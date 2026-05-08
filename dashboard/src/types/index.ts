@@ -212,3 +212,26 @@ export interface UploadedAsset {
   entityType: ManualEntityType
   fileName: string
 }
+
+export interface Product {
+  id: string
+  source: 'FASTMOSS' | 'MANUAL_PROJECT'
+  raw_product_title: string
+  product_display_name: string
+  product_short_name: string
+  category: string | null
+  subcategory: string | null
+  type: string | null
+  shop_name: string | null
+  price_min: number | null
+  price_max: number | null
+  commission: string | null
+  image_url: string | null
+  tiktok_product_url: string | null
+  fastmoss_source_file: string | null
+  asset_status: 'UNRESOLVED' | 'DOWNLOADED' | 'UPLOADED_TO_FLOW'
+  media_id: string | null
+  local_image_path: string | null
+  created_at: string
+  updated_at: string
+}

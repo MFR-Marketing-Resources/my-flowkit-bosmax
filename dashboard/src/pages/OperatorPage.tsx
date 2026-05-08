@@ -12,6 +12,7 @@ import type {
   CreatedState,
   UploadedAsset,
   ManualEntityType,
+  Product,
 } from '../types'
 import { useWebSocketContext } from '../contexts/WebSocketContext'
 import OperatorManual from '../components/operator/OperatorManual'
