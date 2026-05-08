@@ -194,7 +194,7 @@ def _content_pack_summary() -> ContentPackSummary:
         workbooks=workbook_summaries,
         notes=[
             "This operator pack supplies registries, copy hooks, and product intelligence.",
-            "Current Flow Kit supports IMG, I2V, and F2V lanes. Direct single-shot T2V is not a native queue type in this repo.",
+            "Current Flow Kit supports IMG/Edit Image, I2V/Start Image to Video, and Ingredients/Refs to Video lanes. True F2V start-plus-end frames is not wired in this operator surface.",
             "Scene context remains the visual authority; hook/USP/CTA are used for wording and scene framing only.",
             f"Malay tone rules are sourced from SCRIPT_REGISTRY_UNIFIED.yaml ({len(script_registry.get('language_tone_rules', {}).get('rules', []))} rules detected).",
         ],
@@ -444,6 +444,6 @@ async def build_blueprint(body: BlueprintInput):
         notes=[
             "Blueprint compiled from the external BOSMAX content pack.",
             "Use Generate Refs before Generate Images, and Generate Images before Generate Videos.",
-            "Direct single-step T2V is not exposed as a native queue type in this repo; the supported path is prompt -> image -> video or refs -> video.",
+            "Direct single-step T2V is not exposed as a native queue type in this repo. Verified operator paths are prompt -> image -> video or ingredients/refs -> video.",
         ],
     )

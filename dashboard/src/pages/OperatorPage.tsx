@@ -334,7 +334,7 @@ export default function OperatorPage() {
       const labels: Record<string, string> = {
         GENERATE_IMAGE: 'Image generation queue submitted.',
         GENERATE_VIDEO: 'I2V queue submitted.',
-        GENERATE_VIDEO_REFS: 'F2V queue submitted.',
+        GENERATE_VIDEO_REFS: 'Ingredients / Refs to Video queue submitted.',
         UPSCALE_VIDEO: 'Upscale queue submitted.',
       }
       setMessage(labels[type] ?? 'Queue submitted.')
@@ -472,9 +472,9 @@ export default function OperatorPage() {
       await refreshCreatedResources(created)
 
       const labels: Record<string, string> = {
-        EDIT_IMAGE: 'IMG submit sent with uploaded base photo.',
+        EDIT_IMAGE: 'IMG / Edit Image submit sent with uploaded base photo.',
         GENERATE_VIDEO: 'I2V submit sent with uploaded start frame.',
-        GENERATE_VIDEO_REFS: 'F2V submit sent with uploaded reference photos.',
+        GENERATE_VIDEO_REFS: 'Ingredients / Refs to Video submit sent with uploaded reference photos.',
       }
       setMessage(labels[mode])
     } catch (err) {
@@ -712,25 +712,31 @@ export default function OperatorPage() {
             ? `Active project: ${created.project.name} | video: ${created.video.title}`
             : 'Create a project from the blueprint before queueing generation.'}
         </div>
+        <div className="rounded p-3 text-xs grid gap-1" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
+          <div style={{ color: 'var(--text)' }}>Operator lane status</div>
+          <div>Supported now: `IMG / Edit Image`, `I2V / Start Image to Video`, `Ingredients / Refs to Video`.</div>
+          <div>Not wired yet: `True F2V / Start + End Frames`, `Direct T2V`.</div>
+          <div>Do not confuse `Ingredients / Refs to Video` with true `F2V` start-plus-end frame generation.</div>
+        </div>
         <div className="flex gap-2 flex-wrap">
           <button onClick={() => queueRequests('GENERATE_CHARACTER_IMAGE')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-            Generate Refs
+            Generate Ingredients / Refs
           </button>
           <button onClick={() => queueRequests('GENERATE_IMAGE')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
             Generate Images
           </button>
           <button onClick={() => queueRequests('GENERATE_VIDEO')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-            Generate Videos (I2V)
+            Generate Videos (I2V Start Image)
           </button>
           <button onClick={() => queueRequests('GENERATE_VIDEO_REFS')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-            Generate Videos (F2V)
+            Generate Videos (Ingredients / Refs)
           </button>
           <button onClick={() => queueRequests('UPSCALE_VIDEO')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
             Upscale
           </button>
         </div>
         <div className="text-xs" style={{ color: 'var(--muted)' }}>
-          T2V in this repo is an operator pipeline, not a single native queue type: prompt to image to video.
+          T2V in this repo is not a native single-shot queue type. The verified path here is prompt to image to video.
         </div>
         {batchStatus && (
           <div className="grid gap-2 text-xs" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}>
@@ -748,16 +754,20 @@ export default function OperatorPage() {
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Manual Upload and Submit</h3>
           <span className="text-xs" style={{ color: 'var(--muted)' }}>
-            IMG uses uploaded base photo, I2V uses first uploaded start frame, F2V uses all uploaded refs.
+            IMG uses uploaded base photo, I2V uses the first uploaded start frame, Ingredients / Refs uses uploaded reference photos.
           </span>
         </div>
 
         {!created ? (
           <div className="text-xs" style={{ color: 'var(--muted)' }}>
-            Create a project first. Then this panel will expose photo upload plus submit buttons for IMG, I2V, and F2V.
+            Create a project first. Then this panel will expose photo upload plus submit buttons for IMG, I2V, and Ingredients / Refs to Video.
           </div>
         ) : (
           <>
+            <div className="rounded p-3 text-xs grid gap-1" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
+              <div>Supported here: `Submit IMG / Edit Image`, `Submit I2V - Start Image to Video`, `Submit Ingredients / Refs to Video`.</div>
+              <div>`True F2V / Start + End Frames` is not wired into this panel because there is no end-frame field exposed here yet.</div>
+            </div>
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
               <div className="flex flex-col gap-1">
                 <FieldLabel>Target Scene</FieldLabel>
@@ -790,7 +800,7 @@ export default function OperatorPage() {
               <div className="text-xs" style={{ color: 'var(--muted)' }}>
                 {manualFiles.length > 0
                   ? `${manualFiles.length} file selected: ${manualFiles.map(file => file.name).join(', ')}`
-                  : 'Choose one photo for IMG/I2V or multiple photos for F2V.'}
+                  : 'Choose one photo for IMG/I2V or multiple photos for Ingredients / Refs to Video.'}
               </div>
             </div>
 
@@ -804,13 +814,13 @@ export default function OperatorPage() {
                 {uploadingAssets ? 'Uploading...' : 'Upload Photo to Flow'}
               </button>
               <button onClick={() => submitManual('EDIT_IMAGE')} disabled={submittingManual || uploadedAssets.length === 0 || !selectedSceneId} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'rgba(59,130,246,0.14)', color: 'var(--accent)', border: '1px solid var(--border)' }}>
-                Submit IMG
+                Submit IMG / Edit Image
               </button>
               <button onClick={() => submitManual('GENERATE_VIDEO')} disabled={submittingManual || uploadedAssets.length === 0 || !selectedSceneId} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'rgba(34,197,94,0.14)', color: 'var(--green)', border: '1px solid var(--border)' }}>
-                Submit I2V
+                Submit I2V - Start Image to Video
               </button>
               <button onClick={() => submitManual('GENERATE_VIDEO_REFS')} disabled={submittingManual || uploadedAssets.length === 0 || !selectedSceneId} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'rgba(245,158,11,0.14)', color: 'var(--yellow)', border: '1px solid var(--border)' }}>
-                Submit F2V
+                Submit Ingredients / Refs to Video
               </button>
             </div>
 
