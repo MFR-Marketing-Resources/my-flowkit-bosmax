@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { fetchAPI } from '../api/client'
-import { useWebSocket } from '../api/useWebSocket'
+import { useWebSocketContext } from '../contexts/WebSocketContext'
 import type { Project, Video } from '../types'
 import PipelineView from '../components/pipeline/PipelineView'
 
@@ -9,7 +9,7 @@ export default function DashboardPage() {
   const [videos, setVideos] = useState<Video[]>([])
   const [selectedProject, setSelectedProject] = useState<string>('')
   const [selectedVideo, setSelectedVideo] = useState<string>('')
-  const { lastEvent } = useWebSocket()
+  const { lastEvent } = useWebSocketContext()
 
   useEffect(() => {
     fetchAPI<Project[]>('/api/projects').then(setProjects).catch(() => {})

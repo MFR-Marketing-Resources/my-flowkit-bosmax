@@ -15,8 +15,17 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [lastEvent, setLastEvent] = useState<WSEvent | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const retriesRef = useRef(0)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mountedRef = useRef(false)
 
   const connect = useCallback(() => {
+    if (!mountedRef.current) return
+
+    // Avoid opening a second socket if one is already OPEN or CONNECTING
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+      return
+    }
+
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const ws = new WebSocket(`${proto}//${window.location.host}/ws/dashboard`)
     wsRef.current = ws
@@ -48,17 +57,34 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     ws.onclose = () => {
       setIsConnected(false)
       wsRef.current = null
-      const delay = Math.min(1000 * 2 ** retriesRef.current, 30000)
-      retriesRef.current++
-      setTimeout(connect, delay)
+
+      if (mountedRef.current) {
+        const delay = Math.min(1000 * 2 ** retriesRef.current, 30000)
+        retriesRef.current++
+        reconnectTimerRef.current = setTimeout(connect, delay)
+      }
     }
 
-    ws.onerror = () => ws.close()
+    ws.onerror = () => {
+      if (wsRef.current === ws) {
+        ws.close()
+      }
+    }
   }, [])
 
   useEffect(() => {
+    mountedRef.current = true
     connect()
-    return () => { wsRef.current?.close() }
+    return () => {
+      mountedRef.current = false
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+      }
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
+    }
   }, [connect])
 
   return (

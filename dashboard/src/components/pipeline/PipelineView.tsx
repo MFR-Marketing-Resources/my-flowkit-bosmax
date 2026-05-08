@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Image, Film, Zap, Users } from 'lucide-react'
 import { fetchAPI } from '../../api/client'
-import { useWebSocket } from '../../api/useWebSocket'
+import { useWebSocketContext } from '../../contexts/WebSocketContext'
 import type { Character, Scene } from '../../types'
 import StageNode from './StageNode'
 import SceneCard from './SceneCard'
@@ -25,7 +25,7 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
   const [chars, setChars] = useState<Character[]>([])
   const [scenes, setScenes] = useState<Scene[]>([])
   const [expanded, setExpanded] = useState<ExpandedStage>(null)
-  const { lastEvent } = useWebSocket()
+  const { lastEvent } = useWebSocketContext()
 
   const load = useCallback(async () => {
     const [c, s] = await Promise.all([
