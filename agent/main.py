@@ -229,11 +229,16 @@ async def dashboard_ws(websocket: WebSocket):
         from agent.db import crud
         pending_requests = await crud.list_requests(status="PENDING")
         processing_requests = await crud.list_requests(status="PROCESSING")
+        # Update event_bus state from client
+        event_bus.extension_connected = client.connected
+        event_bus.extension_state = client.last_state if hasattr(client, "last_state") else ("IDLE" if client.connected else "OFFLINE")
+
         snapshot = {
             "type": "snapshot",
             "health": {
                 "status": "ok",
-                "extension_connected": client.connected,
+                "extension_connected": event_bus.extension_connected,
+                "extension_state": event_bus.extension_state,
             },
             "requests": pending_requests + processing_requests,
             "worker": {

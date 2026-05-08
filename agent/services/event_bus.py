@@ -7,6 +7,8 @@ class EventBus:
     """Broadcast events to all connected dashboard WebSocket clients."""
     def __init__(self):
         self._subscribers: set[asyncio.Queue] = set()
+        self.extension_connected = False
+        self.extension_state = "OFFLINE"
 
     def subscribe(self) -> asyncio.Queue:
         q = asyncio.Queue(maxsize=100)

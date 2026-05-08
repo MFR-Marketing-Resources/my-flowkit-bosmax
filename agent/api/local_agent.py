@@ -36,6 +36,8 @@ class LocalAgentStatus(BaseModel):
     dashboard_url: str
     dashboard_serving_mode: str
     repair_command: str
+    extension_connected: bool
+    extension_state: str
     registration: LocalAgentRegistration
 
 
@@ -98,12 +100,16 @@ def load_registration() -> LocalAgentRegistration:
 
 @router.get("/status", response_model=LocalAgentStatus)
 async def get_local_agent_status():
+    from agent.services.flow_client import get_flow_client
+    client = get_flow_client()
     return LocalAgentStatus(
         task_name=LOCAL_AGENT_TASK_NAME,
         health_url=LOCAL_AGENT_HEALTH_URL,
         dashboard_url=LOCAL_AGENT_DASHBOARD_URL,
         dashboard_serving_mode=get_dashboard_serving_mode(),
         repair_command=LOCAL_AGENT_REPAIR_COMMAND,
+        extension_connected=client.connected,
+        extension_state=client.last_state if hasattr(client, "last_state") else ("IDLE" if client.connected else "OFFLINE"),
         registration=load_registration(),
     )
 

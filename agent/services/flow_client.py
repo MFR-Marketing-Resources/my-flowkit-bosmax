@@ -32,6 +32,7 @@ class FlowClient:
         self._ws_disconnect_count = 0
         self._ws_connected_at: Optional[float] = None
         self._ws_last_disconnect_at: Optional[float] = None
+        self.last_state = "OFFLINE"
 
     def set_extension(self, ws):
         """Called when extension connects via WS."""
