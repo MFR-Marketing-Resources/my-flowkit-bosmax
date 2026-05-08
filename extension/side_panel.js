@@ -93,7 +93,7 @@ function updateStatus(data) {
     }
     // Auto-refresh when token age > 55 min and connected
     if (ageMs > 3300000 && data.agentConnected) {
-      chrome.runtime.sendMessage({ type: 'REFRESH_TOKEN' });
+      sendRuntimeMessageSafe({ type: 'REFRESH_TOKEN' });
     }
   } else {
     tokenEl.textContent = 'no token';
@@ -232,16 +232,27 @@ document.getElementById('detail-overlay').addEventListener('click', (e) => {
 // ── Initial data fetch ───────────────────────────────────────
 
 function fetchStatus() {
-  chrome.runtime.sendMessage({ type: 'STATUS' }, (data) => {
+  chrome.runtime.sendMessage({ type: 'STATUS' }, (response) => {
     if (chrome.runtime.lastError) return;
-    updateStatus(data);
+    if (response?.ok) {
+      updateStatus(response.data);
+    }
   });
 }
 
 function fetchLog() {
-  chrome.runtime.sendMessage({ type: 'REQUEST_LOG' }, (data) => {
+  chrome.runtime.sendMessage({ type: 'REQUEST_LOG' }, (response) => {
     if (chrome.runtime.lastError) return;
-    if (data && data.log) updateRequestLog(data.log);
+    if (response?.ok && response.data?.log) {
+      updateRequestLog(response.data.log);
+    }
+  });
+}
+
+function sendRuntimeMessageSafe(message, onResponse) {
+  chrome.runtime.sendMessage(message, (response) => {
+    if (chrome.runtime.lastError) return;
+    if (typeof onResponse === 'function') onResponse(response);
   });
 }
 
@@ -292,8 +303,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 document.getElementById('main-toggle').addEventListener('change', (e) => {
   const msgType = e.target.checked ? 'RECONNECT' : 'DISCONNECT';
-  chrome.runtime.sendMessage({ type: msgType }, () => {
-    if (chrome.runtime.lastError) return;
+  sendRuntimeMessageSafe({ type: msgType }, () => {
     setTimeout(fetchStatus, 400);
   });
 });
@@ -301,9 +311,7 @@ document.getElementById('main-toggle').addEventListener('change', (e) => {
 // ── Action buttons ───────────────────────────────────────────
 
 document.getElementById('btn-flow').addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'OPEN_FLOW_TAB' }, () => {
-    if (chrome.runtime.lastError) return;
-  });
+  sendRuntimeMessageSafe({ type: 'OPEN_FLOW_TAB' });
 });
 
 document.getElementById('btn-operator').addEventListener('click', async () => {
@@ -318,8 +326,7 @@ document.getElementById('btn-token').addEventListener('click', () => {
   const btn = document.getElementById('btn-token');
   btn.textContent = 'Opening...';
   btn.disabled = true;
-  chrome.runtime.sendMessage({ type: 'REFRESH_TOKEN' }, () => {
-    if (chrome.runtime.lastError) { /* ignore */ }
+  sendRuntimeMessageSafe({ type: 'REFRESH_TOKEN' }, () => {
     btn.textContent = 'Refresh Token';
     btn.disabled = false;
   });

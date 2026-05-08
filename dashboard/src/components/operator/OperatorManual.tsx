@@ -82,6 +82,7 @@ interface OperatorManualProps {
   selectedSceneId: string
   uploadedAssets: UploadedAsset[]
   manualPrompt: string
+  resolvedVideoPromptReady: boolean
   submittingManual: boolean
   uploadingAssets: boolean
   backendConnected: boolean
@@ -93,6 +94,7 @@ export default function OperatorManual({
   selectedSceneId,
   uploadedAssets,
   manualPrompt,
+  resolvedVideoPromptReady,
   submittingManual,
   uploadingAssets,
   backendConnected,
@@ -104,7 +106,7 @@ export default function OperatorManual({
     { label: "Project created", pass: !!created },
     { label: "Target scene selected", pass: !!selectedSceneId },
     { label: "Uploaded assets ready", pass: uploadedAssets.length > 0 },
-    { label: "Prompt prepared", pass: manualPrompt.trim().length > 0 },
+    { label: "Resolved video prompt ready", pass: resolvedVideoPromptReady || manualPrompt.trim().length > 0 },
     { label: "Upload not running", pass: !uploadingAssets },
     { label: "Submit not running", pass: !submittingManual },
     { label: "F2V not confused with Ingredients/Refs", pass: true }
@@ -129,7 +131,7 @@ export default function OperatorManual({
             status="WIRED"
             type="GENERATE_VIDEO"
             useWhen="first uploaded image becomes the start frame for video."
-            required="created project, target scene, uploaded image/start frame, video prompt."
+            required="created project, target scene, uploaded image/start frame, resolved video prompt."
             button="Submit I2V - Start Image to Video"
             warning="Not wired: explicit end frame."
           />
@@ -138,17 +140,17 @@ export default function OperatorManual({
             status="WIRED"
             type="GENERATE_VIDEO_REFS"
             useWhen="multiple uploaded reference images guide video generation."
-            required="created project, target scene, one or more uploaded refs, video prompt."
+            required="created project, target scene, one or more uploaded refs, resolved video prompt."
             button="Submit Ingredients / Refs to Video"
             warning="Warning: This is NOT true F2V."
           />
           <ModeCard
-            title="4. True F2V / Start + End Frames"
+            title="4. True F2V / Start + Optional End Frame"
             status="WIRED IN OPERATOR"
             type="GENERATE_VIDEO + end_scene_media_id"
             useWhen="transitioning between a specific start frame and end frame."
-            required="created project, target scene, uploaded start asset, uploaded end asset, video prompt."
-            button="Submit True F2V / Start + End Frames"
+            required="created project, target scene, uploaded start asset, optional end asset, resolved video prompt."
+            button="Submit True F2V / Start Frame + Optional End"
             warning="Chrome DOM automation: still LIVE TEST REQUIRED."
           />
           <ModeCard
@@ -185,7 +187,8 @@ export default function OperatorManual({
 
             <EvidenceSubsection title="F2V / Frames Evidence">
               <div><Badge type="info">SOURCE EVIDENCE</Badge> Labels: "Select start", "Select end". End frame is optional.</div>
-              <div style={{ color: 'var(--muted)' }}><Badge type="danger">REPO NOT WIRED</Badge> True F2V requires Start + End frame handling. Do not map this to <code>GENERATE_VIDEO_REFS</code>.</div>
+              <div><Badge type="success">QUEUE WIRED</Badge> True F2V maps to <code>GENERATE_VIDEO</code> with optional <code>end_scene_media_id</code>.</div>
+              <div style={{ color: 'var(--muted)' }}><Badge type="warn">LIVE TEST REQUIRED</Badge> Live Flow execution still depends on worker + extension connected path.</div>
             </EvidenceSubsection>
 
             <EvidenceSubsection title="Ingredients / Refs Evidence">

@@ -22,6 +22,37 @@ let metrics = {
   lastError: null,
 };
 
+function respondOnce(reply, payload) {
+  if (typeof reply !== 'function') return;
+  try {
+    reply(payload);
+  } catch (_) {}
+}
+
+function runAsyncReply(reply, task) {
+  Promise.resolve()
+    .then(task)
+    .then((payload) => respondOnce(reply, payload))
+    .catch((error) => respondOnce(reply, {
+      ok: false,
+      error: error?.message || String(error),
+    }));
+  return true;
+}
+
+function sendTabMessageSafe(tabId, payload) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, payload, (response) => {
+      const lastError = chrome.runtime.lastError;
+      if (lastError) {
+        resolve({ ok: false, error: lastError.message });
+        return;
+      }
+      resolve(response ?? { ok: false, error: 'No response' });
+    });
+  });
+}
+
 // ─── URL → Log Type Classifier ─────────────────────────────
 
 // Visible log types — only these appear in the request log
@@ -281,31 +312,34 @@ function sendToAgent(msg) {
 // ─── reCAPTCHA Solving ──────────────────────────────────────
 
 async function requestCaptchaFromTab(tabId, requestId, pageAction) {
-  try {
-    return await chrome.tabs.sendMessage(tabId, {
-      type: 'GET_CAPTCHA',
-      requestId,
-      pageAction,
-    });
-  } catch (error) {
-    const msg = error?.message || '';
-    const shouldInject =
-      msg.includes('Receiving end does not exist') ||
-      msg.includes('Could not establish connection');
-    if (!shouldInject) throw error;
+  const initialResponse = await sendTabMessageSafe(tabId, {
+    type: 'GET_CAPTCHA',
+    requestId,
+    pageAction,
+  });
 
-    // Inject content script and retry
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['content.js'],
-    });
-    await sleep(200);
-    return await chrome.tabs.sendMessage(tabId, {
-      type: 'GET_CAPTCHA',
-      requestId,
-      pageAction,
-    });
+  if (!initialResponse?.error) {
+    return initialResponse;
   }
+
+  const msg = initialResponse.error || '';
+  const shouldInject =
+    msg.includes('Receiving end does not exist') ||
+    msg.includes('Could not establish connection');
+  if (!shouldInject) {
+    return initialResponse;
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['content.js'],
+  });
+  await sleep(200);
+  return await sendTabMessageSafe(tabId, {
+    type: 'GET_CAPTCHA',
+    requestId,
+    pageAction,
+  });
 }
 
 async function solveCaptcha(requestId, captchaAction) {
@@ -538,9 +572,9 @@ function broadcastStatus() {
   chrome.runtime.sendMessage({ type: 'STATUS_PUSH' }).catch(() => {});
 }
 
-chrome.runtime.onMessage.addListener((msg, _, reply) => {
+async function handleMessage(msg, sender) {
   if (msg.type === 'STATUS') {
-    reply({
+    return {
       connected: ws?.readyState === WebSocket.OPEN,
       agentConnected: ws?.readyState === WebSocket.OPEN,
       flowKeyPresent: !!flowKey,
@@ -553,66 +587,65 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
         lastError: metrics.lastError,
       },
       state,
-    });
-    return false;
+    };
   }
 
   if (msg.type === 'DISCONNECT') {
     manualDisconnect = true;
     if (ws) ws.close();
-    reply({ ok: true });
-    return false;
+    return { ok: true };
   }
 
   if (msg.type === 'RECONNECT') {
     manualDisconnect = false;
     connectToAgent();
-    reply({ ok: true });
-    return false;
+    return { ok: true };
   }
 
   if (msg.type === 'REQUEST_LOG') {
-    reply({ log: requestLog });
-    return false;
+    return { log: requestLog };
   }
 
   if (msg.type === 'OPEN_FLOW_TAB') {
-    chrome.tabs.query({
+    const tabs = await chrome.tabs.query({
       url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-    }).then((tabs) => {
-      if (tabs.length) {
-        chrome.tabs.update(tabs[0].id, { active: true });
-        reply({ ok: true, tabId: tabs[0].id });
-      } else {
-        chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow' })
-          .then((tab) => reply({ ok: true, tabId: tab.id }))
-          .catch((e) => reply({ error: e.message }));
-      }
-    }).catch((e) => reply({ error: e.message }));
-    return true;
+    });
+    if (tabs.length) {
+      await chrome.tabs.update(tabs[0].id, { active: true });
+      return { ok: true, tabId: tabs[0].id };
+    }
+    const tab = await chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow' });
+    return { ok: true, tabId: tab.id };
   }
 
   if (msg.type === 'REFRESH_TOKEN') {
-    captureTokenFromFlowTab()
-      .then(() => reply({ ok: true }))
-      .catch((e) => reply({ error: e.message }));
-    return true;
+    await captureTokenFromFlowTab();
+    return { ok: true };
   }
 
   if (msg.type === 'TEST_CAPTCHA') {
-    solveCaptcha(`test-${Date.now()}`, msg.pageAction || 'IMAGE_GENERATION')
-      .then((r) => reply(r))
-      .catch((e) => reply({ error: e.message }));
-    return true;
+    const result = await solveCaptcha(`test-${Date.now()}`, msg.pageAction || 'IMAGE_GENERATION');
+    return result?.error ? { ok: false, error: result.error } : { ok: true, data: result };
   }
 
   if (msg.type === 'TRPC_MEDIA_URLS') {
     handleTrpcMediaUrls(msg.trpcUrl, msg.body);
-    reply({ ok: true });
-    return false;
+    return { ok: true };
   }
 
-  return false;
+  throw new Error(`Unknown message type: ${msg.type}`);
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  ;(async () => {
+    try {
+      const data = await handleMessage(message, sender);
+      sendResponse({ ok: true, data });
+    } catch (error) {
+      sendResponse({ ok: false, error: String(error?.message || error) });
+    }
+  })();
+  return true;
 });
 
 // ─── TRPC Media URL Extractor ──────────────────────────────

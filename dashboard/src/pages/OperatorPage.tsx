@@ -148,33 +148,39 @@ export default function OperatorPage() {
   const [uploadingF2vEnd, setUploadingF2vEnd] = useState(false)
 
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
+  const selectedScene = videoScenes.find(item => item.id === selectedSceneId)
+  const systemVideoPrompt = selectedScene?.video_prompt || selectedScene?.prompt || ''
+  const manualPromptOverride = manualPrompt.trim()
+  const resolvedVideoPrompt = manualPromptOverride || systemVideoPrompt
 
   // True F2V Readiness Rules
-  const f2vPromptReady = manualPrompt.trim().length > 0
+  const f2vResolvedPromptReady = resolvedVideoPrompt.trim().length > 0
   const f2vStartReady = !!f2vStartAssetId
   const f2vEndReady = !!f2vEndAssetId
-  const f2vDifferentAssets = f2vStartAssetId && f2vEndAssetId && f2vStartAssetId !== f2vEndAssetId
+  const f2vDifferentAssets = !f2vEndReady || f2vStartAssetId !== f2vEndAssetId
   const f2vSceneReady = !!selectedSceneId
   const f2vReady =
     f2vSceneReady &&
     f2vStartReady &&
-    f2vEndReady &&
-    f2vPromptReady &&
+    f2vResolvedPromptReady &&
     f2vDifferentAssets &&
     !submittingManual &&
     !uploadingAssets &&
     !uploadingF2vStart &&
     !uploadingF2vEnd
 
-  const f2vBlockingReasons = []
+  const f2vBlockingReasons: string[] = []
+  const f2vAdvisoryReasons: string[] = []
   if (!f2vSceneReady) f2vBlockingReasons.push('Select a target scene.')
   if (!f2vStartReady) f2vBlockingReasons.push('Upload a Start Frame to Flow.')
-  if (!f2vEndReady) f2vBlockingReasons.push('Upload an End Frame to Flow.')
   if (f2vStartReady && f2vEndReady && !f2vDifferentAssets) f2vBlockingReasons.push('Start and End frames must be different assets.')
-  if (!f2vPromptReady) f2vBlockingReasons.push('Enter a transition prompt.')
+  if (!f2vResolvedPromptReady) f2vBlockingReasons.push('Generated scene prompt missing. Enter a prompt override.')
+  if (uploadingAssets) f2vBlockingReasons.push('Wait for upload to finish.')
   if (uploadingF2vStart) f2vBlockingReasons.push('Wait for Start Frame upload to finish.')
   if (uploadingF2vEnd) f2vBlockingReasons.push('Wait for End Frame upload to finish.')
   if (submittingManual) f2vBlockingReasons.push('Submission already running.')
+
+  if (!f2vEndReady) f2vAdvisoryReasons.push('End Frame is optional. Use it only if you want last-frame control.')
 
 
 
@@ -504,20 +510,28 @@ export default function OperatorPage() {
         setMessage('Select a target scene first.')
         return
       }
-      if (!f2vStartAssetId || !f2vEndAssetId) {
-        setMessage('Select both Start and End assets for True F2V.')
+      if (!f2vStartAssetId) {
+        setMessage('Upload a Start Frame to Flow.')
         return
       }
-      if (!f2vDifferentAssets) {
+      if (f2vEndAssetId && !f2vDifferentAssets) {
         setMessage('Start and End frames must be different assets.')
         return
       }
-      if (!f2vPromptReady) {
-        setMessage('Enter a transition prompt for True F2V.')
+      if (!f2vResolvedPromptReady) {
+        setMessage('Generated scene prompt missing. Enter a prompt override.')
         return
       }
       if (uploadingAssets) {
         setMessage('Wait for upload to finish.')
+        return
+      }
+      if (uploadingF2vStart) {
+        setMessage('Wait for Start Frame upload to finish.')
+        return
+      }
+      if (uploadingF2vEnd) {
+        setMessage('Wait for End Frame upload to finish.')
         return
       }
     } else if (uploadedAssets.length === 0) {
@@ -530,7 +544,7 @@ export default function OperatorPage() {
 
     try {
       const scenePatch: Record<string, unknown> = {}
-      const prompt = manualPrompt.trim()
+      const prompt = manualPromptOverride
 
       if (mode === 'EDIT_IMAGE' && prompt) {
         scenePatch.image_prompt = prompt
@@ -551,14 +565,25 @@ export default function OperatorPage() {
       }
 
       if (mode === 'TRUE_F2V') {
+        scenePatch.video_prompt = resolvedVideoPrompt
         if (form.orientation === 'VERTICAL') {
           scenePatch.vertical_image_media_id = f2vStartAssetId
           scenePatch.vertical_image_status = 'COMPLETED'
-          scenePatch.vertical_end_scene_media_id = f2vEndAssetId
+          if (f2vEndAssetId) {
+            scenePatch.vertical_end_scene_media_id = f2vEndAssetId
+          } else {
+            // Ensure no end frame is sent for start-only F2V
+            scenePatch.vertical_end_scene_media_id = null
+          }
         } else {
           scenePatch.horizontal_image_media_id = f2vStartAssetId
           scenePatch.horizontal_image_status = 'COMPLETED'
-          scenePatch.horizontal_end_scene_media_id = f2vEndAssetId
+          if (f2vEndAssetId) {
+            scenePatch.horizontal_end_scene_media_id = f2vEndAssetId
+          } else {
+            // Ensure no end frame is sent for start-only F2V
+            scenePatch.horizontal_end_scene_media_id = null
+          }
         }
       }
 
@@ -596,7 +621,9 @@ export default function OperatorPage() {
         EDIT_IMAGE: 'IMG / Edit Image submit sent with uploaded base photo.',
         GENERATE_VIDEO: 'I2V submit sent with uploaded start frame.',
         GENERATE_VIDEO_REFS: 'Ingredients / Refs to Video submit sent with uploaded reference photos.',
-        TRUE_F2V: 'True F2V submit sent with explicit Start and End frames.',
+        TRUE_F2V: f2vEndAssetId
+          ? 'True F2V submit sent with explicit Start and End frames.'
+          : 'True F2V submit sent with explicit Start frame and generated prompt.',
       }
       setMessage(labels[mode])
     } catch (err) {
@@ -877,6 +904,7 @@ export default function OperatorPage() {
         selectedSceneId={selectedSceneId}
         uploadedAssets={uploadedAssets}
         manualPrompt={manualPrompt}
+        resolvedVideoPromptReady={resolvedVideoPrompt.trim().length > 0}
         submittingManual={submittingManual}
         uploadingAssets={uploadingAssets}
         backendConnected={backendConnected}
@@ -943,8 +971,18 @@ export default function OperatorPage() {
               </div>
 
             <div className="flex flex-col gap-1">
-              <FieldLabel>Submit Prompt Override</FieldLabel>
+              <FieldLabel>Prompt Override (optional)</FieldLabel>
               <textarea value={manualPrompt} onChange={e => setManualPrompt(e.target.value)} rows={3} placeholder="Optional prompt override for the selected scene." className="px-2 py-1.5 rounded text-xs resize-y" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
+              <div className="rounded p-2 text-[10px]" style={{ background: 'rgba(15,23,42,0.35)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
+                {systemVideoPrompt.trim().length > 0 ? (
+                  <>
+                    <div className="font-bold" style={{ color: 'var(--text)' }}>System-generated prompt used when override is empty:</div>
+                    <div className="mt-1 whitespace-pre-wrap" style={{ color: 'var(--muted)' }}>{systemVideoPrompt}</div>
+                  </>
+                ) : (
+                  <div style={{ color: 'var(--red)' }}>Generated scene prompt missing. Enter a prompt override.</div>
+                )}
+              </div>
             </div>
 
             <div className="flex gap-2 flex-wrap">
@@ -964,17 +1002,17 @@ export default function OperatorPage() {
 
             <div className="rounded p-3 flex flex-col gap-3" style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.2)' }}>
               <div className="flex items-center justify-between">
-                <div className="text-xs font-bold" style={{ color: 'var(--accent)' }}>True F2V / Start + End Frames</div>
+                <div className="text-xs font-bold" style={{ color: 'var(--accent)' }}>True F2V / Start Frame + Optional End Frame</div>
                 <div className="text-[10px]" style={{ color: 'var(--muted)' }}>
-                  Use I2V for start-frame-only video.
+                  End Frame is optional in this lane.
                 </div>
               </div>
                 <div className="text-[10px]" style={{ color: 'var(--accent)' }}>
-                  True F2V uses two explicit images:
+                  True F2V uses one required image and one optional control frame:
                   <ol className="list-decimal ml-4 mt-1">
                     <li>Upload Start Frame.</li>
-                    <li>Upload End Frame.</li>
-                    <li>Enter transition prompt.</li>
+                    <li>Optional: Upload End Frame for last-frame control.</li>
+                    <li>Review the generated scene prompt or add an override.</li>
                     <li>Submit True F2V.</li>
                   </ol>
                 </div>
@@ -1020,7 +1058,7 @@ export default function OperatorPage() {
                 </div>
 
                 <div className="flex flex-col gap-2 p-2 rounded" style={{ background: 'rgba(0,0,0,0.1)', border: '1px solid var(--border)' }}>
-                  <FieldLabel>End Frame</FieldLabel>
+                  <FieldLabel>End Frame (optional)</FieldLabel>
                   <input
                     type="file"
                     accept="image/*"
@@ -1056,8 +1094,23 @@ export default function OperatorPage() {
                 </div>
               </div>
 
+              <div className="flex flex-col gap-1">
+                <FieldLabel>Prompt Override (Optional)</FieldLabel>
+                <input
+                  type="text"
+                  placeholder="Leave empty to use system scene prompt..."
+                  value={manualPrompt}
+                  onChange={e => setManualPrompt(e.target.value)}
+                  className="px-2 py-1 rounded text-xs"
+                  style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}
+                />
+                <div className="mt-1 p-2 rounded text-[10px] italic" style={{ background: 'rgba(59,130,246,0.05)', border: '1px dashed var(--blue)', color: 'var(--blue)' }}>
+                  <strong>Resolved Prompt:</strong> {manualPrompt.trim() ? manualPrompt : (resolvedVideoPrompt || 'Waiting for scene...')}
+                </div>
+              </div>
+
               <div className="flex flex-col gap-2">
-                {f2vBlockingReasons.length > 0 ? (
+                {f2vBlockingReasons.length > 0 || f2vAdvisoryReasons.length > 0 ? (
                   <div className="flex flex-wrap gap-x-3 gap-y-1">
                     {f2vBlockingReasons.map((reason, i) => (
                       <div key={i} className="text-[10px] flex items-center gap-1" style={{ color: 'var(--red)' }}>
@@ -1065,15 +1118,21 @@ export default function OperatorPage() {
                         {reason}
                       </div>
                     ))}
+                    {f2vAdvisoryReasons.map((reason, i) => (
+                      <div key={`advisory-${i}`} className="text-[10px] flex items-center gap-1" style={{ color: 'var(--yellow)' }}>
+                        <span className="w-1 h-1 rounded-full" style={{ background: 'var(--yellow)' }}></span>
+                        {reason}
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="text-[10px] font-bold" style={{ color: 'var(--green)' }}>
-                    True F2V ready: Start + End frames and transition prompt are set.
+                    True F2V ready: Start frame and resolved prompt are set.
                   </div>
                 )}
 
                 <button onClick={() => submitManual('TRUE_F2V')} disabled={!f2vReady} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: !f2vReady ? 'var(--border)' : 'rgba(168,85,247,0.14)', color: !f2vReady ? 'var(--muted)' : 'var(--accent)', border: `1px solid ${!f2vReady ? 'var(--border)' : 'rgba(168,85,247,0.4)'}` }}>
-                  Submit True F2V / Start + End Frames
+                  Submit True F2V / Start Frame + Optional End
                 </button>
               </div>
             </div>
