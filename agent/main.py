@@ -37,6 +37,7 @@ from agent.api.products import router as products_router
 from agent.worker.processor import get_worker_controller
 from agent.services.flow_client import get_flow_client
 from agent.services.event_bus import event_bus
+from agent.api.telemetry import router as telemetry_router
 from agent.sdk import init_sdk
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -147,6 +148,7 @@ app.include_router(models_router)
 app.include_router(active_project_router)
 app.include_router(local_agent_router)
 app.include_router(operator_router)
+app.include_router(telemetry_router)
 
 
 

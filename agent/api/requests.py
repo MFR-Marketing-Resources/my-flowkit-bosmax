@@ -141,6 +141,13 @@ async def batch_status(video_id: str = None, project_id: str = None,
     )
 
 
+
+@router.get("/snapshot", response_model=list[Request])
+async def snapshot(project_id: str, limit: int = 5):
+    """Get the N most recent requests for a project."""
+    return await crud.list_requests(project_id=project_id, limit=limit)
+
+
 @router.get("/{rid}", response_model=Request)
 async def get(rid: str):
     r = await crud.get_request(rid)
@@ -160,10 +167,3 @@ async def update(rid: str, body: RequestUpdate):
     return r
 
 
-@router.get("/snapshot", response_model=list[Request])
-async def snapshot(project_id: str, limit: int = 5):
-    """Get the N most recent requests for a project."""
-    rows = await crud.list_requests(project_id=project_id)
-    # Sort by created_at desc
-    rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-    return rows[:limit]

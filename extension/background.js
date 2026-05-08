@@ -637,6 +637,23 @@ async function handleMessage(msg, sender) {
     return await handleExecuteFlowJob(msg.job);
   }
 
+  if (msg.type === 'FLOW_STAGE_EVENT') {
+    if (msg.request_id) {
+      fetch('http://127.0.0.1:8100/api/telemetry/stage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request_id: msg.request_id,
+          stage: msg.stage,
+          status: msg.status,
+          message: msg.message || null,
+          source: 'extension'
+        })
+      }).catch(() => {});
+    }
+    return { ok: true };
+  }
+
   throw new Error(`Unknown message type: ${msg.type}`);
 }
 

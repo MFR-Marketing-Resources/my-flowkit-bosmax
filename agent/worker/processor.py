@@ -12,6 +12,7 @@ import time
 import aiohttp
 
 from agent.db import crud
+from agent.db.crud import upsert_request_telemetry, add_stage_event
 from agent.services.flow_client import get_flow_client
 from agent.services.event_bus import event_bus
 from agent.config import POLL_INTERVAL, MAX_RETRIES, API_COOLDOWN, MAX_CONCURRENT_REQUESTS
@@ -232,6 +233,27 @@ async def _resolve_orientation(req: dict) -> str:
     return "VERTICAL"
 
 
+async def _log_telemetry(request_id: str, stage: str, status: str = "PROCESSING", message: str = None, **extra):
+    """Helper to update telemetry and add stage event."""
+    try:
+        kw = {"worker_stage": stage, "status": status, **extra}
+        if status == "PROCESSING" and "started_at" not in extra:
+            kw["started_at"] = crud._now()
+        if status == "COMPLETED":
+            kw["completed_at"] = crud._now()
+        if status == "FAILED":
+            kw["failed_at"] = crud._now()
+            if message:
+                kw["error_message"] = message
+        
+        kw["last_heartbeat_at"] = crud._now()
+        
+        await upsert_request_telemetry(request_id, **kw)
+        await add_stage_event(request_id, stage, status, message, source="worker")
+    except Exception as e:
+        logger.warning("Failed to log telemetry: %s", e)
+
+
 async def _process_one(req: dict, deferred: dict = None, retry_after: dict = None):
     rid, req_type = req["id"], req["type"]
     orientation = await _resolve_orientation(req)
@@ -269,6 +291,7 @@ async def _process_one(req: dict, deferred: dict = None, retry_after: dict = Non
 
     logger.info("Processing request %s type=%s", rid[:8], req_type)
     await crud.update_request(rid, status="PROCESSING")
+    await _log_telemetry(rid, "WORKER_STARTED", "PROCESSING", project_id=req.get("project_id"), video_id=req.get("video_id"), scene_id=req.get("scene_id"), request_type=req_type)
     await event_bus.emit("request_update", {"id": rid, "status": "PROCESSING", "type": req_type})
 
     try:
@@ -278,6 +301,7 @@ async def _process_one(req: dict, deferred: dict = None, retry_after: dict = Non
         else:
             gen_result = parse_result(result, req_type)
             await crud.update_request(rid, status="COMPLETED", media_id=gen_result.media_id, output_url=gen_result.url)
+            await _log_telemetry(rid, "WORKER_COMPLETED", "COMPLETED")
             if req_type in ("GENERATE_CHARACTER_IMAGE", "REGENERATE_CHARACTER_IMAGE", "EDIT_CHARACTER_IMAGE"):
                 char_id = req.get("character_id")
                 if char_id:
@@ -480,9 +504,11 @@ async def _handle_failure(rid: str, req: dict, result: dict, retry_after: dict =
                 return
             retry_after[rid] = now + min(2 ** retry * 10, 300)
         await crud.update_request(rid, status="PENDING", retry_count=retry, error_message=str(error_msg))
+        await _log_telemetry(rid, "WORKER_RETRY", "QUEUED", message=str(error_msg))
         logger.warning("Request %s failed (retry %d/%d): %s", rid[:8], retry, MAX_RETRIES, error_msg)
     else:
         await crud.update_request(rid, status="FAILED", error_message=str(error_msg))
+        await _log_telemetry(rid, "WORKER_FAILED", "FAILED", message=str(error_msg))
         await _mark_scene_failed(req)
         logger.error("Request %s FAILED permanently: %s", rid[:8], error_msg)
 

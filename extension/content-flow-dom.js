@@ -140,6 +140,14 @@
     const logStage = (stage, status = 'YES') => {
       report.stages.push({ stage, status });
       console.log(`[FlowAgent] Stage: ${stage} - ${status}`);
+      // Real-time stage reporting to background
+      chrome.runtime.sendMessage({ 
+        type: 'FLOW_STAGE_EVENT', 
+        request_id: job.request_id, 
+        stage, 
+        status, 
+        source: 'google_flow' 
+      }).catch(() => {});
     };
 
     try {

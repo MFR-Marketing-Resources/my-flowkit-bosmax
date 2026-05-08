@@ -18,8 +18,73 @@ import type {
 import { useWebSocketContext } from '../contexts/WebSocketContext'
 import OperatorManual from '../components/operator/OperatorManual'
 
+type TelemetrySummary = {
+  total_today: number
+  queued: number
+  processing: number
+  waiting_flow: number
+  flow_running: number
+  completed: number
+  failed: number
+  last_job_status: string
+  last_stage: string
+  last_error: string
+  idle_seconds: number
+}
 
+function TelemetryDashboard({ summary }: { summary: TelemetrySummary | null }) {
+  if (!summary) return null
 
+  const items = [
+    { label: 'Today', value: summary.total_today, color: 'var(--text)' },
+    { label: 'Queued', value: summary.queued, color: 'var(--muted)' },
+    { label: 'Processing', value: summary.processing, color: 'var(--blue)' },
+    { label: 'Waiting Flow', value: summary.waiting_flow, color: 'var(--accent)' },
+    { label: 'Flow Running', value: summary.flow_running, color: 'var(--yellow)' },
+    { label: 'Success', value: summary.completed, color: 'var(--green)' },
+    { label: 'Failed', value: summary.failed, color: 'var(--red)' },
+  ]
+
+  return (
+    <Card className="mb-4">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>System Telemetry (Real-time)</h3>
+        {summary.last_job_status && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] opacity-60">Last Job:</span>
+            <span className={`text-[10px] font-bold ${summary.last_job_status === 'COMPLETED' ? 'text-green-400' : 'text-red-400'}`}>
+              {summary.last_job_status}
+            </span>
+          </div>
+        )}
+      </div>
+      
+      <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+        {items.map(item => (
+          <div key={item.label} className="p-2 rounded border flex flex-col items-center justify-center bg-black/20" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+            <div className="text-lg font-bold" style={{ color: item.color }}>{item.value}</div>
+            <div className="text-[9px] uppercase tracking-tighter opacity-60">{item.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {(summary.last_stage || summary.last_error) && (
+        <div className="mt-2 p-2 rounded bg-black/30 border border-white/5 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2 truncate">
+            <span className="text-[9px] font-bold text-accent uppercase">Live Stage:</span>
+            <span className="text-[10px] font-mono truncate">{summary.last_stage || 'IDLE'}</span>
+          </div>
+          {summary.last_error && (
+            <div className="flex items-center gap-2 truncate max-w-[50%]">
+              <span className="text-[9px] font-bold text-red-500 uppercase">Alert:</span>
+              <span className="text-[10px] text-red-400 italic truncate">{summary.last_error}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  )
+}
 
 type OperatorForm = {
   product_name: string
@@ -339,6 +404,11 @@ export default function OperatorPage() {
   const [importingCatalog, setImportingCatalog] = useState(false)
   const [recentRequests, setRecentRequests] = useState<Request[]>([])
   const [hoveredMode, setHoveredMode] = useState<string | null>(null)
+  const [telemetry, setTelemetry] = useState<TelemetrySummary | null>(null)
+  const [allProjects, setAllProjects] = useState<Project[]>([])
+  const [allVideos, setAllVideos] = useState<Video[]>([])
+  const [fetchingProjects, setFetchingProjects] = useState(false)
+  const [fetchingVideos, setFetchingVideos] = useState(false)
 
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
   const selectedScene = videoScenes.find(item => item.id === selectedSceneId)
@@ -375,6 +445,29 @@ export default function OperatorPage() {
 
   if (!f2vEndReady) f2vAdvisoryReasons.push('End Frame is optional. Use it only if you want last-frame control.')
 
+  useEffect(() => {
+    setFetchingProjects(true)
+    fetchAPI<Project[]>('/api/projects')
+      .then(setAllProjects)
+      .finally(() => setFetchingProjects(false))
+  }, [created])
+
+  useEffect(() => {
+    if (!created?.project.id) return
+    setFetchingVideos(true)
+    fetchAPI<Video[]>(`/api/videos?project_id=${created.project.id}`)
+      .then(setAllVideos)
+      .finally(() => setFetchingVideos(false))
+  }, [created?.project.id])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      fetchAPI<TelemetrySummary>('/api/telemetry/summary')
+        .then(setTelemetry)
+        .catch(() => {})
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [])
 
 
   useEffect(() => {
@@ -486,6 +579,28 @@ export default function OperatorPage() {
     setProjectCharacters(characters)
     setVideoScenes(scenes)
     setSelectedSceneId(existing => existing || scenes[0]?.id || '')
+  }
+
+  async function selectProject(p: Project) {
+    setFetchingVideos(true)
+    try {
+      const videos = await fetchAPI<Video[]>(`/api/videos?project_id=${p.id}`)
+      setAllVideos(videos)
+      if (videos.length > 0) {
+        setCreated({ project: p, video: videos[0] })
+      } else {
+        setCreated(null) // Or handle project without videos
+      }
+    } catch (err) {
+      setMessage(`Failed to load videos for project: ${String(err)}`)
+    } finally {
+      setFetchingVideos(false)
+    }
+  }
+
+  async function selectVideo(v: Video) {
+    if (!created) return
+    setCreated({ ...created, video: v })
   }
 
   async function buildBlueprint() {
@@ -887,7 +1002,10 @@ export default function OperatorPage() {
   const durationOptions = pack.durations_by_engine[form.engine_id] ?? []
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 max-w-5xl mx-auto p-4 sm:p-6 pb-24">
+      <TelemetryDashboard summary={telemetry} />
+
+      <Card className="border-blue-500/20" style={{ background: 'linear-gradient(135deg, rgba(59,130,246,0.05), rgba(59,130,246,0.01))' }}>
       {message && (
         <div className="rounded px-3 py-2 text-xs" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
           {message}
@@ -1188,10 +1306,29 @@ export default function OperatorPage() {
 
       <Card>
         <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Generation Controls</h3>
-        <div className="text-xs" style={{ color: 'var(--muted)' }}>
-          {created
-            ? `Active project: ${created.project.name} | video: ${created.video.title}`
-            : 'Create a project from the blueprint before queueing generation.'}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1">
+            <FieldLabel>Active Project</FieldLabel>
+            <SearchableSelect
+              options={allProjects}
+              value={created?.project.id || ''}
+              onChange={selectProject}
+              getLabel={(p: Project) => p.name}
+              getSublabel={(p: Project) => p.id}
+              placeholder="Select a historical project..."
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <FieldLabel>Active Video</FieldLabel>
+            <SearchableSelect
+              options={allVideos}
+              value={created?.video.id || ''}
+              onChange={selectVideo}
+              getLabel={(v: Video) => v.title}
+              getSublabel={(v: Video) => v.id}
+              placeholder="Select a video..."
+            />
+          </div>
         </div>
         <div className="rounded p-3 text-xs grid gap-1" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
           <div style={{ color: 'var(--text)' }}>Operator lane status</div>
@@ -1519,32 +1656,77 @@ export default function OperatorPage() {
 
       <Card className="mt-4 border-accent/20" style={{ background: 'rgba(59,130,246,0.02)' }}>
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Recent Automation Results</h3>
-          <span className="text-[10px]" style={{ color: 'var(--muted)' }}>Last 5 requests</span>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Recent Automation Results</h3>
+            {telemetry && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/20 text-blue-400 border border-blue-800/30 font-mono">
+                {telemetry.processing > 0 ? `WORKING ON ${telemetry.processing} JOBS` : 'SYSTEM IDLE'}
+              </span>
+            )}
+          </div>
+          <span className="text-[10px]" style={{ color: 'var(--muted)' }}>Latest telemetry snapshot</span>
         </div>
         
-        <div className="grid gap-4">
+        <div className="grid gap-4 max-h-[600px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-muted">
           {recentRequests.length === 0 ? (
-            <div className="text-xs italic text-center py-4" style={{ color: 'var(--muted)' }}>No recent requests found for this project.</div>
+            <div className="text-xs italic text-center py-8" style={{ color: 'var(--muted)' }}>No historical telemetry found for this project.</div>
           ) : (
             recentRequests.map(req => (
-              <div key={req.id} className="p-3 rounded border" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <div key={req.id} className="p-3 rounded border transition-all hover:border-accent/30" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700">{req.type}</span>
+                    <span className="text-[10px] font-mono" style={{ color: 'var(--muted)' }}>{req.id.slice(0, 8)}</span>
                     <span className="text-[10px]" style={{ color: 'var(--muted)' }}>{new Date(req.created_at || '').toLocaleTimeString()}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    {req.status === 'COMPLETED' && <span className="text-[10px] text-green-400 font-bold">COMPLETED</span>}
-                    {req.status === 'FAILED' && <span className="text-[10px] text-red-400 font-bold">FAILED</span>}
-                    {req.status === 'PROCESSING' && <span className="text-[10px] text-blue-400 font-bold animate-pulse">PROCESSING</span>}
-                    {req.status === 'PENDING' && <span className="text-[10px] text-gray-400 font-bold">PENDING</span>}
+                    {req.status === 'COMPLETED' && <span className="text-[10px] text-green-400 font-bold border-b border-green-900/50">COMPLETED</span>}
+                    {req.status === 'FAILED' && <span className="text-[10px] text-red-400 font-bold border-b border-red-900/50">FAILED</span>}
+                    {req.status === 'PROCESSING' && <span className="text-[10px] text-blue-400 font-bold animate-pulse">FLOW RUNNING</span>}
+                    {req.status === 'PENDING' && <span className="text-[10px] text-gray-400 font-bold">QUEUED</span>}
                   </div>
                 </div>
                 
-                <div className="text-[10px] mb-2 truncate" style={{ color: 'var(--muted)' }}>
-                  Scene ID: <span className="font-mono">{req.scene_id?.slice(0, 8)}...</span>
-                  {req.error_message && <div className="mt-1 text-red-400 font-bold italic">{req.error_message}</div>}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2 p-2 rounded bg-black/10 border border-white/5">
+                  <div className="flex flex-col">
+                    <span className="text-[8px] uppercase opacity-50">Elapsed</span>
+                    <span className="text-[10px] font-mono">
+                      {req.started_at && req.completed_at 
+                        ? `${Math.round((new Date(req.completed_at).getTime() - new Date(req.started_at).getTime()) / 1000)}s`
+                        : req.started_at 
+                          ? `${Math.round((Date.now() - new Date(req.started_at).getTime()) / 1000)}s`
+                          : '-'}
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[8px] uppercase opacity-50">Idle Time</span>
+                    <span className="text-[10px] font-mono text-yellow-500/80">
+                      {req.queued_at && req.started_at 
+                        ? `${Math.round((new Date(req.started_at).getTime() - new Date(req.queued_at).getTime()) / 1000)}s`
+                        : '-'}
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[8px] uppercase opacity-50">Worker Stage</span>
+                    <span className="text-[10px] font-bold text-blue-300 truncate">{req.worker_stage || 'PENDING'}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[8px] uppercase opacity-50">Heartbeat</span>
+                    <span className="text-[10px] font-mono truncate">
+                      {req.last_heartbeat_at ? new Date(req.last_heartbeat_at).toLocaleTimeString() : 'NONE'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-[10px] mb-2" style={{ color: 'var(--muted)' }}>
+                  <div className="flex items-center justify-between">
+                    <span>Scene: <span className="font-mono text-text">{req.scene_id?.slice(0, 8)}...</span></span>
+                  </div>
+                  {req.error_message && (
+                    <div className="mt-2 p-2 rounded bg-red-900/10 border border-red-900/20 text-red-400 font-bold italic text-[9px] whitespace-pre-wrap">
+                      FAILURE: {req.error_message}
+                    </div>
+                  )}
                 </div>
 
                 <AutomationReport reportJson={req.automation_report} />

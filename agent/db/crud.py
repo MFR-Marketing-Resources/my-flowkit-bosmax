@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event"})
 
 
 def _validate_table(table: str) -> None:
@@ -30,8 +30,10 @@ _COLUMNS = {
               "horizontal_upscale_url", "horizontal_upscale_media_id", "horizontal_upscale_status",
               "vertical_end_scene_media_id", "horizontal_end_scene_media_id",
               "trim_start", "trim_end", "duration", "display_order", "source", "transition_prompt", "narrator_text", "updated_at"},
-    "request": {"status", "request_id", "media_id", "output_url", "error_message", "retry_count", "next_retry_at", "source_media_id", "updated_at"},
+    "request": {"status", "request_id", "media_id", "output_url", "error_message", "retry_count", "next_retry_at", "source_media_id", "updated_at", "automation_report"},
     "product": {"source", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "asset_status", "media_id", "local_image_path", "updated_at"},
+    "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message"},
+    "request_stage_event": {"request_id", "timestamp", "stage", "status", "message", "source"},
 }
 
 
@@ -251,7 +253,8 @@ async def get_request(rid: str): return await _get("request", "id", rid)
 async def update_request(rid: str, **kw): return await _update("request", "id", rid, **kw)
 
 async def list_requests(scene_id: str = None, status: str = None,
-                        video_id: str = None, project_id: str = None) -> list[dict]:
+                        video_id: str = None, project_id: str = None,
+                        limit: int = None) -> list[dict]:
     db = await get_db()
     q, params = "SELECT * FROM request WHERE 1=1", []
     if scene_id:
@@ -263,6 +266,8 @@ async def list_requests(scene_id: str = None, status: str = None,
     if project_id:
         q += " AND project_id=?"; params.append(project_id)
     q += " ORDER BY created_at DESC"
+    if limit:
+        q += " LIMIT ?"; params.append(limit)
     cur = await db.execute(q, params)
     return [dict(r) for r in await cur.fetchall()]
 
@@ -383,3 +388,111 @@ async def list_products(source: str = None, query: str = None) -> list[dict]:
     q += " ORDER BY created_at DESC"
     cur = await db.execute(q, params)
     return [dict(r) for r in await cur.fetchall()]
+
+
+# ─── Telemetry ───────────────────────────────────────────────
+
+async def upsert_request_telemetry(request_id: str, **kw) -> dict:
+    db = await get_db()
+    existing = await _get_with_db(db, "request_telemetry", "request_id", request_id)
+    if existing:
+        return await _update("request_telemetry", "request_id", request_id, **kw)
+    
+    # Create new
+    now = _now()
+    cols = ["request_id", "created_at"]
+    vals = [request_id, now]
+    
+    allowed = _COLUMNS["request_telemetry"]
+    for k, v in kw.items():
+        if k in allowed:
+            cols.append(k)
+            vals.append(v)
+            
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    
+    async with _db_lock:
+        await db.execute(f"INSERT INTO request_telemetry ({col_str}) VALUES ({placeholders})", vals)
+        await db.commit()
+    return await _get_with_db(db, "request_telemetry", "request_id", request_id)
+
+
+async def add_stage_event(request_id: str, stage: str, status: str, message: str = None, source: str = "backend") -> dict:
+    db = await get_db()
+    eid, now = _uuid(), _now()
+    async with _db_lock:
+        await db.execute(
+            "INSERT INTO request_stage_event (id, request_id, timestamp, stage, status, message, source) VALUES (?,?,?,?,?,?,?)",
+            (eid, request_id, now, stage, status, message, source))
+        await db.commit()
+    return await _get_with_db(db, "request_stage_event", "id", eid)
+
+
+async def get_request_telemetry(request_id: str):
+    return await _get("request_telemetry", "request_id", request_id)
+
+
+async def list_request_telemetry(project_id: str = None, video_id: str = None, limit: int = 50) -> list[dict]:
+    db = await get_db()
+    q, params = "SELECT * FROM request_telemetry WHERE 1=1", []
+    if project_id:
+        q += " AND project_id=?"; params.append(project_id)
+    if video_id:
+        q += " AND video_id=?"; params.append(video_id)
+    q += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_stage_history(request_id: str) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute("SELECT * FROM request_stage_event WHERE request_id=? ORDER BY timestamp ASC", (request_id,))
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_telemetry_summary() -> dict:
+    db = await get_db()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d") + "%"
+    
+    cur = await db.execute("""
+        SELECT 
+            COUNT(*) as total_today,
+            SUM(CASE WHEN status='QUEUED' THEN 1 ELSE 0 END) as queued,
+            SUM(CASE WHEN status='PROCESSING' THEN 1 ELSE 0 END) as processing,
+            SUM(CASE WHEN status='WAITING_FLOW' THEN 1 ELSE 0 END) as waiting_flow,
+            SUM(CASE WHEN status='FLOW_RUNNING' THEN 1 ELSE 0 END) as flow_running,
+            SUM(CASE WHEN status='COMPLETED' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END) as failed
+        FROM request_telemetry 
+        WHERE created_at LIKE ?
+    """, (today,))
+    row = await cur.fetchone()
+    summary = {
+        "total_today": row["total_today"] or 0,
+        "queued": row["queued"] or 0,
+        "processing": row["processing"] or 0,
+        "waiting_flow": row["waiting_flow"] or 0,
+        "flow_running": row["flow_running"] or 0,
+        "completed": row["completed"] or 0,
+        "failed": row["failed"] or 0
+    } if row else {
+        "total_today": 0, "queued": 0, "processing": 0, 
+        "waiting_flow": 0, "flow_running": 0, "completed": 0, "failed": 0
+    }
+    
+    cur = await db.execute("SELECT status, google_flow_stage, error_message FROM request_telemetry ORDER BY created_at DESC LIMIT 1")
+    last = await cur.fetchone()
+    if last:
+        summary["last_job_status"] = last["status"]
+        summary["last_stage"] = last["google_flow_stage"]
+        summary["last_error"] = last["error_message"]
+    else:
+        summary["last_job_status"] = ""
+        summary["last_stage"] = ""
+        summary["last_error"] = ""
+        
+    summary["idle_seconds"] = 0 
+    
+    return summary

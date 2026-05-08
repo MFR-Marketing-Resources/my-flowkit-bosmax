@@ -104,6 +104,11 @@ export interface Request {
   error_message: string | null
   automation_report: string | null
   retry_count: number
+  worker_stage: string | null
+  last_heartbeat_at: string | null
+  queued_at: string | null
+  started_at: string | null
+  completed_at: string | null
   created_at: string
   updated_at: string
 }
