@@ -145,6 +145,30 @@ export default function OperatorPage() {
 
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
 
+  // True F2V Readiness Rules
+  const f2vPromptReady = manualPrompt.trim().length > 0
+  const f2vStartReady = !!f2vStartAssetId
+  const f2vEndReady = !!f2vEndAssetId
+  const f2vDifferentAssets = f2vStartAssetId && f2vEndAssetId && f2vStartAssetId !== f2vEndAssetId
+  const f2vSceneReady = !!selectedSceneId
+  const f2vReady =
+    f2vSceneReady &&
+    f2vStartReady &&
+    f2vEndReady &&
+    f2vPromptReady &&
+    f2vDifferentAssets &&
+    !submittingManual &&
+    !uploadingAssets
+
+  const f2vBlockingReasons = []
+  if (!f2vSceneReady) f2vBlockingReasons.push('Select a target scene.')
+  if (!f2vStartReady) f2vBlockingReasons.push('Select a Start Frame asset.')
+  if (!f2vEndReady) f2vBlockingReasons.push('Select an End Frame asset.')
+  if (f2vStartReady && f2vEndReady && !f2vDifferentAssets) f2vBlockingReasons.push('Start and End frames must be different assets.')
+  if (!f2vPromptReady) f2vBlockingReasons.push('Enter a transition prompt.')
+  if (uploadingAssets) f2vBlockingReasons.push('Wait for upload to finish.')
+  if (submittingManual) f2vBlockingReasons.push('Submission already running.')
+
 
 
   useEffect(() => {
@@ -416,8 +440,24 @@ export default function OperatorPage() {
     }
 
     if (mode === 'TRUE_F2V') {
+      if (!f2vSceneReady) {
+        setMessage('Select a target scene first.')
+        return
+      }
       if (!f2vStartAssetId || !f2vEndAssetId) {
         setMessage('Select both Start and End assets for True F2V.')
+        return
+      }
+      if (!f2vDifferentAssets) {
+        setMessage('Start and End frames must be different assets.')
+        return
+      }
+      if (!f2vPromptReady) {
+        setMessage('Enter a transition prompt for True F2V.')
+        return
+      }
+      if (uploadingAssets) {
+        setMessage('Wait for upload to finish.')
         return
       }
     } else if (uploadedAssets.length === 0) {
@@ -859,7 +899,15 @@ export default function OperatorPage() {
             </div>
 
             <div className="rounded p-3 flex flex-col gap-3" style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.2)' }}>
-              <div className="text-xs font-bold" style={{ color: 'var(--accent)' }}>True F2V / Start + End Frames</div>
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold" style={{ color: 'var(--accent)' }}>True F2V / Start + End Frames</div>
+                <div className="text-[10px]" style={{ color: 'var(--muted)' }}>
+                  Use I2V for start-frame-only video.
+                </div>
+              </div>
+              <div className="text-[10px]" style={{ color: 'var(--muted)' }}>
+                True F2V requires two different uploaded assets and a transition prompt.
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="flex flex-col gap-1">
                   <FieldLabel>Start Frame Asset</FieldLabel>
@@ -880,9 +928,27 @@ export default function OperatorPage() {
                   </select>
                 </div>
               </div>
-              <button onClick={() => submitManual('TRUE_F2V')} disabled={submittingManual || !f2vStartAssetId || !f2vEndAssetId || !selectedSceneId} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'rgba(168,85,247,0.14)', color: 'var(--accent)', border: '1px solid rgba(168,85,247,0.4)' }}>
-                Submit True F2V / Start + End Frames
-              </button>
+
+              <div className="flex flex-col gap-2">
+                {f2vBlockingReasons.length > 0 ? (
+                  <div className="flex flex-wrap gap-x-3 gap-y-1">
+                    {f2vBlockingReasons.map((reason, i) => (
+                      <div key={i} className="text-[10px] flex items-center gap-1" style={{ color: 'var(--red)' }}>
+                        <span className="w-1 h-1 rounded-full" style={{ background: 'var(--red)' }}></span>
+                        {reason}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[10px] font-bold" style={{ color: 'var(--green)' }}>
+                    True F2V ready: Start + End frames and transition prompt are set.
+                  </div>
+                )}
+
+                <button onClick={() => submitManual('TRUE_F2V')} disabled={!f2vReady} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: !f2vReady ? 'var(--border)' : 'rgba(168,85,247,0.14)', color: !f2vReady ? 'var(--muted)' : 'var(--accent)', border: `1px solid ${!f2vReady ? 'var(--border)' : 'rgba(168,85,247,0.4)'}` }}>
+                  Submit True F2V / Start + End Frames
+                </button>
+              </div>
             </div>
 
             <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
