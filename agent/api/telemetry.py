@@ -84,6 +84,18 @@ async def add_stage(event: StageEventCreate):
 @router.post("/self-test")
 async def telemetry_self_test():
     test_id = f"test-{crud._uuid()[:8]}"
+    
+    # Satisfy FK constraint by inserting into 'request' table first
+    from agent.db.schema import get_db
+    db = await get_db()
+    now = crud._now()
+    async with crud._db_lock:
+        await db.execute(
+            "INSERT INTO request (id, type, status, created_at, updated_at) VALUES (?,?,?,?,?)",
+            (test_id, "TELEMETRY_SELF_TEST", "COMPLETED", now, now)
+        )
+        await db.commit()
+
     await crud.upsert_request_telemetry(
         test_id,
         request_type="TELEMETRY_SELF_TEST",
