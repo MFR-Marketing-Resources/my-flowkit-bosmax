@@ -142,6 +142,10 @@ export default function OperatorPage() {
   const [manualPrompt, setManualPrompt] = useState('')
   const [f2vStartAssetId, setF2vStartAssetId] = useState('')
   const [f2vEndAssetId, setF2vEndAssetId] = useState('')
+  const [f2vStartFile, setF2vStartFile] = useState<File | null>(null)
+  const [f2vEndFile, setF2vEndFile] = useState<File | null>(null)
+  const [uploadingF2vStart, setUploadingF2vStart] = useState(false)
+  const [uploadingF2vEnd, setUploadingF2vEnd] = useState(false)
 
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
 
@@ -158,16 +162,18 @@ export default function OperatorPage() {
     f2vPromptReady &&
     f2vDifferentAssets &&
     !submittingManual &&
-    !uploadingAssets
+    !uploadingAssets &&
+    !uploadingF2vStart &&
+    !uploadingF2vEnd
 
   const f2vBlockingReasons = []
-  if (uploadedAssets.length < 2) f2vBlockingReasons.push('Upload at least two photos to Flow.')
   if (!f2vSceneReady) f2vBlockingReasons.push('Select a target scene.')
-  if (!f2vStartReady) f2vBlockingReasons.push('Select a Start Frame asset.')
-  if (!f2vEndReady) f2vBlockingReasons.push('Select an End Frame asset.')
+  if (!f2vStartReady) f2vBlockingReasons.push('Upload a Start Frame to Flow.')
+  if (!f2vEndReady) f2vBlockingReasons.push('Upload an End Frame to Flow.')
   if (f2vStartReady && f2vEndReady && !f2vDifferentAssets) f2vBlockingReasons.push('Start and End frames must be different assets.')
   if (!f2vPromptReady) f2vBlockingReasons.push('Enter a transition prompt.')
-  if (uploadingAssets) f2vBlockingReasons.push('Wait for upload to finish.')
+  if (uploadingF2vStart) f2vBlockingReasons.push('Wait for Start Frame upload to finish.')
+  if (uploadingF2vEnd) f2vBlockingReasons.push('Wait for End Frame upload to finish.')
   if (submittingManual) f2vBlockingReasons.push('Submission already running.')
 
 
@@ -425,6 +431,58 @@ export default function OperatorPage() {
       setMessage(`Photo upload failed: ${String(err)}`)
     } finally {
       setUploadingAssets(false)
+    }
+  }
+
+  async function uploadSingleF2vFrame(kind: 'start' | 'end') {
+    const file = kind === 'start' ? f2vStartFile : f2vEndFile
+    if (!created || !file) return
+
+    const setUploading = kind === 'start' ? setUploadingF2vStart : setUploadingF2vEnd
+    setUploading(true)
+    setMessage('')
+
+    try {
+      const imageBase64 = await fileToBase64(file)
+      const upload = await postAPI<UploadImageBase64Response>('/api/flow/upload-image-base64', {
+        image_base64: imageBase64,
+        mime_type: file.type || 'image/png',
+        project_id: created.project.id,
+        file_name: file.name,
+      })
+
+      const label = `F2V ${kind === 'start' ? 'Start' : 'End'} - ${stripExtension(file.name)}`
+
+      const character = await postAPI<Character>('/api/characters', {
+        name: label,
+        entity_type: 'visual_asset',
+        media_id: upload.media_id,
+      })
+      await postAPI(`/api/projects/${created.project.id}/characters/${character.id}`, {})
+
+      const asset: UploadedAsset = {
+        label,
+        mediaId: upload.media_id,
+        characterId: character.id,
+        entityType: 'visual_asset',
+        fileName: file.name,
+      }
+
+      setUploadedAssets(current => mergeUniqueAssets([...current, asset]))
+      if (kind === 'start') {
+        setF2vStartAssetId(upload.media_id)
+        setF2vStartFile(null)
+      } else {
+        setF2vEndAssetId(upload.media_id)
+        setF2vEndFile(null)
+      }
+
+      await refreshCreatedResources(created)
+      setMessage(`${kind === 'start' ? 'Start' : 'End'} frame uploaded and assigned to True F2V.`)
+    } catch (err) {
+      setMessage(`${kind === 'start' ? 'Start' : 'End'} frame upload failed: ${String(err)}`)
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -911,36 +969,90 @@ export default function OperatorPage() {
                   Use I2V for start-frame-only video.
                 </div>
               </div>
+                <div className="text-[10px]" style={{ color: 'var(--accent)' }}>
+                  True F2V uses two explicit images:
+                  <ol className="list-decimal ml-4 mt-1">
+                    <li>Upload Start Frame.</li>
+                    <li>Upload End Frame.</li>
+                    <li>Enter transition prompt.</li>
+                    <li>Submit True F2V.</li>
+                  </ol>
+                </div>
               <div className="text-[10px]" style={{ color: 'var(--muted)' }}>
-                True F2V requires two different uploaded assets and a transition prompt.
+                Uploaded assets available for selection: {uploadedAssets.length}
               </div>
-              <div className="text-[10px]" style={{ color: 'var(--accent)' }}>
-                Uploaded assets available for F2V: {uploadedAssets.length}
-              </div>
-              {uploadedAssets.length < 2 && (
-                <div className="text-[10px] font-bold" style={{ color: 'var(--yellow)' }}>
-                  Upload at least two photos to Flow before using True F2V.
-                  Chosen files are not available until "Upload Photo to Flow" is clicked.
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-2 p-2 rounded" style={{ background: 'rgba(0,0,0,0.1)', border: '1px solid var(--border)' }}>
+                  <FieldLabel>Start Frame</FieldLabel>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={e => setF2vStartFile(e.target.files?.[0] ?? null)}
+                    className="text-[10px]"
+                  />
+                  <button
+                    onClick={() => uploadSingleF2vFrame('start')}
+                    disabled={!f2vStartFile || uploadingF2vStart}
+                    className="px-2 py-1 rounded text-[10px] font-bold"
+                    style={{ background: 'var(--accent)', color: '#fff' }}
+                  >
+                    {uploadingF2vStart ? 'Uploading...' : 'Upload Start Frame to Flow'}
+                  </button>
+                  <div className="text-[10px]" style={{ color: f2vStartAssetId ? 'var(--green)' : 'var(--muted)' }}>
+                    Status: {uploadingF2vStart ? 'Uploading...' : f2vStartAssetId ? 'Uploaded' : f2vStartFile ? 'Selected' : 'Not selected'}
+                  </div>
+                  <div className="flex flex-col gap-1 mt-1 border-t pt-1 border-gray-700">
+                    <FieldLabel>Or select uploaded Start asset</FieldLabel>
+                    <select
+                      value={f2vStartAssetId}
+                      onChange={e => setF2vStartAssetId(e.target.value)}
+                      disabled={uploadedAssets.length === 0}
+                      className="px-2 py-1 rounded text-[10px]"
+                      style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', opacity: uploadedAssets.length === 0 ? 0.5 : 1 }}
+                    >
+                      <option value="">Choose existing...</option>
+                      {uploadedAssets.map(asset => (
+                        <option key={asset.mediaId} value={asset.mediaId}>{asset.label}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-              )}
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="flex flex-col gap-1">
-                  <FieldLabel>Start Frame Asset</FieldLabel>
-                  <select value={f2vStartAssetId} onChange={e => setF2vStartAssetId(e.target.value)} disabled={uploadedAssets.length === 0} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', opacity: uploadedAssets.length === 0 ? 0.5 : 1 }}>
-                    <option value="">Select start asset...</option>
-                    {uploadedAssets.map(asset => (
-                      <option key={asset.mediaId} value={asset.mediaId}>{asset.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <FieldLabel>End Frame Asset</FieldLabel>
-                  <select value={f2vEndAssetId} onChange={e => setF2vEndAssetId(e.target.value)} disabled={uploadedAssets.length === 0} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', opacity: uploadedAssets.length === 0 ? 0.5 : 1 }}>
-                    <option value="">Select end asset...</option>
-                    {uploadedAssets.map(asset => (
-                      <option key={asset.mediaId} value={asset.mediaId}>{asset.label}</option>
-                    ))}
-                  </select>
+
+                <div className="flex flex-col gap-2 p-2 rounded" style={{ background: 'rgba(0,0,0,0.1)', border: '1px solid var(--border)' }}>
+                  <FieldLabel>End Frame</FieldLabel>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={e => setF2vEndFile(e.target.files?.[0] ?? null)}
+                    className="text-[10px]"
+                  />
+                  <button
+                    onClick={() => uploadSingleF2vFrame('end')}
+                    disabled={!f2vEndFile || uploadingF2vEnd}
+                    className="px-2 py-1 rounded text-[10px] font-bold"
+                    style={{ background: 'var(--accent)', color: '#fff' }}
+                  >
+                    {uploadingF2vEnd ? 'Uploading...' : 'Upload End Frame to Flow'}
+                  </button>
+                  <div className="text-[10px]" style={{ color: f2vEndAssetId ? 'var(--green)' : 'var(--muted)' }}>
+                    Status: {uploadingF2vEnd ? 'Uploading...' : f2vEndAssetId ? 'Uploaded' : f2vEndFile ? 'Selected' : 'Not selected'}
+                  </div>
+                  <div className="flex flex-col gap-1 mt-1 border-t pt-1 border-gray-700">
+                    <FieldLabel>Or select uploaded End asset</FieldLabel>
+                    <select
+                      value={f2vEndAssetId}
+                      onChange={e => setF2vEndAssetId(e.target.value)}
+                      disabled={uploadedAssets.length === 0}
+                      className="px-2 py-1 rounded text-[10px]"
+                      style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', opacity: uploadedAssets.length === 0 ? 0.5 : 1 }}
+                    >
+                      <option value="">Choose existing...</option>
+                      {uploadedAssets.map(asset => (
+                        <option key={asset.mediaId} value={asset.mediaId}>{asset.label}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 
