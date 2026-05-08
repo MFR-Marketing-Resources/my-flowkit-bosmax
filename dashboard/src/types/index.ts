@@ -1,5 +1,5 @@
 // Enums
-export type RequestType = 'GENERATE_IMAGE' | 'REGENERATE_IMAGE' | 'EDIT_IMAGE' | 'GENERATE_VIDEO' | 'GENERATE_VIDEO_REFS' | 'UPSCALE_VIDEO' | 'GENERATE_CHARACTER_IMAGE' | 'REGENERATE_CHARACTER_IMAGE' | 'EDIT_CHARACTER_IMAGE'
+export type RequestType = 'GENERATE_IMAGE' | 'REGENERATE_IMAGE' | 'EDIT_IMAGE' | 'GENERATE_VIDEO' | 'REGENERATE_VIDEO' | 'GENERATE_VIDEO_REFS' | 'TRUE_F2V' | 'UPSCALE_VIDEO' | 'GENERATE_CHARACTER_IMAGE' | 'REGENERATE_CHARACTER_IMAGE' | 'EDIT_CHARACTER_IMAGE'
 export type StatusType = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
 export type Orientation = 'VERTICAL' | 'HORIZONTAL'
 export type ChainType = 'ROOT' | 'CONTINUATION' | 'INSERT'
@@ -102,6 +102,7 @@ export interface Request {
   media_id: string | null
   output_url: string | null
   error_message: string | null
+  automation_report: string | null
   retry_count: number
   created_at: string
   updated_at: string

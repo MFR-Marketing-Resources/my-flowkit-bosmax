@@ -13,6 +13,7 @@ import type {
   UploadedAsset,
   ManualEntityType,
   Product,
+  Request,
 } from '../types'
 import { useWebSocketContext } from '../contexts/WebSocketContext'
 import OperatorManual from '../components/operator/OperatorManual'
@@ -80,6 +81,114 @@ const emptyForm: OperatorForm = {
 
 function FieldLabel({ children }: { children: string }) {
   return <label className="text-xs font-bold" style={{ color: 'var(--muted)' }}>{children}</label>
+}
+
+function Card({ children, className = "", style = {} }: { children: ReactNode, className?: string, style?: any }) {
+  return (
+    <div className={`p-4 rounded-xl border grid gap-4 transition-all duration-300 ${className}`} style={{ background: 'var(--card)', border: '1px solid var(--border)', boxShadow: '0 4px 20px -5px rgba(0,0,0,0.3)', ...style }}>
+      {children}
+    </div>
+  )
+}
+
+function FlowRuntimePlan({
+  mode,
+  orientation,
+  prompt,
+  startAsset,
+  endAsset,
+  promptSource = 'System-generated product prompt'
+}: {
+  mode: string,
+  orientation: Orientation,
+  prompt: string,
+  startAsset?: string | null,
+  endAsset?: string | null,
+  promptSource?: string
+}) {
+  const mapping: Record<string, any> = {
+    TRUE_F2V: { flowMode: 'Video', submode: 'Frames', model: 'Veo 3.1 - Lite', submit: 'right arrow' },
+    GENERATE_VIDEO: { flowMode: 'Video', submode: 'Ingredients', model: 'Veo 3.1 - Lite', submit: 'right arrow' },
+    EDIT_IMAGE: { flowMode: 'Image', submode: 'none', model: 'Nano Banana 2', submit: 'generate button' },
+    GENERATE_VIDEO_REFS: { flowMode: 'Video', submode: 'Ingredients', model: 'Veo 3.1 - Lite', submit: 'right arrow' },
+  }
+
+  const plan = mapping[mode] || { flowMode: 'Unknown', submode: 'Unknown', model: 'Unknown', submit: 'Unknown' }
+
+  return (
+    <div className="p-3 rounded border grid gap-2 text-[11px]" style={{ background: 'rgba(59,130,246,0.03)', border: '1px solid rgba(59,130,246,0.15)' }}>
+      <div className="flex items-center gap-2 mb-1">
+        <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+        <span className="font-bold text-xs uppercase tracking-wider" style={{ color: 'var(--accent)' }}>Google Flow Runtime Plan</span>
+      </div>
+      
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 opacity-90">
+        <div style={{ color: 'var(--muted)' }}>BOSMAX Mode:</div> <div className="font-mono text-[10px]">{mode}</div>
+        <div style={{ color: 'var(--muted)' }}>Google Flow Mode:</div> <div className="font-bold">{plan.flowMode}</div>
+        <div style={{ color: 'var(--muted)' }}>Google Flow Submode:</div> <div className="font-bold">{plan.submode}</div>
+        <div style={{ color: 'var(--muted)' }}>Aspect Ratio:</div> <div className="font-bold">{orientation === 'VERTICAL' ? '9:16' : '16:9'}</div>
+        <div style={{ color: 'var(--muted)' }}>Count:</div> <div className="font-bold">1x</div>
+        <div style={{ color: 'var(--muted)' }}>Model:</div> <div className="font-bold">{plan.model}</div>
+        <div style={{ color: 'var(--muted)' }}>Start Frame:</div> <div className="truncate">{startAsset || (mode === 'GENERATE_VIDEO' || mode === 'EDIT_IMAGE' || mode === 'TRUE_F2V' ? 'Product image / uploaded media' : 'Not used')}</div>
+        <div style={{ color: 'var(--muted)' }}>End Frame:</div> <div className="truncate">{endAsset || 'Not used'}</div>
+        <div style={{ color: 'var(--muted)' }}>Prompt Source:</div> <div className="italic">{promptSource}</div>
+        <div style={{ color: 'var(--muted)' }}>Expected Submit:</div> <div className="font-bold flex items-center gap-1">{plan.submit}</div>
+      </div>
+
+      <div className="mt-2 border-t pt-2 border-blue-900/20">
+        <div style={{ color: 'var(--muted)', fontSize: '10px' }} className="mb-1">Prompt Preview:</div>
+        <div className="p-2 rounded font-mono text-[10px] leading-tight max-h-20 overflow-y-auto whitespace-pre-wrap" style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text)' }}>
+          {prompt || '(Empty)'}
+        </div>
+      </div>
+
+      <div className="mt-1 text-[9px] italic" style={{ color: 'var(--muted)' }}>
+        Note: Google Flow settings are selected automatically by the Chrome extension. This panel shows the planned runtime selection.
+      </div>
+    </div>
+  )
+}
+
+function AutomationReport({ reportJson }: { reportJson: string | null }) {
+  if (!reportJson) return null
+  
+  let report: { ok: boolean, stages: Array<{ stage: string, status: string }>, error?: string }
+  try {
+    report = JSON.parse(reportJson)
+  } catch (e) {
+    return <div className="text-[10px] text-red-400 p-2">Invalid report data</div>
+  }
+
+  return (
+    <div className="mt-3 p-3 rounded border grid gap-2" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border)' }}>
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-2">
+          <span>Execution Proof</span>
+          {report.ok ? (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-900/40 text-green-400 border border-green-700/50">SUCCESS</span>
+          ) : (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-400 border border-red-700/50">FAILED</span>
+          )}
+        </div>
+        {report.error && <div className="text-[10px] text-red-400 font-mono truncate max-w-[200px]">{report.error}</div>}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 border-t pt-2 border-gray-800">
+        {(report.stages || []).map((s, i) => (
+          <div key={i} className="flex items-center justify-between gap-4 text-[10px] font-mono">
+            <span style={{ color: 'var(--muted)' }}>{s.stage}</span>
+            <span className={`font-bold ${
+              s.status === 'YES' || s.status === 'PASS' ? 'text-green-400' : 
+              s.status === 'NO' || s.status === 'FAIL' ? 'text-red-400' : 
+              s.status === 'MAYBE' ? 'text-yellow-400' : 'text-blue-400'
+            }`}>
+              {s.status}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 
@@ -167,16 +276,7 @@ function SearchableSelect<T>({
 }
 
 
-function Card({ children }: { children: ReactNode }) {
-  return (
-    <section
-      className="rounded-lg p-4 flex flex-col gap-3"
-      style={{ background: 'var(--card)', border: '1px solid var(--border)' }}
-    >
-      {children}
-    </section>
-  )
-}
+
 
 function stripExtension(name: string) {
   return name.replace(/\.[^/.]+$/, '')
@@ -237,6 +337,8 @@ export default function OperatorPage() {
   const [catalogSearchQuery, setCatalogSearchQuery] = useState('')
   const [searchingCatalog, setSearchingCatalog] = useState(false)
   const [importingCatalog, setImportingCatalog] = useState(false)
+  const [recentRequests, setRecentRequests] = useState<Request[]>([])
+  const [hoveredMode, setHoveredMode] = useState<string | null>(null)
 
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
   const selectedScene = videoScenes.find(item => item.id === selectedSceneId)
@@ -330,6 +432,16 @@ export default function OperatorPage() {
     }, 5000)
     return () => window.clearInterval(timer)
   }, [created, activeBatchType, batchStatus?.done, form.orientation])
+
+  useEffect(() => {
+    if (!created) return
+    const timer = window.setInterval(() => {
+      fetchAPI<Request[]>(`/api/requests/snapshot?project_id=${created.project.id}&limit=5`)
+        .then(setRecentRequests)
+        .catch(() => {})
+    }, 4000)
+    return () => window.clearInterval(timer)
+  }, [created])
 
   useEffect(() => {
     if (!created) {
@@ -1205,17 +1317,52 @@ export default function OperatorPage() {
               </div>
             </div>
 
-            <div className="flex gap-2 flex-wrap">
-              <button onClick={uploadManualAssets} disabled={uploadingAssets || manualFiles.length === 0} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--accent)', color: '#fff', border: '1px solid var(--accent)' }}>
+            <div className="flex flex-col gap-2">
+              <FieldLabel>Runtime Verification</FieldLabel>
+              <FlowRuntimePlan
+                mode={hoveredMode || 'EDIT_IMAGE'}
+                orientation={form.orientation}
+                prompt={resolvedVideoPrompt}
+                startAsset={uploadedAssets[0]?.label}
+                promptSource={manualPromptOverride ? 'Manual override' : 'System-generated product prompt'}
+              />
+            </div>
+
+            <div className="flex gap-2 flex-wrap" onMouseLeave={() => setHoveredMode(null)}>
+              <button 
+                onMouseEnter={() => setHoveredMode('EDIT_IMAGE')}
+                onClick={uploadManualAssets} 
+                disabled={uploadingAssets || manualFiles.length === 0} 
+                className="px-3 py-2 rounded text-xs font-semibold transition-all hover:scale-[1.02]" 
+                style={{ background: 'var(--accent)', color: '#fff', border: '1px solid var(--accent)' }}
+              >
                 {uploadingAssets ? 'Uploading...' : 'Upload Photo to Flow'}
               </button>
-              <button onClick={() => submitManual('EDIT_IMAGE')} disabled={submittingManual || uploadedAssets.length === 0 || !selectedSceneId} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'rgba(59,130,246,0.14)', color: 'var(--accent)', border: '1px solid var(--border)' }}>
+              <button 
+                onMouseEnter={() => setHoveredMode('EDIT_IMAGE')}
+                onClick={() => submitManual('EDIT_IMAGE')} 
+                disabled={submittingManual || uploadedAssets.length === 0 || !selectedSceneId} 
+                className="px-3 py-2 rounded text-xs font-semibold transition-all hover:scale-[1.02]" 
+                style={{ background: 'rgba(59,130,246,0.14)', color: 'var(--accent)', border: '1px solid var(--border)' }}
+              >
                 Submit IMG / Edit Image
               </button>
-              <button onClick={() => submitManual('GENERATE_VIDEO')} disabled={submittingManual || uploadedAssets.length === 0 || !selectedSceneId} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'rgba(34,197,94,0.14)', color: 'var(--green)', border: '1px solid var(--border)' }}>
+              <button 
+                onMouseEnter={() => setHoveredMode('GENERATE_VIDEO')}
+                onClick={() => submitManual('GENERATE_VIDEO')} 
+                disabled={submittingManual || uploadedAssets.length === 0 || !selectedSceneId} 
+                className="px-3 py-2 rounded text-xs font-semibold transition-all hover:scale-[1.02]" 
+                style={{ background: 'rgba(34,197,94,0.14)', color: 'var(--green)', border: '1px solid var(--border)' }}
+              >
                 Submit I2V - Start Image to Video
               </button>
-              <button onClick={() => submitManual('GENERATE_VIDEO_REFS')} disabled={submittingManual || uploadedAssets.length === 0 || !selectedSceneId} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'rgba(245,158,11,0.14)', color: 'var(--yellow)', border: '1px solid var(--border)' }}>
+              <button 
+                onMouseEnter={() => setHoveredMode('GENERATE_VIDEO_REFS')}
+                onClick={() => submitManual('GENERATE_VIDEO_REFS')} 
+                disabled={submittingManual || uploadedAssets.length === 0 || !selectedSceneId} 
+                className="px-3 py-2 rounded text-xs font-semibold transition-all hover:scale-[1.02]" 
+                style={{ background: 'rgba(245,158,11,0.14)', color: 'var(--yellow)', border: '1px solid var(--border)' }}
+              >
                 Submit Ingredients / Refs to Video
               </button>
             </div>
@@ -1308,6 +1455,18 @@ export default function OperatorPage() {
                 </div>
               </div>
 
+              <div className="flex flex-col gap-2">
+                <FieldLabel>Runtime Verification</FieldLabel>
+                <FlowRuntimePlan
+                  mode="TRUE_F2V"
+                  orientation={form.orientation}
+                  prompt={resolvedVideoPrompt}
+                  startAsset={uploadedAssets.find(a => a.mediaId === f2vStartAssetId)?.label}
+                  endAsset={uploadedAssets.find(a => a.mediaId === f2vEndAssetId)?.label}
+                  promptSource={manualPromptOverride ? 'Manual override' : 'System-generated product prompt'}
+                />
+              </div>
+
               <div className="flex flex-col gap-1">
                 <FieldLabel>Prompt Override (Optional)</FieldLabel>
                 <input
@@ -1351,23 +1510,48 @@ export default function OperatorPage() {
               </div>
             </div>
 
-            <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-              {uploadedAssets.length === 0 ? (
-                <div className="text-xs" style={{ color: 'var(--muted)' }}>No uploaded assets yet.</div>
-              ) : uploadedAssets.map(asset => (
-                <div key={asset.mediaId} className="rounded p-3 text-xs" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-                  <div style={{ color: 'var(--text)' }}>{asset.label}</div>
-                  <div style={{ color: 'var(--muted)' }}>{asset.entityType}</div>
-                  <div style={{ color: 'var(--accent)' }}>{asset.mediaId}</div>
-                </div>
-              ))}
-            </div>
-
             <div className="text-xs" style={{ color: 'var(--muted)' }}>
               Existing project refs linked here: {projectCharacters.map(character => character.name).join(', ') || 'none'}
             </div>
           </>
         )}
+      </Card>
+
+      <Card className="mt-4 border-accent/20" style={{ background: 'rgba(59,130,246,0.02)' }}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Recent Automation Results</h3>
+          <span className="text-[10px]" style={{ color: 'var(--muted)' }}>Last 5 requests</span>
+        </div>
+        
+        <div className="grid gap-4">
+          {recentRequests.length === 0 ? (
+            <div className="text-xs italic text-center py-4" style={{ color: 'var(--muted)' }}>No recent requests found for this project.</div>
+          ) : (
+            recentRequests.map(req => (
+              <div key={req.id} className="p-3 rounded border" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700">{req.type}</span>
+                    <span className="text-[10px]" style={{ color: 'var(--muted)' }}>{new Date(req.created_at || '').toLocaleTimeString()}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {req.status === 'COMPLETED' && <span className="text-[10px] text-green-400 font-bold">COMPLETED</span>}
+                    {req.status === 'FAILED' && <span className="text-[10px] text-red-400 font-bold">FAILED</span>}
+                    {req.status === 'PROCESSING' && <span className="text-[10px] text-blue-400 font-bold animate-pulse">PROCESSING</span>}
+                    {req.status === 'PENDING' && <span className="text-[10px] text-gray-400 font-bold">PENDING</span>}
+                  </div>
+                </div>
+                
+                <div className="text-[10px] mb-2 truncate" style={{ color: 'var(--muted)' }}>
+                  Scene ID: <span className="font-mono">{req.scene_id?.slice(0, 8)}...</span>
+                  {req.error_message && <div className="mt-1 text-red-400 font-bold italic">{req.error_message}</div>}
+                </div>
+
+                <AutomationReport reportJson={req.automation_report} />
+              </div>
+            ))
+          )}
+        </div>
       </Card>
 
       <Card>

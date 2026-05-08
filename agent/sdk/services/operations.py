@@ -177,7 +177,7 @@ class OperationService:
     # Scene image operations
     # ------------------------------------------------------------------
 
-    async def generate_scene_image(self, scene: dict, orientation: str) -> dict:
+    async def generate_scene_image(self, scene: dict, orientation: str, request_id: str = "") -> dict:
         """Generate a scene image with reference imageInputs."""
         project = await crud.get_project(scene.get("_project_id", "0"))
         aspect = "IMAGE_ASPECT_RATIO_PORTRAIT" if orientation == "VERTICAL" else "IMAGE_ASPECT_RATIO_LANDSCAPE"
@@ -237,14 +237,17 @@ class OperationService:
                     "prompt": prompt,
                     "imageUrl": scene.get(f"{'vertical' if orientation == 'VERTICAL' else 'horizontal'}_image_url")
                 }
-                await self._client.execute_flow_job(job)
+                report = await self._client.execute_flow_job(job)
+                if request_id and report:
+                    await crud.update_request(request_id, automation_report=json.dumps(report))
             except Exception as e:
                 logger.warning("DOM automation failed for image: %s", e)
 
         return result
 
     async def edit_scene_image(self, scene: dict, orientation: str,
-                               source_media_id: str | None = None) -> dict:
+                               source_media_id: str | None = None,
+                               request_id: str = "") -> dict:
         """Edit an existing scene image using IMAGE_INPUT_TYPE_BASE_IMAGE.
 
         Resolves character refs from scene's character_names and passes them
@@ -292,12 +295,30 @@ class OperationService:
                         valid_ids.append(c["media_id"])
                 char_media_ids = valid_ids if valid_ids else None
 
-        return await self._client.edit_image(
+        result = await self._client.edit_image(
             prompt=edit_prompt, source_media_id=src,
             project_id=pid, aspect_ratio=aspect,
             user_paygate_tier=tier,
             character_media_ids=char_media_ids,
         )
+
+        if not _is_error(result):
+            try:
+                job = {
+                    "mode": "IMG",
+                    "aspectRatio": "9:16" if orientation == "VERTICAL" else "16:9",
+                    "count": 1,
+                    "modelLabel": "Nano Banana 2",
+                    "prompt": edit_prompt,
+                    "startImageMediaId": src
+                }
+                report = await self._client.execute_flow_job(job)
+                if request_id and report:
+                    await crud.update_request(request_id, automation_report=json.dumps(report))
+            except Exception as e:
+                logger.warning("DOM automation failed for edit image: %s", e)
+
+        return result
 
     # ------------------------------------------------------------------
     # Video operations
@@ -383,7 +404,9 @@ class OperationService:
                 "startImageMediaId": image_media_id,
                 "endImageMediaId": end_id
             }
-            await self._client.execute_flow_job(job)
+            report = await self._client.execute_flow_job(job)
+            if request_id and report:
+                await crud.update_request(request_id, automation_report=json.dumps(report))
         except Exception as e:
             logger.warning("DOM automation failed (continuing with API result): %s", e)
 

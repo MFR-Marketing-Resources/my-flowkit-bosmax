@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS request (
     media_id  TEXT,
     output_url    TEXT,
     error_message TEXT,
+    automation_report TEXT,   -- JSON report from Chrome extension executor
     retry_count   INTEGER NOT NULL DEFAULT 0,
     next_retry_at TEXT,
     edit_prompt   TEXT,    -- prompt for EDIT_IMAGE requests
@@ -259,6 +260,7 @@ CREATE TABLE IF NOT EXISTS request (
     media_id      TEXT,
     output_url    TEXT,
     error_message TEXT,
+    automation_report TEXT,
     retry_count   INTEGER NOT NULL DEFAULT 0,
     next_retry_at TEXT,
     edit_prompt   TEXT,

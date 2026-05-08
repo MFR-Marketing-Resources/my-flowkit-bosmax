@@ -308,9 +308,9 @@ async def _dispatch(req: dict, orientation: str) -> dict:
         scene["_project_id"] = pid
 
         if req_type in ("GENERATE_IMAGE", "REGENERATE_IMAGE"):
-            return await ops.generate_scene_image(scene, orientation)
+            return await ops.generate_scene_image(scene, orientation, request_id=rid)
         if req_type == "EDIT_IMAGE":
-            return await ops.edit_scene_image(scene, orientation, source_media_id=req.get("source_media_id"))
+            return await ops.edit_scene_image(scene, orientation, source_media_id=req.get("source_media_id"), request_id=rid)
         if req_type in ("GENERATE_VIDEO", "REGENERATE_VIDEO", "TRUE_F2V"):
             return await ops.generate_scene_video(scene, orientation, request_id=rid)
         if req_type == "GENERATE_VIDEO_REFS":

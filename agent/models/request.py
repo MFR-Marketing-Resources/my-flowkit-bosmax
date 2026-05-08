@@ -44,6 +44,7 @@ class Request(BaseModel):
     media_id: Optional[str] = None
     output_url: Optional[str] = None
     error_message: Optional[str] = None
+    automation_report: Optional[str] = None
     retry_count: int = 0
     source_media_id: Optional[str] = None
     created_at: Optional[str] = None

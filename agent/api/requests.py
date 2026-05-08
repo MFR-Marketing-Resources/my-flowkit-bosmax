@@ -13,6 +13,7 @@ class RequestUpdate(BaseModel):
     media_id: Optional[str] = None
     output_url: Optional[str] = None
     error_message: Optional[str] = None
+    automation_report: Optional[str] = None
     request_id: Optional[str] = None
 
 
@@ -157,3 +158,12 @@ async def update(rid: str, body: RequestUpdate):
     if not r:
         raise HTTPException(404, "Request not found")
     return r
+
+
+@router.get("/snapshot", response_model=list[Request])
+async def snapshot(project_id: str, limit: int = 5):
+    """Get the N most recent requests for a project."""
+    rows = await crud.list_requests(project_id=project_id)
+    # Sort by created_at desc
+    rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return rows[:limit]
