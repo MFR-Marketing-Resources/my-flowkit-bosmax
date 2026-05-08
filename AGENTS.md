@@ -113,3 +113,11 @@ This project has reusable skills in `skills/`. When the user says `/fk:<name>`, 
 - **Validation Required:** NEVER mark a task as fixed without validation proof (tests, logs, or manual verification).
 - **Final Report:** You MUST return the final report using the format in [.ai/contracts/ROOT_CAUSE_REPORT_FORMAT.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/contracts/ROOT_CAUSE_REPORT_FORMAT.md) (STATUS / VERIFIED / NOT VERIFIED / REMOTE PROOF / RISKS / NEXT DECISION).
 
+## AGENT DELIVERY SOP (AUDITABLE GITHUB REMOTE STATE)
+- **Canonical Rule:** Read `docs/agent-delivery-sop.md` and `.ai/contracts/GIT_PROOF_REQUIREMENTS.md` before any repo-governance, delivery, commit, push, pull, merge, or completion step.
+- **Remote First:** Start repo-changing tasks by reconciling the current branch against its GitHub remote (`fetch`, then inspect ahead/behind state) before claiming anything about delivery status.
+- **No Local-Only Completion:** Any task that changes tracked repo files is incomplete until the validated result is auditable on a GitHub remote through a commit plus push, or is explicitly reported as blocked with the exact failing reason.
+- **Mandatory Evidence:** Completion reports must include the full 40-character commit SHA, exact GitHub remote branch name, push target, and exact push result.
+- **Branch / PR Discipline:** If the workflow requires a branch, PR, or merge, the agent must update or create the remote artifact and report the exact branch and URL. If protection rules block that action, the task status is `BLOCKED`, not `DONE`.
+- **Persistent Default:** Do not wait for a user reminder to push validated repo work. The default operating rule in this repository is sync, validate, commit, push, then report.
+

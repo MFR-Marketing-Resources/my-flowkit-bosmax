@@ -1,0 +1,11 @@
+---
+description: Mandatory GitHub remote delivery policy for all repo changes
+globs: **/*
+---
+
+# AUDITABLE GITHUB DELIVERY
+
+- Read `docs/agent-delivery-sop.md` and `.ai/contracts/GIT_PROOF_REQUIREMENTS.md` before any completion, commit, push, pull, merge, or repo-delivery claim.
+- Any tracked repo change is incomplete until it is committed and pushed to GitHub, or explicitly reported as blocked with the exact failing reason.
+- Final delivery evidence must include the full 40-character commit SHA, exact remote branch name, push target, and exact push result.
+- Do not wait for the user to remind you to push validated tracked-file changes.

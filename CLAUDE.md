@@ -62,3 +62,8 @@ curl -s http://127.0.0.1:8100/health
 - **Evidence-Based:** Produce exact file, function, and root-cause evidence before proposing any changes.
 - **Validation Summary:** Always provide a command/test output summary to prove the fix.
 
+## Auditable GitHub Delivery
+- Read `docs/agent-delivery-sop.md` and `.ai/contracts/GIT_PROOF_REQUIREMENTS.md` before any completion, commit, push, pull, merge, or repo-delivery claim.
+- Any tracked repo change is incomplete until it is committed and pushed to GitHub, or explicitly reported as blocked with the exact failing reason.
+- Final delivery evidence must include the full 40-character commit SHA, exact remote branch name, push target, and exact push result.
+
