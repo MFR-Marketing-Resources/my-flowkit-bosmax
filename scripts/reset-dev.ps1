@@ -5,17 +5,20 @@ $scriptDir = $PSScriptRoot
 # 1. Killing stale ports (8100, 8101, 5173, 5174, 5175)...
 & "$scriptDir\start-dev.ps1" -KillStale
 
-# 2. Wait 2 seconds
-Write-Host "Waiting 2 seconds..."
-Start-Sleep -Seconds 2
+$maxAttempts = 12
+$delaySeconds = 3
 
-# 3. Start dev environment (already done by start-dev.ps1 -KillStale if we modified it to continue, 
-# but start-dev.ps1 normally exits after Start-Process. Let's make sure it's clear.)
-# Actually, start-dev.ps1 with -KillStale will kill then start.
+for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+    Write-Host "Readiness probe $attempt/$maxAttempts..." -ForegroundColor Cyan
+    & "$scriptDir\check-dev.ps1"
+    if ($LASTEXITCODE -eq 0) {
+        exit 0
+    }
 
-# 4. Wait 10 seconds for startup
-Write-Host "Waiting 10 seconds for startup..."
-Start-Sleep -Seconds 10
+    if ($attempt -lt $maxAttempts) {
+        Start-Sleep -Seconds $delaySeconds
+    }
+}
 
-# 5. Run health check
-& "$scriptDir\check-dev.ps1"
+Write-Host "RESET_DEV_RESULT: FAIL" -ForegroundColor Red
+exit 1

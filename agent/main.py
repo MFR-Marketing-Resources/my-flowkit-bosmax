@@ -169,10 +169,16 @@ async def ext_callback(request: Request):
 @app.get("/health")
 async def health():
     client = get_flow_client()
+    extension_status = await client.get_status()
     return {
         "status": "ok",
         "version": "0.2.0",
         "extension_connected": client.connected,
+        "extension_state": extension_status.get("state", "off"),
+        "flow_key_present": bool(extension_status.get("flowKeyPresent")),
+        "extension_manual_disconnect": bool(extension_status.get("manualDisconnect")),
+        "extension_metrics": extension_status.get("metrics", {}),
+        "extension_status_error": extension_status.get("error"),
         "ws": client.ws_stats,
     }
 

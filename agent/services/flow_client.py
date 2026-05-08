@@ -513,6 +513,42 @@ class FlowClient:
             "headers": random_headers(),
         }, timeout=15)
 
+    async def get_status(self) -> dict:
+        """Query live extension runtime state over the WebSocket bridge."""
+        if not self.connected:
+            return {
+                "connected": False,
+                "state": "off",
+                "flowKeyPresent": False,
+                "manualDisconnect": False,
+                "metrics": {},
+            }
+
+        result = await self._send("get_status", {}, timeout=5)
+        if result.get("error"):
+            return {
+                "connected": True,
+                "state": "unknown",
+                "flowKeyPresent": False,
+                "manualDisconnect": False,
+                "metrics": {},
+                "error": result["error"],
+            }
+
+        data = result.get("result")
+        if isinstance(data, dict):
+            data.setdefault("connected", self.connected)
+            return data
+
+        return {
+            "connected": self.connected,
+            "state": "unknown",
+            "flowKeyPresent": False,
+            "manualDisconnect": False,
+            "metrics": {},
+            "error": "invalid extension status payload",
+        }
+
     async def validate_media_id(self, media_id: str) -> bool:
         """Check if a mediaId is still valid.
 
