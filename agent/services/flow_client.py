@@ -240,6 +240,10 @@ class FlowClient:
         sep = "&" if "?" in path else "?"
         return f"{GOOGLE_FLOW_API}{path}{sep}key={GOOGLE_API_KEY}"
 
+    async def execute_flow_job(self, job_data: dict) -> dict:
+        """Trigger DOM automation in the extension for a generation job."""
+        return await self._send("EXECUTE_FLOW_JOB", {"job": job_data}, timeout=120)
+
     def _client_context(self, project_id: str, user_paygate_tier: str = "PAYGATE_TIER_TWO") -> dict:
         """Build clientContext with recaptcha placeholder."""
         return {

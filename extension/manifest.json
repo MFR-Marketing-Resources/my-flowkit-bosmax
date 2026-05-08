@@ -21,7 +21,7 @@
         "https://labs.google/fx/tools/flow*",
         "https://labs.google/fx/*/tools/flow*"
       ],
-      "js": ["content.js"],
+      "js": ["content.js", "content-flow-dom.js"],
       "run_at": "document_start"
     }
   ],

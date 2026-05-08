@@ -633,20 +633,55 @@ async function handleMessage(msg, sender) {
     return { ok: true };
   }
 
+  if (msg.type === 'EXECUTE_FLOW_JOB') {
+    return await handleExecuteFlowJob(msg.job);
+  }
+
   throw new Error(`Unknown message type: ${msg.type}`);
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  ;(async () => {
+  // Use an IIFE to handle the async work correctly
+  (async () => {
     try {
       const data = await handleMessage(message, sender);
-      sendResponse({ ok: true, data });
+      // Ensure data is wrapped in the expected format if it isn't already
+      const result = (data && typeof data === 'object' && 'ok' in data)
+        ? data
+        : { ok: true, data };
+      sendResponse(result);
     } catch (error) {
+      console.error('[FlowAgent] Message handling error:', error);
       sendResponse({ ok: false, error: String(error?.message || error) });
     }
   })();
-  return true;
+  return true; // Keep the message channel open for sendResponse
 });
+
+async function handleExecuteFlowJob(job) {
+  const tabs = await chrome.tabs.query({
+    url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
+  });
+
+  if (!tabs.length) {
+    return { ok: false, error: 'NO_FLOW_TAB' };
+  }
+
+  // Ensure content-flow-dom.js is injected
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabs[0].id },
+      files: ['content-flow-dom.js'],
+    });
+  } catch (e) {
+    console.warn('[FlowAgent] Script injection failed (already injected?):', e);
+  }
+
+  return await sendTabMessageSafe(tabs[0].id, {
+    type: 'EXECUTE_FLOW_JOB',
+    job
+  });
+}
 
 // ─── TRPC Media URL Extractor ──────────────────────────────
 

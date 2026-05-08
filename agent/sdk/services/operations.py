@@ -221,10 +221,27 @@ class OperationService:
                     logger.info("Scene %s: using %d reference images",
                                 scene.get("id", "?")[:8], len(char_media_ids))
 
-        return await self._client.generate_images(
+        result = await self._client.generate_images(
             prompt=prompt, project_id=pid, aspect_ratio=aspect,
             user_paygate_tier=tier, character_media_ids=char_media_ids,
         )
+
+        # Trigger DOM automation for visual feedback
+        if not _is_error(result):
+            try:
+                job = {
+                    "mode": "IMG",
+                    "aspectRatio": "9:16" if orientation == "VERTICAL" else "16:9",
+                    "count": 1,
+                    "modelLabel": "Nano Banana 2",
+                    "prompt": prompt,
+                    "imageUrl": scene.get(f"{'vertical' if orientation == 'VERTICAL' else 'horizontal'}_image_url")
+                }
+                await self._client.execute_flow_job(job)
+            except Exception as e:
+                logger.warning("DOM automation failed for image: %s", e)
+
+        return result
 
     async def edit_scene_image(self, scene: dict, orientation: str,
                                source_media_id: str | None = None) -> dict:
@@ -347,6 +364,22 @@ class OperationService:
             return {"error": "Video generation failed immediately"}
 
         logger.info("Video gen submitted, polling %d operations...", len(operations))
+
+        # Trigger DOM automation for visual feedback and prompt insertion
+        try:
+            job = {
+                "mode": "I2V" if not end_id else "F2V",
+                "aspectRatio": "9:16" if orientation == "VERTICAL" else "16:9",
+                "count": 1,
+                "modelLabel": "Veo 3.1 - Lite",
+                "prompt": prompt,
+                "startImageMediaId": image_media_id,
+                "endImageMediaId": end_id
+            }
+            await self._client.execute_flow_job(job)
+        except Exception as e:
+            logger.warning("DOM automation failed (continuing with API result): %s", e)
+
         return await _poll_operations(self._client, operations)
 
     async def generate_scene_video_refs(self, scene: dict, orientation: str,
@@ -458,6 +491,21 @@ class OperationService:
             return {"error": "R2V failed immediately"}
 
         logger.info("R2V submitted with %d refs, polling %d operations...", len(ref_ids), len(operations))
+
+        # Trigger DOM automation for visual feedback
+        try:
+            job = {
+                "mode": "I2V", # R2V is closest to I2V in DOM (Ingredients)
+                "aspectRatio": "9:16" if orientation == "VERTICAL" else "16:9",
+                "count": 1,
+                "modelLabel": "Veo 3.1 - Lite",
+                "prompt": prompt,
+                "startImageMediaId": ref_ids[0] if ref_ids else None
+            }
+            await self._client.execute_flow_job(job)
+        except Exception as e:
+            logger.warning("DOM automation failed for R2V: %s", e)
+
         return await _poll_operations(self._client, operations)
 
     async def upscale_scene_video(self, scene: dict, orientation: str,
