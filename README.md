@@ -170,7 +170,20 @@ Each project goes through: **story → entities → reference images → scene i
 
 This checks and installs: Python 3.10+, pip, ffmpeg, ffprobe, Chrome, creates venv, installs dependencies, verifies imports.
 
-> **Windows:** Use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) (`wsl --install`) or Git Bash. All bash scripts and commands assume a Unix shell.
+## Windows local dev quick start
+
+```powershell
+cd <repo-root>
+.\scripts\start-dev.ps1
+```
+
+Dashboard:
+[http://127.0.0.1:5173/operator](http://127.0.0.1:5173/operator)
+
+Backend health:
+[http://127.0.0.1:8100/health](http://127.0.0.1:8100/health)
+
+> **Unix/Linux/macOS:** Use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) (`wsl --install`) or Git Bash. All bash scripts and commands assume a Unix shell.
 
 ### Manual setup
 
