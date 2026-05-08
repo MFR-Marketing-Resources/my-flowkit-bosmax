@@ -284,7 +284,7 @@ async function fetchOperatorPack() {
     statusEl.textContent = 'offline';
     statusEl.style.background = 'rgba(239,68,68,0.15)';
     statusEl.style.color = 'var(--red)';
-    summaryEl.textContent = `Operator API unavailable: ${String(error.message || error)}`;
+    summaryEl.textContent = `Operator API unavailable: ${String(error.message || error)}. Ensure backend is running on port 8100.`;
   }
 }
 

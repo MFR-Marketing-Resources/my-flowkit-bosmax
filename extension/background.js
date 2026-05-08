@@ -598,7 +598,7 @@ async function handleMessage(msg, sender) {
 
   if (msg.type === 'RECONNECT') {
     manualDisconnect = false;
-    connectToAgent();
+    init(); // Use init to ensure storage is loaded too
     return { ok: true };
   }
 
@@ -790,5 +790,8 @@ function scheduleTelemetry() {
 setInterval(() => { _telemetrySessionId = `;${Date.now()}`; }, _rand(25, 35) * 60 * 1000);
 
 scheduleTelemetry();
+
+// Ensure initialization runs when worker starts
+init().catch(console.error);
 
 console.log('[FlowAgent] Extension loaded');
