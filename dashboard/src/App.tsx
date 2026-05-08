@@ -1,6 +1,6 @@
 import { BrowserRouter, NavLink, Routes, Route, useLocation } from 'react-router-dom'
 import { LayoutDashboard, FolderOpen, ScrollText, Film, Sparkles } from 'lucide-react'
-import { useWebSocket } from './api/useWebSocket'
+import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext'
 import DashboardPage from './pages/DashboardPage'
 import ProjectsPage from './pages/ProjectsPage'
 import LogsPage from './pages/LogsPage'
@@ -22,7 +22,7 @@ function PageTitle() {
 }
 
 function Layout() {
-  const { isConnected } = useWebSocket()
+  const { isConnected } = useWebSocketContext()
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
@@ -93,7 +93,9 @@ function Layout() {
 export default function App() {
   return (
     <BrowserRouter>
-      <Layout />
+      <WebSocketProvider>
+        <Layout />
+      </WebSocketProvider>
     </BrowserRouter>
   )
 }

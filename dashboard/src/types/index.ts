@@ -108,9 +108,23 @@ export interface Request {
 }
 
 // WebSocket event
+export interface WSHealthData {
+  status: string
+  extension_connected: boolean
+}
+
+export interface WSSnapshotData {
+  health: WSHealthData
+  requests: Request[]
+  worker: {
+    active: number
+    slots: number
+  }
+}
+
 export interface WSEvent {
-  type: string
-  data: Record<string, unknown>
+  type: 'health' | 'snapshot' | 'request_created' | 'request_updated' | 'ping' | string
+  data: WSHealthData | WSSnapshotData | Request | Record<string, unknown>
   timestamp: string
 }
 

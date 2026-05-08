@@ -13,8 +13,9 @@ import type {
   UploadedAsset,
   ManualEntityType,
 } from '../types'
-import { useWebSocket } from '../api/useWebSocket'
+import { useWebSocketContext } from '../contexts/WebSocketContext'
 import OperatorManual from '../components/operator/OperatorManual'
+
 
 
 
@@ -140,10 +141,8 @@ export default function OperatorPage() {
   const [selectedSceneId, setSelectedSceneId] = useState('')
   const [manualPrompt, setManualPrompt] = useState('')
 
-  const { isConnected: backendConnected, lastEvent } = useWebSocket()
-  const extensionConnected = lastEvent?.type === 'snapshot'
-    ? (lastEvent.data?.health as any)?.extension_connected
-    : (lastEvent?.type === 'health' ? (lastEvent.data as any)?.extension_connected : false)
+  const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
+
 
 
   useEffect(() => {
