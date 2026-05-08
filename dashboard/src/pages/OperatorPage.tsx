@@ -9,8 +9,13 @@ import type {
   Project,
   Scene,
   Video,
+  CreatedState,
+  UploadedAsset,
+  ManualEntityType,
 } from '../types'
+import { useWebSocket } from '../api/useWebSocket'
 import OperatorManual from '../components/operator/OperatorManual'
+
 
 
 type OperatorForm = {
@@ -39,20 +44,7 @@ type OperatorForm = {
   orientation: Orientation
 }
 
-type CreatedState = {
-  project: Project
-  video: Video
-}
 
-type ManualEntityType = 'character' | 'visual_asset'
-
-type UploadedAsset = {
-  label: string
-  mediaId: string
-  characterId: string
-  entityType: ManualEntityType
-  fileName: string
-}
 
 type UploadImageBase64Response = {
   media_id: string
@@ -147,6 +139,12 @@ export default function OperatorPage() {
   const [manualEntityType, setManualEntityType] = useState<ManualEntityType>('visual_asset')
   const [selectedSceneId, setSelectedSceneId] = useState('')
   const [manualPrompt, setManualPrompt] = useState('')
+
+  const { isConnected: backendConnected, lastEvent } = useWebSocket()
+  const extensionConnected = lastEvent?.type === 'snapshot'
+    ? (lastEvent.data?.health as any)?.extension_connected
+    : (lastEvent?.type === 'health' ? (lastEvent.data as any)?.extension_connected : false)
+
 
   useEffect(() => {
     setLoadingPack(true)
@@ -759,6 +757,8 @@ export default function OperatorPage() {
         manualPrompt={manualPrompt}
         submittingManual={submittingManual}
         uploadingAssets={uploadingAssets}
+        backendConnected={backendConnected}
+        extensionConnected={extensionConnected || false}
       />
 
       <Card>

@@ -183,3 +183,18 @@ export interface BatchStatus {
   all_succeeded: boolean
   orientation: Orientation | null
 }
+
+export interface CreatedState {
+  project: Project
+  video: Video
+}
+
+export type ManualEntityType = 'character' | 'visual_asset'
+
+export interface UploadedAsset {
+  label: string
+  mediaId: string
+  characterId: string
+  entityType: ManualEntityType
+  fileName: string
+}

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import type { CreatedState, UploadedAsset } from '../../types'
 
 function Card({ children }: { children: ReactNode }) {
   return (
@@ -52,13 +53,15 @@ function ModeCard({ title, status, type, useWhen, required, button, warning }: {
   )
 }
 
-type OperatorManualProps = {
-  created: any
+interface OperatorManualProps {
+  created: CreatedState | null
   selectedSceneId: string
-  uploadedAssets: any[]
+  uploadedAssets: UploadedAsset[]
   manualPrompt: string
   submittingManual: boolean
   uploadingAssets: boolean
+  backendConnected: boolean
+  extensionConnected: boolean
 }
 
 export default function OperatorManual({
@@ -67,9 +70,13 @@ export default function OperatorManual({
   uploadedAssets,
   manualPrompt,
   submittingManual,
-  uploadingAssets
+  uploadingAssets,
+  backendConnected,
+  extensionConnected
 }: OperatorManualProps) {
   const checklist = [
+    { label: "Backend connected", pass: backendConnected },
+    { label: "Extension connected", pass: extensionConnected },
     { label: "Project created", pass: !!created },
     { label: "Target scene selected", pass: !!selectedSceneId },
     { label: "Uploaded assets ready", pass: uploadedAssets.length > 0 },
@@ -133,7 +140,7 @@ export default function OperatorManual({
 
       <Card>
         <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Readiness Checklist</h3>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
           {checklist.map((item, i) => (
             <div key={i} className="flex items-center justify-between p-2 rounded" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
               <span className="text-[10px]" style={{ color: 'var(--text)' }}>{item.label}</span>
