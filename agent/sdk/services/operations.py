@@ -367,8 +367,15 @@ class OperationService:
 
         # Trigger DOM automation for visual feedback and prompt insertion
         try:
+            # Determine true intent from request type if available
+            is_explicit_f2v = False
+            if request_id:
+                req_row = await crud.get_request(request_id)
+                if req_row and req_row.get("type") == "TRUE_F2V":
+                    is_explicit_f2v = True
+
             job = {
-                "mode": "I2V" if not end_id else "F2V",
+                "mode": "F2V" if (is_explicit_f2v or end_id) else "I2V",
                 "aspectRatio": "9:16" if orientation == "VERTICAL" else "16:9",
                 "count": 1,
                 "modelLabel": "Veo 3.1 - Lite",

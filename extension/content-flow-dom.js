@@ -1,7 +1,7 @@
 /**
  * Flow Kit — Google Flow DOM Executor
  * 
- * Automates the generation workflow in the Flow UI.
+ * Automates the generation workflow in the Flow UI with human-like interactions.
  */
 
 (function() {
@@ -20,15 +20,16 @@
     COUNT_SELECTED: 'COUNT_SELECTED',
     MODEL_SELECTED: 'MODEL_SELECTED',
     IMAGE_ATTACHED: 'IMAGE_ATTACHED',
-    PROMPT_FIELD_FOUND: 'PROMPT_FIELD_FOUND',
-    PROMPT_INSERTED: 'PROMPT_INSERTED',
-    PROMPT_VERIFIED: 'PROMPT_VERIFIED',
-    GENERATE_BUTTON_FOUND: 'GENERATE_BUTTON_FOUND',
-    GENERATE_BUTTON_ENABLED: 'GENERATE_BUTTON_ENABLED',
-    GENERATE_BUTTON_CLICKED: 'GENERATE_BUTTON_CLICKED',
+    COMPOSER_FOUND: 'COMPOSER_FOUND',
+    COMPOSER_TYPE: 'COMPOSER_TYPE',
+    PROMPT_INSERT_METHOD: 'PROMPT_INSERT_METHOD',
+    PROMPT_VISIBLE: 'PROMPT_VISIBLE',
+    PROMPT_EDITABLE_AFTER_INSERT: 'PROMPT_EDITABLE_AFTER_INSERT',
+    GENERATE_ARROW_ENABLED: 'GENERATE_ARROW_ENABLED',
+    GENERATE_CLICKED: 'GENERATE_CLICKED',
     GENERATION_STARTED: 'GENERATION_STARTED',
-    GENERATION_COMPLETED_OR_TIMEOUT: 'GENERATION_COMPLETED_OR_TIMEOUT',
-    DOWNLOAD_CAPTURED_OR_NOT_AVAILABLE: 'DOWNLOAD_CAPTURED_OR_NOT_AVAILABLE'
+    VIDEO_JOB_RUNNING_OR_GENERATED: 'VIDEO_JOB_RUNNING_OR_GENERATED',
+    DOWNLOAD_CAPTURE: 'DOWNLOAD_CAPTURE'
   };
 
   async function sleep(ms) {
@@ -48,25 +49,90 @@
   }
 
   function findButtonByIcon() {
-    // Search for button with right arrow icon (M10 20l-1.41-1.41L15.17 12 8.59 5.41 10 4l8 8-8 8z)
-    // or similar arrow path
+    // Search for button with right arrow icon
     const paths = document.querySelectorAll('path');
     for (const path of paths) {
       const d = path.getAttribute('d') || '';
-      if (d.includes('M10 20') || d.includes('M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z')) {
+      if (d.includes('M10 20l-1.41-1.41L15.17 12 8.59 5.41 10 4l8 8-8 8z') ||
+          d.includes('M10 20') ||
+          d.includes('M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z')) {
         return path.closest('button');
       }
     }
-    // Fallback: search for button next to composer
     const composer = document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
     if (composer) {
       const parent = composer.parentElement;
       if (parent) {
         const buttons = parent.querySelectorAll('button');
-        if (buttons.length > 0) return buttons[buttons.length - 1]; // Usually the last button in the composer bar
+        if (buttons.length > 0) return buttons[buttons.length - 1];
       }
     }
     return document.querySelector('button[aria-label="Generate"]') || document.querySelector('button[title="Generate"]');
+  }
+
+  function getComposerText(el) {
+    if ('value' in el) return el.value;
+    return el.textContent || '';
+  }
+
+  function isComposerEditable(el) {
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+    if (el.getAttribute('contenteditable') === 'false') return false;
+    return true;
+  }
+
+  async function keyboardClear(el) {
+    el.focus();
+    await sleep(50);
+    if ('value' in el) {
+      el.value = '';
+    } else {
+      el.innerHTML = '';
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(50);
+  }
+
+  function setNativeValue(el, value) {
+    const proto = Object.getPrototypeOf(el);
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    setter?.call(el, value);
+    el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: value }));
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function insertTextLikeUser(el, text) {
+    el.focus();
+    const ok = document.execCommand && document.execCommand('insertText', false, text);
+    if (!ok) {
+      el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: text }));
+      if ('value' in el) {
+        const start = el.selectionStart || 0;
+        const end = el.selectionEnd || 0;
+        el.value = el.value.substring(0, start) + text + el.value.substring(end);
+        el.selectionStart = el.selectionEnd = start + text.length;
+      } else {
+        el.textContent = `${el.textContent || ''}${text}`;
+      }
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    }
+  }
+
+  async function humanTypePrompt(composer, prompt) {
+    composer.click();
+    composer.focus();
+    await sleep(100);
+
+    await keyboardClear(composer);
+
+    const chunks = prompt.match(/.{1,12}/g) || [];
+    for (const chunk of chunks) {
+      insertTextLikeUser(composer, chunk);
+      await sleep(10);
+    }
+
+    await sleep(300);
   }
 
   async function executeFlowJob(job) {
@@ -79,14 +145,14 @@
     try {
       logStage(STAGES.FLOW_TAB_FOUND);
 
-      // 1. Select Mode (Image / Video)
+      // 1. Select Mode
       const modeBtn = findElementByText('button, div[role="button"], span', job.mode === 'IMG' ? 'Image' : 'Video');
       if (!modeBtn) throw new Error(`Mode button ${job.mode} not found`);
       modeBtn.click();
       await sleep(1000);
       logStage(STAGES.FLOW_MODE_SELECTED);
 
-      // 2. Select Submode (for Video)
+      // 2. Select Submode
       if (job.mode !== 'IMG') {
         const submodeText = job.mode === 'F2V' ? 'Frames' : 'Ingredients';
         const submodeBtn = findElementByText('button, div[role="button"], span', submodeText);
@@ -104,15 +170,7 @@
         logStage(STAGES.ASPECT_SELECTED);
       }
 
-      // 4. Set Count
-      const countBtn = findElementByText('button, div[role="button"]', `${job.count}x`);
-      if (countBtn) {
-        countBtn.click();
-        await sleep(500);
-        logStage(STAGES.COUNT_SELECTED);
-      }
-
-      // 5. Set Model
+      // 4. Set Model
       const modelDropdown = document.querySelector('[aria-haspopup="listbox"]') || 
                            findElementByText('button', 'Nano Banana') || 
                            findElementByText('button', 'Veo');
@@ -127,8 +185,7 @@
         }
       }
 
-      // 6. Attach Image
-      // Check for image previews in the DOM.
+      // 5. Attach Image (Check if preview exists)
       const previews = document.querySelectorAll('img[src^="blob:"], img[src^="https://storage.googleapis.com"]');
       if (previews.length > 0) {
         logStage(STAGES.IMAGE_ATTACHED);
@@ -136,87 +193,75 @@
         logStage(STAGES.IMAGE_ATTACHED, 'NO (MAYBE BACKGROUND UPLOADED)');
       }
 
-      // 7. Insert Prompt
+      // 6. Composer Setup
       const composer = document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
-      if (!composer) throw new Error('Prompt composer not found');
-      logStage(STAGES.PROMPT_FIELD_FOUND);
-
-      composer.focus();
-      // Clear if contenteditable
-      if (composer.getAttribute('contenteditable') === 'true') {
-        composer.innerHTML = '';
+      if (!composer) {
+        logStage(STAGES.COMPOSER_FOUND, 'NO');
+        throw new Error('PROMPT_FIELD_NOT_FOUND');
       }
+      logStage(STAGES.COMPOSER_FOUND);
+      const cType = composer.tagName === 'TEXTAREA' ? 'TEXTAREA' : (composer.getAttribute('contenteditable') === 'true' ? 'CONTENTEDITABLE' : 'OTHER');
+      logStage(STAGES.COMPOSER_TYPE, cType);
+
+      // 7. Human-like Typing
+      logStage(STAGES.PROMPT_INSERT_METHOD, 'HUMAN_TYPING');
+      await humanTypePrompt(composer, job.prompt);
       
-      if ('value' in composer) {
-        composer.value = job.prompt;
-        composer.dispatchEvent(new Event('input', { bubbles: true }));
-        composer.dispatchEvent(new Event('change', { bubbles: true }));
-      } else {
-        composer.textContent = job.prompt;
-        composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: job.prompt }));
+      const actual = getComposerText(composer);
+      if (!actual || !actual.includes(job.prompt.slice(0, 10))) {
+        logStage(STAGES.PROMPT_VISIBLE, 'NO');
+        throw new Error('PROMPT_INSERT_FAILED');
       }
-      await sleep(500);
-      logStage(STAGES.PROMPT_INSERTED);
+      logStage(STAGES.PROMPT_VISIBLE);
 
-      // Verify prompt
-      const actualText = (composer.value || composer.textContent || '').trim();
-      if (actualText.length > 0) {
-        logStage(STAGES.PROMPT_VERIFIED);
-      } else {
-        // One more try with focus + execCommand
-        composer.focus();
-        document.execCommand('insertText', false, job.prompt);
-        await sleep(300);
-        if ((composer.value || composer.textContent || '').trim().length > 0) {
-          logStage(STAGES.PROMPT_VERIFIED);
-        } else {
-          throw new Error('Prompt insertion verification failed');
-        }
+      if (!isComposerEditable(composer)) {
+        logStage(STAGES.PROMPT_EDITABLE_AFTER_INSERT, 'NO');
+        throw new Error('PROMPT_INSERT_LOCKED_OR_UNTRUSTED');
       }
+      logStage(STAGES.PROMPT_EDITABLE_AFTER_INSERT);
 
       // 8. Click Generate
       const generateBtn = findButtonByIcon();
-      if (!generateBtn) throw new Error('Generate button not found');
-      logStage(STAGES.GENERATE_BUTTON_FOUND);
+      if (!generateBtn) throw new Error('GENERATE_ARROW_NOT_FOUND');
+      if (generateBtn.disabled) {
+        await sleep(2000); // Wait for validation
+      }
 
       if (generateBtn.disabled) {
-        logStage(STAGES.GENERATE_BUTTON_ENABLED, 'NO (WAITING)');
-        await sleep(3000);
+        logStage(STAGES.GENERATE_ARROW_ENABLED, 'NO');
+        throw new Error('GENERATE_ARROW_DISABLED_AFTER_PROMPT');
       }
+      logStage(STAGES.GENERATE_ARROW_ENABLED);
       
-      if (!generateBtn.disabled) {
-        logStage(STAGES.GENERATE_BUTTON_ENABLED);
-        generateBtn.click();
-        logStage(STAGES.GENERATE_BUTTON_CLICKED);
-        
-        // 9. Detect Job Start
-        await sleep(1500);
-        // Look for loading states
-        const progress = document.querySelector('[role="progressbar"], .loading, .spinner');
-        if (generateBtn.disabled || progress) {
-          logStage(STAGES.GENERATION_STARTED);
-          report.ok = true;
-        } else {
-          logStage(STAGES.GENERATION_STARTED, 'MAYBE');
-          report.ok = true;
-        }
+      generateBtn.click();
+      logStage(STAGES.GENERATE_CLICKED);
+
+      // 9. Detect Job Start
+      await sleep(1500);
+      const progress = document.querySelector('[role="progressbar"], .loading, .spinner');
+      if (generateBtn.disabled || progress) {
+        logStage(STAGES.GENERATION_STARTED);
+        logStage(STAGES.VIDEO_JOB_RUNNING_OR_GENERATED);
+        report.ok = true;
       } else {
-        throw new Error('Generate button disabled after wait');
+        logStage(STAGES.GENERATION_STARTED, 'MAYBE');
+        logStage(STAGES.VIDEO_JOB_RUNNING_OR_GENERATED, 'MAYBE');
+        report.ok = true;
       }
 
-      // 10. Download Capture (Not implemented yet, but we report it)
-      logStage(STAGES.DOWNLOAD_CAPTURED_OR_NOT_AVAILABLE, 'NOT_IMPLEMENTED');
+      logStage(STAGES.DOWNLOAD_CAPTURE, 'NOT_IMPLEMENTED');
 
     } catch (e) {
       console.error('[FlowAgent] Job execution failed:', e);
       report.error = e.message;
       report.ok = false;
+      // Add error as a stage for visibility in the report
+      report.stages.push({ stage: 'ERROR', status: e.message });
     }
 
     return report;
   }
 
-  // Listen for messages from background script
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'EXECUTE_FLOW_JOB') {
       executeFlowJob(msg.job).then(sendResponse);

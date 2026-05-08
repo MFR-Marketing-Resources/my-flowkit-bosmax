@@ -730,7 +730,7 @@ export default function OperatorPage() {
         await patchAPI<Scene>(`/api/scenes/${scene.id}`, scenePatch)
       }
 
-      const requestType = mode === 'TRUE_F2V' ? 'GENERATE_VIDEO' : mode
+      const requestType = mode
 
       await postAPI('/api/requests/batch', {
         requests: [{
