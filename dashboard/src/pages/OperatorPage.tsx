@@ -10,6 +10,8 @@ import type {
   Scene,
   Video,
 } from '../types'
+import OperatorManual from '../components/operator/OperatorManual'
+
 
 type OperatorForm = {
   product_name: string
@@ -750,8 +752,11 @@ export default function OperatorPage() {
         )}
       </Card>
 
+      <OperatorManual />
+
       <Card>
         <div className="flex items-center justify-between gap-3">
+
           <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Manual Upload and Submit</h3>
           <span className="text-xs" style={{ color: 'var(--muted)' }}>
             IMG uses uploaded base photo, I2V uses the first uploaded start frame, Ingredients / Refs uses uploaded reference photos.
