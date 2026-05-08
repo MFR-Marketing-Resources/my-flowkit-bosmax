@@ -6,8 +6,8 @@ $repoRoot = $PSScriptRoot
 if ($repoRoot -eq "") { $repoRoot = "." }
 
 if ($KillStale) {
-    Write-Host "Killing stale ports (8100, 5173, 5174, 5175)..." -ForegroundColor Yellow
-    $ports = @(8100, 5173, 5174, 5175)
+    Write-Host "Killing stale ports (8100, 8101, 5173, 5174, 5175)..." -ForegroundColor Yellow
+    $ports = @(8100, 8101, 5173, 5174, 5175)
     foreach ($port in $ports) {
         $conns = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
         foreach ($conn in $conns) {

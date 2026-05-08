@@ -151,7 +151,7 @@ Each project goes through: **story → entities → reference images → scene i
 ```
 ┌──────────────────┐     WebSocket      ┌──────────────────────┐
 │  Python Agent    │◄──────────────────►│  Chrome Extension     │
-│  (FastAPI+SQLite)│     localhost:9222  │  (MV3 Service Worker) │
+│  (FastAPI+SQLite)│     localhost:8101  │  (MV3 Service Worker) │
 │                  │                    │                       │
 │  - REST API :8100│  ── commands ──►   │  - Token capture      │
 │  - Queue worker  │  ◄── results ──    │  - reCAPTCHA solve    │

@@ -2,7 +2,7 @@ Write-Host "Resetting Flow Kit Dev Environment..." -ForegroundColor Cyan
 
 $scriptDir = $PSScriptRoot
 
-# 1. Kill stale ports
+# 1. Killing stale ports (8100, 8101, 5173, 5174, 5175)...
 & "$scriptDir\start-dev.ps1" -KillStale
 
 # 2. Wait 2 seconds
