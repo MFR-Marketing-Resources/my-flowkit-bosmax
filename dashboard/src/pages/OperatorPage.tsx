@@ -161,6 +161,7 @@ export default function OperatorPage() {
     !uploadingAssets
 
   const f2vBlockingReasons = []
+  if (uploadedAssets.length < 2) f2vBlockingReasons.push('Upload at least two photos to Flow.')
   if (!f2vSceneReady) f2vBlockingReasons.push('Select a target scene.')
   if (!f2vStartReady) f2vBlockingReasons.push('Select a Start Frame asset.')
   if (!f2vEndReady) f2vBlockingReasons.push('Select an End Frame asset.')
@@ -418,7 +419,8 @@ export default function OperatorPage() {
 
       setUploadedAssets(current => mergeUniqueAssets([...current, ...nextAssets]))
       await refreshCreatedResources(created)
-      setMessage(`Uploaded ${nextAssets.length} photo ${nextAssets.length === 1 ? 'asset' : 'assets'} to Google Flow.`)
+      setManualFiles([])
+      setMessage(`Upload complete. ${nextAssets.length} asset${nextAssets.length === 1 ? '' : 's'} now available in Start/End dropdowns.`)
     } catch (err) {
       setMessage(`Photo upload failed: ${String(err)}`)
     } finally {
@@ -868,15 +870,19 @@ export default function OperatorPage() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-1">
-              <FieldLabel>Upload Photo</FieldLabel>
-              <input type="file" accept="image/*" multiple onChange={e => setManualFiles(Array.from(e.target.files ?? []))} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
-              <div className="text-xs" style={{ color: 'var(--muted)' }}>
-                {manualFiles.length > 0
-                  ? `${manualFiles.length} file selected: ${manualFiles.map(file => file.name).join(', ')}`
-                  : 'Choose one photo for IMG/I2V or multiple photos for Ingredients / Refs to Video.'}
+              <div className="flex flex-col gap-1">
+                <FieldLabel>Upload Photo</FieldLabel>
+                <div className="text-[10px] mb-1" style={{ color: 'var(--accent)' }}>
+                  <b>Step 1:</b> Choose a file. <b>Step 2:</b> Click "Upload Photo to Flow".<br />
+                  Only uploaded assets appear in Start/End dropdowns.
+                </div>
+                <input type="file" accept="image/*" multiple onChange={e => setManualFiles(Array.from(e.target.files ?? []))} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
+                <div className="text-xs" style={{ color: 'var(--muted)' }}>
+                  {manualFiles.length > 0
+                    ? `${manualFiles.length} file selected: ${manualFiles.map(file => file.name).join(', ')}`
+                    : 'Choose one photo for IMG/I2V or multiple photos for Ingredients / Refs to Video.'}
+                </div>
               </div>
-            </div>
 
             <div className="flex flex-col gap-1">
               <FieldLabel>Submit Prompt Override</FieldLabel>
@@ -908,10 +914,19 @@ export default function OperatorPage() {
               <div className="text-[10px]" style={{ color: 'var(--muted)' }}>
                 True F2V requires two different uploaded assets and a transition prompt.
               </div>
+              <div className="text-[10px]" style={{ color: 'var(--accent)' }}>
+                Uploaded assets available for F2V: {uploadedAssets.length}
+              </div>
+              {uploadedAssets.length < 2 && (
+                <div className="text-[10px] font-bold" style={{ color: 'var(--yellow)' }}>
+                  Upload at least two photos to Flow before using True F2V.
+                  Chosen files are not available until "Upload Photo to Flow" is clicked.
+                </div>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="flex flex-col gap-1">
                   <FieldLabel>Start Frame Asset</FieldLabel>
-                  <select value={f2vStartAssetId} onChange={e => setF2vStartAssetId(e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+                  <select value={f2vStartAssetId} onChange={e => setF2vStartAssetId(e.target.value)} disabled={uploadedAssets.length === 0} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', opacity: uploadedAssets.length === 0 ? 0.5 : 1 }}>
                     <option value="">Select start asset...</option>
                     {uploadedAssets.map(asset => (
                       <option key={asset.mediaId} value={asset.mediaId}>{asset.label}</option>
@@ -920,7 +935,7 @@ export default function OperatorPage() {
                 </div>
                 <div className="flex flex-col gap-1">
                   <FieldLabel>End Frame Asset</FieldLabel>
-                  <select value={f2vEndAssetId} onChange={e => setF2vEndAssetId(e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+                  <select value={f2vEndAssetId} onChange={e => setF2vEndAssetId(e.target.value)} disabled={uploadedAssets.length === 0} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', opacity: uploadedAssets.length === 0 ? 0.5 : 1 }}>
                     <option value="">Select end asset...</option>
                     {uploadedAssets.map(asset => (
                       <option key={asset.mediaId} value={asset.mediaId}>{asset.label}</option>
