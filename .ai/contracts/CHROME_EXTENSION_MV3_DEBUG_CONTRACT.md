@@ -1,30 +1,47 @@
 # CHROME EXTENSION MV3 DEBUG CONTRACT
 
-This contract must be loaded for any debugging tasks involving the Chrome Extension.
+This contract is MANDATORY for all Chrome Extension Manifest V3 debugging tasks.
 
-## Mandatory Audit Points
+## Objective: Fix Common MV3 Issues
+- "message port closed before a response was received"
+- "listener indicated async response but channel closed"
+- Service worker lifecycle bugs
+- Content script stale tab bugs (after reload/update)
+- chrome.runtime.sendMessage / chrome.tabs.sendMessage race conditions
 
-You must audit the following areas for potential failure points:
+## MV3 HARD RULES for Debugging Agents
 
-1. **Message Passing:** `chrome.runtime.onMessage` listeners and `sendMessage` calls.
-2. **Lifecycle:** Service worker and content script lifecycle transitions.
-3. **Stale Contexts:** Already-open tabs with stale content scripts after extension reload.
-4. **Async Listeners:** Ensure listeners returning `true` for async `sendResponse` actually guarantee the response is sent.
-5. **Race Conditions:** Extension reload/update vs tab interaction.
+1. **Map Message Topology:**
+   - Map every sender/receiver pair.
+   - Use the Message Topology table below.
+
+2. **Audit Message Listeners:**
+   - Audit every `chrome.runtime.onMessage` listener.
+   - Check if the listener returns `true` for async paths.
+   - Check if `sendResponse` is GUARANTEED to be called on every path (even error paths).
+   - Check for async listeners returning a Promise accidentally (MV3 requires literal `true`).
+
+3. **Audit Message Senders:**
+   - Audit every `chrome.tabs.sendMessage` and `chrome.runtime.sendMessage` call.
+   - Check for missing callback/promise error handling (e.g., `chrome.runtime.lastError`).
+
+4. **Audit Lifecycle:**
+   - Check Service Worker lifecycle (is it suspended? does it have persistent state it shouldn't?).
+   - Check Content Script lifecycle in already-open tabs (stale scripts).
+   - Check Extension reload/update behavior.
+   - Check Tab reload/reinjection strategy.
 
 ## Required Audit Tables
 
 ### Message Topology
 | Sender | Receiver | API | File | Risk |
 |--------|----------|-----|------|------|
-|        |          |     |      |      |
 
 ### Listener Return Audit
 | File | Listener | async? | returns true? | sendResponse guaranteed? | Risk |
 |------|----------|--------|---------------|--------------------------|------|
-|      |          |        |               |                          |      |
 
-## Validation Requirements
-- Confirm behavior after `chrome.runtime.reload()`.
-- Test on a fresh tab and an existing tab.
-- Verify manifest permissions match API usage.
+## Patching & Validation
+- Patch ONLY the verified failure path.
+- Validate using the Extension Reload + Manual Protocol.
+- Report must follow the format in [.ai/contracts/ROOT_CAUSE_REPORT_FORMAT.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/contracts/ROOT_CAUSE_REPORT_FORMAT.md).

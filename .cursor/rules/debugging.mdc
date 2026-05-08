@@ -1,11 +1,12 @@
 ---
-description: Mandatory debugging workflow for any bug-related commands
+description: Mandatory MV3 debugging workflow for extension-related bugs
 globs: **/*
 ---
 
 # AI DEBUGGING CONTRACT ROUTER
 
-- Always apply the [.ai/keyword-router.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/keyword-router.md) when handling debugging requests.
-- Route all debugging commands ("fix this bug", "macam mana ni", etc.) to the contract defined in [.ai/contracts/DEBUG_CONTRACT.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/contracts/DEBUG_CONTRACT.md).
-- **FORBIDDEN:** Code-first patching without proven failure evidence.
-- Every debugging cycle must culminate in the report format specified in [.ai/contracts/ROOT_CAUSE_REPORT_FORMAT.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/contracts/ROOT_CAUSE_REPORT_FORMAT.md).
+- For any debugging request ("fix this bug", "error ni", etc.), automatically load [.ai/keyword-router.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/keyword-router.md).
+- Follow the protocols in [.ai/contracts/DEBUG_CONTRACT.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/contracts/DEBUG_CONTRACT.md).
+- For Chrome Extension MV3 issues, the [.ai/contracts/CHROME_EXTENSION_MV3_DEBUG_CONTRACT.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/contracts/CHROME_EXTENSION_MV3_DEBUG_CONTRACT.md) is MANDATORY.
+- **FORBIDDEN:** Patching code without verified failure path and listener/sender audit.
+- Conclusion must follow [.ai/contracts/ROOT_CAUSE_REPORT_FORMAT.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/contracts/ROOT_CAUSE_REPORT_FORMAT.md).
