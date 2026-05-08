@@ -46,6 +46,11 @@ class Request(BaseModel):
     error_message: Optional[str] = None
     automation_report: Optional[str] = None
     retry_count: int = 0
+    worker_stage: Optional[str] = None
+    last_heartbeat_at: Optional[str] = None
+    queued_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
     source_media_id: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
