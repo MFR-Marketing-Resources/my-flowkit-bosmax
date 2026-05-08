@@ -14,23 +14,12 @@ import type {
   ManualEntityType,
   Product,
   Request,
+  LocalAgentStatus,
+  TelemetrySummary,
 } from '../types'
 import { useWebSocketContext } from '../contexts/WebSocketContext'
 import OperatorManual from '../components/operator/OperatorManual'
 
-type TelemetrySummary = {
-  total_today: number
-  queued: number
-  processing: number
-  waiting_flow: number
-  flow_running: number
-  completed: number
-  failed: number
-  last_job_status: string
-  last_stage: string
-  last_error: string
-  idle_seconds: number
-}
 
 function TelemetryDashboard({ summary }: { summary: TelemetrySummary | null }) {
   if (!summary) return null
@@ -368,6 +357,97 @@ function mergeUniqueAssets(items: UploadedAsset[]) {
   return Array.from(byMediaId.values())
 }
 
+export function SystemHealthPanel({
+  telemetry,
+  agentStatus,
+  checkingAgent,
+  smokeTesting,
+  diagnosing,
+  extensionConnected,
+  onCheckAgent,
+  onRefreshTelemetry,
+  onRunSelfTest,
+  onRunSmokeTest,
+  onExportDiagnostics
+}: {
+  telemetry: TelemetrySummary | null
+  agentStatus: LocalAgentStatus | null
+  checkingAgent: boolean
+  smokeTesting: boolean
+  diagnosing: boolean
+  extensionConnected: boolean
+  onCheckAgent: () => void
+  onRefreshTelemetry: () => void
+  onRunSelfTest: () => void
+  onRunSmokeTest: () => void
+  onExportDiagnostics: () => void
+}) {
+  return (
+    <Card className="border-blue-900/30" style={{ background: 'rgba(30,58,138,0.05)' }}>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--text)' }}>
+          <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+          System Health & Smoke Test
+        </h3>
+        <div className="flex items-center gap-2">
+          <button onClick={onCheckAgent} disabled={checkingAgent} className="text-[10px] px-2 py-1 rounded bg-gray-800 border border-gray-700 hover:border-blue-500 transition-all">
+            {checkingAgent ? 'Checking...' : 'Check Local Agent'}
+          </button>
+          <button onClick={onExportDiagnostics} disabled={diagnosing} className="text-[10px] px-2 py-1 rounded bg-gray-800 border border-gray-700 hover:border-blue-500 transition-all">
+            {diagnosing ? 'Exporting...' : 'Diagnostics Bundle'}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+        <div className="p-2 rounded bg-black/20 border border-white/5">
+          <div className="text-[8px] uppercase opacity-50">Local Agent</div>
+          <div className={`text-xs font-bold ${agentStatus ? 'text-green-400' : 'text-yellow-400'}`}>
+            {agentStatus ? 'ONLINE' : 'UNKNOWN'}
+          </div>
+        </div>
+        <div className="p-2 rounded bg-black/20 border border-white/5">
+          <div className="text-[8px] uppercase opacity-50">Extension</div>
+          <div className={`text-xs font-bold ${extensionConnected ? 'text-green-400' : 'text-red-400'}`}>
+            {extensionConnected ? 'CONNECTED' : 'OFFLINE'}
+          </div>
+        </div>
+        <div className="p-2 rounded bg-black/20 border border-white/5">
+          <div className="text-[8px] uppercase opacity-50">Serving Mode</div>
+          <div className="text-xs font-bold truncate">{agentStatus?.dashboard_serving_mode || '-'}</div>
+        </div>
+        <div className="p-2 rounded bg-black/20 border border-white/5">
+          <div className="text-[8px] uppercase opacity-50">Last Heartbeat</div>
+          <div className="text-xs font-mono">{telemetry?.last_stage ? new Date().toLocaleTimeString() : '-'}</div>
+        </div>
+      </div>
+
+      <div className="flex gap-2 flex-wrap mb-4">
+        <button onClick={onRefreshTelemetry} className="px-3 py-1.5 rounded text-[10px] font-bold bg-blue-600/20 text-blue-400 border border-blue-800/50 hover:bg-blue-600/30 transition-all">
+          Refresh Telemetry
+        </button>
+        <button onClick={onRunSelfTest} className="px-3 py-1.5 rounded text-[10px] font-bold bg-green-600/20 text-green-400 border border-green-800/50 hover:bg-green-600/30 transition-all">
+          Run Telemetry Self-Test
+        </button>
+        <button onClick={onRunSmokeTest} disabled={smokeTesting} className="px-3 py-1.5 rounded text-[10px] font-bold bg-purple-600/20 text-purple-400 border border-purple-800/50 hover:bg-purple-600/30 transition-all">
+          {smokeTesting ? 'Smoke Test Running...' : 'Run First F2V Smoke Test'}
+        </button>
+      </div>
+
+      {telemetry && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-2 rounded bg-black/10 border border-white/5 text-[10px]">
+          <div><span className="opacity-50">Total Today:</span> <span className="font-mono text-blue-400">{telemetry.total_today}</span></div>
+          <div><span className="opacity-50">Completed:</span> <span className="font-mono text-green-400">{telemetry.completed}</span></div>
+          <div><span className="opacity-50">Failed:</span> <span className="font-mono text-red-400">{telemetry.failed}</span></div>
+          <div><span className="opacity-50">Processing:</span> <span className="font-mono text-blue-300 animate-pulse">{telemetry.processing}</span></div>
+          <div><span className="opacity-50">Avg Idle:</span> <span className="font-mono">{telemetry.idle_seconds}s</span></div>
+          <div><span className="opacity-50">Last Stage:</span> <span className="font-bold text-accent">{telemetry.last_stage || 'IDLE'}</span></div>
+        </div>
+      )}
+    </Card>
+  )
+}
+
 export default function OperatorPage() {
   const [pack, setPack] = useState<ContentPackSummary | null>(null)
   const [form, setForm] = useState<OperatorForm>(emptyForm)
@@ -405,6 +485,10 @@ export default function OperatorPage() {
   const [recentRequests, setRecentRequests] = useState<Request[]>([])
   const [hoveredMode, setHoveredMode] = useState<string | null>(null)
   const [telemetry, setTelemetry] = useState<TelemetrySummary | null>(null)
+  const [agentStatus, setAgentStatus] = useState<LocalAgentStatus | null>(null)
+  const [checkingAgent, setCheckingAgent] = useState(false)
+  const [smokeTesting, setSmokeTesting] = useState(false)
+  const [diagnosing, setDiagnosing] = useState(false)
   const [allProjects, setAllProjects] = useState<Project[]>([])
   const [allVideos, setAllVideos] = useState<Video[]>([])
   const [fetchingProjects, setFetchingProjects] = useState(false)
@@ -601,6 +685,65 @@ export default function OperatorPage() {
   async function selectVideo(v: Video) {
     if (!created) return
     setCreated({ ...created, video: v })
+  }
+
+  async function checkAgent() {
+    setCheckingAgent(true)
+    try {
+      const status = await fetchAPI<LocalAgentStatus>('/api/local-agent/status')
+      setAgentStatus(status)
+      setMessage('Local Agent status refreshed.')
+    } catch (err) {
+      setMessage(`Agent check failed: ${String(err)}`)
+    } finally {
+      setCheckingAgent(false)
+    }
+  }
+
+  async function runTelemetrySelfTest() {
+    try {
+      const res = await postAPI<any>('/api/telemetry/self-test', {})
+      setMessage(`Telemetry self-test: ${res.ok ? 'PASS' : 'FAIL'} (ID: ${res.test_id})`)
+    } catch (err) {
+      setMessage(`Self-test failed: ${String(err)}`)
+    }
+  }
+
+  async function runF2VSmokeTest() {
+    setSmokeTesting(true)
+    try {
+      const res = await postAPI<any>('/api/smoke/true-f2v', {})
+      if (res.ok) {
+        setMessage(`Smoke test triggered: ${res.product} | Request ID: ${res.request_id}`)
+      } else {
+        setMessage(`Smoke test blocker: ${res.message} (${res.error})`)
+      }
+    } catch (err) {
+      setMessage(`Smoke test failed: ${String(err)}`)
+    } finally {
+      setSmokeTesting(false)
+    }
+  }
+
+  async function exportDiagnostics() {
+    setDiagnosing(true)
+    try {
+      const bundle = await postAPI<any>('/api/diagnostics/export', {})
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `flowkit_diagnostics_${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setMessage('Diagnostics bundle exported successfully.')
+    } catch (err) {
+      setMessage(`Export failed: ${String(err)}`)
+    } finally {
+      setDiagnosing(false)
+    }
   }
 
   async function buildBlueprint() {
@@ -1005,13 +1148,29 @@ export default function OperatorPage() {
     <div className="flex flex-col gap-4 max-w-5xl mx-auto p-4 sm:p-6 pb-24">
       <TelemetryDashboard summary={telemetry} />
 
-      <Card className="border-blue-500/20" style={{ background: 'linear-gradient(135deg, rgba(59,130,246,0.05), rgba(59,130,246,0.01))' }}>
-      {message && (
-        <div className="rounded px-3 py-2 text-xs" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
-          {message}
-        </div>
-      )}
+      <SystemHealthPanel
+        telemetry={telemetry}
+        agentStatus={agentStatus}
+        checkingAgent={checkingAgent}
+        smokeTesting={smokeTesting}
+        diagnosing={diagnosing}
+        extensionConnected={extensionConnected}
+        onCheckAgent={checkAgent}
+        onRefreshTelemetry={() => {
+          fetchAPI<TelemetrySummary>('/api/telemetry/summary').then(setTelemetry)
+        }}
+        onRunSelfTest={runTelemetrySelfTest}
+        onRunSmokeTest={runF2VSmokeTest}
+        onExportDiagnostics={exportDiagnostics}
+      />
 
+      <Card className="border-blue-500/20" style={{ background: 'linear-gradient(135deg, rgba(59,130,246,0.05), rgba(59,130,246,0.01))' }}>
+        {message && (
+          <div className="rounded px-3 py-2 text-xs" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+            {message}
+          </div>
+        )}
+      </Card>
 
       <Card>
         <div className="flex items-center justify-between">

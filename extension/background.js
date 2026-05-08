@@ -603,6 +603,27 @@ async function handleMessage(msg, sender) {
   }
 
   if (msg.type === 'REQUEST_LOG') {
+    // If we have history on local agent, try to merge or prefer it
+    try {
+      const resp = await fetch('http://127.0.0.1:8100/api/requests/snapshot?project_id=any&limit=20');
+      if (resp.ok) {
+        const history = await resp.json();
+        if (history && history.length > 0) {
+          // Map backend Requests to extension log format if needed
+          const merged = history.map(r => ({
+            id: r.id,
+            type: r.type,
+            time: r.created_at,
+            status: r.status,
+            error: r.error_message || '',
+            isBackend: true
+          }));
+          return { log: merged };
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to sync history from agent:', e);
+    }
     return { log: requestLog };
   }
 

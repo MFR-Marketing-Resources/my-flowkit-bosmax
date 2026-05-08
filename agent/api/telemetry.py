@@ -80,3 +80,28 @@ async def add_stage(event: StageEventCreate):
         event.message, 
         event.source
     )
+
+@router.post("/self-test")
+async def telemetry_self_test():
+    test_id = f"test-{crud._uuid()[:8]}"
+    await crud.upsert_request_telemetry(
+        test_id,
+        request_type="TELEMETRY_SELF_TEST",
+        status="COMPLETED",
+        google_flow_stage="SELF_TEST_PASSED",
+        completed_at=crud._now()
+    )
+    await crud.add_stage_event(
+        test_id,
+        "TELEMETRY_SELF_TEST",
+        "PASS",
+        "Harmless telemetry self-test event generated.",
+        "SYSTEM"
+    )
+    return {
+        "ok": True,
+        "stage": "TELEMETRY_SELF_TEST",
+        "request_logged": True,
+        "summary_updated": True,
+        "test_id": test_id
+    }

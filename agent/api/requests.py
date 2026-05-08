@@ -145,7 +145,8 @@ async def batch_status(video_id: str = None, project_id: str = None,
 @router.get("/snapshot", response_model=list[Request])
 async def snapshot(project_id: str, limit: int = 5):
     """Get the N most recent requests for a project."""
-    return await crud.list_requests(project_id=project_id, limit=limit)
+    pid = None if project_id == 'any' else project_id
+    return await crud.list_requests(project_id=pid, limit=limit)
 
 
 @router.get("/{rid}", response_model=Request)

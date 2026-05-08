@@ -449,14 +449,33 @@ document.getElementById('btn-dashboard').addEventListener('click', async () => {
   summaryEl.textContent = `Local Agent offline. Run installer: ${LOCAL_AGENT_REPAIR_COMMAND}`;
 });
 
-document.getElementById('btn-token').addEventListener('click', () => {
-  const btn = document.getElementById('btn-token');
-  btn.textContent = 'Opening...';
-  btn.disabled = true;
-  sendRuntimeMessageSafe({ type: 'REFRESH_TOKEN' }, () => {
-    btn.textContent = 'Refresh Token';
-    btn.disabled = false;
-  });
+document.getElementById('btn-agent-check').addEventListener('click', () => {
+  fetchLocalAgentStatus();
+  fetchDashboardStatus();
+  fetchOperatorPack();
+});
+
+document.getElementById('btn-telemetry-refresh').addEventListener('click', () => {
+  fetchLog();
+});
+
+document.getElementById('btn-diag-export').addEventListener('click', async () => {
+  try {
+    const res = await fetch(`${LOCAL_AGENT_BASE}/api/diagnostics/export`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const bundle = await res.json();
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `flowkit_diagnostics_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(`Export failed: ${err.message}`);
+  }
 });
 
 // ── Init ─────────────────────────────────────────────────────

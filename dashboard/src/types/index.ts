@@ -241,3 +241,35 @@ export interface Product {
   created_at: string
   updated_at: string
 }
+
+export interface LocalAgentRegistration {
+  operator_id: string | null
+  device_id: string
+  approval_status: string
+  license_status: string
+  registered_at: string | null
+  updated_at: string
+}
+
+export interface LocalAgentStatus {
+  task_name: string
+  health_url: string
+  dashboard_url: string
+  dashboard_serving_mode: string
+  repair_command: string
+  registration: LocalAgentRegistration
+}
+
+export interface TelemetrySummary {
+  total_today: number
+  queued: number
+  processing: number
+  waiting_flow: number
+  flow_running: number
+  completed: number
+  failed: number
+  last_job_status: string
+  last_stage: string
+  last_error: string
+  idle_seconds: number
+}
