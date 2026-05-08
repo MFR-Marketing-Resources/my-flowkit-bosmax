@@ -144,12 +144,12 @@ export default function OperatorManual({
           />
           <ModeCard
             title="4. True F2V / Start + End Frames"
-            status="NOT WIRED YET"
-            type="GENERATE_VIDEO with end_image_media_id"
-            useWhen="Expected backend path: end_image_media_id / end_scene_media_id"
-            required="Missing UI: explicit start-frame selector and end-frame selector."
-            button="Button not available"
-            warning="Do not use GENERATE_VIDEO_REFS as F2V."
+            status="WIRED IN OPERATOR"
+            type="GENERATE_VIDEO + end_scene_media_id"
+            useWhen="transitioning between a specific start frame and end frame."
+            required="created project, target scene, uploaded start asset, uploaded end asset, video prompt."
+            button="Submit True F2V / Start + End Frames"
+            warning="Chrome DOM automation: still LIVE TEST REQUIRED."
           />
           <ModeCard
             title="5. Direct T2V"

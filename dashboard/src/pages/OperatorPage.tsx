@@ -140,6 +140,8 @@ export default function OperatorPage() {
   const [manualEntityType, setManualEntityType] = useState<ManualEntityType>('visual_asset')
   const [selectedSceneId, setSelectedSceneId] = useState('')
   const [manualPrompt, setManualPrompt] = useState('')
+  const [f2vStartAssetId, setF2vStartAssetId] = useState('')
+  const [f2vEndAssetId, setF2vEndAssetId] = useState('')
 
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
 
@@ -400,20 +402,26 @@ export default function OperatorPage() {
     }
   }
 
-  async function submitManual(mode: 'EDIT_IMAGE' | 'GENERATE_VIDEO' | 'GENERATE_VIDEO_REFS') {
+  async function submitManual(mode: 'EDIT_IMAGE' | 'GENERATE_VIDEO' | 'GENERATE_VIDEO_REFS' | 'TRUE_F2V') {
     if (!created) return
     if (!selectedSceneId) {
       setMessage('Select a target scene first.')
-      return
-    }
-    if (uploadedAssets.length === 0) {
-      setMessage('Upload at least one photo first.')
       return
     }
 
     const scene = videoScenes.find(item => item.id === selectedSceneId)
     if (!scene) {
       setMessage('Selected scene not found.')
+      return
+    }
+
+    if (mode === 'TRUE_F2V') {
+      if (!f2vStartAssetId || !f2vEndAssetId) {
+        setMessage('Select both Start and End assets for True F2V.')
+        return
+      }
+    } else if (uploadedAssets.length === 0) {
+      setMessage('Upload at least one photo first.')
       return
     }
 
@@ -428,7 +436,7 @@ export default function OperatorPage() {
         scenePatch.image_prompt = prompt
       }
 
-      if ((mode === 'GENERATE_VIDEO' || mode === 'GENERATE_VIDEO_REFS') && prompt) {
+      if ((mode === 'GENERATE_VIDEO' || mode === 'GENERATE_VIDEO_REFS' || mode === 'TRUE_F2V') && prompt) {
         scenePatch.video_prompt = prompt
       }
 
@@ -439,6 +447,18 @@ export default function OperatorPage() {
         } else {
           scenePatch.horizontal_image_media_id = uploadedAssets[0].mediaId
           scenePatch.horizontal_image_status = 'COMPLETED'
+        }
+      }
+
+      if (mode === 'TRUE_F2V') {
+        if (form.orientation === 'VERTICAL') {
+          scenePatch.vertical_image_media_id = f2vStartAssetId
+          scenePatch.vertical_image_status = 'COMPLETED'
+          scenePatch.vertical_end_scene_media_id = f2vEndAssetId
+        } else {
+          scenePatch.horizontal_image_media_id = f2vStartAssetId
+          scenePatch.horizontal_image_status = 'COMPLETED'
+          scenePatch.horizontal_end_scene_media_id = f2vEndAssetId
         }
       }
 
@@ -454,9 +474,11 @@ export default function OperatorPage() {
         await patchAPI<Scene>(`/api/scenes/${scene.id}`, scenePatch)
       }
 
+      const requestType = mode === 'TRUE_F2V' ? 'GENERATE_VIDEO' : mode
+
       await postAPI('/api/requests/batch', {
         requests: [{
-          type: mode,
+          type: requestType,
           project_id: created.project.id,
           video_id: created.video.id,
           scene_id: scene.id,
@@ -465,8 +487,8 @@ export default function OperatorPage() {
         }],
       })
 
-      setActiveBatchType(mode)
-      const status = await fetchAPI<BatchStatus>(`/api/requests/batch-status?video_id=${created.video.id}&type=${mode}&orientation=${form.orientation}`)
+      setActiveBatchType(requestType)
+      const status = await fetchAPI<BatchStatus>(`/api/requests/batch-status?video_id=${created.video.id}&type=${requestType}&orientation=${form.orientation}`)
       setBatchStatus(status)
       await refreshCreatedResources(created)
 
@@ -474,6 +496,7 @@ export default function OperatorPage() {
         EDIT_IMAGE: 'IMG / Edit Image submit sent with uploaded base photo.',
         GENERATE_VIDEO: 'I2V submit sent with uploaded start frame.',
         GENERATE_VIDEO_REFS: 'Ingredients / Refs to Video submit sent with uploaded reference photos.',
+        TRUE_F2V: 'True F2V submit sent with explicit Start and End frames.',
       }
       setMessage(labels[mode])
     } catch (err) {
@@ -713,8 +736,8 @@ export default function OperatorPage() {
         </div>
         <div className="rounded p-3 text-xs grid gap-1" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
           <div style={{ color: 'var(--text)' }}>Operator lane status</div>
-          <div>Supported now: `IMG / Edit Image`, `I2V / Start Image to Video`, `Ingredients / Refs to Video`.</div>
-          <div>Not wired yet: `True F2V / Start + End Frames`, `Direct T2V`.</div>
+          <div>Supported now: `IMG / Edit Image`, `I2V / Start Image to Video`, `Ingredients / Refs to Video`, `True F2V / Start + End Frames`.</div>
+          <div>Direct T2V: NOT WIRED / NOT NATIVE.</div>
           <div>Do not confuse `Ingredients / Refs to Video` with true `F2V` start-plus-end frame generation.</div>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -776,8 +799,8 @@ export default function OperatorPage() {
         ) : (
           <>
             <div className="rounded p-3 text-xs grid gap-1" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
-              <div>Supported here: `Submit IMG / Edit Image`, `Submit I2V - Start Image to Video`, `Submit Ingredients / Refs to Video`.</div>
-              <div>`True F2V / Start + End Frames` is not wired into this panel because there is no end-frame field exposed here yet.</div>
+              <div>Supported here: `Submit IMG`, `Submit I2V`, `Submit Ingredients / Refs`, `Submit True F2V`.</div>
+              <div>`True F2V` requires explicit selection of Start and End frame assets from your uploads.</div>
             </div>
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
               <div className="flex flex-col gap-1">
@@ -832,6 +855,33 @@ export default function OperatorPage() {
               </button>
               <button onClick={() => submitManual('GENERATE_VIDEO_REFS')} disabled={submittingManual || uploadedAssets.length === 0 || !selectedSceneId} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'rgba(245,158,11,0.14)', color: 'var(--yellow)', border: '1px solid var(--border)' }}>
                 Submit Ingredients / Refs to Video
+              </button>
+            </div>
+
+            <div className="rounded p-3 flex flex-col gap-3" style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.2)' }}>
+              <div className="text-xs font-bold" style={{ color: 'var(--accent)' }}>True F2V / Start + End Frames</div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1">
+                  <FieldLabel>Start Frame Asset</FieldLabel>
+                  <select value={f2vStartAssetId} onChange={e => setF2vStartAssetId(e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+                    <option value="">Select start asset...</option>
+                    {uploadedAssets.map(asset => (
+                      <option key={asset.mediaId} value={asset.mediaId}>{asset.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <FieldLabel>End Frame Asset</FieldLabel>
+                  <select value={f2vEndAssetId} onChange={e => setF2vEndAssetId(e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+                    <option value="">Select end asset...</option>
+                    {uploadedAssets.map(asset => (
+                      <option key={asset.mediaId} value={asset.mediaId}>{asset.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <button onClick={() => submitManual('TRUE_F2V')} disabled={submittingManual || !f2vStartAssetId || !f2vEndAssetId || !selectedSceneId} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'rgba(168,85,247,0.14)', color: 'var(--accent)', border: '1px solid rgba(168,85,247,0.4)' }}>
+                Submit True F2V / Start + End Frames
               </button>
             </div>
 
