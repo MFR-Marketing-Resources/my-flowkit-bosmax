@@ -16,4 +16,5 @@ AGENTS.md
 GEMINI.md
 .fk-setup.json
 .venv/
-.pytest_cache/
+.pytest_cache/
+.local-agent/

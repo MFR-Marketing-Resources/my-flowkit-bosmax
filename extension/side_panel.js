@@ -36,6 +36,17 @@ const TYPE_LABELS = {
   API:                      'API',
 };
 
+const LOCAL_AGENT_BASE = 'http://127.0.0.1:8100';
+const LOCAL_AGENT_DASHBOARD_URL = `${LOCAL_AGENT_BASE}/operator`;
+const LOCAL_AGENT_STATUS_URL = `${LOCAL_AGENT_BASE}/api/local-agent/status`;
+const LOCAL_AGENT_CONTENT_PACK_URL = `${LOCAL_AGENT_BASE}/api/operator/content-pack`;
+const LOCAL_AGENT_REPAIR_COMMAND = '.\\scripts\\install-local-agent.ps1';
+
+let _localAgentStatus = null;
+let _localAgentError = null;
+let _operatorPack = null;
+let _operatorPackError = null;
+
 function formatType(type) {
   if (!type) return '—';
   return TYPE_LABELS[type] || type.slice(0, 5).toUpperCase();
@@ -256,36 +267,112 @@ function sendRuntimeMessageSafe(message, onResponse) {
   });
 }
 
-async function fetchOperatorPack() {
+function applyAgentBadge(mode) {
   const statusEl = document.getElementById('operator-pack-status');
+  if (mode === 'online') {
+    statusEl.textContent = 'online';
+    statusEl.style.background = 'rgba(34,197,94,0.15)';
+    statusEl.style.color = 'var(--green)';
+    return;
+  }
+  if (mode === 'repair') {
+    statusEl.textContent = 'repair';
+    statusEl.style.background = 'rgba(245,158,11,0.15)';
+    statusEl.style.color = 'var(--yellow)';
+    return;
+  }
+  statusEl.textContent = 'offline';
+  statusEl.style.background = 'rgba(239,68,68,0.15)';
+  statusEl.style.color = 'var(--red)';
+}
+
+function renderLocalAgentPanel() {
   const summaryEl = document.getElementById('operator-summary');
   const productsEl = document.getElementById('operator-products');
   const enginesEl = document.getElementById('operator-engines');
   const silosEl = document.getElementById('operator-silos');
 
-  try {
-    const res = await fetch('http://127.0.0.1:8100/api/operator/content-pack');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-
-    productsEl.textContent = String((data.products || []).length);
-    enginesEl.textContent = String((data.engines || []).length);
-    silosEl.textContent = String((data.silos || []).length);
-    statusEl.textContent = data.available ? 'ready' : 'missing';
-    statusEl.style.background = data.available ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
-    statusEl.style.color = data.available ? 'var(--green)' : 'var(--red)';
-
-    const notes = Array.isArray(data.notes) ? data.notes : [];
-    summaryEl.textContent = notes[0] || 'Operator pack loaded. Open Upload Submit to create projects, upload photos, and submit IMG, I2V, or F2V.';
-  } catch (error) {
+  if (_operatorPack) {
+    productsEl.textContent = String((_operatorPack.products || []).length);
+    enginesEl.textContent = String((_operatorPack.engines || []).length);
+    silosEl.textContent = String((_operatorPack.silos || []).length);
+  } else {
     productsEl.textContent = '0';
     enginesEl.textContent = '0';
     silosEl.textContent = '0';
-    statusEl.textContent = 'offline';
-    statusEl.style.background = 'rgba(239,68,68,0.15)';
-    statusEl.style.color = 'var(--red)';
-    summaryEl.textContent = `Operator API unavailable: ${String(error.message || error)}. Ensure backend is running on port 8100.`;
   }
+
+  if (!_localAgentStatus) {
+    applyAgentBadge('offline');
+    summaryEl.textContent = `Local Agent offline. Run installer: ${LOCAL_AGENT_REPAIR_COMMAND}`;
+    return;
+  }
+
+  const registration = _localAgentStatus.registration || {};
+  const approval = registration.approval_status || 'UNKNOWN';
+  const license = registration.license_status || 'UNKNOWN';
+  const deviceId = registration.device_id || 'unassigned';
+  const notes = Array.isArray(_operatorPack?.notes) ? _operatorPack.notes : [];
+  const lead = _operatorPackError
+    ? `Local Agent online, but operator content pack is unavailable: ${_operatorPackError}.`
+    : (notes[0] || `Local Agent online. Dashboard is served from ${_localAgentStatus.dashboard_url}.`);
+
+  if (_operatorPack && _operatorPack.available) {
+    applyAgentBadge('online');
+  } else {
+    applyAgentBadge('repair');
+  }
+
+  summaryEl.textContent = `${lead} Approval ${approval}. License ${license}. Device ${deviceId}.`;
+}
+
+async function fetchLocalAgentStatus() {
+  try {
+    const res = await fetch(LOCAL_AGENT_STATUS_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _localAgentStatus = await res.json();
+    _localAgentError = null;
+  } catch (error) {
+    _localAgentStatus = null;
+    _localAgentError = String(error?.message || error);
+  }
+  renderLocalAgentPanel();
+}
+
+async function fetchOperatorPack() {
+  try {
+    const res = await fetch(LOCAL_AGENT_CONTENT_PACK_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _operatorPack = await res.json();
+    _operatorPackError = null;
+  } catch (error) {
+    _operatorPack = null;
+    _operatorPackError = String(error?.message || error);
+  }
+
+  renderLocalAgentPanel();
+}
+
+function buildRepairPageUrl() {
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <title>BOSMAX Local Agent Repair</title>
+      <style>
+        body { font-family: Consolas, monospace; background: #0f172a; color: #e2e8f0; padding: 32px; }
+        code { display: block; margin: 16px 0; padding: 14px; background: #020617; border-radius: 10px; white-space: pre-wrap; }
+      </style>
+    </head>
+    <body>
+      <h1>Repair Local Agent</h1>
+      <p>Run this command from the repository root:</p>
+      <code>${LOCAL_AGENT_REPAIR_COMMAND}</code>
+      <p>Expected dashboard URL: ${LOCAL_AGENT_DASHBOARD_URL}</p>
+    </body>
+    </html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
 // ── Message listener (push updates) ─────────────────────────
@@ -315,11 +402,11 @@ document.getElementById('btn-flow').addEventListener('click', () => {
 });
 
 document.getElementById('btn-operator').addEventListener('click', async () => {
-  await chrome.tabs.create({ url: 'http://127.0.0.1:5173/operator' });
+  await chrome.tabs.create({ url: LOCAL_AGENT_DASHBOARD_URL });
 });
 
 document.getElementById('btn-dashboard').addEventListener('click', async () => {
-  await chrome.tabs.create({ url: 'http://127.0.0.1:5173/' });
+  await chrome.tabs.create({ url: buildRepairPageUrl() });
 });
 
 document.getElementById('btn-token').addEventListener('click', () => {
@@ -337,5 +424,6 @@ document.getElementById('btn-token').addEventListener('click', () => {
 document.addEventListener('DOMContentLoaded', () => {
   fetchStatus();
   fetchLog();
+  fetchLocalAgentStatus();
   fetchOperatorPack();
 });

@@ -4,12 +4,14 @@ import json
 import logging
 import signal
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import websockets
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 
-from agent.config import API_HOST, API_PORT, WS_HOST, WS_PORT
+from agent.config import API_HOST, API_PORT, BASE_DIR, WS_HOST, WS_PORT
 from agent.db.schema import init_db, close_db
 from agent.api.characters import router as characters_router
 from agent.api.projects import router as projects_router
@@ -23,6 +25,13 @@ from agent.api.materials import router as materials_router
 from agent.api.music import router as music_router
 from agent.api.models import router as models_router
 from agent.api.active_project import router as active_project_router
+from agent.api.local_agent import (
+    LOCAL_AGENT_DASHBOARD_URL,
+    LOCAL_AGENT_REPAIR_COMMAND,
+    get_dashboard_serving_mode,
+    load_registration,
+    router as local_agent_router,
+)
 from agent.api.operator import router as operator_router
 from agent.worker.processor import get_worker_controller
 from agent.services.flow_client import get_flow_client
@@ -134,6 +143,7 @@ app.include_router(materials_router, prefix="/api")
 app.include_router(music_router, prefix="/api")
 app.include_router(models_router)
 app.include_router(active_project_router)
+app.include_router(local_agent_router)
 app.include_router(operator_router)
 
 
@@ -170,6 +180,7 @@ async def ext_callback(request: Request):
 async def health():
     client = get_flow_client()
     extension_status = await client.get_status()
+    registration = load_registration()
     return {
         "status": "ok",
         "version": "0.2.0",
@@ -179,6 +190,10 @@ async def health():
         "extension_manual_disconnect": bool(extension_status.get("manualDisconnect")),
         "extension_metrics": extension_status.get("metrics", {}),
         "extension_status_error": extension_status.get("error"),
+        "dashboard_serving_mode": get_dashboard_serving_mode(),
+        "dashboard_url": LOCAL_AGENT_DASHBOARD_URL,
+        "repair_command": LOCAL_AGENT_REPAIR_COMMAND,
+        "registration": registration.model_dump(),
         "ws": client.ws_stats,
     }
 
@@ -233,6 +248,50 @@ async def dashboard_ws(websocket: WebSocket):
         logger.debug("Dashboard WS client disconnected: %s", e)
     finally:
         event_bus.unsubscribe(q)
+
+
+_DASHBOARD_DIST_DIR = BASE_DIR / "dashboard" / "dist"
+_DASHBOARD_INDEX_FILE = _DASHBOARD_DIST_DIR / "index.html"
+
+
+def _resolve_dashboard_asset(path: str) -> Path | None:
+    if not path:
+        return None
+
+    candidate = (_DASHBOARD_DIST_DIR / path).resolve()
+    try:
+        candidate.relative_to(_DASHBOARD_DIST_DIR.resolve())
+    except ValueError:
+        return None
+
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+@app.get("/")
+@app.get("/operator")
+@app.get("/dashboard")
+@app.get("/{full_path:path}")
+async def dashboard_app(full_path: str = ""):
+    if full_path.startswith(("api/", "api", "ws/", "ws")):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+    if not _DASHBOARD_INDEX_FILE.exists():
+        return JSONResponse(
+            {
+                "status": "build_required",
+                "message": "Dashboard production bundle is missing. Run .\\scripts\\install-local-agent.ps1.",
+                "expected_bundle": str(_DASHBOARD_INDEX_FILE),
+            },
+            status_code=503,
+        )
+
+    asset = _resolve_dashboard_asset(full_path)
+    if asset:
+        return FileResponse(asset)
+
+    return FileResponse(_DASHBOARD_INDEX_FILE)
 
 
 if __name__ == "__main__":
