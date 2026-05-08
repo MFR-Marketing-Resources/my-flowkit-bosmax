@@ -54,3 +54,11 @@ curl -s http://127.0.0.1:8100/health
 | `/fk-thumbnail-guide` | Thumbnail design reference |
 | `/fk-import-voice` | Import existing voice template |
 | `/fk-dashboard` | Live statusline setup |
+
+## AI DEBUGGING CONTRACT ROUTER
+- **Follow the Router:** Follow the instructions in [.ai/keyword-router.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/keyword-router.md) for all debugging requests.
+- **Execute Contract:** You must EXECUTE the contract steps in [.ai/contracts/DEBUG_CONTRACT.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/contracts/DEBUG_CONTRACT.md), not just summarize them.
+- **No Broad Rewrites:** Avoid broad rewrites; focus only on the minimal patch required.
+- **Evidence-Based:** Produce exact file, function, and root-cause evidence before proposing any changes.
+- **Validation Summary:** Always provide a command/test output summary to prove the fix.
+

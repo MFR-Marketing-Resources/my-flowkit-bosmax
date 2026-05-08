@@ -1,0 +1,11 @@
+---
+description: Mandatory debugging workflow for any bug-related commands
+globs: **/*
+---
+
+# AI DEBUGGING CONTRACT ROUTER
+
+- Always apply the [.ai/keyword-router.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/keyword-router.md) when handling debugging requests.
+- Route all debugging commands ("fix this bug", "macam mana ni", etc.) to the contract defined in [.ai/contracts/DEBUG_CONTRACT.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/contracts/DEBUG_CONTRACT.md).
+- **FORBIDDEN:** Code-first patching without proven failure evidence.
+- Every debugging cycle must culminate in the report format specified in [.ai/contracts/ROOT_CAUSE_REPORT_FORMAT.md](file:///c:/Users/USER/Desktop/_ref_flowkit/.ai/contracts/ROOT_CAUSE_REPORT_FORMAT.md).
