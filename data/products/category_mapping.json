@@ -1,0 +1,22 @@
+{
+  "diaper": {
+    "category": "Baby & Maternity",
+    "subcategory": "Baby Care & Health",
+    "type": "Diapers"
+  },
+  "milk": {
+    "category": "Food & Beverages",
+    "subcategory": "Dairy",
+    "type": "Milk"
+  },
+  "toy": {
+    "category": "Toys & Hobbies",
+    "subcategory": "Learning Toys",
+    "type": "Educational Toy"
+  },
+  "clothing": {
+    "category": "Fashion",
+    "subcategory": "Kids Clothing",
+    "type": "Apparel"
+  }
+}

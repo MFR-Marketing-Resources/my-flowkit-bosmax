@@ -153,11 +153,36 @@ CREATE TABLE IF NOT EXISTS request (
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS product (
+    id                  TEXT PRIMARY KEY,
+    source              TEXT NOT NULL DEFAULT 'FASTMOSS' CHECK(source IN ('FASTMOSS','MANUAL_PROJECT')),
+    raw_product_title   TEXT NOT NULL,
+    product_display_name TEXT NOT NULL,
+    product_short_name  TEXT NOT NULL,
+    category            TEXT,
+    subcategory         TEXT,
+    type                TEXT,
+    shop_name           TEXT,
+    price_min           REAL,
+    price_max           REAL,
+    commission          TEXT,
+    image_url           TEXT,
+    tiktok_product_url  TEXT,
+    fastmoss_source_file TEXT,
+    asset_status        TEXT NOT NULL DEFAULT 'UNRESOLVED' CHECK(asset_status IN ('UNRESOLVED','DOWNLOADED','UPLOADED_TO_FLOW')),
+    media_id            TEXT, -- Google Flow media_id after upload
+    local_image_path    TEXT, -- Path to cached image
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_scene_video ON scene(video_id);
 CREATE INDEX IF NOT EXISTS idx_scene_order ON scene(video_id, display_order);
 CREATE INDEX IF NOT EXISTS idx_request_status ON request(status);
 CREATE INDEX IF NOT EXISTS idx_request_scene ON request(scene_id);
 CREATE INDEX IF NOT EXISTS idx_video_project ON video(project_id);
+CREATE INDEX IF NOT EXISTS idx_product_source ON product(source);
+CREATE INDEX IF NOT EXISTS idx_product_name ON product(product_short_name);
 """
 
 

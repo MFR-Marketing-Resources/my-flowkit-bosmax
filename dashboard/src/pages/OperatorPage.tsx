@@ -81,6 +81,91 @@ function FieldLabel({ children }: { children: string }) {
   return <label className="text-xs font-bold" style={{ color: 'var(--muted)' }}>{children}</label>
 }
 
+
+function SearchableSelect<T>({
+  options,
+  value,
+  onChange,
+  getLabel,
+  getSublabel,
+  placeholder = 'Search...',
+  maxHeight = '260px'
+}: {
+  options: T[]
+  value: string
+  onChange: (val: T) => void
+  getLabel: (opt: T) => string
+  getSublabel?: (opt: T) => string
+  placeholder?: string
+  maxHeight?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  
+  const filtered = options.filter(opt => {
+    const l = getLabel(opt).toLowerCase()
+    const s = getSublabel ? getSublabel(opt).toLowerCase() : ''
+    return l.includes(search.toLowerCase()) || s.includes(search.toLowerCase())
+  })
+
+  const selected = options.find(opt => (opt as any).id === value || (opt as any).product_name === value || (opt as any).name === value)
+  
+  return (
+    <div className="relative">
+      <div 
+        onClick={() => setOpen(!open)}
+        className="px-2 py-1.5 rounded text-xs cursor-pointer border flex justify-between items-center transition-colors hover:border-muted"
+        style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}
+      >
+        <span className="truncate flex-1">{selected ? getLabel(selected) : placeholder}</span>
+        <span className="text-[10px] opacity-50 ml-2">{open ? '▲' : '▼'}</span>
+      </div>
+      
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div 
+            className="absolute z-50 mt-1 w-full rounded border shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in duration-100"
+            style={{ background: 'var(--card)', border: '1px solid var(--border)', maxHeight: '350px', left: 0 }}
+          >
+            <div className="p-2" style={{ background: 'var(--surface)' }}>
+              <input 
+                autoFocus
+                placeholder="Search..."
+                className="w-full p-2 text-xs rounded border outline-none"
+                style={{ background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="overflow-y-auto flex-1 scrollbar-thin scrollbar-thumb-muted" style={{ maxHeight }}>
+              {filtered.map((opt, i) => (
+                <div 
+                  key={i}
+                  onClick={() => {
+                    onChange(opt)
+                    setOpen(false)
+                    setSearch('')
+                  }}
+                  className={`p-2 text-xs cursor-pointer hover:bg-blue-600/10 border-b last:border-0 transition-colors ${
+                    ((opt as any).id === value || (opt as any).product_name === value || (opt as any).name === value) ? 'bg-blue-600/20' : ''
+                  }`}
+                  style={{ borderBottomColor: 'var(--border)' }}
+                >
+                  <div className="font-bold truncate">{getLabel(opt)}</div>
+                  {getSublabel && <div className="text-[10px] opacity-60 truncate">{getSublabel(opt)}</div>}
+                </div>
+              ))}
+              {filtered.length === 0 && <div className="p-4 text-center text-xs opacity-50">No results found</div>}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+
 function Card({ children }: { children: ReactNode }) {
   return (
     <section
@@ -146,6 +231,11 @@ export default function OperatorPage() {
   const [f2vEndFile, setF2vEndFile] = useState<File | null>(null)
   const [uploadingF2vStart, setUploadingF2vStart] = useState(false)
   const [uploadingF2vEnd, setUploadingF2vEnd] = useState(false)
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([])
+  const [selectedCatalogProduct, setSelectedCatalogProduct] = useState<Product | null>(null)
+  const [catalogSearchQuery, setCatalogSearchQuery] = useState('')
+  const [searchingCatalog, setSearchingCatalog] = useState(false)
+  const [importingCatalog, setImportingCatalog] = useState(false)
 
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
   const selectedScene = videoScenes.find(item => item.id === selectedSceneId)
@@ -492,6 +582,46 @@ export default function OperatorPage() {
     }
   }
 
+
+  async function searchCatalog() {
+    setSearchingCatalog(true)
+    try {
+      const results = await fetchAPI<any[]>('/api/products/search?q=' + encodeURIComponent(catalogSearchQuery))
+      setCatalogProducts(results)
+    } catch (err) {
+      setMessage('Catalog search failed: ' + String(err))
+    } finally {
+      setSearchingCatalog(false)
+    }
+  }
+
+  async function applyCatalogProduct(product: any) {
+    setSelectedCatalogProduct(product)
+    setForm(current => ({
+      ...current,
+      product_name: product.product_short_name,
+      category: product.category || current.category,
+      sub_category: product.subcategory || current.sub_category,
+      scene_context: product.raw_product_title,
+    }))
+    try {
+      const res = await fetchAPI<{ prompt: string }>('/api/products/' + product.id + '/prompt?mode=F2V')
+      if (res.prompt) setManualPrompt(res.prompt)
+    } catch (err) {}
+    try {
+      await postAPI('/api/products/' + product.id + '/resolve-assets', {})
+    } catch (err) {}
+  }
+
+  async function importCatalog() {
+    setImportingCatalog(true)
+    try {
+      const res = await postAPI<any>('/api/products/import-fastmoss', {})
+      if (res.ok) setMessage('Imported ' + res.imported + ' products.')
+    } catch (err) { setMessage('Import error: ' + String(err)) }
+    finally { setImportingCatalog(false) }
+  }
+
   async function submitManual(mode: 'EDIT_IMAGE' | 'GENERATE_VIDEO' | 'GENERATE_VIDEO_REFS' | 'TRUE_F2V') {
     if (!created) return
     if (!selectedSceneId) {
@@ -651,6 +781,91 @@ export default function OperatorPage() {
         </div>
       )}
 
+
+      <Card>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Product Intelligence</h2>
+          <button 
+            onClick={importCatalog} 
+            disabled={importingCatalog}
+            className="text-[10px] px-2 py-0.5 rounded bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-600/30"
+          >
+            {importingCatalog ? 'Importing...' : 'Sync FastMoss'}
+          </button>
+        </div>
+        <div className="flex gap-2">
+          <input
+            placeholder="Search catalog (e.g. Diaper, Sumikko)..."
+            value={catalogSearchQuery}
+            onChange={e => setCatalogSearchQuery(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && searchCatalog()}
+            className="flex-1 px-2 py-1.5 rounded text-xs"
+            style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}
+          />
+          <button
+            onClick={searchCatalog}
+            disabled={searchingCatalog}
+            className="px-3 py-1.5 rounded text-xs font-bold"
+            style={{ background: 'var(--primary)', color: 'white' }}
+          >
+            {searchingCatalog ? '...' : 'Search'}
+          </button>
+        </div>
+        {catalogProducts.length > 0 && (
+          <div className="flex flex-col gap-1 max-h-48 overflow-y-auto pr-1">
+            {catalogProducts.map(p => (
+              <div
+                key={p.id}
+                onClick={() => applyCatalogProduct(p)}
+                className={`p-2 rounded text-xs cursor-pointer border transition-colors ${
+                  selectedCatalogProduct?.id === p.id 
+                    ? 'bg-blue-600/20 border-blue-600/50' 
+                    : 'bg-surface/50 border-border hover:border-muted'
+                }`}
+              >
+                <div className="font-bold flex justify-between items-center">
+                  <span>{p.product_short_name}</span>
+                  <span className="text-[10px] opacity-50 uppercase">{p.source}</span>
+                </div>
+                <div className="text-[10px] opacity-70 truncate">{p.raw_product_title}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+
+      {selectedCatalogProduct && (
+        <Card>
+          <div className="flex gap-4">
+            {selectedCatalogProduct.image_url && (
+              <div className="w-24 h-24 rounded border overflow-hidden bg-surface flex-shrink-0">
+                <img src={selectedCatalogProduct.image_url} alt="Product" className="w-full h-full object-contain" />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-bold truncate" style={{ color: 'var(--text)' }}>{selectedCatalogProduct.product_short_name}</h3>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2">
+                <div className="text-[10px] opacity-60">Display Name:</div>
+                <div className="text-[10px] truncate">{selectedCatalogProduct.product_display_name}</div>
+                <div className="text-[10px] opacity-60">Category:</div>
+                <div className="text-[10px] truncate">{selectedCatalogProduct.category}</div>
+                <div className="text-[10px] opacity-60">Subcategory:</div>
+                <div className="text-[10px] truncate">{selectedCatalogProduct.subcategory}</div>
+                <div className="text-[10px] opacity-60">Type:</div>
+                <div className="text-[10px] truncate">{selectedCatalogProduct.type}</div>
+                <div className="text-[10px] opacity-60">Source:</div>
+                <div className="text-[10px] font-bold text-blue-400 uppercase">{selectedCatalogProduct.source}</div>
+              </div>
+            </div>
+          </div>
+          <div className="mt-2 pt-2 border-t" style={{ borderTopColor: 'var(--border)' }}>
+            <div className="text-[10px] font-bold opacity-50 mb-1">RAW TITLE (AUDIT):</div>
+            <div className="text-[10px] opacity-70 leading-relaxed">{selectedCatalogProduct.raw_product_title}</div>
+          </div>
+        </Card>
+      )}
+
       <Card>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold" style={{ color: 'var(--text)' }}>BOSMAX Operator</h2>
@@ -659,20 +874,23 @@ export default function OperatorPage() {
         <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
           <div className="flex flex-col gap-1">
             <FieldLabel>Product</FieldLabel>
-            <select value={selectedProductName} onChange={e => applyProduct(e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-              {pack.products.map(product => (
-                <option key={product.product_name} value={product.product_name}>{product.product_name}</option>
-              ))}
-            </select>
+            <SearchableSelect
+              options={pack.products}
+              value={selectedProductName}
+              onChange={(p: any) => applyProduct(p.product_name)}
+              getLabel={(p: any) => p.product_short_name || p.product_name}
+              getSublabel={(p: any) => p.category + ' | ' + p.type_angle}
+            />
           </div>
 
           <div className="flex flex-col gap-1">
             <FieldLabel>Engine</FieldLabel>
-            <select value={form.engine_id} onChange={e => updateField('engine_id', e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-              {pack.engines.map(engine => (
-                <option key={engine} value={engine}>{engine}</option>
-              ))}
-            </select>
+            <SearchableSelect
+              options={pack.engines.map(e => ({ name: e }))}
+              value={form.engine_id}
+              onChange={(e: any) => updateField('engine_id', e.name)}
+              getLabel={(e: any) => e.name}
+            />
           </div>
 
           <div className="flex flex-col gap-1">
@@ -694,11 +912,12 @@ export default function OperatorPage() {
 
           <div className="flex flex-col gap-1">
             <FieldLabel>Avatar</FieldLabel>
-            <select value={form.avatar_id} onChange={e => updateField('avatar_id', e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-              {pack.avatars.map(avatar => (
-                <option key={avatar} value={avatar}>{avatar}</option>
-              ))}
-            </select>
+            <SearchableSelect
+              options={pack.avatars.map(a => ({ name: a }))}
+              value={form.avatar_id}
+              onChange={(a: any) => updateField('avatar_id', a.name)}
+              getLabel={(a: any) => a.name}
+            />
           </div>
 
           <div className="flex flex-col gap-1">
@@ -933,13 +1152,13 @@ export default function OperatorPage() {
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
               <div className="flex flex-col gap-1">
                 <FieldLabel>Target Scene</FieldLabel>
-                <select value={selectedSceneId} onChange={e => setSelectedSceneId(e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-                  {videoScenes.map(scene => (
-                    <option key={scene.id} value={scene.id}>
-                      {`Scene ${scene.display_order + 1} - ${scene.prompt ?? scene.video_prompt ?? 'Untitled'}`}
-                    </option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  options={videoScenes}
+                  value={selectedSceneId}
+                  onChange={(s: any) => setSelectedSceneId(s.id)}
+                  getLabel={(s: any) => `Scene ${s.display_order + 1} - ${s.prompt || s.video_prompt || 'Untitled'}`}
+                  getSublabel={(s: any) => s.video_prompt || s.prompt}
+                />
               </div>
 
               <div className="flex flex-col gap-1">
@@ -1042,18 +1261,15 @@ export default function OperatorPage() {
                   </div>
                   <div className="flex flex-col gap-1 mt-1 border-t pt-1 border-gray-700">
                     <FieldLabel>Or select uploaded Start asset</FieldLabel>
-                    <select
+                    <SearchableSelect
+                      options={uploadedAssets}
                       value={f2vStartAssetId}
-                      onChange={e => setF2vStartAssetId(e.target.value)}
-                      disabled={uploadedAssets.length === 0}
-                      className="px-2 py-1 rounded text-[10px]"
-                      style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', opacity: uploadedAssets.length === 0 ? 0.5 : 1 }}
-                    >
-                      <option value="">Choose existing...</option>
-                      {uploadedAssets.map(asset => (
-                        <option key={asset.mediaId} value={asset.mediaId}>{asset.label}</option>
-                      ))}
-                    </select>
+                      onChange={(a: any) => setF2vStartAssetId(a.mediaId)}
+                      getLabel={(a: any) => a.label}
+                      getSublabel={(a: any) => a.fileName}
+                      placeholder="Choose existing..."
+                      maxHeight="180px"
+                    />
                   </div>
                 </div>
 
@@ -1078,18 +1294,15 @@ export default function OperatorPage() {
                   </div>
                   <div className="flex flex-col gap-1 mt-1 border-t pt-1 border-gray-700">
                     <FieldLabel>Or select uploaded End asset</FieldLabel>
-                    <select
+                    <SearchableSelect
+                      options={uploadedAssets}
                       value={f2vEndAssetId}
-                      onChange={e => setF2vEndAssetId(e.target.value)}
-                      disabled={uploadedAssets.length === 0}
-                      className="px-2 py-1 rounded text-[10px]"
-                      style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', opacity: uploadedAssets.length === 0 ? 0.5 : 1 }}
-                    >
-                      <option value="">Choose existing...</option>
-                      {uploadedAssets.map(asset => (
-                        <option key={asset.mediaId} value={asset.mediaId}>{asset.label}</option>
-                      ))}
-                    </select>
+                      onChange={(a: any) => setF2vEndAssetId(a.mediaId)}
+                      getLabel={(a: any) => a.label}
+                      getSublabel={(a: any) => a.fileName}
+                      placeholder="Choose existing..."
+                      maxHeight="180px"
+                    />
                   </div>
                 </div>
               </div>

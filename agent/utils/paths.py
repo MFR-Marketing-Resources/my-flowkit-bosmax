@@ -44,3 +44,11 @@ def resolve_4k_file(project_slug: str, display_order: int, scene_id: str) -> "Pa
     if legacy.exists():
         return legacy
     return None
+
+
+def product_image_path(product_id: str, ext: str = "jpg") -> Path:
+    """Return path to the local cached product image."""
+    from agent.config import BASE_DIR
+    p = BASE_DIR / "data" / "products" / "images" / f"{product_id}.{ext}"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p

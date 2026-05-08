@@ -17,6 +17,8 @@ router = APIRouter(prefix="/api/operator", tags=["operator"])
 
 class OperatorProduct(BaseModel):
     product_name: str
+    product_display_name: str | None = None
+    product_short_name: str | None = None
     category: str
     sub_category: str
     type_angle: str
@@ -227,9 +229,17 @@ def _load_products(limit: int = 120) -> list[OperatorProduct]:
         name = _clean_text(str(data.get("Product Name") or ""))
         if not name:
             continue
+            
+        # Basic normalization for Excel source
+        short_name = re.sub(r'(\d+PCS|Premium|All size|S/M/L/XL/XXL/XXXL|Ultra-thin|breathable|disposable|tape|pull-ups|disposable diaper tape diaper pants pull-ups)', '', name, flags=re.IGNORECASE)
+        short_name = " ".join(short_name.split()[:4]).strip()
+        display_name = " ".join(name.split()[:9]).strip()
+
         products.append(
             OperatorProduct(
                 product_name=name,
+                product_short_name=short_name,
+                product_display_name=display_name,
                 category=_clean_text(str(data.get("Category") or "")),
                 sub_category=_clean_text(str(data.get("Sub Category") or "")),
                 type_angle=_clean_text(str(data.get("Type / Product Angle") or "")),

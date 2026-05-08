@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product"})
 
 
 def _validate_table(table: str) -> None:
@@ -31,6 +31,7 @@ _COLUMNS = {
               "vertical_end_scene_media_id", "horizontal_end_scene_media_id",
               "trim_start", "trim_end", "duration", "display_order", "source", "transition_prompt", "narrator_text", "updated_at"},
     "request": {"status", "request_id", "media_id", "output_url", "error_message", "retry_count", "next_retry_at", "source_media_id", "updated_at"},
+    "product": {"source", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "asset_status", "media_id", "local_image_path", "updated_at"},
 }
 
 
@@ -337,4 +338,48 @@ async def delete_material(mid: str): return await _delete("material", "id", mid)
 async def list_materials() -> list[dict]:
     db = await get_db()
     cur = await db.execute("SELECT * FROM material ORDER BY created_at")
+    return [dict(r) for r in await cur.fetchall()]
+
+
+# ─── Product ─────────────────────────────────────────────────
+
+async def create_product(raw_product_title: str, source: str = "FASTMOSS", product_display_name: str = None, product_short_name: str = None, **kw) -> dict:
+    db = await get_db()
+    pid, now = _uuid(), _now()
+    # Basic auto-fill if missing
+    display = product_display_name or " ".join(raw_product_title.split()[:9])
+    short = product_short_name or " ".join(raw_product_title.split()[:4])
+    
+    cols = ["id", "source", "raw_product_title", "product_display_name", "product_short_name", "created_at", "updated_at"]
+    vals = [pid, source, raw_product_title, display, short, now, now]
+    
+    allowed = _COLUMNS["product"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+            
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    
+    async with _db_lock:
+        await db.execute(f"INSERT INTO product ({col_str}) VALUES ({placeholders})", vals)
+        await db.commit()
+    return await _get_with_db(db, "product", "id", pid)
+
+async def get_product(pid: str): return await _get("product", "id", pid)
+async def update_product(pid: str, **kw): return await _update("product", "id", pid, **kw)
+async def delete_product(pid: str): return await _delete("product", "id", pid)
+
+async def list_products(source: str = None, query: str = None) -> list[dict]:
+    db = await get_db()
+    q, params = "SELECT * FROM product WHERE 1=1", []
+    if source:
+        q += " AND source=?"; params.append(source)
+    if query:
+        q += " AND (product_short_name LIKE ? OR product_display_name LIKE ? OR raw_product_title LIKE ?)"
+        lk = f"%{query}%"
+        params.extend([lk, lk, lk])
+    q += " ORDER BY created_at DESC"
+    cur = await db.execute(q, params)
     return [dict(r) for r in await cur.fetchall()]
