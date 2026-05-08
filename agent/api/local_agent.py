@@ -157,6 +157,8 @@ async def get_repair_page():
         <body>
           <div class="card">
             <h1>Local Agent Repair</h1>
+            <p>Use this page only when the local agent is offline or dashboard health checks fail.</p>
+            <p>PowerShell is only needed for repair/install diagnostics.</p>
             <p>Run the installer from the repository root to rebuild the production dashboard, re-register the Windows startup task, and restart the local agent.</p>
             <code>{LOCAL_AGENT_REPAIR_COMMAND}</code>
             <p class="muted">Dashboard URL: {status.dashboard_url}</p>

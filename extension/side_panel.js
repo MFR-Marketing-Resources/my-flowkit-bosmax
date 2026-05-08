@@ -38,6 +38,7 @@ const TYPE_LABELS = {
 
 const LOCAL_AGENT_BASE = 'http://127.0.0.1:8100';
 const LOCAL_AGENT_DASHBOARD_URL = `${LOCAL_AGENT_BASE}/operator`;
+const LOCAL_AGENT_REPAIR_URL = `${LOCAL_AGENT_BASE}/api/local-agent/repair`;
 const LOCAL_AGENT_STATUS_URL = `${LOCAL_AGENT_BASE}/api/local-agent/status`;
 const LOCAL_AGENT_CONTENT_PACK_URL = `${LOCAL_AGENT_BASE}/api/operator/content-pack`;
 const LOCAL_AGENT_REPAIR_COMMAND = '.\\scripts\\install-local-agent.ps1';
@@ -46,6 +47,8 @@ let _localAgentStatus = null;
 let _localAgentError = null;
 let _operatorPack = null;
 let _operatorPackError = null;
+let _dashboardReachable = null;
+let _dashboardError = null;
 
 function formatType(type) {
   if (!type) return '—';
@@ -286,6 +289,36 @@ function applyAgentBadge(mode) {
   statusEl.style.color = 'var(--red)';
 }
 
+function isLocalAgentHealthy() {
+  return Boolean(
+    _localAgentStatus &&
+    _operatorPack &&
+    _operatorPack.available &&
+    _dashboardReachable !== false
+  );
+}
+
+function needsRepairState() {
+  if (!_localAgentStatus) return true;
+  if (_operatorPackError) return true;
+  if (_operatorPack && !_operatorPack.available) return true;
+  if (_dashboardReachable === false) return true;
+  return false;
+}
+
+function updateRepairButton() {
+  const repairBtn = document.getElementById('btn-dashboard');
+  repairBtn.classList.remove('btn-primary');
+  repairBtn.disabled = false;
+
+  if (needsRepairState()) {
+    repairBtn.title = 'Repair guidance is available because the local agent is unhealthy.';
+    return;
+  }
+
+  repairBtn.title = 'Local Agent is already online. No repair required.';
+}
+
 function renderLocalAgentPanel() {
   const summaryEl = document.getElementById('operator-summary');
   const productsEl = document.getElementById('operator-products');
@@ -304,26 +337,29 @@ function renderLocalAgentPanel() {
 
   if (!_localAgentStatus) {
     applyAgentBadge('offline');
-    summaryEl.textContent = `Local Agent offline. Run installer: ${LOCAL_AGENT_REPAIR_COMMAND}`;
+    summaryEl.textContent = `Local Agent offline. PowerShell is only needed for repair/install diagnostics: ${LOCAL_AGENT_REPAIR_COMMAND}`;
+    updateRepairButton();
     return;
   }
 
-  const registration = _localAgentStatus.registration || {};
-  const approval = registration.approval_status || 'UNKNOWN';
-  const license = registration.license_status || 'UNKNOWN';
-  const deviceId = registration.device_id || 'unassigned';
-  const notes = Array.isArray(_operatorPack?.notes) ? _operatorPack.notes : [];
-  const lead = _operatorPackError
-    ? `Local Agent online, but operator content pack is unavailable: ${_operatorPackError}.`
-    : (notes[0] || `Local Agent online. Dashboard is served from ${_localAgentStatus.dashboard_url}.`);
-
-  if (_operatorPack && _operatorPack.available) {
+  if (isLocalAgentHealthy()) {
     applyAgentBadge('online');
-  } else {
-    applyAgentBadge('repair');
+    summaryEl.textContent = 'Local Agent online. Dashboard ready. PowerShell is only needed for repair/install diagnostics.';
+    updateRepairButton();
+    return;
   }
 
-  summaryEl.textContent = `${lead} Approval ${approval}. License ${license}. Device ${deviceId}.`;
+  applyAgentBadge('repair');
+  if (_operatorPackError) {
+    summaryEl.textContent = `Local Agent online, but operator content pack is unavailable: ${_operatorPackError}.`;
+  } else if (_operatorPack && !_operatorPack.available) {
+    summaryEl.textContent = 'Local Agent online, but operator content pack is not ready. Repair may be required.';
+  } else if (_dashboardError || _dashboardReachable === false) {
+    summaryEl.textContent = `Local Agent online, but dashboard URL is unreachable: ${_dashboardError || 'unknown error'}.`;
+  } else {
+    summaryEl.textContent = 'Local Agent online, but health checks are incomplete. Repair may be required.';
+  }
+  updateRepairButton();
 }
 
 async function fetchLocalAgentStatus() {
@@ -339,6 +375,20 @@ async function fetchLocalAgentStatus() {
   renderLocalAgentPanel();
 }
 
+async function fetchDashboardStatus() {
+  try {
+    const res = await fetch(LOCAL_AGENT_DASHBOARD_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _dashboardReachable = true;
+    _dashboardError = null;
+  } catch (error) {
+    _dashboardReachable = false;
+    _dashboardError = String(error?.message || error);
+  }
+
+  renderLocalAgentPanel();
+}
+
 async function fetchOperatorPack() {
   try {
     const res = await fetch(LOCAL_AGENT_CONTENT_PACK_URL);
@@ -351,28 +401,6 @@ async function fetchOperatorPack() {
   }
 
   renderLocalAgentPanel();
-}
-
-function buildRepairPageUrl() {
-  const html = `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>BOSMAX Local Agent Repair</title>
-      <style>
-        body { font-family: Consolas, monospace; background: #0f172a; color: #e2e8f0; padding: 32px; }
-        code { display: block; margin: 16px 0; padding: 14px; background: #020617; border-radius: 10px; white-space: pre-wrap; }
-      </style>
-    </head>
-    <body>
-      <h1>Repair Local Agent</h1>
-      <p>Run this command from the repository root:</p>
-      <code>${LOCAL_AGENT_REPAIR_COMMAND}</code>
-      <p>Expected dashboard URL: ${LOCAL_AGENT_DASHBOARD_URL}</p>
-    </body>
-    </html>`;
-  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
 // ── Message listener (push updates) ─────────────────────────
@@ -406,7 +434,19 @@ document.getElementById('btn-operator').addEventListener('click', async () => {
 });
 
 document.getElementById('btn-dashboard').addEventListener('click', async () => {
-  await chrome.tabs.create({ url: buildRepairPageUrl() });
+  const summaryEl = document.getElementById('operator-summary');
+
+  if (isLocalAgentHealthy()) {
+    summaryEl.textContent = 'Local Agent is already online. No repair required.';
+    return;
+  }
+
+  if (_localAgentStatus) {
+    await chrome.tabs.create({ url: LOCAL_AGENT_REPAIR_URL });
+    return;
+  }
+
+  summaryEl.textContent = `Local Agent offline. Run installer: ${LOCAL_AGENT_REPAIR_COMMAND}`;
 });
 
 document.getElementById('btn-token').addEventListener('click', () => {
@@ -426,4 +466,5 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchLog();
   fetchLocalAgentStatus();
   fetchOperatorPack();
+  fetchDashboardStatus();
 });
