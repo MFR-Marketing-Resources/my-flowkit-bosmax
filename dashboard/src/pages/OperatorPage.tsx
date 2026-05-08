@@ -752,7 +752,14 @@ export default function OperatorPage() {
         )}
       </Card>
 
-      <OperatorManual />
+      <OperatorManual
+        created={created}
+        selectedSceneId={selectedSceneId}
+        uploadedAssets={uploadedAssets}
+        manualPrompt={manualPrompt}
+        submittingManual={submittingManual}
+        uploadingAssets={uploadingAssets}
+      />
 
       <Card>
         <div className="flex items-center justify-between gap-3">

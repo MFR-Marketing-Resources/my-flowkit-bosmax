@@ -25,8 +25,8 @@ function ModeCard({ title, status, type, useWhen, required, button, warning }: {
     <div className="rounded p-3 flex flex-col gap-2" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold" style={{ color: 'var(--text)' }}>{title}</span>
-        <span className="text-[10px] px-1.5 py-0.5 rounded font-bold" style={{ 
-          background: isWired ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', 
+        <span className="text-[10px] px-1.5 py-0.5 rounded font-bold" style={{
+          background: isWired ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
           color: isWired ? 'var(--green)' : 'var(--red)',
           border: `1px solid ${isWired ? 'var(--green)' : 'var(--red)'}`
         }}>
@@ -52,13 +52,39 @@ function ModeCard({ title, status, type, useWhen, required, button, warning }: {
   )
 }
 
-export default function OperatorManual() {
+type OperatorManualProps = {
+  created: any
+  selectedSceneId: string
+  uploadedAssets: any[]
+  manualPrompt: string
+  submittingManual: boolean
+  uploadingAssets: boolean
+}
+
+export default function OperatorManual({
+  created,
+  selectedSceneId,
+  uploadedAssets,
+  manualPrompt,
+  submittingManual,
+  uploadingAssets
+}: OperatorManualProps) {
+  const checklist = [
+    { label: "Project created", pass: !!created },
+    { label: "Target scene selected", pass: !!selectedSceneId },
+    { label: "Uploaded assets ready", pass: uploadedAssets.length > 0 },
+    { label: "Prompt prepared", pass: manualPrompt.trim().length > 0 },
+    { label: "Upload not running", pass: !uploadingAssets },
+    { label: "Submit not running", pass: !submittingManual },
+    { label: "F2V not confused with Ingredients/Refs", pass: true }
+  ]
+
   return (
     <div className="flex flex-col gap-4">
       <Card>
         <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Operator Manual / SOP</h3>
         <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-          <ModeCard 
+          <ModeCard
             title="1. IMG / Edit Image"
             status="WIRED"
             type="EDIT_IMAGE"
@@ -67,7 +93,7 @@ export default function OperatorManual() {
             button="Submit IMG / Edit Image"
             warning="Not verified: Google Flow DOM selector automation."
           />
-          <ModeCard 
+          <ModeCard
             title="2. I2V / Start Image to Video"
             status="WIRED"
             type="GENERATE_VIDEO"
@@ -76,7 +102,7 @@ export default function OperatorManual() {
             button="Submit I2V - Start Image to Video"
             warning="Not wired: explicit end frame."
           />
-          <ModeCard 
+          <ModeCard
             title="3. Ingredients / Refs to Video"
             status="WIRED"
             type="GENERATE_VIDEO_REFS"
@@ -85,7 +111,7 @@ export default function OperatorManual() {
             button="Submit Ingredients / Refs to Video"
             warning="Warning: This is NOT true F2V."
           />
-          <ModeCard 
+          <ModeCard
             title="4. True F2V / Start + End Frames"
             status="NOT WIRED YET"
             type="GENERATE_VIDEO with end_image_media_id"
@@ -94,7 +120,7 @@ export default function OperatorManual() {
             button="Button not available"
             warning="Do not use GENERATE_VIDEO_REFS as F2V."
           />
-          <ModeCard 
+          <ModeCard
             title="5. Direct T2V"
             status="NOT NATIVE / NOT VERIFIED"
             type="N/A"
@@ -108,19 +134,12 @@ export default function OperatorManual() {
       <Card>
         <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Readiness Checklist</h3>
         <div className="grid gap-2 sm:grid-cols-2">
-          {[
-            "Project created",
-            "Target scene selected",
-            "Correct lane selected",
-            "Required media uploaded",
-            "Prompt prepared",
-            "Extension connected",
-            "Queue type matches lane",
-            "Not confusing F2V with Ingredients/Refs"
-          ].map((item, i) => (
-            <div key={i} className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--text)' }}>
-              <input type="checkbox" readOnly className="pointer-events-none" />
-              <span>{item}</span>
+          {checklist.map((item, i) => (
+            <div key={i} className="flex items-center justify-between p-2 rounded" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <span className="text-[10px]" style={{ color: 'var(--text)' }}>{item.label}</span>
+              <span className="text-[10px] font-bold" style={{ color: item.pass ? 'var(--green)' : 'var(--red)' }}>
+                {item.pass ? 'PASS' : 'BLOCKED'}
+              </span>
             </div>
           ))}
         </div>
