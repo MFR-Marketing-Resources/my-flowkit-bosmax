@@ -19,6 +19,22 @@
   window._flowKitDomInjected = true;
   console.log('[FlowAgent] Flow DOM Executor injected');
 
+  // Safe wrapper for sending messages without blocking on response
+  function sendStageEvent(request_id, stage, status) {
+    chrome.runtime.sendMessage({
+      type: 'FLOW_STAGE_EVENT',
+      request_id: request_id,
+      stage: stage,
+      status: status,
+      source: 'google_flow'
+    }).catch(err => {
+      // Silently ignore message send errors (tab might be closing)
+      if (err && !err.message.includes('closed')) {
+        console.warn(`[FlowAgent] Failed to send stage event ${stage}:`, err);
+      }
+    });
+  }
+
   const STAGES = {
     FLOW_TAB_FOUND: 'FLOW_TAB_FOUND',
     PRE_EXECUTION_STATE_CLEARED: 'PRE_EXECUTION_STATE_CLEARED',
@@ -409,13 +425,7 @@
     const logStage = (stage, status = 'YES') => {
       report.stages.push({ stage, status });
       console.log(`[FlowAgent] Stage: ${stage} - ${status}`);
-      chrome.runtime.sendMessage({ 
-        type: 'FLOW_STAGE_EVENT', 
-        request_id: job.request_id, 
-        stage, 
-        status, 
-        source: 'google_flow' 
-      }).catch(() => {});
+      sendStageEvent(job.request_id, stage, status);
     };
 
     try {
@@ -587,8 +597,32 @@
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'EXECUTE_FLOW_JOB') {
-      executeFlowJob(msg.job).then(sendResponse);
-      return true;
+      // IMMEDIATE ACK - Send response right away, don't wait for job completion
+      sendResponse({ ok: true, accepted: true, request_id: msg.job?.request_id });
+      
+      // Execute job asynchronously AFTER returning from listener
+      setTimeout(async () => {
+        try {
+          const result = await executeFlowJob(msg.job);
+          // Send final result via FLOW_JOB_COMPLETED message
+          chrome.runtime.sendMessage({
+            type: 'FLOW_JOB_COMPLETED',
+            request_id: msg.job?.request_id,
+            result: result,
+            success: result.ok
+          }).catch(err => console.warn('[FlowAgent] Failed to send FLOW_JOB_COMPLETED:', err));
+        } catch (err) {
+          // Send error via FLOW_JOB_FAILED message
+          chrome.runtime.sendMessage({
+            type: 'FLOW_JOB_FAILED',
+            request_id: msg.job?.request_id,
+            error: String(err?.message || err)
+          }).catch(err => console.warn('[FlowAgent] Failed to send FLOW_JOB_FAILED:', err));
+        }
+      }, 0);
+      
+      // Return false - we already called sendResponse synchronously
+      return false;
     }
   });
 

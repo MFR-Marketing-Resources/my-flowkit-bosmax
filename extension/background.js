@@ -53,6 +53,20 @@ function sendTabMessageSafe(tabId, payload) {
   });
 }
 
+function sendRuntimeMessageSafe(payload) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(payload, (response) => {
+      const lastError = chrome.runtime.lastError;
+      if (lastError) {
+        console.warn('[FlowAgent] Runtime message error:', lastError.message);
+        resolve({ ok: false, error: lastError.message });
+        return;
+      }
+      resolve(response ?? { ok: true });
+    });
+  });
+}
+
 // ─── URL → Log Type Classifier ─────────────────────────────
 
 // Visible log types — only these appear in the request log
@@ -679,7 +693,35 @@ async function handleMessage(msg, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Use an IIFE to handle the async work correctly
+  // LONG-RUNNING JOBS: Use immediate ACK pattern
+  if (message.type === 'EXECUTE_FLOW_JOB') {
+    sendResponse({ ok: true, accepted: true, request_id: message.job?.request_id });
+    
+    // Execute asynchronously after returning
+    setTimeout(async () => {
+      try {
+        const result = await handleExecuteFlowJob(message.job);
+        // Send final status via FLOW_JOB_COMPLETED
+        chrome.runtime.sendMessage({
+          type: 'FLOW_JOB_COMPLETED',
+          request_id: message.job?.request_id,
+          result: result,
+          success: result.ok === true
+        }).catch(err => console.warn('[FlowAgent] Failed to send FLOW_JOB_COMPLETED to background:', err));
+      } catch (err) {
+        // Send error via FLOW_JOB_FAILED
+        chrome.runtime.sendMessage({
+          type: 'FLOW_JOB_FAILED',
+          request_id: message.job?.request_id,
+          error: String(err?.message || err)
+        }).catch(err => console.warn('[FlowAgent] Failed to send FLOW_JOB_FAILED to background:', err));
+      }
+    }, 0);
+    
+    return false; // Already called sendResponse synchronously
+  }
+  
+  // SHORT-RUN TASKS: Use async response pattern (keep port open briefly)
   (async () => {
     try {
       const data = await handleMessage(message, sender);
@@ -693,7 +735,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, error: String(error?.message || error) });
     }
   })();
-  return true; // Keep the message channel open for sendResponse
+  return true; // Keep port open for short async tasks only
 });
 
 async function handleExecuteFlowJob(job) {
