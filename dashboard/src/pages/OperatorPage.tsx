@@ -389,7 +389,7 @@ function mappingToOperatorProduct(mapping: ProductMapping): OperatorProduct {
     claim_risk_level: mapping.claim_risk_level,
     mapping_source: mapping.mapping_source,
     mapping_confidence: mapping.mapping_confidence,
-    missing_fields: mapping.missing_fields,
+    missing_fields: mapping.prompt_missing_fields || mapping.missing_fields,
     raw_category: null,
     avg_price_rm: null,
     status: null,
@@ -407,13 +407,20 @@ function mappingToOperatorProduct(mapping: ProductMapping): OperatorProduct {
 function mergeMappingIntoProduct(mapping: ProductMapping, existing?: Product | null): Product {
   return {
     id: mapping.product_id || existing?.id || '',
-    source: existing?.source || 'MANUAL_PROJECT',
+    product_id: mapping.product_id || existing?.product_id || existing?.id || '',
+    source: existing?.source || 'MANUAL',
     raw_product_title: mapping.raw_product_title,
     product_display_name: existing?.product_display_name || mapping.raw_product_title,
     product_short_name: mapping.product_short_name,
+    source_url: existing?.source_url || existing?.tiktok_product_url || null,
+    brand: existing?.brand || null,
     category: mapping.category || null,
     subcategory: mapping.subcategory || null,
     type: mapping.type || null,
+    price: existing?.price || existing?.price_min || null,
+    currency: existing?.currency || 'MYR',
+    commission_amount: existing?.commission_amount || null,
+    commission_rate: existing?.commission_rate || existing?.commission || null,
     product_type: mapping.product_type || null,
     silo: mapping.silo || null,
     trigger_id: mapping.trigger_id || null,
@@ -423,6 +430,23 @@ function mergeMappingIntoProduct(mapping: ProductMapping, existing?: Product | n
     claim_risk_level: mapping.claim_risk_level || null,
     mapping_source: mapping.mapping_source,
     mapping_confidence: mapping.mapping_confidence,
+    mapping_review_status: mapping.mapping_review_status || null,
+    prompt_readiness_status: mapping.prompt_readiness_status || null,
+    prompt_missing_fields: mapping.prompt_missing_fields || [],
+    physics_class: mapping.physics_class || null,
+    product_scale: mapping.product_scale || null,
+    hand_object_interaction: mapping.hand_object_interaction || null,
+    recommended_grip: mapping.recommended_grip || null,
+    air_gap_rule: mapping.air_gap_rule || null,
+    material_behavior: mapping.material_behavior || null,
+    surface_behavior: mapping.surface_behavior || null,
+    fragility_level: mapping.fragility_level || null,
+    camera_handling_notes: mapping.camera_handling_notes || null,
+    unsafe_handling_rules: mapping.unsafe_handling_rules || [],
+    section_4_visual_action_prompt: mapping.section_4_visual_action_prompt || null,
+    section_5_product_physics_prompt: mapping.section_5_product_physics_prompt || null,
+    section_6_dialogue_prompt: mapping.section_6_dialogue_prompt || null,
+    section_9_overlay_prompt: mapping.section_9_overlay_prompt || null,
     missing_fields: mapping.missing_fields,
     notes: mapping.notes,
     shop_name: existing?.shop_name || null,
@@ -432,6 +456,7 @@ function mergeMappingIntoProduct(mapping: ProductMapping, existing?: Product | n
     image_url: existing?.image_url || null,
     tiktok_product_url: existing?.tiktok_product_url || null,
     fastmoss_source_file: existing?.fastmoss_source_file || null,
+    image_asset_status: existing?.image_asset_status || existing?.asset_status || 'UNRESOLVED',
     asset_status: existing?.asset_status || 'UNRESOLVED',
     media_id: existing?.media_id || null,
     local_image_path: existing?.local_image_path || null,
@@ -872,7 +897,7 @@ export default function OperatorPage() {
     }))
     void resolveProductMapping({
       product_name: product.raw_product_title || product.product_name,
-      source: product.mapping_source === 'MANUAL' ? 'MANUAL_PROJECT' : 'FASTMOSS',
+      source: product.mapping_source === 'MANUAL' ? 'MANUAL' : 'FASTMOSS',
       category: product.category,
       subcategory: product.sub_category,
       type: product.type_angle,
@@ -1251,7 +1276,7 @@ export default function OperatorPage() {
     }
     const mapping = await resolveProductMapping({
       product_name: title,
-      source: 'MANUAL_PROJECT',
+      source: 'MANUAL',
       persist: true,
     })
     if (!mapping) return
@@ -1272,7 +1297,7 @@ export default function OperatorPage() {
     const mapping = await resolveProductMapping({
       product_id: selectedCatalogProduct?.id || undefined,
       product_name: title,
-      source: selectedCatalogProduct?.source || (resolvedMapping?.mapping_source === 'MANUAL' ? 'MANUAL_PROJECT' : 'FASTMOSS'),
+      source: selectedCatalogProduct?.source || (resolvedMapping?.mapping_source === 'MANUAL' ? 'MANUAL' : 'FASTMOSS'),
       override_category: overrideDraft.category,
       override_subcategory: overrideDraft.subcategory,
       override_type: overrideDraft.type,
@@ -1690,13 +1715,23 @@ export default function OperatorPage() {
           <ReadOnlyField label="Formula" value={form.submode_formula} />
           <ReadOnlyField label="Mapping Confidence" value={resolvedMapping?.mapping_confidence} />
           <ReadOnlyField label="Mapping Source" value={resolvedMapping?.mapping_source} />
+          <ReadOnlyField label="Readiness" value={resolvedMapping?.prompt_readiness_status} />
           <ReadOnlyField label="Copywriting Angle" value={resolvedMapping?.copywriting_angle} />
           <ReadOnlyField label="Claim Risk" value={resolvedMapping?.claim_risk_level} />
           <ReadOnlyField label="Recommended Lanes" value={resolvedMapping?.mode_recommendations?.join(', ')} />
+          <ReadOnlyField label="Physics Class" value={resolvedMapping?.physics_class} />
+          <ReadOnlyField label="Recommended Grip" value={resolvedMapping?.recommended_grip} />
+          <ReadOnlyField label="Handling Notes" value={resolvedMapping?.camera_handling_notes} />
+          <ReadOnlyField label="Section 5 Physics Prompt" value={resolvedMapping?.section_5_product_physics_prompt} />
         </div>
         {resolvedMapping?.missing_fields?.length ? (
           <div className="rounded px-3 py-2 text-xs" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: 'var(--text)' }}>
             Mapping needs review for: {resolvedMapping.missing_fields.join(', ')}.
+          </div>
+        ) : null}
+        {resolvedMapping?.prompt_missing_fields?.length ? (
+          <div className="rounded px-3 py-2 text-xs" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.25)', color: 'var(--text)' }}>
+            Prompt readiness missing: {resolvedMapping.prompt_missing_fields.join(', ')}.
           </div>
         ) : null}
         {advancedOverrideOpen && (

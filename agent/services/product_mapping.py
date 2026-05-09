@@ -10,6 +10,7 @@ from agent.config import BASE_DIR
 
 
 RULES_PATH = BASE_DIR / "data" / "products" / "product_mapping_rules.json"
+FALLBACK_RULES_PATH = Path(__file__).resolve().parents[2] / "data" / "products" / "product_mapping_rules.json"
 _SHORT_NAME_STOPWORDS = {
     "premium",
     "disposable",
@@ -31,7 +32,8 @@ _REQUIRED_FIELDS = ["category", "subcategory", "type", "product_type", "silo", "
 
 @lru_cache(maxsize=1)
 def load_mapping_rules() -> dict[str, Any]:
-    return json.loads(RULES_PATH.read_text(encoding="utf-8"))
+    rules_path = RULES_PATH if RULES_PATH.exists() else FALLBACK_RULES_PATH
+    return json.loads(rules_path.read_text(encoding="utf-8"))
 
 
 def normalize_mapping_text(value: str | None) -> str:

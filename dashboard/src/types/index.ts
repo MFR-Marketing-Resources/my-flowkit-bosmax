@@ -235,13 +235,20 @@ export interface UploadedAsset {
 
 export interface Product {
   id: string
-  source: 'FASTMOSS' | 'MANUAL_PROJECT'
+  product_id?: string
+  source: 'FASTMOSS' | 'TIKTOKSHOP' | 'MANUAL' | 'IMPORTED'
+  source_url?: string | null
+  brand?: string | null
   raw_product_title: string
   product_display_name: string
   product_short_name: string
   category: string | null
   subcategory: string | null
   type: string | null
+  price?: number | null
+  currency?: string | null
+  commission_amount?: number | null
+  commission_rate?: string | null
   product_type?: string | null
   silo?: string | null
   trigger_id?: string | null
@@ -251,6 +258,24 @@ export interface Product {
   claim_risk_level?: string | null
   mapping_source?: 'FASTMOSS' | 'MANUAL' | 'FALLBACK' | null
   mapping_confidence?: 'HIGH' | 'MEDIUM' | 'LOW' | 'NEEDS_REVIEW' | null
+  mapping_review_status?: string | null
+  prompt_readiness_status?: 'READY' | 'NEEDS_REVIEW' | 'MISSING_FIELDS' | null
+  prompt_missing_fields?: string[]
+  physics_dna_status?: 'READY' | 'MISSING_FIELDS' | null
+  physics_class?: string | null
+  product_scale?: string | null
+  hand_object_interaction?: string | null
+  recommended_grip?: string | null
+  air_gap_rule?: string | null
+  material_behavior?: string | null
+  surface_behavior?: string | null
+  fragility_level?: string | null
+  camera_handling_notes?: string | null
+  unsafe_handling_rules?: string[]
+  section_4_visual_action_prompt?: string | null
+  section_5_product_physics_prompt?: string | null
+  section_6_dialogue_prompt?: string | null
+  section_9_overlay_prompt?: string | null
   missing_fields?: string[]
   notes?: string[]
   shop_name: string | null
@@ -260,6 +285,7 @@ export interface Product {
   image_url: string | null
   tiktok_product_url: string | null
   fastmoss_source_file: string | null
+  image_asset_status?: 'UNRESOLVED' | 'DOWNLOADED' | 'UPLOADED_TO_FLOW' | null
   asset_status: 'UNRESOLVED' | 'DOWNLOADED' | 'UPLOADED_TO_FLOW'
   media_id: string | null
   local_image_path: string | null
@@ -283,6 +309,23 @@ export interface ProductMapping {
   claim_risk_level: string
   mapping_source: 'FASTMOSS' | 'MANUAL' | 'FALLBACK'
   mapping_confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'NEEDS_REVIEW'
+  mapping_review_status?: string
+  prompt_readiness_status?: 'READY' | 'NEEDS_REVIEW' | 'MISSING_FIELDS'
+  prompt_missing_fields?: string[]
+  physics_class?: string
+  product_scale?: string
+  hand_object_interaction?: string
+  recommended_grip?: string
+  air_gap_rule?: string
+  material_behavior?: string
+  surface_behavior?: string
+  fragility_level?: string
+  camera_handling_notes?: string
+  unsafe_handling_rules?: string[]
+  section_4_visual_action_prompt?: string
+  section_5_product_physics_prompt?: string
+  section_6_dialogue_prompt?: string
+  section_9_overlay_prompt?: string
   missing_fields: string[]
   notes: string[]
 }

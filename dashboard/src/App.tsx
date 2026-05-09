@@ -1,14 +1,16 @@
 import { BrowserRouter, NavLink, Routes, Route, useLocation } from 'react-router-dom'
-import { LayoutDashboard, FolderOpen, ScrollText, Film, Sparkles } from 'lucide-react'
+import { LayoutDashboard, FolderOpen, ScrollText, Film, Sparkles, PackageSearch } from 'lucide-react'
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext'
 import DashboardPage from './pages/DashboardPage'
 import ProjectsPage from './pages/ProjectsPage'
 import LogsPage from './pages/LogsPage'
 import GalleryPage from './pages/GalleryPage'
 import OperatorPage from './pages/OperatorPage'
+import ProductsSalesAnalyzerPage from './pages/ProductsSalesAnalyzerPage'
 
 const NAV = [
   { to: '/operator', icon: Sparkles, label: 'Operator', exact: false },
+  { to: '/products', icon: PackageSearch, label: 'Products', exact: false },
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', exact: true },
   { to: '/projects', icon: FolderOpen, label: 'Projects', exact: false },
   { to: '/logs', icon: ScrollText, label: 'Logs', exact: false },
@@ -78,6 +80,7 @@ function Layout() {
         <main className="flex-1 overflow-auto p-5">
           <Routes>
             <Route path="/operator" element={<OperatorPage />} />
+            <Route path="/products" element={<ProductsSalesAnalyzerPage />} />
             <Route path="/" element={<DashboardPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectsPage />} />

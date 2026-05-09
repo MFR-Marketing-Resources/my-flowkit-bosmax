@@ -191,7 +191,9 @@ CREATE TABLE IF NOT EXISTS request_stage_event (
 
 CREATE TABLE IF NOT EXISTS product (
     id                  TEXT PRIMARY KEY,
-    source              TEXT NOT NULL DEFAULT 'FASTMOSS' CHECK(source IN ('FASTMOSS','MANUAL_PROJECT')),
+    source              TEXT NOT NULL DEFAULT 'FASTMOSS' CHECK(source IN ('FASTMOSS','TIKTOKSHOP','MANUAL','IMPORTED')),
+    source_url          TEXT,
+    brand               TEXT,
     raw_product_title   TEXT NOT NULL,
     product_display_name TEXT NOT NULL,
     product_short_name  TEXT NOT NULL,
@@ -199,12 +201,40 @@ CREATE TABLE IF NOT EXISTS product (
     subcategory         TEXT,
     type                TEXT,
     shop_name           TEXT,
+    price               REAL,
+    currency            TEXT,
+    commission_amount   REAL,
+    commission_rate     TEXT,
     price_min           REAL,
     price_max           REAL,
     commission          TEXT,
     image_url           TEXT,
     tiktok_product_url  TEXT,
     fastmoss_source_file TEXT,
+    image_asset_status  TEXT,
+    product_type        TEXT,
+    silo                TEXT,
+    trigger_id          TEXT,
+    formula             TEXT,
+    copywriting_angle   TEXT,
+    claim_risk_level    TEXT,
+    mode_recommendations TEXT,
+    physics_class       TEXT,
+    product_scale       TEXT,
+    hand_object_interaction TEXT,
+    recommended_grip    TEXT,
+    air_gap_rule        TEXT,
+    material_behavior   TEXT,
+    surface_behavior    TEXT,
+    fragility_level     TEXT,
+    camera_handling_notes TEXT,
+    unsafe_handling_rules TEXT,
+    section_5_product_physics_prompt TEXT,
+    mapping_source      TEXT,
+    mapping_confidence  TEXT,
+    mapping_review_status TEXT,
+    prompt_readiness_status TEXT,
+    prompt_missing_fields TEXT,
     asset_status        TEXT NOT NULL DEFAULT 'UNRESOLVED' CHECK(asset_status IN ('UNRESOLVED','DOWNLOADED','UPLOADED_TO_FLOW')),
     media_id            TEXT, -- Google Flow media_id after upload
     local_image_path    TEXT, -- Path to cached image
@@ -338,6 +368,125 @@ CREATE INDEX IF NOT EXISTS idx_request_scene ON request(scene_id);
         if "allow_voice" not in project_columns:
             await db.execute("ALTER TABLE project ADD COLUMN allow_voice INTEGER NOT NULL DEFAULT 0")
             logger.info("Migrated: added allow_voice column to project table")
+        # Migration: upgrade product table for product intelligence fields and new source enum.
+        cursor = await db.execute("SELECT sql FROM sqlite_master WHERE name='product' AND type='table'")
+        row = await cursor.fetchone()
+        product_sql = row[0] if row else ""
+        product_columns_cursor = await db.execute("PRAGMA table_info(product)")
+        product_columns = {r[1] for r in await product_columns_cursor.fetchall()}
+        product_needs_recreate = False
+        required_product_columns = {
+            "source_url", "brand", "price", "currency", "commission_amount", "commission_rate",
+            "image_asset_status", "product_type", "silo", "trigger_id", "formula", "copywriting_angle",
+            "claim_risk_level", "mode_recommendations", "physics_class", "product_scale",
+            "hand_object_interaction", "recommended_grip", "air_gap_rule", "material_behavior",
+            "surface_behavior", "fragility_level", "camera_handling_notes", "unsafe_handling_rules",
+            "section_5_product_physics_prompt", "mapping_source", "mapping_confidence", "mapping_review_status",
+            "prompt_readiness_status", "prompt_missing_fields",
+        }
+        if "MANUAL_PROJECT" in product_sql:
+            product_needs_recreate = True
+        if not required_product_columns.issubset(product_columns):
+            product_needs_recreate = True
+        if product_needs_recreate:
+            await db.execute("PRAGMA foreign_keys=OFF")
+            await db.execute("ALTER TABLE product RENAME TO _product_old")
+            await db.executescript("""
+CREATE TABLE IF NOT EXISTS product (
+    id                  TEXT PRIMARY KEY,
+    source              TEXT NOT NULL DEFAULT 'FASTMOSS' CHECK(source IN ('FASTMOSS','TIKTOKSHOP','MANUAL','IMPORTED')),
+    source_url          TEXT,
+    brand               TEXT,
+    raw_product_title   TEXT NOT NULL,
+    product_display_name TEXT NOT NULL,
+    product_short_name  TEXT NOT NULL,
+    category            TEXT,
+    subcategory         TEXT,
+    type                TEXT,
+    shop_name           TEXT,
+    price               REAL,
+    currency            TEXT,
+    commission_amount   REAL,
+    commission_rate     TEXT,
+    price_min           REAL,
+    price_max           REAL,
+    commission          TEXT,
+    image_url           TEXT,
+    tiktok_product_url  TEXT,
+    fastmoss_source_file TEXT,
+    image_asset_status  TEXT,
+    product_type        TEXT,
+    silo                TEXT,
+    trigger_id          TEXT,
+    formula             TEXT,
+    copywriting_angle   TEXT,
+    claim_risk_level    TEXT,
+    mode_recommendations TEXT,
+    physics_class       TEXT,
+    product_scale       TEXT,
+    hand_object_interaction TEXT,
+    recommended_grip    TEXT,
+    air_gap_rule        TEXT,
+    material_behavior   TEXT,
+    surface_behavior    TEXT,
+    fragility_level     TEXT,
+    camera_handling_notes TEXT,
+    unsafe_handling_rules TEXT,
+    section_5_product_physics_prompt TEXT,
+    mapping_source      TEXT,
+    mapping_confidence  TEXT,
+    mapping_review_status TEXT,
+    prompt_readiness_status TEXT,
+    prompt_missing_fields TEXT,
+    asset_status        TEXT NOT NULL DEFAULT 'UNRESOLVED' CHECK(asset_status IN ('UNRESOLVED','DOWNLOADED','UPLOADED_TO_FLOW')),
+    media_id            TEXT,
+    local_image_path    TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_source ON product(source);
+CREATE INDEX IF NOT EXISTS idx_product_name ON product(product_short_name);
+""")
+            await db.execute("""
+INSERT INTO product (
+    id, source, source_url, brand, raw_product_title, product_display_name, product_short_name,
+    category, subcategory, type, shop_name, price, currency, commission_amount, commission_rate,
+    price_min, price_max, commission, image_url, tiktok_product_url, fastmoss_source_file,
+    image_asset_status, asset_status, media_id, local_image_path, created_at, updated_at
+)
+SELECT
+    id,
+    CASE WHEN source='MANUAL_PROJECT' THEN 'MANUAL' ELSE source END,
+    COALESCE(tiktok_product_url, ''),
+    NULL,
+    raw_product_title,
+    product_display_name,
+    product_short_name,
+    category,
+    subcategory,
+    type,
+    shop_name,
+    COALESCE(price_min, price_max),
+    'MYR',
+    NULL,
+    commission,
+    price_min,
+    price_max,
+    commission,
+    image_url,
+    tiktok_product_url,
+    fastmoss_source_file,
+    asset_status,
+    asset_status,
+    media_id,
+    local_image_path,
+    created_at,
+    updated_at
+FROM _product_old
+""")
+            await db.execute("DROP TABLE _product_old")
+            await db.execute("PRAGMA foreign_keys=ON")
+            logger.info("Migrated: upgraded product table for product intelligence fields")
         # Migration: add orientation to video table + backfill from scene data
         cursor = await db.execute("PRAGMA table_info(video)")
         video_columns = {row[1] for row in await cursor.fetchall()}
