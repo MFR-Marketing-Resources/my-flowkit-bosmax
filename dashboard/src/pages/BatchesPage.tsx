@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Package, Plus, Play, X, Clock, Eye, List } from 'lucide-react'
+import { fetchAPI, postAPI } from '../api/client'
 
 interface Variant {
   variant_id: string
@@ -38,8 +39,7 @@ export default function BatchesPage() {
 
   const fetchBatches = async () => {
     try {
-      const res = await fetch('http://127.0.0.1:8100/api/batches')
-      const data = await res.json()
+      const data = await fetchAPI('/api/batches') as Batch[]
       setBatches(data)
     } catch (err) {
       console.error('Failed to fetch batches', err)
@@ -48,9 +48,8 @@ export default function BatchesPage() {
 
   const fetchProducts = async () => {
     try {
-      const res = await fetch('http://127.0.0.1:8100/api/products')
-      const data = await res.json()
-      setProducts(data)
+      const data = await fetchAPI('/api/products?limit=500') as any
+      setProducts(data.items || [])
     } catch (err) {
       console.error('Failed to fetch products', err)
     }
@@ -60,18 +59,13 @@ export default function BatchesPage() {
     if (!selectedProductId) return
     setLoading(true)
     try {
-      const res = await fetch('http://127.0.0.1:8100/api/batches/draft', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          product_id: selectedProductId,
-          quantity: quantity,
-          platform: 'TikTok',
-          mode: 'Frames',
-          approval_required: true
-        })
-      })
-      const data = await res.json()
+      const data = await postAPI('/api/batches/draft', {
+        product_id: selectedProductId,
+        quantity: quantity,
+        platform: 'TikTok',
+        mode: 'Frames',
+        approval_required: true
+      }) as any
       if (data.error) {
         alert(`Error: ${data.error}\n\n${data.safety?.errors?.join('\n') || ''}`)
       } else {
@@ -87,8 +81,7 @@ export default function BatchesPage() {
 
   const handleViewBatch = async (id: string) => {
     try {
-      const res = await fetch(`http://127.0.0.1:8100/api/batches/${id}`)
-      const data = await res.json()
+      const data = await fetchAPI(`/api/batches/${id}`) as Batch
       setSelectedBatch(data)
     } catch (err) {
       console.error('Failed to fetch batch detail', err)
@@ -97,8 +90,7 @@ export default function BatchesPage() {
 
   const handleQueueBatch = async (id: string) => {
     try {
-      const res = await fetch(`http://127.0.0.1:8100/api/batches/${id}/queue`, { method: 'POST' })
-      const data = await res.json()
+      const data = await postAPI(`/api/batches/${id}/queue`, {}) as any
       if (data.error) alert(data.error)
       else handleViewBatch(id)
     } catch (err) {
@@ -108,8 +100,7 @@ export default function BatchesPage() {
 
   const handleCancelBatch = async (id: string) => {
     try {
-      const res = await fetch(`http://127.0.0.1:8100/api/batches/${id}/cancel`, { method: 'POST' })
-      const data = await res.json()
+      const data = await postAPI(`/api/batches/${id}/cancel`, {}) as any
       if (data.error) alert(data.error)
       else handleViewBatch(id)
     } catch (err) {

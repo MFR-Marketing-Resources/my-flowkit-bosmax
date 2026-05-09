@@ -262,7 +262,7 @@ CREATE TABLE IF NOT EXISTS batch (
     cooldown_seconds        INTEGER DEFAULT 300,
     daily_credit_limit      INTEGER DEFAULT 0,
     approval_required       INTEGER DEFAULT 1,
-    status                  TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','DRAFT_BLOCKED','QUEUED','PROCESSING','COMPLETED','CANCELLED')),
+    status                  TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','DRAFT_BLOCKED','QUEUED','PROCESSING','COMPLETED','CANCELLED','PAUSED','FAILED')),
     created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -285,7 +285,7 @@ CREATE TABLE IF NOT EXISTS batch_variant (
     prompt_9_section        TEXT,
     readiness               TEXT DEFAULT 'PENDING',
     blocked_reason          TEXT,
-    queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','PROCESSING','COMPLETED','FAILED','CANCELLED')),
+    queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','WAITING_INTERVAL','RUNNING','FLOW_MODE_VERIFIED','PROMPT_INSERTED','GENERATION_STARTED','GENERATED','DOWNLOADED','QA_PASSED','QA_FAILED','FAILED','RETRY_PENDING','CANCELLED')),
     request_id              TEXT,
     created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -647,7 +647,7 @@ CREATE TABLE IF NOT EXISTS batch (
     cooldown_seconds        INTEGER DEFAULT 300,
     daily_credit_limit      INTEGER DEFAULT 0,
     approval_required       INTEGER DEFAULT 1,
-    status                  TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','DRAFT_BLOCKED','QUEUED','PROCESSING','COMPLETED','CANCELLED')),
+    status                  TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','DRAFT_BLOCKED','QUEUED','PROCESSING','COMPLETED','CANCELLED','PAUSED','FAILED')),
     created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -669,7 +669,7 @@ CREATE TABLE IF NOT EXISTS batch_variant (
     prompt_9_section        TEXT,
     readiness               TEXT DEFAULT 'PENDING',
     blocked_reason          TEXT,
-    queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','PROCESSING','COMPLETED','FAILED','CANCELLED')),
+    queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','WAITING_INTERVAL','RUNNING','FLOW_MODE_VERIFIED','PROMPT_INSERTED','GENERATION_STARTED','GENERATED','DOWNLOADED','QA_PASSED','QA_FAILED','FAILED','RETRY_PENDING','CANCELLED')),
     request_id              TEXT,
     created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))

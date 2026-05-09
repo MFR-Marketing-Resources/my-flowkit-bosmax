@@ -34,7 +34,7 @@ async def queue_batch(batch_id: str) -> dict[str, Any]:
     event_id = str(uuid.uuid4())
     await db.execute("""
         INSERT INTO batch_queue_event (event_id, batch_id, status, message, source)
-        VALUES (?, ?, 'QUEUED', 'Batch moved to queue for scheduled execution.', 'system')
+        VALUES (?, ?, 'QUEUED', 'Batch queued as execution plan only. Google Flow execution has not started.', 'system')
     """, (event_id, batch_id))
     
     await db.commit()

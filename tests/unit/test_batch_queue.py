@@ -15,6 +15,11 @@ async def test_queue_batch_workflow():
     })
     batch_id = draft["batch_id"]
     
+    # Get count before
+    db = await crud.get_db()
+    cursor = await db.execute("SELECT COUNT(*) as cnt FROM request")
+    count_before = (await cursor.fetchone())["cnt"]
+
     # Queue it
     res = await queue_batch(batch_id)
     assert res["ok"]
@@ -29,6 +34,16 @@ async def test_queue_batch_workflow():
     variants = await cursor.fetchall()
     for v in variants:
         assert v["queue_status"] == "QUEUED"
+
+    # Verify event message
+    cursor = await db.execute("SELECT message FROM batch_queue_event WHERE batch_id = ?", (batch_id,))
+    event = await cursor.fetchone()
+    assert "Google Flow execution has not started" in event["message"]
+
+    # Verify NO request records created
+    cursor = await db.execute("SELECT COUNT(*) as cnt FROM request")
+    row = await cursor.fetchone()
+    assert row["cnt"] == count_before
 
 @pytest.mark.asyncio
 async def test_cancel_batch_workflow():
