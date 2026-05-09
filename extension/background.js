@@ -912,19 +912,19 @@ async function sendTelemetry() {
     } else {
       await fetch(`https://aisandbox-pa.googleapis.com/v1/flow:batchLogFrontendEvents`, {
         method: 'POST', headers, credentials: 'include',
-        sendRuntimeMessageNoThrow({
+        body: JSON.stringify(_buildFrontendEventsPayload()),
       });
     }
   } catch {}
 }
-        });
+
 // Send telemetry at random intervals (45-120s) to look organic
 function scheduleTelemetry() {
-        sendRuntimeMessageNoThrow({
+  const delay = _rand(45, 120) * 1000;
   setTimeout(async () => {
     await sendTelemetry();
     scheduleTelemetry(); // reschedule with new random interval
-        });
+  }, delay);
 }
 
 // Refresh session ID every ~30min like a real user
