@@ -37,6 +37,7 @@ const TYPE_LABELS = {
 };
 
 const LOCAL_AGENT_BASE = 'http://127.0.0.1:8100';
+const LOCAL_AGENT_HEALTH_URL = `${LOCAL_AGENT_BASE}/health`;
 const LOCAL_AGENT_DASHBOARD_URL = `${LOCAL_AGENT_BASE}/operator`;
 const LOCAL_AGENT_REPAIR_URL = `${LOCAL_AGENT_BASE}/api/local-agent/repair`;
 const LOCAL_AGENT_STATUS_URL = `${LOCAL_AGENT_BASE}/api/local-agent/status`;
@@ -45,6 +46,8 @@ const LOCAL_AGENT_REPAIR_COMMAND = '.\\scripts\\install-local-agent.ps1';
 
 let _localAgentStatus = null;
 let _localAgentError = null;
+let _backendHealth = null;
+let _backendHealthError = null;
 let _operatorPack = null;
 let _operatorPackError = null;
 let _dashboardReachable = null;
@@ -273,6 +276,7 @@ function sendRuntimeMessageSafe(message, onResponse) {
 // ── Offline reason mapping ──────────────────────────────────
 
 const OFFLINE_REASON_TEXT = {
+  'EXTENSION_DISCONNECTED': 'Backend is reachable, but the extension bridge is disconnected',
   'LOCAL_AGENT_NOT_RUNNING': 'Local agent process not running',
   'LOCAL_AGENT_UNREACHABLE': 'Cannot connect to http://127.0.0.1:8100',
   'LOCAL_AGENT_STARTING': 'Local agent is starting...',
@@ -306,6 +310,28 @@ function applyAgentBadge(mode) {
   statusEl.textContent = 'offline';
   statusEl.style.background = 'rgba(239,68,68,0.15)';
   statusEl.style.color = 'var(--red)';
+}
+
+function updateHealthDiagnostics() {
+  const healthTargetEl = document.getElementById('operator-health-target');
+  const healthResultEl = document.getElementById('operator-health-result');
+  const contentPackResultEl = document.getElementById('operator-content-pack-result');
+  const lastErrorEl = document.getElementById('operator-last-error');
+
+  healthTargetEl.textContent = LOCAL_AGENT_BASE;
+  healthResultEl.textContent = _backendHealthError
+    ? `FAIL: ${_backendHealthError}`
+    : _backendHealth
+      ? `OK: ${_backendHealth.status || 'ok'} | ext=${_backendHealth.extension_connected ? 'connected' : 'disconnected'} | state=${_backendHealth.extension_state || 'off'}`
+      : 'checking...';
+  contentPackResultEl.textContent = _operatorPackError
+    ? `FAIL: ${_operatorPackError}`
+    : _operatorPack
+      ? `OK: available=${_operatorPack.available ? 'true' : 'false'} | products=${(_operatorPack.products || []).length} | engines=${(_operatorPack.engines || []).length} | silos=${(_operatorPack.silos || []).length}`
+      : 'checking...';
+
+  const errors = [_localAgentError, _backendHealthError, _operatorPackError, _dashboardError].filter(Boolean)
+  lastErrorEl.textContent = errors[0] || '—';
 }
 
 function isLocalAgentHealthy() {
@@ -370,6 +396,8 @@ function renderLocalAgentPanel() {
     silosEl.textContent = '0';
   }
 
+  updateHealthDiagnostics();
+
   if (!_localAgentStatus) {
     applyAgentBadge('offline');
     summaryEl.textContent = `Local Agent offline. Run the installer to restore the Windows startup shortcut and restart the agent.`;
@@ -391,7 +419,7 @@ function renderLocalAgentPanel() {
   }
 
   // Partial/degraded state
-  applyAgentBadge('repair');
+  applyAgentBadge('online');
   reconnectBtn.style.display = 'inline-flex';
   repairBtn.style.display = 'inline-flex';
 
@@ -399,13 +427,15 @@ function renderLocalAgentPanel() {
   updateOfflineReason(offlineReason);
 
   if (_operatorPackError) {
-    summaryEl.textContent = `Local Agent online, but operator content pack is unavailable: ${_operatorPackError}.`;
+    summaryEl.textContent = `Backend reachable. Operator content pack is unavailable: ${_operatorPackError}.`;
   } else if (_operatorPack && !_operatorPack.available) {
-    summaryEl.textContent = 'Local Agent online, but operator content pack is not ready. Repair may be required.';
+    summaryEl.textContent = 'Backend reachable. Operator content pack is not ready yet.';
   } else if (_dashboardError || _dashboardReachable === false) {
-    summaryEl.textContent = `Local Agent online, but dashboard URL is unreachable: ${_dashboardError || 'unknown error'}.`;
+    summaryEl.textContent = `Backend reachable. Dashboard URL is unreachable: ${_dashboardError || 'unknown error'}.`;
+  } else if (_localAgentStatus?.offline_reason === 'EXTENSION_DISCONNECTED') {
+    summaryEl.textContent = 'Backend reachable. Dashboard browser can connect, but the extension bridge is disconnected.';
   } else {
-    summaryEl.textContent = 'Local Agent online, but health checks are incomplete. Repair may be required.';
+    summaryEl.textContent = 'Backend reachable. Some local agent checks are incomplete.';
   }
   updateRepairButton();
 }
@@ -420,6 +450,20 @@ async function fetchLocalAgentStatus() {
     _localAgentStatus = null;
     _localAgentError = String(error?.message || error);
   }
+  renderLocalAgentPanel();
+}
+
+async function fetchBackendHealth() {
+  try {
+    const res = await fetch(LOCAL_AGENT_HEALTH_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _backendHealth = await res.json();
+    _backendHealthError = null;
+  } catch (error) {
+    _backendHealth = null;
+    _backendHealthError = String(error?.message || error);
+  }
+
   renderLocalAgentPanel();
 }
 
@@ -483,6 +527,7 @@ document.getElementById('btn-operator').addEventListener('click', async () => {
 
 document.getElementById('btn-agent-check').addEventListener('click', () => {
   fetchLocalAgentStatus();
+  fetchBackendHealth();
   fetchDashboardStatus();
   fetchOperatorPack();
 });
@@ -490,12 +535,14 @@ document.getElementById('btn-agent-check').addEventListener('click', () => {
 document.getElementById('btn-agent-reconnect').addEventListener('click', async () => {
   // Force reconnect by refetching status
   await fetchLocalAgentStatus();
+  await fetchBackendHealth();
   await fetchOperatorPack();
   // Trigger reconnect in background
   sendRuntimeMessageSafe({ type: 'RECONNECT' }, () => {
     setTimeout(() => {
       fetchStatus();
       fetchLocalAgentStatus();
+      fetchBackendHealth();
       fetchOperatorPack();
     }, 500);
   });
@@ -534,6 +581,7 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchStatus();
   fetchLog();
   fetchLocalAgentStatus();
+  fetchBackendHealth();
   fetchOperatorPack();
   fetchDashboardStatus();
 });

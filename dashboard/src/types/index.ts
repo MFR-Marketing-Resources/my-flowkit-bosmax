@@ -287,8 +287,12 @@ export interface Product {
   fastmoss_source_file: string | null
   image_asset_status?: string | null
   image_failure_detail?: string | null
-  image_readiness_status?: 'IMAGE_READY' | 'IMAGE_NOT_AVAILABLE' | 'IMAGE_DOWNLOAD_FAILED' | 'IMAGE_URL_MISSING' | 'IMAGE_URL_MISSING_FROM_SOURCE' | 'IMAGE_CACHE_READY' | null
+  image_readiness_status?: 'IMAGE_READY' | 'IMAGE_NOT_AVAILABLE' | 'IMAGE_DOWNLOAD_FAILED' | 'IMAGE_URL_MISSING' | 'IMAGE_URL_MISSING_FROM_SOURCE' | 'IMAGE_CACHE_READY' | 'LOCAL_CACHE_MISSING' | null
   image_readiness_detail?: string | null
+  rendered_img_src?: string | null
+  image_http_status?: number | null
+  is_test_product?: boolean
+  catalog_label?: string | null
   mode_readiness?: Record<string, {
     status: string
     detail: string
@@ -352,6 +356,7 @@ export interface LocalAgentStatus {
   task_name: string
   health_url: string
   dashboard_url: string
+  content_pack_url: string
   dashboard_serving_mode: string
   repair_command: string
   extension_connected: boolean

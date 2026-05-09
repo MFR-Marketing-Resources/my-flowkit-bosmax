@@ -272,6 +272,7 @@ async def dashboard_ws(websocket: WebSocket):
 
 _DASHBOARD_DIST_DIR = BASE_DIR / "dashboard" / "dist"
 _DASHBOARD_INDEX_FILE = _DASHBOARD_DIST_DIR / "index.html"
+_PRODUCT_IMAGE_DIR = BASE_DIR / "data" / "products" / "images"
 
 
 def _resolve_dashboard_asset(path: str) -> Path | None:
@@ -287,6 +288,20 @@ def _resolve_dashboard_asset(path: str) -> Path | None:
     if candidate.is_file():
         return candidate
     return None
+
+
+@app.get("/api/assets/product-images/{filename}")
+async def product_image_asset(filename: str):
+    candidate = (_PRODUCT_IMAGE_DIR / filename).resolve()
+    try:
+        candidate.relative_to(_PRODUCT_IMAGE_DIR.resolve())
+    except ValueError:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+    if not candidate.is_file():
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+    return FileResponse(candidate)
 
 
 @app.get("/")

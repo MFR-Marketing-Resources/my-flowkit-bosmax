@@ -100,10 +100,23 @@ function KV({ label, value }: { label: string; value: string | number | null | u
   )
 }
 
-function ImageFallback({ src, alt, className }: { src?: string | null; alt?: string; className?: string }) {
+function imageStatusLabel(product: Product | null) {
+  return product?.image_readiness_status || 'IMAGE_NOT_AVAILABLE'
+}
+
+function imageStatusDetail(product: Product | null) {
+  return product?.image_readiness_detail || product?.image_failure_detail || ''
+}
+
+function imageErrorLabel(product: Product | null) {
+  if (product?.local_image_path) return imageStatusLabel(product)
+  return 'IMAGE_LOAD_FAILED'
+}
+
+function ImageFallback({ src, alt, className, emptyLabel, errorLabel }: { src?: string | null; alt?: string; className?: string; emptyLabel?: string; errorLabel?: string }) {
   const [err, setErr] = useState(false)
-  if (!src) return <div className={`${className} flex items-center justify-center bg-slate-800 text-[10px] font-bold text-slate-500 text-center p-2`}>IMAGE_NOT_AVAILABLE</div>
-  if (err) return <div className={`${className} flex items-center justify-center bg-red-900/20 text-[10px] font-bold text-red-500/70 border border-red-900/50 text-center p-2`}>IMAGE_LOAD_FAILED</div>
+  if (!src) return <div className={`${className} flex items-center justify-center bg-slate-800 text-[10px] font-bold text-slate-500 text-center p-2`}>{emptyLabel || 'IMAGE_NOT_AVAILABLE'}</div>
+  if (err) return <div className={`${className} flex items-center justify-center bg-red-900/20 text-[10px] font-bold text-red-500/70 border border-red-900/50 text-center p-2`}>{errorLabel || 'IMAGE_LOAD_FAILED'}</div>
   return <img src={src} alt={alt} className={className} onError={() => setErr(true)} />
 }
 
@@ -111,7 +124,7 @@ export default function ProductsSalesAnalyzerPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [sourceFilter, setSourceFilter] = useState('ALL')
+  const [sourceFilter, setSourceFilter] = useState('FASTMOSS')
   const [readinessFilter] = useState('ALL')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -436,10 +449,11 @@ export default function ProductsSalesAnalyzerPage() {
                 className="flex-1 bg-slate-900 border text-xs px-2 py-1.5 rounded"
                 style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
               >
-                <option value="ALL">All Sources</option>
                 <option value="FASTMOSS">FastMoss</option>
                 <option value="MANUAL">Manual</option>
-                <option value="TIKTOKSHOP_DRAFT">TikTok Draft</option>
+                <option value="TIKTOKSHOP">TikTok Draft</option>
+                <option value="TEST">Test / Fixture</option>
+                <option value="ALL">All Sources</option>
               </select>
               <button
                 onClick={loadProducts}
@@ -463,11 +477,15 @@ export default function ProductsSalesAnalyzerPage() {
                 className={`flex gap-3 p-2 rounded cursor-pointer transition-colors ${selectedId === product.id ? 'bg-blue-900/30 border-blue-500/50 border' : 'hover:bg-slate-800 border border-transparent'}`}
               >
                 <div className="flex-shrink-0 w-16 h-16 rounded overflow-hidden bg-slate-800">
-                   <ImageFallback src={product.local_image_path ? `/api/files/${encodeURIComponent(product.local_image_path)}` : product.image_url} alt={product.product_short_name} className="w-full h-full object-cover" />
+                   <ImageFallback src={product.rendered_img_src} alt={product.product_short_name} className="w-full h-full object-cover" emptyLabel={imageStatusLabel(product)} errorLabel={imageErrorLabel(product)} />
                 </div>
                 <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
-                  <div className="text-xs font-semibold truncate text-slate-200" title={product.raw_product_title}>{product.product_short_name || product.raw_product_title}</div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="text-xs font-semibold truncate text-slate-200" title={product.raw_product_title}>{product.product_short_name || product.raw_product_title}</div>
+                    {product.is_test_product ? <StatBadge label="TEST" tone="risk" /> : null}
+                  </div>
                   <div className="text-[10px] text-slate-400 truncate mt-0.5">{product.category} &rsaquo; {product.subcategory} &rsaquo; {product.type}</div>
+                  <div className="text-[10px] text-slate-500 truncate mt-0.5">{imageStatusLabel(product)}</div>
                   <div className="flex items-center justify-between mt-1 text-[10px]">
                      <span className="text-emerald-400">{product.currency} {fieldValue(product.price)}</span>
                      <span className="text-orange-300">Comm: {fieldValue(product.commission_amount)} / {fieldValue(product.commission_rate)}</span>
@@ -506,7 +524,7 @@ export default function ProductsSalesAnalyzerPage() {
                 <Panel title="Database Record" subtitle={`ID: ${selectedProduct.id} | Source: ${selectedProduct.source}`}>
                   <div className="flex gap-4 mb-4">
                     <div className="w-24 h-24 rounded border border-slate-700 overflow-hidden flex-shrink-0">
-                       <ImageFallback src={selectedProduct.local_image_path ? `/api/files/${encodeURIComponent(selectedProduct.local_image_path)}` : selectedProduct.image_url} alt="Product Thumbnail" className="w-full h-full object-cover" />
+                       <ImageFallback src={selectedProduct.rendered_img_src} alt="Product Thumbnail" className="w-full h-full object-cover" emptyLabel={imageStatusLabel(selectedProduct)} errorLabel={imageErrorLabel(selectedProduct)} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-lg font-bold truncate text-slate-100">{selectedProduct.product_short_name || selectedProduct.raw_product_title}</div>
@@ -515,6 +533,7 @@ export default function ProductsSalesAnalyzerPage() {
                         {selectedProduct.prompt_readiness_status === 'READY' ? <StatBadge label="READY" tone="ready" /> : <StatBadge label={selectedProduct.prompt_readiness_status || 'MISSING_FIELDS'} tone="warn" />}
                         {selectedProduct.physics_class ? <StatBadge label={`DNA: ${selectedProduct.physics_class}`} tone="ready" /> : <StatBadge label="DNA: NONE" tone="neutral" />}
                         <StatBadge label={`${selectedProduct.mapping_source} | ${selectedProduct.mapping_confidence}`} tone="neutral" />
+                        {selectedProduct.is_test_product ? <StatBadge label="TEST" tone="risk" /> : null}
                       </div>
                     </div>
                   </div>
@@ -554,7 +573,16 @@ export default function ProductsSalesAnalyzerPage() {
                     <KV label="Image Readiness" value={selectedProduct.image_readiness_status} />
                     <KV label="Image Readiness Detail" value={selectedProduct.image_readiness_detail || selectedProduct.image_failure_detail} />
                     <KV label="Local Image Path" value={selectedProduct.local_image_path} />
+                    <KV label="Rendered Image Src" value={selectedProduct.rendered_img_src} />
+                    <KV label="Image HTTP Status" value={selectedProduct.image_http_status} />
+                    <KV label="Catalog Label" value={selectedProduct.catalog_label} />
                   </div>
+
+                  {imageStatusDetail(selectedProduct) ? (
+                    <div className="mt-4 rounded border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300">
+                      {imageStatusDetail(selectedProduct)}
+                    </div>
+                  ) : null}
 
                   <div className="mt-4 rounded border border-slate-800 bg-slate-950/60 p-3 space-y-3">
                     <div className="text-[11px] font-semibold text-slate-300">Image Actions</div>

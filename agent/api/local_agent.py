@@ -19,6 +19,7 @@ LOCAL_AGENT_REGISTRATION_FILE = LOCAL_AGENT_STATE_DIR / "registration.json"
 LOCAL_AGENT_REPAIR_COMMAND = r".\scripts\install-local-agent.ps1"
 LOCAL_AGENT_DASHBOARD_URL = "http://127.0.0.1:8100/operator"
 LOCAL_AGENT_HEALTH_URL = "http://127.0.0.1:8100/health"
+LOCAL_AGENT_CONTENT_PACK_URL = "http://127.0.0.1:8100/api/operator/content-pack"
 
 
 class LocalAgentRegistration(BaseModel):
@@ -34,6 +35,7 @@ class LocalAgentStatus(BaseModel):
     task_name: str
     health_url: str
     dashboard_url: str
+    content_pack_url: str
     dashboard_serving_mode: str
     repair_command: str
     extension_connected: bool
@@ -110,11 +112,11 @@ async def get_local_agent_status():
 
     client = get_flow_client()
     registration = load_registration()
+    extension_status = await client.get_status()
 
-    # Offline reason: only set if local agent backend is truly unreachable
     offline_reason = None
     if not client.connected:
-        offline_reason = "LOCAL_AGENT_UNREACHABLE"
+        offline_reason = "EXTENSION_DISCONNECTED"
 
     # Check if auto-start is enabled (startup shortcut exists)
     startup_dir = pathlib.Path.home() / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup"
@@ -124,10 +126,11 @@ async def get_local_agent_status():
         task_name=LOCAL_AGENT_TASK_NAME,
         health_url=LOCAL_AGENT_HEALTH_URL,
         dashboard_url=LOCAL_AGENT_DASHBOARD_URL,
+        content_pack_url=LOCAL_AGENT_CONTENT_PACK_URL,
         dashboard_serving_mode=get_dashboard_serving_mode(),
         repair_command=LOCAL_AGENT_REPAIR_COMMAND,
         extension_connected=client.connected,
-        extension_state=client.last_state if hasattr(client, "last_state") else ("IDLE" if client.connected else "OFFLINE"),
+        extension_state=(extension_status.get("state") or ("idle" if client.connected else "off")).upper(),
         offline_reason=offline_reason,
         auto_start_enabled=auto_start_enabled,
         last_health_check=_iso_now(),

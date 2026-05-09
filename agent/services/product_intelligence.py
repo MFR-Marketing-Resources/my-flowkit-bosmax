@@ -15,6 +15,53 @@ logger = logging.getLogger(__name__)
 
 IMAGE_READY_STATES = {"IMAGE_READY", "IMAGE_CACHE_READY"}
 MODE_IMAGE_DEPENDENT = ("Images", "Ingredients", "Frames")
+TEST_PRODUCT_NAMES = {"test product", "test item", "fixture product"}
+
+
+def resolve_cached_image_path(payload: dict[str, Any]) -> Path | None:
+    local_image_path = (payload.get("local_image_path") or "").strip()
+    if not local_image_path:
+        return None
+
+    cached_path = Path(local_image_path)
+    if not cached_path.is_absolute():
+        cached_path = BASE_DIR / cached_path
+    return cached_path
+
+
+def is_test_product(payload: dict[str, Any]) -> bool:
+    product_id = str(payload.get("id") or payload.get("product_id") or "").strip().lower()
+    short_name = str(payload.get("product_short_name") or "").strip().lower()
+    raw_title = str(payload.get("raw_product_title") or "").strip().lower()
+    local_image_path = str(payload.get("local_image_path") or "").strip().lower()
+
+    if product_id.startswith("test_") or product_id.startswith("fixture_"):
+        return True
+    if short_name in TEST_PRODUCT_NAMES or raw_title in TEST_PRODUCT_NAMES:
+        return True
+    if short_name.startswith("test product") or raw_title.startswith("test product"):
+        return True
+    if local_image_path in {"test.jpg", "test.jpeg", "test.png", "test.webp", "test.gif"}:
+        return True
+    return False
+
+
+def build_rendered_image_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    product_id = payload.get("id") or payload.get("product_id")
+    image_url = (payload.get("image_url") or "").strip() or None
+    local_image_path = (payload.get("local_image_path") or "").strip()
+    readiness = payload.get("image_readiness_status")
+
+    if product_id and local_image_path:
+        return {
+            "rendered_img_src": f"/api/products/{product_id}/image",
+            "image_http_status": 200 if readiness == "IMAGE_CACHE_READY" else 404,
+        }
+
+    return {
+        "rendered_img_src": image_url,
+        "image_http_status": None,
+    }
 
 def normalize_source(source: str | None) -> str:
     normalized = (source or "FASTMOSS").strip().upper()
@@ -77,14 +124,16 @@ def resolve_image_readiness(payload: dict[str, Any]) -> dict[str, Any]:
     local_image_path = (payload.get("local_image_path") or "").strip()
 
     if local_image_path:
-        cached_path = Path(local_image_path)
-        if not cached_path.is_absolute():
-            cached_path = BASE_DIR / cached_path
+        cached_path = resolve_cached_image_path(payload)
         if cached_path.exists():
             return {
                 "image_readiness_status": "IMAGE_CACHE_READY",
                 "image_readiness_detail": str(cached_path),
             }
+        return {
+            "image_readiness_status": "LOCAL_CACHE_MISSING",
+            "image_readiness_detail": failure_detail or f"Cached image file is missing: {cached_path}",
+        }
 
     if image_status == "NOT_AVAILABLE":
         return {
@@ -92,7 +141,7 @@ def resolve_image_readiness(payload: dict[str, Any]) -> dict[str, Any]:
             "image_readiness_detail": failure_detail or "Image marked as not available.",
         }
 
-    if image_url and image_status == "FAILED":
+    if image_status == "FAILED":
         return {
             "image_readiness_status": "IMAGE_DOWNLOAD_FAILED",
             "image_readiness_detail": failure_detail or "Image download failed.",
@@ -162,10 +211,13 @@ async def enrich_product(product: dict[str, Any], *, persist: bool = False) -> d
     physics = resolve_product_physics(product=payload)
     payload.update(physics)
     payload.update(resolve_image_readiness(payload))
+    payload.update(build_rendered_image_fields(payload))
     readiness = evaluate_prompt_readiness(payload, physics)
     payload.update(readiness)
     payload["mode_readiness"] = mode_readiness(payload)
     payload["product_id"] = payload.get("id")
+    payload["is_test_product"] = is_test_product(payload)
+    payload["catalog_label"] = "TEST" if payload["is_test_product"] else payload.get("source")
     payload["mapping_review_status"] = payload.get("mapping_review_status") or (
         "NEEDS_REVIEW" if payload.get("mapping_confidence") == "NEEDS_REVIEW" else "AUTO_MAPPED"
     )

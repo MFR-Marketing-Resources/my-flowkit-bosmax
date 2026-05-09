@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from agent.config import BASE_DIR
@@ -20,7 +21,8 @@ from agent.services.product_intelligence import (
     json_dump_list as _json_dump_list,
     derive_commission_amount as _derive_commission_amount,
     display_name as _display_name,
-    generate_product_prompt
+    generate_product_prompt,
+    resolve_cached_image_path,
 )
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
@@ -322,17 +324,13 @@ async def _list_products_response(
     limit: int = 50,
     offset: int = 0,
 ):
-    source_norm = _normalize_source(source) if source else None
-    products = await crud.list_products(source=source_norm, query=q, limit=limit, offset=offset)
-    enriched = [await _enrich_product(product) for product in products]
-
-    total = await crud.count_products(source=source_norm, query=q)
-    if readiness:
-        all_products = await crud.list_products(source=source_norm, query=q)
-        enriched_all = [await _enrich_product(product) for product in all_products]
-        filtered_all = [product for product in enriched_all if product.get("prompt_readiness_status") == readiness]
-        enriched = [product for product in enriched if product.get("prompt_readiness_status") == readiness]
-        total = len(filtered_all)
+    requested_source = (source or "").strip().upper() or None
+    db_source = _normalize_source(requested_source) if requested_source in {"FASTMOSS", "MANUAL", "TIKTOKSHOP", "IMPORTED"} else None
+    all_products = await crud.list_products(source=db_source, query=q)
+    enriched_all = [await _enrich_product(product) for product in all_products]
+    filtered_all = _filter_products_for_catalog(enriched_all, source=requested_source, readiness=readiness)
+    total = len(filtered_all)
+    enriched = filtered_all[offset:offset + limit]
 
     return {
         "total_count": total,
@@ -342,6 +340,50 @@ async def _list_products_response(
         "offset": offset,
         "items": enriched,
     }
+
+
+def _catalog_priority(product: dict[str, Any]) -> tuple[int, int, int, int]:
+    source = (product.get("source") or "").upper()
+    prompt_status = product.get("prompt_readiness_status")
+    image_status = product.get("image_readiness_status")
+
+    source_rank = {
+        "FASTMOSS": 0,
+        "IMPORTED": 1,
+        "MANUAL": 2,
+        "TIKTOKSHOP": 3,
+    }.get(source, 4)
+    prompt_rank = {"READY": 0, "NEEDS_REVIEW": 1}.get(prompt_status, 2)
+    image_rank = 0 if image_status in {"IMAGE_READY", "IMAGE_CACHE_READY"} else 1
+    test_rank = 1 if product.get("is_test_product") else 0
+    return (test_rank, source_rank, prompt_rank, image_rank)
+
+
+def _matches_catalog_source(product: dict[str, Any], requested_source: str | None) -> bool:
+    if requested_source == "ALL":
+        return True
+    if requested_source == "TEST":
+        return bool(product.get("is_test_product"))
+    if product.get("is_test_product"):
+        return False
+    if not requested_source:
+        return True
+    return (product.get("source") or "").upper() == requested_source
+
+
+def _filter_products_for_catalog(
+    products: list[dict[str, Any]],
+    *,
+    source: str | None,
+    readiness: str | None,
+) -> list[dict[str, Any]]:
+    filtered = [product for product in products if _matches_catalog_source(product, source)]
+    if readiness:
+        filtered = [product for product in filtered if product.get("prompt_readiness_status") == readiness]
+
+    filtered.sort(key=lambda product: product.get("updated_at") or product.get("created_at") or "", reverse=True)
+    filtered.sort(key=_catalog_priority)
+    return filtered
 
 
 @router.get("")
@@ -649,6 +691,26 @@ async def get_product(product_id: str):
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return await _enrich_product(product, persist=True)
+
+
+@router.get("/{product_id}/image")
+async def get_product_image(product_id: str):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    enriched = await _enrich_product(product)
+    cached_path = resolve_cached_image_path(enriched)
+    if cached_path and cached_path.exists():
+        return FileResponse(cached_path)
+
+    raise HTTPException(
+        status_code=404,
+        detail={
+            "status": enriched.get("image_readiness_status") or "IMAGE_NOT_AVAILABLE",
+            "reason": enriched.get("image_readiness_detail") or "No cached product image found.",
+        },
+    )
 
 
 @router.patch("/{product_id}")
