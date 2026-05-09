@@ -7,9 +7,11 @@ import LogsPage from './pages/LogsPage'
 import GalleryPage from './pages/GalleryPage'
 import OperatorPage from './pages/OperatorPage'
 import ProductsSalesAnalyzerPage from './pages/ProductsSalesAnalyzerPage'
+import BatchesPage from './pages/BatchesPage'
 
 const NAV = [
   { to: '/operator', icon: Sparkles, label: 'Operator', exact: false },
+  { to: '/batches', icon: PackageSearch, label: 'Batches', exact: false },
   { to: '/products', icon: PackageSearch, label: 'Products', exact: false },
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', exact: true },
   { to: '/projects', icon: FolderOpen, label: 'Projects', exact: false },
@@ -80,6 +82,7 @@ function Layout() {
         <main className="flex-1 overflow-auto p-5">
           <Routes>
             <Route path="/operator" element={<OperatorPage />} />
+            <Route path="/batches" element={<BatchesPage />} />
             <Route path="/products" element={<ProductsSalesAnalyzerPage />} />
             <Route path="/" element={<DashboardPage />} />
             <Route path="/projects" element={<ProjectsPage />} />

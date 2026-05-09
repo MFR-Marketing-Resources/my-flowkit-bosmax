@@ -243,6 +243,64 @@ CREATE TABLE IF NOT EXISTS product (
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS batch (
+    id                      TEXT PRIMARY KEY,
+    product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    brief_id                TEXT,
+    quantity                INTEGER NOT NULL DEFAULT 1,
+    platform                TEXT DEFAULT 'TikTok',
+    objective               TEXT DEFAULT 'conversion',
+    language                TEXT DEFAULT 'Malay',
+    engine                  TEXT DEFAULT 'VEO_3_1',
+    duration                INTEGER DEFAULT 8,
+    mode                    TEXT DEFAULT 'Frames',
+    variation_level         TEXT DEFAULT 'medium',
+    max_parallel_jobs       INTEGER DEFAULT 1,
+    interval_min_seconds    INTEGER DEFAULT 45,
+    interval_max_seconds    INTEGER DEFAULT 120,
+    cooldown_after_n_jobs   INTEGER DEFAULT 5,
+    cooldown_seconds        INTEGER DEFAULT 300,
+    daily_credit_limit      INTEGER DEFAULT 0,
+    approval_required       INTEGER DEFAULT 1,
+    status                  TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','DRAFT_BLOCKED','QUEUED','PROCESSING','COMPLETED','CANCELLED')),
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS batch_variant (
+    variant_id              TEXT PRIMARY KEY,
+    batch_id                TEXT NOT NULL REFERENCES batch(id) ON DELETE CASCADE,
+    product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    brief_id                TEXT,
+    variation_index         INTEGER NOT NULL,
+    hook_angle              TEXT,
+    scene_context           TEXT,
+    camera_route            TEXT,
+    copywriting_formula     TEXT,
+    overlay_strategy        TEXT,
+    cta_style               TEXT,
+    google_flow_mode        TEXT,
+    asset_strategy          TEXT,
+    diversity_fingerprint   TEXT,
+    prompt_9_section        TEXT,
+    readiness               TEXT DEFAULT 'PENDING',
+    blocked_reason          TEXT,
+    queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','PROCESSING','COMPLETED','FAILED','CANCELLED')),
+    request_id              TEXT,
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS batch_queue_event (
+    event_id                TEXT PRIMARY KEY,
+    batch_id                TEXT NOT NULL REFERENCES batch(id) ON DELETE CASCADE,
+    variant_id              TEXT REFERENCES batch_variant(variant_id) ON DELETE SET NULL,
+    status                  TEXT NOT NULL,
+    message                 TEXT,
+    timestamp               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    source                  TEXT NOT NULL DEFAULT 'system'
+);
+
 CREATE INDEX IF NOT EXISTS idx_scene_video ON scene(video_id);
 CREATE INDEX IF NOT EXISTS idx_scene_order ON scene(video_id, display_order);
 CREATE INDEX IF NOT EXISTS idx_request_status ON request(status);
@@ -250,6 +308,9 @@ CREATE INDEX IF NOT EXISTS idx_request_scene ON request(scene_id);
 CREATE INDEX IF NOT EXISTS idx_video_project ON video(project_id);
 CREATE INDEX IF NOT EXISTS idx_product_source ON product(source);
 CREATE INDEX IF NOT EXISTS idx_product_name ON product(product_short_name);
+CREATE INDEX IF NOT EXISTS idx_batch_product ON batch(product_id);
+CREATE INDEX IF NOT EXISTS idx_batch_variant_batch ON batch_variant(batch_id);
+CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_status);
 """
 
 
@@ -562,6 +623,71 @@ FROM _product_old
                 source        TEXT NOT NULL CHECK(source IN ('dashboard','backend','worker','extension','google_flow'))
             )""")
             logger.info("Migrated: created request_stage_event table")
+
+        # Migration: create batch tables if missing
+        cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='batch'")
+        if not await cursor.fetchone():
+            await db.executescript("""
+CREATE TABLE IF NOT EXISTS batch (
+    id                      TEXT PRIMARY KEY,
+    product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    brief_id                TEXT,
+    quantity                INTEGER NOT NULL DEFAULT 1,
+    platform                TEXT DEFAULT 'TikTok',
+    objective               TEXT DEFAULT 'conversion',
+    language                TEXT DEFAULT 'Malay',
+    engine                  TEXT DEFAULT 'VEO_3_1',
+    duration                INTEGER DEFAULT 8,
+    mode                    TEXT DEFAULT 'Frames',
+    variation_level         TEXT DEFAULT 'medium',
+    max_parallel_jobs       INTEGER DEFAULT 1,
+    interval_min_seconds    INTEGER DEFAULT 45,
+    interval_max_seconds    INTEGER DEFAULT 120,
+    cooldown_after_n_jobs   INTEGER DEFAULT 5,
+    cooldown_seconds        INTEGER DEFAULT 300,
+    daily_credit_limit      INTEGER DEFAULT 0,
+    approval_required       INTEGER DEFAULT 1,
+    status                  TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','DRAFT_BLOCKED','QUEUED','PROCESSING','COMPLETED','CANCELLED')),
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE TABLE IF NOT EXISTS batch_variant (
+    variant_id              TEXT PRIMARY KEY,
+    batch_id                TEXT NOT NULL REFERENCES batch(id) ON DELETE CASCADE,
+    product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    brief_id                TEXT,
+    variation_index         INTEGER NOT NULL,
+    hook_angle              TEXT,
+    scene_context           TEXT,
+    camera_route            TEXT,
+    copywriting_formula     TEXT,
+    overlay_strategy        TEXT,
+    cta_style               TEXT,
+    google_flow_mode        TEXT,
+    asset_strategy          TEXT,
+    diversity_fingerprint   TEXT,
+    prompt_9_section        TEXT,
+    readiness               TEXT DEFAULT 'PENDING',
+    blocked_reason          TEXT,
+    queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','PROCESSING','COMPLETED','FAILED','CANCELLED')),
+    request_id              TEXT,
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE TABLE IF NOT EXISTS batch_queue_event (
+    event_id                TEXT PRIMARY KEY,
+    batch_id                TEXT NOT NULL REFERENCES batch(id) ON DELETE CASCADE,
+    variant_id              TEXT REFERENCES batch_variant(variant_id) ON DELETE SET NULL,
+    status                  TEXT NOT NULL,
+    message                 TEXT,
+    timestamp               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    source                  TEXT NOT NULL DEFAULT 'system'
+);
+CREATE INDEX IF NOT EXISTS idx_batch_product ON batch(product_id);
+CREATE INDEX IF NOT EXISTS idx_batch_variant_batch ON batch_variant(batch_id);
+CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_status);
+""")
+            logger.info("Migrated: created batch production tables")
         await db.commit()
     logger.info("Database initialized at %s", DB_PATH)
 
