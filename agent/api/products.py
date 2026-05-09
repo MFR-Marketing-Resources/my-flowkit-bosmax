@@ -79,6 +79,10 @@ class ProductPatchRequest(BaseModel):
     commission_rate: str | None = None
     image_url: str | None = None
     tiktok_product_url: str | None = None
+    image_asset_status: str | None = None
+    image_failure_detail: str | None = None
+    asset_status: str | None = None
+    local_image_path: str | None = None
     product_type: str | None = None
     silo: str | None = None
     trigger_id: str | None = None
@@ -193,6 +197,7 @@ async def _persist_intelligence(product_id: str, payload: dict[str, Any]) -> Non
         image_url=payload.get("image_url") or None,
         tiktok_product_url=payload.get("tiktok_product_url") or None,
         image_asset_status=payload.get("image_asset_status") or None,
+        image_failure_detail=payload.get("image_failure_detail") or None,
         product_type=payload.get("product_type") or None,
         silo=payload.get("silo") or None,
         trigger_id=payload.get("trigger_id") or None,
@@ -221,6 +226,47 @@ async def _persist_intelligence(product_id: str, payload: dict[str, Any]) -> Non
     )
 
 
+def _resolve_image_readiness(payload: dict[str, Any]) -> dict[str, Any]:
+    image_url = (payload.get("image_url") or "").strip()
+    image_status = (payload.get("image_asset_status") or "").strip().upper()
+    failure_detail = (payload.get("image_failure_detail") or "").strip()
+    local_image_path = (payload.get("local_image_path") or "").strip()
+
+    if local_image_path:
+        cached_path = Path(local_image_path)
+        if not cached_path.is_absolute():
+            cached_path = BASE_DIR / cached_path
+        if cached_path.exists():
+            return {
+                "image_readiness_status": "IMAGE_CACHE_READY",
+                "image_readiness_detail": str(cached_path),
+            }
+
+    if image_status == "NOT_AVAILABLE":
+        return {
+            "image_readiness_status": "IMAGE_NOT_AVAILABLE",
+            "image_readiness_detail": failure_detail or "Image marked as not available.",
+        }
+
+    if image_url and image_status == "FAILED":
+        return {
+            "image_readiness_status": "IMAGE_DOWNLOAD_FAILED",
+            "image_readiness_detail": failure_detail or "Image download failed.",
+        }
+
+    if image_url:
+        return {
+            "image_readiness_status": "IMAGE_READY",
+            "image_readiness_detail": failure_detail or "Remote image URL is available.",
+        }
+
+    missing_from_source = payload.get("source") == "FASTMOSS" and bool(payload.get("fastmoss_source_file"))
+    return {
+        "image_readiness_status": "IMAGE_URL_MISSING_FROM_SOURCE" if missing_from_source else "IMAGE_URL_MISSING",
+        "image_readiness_detail": failure_detail or ("Image URL missing from imported source data." if missing_from_source else "Image URL missing."),
+    }
+
+
 async def _enrich_product(product: dict[str, Any], *, persist: bool = False) -> dict[str, Any]:
     payload = dict(product)
     payload["source"] = _normalize_source(payload.get("source"))
@@ -237,6 +283,7 @@ async def _enrich_product(product: dict[str, Any], *, persist: bool = False) -> 
     payload.update(mapping)
     physics = resolve_product_physics(product=payload)
     payload.update(physics)
+    payload.update(_resolve_image_readiness(payload))
     readiness = evaluate_prompt_readiness(payload, physics)
     payload.update(readiness)
     payload["product_id"] = payload.get("id")
@@ -304,13 +351,14 @@ async def cache_product_image(product_id: str):
         if not cached_path.is_absolute():
             cached_path = BASE_DIR / cached_path
         if cached_path.exists():
-            await crud.update_product(product_id, local_image_path=str(cached_path), asset_status="DOWNLOADED", image_asset_status="READY")
+            await crud.update_product(product_id, local_image_path=str(cached_path), asset_status="DOWNLOADED", image_asset_status="READY", image_failure_detail=None)
             return {"status": "success", "local_image_path": str(cached_path), "image_asset_status": "READY"}
 
     image_url = product.get("image_url")
     if not image_url:
-        await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="FAILED")
-        return {"status": "failed", "detail": "No image_url found for product", "image_asset_status": "FAILED"}
+        detail = "Image URL missing from source data"
+        await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="UNRESOLVED", image_failure_detail=detail)
+        return {"status": "failed", "detail": detail, "image_asset_status": "UNRESOLVED"}
 
     try:
         ext = "jpg"
@@ -323,25 +371,29 @@ async def cache_product_image(product_id: str):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(image_url) as resp:
                 if resp.status != 200:
-                    await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="FAILED")
-                    return {"status": "failed", "detail": f"Failed to download image: {resp.status}", "image_asset_status": "FAILED"}
+                    detail = f"Failed to download image: {resp.status}"
+                    await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="FAILED", image_failure_detail=detail)
+                    return {"status": "failed", "detail": detail, "image_asset_status": "FAILED"}
                 data = await resp.read()
                 dest.write_bytes(data)
 
         if not dest.exists() or dest.stat().st_size == 0:
-            await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="FAILED")
-            return {"status": "failed", "detail": "Downloaded image was not written to disk", "image_asset_status": "FAILED"}
+            detail = "Downloaded image was not written to disk"
+            await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="FAILED", image_failure_detail=detail)
+            return {"status": "failed", "detail": detail, "image_asset_status": "FAILED"}
 
         await crud.update_product(
             product_id,
             local_image_path=str(dest),
             asset_status="DOWNLOADED",
-            image_asset_status="READY"
+            image_asset_status="READY",
+            image_failure_detail=None,
         )
         return {"status": "success", "local_image_path": str(dest), "image_asset_status": "READY"}
     except Exception as e:
-        await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="FAILED")
-        return {"status": "failed", "detail": str(e), "image_asset_status": "FAILED"}
+        detail = str(e)
+        await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="FAILED", image_failure_detail=detail)
+        return {"status": "failed", "detail": detail, "image_asset_status": "FAILED"}
 
 
 async def _list_products_response(

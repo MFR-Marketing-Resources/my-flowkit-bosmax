@@ -71,3 +71,48 @@ def test_unknown_manual_product_needs_review():
 
     assert result["mapping_confidence"] == "NEEDS_REVIEW"
     assert "category" in result["missing_fields"]
+
+
+def test_kb_hijabsta_pants_mapping_outranks_mat_keyword_noise():
+    result = resolve_product_mapping(
+        product_name="[ KB HIJABSTA ] Women High Waist Stretch Long Pants Mini BootCut Auto Slim Design Slack Ironless Trousers MATERIAL PREMIUM SCUBA",
+        source_hint="FASTMOSS",
+    )
+
+    assert result["category"] == "Fashion"
+    assert result["subcategory"] == "Bottoms"
+    assert result["type"] == "Pants"
+    assert result["product_type"] == "UNIVERSAL"
+    assert result["silo"] == "fashion_mass_01"
+    assert result["trigger_id"] == "CONFIDENCE_01"
+    assert result["formula"] == "AIDA"
+
+
+def test_sampul_duit_raya_mapping():
+    result = resolve_product_mapping(
+        product_name="(10 pcs) SAMPUL DUIT RAYA BASIC BUNGA BUNGA SAIZ BESAR 2026 Money Packet",
+        source_hint="FASTMOSS",
+    )
+
+    assert result["category"] == "Stationery"
+    assert result["subcategory"] == "Envelope"
+    assert result["type"] == "Money Packet"
+    assert result["product_type"] == "UNIVERSAL"
+    assert result["silo"] == "stationery_mass_01"
+    assert result["trigger_id"] == "GIFTING_01"
+    assert result["formula"] == "PAS"
+
+
+def test_food_container_mapping_not_food_and_beverage():
+    result = resolve_product_mapping(
+        product_name="HOMEWORTH 7 in 1 Food Container Set With Lid Bekas Makanan Hadiah Microwave-safe",
+        source_hint="FASTMOSS",
+    )
+
+    assert result["category"] == "Home & Living"
+    assert result["subcategory"] == "Kitchen Storage"
+    assert result["type"] == "Food Container"
+    assert result["product_type"] == "UNIVERSAL"
+    assert result["silo"] == "household_mass_01"
+    assert result["trigger_id"] == "TRUST_01"
+    assert result["formula"] == "PAS"

@@ -30,6 +30,29 @@ _SHORT_NAME_STOPWORDS = {
 _REQUIRED_FIELDS = ["category", "subcategory", "type", "product_type", "silo", "trigger_id", "formula"]
 
 
+def _keyword_matched(keyword: str, normalized_title: str, normalized_tokens: set[str]) -> bool:
+    if not keyword:
+        return False
+    if " " in keyword:
+        return f" {keyword} " in f" {normalized_title} "
+    return keyword in normalized_tokens
+
+
+def _matched_keywords(rule: dict[str, Any], normalized_title: str, normalized_tokens: set[str]) -> list[str]:
+    matches: list[str] = []
+    for item in rule.get("keywords", []):
+        keyword = normalize_mapping_text(item)
+        if _keyword_matched(keyword, normalized_title, normalized_tokens):
+            matches.append(keyword)
+    return matches
+
+
+def _rule_specificity(matched_keywords: list[str]) -> tuple[int, int]:
+    if not matched_keywords:
+        return (0, 0)
+    return max((len(keyword.split()), len(keyword)) for keyword in matched_keywords)
+
+
 @lru_cache(maxsize=1)
 def load_mapping_rules() -> dict[str, Any]:
     rules_path = RULES_PATH if RULES_PATH.exists() else FALLBACK_RULES_PATH
@@ -74,23 +97,34 @@ def _resolve_source_label(product: dict[str, Any] | None, source_hint: str | Non
 
 
 def _match_keyword_rule(normalized_title: str) -> tuple[dict[str, Any] | None, list[str]]:
-    matched_rules = []
+    normalized_tokens = set(normalized_title.split())
+    matched_rules: list[tuple[dict[str, Any], list[str]]] = []
     for rule in load_mapping_rules().get("keyword_rules", []):
-        keywords = [normalize_mapping_text(item) for item in rule.get("keywords", [])]
-        if any(keyword and keyword in normalized_title for keyword in keywords):
-            matched_rules.append(rule)
+        matches = _matched_keywords(rule, normalized_title, normalized_tokens)
+        if matches:
+            matched_rules.append((rule, matches))
     
     if not matched_rules:
         return None, []
         
-    has_baby = any(r.get("id") == "baby_diaper" for r in matched_rules)
-    has_seluar = any("fashion" in r.get("id", "") for r in matched_rules)
+    by_id = {rule.get("id"): (rule, matches) for rule, matches in matched_rules}
+    has_baby = "baby_diaper" in by_id
+    has_fashion = any(rule.get("id") in {"fashion_bottoms", "fashion_sportswear"} for rule, _ in matched_rules)
     
-    if has_baby and has_seluar:
-        baby_rule = next(r for r in matched_rules if r.get("id") == "baby_diaper")
+    if has_baby and has_fashion:
+        baby_rule = by_id["baby_diaper"][0]
         return baby_rule, ["Conflict resolved: baby_diaper outranked fashion_bottoms due lampin/diaper keywords"]
 
-    return matched_rules[0], []
+    home_carpet = by_id.get("home_carpet")
+    fashion_bottoms = by_id.get("fashion_bottoms")
+    if home_carpet and fashion_bottoms:
+        _, carpet_matches = home_carpet
+        if any(keyword in {"carpet", "karpet", "rug"} for keyword in carpet_matches):
+            return home_carpet[0], ["Conflict resolved: explicit carpet keywords outranked fashion_bottoms."]
+        return fashion_bottoms[0], ["Conflict resolved: fashion_bottoms outranked home_carpet because only soft mat keywords matched."]
+
+    best_rule, _ = max(matched_rules, key=lambda item: _rule_specificity(item[1]))
+    return best_rule, []
 
 
 def _match_taxonomy_alias(category: str, subcategory: str, product_type: str) -> dict[str, Any] | None:
@@ -114,6 +148,7 @@ def _match_profile(category: str, subcategory: str, product_type: str) -> dict[s
     norm_category = normalize_mapping_text(category)
     norm_subcategory = normalize_mapping_text(subcategory)
     norm_type = normalize_mapping_text(product_type)
+    candidates: list[dict[str, Any]] = []
     for profile in load_mapping_rules().get("profile_rules", []):
         match = profile.get("match", {})
         if match.get("category") and normalize_mapping_text(match["category"]) != norm_category:
@@ -122,8 +157,13 @@ def _match_profile(category: str, subcategory: str, product_type: str) -> dict[s
             continue
         if match.get("type") and normalize_mapping_text(match["type"]) != norm_type:
             continue
-        return profile
-    return None
+        candidates.append(profile)
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda profile: sum(1 for field in ("category", "subcategory", "type") if profile.get("match", {}).get(field)),
+    )
 
 
 def _missing_fields(payload: dict[str, Any]) -> list[str]:

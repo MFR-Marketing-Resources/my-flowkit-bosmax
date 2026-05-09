@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 
-import { fetchAPI, postAPI } from '../api/client'
+import { fetchAPI, patchAPI, postAPI } from '../api/client'
 import type { Product } from '../types'
 
 type ManualFormState = Partial<Product> & {
@@ -117,10 +117,16 @@ export default function ProductsSalesAnalyzerPage() {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
+  const [imageActionBusy, setImageActionBusy] = useState(false)
+  const [selectedImageUrl, setSelectedImageUrl] = useState('')
   const [manualForm, setManualForm] = useState<ManualFormState>(emptyManualForm)
   const [tikTokForm, setTikTokForm] = useState<TikTokFormState>({ url: '', raw_product_title: '' })
 
   const selectedProduct = useMemo(() => products.find(product => product.id === selectedId) || null, [products, selectedId])
+
+  useEffect(() => {
+    setSelectedImageUrl(selectedProduct?.image_url || '')
+  }, [selectedProduct?.id, selectedProduct?.image_url])
 
   async function loadProducts() {
     setLoading(true)
@@ -203,6 +209,93 @@ export default function ProductsSalesAnalyzerPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  async function updateSelectedProductImage(payload: Record<string, unknown>, successMessage: string) {
+    if (!selectedProduct) return
+    setImageActionBusy(true)
+    setError(null)
+    setSaveSuccess(null)
+    try {
+      const updated = await patchAPI<Product>(`/api/products/${selectedProduct.id}`, payload)
+      await loadProducts()
+      setSelectedId(updated.id)
+      setSaveSuccess(successMessage)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update selected product image state')
+    } finally {
+      setImageActionBusy(false)
+    }
+  }
+
+  async function handleSelectedImageUpload(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !selectedProduct) return
+    setImageActionBusy(true)
+    setError(null)
+    setSaveSuccess(null)
+    try {
+      const base64 = await fileToBase64(file)
+      const updated = await patchAPI<Product>(`/api/products/${selectedProduct.id}`, {
+        image_base64: base64,
+        image_filename: file.name,
+        image_asset_status: 'READY',
+        image_failure_detail: '',
+      })
+      await loadProducts()
+      setSelectedId(updated.id)
+      setSaveSuccess('Uploaded image and cached it locally for the selected product')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to upload image for selected product')
+    } finally {
+      e.target.value = ''
+      setImageActionBusy(false)
+    }
+  }
+
+  async function handlePasteImageUrl() {
+    if (!selectedProduct || !selectedImageUrl.trim()) return
+    await updateSelectedProductImage(
+      {
+        image_url: selectedImageUrl.trim(),
+        local_image_path: '',
+        asset_status: 'UNRESOLVED',
+        image_asset_status: 'UNRESOLVED',
+        image_failure_detail: '',
+      },
+      'Updated image URL for the selected product',
+    )
+  }
+
+  async function handleCacheSelectedImage() {
+    if (!selectedProduct) return
+    setImageActionBusy(true)
+    setError(null)
+    setSaveSuccess(null)
+    try {
+      const result = await postAPI<{ status: string; detail?: string; local_image_path?: string }>(`/api/products/${selectedProduct.id}/cache-image`, {})
+      await loadProducts()
+      setSelectedId(selectedProduct.id)
+      setSaveSuccess(result.status === 'success' ? 'Cached image successfully for the selected product' : (result.detail || 'Image cache attempt completed with a non-ready result'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to cache selected product image')
+    } finally {
+      setImageActionBusy(false)
+    }
+  }
+
+  async function handleMarkImageNotAvailable() {
+    if (!selectedProduct) return
+    await updateSelectedProductImage(
+      {
+        image_url: '',
+        local_image_path: '',
+        asset_status: 'UNRESOLVED',
+        image_asset_status: 'NOT_AVAILABLE',
+        image_failure_detail: 'Marked manually as image not available.',
+      },
+      'Marked the selected product image as not available',
+    )
   }
 
   return (
@@ -330,6 +423,52 @@ export default function ProductsSalesAnalyzerPage() {
                   <div className="space-y-1">
                     <KV label="Source URL" value={selectedProduct.source_url || selectedProduct.tiktok_product_url} />
                     <KV label="Image Source" value={selectedProduct.image_url} />
+                    <KV label="Image Readiness" value={selectedProduct.image_readiness_status} />
+                    <KV label="Image Readiness Detail" value={selectedProduct.image_readiness_detail || selectedProduct.image_failure_detail} />
+                    <KV label="Local Image Path" value={selectedProduct.local_image_path} />
+                  </div>
+
+                  <div className="mt-4 rounded border border-slate-800 bg-slate-950/60 p-3 space-y-3">
+                    <div className="text-[11px] font-semibold text-slate-300">Image Actions</div>
+                    <div className="flex flex-col gap-2">
+                      <input
+                        type="text"
+                        value={selectedImageUrl}
+                        onChange={e => setSelectedImageUrl(e.target.value)}
+                        placeholder="Paste image URL"
+                        className="w-full bg-slate-900 border border-slate-700 text-xs p-2 rounded text-slate-200"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          disabled={imageActionBusy || !selectedImageUrl.trim()}
+                          onClick={handlePasteImageUrl}
+                          className="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 text-xs px-3 py-2 rounded disabled:opacity-50"
+                        >
+                          Paste Image URL
+                        </button>
+                        <button
+                          type="button"
+                          disabled={imageActionBusy}
+                          onClick={handleCacheSelectedImage}
+                          className="bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/30 text-xs px-3 py-2 rounded disabled:opacity-50"
+                        >
+                          Cache Image
+                        </button>
+                        <label className={`bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-xs px-3 py-2 rounded text-center cursor-pointer ${imageActionBusy ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                          Upload Image
+                          <input type="file" accept="image/*" onChange={handleSelectedImageUpload} className="hidden" disabled={imageActionBusy} />
+                        </label>
+                        <button
+                          type="button"
+                          disabled={imageActionBusy}
+                          onClick={handleMarkImageNotAvailable}
+                          className="bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/30 text-xs px-3 py-2 rounded disabled:opacity-50"
+                        >
+                          Mark Image Not Available
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </Panel>
               </div>

@@ -79,3 +79,27 @@ def test_unknown_manual_product_readiness_missing_fields():
     assert readiness["prompt_readiness_status"] == "MISSING_FIELDS"
     assert "physics_class" in readiness["prompt_missing_fields"]
     assert "category" in readiness["prompt_missing_fields"]
+
+
+def test_money_packet_physics_mapping():
+    result = resolve_product_physics(
+        product_name="Sampul Duit Raya money packet festive envelope",
+        category="Stationery",
+        subcategory="Envelope",
+        type_name="Money Packet",
+    )
+
+    assert result["physics_class"] == "PAPER_GOODS"
+    assert "paper" in result["material_behavior"]
+
+
+def test_food_container_physics_mapping():
+    result = resolve_product_physics(
+        product_name="Microwave-safe food container set bekas makanan",
+        category="Home & Living",
+        subcategory="Kitchen Storage",
+        type_name="Food Container",
+    )
+
+    assert result["physics_class"] == "RIGID_CONTAINER"
+    assert "lid" in result["camera_handling_notes"]

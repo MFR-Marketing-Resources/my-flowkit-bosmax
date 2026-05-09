@@ -28,6 +28,24 @@
       "claim_risk_level": "LOW"
     },
     {
+      "id": "stationery_money_packet",
+      "keywords": ["sampul duit raya", "duit raya", "money packet", "angpow", "red packet"],
+      "category": "Stationery",
+      "subcategory": "Envelope",
+      "type": "Money Packet",
+      "copywriting_angle": "Gifting-led festive presentation and thoughtful giving",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "id": "home_kitchen_food_container",
+      "keywords": ["food container", "bekas makanan", "bekas kedap udara", "microwave-safe", "microwave safe"],
+      "category": "Home & Living",
+      "subcategory": "Kitchen Storage",
+      "type": "Food Container",
+      "copywriting_angle": "Trust-led freshness, storage convenience, and kitchen organization",
+      "claim_risk_level": "LOW"
+    },
+    {
       "id": "beauty_fragrance",
       "keywords": ["body spray", "fragrance mist", "perfume", "fragrance", "eau de parfum"],
       "category": "Beauty & Personal Care",
@@ -83,7 +101,7 @@
     },
     {
       "id": "fashion_bottoms",
-      "keywords": ["seluar", "trousers", "pants"],
+      "keywords": ["seluar", "trousers", "pants", "slack", "bootcut", "high waist", "high-waist"],
       "category": "Fashion",
       "subcategory": "Bottoms",
       "type": "Pants",
@@ -233,6 +251,296 @@
       "formula": "PAS",
       "mode_recommendations": ["Images", "Ingredients", "Frames"],
       "copywriting_angle": "Comfort-led home lifestyle appeal",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Stationery",
+        "subcategory": "Envelope"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "stationery_mass_01",
+      "trigger_id": "GIFTING_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Gifting-led festive presentation",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Home & Living",
+        "subcategory": "Kitchen Storage"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led storage convenience",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Beauty & Personal Care"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_or_beauty_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led beauty and personal care benefits",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Food & Beverages"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fnb_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led food desirability",
+      "claim_risk_level": "MEDIUM"
+    },
+    {
+      "match": {
+        "category": "Home Supplies"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "COMFORT_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Comfort-led household utility and organization",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Muslim Fashion"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fashion_mass_01",
+      "trigger_id": "CONFIDENCE_01",
+      "formula": "AIDA",
+      "mode_recommendations": ["Images", "Ingredients", "Frames", "Text to Video"],
+      "copywriting_angle": "Confidence-led modest fashion appeal",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Womenswear & Underwear"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fashion_mass_01",
+      "trigger_id": "CONFIDENCE_01",
+      "formula": "AIDA",
+      "mode_recommendations": ["Images", "Ingredients", "Frames", "Text to Video"],
+      "copywriting_angle": "Confidence-led fashion appeal",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Textiles & Soft Furnishings"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "COMFORT_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Comfort-led textile texture and home coziness",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Household Appliances"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "AUTHORITY_01",
+      "formula": "FEATURE_BENEFIT",
+      "mode_recommendations": ["Images", "Frames", "Text to Video"],
+      "copywriting_angle": "Authority-led appliance utility and convenience",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Phones & Electronics"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "electronics_mass_01",
+      "trigger_id": "AUTHORITY_01",
+      "formula": "FEATURE_BENEFIT",
+      "mode_recommendations": ["Images", "Frames", "Text to Video"],
+      "copywriting_angle": "Authority-led features and compatibility",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Baby & Maternity"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "baby_care_universal_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led baby care and parenting support",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Pet Supplies"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led daily pet care utility",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Home Improvement"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "AUTHORITY_01",
+      "formula": "FEATURE_BENEFIT",
+      "mode_recommendations": ["Images", "Frames", "Text to Video"],
+      "copywriting_angle": "Authority-led household upgrade utility",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Health"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_or_beauty_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led wellness and daily support",
+      "claim_risk_level": "MEDIUM"
+    },
+    {
+      "match": {
+        "category": "Books, Magazines & Audio"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "AUTHORITY_01",
+      "formula": "FEATURE_BENEFIT",
+      "mode_recommendations": ["Images", "Frames", "Text to Video"],
+      "copywriting_angle": "Authority-led educational value and clarity",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Automotive & Motorcycle"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "AUTHORITY_01",
+      "formula": "FEATURE_BENEFIT",
+      "mode_recommendations": ["Images", "Frames", "Text to Video"],
+      "copywriting_angle": "Authority-led car care and maintenance utility",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Toys & Hobbies"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led play value and family-friendly fun",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Computers & Office Equipment"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "stationery_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led office utility and neat organization",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Kitchenware"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led kitchen utility and ease of use",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Sports & Outdoor"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fashion_mass_01",
+      "trigger_id": "CONFIDENCE_01",
+      "formula": "AIDA",
+      "mode_recommendations": ["Images", "Ingredients", "Frames", "Text to Video"],
+      "copywriting_angle": "Confidence-led performance and outdoor readiness",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Fashion Accessories"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fashion_mass_01",
+      "trigger_id": "CONFIDENCE_01",
+      "formula": "AIDA",
+      "mode_recommendations": ["Images", "Ingredients", "Frames", "Text to Video"],
+      "copywriting_angle": "Confidence-led accessorizing and styling",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Shoes"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fashion_mass_01",
+      "trigger_id": "CONFIDENCE_01",
+      "formula": "AIDA",
+      "mode_recommendations": ["Images", "Ingredients", "Frames", "Text to Video"],
+      "copywriting_angle": "Confidence-led comfort and everyday styling",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Menswear & Underwear"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fashion_mass_01",
+      "trigger_id": "CONFIDENCE_01",
+      "formula": "AIDA",
+      "mode_recommendations": ["Images", "Ingredients", "Frames", "Text to Video"],
+      "copywriting_angle": "Confidence-led menswear appeal",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Tools & Hardware"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "AUTHORITY_01",
+      "formula": "FEATURE_BENEFIT",
+      "mode_recommendations": ["Images", "Frames", "Text to Video"],
+      "copywriting_angle": "Authority-led practical tool utility",
       "claim_risk_level": "LOW"
     },
     {

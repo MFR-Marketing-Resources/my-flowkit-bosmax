@@ -238,6 +238,7 @@ CREATE TABLE IF NOT EXISTS product (
     asset_status        TEXT NOT NULL DEFAULT 'UNRESOLVED' CHECK(asset_status IN ('UNRESOLVED','DOWNLOADED','UPLOADED_TO_FLOW')),
     media_id            TEXT, -- Google Flow media_id after upload
     local_image_path    TEXT, -- Path to cached image
+    image_failure_detail TEXT,
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -441,6 +442,7 @@ CREATE TABLE IF NOT EXISTS product (
     asset_status        TEXT NOT NULL DEFAULT 'UNRESOLVED' CHECK(asset_status IN ('UNRESOLVED','DOWNLOADED','UPLOADED_TO_FLOW')),
     media_id            TEXT,
     local_image_path    TEXT,
+    image_failure_detail TEXT,
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -452,7 +454,7 @@ INSERT INTO product (
     id, source, source_url, brand, raw_product_title, product_display_name, product_short_name,
     category, subcategory, type, shop_name, price, currency, commission_amount, commission_rate,
     price_min, price_max, commission, image_url, tiktok_product_url, fastmoss_source_file,
-    image_asset_status, asset_status, media_id, local_image_path, created_at, updated_at
+    image_asset_status, asset_status, media_id, local_image_path, image_failure_detail, created_at, updated_at
 )
 SELECT
     id,
@@ -480,6 +482,7 @@ SELECT
     asset_status,
     media_id,
     local_image_path,
+    NULL,
     created_at,
     updated_at
 FROM _product_old
@@ -487,6 +490,11 @@ FROM _product_old
             await db.execute("DROP TABLE _product_old")
             await db.execute("PRAGMA foreign_keys=ON")
             logger.info("Migrated: upgraded product table for product intelligence fields")
+        product_columns_cursor = await db.execute("PRAGMA table_info(product)")
+        product_columns = {r[1] for r in await product_columns_cursor.fetchall()}
+        if "image_failure_detail" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN image_failure_detail TEXT")
+            logger.info("Migrated: added image_failure_detail column to product table")
         # Migration: add orientation to video table + backfill from scene data
         cursor = await db.execute("PRAGMA table_info(video)")
         video_columns = {row[1] for row in await cursor.fetchall()}

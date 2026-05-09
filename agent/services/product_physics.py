@@ -87,6 +87,21 @@ PHYSICS_RULES: list[tuple[list[str], dict[str, Any]]] = [
         ),
     ),
     (
+        ["food container", "bekas makanan", "bekas kedap udara", "container set"],
+        _rule(
+            physics_class="RIGID_CONTAINER",
+            product_scale="MEDIUM_OBJECT",
+            hand_object_interaction="stable two-hand or single-hand lid-off presentation of a rigid storage container",
+            recommended_grip="side grip on the container wall or lid edge hold",
+            air_gap_rule="keep fingers clear of the transparent body and lid seal when demonstrating closure",
+            material_behavior="rigid plastic body with snap-fit or press-fit lid response",
+            surface_behavior="semi-gloss plastic with clear edge reflections and visible container depth",
+            fragility_level="LOW",
+            camera_handling_notes="show lid open-close action and stackable form without implying food is included unless visible",
+            unsafe_handling_rules=["avoid edible implication when container is empty", "avoid warped lid presentation"],
+        ),
+    ),
+    (
         ["sambal", "jar", "sachet", "mee kari", "food", "sauce"],
         _rule(
             physics_class="B",
@@ -99,6 +114,21 @@ PHYSICS_RULES: list[tuple[list[str], dict[str, Any]]] = [
             fragility_level="LOW",
             camera_handling_notes="present as clean and food-safe, with lid or seal clearly intact",
             unsafe_handling_rules=["avoid unsupported health claims", "avoid messy spills unless intentional food styling is shown"],
+        ),
+    ),
+    (
+        ["sampul duit raya", "money packet", "angpow", "red packet", "envelope"],
+        _rule(
+            physics_class="PAPER_GOODS",
+            product_scale="SMALL_FLAT_OBJECT",
+            hand_object_interaction="fan, stack, or single-piece presentation of thin paper goods",
+            recommended_grip="light pinch on the edge or corner to keep the front face visible",
+            air_gap_rule="preserve visible separation between overlapping envelopes so design details remain readable",
+            material_behavior="thin paper stock with slight bend memory and crisp fold lines",
+            surface_behavior="matte or light satin paper finish with printed design visibility",
+            fragility_level="LOW",
+            camera_handling_notes="keep edges aligned and surfaces clean so printed festive details stay legible",
+            unsafe_handling_rules=["avoid torn edges", "avoid cash implication unless explicitly shown as packaging use"],
         ),
     ),
     (
@@ -127,6 +157,7 @@ def resolve_product_physics(
     subcategory: str | None = None,
     type_name: str | None = None,
 ) -> dict[str, Any]:
+    existing_payload = None
     if product and all(product.get(field) for field in [
         "physics_class",
         "product_scale",
@@ -139,14 +170,13 @@ def resolve_product_physics(
         "camera_handling_notes",
         "section_5_product_physics_prompt",
     ]):
-        payload = {key: product.get(key) for key in [
+        existing_payload = {key: product.get(key) for key in [
             "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "air_gap_rule",
             "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes",
             "unsafe_handling_rules", "section_5_product_physics_prompt",
         ]}
-        if isinstance(payload.get("unsafe_handling_rules"), str):
-            payload["unsafe_handling_rules"] = [item.strip() for item in payload["unsafe_handling_rules"].split("|") if item.strip()]
-        return payload
+        if isinstance(existing_payload.get("unsafe_handling_rules"), str):
+            existing_payload["unsafe_handling_rules"] = [item.strip() for item in existing_payload["unsafe_handling_rules"].split("|") if item.strip()]
 
     title = normalize_mapping_text(product_name or (product or {}).get("raw_product_title") or "")
     taxonomy = " ".join(
@@ -159,6 +189,9 @@ def resolve_product_physics(
     for keywords, rule in PHYSICS_RULES:
         if any(normalize_mapping_text(keyword) in haystack for keyword in keywords):
             return dict(rule)
+
+    if existing_payload:
+        return existing_payload
 
     return {
         "physics_class": "",
@@ -185,7 +218,10 @@ def evaluate_prompt_readiness(product: dict[str, Any], physics: dict[str, Any]) 
         missing_fields.append("subcategory")
     if not (product.get("type") or "").strip():
         missing_fields.append("type")
-    if not ((product.get("image_url") or "").strip() or (product.get("local_image_path") or "").strip()):
+    image_ready = product.get("image_readiness_status") in {"IMAGE_READY", "IMAGE_CACHE_READY"}
+    if not image_ready and not ((product.get("image_url") or "").strip() or (product.get("local_image_path") or "").strip()):
+        missing_fields.append("image")
+    elif not image_ready and product.get("image_readiness_status") in {"IMAGE_DOWNLOAD_FAILED", "IMAGE_NOT_AVAILABLE", "IMAGE_URL_MISSING", "IMAGE_URL_MISSING_FROM_SOURCE"}:
         missing_fields.append("image")
     if not (physics.get("physics_class") or "").strip():
         missing_fields.append("physics_class")

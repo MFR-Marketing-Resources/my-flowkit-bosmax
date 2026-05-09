@@ -285,7 +285,10 @@ export interface Product {
   image_url: string | null
   tiktok_product_url: string | null
   fastmoss_source_file: string | null
-  image_asset_status?: 'UNRESOLVED' | 'DOWNLOADED' | 'UPLOADED_TO_FLOW' | null
+  image_asset_status?: string | null
+  image_failure_detail?: string | null
+  image_readiness_status?: 'IMAGE_READY' | 'IMAGE_NOT_AVAILABLE' | 'IMAGE_DOWNLOAD_FAILED' | 'IMAGE_URL_MISSING' | 'IMAGE_URL_MISSING_FROM_SOURCE' | 'IMAGE_CACHE_READY' | null
+  image_readiness_detail?: string | null
   asset_status: 'UNRESOLVED' | 'DOWNLOADED' | 'UPLOADED_TO_FLOW'
   media_id: string | null
   local_image_path: string | null
