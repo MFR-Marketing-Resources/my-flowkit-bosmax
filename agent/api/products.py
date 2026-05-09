@@ -44,17 +44,72 @@ async def upload_to_flow(product_id: str):
 async def get_generated_prompt(product_id: str, mode: str = "F2V"):
     """Get a system-generated prompt for a product and mode.
     Supported modes: IMG, I2V, F2V, TRUE_F2V, GENERATE_VIDEO, GENERATE_VIDEO_REFS
-    Supports lookup by product ID or product_name.
+    
+    Product lookup order:
+    1. product.id (exact)
+    2. product_short_name (exact)
+    3. product_display_name (exact)
+    4. raw_product_title (exact)
+    5. product_name (exact)
+    6. Case-insensitive normalized match
+    7. Contains/substring match
     """
+    # First try exact ID match
     product = await crud.get_product(product_id)
+    if product:
+        # Found by ID
+        lookup_method = "ID"
+    else:
+        # Get all products for fallback matching
+        all_products = await crud.list_products()
+        
+        # Normalize search string
+        search_normalized = product_id.lower().strip()
+        
+        # Try exact string matches first (case-insensitive)
+        product = None
+        lookup_method = None
+        
+        for field_name in ["product_short_name", "product_display_name", "raw_product_title", "product_name"]:
+            for p in all_products:
+                field_val = p.get(field_name, "")
+                if field_val and field_val.lower().strip() == search_normalized:
+                    product = p
+                    lookup_method = field_name
+                    break
+            if product:
+                break
+        
+        # If no exact match, try case-insensitive normalized match
+        if not product:
+            for p in all_products:
+                for field_name in ["product_short_name", "product_display_name", "raw_product_title", "product_name"]:
+                    field_val = p.get(field_name, "")
+                    if not field_val:
+                        continue
+                    # Normalize both: lowercase, remove extra spaces
+                    field_normalized = " ".join(field_val.lower().split())
+                    if field_normalized == search_normalized:
+                        product = p
+                        lookup_method = f"{field_name} (normalized)"
+                        break
+                if product:
+                    break
+        
+        # Last resort: contains/substring match
+        if not product and len(search_normalized) >= 4:
+            for p in all_products:
+                for field_name in ["product_short_name", "product_display_name", "raw_product_title", "product_name"]:
+                    field_val = p.get(field_name, "")
+                    if field_val and search_normalized in field_val.lower():
+                        product = p
+                        lookup_method = f"{field_name} (contains)"
+                        break
+                if product:
+                    break
     
-    # If not found by ID, try to find by product_short_name
     if not product:
-        products = await crud.list_products()
-        product = next((p for p in products if p.get("product_short_name") == product_id), None)
-    
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(status_code=404, detail=f"Product not found: {product_id}")
 
     # Normalize BOSMAX mode names to product intelligence modes
     mode_map = {

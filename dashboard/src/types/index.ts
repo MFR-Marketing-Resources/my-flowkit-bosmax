@@ -136,6 +136,8 @@ export interface WSEvent {
 
 export interface OperatorProduct {
   product_name: string
+  product_short_name: string | null
+  product_display_name: string | null
   category: string
   sub_category: string
   type_angle: string
