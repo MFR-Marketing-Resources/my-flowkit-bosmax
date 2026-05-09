@@ -357,6 +357,73 @@ function mergeUniqueAssets(items: UploadedAsset[]) {
   return Array.from(byMediaId.values())
 }
 
+export function DeploymentStatusCard({
+  agentStatus,
+  extensionConnected,
+}: {
+  agentStatus: LocalAgentStatus | null
+  extensionConnected: boolean
+}) {
+  if (!agentStatus) return null
+
+  const isOnline = agentStatus.extension_connected && agentStatus.extension_state === 'IDLE'
+  const deploymentMode = 'LOCAL_AGENT'
+  const autoStartEnabled = agentStatus.auto_start_enabled
+
+  return (
+    <Card className="border-amber-700/20" style={{ background: 'linear-gradient(135deg, rgba(217,119,6,0.05), rgba(217,119,6,0.01))' }}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--text)' }}>
+          <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+          Deployment Status
+        </h3>
+        <div className={`text-[10px] px-2 py-0.5 rounded font-bold ${isOnline ? 'bg-green-600/20 text-green-400' : 'bg-red-600/20 text-red-400'}`}>
+          {isOnline ? 'ONLINE' : 'OFFLINE'}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div className="p-2 rounded bg-black/20 border border-white/5">
+          <div className="text-[8px] uppercase opacity-50 mb-1">Mode</div>
+          <div className="text-xs font-bold">{deploymentMode}</div>
+        </div>
+        <div className="p-2 rounded bg-black/20 border border-white/5">
+          <div className="text-[8px] uppercase opacity-50 mb-1">Auto-Start</div>
+          <div className={`text-xs font-bold ${autoStartEnabled ? 'text-green-400' : 'text-yellow-400'}`}>
+            {autoStartEnabled ? 'INSTALLED' : 'NOT SET'}
+          </div>
+        </div>
+        <div className="p-2 rounded bg-black/20 border border-white/5">
+          <div className="text-[8px] uppercase opacity-50 mb-1">Extension</div>
+          <div className={`text-xs font-bold ${extensionConnected ? 'text-green-400' : 'text-red-400'}`}>
+            {extensionConnected ? 'CONNECTED' : 'OFFLINE'}
+          </div>
+        </div>
+        <div className="p-2 rounded bg-black/20 border border-white/5">
+          <div className="text-[8px] uppercase opacity-50 mb-1">Last Check</div>
+          <div className="text-xs font-mono">{agentStatus.last_health_check ? new Date(agentStatus.last_health_check).toLocaleTimeString() : '—'}</div>
+        </div>
+      </div>
+
+      {agentStatus.offline_reason && (
+        <div className="p-2 rounded mb-3 bg-red-600/10 border border-red-800/30">
+          <div className="text-[8px] uppercase opacity-60 mb-1">Offline Reason</div>
+          <div className="text-[11px] font-mono text-red-400">{agentStatus.offline_reason}</div>
+        </div>
+      )}
+
+      <div className="p-2 rounded bg-black/20 border border-white/5 text-[9px]">
+        <div className="opacity-60 mb-1">Cross-PC Deployment Notes</div>
+        <div className="text-[10px] leading-relaxed opacity-70">
+          This local agent runs only on this Windows PC. To use BOSMAX from another PC, install the local agent there too.
+          For shared account/data across PCs, a hosted/hybrid backend is required. Do not expect 24/7 cross-PC availability
+          from local-only agents.
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 export function SystemHealthPanel({
   telemetry,
   agentStatus,
@@ -491,8 +558,8 @@ export default function OperatorPage() {
   const [diagnosing, setDiagnosing] = useState(false)
   const [allProjects, setAllProjects] = useState<Project[]>([])
   const [allVideos, setAllVideos] = useState<Video[]>([])
-  const [fetchingProjects, setFetchingProjects] = useState(false)
-  const [fetchingVideos, setFetchingVideos] = useState(false)
+  const [, setFetchingProjects] = useState(false)
+  const [, setFetchingVideos] = useState(false)
 
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
   const selectedScene = videoScenes.find(item => item.id === selectedSceneId)
@@ -1147,6 +1214,11 @@ export default function OperatorPage() {
   return (
     <div className="flex flex-col gap-4 max-w-5xl mx-auto p-4 sm:p-6 pb-24">
       <TelemetryDashboard summary={telemetry} />
+
+      <DeploymentStatusCard
+        agentStatus={agentStatus}
+        extensionConnected={extensionConnected}
+      />
 
       <SystemHealthPanel
         telemetry={telemetry}

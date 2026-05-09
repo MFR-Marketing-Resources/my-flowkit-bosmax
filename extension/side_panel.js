@@ -270,6 +270,26 @@ function sendRuntimeMessageSafe(message, onResponse) {
   });
 }
 
+// ── Offline reason mapping ──────────────────────────────────
+
+const OFFLINE_REASON_TEXT = {
+  'LOCAL_AGENT_NOT_RUNNING': 'Local agent process not running',
+  'LOCAL_AGENT_UNREACHABLE': 'Cannot connect to http://127.0.0.1:8100',
+  'LOCAL_AGENT_STARTING': 'Local agent is starting...',
+  'TOKEN_MISSING': 'No Google Flow token found',
+  'TOKEN_STALE': 'Token needs refresh',
+  'EXTENSION_RELOAD_REQUIRED': 'Please reload extension',
+  'HOST_PERMISSION_MISSING': 'Missing host permissions',
+  'CONTENT_PACK_FAILED': 'Content pack load failed',
+  'BACKEND_500': 'Backend server error',
+  'LICENSE_REQUIRED': 'License key required',
+};
+
+function getOfflineReasonText(code) {
+  if (!code) return 'Unknown error';
+  return OFFLINE_REASON_TEXT[code] || code;
+}
+
 function applyAgentBadge(mode) {
   const statusEl = document.getElementById('operator-pack-status');
   if (mode === 'online') {
@@ -319,11 +339,27 @@ function updateRepairButton() {
   repairBtn.title = 'Local Agent is already online. No repair required.';
 }
 
+function updateOfflineReason(reason) {
+  const reasonEl = document.getElementById('operator-offline-reason');
+  const codeEl = document.getElementById('offline-reason-code');
+
+  if (!reason) {
+    reasonEl.style.display = 'none';
+    return;
+  }
+
+  reasonEl.style.display = 'block';
+  codeEl.textContent = reason;
+  codeEl.title = getOfflineReasonText(reason);
+}
+
 function renderLocalAgentPanel() {
   const summaryEl = document.getElementById('operator-summary');
   const productsEl = document.getElementById('operator-products');
   const enginesEl = document.getElementById('operator-engines');
   const silosEl = document.getElementById('operator-silos');
+  const reconnectBtn = document.getElementById('btn-agent-reconnect');
+  const repairBtn = document.getElementById('btn-agent-repair');
 
   if (_operatorPack) {
     productsEl.textContent = String((_operatorPack.products || []).length);
@@ -337,19 +373,32 @@ function renderLocalAgentPanel() {
 
   if (!_localAgentStatus) {
     applyAgentBadge('offline');
-    summaryEl.textContent = `Local Agent offline. PowerShell is only needed for repair/install diagnostics: ${LOCAL_AGENT_REPAIR_COMMAND}`;
+    summaryEl.textContent = `Local Agent offline. Run the installer to restore the Windows startup shortcut and restart the agent.`;
+    updateOfflineReason(_localAgentError ? 'LOCAL_AGENT_UNREACHABLE' : null);
+    reconnectBtn.style.display = 'inline-flex';
+    repairBtn.style.display = 'inline-flex';
     updateRepairButton();
     return;
   }
 
   if (isLocalAgentHealthy()) {
     applyAgentBadge('online');
-    summaryEl.textContent = 'Local Agent online. Dashboard ready. PowerShell is only needed for repair/install diagnostics.';
+    summaryEl.textContent = 'Local Agent online. All systems healthy. Dashboard is ready to use.';
+    updateOfflineReason(null);
+    reconnectBtn.style.display = 'none';
+    repairBtn.style.display = 'none';
     updateRepairButton();
     return;
   }
 
+  // Partial/degraded state
   applyAgentBadge('repair');
+  reconnectBtn.style.display = 'inline-flex';
+  repairBtn.style.display = 'inline-flex';
+
+  const offlineReason = _localAgentStatus?.offline_reason;
+  updateOfflineReason(offlineReason);
+
   if (_operatorPackError) {
     summaryEl.textContent = `Local Agent online, but operator content pack is unavailable: ${_operatorPackError}.`;
   } else if (_operatorPack && !_operatorPack.available) {
@@ -433,26 +482,28 @@ document.getElementById('btn-operator').addEventListener('click', async () => {
   await chrome.tabs.create({ url: LOCAL_AGENT_DASHBOARD_URL });
 });
 
-document.getElementById('btn-dashboard').addEventListener('click', async () => {
-  const summaryEl = document.getElementById('operator-summary');
-
-  if (isLocalAgentHealthy()) {
-    summaryEl.textContent = 'Local Agent is already online. No repair required.';
-    return;
-  }
-
-  if (_localAgentStatus) {
-    await chrome.tabs.create({ url: LOCAL_AGENT_REPAIR_URL });
-    return;
-  }
-
-  summaryEl.textContent = `Local Agent offline. Run installer: ${LOCAL_AGENT_REPAIR_COMMAND}`;
-});
-
 document.getElementById('btn-agent-check').addEventListener('click', () => {
   fetchLocalAgentStatus();
   fetchDashboardStatus();
   fetchOperatorPack();
+});
+
+document.getElementById('btn-agent-reconnect').addEventListener('click', async () => {
+  // Force reconnect by refetching status
+  await fetchLocalAgentStatus();
+  await fetchOperatorPack();
+  // Trigger reconnect in background
+  sendRuntimeMessageSafe({ type: 'RECONNECT' }, () => {
+    setTimeout(() => {
+      fetchStatus();
+      fetchLocalAgentStatus();
+      fetchOperatorPack();
+    }, 500);
+  });
+});
+
+document.getElementById('btn-agent-repair').addEventListener('click', async () => {
+  await chrome.tabs.create({ url: LOCAL_AGENT_REPAIR_URL });
 });
 
 document.getElementById('btn-telemetry-refresh').addEventListener('click', () => {

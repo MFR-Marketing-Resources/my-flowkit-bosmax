@@ -38,6 +38,9 @@ class LocalAgentStatus(BaseModel):
     repair_command: str
     extension_connected: bool
     extension_state: str
+    offline_reason: str | None = None
+    auto_start_enabled: bool = False
+    last_health_check: str | None = None
     registration: LocalAgentRegistration
 
 
@@ -101,7 +104,24 @@ def load_registration() -> LocalAgentRegistration:
 @router.get("/status", response_model=LocalAgentStatus)
 async def get_local_agent_status():
     from agent.services.flow_client import get_flow_client
+    import pathlib
+
     client = get_flow_client()
+    registration = load_registration()
+
+    # Determine offline reason
+    offline_reason = None
+    if not client.connected:
+        # Check which component is missing
+        if registration.license_status == "UNLICENSED":
+            offline_reason = "LICENSE_REQUIRED"
+        else:
+            offline_reason = "LOCAL_AGENT_UNREACHABLE"
+
+    # Check if auto-start is enabled (startup shortcut exists)
+    startup_dir = pathlib.Path.home() / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup"
+    auto_start_enabled = (startup_dir / "BOSMAX Flow Kit Local Agent.lnk").exists()
+
     return LocalAgentStatus(
         task_name=LOCAL_AGENT_TASK_NAME,
         health_url=LOCAL_AGENT_HEALTH_URL,
@@ -110,7 +130,10 @@ async def get_local_agent_status():
         repair_command=LOCAL_AGENT_REPAIR_COMMAND,
         extension_connected=client.connected,
         extension_state=client.last_state if hasattr(client, "last_state") else ("IDLE" if client.connected else "OFFLINE"),
-        registration=load_registration(),
+        offline_reason=offline_reason,
+        auto_start_enabled=auto_start_enabled,
+        last_health_check=_iso_now(),
+        registration=registration,
     )
 
 

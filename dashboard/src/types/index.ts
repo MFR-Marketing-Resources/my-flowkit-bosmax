@@ -257,6 +257,11 @@ export interface LocalAgentStatus {
   dashboard_url: string
   dashboard_serving_mode: string
   repair_command: string
+  extension_connected: boolean
+  extension_state: string
+  offline_reason: string | null
+  auto_start_enabled: boolean
+  last_health_check: string | null
   registration: LocalAgentRegistration
 }
 
