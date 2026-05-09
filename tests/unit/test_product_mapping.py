@@ -33,11 +33,12 @@ def test_seluar_mapping_prefers_specific_phrase_rule():
         source_hint="MANUAL_PROJECT",
     )
 
-    assert result["category"] == "Fashion"
-    assert result["subcategory"] == "Bottoms"
+    assert result["category"] == "Baby Care"
+    assert result["subcategory"] == "Diaper"
     assert result["type"] == "Pants"
+    assert "Conflict resolved: baby_diaper outranked fashion_bottoms due lampin/diaper keywords" in result["notes"]
     assert result["product_type"] == "UNIVERSAL"
-    assert result["trigger_id"] == "CONFIDENCE_01"
+    assert result["trigger_id"] == "TRUST_01"
 
 
 def test_elianto_body_spray_mapping():

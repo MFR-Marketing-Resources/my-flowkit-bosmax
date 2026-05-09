@@ -73,12 +73,24 @@ def _resolve_source_label(product: dict[str, Any] | None, source_hint: str | Non
     return "FALLBACK"
 
 
-def _match_keyword_rule(normalized_title: str) -> dict[str, Any] | None:
+def _match_keyword_rule(normalized_title: str) -> tuple[dict[str, Any] | None, list[str]]:
+    matched_rules = []
     for rule in load_mapping_rules().get("keyword_rules", []):
         keywords = [normalize_mapping_text(item) for item in rule.get("keywords", [])]
         if any(keyword and keyword in normalized_title for keyword in keywords):
-            return rule
-    return None
+            matched_rules.append(rule)
+    
+    if not matched_rules:
+        return None, []
+        
+    has_baby = any(r.get("id") == "baby_diaper" for r in matched_rules)
+    has_seluar = any("fashion" in r.get("id", "") for r in matched_rules)
+    
+    if has_baby and has_seluar:
+        baby_rule = next(r for r in matched_rules if r.get("id") == "baby_diaper")
+        return baby_rule, ["Conflict resolved: baby_diaper outranked fashion_bottoms due lampin/diaper keywords"]
+
+    return matched_rules[0], []
 
 
 def _match_taxonomy_alias(category: str, subcategory: str, product_type: str) -> dict[str, Any] | None:
@@ -182,7 +194,7 @@ def resolve_product_mapping(
         base["notes"].append("Applied advanced override for category taxonomy.")
 
     if not matched:
-        keyword_rule = _match_keyword_rule(normalized_title)
+        keyword_rule, conflict_notes = _match_keyword_rule(normalized_title)
         if keyword_rule:
             base["category"] = keyword_rule["category"]
             base["subcategory"] = keyword_rule["subcategory"]
@@ -193,6 +205,8 @@ def resolve_product_mapping(
             matched = True
             base["mapping_confidence"] = "HIGH"
             base["notes"].append(f"Matched keyword rule: {keyword_rule['id']}")
+            if conflict_notes:
+                base["notes"].extend(conflict_notes)
 
     if not matched:
         alias = _match_taxonomy_alias(
