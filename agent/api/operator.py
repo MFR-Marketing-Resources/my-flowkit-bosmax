@@ -11,17 +11,30 @@ from openpyxl import load_workbook
 from pydantic import BaseModel
 
 from agent.config import OPERATOR_PACK_DIR
+from agent.services.product_mapping import resolve_product_mapping
 
 router = APIRouter(prefix="/api/operator", tags=["operator"])
 
 
 class OperatorProduct(BaseModel):
+    product_id: str | None = None
     product_name: str
+    raw_product_title: str | None = None
     product_display_name: str | None = None
     product_short_name: str | None = None
     category: str
     sub_category: str
     type_angle: str
+    product_type: str | None = None
+    silo_id: str | None = None
+    trigger_id: str | None = None
+    submode_formula: str | None = None
+    mode_recommendations: list[str] = []
+    copywriting_angle: str | None = None
+    claim_risk_level: str | None = None
+    mapping_source: str | None = None
+    mapping_confidence: str | None = None
+    missing_fields: list[str] = []
     raw_category: str | None = None
     avg_price_rm: float | None = None
     status: str | None = None
@@ -125,6 +138,17 @@ def _load_yaml_file(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _merged_registry_values(values: list[str], required: list[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for item in [*values, *required]:
+        if not item or item in seen:
+            continue
+        ordered.append(item)
+        seen.add(item)
+    return ordered
+
+
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
 
@@ -186,17 +210,17 @@ def _content_pack_summary() -> ContentPackSummary:
         avatars=list(master.get("avatar_id") or []),
         headwear_styles=list(master.get("headwear_style") or []),
         camera_styles=list(master.get("camera_style") or []),
-        product_types=list(master.get("product_type") or ["STEALTH", "DIRECT"]),
-        triggers=list(master.get("trigger_id") or []),
-        silos=list(master.get("silo_id") or []),
-        formulas=list(master.get("submode_formula") or []),
+        product_types=_merged_registry_values(list(master.get("product_type") or ["STEALTH", "DIRECT"]), ["UNIVERSAL", "STEALTH"]),
+        triggers=_merged_registry_values(list(master.get("trigger_id") or []), ["TRUST_01", "CONFIDENCE_01", "AUTHORITY_01", "COMFORT_01", "EGO_01"]),
+        silos=_merged_registry_values(list(master.get("silo_id") or []), ["baby_care_universal_01", "fashion_mass_01", "perfume_mass_01", "fnb_mass_01", "household_or_beauty_mass_01", "electronics_mass_01", "household_mass_01", "health_supp_stealth_01"]),
+        formulas=_merged_registry_values(list(master.get("submode_formula") or []), ["PAS", "AIDA", "TRUST_STACK", "FEATURE_BENEFIT"]),
         materials=["realistic", "3d_pixar", "anime"],
         language_defaults=["Malay", "English"],
         products=products,
         workbooks=workbook_summaries,
         notes=[
             "This operator pack supplies registries, copy hooks, and product intelligence.",
-            "Current Flow Kit supports IMG/Edit Image, I2V/Start Image to Video, and Ingredients/Refs to Video lanes. True F2V start-plus-end frames is not wired in this operator surface.",
+            "Current Flow Kit uses canonical Google Flow labels: Images, Ingredients, Frames, and Text to Video.",
             "Scene context remains the visual authority; hook/USP/CTA are used for wording and scene framing only.",
             f"Malay tone rules are sourced from SCRIPT_REGISTRY_UNIFIED.yaml ({len(script_registry.get('language_tone_rules', {}).get('rules', []))} rules detected).",
         ],
@@ -235,14 +259,38 @@ def _load_products(limit: int = 120) -> list[OperatorProduct]:
         short_name = " ".join(short_name.split()[:4]).strip()
         display_name = " ".join(name.split()[:9]).strip()
 
+        mapping = resolve_product_mapping(
+            product={
+                "raw_product_title": name,
+                "product_display_name": display_name,
+                "product_short_name": short_name,
+                "category": _clean_text(str(data.get("Category") or "")),
+                "subcategory": _clean_text(str(data.get("Sub Category") or "")),
+                "type": _clean_text(str(data.get("Type / Product Angle") or "")),
+                "source": "FASTMOSS",
+            },
+            source_hint="FASTMOSS",
+        )
+
         products.append(
             OperatorProduct(
                 product_name=name,
-                product_short_name=short_name,
+                raw_product_title=name,
+                product_short_name=mapping["product_short_name"],
                 product_display_name=display_name,
-                category=_clean_text(str(data.get("Category") or "")),
-                sub_category=_clean_text(str(data.get("Sub Category") or "")),
-                type_angle=_clean_text(str(data.get("Type / Product Angle") or "")),
+                category=mapping["category"],
+                sub_category=mapping["subcategory"],
+                type_angle=mapping["type"],
+                product_type=mapping["product_type"] or None,
+                silo_id=mapping["silo"] or None,
+                trigger_id=mapping["trigger_id"] or None,
+                submode_formula=mapping["formula"] or None,
+                mode_recommendations=list(mapping.get("mode_recommendations", [])),
+                copywriting_angle=mapping.get("copywriting_angle") or None,
+                claim_risk_level=mapping.get("claim_risk_level") or None,
+                mapping_source=mapping.get("mapping_source") or None,
+                mapping_confidence=mapping.get("mapping_confidence") or None,
+                missing_fields=list(mapping.get("missing_fields", [])),
                 raw_category=_clean_text(str(data.get("Raw Category") or "")) or None,
                 avg_price_rm=float(data["Avg Price (RM)"]) if data.get("Avg Price (RM)") is not None else None,
                 status=_clean_text(str(data.get("Product Status") or "")) or None,
@@ -453,7 +501,7 @@ async def build_blueprint(body: BlueprintInput):
         scenes=scenes,
         notes=[
             "Blueprint compiled from the external BOSMAX content pack.",
-            "Use Generate Refs before Generate Images, and Generate Images before Generate Videos.",
+            "Use Generate Images before Generate Ingredients or Frames. Generate Text to Video remains visible only as a not-wired label.",
             "Direct single-step T2V is not exposed as a native queue type in this repo. Verified operator paths are prompt -> image -> video or ingredients/refs -> video.",
         ],
     )

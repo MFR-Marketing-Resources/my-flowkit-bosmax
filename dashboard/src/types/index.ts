@@ -135,12 +135,24 @@ export interface WSEvent {
 }
 
 export interface OperatorProduct {
+  product_id?: string | null
   product_name: string
+  raw_product_title?: string | null
   product_short_name: string | null
   product_display_name: string | null
   category: string
   sub_category: string
   type_angle: string
+  product_type?: string | null
+  silo_id?: string | null
+  trigger_id?: string | null
+  submode_formula?: string | null
+  mode_recommendations?: string[]
+  copywriting_angle?: string | null
+  claim_risk_level?: string | null
+  mapping_source?: string | null
+  mapping_confidence?: string | null
+  missing_fields?: string[]
   raw_category: string | null
   avg_price_rm: number | null
   status: string | null
@@ -230,6 +242,17 @@ export interface Product {
   category: string | null
   subcategory: string | null
   type: string | null
+  product_type?: string | null
+  silo?: string | null
+  trigger_id?: string | null
+  formula?: string | null
+  mode_recommendations?: string[]
+  copywriting_angle?: string | null
+  claim_risk_level?: string | null
+  mapping_source?: 'FASTMOSS' | 'MANUAL' | 'FALLBACK' | null
+  mapping_confidence?: 'HIGH' | 'MEDIUM' | 'LOW' | 'NEEDS_REVIEW' | null
+  missing_fields?: string[]
+  notes?: string[]
   shop_name: string | null
   price_min: number | null
   price_max: number | null
@@ -242,6 +265,26 @@ export interface Product {
   local_image_path: string | null
   created_at: string
   updated_at: string
+}
+
+export interface ProductMapping {
+  product_id: string
+  raw_product_title: string
+  product_short_name: string
+  category: string
+  subcategory: string
+  type: string
+  product_type: string
+  silo: string
+  trigger_id: string
+  formula: string
+  mode_recommendations: string[]
+  copywriting_angle: string
+  claim_risk_level: string
+  mapping_source: 'FASTMOSS' | 'MANUAL' | 'FALLBACK'
+  mapping_confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'NEEDS_REVIEW'
+  missing_fields: string[]
+  notes: string[]
 }
 
 export interface LocalAgentRegistration {

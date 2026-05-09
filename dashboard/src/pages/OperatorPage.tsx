@@ -6,7 +6,9 @@ import type {
   Character,
   ContentPackSummary,
   Orientation,
+  OperatorProduct,
   Project,
+  ProductMapping,
   Scene,
   Video,
   CreatedState,
@@ -112,7 +114,7 @@ const emptyForm: OperatorForm = {
   category: '',
   sub_category: '',
   type_angle: '',
-  product_type: 'STEALTH',
+  product_type: '',
   target_language: 'Malay',
   duration_target: '8s',
   engine_id: 'VEO_3_1',
@@ -122,7 +124,7 @@ const emptyForm: OperatorForm = {
   scene_context: '',
   trigger_id: '',
   silo_id: '',
-  submode_formula: 'PAS',
+  submode_formula: '',
   hook: '',
   usp_1: '',
   usp_2: '',
@@ -135,6 +137,17 @@ const emptyForm: OperatorForm = {
 
 function FieldLabel({ children }: { children: string }) {
   return <label className="text-xs font-bold" style={{ color: 'var(--muted)' }}>{children}</label>
+}
+
+function ReadOnlyField({ label, value }: { label: string, value: string | null | undefined }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <FieldLabel>{label}</FieldLabel>
+      <div className="px-2 py-1.5 rounded text-xs min-h-[32px] flex items-center" style={{ background: 'var(--surface)', color: value ? 'var(--text)' : 'var(--muted)', border: '1px solid var(--border)' }}>
+        {value || '—'}
+      </div>
+    </div>
+  )
 }
 
 function Card({ children, className = "", style = {} }: { children: ReactNode, className?: string, style?: any }) {
@@ -161,13 +174,13 @@ function FlowRuntimePlan({
   promptSource?: string
 }) {
   const mapping: Record<string, any> = {
-    TRUE_F2V: { flowMode: 'Video', submode: 'Frames', model: 'Veo 3.1 - Lite', submit: 'right arrow' },
-    GENERATE_VIDEO: { flowMode: 'Video', submode: 'Ingredients', model: 'Veo 3.1 - Lite', submit: 'right arrow' },
-    EDIT_IMAGE: { flowMode: 'Image', submode: 'none', model: 'Nano Banana 2', submit: 'generate button' },
-    GENERATE_VIDEO_REFS: { flowMode: 'Video', submode: 'Ingredients', model: 'Veo 3.1 - Lite', submit: 'right arrow' },
+    TRUE_F2V: { lane: 'Frames', routeFamily: 'Video', model: 'Veo 3.1 - Lite', submit: 'right arrow' },
+    GENERATE_VIDEO: { lane: 'Ingredients', routeFamily: 'Video', model: 'Veo 3.1 - Lite', submit: 'right arrow' },
+    EDIT_IMAGE: { lane: 'Images', routeFamily: 'Image', model: 'Nano Banana 2', submit: 'generate button' },
+    GENERATE_VIDEO_REFS: { lane: 'Ingredients', routeFamily: 'Video', model: 'Veo 3.1 - Lite', submit: 'right arrow' },
   }
 
-  const plan = mapping[mode] || { flowMode: 'Unknown', submode: 'Unknown', model: 'Unknown', submit: 'Unknown' }
+  const plan = mapping[mode] || { lane: 'Unknown', routeFamily: 'Unknown', model: 'Unknown', submit: 'Unknown' }
 
   return (
     <div className="p-3 rounded border grid gap-2 text-[11px]" style={{ background: 'rgba(59,130,246,0.03)', border: '1px solid rgba(59,130,246,0.15)' }}>
@@ -178,8 +191,8 @@ function FlowRuntimePlan({
       
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 opacity-90">
         <div style={{ color: 'var(--muted)' }}>BOSMAX Mode:</div> <div className="font-mono text-[10px]">{mode}</div>
-        <div style={{ color: 'var(--muted)' }}>Google Flow Mode:</div> <div className="font-bold">{plan.flowMode}</div>
-        <div style={{ color: 'var(--muted)' }}>Google Flow Submode:</div> <div className="font-bold">{plan.submode}</div>
+        <div style={{ color: 'var(--muted)' }}>Google Flow Label:</div> <div className="font-bold">{plan.lane}</div>
+        <div style={{ color: 'var(--muted)' }}>Route Family:</div> <div className="font-bold">{plan.routeFamily}</div>
         <div style={{ color: 'var(--muted)' }}>Aspect Ratio:</div> <div className="font-bold">{orientation === 'VERTICAL' ? '9:16' : '16:9'}</div>
         <div style={{ color: 'var(--muted)' }}>Count:</div> <div className="font-bold">1x</div>
         <div style={{ color: 'var(--muted)' }}>Model:</div> <div className="font-bold">{plan.model}</div>
@@ -197,7 +210,7 @@ function FlowRuntimePlan({
       </div>
 
       <div className="mt-1 text-[9px] italic" style={{ color: 'var(--muted)' }}>
-        Note: Google Flow settings are selected automatically by the Chrome extension. This panel shows the planned runtime selection.
+        Note: Google Flow settings are selected automatically by the Chrome extension. This panel shows the canonical SOP label the runtime will target.
       </div>
     </div>
   )
@@ -355,6 +368,76 @@ function mergeUniqueAssets(items: UploadedAsset[]) {
   const byMediaId = new Map<string, UploadedAsset>()
   for (const item of items) byMediaId.set(item.mediaId, item)
   return Array.from(byMediaId.values())
+}
+
+function mappingToOperatorProduct(mapping: ProductMapping): OperatorProduct {
+  return {
+    product_id: mapping.product_id || null,
+    product_name: mapping.raw_product_title,
+    raw_product_title: mapping.raw_product_title,
+    product_short_name: mapping.product_short_name,
+    product_display_name: mapping.raw_product_title,
+    category: mapping.category,
+    sub_category: mapping.subcategory,
+    type_angle: mapping.type,
+    product_type: mapping.product_type,
+    silo_id: mapping.silo,
+    trigger_id: mapping.trigger_id,
+    submode_formula: mapping.formula,
+    mode_recommendations: mapping.mode_recommendations,
+    copywriting_angle: mapping.copywriting_angle,
+    claim_risk_level: mapping.claim_risk_level,
+    mapping_source: mapping.mapping_source,
+    mapping_confidence: mapping.mapping_confidence,
+    missing_fields: mapping.missing_fields,
+    raw_category: null,
+    avg_price_rm: null,
+    status: null,
+    copy_angle: null,
+    hook: null,
+    usp_1: null,
+    usp_2: null,
+    usp_3: null,
+    body: null,
+    cta: null,
+    shop_name: null,
+  }
+}
+
+function mergeMappingIntoProduct(mapping: ProductMapping, existing?: Product | null): Product {
+  return {
+    id: mapping.product_id || existing?.id || '',
+    source: existing?.source || 'MANUAL_PROJECT',
+    raw_product_title: mapping.raw_product_title,
+    product_display_name: existing?.product_display_name || mapping.raw_product_title,
+    product_short_name: mapping.product_short_name,
+    category: mapping.category || null,
+    subcategory: mapping.subcategory || null,
+    type: mapping.type || null,
+    product_type: mapping.product_type || null,
+    silo: mapping.silo || null,
+    trigger_id: mapping.trigger_id || null,
+    formula: mapping.formula || null,
+    mode_recommendations: mapping.mode_recommendations,
+    copywriting_angle: mapping.copywriting_angle || null,
+    claim_risk_level: mapping.claim_risk_level || null,
+    mapping_source: mapping.mapping_source,
+    mapping_confidence: mapping.mapping_confidence,
+    missing_fields: mapping.missing_fields,
+    notes: mapping.notes,
+    shop_name: existing?.shop_name || null,
+    price_min: existing?.price_min || null,
+    price_max: existing?.price_max || null,
+    commission: existing?.commission || null,
+    image_url: existing?.image_url || null,
+    tiktok_product_url: existing?.tiktok_product_url || null,
+    fastmoss_source_file: existing?.fastmoss_source_file || null,
+    asset_status: existing?.asset_status || 'UNRESOLVED',
+    media_id: existing?.media_id || null,
+    local_image_path: existing?.local_image_path || null,
+    created_at: existing?.created_at || '',
+    updated_at: existing?.updated_at || '',
+  }
 }
 
 export function DeploymentStatusCard({
@@ -560,6 +643,12 @@ export default function OperatorPage() {
   const [uploadingF2vEnd, setUploadingF2vEnd] = useState(false)
   const [catalogProducts, setCatalogProducts] = useState<Product[]>([])
   const [selectedCatalogProduct, setSelectedCatalogProduct] = useState<Product | null>(null)
+  const [resolvedMapping, setResolvedMapping] = useState<ProductMapping | null>(null)
+  const [mappingBusy, setMappingBusy] = useState(false)
+  const [advancedOverrideOpen, setAdvancedOverrideOpen] = useState(false)
+  const [overrideDraft, setOverrideDraft] = useState({ category: '', subcategory: '', type: '' })
+  const [manualProductName, setManualProductName] = useState('')
+  const [manualProducts, setManualProducts] = useState<OperatorProduct[]>([])
   const [catalogSearchQuery, setCatalogSearchQuery] = useState('')
   const [searchingCatalog, setSearchingCatalog] = useState(false)
   const [importingCatalog, setImportingCatalog] = useState(false)
@@ -576,6 +665,7 @@ export default function OperatorPage() {
   const [, setFetchingVideos] = useState(false)
 
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
+  const availableProducts = [...manualProducts, ...(pack?.products ?? [])]
   const selectedScene = videoScenes.find(item => item.id === selectedSceneId)
   const systemVideoPrompt = systemPrompt || selectedScene?.video_prompt || selectedScene?.prompt || ''
   const manualPromptOverride = manualPrompt.trim()
@@ -656,25 +746,32 @@ export default function OperatorPage() {
           avatar_id: data.avatars[0] ?? '',
           headwear_style: data.headwear_styles[0] ?? emptyForm.headwear_style,
           camera_style: data.camera_styles[0] ?? emptyForm.camera_style,
-          product_type: data.product_types[0] ?? emptyForm.product_type,
-          trigger_id: data.triggers[0] ?? '',
-          silo_id: data.silos[0] ?? '',
-          submode_formula: data.formulas[0] ?? emptyForm.submode_formula,
           target_language: data.language_defaults[0] ?? emptyForm.target_language,
           material: data.materials[0] ?? emptyForm.material,
-          product_name: firstProduct?.product_name ?? '',
-          category: firstProduct?.category ?? '',
-          sub_category: firstProduct?.sub_category ?? '',
-          type_angle: firstProduct?.type_angle ?? '',
+          product_name: firstProduct?.product_short_name ?? firstProduct?.product_name ?? '',
+          category: '',
+          sub_category: '',
+          type_angle: '',
           hook: firstProduct?.hook ?? '',
           usp_1: firstProduct?.usp_1 ?? '',
           usp_2: firstProduct?.usp_2 ?? '',
           usp_3: firstProduct?.usp_3 ?? '',
           body: firstProduct?.body ?? '',
           cta: firstProduct?.cta ?? '',
-          scene_context: firstProduct ? `${firstProduct.category} environment with ${firstProduct.type_angle}` : '',
+          scene_context: '',
         })
         setSelectedProductName(firstProduct?.product_name ?? '')
+        setResolvedMapping(null)
+        setOverrideDraft({ category: '', subcategory: '', type: '' })
+        if (firstProduct) {
+          void resolveProductMapping({
+            product_name: firstProduct.raw_product_title || firstProduct.product_name,
+            source: 'FASTMOSS',
+            category: firstProduct.category,
+            subcategory: firstProduct.sub_category,
+            type: firstProduct.type_angle,
+          })
+        }
       })
       .catch(err => setMessage(`Failed to load content pack: ${String(err)}`))
       .finally(() => setLoadingPack(false))
@@ -724,24 +821,63 @@ export default function OperatorPage() {
     setForm(current => ({ ...current, [field]: value }))
   }
 
+  async function resolveProductMapping(payload: Record<string, unknown>) {
+    setMappingBusy(true)
+    try {
+      const mapping = await postAPI<ProductMapping>('/api/products/map', payload)
+      setResolvedMapping(mapping)
+      setOverrideDraft({
+        category: mapping.category || '',
+        subcategory: mapping.subcategory || '',
+        type: mapping.type || '',
+      })
+      setForm(current => ({
+        ...current,
+        product_name: mapping.product_short_name || current.product_name,
+        category: mapping.category || '',
+        sub_category: mapping.subcategory || '',
+        type_angle: mapping.type || '',
+        product_type: mapping.product_type || '',
+        trigger_id: mapping.trigger_id || '',
+        silo_id: mapping.silo || '',
+        submode_formula: mapping.formula || '',
+        scene_context: mapping.category && mapping.type
+          ? `${mapping.category} environment with ${mapping.type}`
+          : (mapping.raw_product_title || current.scene_context),
+      }))
+      if (mapping.missing_fields.length > 0) {
+        setMessage(`Mapping needs review: ${mapping.missing_fields.join(', ')}`)
+      }
+      return mapping
+    } catch (err) {
+      setMessage('Product mapping failed: ' + String(err))
+      return null
+    } finally {
+      setMappingBusy(false)
+    }
+  }
+
   function applyProduct(productName: string) {
     setSelectedProductName(productName)
-    const product = pack?.products.find(item => item.product_name === productName)
+    const product = availableProducts.find(item => item.product_name === productName)
     if (!product) return
     setForm(current => ({
       ...current,
-      product_name: product.product_name,
-      category: product.category,
-      sub_category: product.sub_category,
-      type_angle: product.type_angle,
       hook: product.hook ?? '',
       usp_1: product.usp_1 ?? '',
       usp_2: product.usp_2 ?? '',
       usp_3: product.usp_3 ?? '',
       body: product.body ?? '',
       cta: product.cta ?? '',
-      scene_context: `${product.category} environment with ${product.type_angle}`,
     }))
+    void resolveProductMapping({
+      product_name: product.raw_product_title || product.product_name,
+      source: product.mapping_source === 'MANUAL' ? 'MANUAL_PROJECT' : 'FASTMOSS',
+      category: product.category,
+      subcategory: product.sub_category,
+      type: product.type_angle,
+      persist: Boolean(product.product_id),
+    })
   }
 
   async function refreshCreatedResources(current: CreatedState) {
@@ -756,13 +892,7 @@ export default function OperatorPage() {
 
   // Auto-generate system prompt when product changes
   useEffect(() => {
-    if (!pack || !form.product_name) {
-      setSystemPrompt('')
-      return
-    }
-
-    const product = pack.products.find(p => p.product_name === form.product_name)
-    if (!product) {
+    if (!form.product_name) {
       setSystemPrompt('')
       return
     }
@@ -776,7 +906,7 @@ export default function OperatorPage() {
       })
       .catch(() => setSystemPrompt(''))
       .finally(() => setGeneratingPrompt(false))
-  }, [form.product_name, pack])
+  }, [form.product_name])
 
 
   async function selectProject(p: Project) {
@@ -946,8 +1076,8 @@ export default function OperatorPage() {
 
       const labels: Record<string, string> = {
         GENERATE_IMAGE: 'Image generation queue submitted.',
-        GENERATE_VIDEO: 'I2V queue submitted.',
-        GENERATE_VIDEO_REFS: 'Ingredients / Refs to Video queue submitted.',
+        GENERATE_VIDEO: 'Ingredients queue submitted.',
+        GENERATE_VIDEO_REFS: 'Frames queue submitted.',
         UPSCALE_VIDEO: 'Upscale queue submitted.',
       }
       setMessage(labels[type] ?? 'Queue submitted.')
@@ -1059,7 +1189,7 @@ export default function OperatorPage() {
       }
 
       await refreshCreatedResources(created)
-      setMessage(`${kind === 'start' ? 'Start' : 'End'} frame uploaded and assigned to True F2V.`)
+      setMessage(`${kind === 'start' ? 'Start' : 'End'} frame uploaded and assigned to Frames.`)
     } catch (err) {
       setMessage(`${kind === 'start' ? 'Start' : 'End'} frame upload failed: ${String(err)}`)
     } finally {
@@ -1082,13 +1212,19 @@ export default function OperatorPage() {
 
   async function applyCatalogProduct(product: any) {
     setSelectedCatalogProduct(product)
-    setForm(current => ({
-      ...current,
-      product_name: product.product_short_name,
-      category: product.category || current.category,
-      sub_category: product.subcategory || current.sub_category,
-      scene_context: product.raw_product_title,
-    }))
+    setSelectedProductName(product.raw_product_title)
+    const mapping = await resolveProductMapping({
+      product_id: product.id,
+      product_name: product.raw_product_title,
+      source: product.source,
+      category: product.category,
+      subcategory: product.subcategory,
+      type: product.type,
+      persist: true,
+    })
+    if (mapping) {
+      setSelectedCatalogProduct(mergeMappingIntoProduct(mapping, product))
+    }
     try {
       const res = await fetchAPI<{ prompt: string }>('/api/products/' + product.id + '/prompt?mode=F2V')
       if (res.prompt) setManualPrompt(res.prompt)
@@ -1105,6 +1241,47 @@ export default function OperatorPage() {
       if (res.ok) setMessage('Imported ' + res.imported + ' products.')
     } catch (err) { setMessage('Import error: ' + String(err)) }
     finally { setImportingCatalog(false) }
+  }
+
+  async function resolveManualProduct() {
+    const title = manualProductName.trim()
+    if (!title) {
+      setMessage('Enter a manual product name first.')
+      return
+    }
+    const mapping = await resolveProductMapping({
+      product_name: title,
+      source: 'MANUAL_PROJECT',
+      persist: true,
+    })
+    if (!mapping) return
+
+    const manualProduct = mappingToOperatorProduct(mapping)
+    setManualProducts(current => [manualProduct, ...current.filter(item => item.product_name !== manualProduct.product_name)])
+    setSelectedCatalogProduct(mergeMappingIntoProduct(mapping))
+    setSelectedProductName(manualProduct.product_name)
+  }
+
+  async function applyAdvancedOverride() {
+    const title = resolvedMapping?.raw_product_title || selectedCatalogProduct?.raw_product_title || form.product_name
+    if (!title) {
+      setMessage('Select or resolve a product before applying overrides.')
+      return
+    }
+
+    const mapping = await resolveProductMapping({
+      product_id: selectedCatalogProduct?.id || undefined,
+      product_name: title,
+      source: selectedCatalogProduct?.source || (resolvedMapping?.mapping_source === 'MANUAL' ? 'MANUAL_PROJECT' : 'FASTMOSS'),
+      override_category: overrideDraft.category,
+      override_subcategory: overrideDraft.subcategory,
+      override_type: overrideDraft.type,
+      persist: Boolean(selectedCatalogProduct?.id),
+    })
+
+    if (mapping && selectedCatalogProduct) {
+      setSelectedCatalogProduct(mergeMappingIntoProduct(mapping, selectedCatalogProduct))
+    }
   }
 
   async function submitManual(mode: 'EDIT_IMAGE' | 'GENERATE_VIDEO' | 'GENERATE_VIDEO_REFS' | 'TRUE_F2V') {
@@ -1237,12 +1414,12 @@ export default function OperatorPage() {
       await refreshCreatedResources(created)
 
       const labels: Record<string, string> = {
-        EDIT_IMAGE: 'IMG / Edit Image submit sent with uploaded base photo.',
-        GENERATE_VIDEO: 'I2V submit sent with uploaded start frame.',
-        GENERATE_VIDEO_REFS: 'Ingredients / Refs to Video submit sent with uploaded reference photos.',
+        EDIT_IMAGE: 'Images submit sent with uploaded base photo.',
+        GENERATE_VIDEO: 'Ingredients submit sent with uploaded start frame.',
+        GENERATE_VIDEO_REFS: 'Frames submit sent with uploaded reference photos.',
         TRUE_F2V: f2vEndAssetId
-          ? 'True F2V submit sent with explicit Start and End frames.'
-          : 'True F2V submit sent with explicit Start frame and generated prompt.',
+          ? 'Frames submit sent with explicit Start and End frames.'
+          : 'Frames submit sent with explicit Start frame and generated prompt.',
       }
       setMessage(labels[mode])
     } catch (err) {
@@ -1324,6 +1501,23 @@ export default function OperatorPage() {
             {searchingCatalog ? '...' : 'Search'}
           </button>
         </div>
+        <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+          <input
+            placeholder="Manual product name for non-FastMoss mapping..."
+            value={manualProductName}
+            onChange={e => setManualProductName(e.target.value)}
+            className="px-2 py-1.5 rounded text-xs"
+            style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}
+          />
+          <button
+            onClick={resolveManualProduct}
+            disabled={mappingBusy}
+            className="px-3 py-1.5 rounded text-xs font-bold"
+            style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}
+          >
+            {mappingBusy ? 'Resolving...' : 'Resolve + Save Manual Product'}
+          </button>
+        </div>
         {catalogProducts.length > 0 && (
           <div className="flex flex-col gap-1 max-h-48 overflow-y-auto pr-1">
             {catalogProducts.map(p => (
@@ -1367,8 +1561,10 @@ export default function OperatorPage() {
                 <div className="text-[10px] truncate">{selectedCatalogProduct.subcategory}</div>
                 <div className="text-[10px] opacity-60">Type:</div>
                 <div className="text-[10px] truncate">{selectedCatalogProduct.type}</div>
-                <div className="text-[10px] opacity-60">Source:</div>
-                <div className="text-[10px] font-bold text-blue-400 uppercase">{selectedCatalogProduct.source}</div>
+                <div className="text-[10px] opacity-60">Mapping Source:</div>
+                <div className="text-[10px] font-bold text-blue-400 uppercase">{selectedCatalogProduct.mapping_source || selectedCatalogProduct.source}</div>
+                <div className="text-[10px] opacity-60">Mapping Confidence:</div>
+                <div className="text-[10px] truncate">{selectedCatalogProduct.mapping_confidence || '—'}</div>
               </div>
             </div>
           </div>
@@ -1388,11 +1584,11 @@ export default function OperatorPage() {
           <div className="flex flex-col gap-1">
             <FieldLabel>Product</FieldLabel>
             <SearchableSelect
-              options={pack.products}
+              options={availableProducts}
               value={selectedProductName}
               onChange={(p: any) => applyProduct(p.product_name)}
               getLabel={(p: any) => p.product_short_name || p.product_name}
-              getSublabel={(p: any) => p.category + ' | ' + p.type_angle}
+              getSublabel={(p: any) => `${p.category || 'Unmapped'} | ${p.type_angle || p.sub_category || 'Needs review'}`}
             />
           </div>
 
@@ -1461,15 +1657,6 @@ export default function OperatorPage() {
           </div>
 
           <div className="flex flex-col gap-1">
-            <FieldLabel>Product Type</FieldLabel>
-            <select value={form.product_type} onChange={e => updateField('product_type', e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-              {pack.product_types.map(item => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-1">
             <FieldLabel>Target Language</FieldLabel>
             <select value={form.target_language} onChange={e => updateField('target_language', e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
               {pack.language_defaults.map(item => (
@@ -1478,51 +1665,64 @@ export default function OperatorPage() {
             </select>
           </div>
 
-          <div className="flex flex-col gap-1">
-            <FieldLabel>Silo</FieldLabel>
-            <select value={form.silo_id} onChange={e => updateField('silo_id', e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-              {pack.silos.map(item => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <FieldLabel>Trigger</FieldLabel>
-            <select value={form.trigger_id} onChange={e => updateField('trigger_id', e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-              {pack.triggers.map(item => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <FieldLabel>Formula</FieldLabel>
-            <select value={form.submode_formula} onChange={e => updateField('submode_formula', e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-              {pack.formulas.map(item => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </select>
-          </div>
         </div>
       </Card>
 
       <Card>
-        <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Campaign Inputs</h3>
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
-          <div className="flex flex-col gap-1">
-            <FieldLabel>Category</FieldLabel>
-            <input value={form.category} onChange={e => updateField('category', e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
-          </div>
-          <div className="flex flex-col gap-1">
-            <FieldLabel>Sub Category</FieldLabel>
-            <input value={form.sub_category} onChange={e => updateField('sub_category', e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
-          </div>
-          <div className="flex flex-col gap-1">
-            <FieldLabel>Type Angle</FieldLabel>
-            <input value={form.type_angle} onChange={e => updateField('type_angle', e.target.value)} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
-          </div>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Resolved Product Mapping</h3>
+          <button
+            type="button"
+            onClick={() => setAdvancedOverrideOpen(current => !current)}
+            className="px-2 py-1 rounded text-[10px] font-bold"
+            style={{ background: advancedOverrideOpen ? 'rgba(59,130,246,0.15)' : 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}
+          >
+            {advancedOverrideOpen ? 'Hide Advanced Override' : 'Advanced Override'}
+          </button>
         </div>
+        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <ReadOnlyField label="Category" value={form.category} />
+          <ReadOnlyField label="Subcategory" value={form.sub_category} />
+          <ReadOnlyField label="Type" value={form.type_angle} />
+          <ReadOnlyField label="Product Type" value={form.product_type} />
+          <ReadOnlyField label="Silo" value={form.silo_id} />
+          <ReadOnlyField label="Trigger ID" value={form.trigger_id} />
+          <ReadOnlyField label="Formula" value={form.submode_formula} />
+          <ReadOnlyField label="Mapping Confidence" value={resolvedMapping?.mapping_confidence} />
+          <ReadOnlyField label="Mapping Source" value={resolvedMapping?.mapping_source} />
+          <ReadOnlyField label="Copywriting Angle" value={resolvedMapping?.copywriting_angle} />
+          <ReadOnlyField label="Claim Risk" value={resolvedMapping?.claim_risk_level} />
+          <ReadOnlyField label="Recommended Lanes" value={resolvedMapping?.mode_recommendations?.join(', ')} />
+        </div>
+        {resolvedMapping?.missing_fields?.length ? (
+          <div className="rounded px-3 py-2 text-xs" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: 'var(--text)' }}>
+            Mapping needs review for: {resolvedMapping.missing_fields.join(', ')}.
+          </div>
+        ) : null}
+        {advancedOverrideOpen && (
+          <div className="grid gap-3 rounded-lg border p-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)' }}>
+            <div className="text-xs font-semibold" style={{ color: 'var(--text)' }}>Advanced Override</div>
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+              <div className="flex flex-col gap-1">
+                <FieldLabel>Override Category</FieldLabel>
+                <input value={overrideDraft.category} onChange={e => setOverrideDraft(current => ({ ...current, category: e.target.value }))} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
+              </div>
+              <div className="flex flex-col gap-1">
+                <FieldLabel>Override Subcategory</FieldLabel>
+                <input value={overrideDraft.subcategory} onChange={e => setOverrideDraft(current => ({ ...current, subcategory: e.target.value }))} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
+              </div>
+              <div className="flex flex-col gap-1">
+                <FieldLabel>Override Type</FieldLabel>
+                <input value={overrideDraft.type} onChange={e => setOverrideDraft(current => ({ ...current, type: e.target.value }))} className="px-2 py-1.5 rounded text-xs" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button onClick={applyAdvancedOverride} disabled={mappingBusy} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+                {mappingBusy ? 'Applying...' : 'Apply Advanced Override'}
+              </button>
+            </div>
+          </div>
+        )}
         <div className="flex flex-col gap-1">
           <FieldLabel>Scene Context</FieldLabel>
           <textarea value={form.scene_context} onChange={e => updateField('scene_context', e.target.value)} rows={3} className="px-2 py-1.5 rounded text-xs resize-y" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
@@ -1614,22 +1814,25 @@ export default function OperatorPage() {
         </div>
         <div className="rounded p-3 text-xs grid gap-1" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
           <div style={{ color: 'var(--text)' }}>Operator lane status</div>
-          <div>Supported now: `IMG / Edit Image`, `I2V / Start Image to Video`, `Ingredients / Refs to Video`, `True F2V / Start + End Frames`.</div>
-          <div>Direct T2V: NOT WIRED / NOT NATIVE.</div>
-          <div>Do not confuse `Ingredients / Refs to Video` with true `F2V` start-plus-end frame generation.</div>
+          <div>Supported now: `Images`, `Ingredients`, `Frames`, `Text to Video`.</div>
+          <div>Direct Text to Video is visible for naming completeness but remains NOT WIRED / NOT NATIVE.</div>
+          <div>Do not confuse `Ingredients` with true `Frames` start-plus-end frame generation.</div>
         </div>
         <div className="flex gap-2 flex-wrap">
           <button onClick={() => queueRequests('GENERATE_CHARACTER_IMAGE')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-            Generate Ingredients / Refs
+            Generate Ingredients
           </button>
           <button onClick={() => queueRequests('GENERATE_IMAGE')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
             Generate Images
           </button>
           <button onClick={() => queueRequests('GENERATE_VIDEO')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-            Generate Videos (I2V Start Image)
+            Generate Ingredients
           </button>
           <button onClick={() => queueRequests('GENERATE_VIDEO_REFS')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-            Generate Videos (Ingredients / Refs)
+            Generate Frames
+          </button>
+          <button disabled className="px-3 py-2 rounded text-xs font-semibold opacity-70 cursor-not-allowed" style={{ background: 'var(--surface)', color: 'var(--muted)', border: '1px solid var(--border)' }}>
+            Generate Text to Video — NOT WIRED
           </button>
           <button onClick={() => queueRequests('UPSCALE_VIDEO')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
             Upscale
@@ -1667,19 +1870,19 @@ export default function OperatorPage() {
 
           <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Manual Upload and Submit</h3>
           <span className="text-xs" style={{ color: 'var(--muted)' }}>
-            IMG uses uploaded base photo, I2V uses the first uploaded start frame, Ingredients / Refs uses uploaded reference photos.
+            Images uses uploaded base photo, Ingredients uses the first uploaded start frame, Frames uses explicit start and end assets.
           </span>
         </div>
 
         {!created ? (
           <div className="text-xs" style={{ color: 'var(--muted)' }}>
-            Create a project first. Then this panel will expose photo upload plus submit buttons for IMG, I2V, and Ingredients / Refs to Video.
+            Create a project first. Then this panel will expose photo upload plus submit buttons for Images, Ingredients, and Frames.
           </div>
         ) : (
           <>
             <div className="rounded p-3 text-xs grid gap-1" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
-              <div>Supported here: `Submit IMG`, `Submit I2V`, `Submit Ingredients / Refs`, `Submit True F2V`.</div>
-              <div>`True F2V` requires explicit selection of Start and End frame assets from your uploads.</div>
+              <div>Supported here: `Generate Images`, `Generate Ingredients`, `Generate Frames`, `Generate Text to Video — NOT WIRED`.</div>
+              <div>`Frames` requires explicit selection of Start and End frame assets from your uploads.</div>
             </div>
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
               <div className="flex flex-col gap-1">
@@ -1717,7 +1920,7 @@ export default function OperatorPage() {
                 <div className="text-xs" style={{ color: 'var(--muted)' }}>
                   {manualFiles.length > 0
                     ? `${manualFiles.length} file selected: ${manualFiles.map(file => file.name).join(', ')}`
-                    : 'Choose one photo for IMG/I2V or multiple photos for Ingredients / Refs to Video.'}
+                    : 'Choose one photo for Images/Ingredients or multiple photos for manual reference uploads.'}
                 </div>
               </div>
 
@@ -1764,7 +1967,7 @@ export default function OperatorPage() {
                 className="px-3 py-2 rounded text-xs font-semibold transition-all hover:scale-[1.02]" 
                 style={{ background: 'rgba(59,130,246,0.14)', color: 'var(--accent)', border: '1px solid var(--border)' }}
               >
-                Submit IMG / Edit Image
+                Generate Images
               </button>
               <button 
                 onMouseEnter={() => setHoveredMode('GENERATE_VIDEO')}
@@ -1773,7 +1976,7 @@ export default function OperatorPage() {
                 className="px-3 py-2 rounded text-xs font-semibold transition-all hover:scale-[1.02]" 
                 style={{ background: 'rgba(34,197,94,0.14)', color: 'var(--green)', border: '1px solid var(--border)' }}
               >
-                Submit I2V - Start Image to Video
+                Generate Ingredients
               </button>
               <button 
                 onMouseEnter={() => setHoveredMode('GENERATE_VIDEO_REFS')}
@@ -1782,24 +1985,24 @@ export default function OperatorPage() {
                 className="px-3 py-2 rounded text-xs font-semibold transition-all hover:scale-[1.02]" 
                 style={{ background: 'rgba(245,158,11,0.14)', color: 'var(--yellow)', border: '1px solid var(--border)' }}
               >
-                Submit Ingredients / Refs to Video
+                Generate Frames
               </button>
             </div>
 
             <div className="rounded p-3 flex flex-col gap-3" style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.2)' }}>
               <div className="flex items-center justify-between">
-                <div className="text-xs font-bold" style={{ color: 'var(--accent)' }}>True F2V / Start Frame + Optional End Frame</div>
+                <div className="text-xs font-bold" style={{ color: 'var(--accent)' }}>Frames / Start Frame + Optional End Frame</div>
                 <div className="text-[10px]" style={{ color: 'var(--muted)' }}>
                   End Frame is optional in this lane.
                 </div>
               </div>
                 <div className="text-[10px]" style={{ color: 'var(--accent)' }}>
-                  True F2V uses one required image and one optional control frame:
+                  Frames uses one required image and one optional control frame:
                   <ol className="list-decimal ml-4 mt-1">
                     <li>Upload Start Frame.</li>
                     <li>Optional: Upload End Frame for last-frame control.</li>
                     <li>Review the generated scene prompt or add an override.</li>
-                    <li>Submit True F2V.</li>
+                    <li>Generate Frames.</li>
                   </ol>
                 </div>
               <div className="text-[10px]" style={{ color: 'var(--muted)' }}>
@@ -1943,12 +2146,12 @@ export default function OperatorPage() {
                   </div>
                 ) : (
                   <div className="text-[10px] font-bold" style={{ color: 'var(--green)' }}>
-                    True F2V ready: Start frame and resolved prompt are set.
+                    Frames ready: Start frame and resolved prompt are set.
                   </div>
                 )}
 
                 <button onClick={() => submitManual('TRUE_F2V')} disabled={!f2vReady} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: !f2vReady ? 'var(--border)' : 'rgba(168,85,247,0.14)', color: !f2vReady ? 'var(--muted)' : 'var(--accent)', border: `1px solid ${!f2vReady ? 'var(--border)' : 'rgba(168,85,247,0.4)'}` }}>
-                  Submit True F2V / Start Frame + Optional End
+                  Generate Frames
                 </button>
               </div>
             </div>

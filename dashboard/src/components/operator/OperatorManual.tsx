@@ -118,48 +118,48 @@ export default function OperatorManual({
         <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Operator Manual / SOP</h3>
         <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
           <ModeCard
-            title="1. IMG / Edit Image"
+            title="1. Images"
             status="WIRED"
             type="EDIT_IMAGE"
             useWhen="user uploads a base product/photo and wants an edited/generated image."
             required="created project, target scene, uploaded image, prompt if user wants override."
-            button="Submit IMG / Edit Image"
+            button="Generate Images"
             warning="Not verified: Google Flow DOM selector automation."
           />
           <ModeCard
-            title="2. I2V / Start Image to Video"
+            title="2. Ingredients"
             status="WIRED"
             type="GENERATE_VIDEO"
             useWhen="first uploaded image becomes the start frame for video."
             required="created project, target scene, uploaded image/start frame, resolved video prompt."
-            button="Submit I2V - Start Image to Video"
+            button="Generate Ingredients"
             warning="Not wired: explicit end frame."
           />
           <ModeCard
-            title="3. Ingredients / Refs to Video"
+            title="3. Frames"
             status="WIRED"
             type="GENERATE_VIDEO_REFS"
             useWhen="multiple uploaded reference images guide video generation."
             required="created project, target scene, one or more uploaded refs, resolved video prompt."
-            button="Submit Ingredients / Refs to Video"
-            warning="Warning: This is NOT true F2V."
+            button="Generate Frames"
+            warning="Warning: This is the Frame-style route used in this repo, not direct Text to Video."
           />
           <ModeCard
-            title="4. True F2V / Start + Optional End Frame"
+            title="4. Frames / Start + Optional End Frame"
             status="WIRED IN OPERATOR"
             type="GENERATE_VIDEO + end_scene_media_id"
             useWhen="transitioning between a specific start frame and end frame."
             required="created project, target scene, uploaded start asset, optional end asset, resolved video prompt."
-            button="Submit True F2V / Start Frame + Optional End"
+            button="Generate Frames"
             warning="Chrome DOM automation: still LIVE TEST REQUIRED."
           />
           <ModeCard
-            title="5. Direct T2V"
+            title="5. Text to Video"
             status="NOT NATIVE / NOT VERIFIED"
             type="N/A"
             useWhen="Current supported path: prompt -> image -> video"
             required="Do not expose direct submit until native queue path is verified."
-            button="Button not available"
+            button="Generate Text to Video — NOT WIRED"
           />
         </div>
       </Card>
@@ -168,30 +168,30 @@ export default function OperatorManual({
         <Card>
           <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Google Flow Evidence Notes</h3>
           <div className="flex flex-col gap-3">
-            <EvidenceSubsection title="IMAGE / IMG Evidence">
+            <EvidenceSubsection title="Images Evidence">
               <div><Badge type="info">SOURCE EVIDENCE</Badge> Workspace uses Nano Banana 2 / Pro.</div>
               <div>Ratios: 16:9, 9:16, 1:1, 3:4, 4:3. Tools: Doodle, Box, Lasso, Annotation, Crop.</div>
               <div style={{ color: 'var(--muted)' }}><Badge type="warn">LIVE TEST REQUIRED</Badge> Exact DOM selectors for toggle, prompt, and generate buttons.</div>
             </EvidenceSubsection>
 
-            <EvidenceSubsection title="T2V Evidence">
+            <EvidenceSubsection title="Text to Video Evidence">
               <div><Badge type="info">SOURCE EVIDENCE</Badge> External API evidence exists for direct T2V: <code>/v1/video:batchAsyncGenerateVideoText</code>.</div>
               <div style={{ color: 'var(--muted)' }}><Badge type="danger">REPO NOT WIRED</Badge> This repo does not expose a native T2V queue yet. Path is prompt -&gt; image -&gt; video.</div>
             </EvidenceSubsection>
 
-            <EvidenceSubsection title="I2V Evidence">
+            <EvidenceSubsection title="Ingredients Evidence">
               <div><Badge type="info">SOURCE EVIDENCE</Badge> Uses attached image asset plus video prompt.</div>
               <div><Badge type="success">REPO WIRED</Badge> Maps to <code>GENERATE_VIDEO</code> lane.</div>
               <div style={{ color: 'var(--muted)' }}><Badge type="warn">LIVE TEST REQUIRED</Badge> Exact native file input selector.</div>
             </EvidenceSubsection>
 
-            <EvidenceSubsection title="F2V / Frames Evidence">
+            <EvidenceSubsection title="Frames Evidence">
               <div><Badge type="info">SOURCE EVIDENCE</Badge> Labels: "Select start", "Select end". End frame is optional.</div>
-              <div><Badge type="success">QUEUE WIRED</Badge> True F2V maps to <code>GENERATE_VIDEO</code> with optional <code>end_scene_media_id</code>.</div>
+              <div><Badge type="success">QUEUE WIRED</Badge> Frames maps to <code>GENERATE_VIDEO</code> with optional <code>end_scene_media_id</code>.</div>
               <div style={{ color: 'var(--muted)' }}><Badge type="warn">LIVE TEST REQUIRED</Badge> Live Flow execution still depends on worker + extension connected path.</div>
             </EvidenceSubsection>
 
-            <EvidenceSubsection title="Ingredients / Refs Evidence">
+            <EvidenceSubsection title="Ingredients Reference Evidence">
               <div><Badge type="info">SOURCE EVIDENCE</Badge> Labels: "Ingredient 1", "Ingredient 2". Claimed max 14 references (4 char / 10 object).</div>
               <div style={{ color: 'var(--yellow)' }}><Badge type="warn">DO NOT HARDCODE</Badge> Source evidence claims max 14 references. Runtime-detect actual capacity before automation.</div>
               <div style={{ color: 'var(--red)' }}><Badge type="danger">Veo 3.1 Lite Limitation</Badge> Cannot process Ingredients/Refs or 4K.</div>

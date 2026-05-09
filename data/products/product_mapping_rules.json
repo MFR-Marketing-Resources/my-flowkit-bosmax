@@ -1,0 +1,253 @@
+{
+  "keyword_rules": [
+    {
+      "id": "fashion_bottoms_seluar_tarik_ke_atas",
+      "keywords": ["seluar tarik ke atas"],
+      "category": "Fashion",
+      "subcategory": "Bottoms",
+      "type": "Pants",
+      "copywriting_angle": "Confidence-led fit and daily comfort",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "id": "baby_diaper",
+      "keywords": ["diaper pants", "pull ups", "pull-ups", "lampin bayi", "lampin", "baby diaper", "diaper"],
+      "category": "Baby Care",
+      "subcategory": "Diaper",
+      "type": "Pants",
+      "copywriting_angle": "Trust-led baby care with softness and leak protection",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "id": "fashion_sportswear",
+      "keywords": ["jersey", "jersi", "athleisure", "baju sukan", "muslimah sport", "muslimah"],
+      "category": "Fashion",
+      "subcategory": "Sportswear",
+      "type": "Jersey-Athleisure",
+      "copywriting_angle": "Confidence, performance, and modest activewear styling",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "id": "beauty_fragrance",
+      "keywords": ["body spray", "fragrance mist", "perfume", "fragrance", "eau de parfum"],
+      "category": "Beauty & Personal Care",
+      "subcategory": "Fragrance",
+      "type": "Body Mist",
+      "copywriting_angle": "Confidence-led scent appeal and everyday freshness",
+      "claim_risk_level": "MEDIUM"
+    },
+    {
+      "id": "fnb_ready_food",
+      "keywords": ["sambal", "mee kari", "kari", "ready to eat", "ready-to-eat", "instant meal", "sauce"],
+      "category": "Food & Beverage",
+      "subcategory": "Ready-to-eat/Food",
+      "type": "Sauce-Food",
+      "copywriting_angle": "Trust-led taste, convenience, and appetite appeal",
+      "claim_risk_level": "MEDIUM"
+    },
+    {
+      "id": "beauty_bath_body",
+      "keywords": ["body soap", "sabun badan", "soap bar", "shower gel", "body wash"],
+      "category": "Beauty & Personal Care",
+      "subcategory": "Bath & Body",
+      "type": "Soap",
+      "copywriting_angle": "Trust-led cleanliness, comfort, and daily care",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "id": "electronics_wearables",
+      "keywords": ["smartwatch", "smart watch", "jam tangan pintar", "jam tangan"],
+      "category": "Electronics",
+      "subcategory": "Wearables",
+      "type": "Smartwatch",
+      "copywriting_angle": "Authority-led features, utility, and lifestyle upgrade",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "id": "home_bedding_pillow",
+      "keywords": ["pillow", "bantal"],
+      "category": "Home & Living",
+      "subcategory": "Bedding",
+      "type": "Pillow",
+      "copywriting_angle": "Comfort-led rest quality and home coziness",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "id": "home_carpet",
+      "keywords": ["carpet", "karpet", "rug", "mat"],
+      "category": "Home & Living",
+      "subcategory": "Carpet",
+      "type": "Mat-Rug",
+      "copywriting_angle": "Comfort-led texture, warmth, and room styling",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "id": "fashion_bottoms",
+      "keywords": ["seluar", "trousers", "pants"],
+      "category": "Fashion",
+      "subcategory": "Bottoms",
+      "type": "Pants",
+      "copywriting_angle": "Confidence-led fit, shape, and versatile styling",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "id": "stealth_male_health",
+      "keywords": ["lelaki", "male health", "men's health", "stamina", "kuat lelaki", "sensitive supplement"],
+      "category": "Health",
+      "subcategory": "Supplements",
+      "type": "Male Health",
+      "copywriting_angle": "Private confidence and discreet performance framing",
+      "claim_risk_level": "HIGH"
+    }
+  ],
+  "taxonomy_aliases": [
+    {
+      "match": {
+        "category": ["baby & maternity"],
+        "subcategory": ["baby care & health"],
+        "type": ["diapers"]
+      },
+      "category": "Baby Care",
+      "subcategory": "Diaper",
+      "type": "Pants"
+    },
+    {
+      "match": {
+        "category": ["food & beverages", "food and beverages"],
+        "subcategory": ["dairy"],
+        "type": ["milk"]
+      },
+      "category": "Food & Beverage",
+      "subcategory": "Ready-to-eat/Food",
+      "type": "Milk"
+    },
+    {
+      "match": {
+        "category": ["fashion"],
+        "subcategory": ["kids clothing"],
+        "type": ["apparel"]
+      },
+      "category": "Fashion",
+      "subcategory": "Sportswear",
+      "type": "Jersey-Athleisure"
+    }
+  ],
+  "profile_rules": [
+    {
+      "match": {
+        "category": "Baby Care",
+        "subcategory": "Diaper"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "baby_care_universal_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led baby care",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Fashion",
+        "subcategory": "Sportswear"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fashion_mass_01",
+      "trigger_id": "CONFIDENCE_01",
+      "formula": "AIDA",
+      "mode_recommendations": ["Images", "Ingredients", "Frames", "Text to Video"],
+      "copywriting_angle": "Confidence-led fashion appeal",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Fashion",
+        "subcategory": "Bottoms"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fashion_mass_01",
+      "trigger_id": "CONFIDENCE_01",
+      "formula": "AIDA",
+      "mode_recommendations": ["Images", "Ingredients", "Frames", "Text to Video"],
+      "copywriting_angle": "Confidence-led fashion appeal",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Beauty & Personal Care",
+        "subcategory": "Fragrance"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "perfume_mass_01",
+      "trigger_id": "CONFIDENCE_01",
+      "formula": "AIDA",
+      "mode_recommendations": ["Images", "Ingredients", "Frames", "Text to Video"],
+      "copywriting_angle": "Confidence-led fragrance appeal",
+      "claim_risk_level": "MEDIUM"
+    },
+    {
+      "match": {
+        "category": "Food & Beverage"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fnb_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led food desirability",
+      "claim_risk_level": "MEDIUM"
+    },
+    {
+      "match": {
+        "category": "Beauty & Personal Care",
+        "subcategory": "Bath & Body"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_or_beauty_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led cleanliness and comfort",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Electronics",
+        "subcategory": "Wearables"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "electronics_mass_01",
+      "trigger_id": "AUTHORITY_01",
+      "formula": "FEATURE_BENEFIT",
+      "mode_recommendations": ["Images", "Frames", "Text to Video"],
+      "copywriting_angle": "Authority-led feature education",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Home & Living"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "COMFORT_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Comfort-led home lifestyle appeal",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Health",
+        "subcategory": "Supplements",
+        "type": "Male Health"
+      },
+      "product_type": "STEALTH",
+      "silo": "health_supp_stealth_01",
+      "trigger_id": "EGO_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Frames"],
+      "copywriting_angle": "Private confidence with careful claim handling",
+      "claim_risk_level": "HIGH"
+    }
+  ]
+}
