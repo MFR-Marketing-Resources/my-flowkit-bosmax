@@ -22,6 +22,7 @@
     IMAGE_ATTACHED: 'IMAGE_ATTACHED',
     COMPOSER_FOUND: 'COMPOSER_FOUND',
     COMPOSER_TYPE: 'COMPOSER_TYPE',
+    JOB_PROMPT_RECEIVED: 'JOB_PROMPT_RECEIVED',
     PROMPT_INSERT_METHOD: 'PROMPT_INSERT_METHOD',
     PROMPT_VISIBLE: 'PROMPT_VISIBLE',
     PROMPT_EDITABLE_AFTER_INSERT: 'PROMPT_EDITABLE_AFTER_INSERT',
@@ -151,6 +152,13 @@
     };
 
     try {
+      // 0. Log job received with prompt status
+      if (job.prompt) {
+        logStage(STAGES.JOB_PROMPT_RECEIVED, `${job.prompt.length} chars`);
+      } else {
+        logStage(STAGES.JOB_PROMPT_RECEIVED, 'MISSING');
+      }
+
       logStage(STAGES.FLOW_TAB_FOUND);
 
       // 1. Select Mode
@@ -211,8 +219,14 @@
       const cType = composer.tagName === 'TEXTAREA' ? 'TEXTAREA' : (composer.getAttribute('contenteditable') === 'true' ? 'CONTENTEDITABLE' : 'OTHER');
       logStage(STAGES.COMPOSER_TYPE, cType);
 
-      // 7. Human-like Typing
+      // 7. Validate Prompt
+      if (!job.prompt || job.prompt.trim().length === 0) {
+        logStage(STAGES.PROMPT_INSERT_METHOD, 'VALIDATION_FAILED');
+        throw new Error('JOB_PROMPT_EMPTY');
+      }
       logStage(STAGES.PROMPT_INSERT_METHOD, 'HUMAN_TYPING');
+
+      // 8. Human-like Typing
       await humanTypePrompt(composer, job.prompt);
       
       const actual = getComposerText(composer);

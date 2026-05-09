@@ -345,6 +345,11 @@ class OperationService:
             base_prompt = scene.get("video_prompt") or scene.get("prompt", "")
         prompt = await _build_video_prompt(base_prompt, scene, pid)
 
+        # Validate prompt is non-empty
+        if not prompt or not prompt.strip():
+            logger.error("PROMPT_EMPTY: Scene %s has empty video_prompt and no fallback", scene.get("id"))
+            return {"error": "Scene video prompt is empty"}
+
         # Check if already submitted (op_name saved from previous attempt)
         existing_op = None
         if request_id:
