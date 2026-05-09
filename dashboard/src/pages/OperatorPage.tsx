@@ -98,9 +98,21 @@ type OperatorForm = {
   usp_2: string
   usp_3: string
   body: string
-  cta: string
   material: string
   orientation: Orientation
+  physics_class: string
+  recommended_grip: string
+  product_scale: string
+  fragility_level: string
+  hand_object_interaction: string
+  material_behavior: string
+  surface_behavior: string
+  air_gap_rule: string
+  unsafe_handling_rules: string[]
+  section_5_product_physics_prompt: string
+  cta: string
+  media_id: string
+  camera_handling_notes: string
 }
 
 
@@ -133,6 +145,18 @@ const emptyForm: OperatorForm = {
   cta: '',
   material: 'realistic',
   orientation: 'VERTICAL',
+  physics_class: '',
+  recommended_grip: '',
+  product_scale: '',
+  fragility_level: '',
+  hand_object_interaction: '',
+  material_behavior: '',
+  surface_behavior: '',
+  air_gap_rule: '',
+  unsafe_handling_rules: [],
+  section_5_product_physics_prompt: '',
+  media_id: '',
+  camera_handling_notes: '',
 }
 
 function FieldLabel({ children }: { children: string }) {
@@ -866,6 +890,16 @@ export default function OperatorPage() {
         trigger_id: mapping.trigger_id || '',
         silo_id: mapping.silo || '',
         submode_formula: mapping.formula || '',
+        physics_class: mapping.physics_class || '',
+        recommended_grip: mapping.recommended_grip || '',
+        product_scale: mapping.product_scale || '',
+        fragility_level: mapping.fragility_level || '',
+        hand_object_interaction: mapping.hand_object_interaction || '',
+        material_behavior: mapping.material_behavior || '',
+        surface_behavior: mapping.surface_behavior || '',
+        air_gap_rule: mapping.air_gap_rule || '',
+        unsafe_handling_rules: mapping.unsafe_handling_rules || [],
+        section_5_product_physics_prompt: mapping.section_5_product_physics_prompt || '',
         scene_context: mapping.category && mapping.type
           ? `${mapping.category} environment with ${mapping.type}`
           : (mapping.raw_product_title || current.scene_context),
@@ -1719,10 +1753,17 @@ export default function OperatorPage() {
           <ReadOnlyField label="Copywriting Angle" value={resolvedMapping?.copywriting_angle} />
           <ReadOnlyField label="Claim Risk" value={resolvedMapping?.claim_risk_level} />
           <ReadOnlyField label="Recommended Lanes" value={resolvedMapping?.mode_recommendations?.join(', ')} />
-          <ReadOnlyField label="Physics Class" value={resolvedMapping?.physics_class} />
-          <ReadOnlyField label="Recommended Grip" value={resolvedMapping?.recommended_grip} />
-          <ReadOnlyField label="Handling Notes" value={resolvedMapping?.camera_handling_notes} />
-          <ReadOnlyField label="Section 5 Physics Prompt" value={resolvedMapping?.section_5_product_physics_prompt} />
+          <ReadOnlyField label="Physics Class" value={form.physics_class} />
+          <ReadOnlyField label="Scale" value={form.product_scale} />
+          <ReadOnlyField label="Fragility" value={form.fragility_level} />
+          <ReadOnlyField label="Grip" value={form.recommended_grip} />
+          <ReadOnlyField label="Handling Notes" value={form.camera_handling_notes} />
+          <ReadOnlyField label="Hand Interact" value={form.hand_object_interaction} />
+          <ReadOnlyField label="Material" value={form.material_behavior} />
+          <ReadOnlyField label="Surface" value={form.surface_behavior} />
+          <ReadOnlyField label="Air Gap" value={form.air_gap_rule} />
+          <ReadOnlyField label="Unsafe" value={form.unsafe_handling_rules?.join('; ')} />
+          <ReadOnlyField label="S5 PMT" value={form.section_5_product_physics_prompt} />
         </div>
         {resolvedMapping?.missing_fields?.length ? (
           <div className="rounded px-3 py-2 text-xs" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: 'var(--text)' }}>
