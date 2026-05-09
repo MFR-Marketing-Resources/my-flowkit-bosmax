@@ -45,7 +45,16 @@ function sendTabMessageSafe(tabId, payload) {
     chrome.tabs.sendMessage(tabId, payload, (response) => {
       const lastError = chrome.runtime.lastError;
       if (lastError) {
-        resolve({ ok: false, error: lastError.message });
+        const message = lastError.message || 'MESSAGE_SEND_FAILED';
+        if (/Receiving end does not exist|Could not establish connection/i.test(message)) {
+          resolve({ ok: false, error: 'CONTENT_SCRIPT_NOT_READY' });
+          return;
+        }
+        if (/No tab with id|tab was closed|frame .* removed|The tab was closed/i.test(message)) {
+          resolve({ ok: false, error: 'FLOW_TAB_DISCONNECTED' });
+          return;
+        }
+        resolve({ ok: false, error: `MESSAGE_SEND_FAILED: ${message}` });
         return;
       }
       resolve(response ?? { ok: false, error: 'No response' });
@@ -65,6 +74,19 @@ function sendRuntimeMessageSafe(payload) {
       resolve(response ?? { ok: true });
     });
   });
+}
+
+function sendRuntimeMessageNoThrow(payload) {
+  try {
+    chrome.runtime.sendMessage(payload, () => {
+      const lastError = chrome.runtime.lastError;
+      if (lastError) {
+        console.warn('[FlowAgent] runtime message ignored:', lastError.message);
+      }
+    });
+  } catch (error) {
+    console.warn('[FlowAgent] runtime message exception:', error);
+  }
 }
 
 // ─── URL → Log Type Classifier ─────────────────────────────
@@ -102,7 +124,7 @@ function updateRequestLog(id, updates) {
 }
 
 function broadcastRequestLog() {
-  chrome.runtime.sendMessage({ type: 'REQUEST_LOG_UPDATE', log: requestLog }).catch(() => {});
+  sendRuntimeMessageNoThrow({ type: 'REQUEST_LOG_UPDATE', log: requestLog });
 }
 
 // ─── Startup ────────────────────────────────────────────────
@@ -583,7 +605,7 @@ function setState(newState) {
 }
 
 function broadcastStatus() {
-  chrome.runtime.sendMessage({ type: 'STATUS_PUSH' }).catch(() => {});
+  sendRuntimeMessageNoThrow({ type: 'STATUS_PUSH' });
 }
 
 async function handleMessage(msg, sender) {
@@ -672,6 +694,10 @@ async function handleMessage(msg, sender) {
     return await handleExecuteFlowJob(msg.job);
   }
 
+  if (msg.type === 'FLOW_JOB_COMPLETED' || msg.type === 'FLOW_JOB_FAILED') {
+    return { ok: true };
+  }
+
   if (msg.type === 'FLOW_STAGE_EVENT') {
     if (msg.request_id) {
       fetch('http://127.0.0.1:8100/api/telemetry/stage', {
@@ -702,19 +728,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         const result = await handleExecuteFlowJob(message.job);
         // Send final status via FLOW_JOB_COMPLETED
-        chrome.runtime.sendMessage({
+        sendRuntimeMessageNoThrow({
           type: 'FLOW_JOB_COMPLETED',
           request_id: message.job?.request_id,
           result: result,
           success: result.ok === true
-        }).catch(err => console.warn('[FlowAgent] Failed to send FLOW_JOB_COMPLETED to background:', err));
+        });
       } catch (err) {
         // Send error via FLOW_JOB_FAILED
-        chrome.runtime.sendMessage({
+        sendRuntimeMessageNoThrow({
           type: 'FLOW_JOB_FAILED',
           request_id: message.job?.request_id,
           error: String(err?.message || err)
-        }).catch(err => console.warn('[FlowAgent] Failed to send FLOW_JOB_FAILED to background:', err));
+        });
       }
     }, 0);
     
@@ -744,7 +770,7 @@ async function handleExecuteFlowJob(job) {
   });
 
   if (!tabs.length) {
-    return { ok: false, error: 'NO_FLOW_TAB' };
+    return { ok: false, error: 'FLOW_TAB_DISCONNECTED' };
   }
 
   // Ensure content-flow-dom.js is injected
@@ -886,19 +912,19 @@ async function sendTelemetry() {
     } else {
       await fetch(`https://aisandbox-pa.googleapis.com/v1/flow:batchLogFrontendEvents`, {
         method: 'POST', headers, credentials: 'include',
-        body: JSON.stringify(_buildFrontendEventsPayload()),
+        sendRuntimeMessageNoThrow({
       });
     }
   } catch {}
 }
-
+        });
 // Send telemetry at random intervals (45-120s) to look organic
 function scheduleTelemetry() {
-  const delay = _rand(45, 120) * 1000;
+        sendRuntimeMessageNoThrow({
   setTimeout(async () => {
     await sendTelemetry();
     scheduleTelemetry(); // reschedule with new random interval
-  }, delay);
+        });
 }
 
 // Refresh session ID every ~30min like a real user

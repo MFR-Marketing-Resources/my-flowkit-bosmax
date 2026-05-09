@@ -282,3 +282,28 @@ export interface TelemetrySummary {
   last_error: string
   idle_seconds: number
 }
+
+export interface TelemetryRequest {
+  request_id: string
+  project_id: string | null
+  video_id: string | null
+  scene_id: string | null
+  product_id: string | null
+  request_type: RequestType | string | null
+  mode: string | null
+  status: string
+  google_flow_stage: string | null
+  extension_stage: string | null
+  worker_stage: string | null
+  queued_at: string | null
+  started_at: string | null
+  last_heartbeat_at: string | null
+  completed_at: string | null
+  failed_at: string | null
+  duration_seconds: number | null
+  idle_seconds: number | null
+  processing_seconds: number | null
+  error_code: string | null
+  error_message: string | null
+  created_at: string
+}

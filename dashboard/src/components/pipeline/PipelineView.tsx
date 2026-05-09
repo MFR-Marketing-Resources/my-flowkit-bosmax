@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { Image, Film, Zap, Users } from 'lucide-react'
 import { fetchAPI } from '../../api/client'
 import { useWebSocketContext } from '../../contexts/WebSocketContext'
-import type { Character, Scene } from '../../types'
+import type { Character, Scene, TelemetryRequest } from '../../types'
 import StageNode from './StageNode'
 import SceneCard from './SceneCard'
+import { getTraceStage, isActiveTelemetryStatus, shortId } from '../../utils/requestTrace'
 
 type ExpandedStage = 'refs' | 'image' | 'video' | 'upscale' | null
 
@@ -24,16 +25,19 @@ function deriveStatus(completed: number, total: number, hasFailure: boolean) {
 export default function PipelineView({ projectId, videoId }: PipelineViewProps) {
   const [chars, setChars] = useState<Character[]>([])
   const [scenes, setScenes] = useState<Scene[]>([])
+  const [telemetryRequests, setTelemetryRequests] = useState<TelemetryRequest[]>([])
   const [expanded, setExpanded] = useState<ExpandedStage>(null)
   const { lastEvent } = useWebSocketContext()
 
   const load = useCallback(async () => {
-    const [c, s] = await Promise.all([
+    const [c, s, t] = await Promise.all([
       fetchAPI<Character[]>(`/api/projects/${projectId}/characters`),
       fetchAPI<Scene[]>(`/api/scenes?video_id=${videoId}`),
+      fetchAPI<TelemetryRequest[]>(`/api/telemetry/requests?video_id=${videoId}&limit=100`),
     ])
     setChars(c)
     setScenes(s)
+    setTelemetryRequests(t)
   }, [projectId, videoId])
 
   useEffect(() => { load() }, [load])
@@ -41,10 +45,21 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
   useEffect(() => {
     if (!lastEvent) return
     const t = lastEvent.type
-    if (t === 'scene_updated' || t === 'character_updated' || t === 'request_completed' || t === 'request_failed') {
+    if (t === 'scene_updated' || t === 'character_updated' || t === 'request_completed' || t === 'request_failed' || t === 'request_created' || t === 'request_updated') {
       load()
     }
   }, [lastEvent, load])
+
+  const activeTelemetry = telemetryRequests.filter(trace => isActiveTelemetryStatus(trace.status))
+
+  const findStageTrace = (types: string[]) => activeTelemetry.find(trace => types.includes(trace.request_type || '')) || null
+
+  const stageTrace = {
+    refs: findStageTrace(['GENERATE_CHARACTER_IMAGE', 'REGENERATE_CHARACTER_IMAGE', 'EDIT_CHARACTER_IMAGE']),
+    image: findStageTrace(['GENERATE_IMAGE', 'REGENERATE_IMAGE', 'EDIT_IMAGE']),
+    video: findStageTrace(['GENERATE_VIDEO', 'REGENERATE_VIDEO', 'GENERATE_VIDEO_REFS', 'TRUE_F2V']),
+    upscale: findStageTrace(['UPSCALE_VIDEO']),
+  }
 
   // Helpers — pick whichever orientation has data
   const imgStatus = (s: Scene) =>
@@ -77,6 +92,8 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
       completed: refsCompleted,
       total: refsTotal,
       status: deriveStatus(refsCompleted, refsTotal, false),
+      activeRequestId: stageTrace.refs ? shortId(stageTrace.refs.request_id) : null,
+      lastStage: getTraceStage(stageTrace.refs),
     },
     {
       key: 'image' as const,
@@ -85,6 +102,8 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
       completed: imagesCompleted,
       total,
       status: deriveStatus(imagesCompleted, total, imagesFailed),
+      activeRequestId: stageTrace.image ? shortId(stageTrace.image.request_id) : null,
+      lastStage: getTraceStage(stageTrace.image),
     },
     {
       key: 'video' as const,
@@ -93,6 +112,8 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
       completed: videosCompleted,
       total,
       status: deriveStatus(videosCompleted, total, videosFailed),
+      activeRequestId: stageTrace.video ? shortId(stageTrace.video.request_id) : null,
+      lastStage: getTraceStage(stageTrace.video),
     },
     {
       key: 'upscale' as const,
@@ -101,6 +122,8 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
       completed: upscaleCompleted,
       total,
       status: deriveStatus(upscaleCompleted, total, upscaleFailed),
+      activeRequestId: stageTrace.upscale ? shortId(stageTrace.upscale.request_id) : null,
+      lastStage: getTraceStage(stageTrace.upscale),
     },
   ]
 
@@ -118,6 +141,8 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
               completed={stage.completed}
               total={stage.total}
               status={stage.status}
+              activeRequestId={stage.activeRequestId}
+              lastStage={stage.lastStage}
               isExpanded={expanded === stage.key}
               onClick={() => toggle(stage.key)}
             />

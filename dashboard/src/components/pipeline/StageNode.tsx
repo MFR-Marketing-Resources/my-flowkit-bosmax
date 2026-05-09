@@ -8,6 +8,8 @@ interface StageNodeProps {
   completed: number
   total: number
   status: StageStatus
+  activeRequestId?: string | null
+  lastStage?: string | null
   isExpanded: boolean
   onClick: () => void
 }
@@ -19,7 +21,7 @@ const STATUS_COLORS: Record<StageStatus, string> = {
   failed: 'var(--red)',
 }
 
-export default function StageNode({ name, icon: Icon, completed, total, status, isExpanded, onClick }: StageNodeProps) {
+export default function StageNode({ name, icon: Icon, completed, total, status, activeRequestId, lastStage, isExpanded, onClick }: StageNodeProps) {
   const pct = total === 0 ? 0 : Math.round((completed / total) * 100)
   const borderColor = STATUS_COLORS[status]
 
@@ -63,6 +65,15 @@ export default function StageNode({ name, icon: Icon, completed, total, status, 
 
       <div className="text-xs" style={{ color: 'var(--muted)' }}>
         {pct}% {status}
+      </div>
+
+      <div className="grid gap-1 text-[10px]" style={{ color: 'var(--muted)' }}>
+        <div className="font-mono truncate">
+          {activeRequestId ? `active: ${activeRequestId}` : 'next: none'}
+        </div>
+        <div className="truncate">
+          last stage: {lastStage || 'IDLE'}
+        </div>
       </div>
     </button>
   )

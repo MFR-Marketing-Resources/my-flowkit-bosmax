@@ -23,14 +23,23 @@ if (!window._flowKitInjected) {
       return { ok: true };
     }
 
-    throw new Error(`Unknown message type: ${msg.type}`);
+    return null;
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'PING') {
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (message.type !== 'GET_CAPTCHA') {
+      return false;
+    }
+
     ;(async () => {
       try {
         const data = await handleMessage(message, sender);
-        sendResponse(data); // Content script direct reply is simpler but still needs safety
+        sendResponse(data ?? { ok: false, error: 'UNHANDLED_MESSAGE_TYPE' });
       } catch (error) {
         sendResponse({ error: String(error?.message || error) });
       }

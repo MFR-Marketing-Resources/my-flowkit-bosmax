@@ -19,19 +19,27 @@
   window._flowKitDomInjected = true;
   console.log('[FlowAgent] Flow DOM Executor injected');
 
+  function sendRuntimeMessageNoThrow(payload) {
+    try {
+      chrome.runtime.sendMessage(payload, () => {
+        const lastError = chrome.runtime.lastError;
+        if (lastError) {
+          console.warn('[FlowAgent] runtime message ignored:', lastError.message);
+        }
+      });
+    } catch (error) {
+      console.warn('[FlowAgent] runtime message exception:', error);
+    }
+  }
+
   // Safe wrapper for sending messages without blocking on response
   function sendStageEvent(request_id, stage, status) {
-    chrome.runtime.sendMessage({
+    sendRuntimeMessageNoThrow({
       type: 'FLOW_STAGE_EVENT',
       request_id: request_id,
       stage: stage,
       status: status,
       source: 'google_flow'
-    }).catch(err => {
-      // Silently ignore message send errors (tab might be closing)
-      if (err && !err.message.includes('closed')) {
-        console.warn(`[FlowAgent] Failed to send stage event ${stage}:`, err);
-      }
     });
   }
 
@@ -605,19 +613,19 @@
         try {
           const result = await executeFlowJob(msg.job);
           // Send final result via FLOW_JOB_COMPLETED message
-          chrome.runtime.sendMessage({
+          sendRuntimeMessageNoThrow({
             type: 'FLOW_JOB_COMPLETED',
             request_id: msg.job?.request_id,
             result: result,
             success: result.ok
-          }).catch(err => console.warn('[FlowAgent] Failed to send FLOW_JOB_COMPLETED:', err));
+          });
         } catch (err) {
           // Send error via FLOW_JOB_FAILED message
-          chrome.runtime.sendMessage({
+          sendRuntimeMessageNoThrow({
             type: 'FLOW_JOB_FAILED',
             request_id: msg.job?.request_id,
             error: String(err?.message || err)
-          }).catch(err => console.warn('[FlowAgent] Failed to send FLOW_JOB_FAILED:', err));
+          });
         }
       }, 0);
       
