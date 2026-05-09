@@ -118,11 +118,41 @@ export default function ProductsSalesAnalyzerPage() {
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
   const [imageActionBusy, setImageActionBusy] = useState(false)
+  const [imageMapImportBusy, setImageMapImportBusy] = useState(false)
   const [selectedImageUrl, setSelectedImageUrl] = useState('')
   const [manualForm, setManualForm] = useState<ManualFormState>(emptyManualForm)
   const [tikTokForm, setTikTokForm] = useState<TikTokFormState>({ url: '', raw_product_title: '' })
 
   const selectedProduct = useMemo(() => products.find(product => product.id === selectedId) || null, [products, selectedId])
+  const imageReadinessSummary = useMemo(() => {
+    const summary = {
+      READY: 0,
+      CACHE_READY: 0,
+      URL_MISSING: 0,
+      DOWNLOAD_FAILED: 0,
+      NOT_AVAILABLE: 0,
+    }
+
+    for (const product of products) {
+      switch (product.image_readiness_status) {
+        case 'IMAGE_READY':
+          summary.READY += 1
+          break
+        case 'IMAGE_CACHE_READY':
+          summary.CACHE_READY += 1
+          break
+        case 'IMAGE_DOWNLOAD_FAILED':
+          summary.DOWNLOAD_FAILED += 1
+          break
+        case 'IMAGE_NOT_AVAILABLE':
+          summary.NOT_AVAILABLE += 1
+          break
+        default:
+          summary.URL_MISSING += 1
+      }
+    }
+    return summary
+  }, [products])
 
   useEffect(() => {
     setSelectedImageUrl(selectedProduct?.image_url || '')
@@ -136,6 +166,7 @@ export default function ProductsSalesAnalyzerPage() {
       if (search.trim()) params.set('q', search.trim())
       if (sourceFilter !== 'ALL') params.set('source', sourceFilter)
       if (readinessFilter !== 'ALL') params.set('readiness', readinessFilter)
+      params.set('limit', '500')
       const query = params.toString()
       const res = await fetchAPI<{items: Product[], total_count: number}>(`/api/products${query ? `?${query}` : ''}`)
       // No more slice logic, it natively returns exactly what matches.
@@ -298,6 +329,37 @@ export default function ProductsSalesAnalyzerPage() {
     )
   }
 
+  async function handleImageMapImport(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImageMapImportBusy(true)
+    setError(null)
+    setSaveSuccess(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const response = await fetch('/api/products/import-image-map', {
+        method: 'POST',
+        body: formData,
+      })
+      const payload = await response.json() as { imported?: number; total_rows?: number; warnings?: string[]; detail?: string }
+      if (!response.ok) {
+        throw new Error(payload.detail || 'Failed to import image map')
+      }
+      await loadProducts()
+      const warningSuffix = payload.warnings?.length ? ` (${payload.warnings.length} warning${payload.warnings.length === 1 ? '' : 's'})` : ''
+      setSaveSuccess(`Imported image map rows: ${payload.imported || 0}/${payload.total_rows || 0}${warningSuffix}`)
+      if (payload.warnings?.length) {
+        setError(payload.warnings.slice(0, 5).join(' | '))
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to import image map')
+    } finally {
+      e.target.value = ''
+      setImageMapImportBusy(false)
+    }
+  }
+
   return (
     <div className="grid grid-cols-[380px_1fr] h-full overflow-hidden">
 
@@ -305,6 +367,13 @@ export default function ProductsSalesAnalyzerPage() {
       <div className="border-r flex flex-col bg-slate-900/30 overflow-hidden" style={{ borderColor: 'var(--border)' }}>
         <div className="p-4 border-b" style={{ borderColor: 'var(--border)' }}>
           <h2 className="text-sm font-bold mb-3">Products / Sales Analyzer</h2>
+          <div className="grid grid-cols-2 gap-2 mb-3 text-[10px]">
+            <div className="rounded border border-emerald-500/20 bg-emerald-500/10 p-2 text-emerald-200">READY: {imageReadinessSummary.READY}</div>
+            <div className="rounded border border-sky-500/20 bg-sky-500/10 p-2 text-sky-200">CACHE_READY: {imageReadinessSummary.CACHE_READY}</div>
+            <div className="rounded border border-amber-500/20 bg-amber-500/10 p-2 text-amber-200">URL_MISSING: {imageReadinessSummary.URL_MISSING}</div>
+            <div className="rounded border border-rose-500/20 bg-rose-500/10 p-2 text-rose-200">DOWNLOAD_FAILED: {imageReadinessSummary.DOWNLOAD_FAILED}</div>
+            <div className="rounded border border-slate-500/20 bg-slate-500/10 p-2 text-slate-200 col-span-2">NOT_AVAILABLE: {imageReadinessSummary.NOT_AVAILABLE} | TOTAL: {products.length}</div>
+          </div>
           <div className="space-y-2">
             <input
               type="text"
@@ -319,6 +388,7 @@ export default function ProductsSalesAnalyzerPage() {
               <select
                 value={sourceFilter}
                 onChange={e => setSourceFilter(e.target.value)}
+                aria-label="Filter products by source"
                 className="flex-1 bg-slate-900 border text-xs px-2 py-1.5 rounded"
                 style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
               >
@@ -435,6 +505,7 @@ export default function ProductsSalesAnalyzerPage() {
                         type="text"
                         value={selectedImageUrl}
                         onChange={e => setSelectedImageUrl(e.target.value)}
+                        aria-label="Selected product image URL"
                         placeholder="Paste image URL"
                         className="w-full bg-slate-900 border border-slate-700 text-xs p-2 rounded text-slate-200"
                       />
@@ -457,7 +528,7 @@ export default function ProductsSalesAnalyzerPage() {
                         </button>
                         <label className={`bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-xs px-3 py-2 rounded text-center cursor-pointer ${imageActionBusy ? 'opacity-50 cursor-not-allowed' : ''}`}>
                           Upload Image
-                          <input type="file" accept="image/*" onChange={handleSelectedImageUpload} className="hidden" disabled={imageActionBusy} />
+                          <input type="file" accept="image/*" onChange={handleSelectedImageUpload} aria-label="Upload selected product image" className="hidden" disabled={imageActionBusy} />
                         </label>
                         <button
                           type="button"
@@ -468,6 +539,25 @@ export default function ProductsSalesAnalyzerPage() {
                           Mark Image Not Available
                         </button>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded border border-slate-800 bg-slate-950/60 p-3 space-y-3">
+                    <div className="text-[11px] font-semibold text-slate-300">Mode Readiness</div>
+                    <div className="space-y-2">
+                      {Object.entries(selectedProduct.mode_readiness || {}).map(([mode, readiness]) => (
+                        <div key={mode} className="rounded border border-slate-800 bg-slate-900/60 p-2">
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="font-semibold text-slate-200">{mode}</span>
+                            <StatBadge
+                              label={readiness.status}
+                              tone={readiness.status === 'READY' ? 'ready' : readiness.status === 'READY_OR_NEEDS_REVIEW' ? 'warn' : 'risk'}
+                            />
+                          </div>
+                          <div className="mt-1 text-[10px] text-slate-400">{readiness.detail}</div>
+                          {'asset_strategy' in readiness && readiness.asset_strategy ? <div className="mt-1 text-[10px] text-slate-500">Asset Strategy: {readiness.asset_strategy}</div> : null}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </Panel>
@@ -536,6 +626,16 @@ export default function ProductsSalesAnalyzerPage() {
           </div>
 
           <div className="space-y-6 sticky top-6">
+            <Panel title="Image Acquisition" subtitle="Bulk import existing image/source URLs and commission metadata.">
+              <label className={`flex items-center justify-center rounded border border-dashed border-slate-700 px-3 py-4 text-xs text-slate-300 ${imageMapImportBusy ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-sky-500/50 hover:text-sky-200'}`}>
+                {imageMapImportBusy ? 'Importing image map...' : 'Import Image Map CSV / JSON'}
+                <input type="file" accept=".csv,.json" onChange={handleImageMapImport} aria-label="Import image map file" className="hidden" disabled={imageMapImportBusy} />
+              </label>
+              <div className="mt-2 text-[10px] text-slate-500 leading-relaxed">
+                Supported columns: product_id, raw_product_title, product_short_name, image_url, source_url, commission_amount, commission_rate.
+              </div>
+            </Panel>
+
             <Panel title="TikTok Shop Import" subtitle="Register a draft for maintenance.">
               <form onSubmit={handleTikTokSubmit} className="space-y-3">
                 <div>

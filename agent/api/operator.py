@@ -46,6 +46,11 @@ class OperatorProduct(BaseModel):
     body: str | None = None
     cta: str | None = None
     shop_name: str | None = None
+    image_url: str | None = None
+    source_url: str | None = None
+    tiktok_product_url: str | None = None
+    commission_rate: str | None = None
+    commission_amount: float | None = None
 
 
 class WorkbookSummary(BaseModel):
@@ -153,6 +158,12 @@ def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
 
 
+def _normalized_product_key(value: str | None) -> str:
+    cleaned = _clean_text(value or "")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.casefold()
+
+
 def _seconds(duration: str) -> int:
     match = re.search(r"(\d+)", duration or "")
     return int(match.group(1)) if match else 8
@@ -171,6 +182,125 @@ def _timed_video_prompt(core_action: str, benefit: str, cta: str) -> str:
         f'3-6s: {benefit}. '
         f'6-8s: {cta}.'
     )
+
+
+def _find_sheet_header(ws) -> list[str]:
+    for row in ws.iter_rows(values_only=True, max_row=10):
+        values = [str(v).strip() if v is not None else "" for v in row]
+        normalized = {value.lower() for value in values if value}
+        if "product name" in normalized or "product title" in normalized:
+            return values
+    return []
+
+
+def _row_mapping(headers: list[str], values: list[Any]) -> dict[str, Any]:
+    return {headers[i]: values[i] for i in range(min(len(headers), len(values))) if headers[i]}
+
+
+def _parse_commission_amount(price_value: Any, commission_rate: str | None) -> float | None:
+    if price_value in {None, ""} or not commission_rate:
+        return None
+    try:
+        rate = float(str(commission_rate).replace('%', '').strip()) / 100.0
+    except ValueError:
+        return None
+    price_text = str(price_value).replace('RM', '').strip()
+    if '-' in price_text:
+        price_text = price_text.split('-', 1)[0].strip()
+    try:
+        price = float(price_text)
+    except ValueError:
+        return None
+    return round(price * rate, 2)
+
+
+def _build_product_asset_lookup(wb) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    sheet_configs = [
+        {
+            "sheet": "Product Sales Rank",
+            "name_field": "Product Name",
+            "image_fields": ["Product Image"],
+            "source_fields": ["FastMoss Product Detail"],
+            "tiktok_fields": ["TikTok Product Detail"],
+            "commission_fields": ["Commission Rate"],
+            "price_fields": ["Price"],
+        },
+        {
+            "sheet": "Most Promoted Products",
+            "name_field": "Product Name",
+            "image_fields": ["Product Image Link"],
+            "source_fields": ["FastMoss Product Detail"],
+            "tiktok_fields": ["TikTok Product Detail"],
+            "commission_fields": ["Commission Rate"],
+            "price_fields": ["Price"],
+        },
+        {
+            "sheet": "Video Product List",
+            "name_field": "Product Title",
+            "image_fields": ["Product Cover"],
+            "source_fields": ["FastMoss Product Detail Page Link"],
+            "tiktok_fields": ["TikTok Product Link"],
+            "commission_fields": [],
+            "price_fields": ["Product Price"],
+        },
+        {
+            "sheet": "Product Search Data",
+            "name_field": "Product Name",
+            "image_fields": ["Product Image"],
+            "source_fields": ["FastMoss", "FastMoss Shop"],
+            "tiktok_fields": ["TikTok"],
+            "commission_fields": ["Commission Rate"],
+            "price_fields": ["Selling Price / Price"],
+        },
+        {
+            "sheet": "New Products Ranking",
+            "name_field": "Product Name",
+            "image_fields": ["Cover"],
+            "source_fields": [],
+            "tiktok_fields": [],
+            "commission_fields": ["Commission Rate"],
+            "price_fields": ["Selling Price"],
+        },
+    ]
+
+    for config in sheet_configs:
+        if config["sheet"] not in wb.sheetnames:
+            continue
+        ws = wb[config["sheet"]]
+        headers = _find_sheet_header(ws)
+        if not headers:
+            continue
+        for row in ws.iter_rows(values_only=True):
+            values = list(row)
+            if not any(v is not None and str(v).strip() for v in values):
+                continue
+            if headers and values[:len(headers)] == headers[:len(values[:len(headers)])]:
+                continue
+            data = _row_mapping(headers, values)
+            name = _clean_text(str(data.get(config["name_field"]) or ""))
+            if not name:
+                continue
+            key = _normalized_product_key(name)
+            record = lookup.setdefault(key, {})
+            image_url = next((_clean_text(str(data.get(field) or "")) for field in config["image_fields"] if data.get(field)), "")
+            source_url = next((_clean_text(str(data.get(field) or "")) for field in config["source_fields"] if data.get(field)), "")
+            tiktok_url = next((_clean_text(str(data.get(field) or "")) for field in config["tiktok_fields"] if data.get(field)), "")
+            commission_rate = next((_clean_text(str(data.get(field) or "")) for field in config["commission_fields"] if data.get(field)), "")
+            price_value = next((data.get(field) for field in config["price_fields"] if data.get(field) is not None), None)
+            commission_amount = _parse_commission_amount(price_value, commission_rate)
+
+            if image_url and not record.get("image_url"):
+                record["image_url"] = image_url
+            if source_url and not record.get("source_url"):
+                record["source_url"] = source_url
+            if tiktok_url and not record.get("tiktok_product_url"):
+                record["tiktok_product_url"] = tiktok_url
+            if commission_rate and not record.get("commission_rate"):
+                record["commission_rate"] = commission_rate
+            if commission_amount is not None and record.get("commission_amount") is None:
+                record["commission_amount"] = commission_amount
+    return lookup
 
 
 @lru_cache(maxsize=1)
@@ -236,6 +366,8 @@ def _load_products(limit: int = 120) -> list[OperatorProduct]:
     if "Copywriting_Product_Map" not in wb.sheetnames:
         return []
 
+    asset_lookup = _build_product_asset_lookup(wb)
+
     ws = wb["Copywriting_Product_Map"]
     headers: list[str] = []
     products: list[OperatorProduct] = []
@@ -253,6 +385,7 @@ def _load_products(limit: int = 120) -> list[OperatorProduct]:
         name = _clean_text(str(data.get("Product Name") or ""))
         if not name:
             continue
+        asset_data = asset_lookup.get(_normalized_product_key(name), {})
             
         # Basic normalization for Excel source
         short_name = re.sub(r'(\d+PCS|Premium|All size|S/M/L/XL/XXL/XXXL|Ultra-thin|breathable|disposable|tape|pull-ups|disposable diaper tape diaper pants pull-ups)', '', name, flags=re.IGNORECASE)
@@ -291,6 +424,11 @@ def _load_products(limit: int = 120) -> list[OperatorProduct]:
                 mapping_source=mapping.get("mapping_source") or None,
                 mapping_confidence=mapping.get("mapping_confidence") or None,
                 missing_fields=list(mapping.get("missing_fields", [])),
+                image_url=asset_data.get("image_url") or None,
+                source_url=asset_data.get("source_url") or None,
+                tiktok_product_url=asset_data.get("tiktok_product_url") or None,
+                commission_rate=asset_data.get("commission_rate") or None,
+                commission_amount=asset_data.get("commission_amount"),
                 raw_category=_clean_text(str(data.get("Raw Category") or "")) or None,
                 avg_price_rm=float(data["Avg Price (RM)"]) if data.get("Avg Price (RM)") is not None else None,
                 status=_clean_text(str(data.get("Product Status") or "")) or None,

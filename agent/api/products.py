@@ -1,11 +1,14 @@
 import base64
 import aiohttp
+import csv
+import io
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from agent.config import BASE_DIR
@@ -120,6 +123,9 @@ class ImportTikTokShopRequest(BaseModel):
 
 PRODUCT_LOOKUP_FIELDS = ["product_short_name", "product_display_name", "raw_product_title"]
 
+IMAGE_READY_STATES = {"IMAGE_READY", "IMAGE_CACHE_READY"}
+MODE_IMAGE_DEPENDENT = ("Images", "Ingredients", "Frames")
+
 
 def _normalize_source(source: str | None) -> str:
     normalized = (source or "FASTMOSS").strip().upper()
@@ -158,6 +164,123 @@ def _display_name(raw_title: str, override: str | None = None) -> str:
     if override and override.strip():
         return override.strip()
     return " ".join(raw_title.split()[:9]).strip()
+
+
+def _normalize_lookup_value(value: str | None) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip()).casefold()
+
+
+def _parse_percentage(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return float(str(value).replace("%", "").strip()) / 100.0
+    except ValueError:
+        return None
+
+
+def _derive_commission_amount(price: Any, commission_rate: str | None) -> float | None:
+    if price in {None, ""}:
+        return None
+    rate = _parse_percentage(commission_rate)
+    if rate is None:
+        return None
+    try:
+        return round(float(price) * rate, 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _mode_readiness(payload: dict[str, Any]) -> dict[str, dict[str, str | list[str]]]:
+    missing_fields = [field for field in (payload.get("prompt_missing_fields") or []) if field != "image_url"]
+    has_image = payload.get("image_readiness_status") in IMAGE_READY_STATES
+    text_status = "READY_OR_NEEDS_REVIEW" if not missing_fields else "MISSING_FIELDS"
+    text_detail = "Product metadata is sufficient for text-to-video draft generation without an image." if text_status == "READY_OR_NEEDS_REVIEW" else f"Missing fields: {', '.join(missing_fields)}"
+    readiness: dict[str, dict[str, str | list[str]]] = {
+        "Text to Video": {
+            "status": text_status,
+            "detail": text_detail,
+            "missing_fields": missing_fields,
+            "asset_strategy": "WITH_IMAGE" if has_image else "NO_IMAGE",
+        }
+    }
+
+    for mode in MODE_IMAGE_DEPENDENT:
+        if missing_fields:
+            readiness[mode] = {
+                "status": "MISSING_FIELDS",
+                "detail": f"Missing fields: {', '.join(missing_fields)}",
+                "missing_fields": missing_fields,
+            }
+        elif not has_image:
+            readiness[mode] = {
+                "status": "BLOCKED_IMAGE_MISSING",
+                "detail": "Requires image_url or local_image_path.",
+                "missing_fields": ["image_url"],
+            }
+        else:
+            readiness[mode] = {
+                "status": "READY",
+                "detail": "Image and product metadata are ready.",
+                "missing_fields": [],
+            }
+    return readiness
+
+
+async def _find_product_by_exact_title(raw_title: str) -> dict[str, Any] | None:
+    candidates = await crud.list_products(query=raw_title)
+    normalized = _normalize_lookup_value(raw_title)
+    for candidate in candidates:
+        if _normalize_lookup_value(candidate.get("raw_product_title")) == normalized:
+            return candidate
+    return None
+
+
+async def _find_image_map_match(row: dict[str, str], products: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, str | None]:
+    product_id = (row.get("product_id") or "").strip()
+    if product_id:
+        for product in products:
+            if product.get("id") == product_id:
+                return product, None
+        return None, f"No product matched product_id '{product_id}'"
+
+    raw_title = (row.get("raw_product_title") or "").strip()
+    if raw_title:
+        normalized = _normalize_lookup_value(raw_title)
+        matches = [product for product in products if _normalize_lookup_value(product.get("raw_product_title")) == normalized]
+        if len(matches) == 1:
+            return matches[0], None
+        if len(matches) > 1:
+            return None, f"Ambiguous raw_product_title '{raw_title}'"
+
+    short_name = (row.get("product_short_name") or "").strip()
+    if short_name:
+        normalized = _normalize_lookup_value(short_name)
+        matches = [product for product in products if _normalize_lookup_value(product.get("product_short_name")) == normalized]
+        if len(matches) == 1:
+            return matches[0], None
+        if len(matches) > 1:
+            return None, f"Ambiguous product_short_name '{short_name}'"
+        return None, f"No product matched product_short_name '{short_name}'"
+
+    return None, "Row missing product_id, raw_product_title, and product_short_name"
+
+
+async def _parse_image_map_upload(file: UploadFile) -> list[dict[str, str]]:
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    content = raw.decode("utf-8-sig")
+    filename = (file.filename or "").lower()
+    if filename.endswith(".json"):
+        parsed = json.loads(content)
+        if not isinstance(parsed, list):
+            raise HTTPException(status_code=400, detail="JSON image map must be an array")
+        return [{str(key): "" if value is None else str(value) for key, value in row.items()} for row in parsed if isinstance(row, dict)]
+    reader = csv.DictReader(io.StringIO(content))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV image map is missing a header row")
+    return [{str(key): "" if value is None else str(value) for key, value in row.items()} for row in reader]
 
 
 async def _save_manual_image(product_id: str, image_base64: str | None, image_filename: str | None) -> tuple[str | None, str | None]:
@@ -286,6 +409,7 @@ async def _enrich_product(product: dict[str, Any], *, persist: bool = False) -> 
     payload.update(_resolve_image_readiness(payload))
     readiness = evaluate_prompt_readiness(payload, physics)
     payload.update(readiness)
+    payload["mode_readiness"] = _mode_readiness(payload)
     payload["product_id"] = payload.get("id")
     payload["mapping_review_status"] = payload.get("mapping_review_status") or (
         "NEEDS_REVIEW" if payload.get("mapping_confidence") == "NEEDS_REVIEW" else "AUTO_MAPPED"
@@ -591,14 +715,14 @@ async def import_fastmoss_catalog():
 
         products = _load_products(limit=500)
         imported = 0
+        updated = 0
         for entry in products:
             raw_title = entry.raw_product_title or entry.product_name
-            existing = await crud.list_products(query=raw_title)
-            if any((candidate.get("raw_product_title") or "").strip().lower() == raw_title.strip().lower() for candidate in existing):
-                continue
-            created = await crud.create_product(
+            commission_amount = entry.commission_amount if entry.commission_amount is not None else _derive_commission_amount(entry.avg_price_rm, entry.commission_rate)
+            payload = dict(
                 raw_product_title=raw_title,
                 source="FASTMOSS",
+                source_url=entry.source_url,
                 product_display_name=entry.product_display_name,
                 product_short_name=entry.product_short_name,
                 category=entry.category,
@@ -618,12 +742,76 @@ async def import_fastmoss_catalog():
                 fastmoss_source_file="FASTMOSS_COMBINED_10_FILES_WORKBOOK.xlsx",
                 asset_status="UNRESOLVED",
                 image_asset_status="UNRESOLVED",
+                image_url=entry.image_url,
+                tiktok_product_url=entry.tiktok_product_url,
+                commission_rate=entry.commission_rate,
+                commission=entry.commission_rate,
+                commission_amount=commission_amount,
             )
+            existing = await _find_product_by_exact_title(raw_title)
+            if existing:
+                updated_product = await crud.update_product(existing["id"], **payload)
+                await _enrich_product(updated_product, persist=True)
+                updated += 1
+                continue
+
+            created = await crud.create_product(**payload)
             await _enrich_product(created, persist=True)
             imported += 1
-        return {"ok": True, "imported": imported, "total": len(products)}
+        return {"ok": True, "imported": imported, "updated": updated, "total": len(products)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+@router.post("/import-image-map")
+async def import_image_map(file: UploadFile = File(...)):
+    rows = await _parse_image_map_upload(file)
+    products = await crud.list_products(limit=1000)
+    imported = 0
+    warnings: list[str] = []
+
+    for index, row in enumerate(rows, start=2):
+        product, warning = await _find_image_map_match(row, products)
+        if warning:
+            warnings.append(f"row {index}: {warning}")
+            continue
+        if not product:
+            warnings.append(f"row {index}: no product match")
+            continue
+
+        image_url = (row.get("image_url") or "").strip() or None
+        source_url = (row.get("source_url") or "").strip() or product.get("source_url") or None
+        commission_rate = (row.get("commission_rate") or "").strip() or product.get("commission_rate") or product.get("commission") or None
+        commission_amount_raw = (row.get("commission_amount") or "").strip()
+        commission_amount = product.get("commission_amount")
+        if commission_amount_raw:
+            try:
+                commission_amount = float(commission_amount_raw)
+            except ValueError:
+                warnings.append(f"row {index}: invalid commission_amount '{commission_amount_raw}'")
+        elif commission_amount is None:
+            commission_amount = _derive_commission_amount(product.get("price") or product.get("price_min"), commission_rate)
+
+        updated = await crud.update_product(
+            product["id"],
+            image_url=image_url,
+            source_url=source_url,
+            commission_rate=commission_rate,
+            commission=commission_rate,
+            commission_amount=commission_amount,
+            image_asset_status="UNRESOLVED",
+            image_failure_detail=None,
+            asset_status=product.get("asset_status") or "UNRESOLVED",
+        )
+        await _enrich_product(updated, persist=True)
+        imported += 1
+
+    return {
+        "ok": True,
+        "imported": imported,
+        "warnings": warnings,
+        "total_rows": len(rows),
+    }
 
 
 @router.get("/{product_id}/mapping")

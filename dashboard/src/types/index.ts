@@ -289,6 +289,12 @@ export interface Product {
   image_failure_detail?: string | null
   image_readiness_status?: 'IMAGE_READY' | 'IMAGE_NOT_AVAILABLE' | 'IMAGE_DOWNLOAD_FAILED' | 'IMAGE_URL_MISSING' | 'IMAGE_URL_MISSING_FROM_SOURCE' | 'IMAGE_CACHE_READY' | null
   image_readiness_detail?: string | null
+  mode_readiness?: Record<string, {
+    status: string
+    detail: string
+    missing_fields: string[]
+    asset_strategy?: string
+  }>
   asset_status: 'UNRESOLVED' | 'DOWNLOADED' | 'UPLOADED_TO_FLOW'
   media_id: string | null
   local_image_path: string | null
