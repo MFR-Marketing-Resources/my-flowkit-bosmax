@@ -285,7 +285,7 @@ CREATE TABLE IF NOT EXISTS batch_variant (
     prompt_9_section        TEXT,
     readiness               TEXT DEFAULT 'PENDING',
     blocked_reason          TEXT,
-    queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','WAITING_INTERVAL','RUNNING','FLOW_MODE_VERIFIED','PROMPT_INSERTED','GENERATION_STARTED','GENERATED','DOWNLOADED','QA_PASSED','QA_FAILED','FAILED','RETRY_PENDING','CANCELLED')),
+    queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','DRY_RUN_VALIDATED','WAITING_INTERVAL','RUNNING','FLOW_MODE_VERIFIED','PROMPT_INSERTED','GENERATION_STARTED','GENERATED','DOWNLOADED','QA_PASSED','QA_FAILED','FAILED','RETRY_PENDING','CANCELLED')),
     request_id              TEXT,
     created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -669,7 +669,7 @@ CREATE TABLE IF NOT EXISTS batch_variant (
     prompt_9_section        TEXT,
     readiness               TEXT DEFAULT 'PENDING',
     blocked_reason          TEXT,
-    queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','WAITING_INTERVAL','RUNNING','FLOW_MODE_VERIFIED','PROMPT_INSERTED','GENERATION_STARTED','GENERATED','DOWNLOADED','QA_PASSED','QA_FAILED','FAILED','RETRY_PENDING','CANCELLED')),
+    queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','DRY_RUN_VALIDATED','WAITING_INTERVAL','RUNNING','FLOW_MODE_VERIFIED','PROMPT_INSERTED','GENERATION_STARTED','GENERATED','DOWNLOADED','QA_PASSED','QA_FAILED','FAILED','RETRY_PENDING','CANCELLED')),
     request_id              TEXT,
     created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -689,6 +689,110 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
 """)
             logger.info("Migrated: created batch production tables")
         await db.commit()
+
+        # Migration: rebuild batch_variant CHECK constraint to include DRY_RUN_VALIDATED
+        # SQLite cannot ALTER CHECK constraints, so we detect the old constraint and rebuild.
+        cursor = await db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='batch_variant'"
+        )
+        row = await cursor.fetchone()
+        if row and "DRY_RUN_VALIDATED" not in row[0]:
+            logger.info("Migrating batch_variant: rebuilding table to add DRY_RUN_VALIDATED to CHECK constraint")
+            # SQLite ALTER TABLE cannot modify CHECK constraints.
+            # We must use a synchronous sqlite3 connection so PRAGMA foreign_keys=OFF
+            # is set outside any transaction (aiosqlite always wraps in implicit BEGIN).
+            import sqlite3 as _sqlite3
+            _sync_path = str(DB_PATH) if str(DB_PATH) != ":memory:" else None
+            if _sync_path:
+                _sync = _sqlite3.connect(_sync_path)
+                try:
+                    _sync.execute("PRAGMA foreign_keys=OFF")
+                    _sync.execute("""
+                        CREATE TABLE batch_variant_new (
+                            variant_id              TEXT PRIMARY KEY,
+                            batch_id                TEXT NOT NULL REFERENCES batch(id) ON DELETE CASCADE,
+                            product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+                            brief_id                TEXT,
+                            variation_index         INTEGER NOT NULL,
+                            hook_angle              TEXT,
+                            scene_context           TEXT,
+                            camera_route            TEXT,
+                            copywriting_formula     TEXT,
+                            overlay_strategy        TEXT,
+                            cta_style               TEXT,
+                            google_flow_mode        TEXT,
+                            asset_strategy          TEXT,
+                            diversity_fingerprint   TEXT,
+                            prompt_9_section        TEXT,
+                            readiness               TEXT DEFAULT 'PENDING',
+                            blocked_reason          TEXT,
+                            queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN (
+                                'READY','QUEUED','DRY_RUN_VALIDATED','WAITING_INTERVAL','RUNNING',
+                                'FLOW_MODE_VERIFIED','PROMPT_INSERTED','GENERATION_STARTED',
+                                'GENERATED','DOWNLOADED','QA_PASSED','QA_FAILED',
+                                'FAILED','RETRY_PENDING','CANCELLED')),
+                            request_id              TEXT,
+                            created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                            updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                        )
+                    """)
+                    _sync.execute("""
+                        INSERT INTO batch_variant_new
+                        SELECT variant_id, batch_id, product_id, brief_id, variation_index,
+                               hook_angle, scene_context, camera_route, copywriting_formula,
+                               overlay_strategy, cta_style, google_flow_mode, asset_strategy,
+                               diversity_fingerprint, prompt_9_section, readiness, blocked_reason,
+                               queue_status, request_id, created_at, updated_at
+                        FROM batch_variant
+                    """)
+                    _sync.execute("DROP TABLE batch_variant")
+                    _sync.execute("ALTER TABLE batch_variant_new RENAME TO batch_variant")
+                    _sync.execute("CREATE INDEX IF NOT EXISTS idx_batch_variant_batch ON batch_variant(batch_id)")
+                    _sync.execute("CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_status)")
+                    _sync.commit()
+                    _sync.execute("PRAGMA foreign_keys=ON")
+                    logger.info("Migrated: batch_variant rebuilt with DRY_RUN_VALIDATED in CHECK constraint")
+                finally:
+                    _sync.close()
+            else:
+                # In-memory DB (tests): schema already has DRY_RUN_VALIDATED, skip migration
+                logger.info("In-memory DB detected: skipping batch_variant migration (schema already correct)")
+
+        # Migration: repair broken batch_queue_event FK reference to _batch_variant_old
+        # A previous rename-based migration caused SQLite to auto-update the FK reference
+        # from batch_variant → _batch_variant_old.  Detect and rebuild the table.
+        cursor = await db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='batch_queue_event'"
+        )
+        bqe_row = await cursor.fetchone()
+        if bqe_row and "_batch_variant_old" in bqe_row[0]:
+            logger.info("Migrating batch_queue_event: repairing broken FK reference to _batch_variant_old")
+            import sqlite3 as _sqlite3
+            _sync_path = str(DB_PATH) if str(DB_PATH) != ":memory:" else None
+            if _sync_path:
+                _sync = _sqlite3.connect(_sync_path)
+                try:
+                    _sync.execute("PRAGMA foreign_keys=OFF")
+                    _sync.execute("""
+                        CREATE TABLE batch_queue_event_new (
+                            event_id   TEXT PRIMARY KEY,
+                            batch_id   TEXT NOT NULL REFERENCES batch(id) ON DELETE CASCADE,
+                            variant_id TEXT REFERENCES batch_variant(variant_id) ON DELETE SET NULL,
+                            status     TEXT NOT NULL,
+                            message    TEXT,
+                            timestamp  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                            source     TEXT NOT NULL DEFAULT 'system'
+                        )
+                    """)
+                    _sync.execute("INSERT INTO batch_queue_event_new SELECT * FROM batch_queue_event")
+                    _sync.execute("DROP TABLE batch_queue_event")
+                    _sync.execute("ALTER TABLE batch_queue_event_new RENAME TO batch_queue_event")
+                    _sync.commit()
+                    _sync.execute("PRAGMA foreign_keys=ON")
+                    logger.info("Migrated: batch_queue_event FK reference repaired")
+                finally:
+                    _sync.close()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 
@@ -700,6 +804,7 @@ async def get_db() -> aiosqlite.Connection:
         _db_connection.row_factory = aiosqlite.Row
         await _db_connection.execute("PRAGMA journal_mode=WAL")
         await _db_connection.execute("PRAGMA foreign_keys=ON")
+        await _db_connection.execute("PRAGMA busy_timeout=5000")
         # Force WAL checkpoint so this connection sees all committed writes
         # from previous processes (e.g. after hot-reload)
         await _db_connection.execute("PRAGMA wal_checkpoint(PASSIVE)")

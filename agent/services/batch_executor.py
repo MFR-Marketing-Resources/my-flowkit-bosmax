@@ -109,11 +109,11 @@ async def _check_execution_safety(variant: dict, dry_run: bool) -> dict[str, Any
         return {"ok": False, "error": "ABORT_FLOW_TAB_MISSING: Google Flow tab is not active or ready."}
 
     # Gate: Prompt Existence
-    if not variant.get("prompt_9_section"):
+    if not variant["prompt_9_section"]:
         return {"ok": False, "error": "ABORT_PROMPT_MISSING: 9-Section prompt has not been compiled."}
 
     # Gate: Flow Mode
-    mode = variant.get("google_flow_mode")
+    mode = variant["google_flow_mode"]
     if not mode:
         return {"ok": False, "error": "ABORT_MODE_MISSING: Google Flow execution mode not specified."}
 
@@ -150,7 +150,7 @@ async def _check_execution_safety(variant: dict, dry_run: bool) -> dict[str, Any
             try:
                 last_time = datetime.strptime(last_run["updated_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
                 elapsed = (datetime.now(timezone.utc) - last_time).total_seconds()
-                interval_min = batch.get("interval_min_seconds", 30)
+                interval_min = batch["interval_min_seconds"] or 30
                 if elapsed < interval_min:
                     return {"ok": False, "error": f"ABORT_INTERVAL_SAFETY: Cooldown active. {int(interval_min - elapsed)}s remaining."}
             except Exception:
@@ -241,13 +241,11 @@ async def _update_variant_status(variant_id: str, status: str, blocked_reason: s
 async def _log_event(batch_id: str, variant_id: str, status: str, message: str):
     db = await crud.get_db()
     event_id = str(uuid.uuid4())
-    from agent.db.schema import _db_lock
-    async with _db_lock:
-        await db.execute("""
-            INSERT INTO batch_queue_event (event_id, batch_id, variant_id, status, message, source)
-            VALUES (?, ?, ?, ?, ?, 'executor')
-        """, (event_id, batch_id, variant_id, status, message))
-        await db.commit()
+    await db.execute("""
+        INSERT INTO batch_queue_event (event_id, batch_id, variant_id, status, message, source)
+        VALUES (?, ?, ?, ?, ?, 'executor')
+    """, (event_id, batch_id, variant_id, status, message))
+    await db.commit()
 
 async def get_execution_status(batch_id: str) -> dict[str, Any]:
     db = await crud.get_db()

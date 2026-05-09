@@ -158,7 +158,7 @@ app.include_router(diagnostics_router)
 app.include_router(smoke_router)
 app.include_router(creative_brief_router, prefix="/api")
 app.include_router(batches_router, prefix="/api")
-app.include_router(batch_executor_router, prefix="/api/batches")
+app.include_router(batch_executor_router, prefix="/api")
 
 
 

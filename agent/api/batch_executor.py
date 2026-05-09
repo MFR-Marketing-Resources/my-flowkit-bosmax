@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from agent.services import batch_executor
 
-router = APIRouter()
+router = APIRouter(prefix="/batches", tags=["batches"])
 
 @router.post("/{batch_id}/execute-next")
 async def execute_next(
