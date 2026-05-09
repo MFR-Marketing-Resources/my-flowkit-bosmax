@@ -1,12 +1,227 @@
 import logging
 import httpx
 import json
+import re
+from typing import Any
 from pathlib import Path
 from agent.db import crud
 from agent.utils.paths import product_image_path
 from agent.services.flow_client import get_flow_client
+from agent.services.product_mapping import resolve_product_mapping
+from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
+from agent.config import BASE_DIR
 
 logger = logging.getLogger(__name__)
+
+IMAGE_READY_STATES = {"IMAGE_READY", "IMAGE_CACHE_READY"}
+MODE_IMAGE_DEPENDENT = ("Images", "Ingredients", "Frames")
+
+def normalize_source(source: str | None) -> str:
+    normalized = (source or "FASTMOSS").strip().upper()
+    if normalized == "MANUAL_PROJECT":
+        return "MANUAL"
+    if normalized in {"FASTMOSS", "TIKTOKSHOP", "MANUAL", "IMPORTED"}:
+        return normalized
+    return "MANUAL"
+
+def display_name(raw_title: str, override: str | None = None) -> str:
+    if override and override.strip():
+        return override.strip()
+    return " ".join(raw_title.split()[:9]).strip()
+
+def parse_percentage(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return float(str(value).replace("%", "").strip()) / 100.0
+    except ValueError:
+        return None
+
+def derive_commission_amount(price: Any, commission_rate: str | None) -> float | None:
+    if price in {None, ""}:
+        return None
+    rate = parse_percentage(commission_rate)
+    if rate is None:
+        return None
+    try:
+        return round(float(price) * rate, 2)
+    except (TypeError, ValueError):
+        return None
+
+def json_load_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        if stripped.startswith("["):
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, list):
+                    return [str(item) for item in parsed if str(item).strip()]
+            except json.JSONDecodeError:
+                pass
+        return [item.strip() for item in stripped.split("|") if item.strip()]
+    return [str(value)]
+
+def json_dump_list(values: list[str]) -> str:
+    return json.dumps([value for value in values if value], ensure_ascii=True)
+
+def resolve_image_readiness(payload: dict[str, Any]) -> dict[str, Any]:
+    image_url = (payload.get("image_url") or "").strip()
+    image_status = (payload.get("image_asset_status") or "").strip().upper()
+    failure_detail = (payload.get("image_failure_detail") or "").strip()
+    local_image_path = (payload.get("local_image_path") or "").strip()
+
+    if local_image_path:
+        cached_path = Path(local_image_path)
+        if not cached_path.is_absolute():
+            cached_path = BASE_DIR / cached_path
+        if cached_path.exists():
+            return {
+                "image_readiness_status": "IMAGE_CACHE_READY",
+                "image_readiness_detail": str(cached_path),
+            }
+
+    if image_status == "NOT_AVAILABLE":
+        return {
+            "image_readiness_status": "IMAGE_NOT_AVAILABLE",
+            "image_readiness_detail": failure_detail or "Image marked as not available.",
+        }
+
+    if image_url and image_status == "FAILED":
+        return {
+            "image_readiness_status": "IMAGE_DOWNLOAD_FAILED",
+            "image_readiness_detail": failure_detail or "Image download failed.",
+        }
+
+    if image_url:
+        return {
+            "image_readiness_status": "IMAGE_READY",
+            "image_readiness_detail": failure_detail or "Remote image URL is available.",
+        }
+
+    missing_from_source = payload.get("source") == "FASTMOSS" and bool(payload.get("fastmoss_source_file"))
+    return {
+        "image_readiness_status": "IMAGE_URL_MISSING_FROM_SOURCE" if missing_from_source else "IMAGE_URL_MISSING",
+        "image_readiness_detail": failure_detail or ("Image URL missing from imported source data." if missing_from_source else "Image URL missing."),
+    }
+
+def mode_readiness(payload: dict[str, Any]) -> dict[str, dict[str, str | list[str]]]:
+    missing_fields = [field for field in (payload.get("prompt_missing_fields") or []) if field != "image_url"]
+    has_image = payload.get("image_readiness_status") in IMAGE_READY_STATES
+    text_status = "READY_OR_NEEDS_REVIEW" if not missing_fields else "MISSING_FIELDS"
+    text_detail = "Product metadata is sufficient for text-to-video draft generation without an image." if text_status == "READY_OR_NEEDS_REVIEW" else f"Missing fields: {', '.join(missing_fields)}"
+    readiness: dict[str, dict[str, str | list[str]]] = {
+        "Text to Video": {
+            "status": text_status,
+            "detail": text_detail,
+            "missing_fields": missing_fields,
+            "asset_strategy": "WITH_IMAGE" if has_image else "NO_IMAGE",
+        }
+    }
+
+    for mode in MODE_IMAGE_DEPENDENT:
+        if missing_fields:
+            readiness[mode] = {
+                "status": "MISSING_FIELDS",
+                "detail": f"Missing fields: {', '.join(missing_fields)}",
+                "missing_fields": missing_fields,
+            }
+        elif not has_image:
+            readiness[mode] = {
+                "status": "BLOCKED_IMAGE_MISSING",
+                "detail": "Requires image_url or local_image_path.",
+                "missing_fields": ["image_url"],
+            }
+        else:
+            readiness[mode] = {
+                "status": "READY",
+                "detail": "Image and product metadata are ready.",
+                "missing_fields": [],
+            }
+    return readiness
+
+async def enrich_product(product: dict[str, Any], *, persist: bool = False) -> dict[str, Any]:
+    payload = dict(product)
+    payload["source"] = normalize_source(payload.get("source"))
+    payload["source_url"] = payload.get("source_url") or payload.get("tiktok_product_url")
+    payload["price"] = payload.get("price") if payload.get("price") is not None else payload.get("price_min")
+    payload["currency"] = payload.get("currency") or "MYR"
+    payload["commission_rate"] = payload.get("commission_rate") or payload.get("commission")
+    payload["image_asset_status"] = payload.get("image_asset_status") or payload.get("asset_status")
+    payload["mode_recommendations"] = json_load_list(payload.get("mode_recommendations"))
+    payload["unsafe_handling_rules"] = json_load_list(payload.get("unsafe_handling_rules"))
+    payload["prompt_missing_fields"] = json_load_list(payload.get("prompt_missing_fields"))
+
+    mapping = resolve_product_mapping(product=payload, source_hint=payload.get("source"))
+    payload.update(mapping)
+    physics = resolve_product_physics(product=payload)
+    payload.update(physics)
+    payload.update(resolve_image_readiness(payload))
+    readiness = evaluate_prompt_readiness(payload, physics)
+    payload.update(readiness)
+    payload["mode_readiness"] = mode_readiness(payload)
+    payload["product_id"] = payload.get("id")
+    payload["mapping_review_status"] = payload.get("mapping_review_status") or (
+        "NEEDS_REVIEW" if payload.get("mapping_confidence") == "NEEDS_REVIEW" else "AUTO_MAPPED"
+    )
+
+    if persist and payload.get("id"):
+        await persist_intelligence(payload["id"], payload)
+    return payload
+
+async def persist_intelligence(product_id: str, payload: dict[str, Any]) -> None:
+    await crud.update_product(
+        product_id,
+        source=normalize_source(payload.get("source")),
+        source_url=payload.get("source_url") or None,
+        brand=payload.get("brand") or None,
+        raw_product_title=payload.get("raw_product_title") or None,
+        product_display_name=payload.get("product_display_name") or None,
+        product_short_name=payload.get("product_short_name") or None,
+        category=payload.get("category") or None,
+        subcategory=payload.get("subcategory") or None,
+        type=payload.get("type") or None,
+        shop_name=payload.get("shop_name") or None,
+        price=payload.get("price"),
+        currency=payload.get("currency") or None,
+        commission_amount=payload.get("commission_amount"),
+        commission_rate=payload.get("commission_rate") or None,
+        commission=payload.get("commission_rate") or None,
+        image_url=payload.get("image_url") or None,
+        tiktok_product_url=payload.get("tiktok_product_url") or None,
+        image_asset_status=payload.get("image_asset_status") or None,
+        image_failure_detail=payload.get("image_failure_detail") or None,
+        product_type=payload.get("product_type") or None,
+        silo=payload.get("silo") or None,
+        trigger_id=payload.get("trigger_id") or None,
+        formula=payload.get("formula") or None,
+        copywriting_angle=payload.get("copywriting_angle") or None,
+        claim_risk_level=payload.get("claim_risk_level") or None,
+        mode_recommendations=json_dump_list(payload.get("mode_recommendations") or []),
+        physics_class=payload.get("physics_class") or None,
+        product_scale=payload.get("product_scale") or None,
+        hand_object_interaction=payload.get("hand_object_interaction") or None,
+        recommended_grip=payload.get("recommended_grip") or None,
+        air_gap_rule=payload.get("air_gap_rule") or None,
+        material_behavior=payload.get("material_behavior") or None,
+        surface_behavior=payload.get("surface_behavior") or None,
+        fragility_level=payload.get("fragility_level") or None,
+        camera_handling_notes=payload.get("camera_handling_notes") or None,
+        unsafe_handling_rules=json_dump_list(payload.get("unsafe_handling_rules") or []),
+        section_5_product_physics_prompt=payload.get("section_5_product_physics_prompt") or None,
+        mapping_source=payload.get("mapping_source") or None,
+        mapping_confidence=payload.get("mapping_confidence") or None,
+        mapping_review_status=payload.get("mapping_review_status") or None,
+        prompt_readiness_status=payload.get("prompt_readiness_status") or None,
+        prompt_missing_fields=json_dump_list(payload.get("prompt_missing_fields") or []),
+        asset_status=payload.get("asset_status") or None,
+        local_image_path=payload.get("local_image_path") or None,
+    )
 
 async def generate_product_prompt(product: dict, mode: str) -> str:
     """Generate a high-conversion prompt based on product metadata and category guardrails."""

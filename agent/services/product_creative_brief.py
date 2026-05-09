@@ -2,24 +2,21 @@ import logging
 import json
 import uuid
 from agent.db import crud
+from agent.services.product_intelligence import enrich_product
 
 logger = logging.getLogger(__name__)
 
 async def get_creative_brief(product_id: str) -> dict:
     """Generate a canonical creative brief from product intelligence."""
-    product = await crud.get_product(product_id)
-    if not product:
+    raw_product = await crud.get_product(product_id)
+    if not raw_product:
         return {"error": "Product not found"}
-
-    # Calculate readiness
-    image_ready = product.get("asset_status") in ["DOWNLOADED", "UPLOADED_TO_FLOW"]
     
-    # Missing fields check
-    missing = []
-    if not product.get("category"): missing.append("category")
-    if not product.get("product_type"): missing.append("product_type")
-    if not product.get("silo"): missing.append("silo")
-    if not product.get("physics_class"): missing.append("physics_class")
+    product = await enrich_product(raw_product)
+
+    # Calculate readiness from canonical enrichment
+    mode_status = product.get("mode_readiness", {})
+    missing = product.get("prompt_missing_fields") or []
 
     brief = {
         "brief_id": str(uuid.uuid4()),
@@ -32,7 +29,7 @@ async def get_creative_brief(product_id: str) -> dict:
             "type": product.get("type"),
             "price": product.get("price"),
             "commission_rate": product.get("commission_rate"),
-            "image_readiness_status": product.get("asset_status"),
+            "image_readiness_status": product.get("image_readiness_status"),
             "source_url": product.get("source_url"),
             "tiktok_product_url": product.get("tiktok_product_url")
         },
@@ -48,7 +45,7 @@ async def get_creative_brief(product_id: str) -> dict:
             "hand_object_interaction": product.get("hand_object_interaction"),
             "material_behavior": product.get("material_behavior"),
             "surface_behavior": product.get("surface_behavior"),
-            "unsafe_handling_rules": json.loads(product.get("unsafe_handling_rules") or "[]"),
+            "unsafe_handling_rules": product.get("unsafe_handling_rules") or [],
             "section_5_product_physics_prompt": product.get("section_5_product_physics_prompt")
         },
         "copywriting_route": {
@@ -60,16 +57,16 @@ async def get_creative_brief(product_id: str) -> dict:
             "claim_risk_level": product.get("claim_risk_level")
         },
         "creative_mapping": {
-            "character_recommendations": json.loads(product.get("character_recommendations") or "[]"),
-            "scene_context_recommendations": json.loads(product.get("scene_context_recommendations") or "[]"),
-            "camera_recommendations": json.loads(product.get("camera_recommendations") or "[]"),
-            "mode_recommendations": json.loads(product.get("mode_recommendations") or "[]")
+            "character_recommendations": product.get("character_recommendations") or [],
+            "scene_context_recommendations": product.get("scene_context_recommendations") or [],
+            "camera_recommendations": product.get("camera_recommendations") or [],
+            "mode_recommendations": product.get("mode_recommendations") or []
         },
         "readiness": {
-            "Images": "READY" if image_ready else "BLOCKED",
-            "Ingredients": "READY" if image_ready else "BLOCKED",
-            "Frames": "READY" if image_ready else "BLOCKED",
-            "Text to Video": "READY" if (not missing) else "NEEDS_REVIEW"
+            "Images": mode_status.get("Images", {}).get("status", "BLOCKED"),
+            "Ingredients": mode_status.get("Ingredients", {}).get("status", "BLOCKED"),
+            "Frames": mode_status.get("Frames", {}).get("status", "BLOCKED"),
+            "Text to Video": mode_status.get("Text to Video", {}).get("status", "NEEDS_REVIEW")
         },
         "claim_boundaries": {
             "risk_level": product.get("claim_risk_level"),
