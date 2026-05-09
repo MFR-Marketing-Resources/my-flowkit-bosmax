@@ -402,3 +402,77 @@ export interface TelemetryRequest {
   error_message: string | null
   created_at: string
 }
+export interface ProductCreativeBrief {
+  brief_id: string
+  product_id: string
+  product_intelligence: {
+    product_short_name: string
+    raw_product_title: string
+    category: string
+    subcategory: string
+    type: string
+    price: number | null
+    commission_rate: string | null
+    image_readiness_status: string
+    source_url: string
+    tiktok_product_url: string
+  }
+  commercial_signals: {
+    price: number | null
+    commission_rate: string | null
+    shop_name: string | null
+  }
+  physics_dna: {
+    physics_class: string
+    product_scale: string
+    recommended_grip: string
+    hand_object_interaction: string
+    material_behavior: string
+    surface_behavior: string
+    unsafe_handling_rules: string[]
+    section_5_product_physics_prompt: string
+  }
+  copywriting_route: {
+    product_type: string
+    silo: string
+    trigger_id: string
+    formula: string
+    copywriting_angle: string
+    claim_risk_level: string
+  }
+  creative_mapping: {
+    character_recommendations: string[]
+    scene_context_recommendations: string[]
+    camera_recommendations: string[]
+    mode_recommendations: string[]
+  }
+  readiness: {
+    Images: string
+    Ingredients: string
+    Frames: string
+    'Text to Video': string
+  }
+  claim_boundaries: {
+    risk_level: string
+    restricted_keywords: string[]
+  }
+  missing_fields: string[]
+}
+
+export interface VariationPlan {
+  variant_id: string
+  product_id: string
+  brief_id: string
+  variation_index: number
+  hook_angle: string
+  scene_context: string
+  camera_route: string
+  copywriting_formula: string
+  overlay_strategy: string
+  cta_style: string
+  google_flow_mode: string
+  asset_strategy: string
+  diversity_fingerprint: string
+  readiness: string
+  blocked_reason: string[]
+}

@@ -122,6 +122,11 @@ export default function ProductsSalesAnalyzerPage() {
   const [selectedImageUrl, setSelectedImageUrl] = useState('')
   const [manualForm, setManualForm] = useState<ManualFormState>(emptyManualForm)
   const [tikTokForm, setTikTokForm] = useState<TikTokFormState>({ url: '', raw_product_title: '' })
+  const [activeTab, setActiveTab] = useState<'DETAILS' | 'BRIEF' | 'VARIATIONS' | 'PREVIEW'>('DETAILS')
+  const [brief, setBrief] = useState<any | null>(null)
+  const [variations, setVariations] = useState<any[]>([])
+  const [promptPreview, setPromptPreview] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   const selectedProduct = useMemo(() => products.find(product => product.id === selectedId) || null, [products, selectedId])
   const imageReadinessSummary = useMemo(() => {
@@ -156,7 +161,32 @@ export default function ProductsSalesAnalyzerPage() {
 
   useEffect(() => {
     setSelectedImageUrl(selectedProduct?.image_url || '')
+    setBrief(null)
+    setVariations([])
+    setPromptPreview(null)
   }, [selectedProduct?.id, selectedProduct?.image_url])
+
+  useEffect(() => {
+    async function fetchData() {
+      if (!selectedId) return
+      if (activeTab === 'BRIEF') {
+        try {
+          const res = await fetchAPI<any>(`/api/products/${selectedId}/creative-brief`)
+          setBrief(res)
+        } catch (err) {
+          console.error('Failed to fetch brief', err)
+        }
+      } else if (activeTab === 'VARIATIONS') {
+        try {
+          const res = await postAPI<any[]>(`/api/products/${selectedId}/variation-plan`, {})
+          setVariations(res)
+        } catch (err) {
+          console.error('Failed to fetch variations', err)
+        }
+      }
+    }
+    fetchData()
+  }, [selectedId, activeTab])
 
   async function loadProducts() {
     setLoading(true)
@@ -281,6 +311,20 @@ export default function ProductsSalesAnalyzerPage() {
     } finally {
       e.target.value = ''
       setImageActionBusy(false)
+    }
+  }
+
+  async function handlePreviewPrompt(variant: any) {
+    if (!selectedId) return
+    setPreviewLoading(true)
+    try {
+      const res = await postAPI<{ prompt: string }>(`/api/products/${selectedId}/prompt-preview`, variant)
+      setPromptPreview(res.prompt)
+      setActiveTab('PREVIEW')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate preview')
+    } finally {
+      setPreviewLoading(false)
     }
   }
 
@@ -445,6 +489,20 @@ export default function ProductsSalesAnalyzerPage() {
 
             {selectedProduct && (
               <div className="space-y-6">
+                <div className="flex gap-1 border-b border-slate-800 pb-px">
+                  {(['DETAILS', 'BRIEF', 'VARIATIONS', 'PREVIEW'] as const).map(tab => (
+                    <button
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
+                      className={`px-4 py-2 text-[11px] font-bold transition-all border-b-2 ${activeTab === tab ? 'border-blue-500 text-blue-400 bg-blue-500/5' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+
+                {activeTab === 'DETAILS' && (
+                  <>
                 <Panel title="Database Record" subtitle={`ID: ${selectedProduct.id} | Source: ${selectedProduct.source}`}>
                   <div className="flex gap-4 mb-4">
                     <div className="w-24 h-24 rounded border border-slate-700 overflow-hidden flex-shrink-0">
@@ -561,6 +619,117 @@ export default function ProductsSalesAnalyzerPage() {
                     </div>
                   </div>
                 </Panel>
+                  </>
+                )}
+
+                {activeTab === 'BRIEF' && brief && (
+                  <div className="space-y-6">
+                    <Panel title="Product Creative Brief" subtitle={`Brief ID: ${brief.brief_id}`}>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-4">
+                          <h3 className="text-xs font-bold text-slate-300">Readiness Status</h3>
+                          <div className="space-y-2">
+                            {Object.entries(brief.readiness).map(([k, v]) => (
+                              <div key={k} className="flex justify-between items-center text-[11px] p-2 bg-slate-900/50 rounded border border-slate-800">
+                                <span className="text-slate-400">{k}</span>
+                                <StatBadge label={v as string} tone={v === 'READY' ? 'ready' : 'risk'} />
+                              </div>
+                            ))}
+                          </div>
+                          {brief.missing_fields.length > 0 && (
+                            <div className="p-3 bg-red-900/10 border border-red-500/20 rounded text-[10px] text-red-300">
+                              <strong>Missing Fields:</strong> {brief.missing_fields.join(', ')}
+                            </div>
+                          )}
+                        </div>
+                        <div className="space-y-4">
+                          <h3 className="text-xs font-bold text-slate-300">Copywriting Route</h3>
+                          <div className="space-y-1">
+                            <KV label="Silo" value={brief.copywriting_route.silo} />
+                            <KV label="Formula" value={brief.copywriting_route.formula} />
+                            <KV label="Trigger" value={brief.copywriting_route.trigger_id} />
+                            <KV label="Risk Level" value={brief.copywriting_route.claim_risk_level} />
+                          </div>
+                        </div>
+                      </div>
+                    </Panel>
+
+                    <Panel title="Physics DNA" subtitle="Biometric and material properties">
+                       <div className="grid grid-cols-2 gap-4">
+                         <div className="space-y-1">
+                           <KV label="Class" value={brief.physics_dna.physics_class} />
+                           <KV label="Scale" value={brief.physics_dna.product_scale} />
+                           <KV label="Interaction" value={brief.physics_dna.hand_object_interaction} />
+                         </div>
+                         <div className="space-y-1">
+                           <KV label="Material" value={brief.physics_dna.material_behavior} />
+                           <KV label="Surface" value={brief.physics_dna.surface_behavior} />
+                         </div>
+                       </div>
+                       <div className="mt-4 p-3 bg-slate-900/80 rounded border border-slate-800 font-mono text-[10px] text-purple-300">
+                         {brief.physics_dna.section_5_product_physics_prompt}
+                       </div>
+                    </Panel>
+                  </div>
+                )}
+
+                {activeTab === 'VARIATIONS' && (
+                  <Panel title="Variation Matrix" subtitle="Product-to-Concept expansion">
+                    <div className="space-y-4">
+                      {variations.map((v) => (
+                        <div key={v.variant_id} className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 hover:bg-slate-900/60 transition-all">
+                          <div className="flex justify-between items-start mb-3">
+                             <div className="text-xs font-bold text-blue-400">Variant #{v.variation_index}</div>
+                             <StatBadge label={v.readiness} tone={v.readiness === 'READY' ? 'ready' : 'risk'} />
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 mb-4">
+                            <KV label="Hook Angle" value={v.hook_angle} />
+                            <KV label="Scene Context" value={v.scene_context} />
+                            <KV label="Camera Route" value={v.camera_route} />
+                            <KV label="Strategy" value={v.asset_strategy} />
+                          </div>
+                          <button
+                            onClick={() => handlePreviewPrompt(v)}
+                            className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold py-2 rounded uppercase tracking-wider border border-slate-700"
+                          >
+                            Preview 9-Section Prompt
+                          </button>
+                        </div>
+                      ))}
+                      {variations.length === 0 && <div className="text-center py-8 text-slate-500 text-xs">No variations generated.</div>}
+                    </div>
+                  </Panel>
+                )}
+
+                {activeTab === 'PREVIEW' && (
+                  <Panel title="9-Section Prompt Preview" subtitle="Clean compiled output for Google Flow">
+                    {previewLoading ? (
+                      <div className="text-center py-12 text-slate-500 text-xs">Compiling prompt...</div>
+                    ) : promptPreview ? (
+                      <div className="space-y-4">
+                        <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 font-mono text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap select-all">
+                          {promptPreview}
+                        </div>
+                        <div className="flex gap-2">
+                           <button
+                             onClick={() => { navigator.clipboard.writeText(promptPreview); setSaveSuccess("Prompt copied to clipboard"); }}
+                             className="flex-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 py-2 rounded text-xs font-bold"
+                           >
+                             Copy to Clipboard
+                           </button>
+                           <button
+                             onClick={() => setActiveTab('VARIATIONS')}
+                             className="px-6 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-2 rounded text-xs font-bold"
+                           >
+                             Back
+                           </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-12 text-slate-500 text-xs">Select a variant to preview prompt.</div>
+                    )}
+                  </Panel>
+                )}
               </div>
             )}
             {!selectedProduct && !loading && (

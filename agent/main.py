@@ -40,6 +40,7 @@ from agent.services.event_bus import event_bus
 from agent.api.telemetry import router as telemetry_router
 from agent.api.diagnostics import router as diagnostics_router
 from agent.api.smoke import router as smoke_router
+from agent.api.creative_brief import router as creative_brief_router
 from agent.sdk import init_sdk
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -153,6 +154,7 @@ app.include_router(operator_router)
 app.include_router(telemetry_router)
 app.include_router(diagnostics_router)
 app.include_router(smoke_router)
+app.include_router(creative_brief_router, prefix="/api")
 
 
 

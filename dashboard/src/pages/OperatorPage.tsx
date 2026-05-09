@@ -163,6 +163,16 @@ function FieldLabel({ children }: { children: string }) {
   return <label className="text-xs font-bold" style={{ color: 'var(--muted)' }}>{children}</label>
 }
 
+function StatBadge({ label, tone = 'neutral' }: { label: string; tone?: 'neutral' | 'ready' | 'warn' | 'risk' }) {
+  const styles = {
+    neutral: { background: 'rgba(148,163,184,0.12)', color: 'var(--text)', border: '1px solid rgba(148,163,184,0.2)' },
+    ready: { background: 'rgba(34,197,94,0.12)', color: '#86efac', border: '1px solid rgba(34,197,94,0.2)' },
+    warn: { background: 'rgba(245,158,11,0.12)', color: '#fcd34d', border: '1px solid rgba(245,158,11,0.2)' },
+    risk: { background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' },
+  } as const
+  return <span className="px-2 py-1 rounded text-[10px] font-semibold" style={styles[tone]}>{label}</span>
+}
+
 function ReadOnlyField({ label, value }: { label: string, value: string | null | undefined }) {
   return (
     <div className="flex flex-col gap-1">
@@ -743,6 +753,9 @@ export default function OperatorPage() {
   const [checkingAgent, setCheckingAgent] = useState(false)
   const [smokeTesting, setSmokeTesting] = useState(false)
   const [diagnosing, setDiagnosing] = useState(false)
+  const [brief, setBrief] = useState<any | null>(null)
+  const [promptPreview, setPromptPreview] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const [allProjects, setAllProjects] = useState<Project[]>([])
   const [allVideos, setAllVideos] = useState<Video[]>([])
   const [, setFetchingProjects] = useState(false)
@@ -1329,6 +1342,7 @@ export default function OperatorPage() {
     })
     if (mapping) {
       setSelectedCatalogProduct(mergeMappingIntoProduct(mapping, product))
+      await fetchBrief(product.id)
     }
     try {
       const res = await fetchAPI<{ prompt: string }>('/api/products/' + product.id + '/prompt?mode=F2V')
@@ -1349,6 +1363,35 @@ export default function OperatorPage() {
       }
     } catch (err) { setMessage('Import error: ' + String(err)) }
     finally { setImportingCatalog(false) }
+  }
+
+  async function fetchBrief(productId: string) {
+    try {
+      const res = await fetchAPI<any>(`/api/products/${productId}/creative-brief`)
+      setBrief(res)
+    } catch (err) {
+      console.error('Failed to fetch brief', err)
+      setBrief(null)
+    }
+  }
+
+  async function handlePromptPreview() {
+    const productId = selectedCatalogProduct?.id || resolvedMapping?.product_id
+    if (!productId) return
+    setPreviewLoading(true)
+    try {
+      const res = await postAPI<{ prompt: string }>(`/api/products/${productId}/prompt-preview`, {
+        variation_index: 0,
+        hook_angle: form.hook,
+        scene_context: form.scene_context,
+        google_flow_mode: hoveredMode || 'EDIT_IMAGE'
+      })
+      setPromptPreview(res.prompt)
+    } catch (err) {
+      setMessage(`Preview failed: ${String(err)}`)
+    } finally {
+      setPreviewLoading(false)
+    }
   }
 
   async function resolveManualProduct() {
@@ -2065,8 +2108,43 @@ export default function OperatorPage() {
               </div>
             </div>
 
+            {brief && (
+              <div className="p-3 rounded border grid gap-2 text-[11px]" style={{ background: 'rgba(34,197,94,0.03)', border: '1px solid rgba(34,197,94,0.15)' }}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                    <span className="font-bold text-xs uppercase tracking-wider" style={{ color: 'var(--green)' }}>Product Creative Brief Readiness</span>
+                  </div>
+                  <StatBadge label={brief.missing_fields.length === 0 ? 'READY' : 'NEEDS_REVIEW'} tone={brief.missing_fields.length === 0 ? 'ready' : 'risk'} />
+                </div>
+                <div className="grid grid-cols-2 gap-2 opacity-90">
+                  {Object.entries(brief.readiness).map(([k, v]) => (
+                    <div key={k} className="flex justify-between items-center px-2 py-1 bg-black/20 rounded">
+                       <span style={{ color: 'var(--muted)' }}>{k}</span>
+                       <span className={v === 'READY' ? 'text-green-400' : 'text-red-400'}>{v as string}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-col gap-2">
-              <FieldLabel>Runtime Verification</FieldLabel>
+              <div className="flex justify-between items-center">
+                <FieldLabel>Runtime Verification</FieldLabel>
+                <button
+                  onClick={handlePromptPreview}
+                  disabled={previewLoading || !brief}
+                  className="text-[10px] font-bold text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-widest flex items-center gap-1"
+                >
+                  {previewLoading ? 'Compiling...' : 'Preview 9-Section Prompt'}
+                  <span className="text-[8px]">▶</span>
+                </button>
+              </div>
+              {promptPreview && (
+                <div className="mb-2 p-3 rounded bg-slate-950 border border-blue-500/30 font-mono text-[10px] text-blue-100 whitespace-pre-wrap select-all max-h-40 overflow-y-auto">
+                  {promptPreview}
+                </div>
+              )}
               <FlowRuntimePlan
                 mode={hoveredMode || 'EDIT_IMAGE'}
                 orientation={form.orientation}
