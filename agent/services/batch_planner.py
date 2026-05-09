@@ -1,5 +1,6 @@
 import logging
 import uuid
+import json
 from typing import Any
 from agent.db import crud
 from agent.services.product_creative_brief import get_creative_brief
@@ -49,48 +50,51 @@ async def create_batch_draft(batch_data: dict[str, Any]) -> dict[str, Any]:
     status = "DRAFT" if safety["is_safe"] else "DRAFT_BLOCKED"
     
     db = await crud.get_db()
-    await db.execute("""
-        INSERT INTO batch (
-            id, product_id, brief_id, quantity, platform, objective, 
-            language, engine, duration, mode, variation_level,
-            max_parallel_jobs, interval_min_seconds, interval_max_seconds,
-            cooldown_after_n_jobs, cooldown_seconds, daily_credit_limit,
-            approval_required, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        batch_id, product_id, brief.get("brief_id"), quantity,
-        batch_data.get("platform", "TikTok"), batch_data.get("objective", "conversion"),
-        batch_data.get("language", "Malay"), batch_data.get("engine", "VEO_3_1"),
-        batch_data.get("duration", 8), batch_data.get("mode", "Frames"),
-        batch_data.get("variation_level", "medium"),
-        batch_data.get("max_parallel_jobs", 1),
-        batch_data.get("interval_min_seconds", 45),
-        batch_data.get("interval_max_seconds", 120),
-        batch_data.get("cooldown_after_n_jobs", 5),
-        batch_data.get("cooldown_seconds", 300),
-        batch_data.get("daily_credit_limit", 0),
-        1 if batch_data.get("approval_required") else 0,
-        status
-    ))
-    
-    # 6. DB Persistence (Variants)
-    for v in final_variants:
-        v["batch_id"] = batch_id
+    from agent.db.schema import _db_lock
+    async with _db_lock:
         await db.execute("""
-            INSERT INTO batch_variant (
-                variant_id, batch_id, product_id, brief_id, variation_index,
-                hook_angle, scene_context, camera_route, copywriting_formula,
-                overlay_strategy, cta_style, google_flow_mode, asset_strategy,
-                diversity_fingerprint, prompt_9_section, readiness, queue_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO batch (
+                id, product_id, brief_id, quantity, platform, objective, 
+                language, engine, duration, mode, variation_level,
+                max_parallel_jobs, interval_min_seconds, interval_max_seconds,
+                cooldown_after_n_jobs, cooldown_seconds, daily_credit_limit,
+                approval_required, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            v["variant_id"], batch_id, product_id, v["brief_id"], v["variation_index"],
-            v["hook_angle"], v["scene_context"], v["camera_route"], v["copywriting_formula"],
-            v["overlay_strategy"], v["cta_style"], v["google_flow_mode"], v["asset_strategy"],
-            v["diversity_fingerprint"], v["prompt_9_section"], v["readiness"], "READY"
+            batch_id, product_id, brief.get("brief_id"), quantity,
+            batch_data.get("platform", "TikTok"), batch_data.get("objective", "conversion"),
+            batch_data.get("language", "Malay"), batch_data.get("engine", "VEO_3_1"),
+            batch_data.get("duration", 8), batch_data.get("mode", "Frames"),
+            batch_data.get("variation_level", "medium"),
+            batch_data.get("max_parallel_jobs", 1),
+            batch_data.get("interval_min_seconds", 45),
+            batch_data.get("interval_max_seconds", 120),
+            batch_data.get("cooldown_after_n_jobs", 5),
+            batch_data.get("cooldown_seconds", 300),
+            batch_data.get("daily_credit_limit", 0),
+            1 if batch_data.get("approval_required") else 0,
+            status
         ))
-    
-    await db.commit()
+        
+        # 6. DB Persistence (Variants)
+        for v in final_variants:
+            v["batch_id"] = batch_id
+            await db.execute("""
+                INSERT INTO batch_variant (
+                    variant_id, batch_id, product_id, brief_id, variation_index,
+                    hook_angle, scene_context, camera_route, copywriting_formula,
+                    overlay_strategy, cta_style, google_flow_mode, asset_strategy,
+                    diversity_fingerprint, prompt_9_section, readiness, blocked_reason, queue_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                v["variant_id"], batch_id, product_id, v["brief_id"], v["variation_index"],
+                v["hook_angle"], v["scene_context"], v["camera_route"], v["copywriting_formula"],
+                v["overlay_strategy"], v["cta_style"], v["google_flow_mode"], v["asset_strategy"],
+                v["diversity_fingerprint"], v["prompt_9_section"], v["readiness"], 
+                json.dumps(v.get("blocked_reason", [])), "READY"
+            ))
+        
+        await db.commit()
     
     return {
         "batch_id": batch_id,

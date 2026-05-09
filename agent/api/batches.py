@@ -34,7 +34,7 @@ async def post_batch_draft(request: BatchDraftRequest):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
 
-@router.get("/")
+@router.get("")
 async def get_batches():
     return await list_batches()
 

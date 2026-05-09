@@ -1,6 +1,13 @@
 """Shared pytest fixtures for Flow Kit tests."""
 
 import pytest
+from agent.db.schema import init_db, close_db
+
+@pytest.fixture(autouse=True)
+async def db_setup():
+    await init_db()
+    yield
+    await close_db()
 
 
 @pytest.fixture

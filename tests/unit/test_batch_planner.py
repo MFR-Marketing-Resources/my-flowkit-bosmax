@@ -26,6 +26,8 @@ async def test_create_batch_draft_sumikko():
     assert v["variation_index"] == 1
     assert "prompt_9_section" in v
     assert len(v["prompt_9_section"]) > 100
+    from agent.db.schema import close_db
+    await close_db()
 
 @pytest.mark.asyncio
 async def test_batch_draft_blocked_on_safety():

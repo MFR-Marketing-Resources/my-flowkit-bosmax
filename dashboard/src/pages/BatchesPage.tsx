@@ -11,6 +11,7 @@ interface Variant {
   prompt_9_section: string
   readiness: string
   queue_status: string
+  blocked_reason?: string
 }
 
 interface Batch {
@@ -35,7 +36,16 @@ export default function BatchesPage() {
   useEffect(() => {
     fetchBatches()
     fetchProducts()
+    const timer = setInterval(fetchBatches, 10000)
+    return () => clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    if (selectedBatch && ['QUEUED', 'PROCESSING'].includes(selectedBatch.status)) {
+      const timer = setInterval(() => handleViewBatch(selectedBatch.id), 5000)
+      return () => clearInterval(timer)
+    }
+  }, [selectedBatch?.id, selectedBatch?.status])
 
   const fetchBatches = async () => {
     try {
@@ -105,6 +115,21 @@ export default function BatchesPage() {
       else handleViewBatch(id)
     } catch (err) {
       console.error('Failed to cancel batch', err)
+    }
+  }
+
+  const handleExecuteNext = async (id: string, dryRun: boolean = true) => {
+    setLoading(true)
+    try {
+      const data = await postAPI(`/api/batches/${id}/execute-next?dry_run=${dryRun}`, {}) as any
+      if (data.error) {
+        alert(`Execution Error: ${data.error}`)
+      }
+      handleViewBatch(id)
+    } catch (err) {
+      console.error('Failed to execute next', err)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -215,6 +240,28 @@ export default function BatchesPage() {
                         <Play size={12} /> Queue Batch
                       </button>
                     )}
+                    {selectedBatch.status === 'QUEUED' && (
+                      <>
+                        <button 
+                          onClick={() => handleExecuteNext(selectedBatch.id, true)}
+                          disabled={loading}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold border border-accent text-accent hover:bg-accent/10 disabled:opacity-50"
+                        >
+                          Dry Run Next
+                        </button>
+                        <button 
+                          onClick={() => {
+                            if (window.confirm('Execute LIVE variant in Google Flow? This will consume credits.')) {
+                              handleExecuteNext(selectedBatch.id, false)
+                            }
+                          }}
+                          disabled={loading}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold bg-accent text-white hover:opacity-90 disabled:opacity-50"
+                        >
+                          Execute Live
+                        </button>
+                      </>
+                    )}
                     {['QUEUED', 'PROCESSING', 'DRAFT'].includes(selectedBatch.status) && (
                       <button 
                         onClick={() => handleCancelBatch(selectedBatch.id)}
@@ -281,6 +328,11 @@ export default function BatchesPage() {
                         <span>{v.camera_route}</span>
                         <span>{v.scene_context}</span>
                       </div>
+                      {v.blocked_reason && (
+                        <div className="text-[10px] text-red-500 bg-red-500/10 p-2 rounded border border-red-500/20">
+                          <strong>ABORTED:</strong> {v.blocked_reason}
+                        </div>
+                      )}
                       {showPrompt === v.variant_id && (
                         <div className="mt-2 p-3 rounded bg-black/20 text-[10px] font-mono whitespace-pre-wrap leading-relaxed border border-white/5">
                           {v.prompt_9_section}

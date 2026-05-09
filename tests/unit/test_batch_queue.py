@@ -44,6 +44,8 @@ async def test_queue_batch_workflow():
     cursor = await db.execute("SELECT COUNT(*) as cnt FROM request")
     row = await cursor.fetchone()
     assert row["cnt"] == count_before
+    from agent.db.schema import close_db
+    await close_db()
 
 @pytest.mark.asyncio
 async def test_cancel_batch_workflow():

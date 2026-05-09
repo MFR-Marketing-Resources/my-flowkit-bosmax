@@ -5,7 +5,10 @@ from pathlib import Path
 
 # ─── Paths ───────────────────────────────────────────────────
 BASE_DIR = Path(os.environ.get("FLOW_AGENT_DIR", Path(__file__).parent.parent))
-DB_PATH = BASE_DIR / "flow_agent.db"
+if "PYTEST_CURRENT_TEST" in os.environ:
+    DB_PATH = ":memory:"
+else:
+    DB_PATH = BASE_DIR / "flow_agent.db"
 OPERATOR_PACK_DIR = Path(
     os.environ.get(
         "FLOW_OPERATOR_PACK_DIR",
