@@ -550,6 +550,8 @@ export default function OperatorPage() {
   const [manualEntityType, setManualEntityType] = useState<ManualEntityType>('visual_asset')
   const [selectedSceneId, setSelectedSceneId] = useState('')
   const [manualPrompt, setManualPrompt] = useState('')
+  const [systemPrompt, setSystemPrompt] = useState('')
+  const [generatingPrompt, setGeneratingPrompt] = useState(false)
   const [f2vStartAssetId, setF2vStartAssetId] = useState('')
   const [f2vEndAssetId, setF2vEndAssetId] = useState('')
   const [f2vStartFile, setF2vStartFile] = useState<File | null>(null)
@@ -575,12 +577,14 @@ export default function OperatorPage() {
 
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
   const selectedScene = videoScenes.find(item => item.id === selectedSceneId)
-  const systemVideoPrompt = selectedScene?.video_prompt || selectedScene?.prompt || ''
+  const systemVideoPrompt = systemPrompt || selectedScene?.video_prompt || selectedScene?.prompt || ''
   const manualPromptOverride = manualPrompt.trim()
   const resolvedVideoPrompt = manualPromptOverride || systemVideoPrompt
+  const promptSource = manualPromptOverride ? 'USER_OVERRIDE' : (systemVideoPrompt ? 'SYSTEM' : 'MISSING')
 
   // True F2V Readiness Rules
   const f2vResolvedPromptReady = resolvedVideoPrompt.trim().length > 0
+  const f2vSystemPromptReady = systemVideoPrompt.trim().length > 0
   const f2vStartReady = !!f2vStartAssetId
   const f2vEndReady = !!f2vEndAssetId
   const f2vDifferentAssets = !f2vEndReady || f2vStartAssetId !== f2vEndAssetId
@@ -600,7 +604,13 @@ export default function OperatorPage() {
   if (!f2vSceneReady) f2vBlockingReasons.push('Select a target scene.')
   if (!f2vStartReady) f2vBlockingReasons.push('Upload a Start Frame to Flow.')
   if (f2vStartReady && f2vEndReady && !f2vDifferentAssets) f2vBlockingReasons.push('Start and End frames must be different assets.')
-  if (!f2vResolvedPromptReady) f2vBlockingReasons.push('Generated scene prompt missing. Enter a prompt override.')
+  if (!f2vResolvedPromptReady) {
+    if (!f2vSystemPromptReady && !manualPromptOverride) {
+      f2vBlockingReasons.push('System prompt generating...')
+    } else {
+      f2vBlockingReasons.push('ERROR: SYSTEM_PROMPT_MISSING')
+    }
+  }
   if (uploadingAssets) f2vBlockingReasons.push('Wait for upload to finish.')
   if (uploadingF2vStart) f2vBlockingReasons.push('Wait for Start Frame upload to finish.')
   if (uploadingF2vEnd) f2vBlockingReasons.push('Wait for End Frame upload to finish.')
@@ -743,6 +753,31 @@ export default function OperatorPage() {
     setVideoScenes(scenes)
     setSelectedSceneId(existing => existing || scenes[0]?.id || '')
   }
+
+  // Auto-generate system prompt when product changes
+  useEffect(() => {
+    if (!pack || !form.product_name) {
+      setSystemPrompt('')
+      return
+    }
+
+    const product = pack.products.find(p => p.product_name === form.product_name)
+    if (!product) {
+      setSystemPrompt('')
+      return
+    }
+
+    setGeneratingPrompt(true)
+    fetchAPI<{prompt: string, prompt_source: string}>(`/api/products/${encodeURIComponent(form.product_name)}/prompt?mode=TRUE_F2V`)
+      .then(res => {
+        if (res?.prompt) {
+          setSystemPrompt(res.prompt)
+        }
+      })
+      .catch(() => setSystemPrompt(''))
+      .finally(() => setGeneratingPrompt(false))
+  }, [form.product_name, pack])
+
 
   async function selectProject(p: Project) {
     setFetchingVideos(true)
@@ -1099,7 +1134,11 @@ export default function OperatorPage() {
         return
       }
       if (!f2vResolvedPromptReady) {
-        setMessage('Generated scene prompt missing. Enter a prompt override.')
+        setMessage('ERROR: SYSTEM_PROMPT_MISSING. Resolved prompt is required before submit.')
+        return
+      }
+      if (!f2vSystemPromptReady && !manualPromptOverride) {
+        setMessage('Waiting for system prompt generation. Please wait a moment...')
         return
       }
       if (uploadingAssets) {
@@ -1847,19 +1886,43 @@ export default function OperatorPage() {
                 />
               </div>
 
+              <div className="flex flex-col gap-2 p-2 rounded border-2" style={{ background: 'rgba(34,197,94,0.04)', borderColor: f2vSystemPromptReady ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)' }}>
+                <div className="flex items-center justify-between">
+                  <FieldLabel>System Generated Prompt</FieldLabel>
+                  <div className={`text-[9px] font-bold px-2 py-0.5 rounded ${f2vSystemPromptReady ? 'bg-green-600/20 text-green-400' : 'bg-red-600/20 text-red-400'}`}>
+                    {f2vSystemPromptReady ? 'READY' : (generatingPrompt ? 'GENERATING...' : 'MISSING')}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                  <div>
+                    <div style={{ color: 'var(--muted)' }}>Source:</div>
+                    <div className="font-mono">{promptSource}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: 'var(--muted)' }}>Length:</div>
+                    <div className="font-mono">{resolvedVideoPrompt.length} chars</div>
+                  </div>
+                </div>
+                <div className="p-2 rounded text-[10px] leading-tight max-h-24 overflow-y-auto font-mono whitespace-pre-wrap" style={{ background: 'rgba(0,0,0,0.2)', color: systemVideoPrompt ? 'var(--green)' : 'var(--muted)', border: `1px solid ${systemVideoPrompt ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}` }}>
+                  {systemVideoPrompt || '(System prompt will be generated when you select a product)'}
+                </div>
+              </div>
+
               <div className="flex flex-col gap-1">
-                <FieldLabel>Prompt Override (Optional)</FieldLabel>
+                <FieldLabel>Optional User Override Prompt</FieldLabel>
                 <input
                   type="text"
-                  placeholder="Leave empty to use system scene prompt..."
+                  placeholder="Leave empty to use system-generated prompt..."
                   value={manualPrompt}
                   onChange={e => setManualPrompt(e.target.value)}
                   className="px-2 py-1 rounded text-xs"
                   style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}
                 />
-                <div className="mt-1 p-2 rounded text-[10px] italic" style={{ background: 'rgba(59,130,246,0.05)', border: '1px dashed var(--blue)', color: 'var(--blue)' }}>
-                  <strong>Resolved Prompt:</strong> {manualPrompt.trim() ? manualPrompt : (resolvedVideoPrompt || 'Waiting for scene...')}
-                </div>
+                {manualPrompt.trim() && (
+                  <div className="mt-1 p-2 rounded text-[10px] italic" style={{ background: 'rgba(245,158,11,0.05)', border: '1px dashed var(--yellow)', color: 'var(--yellow)' }}>
+                    <strong>Override Active:</strong> Using your manual prompt instead of system-generated one.
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-col gap-2">

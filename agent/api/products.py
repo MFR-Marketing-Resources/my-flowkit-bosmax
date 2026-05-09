@@ -42,15 +42,36 @@ async def upload_to_flow(product_id: str):
 
 @router.get("/{product_id}/prompt")
 async def get_generated_prompt(product_id: str, mode: str = "F2V"):
-    """Get a system-generated prompt for a product and mode."""
+    """Get a system-generated prompt for a product and mode.
+    Supported modes: IMG, I2V, F2V, TRUE_F2V, GENERATE_VIDEO, GENERATE_VIDEO_REFS
+    Supports lookup by product ID or product_name.
+    """
     product = await crud.get_product(product_id)
+    
+    # If not found by ID, try to find by product_short_name
+    if not product:
+        products = await crud.list_products()
+        product = next((p for p in products if p.get("product_short_name") == product_id), None)
+    
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    
-    prompt = await generate_product_prompt(product, mode)
-    return {"product_id": product_id, "mode": mode, "prompt": prompt}
 
-@router.post("/import-fastmoss")
+    # Normalize BOSMAX mode names to product intelligence modes
+    mode_map = {
+        "TRUE_F2V": "F2V",
+        "GENERATE_VIDEO": "I2V",
+        "GENERATE_VIDEO_REFS": "I2V",
+    }
+    normalized_mode = mode_map.get(mode, mode)
+
+    prompt = await generate_product_prompt(product, normalized_mode)
+    return {
+        "product_id": product_id,
+        "mode": mode,
+        "prompt": prompt,
+        "prompt_length": len(prompt),
+        "prompt_source": "SYSTEM"
+    }
 async def import_fastmoss_catalog():
     """Trigger the FastMoss catalog import script."""
     import subprocess
