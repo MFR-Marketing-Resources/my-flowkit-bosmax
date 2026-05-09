@@ -1,6 +1,8 @@
 import base64
+import aiohttp
 import json
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -290,6 +292,88 @@ async def _find_product_by_lookup(product_id: str) -> dict[str, Any] | None:
     return None
 
 
+@router.post("/{product_id}/cache-image")
+async def cache_product_image(product_id: str):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    existing_local_path = product.get("local_image_path")
+    if existing_local_path:
+        cached_path = Path(existing_local_path)
+        if not cached_path.is_absolute():
+            cached_path = BASE_DIR / cached_path
+        if cached_path.exists():
+            await crud.update_product(product_id, local_image_path=str(cached_path), asset_status="DOWNLOADED", image_asset_status="READY")
+            return {"status": "success", "local_image_path": str(cached_path), "image_asset_status": "READY"}
+
+    image_url = product.get("image_url")
+    if not image_url:
+        await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="FAILED")
+        return {"status": "failed", "detail": "No image_url found for product", "image_asset_status": "FAILED"}
+
+    try:
+        ext = "jpg"
+        if image_url.split("?")[0].split(".")[-1].lower() in ["jpg", "jpeg", "png", "webp", "gif"]:
+            ext = image_url.split("?")[0].split(".")[-1].lower()
+
+        dest = product_image_path(product_id, ext=ext)
+
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(image_url) as resp:
+                if resp.status != 200:
+                    await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="FAILED")
+                    return {"status": "failed", "detail": f"Failed to download image: {resp.status}", "image_asset_status": "FAILED"}
+                data = await resp.read()
+                dest.write_bytes(data)
+
+        if not dest.exists() or dest.stat().st_size == 0:
+            await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="FAILED")
+            return {"status": "failed", "detail": "Downloaded image was not written to disk", "image_asset_status": "FAILED"}
+
+        await crud.update_product(
+            product_id,
+            local_image_path=str(dest),
+            asset_status="DOWNLOADED",
+            image_asset_status="READY"
+        )
+        return {"status": "success", "local_image_path": str(dest), "image_asset_status": "READY"}
+    except Exception as e:
+        await crud.update_product(product_id, asset_status="UNRESOLVED", image_asset_status="FAILED")
+        return {"status": "failed", "detail": str(e), "image_asset_status": "FAILED"}
+
+
+async def _list_products_response(
+    *,
+    q: str | None = None,
+    source: str | None = None,
+    readiness: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    source_norm = _normalize_source(source) if source else None
+    products = await crud.list_products(source=source_norm, query=q, limit=limit, offset=offset)
+    enriched = [await _enrich_product(product) for product in products]
+
+    total = await crud.count_products(source=source_norm, query=q)
+    if readiness:
+        all_products = await crud.list_products(source=source_norm, query=q)
+        enriched_all = [await _enrich_product(product) for product in all_products]
+        filtered_all = [product for product in enriched_all if product.get("prompt_readiness_status") == readiness]
+        enriched = [product for product in enriched if product.get("prompt_readiness_status") == readiness]
+        total = len(filtered_all)
+
+    return {
+        "total_count": total,
+        "returned_count": len(enriched),
+        "has_pagination": (offset + len(enriched)) < total,
+        "limit": limit,
+        "offset": offset,
+        "items": enriched,
+    }
+
+
 @router.get("")
 async def list_products(
     q: str | None = Query(default=None),
@@ -298,30 +382,16 @@ async def list_products(
     limit: int = Query(default=50),
     offset: int = Query(default=0),
 ):
-    source_norm = _normalize_source(source) if source else None
-    
-    total = await crud.count_products(source=source_norm, query=q)
-    products = await crud.list_products(source=source_norm, query=q, limit=limit, offset=offset)
-    
-    enriched = [await _enrich_product(product) for product in products]
-    if readiness:
-        enriched = [product for product in enriched if product.get("prompt_readiness_status") == readiness]
-        total = len(enriched) # Approximate total if readiness filter overrides db query
-    
-    return {
-        "total_count": total,
-        "returned_count": len(enriched),
-        "has_pagination": limit > 0 and len(enriched) == limit,
-        "limit": limit,
-        "offset": offset,
-        "items": enriched
-    }
+    return await _list_products_response(q=q, source=source, readiness=readiness, limit=limit, offset=offset)
 
 
 @router.get("/search")
-async def search_products(q: str | None = Query(default=None)):
-    products = await crud.list_products(query=q)
-    return [await _enrich_product(product) for product in products]
+async def search_products(
+    q: str | None = Query(default=None),
+    limit: int = Query(default=25),
+    offset: int = Query(default=0),
+):
+    return await _list_products_response(q=q, limit=limit, offset=offset)
 
 
 @router.post("/map")
@@ -465,41 +535,37 @@ async def import_tiktokshop_product(data: ImportTikTokShopRequest):
 @router.post("/import-fastmoss")
 async def import_fastmoss_catalog():
     try:
-        res = subprocess.run(["python", "scripts/build-product-catalog.py"], capture_output=True, text=True)
-        if res.returncode != 0:
-            return {"ok": False, "error": res.stderr}
+        from agent.api.operator import _load_products
 
-        catalog_path = BASE_DIR / "data" / "products" / "product_catalog.json"
-        if not catalog_path.exists():
-            return {"ok": False, "error": "Catalog file not found after script execution"}
-
-        products = json.loads(catalog_path.read_text(encoding="utf-8"))
+        products = _load_products(limit=500)
         imported = 0
         for entry in products:
-            existing = await crud.list_products(query=entry["raw_product_title"])
-            if existing:
+            raw_title = entry.raw_product_title or entry.product_name
+            existing = await crud.list_products(query=raw_title)
+            if any((candidate.get("raw_product_title") or "").strip().lower() == raw_title.strip().lower() for candidate in existing):
                 continue
             created = await crud.create_product(
-                raw_product_title=entry["raw_product_title"],
-                source=_normalize_source(entry.get("source") or "FASTMOSS"),
-                source_url=entry.get("tiktok_product_url"),
-                product_display_name=entry.get("product_display_name"),
-                product_short_name=entry.get("product_short_name"),
-                category=entry.get("category"),
-                subcategory=entry.get("subcategory"),
-                type=entry.get("type"),
-                shop_name=entry.get("shop_name"),
-                price=entry.get("price"),
-                price_min=entry.get("price_min"),
-                price_max=entry.get("price_max"),
-                currency=entry.get("currency") or "MYR",
-                commission=entry.get("commission"),
-                commission_rate=entry.get("commission_rate") or entry.get("commission"),
-                image_url=entry.get("image_url"),
-                tiktok_product_url=entry.get("tiktok_product_url"),
-                fastmoss_source_file=entry.get("fastmoss_source_file"),
-                asset_status=entry.get("asset_status") or "UNRESOLVED",
-                image_asset_status=entry.get("asset_status") or "UNRESOLVED",
+                raw_product_title=raw_title,
+                source="FASTMOSS",
+                product_display_name=entry.product_display_name,
+                product_short_name=entry.product_short_name,
+                category=entry.category,
+                subcategory=entry.sub_category,
+                type=entry.type_angle,
+                shop_name=entry.shop_name,
+                price=entry.avg_price_rm,
+                price_min=entry.avg_price_rm,
+                currency="MYR",
+                product_type=entry.product_type,
+                silo=entry.silo_id,
+                trigger_id=entry.trigger_id,
+                formula=entry.submode_formula,
+                copywriting_angle=entry.copywriting_angle or entry.copy_angle,
+                claim_risk_level=entry.claim_risk_level,
+                mode_recommendations=json.dumps(entry.mode_recommendations or []),
+                fastmoss_source_file="FASTMOSS_COMBINED_10_FILES_WORKBOOK.xlsx",
+                asset_status="UNRESOLVED",
+                image_asset_status="UNRESOLVED",
             )
             await _enrich_product(created, persist=True)
             imported += 1

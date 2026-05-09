@@ -428,6 +428,40 @@ function mappingToOperatorProduct(mapping: ProductMapping): OperatorProduct {
   }
 }
 
+function productToOperatorProduct(product: Product): OperatorProduct {
+  return {
+    product_id: product.product_id || product.id || null,
+    product_name: product.raw_product_title,
+    raw_product_title: product.raw_product_title,
+    product_short_name: product.product_short_name,
+    product_display_name: product.product_display_name,
+    category: product.category || '',
+    sub_category: product.subcategory || '',
+    type_angle: product.type || '',
+    product_type: product.product_type || null,
+    silo_id: product.silo || null,
+    trigger_id: product.trigger_id || null,
+    submode_formula: product.formula || null,
+    mode_recommendations: product.mode_recommendations || [],
+    copywriting_angle: product.copywriting_angle || null,
+    claim_risk_level: product.claim_risk_level || null,
+    mapping_source: product.mapping_source || product.source,
+    mapping_confidence: product.mapping_confidence || null,
+    missing_fields: product.prompt_missing_fields || product.missing_fields || [],
+    raw_category: null,
+    avg_price_rm: product.price ?? product.price_min ?? null,
+    status: product.mapping_review_status || null,
+    copy_angle: product.copywriting_angle || null,
+    hook: null,
+    usp_1: null,
+    usp_2: null,
+    usp_3: null,
+    body: null,
+    cta: null,
+    shop_name: product.shop_name || null,
+  }
+}
+
 function mergeMappingIntoProduct(mapping: ProductMapping, existing?: Product | null): Product {
   return {
     id: mapping.product_id || existing?.id || '',
@@ -691,6 +725,7 @@ export default function OperatorPage() {
   const [uploadingF2vStart, setUploadingF2vStart] = useState(false)
   const [uploadingF2vEnd, setUploadingF2vEnd] = useState(false)
   const [catalogProducts, setCatalogProducts] = useState<Product[]>([])
+  const [canonicalProducts, setCanonicalProducts] = useState<Product[]>([])
   const [selectedCatalogProduct, setSelectedCatalogProduct] = useState<Product | null>(null)
   const [resolvedMapping, setResolvedMapping] = useState<ProductMapping | null>(null)
   const [mappingBusy, setMappingBusy] = useState(false)
@@ -714,7 +749,7 @@ export default function OperatorPage() {
   const [, setFetchingVideos] = useState(false)
 
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
-  const availableProducts = [...manualProducts, ...(pack?.products ?? [])]
+  const availableProducts = [...manualProducts, ...canonicalProducts.map(productToOperatorProduct)]
   const selectedScene = videoScenes.find(item => item.id === selectedSceneId)
   const systemVideoPrompt = systemPrompt || selectedScene?.video_prompt || selectedScene?.prompt || ''
   const manualPromptOverride = manualPrompt.trim()
@@ -781,6 +816,12 @@ export default function OperatorPage() {
     return () => window.clearInterval(timer)
   }, [])
 
+  async function loadCanonicalProducts(limit = 200) {
+    const response = await fetchAPI<{ items: Product[] }>(`/api/products?limit=${limit}&offset=0`)
+    setCanonicalProducts(response.items || [])
+    return response.items || []
+  }
+
 
   useEffect(() => {
     setLoadingPack(true)
@@ -824,6 +865,10 @@ export default function OperatorPage() {
       })
       .catch(err => setMessage(`Failed to load content pack: ${String(err)}`))
       .finally(() => setLoadingPack(false))
+  }, [])
+
+  useEffect(() => {
+    void loadCanonicalProducts().catch(err => setMessage(`Failed to load canonical products: ${String(err)}`))
   }, [])
 
   useEffect(() => {
@@ -930,6 +975,7 @@ export default function OperatorPage() {
       cta: product.cta ?? '',
     }))
     void resolveProductMapping({
+      product_id: product.product_id || undefined,
       product_name: product.raw_product_title || product.product_name,
       source: product.mapping_source === 'MANUAL' ? 'MANUAL' : 'FASTMOSS',
       category: product.category,
@@ -1260,8 +1306,8 @@ export default function OperatorPage() {
   async function searchCatalog() {
     setSearchingCatalog(true)
     try {
-      const results = await fetchAPI<any[]>('/api/products/search?q=' + encodeURIComponent(catalogSearchQuery))
-      setCatalogProducts(results)
+      const results = await fetchAPI<{ items: Product[] }>('/api/products/search?q=' + encodeURIComponent(catalogSearchQuery))
+      setCatalogProducts(results.items || [])
     } catch (err) {
       setMessage('Catalog search failed: ' + String(err))
     } finally {
@@ -1297,7 +1343,10 @@ export default function OperatorPage() {
     setImportingCatalog(true)
     try {
       const res = await postAPI<any>('/api/products/import-fastmoss', {})
-      if (res.ok) setMessage('Imported ' + res.imported + ' products.')
+      if (res.ok) {
+        await loadCanonicalProducts()
+        setMessage('Imported ' + res.imported + ' products.')
+      }
     } catch (err) { setMessage('Import error: ' + String(err)) }
     finally { setImportingCatalog(false) }
   }
@@ -1740,6 +1789,7 @@ export default function OperatorPage() {
           </button>
         </div>
         <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <ReadOnlyField label="Product ID" value={resolvedMapping?.product_id} />
           <ReadOnlyField label="Category" value={form.category} />
           <ReadOnlyField label="Subcategory" value={form.sub_category} />
           <ReadOnlyField label="Type" value={form.type_angle} />
