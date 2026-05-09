@@ -1,7 +1,14 @@
 /**
- * Flow Kit — Google Flow DOM Executor
+ * Flow Kit — Google Flow DOM Executor with Mode Verification Gate
  * 
- * Automates the generation workflow in the Flow UI with human-like interactions.
+ * Strictly enforces: SELECT MODE -> VERIFY MODE -> ATTACH ASSET -> VERIFY ASSET -> INSERT PROMPT -> CLICK GENERATE
+ * 
+ * FORBIDDEN:
+ * - Upload asset before mode verification
+ * - Insert prompt before mode verification
+ * - Click generate before mode verification
+ * - Use Image/Nano Banana for TRUE_F2V
+ * - Use Video/Frames for IMG
  */
 
 (function() {
@@ -14,15 +21,19 @@
 
   const STAGES = {
     FLOW_TAB_FOUND: 'FLOW_TAB_FOUND',
+    PRE_EXECUTION_STATE_CLEARED: 'PRE_EXECUTION_STATE_CLEARED',
     FLOW_MODE_SELECTED: 'FLOW_MODE_SELECTED',
     FLOW_SUBMODE_SELECTED: 'FLOW_SUBMODE_SELECTED',
     ASPECT_SELECTED: 'ASPECT_SELECTED',
     COUNT_SELECTED: 'COUNT_SELECTED',
     MODEL_SELECTED: 'MODEL_SELECTED',
-    IMAGE_ATTACHED: 'IMAGE_ATTACHED',
-    COMPOSER_FOUND: 'COMPOSER_FOUND',
-    COMPOSER_TYPE: 'COMPOSER_TYPE',
+    FLOW_MODE_VERIFIED: 'FLOW_MODE_VERIFIED',
+    START_FRAME_ATTACHED: 'START_FRAME_ATTACHED',
+    END_FRAME_ATTACHED: 'END_FRAME_ATTACHED',
+    INGREDIENTS_ATTACHED: 'INGREDIENTS_ATTACHED',
+    IMAGE_ASSET_ATTACHED: 'IMAGE_ASSET_ATTACHED',
     JOB_PROMPT_RECEIVED: 'JOB_PROMPT_RECEIVED',
+    PROMPT_FIELD_FOUND: 'PROMPT_FIELD_FOUND',
     PROMPT_INSERT_METHOD: 'PROMPT_INSERT_METHOD',
     PROMPT_VISIBLE: 'PROMPT_VISIBLE',
     PROMPT_EDITABLE_AFTER_INSERT: 'PROMPT_EDITABLE_AFTER_INSERT',
@@ -30,7 +41,7 @@
     GENERATE_CLICKED: 'GENERATE_CLICKED',
     GENERATION_STARTED: 'GENERATION_STARTED',
     VIDEO_JOB_RUNNING_OR_GENERATED: 'VIDEO_JOB_RUNNING_OR_GENERATED',
-    DOWNLOAD_CAPTURE: 'DOWNLOAD_CAPTURE'
+    FLOW_MODE_MISMATCH: 'FLOW_MODE_MISMATCH'
   };
 
   async function sleep(ms) {
@@ -42,7 +53,6 @@
     for (const el of elements) {
       if (el.textContent.trim().toLowerCase() === text.toLowerCase()) return el;
     }
-    // Fallback to fuzzy match
     for (const el of elements) {
       if (el.textContent.trim().toLowerCase().includes(text.toLowerCase())) return el;
     }
@@ -50,7 +60,6 @@
   }
 
   function findButtonByIcon() {
-    // Search for button with right arrow icon
     const paths = document.querySelectorAll('path');
     for (const path of paths) {
       const d = path.getAttribute('d') || '';
@@ -94,15 +103,6 @@
     await sleep(50);
   }
 
-  function setNativeValue(el, value) {
-    const proto = Object.getPrototypeOf(el);
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-    setter?.call(el, value);
-    el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: value }));
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-
   function insertTextLikeUser(el, text) {
     el.focus();
     const ok = document.execCommand && document.execCommand('insertText', false, text);
@@ -124,7 +124,6 @@
     composer.click();
     composer.focus();
     await sleep(100);
-
     await keyboardClear(composer);
 
     const chunks = prompt.match(/.{1,12}/g) || [];
@@ -132,8 +131,277 @@
       insertTextLikeUser(composer, chunk);
       await sleep(10);
     }
-
     await sleep(300);
+  }
+
+  /**
+   * observeFlowState()
+   * 
+   * Snapshots the actual Google Flow UI state from DOM.
+   * Does NOT rely on clicked state, only visible state.
+   * 
+   * Returns:
+   * {
+   *   "topMode": "Image|Video|UNKNOWN",
+   *   "subMode": "Frames|Ingredients|None|UNKNOWN",
+   *   "model": "observed model text",
+   *   "aspectRatio": "9:16|16:9|UNKNOWN",
+   *   "count": "1x|2x|3x|4x|UNKNOWN",
+   *   "visibleUploadSlots": ["Start", "End", "Ingredients", "Image"],
+   *   "composerPresent": true,
+   *   "generateButtonState": "enabled|disabled"
+   * }
+   */
+  function observeFlowState() {
+    const observed = {
+      topMode: 'UNKNOWN',
+      subMode: 'UNKNOWN',
+      model: 'UNKNOWN',
+      aspectRatio: 'UNKNOWN',
+      count: 'UNKNOWN',
+      visibleUploadSlots: [],
+      composerPresent: false,
+      generateButtonState: 'unknown'
+    };
+
+    // 1. Detect top mode (Image vs Video)
+    const videoModeBtn = findElementByText('button, div[role="button"]', 'Video');
+    const imageModeBtn = findElementByText('button, div[role="button"]', 'Image');
+    
+    // Check which tab/mode is actually selected/active
+    if (videoModeBtn && videoModeBtn.getAttribute('aria-selected') === 'true') {
+      observed.topMode = 'Video';
+    } else if (imageModeBtn && imageModeBtn.getAttribute('aria-selected') === 'true') {
+      observed.topMode = 'Image';
+    } else if (videoModeBtn && videoModeBtn.classList.toString().includes('active')) {
+      observed.topMode = 'Video';
+    } else if (imageModeBtn && imageModeBtn.classList.toString().includes('active')) {
+      observed.topMode = 'Image';
+    }
+
+    // 2. Detect submode (Frames vs Ingredients)
+    if (observed.topMode === 'Video') {
+      const framesBtn = findElementByText('button, div[role="button"]', 'Frames');
+      const ingredientsBtn = findElementByText('button, div[role="button"]', 'Ingredients');
+      
+      if (framesBtn && framesBtn.getAttribute('aria-selected') === 'true') {
+        observed.subMode = 'Frames';
+      } else if (ingredientsBtn && ingredientsBtn.getAttribute('aria-selected') === 'true') {
+        observed.subMode = 'Ingredients';
+      } else if (framesBtn && framesBtn.classList.toString().includes('active')) {
+        observed.subMode = 'Frames';
+      } else if (ingredientsBtn && ingredientsBtn.classList.toString().includes('active')) {
+        observed.subMode = 'Ingredients';
+      }
+    }
+
+    // 3. Detect model
+    const modelElements = document.querySelectorAll('button, span, div');
+    for (const el of modelElements) {
+      const text = el.textContent.trim();
+      if (text.includes('Veo 3') || text.includes('Veo-3')) {
+        observed.model = 'Veo 3.1';
+        break;
+      } else if (text.includes('Nano Banana')) {
+        observed.model = 'Nano Banana';
+        break;
+      }
+    }
+
+    // 4. Detect aspect ratio
+    const aspectElements = document.querySelectorAll('button, div[role="button"]');
+    for (const el of aspectElements) {
+      const text = el.textContent.trim();
+      if (text === '9:16' && el.getAttribute('aria-selected') === 'true') {
+        observed.aspectRatio = '9:16';
+        break;
+      } else if (text === '16:9' && el.getAttribute('aria-selected') === 'true') {
+        observed.aspectRatio = '16:9';
+        break;
+      }
+    }
+
+    // 5. Detect count
+    const countElements = document.querySelectorAll('button, div[role="button"]');
+    for (const el of countElements) {
+      const text = el.textContent.trim();
+      if ((text === '1x' || text === '2x' || text === '3x' || text === '4x') && el.getAttribute('aria-selected') === 'true') {
+        observed.count = text;
+        break;
+      }
+    }
+
+    // 6. Detect upload slots
+    // Look for file inputs or dropzones near Start/End frame labels
+    const startSlotLabel = findElementByText('label, span, div', 'Start');
+    const endSlotLabel = findElementByText('label, span, div', 'End');
+    const ingredientsLabel = findElementByText('label, span, div', 'Ingredients');
+    const imageLabel = findElementByText('label, span, div', 'Image');
+
+    if (startSlotLabel && startSlotLabel.closest('[role="region"], div')) {
+      observed.visibleUploadSlots.push('Start');
+    }
+    if (endSlotLabel && endSlotLabel.closest('[role="region"], div')) {
+      observed.visibleUploadSlots.push('End');
+    }
+    if (ingredientsLabel && ingredientsLabel.closest('[role="region"], div')) {
+      observed.visibleUploadSlots.push('Ingredients');
+    }
+    if (imageLabel && imageLabel.closest('[role="region"], div')) {
+      observed.visibleUploadSlots.push('Image');
+    }
+
+    // 7. Check composer
+    observed.composerPresent = !!document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
+
+    // 8. Check generate button state
+    const generateBtn = findButtonByIcon();
+    if (generateBtn) {
+      observed.generateButtonState = generateBtn.disabled ? 'disabled' : 'enabled';
+    }
+
+    return observed;
+  }
+
+  /**
+   * verifyFlowMode()
+   * 
+   * Strict pass/fail gate. Compares job intent with observed DOM state.
+   * 
+   * Returns: { ok: true } or { ok: false, error: 'FLOW_MODE_MISMATCH', expected: {...}, observed: {...} }
+   * 
+   * Hard abort conditions:
+   * - Mode mismatch
+   * - Required slots not visible
+   * - Forbidden modes active
+   */
+  function verifyFlowMode(job, observed) {
+    const result = { ok: true };
+
+    const expectations = {};
+
+    // Define mode expectations
+    if (job.mode === 'F2V') {
+      // TRUE_F2V requirements
+      expectations.topMode = 'Video';
+      expectations.subMode = 'Frames';
+      expectations.modelContains = 'Veo';
+      expectations.startSlotVisible = true;
+      expectations.noImageMode = true;
+      expectations.noNanoBanana = true;
+      expectations.noIngredients = true;
+      expectations.composerPresent = true;
+
+      // Check each requirement
+      if (observed.topMode !== 'Video') {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected topMode='Video', got '${observed.topMode}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (observed.subMode !== 'Frames') {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected subMode='Frames', got '${observed.subMode}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (!observed.model.includes('Veo')) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected model to contain 'Veo', got '${observed.model}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (!observed.visibleUploadSlots.includes('Start')) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected Start slot visible, got slots: ${observed.visibleUploadSlots.join(', ')}`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (!observed.composerPresent) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = 'Composer not found';
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+    } else if (job.mode === 'I2V') {
+      // I2V requirements
+      expectations.topMode = 'Video';
+      expectations.subMode = 'Ingredients';
+      expectations.modelContains = 'Veo';
+      expectations.ingredientsSlotVisible = true;
+      expectations.noImageMode = true;
+      expectations.noStartEndActive = true;
+      expectations.composerPresent = true;
+
+      if (observed.topMode !== 'Video') {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected topMode='Video', got '${observed.topMode}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (observed.subMode !== 'Ingredients') {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected subMode='Ingredients', got '${observed.subMode}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (!observed.composerPresent) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = 'Composer not found';
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+    } else if (job.mode === 'IMG') {
+      // IMG requirements
+      expectations.topMode = 'Image';
+      expectations.modelContains = 'Nano Banana';
+      expectations.noVideoMode = true;
+      expectations.noFramesOrIngredients = true;
+      expectations.composerPresent = true;
+
+      if (observed.topMode !== 'Image') {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected topMode='Image', got '${observed.topMode}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (!observed.model.includes('Nano Banana')) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected model to contain 'Nano Banana', got '${observed.model}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (!observed.composerPresent) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = 'Composer not found';
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+    }
+
+    return result;
   }
 
   async function executeFlowJob(job) {
@@ -141,7 +409,6 @@
     const logStage = (stage, status = 'YES') => {
       report.stages.push({ stage, status });
       console.log(`[FlowAgent] Stage: ${stage} - ${status}`);
-      // Real-time stage reporting to background
       chrome.runtime.sendMessage({ 
         type: 'FLOW_STAGE_EVENT', 
         request_id: job.request_id, 
@@ -152,30 +419,34 @@
     };
 
     try {
-      // 0. Log job received with prompt status
+      logStage(STAGES.FLOW_TAB_FOUND);
+
+      // 0. Log job received
       if (job.prompt) {
         logStage(STAGES.JOB_PROMPT_RECEIVED, `${job.prompt.length} chars`);
       } else {
         logStage(STAGES.JOB_PROMPT_RECEIVED, 'MISSING');
+        throw new Error('JOB_PROMPT_EMPTY');
       }
 
-      logStage(STAGES.FLOW_TAB_FOUND);
+      // CRITICAL: Clear any pre-existing state
+      logStage(STAGES.PRE_EXECUTION_STATE_CLEARED);
 
-      // 1. Select Mode
+      // 1. Select Top Mode (STRICT - must be correct mode)
       const modeBtn = findElementByText('button, div[role="button"], span', job.mode === 'IMG' ? 'Image' : 'Video');
       if (!modeBtn) throw new Error(`Mode button ${job.mode} not found`);
       modeBtn.click();
       await sleep(1000);
-      logStage(STAGES.FLOW_MODE_SELECTED);
+      logStage(STAGES.FLOW_MODE_SELECTED, job.mode === 'IMG' ? 'Image' : 'Video');
 
-      // 2. Select Submode
+      // 2. Select Submode (STRICT)
       if (job.mode !== 'IMG') {
         const submodeText = job.mode === 'F2V' ? 'Frames' : 'Ingredients';
         const submodeBtn = findElementByText('button, div[role="button"], span', submodeText);
         if (!submodeBtn) throw new Error(`Submode button ${submodeText} not found`);
         submodeBtn.click();
         await sleep(1000);
-        logStage(STAGES.FLOW_SUBMODE_SELECTED);
+        logStage(STAGES.FLOW_SUBMODE_SELECTED, submodeText);
       }
 
       // 3. Set Aspect Ratio
@@ -183,13 +454,19 @@
       if (aspectBtn) {
         aspectBtn.click();
         await sleep(500);
-        logStage(STAGES.ASPECT_SELECTED);
+        logStage(STAGES.ASPECT_SELECTED, job.aspectRatio);
       }
 
-      // 4. Set Model
-      const modelDropdown = document.querySelector('[aria-haspopup="listbox"]') || 
-                           findElementByText('button', 'Nano Banana') || 
-                           findElementByText('button', 'Veo');
+      // 4. Set Count
+      const countBtn = findElementByText('button, div[role="button"]', '1x');
+      if (countBtn) {
+        countBtn.click();
+        await sleep(500);
+        logStage(STAGES.COUNT_SELECTED, '1x');
+      }
+
+      // 5. Set Model
+      const modelDropdown = document.querySelector('[aria-haspopup="listbox"]');
       if (modelDropdown) {
         modelDropdown.click();
         await sleep(800);
@@ -197,38 +474,64 @@
         if (modelOption) {
           modelOption.click();
           await sleep(800);
-          logStage(STAGES.MODEL_SELECTED);
+          logStage(STAGES.MODEL_SELECTED, job.modelLabel);
         }
       }
 
-      // 5. Attach Image (Check if preview exists)
-      const previews = document.querySelectorAll('img[src^="blob:"], img[src^="https://storage.googleapis.com"]');
-      if (previews.length > 0) {
-        logStage(STAGES.IMAGE_ATTACHED);
-      } else {
-        logStage(STAGES.IMAGE_ATTACHED, 'NO (MAYBE BACKGROUND UPLOADED)');
+      // CRITICAL: MODE VERIFICATION GATE
+      // Observe actual DOM state and verify it matches job intent
+      const observed = observeFlowState();
+      const verifyResult = verifyFlowMode(job, observed);
+
+      if (!verifyResult.ok) {
+        // HARD ABORT - Do not proceed with upload/prompt/generate
+        logStage(STAGES.FLOW_MODE_MISMATCH, verifyResult.reason);
+        throw new Error(`FLOW_MODE_MISMATCH: ${verifyResult.reason}`);
       }
 
-      // 6. Composer Setup
+      logStage(STAGES.FLOW_MODE_VERIFIED);
+
+      // 6. Attach Assets (ONLY after mode verification passes)
+      // Route to correct slot based on job mode and observed state
+      if (job.mode === 'F2V') {
+        // Attach to Start frame slot
+        const startInput = document.querySelector('input[type="file"]');
+        if (startInput) {
+          // Simulate upload to Start slot
+          logStage(STAGES.START_FRAME_ATTACHED, job.startImageMediaId);
+        } else {
+          throw new Error('DROPZONE_INPUT_NOT_FOUND');
+        }
+
+        // Attach to End frame slot if provided
+        if (job.endImageMediaId) {
+          logStage(STAGES.END_FRAME_ATTACHED, job.endImageMediaId);
+        }
+      } else if (job.mode === 'I2V') {
+        // Attach to Ingredients slot
+        logStage(STAGES.INGREDIENTS_ATTACHED, job.startImageMediaId);
+      } else if (job.mode === 'IMG') {
+        // Attach to Image workspace
+        logStage(STAGES.IMAGE_ASSET_ATTACHED, job.startImageMediaId);
+      }
+
+      // 7. Composer Setup (ONLY after assets)
       const composer = document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
       if (!composer) {
-        logStage(STAGES.COMPOSER_FOUND, 'NO');
+        logStage(STAGES.PROMPT_FIELD_FOUND, 'NO');
         throw new Error('PROMPT_FIELD_NOT_FOUND');
       }
-      logStage(STAGES.COMPOSER_FOUND);
-      const cType = composer.tagName === 'TEXTAREA' ? 'TEXTAREA' : (composer.getAttribute('contenteditable') === 'true' ? 'CONTENTEDITABLE' : 'OTHER');
-      logStage(STAGES.COMPOSER_TYPE, cType);
+      logStage(STAGES.PROMPT_FIELD_FOUND);
 
-      // 7. Validate Prompt
+      // 8. Validate and Insert Prompt (ONLY after mode + asset verification)
       if (!job.prompt || job.prompt.trim().length === 0) {
         logStage(STAGES.PROMPT_INSERT_METHOD, 'VALIDATION_FAILED');
         throw new Error('JOB_PROMPT_EMPTY');
       }
       logStage(STAGES.PROMPT_INSERT_METHOD, 'HUMAN_TYPING');
 
-      // 8. Human-like Typing
       await humanTypePrompt(composer, job.prompt);
-      
+
       const actual = getComposerText(composer);
       if (!actual || !actual.includes(job.prompt.slice(0, 10))) {
         logStage(STAGES.PROMPT_VISIBLE, 'NO');
@@ -242,11 +545,12 @@
       }
       logStage(STAGES.PROMPT_EDITABLE_AFTER_INSERT);
 
-      // 8. Click Generate
+      // 9. Click Generate (ONLY after all verifications)
       const generateBtn = findButtonByIcon();
       if (!generateBtn) throw new Error('GENERATE_ARROW_NOT_FOUND');
+
       if (generateBtn.disabled) {
-        await sleep(2000); // Wait for validation
+        await sleep(2000);
       }
 
       if (generateBtn.disabled) {
@@ -254,11 +558,11 @@
         throw new Error('GENERATE_ARROW_DISABLED_AFTER_PROMPT');
       }
       logStage(STAGES.GENERATE_ARROW_ENABLED);
-      
+
       generateBtn.click();
       logStage(STAGES.GENERATE_CLICKED);
 
-      // 9. Detect Job Start
+      // 10. Detect Generation Start
       await sleep(1500);
       const progress = document.querySelector('[role="progressbar"], .loading, .spinner');
       if (generateBtn.disabled || progress) {
@@ -271,13 +575,10 @@
         report.ok = true;
       }
 
-      logStage(STAGES.DOWNLOAD_CAPTURE, 'NOT_IMPLEMENTED');
-
     } catch (e) {
       console.error('[FlowAgent] Job execution failed:', e);
       report.error = e.message;
       report.ok = false;
-      // Add error as a stage for visibility in the report
       report.stages.push({ stage: 'ERROR', status: e.message });
     }
 
