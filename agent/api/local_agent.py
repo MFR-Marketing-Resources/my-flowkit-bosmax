@@ -41,6 +41,8 @@ class LocalAgentStatus(BaseModel):
     offline_reason: str | None = None
     auto_start_enabled: bool = False
     last_health_check: str | None = None
+    license_status: str
+    approval_status: str
     registration: LocalAgentRegistration
 
 
@@ -109,14 +111,10 @@ async def get_local_agent_status():
     client = get_flow_client()
     registration = load_registration()
 
-    # Determine offline reason
+    # Offline reason: only set if local agent backend is truly unreachable
     offline_reason = None
     if not client.connected:
-        # Check which component is missing
-        if registration.license_status == "UNLICENSED":
-            offline_reason = "LICENSE_REQUIRED"
-        else:
-            offline_reason = "LOCAL_AGENT_UNREACHABLE"
+        offline_reason = "LOCAL_AGENT_UNREACHABLE"
 
     # Check if auto-start is enabled (startup shortcut exists)
     startup_dir = pathlib.Path.home() / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup"
@@ -133,8 +131,11 @@ async def get_local_agent_status():
         offline_reason=offline_reason,
         auto_start_enabled=auto_start_enabled,
         last_health_check=_iso_now(),
+        license_status=registration.license_status,
+        approval_status=registration.approval_status,
         registration=registration,
     )
+
 
 
 @router.get("/registration", response_model=LocalAgentRegistration)

@@ -262,6 +262,8 @@ export interface LocalAgentStatus {
   offline_reason: string | null
   auto_start_enabled: boolean
   last_health_check: string | null
+  license_status: string
+  approval_status: string
   registration: LocalAgentRegistration
 }
 

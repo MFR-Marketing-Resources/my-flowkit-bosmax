@@ -403,6 +403,18 @@ export function DeploymentStatusCard({
           <div className="text-[8px] uppercase opacity-50 mb-1">Last Check</div>
           <div className="text-xs font-mono">{agentStatus.last_health_check ? new Date(agentStatus.last_health_check).toLocaleTimeString() : '—'}</div>
         </div>
+        <div className="p-2 rounded bg-black/20 border border-white/5">
+          <div className="text-[8px] uppercase opacity-50 mb-1">License</div>
+          <div className={`text-xs font-bold ${agentStatus.license_status === 'UNLICENSED' ? 'text-yellow-400' : 'text-green-400'}`}>
+            {agentStatus.license_status}
+          </div>
+        </div>
+        <div className="p-2 rounded bg-black/20 border border-white/5">
+          <div className="text-[8px] uppercase opacity-50 mb-1">Approval</div>
+          <div className={`text-xs font-bold ${agentStatus.approval_status === 'PENDING_APPROVAL' ? 'text-yellow-400' : 'text-green-400'}`}>
+            {agentStatus.approval_status}
+          </div>
+        </div>
       </div>
 
       {agentStatus.offline_reason && (

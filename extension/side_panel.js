@@ -282,7 +282,6 @@ const OFFLINE_REASON_TEXT = {
   'HOST_PERMISSION_MISSING': 'Missing host permissions',
   'CONTENT_PACK_FAILED': 'Content pack load failed',
   'BACKEND_500': 'Backend server error',
-  'LICENSE_REQUIRED': 'License key required',
 };
 
 function getOfflineReasonText(code) {
