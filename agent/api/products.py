@@ -295,12 +295,27 @@ async def list_products(
     q: str | None = Query(default=None),
     source: str | None = Query(default=None),
     readiness: str | None = Query(default=None),
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
 ):
-    products = await crud.list_products(source=_normalize_source(source) if source else None, query=q)
+    source_norm = _normalize_source(source) if source else None
+    
+    total = await crud.count_products(source=source_norm, query=q)
+    products = await crud.list_products(source=source_norm, query=q, limit=limit, offset=offset)
+    
     enriched = [await _enrich_product(product) for product in products]
     if readiness:
         enriched = [product for product in enriched if product.get("prompt_readiness_status") == readiness]
-    return enriched
+        total = len(enriched) # Approximate total if readiness filter overrides db query
+    
+    return {
+        "total_count": total,
+        "returned_count": len(enriched),
+        "has_pagination": limit > 0 and len(enriched) == limit,
+        "limit": limit,
+        "offset": offset,
+        "items": enriched
+    }
 
 
 @router.get("/search")

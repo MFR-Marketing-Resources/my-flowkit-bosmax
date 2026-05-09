@@ -376,7 +376,20 @@ async def get_product(pid: str): return await _get("product", "id", pid)
 async def update_product(pid: str, **kw): return await _update("product", "id", pid, **kw)
 async def delete_product(pid: str): return await _delete("product", "id", pid)
 
-async def list_products(source: str = None, query: str = None) -> list[dict]:
+async def count_products(source: str = None, query: str = None) -> int:
+    db = await get_db()
+    q, params = "SELECT COUNT(*) FROM product WHERE 1=1", []
+    if source:
+        q += " AND source=?"; params.append(source)
+    if query:
+        q += " AND (product_short_name LIKE ? OR product_display_name LIKE ? OR raw_product_title LIKE ?)"
+        lk = f"%{query}%"
+        params.extend([lk, lk, lk])
+    cur = await db.execute(q, params)
+    row = await cur.fetchone()
+    return row[0] if row else 0
+
+async def list_products(source: str = None, query: str = None, limit: int = None, offset: int = None) -> list[dict]:
     db = await get_db()
     q, params = "SELECT * FROM product WHERE 1=1", []
     if source:
@@ -386,6 +399,12 @@ async def list_products(source: str = None, query: str = None) -> list[dict]:
         lk = f"%{query}%"
         params.extend([lk, lk, lk])
     q += " ORDER BY created_at DESC"
+    if limit is not None:
+        q += " LIMIT ?"
+        params.append(limit)
+    if offset is not None:
+        q += " OFFSET ?"
+        params.append(offset)
     cur = await db.execute(q, params)
     return [dict(r) for r in await cur.fetchall()]
 

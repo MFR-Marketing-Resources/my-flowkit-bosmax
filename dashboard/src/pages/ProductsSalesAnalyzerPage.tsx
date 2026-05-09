@@ -131,8 +131,9 @@ export default function ProductsSalesAnalyzerPage() {
       if (sourceFilter !== 'ALL') params.set('source', sourceFilter)
       if (readinessFilter !== 'ALL') params.set('readiness', readinessFilter)
       const query = params.toString()
-      const rows = await fetchAPI<Product[]>(`/api/products${query ? `?${query}` : ''}`)
+      const res = await fetchAPI<{items: Product[], total_count: number}>(`/api/products${query ? `?${query}` : ''}`)
       // No more slice logic, it natively returns exactly what matches.
+      const rows = res.items || []
       setProducts(rows)
       setSelectedId(current => current && rows.some(row => row.id === current) ? current : rows[0]?.id || null)
     } catch (err) {
