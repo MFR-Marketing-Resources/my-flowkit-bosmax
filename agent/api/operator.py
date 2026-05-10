@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
@@ -137,6 +138,10 @@ class FlowReadinessSmokeRequest(BaseModel):
     batch_id: str | None = None
     variant_id: str | None = None
     mode: str = "F2V"
+
+
+class ReloadFlowTabRequest(BaseModel):
+    pass
 
 
 def _pack_file(name: str) -> Path:
@@ -487,11 +492,13 @@ def _classify_flow_primary_blocker(
     if not extension_connected:
         return "EXTENSION_RUNTIME_STALE_NEEDS_RELOAD"
 
-    detail = str(composer.get("detail") or composer.get("error") or "")
+    detail = str(composer.get("raw_error") or composer.get("detail") or composer.get("error") or "")
     if any(token in detail for token in ["ERR_UNKNOWN_MESSAGE_TYPE", "ERR_CONTENT_SCRIPT_STALE", "ERR_NO_RECEIVER", "ERR_MESSAGE_RESPONSE_TIMEOUT", "Timed out waiting"]):
         return "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED"
     if not composer.get("flow_tab_found"):
         return "FLOW_PROJECT_LIST_NOT_EDITOR"
+    if composer.get("flow_tab_found") and not composer.get("content_script_loaded", False):
+        return "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED"
     if not composer.get("signed_in_likely", True):
         return "FLOW_EDITOR_NOT_AUTHENTICATED"
 
@@ -507,6 +514,20 @@ def _classify_flow_primary_blocker(
     if not composer.get("composer_found"):
         return "FLOW_PROJECT_LIST_NOT_EDITOR"
     return None
+
+
+@router.post("/reload-flow-tab")
+async def reload_flow_tab(_: ReloadFlowTabRequest):
+    result = await get_flow_client().reload_flow_tab()
+    detail = str(result.get("error") or result.get("raw_error") or "")
+    primary_blocker = None
+    if any(token in detail for token in ["ERR_UNKNOWN_MESSAGE_TYPE", "ERR_CONTENT_SCRIPT_STALE", "ERR_NO_RECEIVER", "ERR_MESSAGE_RESPONSE_TIMEOUT"]):
+        primary_blocker = "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED"
+    return {
+        **result,
+        "primary_blocker": primary_blocker,
+        "last_checked_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    }
 
 
 @router.get("/preflight")
@@ -547,7 +568,13 @@ async def flow_readiness_smoke(body: FlowReadinessSmokeRequest):
         "checked_mode": body.mode,
         "extension_runtime": "PASS" if extension_connected else "FAIL",
         "flow_tab_found": composer.get("flow_tab_found", False),
+        "flow_tab_id": composer.get("flow_tab_id"),
         "flow_url": composer.get("flow_url"),
+        "extension_protocol_version": composer.get("extension_protocol_version"),
+        "content_script_protocol_version": composer.get("content_script_protocol_version"),
+        "content_script_loaded": composer.get("content_script_loaded", False),
+        "content_script_alive": composer.get("content_script_alive", False),
+        "last_content_script_seen_at": composer.get("last_content_script_seen_at"),
         "signed_in_likely": composer.get("signed_in_likely", False),
         "composer_found": composer.get("composer_found", False),
         "composer_editable": composer.get("composer_editable", False),
@@ -557,6 +584,8 @@ async def flow_readiness_smoke(body: FlowReadinessSmokeRequest):
         "flow_composer_ready": bool(composer.get("ok")),
         "execute_flow_job_smoke": execute_status,
         "primary_blocker": primary_blocker,
+        "last_checked_at": composer.get("last_checked_at") or datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "raw_error": composer.get("raw_error") or composer.get("detail") or composer.get("error"),
         "composer": composer,
         "smoke_result": smoke_result,
         "batch_context": batch_context,

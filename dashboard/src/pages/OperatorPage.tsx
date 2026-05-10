@@ -6,6 +6,7 @@ import type {
   Character,
   ContentPackSummary,
   FlowReadinessSmokeResult,
+  ReloadFlowTabResult,
   Orientation,
   OperatorProduct,
   OperatorPreflightResponse,
@@ -780,6 +781,7 @@ export default function OperatorPage() {
   const [agentStatus, setAgentStatus] = useState<LocalAgentStatus | null>(null)
   const [checkingAgent, setCheckingAgent] = useState(false)
   const [smokeTesting, setSmokeTesting] = useState(false)
+  const [reloadingFlowTab, setReloadingFlowTab] = useState(false)
   const [diagnosing, setDiagnosing] = useState(false)
   const [brief, setBrief] = useState<any | null>(null)
   const [promptPreview, setPromptPreview] = useState<string | null>(null)
@@ -1171,6 +1173,19 @@ export default function OperatorPage() {
       setMessage(`Flow readiness check failed: ${String(err)}`)
     } finally {
       setSmokeTesting(false)
+    }
+  }
+
+  async function reloadFlowTabAndReinject() {
+    setReloadingFlowTab(true)
+    try {
+      const result = await postAPI<ReloadFlowTabResult>('/api/operator/reload-flow-tab', {})
+      setMessage(result.ok ? 'Flow tab reloaded and content script re-injected.' : `Flow tab reload/reinject failed: ${result.error || 'UNKNOWN'}`)
+      await runF2VSmokeTest()
+    } catch (err) {
+      setMessage(`Flow tab reload/reinject failed: ${String(err)}`)
+    } finally {
+      setReloadingFlowTab(false)
     }
   }
 
@@ -1888,11 +1903,29 @@ export default function OperatorPage() {
 
             {flowReadiness && (
               <div className="grid gap-3 rounded-lg border p-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)' }}>
-                <div className="text-xs font-semibold" style={{ color: 'var(--text)' }}>Flow Readiness Smoke Evidence</div>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs font-semibold" style={{ color: 'var(--text)' }}>Flow Readiness Diagnostic</div>
+                  {flowReadiness.primary_blocker === 'CONTENT_SCRIPT_STALE_OR_NOT_INJECTED' && (
+                    <button
+                      onClick={reloadFlowTabAndReinject}
+                      disabled={reloadingFlowTab || smokeTesting}
+                      className="px-3 py-1.5 rounded text-[10px] font-bold"
+                      style={{ background: 'rgba(59,130,246,0.14)', color: '#93c5fd', border: '1px solid rgba(59,130,246,0.3)' }}
+                    >
+                      {reloadingFlowTab ? 'Reloading...' : 'Reload Flow Tab / Re-inject Content Script'}
+                    </button>
+                  )}
+                </div>
                 <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
                   <ReadOnlyField label="Extension Runtime" value={flowReadiness.extension_runtime} />
                   <ReadOnlyField label="Flow Tab Found" value={String(flowReadiness.flow_tab_found)} />
+                  <ReadOnlyField label="Flow Tab ID" value={flowReadiness.flow_tab_id != null ? String(flowReadiness.flow_tab_id) : '—'} />
                   <ReadOnlyField label="Flow URL" value={flowReadiness.flow_url || '—'} />
+                  <ReadOnlyField label="Extension Protocol" value={flowReadiness.extension_protocol_version || '—'} />
+                  <ReadOnlyField label="Content Script Protocol" value={flowReadiness.content_script_protocol_version || '—'} />
+                  <ReadOnlyField label="Content Script Loaded" value={String(flowReadiness.content_script_loaded)} />
+                  <ReadOnlyField label="Content Script Alive" value={String(flowReadiness.content_script_alive)} />
+                  <ReadOnlyField label="Last Content Script Seen" value={flowReadiness.last_content_script_seen_at || '—'} />
                   <ReadOnlyField label="Signed In Likely" value={String(flowReadiness.signed_in_likely)} />
                   <ReadOnlyField label="Composer Found" value={String(flowReadiness.composer_found)} />
                   <ReadOnlyField label="Composer Editable" value={String(flowReadiness.composer_editable)} />
@@ -1900,7 +1933,14 @@ export default function OperatorPage() {
                   <ReadOnlyField label="Current Mode Visible" value={flowReadiness.current_mode_visible} />
                   <ReadOnlyField label="Blocking Modal Detected" value={String(flowReadiness.blocking_modal_detected)} />
                   <ReadOnlyField label="Primary Blocker" value={flowReadiness.primary_blocker || '—'} />
+                  <ReadOnlyField label="Last Checked At" value={flowReadiness.last_checked_at || '—'} />
+                  <ReadOnlyField label="Raw Error" value={flowReadiness.raw_error || '—'} />
                 </div>
+                {flowReadiness.primary_blocker === 'CONTENT_SCRIPT_STALE_OR_NOT_INJECTED' && (
+                  <div className="rounded px-3 py-2 text-xs" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--text)' }}>
+                    CONTENT_SCRIPT_STALE_OR_NOT_INJECTED. Reload Flow Tab / Re-inject Content Script required.
+                  </div>
+                )}
               </div>
             )}
 

@@ -8,6 +8,8 @@
 const AGENT_WS_URL = 'ws://127.0.0.1:8101';
 // NOTE: This is a browser-restricted public API key — safe to ship in extension bundles.
 const API_KEY = 'AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY';
+const EXTENSION_PROTOCOL_VERSION = 'FLOWKIT_EXTENSION_V1';
+const FLOW_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
 
 let ws = null;
 let flowKey = null;
@@ -77,6 +79,10 @@ function sendTabMessageSafe(tabId, payload, timeoutMs = 4000) {
           resolve({ ok: false, error: 'ERR_TAB_RELOADED' });
           return;
         }
+        if (/message port closed before a response was received/i.test(message)) {
+          resolve({ ok: false, error: 'ERR_MESSAGE_RESPONSE_TIMEOUT' });
+          return;
+        }
         resolve({ ok: false, error: `ERR_RUNTIME_LASTERROR: ${message}` });
         return;
       }
@@ -112,6 +118,8 @@ function sendRuntimeMessageNoThrow(payload) {
   }
 }
 
+const flowContentScriptHealth = new Map();
+
 async function getFlowTab() {
   const tabs = await chrome.tabs.query({
     url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
@@ -127,6 +135,178 @@ async function ensureFlowDomScript(tabId) {
     });
   } catch (e) {
     console.warn('[FlowAgent] Script injection failed (already injected?):', e);
+  }
+}
+
+function getKnownContentScriptHealth(tabId) {
+  const last = flowContentScriptHealth.get(tabId);
+  return {
+    content_script_protocol_version: last?.content_script_protocol_version || null,
+    content_script_loaded: Boolean(last?.content_script_loaded),
+    content_script_alive: Boolean(last?.content_script_alive),
+    last_content_script_seen_at: last?.last_content_script_seen_at || null,
+  };
+}
+
+function rememberContentScriptHealth(tabId, payload) {
+  const timestamp = payload?.timestamp || new Date().toISOString();
+  flowContentScriptHealth.set(tabId, {
+    content_script_protocol_version: payload?.content_script_protocol_version || null,
+    content_script_loaded: Boolean(payload?.content_script_loaded),
+    content_script_alive: Boolean(payload?.ok && payload?.content_script_loaded),
+    last_content_script_seen_at: timestamp,
+  });
+  return getKnownContentScriptHealth(tabId);
+}
+
+function buildFlowReadinessBase(flowTab) {
+  return {
+    ok: false,
+    flow_tab_found: Boolean(flowTab),
+    flow_tab_id: flowTab?.id ?? null,
+    flow_url: flowTab?.url ?? null,
+    extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
+    content_script_protocol_version: null,
+    content_script_loaded: false,
+    content_script_alive: false,
+    last_content_script_seen_at: null,
+    signed_in_likely: false,
+    composer_found: false,
+    composer_editable: false,
+    generate_button_found: false,
+    current_mode_visible: 'UNKNOWN',
+    blocking_modal_detected: false,
+    primary_blocker: null,
+    last_checked_at: new Date().toISOString(),
+    raw_error: null,
+  };
+}
+
+function classifyFlowPrimaryBlocker(result) {
+  const rawError = String(result?.raw_error || result?.detail || result?.error || '');
+  if (['ERR_UNKNOWN_MESSAGE_TYPE', 'ERR_CONTENT_SCRIPT_STALE', 'ERR_NO_RECEIVER', 'ERR_MESSAGE_RESPONSE_TIMEOUT'].includes(rawError)) {
+    return 'CONTENT_SCRIPT_STALE_OR_NOT_INJECTED';
+  }
+  if (!result?.flow_tab_found) {
+    return 'FLOW_PROJECT_LIST_NOT_EDITOR';
+  }
+  if (!result?.content_script_loaded || !result?.content_script_alive) {
+    return 'CONTENT_SCRIPT_STALE_OR_NOT_INJECTED';
+  }
+  if (result?.content_script_protocol_version && result.content_script_protocol_version !== FLOW_DOM_PROTOCOL_VERSION) {
+    return 'CONTENT_SCRIPT_STALE_OR_NOT_INJECTED';
+  }
+  if (!result?.signed_in_likely) {
+    return 'FLOW_EDITOR_NOT_AUTHENTICATED';
+  }
+  if (result?.flow_url && !result.flow_url.includes('/project/') && !result.flow_url.includes('/edit/')) {
+    return 'FLOW_PROJECT_LIST_NOT_EDITOR';
+  }
+  if (result?.composer_found && !result?.composer_editable) {
+    return 'COMPOSER_NOT_EDITABLE';
+  }
+  if (result?.composer_found && !result?.generate_button_found) {
+    return 'GENERATE_BUTTON_NOT_FOUND';
+  }
+  if (!result?.composer_found) {
+    return 'FLOW_PROJECT_LIST_NOT_EDITOR';
+  }
+  return null;
+}
+
+function finalizeFlowReadiness(result) {
+  const finalized = {
+    ...result,
+    last_checked_at: new Date().toISOString(),
+  };
+  finalized.primary_blocker = classifyFlowPrimaryBlocker(finalized);
+  return finalized;
+}
+
+async function pingFlowDomScript(flowTab) {
+  const response = await sendTabMessageSafe(flowTab.id, { type: 'FLOWKIT_DIAGNOSTIC_PING' });
+  if (response?.ok && response?.content_script_loaded) {
+    const health = rememberContentScriptHealth(flowTab.id, response);
+    return {
+      ...health,
+      raw_error: null,
+    };
+  }
+
+  const health = getKnownContentScriptHealth(flowTab.id);
+  return {
+    ...health,
+    raw_error: response?.error || 'ERR_NO_RECEIVER',
+  };
+}
+
+async function waitForTabReload(tabId, timeoutMs = 10000) {
+  const tab = await chrome.tabs.get(tabId);
+  if (tab.status === 'complete') {
+    return tab;
+  }
+
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error('ERR_MESSAGE_RESPONSE_TIMEOUT'));
+    }, timeoutMs);
+
+    const listener = (updatedTabId, changeInfo, updatedTab) => {
+      if (updatedTabId !== tabId || changeInfo.status !== 'complete') {
+        return;
+      }
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(updatedTab);
+    };
+
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+async function handleReloadFlowTab() {
+  const flowTab = await getFlowTab();
+  if (!flowTab) {
+    return {
+      ok: false,
+      error: 'FLOW_TAB_NOT_FOUND',
+      action_taken: 'NONE',
+      flow_tab_id: null,
+      flow_url: null,
+      extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
+    };
+  }
+
+  try {
+    await chrome.tabs.reload(flowTab.id);
+    const reloadedTab = await waitForTabReload(flowTab.id);
+    await ensureFlowDomScript(flowTab.id);
+    const diagnostic = await pingFlowDomScript(reloadedTab);
+    return {
+      ok: !diagnostic.raw_error,
+      error: diagnostic.raw_error,
+      action_taken: 'RELOAD_AND_REINJECT',
+      flow_tab_id: flowTab.id,
+      flow_url: reloadedTab?.url || flowTab.url,
+      extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
+      ...diagnostic,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: String(error?.message || error),
+      action_taken: 'RELOAD_AND_REINJECT',
+      flow_tab_id: flowTab.id,
+      flow_url: flowTab.url,
+      extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
+      ...getKnownContentScriptHealth(flowTab.id),
+    };
   }
 }
 
@@ -347,6 +527,9 @@ function connectToAgent() {
         console.log('[FlowAgent] Received callback secret');
       } else if (msg.method === 'CHECK_FLOW_COMPOSER_READY') {
         const result = await handleCheckFlowComposerReady(msg.params?.mode);
+        replyToAgent(msg, result);
+      } else if (msg.method === 'RELOAD_FLOW_TAB') {
+        const result = await handleReloadFlowTab();
         replyToAgent(msg, result);
       } else if (msg.method === 'EXECUTE_FLOW_JOB') {
         const result = await handleExecuteFlowJob(msg.params.job);
@@ -755,6 +938,10 @@ async function handleMessage(msg, sender) {
     return await handleCheckFlowComposerReady(msg.mode);
   }
 
+  if (msg.type === 'RELOAD_FLOW_TAB') {
+    return await handleReloadFlowTab();
+  }
+
   if (msg.type === 'EXECUTE_FLOW_JOB') {
     return await handleExecuteFlowJob(msg.job);
   }
@@ -821,6 +1008,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
   }
 
+  if (message.type === 'RELOAD_FLOW_TAB') {
+    return respondAsync(sendResponse, async () => {
+      const result = await handleReloadFlowTab();
+      return result && typeof result === 'object' && 'ok' in result
+        ? result
+        : { ok: true, data: result };
+    });
+  }
+
   return respondAsync(sendResponse, async () => {
     const data = await handleMessage(message, sender);
     return (data && typeof data === 'object' && 'ok' in data)
@@ -845,72 +1041,62 @@ async function handleExecuteFlowJob(job) {
 
 async function handleCheckFlowComposerReady(mode) {
   const flowTab = await getFlowTab();
+  const base = buildFlowReadinessBase(flowTab);
   if (!flowTab) {
-    return {
-      ok: false,
-      error: 'ABORT_FLOW_COMPOSER_NOT_READY',
-      flow_tab_found: false,
-      flow_url: null,
-      signed_in_likely: false,
-      composer_found: false,
-      composer_editable: false,
-      generate_button_found: false,
-      current_mode_visible: 'UNKNOWN',
-      blocking_modal_detected: false,
-    };
+    return finalizeFlowReadiness({
+      ...base,
+      error: 'FLOW_PROJECT_LIST_NOT_EDITOR',
+      raw_error: 'ERR_NO_FLOW_TAB',
+    });
   }
 
   await ensureFlowDomScript(flowTab.id);
+
+  const diagnostic = await pingFlowDomScript(flowTab);
+  if (diagnostic.raw_error) {
+    return finalizeFlowReadiness({
+      ...base,
+      ...diagnostic,
+      error: diagnostic.raw_error,
+    });
+  }
 
   const response = await sendTabMessageSafe(flowTab.id, {
     type: 'CHECK_FLOW_COMPOSER_READY',
     mode,
   });
-  if (response?.error === 'MESSAGE_RESPONSE_TIMEOUT') {
-    return {
-      ok: false,
-      error: 'ABORT_FLOW_COMPOSER_NOT_READY',
-      flow_tab_found: true,
-      flow_url: flowTab.url,
-      signed_in_likely: false,
-      composer_found: false,
-      composer_editable: false,
-      generate_button_found: false,
-      current_mode_visible: 'UNKNOWN',
-      blocking_modal_detected: false,
+  if (response?.error === 'ERR_MESSAGE_RESPONSE_TIMEOUT') {
+    return finalizeFlowReadiness({
+      ...base,
+      ...diagnostic,
+      error: 'ERR_MESSAGE_RESPONSE_TIMEOUT',
+      raw_error: 'ERR_MESSAGE_RESPONSE_TIMEOUT',
       detail: 'Timed out waiting for content script readiness response.',
-    };
+    });
   }
   if (response?.error) {
-    return {
-      ok: false,
-      error: 'ABORT_FLOW_COMPOSER_NOT_READY',
-      flow_tab_found: true,
-      flow_url: flowTab.url,
-      signed_in_likely: false,
-      composer_found: false,
-      composer_editable: false,
-      generate_button_found: false,
-      current_mode_visible: 'UNKNOWN',
-      blocking_modal_detected: false,
+    return finalizeFlowReadiness({
+      ...base,
+      ...diagnostic,
+      error: response.error,
+      raw_error: response.error,
       detail: response.error,
-    };
+    });
   }
   if (!response?.ok && !response?.error) {
-    return {
-      ok: false,
+    return finalizeFlowReadiness({
+      ...base,
+      ...diagnostic,
       error: 'ABORT_FLOW_COMPOSER_NOT_READY',
-      flow_tab_found: true,
-      flow_url: flowTab.url,
-      signed_in_likely: false,
-      composer_found: false,
-      composer_editable: false,
-      generate_button_found: false,
-      current_mode_visible: 'UNKNOWN',
-      blocking_modal_detected: false,
-    };
+      raw_error: 'ERR_EMPTY_COMPOSER_RESPONSE',
+    });
   }
-  return response;
+  return finalizeFlowReadiness({
+    ...base,
+    ...diagnostic,
+    ...response,
+    flow_url: response?.flow_url || flowTab.url,
+  });
 }
 
 // ─── TRPC Media URL Extractor ──────────────────────────────

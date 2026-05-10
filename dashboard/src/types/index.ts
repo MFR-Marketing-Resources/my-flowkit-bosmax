@@ -402,7 +402,13 @@ export interface FlowReadinessSmokeResult {
   checked_mode: string
   extension_runtime: 'PASS' | 'FAIL'
   flow_tab_found: boolean
+  flow_tab_id: number | null
   flow_url: string | null
+  extension_protocol_version: string | null
+  content_script_protocol_version: string | null
+  content_script_loaded: boolean
+  content_script_alive: boolean
+  last_content_script_seen_at: string | null
   signed_in_likely: boolean
   composer_found: boolean
   composer_editable: boolean
@@ -412,7 +418,24 @@ export interface FlowReadinessSmokeResult {
   flow_composer_ready: boolean
   execute_flow_job_smoke: string
   primary_blocker: string | null
+  last_checked_at: string | null
+  raw_error: string | null
   batch_context: OperatorBatchContext | null
+}
+
+export interface ReloadFlowTabResult {
+  ok: boolean
+  error: string | null
+  action_taken: string
+  flow_tab_id: number | null
+  flow_url: string | null
+  extension_protocol_version: string | null
+  content_script_protocol_version: string | null
+  content_script_loaded: boolean
+  content_script_alive: boolean
+  last_content_script_seen_at: string | null
+  primary_blocker: string | null
+  last_checked_at: string | null
 }
 
 export interface LocalAgentRegistration {

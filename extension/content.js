@@ -8,6 +8,7 @@
 if (!window._flowKitInjected) {
   window._flowKitInjected = true;
   console.log('[FlowAgent] Content script injected');
+  const CAPTCHA_PROTOCOL_VERSION = 'FLOWKIT_CAPTCHA_V1';
 
   function respondAsync(sendResponse, task) {
     let settled = false;
@@ -44,7 +45,17 @@ if (!window._flowKitInjected) {
       return { ok: true };
     }
 
-    return { ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' };
+    if (msg.type === 'FLOWKIT_CAPTCHA_PING') {
+      return {
+        ok: true,
+        content_script_loaded: true,
+        content_script_protocol_version: CAPTCHA_PROTOCOL_VERSION,
+        location_href: window.location.href,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    return null;
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -53,8 +64,18 @@ if (!window._flowKitInjected) {
       return false;
     }
 
+    if (message.type === 'FLOWKIT_CAPTCHA_PING') {
+      sendResponse({
+        ok: true,
+        content_script_loaded: true,
+        content_script_protocol_version: CAPTCHA_PROTOCOL_VERSION,
+        location_href: window.location.href,
+        timestamp: new Date().toISOString(),
+      });
+      return false;
+    }
+
     if (message.type !== 'GET_CAPTCHA') {
-      sendResponse({ ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' });
       return false;
     }
 

@@ -13,6 +13,7 @@
 
 (function() {
   const FLOW_KIT_DOM_VERSION = '2026-05-10-live-gates';
+  const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
 
   if (window._flowKitDomInjectedVersion === FLOW_KIT_DOM_VERSION && window._flowKitDomListener) {
     console.log('[FlowAgent] Flow DOM Executor already present');
@@ -101,6 +102,16 @@
       .then((payload) => done(payload))
       .catch((error) => done({ ok: false, error: String(error?.message || error) }));
     return true;
+  }
+
+  function buildDiagnosticPingResponse() {
+    return {
+      ok: true,
+      content_script_loaded: true,
+      content_script_protocol_version: FLOW_KIT_DOM_PROTOCOL_VERSION,
+      location_href: window.location.href,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   function isVisible(el) {
@@ -734,6 +745,11 @@
   }
 
   const flowDomMessageListener = (msg, sender, sendResponse) => {
+    if (msg.type === 'FLOWKIT_DIAGNOSTIC_PING') {
+      sendResponse(buildDiagnosticPingResponse());
+      return false;
+    }
+
     if (msg.type === 'CHECK_FLOW_COMPOSER_READY') {
       try {
         sendResponse(checkFlowComposerReady(msg.mode));
