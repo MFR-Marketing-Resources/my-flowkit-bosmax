@@ -103,3 +103,87 @@ def test_food_container_physics_mapping():
 
     assert result["physics_class"] == "RIGID_CONTAINER"
     assert "lid" in result["camera_handling_notes"]
+
+
+def test_household_cleaner_uses_household_packaged_goods_family():
+    result = resolve_product_physics(
+        product_name="5 liter sabun dobi malaya liquid detergen",
+        category="Home Supplies",
+        subcategory="Home Care Supplies",
+        type_name="Household Cleaners",
+    )
+
+    assert result["physics_class"] == "HOUSEHOLD_PACKAGED_GOODS"
+    assert "label" in result["recommended_grip"] or "support" in result["recommended_grip"]
+
+
+def test_square_hijab_uses_modestwear_family():
+    result = resolve_product_physics(
+        product_name="Amyrahijab chiffon premium",
+        category="Muslim Fashion",
+        subcategory="Hijabs",
+        type_name="Square Hijabs",
+    )
+
+    assert result["physics_class"] == "MODESTWEAR_TEXTILE"
+    assert "fabric" in result["recommended_grip"]
+
+
+def test_skincare_cleanser_uses_skincare_family():
+    result = resolve_product_physics(
+        product_name="Bestie bundle cleanser",
+        category="Beauty & Personal Care",
+        subcategory="Skincare",
+        type_name="Facial Cleansers",
+    )
+
+    assert result["physics_class"] == "SKINCARE_JAR_OR_TUBE"
+    assert "label" in result["camera_handling_notes"] or "seal" in result["camera_handling_notes"]
+
+
+def test_phone_charger_uses_electronics_family():
+    result = resolve_product_physics(
+        product_name="UGREEN PD20W fast charger",
+        category="Phones & Electronics",
+        subcategory="Phone Accessories",
+        type_name="Cables, Chargers & Adapters",
+    )
+
+    assert result["physics_class"] == "ELECTRONICS_SMALL_DEVICE"
+    assert "ports" in result["camera_handling_notes"] or "controls" in result["camera_handling_notes"]
+
+
+def test_religion_book_uses_stationery_family():
+    result = resolve_product_physics(
+        product_name="100 doa taubat",
+        category="Books, Magazines & Audio",
+        subcategory="Humanities & Social Sciences",
+        type_name="Religion & Philosophy",
+    )
+
+    assert result["physics_class"] == "STATIONERY_PACK"
+    assert "printed" in result["handling_notes"] or "readable" in result["camera_handling_notes"]
+
+
+def test_supplement_uses_bottle_family():
+    result = resolve_product_physics(
+        product_name="Pentavite men multivitamin",
+        category="Health",
+        subcategory="Supplements",
+        type_name="Male Health",
+    )
+
+    assert result["physics_class"] == "SUPPLEMENT_BOTTLE"
+    assert "bottle" in result["handling_notes"]
+
+
+def test_wall_sticker_uses_small_rigid_decor_family():
+    result = resolve_product_physics(
+        product_name="Stiker Dinding PVC Mewah",
+        category="Tools & Hardware",
+        subcategory="Hardware",
+        type_name="Fasteners & Hooks",
+    )
+
+    assert result["physics_class"] == "SMALL_RIGID_DECOR"
+    assert "decorative" in result["handling_notes"] or "silhouette" in result["handling_notes"]
