@@ -174,29 +174,64 @@
     return null;
   }
 
-  function findButtonByIcon() {
+  function findGenerateButtonNearComposer() {
+    // 1. Target by specific text found in diagnostic
+    const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+    const createBtn = buttons.find(btn => {
+      if (!isVisible(btn)) return false;
+      const text = normalizeText(btn.textContent);
+      // arrow_forward Create or just Create
+      if (text.includes('Create') || text.includes('Generate')) return true;
+      const aria = btn.getAttribute('aria-label') || '';
+      if (aria.includes('Create') || aria.includes('Generate')) return true;
+      return false;
+    });
+    if (createBtn) return createBtn;
+
+    // 2. Fallback to icon path detection
     const paths = document.querySelectorAll('path');
     for (const path of paths) {
       const d = path.getAttribute('d') || '';
       if (d.includes('M10 20l-1.41-1.41L15.17 12 8.59 5.41 10 4l8 8-8 8z') ||
-          d.includes('M10 20') ||
           d.includes('M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z')) {
-        return path.closest('button');
+        const btn = path.closest('button');
+        if (btn && isVisible(btn)) return btn;
       }
     }
-    const composer = document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
+
+    // 3. Fallback to proximity to composer
+    const composer = findComposerElement();
     if (composer) {
-      const parent = composer.parentElement;
-      if (parent) {
-        const buttons = parent.querySelectorAll('button');
-        if (buttons.length > 0) return buttons[buttons.length - 1];
+      let current = composer.parentElement;
+      for (let i = 0; i < 3 && current; i++) {
+        const siblingButtons = current.querySelectorAll('button');
+        if (siblingButtons.length > 0) {
+          const lastBtn = siblingButtons[siblingButtons.length - 1];
+          if (isVisible(lastBtn)) return lastBtn;
+        }
+        current = current.parentElement;
       }
     }
-    return document.querySelector('button[aria-label="Generate"]') || document.querySelector('button[title="Generate"]');
+
+    return document.querySelector('button[aria-label*="Create"], button[aria-label*="Generate"]');
   }
 
   function findComposerElement() {
     const candidates = Array.from(document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]'));
+
+    // 1. Target by specific aria-label found in diagnostic
+    const specific = candidates.find(el => el.getAttribute('aria-label') === 'Editable text' && isVisible(el));
+    if (specific) return specific;
+
+    // 2. Target by placeholder/text content
+    const withPlaceholder = candidates.find(el => {
+      if (!isVisible(el)) return false;
+      const text = el.textContent || el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || '';
+      return text.includes('What do you want to create?');
+    });
+    if (withPlaceholder) return withPlaceholder;
+
+    // 3. General visible candidate
     return candidates.find(isVisible) || candidates[0] || null;
   }
 
@@ -302,14 +337,29 @@
     const imageModeBtn = findElementByText('button, div[role="button"]', 'Image');
     
     // Check which tab/mode is actually selected/active
-    if (videoModeBtn && videoModeBtn.getAttribute('aria-selected') === 'true') {
+    const isSelected = (el) => {
+      if (!el) return false;
+      if (el.getAttribute('aria-selected') === 'true') return true;
+      if (el.classList.toString().includes('active')) return true;
+      // Check for material "selected" state (often a background color or border)
+      const style = window.getComputedStyle(el);
+      if (style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent') {
+         // This is heuristic, but often works when aria-selected is missing
+      }
+      return false;
+    };
+
+    if (isSelected(videoModeBtn)) {
       observed.topMode = 'Video';
-    } else if (imageModeBtn && imageModeBtn.getAttribute('aria-selected') === 'true') {
+    } else if (isSelected(imageModeBtn)) {
       observed.topMode = 'Image';
-    } else if (videoModeBtn && videoModeBtn.classList.toString().includes('active')) {
-      observed.topMode = 'Video';
-    } else if (imageModeBtn && imageModeBtn.classList.toString().includes('active')) {
-      observed.topMode = 'Image';
+    } else {
+      // Final fallback: check for visible markers that only appear in one mode
+      if (document.body.innerText.includes('Frames') || document.body.innerText.includes('Start') || document.body.innerText.includes('End')) {
+        observed.topMode = 'Video';
+      } else if (document.body.innerText.includes('Nano Banana')) {
+        observed.topMode = 'Image';
+      }
     }
 
     // 2. Detect submode (Frames vs Ingredients)
@@ -317,14 +367,17 @@
       const framesBtn = findElementByText('button, div[role="button"]', 'Frames');
       const ingredientsBtn = findElementByText('button, div[role="button"]', 'Ingredients');
       
-      if (framesBtn && framesBtn.getAttribute('aria-selected') === 'true') {
+      if (isSelected(framesBtn)) {
         observed.subMode = 'Frames';
-      } else if (ingredientsBtn && ingredientsBtn.getAttribute('aria-selected') === 'true') {
+      } else if (isSelected(ingredientsBtn)) {
         observed.subMode = 'Ingredients';
-      } else if (framesBtn && framesBtn.classList.toString().includes('active')) {
-        observed.subMode = 'Frames';
-      } else if (ingredientsBtn && ingredientsBtn.classList.toString().includes('active')) {
-        observed.subMode = 'Ingredients';
+      } else {
+        // Fallback: check for visible upload slots
+        if (document.body.innerText.includes('Start') || document.body.innerText.includes('End')) {
+          observed.subMode = 'Frames';
+        } else if (document.body.innerText.includes('Ingredients')) {
+          observed.subMode = 'Ingredients';
+        }
       }
     }
 
@@ -388,7 +441,7 @@
     observed.composerPresent = !!findComposerElement();
 
     // 8. Check generate button state
-    const generateBtn = findButtonByIcon();
+    const generateBtn = findGenerateButtonNearComposer();
     if (generateBtn) {
       observed.generateButtonState = generateBtn.disabled ? 'disabled' : 'enabled';
     }
@@ -492,7 +545,7 @@
   function checkFlowComposerReady(mode) {
     const observed = observeFlowState();
     const composer = findComposerElement();
-    const generateBtn = findButtonByIcon();
+    const generateBtn = findGenerateButtonNearComposer();
     const blockingModal = detectBlockingModal();
     const currentModeVisible = observed.topMode === 'UNKNOWN'
       ? 'UNKNOWN'
@@ -840,7 +893,7 @@
       logStage(STAGES.PROMPT_EDITABLE_AFTER_INSERT);
 
       // 9. Click Generate (ONLY after all verifications)
-      const generateBtn = findButtonByIcon();
+      const generateBtn = findGenerateButtonNearComposer();
       if (!generateBtn) throw new Error('GENERATE_ARROW_NOT_FOUND');
 
       if (generateBtn.disabled) {
