@@ -22,6 +22,30 @@ async def test_enrich_product_marks_test_rows_and_local_cache_missing():
     assert enriched["image_http_status"] == 404
 
 
+async def test_enrich_product_normalizes_baby_wipes_price_commission_and_taxonomy():
+    enriched = await enrich_product(
+        {
+            "id": "baby_wipes_1",
+            "source": "FASTMOSS",
+            "raw_product_title": "Baby Wipes Newborn Wet Tissue Tisue Basah Non-alcohol Paraben-free Fragrance-free Babies Wipe Tisu Basah Bayi",
+            "product_short_name": "Baby Wipes Newborn Wet",
+            "price": 8.360000000000001,
+            "currency": "MYR",
+            "commission_rate": "6%",
+            "commission_amount": None,
+            "asset_status": "DOWNLOADED",
+        }
+    )
+
+    assert enriched["category"] == "Baby Care"
+    assert enriched["subcategory"] == "Diapering / Baby Wipes / Wet Wipes"
+    assert enriched["type"] == "Baby Wipes"
+    assert enriched["price"] == 8.36
+    assert enriched["commission_amount"] == 0.5
+    assert enriched["product_type_id"] == "BABY_WIPES"
+    assert enriched["copywriting_angle"] == "Trust-led baby hygiene and gentle newborn care"
+
+
 def test_catalog_default_hides_test_products_and_prioritizes_ready_fastmoss():
     items = [
         {

@@ -69,6 +69,8 @@ def resolve_product_family(product: dict[str, Any]) -> str:
     subcategory = normalize_mapping_text(product.get("subcategory"))
     type_name = normalize_mapping_text(product.get("type"))
 
+    if _contains_any(haystack, ["baby wipes", "newborn wet wipes", "wet wipes", "wet tissue", "baby wet tissue", "tisu basah", "tisu basah baby", "baby tissue", "wipes newborn"]):
+        return "baby_wipes"
     if _contains_any(haystack, ["diaper", "lampin", "pull ups", "baby diaper"]):
         return "baby_diaper"
     if _contains_any(haystack, ["instant sarung", "sarung syria", "sarung", "syria", "khimar", "telekung", "tudung labuh", "moscrepe"]):
@@ -91,6 +93,8 @@ def resolve_product_family(product: dict[str, Any]) -> str:
         return "toy_play"
     if category == "fashion":
         return "fashion_apparel"
+    if category == "baby care" and ("baby wipes" in type_name or "wet wipes" in subcategory or "diapering" in subcategory):
+        return "baby_wipes"
     if category == "baby care":
         return "baby_diaper"
     if category == "food beverage" or category == "food and beverage":
@@ -113,6 +117,17 @@ def resolve_creative_profile(product: dict[str, Any]) -> dict[str, Any]:
     physics_hint = (product.get("section_5_product_physics_prompt") or "Keep product handling natural and physically plausible.").strip()
 
     profiles: dict[str, dict[str, str]] = {
+        "baby_wipes": {
+            "product_type_id": "BABY_WIPES",
+            "handling_notes": "Use supportive soft-pack handling with the front panel, opening edge, and seal kept readable and natural.",
+            "scene_context": "clean baby-care tabletop, nursery shelf, or parent-trust hygiene scene with gentle household realism",
+            "camera_style": "clean baby-care product close-up",
+            "camera_behavior": "slow trust-led reveal with stable front-facing pack support",
+            "camera_shot": "hero soft-pack close-up with seal and label detail cut-ins",
+            "section_4_hint": "Show the wipes pack in a trust-led baby-care reveal that emphasizes gentle newborn hygiene, pack softness, and clean handling.",
+            "section_6_copy_hint": "Keep copy reassuring and hygiene-led without medical, sterilization, or rash-prevention guarantees.",
+            "section_9_overlay_hint": f"Overlay {short_name} with a gentle baby-care hygiene line and no medical claims.",
+        },
         "baby_diaper": {
             "product_type_id": "BABY_CARE_SOFT_PACK",
             "handling_notes": "Use supportive two-hand pack presentation with the front panel square and readable.",

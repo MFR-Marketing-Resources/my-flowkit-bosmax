@@ -2,6 +2,7 @@ import logging
 import httpx
 import json
 import re
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 from pathlib import Path
 from agent.db import crud
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 IMAGE_READY_STATES = {"IMAGE_READY", "IMAGE_CACHE_READY"}
 MODE_IMAGE_DEPENDENT = ("Images", "Ingredients", "Frames")
 TEST_PRODUCT_NAMES = {"test product", "test item", "fixture product"}
+_CURRENCY_QUANTUM = Decimal("0.01")
 
 
 def resolve_cached_image_path(payload: dict[str, Any]) -> Path | None:
@@ -77,24 +79,38 @@ def display_name(raw_title: str, override: str | None = None) -> str:
         return override.strip()
     return " ".join(raw_title.split()[:9]).strip()
 
-def parse_percentage(value: str | None) -> float | None:
+def _parse_decimal(value: Any) -> Decimal | None:
+    if value in {None, ""}:
+        return None
+    try:
+        return Decimal(str(value).strip())
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def normalize_currency_amount(value: Any) -> float | None:
+    amount = _parse_decimal(value)
+    if amount is None:
+        return None
+    return float(amount.quantize(_CURRENCY_QUANTUM, rounding=ROUND_HALF_UP))
+
+
+def parse_percentage(value: str | None) -> Decimal | None:
     if not value:
         return None
     try:
-        return float(str(value).replace("%", "").strip()) / 100.0
-    except ValueError:
+        percentage = Decimal(str(value).replace("%", "").strip())
+    except (InvalidOperation, ValueError):
         return None
+    return percentage / Decimal("100")
 
 def derive_commission_amount(price: Any, commission_rate: str | None) -> float | None:
-    if price in {None, ""}:
-        return None
+    normalized_price = _parse_decimal(price)
     rate = parse_percentage(commission_rate)
-    if rate is None:
+    if normalized_price is None or rate is None:
         return None
-    try:
-        return round(float(price) * rate, 2)
-    except (TypeError, ValueError):
-        return None
+    commission_amount = normalized_price * rate
+    return float(commission_amount.quantize(_CURRENCY_QUANTUM, rounding=ROUND_HALF_UP))
 
 def json_load_list(value: Any) -> list[str]:
     if value is None:
@@ -199,9 +215,14 @@ async def enrich_product(product: dict[str, Any], *, persist: bool = False) -> d
     payload = dict(product)
     payload["source"] = normalize_source(payload.get("source"))
     payload["source_url"] = payload.get("source_url") or payload.get("tiktok_product_url")
-    payload["price"] = payload.get("price") if payload.get("price") is not None else payload.get("price_min")
+    payload["price"] = normalize_currency_amount(payload.get("price") if payload.get("price") is not None else payload.get("price_min"))
+    payload["price_min"] = normalize_currency_amount(payload.get("price_min"))
+    payload["price_max"] = normalize_currency_amount(payload.get("price_max"))
     payload["currency"] = payload.get("currency") or "MYR"
     payload["commission_rate"] = payload.get("commission_rate") or payload.get("commission")
+    payload["commission_amount"] = normalize_currency_amount(payload.get("commission_amount"))
+    if payload["commission_amount"] is None:
+        payload["commission_amount"] = derive_commission_amount(payload.get("price"), payload.get("commission_rate"))
     payload["image_asset_status"] = payload.get("image_asset_status") or payload.get("asset_status")
     payload["mode_recommendations"] = json_load_list(payload.get("mode_recommendations"))
     payload["unsafe_handling_rules"] = json_load_list(payload.get("unsafe_handling_rules"))

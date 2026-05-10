@@ -121,8 +121,17 @@ def _match_keyword_rule(normalized_title: str) -> tuple[dict[str, Any] | None, l
         
     by_id = {rule.get("id"): (rule, matches) for rule, matches in matched_rules}
     has_baby = "baby_diaper" in by_id
+    has_baby_wipes = "baby_wipes" in by_id
     has_modestwear = "fashion_modestwear" in by_id
     has_fashion = any(rule.get("id") in {"fashion_bottoms", "fashion_sportswear"} for rule, _ in matched_rules)
+
+    if has_baby_wipes and "beauty_fragrance" in by_id:
+        baby_wipes_rule = by_id["baby_wipes"][0]
+        return baby_wipes_rule, ["Conflict resolved: baby_wipes outranked beauty_fragrance due wipes/tisu basah keywords."]
+
+    if has_baby_wipes and has_baby:
+        baby_wipes_rule = by_id["baby_wipes"][0]
+        return baby_wipes_rule, ["Conflict resolved: baby_wipes outranked baby_diaper due explicit wipes keywords."]
     
     if has_baby and has_fashion:
         baby_rule = by_id["baby_diaper"][0]

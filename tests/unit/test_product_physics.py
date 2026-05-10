@@ -48,6 +48,19 @@ def test_body_spray_physics_mapping():
     assert "label visible" in result["recommended_grip"]
 
 
+def test_baby_wipes_physics_mapping():
+    result = resolve_product_physics(
+        product_name="Baby Wipes Newborn Wet Tissue Tisue Basah Fragrance-free",
+        category="Baby Care",
+        subcategory="Diapering / Baby Wipes / Wet Wipes",
+        type_name="Baby Wipes",
+    )
+
+    assert result["physics_class"] == "WIPES_SOFT_PACK"
+    assert "flat palm support" in result["recommended_grip"]
+    assert "opening edge" in result["camera_handling_notes"]
+
+
 def test_sambal_physics_mapping():
     result = resolve_product_physics(
         product_name="Sambal Nyet extra pedas",

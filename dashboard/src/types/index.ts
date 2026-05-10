@@ -249,6 +249,7 @@ export interface Product {
   currency?: string | null
   commission_amount?: number | null
   commission_rate?: string | null
+  product_type_id?: string | null
   product_type?: string | null
   silo?: string | null
   trigger_id?: string | null

@@ -3,6 +3,7 @@ import type { ChangeEvent, FormEvent } from 'react'
 
 import { fetchAPI, patchAPI, postAPI } from '../api/client'
 import type { Product } from '../types'
+import { formatCommissionDisplay, formatCurrencyDisplay, formatTaxonomyPath } from '../utils/productDisplay'
 
 type ManualFormState = Partial<Product> & {
   image_base64?: string | null
@@ -235,8 +236,8 @@ export default function ProductsSalesAnalyzerPage() {
     try {
       const payload = {
         ...manualForm,
-        price: manualForm.price ? Number(manualForm.price) : null,
-        commission_amount: manualForm.commission_amount ? Number(manualForm.commission_amount) : null,
+        price: manualForm.price === undefined ? null : Number(manualForm.price),
+        commission_amount: manualForm.commission_amount === undefined ? null : Number(manualForm.commission_amount),
       }
       const created = await postAPI<Product>('/api/products/manual', payload)
       setManualForm(emptyManualForm())
@@ -484,11 +485,11 @@ export default function ProductsSalesAnalyzerPage() {
                     <div className="text-xs font-semibold truncate text-slate-200" title={product.raw_product_title}>{product.product_short_name || product.raw_product_title}</div>
                     {product.is_test_product ? <StatBadge label="TEST" tone="risk" /> : null}
                   </div>
-                  <div className="text-[10px] text-slate-400 truncate mt-0.5">{product.category} &rsaquo; {product.subcategory} &rsaquo; {product.type}</div>
+                  <div className="text-[10px] text-slate-400 truncate mt-0.5">{formatTaxonomyPath(product.category, product.subcategory, product.type)}</div>
                   <div className="text-[10px] text-slate-500 truncate mt-0.5">{imageStatusLabel(product)}</div>
                   <div className="flex items-center justify-between mt-1 text-[10px]">
-                     <span className="text-emerald-400">{product.currency} {fieldValue(product.price)}</span>
-                     <span className="text-orange-300">Comm: {fieldValue(product.commission_amount)} / {fieldValue(product.commission_rate)}</span>
+                    <span className="text-emerald-400">{formatCurrencyDisplay(product.price, product.currency)}</span>
+                    <span className="text-orange-300">{formatCommissionDisplay(product)}</span>
                   </div>
                 </div>
               </div>
@@ -539,9 +540,9 @@ export default function ProductsSalesAnalyzerPage() {
                   </div>
 
                   <div className="space-y-1 mt-4">
-                    <KV label="Category Taxonomy" value={`${selectedProduct.category} > ${selectedProduct.subcategory} > ${selectedProduct.type}`} />
-                    <KV label="Price & Currency" value={`${fieldValue(selectedProduct.price)} ${fieldValue(selectedProduct.currency)}`} />
-                    <KV label="Commission" value={`Amount: ${fieldValue(selectedProduct.commission_amount)} | Rate: ${fieldValue(selectedProduct.commission_rate)}`} />
+                    <KV label="Category Taxonomy" value={formatTaxonomyPath(selectedProduct.category, selectedProduct.subcategory, selectedProduct.type)} />
+                    <KV label="Price & Currency" value={formatCurrencyDisplay(selectedProduct.price, selectedProduct.currency)} />
+                    <KV label="Commission" value={formatCommissionDisplay(selectedProduct)} />
                     <KV label="Product Type ID" value={selectedProduct.product_type} />
                     <KV label="Silo" value={selectedProduct.silo} />
                     <KV label="Copywriting Angle" value={selectedProduct.copywriting_angle} />

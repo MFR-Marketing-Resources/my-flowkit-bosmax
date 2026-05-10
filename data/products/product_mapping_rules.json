@@ -19,6 +19,15 @@
       "claim_risk_level": "LOW"
     },
     {
+      "id": "baby_wipes",
+      "keywords": ["baby wipes", "newborn wet wipes", "wet wipes", "wet tissue", "baby wet tissue", "tisu basah", "tisu basah baby", "baby tissue", "wipes newborn"],
+      "category": "Baby Care",
+      "subcategory": "Diapering / Baby Wipes / Wet Wipes",
+      "type": "Baby Wipes",
+      "copywriting_angle": "Trust-led baby hygiene and gentle newborn care",
+      "claim_risk_level": "LOW"
+    },
+    {
       "id": "fashion_modestwear",
       "keywords": ["instant sarung", "sarung syria", "sarung", "syria", "moscrepe", "telekung", "khimar"],
       "category": "Fashion",
@@ -171,6 +180,20 @@
       "formula": "PAS",
       "mode_recommendations": ["Images", "Ingredients", "Frames"],
       "copywriting_angle": "Trust-led baby care",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Baby Care",
+        "subcategory": "Diapering / Baby Wipes / Wet Wipes",
+        "type": "Baby Wipes"
+      },
+      "product_type": "BABY_WIPES",
+      "silo": "baby_care_universal_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led baby hygiene and gentle newborn care",
       "claim_risk_level": "LOW"
     },
     {

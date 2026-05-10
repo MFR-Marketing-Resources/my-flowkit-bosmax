@@ -45,6 +45,22 @@ def _rule(
 
 PHYSICS_RULES: list[tuple[list[str], dict[str, Any]]] = [
     (
+        ["baby wipes", "newborn wet wipes", "wet wipes", "wet tissue", "baby wet tissue", "tisu basah", "tisu basah baby", "baby tissue", "wipes newborn", "baby wipes"],
+        _rule(
+            physics_class="WIPES_SOFT_PACK",
+            product_scale="SOFT_PACK",
+            hand_object_interaction="supportive presentation of a soft wipes pack with the front panel, seal, and opening edge kept readable",
+            recommended_grip="pack side-hold, flat palm support, or pinch corner lift",
+            air_gap_rule="keep fingers clear of the front label and opening edge so pack scale and seal cues stay visible",
+            material_behavior="soft sealed wipes pack with light compression, flexible corners, and gentle crinkle response",
+            surface_behavior="matte-soft pack surfaces with mild highlights on the seal, opening flap, and side seams",
+            fragility_level="LOW",
+            handling_notes="keep front label visible and avoid squeezing the soft pack unnaturally during presentation",
+            camera_handling_notes="show soft pack scale, front label, and seal or opening edge if visible while keeping the pack stable and front-readable",
+            unsafe_handling_rules=["avoid implying medical sterilization claims", "avoid crushed or over-squeezed pack presentation", "avoid hiding the opening flap or front label"],
+        ),
+    ),
+    (
         ["instant sarung", "sarung syria", "sarung", "syria", "telekung", "khimar", "moscrepe"],
         _rule(
             physics_class="APPAREL_TEXTILE",

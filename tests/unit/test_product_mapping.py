@@ -54,6 +54,20 @@ def test_elianto_body_spray_mapping():
     assert result["type"] == "Body Mist"
 
 
+def test_baby_wipes_mapping_outranks_fragrance_noise():
+    result = resolve_product_mapping(
+        product_name="Baby Wipes Newborn Wet Tissue Tisue Basah Non-alcohol Paraben-free Fragrance-free Babies Wipe Tisu Basah Bayi",
+        source_hint="FASTMOSS",
+    )
+
+    assert result["category"] == "Baby Care"
+    assert result["subcategory"] == "Diapering / Baby Wipes / Wet Wipes"
+    assert result["type"] == "Baby Wipes"
+    assert result["product_type"] == "BABY_WIPES"
+    assert result["trigger_id"] == "TRUST_01"
+    assert result["formula"] == "PAS"
+
+
 def test_sambal_mapping():
     result = resolve_product_mapping(
         product_name="Sambal Nyet extra pedas",
