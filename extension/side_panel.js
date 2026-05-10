@@ -497,13 +497,19 @@ async function fetchOperatorPack() {
 
 // ── Message listener (push updates) ─────────────────────────
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'STATUS_PUSH') {
     fetchStatus();
+    sendResponse({ ok: true });
+    return false;
   }
   if (msg.type === 'REQUEST_LOG_UPDATE') {
     if (msg.log) updateRequestLog(msg.log);
+    sendResponse({ ok: true });
+    return false;
   }
+  sendResponse({ ok: false, error: 'IGNORED_MESSAGE_TYPE' });
+  return false;
 });
 
 // ── Toggle (connect / disconnect) ───────────────────────────

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
-import type { WSEvent, WSHealthData, WSSnapshotData } from '../types'
+import type { WSEvent, WSHealthData } from '../types'
 
 interface WebSocketContextType {
   isConnected: boolean
@@ -8,6 +8,44 @@ interface WebSocketContextType {
 }
 
 const WebSocketContext = createContext<WebSocketContextType | undefined>(undefined)
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function readSnapshotHealth(event: unknown): WSHealthData | null {
+  if (!isRecord(event)) return null
+
+  const nestedData = isRecord(event.data) ? event.data : null
+  const snapshotCandidate = nestedData && isRecord(nestedData.health)
+    ? nestedData
+    : event
+
+  if (!isRecord(snapshotCandidate.health)) return null
+
+  const health = snapshotCandidate.health
+  if (typeof health.status !== 'string' || typeof health.extension_connected !== 'boolean') {
+    return null
+  }
+
+  return {
+    status: health.status,
+    extension_connected: health.extension_connected,
+  }
+}
+
+function readHealthEvent(event: unknown): WSHealthData | null {
+  if (!isRecord(event)) return null
+  const candidate = isRecord(event.data) ? event.data : event
+  if (typeof candidate.status !== 'string' || typeof candidate.extension_connected !== 'boolean') {
+    return null
+  }
+
+  return {
+    status: candidate.status,
+    extension_connected: candidate.extension_connected,
+  }
+}
 
 export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [isConnected, setIsConnected] = useState(false)
@@ -37,17 +75,31 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     ws.onmessage = (e) => {
       try {
-        const event: WSEvent = JSON.parse(e.data)
+        const parsed = JSON.parse(e.data) as unknown
+        const event = (isRecord(parsed)
+          ? {
+              ...parsed,
+              type: typeof parsed.type === 'string' ? parsed.type : 'unknown',
+              data: parsed.data,
+              timestamp: typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString(),
+            }
+          : {
+              type: 'unknown',
+              data: parsed,
+              timestamp: new Date().toISOString(),
+            }) as WSEvent
         setLastEvent(event)
 
         if (event.type === 'snapshot') {
-          const data = event.data as WSSnapshotData
-          if (data.health) {
-            setExtensionConnected(data.health.extension_connected)
+          const health = readSnapshotHealth(parsed)
+          if (health) {
+            setExtensionConnected(health.extension_connected)
           }
         } else if (event.type === 'health') {
-          const data = event.data as WSHealthData
-          setExtensionConnected(data.extension_connected)
+          const health = readHealthEvent(parsed)
+          if (health) {
+            setExtensionConnected(health.extension_connected)
+          }
         }
       } catch (err) {
         console.error('WS parse error:', err)
