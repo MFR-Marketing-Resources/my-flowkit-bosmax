@@ -293,6 +293,9 @@ function connectToAgent() {
         callbackSecret = msg.secret;
         chrome.storage.local.set({ callbackSecret: msg.secret });
         console.log('[FlowAgent] Received callback secret');
+      } else if (msg.method === 'EXECUTE_FLOW_JOB') {
+        const result = await handleExecuteFlowJob(msg.params.job);
+        sendToAgent({ id: msg.id, result });
       } else if (msg.type === 'pong') {
         // keepalive response
       }
