@@ -124,6 +124,7 @@ const flowContentScriptHealth = new Map();
 const WS_METHOD_TIMEOUT_MS = {
   get_status: 5000,
   CHECK_FLOW_COMPOSER_READY: 12000,
+  FLOW_PAGE_STATE_DIAGNOSTIC: 12000,
   RELOAD_FLOW_TAB: 12000,
   OPEN_TARGET_FLOW_PROJECT: 12000,
   EXECUTE_FLOW_JOB: 125000,
@@ -848,6 +849,12 @@ function connectToAgent() {
           () => handleCheckFlowComposerReady(msg.params?.mode),
         );
         replyToAgent(msg, result);
+      } else if (msg.method === 'FLOW_PAGE_STATE_DIAGNOSTIC') {
+        const result = await executeWsMethodAndReply(
+          msg,
+          () => handleFlowPageStateDiagnostic(msg.params?.mode),
+        );
+        replyToAgent(msg, result);
       } else if (msg.method === 'RELOAD_FLOW_TAB') {
         const result = await executeWsMethodAndReply(msg, () => handleReloadFlowTab());
         replyToAgent(msg, result);
@@ -1464,6 +1471,95 @@ async function handleCheckFlowComposerReady(mode) {
     ...response,
     flow_url: response?.flow_url || flowTab.url,
   });
+}
+
+async function handleFlowPageStateDiagnostic(mode) {
+  const flowTab = await getFlowTab();
+  const base = buildFlowReadinessBase(flowTab);
+  if (!flowTab) {
+    return {
+      ...base,
+      error: 'ERR_NO_FLOW_TAB',
+      raw_error: 'ERR_NO_FLOW_TAB',
+      detail: 'No Google Flow tab matched the editor URL patterns.',
+      location_href: null,
+      document_title: null,
+      document_ready_state: null,
+      body_text_first_2000_chars: '',
+      visible_login_markers: [],
+      visible_loading_markers: [],
+      visible_error_markers: [],
+      visible_project_editor_markers: [],
+      visible_composer_placeholder_markers: [],
+      button_texts: [],
+      textarea_placeholders: [],
+      input_placeholders: [],
+      contenteditable_texts: [],
+      aria_labels: [],
+    };
+  }
+
+  await ensureFlowDomScript(flowTab.id);
+
+  const diagnostic = await pingFlowDomScript(flowTab);
+  if (diagnostic.raw_error) {
+    return {
+      ...base,
+      ...diagnostic,
+      error: diagnostic.raw_error,
+      detail: diagnostic.raw_error,
+      location_href: flowTab.url,
+      document_title: null,
+      document_ready_state: null,
+      body_text_first_2000_chars: '',
+      visible_login_markers: [],
+      visible_loading_markers: [],
+      visible_error_markers: [],
+      visible_project_editor_markers: [],
+      visible_composer_placeholder_markers: [],
+      button_texts: [],
+      textarea_placeholders: [],
+      input_placeholders: [],
+      contenteditable_texts: [],
+      aria_labels: [],
+    };
+  }
+
+  const response = await sendTabMessageSafe(flowTab.id, {
+    type: 'FLOW_PAGE_STATE_DIAGNOSTIC',
+    mode,
+  });
+
+  if (response?.error) {
+    return {
+      ...base,
+      ...diagnostic,
+      error: response.error,
+      raw_error: response.error,
+      detail: response.error,
+      location_href: flowTab.url,
+      document_title: null,
+      document_ready_state: null,
+      body_text_first_2000_chars: '',
+      visible_login_markers: [],
+      visible_loading_markers: [],
+      visible_error_markers: [],
+      visible_project_editor_markers: [],
+      visible_composer_placeholder_markers: [],
+      button_texts: [],
+      textarea_placeholders: [],
+      input_placeholders: [],
+      contenteditable_texts: [],
+      aria_labels: [],
+    };
+  }
+
+  return {
+    ...base,
+    ...diagnostic,
+    ...response,
+    flow_url: response?.flow_url || flowTab.url,
+  };
 }
 
 // ─── TRPC Media URL Extractor ──────────────────────────────

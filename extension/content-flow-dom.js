@@ -114,6 +114,48 @@
     };
   }
 
+  function normalizeText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function uniqueNonEmpty(values, limit = 50) {
+    const seen = new Set();
+    const result = [];
+    for (const rawValue of values || []) {
+      const value = normalizeText(rawValue);
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      result.push(value);
+      if (result.length >= limit) break;
+    }
+    return result;
+  }
+
+  function collectVisibleTexts(selector, projector, limit = 50) {
+    const values = [];
+    for (const el of document.querySelectorAll(selector)) {
+      if (!isVisible(el)) continue;
+      values.push(projector(el));
+      if (values.length >= limit) break;
+    }
+    return uniqueNonEmpty(values, limit);
+  }
+
+  function collectVisibleMarkers(candidates, sources) {
+    const haystacks = sources
+      .map((source) => normalizeText(source).toLowerCase())
+      .filter(Boolean);
+    const found = [];
+    for (const candidate of candidates) {
+      const normalizedCandidate = normalizeText(candidate).toLowerCase();
+      if (!normalizedCandidate) continue;
+      if (haystacks.some((source) => source.includes(normalizedCandidate))) {
+        found.push(candidate);
+      }
+    }
+    return uniqueNonEmpty(found);
+  }
+
   function isVisible(el) {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
@@ -352,6 +394,99 @@
     }
 
     return observed;
+  }
+
+  function collectFlowPageStateDiagnostic(mode) {
+    const readiness = checkFlowComposerReady(mode);
+    const bodyText = normalizeText(document.body?.innerText || '').slice(0, 2000);
+    const buttonTexts = collectVisibleTexts('button, [role="button"]', (el) => el.textContent || '');
+    const textareaPlaceholders = collectVisibleTexts('textarea', (el) => el.getAttribute('placeholder') || el.getAttribute('aria-label') || '');
+    const inputPlaceholders = collectVisibleTexts('input', (el) => el.getAttribute('placeholder') || el.getAttribute('aria-label') || '');
+    const contenteditableTexts = collectVisibleTexts('[contenteditable="true"], [role="textbox"]', (el) => {
+      return el.textContent || el.getAttribute('aria-label') || el.getAttribute('data-placeholder') || '';
+    });
+    const ariaLabels = collectVisibleTexts('[aria-label]', (el) => el.getAttribute('aria-label') || '');
+
+    const markerSources = [
+      bodyText,
+      document.title,
+      ...buttonTexts,
+      ...textareaPlaceholders,
+      ...inputPlaceholders,
+      ...contenteditableTexts,
+      ...ariaLabels,
+    ];
+
+    return {
+      ok: true,
+      flow_url: window.location.href,
+      location_href: window.location.href,
+      document_title: document.title,
+      document_ready_state: document.readyState,
+      body_text_first_2000_chars: bodyText,
+      visible_login_markers: collectVisibleMarkers([
+        'Sign in',
+        'Log in',
+        'Continue with Google',
+        'Choose an account',
+        'Use another account',
+        'Switch account',
+        'Create with Flow',
+      ], markerSources),
+      visible_loading_markers: collectVisibleMarkers([
+        'Loading',
+        'Please wait',
+        'Just a sec',
+        'Just a moment',
+        'Opening project',
+        'Loading project',
+      ], markerSources),
+      visible_error_markers: collectVisibleMarkers([
+        'Access denied',
+        'Request access',
+        'Not found',
+        '404',
+        '403',
+        'Something went wrong',
+        'Unable to load',
+        'Permission denied',
+        'You need access',
+      ], markerSources),
+      visible_project_editor_markers: collectVisibleMarkers([
+        'Video',
+        'Frames',
+        'Ingredients',
+        'Image',
+        'Veo',
+        'Start',
+        'End',
+        '9:16',
+        '16:9',
+        '1x',
+      ], markerSources),
+      visible_composer_placeholder_markers: collectVisibleMarkers([
+        'What do you want to create?',
+        'Describe your video',
+        'Describe your image',
+        'Write a prompt',
+        'Enter prompt',
+      ], markerSources),
+      button_texts: buttonTexts,
+      textarea_placeholders: textareaPlaceholders,
+      input_placeholders: inputPlaceholders,
+      contenteditable_texts: contenteditableTexts,
+      aria_labels: ariaLabels,
+      signed_in_likely: readiness.signed_in_likely,
+      composer_found: readiness.composer_found,
+      composer_editable: readiness.composer_editable,
+      generate_button_found: readiness.generate_button_found,
+      current_mode_visible: readiness.current_mode_visible,
+      blocking_modal_detected: readiness.blocking_modal_detected,
+      observed: readiness.observed,
+      content_script_loaded: true,
+      content_script_protocol_version: FLOW_KIT_DOM_PROTOCOL_VERSION,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   function checkFlowComposerReady(mode) {
@@ -747,6 +882,34 @@
   const flowDomMessageListener = (msg, sender, sendResponse) => {
     if (msg.type === 'FLOWKIT_DIAGNOSTIC_PING') {
       sendResponse(buildDiagnosticPingResponse());
+      return false;
+    }
+
+    if (msg.type === 'FLOW_PAGE_STATE_DIAGNOSTIC') {
+      try {
+        sendResponse(collectFlowPageStateDiagnostic(msg.mode));
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: 'FLOW_PAGE_STATE_DIAGNOSTIC_FAILED',
+          detail: String(error?.message || error),
+          flow_url: window.location.href,
+          location_href: window.location.href,
+          document_title: document.title,
+          document_ready_state: document.readyState,
+          body_text_first_2000_chars: normalizeText(document.body?.innerText || '').slice(0, 2000),
+          visible_login_markers: [],
+          visible_loading_markers: [],
+          visible_error_markers: [],
+          visible_project_editor_markers: [],
+          visible_composer_placeholder_markers: [],
+          button_texts: [],
+          textarea_placeholders: [],
+          input_placeholders: [],
+          contenteditable_texts: [],
+          aria_labels: [],
+        });
+      }
       return false;
     }
 

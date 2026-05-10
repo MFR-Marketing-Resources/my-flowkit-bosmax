@@ -261,6 +261,18 @@ class FlowClient:
 
         return {"ok": False, "error": "invalid composer readiness payload"}
 
+    async def flow_page_state_diagnostic(self, mode: Optional[str] = None) -> dict:
+        """Read visible page state from the controlled Google Flow tab without clicking or generating."""
+        result = await self._send("FLOW_PAGE_STATE_DIAGNOSTIC", {"mode": mode}, timeout=20)
+        if result.get("error"):
+            return {"ok": False, "error": result["error"]}
+
+        payload = result.get("result")
+        if isinstance(payload, dict):
+            return payload
+
+        return {"ok": False, "error": "invalid flow page state diagnostic payload"}
+
     async def reload_flow_tab(self) -> dict:
         """Reload the detected Flow tab and re-inject the DOM helper without executing generation."""
         result = await self._send("RELOAD_FLOW_TAB", {}, timeout=15)

@@ -148,6 +148,10 @@ class OpenTargetFlowProjectRequest(BaseModel):
     flow_project_url: str
 
 
+class FlowPageStateDiagnosticRequest(BaseModel):
+    mode: str = "F2V"
+
+
 def _pack_file(name: str) -> Path:
     return OPERATOR_PACK_DIR / name
 
@@ -520,6 +524,46 @@ def _classify_flow_primary_blocker(
     return None
 
 
+def _classify_flow_page_state(diagnostic: dict[str, Any]) -> tuple[str, bool]:
+    login_markers = [str(item) for item in diagnostic.get("visible_login_markers") or []]
+    loading_markers = [str(item) for item in diagnostic.get("visible_loading_markers") or []]
+    error_markers = [str(item) for item in diagnostic.get("visible_error_markers") or []]
+    editor_markers = [str(item) for item in diagnostic.get("visible_project_editor_markers") or []]
+    composer_markers = [str(item) for item in diagnostic.get("visible_composer_placeholder_markers") or []]
+    button_texts = [str(item) for item in diagnostic.get("button_texts") or []]
+    aria_labels = [str(item) for item in diagnostic.get("aria_labels") or []]
+    body_text = str(diagnostic.get("body_text_first_2000_chars") or "")
+    ready_state = str(diagnostic.get("document_ready_state") or "")
+
+    lowered_body = body_text.lower()
+    wrong_profile_tokens = ("choose an account", "use another account", "switch account")
+    if any(token in lowered_body for token in wrong_profile_tokens):
+        return "FLOW_WRONG_GOOGLE_PROFILE", False
+
+    if login_markers:
+        return "FLOW_LOGIN_WALL_VISIBLE", False
+
+    error_tokens = ("access denied", "request access", "not found", "403", "404", "permission denied", "you need access")
+    if error_markers or any(token in lowered_body for token in error_tokens):
+        return "FLOW_PROJECT_ACCESS_DENIED_OR_NOT_FOUND", False
+
+    if ready_state != "complete" or loading_markers:
+        return "FLOW_PAGE_LOADING_STUCK", False
+
+    generate_marker_present = any("generate" in value.lower() for value in [*button_texts, *aria_labels])
+    selector_miss_proven = bool(
+        editor_markers and (composer_markers or generate_marker_present)
+        and (not diagnostic.get("composer_found") or not diagnostic.get("generate_button_found"))
+    )
+    if selector_miss_proven:
+        return "FLOW_PROJECT_EDITOR_LOADED_SELECTOR_MISS", True
+
+    if editor_markers:
+        return "FLOW_COMPOSER_NOT_PRESENT_ON_THIS_MODE", False
+
+    return "FLOW_PAGE_LOADING_STUCK", False
+
+
 @router.post("/reload-flow-tab")
 async def reload_flow_tab(_: ReloadFlowTabRequest):
     result = await get_flow_client().reload_flow_tab()
@@ -608,6 +652,18 @@ async def flow_readiness_smoke(body: FlowReadinessSmokeRequest):
         "composer": composer,
         "smoke_result": smoke_result,
         "batch_context": batch_context,
+    }
+
+
+@router.post("/flow-page-state-diagnostic")
+async def flow_page_state_diagnostic(body: FlowPageStateDiagnosticRequest):
+    diagnostic = await get_flow_client().flow_page_state_diagnostic(body.mode)
+    classification, selector_miss_proven = _classify_flow_page_state(diagnostic)
+    return {
+        **diagnostic,
+        "classification": classification,
+        "selector_miss_proven": selector_miss_proven,
+        "last_checked_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
     }
 
 
