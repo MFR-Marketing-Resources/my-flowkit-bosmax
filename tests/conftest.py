@@ -1,13 +1,18 @@
 """Shared pytest fixtures for Flow Kit tests."""
 
 import pytest
+from agent.config import DB_PATH
 from agent.db.schema import init_db, close_db
 
 @pytest.fixture(autouse=True)
 async def db_setup():
+    if DB_PATH != ":memory:" and getattr(DB_PATH, "exists", None) and DB_PATH.exists():
+        DB_PATH.unlink()
     await init_db()
     yield
     await close_db()
+    if DB_PATH != ":memory:" and getattr(DB_PATH, "exists", None) and DB_PATH.exists():
+        DB_PATH.unlink()
 
 
 @pytest.fixture

@@ -1,12 +1,24 @@
 """Configuration constants."""
 import json
 import os
+import sys
+import tempfile
 from pathlib import Path
 
 # ─── Paths ───────────────────────────────────────────────────
 BASE_DIR = Path(os.environ.get("FLOW_AGENT_DIR", Path(__file__).parent.parent))
-if "PYTEST_CURRENT_TEST" in os.environ:
-    DB_PATH = ":memory:"
+
+
+def _running_under_pytest() -> bool:
+    return (
+        "PYTEST_CURRENT_TEST" in os.environ
+        or "PYTEST_VERSION" in os.environ
+        or "pytest" in sys.modules
+    )
+
+
+if _running_under_pytest():
+    DB_PATH = Path(tempfile.gettempdir()) / f"flowkit-pytest-{os.getpid()}.db"
 else:
     DB_PATH = BASE_DIR / "flow_agent.db"
 OPERATOR_PACK_DIR = Path(

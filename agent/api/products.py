@@ -23,7 +23,9 @@ from agent.services.product_intelligence import (
     display_name as _display_name,
     generate_product_prompt,
     resolve_cached_image_path,
+    is_test_product as _is_test_product,
 )
+from agent.services.product_catalog_audit import build_mapping_summary
 from agent.services.product_preflight import build_product_preflight
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
@@ -521,6 +523,10 @@ async def map_product(data: ProductMapRequest):
 async def backfill_product_mapping(product_id: str | None = None):
     products = [await crud.get_product(product_id)] if product_id else await crud.list_products(limit=5000)
     products = [product for product in products if product]
+    excluded_test_fixtures = 0
+    if product_id is None:
+        excluded_test_fixtures = sum(1 for product in products if _is_test_product(product))
+        products = [product for product in products if not _is_test_product(product)]
     processed = 0
     ready = 0
     needs_review = 0
@@ -551,8 +557,16 @@ async def backfill_product_mapping(product_id: str | None = None):
         "total_mapping_ready": ready,
         "total_needs_review": needs_review,
         "total_blocked": blocked,
+        "excluded_test_fixtures": excluded_test_fixtures,
         "sample": sample,
     }
+
+
+@router.get("/mapping-summary")
+async def get_product_mapping_summary(sample_limit: int = Query(default=30, ge=1, le=100)):
+    raw_products = await crud.list_products(limit=10000)
+    enriched_products = [await _enrich_product(product, persist=False) for product in raw_products]
+    return build_mapping_summary(raw_products, enriched_products, sample_limit=sample_limit)
 
 
 @router.post("/{product_id}/repair-mapping")

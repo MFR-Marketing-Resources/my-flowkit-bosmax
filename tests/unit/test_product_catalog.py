@@ -1,4 +1,5 @@
 from agent.api.products import _filter_products_for_catalog
+from agent.services.product_catalog_audit import CANONICAL_FATIMA_PRODUCT_ID, build_cleanup_plan, build_mapping_summary
 from agent.services.product_intelligence import enrich_product
 
 
@@ -69,3 +70,101 @@ def test_catalog_test_filter_only_returns_test_products():
     filtered = _filter_products_for_catalog(items, source="TEST", readiness=None)
 
     assert [item["id"] for item in filtered] == ["test_prod_1"]
+
+
+def test_cleanup_plan_classifies_leaked_fixtures_and_noncanonical_fatima_rows():
+    plan = build_cleanup_plan(
+        [
+            {
+                "id": "test_prod_1",
+                "source": "FASTMOSS",
+                "product_short_name": "Test Product",
+                "raw_product_title": "Test Product",
+                "mapping_status": None,
+                "created_at": "2026-05-10T05:47:17Z",
+                "updated_at": "2026-05-10T05:47:17Z",
+            },
+            {
+                "id": CANONICAL_FATIMA_PRODUCT_ID,
+                "source": "FASTMOSS",
+                "product_short_name": "FATIMA INSTANT SARUNG SYRIA",
+                "raw_product_title": "FATIMA INSTANT SARUNG SYRIA ~ HQ MOSCREPE PREMIUM ~ IRONLESS & STRETCHABLE HIJAB UNTUK WANITA MUSLIMAH BAHAN ELASTIK SESUAI KESELAMAN DAN GAYA",
+                "mapping_status": "READY",
+                "created_at": "2026-05-09T08:51:59Z",
+                "updated_at": "2026-05-10T05:44:27Z",
+            },
+            {
+                "id": "duplicate-fatima",
+                "source": "FASTMOSS",
+                "product_short_name": "FATIMA INSTANT SARUNG SYRIA",
+                "raw_product_title": "FATIMA INSTANT SARUNG SYRIA ~ HQ MOSCREPE PREMIUM",
+                "mapping_status": None,
+                "created_at": "2026-05-10T05:47:17Z",
+                "updated_at": "2026-05-10T05:47:17Z",
+            },
+        ]
+    )
+
+    assert plan["null_mapping_status_before"] == 2
+    assert plan["test_fixture_rows_found"] == 1
+    assert plan["stale_duplicate_rows_found"] == 1
+    assert {row["id"] for row in plan["rows_to_delete"]} == {"test_prod_1", "duplicate-fatima"}
+
+
+def test_mapping_summary_groups_blocked_products_by_missing_fields_and_source():
+    raw_products = [
+        {
+            "id": "blocked_1",
+            "source": "FASTMOSS",
+            "mapping_status": "BLOCKED",
+            "created_at": "2026-05-10T05:00:00Z",
+            "updated_at": "2026-05-10T05:00:00Z",
+        },
+        {
+            "id": "ready_1",
+            "source": "MANUAL",
+            "mapping_status": "READY",
+            "created_at": "2026-05-10T05:00:00Z",
+            "updated_at": "2026-05-10T05:00:00Z",
+        },
+    ]
+    enriched_products = [
+        {
+            "id": "blocked_1",
+            "source": "FASTMOSS",
+            "product_short_name": "Blocked Product",
+            "raw_product_title": "Blocked Product",
+            "category": "UNMAPPED",
+            "subcategory": "UNMAPPED",
+            "type": None,
+            "mapping_source": "fallback",
+            "mapping_status": "BLOCKED",
+            "mapping_missing_fields": ["category", "trigger_id"],
+            "image_readiness_status": "IMAGE_URL_MISSING",
+            "updated_at": "2026-05-10T05:00:00Z",
+        },
+        {
+            "id": "ready_1",
+            "source": "MANUAL",
+            "product_short_name": "Ready Product",
+            "raw_product_title": "Ready Product",
+            "category": "Fashion",
+            "subcategory": "Muslim Fashion",
+            "type": "Instant Sarung",
+            "mapping_source": "rule",
+            "mapping_status": "READY",
+            "mapping_missing_fields": [],
+            "image_readiness_status": "IMAGE_READY",
+            "updated_at": "2026-05-10T05:00:00Z",
+        },
+    ]
+
+    summary = build_mapping_summary(raw_products, enriched_products, sample_limit=10)
+
+    assert summary["total_products"] == 2
+    assert summary["ready"] == 1
+    assert summary["blocked"] == 1
+    assert summary["blocked_by_source"] == {"FASTMOSS": 1}
+    assert summary["blocked_by_missing_field"] == {"category": 1, "trigger_id": 1}
+    assert summary["blocked_by_mapping_source"] == {"fallback": 1}
+    assert summary["sample_blocked_products"][0]["id"] == "blocked_1"

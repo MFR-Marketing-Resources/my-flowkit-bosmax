@@ -1,6 +1,12 @@
 import argparse
 import asyncio
 import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from agent.db.schema import init_db
 from agent.api.products import backfill_product_mapping, get_product_mapping_audit, repair_product_mapping
