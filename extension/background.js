@@ -40,9 +40,20 @@ function runAsyncReply(reply, task) {
   return true;
 }
 
-function sendTabMessageSafe(tabId, payload) {
+function sendTabMessageSafe(tabId, payload, timeoutMs = 4000) {
   return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve({ ok: false, error: 'MESSAGE_RESPONSE_TIMEOUT' });
+    }, timeoutMs);
+
     chrome.tabs.sendMessage(tabId, payload, (response) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+
       const lastError = chrome.runtime.lastError;
       if (lastError) {
         const message = lastError.message || 'MESSAGE_SEND_FAILED';
@@ -86,6 +97,24 @@ function sendRuntimeMessageNoThrow(payload) {
     });
   } catch (error) {
     console.warn('[FlowAgent] runtime message exception:', error);
+  }
+}
+
+async function getFlowTab() {
+  const tabs = await chrome.tabs.query({
+    url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
+  });
+  return tabs.length ? tabs[0] : null;
+}
+
+async function ensureFlowDomScript(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content-flow-dom.js'],
+    });
+  } catch (e) {
+    console.warn('[FlowAgent] Script injection failed (already injected?):', e);
   }
 }
 
@@ -293,6 +322,9 @@ function connectToAgent() {
         callbackSecret = msg.secret;
         chrome.storage.local.set({ callbackSecret: msg.secret });
         console.log('[FlowAgent] Received callback secret');
+      } else if (msg.method === 'CHECK_FLOW_COMPOSER_READY') {
+        const result = await handleCheckFlowComposerReady(msg.params?.mode);
+        sendToAgent({ id: msg.id, result });
       } else if (msg.method === 'EXECUTE_FLOW_JOB') {
         const result = await handleExecuteFlowJob(msg.params.job);
         sendToAgent({ id: msg.id, result });
@@ -693,6 +725,10 @@ async function handleMessage(msg, sender) {
     return { ok: true };
   }
 
+  if (msg.type === 'CHECK_FLOW_COMPOSER_READY') {
+    return await handleCheckFlowComposerReady(msg.mode);
+  }
+
   if (msg.type === 'EXECUTE_FLOW_JOB') {
     return await handleExecuteFlowJob(msg.job);
   }
@@ -768,28 +804,72 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleExecuteFlowJob(job) {
-  const tabs = await chrome.tabs.query({
-    url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
-  });
-
-  if (!tabs.length) {
+  const flowTab = await getFlowTab();
+  if (!flowTab) {
     return { ok: false, error: 'FLOW_TAB_DISCONNECTED' };
   }
 
-  // Ensure content-flow-dom.js is injected
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tabs[0].id },
-      files: ['content-flow-dom.js'],
-    });
-  } catch (e) {
-    console.warn('[FlowAgent] Script injection failed (already injected?):', e);
-  }
+  await ensureFlowDomScript(flowTab.id);
 
-  return await sendTabMessageSafe(tabs[0].id, {
+  return await sendTabMessageSafe(flowTab.id, {
     type: 'EXECUTE_FLOW_JOB',
     job
   });
+}
+
+async function handleCheckFlowComposerReady(mode) {
+  const flowTab = await getFlowTab();
+  if (!flowTab) {
+    return {
+      ok: false,
+      error: 'ABORT_FLOW_COMPOSER_NOT_READY',
+      flow_tab_found: false,
+      flow_url: null,
+      signed_in_likely: false,
+      composer_found: false,
+      composer_editable: false,
+      generate_button_found: false,
+      current_mode_visible: 'UNKNOWN',
+      blocking_modal_detected: false,
+    };
+  }
+
+  await ensureFlowDomScript(flowTab.id);
+
+  const response = await sendTabMessageSafe(flowTab.id, {
+    type: 'CHECK_FLOW_COMPOSER_READY',
+    mode,
+  });
+  if (response?.error === 'MESSAGE_RESPONSE_TIMEOUT') {
+    return {
+      ok: false,
+      error: 'ABORT_FLOW_COMPOSER_NOT_READY',
+      flow_tab_found: true,
+      flow_url: flowTab.url,
+      signed_in_likely: false,
+      composer_found: false,
+      composer_editable: false,
+      generate_button_found: false,
+      current_mode_visible: 'UNKNOWN',
+      blocking_modal_detected: false,
+      detail: 'Timed out waiting for content script readiness response.',
+    };
+  }
+  if (!response?.ok && !response?.error) {
+    return {
+      ok: false,
+      error: 'ABORT_FLOW_COMPOSER_NOT_READY',
+      flow_tab_found: true,
+      flow_url: flowTab.url,
+      signed_in_likely: false,
+      composer_found: false,
+      composer_editable: false,
+      generate_button_found: false,
+      current_mode_visible: 'UNKNOWN',
+      blocking_modal_detected: false,
+    };
+  }
+  return response;
 }
 
 // ─── TRPC Media URL Extractor ──────────────────────────────

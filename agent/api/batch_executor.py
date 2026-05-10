@@ -39,6 +39,50 @@ async def execute_variant(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/{batch_id}/variants/{variant_id}/requeue")
+async def requeue_variant(batch_id: str, variant_id: str):
+    """Explicitly requeue a single variant for controlled live execution."""
+    try:
+        res = await batch_executor.requeue_variant(batch_id, variant_id)
+        if "error" in res:
+            return {"ok": False, "error": res["error"]}
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{batch_id}/live-eligibility")
+async def get_live_eligibility(
+    batch_id: str,
+    variant_id: Optional[str] = Query(None),
+    expected_product_id: Optional[str] = Query(None),
+):
+    """Report whether a batch can safely attempt one controlled live execution."""
+    try:
+        res = await batch_executor.get_live_eligibility(
+            batch_id,
+            variant_id=variant_id,
+            expected_product_id=expected_product_id,
+        )
+        if "error" in res:
+            return {"ok": False, "error": res["error"]}
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{batch_id}/variants/{variant_id}/smoke-execute-flow-job")
+async def smoke_execute_flow_job(batch_id: str, variant_id: str):
+    """Run a non-generating websocket smoke check for EXECUTE_FLOW_JOB."""
+    try:
+        res = await batch_executor.smoke_execute_flow_job(batch_id, variant_id)
+        if "error" in res and not res.get("ok"):
+            return {"ok": False, "error": res["error"], **{k: v for k, v in res.items() if k not in {"error"}}}
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/{batch_id}/execution-status")
 async def get_status(batch_id: str):
     """

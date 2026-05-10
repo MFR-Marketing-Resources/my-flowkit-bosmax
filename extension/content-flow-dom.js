@@ -12,11 +12,22 @@
  */
 
 (function() {
-  if (window._flowKitDomInjected) {
+  const FLOW_KIT_DOM_VERSION = '2026-05-10-live-gates';
+
+  if (window._flowKitDomInjectedVersion === FLOW_KIT_DOM_VERSION && window._flowKitDomListener) {
     console.log('[FlowAgent] Flow DOM Executor already present');
     return;
   }
-  window._flowKitDomInjected = true;
+
+  if (window._flowKitDomListener) {
+    try {
+      chrome.runtime.onMessage.removeListener(window._flowKitDomListener);
+    } catch (error) {
+      console.warn('[FlowAgent] Failed to remove previous Flow DOM listener:', error);
+    }
+  }
+
+  window._flowKitDomInjectedVersion = FLOW_KIT_DOM_VERSION;
   console.log('[FlowAgent] Flow DOM Executor injected');
 
   function sendRuntimeMessageNoThrow(payload) {
@@ -72,6 +83,21 @@
     return new Promise(r => setTimeout(r, ms));
   }
 
+  function respondAsync(sendResponse, task) {
+    Promise.resolve()
+      .then(task)
+      .then((payload) => sendResponse(payload))
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  }
+
   function findElementByText(selector, text) {
     const elements = document.querySelectorAll(selector);
     for (const el of elements) {
@@ -102,6 +128,24 @@
       }
     }
     return document.querySelector('button[aria-label="Generate"]') || document.querySelector('button[title="Generate"]');
+  }
+
+  function findComposerElement() {
+    const candidates = Array.from(document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]'));
+    return candidates.find(isVisible) || candidates[0] || null;
+  }
+
+  function detectBlockingModal() {
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog'));
+    return dialogs.find(isVisible) || null;
+  }
+
+  function inferSignedInLikely(composer, observed) {
+    if (composer) return true;
+    if (observed.topMode !== 'UNKNOWN') return true;
+    const landingCta = findElementByText('button, a, div[role="button"]', 'Create with Flow');
+    if (landingCta && isVisible(landingCta)) return false;
+    return !document.body.innerText.includes('Where the next wave of storytelling happens');
   }
 
   function getComposerText(el) {
@@ -276,7 +320,7 @@
     }
 
     // 7. Check composer
-    observed.composerPresent = !!document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
+    observed.composerPresent = !!findComposerElement();
 
     // 8. Check generate button state
     const generateBtn = findButtonByIcon();
@@ -285,6 +329,79 @@
     }
 
     return observed;
+  }
+
+  function checkFlowComposerReady(mode) {
+    const observed = observeFlowState();
+    const composer = findComposerElement();
+    const generateBtn = findButtonByIcon();
+    const blockingModal = detectBlockingModal();
+    const currentModeVisible = observed.topMode === 'UNKNOWN'
+      ? 'UNKNOWN'
+      : (observed.subMode !== 'UNKNOWN' ? `${observed.topMode}/${observed.subMode}` : observed.topMode);
+
+    const result = {
+      ok: false,
+      flow_tab_found: true,
+      flow_url: window.location.href,
+      signed_in_likely: inferSignedInLikely(composer, observed),
+      composer_found: !!composer,
+      composer_editable: !!composer && isComposerEditable(composer),
+      generate_button_found: !!generateBtn,
+      current_mode_visible: currentModeVisible,
+      blocking_modal_detected: !!blockingModal,
+      observed,
+    };
+
+    if (mode) {
+      result.expected_mode = mode;
+    }
+
+    result.ok = Boolean(
+      result.signed_in_likely &&
+      result.composer_found &&
+      result.composer_editable &&
+      !result.blocking_modal_detected
+    );
+
+    if (!result.ok) {
+      result.error = 'ABORT_FLOW_COMPOSER_NOT_READY';
+    }
+
+    return result;
+  }
+
+  function runExecuteFlowJobSmoke(job) {
+    const readiness = checkFlowComposerReady(job?.mode);
+    const result = {
+      ok: false,
+      status: 'FAIL_COMPOSER_NOT_READY',
+      smoke_test: true,
+      no_generation_triggered: true,
+      composer: readiness,
+    };
+
+    if (!readiness.ok) {
+      result.error = readiness.error || 'ABORT_FLOW_COMPOSER_NOT_READY';
+      return result;
+    }
+
+    const verifyResult = verifyFlowMode(job, readiness.observed);
+    if (!verifyResult.ok) {
+      result.status = 'FAIL_MODE_MISMATCH';
+      result.error = `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`;
+      result.verify = verifyResult;
+      return result;
+    }
+
+    return {
+      ok: true,
+      status: 'PASS',
+      smoke_test: true,
+      no_generation_triggered: true,
+      composer: readiness,
+      observed_state: readiness.observed,
+    };
   }
 
   /**
@@ -603,8 +720,16 @@
     return report;
   }
 
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  const flowDomMessageListener = (msg, sender, sendResponse) => {
+    if (msg.type === 'CHECK_FLOW_COMPOSER_READY') {
+      return respondAsync(sendResponse, () => checkFlowComposerReady(msg.mode));
+    }
+
     if (msg.type === 'EXECUTE_FLOW_JOB') {
+      if (msg.job?.smoke_test) {
+        return respondAsync(sendResponse, () => runExecuteFlowJobSmoke(msg.job));
+      }
+
       // IMMEDIATE ACK - Send response right away, don't wait for job completion
       sendResponse({ ok: true, accepted: true, request_id: msg.job?.request_id });
       
@@ -632,6 +757,11 @@
       // Return false - we already called sendResponse synchronously
       return false;
     }
-  });
+
+    return false;
+  };
+
+  window._flowKitDomListener = flowDomMessageListener;
+  chrome.runtime.onMessage.addListener(flowDomMessageListener);
 
 })();

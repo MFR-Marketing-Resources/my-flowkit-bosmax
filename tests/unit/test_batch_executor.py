@@ -224,3 +224,149 @@ async def test_execute_variant_not_found():
     res = await batch_executor.execute_variant("non-existent-variant-id")
     assert "error" in res
     assert res["error"] == "Variant not found"
+
+
+@pytest.mark.asyncio
+async def test_requeue_variant_from_failed_clears_blocked_reason_and_logs_event():
+    db = await crud.get_db()
+    product_id = "test_prod_" + str(uuid.uuid4())[:8]
+    await _seed_product(db, product_id)
+    batch_id, variant_id = await _seed_queued_batch(db, product_id)
+
+    await db.execute(
+        "UPDATE batch_variant SET queue_status='FAILED', blocked_reason='Timeout' WHERE variant_id=?",
+        (variant_id,)
+    )
+    await db.commit()
+
+    res = await batch_executor.requeue_variant(batch_id, variant_id)
+
+    assert res["ok"] is True
+    assert res["status"] == "QUEUED"
+
+    cursor = await db.execute(
+        "SELECT queue_status, blocked_reason FROM batch_variant WHERE variant_id=?",
+        (variant_id,)
+    )
+    row = await cursor.fetchone()
+    assert row["queue_status"] == "QUEUED"
+    assert row["blocked_reason"] is None
+
+    cursor = await db.execute(
+        "SELECT status, message FROM batch_queue_event WHERE batch_id=? ORDER BY timestamp DESC LIMIT 1",
+        (batch_id,)
+    )
+    event = await cursor.fetchone()
+    assert event["status"] == "REQUEUED"
+    assert event["message"] == "Variant explicitly requeued for controlled live execution."
+
+
+@pytest.mark.asyncio
+async def test_requeue_variant_rejects_when_another_variant_is_running():
+    db = await crud.get_db()
+    product_id = "test_prod_" + str(uuid.uuid4())[:8]
+    await _seed_product(db, product_id)
+
+    batch_id = str(uuid.uuid4())
+    target_variant_id = str(uuid.uuid4())
+    running_variant_id = str(uuid.uuid4())
+
+    await db.execute(
+        "INSERT INTO batch (id, product_id, status, mode, interval_min_seconds, interval_max_seconds) VALUES (?, ?, 'QUEUED', 'Frames', 45, 120)",
+        (batch_id, product_id),
+    )
+    await db.execute(
+        """INSERT INTO batch_variant
+               (variant_id, batch_id, product_id, variation_index, prompt_9_section, google_flow_mode, queue_status, blocked_reason)
+           VALUES (?, ?, ?, 1, 'Prompt', 'F2V', 'FAILED', 'Timeout')""",
+        (target_variant_id, batch_id, product_id),
+    )
+    await db.execute(
+        """INSERT INTO batch_variant
+               (variant_id, batch_id, product_id, variation_index, prompt_9_section, google_flow_mode, queue_status)
+           VALUES (?, ?, ?, 2, 'Prompt', 'F2V', 'RUNNING')""",
+        (running_variant_id, batch_id, product_id),
+    )
+    await db.commit()
+
+    res = await batch_executor.requeue_variant(batch_id, target_variant_id)
+
+    assert "error" in res
+    assert "ABORT_CONCURRENT_VARIANT" in res["error"]
+
+
+@pytest.mark.asyncio
+async def test_live_eligibility_reports_ready_when_composer_and_smoke_pass():
+    db = await crud.get_db()
+    product_id = "test_prod_" + str(uuid.uuid4())[:8]
+    await _seed_product(db, product_id)
+    batch_id, variant_id = await _seed_queued_batch(db, product_id)
+
+    client = get_flow_client()
+    client.set_extension(MagicMock())
+
+    with patch.object(client, "get_status", new_callable=AsyncMock) as mock_status, \
+         patch.object(client, "check_flow_composer_ready", new_callable=AsyncMock) as mock_ready, \
+         patch.object(client, "smoke_execute_flow_job", new_callable=AsyncMock) as mock_smoke:
+        mock_status.return_value = {"state": "idle", "flowKeyPresent": True}
+        mock_ready.return_value = {
+            "ok": True,
+            "flow_tab_found": True,
+            "flow_url": "https://labs.google/fx/tools/flow/project",
+            "signed_in_likely": True,
+            "composer_found": True,
+            "composer_editable": True,
+            "generate_button_found": True,
+            "current_mode_visible": "Video/Frames",
+            "blocking_modal_detected": False,
+        }
+        mock_smoke.return_value = {
+            "ok": True,
+            "status": "PASS",
+            "round_trip_ms": 321,
+            "no_generation_triggered": True,
+        }
+
+        res = await batch_executor.get_live_eligibility(
+            batch_id,
+            variant_id=variant_id,
+            expected_product_id=product_id,
+        )
+
+    assert res["selected_variant_id"] == variant_id
+    assert res["eligible_queued_variant_count"] == 1
+    assert res["target_variant_status"] == "QUEUED"
+    assert res["has_prompt"] is True
+    assert res["product_id"] == product_id
+    assert res["product_id_match_expected"] is True
+    assert res["extension_connected"] is True
+    assert res["extension_state"] == "idle"
+    assert res["flow_composer_ready"] is True
+    assert res["execute_flow_job_smoke_status"] == "PASS"
+    assert res["blocked_reason"] == []
+
+    client.clear_extension()
+
+
+@pytest.mark.asyncio
+async def test_smoke_execute_flow_job_returns_composer_failure_without_generation():
+    db = await crud.get_db()
+    product_id = "test_prod_" + str(uuid.uuid4())[:8]
+    await _seed_product(db, product_id)
+    batch_id, variant_id = await _seed_queued_batch(db, product_id)
+
+    client = get_flow_client()
+    client.set_extension(MagicMock())
+
+    with patch.object(client, "get_status", new_callable=AsyncMock) as mock_status, \
+         patch.object(client, "check_flow_composer_ready", new_callable=AsyncMock) as mock_ready:
+        mock_status.return_value = {"state": "idle", "flowKeyPresent": True}
+        mock_ready.return_value = {"ok": False, "error": "ABORT_FLOW_COMPOSER_NOT_READY"}
+
+        res = await batch_executor.smoke_execute_flow_job(batch_id, variant_id)
+
+    assert res["ok"] is False
+    assert res["status"] == "FAIL_COMPOSER_NOT_READY"
+    assert res["error"] == "ABORT_FLOW_COMPOSER_NOT_READY"
+
+    client.clear_extension()

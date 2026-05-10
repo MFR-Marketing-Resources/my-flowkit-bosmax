@@ -245,6 +245,49 @@ class FlowClient:
         """Trigger DOM automation in the extension for a generation job."""
         return await self._send("EXECUTE_FLOW_JOB", {"job": job_data}, timeout=120)
 
+    async def check_flow_composer_ready(self, mode: Optional[str] = None) -> dict:
+        """Check whether the real Google Flow composer is available and editable."""
+        result = await self._send("CHECK_FLOW_COMPOSER_READY", {"mode": mode}, timeout=10)
+        if result.get("error"):
+            return {"ok": False, "error": result["error"]}
+
+        payload = result.get("result")
+        if isinstance(payload, dict):
+            return payload
+
+        return {"ok": False, "error": "invalid composer readiness payload"}
+
+    async def smoke_execute_flow_job(self, job_data: dict, timeout: float = 5) -> dict:
+        """Verify the EXECUTE_FLOW_JOB bridge path without triggering generation."""
+        smoke_job = dict(job_data)
+        smoke_job["smoke_test"] = True
+        started = time.monotonic()
+        result = await self._send("EXECUTE_FLOW_JOB", {"job": smoke_job}, timeout=timeout)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+
+        if result.get("error"):
+            error = result["error"]
+            status = "FAIL_TIMEOUT" if "Timeout" in error else "FAIL_ERROR"
+            return {
+                "ok": False,
+                "status": status,
+                "error": error,
+                "round_trip_ms": elapsed_ms,
+            }
+
+        payload = result.get("result")
+        if isinstance(payload, dict):
+            smoke_result = dict(payload)
+            smoke_result.setdefault("round_trip_ms", elapsed_ms)
+            return smoke_result
+
+        return {
+            "ok": False,
+            "status": "FAIL_ERROR",
+            "error": "invalid smoke payload",
+            "round_trip_ms": elapsed_ms,
+        }
+
     def _client_context(self, project_id: str, user_paygate_tier: str = "PAYGATE_TIER_TWO") -> dict:
         """Build clientContext with recaptcha placeholder."""
         return {
