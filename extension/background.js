@@ -120,6 +120,149 @@ function sendRuntimeMessageNoThrow(payload) {
 
 const flowContentScriptHealth = new Map();
 
+const WS_METHOD_TIMEOUT_MS = {
+  get_status: 5000,
+  CHECK_FLOW_COMPOSER_READY: 12000,
+  RELOAD_FLOW_TAB: 12000,
+  EXECUTE_FLOW_JOB: 125000,
+  DEBUG_FLOW_DOM_EXECUTION: 65000,
+};
+
+function buildFlowTabSnapshot(flowTab) {
+  return {
+    flow_tab_found: Boolean(flowTab),
+    flow_tab_id: flowTab?.id ?? null,
+    flow_url: flowTab?.url ?? null,
+  };
+}
+
+async function getFlowTabSafe() {
+  try {
+    return await getFlowTab();
+  } catch (_) {
+    return null;
+  }
+}
+
+function getMethodStageField(method, phase) {
+  const stageFields = {
+    CHECK_FLOW_COMPOSER_READY: {
+      received: 'BACKGROUND_RECEIVED_CHECK_FLOW_COMPOSER_READY',
+      sent: 'BACKGROUND_SENT_CHECK_FLOW_COMPOSER_READY_RESPONSE',
+    },
+    RELOAD_FLOW_TAB: {
+      received: 'BACKGROUND_RECEIVED_RELOAD_FLOW_TAB',
+      sent: 'BACKGROUND_SENT_RELOAD_FLOW_TAB_RESPONSE',
+    },
+  };
+  return stageFields[method]?.[phase] || null;
+}
+
+function logWsMethodStage(method, phase, flowTab, extra = {}) {
+  const fieldName = getMethodStageField(method, phase);
+  const payload = {
+    method,
+    phase,
+    timestamp: new Date().toISOString(),
+    ...buildFlowTabSnapshot(flowTab),
+    ...extra,
+  };
+  if (fieldName) {
+    payload[fieldName] = true;
+  }
+  console.info(`[FlowAgent] ${method} ${phase}`, payload);
+  return payload;
+}
+
+function normalizeMethodError(error) {
+  const rawError = String(error || 'ERR_UNKNOWN_METHOD_FAILURE');
+  if (rawError === 'FLOW_TAB_NOT_FOUND') {
+    return 'ERR_NO_FLOW_TAB';
+  }
+  if (rawError === 'ERR_NO_RECEIVER' || rawError === 'ERR_CONTENT_SCRIPT_STALE') {
+    return 'CONTENT_SCRIPT_STALE_OR_NOT_INJECTED';
+  }
+  return rawError;
+}
+
+function normalizeMethodPayload(result) {
+  const payload = result && typeof result === 'object'
+    ? { ...result }
+    : { ok: true, data: result };
+
+  if (payload.error) {
+    const rawError = String(payload.raw_error || payload.error);
+    payload.error = normalizeMethodError(payload.error);
+    if (!payload.raw_error && payload.error !== rawError) {
+      payload.raw_error = rawError;
+    }
+  }
+
+  if (typeof payload.ok !== 'boolean') {
+    payload.ok = !payload.error;
+  }
+
+  return payload;
+}
+
+function finalizeMethodPayload(method, result, flowTab) {
+  const payload = normalizeMethodPayload(result);
+  const reply = {
+    method,
+    timestamp: new Date().toISOString(),
+    ...buildFlowTabSnapshot(flowTab),
+    ...payload,
+  };
+
+  const receivedField = getMethodStageField(method, 'received');
+  if (receivedField) {
+    reply[receivedField] = true;
+  }
+
+  const sentField = getMethodStageField(method, 'sent');
+  if (sentField) {
+    reply[sentField] = true;
+  }
+
+  return reply;
+}
+
+function promiseWithTimeout(task, timeoutMs, timeoutError = 'ERR_MESSAGE_RESPONSE_TIMEOUT') {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(timeoutError)), timeoutMs);
+    Promise.resolve(task)
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
+async function executeWsMethodAndReply(msg, handler) {
+  const method = msg?.method || 'UNKNOWN_METHOD';
+  const flowTab = await getFlowTabSafe();
+  logWsMethodStage(method, 'received', flowTab);
+
+  try {
+    const timeoutMs = WS_METHOD_TIMEOUT_MS[method] || 10000;
+    const result = await promiseWithTimeout(Promise.resolve().then(handler), timeoutMs);
+    const reply = finalizeMethodPayload(method, result, flowTab);
+    logWsMethodStage(method, 'sent', flowTab, { ok: reply.ok, error: reply.error || null });
+    return reply;
+  } catch (error) {
+    const reply = finalizeMethodPayload(method, {
+      ok: false,
+      error: String(error?.message || error || 'ERR_UNKNOWN_METHOD_FAILURE'),
+    }, flowTab);
+    logWsMethodStage(method, 'sent', flowTab, { ok: false, error: reply.error || null });
+    return reply;
+  }
+}
+
 async function getFlowTab() {
   const tabs = await chrome.tabs.query({
     url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
@@ -275,7 +418,7 @@ async function handleReloadFlowTab() {
   if (!flowTab) {
     return {
       ok: false,
-      error: 'FLOW_TAB_NOT_FOUND',
+      error: 'ERR_NO_FLOW_TAB',
       action_taken: 'NONE',
       flow_tab_id: null,
       flow_url: null,
@@ -514,34 +657,63 @@ function connectToAgent() {
       } else if (msg.method === 'solve_captcha') {
         await handleSolveCaptcha(msg);
       } else if (msg.method === 'get_status') {
-        replyToAgent(msg, {
+        const result = await executeWsMethodAndReply(msg, async () => ({
           state,
           flowKeyPresent: !!flowKey,
           manualDisconnect,
           tokenAge: metrics.tokenCapturedAt ? Date.now() - metrics.tokenCapturedAt : null,
           metrics,
-        });
+        }));
+        replyToAgent(msg, result);
       } else if (msg.type === 'callback_secret') {
         callbackSecret = msg.secret;
         chrome.storage.local.set({ callbackSecret: msg.secret });
         console.log('[FlowAgent] Received callback secret');
       } else if (msg.method === 'CHECK_FLOW_COMPOSER_READY') {
-        const result = await handleCheckFlowComposerReady(msg.params?.mode);
+        const result = await executeWsMethodAndReply(
+          msg,
+          () => handleCheckFlowComposerReady(msg.params?.mode),
+        );
         replyToAgent(msg, result);
       } else if (msg.method === 'RELOAD_FLOW_TAB') {
-        const result = await handleReloadFlowTab();
+        const result = await executeWsMethodAndReply(msg, () => handleReloadFlowTab());
         replyToAgent(msg, result);
       } else if (msg.method === 'EXECUTE_FLOW_JOB') {
-        const result = await handleExecuteFlowJob(msg.params.job);
+        const result = await executeWsMethodAndReply(
+          msg,
+          () => handleExecuteFlowJob(msg.params?.job),
+        );
+        replyToAgent(msg, result);
+      } else if (msg.method === 'DEBUG_FLOW_DOM_EXECUTION') {
+        const result = await executeWsMethodAndReply(
+          msg,
+          () => handleDebugFlowDomExecution(msg.params?.mode, msg.params?.job),
+        );
         replyToAgent(msg, result);
       } else if (msg.type === 'pong') {
         // keepalive response
       } else if (msg?.id) {
-        replyToAgent(msg, { ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' });
+        replyToAgent(
+          msg,
+          finalizeMethodPayload(msg.method || 'UNKNOWN_METHOD', {
+            ok: false,
+            error: msg.method ? 'ERR_UNKNOWN_METHOD' : 'ERR_UNKNOWN_MESSAGE_TYPE',
+          }, await getFlowTabSafe()),
+        );
       }
     } catch (e) {
       console.error('[FlowAgent] Message error:', e);
-      replyAgentError(msg, e);
+      if (msg?.id) {
+        replyToAgent(
+          msg,
+          finalizeMethodPayload(msg.method || 'UNKNOWN_METHOD', {
+            ok: false,
+            error: String(e?.message || e || 'ERR_UNKNOWN_METHOD_FAILURE'),
+          }, await getFlowTabSafe()),
+        );
+      } else {
+        replyAgentError(msg, e);
+      }
     }
   };
 
@@ -967,6 +1139,10 @@ async function handleMessage(msg, sender) {
     return { ok: true };
   }
 
+  if (msg.type === 'DEBUG_FLOW_DOM_EXECUTION') {
+    return await handleDebugFlowDomExecution(msg.params?.mode, msg.params?.job);
+  }
+
   return { ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' };
 }
 
@@ -1028,7 +1204,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleExecuteFlowJob(job) {
   const flowTab = await getFlowTab();
   if (!flowTab) {
-    return { ok: false, error: 'ERR_TAB_RELOADED' };
+    return { ok: false, error: 'ERR_NO_FLOW_TAB' };
   }
 
   await ensureFlowDomScript(flowTab.id);
@@ -1039,14 +1215,26 @@ async function handleExecuteFlowJob(job) {
   });
 }
 
+async function handleDebugFlowDomExecution(mode, job) {
+  const flowTab = await getFlowTab();
+  if (!flowTab) return { ok: false, error: 'ERR_NO_FLOW_TAB' };
+  await ensureFlowDomScript(flowTab.id);
+  // Increase timeout for debug/full execution
+  return await sendTabMessageSafe(flowTab.id, {
+    type: 'DEBUG_FLOW_DOM_EXECUTION',
+    params: { mode, job }
+  }, 60000);
+}
+
 async function handleCheckFlowComposerReady(mode) {
   const flowTab = await getFlowTab();
   const base = buildFlowReadinessBase(flowTab);
   if (!flowTab) {
     return finalizeFlowReadiness({
       ...base,
-      error: 'FLOW_PROJECT_LIST_NOT_EDITOR',
+      error: 'ERR_NO_FLOW_TAB',
       raw_error: 'ERR_NO_FLOW_TAB',
+      detail: 'No Google Flow tab matched the editor URL patterns.',
     });
   }
 
