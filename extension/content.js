@@ -9,6 +9,27 @@ if (!window._flowKitInjected) {
   window._flowKitInjected = true;
   console.log('[FlowAgent] Content script injected');
 
+  function respondAsync(sendResponse, task) {
+    let settled = false;
+
+    const done = (payload) => {
+      if (settled) return;
+      settled = true;
+      try {
+        sendResponse(payload || { ok: true });
+      } catch (error) {
+        console.warn('[FlowAgent] sendResponse failed:', error);
+      }
+    };
+
+    Promise.resolve()
+      .then(task)
+      .then((result) => done(result))
+      .catch((error) => done({ ok: false, error: String(error?.message || error) }));
+
+    return true;
+  }
+
   async function handleMessage(msg, sender) {
     if (msg.type === 'GET_CAPTCHA') {
       try {
@@ -23,7 +44,7 @@ if (!window._flowKitInjected) {
       return { ok: true };
     }
 
-    return null;
+    return { ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' };
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -33,18 +54,14 @@ if (!window._flowKitInjected) {
     }
 
     if (message.type !== 'GET_CAPTCHA') {
+      sendResponse({ ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' });
       return false;
     }
 
-    ;(async () => {
-      try {
-        const data = await handleMessage(message, sender);
-        sendResponse(data ?? { ok: false, error: 'UNHANDLED_MESSAGE_TYPE' });
-      } catch (error) {
-        sendResponse({ error: String(error?.message || error) });
-      }
-    })();
-    return true;
+    return respondAsync(sendResponse, async () => {
+      const data = await handleMessage(message, sender);
+      return data ?? { ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' };
+    });
   });
 
   /**

@@ -84,10 +84,22 @@
   }
 
   function respondAsync(sendResponse, task) {
+    let settled = false;
+
+    const done = (payload) => {
+      if (settled) return;
+      settled = true;
+      try {
+        sendResponse(payload || { ok: true });
+      } catch (error) {
+        console.warn('[FlowAgent] sendResponse failed:', error);
+      }
+    };
+
     Promise.resolve()
       .then(task)
-      .then((payload) => sendResponse(payload))
-      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+      .then((payload) => done(payload))
+      .catch((error) => done({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
@@ -361,6 +373,7 @@
       result.signed_in_likely &&
       result.composer_found &&
       result.composer_editable &&
+      result.generate_button_found &&
       !result.blocking_modal_detected
     );
 
@@ -722,12 +735,36 @@
 
   const flowDomMessageListener = (msg, sender, sendResponse) => {
     if (msg.type === 'CHECK_FLOW_COMPOSER_READY') {
-      return respondAsync(sendResponse, () => checkFlowComposerReady(msg.mode));
+      try {
+        sendResponse(checkFlowComposerReady(msg.mode));
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: 'ABORT_FLOW_COMPOSER_NOT_READY',
+          composer_found: false,
+          generate_button_found: false,
+          detail: String(error?.message || error),
+        });
+      }
+      return false;
     }
 
     if (msg.type === 'EXECUTE_FLOW_JOB') {
       if (msg.job?.smoke_test) {
-        return respondAsync(sendResponse, () => runExecuteFlowJobSmoke(msg.job));
+        try {
+          sendResponse(runExecuteFlowJobSmoke(msg.job));
+        } catch (error) {
+          sendResponse({
+            ok: false,
+            status: 'STRUCTURED_FAIL',
+            smoke_test: true,
+            no_generation_triggered: true,
+            error: String(error?.message || error),
+            composer_found: false,
+            generate_button_found: false,
+          });
+        }
+        return false;
       }
 
       // IMMEDIATE ACK - Send response right away, don't wait for job completion
@@ -758,6 +795,7 @@
       return false;
     }
 
+    sendResponse({ ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' });
     return false;
   };
 

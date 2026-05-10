@@ -29,11 +29,19 @@ function respondOnce(reply, payload) {
   } catch (_) {}
 }
 
-function runAsyncReply(reply, task) {
+function respondAsync(reply, task) {
+  let settled = false;
+
+  const done = (payload) => {
+    if (settled) return;
+    settled = true;
+    respondOnce(reply, payload);
+  };
+
   Promise.resolve()
     .then(task)
-    .then((payload) => respondOnce(reply, payload))
-    .catch((error) => respondOnce(reply, {
+    .then((payload) => done(payload || { ok: true }))
+    .catch((error) => done({
       ok: false,
       error: error?.message || String(error),
     }));
@@ -46,7 +54,7 @@ function sendTabMessageSafe(tabId, payload, timeoutMs = 4000) {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      resolve({ ok: false, error: 'MESSAGE_RESPONSE_TIMEOUT' });
+      resolve({ ok: false, error: 'ERR_MESSAGE_RESPONSE_TIMEOUT' });
     }, timeoutMs);
 
     chrome.tabs.sendMessage(tabId, payload, (response) => {
@@ -57,18 +65,22 @@ function sendTabMessageSafe(tabId, payload, timeoutMs = 4000) {
       const lastError = chrome.runtime.lastError;
       if (lastError) {
         const message = lastError.message || 'MESSAGE_SEND_FAILED';
-        if (/Receiving end does not exist|Could not establish connection/i.test(message)) {
-          resolve({ ok: false, error: 'CONTENT_SCRIPT_NOT_READY' });
+        if (/Receiving end does not exist/i.test(message)) {
+          resolve({ ok: false, error: 'ERR_NO_RECEIVER' });
+          return;
+        }
+        if (/Could not establish connection/i.test(message)) {
+          resolve({ ok: false, error: 'ERR_CONTENT_SCRIPT_STALE' });
           return;
         }
         if (/No tab with id|tab was closed|frame .* removed|The tab was closed/i.test(message)) {
-          resolve({ ok: false, error: 'FLOW_TAB_DISCONNECTED' });
+          resolve({ ok: false, error: 'ERR_TAB_RELOADED' });
           return;
         }
-        resolve({ ok: false, error: `MESSAGE_SEND_FAILED: ${message}` });
+        resolve({ ok: false, error: `ERR_RUNTIME_LASTERROR: ${message}` });
         return;
       }
-      resolve(response ?? { ok: false, error: 'No response' });
+      resolve(response ?? { ok: false, error: 'ERR_NO_RECEIVER' });
     });
   });
 }
@@ -278,6 +290,19 @@ function connectToAgent() {
     return;
   }
 
+  const replyToAgent = (msg, result) => {
+    if (!msg?.id) return;
+    sendToAgent({ id: msg.id, result: result || { ok: true } });
+  };
+
+  const replyAgentError = (msg, error) => {
+    if (!msg?.id) return;
+    replyToAgent(msg, {
+      ok: false,
+      error: String(error?.message || error),
+    });
+  };
+
   ws.onopen = () => {
     console.log('[FlowAgent] Connected to agent');
     chrome.alarms.clear('reconnect');
@@ -298,8 +323,9 @@ function connectToAgent() {
   };
 
   ws.onmessage = async ({ data }) => {
+    let msg = null;
     try {
-      const msg = JSON.parse(data);
+      msg = JSON.parse(data);
 
       if (msg.method === 'api_request') {
         await handleApiRequest(msg);
@@ -308,15 +334,12 @@ function connectToAgent() {
       } else if (msg.method === 'solve_captcha') {
         await handleSolveCaptcha(msg);
       } else if (msg.method === 'get_status') {
-        sendToAgent({
-          id: msg.id,
-          result: {
-            state,
-            flowKeyPresent: !!flowKey,
-            manualDisconnect,
-            tokenAge: metrics.tokenCapturedAt ? Date.now() - metrics.tokenCapturedAt : null,
-            metrics,
-          },
+        replyToAgent(msg, {
+          state,
+          flowKeyPresent: !!flowKey,
+          manualDisconnect,
+          tokenAge: metrics.tokenCapturedAt ? Date.now() - metrics.tokenCapturedAt : null,
+          metrics,
         });
       } else if (msg.type === 'callback_secret') {
         callbackSecret = msg.secret;
@@ -324,15 +347,18 @@ function connectToAgent() {
         console.log('[FlowAgent] Received callback secret');
       } else if (msg.method === 'CHECK_FLOW_COMPOSER_READY') {
         const result = await handleCheckFlowComposerReady(msg.params?.mode);
-        sendToAgent({ id: msg.id, result });
+        replyToAgent(msg, result);
       } else if (msg.method === 'EXECUTE_FLOW_JOB') {
         const result = await handleExecuteFlowJob(msg.params.job);
-        sendToAgent({ id: msg.id, result });
+        replyToAgent(msg, result);
       } else if (msg.type === 'pong') {
         // keepalive response
+      } else if (msg?.id) {
+        replyToAgent(msg, { ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' });
       }
     } catch (e) {
       console.error('[FlowAgent] Message error:', e);
+      replyAgentError(msg, e);
     }
   };
 
@@ -754,7 +780,7 @@ async function handleMessage(msg, sender) {
     return { ok: true };
   }
 
-  throw new Error(`Unknown message type: ${msg.type}`);
+  return { ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -785,28 +811,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     return false; // Already called sendResponse synchronously
   }
-  
-  // SHORT-RUN TASKS: Use async response pattern (keep port open briefly)
-  (async () => {
-    try {
-      const data = await handleMessage(message, sender);
-      // Ensure data is wrapped in the expected format if it isn't already
-      const result = (data && typeof data === 'object' && 'ok' in data)
-        ? data
-        : { ok: true, data };
-      sendResponse(result);
-    } catch (error) {
-      console.error('[FlowAgent] Message handling error:', error);
-      sendResponse({ ok: false, error: String(error?.message || error) });
-    }
-  })();
-  return true; // Keep port open for short async tasks only
+
+  if (message.type === 'CHECK_FLOW_COMPOSER_READY') {
+    return respondAsync(sendResponse, async () => {
+      const result = await handleCheckFlowComposerReady(message.mode);
+      return result && typeof result === 'object' && 'ok' in result
+        ? result
+        : { ok: true, data: result };
+    });
+  }
+
+  return respondAsync(sendResponse, async () => {
+    const data = await handleMessage(message, sender);
+    return (data && typeof data === 'object' && 'ok' in data)
+      ? data
+      : { ok: true, data };
+  });
 });
 
 async function handleExecuteFlowJob(job) {
   const flowTab = await getFlowTab();
   if (!flowTab) {
-    return { ok: false, error: 'FLOW_TAB_DISCONNECTED' };
+    return { ok: false, error: 'ERR_TAB_RELOADED' };
   }
 
   await ensureFlowDomScript(flowTab.id);
@@ -853,6 +879,21 @@ async function handleCheckFlowComposerReady(mode) {
       current_mode_visible: 'UNKNOWN',
       blocking_modal_detected: false,
       detail: 'Timed out waiting for content script readiness response.',
+    };
+  }
+  if (response?.error) {
+    return {
+      ok: false,
+      error: 'ABORT_FLOW_COMPOSER_NOT_READY',
+      flow_tab_found: true,
+      flow_url: flowTab.url,
+      signed_in_likely: false,
+      composer_found: false,
+      composer_editable: false,
+      generate_button_found: false,
+      current_mode_visible: 'UNKNOWN',
+      blocking_modal_detected: false,
+      detail: response.error,
     };
   }
   if (!response?.ok && !response?.error) {
