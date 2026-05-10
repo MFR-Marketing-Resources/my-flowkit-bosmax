@@ -120,6 +120,7 @@ async def get_batch_detail(batch_id: str) -> dict[str, Any]:
     events = [dict(row) for row in await cursor.fetchall()]
     
     res = dict(batch)
+    res["dry_run_validated"] = any(v.get("queue_status") == "DRY_RUN_VALIDATED" for v in variants)
     res["variants"] = variants
     res["events"] = events
     return res

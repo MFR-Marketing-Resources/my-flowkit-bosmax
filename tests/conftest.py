@@ -158,3 +158,20 @@ def sample_character_row(sample_uuid):
         "created_at": "2026-04-01T00:00:00",
         "updated_at": "2026-04-01T00:00:00",
     }
+
+
+async def seed_product_ready(db, product_id: str):
+    """Insert a minimal product row for testing that passes all safety gates."""
+    await db.execute(
+        "INSERT OR IGNORE INTO product "
+        "(id, raw_product_title, product_display_name, product_short_name, image_url, asset_status, "
+        "category, subcategory, type, product_type, silo, trigger_id, formula, copywriting_angle, claim_risk_level, "
+        "physics_class, recommended_grip, handling_notes, camera_handling_notes, scene_context, camera_style, "
+        "camera_behavior, camera_shot, section_4_hint, section_5_physics_hint, section_6_copy_hint, section_9_overlay_hint) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (product_id, "Test Diaper Pack", "Test Diaper Pack", "Diapers", "http://example.com/test.jpg", "DOWNLOADED",
+         "Baby Care", "Diapering", "Pants", "STEALTH", "baby_care_universal_01", "TRUST_01", "PAS", "Trust-led framing", "LOW",
+         "soft_pack", "two-hand hold", "stable handling", "clean reveal", "nursery shelf", "product close-up",
+         "slow push-in", "hero shot", "reveal hint", "physics hint", "copy hint", "overlay hint")
+    )
+    await db.commit()

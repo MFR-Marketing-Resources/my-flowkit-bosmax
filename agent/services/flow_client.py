@@ -245,9 +245,13 @@ class FlowClient:
         """Trigger DOM automation in the extension for a generation job."""
         return await self._send("EXECUTE_FLOW_JOB", {"job": job_data}, timeout=120)
 
+    async def debug_flow_dom_execution(self, mode: str, job: Optional[dict] = None) -> dict:
+        """Trigger a debug action for DOM automation."""
+        return await self._send("DEBUG_FLOW_DOM_EXECUTION", {"params": {"mode": mode, "job": job}}, timeout=30)
+
     async def check_flow_composer_ready(self, mode: Optional[str] = None) -> dict:
         """Check whether the real Google Flow composer is available and editable."""
-        result = await self._send("CHECK_FLOW_COMPOSER_READY", {"mode": mode}, timeout=10)
+        result = await self._send("CHECK_FLOW_COMPOSER_READY", {"mode": mode}, timeout=20)
         if result.get("error"):
             return {"ok": False, "error": result["error"]}
 

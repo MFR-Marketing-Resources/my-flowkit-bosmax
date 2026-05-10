@@ -31,8 +31,12 @@ async def _seed_product(db, product_id: str):
     await db.commit()
 
 
-async def _seed_queued_batch(db, product_id: str) -> tuple[str, str]:
-    """Directly insert a batch + variant into QUEUED state, bypassing planner."""
+async def _seed_queued_batch(
+    db,
+    product_id: str,
+    queue_status: str = "QUEUED",
+) -> tuple[str, str]:
+    """Directly insert a batch + variant with a specific queue status, bypassing planner."""
     batch_id = str(uuid.uuid4())
     variant_id = str(uuid.uuid4())
 
@@ -45,8 +49,8 @@ async def _seed_queued_batch(db, product_id: str) -> tuple[str, str]:
         """INSERT INTO batch_variant
                (variant_id, batch_id, product_id, variation_index,
                 prompt_9_section, google_flow_mode, queue_status)
-           VALUES (?, ?, ?, 1, 'Test 9-section prompt text here', 'F2V', 'QUEUED')""",
-        (variant_id, batch_id, product_id)
+           VALUES (?, ?, ?, 1, 'Test 9-section prompt text here', 'F2V', ?)""",
+        (variant_id, batch_id, product_id, queue_status)
     )
     await db.commit()
     return batch_id, variant_id
@@ -165,7 +169,11 @@ async def test_live_execution_blocked_when_extension_offline():
     db = await crud.get_db()
     product_id = "test_prod_" + str(uuid.uuid4())[:8]
     await _seed_product(db, product_id)
-    batch_id, variant_id = await _seed_queued_batch(db, product_id)
+    batch_id, variant_id = await _seed_queued_batch(
+        db,
+        product_id,
+        queue_status="DRY_RUN_VALIDATED",
+    )
 
     client = get_flow_client()
     client.clear_extension()
@@ -195,7 +203,7 @@ async def test_live_execution_blocked_when_prompt_missing():
         """INSERT INTO batch_variant
                (variant_id, batch_id, product_id, variation_index,
                 prompt_9_section, google_flow_mode, queue_status)
-           VALUES (?, ?, ?, 1, '', 'F2V', 'QUEUED')""",
+           VALUES (?, ?, ?, 1, '', 'F2V', 'DRY_RUN_VALIDATED')""",
         (variant_id, batch_id, product_id)
     )
     await db.commit()
@@ -301,7 +309,11 @@ async def test_live_eligibility_reports_ready_when_composer_and_smoke_pass():
     db = await crud.get_db()
     product_id = "test_prod_" + str(uuid.uuid4())[:8]
     await _seed_product(db, product_id)
-    batch_id, variant_id = await _seed_queued_batch(db, product_id)
+    batch_id, variant_id = await _seed_queued_batch(
+        db,
+        product_id,
+        queue_status="DRY_RUN_VALIDATED",
+    )
 
     client = get_flow_client()
     client.set_extension(MagicMock())
@@ -336,7 +348,7 @@ async def test_live_eligibility_reports_ready_when_composer_and_smoke_pass():
 
     assert res["selected_variant_id"] == variant_id
     assert res["eligible_queued_variant_count"] == 1
-    assert res["target_variant_status"] == "QUEUED"
+    assert res["target_variant_status"] == "DRY_RUN_VALIDATED"
     assert res["has_prompt"] is True
     assert res["product_id"] == product_id
     assert res["product_id_match_expected"] is True

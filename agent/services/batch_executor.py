@@ -30,7 +30,7 @@ FLOW_MODE_MAP = {
 
 async def execute_next_variant(batch_id: str, dry_run: bool = True, max_variants: int = 1) -> dict[str, Any]:
     """
-    Find the next QUEUED variant in a batch and execute it.
+    Find the next eligible variant in a batch and execute it.
     """
     db = await crud.get_db()
     
@@ -43,17 +43,19 @@ async def execute_next_variant(batch_id: str, dry_run: bool = True, max_variants
     if batch["status"] != "QUEUED":
         return {"error": f"Batch status is {batch['status']}, must be QUEUED to execute."}
 
-    # Find next variant
+    target_status = "QUEUED" if dry_run else "DRY_RUN_VALIDATED"
+
+    # Find next variant for the current execution phase.
     cursor = await db.execute("""
         SELECT * FROM batch_variant 
-        WHERE batch_id = ? AND queue_status = 'QUEUED'
+        WHERE batch_id = ? AND queue_status = ?
         ORDER BY variation_index ASC
         LIMIT ?
-    """, (batch_id, max_variants))
+    """, (batch_id, target_status, max_variants))
     variants = await cursor.fetchall()
     
     if not variants:
-        return {"ok": True, "message": "No QUEUED variants remaining in this batch."}
+        return {"ok": True, "message": f"No {target_status} variants remaining in this batch."}
 
     results = []
     for variant in variants:
@@ -226,8 +228,14 @@ async def execute_variant(variant_id: str, dry_run: bool = True) -> dict[str, An
     if not variant:
         return {"error": "Variant not found"}
     
-    if variant["queue_status"] != "QUEUED":
-        return {"error": f"Variant {variant_id} status is {variant['queue_status']}, must be QUEUED."}
+    expected_status = "QUEUED" if dry_run else "DRY_RUN_VALIDATED"
+    if variant["queue_status"] != expected_status:
+        return {
+            "error": (
+                f"Variant {variant_id} status is {variant['queue_status']}, "
+                f"must be {expected_status}."
+            )
+        }
 
     from agent.db.schema import _db_lock
     async with _db_lock:
@@ -416,7 +424,7 @@ async def _assess_live_eligibility(
     client = get_flow_client()
 
     cursor = await db.execute(
-        "SELECT COUNT(*) as cnt FROM batch_variant WHERE batch_id = ? AND queue_status = 'QUEUED'",
+        "SELECT COUNT(*) as cnt FROM batch_variant WHERE batch_id = ? AND queue_status = 'DRY_RUN_VALIDATED'",
         (batch["id"],),
     )
     queued_row = await cursor.fetchone()
@@ -430,11 +438,11 @@ async def _assess_live_eligibility(
 
     blocked_reason: list[str] = []
     if eligible_queued_variant_count < 1:
-        blocked_reason.append("NO_QUEUED_VARIANT")
+        blocked_reason.append("NO_DRY_RUN_VALIDATED_VARIANT")
     if not variant:
         blocked_reason.append("TARGET_VARIANT_NOT_FOUND")
-    elif variant["queue_status"] != "QUEUED":
-        blocked_reason.append(f"TARGET_VARIANT_NOT_QUEUED:{variant['queue_status']}")
+    elif variant["queue_status"] != "DRY_RUN_VALIDATED":
+        blocked_reason.append(f"TARGET_VARIANT_NOT_DRY_RUN_VALIDATED:{variant['queue_status']}")
     if not has_prompt:
         blocked_reason.append("ABORT_PROMPT_MISSING")
     if not product_id_match_expected:

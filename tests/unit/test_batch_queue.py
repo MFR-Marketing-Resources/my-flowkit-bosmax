@@ -2,10 +2,14 @@ import pytest
 from agent.services.batch_planner import create_batch_draft
 from agent.services.batch_queue import queue_batch, cancel_batch
 from agent.db import crud
+from tests.conftest import seed_product_ready
 
 @pytest.mark.asyncio
 async def test_queue_batch_workflow():
     product_id = "3bc08dc9-02b8-44d5-bdcd-086a62cbfd34"
+    db = await crud.get_db()
+    await seed_product_ready(db, product_id)
+    
     draft = await create_batch_draft({
         "product_id": product_id,
         "quantity": 3,
@@ -22,7 +26,7 @@ async def test_queue_batch_workflow():
 
     # Queue it
     res = await queue_batch(batch_id)
-    assert res["ok"]
+    assert res.get("ok"), f"Expected ok: True, got {res}"
     assert res["status"] == "QUEUED"
     
     # Verify DB state
@@ -50,6 +54,9 @@ async def test_queue_batch_workflow():
 @pytest.mark.asyncio
 async def test_cancel_batch_workflow():
     product_id = "3bc08dc9-02b8-44d5-bdcd-086a62cbfd34"
+    db = await crud.get_db()
+    await seed_product_ready(db, product_id)
+    
     draft = await create_batch_draft({
         "product_id": product_id,
         "quantity": 2,
