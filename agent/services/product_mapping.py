@@ -87,13 +87,25 @@ def derive_product_short_name(raw_title: str, existing_short_name: str | None = 
     return " ".join(compact) or " ".join(tokens[:4]).strip() or raw_title.strip()
 
 
-def _resolve_source_label(product: dict[str, Any] | None, source_hint: str | None, matched: bool) -> str:
+def _resolve_source_label(
+    product: dict[str, Any] | None,
+    source_hint: str | None,
+    matched: bool,
+    *,
+    has_explicit_override: bool = False,
+) -> str:
+    if has_explicit_override:
+        return "explicit"
     source = (source_hint or product.get("source") if product else source_hint or "").upper()
-    if matched and source in {"FASTMOSS", "MANUAL_PROJECT", "MANUAL"}:
-        return "FASTMOSS" if source == "FASTMOSS" else "MANUAL"
-    if matched and not source:
-        return "MANUAL"
-    return "FALLBACK"
+    if matched and source in {"MANUAL_PROJECT", "MANUAL"}:
+        return "manual"
+    if matched:
+        return "rule"
+    if product and any((product.get(field) or "").strip() for field in ("category", "subcategory", "type")):
+        return "heuristic"
+    if not source:
+        return "manual"
+    return "fallback"
 
 
 def _match_keyword_rule(normalized_title: str) -> tuple[dict[str, Any] | None, list[str]]:
@@ -109,11 +121,16 @@ def _match_keyword_rule(normalized_title: str) -> tuple[dict[str, Any] | None, l
         
     by_id = {rule.get("id"): (rule, matches) for rule, matches in matched_rules}
     has_baby = "baby_diaper" in by_id
+    has_modestwear = "fashion_modestwear" in by_id
     has_fashion = any(rule.get("id") in {"fashion_bottoms", "fashion_sportswear"} for rule, _ in matched_rules)
     
     if has_baby and has_fashion:
         baby_rule = by_id["baby_diaper"][0]
         return baby_rule, ["Conflict resolved: baby_diaper outranked fashion_bottoms due lampin/diaper keywords"]
+
+    if has_modestwear and "fashion_sportswear" in by_id:
+        modestwear_rule = by_id["fashion_modestwear"][0]
+        return modestwear_rule, ["Conflict resolved: fashion_modestwear outranked fashion_sportswear due sarung/syria keywords."]
 
     home_carpet = by_id.get("home_carpet")
     fashion_bottoms = by_id.get("fashion_bottoms")
@@ -220,11 +237,12 @@ def resolve_product_mapping(
     override_category = (overrides.get("category") or "").strip()
     override_subcategory = (overrides.get("subcategory") or "").strip()
     override_type = (overrides.get("type") or "").strip()
+    has_explicit_override = bool(override_category or override_subcategory or override_type)
 
     matched = False
     profile: dict[str, Any] | None = None
 
-    if override_category or override_subcategory or override_type:
+    if has_explicit_override:
         base["category"] = override_category or (product or {}).get("category") or ""
         base["subcategory"] = override_subcategory or (product or {}).get("subcategory") or ""
         base["type"] = override_type or (product or {}).get("type") or ""
@@ -284,7 +302,12 @@ def resolve_product_mapping(
         if not base["claim_risk_level"]:
             base["claim_risk_level"] = profile.get("claim_risk_level", "")
 
-    base["mapping_source"] = _resolve_source_label(product, source_hint, matched)
+    base["mapping_source"] = _resolve_source_label(
+        product,
+        source_hint,
+        matched,
+        has_explicit_override=has_explicit_override,
+    )
     base["missing_fields"] = _missing_fields(base)
     if base["missing_fields"]:
         if matched:

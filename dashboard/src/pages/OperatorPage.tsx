@@ -5,8 +5,10 @@ import type {
   BlueprintResponse,
   Character,
   ContentPackSummary,
+  FlowReadinessSmokeResult,
   Orientation,
   OperatorProduct,
+  OperatorPreflightResponse,
   Project,
   ProductMapping,
   Scene,
@@ -182,6 +184,17 @@ function ReadOnlyField({ label, value }: { label: string, value: string | null |
       </div>
     </div>
   )
+}
+
+function formatList(items: string[] | null | undefined) {
+  return items && items.length > 0 ? items.join(', ') : '—'
+}
+
+function statusTone(status: string | null | undefined): 'neutral' | 'ready' | 'warn' | 'risk' {
+  if (!status) return 'neutral'
+  if (status === 'READY' || status === 'PASS') return 'ready'
+  if (status === 'NEEDS_REVIEW' || status === 'MISSING_FIELDS' || status === 'NOT_CHECKED') return 'warn'
+  return 'risk'
 }
 
 function Card({ children, className = "", style = {} }: { children: ReactNode, className?: string, style?: any }) {
@@ -457,7 +470,7 @@ function productToOperatorProduct(product: Product): OperatorProduct {
     claim_risk_level: product.claim_risk_level || null,
     mapping_source: product.mapping_source || product.source,
     mapping_confidence: product.mapping_confidence || null,
-    missing_fields: product.prompt_missing_fields || product.missing_fields || [],
+    missing_fields: product.mapping_missing_fields || product.prompt_missing_fields || product.missing_fields || [],
     raw_category: null,
     avg_price_rm: product.price ?? product.price_min ?? null,
     status: product.mapping_review_status || null,
@@ -499,18 +512,29 @@ function mergeMappingIntoProduct(mapping: ProductMapping, existing?: Product | n
     mapping_source: mapping.mapping_source,
     mapping_confidence: mapping.mapping_confidence,
     mapping_review_status: mapping.mapping_review_status || null,
+    mapping_status: mapping.mapping_status || null,
+    mapping_missing_fields: mapping.mapping_missing_fields || mapping.missing_fields || [],
     prompt_readiness_status: mapping.prompt_readiness_status || null,
     prompt_missing_fields: mapping.prompt_missing_fields || [],
     physics_class: mapping.physics_class || null,
     product_scale: mapping.product_scale || null,
     hand_object_interaction: mapping.hand_object_interaction || null,
     recommended_grip: mapping.recommended_grip || null,
+    handling_notes: mapping.handling_notes || null,
     air_gap_rule: mapping.air_gap_rule || null,
     material_behavior: mapping.material_behavior || null,
     surface_behavior: mapping.surface_behavior || null,
     fragility_level: mapping.fragility_level || null,
     camera_handling_notes: mapping.camera_handling_notes || null,
+    scene_context: mapping.scene_context || null,
+    camera_style: mapping.camera_style || null,
+    camera_behavior: mapping.camera_behavior || null,
+    camera_shot: mapping.camera_shot || null,
     unsafe_handling_rules: mapping.unsafe_handling_rules || [],
+    section_4_hint: mapping.section_4_hint || null,
+    section_5_physics_hint: mapping.section_5_physics_hint || null,
+    section_6_copy_hint: mapping.section_6_copy_hint || null,
+    section_9_overlay_hint: mapping.section_9_overlay_hint || null,
     section_4_visual_action_prompt: mapping.section_4_visual_action_prompt || null,
     section_5_product_physics_prompt: mapping.section_5_product_physics_prompt || null,
     section_6_dialogue_prompt: mapping.section_6_dialogue_prompt || null,
@@ -642,7 +666,7 @@ export function SystemHealthPanel({
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--text)' }}>
           <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-          System Health & Smoke Test
+          System Health & Flow Readiness
         </h3>
         <div className="flex items-center gap-2">
           <button onClick={onCheckAgent} disabled={checkingAgent} className="text-[10px] px-2 py-1 rounded bg-gray-800 border border-gray-700 hover:border-blue-500 transition-all">
@@ -685,7 +709,7 @@ export function SystemHealthPanel({
           Run Telemetry Self-Test
         </button>
         <button onClick={onRunSmokeTest} disabled={smokeTesting} className="px-3 py-1.5 rounded text-[10px] font-bold bg-purple-600/20 text-purple-400 border border-purple-800/50 hover:bg-purple-600/30 transition-all">
-          {smokeTesting ? 'Smoke Test Running...' : 'Run First F2V Smoke Test'}
+          {smokeTesting ? 'Checking Flow...' : 'Check Flow Readiness'}
         </button>
       </div>
 
@@ -738,7 +762,11 @@ export default function OperatorPage() {
   const [canonicalProducts, setCanonicalProducts] = useState<Product[]>([])
   const [selectedCatalogProduct, setSelectedCatalogProduct] = useState<Product | null>(null)
   const [resolvedMapping, setResolvedMapping] = useState<ProductMapping | null>(null)
+  const [operatorPreflight, setOperatorPreflight] = useState<OperatorPreflightResponse | null>(null)
+  const [flowReadiness, setFlowReadiness] = useState<FlowReadinessSmokeResult | null>(null)
   const [mappingBusy, setMappingBusy] = useState(false)
+  const [repairingMapping, setRepairingMapping] = useState(false)
+  const [backfillingMappings, setBackfillingMappings] = useState(false)
   const [advancedOverrideOpen, setAdvancedOverrideOpen] = useState(false)
   const [overrideDraft, setOverrideDraft] = useState({ category: '', subcategory: '', type: '' })
   const [manualProductName, setManualProductName] = useState('')
@@ -764,10 +792,14 @@ export default function OperatorPage() {
   const { isConnected: backendConnected, extensionConnected } = useWebSocketContext()
   const availableProducts = [...manualProducts, ...canonicalProducts.map(productToOperatorProduct)]
   const selectedScene = videoScenes.find(item => item.id === selectedSceneId)
+  const selectedProductId = selectedCatalogProduct?.id || resolvedMapping?.product_id || ''
+  const preflight = operatorPreflight?.preflight || null
   const systemVideoPrompt = systemPrompt || selectedScene?.video_prompt || selectedScene?.prompt || ''
   const manualPromptOverride = manualPrompt.trim()
   const resolvedVideoPrompt = manualPromptOverride || systemVideoPrompt
   const promptSource = manualPromptOverride ? 'USER_OVERRIDE' : (systemVideoPrompt ? 'SYSTEM' : 'MISSING')
+  const blueprintBlocked = !preflight?.build_allowed
+  const executionBlocked = blueprintBlocked || Boolean(flowReadiness?.primary_blocker)
 
   // True F2V Readiness Rules
   const f2vResolvedPromptReady = resolvedVideoPrompt.trim().length > 0
@@ -924,6 +956,56 @@ export default function OperatorPage() {
     void refreshCreatedResources(created)
   }, [created])
 
+  async function syncSelectedProductState(productId: string) {
+    const [product, mapping, preflightResponse] = await Promise.all([
+      fetchAPI<Product>(`/api/products/${productId}`),
+      fetchAPI<ProductMapping>(`/api/products/${productId}/mapping`),
+      fetchAPI<OperatorPreflightResponse>(`/api/operator/preflight?product_id=${encodeURIComponent(productId)}`),
+    ])
+
+    setSelectedCatalogProduct(product)
+    setResolvedMapping(mapping)
+    setOperatorPreflight(preflightResponse)
+    setCanonicalProducts(current => current.map(item => item.id === product.id ? product : item))
+    setManualProducts(current => current.map(item => item.product_id === product.id ? productToOperatorProduct(product) : item))
+    return { product, mapping, preflightResponse }
+  }
+
+  async function backfillMappings() {
+    setBackfillingMappings(true)
+    try {
+      const result = await postAPI<any>('/api/products/backfill-mapping', {})
+      await loadCanonicalProducts()
+      if (selectedProductId) {
+        await syncSelectedProductState(selectedProductId)
+      }
+      setMessage(`Backfill complete: ${result.total_products_processed} processed, ${result.total_mapping_ready} READY, ${result.total_needs_review} NEEDS_REVIEW, ${result.total_blocked} BLOCKED.`)
+    } catch (err) {
+      setMessage(`Backfill failed: ${String(err)}`)
+    } finally {
+      setBackfillingMappings(false)
+    }
+  }
+
+  async function repairSelectedProductMapping() {
+    if (!selectedProductId) {
+      setMessage('Select a product before repairing mapping.')
+      return
+    }
+
+    setRepairingMapping(true)
+    try {
+      await postAPI(`/api/products/${selectedProductId}/repair-mapping`, {})
+      await syncSelectedProductState(selectedProductId)
+      setFlowReadiness(null)
+      setMessage('Product mapping repaired and preflight refreshed.')
+    } catch (err) {
+      setMessage(`Repair mapping failed: ${String(err)}`)
+    } finally {
+      setRepairingMapping(false)
+    }
+  }
+
   function updateField<K extends keyof OperatorForm>(field: K, value: OperatorForm[K]) {
     setForm(current => ({ ...current, [field]: value }))
   }
@@ -933,6 +1015,7 @@ export default function OperatorPage() {
     try {
       const mapping = await postAPI<ProductMapping>('/api/products/map', payload)
       setResolvedMapping(mapping)
+      setFlowReadiness(null)
       setOverrideDraft({
         category: mapping.category || '',
         subcategory: mapping.subcategory || '',
@@ -958,12 +1041,16 @@ export default function OperatorPage() {
         air_gap_rule: mapping.air_gap_rule || '',
         unsafe_handling_rules: mapping.unsafe_handling_rules || [],
         section_5_product_physics_prompt: mapping.section_5_product_physics_prompt || '',
-        scene_context: mapping.category && mapping.type
-          ? `${mapping.category} environment with ${mapping.type}`
-          : (mapping.raw_product_title || current.scene_context),
+        scene_context: mapping.scene_context || mapping.raw_product_title || current.scene_context,
       }))
-      if (mapping.missing_fields.length > 0) {
-        setMessage(`Mapping needs review: ${mapping.missing_fields.join(', ')}`)
+      if (mapping.product_id) {
+        await syncSelectedProductState(mapping.product_id)
+      } else {
+        setOperatorPreflight(null)
+      }
+      const mappingMissing = mapping.mapping_missing_fields || mapping.missing_fields || []
+      if ((mapping.mapping_status || 'READY') !== 'READY') {
+        setMessage(`Mapping ${mapping.mapping_status || 'NEEDS_REVIEW'}: ${mappingMissing.join(', ')}`)
       }
       return mapping
     } catch (err) {
@@ -1074,14 +1161,14 @@ export default function OperatorPage() {
   async function runF2VSmokeTest() {
     setSmokeTesting(true)
     try {
-      const res = await postAPI<any>('/api/smoke/true-f2v', {})
-      if (res.ok) {
-        setMessage(`Smoke test triggered: ${res.product} | Request ID: ${res.request_id}`)
-      } else {
-        setMessage(`Smoke test blocker: ${res.message} (${res.error})`)
-      }
+      const res = await postAPI<FlowReadinessSmokeResult>('/api/operator/flow-readiness-smoke', {
+        product_id: selectedProductId || undefined,
+        mode: 'F2V',
+      })
+      setFlowReadiness(res)
+      setMessage(res.primary_blocker ? `Flow readiness blocked: ${res.primary_blocker}` : 'Flow readiness is READY.')
     } catch (err) {
-      setMessage(`Smoke test failed: ${String(err)}`)
+      setMessage(`Flow readiness check failed: ${String(err)}`)
     } finally {
       setSmokeTesting(false)
     }
@@ -1109,6 +1196,10 @@ export default function OperatorPage() {
   }
 
   async function buildBlueprint() {
+    if (blueprintBlocked) {
+      setMessage(preflight?.blocking_reason || 'Product preflight is blocked. Repair mapping before building the blueprint.')
+      return
+    }
     setBuilding(true)
     setMessage('')
     try {
@@ -1127,6 +1218,10 @@ export default function OperatorPage() {
 
   async function createProjectFromBlueprint() {
     if (!blueprint) return
+    if (blueprintBlocked) {
+      setMessage(preflight?.blocking_reason || 'Product preflight is blocked. Repair mapping before creating the project.')
+      return
+    }
     setCreating(true)
     setMessage('')
     try {
@@ -1159,6 +1254,10 @@ export default function OperatorPage() {
 
   async function queueRequests(type: 'GENERATE_CHARACTER_IMAGE' | 'GENERATE_IMAGE' | 'GENERATE_VIDEO' | 'GENERATE_VIDEO_REFS' | 'UPSCALE_VIDEO') {
     if (!created) return
+    if (executionBlocked) {
+      setMessage(flowReadiness?.primary_blocker || preflight?.blocking_reason || 'Preflight is blocked. Repair mapping and re-check Flow readiness before executing.')
+      return
+    }
     setQueueing(true)
     setMessage('')
     try {
@@ -1423,7 +1522,7 @@ export default function OperatorPage() {
     const mapping = await resolveProductMapping({
       product_id: selectedCatalogProduct?.id || undefined,
       product_name: title,
-      source: selectedCatalogProduct?.source || (resolvedMapping?.mapping_source === 'MANUAL' ? 'MANUAL' : 'FASTMOSS'),
+      source: selectedCatalogProduct?.source || (resolvedMapping?.mapping_source === 'manual' ? 'MANUAL' : 'FASTMOSS'),
       override_category: overrideDraft.category,
       override_subcategory: overrideDraft.subcategory,
       override_type: overrideDraft.type,
@@ -1716,6 +1815,8 @@ export default function OperatorPage() {
                 <div className="text-[10px] font-bold text-blue-400 uppercase">{selectedCatalogProduct.mapping_source || selectedCatalogProduct.source}</div>
                 <div className="text-[10px] opacity-60">Mapping Confidence:</div>
                 <div className="text-[10px] truncate">{selectedCatalogProduct.mapping_confidence || '—'}</div>
+                <div className="text-[10px] opacity-60">Mapping Status:</div>
+                <div className="text-[10px] truncate">{selectedCatalogProduct.mapping_status || operatorPreflight?.preflight.mapping_status || '—'}</div>
               </div>
             </div>
           </div>
@@ -1725,6 +1826,92 @@ export default function OperatorPage() {
           </div>
         </Card>
       )}
+
+      <Card>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Product Intelligence Preflight</h3>
+            <div className="text-[11px]" style={{ color: 'var(--muted)' }}>
+              System-owned mapping, creative, prompt, and Flow readiness evidence for the selected product.
+            </div>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={repairSelectedProductMapping}
+              disabled={!selectedProductId || repairingMapping}
+              className="px-3 py-1.5 rounded text-[10px] font-bold"
+              style={{ background: 'rgba(245,158,11,0.14)', color: '#fcd34d', border: '1px solid rgba(245,158,11,0.3)' }}
+            >
+              {repairingMapping ? 'Repairing...' : 'Repair Mapping'}
+            </button>
+            <button
+              onClick={backfillMappings}
+              disabled={backfillingMappings}
+              className="px-3 py-1.5 rounded text-[10px] font-bold"
+              style={{ background: 'rgba(59,130,246,0.14)', color: '#93c5fd', border: '1px solid rgba(59,130,246,0.3)' }}
+            >
+              {backfillingMappings ? 'Backfilling...' : 'Backfill All Mappings'}
+            </button>
+            <button
+              onClick={runF2VSmokeTest}
+              disabled={smokeTesting}
+              className="px-3 py-1.5 rounded text-[10px] font-bold"
+              style={{ background: 'rgba(168,85,247,0.14)', color: '#d8b4fe', border: '1px solid rgba(168,85,247,0.3)' }}
+            >
+              {smokeTesting ? 'Checking...' : 'Check Flow Readiness'}
+            </button>
+          </div>
+        </div>
+
+        {!selectedProductId ? (
+          <div className="text-xs" style={{ color: 'var(--muted)' }}>
+            Select or resolve a product to see exact mapping gaps, repair actions, and execution gates.
+          </div>
+        ) : (
+          <>
+            <div className="flex gap-2 flex-wrap">
+              <StatBadge label={`Mapping ${preflight?.mapping_status || 'UNKNOWN'}`} tone={statusTone(preflight?.mapping_status)} />
+              <StatBadge label={`Physics ${preflight?.physics_dna_status || 'UNKNOWN'}`} tone={statusTone(preflight?.physics_dna_status)} />
+              <StatBadge label={`Creative ${preflight?.creative_brief_status || 'UNKNOWN'}`} tone={statusTone(preflight?.creative_brief_status)} />
+              <StatBadge label={`Prompt ${preflight?.prompt_readiness_status || 'UNKNOWN'}`} tone={statusTone(preflight?.prompt_readiness_status)} />
+              <StatBadge label={`Flow ${flowReadiness?.status || preflight?.flow_readiness_status || 'NOT_CHECKED'}`} tone={statusTone(flowReadiness?.status || preflight?.flow_readiness_status)} />
+            </div>
+
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+              <ReadOnlyField label="Mapping Missing Fields" value={formatList(preflight?.missing_fields)} />
+              <ReadOnlyField label="Creative Missing Fields" value={formatList(preflight?.creative_missing_fields)} />
+              <ReadOnlyField label="Prompt Missing Fields" value={formatList(preflight?.prompt_missing_fields)} />
+              <ReadOnlyField label="Blocking Reason" value={flowReadiness?.primary_blocker || preflight?.blocking_reason || '—'} />
+              <ReadOnlyField label="Repair Action" value={preflight?.repair_action || '—'} />
+              <ReadOnlyField label="Backfill Action" value={preflight?.backfill_action || '—'} />
+            </div>
+
+            {flowReadiness && (
+              <div className="grid gap-3 rounded-lg border p-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)' }}>
+                <div className="text-xs font-semibold" style={{ color: 'var(--text)' }}>Flow Readiness Smoke Evidence</div>
+                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                  <ReadOnlyField label="Extension Runtime" value={flowReadiness.extension_runtime} />
+                  <ReadOnlyField label="Flow Tab Found" value={String(flowReadiness.flow_tab_found)} />
+                  <ReadOnlyField label="Flow URL" value={flowReadiness.flow_url || '—'} />
+                  <ReadOnlyField label="Signed In Likely" value={String(flowReadiness.signed_in_likely)} />
+                  <ReadOnlyField label="Composer Found" value={String(flowReadiness.composer_found)} />
+                  <ReadOnlyField label="Composer Editable" value={String(flowReadiness.composer_editable)} />
+                  <ReadOnlyField label="Generate Button Found" value={String(flowReadiness.generate_button_found)} />
+                  <ReadOnlyField label="Current Mode Visible" value={flowReadiness.current_mode_visible} />
+                  <ReadOnlyField label="Blocking Modal Detected" value={String(flowReadiness.blocking_modal_detected)} />
+                  <ReadOnlyField label="Primary Blocker" value={flowReadiness.primary_blocker || '—'} />
+                </div>
+              </div>
+            )}
+
+            {(preflight?.blocking_reason || flowReadiness?.primary_blocker) && (
+              <div className="rounded px-3 py-2 text-xs" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--text)' }}>
+                Buttons are gated until the visible blocker clears. No fake READY state is shown.
+              </div>
+            )}
+          </>
+        )}
+      </Card>
 
       <Card>
         <div className="flex items-center justify-between">
@@ -1923,13 +2110,18 @@ export default function OperatorPage() {
           <textarea value={form.cta} onChange={e => updateField('cta', e.target.value)} rows={2} className="px-2 py-1.5 rounded text-xs resize-y" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
         </div>
         <div className="flex gap-3 flex-wrap">
-          <button onClick={buildBlueprint} disabled={building} className="px-4 py-2 rounded text-xs font-semibold" style={{ background: 'var(--accent)', color: '#fff', border: '1px solid var(--accent)' }}>
+          <button onClick={buildBlueprint} disabled={building || blueprintBlocked} className="px-4 py-2 rounded text-xs font-semibold" style={{ background: blueprintBlocked ? 'var(--border)' : 'var(--accent)', color: blueprintBlocked ? 'var(--muted)' : '#fff', border: '1px solid var(--accent)' }}>
             {building ? 'Building...' : 'Build Blueprint'}
           </button>
-          <button onClick={createProjectFromBlueprint} disabled={!blueprint || creating} className="px-4 py-2 rounded text-xs font-semibold" style={{ background: !blueprint ? 'var(--border)' : 'rgba(34,197,94,0.2)', color: !blueprint ? 'var(--muted)' : 'var(--green)', border: '1px solid var(--border)' }}>
+          <button onClick={createProjectFromBlueprint} disabled={!blueprint || creating || blueprintBlocked} className="px-4 py-2 rounded text-xs font-semibold" style={{ background: !blueprint || blueprintBlocked ? 'var(--border)' : 'rgba(34,197,94,0.2)', color: !blueprint || blueprintBlocked ? 'var(--muted)' : 'var(--green)', border: '1px solid var(--border)' }}>
             {creating ? 'Creating...' : 'Create Project'}
           </button>
         </div>
+        {blueprintBlocked && (
+          <div className="rounded px-3 py-2 text-xs" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--text)' }}>
+            Build/Create blocked: {flowReadiness?.primary_blocker || preflight?.blocking_reason || 'Selected product is not ready.'}
+          </div>
+        )}
       </Card>
 
       {blueprint && (
@@ -1988,25 +2180,30 @@ export default function OperatorPage() {
           <div>Do not confuse `Ingredients` with true `Frames` start-plus-end frame generation.</div>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <button onClick={() => queueRequests('GENERATE_CHARACTER_IMAGE')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+          <button onClick={() => queueRequests('GENERATE_CHARACTER_IMAGE')} disabled={!created || queueing || executionBlocked} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: !created || queueing || executionBlocked ? 'var(--muted)' : 'var(--text)', border: '1px solid var(--border)' }}>
             Generate Ingredients
           </button>
-          <button onClick={() => queueRequests('GENERATE_IMAGE')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+          <button onClick={() => queueRequests('GENERATE_IMAGE')} disabled={!created || queueing || executionBlocked} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: !created || queueing || executionBlocked ? 'var(--muted)' : 'var(--text)', border: '1px solid var(--border)' }}>
             Generate Images
           </button>
-          <button onClick={() => queueRequests('GENERATE_VIDEO')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+          <button onClick={() => queueRequests('GENERATE_VIDEO')} disabled={!created || queueing || executionBlocked} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: !created || queueing || executionBlocked ? 'var(--muted)' : 'var(--text)', border: '1px solid var(--border)' }}>
             Generate Ingredients
           </button>
-          <button onClick={() => queueRequests('GENERATE_VIDEO_REFS')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+          <button onClick={() => queueRequests('GENERATE_VIDEO_REFS')} disabled={!created || queueing || executionBlocked} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: !created || queueing || executionBlocked ? 'var(--muted)' : 'var(--text)', border: '1px solid var(--border)' }}>
             Generate Frames
           </button>
           <button disabled className="px-3 py-2 rounded text-xs font-semibold opacity-70 cursor-not-allowed" style={{ background: 'var(--surface)', color: 'var(--muted)', border: '1px solid var(--border)' }}>
             Generate Text to Video — NOT WIRED
           </button>
-          <button onClick={() => queueRequests('UPSCALE_VIDEO')} disabled={!created || queueing} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+          <button onClick={() => queueRequests('UPSCALE_VIDEO')} disabled={!created || queueing || executionBlocked} className="px-3 py-2 rounded text-xs font-semibold" style={{ background: 'var(--surface)', color: !created || queueing || executionBlocked ? 'var(--muted)' : 'var(--text)', border: '1px solid var(--border)' }}>
             Upscale
           </button>
         </div>
+        {executionBlocked && (
+          <div className="rounded px-3 py-2 text-xs" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--text)' }}>
+            Execute blocked: {flowReadiness?.primary_blocker || preflight?.blocking_reason || 'Selected product is not ready.'}
+          </div>
+        )}
         <div className="text-xs" style={{ color: 'var(--muted)' }}>
           T2V in this repo is not a native single-shot queue type. The verified path here is prompt to image to video.
         </div>

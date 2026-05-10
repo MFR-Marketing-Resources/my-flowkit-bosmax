@@ -256,9 +256,11 @@ export interface Product {
   mode_recommendations?: string[]
   copywriting_angle?: string | null
   claim_risk_level?: string | null
-  mapping_source?: 'FASTMOSS' | 'MANUAL' | 'FALLBACK' | null
+  mapping_source?: 'explicit' | 'manual' | 'rule' | 'heuristic' | 'fallback' | null
   mapping_confidence?: 'HIGH' | 'MEDIUM' | 'LOW' | 'NEEDS_REVIEW' | null
   mapping_review_status?: string | null
+  mapping_status?: 'READY' | 'NEEDS_REVIEW' | 'BLOCKED' | null
+  mapping_missing_fields?: string[]
   prompt_readiness_status?: 'READY' | 'NEEDS_REVIEW' | 'MISSING_FIELDS' | null
   prompt_missing_fields?: string[]
   physics_dna_status?: 'READY' | 'MISSING_FIELDS' | null
@@ -270,8 +272,17 @@ export interface Product {
   material_behavior?: string | null
   surface_behavior?: string | null
   fragility_level?: string | null
+  handling_notes?: string | null
   camera_handling_notes?: string | null
+  scene_context?: string | null
+  camera_style?: string | null
+  camera_behavior?: string | null
+  camera_shot?: string | null
   unsafe_handling_rules?: string[]
+  section_4_hint?: string | null
+  section_5_physics_hint?: string | null
+  section_6_copy_hint?: string | null
+  section_9_overlay_hint?: string | null
   section_4_visual_action_prompt?: string | null
   section_5_product_physics_prompt?: string | null
   section_6_dialogue_prompt?: string | null
@@ -314,33 +325,94 @@ export interface ProductMapping {
   subcategory: string
   type: string
   product_type: string
+  product_type_id?: string
   silo: string
   trigger_id: string
   formula: string
   mode_recommendations: string[]
   copywriting_angle: string
   claim_risk_level: string
-  mapping_source: 'FASTMOSS' | 'MANUAL' | 'FALLBACK'
+  mapping_source: 'explicit' | 'manual' | 'rule' | 'heuristic' | 'fallback'
   mapping_confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'NEEDS_REVIEW'
   mapping_review_status?: string
+  mapping_status?: 'READY' | 'NEEDS_REVIEW' | 'BLOCKED'
+  mapping_missing_fields?: string[]
   prompt_readiness_status?: 'READY' | 'NEEDS_REVIEW' | 'MISSING_FIELDS'
   prompt_missing_fields?: string[]
   physics_class?: string
   product_scale?: string
   hand_object_interaction?: string
   recommended_grip?: string
+  handling_notes?: string
   air_gap_rule?: string
   material_behavior?: string
   surface_behavior?: string
   fragility_level?: string
   camera_handling_notes?: string
+  scene_context?: string
+  camera_style?: string
+  camera_behavior?: string
+  camera_shot?: string
   unsafe_handling_rules?: string[]
+  section_4_hint?: string
+  section_5_physics_hint?: string
+  section_6_copy_hint?: string
+  section_9_overlay_hint?: string
   section_4_visual_action_prompt?: string
   section_5_product_physics_prompt?: string
   section_6_dialogue_prompt?: string
   section_9_overlay_prompt?: string
   missing_fields: string[]
   notes: string[]
+}
+
+export interface OperatorBatchContext {
+  batch_id: string
+  batch_mode: string
+  variant_id: string
+  queue_status: string
+}
+
+export interface ProductPreflight {
+  product_id: string | null
+  mapping_status: 'READY' | 'NEEDS_REVIEW' | 'BLOCKED'
+  missing_fields: string[]
+  physics_dna_status: string
+  creative_brief_status: string
+  creative_missing_fields: string[]
+  prompt_readiness_status: string
+  prompt_missing_fields: string[]
+  flow_readiness_status: string
+  blocking_reason: string | null
+  repair_action: string
+  backfill_action: string
+  flow_readiness_action: string
+  build_allowed: boolean
+}
+
+export interface OperatorPreflightResponse {
+  product_id: string
+  product: Product
+  preflight: ProductPreflight
+  batch_context: OperatorBatchContext | null
+}
+
+export interface FlowReadinessSmokeResult {
+  status: 'READY' | 'BLOCKED'
+  checked_mode: string
+  extension_runtime: 'PASS' | 'FAIL'
+  flow_tab_found: boolean
+  flow_url: string | null
+  signed_in_likely: boolean
+  composer_found: boolean
+  composer_editable: boolean
+  generate_button_found: boolean
+  current_mode_visible: string
+  blocking_modal_detected: boolean
+  flow_composer_ready: boolean
+  execute_flow_job_smoke: string
+  primary_blocker: string | null
+  batch_context: OperatorBatchContext | null
 }
 
 export interface LocalAgentRegistration {

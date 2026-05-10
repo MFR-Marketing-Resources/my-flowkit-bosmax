@@ -9,6 +9,7 @@ from agent.utils.paths import product_image_path
 from agent.services.flow_client import get_flow_client
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
+from agent.services.product_preflight import build_product_preflight, evaluate_mapping_status, resolve_creative_profile
 from agent.config import BASE_DIR
 
 logger = logging.getLogger(__name__)
@@ -210,17 +211,31 @@ async def enrich_product(product: dict[str, Any], *, persist: bool = False) -> d
     payload.update(mapping)
     physics = resolve_product_physics(product=payload)
     payload.update(physics)
+    creative_profile = resolve_creative_profile(payload)
+    payload.update(creative_profile)
+    payload["product_display_name"] = creative_profile.get("display_name") or payload.get("product_display_name")
+    payload.update(evaluate_mapping_status(payload))
     payload.update(resolve_image_readiness(payload))
     payload.update(build_rendered_image_fields(payload))
     readiness = evaluate_prompt_readiness(payload, physics)
     payload.update(readiness)
+    combined_missing = []
+    for field in [*(payload.get("prompt_missing_fields") or []), *(payload.get("mapping_missing_fields") or [])]:
+        if field and field not in combined_missing:
+            combined_missing.append(field)
+    payload["prompt_missing_fields"] = combined_missing
+    if payload.get("mapping_status") == "BLOCKED":
+        payload["prompt_readiness_status"] = "MISSING_FIELDS"
+    elif payload.get("mapping_status") == "NEEDS_REVIEW" and payload.get("prompt_readiness_status") == "READY":
+        payload["prompt_readiness_status"] = "NEEDS_REVIEW"
     payload["mode_readiness"] = mode_readiness(payload)
     payload["product_id"] = payload.get("id")
     payload["is_test_product"] = is_test_product(payload)
     payload["catalog_label"] = "TEST" if payload["is_test_product"] else payload.get("source")
-    payload["mapping_review_status"] = payload.get("mapping_review_status") or (
+    payload["mapping_review_status"] = payload.get("mapping_review_status") or payload.get("mapping_status") or (
         "NEEDS_REVIEW" if payload.get("mapping_confidence") == "NEEDS_REVIEW" else "AUTO_MAPPED"
     )
+    payload["preflight"] = build_product_preflight(payload)
 
     if persist and payload.get("id"):
         await persist_intelligence(payload["id"], payload)
@@ -235,6 +250,7 @@ async def persist_intelligence(product_id: str, payload: dict[str, Any]) -> None
         raw_product_title=payload.get("raw_product_title") or None,
         product_display_name=payload.get("product_display_name") or None,
         product_short_name=payload.get("product_short_name") or None,
+        product_type_id=payload.get("product_type_id") or None,
         category=payload.get("category") or None,
         subcategory=payload.get("subcategory") or None,
         type=payload.get("type") or None,
@@ -259,16 +275,27 @@ async def persist_intelligence(product_id: str, payload: dict[str, Any]) -> None
         product_scale=payload.get("product_scale") or None,
         hand_object_interaction=payload.get("hand_object_interaction") or None,
         recommended_grip=payload.get("recommended_grip") or None,
+        handling_notes=payload.get("handling_notes") or None,
         air_gap_rule=payload.get("air_gap_rule") or None,
         material_behavior=payload.get("material_behavior") or None,
         surface_behavior=payload.get("surface_behavior") or None,
         fragility_level=payload.get("fragility_level") or None,
         camera_handling_notes=payload.get("camera_handling_notes") or None,
+        scene_context=payload.get("scene_context") or None,
+        camera_style=payload.get("camera_style") or None,
+        camera_behavior=payload.get("camera_behavior") or None,
+        camera_shot=payload.get("camera_shot") or None,
         unsafe_handling_rules=json_dump_list(payload.get("unsafe_handling_rules") or []),
         section_5_product_physics_prompt=payload.get("section_5_product_physics_prompt") or None,
+        section_4_hint=payload.get("section_4_hint") or None,
+        section_5_physics_hint=payload.get("section_5_physics_hint") or None,
+        section_6_copy_hint=payload.get("section_6_copy_hint") or None,
+        section_9_overlay_hint=payload.get("section_9_overlay_hint") or None,
         mapping_source=payload.get("mapping_source") or None,
         mapping_confidence=payload.get("mapping_confidence") or None,
         mapping_review_status=payload.get("mapping_review_status") or None,
+        mapping_status=payload.get("mapping_status") or None,
+        mapping_missing_fields=json_dump_list(payload.get("mapping_missing_fields") or []),
         prompt_readiness_status=payload.get("prompt_readiness_status") or None,
         prompt_missing_fields=json_dump_list(payload.get("prompt_missing_fields") or []),
         asset_status=payload.get("asset_status") or None,

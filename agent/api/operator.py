@@ -11,7 +11,13 @@ from openpyxl import load_workbook
 from pydantic import BaseModel
 
 from agent.config import OPERATOR_PACK_DIR
+from agent.db import crud
+from agent.db.schema import get_db
+from agent.services import batch_executor
+from agent.services.flow_client import get_flow_client
+from agent.services.product_intelligence import enrich_product
 from agent.services.product_mapping import resolve_product_mapping
+from agent.services.product_preflight import build_product_preflight
 
 router = APIRouter(prefix="/api/operator", tags=["operator"])
 
@@ -124,6 +130,13 @@ class BlueprintResponse(BaseModel):
     video: dict[str, Any]
     scenes: list[BlueprintScene]
     notes: list[str]
+
+
+class FlowReadinessSmokeRequest(BaseModel):
+    product_id: str | None = None
+    batch_id: str | None = None
+    variant_id: str | None = None
+    mode: str = "F2V"
 
 
 def _pack_file(name: str) -> Path:
@@ -445,6 +458,109 @@ def _load_products(limit: int = 120) -> list[OperatorProduct]:
         if len(products) >= limit:
             break
     return products
+
+
+async def _find_latest_batch_context(product_id: str | None) -> dict[str, Any] | None:
+    if not product_id:
+        return None
+    db = await get_db()
+    cursor = await db.execute(
+        """
+        SELECT b.id AS batch_id, b.mode AS batch_mode, bv.variant_id, bv.queue_status
+        FROM batch_variant bv
+        JOIN batch b ON b.id = bv.batch_id
+        WHERE bv.product_id = ?
+        ORDER BY b.created_at DESC, bv.variation_index ASC
+        LIMIT 1
+        """,
+        (product_id,),
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+def _classify_flow_primary_blocker(
+    extension_connected: bool,
+    composer: dict[str, Any],
+    smoke: dict[str, Any] | None,
+) -> str | None:
+    if not extension_connected:
+        return "EXTENSION_RUNTIME_STALE_NEEDS_RELOAD"
+
+    detail = str(composer.get("detail") or composer.get("error") or "")
+    if any(token in detail for token in ["ERR_UNKNOWN_MESSAGE_TYPE", "ERR_CONTENT_SCRIPT_STALE", "ERR_NO_RECEIVER", "ERR_MESSAGE_RESPONSE_TIMEOUT", "Timed out waiting"]):
+        return "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED"
+    if not composer.get("flow_tab_found"):
+        return "FLOW_PROJECT_LIST_NOT_EDITOR"
+    if not composer.get("signed_in_likely", True):
+        return "FLOW_EDITOR_NOT_AUTHENTICATED"
+
+    flow_url = str(composer.get("flow_url") or "")
+    if "/project/" not in flow_url and "/edit/" not in flow_url:
+        return "FLOW_PROJECT_LIST_NOT_EDITOR"
+    if composer.get("composer_found") and not composer.get("composer_editable"):
+        return "COMPOSER_NOT_EDITABLE"
+    if smoke and smoke.get("status") == "FAIL_MODE_MISMATCH":
+        return "FLOW_MODE_MISMATCH"
+    if composer.get("composer_found") and not composer.get("generate_button_found"):
+        return "GENERATE_BUTTON_NOT_FOUND"
+    if not composer.get("composer_found"):
+        return "FLOW_PROJECT_LIST_NOT_EDITOR"
+    return None
+
+
+@router.get("/preflight")
+async def get_operator_preflight(product_id: str):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(404, "Product not found")
+    enriched = await enrich_product(product, persist=True)
+    batch_context = await _find_latest_batch_context(product_id)
+    return {
+        "product_id": product_id,
+        "preflight": build_product_preflight(enriched),
+        "batch_context": batch_context,
+        "product": enriched,
+    }
+
+
+@router.post("/flow-readiness-smoke")
+async def flow_readiness_smoke(body: FlowReadinessSmokeRequest):
+    status = await get_flow_client().get_status()
+    extension_connected = bool(status.get("connected"))
+    composer = await get_flow_client().check_flow_composer_ready(body.mode)
+    batch_context = None
+    if body.batch_id and body.variant_id:
+        batch_context = {"batch_id": body.batch_id, "variant_id": body.variant_id}
+    elif body.product_id:
+        batch_context = await _find_latest_batch_context(body.product_id)
+
+    smoke_result = None
+    execute_status = "SKIPPED"
+    if batch_context and batch_context.get("batch_id") and batch_context.get("variant_id"):
+        smoke_result = await batch_executor.smoke_execute_flow_job(batch_context["batch_id"], batch_context["variant_id"])
+        execute_status = "PASS" if smoke_result.get("ok") else "STRUCTURED_FAIL"
+
+    primary_blocker = _classify_flow_primary_blocker(extension_connected, composer, smoke_result)
+    return {
+        "status": "BLOCKED" if primary_blocker else "READY",
+        "checked_mode": body.mode,
+        "extension_runtime": "PASS" if extension_connected else "FAIL",
+        "flow_tab_found": composer.get("flow_tab_found", False),
+        "flow_url": composer.get("flow_url"),
+        "signed_in_likely": composer.get("signed_in_likely", False),
+        "composer_found": composer.get("composer_found", False),
+        "composer_editable": composer.get("composer_editable", False),
+        "generate_button_found": composer.get("generate_button_found", False),
+        "current_mode_visible": composer.get("current_mode_visible") or composer.get("observed", {}).get("topMode") or "UNKNOWN",
+        "blocking_modal_detected": composer.get("blocking_modal_detected", False),
+        "flow_composer_ready": bool(composer.get("ok")),
+        "execute_flow_job_smoke": execute_status,
+        "primary_blocker": primary_blocker,
+        "composer": composer,
+        "smoke_result": smoke_result,
+        "batch_context": batch_context,
+    }
 
 
 def _build_story(body: BlueprintInput) -> str:

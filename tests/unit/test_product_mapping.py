@@ -1,4 +1,6 @@
 from agent.services.product_mapping import resolve_product_mapping
+from agent.api.products import get_product_mapping_audit
+from agent.db import crud
 
 
 def test_sumikko_diaper_mapping():
@@ -73,6 +75,21 @@ def test_unknown_manual_product_needs_review():
     assert "category" in result["missing_fields"]
 
 
+def test_explicit_override_marks_mapping_source_explicit():
+    result = resolve_product_mapping(
+        product_name="Mystery artisanal item",
+        source_hint="FASTMOSS",
+        overrides={
+            "category": "Fashion",
+            "subcategory": "Muslim Fashion",
+            "type": "Instant Sarung",
+        },
+    )
+
+    assert result["mapping_source"] == "explicit"
+    assert result["mapping_confidence"] == "HIGH"
+
+
 def test_kb_hijabsta_pants_mapping_outranks_mat_keyword_noise():
     result = resolve_product_mapping(
         product_name="[ KB HIJABSTA ] Women High Waist Stretch Long Pants Mini BootCut Auto Slim Design Slack Ironless Trousers MATERIAL PREMIUM SCUBA",
@@ -116,3 +133,38 @@ def test_food_container_mapping_not_food_and_beverage():
     assert result["silo"] == "household_mass_01"
     assert result["trigger_id"] == "TRUST_01"
     assert result["formula"] == "PAS"
+
+
+def test_fatima_sarung_maps_to_modestwear_apparel():
+    result = resolve_product_mapping(
+        product_name="FATIMA INSTANT SARUNG SYRIA ~ HQ MOSCREPE PREMIUM ~ IRONLESS & STRETCHABLE HIJAB UNTUK WANITA MUSLIMAH BAHAN ELASTIK SESUAI KESELAMAN DAN GAYA",
+        source_hint="FASTMOSS",
+    )
+
+    assert result["category"] == "Fashion"
+    assert result["subcategory"] == "Muslim Fashion"
+    assert result["type"] == "Instant Sarung"
+    assert result["product_type"] == "UNIVERSAL"
+    assert result["trigger_id"] == "CONFIDENCE_01"
+    assert result["formula"] == "AIDA"
+
+
+async def test_mapping_audit_uses_stored_snapshot_for_before_state():
+    created = await crud.create_product(
+        raw_product_title="FATIMA INSTANT SARUNG SYRIA ~ HQ MOSCREPE PREMIUM",
+        source="FASTMOSS",
+        product_display_name="FATIMA INSTANT SARUNG SYRIA",
+        product_short_name="FATIMA INSTANT SARUNG SYRIA",
+        category="Fashion",
+        subcategory="Sportswear",
+        type="Jersey-Athleisure",
+    )
+
+    audit = await get_product_mapping_audit(created["id"])
+
+    assert audit["audit"]["subcategory"]["before"] == "Sportswear"
+    assert audit["audit"]["subcategory"]["after"] == "Muslim Fashion"
+    assert audit["audit"]["type"]["before"] == "Jersey-Athleisure"
+    assert audit["audit"]["type"]["after"] == "Instant Sarung"
+    assert audit["audit"]["mapping_status"]["before"] is None
+    assert audit["audit"]["mapping_status"]["after"] == "READY"

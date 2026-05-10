@@ -50,6 +50,7 @@ async def get_creative_brief(product_id: str) -> dict:
         },
         "copywriting_route": {
             "product_type": product.get("product_type"),
+            "product_type_id": product.get("product_type_id"),
             "silo": product.get("silo"),
             "trigger_id": product.get("trigger_id"),
             "formula": product.get("formula"),
@@ -60,7 +61,15 @@ async def get_creative_brief(product_id: str) -> dict:
             "character_recommendations": product.get("character_recommendations") or [],
             "scene_context_recommendations": product.get("scene_context_recommendations") or [],
             "camera_recommendations": product.get("camera_recommendations") or [],
-            "mode_recommendations": product.get("mode_recommendations") or []
+            "mode_recommendations": product.get("mode_recommendations") or [],
+            "scene_context": product.get("scene_context"),
+            "camera_style": product.get("camera_style"),
+            "camera_behavior": product.get("camera_behavior"),
+            "camera_shot": product.get("camera_shot"),
+            "section_4_hint": product.get("section_4_hint"),
+            "section_5_physics_hint": product.get("section_5_physics_hint"),
+            "section_6_copy_hint": product.get("section_6_copy_hint"),
+            "section_9_overlay_hint": product.get("section_9_overlay_hint"),
         },
         "readiness": {
             "Images": mode_status.get("Images", {}).get("status", "BLOCKED"),

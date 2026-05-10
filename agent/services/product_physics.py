@@ -42,6 +42,21 @@ def _rule(
 
 PHYSICS_RULES: list[tuple[list[str], dict[str, Any]]] = [
     (
+        ["instant sarung", "sarung syria", "sarung", "syria", "telekung", "khimar", "moscrepe"],
+        _rule(
+            physics_class="APPAREL_TEXTILE",
+            product_scale="GARMENT",
+            hand_object_interaction="controlled drape reveal, edge hold, and two-hand spread for soft modestwear fabric",
+            recommended_grip="two-hand fabric spread, neckline hold, or edge hold for drape control",
+            air_gap_rule="maintain enough separation for coverage, silhouette, and fabric fall to remain readable",
+            material_behavior="soft modestwear textile with visible drape, fold memory, and light edge flutter",
+            surface_behavior="matte crepe-like textile finish with natural folds and soft highlights",
+            fragility_level="LOW",
+            camera_handling_notes="present the fabric drape, coverage, and fall cleanly without overstretching or body-shape exaggeration",
+            unsafe_handling_rules=["avoid exaggerated body-shape claims", "avoid unnatural fabric stretch", "avoid styling that breaks modestwear context"],
+        ),
+    ),
+    (
         ["diaper", "lampin", "pull ups", "pull-ups", "baby diaper"],
         _rule(
             physics_class="SOFT_PACKAGED_GOODS",
@@ -231,6 +246,12 @@ def evaluate_prompt_readiness(product: dict[str, Any], physics: dict[str, Any]) 
         missing_fields.append("copywriting_angle")
     if not (product.get("claim_risk_level") or "").strip():
         missing_fields.append("claim_risk_level")
+    if not (product.get("section_4_hint") or "").strip():
+        missing_fields.append("section_4_hint")
+    if not (product.get("section_6_copy_hint") or "").strip():
+        missing_fields.append("section_6_copy_hint")
+    if not (product.get("section_9_overlay_hint") or "").strip():
+        missing_fields.append("section_9_overlay_hint")
 
     status = "READY" if not missing_fields else ("NEEDS_REVIEW" if len(missing_fields) <= 2 else "MISSING_FIELDS")
     return {

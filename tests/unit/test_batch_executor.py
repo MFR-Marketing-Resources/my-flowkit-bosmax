@@ -13,6 +13,7 @@ import pytest
 import uuid
 from unittest.mock import AsyncMock, patch, MagicMock
 from agent.db import crud
+from agent.api.operator import _classify_flow_primary_blocker
 from agent.services import batch_executor, batch_queue, batch_planner
 from agent.services.flow_client import get_flow_client
 
@@ -370,3 +371,21 @@ async def test_smoke_execute_flow_job_returns_composer_failure_without_generatio
     assert res["error"] == "ABORT_FLOW_COMPOSER_NOT_READY"
 
     client.clear_extension()
+
+
+def test_flow_primary_blocker_classifies_content_script_timeout():
+    blocker = _classify_flow_primary_blocker(
+        True,
+        {
+            "flow_tab_found": True,
+            "flow_url": "https://labs.google/fx/tools/flow/project/123",
+            "signed_in_likely": True,
+            "composer_found": False,
+            "composer_editable": False,
+            "generate_button_found": False,
+            "detail": "ERR_MESSAGE_RESPONSE_TIMEOUT",
+        },
+        None,
+    )
+
+    assert blocker == "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED"

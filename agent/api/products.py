@@ -24,6 +24,7 @@ from agent.services.product_intelligence import (
     generate_product_prompt,
     resolve_cached_image_path,
 )
+from agent.services.product_preflight import build_product_preflight
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
 from agent.utils.paths import product_image_path
@@ -97,6 +98,7 @@ class ProductPatchRequest(BaseModel):
     asset_status: str | None = None
     local_image_path: str | None = None
     product_type: str | None = None
+    product_type_id: str | None = None
     silo: str | None = None
     trigger_id: str | None = None
     formula: str | None = None
@@ -106,12 +108,21 @@ class ProductPatchRequest(BaseModel):
     product_scale: str | None = None
     hand_object_interaction: str | None = None
     recommended_grip: str | None = None
+    handling_notes: str | None = None
     air_gap_rule: str | None = None
     material_behavior: str | None = None
     surface_behavior: str | None = None
     fragility_level: str | None = None
     camera_handling_notes: str | None = None
+    scene_context: str | None = None
+    camera_style: str | None = None
+    camera_behavior: str | None = None
+    camera_shot: str | None = None
     section_5_product_physics_prompt: str | None = None
+    section_4_hint: str | None = None
+    section_5_physics_hint: str | None = None
+    section_6_copy_hint: str | None = None
+    section_9_overlay_hint: str | None = None
     image_base64: str | None = None
     image_filename: str | None = None
 
@@ -237,6 +248,69 @@ async def _resolve_mapping_for_product(
         from agent.services.product_intelligence import persist_intelligence
         await persist_intelligence(product["id"], enriched)
     return enriched
+
+
+def _mapping_audit_payload(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    fields = [
+        "category",
+        "subcategory",
+        "type",
+        "product_type_id",
+        "silo",
+        "trigger_id",
+        "formula",
+        "copywriting_angle",
+        "claim_risk_level",
+        "physics_class",
+        "recommended_grip",
+        "handling_notes",
+        "camera_handling_notes",
+        "scene_context",
+        "camera_style",
+        "camera_behavior",
+        "camera_shot",
+        "section_4_hint",
+        "section_5_physics_hint",
+        "section_6_copy_hint",
+        "section_9_overlay_hint",
+        "mapping_status",
+        "mapping_missing_fields",
+    ]
+    return {
+        field: {
+            "before": before.get(field),
+            "after": after.get(field),
+        }
+        for field in fields
+    }
+
+
+def _stored_mapping_snapshot(product: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "category": product.get("category"),
+        "subcategory": product.get("subcategory"),
+        "type": product.get("type"),
+        "product_type_id": product.get("product_type_id"),
+        "silo": product.get("silo"),
+        "trigger_id": product.get("trigger_id"),
+        "formula": product.get("formula"),
+        "copywriting_angle": product.get("copywriting_angle"),
+        "claim_risk_level": product.get("claim_risk_level"),
+        "physics_class": product.get("physics_class"),
+        "recommended_grip": product.get("recommended_grip"),
+        "handling_notes": product.get("handling_notes"),
+        "camera_handling_notes": product.get("camera_handling_notes"),
+        "scene_context": product.get("scene_context"),
+        "camera_style": product.get("camera_style"),
+        "camera_behavior": product.get("camera_behavior"),
+        "camera_shot": product.get("camera_shot"),
+        "section_4_hint": product.get("section_4_hint"),
+        "section_5_physics_hint": product.get("section_5_physics_hint"),
+        "section_6_copy_hint": product.get("section_6_copy_hint"),
+        "section_9_overlay_hint": product.get("section_9_overlay_hint"),
+        "mapping_status": product.get("mapping_status"),
+        "mapping_missing_fields": _json_load_list(product.get("mapping_missing_fields")),
+    }
 
 
 async def _find_product_by_lookup(product_id: str) -> dict[str, Any] | None:
@@ -441,6 +515,73 @@ async def map_product(data: ProductMapRequest):
         return await _enrich_product(created, persist=True)
 
     return enriched
+
+
+@router.post("/backfill-mapping")
+async def backfill_product_mapping(product_id: str | None = None):
+    products = [await crud.get_product(product_id)] if product_id else await crud.list_products(limit=5000)
+    products = [product for product in products if product]
+    processed = 0
+    ready = 0
+    needs_review = 0
+    blocked = 0
+    sample: list[dict[str, Any]] = []
+
+    for product in products:
+        enriched = await _enrich_product(product, persist=True)
+        processed += 1
+        status = enriched.get("mapping_status")
+        if status == "READY":
+            ready += 1
+        elif status == "NEEDS_REVIEW":
+            needs_review += 1
+        else:
+            blocked += 1
+        if len(sample) < 10:
+            sample.append({
+                "product_id": enriched.get("id"),
+                "product_short_name": enriched.get("product_short_name"),
+                "mapping_status": status,
+                "mapping_missing_fields": enriched.get("mapping_missing_fields") or [],
+            })
+
+    return {
+        "ok": True,
+        "total_products_processed": processed,
+        "total_mapping_ready": ready,
+        "total_needs_review": needs_review,
+        "total_blocked": blocked,
+        "sample": sample,
+    }
+
+
+@router.post("/{product_id}/repair-mapping")
+async def repair_product_mapping(product_id: str):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    enriched = await _enrich_product(product, persist=True)
+    return {
+        "ok": True,
+        "product": enriched,
+        "preflight": build_product_preflight(enriched),
+    }
+
+
+@router.get("/{product_id}/mapping-audit")
+async def get_product_mapping_audit(product_id: str):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    proposed = await _enrich_product(product, persist=False)
+    current = _stored_mapping_snapshot(product)
+    return {
+        "product_id": product_id,
+        "product": product.get("raw_product_title"),
+        "audit": _mapping_audit_payload(current, proposed),
+        "before": current,
+        "after": proposed,
+    }
 
 
 @router.post("/physics-map")
@@ -660,8 +801,10 @@ async def get_product_mapping(product_id: str):
         key: enriched.get(key)
         for key in [
             "product_id", "raw_product_title", "product_short_name", "category", "subcategory", "type",
-            "product_type", "silo", "trigger_id", "formula", "mode_recommendations", "copywriting_angle",
-            "claim_risk_level", "mapping_source", "mapping_confidence", "mapping_review_status",
+            "product_type", "product_type_id", "silo", "trigger_id", "formula", "mode_recommendations", "copywriting_angle",
+            "claim_risk_level", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status",
+            "mapping_missing_fields", "handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot",
+            "section_4_hint", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint",
             "prompt_readiness_status", "prompt_missing_fields", "section_4_visual_action_prompt",
             "section_6_dialogue_prompt", "section_9_overlay_prompt",
         ]

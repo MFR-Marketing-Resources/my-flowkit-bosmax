@@ -213,6 +213,7 @@ CREATE TABLE IF NOT EXISTS product (
     fastmoss_source_file TEXT,
     image_asset_status  TEXT,
     product_type        TEXT,
+    product_type_id     TEXT,
     silo                TEXT,
     trigger_id          TEXT,
     formula             TEXT,
@@ -223,16 +224,27 @@ CREATE TABLE IF NOT EXISTS product (
     product_scale       TEXT,
     hand_object_interaction TEXT,
     recommended_grip    TEXT,
+    handling_notes      TEXT,
     air_gap_rule        TEXT,
     material_behavior   TEXT,
     surface_behavior    TEXT,
     fragility_level     TEXT,
     camera_handling_notes TEXT,
+    scene_context       TEXT,
+    camera_style        TEXT,
+    camera_behavior     TEXT,
+    camera_shot         TEXT,
     unsafe_handling_rules TEXT,
+    section_4_hint      TEXT,
     section_5_product_physics_prompt TEXT,
+    section_5_physics_hint TEXT,
+    section_6_copy_hint TEXT,
+    section_9_overlay_hint TEXT,
     mapping_source      TEXT,
     mapping_confidence  TEXT,
     mapping_review_status TEXT,
+    mapping_status      TEXT,
+    mapping_missing_fields TEXT,
     prompt_readiness_status TEXT,
     prompt_missing_fields TEXT,
     asset_status        TEXT NOT NULL DEFAULT 'UNRESOLVED' CHECK(asset_status IN ('UNRESOLVED','DOWNLOADED','UPLOADED_TO_FLOW')),
@@ -439,11 +451,13 @@ CREATE INDEX IF NOT EXISTS idx_request_scene ON request(scene_id);
         product_needs_recreate = False
         required_product_columns = {
             "source_url", "brand", "price", "currency", "commission_amount", "commission_rate",
-            "image_asset_status", "product_type", "silo", "trigger_id", "formula", "copywriting_angle",
+            "image_asset_status", "product_type", "product_type_id", "silo", "trigger_id", "formula", "copywriting_angle",
             "claim_risk_level", "mode_recommendations", "physics_class", "product_scale",
-            "hand_object_interaction", "recommended_grip", "air_gap_rule", "material_behavior",
-            "surface_behavior", "fragility_level", "camera_handling_notes", "unsafe_handling_rules",
-            "section_5_product_physics_prompt", "mapping_source", "mapping_confidence", "mapping_review_status",
+            "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior",
+            "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style",
+            "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint",
+            "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint",
+            "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields",
             "prompt_readiness_status", "prompt_missing_fields",
         }
         if "MANUAL_PROJECT" in product_sql:
@@ -478,6 +492,7 @@ CREATE TABLE IF NOT EXISTS product (
     fastmoss_source_file TEXT,
     image_asset_status  TEXT,
     product_type        TEXT,
+    product_type_id     TEXT,
     silo                TEXT,
     trigger_id          TEXT,
     formula             TEXT,
@@ -488,16 +503,27 @@ CREATE TABLE IF NOT EXISTS product (
     product_scale       TEXT,
     hand_object_interaction TEXT,
     recommended_grip    TEXT,
+    handling_notes      TEXT,
     air_gap_rule        TEXT,
     material_behavior   TEXT,
     surface_behavior    TEXT,
     fragility_level     TEXT,
     camera_handling_notes TEXT,
+    scene_context       TEXT,
+    camera_style        TEXT,
+    camera_behavior     TEXT,
+    camera_shot         TEXT,
     unsafe_handling_rules TEXT,
+    section_4_hint      TEXT,
     section_5_product_physics_prompt TEXT,
+    section_5_physics_hint TEXT,
+    section_6_copy_hint TEXT,
+    section_9_overlay_hint TEXT,
     mapping_source      TEXT,
     mapping_confidence  TEXT,
     mapping_review_status TEXT,
+    mapping_status      TEXT,
+    mapping_missing_fields TEXT,
     prompt_readiness_status TEXT,
     prompt_missing_fields TEXT,
     asset_status        TEXT NOT NULL DEFAULT 'UNRESOLVED' CHECK(asset_status IN ('UNRESOLVED','DOWNLOADED','UPLOADED_TO_FLOW')),
@@ -551,6 +577,91 @@ FROM _product_old
             await db.execute("DROP TABLE _product_old")
             await db.execute("PRAGMA foreign_keys=ON")
             logger.info("Migrated: upgraded product table for product intelligence fields")
+
+        cursor = await db.execute("SELECT sql FROM sqlite_master WHERE name='batch' AND type='table'")
+        batch_sql_row = await cursor.fetchone()
+        cursor = await db.execute("SELECT sql FROM sqlite_master WHERE name='batch_variant' AND type='table'")
+        batch_variant_sql_row = await cursor.fetchone()
+        batch_fk_needs_recreate = any(
+            row and "_product_old" in (row[0] or "")
+            for row in (batch_sql_row, batch_variant_sql_row)
+        )
+        if batch_fk_needs_recreate:
+            await db.execute("PRAGMA foreign_keys=OFF")
+            await db.execute("ALTER TABLE batch_queue_event RENAME TO _batch_queue_event_old")
+            await db.execute("ALTER TABLE batch_variant RENAME TO _batch_variant_old")
+            await db.execute("ALTER TABLE batch RENAME TO _batch_old")
+            await db.executescript("""
+CREATE TABLE IF NOT EXISTS batch (
+    id                      TEXT PRIMARY KEY,
+    product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    brief_id                TEXT,
+    quantity                INTEGER NOT NULL DEFAULT 1,
+    platform                TEXT DEFAULT 'TikTok',
+    objective               TEXT DEFAULT 'conversion',
+    language                TEXT DEFAULT 'Malay',
+    engine                  TEXT DEFAULT 'VEO_3_1',
+    duration                INTEGER DEFAULT 8,
+    mode                    TEXT DEFAULT 'Frames',
+    variation_level         TEXT DEFAULT 'medium',
+    max_parallel_jobs       INTEGER DEFAULT 1,
+    interval_min_seconds    INTEGER DEFAULT 45,
+    interval_max_seconds    INTEGER DEFAULT 120,
+    cooldown_after_n_jobs   INTEGER DEFAULT 5,
+    cooldown_seconds        INTEGER DEFAULT 300,
+    daily_credit_limit      INTEGER DEFAULT 0,
+    approval_required       INTEGER DEFAULT 1,
+    status                  TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','DRAFT_BLOCKED','QUEUED','PROCESSING','COMPLETED','CANCELLED','PAUSED','FAILED')),
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS batch_variant (
+    variant_id              TEXT PRIMARY KEY,
+    batch_id                TEXT NOT NULL REFERENCES batch(id) ON DELETE CASCADE,
+    product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    brief_id                TEXT,
+    variation_index         INTEGER NOT NULL,
+    hook_angle              TEXT,
+    scene_context           TEXT,
+    camera_route            TEXT,
+    copywriting_formula     TEXT,
+    overlay_strategy        TEXT,
+    cta_style               TEXT,
+    google_flow_mode        TEXT,
+    asset_strategy          TEXT,
+    diversity_fingerprint   TEXT,
+    prompt_9_section        TEXT,
+    readiness               TEXT DEFAULT 'PENDING',
+    blocked_reason          TEXT,
+    queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','DRY_RUN_VALIDATED','WAITING_INTERVAL','RUNNING','FLOW_MODE_VERIFIED','PROMPT_INSERTED','GENERATION_STARTED','GENERATED','DOWNLOADED','QA_PASSED','QA_FAILED','FAILED','RETRY_PENDING','CANCELLED')),
+    request_id              TEXT,
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS batch_queue_event (
+    event_id                TEXT PRIMARY KEY,
+    batch_id                TEXT NOT NULL REFERENCES batch(id) ON DELETE CASCADE,
+    variant_id              TEXT REFERENCES batch_variant(variant_id) ON DELETE SET NULL,
+    status                  TEXT NOT NULL,
+    message                 TEXT,
+    timestamp               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    source                  TEXT NOT NULL DEFAULT 'system'
+);
+
+CREATE INDEX IF NOT EXISTS idx_batch_product ON batch(product_id);
+CREATE INDEX IF NOT EXISTS idx_batch_variant_batch ON batch_variant(batch_id);
+CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_status);
+""")
+            await db.execute("INSERT INTO batch SELECT * FROM _batch_old")
+            await db.execute("INSERT INTO batch_variant SELECT * FROM _batch_variant_old")
+            await db.execute("INSERT INTO batch_queue_event SELECT * FROM _batch_queue_event_old")
+            await db.execute("DROP TABLE _batch_queue_event_old")
+            await db.execute("DROP TABLE _batch_variant_old")
+            await db.execute("DROP TABLE _batch_old")
+            await db.execute("PRAGMA foreign_keys=ON")
+            logger.info("Migrated: rebuilt batch tables to refresh product foreign keys")
         product_columns_cursor = await db.execute("PRAGMA table_info(product)")
         product_columns = {r[1] for r in await product_columns_cursor.fetchall()}
         if "image_failure_detail" not in product_columns:

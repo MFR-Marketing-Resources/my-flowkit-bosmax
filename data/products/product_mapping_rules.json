@@ -19,8 +19,17 @@
       "claim_risk_level": "LOW"
     },
     {
+      "id": "fashion_modestwear",
+      "keywords": ["instant sarung", "sarung syria", "sarung", "syria", "moscrepe", "telekung", "khimar"],
+      "category": "Fashion",
+      "subcategory": "Muslim Fashion",
+      "type": "Instant Sarung",
+      "copywriting_angle": "Confidence-led modest styling, comfort, and elegant drape",
+      "claim_risk_level": "LOW"
+    },
+    {
       "id": "fashion_sportswear",
-      "keywords": ["jersey", "jersi", "athleisure", "baju sukan", "muslimah sport", "muslimah"],
+      "keywords": ["jersey", "jersi", "athleisure", "baju sukan", "muslimah sport", "quick dry"],
       "category": "Fashion",
       "subcategory": "Sportswear",
       "type": "Jersey-Athleisure",
@@ -162,6 +171,19 @@
       "formula": "PAS",
       "mode_recommendations": ["Images", "Ingredients", "Frames"],
       "copywriting_angle": "Trust-led baby care",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "match": {
+        "category": "Fashion",
+        "subcategory": "Muslim Fashion"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fashion_mass_01",
+      "trigger_id": "CONFIDENCE_01",
+      "formula": "AIDA",
+      "mode_recommendations": ["Images", "Ingredients", "Frames", "Text to Video"],
+      "copywriting_angle": "Confidence-led modest fashion appeal",
       "claim_risk_level": "LOW"
     },
     {
