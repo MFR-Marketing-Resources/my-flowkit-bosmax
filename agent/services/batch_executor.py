@@ -105,8 +105,8 @@ async def _check_execution_safety(variant: dict, dry_run: bool) -> dict[str, Any
     
     # Gate: Flow Tab Available
     status = await client.get_status()
-    if status.get("state") != "on":
-        return {"ok": False, "error": "ABORT_FLOW_TAB_MISSING: Google Flow tab is not active or ready."}
+    if status.get("state") not in ["on", "idle", "running"]:
+        return {"ok": False, "error": f"ABORT_FLOW_TAB_MISSING: Google Flow tab is not active or ready (state: {status.get('state')})."}
 
     # Gate: Prompt Existence
     if not variant["prompt_9_section"]:
