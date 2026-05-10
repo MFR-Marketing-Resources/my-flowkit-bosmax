@@ -439,6 +439,23 @@ export interface ReloadFlowTabResult {
   last_checked_at: string | null
 }
 
+export interface OpenTargetFlowProjectResult {
+  ok: boolean
+  error: string | null
+  flow_project_url: string | null
+  flow_tab_id: number | null
+  flow_url_before: string | null
+  flow_url_after: string | null
+  flow_url: string | null
+  extension_protocol_version: string | null
+  content_script_protocol_version?: string | null
+  content_script_loaded?: boolean
+  content_script_alive?: boolean
+  last_content_script_seen_at?: string | null
+  primary_blocker: string | null
+  last_checked_at: string | null
+}
+
 export interface LocalAgentRegistration {
   operator_id: string | null
   device_id: string

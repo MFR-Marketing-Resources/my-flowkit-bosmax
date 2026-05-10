@@ -144,6 +144,10 @@ class ReloadFlowTabRequest(BaseModel):
     pass
 
 
+class OpenTargetFlowProjectRequest(BaseModel):
+    flow_project_url: str
+
+
 def _pack_file(name: str) -> Path:
     return OPERATOR_PACK_DIR / name
 
@@ -525,6 +529,21 @@ async def reload_flow_tab(_: ReloadFlowTabRequest):
         primary_blocker = "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED"
     return {
         **result,
+        "primary_blocker": primary_blocker,
+        "last_checked_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    }
+
+
+@router.post("/open-target-flow-project")
+async def open_target_flow_project(body: OpenTargetFlowProjectRequest):
+    result = await get_flow_client().open_target_flow_project(body.flow_project_url)
+    flow_url = str(result.get("flow_url") or result.get("flow_url_after") or "")
+    primary_blocker = None
+    if not flow_url or ("/project/" not in flow_url and "/edit/" not in flow_url):
+        primary_blocker = "FLOW_PROJECT_EDITOR_NOT_OPEN"
+    return {
+        **result,
+        "flow_project_url": body.flow_project_url,
         "primary_blocker": primary_blocker,
         "last_checked_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
     }

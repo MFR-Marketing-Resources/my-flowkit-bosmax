@@ -273,6 +273,18 @@ class FlowClient:
 
         return {"ok": False, "error": "invalid reload flow tab payload"}
 
+    async def open_target_flow_project(self, flow_project_url: str) -> dict:
+        """Open or focus an exact Google Flow project editor URL before readiness checks."""
+        result = await self._send("OPEN_TARGET_FLOW_PROJECT", {"flow_project_url": flow_project_url}, timeout=20)
+        if result.get("error"):
+            return {"ok": False, "error": result["error"]}
+
+        payload = result.get("result")
+        if isinstance(payload, dict):
+            return payload
+
+        return {"ok": False, "error": "invalid open target flow project payload"}
+
     async def smoke_execute_flow_job(self, job_data: dict, timeout: float = 5) -> dict:
         """Verify the EXECUTE_FLOW_JOB bridge path without triggering generation."""
         smoke_job = dict(job_data)

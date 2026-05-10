@@ -10,6 +10,7 @@ const AGENT_WS_URL = 'ws://127.0.0.1:8101';
 const API_KEY = 'AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY';
 const EXTENSION_PROTOCOL_VERSION = 'FLOWKIT_EXTENSION_V1';
 const FLOW_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
+const FLOW_PROJECT_URL_STORAGE_KEY = 'flow_project_url';
 
 let ws = null;
 let flowKey = null;
@@ -124,6 +125,7 @@ const WS_METHOD_TIMEOUT_MS = {
   get_status: 5000,
   CHECK_FLOW_COMPOSER_READY: 12000,
   RELOAD_FLOW_TAB: 12000,
+  OPEN_TARGET_FLOW_PROJECT: 12000,
   EXECUTE_FLOW_JOB: 125000,
   DEBUG_FLOW_DOM_EXECUTION: 65000,
 };
@@ -153,6 +155,10 @@ function getMethodStageField(method, phase) {
     RELOAD_FLOW_TAB: {
       received: 'BACKGROUND_RECEIVED_RELOAD_FLOW_TAB',
       sent: 'BACKGROUND_SENT_RELOAD_FLOW_TAB_RESPONSE',
+    },
+    OPEN_TARGET_FLOW_PROJECT: {
+      received: 'BACKGROUND_RECEIVED_OPEN_TARGET_FLOW_PROJECT',
+      sent: 'BACKGROUND_SENT_OPEN_TARGET_FLOW_PROJECT_RESPONSE',
     },
   };
   return stageFields[method]?.[phase] || null;
@@ -264,10 +270,70 @@ async function executeWsMethodAndReply(msg, handler) {
 }
 
 async function getFlowTab() {
+  const preferredUrl = await getStoredFlowProjectUrl();
   const tabs = await chrome.tabs.query({
     url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
   });
-  return tabs.length ? tabs[0] : null;
+  if (!tabs.length) {
+    return null;
+  }
+
+  return selectBestFlowTab(tabs, preferredUrl);
+}
+
+function isProjectEditorUrl(url) {
+  const value = String(url || '');
+  return value.includes('/project/') || value.includes('/edit/');
+}
+
+function isRootFlowUrl(url) {
+  const value = String(url || '');
+  return /^https:\/\/labs\.google\/fx(?:\/[^/]+)?\/tools\/flow\/?(?:[#?].*)?$/.test(value);
+}
+
+function selectBestFlowTab(tabs, preferredUrl = null) {
+  if (!tabs.length) {
+    return null;
+  }
+
+  const normalizedPreferredUrl = String(preferredUrl || '').trim();
+  if (normalizedPreferredUrl) {
+    const exactMatch = tabs.find((tab) => tab.url === normalizedPreferredUrl);
+    if (exactMatch) {
+      return exactMatch;
+    }
+  }
+
+  const editorTab = tabs.find((tab) => isProjectEditorUrl(tab.url));
+  if (editorTab) {
+    return editorTab;
+  }
+
+  const nonRootTab = tabs.find((tab) => !isRootFlowUrl(tab.url));
+  if (nonRootTab) {
+    return nonRootTab;
+  }
+
+  return tabs[0];
+}
+
+async function getStoredFlowProjectUrl() {
+  try {
+    const stored = await chrome.storage.local.get(FLOW_PROJECT_URL_STORAGE_KEY);
+    return String(stored?.[FLOW_PROJECT_URL_STORAGE_KEY] || '').trim() || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function setStoredFlowProjectUrl(flowProjectUrl) {
+  const normalized = String(flowProjectUrl || '').trim();
+  if (!normalized) {
+    await chrome.storage.local.remove(FLOW_PROJECT_URL_STORAGE_KEY);
+    return null;
+  }
+  await chrome.storage.local.set({ [FLOW_PROJECT_URL_STORAGE_KEY]: normalized });
+  return normalized;
 }
 
 async function ensureFlowDomScript(tabId) {
@@ -411,6 +477,113 @@ async function waitForTabReload(tabId, timeoutMs = 10000) {
 
     chrome.tabs.onUpdated.addListener(listener);
   });
+}
+
+async function waitForTabComplete(tabId, timeoutMs = 15000) {
+  const tab = await chrome.tabs.get(tabId);
+  if (tab.status === 'complete') {
+    return tab;
+  }
+
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error('ERR_MESSAGE_RESPONSE_TIMEOUT'));
+    }, timeoutMs);
+
+    const listener = (updatedTabId, changeInfo, updatedTab) => {
+      if (updatedTabId !== tabId || changeInfo.status !== 'complete') {
+        return;
+      }
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(updatedTab);
+    };
+
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+async function focusTab(tab) {
+  if (!tab?.id) {
+    return tab;
+  }
+  if (tab.windowId != null) {
+    await chrome.windows.update(tab.windowId, { focused: true });
+  }
+  return await chrome.tabs.update(tab.id, { active: true });
+}
+
+async function handleOpenTargetFlowProject(flowProjectUrl) {
+  const normalizedUrl = String(flowProjectUrl || '').trim();
+  if (!normalizedUrl) {
+    return {
+      ok: false,
+      error: 'ERR_FLOW_PROJECT_URL_REQUIRED',
+      flow_project_url: null,
+      flow_tab_id: null,
+      flow_url_before: null,
+      flow_url_after: null,
+      flow_url: null,
+      extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
+    };
+  }
+
+  await setStoredFlowProjectUrl(normalizedUrl);
+
+  const flowTabBefore = await getFlowTab();
+  const flowUrlBefore = flowTabBefore?.url || null;
+
+  const exactTabs = await chrome.tabs.query({ url: normalizedUrl });
+  let targetTab = exactTabs.length ? exactTabs[0] : null;
+
+  if (targetTab) {
+    targetTab = await focusTab(targetTab);
+  } else {
+    targetTab = await chrome.tabs.create({ url: normalizedUrl, active: true });
+  }
+
+  try {
+    targetTab = await waitForTabComplete(targetTab.id);
+  } catch (_) {
+    targetTab = await chrome.tabs.get(targetTab.id);
+  }
+
+  await ensureFlowDomScript(targetTab.id);
+  const diagnostic = await pingFlowDomScript(targetTab);
+  const flowUrlAfter = targetTab?.url || normalizedUrl;
+  const flowTabId = targetTab?.id ?? null;
+
+  if (!isProjectEditorUrl(flowUrlAfter)) {
+    return {
+      ok: false,
+      error: 'FLOW_PROJECT_EDITOR_NOT_OPEN',
+      flow_project_url: normalizedUrl,
+      flow_tab_id: flowTabId,
+      flow_url_before: flowUrlBefore,
+      flow_url_after: flowUrlAfter,
+      flow_url: flowUrlAfter,
+      extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
+      ...diagnostic,
+    };
+  }
+
+  return {
+    ok: true,
+    error: diagnostic.raw_error || null,
+    flow_project_url: normalizedUrl,
+    flow_tab_id: flowTabId,
+    flow_url_before: flowUrlBefore,
+    flow_url_after: flowUrlAfter,
+    flow_url: flowUrlAfter,
+    extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
+    ...diagnostic,
+  };
 }
 
 async function handleReloadFlowTab() {
@@ -677,6 +850,12 @@ function connectToAgent() {
         replyToAgent(msg, result);
       } else if (msg.method === 'RELOAD_FLOW_TAB') {
         const result = await executeWsMethodAndReply(msg, () => handleReloadFlowTab());
+        replyToAgent(msg, result);
+      } else if (msg.method === 'OPEN_TARGET_FLOW_PROJECT') {
+        const result = await executeWsMethodAndReply(
+          msg,
+          () => handleOpenTargetFlowProject(msg.params?.flow_project_url),
+        );
         replyToAgent(msg, result);
       } else if (msg.method === 'EXECUTE_FLOW_JOB') {
         const result = await executeWsMethodAndReply(

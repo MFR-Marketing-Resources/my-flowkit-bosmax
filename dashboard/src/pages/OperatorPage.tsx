@@ -6,6 +6,7 @@ import type {
   Character,
   ContentPackSummary,
   FlowReadinessSmokeResult,
+  OpenTargetFlowProjectResult,
   ReloadFlowTabResult,
   Orientation,
   OperatorProduct,
@@ -205,6 +206,8 @@ function Card({ children, className = "", style = {} }: { children: ReactNode, c
     </div>
   )
 }
+
+const FLOW_PROJECT_URL_STORAGE_KEY = 'bosmax.flow_project_url'
 
 function FlowRuntimePlan({
   mode,
@@ -765,6 +768,9 @@ export default function OperatorPage() {
   const [resolvedMapping, setResolvedMapping] = useState<ProductMapping | null>(null)
   const [operatorPreflight, setOperatorPreflight] = useState<OperatorPreflightResponse | null>(null)
   const [flowReadiness, setFlowReadiness] = useState<FlowReadinessSmokeResult | null>(null)
+  const [flowProjectUrl, setFlowProjectUrl] = useState('')
+  const [openingTargetFlowProject, setOpeningTargetFlowProject] = useState(false)
+  const [targetFlowProjectResult, setTargetFlowProjectResult] = useState<OpenTargetFlowProjectResult | null>(null)
   const [mappingBusy, setMappingBusy] = useState(false)
   const [repairingMapping, setRepairingMapping] = useState(false)
   const [backfillingMappings, setBackfillingMappings] = useState(false)
@@ -838,6 +844,22 @@ export default function OperatorPage() {
   if (submittingManual) f2vBlockingReasons.push('Submission already running.')
 
   if (!f2vEndReady) f2vAdvisoryReasons.push('End Frame is optional. Use it only if you want last-frame control.')
+
+  useEffect(() => {
+    const savedFlowProjectUrl = window.localStorage.getItem(FLOW_PROJECT_URL_STORAGE_KEY)
+    if (savedFlowProjectUrl) {
+      setFlowProjectUrl(savedFlowProjectUrl)
+    }
+  }, [])
+
+  useEffect(() => {
+    const trimmedFlowProjectUrl = flowProjectUrl.trim()
+    if (trimmedFlowProjectUrl) {
+      window.localStorage.setItem(FLOW_PROJECT_URL_STORAGE_KEY, trimmedFlowProjectUrl)
+      return
+    }
+    window.localStorage.removeItem(FLOW_PROJECT_URL_STORAGE_KEY)
+  }, [flowProjectUrl])
 
   useEffect(() => {
     setFetchingProjects(true)
@@ -1186,6 +1208,34 @@ export default function OperatorPage() {
       setMessage(`Flow tab reload/reinject failed: ${String(err)}`)
     } finally {
       setReloadingFlowTab(false)
+    }
+  }
+
+  async function openTargetFlowProject() {
+    const normalizedFlowProjectUrl = flowProjectUrl.trim()
+    if (!normalizedFlowProjectUrl) {
+      setMessage('Enter the exact Google Flow project editor URL first.')
+      return
+    }
+
+    setOpeningTargetFlowProject(true)
+    try {
+      const result = await postAPI<OpenTargetFlowProjectResult>('/api/operator/open-target-flow-project', {
+        flow_project_url: normalizedFlowProjectUrl,
+      })
+      setTargetFlowProjectResult(result)
+
+      if (result.primary_blocker) {
+        setMessage(`Open Target Flow Project failed: ${result.primary_blocker}`)
+        return
+      }
+
+      setMessage('Target Flow project focused. Running readiness check...')
+      await runF2VSmokeTest()
+    } catch (err) {
+      setMessage(`Open Target Flow Project failed: ${String(err)}`)
+    } finally {
+      setOpeningTargetFlowProject(false)
     }
   }
 
@@ -2150,6 +2200,21 @@ export default function OperatorPage() {
           <textarea value={form.cta} onChange={e => updateField('cta', e.target.value)} rows={2} className="px-2 py-1.5 rounded text-xs resize-y" style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }} />
         </div>
         <div className="flex gap-3 flex-wrap">
+            <input
+              value={flowProjectUrl}
+              onChange={(event) => setFlowProjectUrl(event.target.value)}
+              placeholder="https://labs.google/fx/tools/flow/project/..."
+              className="min-w-[320px] flex-1 px-3 py-1.5 rounded text-[10px]"
+              style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}
+            />
+            <button
+              onClick={openTargetFlowProject}
+              disabled={openingTargetFlowProject || smokeTesting || reloadingFlowTab}
+              className="px-3 py-1.5 rounded text-[10px] font-bold"
+              style={{ background: 'rgba(16,185,129,0.14)', color: '#6ee7b7', border: '1px solid rgba(16,185,129,0.3)' }}
+            >
+              {openingTargetFlowProject ? 'Opening...' : 'Open Target Flow Project'}
+            </button>
           <button onClick={buildBlueprint} disabled={building || blueprintBlocked} className="px-4 py-2 rounded text-xs font-semibold" style={{ background: blueprintBlocked ? 'var(--border)' : 'var(--accent)', color: blueprintBlocked ? 'var(--muted)' : '#fff', border: '1px solid var(--accent)' }}>
             {building ? 'Building...' : 'Build Blueprint'}
           </button>
@@ -2540,6 +2605,10 @@ export default function OperatorPage() {
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
                   <div>
                     <div style={{ color: 'var(--muted)' }}>Source:</div>
+                    <ReadOnlyField label="Target Flow Project URL" value={flowProjectUrl || targetFlowProjectResult?.flow_project_url || '—'} />
+                    <ReadOnlyField label="Target Flow Tab ID" value={targetFlowProjectResult?.flow_tab_id != null ? String(targetFlowProjectResult.flow_tab_id) : '—'} />
+                    <ReadOnlyField label="Flow URL Before Open" value={targetFlowProjectResult?.flow_url_before || '—'} />
+                    <ReadOnlyField label="Flow URL After Open" value={targetFlowProjectResult?.flow_url_after || '—'} />
                     <div className="font-mono">{promptSource}</div>
                   </div>
                   <div>
