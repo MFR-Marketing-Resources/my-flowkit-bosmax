@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Upload, ArrowRight, Info } from 'lucide-react'
 import type { UploadedAsset, Orientation } from '../../types'
+import { uploadImageBase64 } from '../../api/client'
 
 interface F2VModuleProps {
   onExecute: (data: any) => void
@@ -15,16 +16,38 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
   const [orientation, setOrientation] = useState<Orientation>('VERTICAL')
   const [model, setModel] = useState('Veo 3.1 - Pro')
   const [count, setCount] = useState(1)
-  const [startAsset] = useState<UploadedAsset | null>(null)
-  const [endAsset] = useState<UploadedAsset | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  
+  // Frame Assets
+  const [startAsset, setStartAsset] = useState<UploadedAsset | null>(null)
+  const [endAsset, setEndAsset] = useState<UploadedAsset | null>(null)
 
   // --- Handlers ---
-  const handleStartUpload = (_e: React.ChangeEvent<HTMLInputElement>) => {
-    // Logic to upload start frame
-  }
+  const handleFileChange = async (type: 'start' | 'end', e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
 
-  const handleEndUpload = (_e: React.ChangeEvent<HTMLInputElement>) => {
-    // Logic to upload end frame
+    setIsUploading(true)
+    try {
+      const reader = new FileReader()
+      reader.readAsDataURL(file)
+      reader.onload = async () => {
+        const base64 = reader.result as string
+        const res = await uploadImageBase64(base64, file.name)
+        const asset: UploadedAsset = {
+          mediaId: res.media_id,
+          fileName: file.name,
+          previewUrl: base64
+        }
+        if (type === 'start') setStartAsset(asset)
+        else setEndAsset(asset)
+        setIsUploading(false)
+      }
+    } catch (error) {
+      console.error('Upload failed:', error)
+      setIsUploading(false)
+      alert('Upload failed. Check if local agent is running.')
+    }
   }
 
   const handleExecute = () => {
@@ -47,32 +70,38 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
         <section className="space-y-4">
           <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">1. Visual Assets (F2V Slots)</h3>
           <div className="grid grid-cols-2 gap-4">
-            <div className="group relative aspect-[9/16] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
+            <div className="group relative aspect-video rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-3 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
                {startAsset ? (
-                 <img src={`http://127.0.0.1:8100/api/products/${startAsset.mediaId}/image`} className="w-full h-full object-cover" alt="Start" />
+                 <img src={startAsset.previewUrl} className="w-full h-full object-cover" alt="Start Frame" />
                ) : (
                  <>
-                   <div className="p-3 rounded-full bg-slate-800 text-slate-400 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-colors">
-                     <Upload size={20} />
+                   <div className="p-4 rounded-full bg-slate-800 text-slate-400 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-colors">
+                     <Upload size={24} />
                    </div>
-                   <span className="text-xs font-bold text-slate-500 group-hover:text-slate-300">Start Frame</span>
+                   <div className="text-center">
+                     <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Start Frame</p>
+                     <p className="text-[9px] text-slate-500 mt-1">Upload reference image</p>
+                   </div>
                  </>
                )}
-               <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleStartUpload} />
+               <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('start', e)} />
             </div>
 
-            <div className="group relative aspect-[9/16] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
+            <div className="group relative aspect-video rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-3 hover:border-purple-500/50 transition-all cursor-pointer overflow-hidden">
                {endAsset ? (
-                 <img src={`http://127.0.0.1:8100/api/products/${endAsset.mediaId}/image`} className="w-full h-full object-cover" alt="End" />
+                 <img src={endAsset.previewUrl} className="w-full h-full object-cover" alt="End Frame" />
                ) : (
                  <>
-                   <div className="p-3 rounded-full bg-slate-800 text-slate-400 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-colors">
-                     <Upload size={20} />
+                   <div className="p-4 rounded-full bg-slate-800 text-slate-400 group-hover:bg-purple-500/10 group-hover:text-purple-400 transition-colors">
+                     <Upload size={24} />
                    </div>
-                   <span className="text-xs font-bold text-slate-500 group-hover:text-slate-300">End Frame (Optional)</span>
+                   <div className="text-center">
+                     <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">End Frame</p>
+                     <p className="text-[9px] text-slate-500 mt-1">Upload reference image</p>
+                   </div>
                  </>
                )}
-               <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleEndUpload} />
+               <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('end', e)} />
             </div>
           </div>
         </section>
@@ -99,11 +128,11 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
         <div className="pt-4">
           <button 
             onClick={handleExecute}
-            disabled={isExecuting || !manualPrompt || !startAsset}
+            disabled={isExecuting || isUploading || !manualPrompt || !startAsset}
             className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
           >
-            {isExecuting ? 'Executing Golden Sequence...' : 'START GENERATION'}
-            {!isExecuting && <ArrowRight size={18} />}
+            {isUploading ? 'Uploading Assets...' : isExecuting ? 'Executing Frames Sequence...' : 'START GENERATION'}
+            {!isExecuting && !isUploading && <ArrowRight size={18} />}
           </button>
         </div>
       </div>
