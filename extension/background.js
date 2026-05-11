@@ -126,7 +126,7 @@ const WS_METHOD_TIMEOUT_MS = {
   CHECK_FLOW_COMPOSER_READY: 12000,
   FLOW_PAGE_STATE_DIAGNOSTIC: 12000,
   RELOAD_FLOW_TAB: 12000,
-  OPEN_TARGET_FLOW_PROJECT: 12000,
+  OPEN_TARGET_FLOW_PROJECT: 45000,
   EXECUTE_FLOW_JOB: 125000,
   DEBUG_FLOW_DOM_EXECUTION: 65000,
 };
@@ -527,6 +527,25 @@ async function focusTab(tab) {
   return await chrome.tabs.update(tab.id, { active: true });
 }
 
+async function openTabInNormalWindow(url) {
+  const windows = await chrome.windows.getAll({ windowTypes: ['normal'], populate: true });
+  const normalWindow = windows.find((item) => item?.id != null);
+
+  if (normalWindow?.id != null) {
+    try {
+      await chrome.windows.update(normalWindow.id, { focused: true });
+    } catch (_) {}
+    return await chrome.tabs.create({ windowId: normalWindow.id, url, active: true });
+  }
+
+  const createdWindow = await chrome.windows.create({ url, focused: true, type: 'normal' });
+  const createdTab = createdWindow?.tabs?.find((item) => item?.url === url) || createdWindow?.tabs?.[0] || null;
+  if (!createdTab?.id) {
+    throw new Error('ERR_NO_NORMAL_BROWSER_WINDOW');
+  }
+  return createdTab;
+}
+
 async function handleOpenTargetFlowProject(flowProjectUrl) {
   const normalizedUrl = String(flowProjectUrl || '').trim();
   if (!normalizedUrl) {
@@ -553,7 +572,7 @@ async function handleOpenTargetFlowProject(flowProjectUrl) {
   if (targetTab) {
     targetTab = await focusTab(targetTab);
   } else {
-    targetTab = await chrome.tabs.create({ url: normalizedUrl, active: true });
+    targetTab = await openTabInNormalWindow(normalizedUrl);
   }
 
   try {

@@ -287,7 +287,7 @@ class FlowClient:
 
     async def open_target_flow_project(self, flow_project_url: str) -> dict:
         """Open or focus an exact Google Flow project editor URL before readiness checks."""
-        result = await self._send("OPEN_TARGET_FLOW_PROJECT", {"flow_project_url": flow_project_url}, timeout=20)
+        result = await self._send("OPEN_TARGET_FLOW_PROJECT", {"flow_project_url": flow_project_url}, timeout=45)
         if result.get("error"):
             return {"ok": False, "error": result["error"]}
 
