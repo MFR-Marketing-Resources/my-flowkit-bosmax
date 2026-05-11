@@ -1,8 +1,9 @@
+import { useEffect, useState } from 'react'
 import { BrowserRouter, NavLink, Navigate, Routes, Route, useLocation } from 'react-router-dom'
 import { 
   LayoutDashboard, FolderOpen, ScrollText, Film, Sparkles, PackageSearch, 
   Video, Layers, Image as ImageIcon, Settings as SettingsIcon, Activity,
-  Briefcase
+  Briefcase, Menu, X
 } from 'lucide-react'
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext'
 import DashboardPage from './pages/DashboardPage'
@@ -58,17 +59,62 @@ function PageTitle() {
 }
 
 function Layout() {
+  const location = useLocation()
   const { isConnected } = useWebSocketContext()
+  const [isCompactNav, setIsCompactNav] = useState(() => window.innerWidth < 1180)
+  const [navOpen, setNavOpen] = useState(() => window.innerWidth >= 1180)
+
+  useEffect(() => {
+    const syncViewportMode = () => {
+      const compact = window.innerWidth < 1180
+      setIsCompactNav(compact)
+      setNavOpen(current => {
+        if (!compact) return true
+        return current && window.innerWidth > 720
+      })
+    }
+
+    syncViewportMode()
+    window.addEventListener('resize', syncViewportMode)
+    return () => window.removeEventListener('resize', syncViewportMode)
+  }, [])
+
+  useEffect(() => {
+    if (isCompactNav) {
+      setNavOpen(false)
+    }
+  }, [isCompactNav, location.pathname])
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-950 text-slate-200">
+    <div className="relative flex h-screen overflow-hidden bg-slate-950 text-slate-200">
+      {isCompactNav && navOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation overlay"
+          className="absolute inset-0 z-30 bg-slate-950/72 backdrop-blur-[2px]"
+          onClick={() => setNavOpen(false)}
+        />
+      )}
+
       {/* Left sidebar */}
-      <aside className="w-56 flex-shrink-0 flex flex-col border-r border-slate-800 bg-slate-900/50 backdrop-blur-xl">
-        <div className="px-6 py-6 flex items-center gap-2">
+      <aside className={`${isCompactNav ? 'absolute inset-y-0 left-0 z-40 w-64 max-w-[84vw] shadow-2xl shadow-slate-950/50 transition-transform duration-200' : 'w-56 flex-shrink-0'} ${isCompactNav && !navOpen ? '-translate-x-full' : 'translate-x-0'} flex flex-col border-r border-slate-800 bg-slate-900/92 backdrop-blur-xl`}>
+        <div className="flex items-center justify-between px-5 py-5 md:px-6 md:py-6">
+          <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center font-bold text-white shadow-lg shadow-blue-500/20">
             B
           </div>
           <span className="font-bold tracking-tight text-white">BOSMAX <span className="text-blue-500">V4</span></span>
+          </div>
+          {isCompactNav && (
+            <button
+              type="button"
+              aria-label="Close navigation"
+              onClick={() => setNavOpen(false)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-950/60 text-slate-300 hover:border-blue-400/50 hover:text-blue-200"
+            >
+              <X size={16} />
+            </button>
+          )}
         </div>
         
         <nav className="flex-1 overflow-y-auto px-3 space-y-6 pb-6">
@@ -113,12 +159,29 @@ function Layout() {
       {/* Main area */}
       <div className="flex flex-col flex-1 overflow-hidden bg-slate-950">
         {/* Top header */}
-        <header className="flex items-center justify-between px-8 py-4 border-b border-slate-800 flex-shrink-0 bg-slate-950/50 backdrop-blur-md">
-          <h1 className="text-sm font-semibold tracking-wide text-slate-100">
-            <PageTitle />
-          </h1>
+        <header className="flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-950/50 px-4 py-3 backdrop-blur-md md:px-8 md:py-4 flex-shrink-0">
+          <div className="flex min-w-0 items-center gap-3">
+            {isCompactNav && (
+              <button
+                type="button"
+                aria-label="Open navigation"
+                onClick={() => setNavOpen(true)}
+                className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/80 text-slate-300 hover:border-blue-400/50 hover:text-blue-200"
+              >
+                <Menu size={16} />
+              </button>
+            )}
+            <h1 className="truncate text-sm font-semibold tracking-wide text-slate-100 md:text-base">
+              <PageTitle />
+            </h1>
+          </div>
           <div className="flex items-center gap-4">
-            {/* User profile or other top actions can go here */}
+            {isCompactNav && (
+              <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${isConnected ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-red-500/30 bg-red-500/10 text-red-200'}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                {isConnected ? 'Agent Online' : 'Agent Offline'}
+              </div>
+            )}
           </div>
         </header>
 

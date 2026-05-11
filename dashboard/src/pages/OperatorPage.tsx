@@ -212,13 +212,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
   }
 
   return (
-    <div className="h-full p-8 flex flex-col bg-slate-950">
-      <div className="mb-8 flex items-center justify-between">
+    <div className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-8">
+      <div className="mb-6 flex flex-col gap-4 lg:mb-8 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-white tracking-tight">{mode} Production Workspace</h2>
-          <p className="text-slate-400 text-sm italic">Automating Google Flow with BOSMAX V4 precision.</p>
+          <h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">{mode} Production Workspace</h2>
+          <p className="text-sm italic text-slate-400">Automating Google Flow with BOSMAX V4 precision.</p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
            <div className="px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-bold uppercase tracking-widest">
              Mode: {mode === 'F2V' ? 'Frames to Video' : mode}
            </div>
@@ -226,12 +226,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
       </div>
 
       <div className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${notice.tone === 'error' ? 'border-red-500/40 bg-red-500/10 text-red-200' : notice.tone === 'success' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : notice.tone === 'info' ? 'border-blue-500/40 bg-blue-500/10 text-blue-200' : 'border-slate-800 bg-slate-900/40 text-slate-300'}`}>
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="font-semibold tracking-wide">{notice.title}</div>
             <div className="text-xs opacity-90 mt-1">{notice.detail}</div>
           </div>
-          <div className="text-[10px] uppercase tracking-[0.2em] opacity-70">
+          <div className="text-[10px] uppercase tracking-[0.2em] opacity-70 md:text-right">
             {notice.requestId ? `req ${notice.requestId}` : 'no active request'}
           </div>
         </div>

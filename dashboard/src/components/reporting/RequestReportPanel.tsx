@@ -185,7 +185,7 @@ export default function RequestReportPanel({
               value={search}
               onChange={event => setSearch(event.target.value)}
               placeholder="Search request ID, mode, stage, error..."
-              className="ml-auto min-w-[240px] rounded-full border border-slate-700 bg-slate-950 px-4 py-2 text-xs text-slate-200 outline-none placeholder:text-slate-500 focus:border-blue-400/50"
+              className="w-full rounded-full border border-slate-700 bg-slate-950 px-4 py-2 text-xs text-slate-200 outline-none placeholder:text-slate-500 focus:border-blue-400/50 sm:ml-auto sm:w-auto sm:min-w-[240px]"
             />
           )}
         </div>
