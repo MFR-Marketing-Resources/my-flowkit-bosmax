@@ -1853,6 +1853,22 @@
   }
 
   /**
+   * Returns true ONLY when the current tab is already a valid F2V workspace:
+   *   topMode=Video, subMode=Frames, Start slot visible, composer visible.
+   * Must stay synchronous — do NOT add async/await.
+   */
+  function isF2VWorkspaceAlreadyReady() {
+    const obs = observeFlowState();
+    if (obs.topMode !== 'Video') return false;
+    if (obs.subMode !== 'Frames') return false;
+    if (!obs.visibleUploadSlots.includes('Start')) return false;
+    if (obs.model && /nano.?banana/i.test(obs.model)) return false;
+    const composer = findComposerElement();
+    if (!composer || !isVisible(composer)) return false;
+    return true;
+  }
+
+  /**
    * F2V SOP state machine — deterministic golden path:
    *   Root/Landing → New Project → Video → Frames → 9:16 → 1x → Veo 3.1 - Lite
    *   → verify Start slot visible → verify prompt field visible
@@ -1872,24 +1888,39 @@
       onRoot ? null : 'Already in project editor — skipping root navigation');
 
     // ── Step 2: New Project ───────────────────────────────────────────────────
-    // If mode controls and composer are both absent we're on the landing page
-    // and must click New Project first.
-    const earlyModeCheck = await ensureModeControlsVisible('F2V');
-    const earlyComposer = findComposerElement();
-    const needsNewProject = !earlyModeCheck.ok && !earlyComposer;
+    // Only skip when the current workspace is ALREADY verified as F2V-ready
+    // (Video + Frames + Start slot + visible composer).  A bare composer
+    // presence is NOT sufficient — an Image workspace or Nano Banana project
+    // also exposes a composer element but is NOT a valid F2V workspace.
+    const alreadyF2VReady = isF2VWorkspaceAlreadyReady();
+    if (alreadyF2VReady) {
+      logStage(STAGES.NEW_PROJECT_CLICKED, 'SKIP',
+        'Existing workspace already Video/Frames with Start slot');
+    } else {
+      // Snapshot current state before any mutations for diagnostics.
+      const snapObs = observeFlowState();
+      const snapComposer = findComposerElement();
+      const snapMsg = `workspace_not_f2v_ready topMode=${snapObs.topMode} subMode=${snapObs.subMode} model=${snapObs.model} slots=[${snapObs.visibleUploadSlots.join(',')}] composer_found=${!!snapComposer}`;
+      console.log('[FlowAgent] ' + snapMsg);
 
-    if (needsNewProject) {
       await closeBlockingModalIfPresent();
 
+      // Prefer a New Project button; fall back to the create-type-chooser
+      // (already in an editor but wrong workspace type).
       const newProjectBtn = findNewProjectControl();
-      if (!newProjectBtn) {
-        logStage(STAGES.NEW_PROJECT_CLICKED, 'FAIL', 'ERR_NEW_PROJECT_NOT_FOUND');
-        throw new Error('ERR_NEW_PROJECT_NOT_FOUND');
+      if (newProjectBtn && isVisible(newProjectBtn)) {
+        newProjectBtn.click();
+        logStage(STAGES.NEW_PROJECT_CLICKED, 'PASS', snapMsg);
+      } else {
+        const chooserOpened = await openCreateTypeChooser();
+        if (!chooserOpened) {
+          logStage(STAGES.NEW_PROJECT_CLICKED, 'FAIL', `ERR_NEW_PROJECT_NOT_FOUND — ${snapMsg}`);
+          throw new Error('ERR_NEW_PROJECT_NOT_FOUND');
+        }
+        logStage(STAGES.NEW_PROJECT_CLICKED, 'PASS', `type_chooser_opened — ${snapMsg}`);
       }
-      newProjectBtn.click();
-      logStage(STAGES.NEW_PROJECT_CLICKED, 'PASS');
 
-      // Wait for Video button to appear (editor loading)
+      // Wait for Video control to become visible after workspace opens.
       const appeared = await waitForCondition(
         () => {
           const btn = findElementByText('button,[role="tab"],[role="button"]', 'Video');
@@ -1900,18 +1931,16 @@
 
       if (!appeared) {
         logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL',
-          'Video button not found after New Project click — timeout 15s');
+          'Video button not found after new-project/chooser click — timeout 15s');
         throw new Error('ERR_WRONG_MODE_IMAGE_SELECTED');
       }
-    } else {
-      logStage(STAGES.NEW_PROJECT_CLICKED, 'SKIP', 'Editor already active');
     }
 
     // ── Step 3: Select Video topMode ─────────────────────────────────────────
     const modeControls = await ensureModeControlsVisible('F2V');
     if (!modeControls.ok) {
       logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL',
-        modeControls.error || 'ensureModeControlsVisible(F2V) returned !ok');
+        `${modeControls.error || 'ensureModeControlsVisible(F2V) returned !ok'}${modeControls.detail ? ' — ' + modeControls.detail : ''}`);
       throw new Error('ERR_WRONG_MODE_IMAGE_SELECTED');
     }
 
