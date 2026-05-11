@@ -3,14 +3,18 @@ import { AlertTriangle, CheckCircle2, Clock3, LoaderCircle, RefreshCcw } from 'l
 import { fetchAPI } from '../../api/client'
 import type { TelemetryRequest, TelemetryRequestDetail } from '../../types'
 import {
+  buildTelemetryHandoffTimeline,
+  classifyTelemetryExecution,
   formatExactDateTime,
   formatRelativeTime,
+  getTelemetryCurrentOwner,
   getTelemetryModeLabel,
   getTelemetryPrimaryRemark,
   getTelemetryRequestLabel,
   getTelemetryStage,
   getTelemetryStatusLabel,
   getTelemetryStatusTone,
+  getTelemetryStuckRemark,
   getTelemetryUpdatedAt,
   sortTelemetryByUpdatedAt,
 } from '../../utils/telemetryReporting'
@@ -42,6 +46,30 @@ function StatusIcon({ status }: { status: string }) {
   if (tone === 'success') return <CheckCircle2 size={16} className="text-emerald-300" />
   if (tone === 'running') return <LoaderCircle size={16} className="text-blue-300 animate-spin" />
   return <Clock3 size={16} className="text-amber-300" />
+}
+
+function ExecutionStateBadge({ state }: { state: 'done' | 'current' | 'failed' | 'pending' }) {
+  const palette = state === 'done'
+    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+    : state === 'failed'
+      ? 'border-red-500/40 bg-red-500/10 text-red-200'
+      : state === 'current'
+        ? 'border-blue-500/40 bg-blue-500/10 text-blue-200'
+        : 'border-slate-700 bg-slate-900 text-slate-300'
+
+  const label = state === 'done'
+    ? 'Done'
+    : state === 'failed'
+      ? 'Failed'
+      : state === 'current'
+        ? 'Current'
+        : 'Pending'
+
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${palette}`}>
+      {label}
+    </span>
+  )
 }
 
 function matchesStatusFilter(trace: TelemetryRequest, statusFilter: StatusFilter) {
@@ -148,7 +176,14 @@ export default function RequestReportPanel({
   }, [selectedRequestId])
 
   const selectedTrace = filteredRequests.find(trace => trace.request_id === selectedRequestId) || null
-  const selectedRemark = selectedTrace ? getTelemetryPrimaryRemark(selectedTrace, detail) : 'Select a job to view detail.'
+  const selectedTelemetry = detail?.telemetry || selectedTrace
+  const selectedRemark = selectedTelemetry ? getTelemetryPrimaryRemark(selectedTelemetry, detail) : 'Select a job to view detail.'
+  const diagnosis = selectedTelemetry ? classifyTelemetryExecution(selectedTelemetry, detail) : null
+  const stuckRemark = selectedTelemetry ? getTelemetryStuckRemark(selectedTelemetry, detail) : null
+  const currentOwner = selectedTelemetry ? getTelemetryCurrentOwner(selectedTelemetry, detail) : 'Unknown'
+  const handoffTimeline = selectedTelemetry ? buildTelemetryHandoffTimeline(selectedTelemetry, detail) : []
+  const firstRecorder = detail?.stages?.[0]?.source || 'backend'
+  const latestRecorder = detail?.stages?.[detail.stages.length - 1]?.source || currentOwner
 
   return (
     <div className="rounded-3xl border border-slate-800 bg-slate-950/80 overflow-hidden">
@@ -239,7 +274,7 @@ export default function RequestReportPanel({
         </div>
 
         <div className="min-h-[420px] bg-slate-950/60 px-5 py-5">
-          {!selectedTrace ? (
+          {!selectedTelemetry ? (
             <div className="text-sm text-slate-400">Select a job to inspect its status timeline and troubleshooting remark.</div>
           ) : (
             <div className="grid gap-4">
@@ -247,12 +282,79 @@ export default function RequestReportPanel({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Selected Job</div>
-                    <div className="mt-2 text-lg font-semibold text-slate-100">{getTelemetryRequestLabel(selectedTrace)}</div>
-                    <div className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">{getTelemetryModeLabel(selectedTrace)} • {selectedTrace.request_id}</div>
+                    <div className="mt-2 text-lg font-semibold text-slate-100">{getTelemetryRequestLabel(selectedTelemetry)}</div>
+                    <div className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">{getTelemetryModeLabel(selectedTelemetry)} • {selectedTelemetry.request_id}</div>
                   </div>
-                  <StatusBadge status={selectedTrace.status} />
+                  <StatusBadge status={selectedTelemetry.status} />
                 </div>
               </div>
+
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Submission Proof</div>
+                    <div className="mt-1 text-xs text-slate-400">This receipt proves the request exists in backend telemetry and shows the first and latest owners of the handoff chain.</div>
+                  </div>
+                  <div className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">
+                    First recorder: {String(firstRecorder).toUpperCase()}
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-slate-300">
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Request ID</div>
+                    <div className="mt-1 break-all font-mono text-slate-100">{selectedTelemetry.request_id}</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Current Owner</div>
+                    <div className="mt-1 font-medium text-slate-100">{currentOwner}</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Request Type</div>
+                    <div className="mt-1 font-medium text-slate-100">{getTelemetryRequestLabel(selectedTelemetry)}</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Mode</div>
+                    <div className="mt-1 font-medium text-slate-100">{getTelemetryModeLabel(selectedTelemetry)}</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Project / Video / Scene</div>
+                    <div className="mt-1 text-slate-100">{selectedTelemetry.project_id || 'N/A'} / {selectedTelemetry.video_id || 'N/A'} / {selectedTelemetry.scene_id || 'N/A'}</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Receipt Times</div>
+                    <div className="mt-1 text-slate-100">Submitted {formatExactDateTime(selectedTelemetry.created_at)}</div>
+                    <div className="mt-1 text-slate-400">Queued {formatExactDateTime(selectedTelemetry.queued_at)}</div>
+                  </div>
+                </div>
+              </div>
+
+              {diagnosis && (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Execution Diagnosis</div>
+                      <div className="mt-2 text-base font-semibold text-slate-100">{diagnosis.label}</div>
+                      <div className="mt-1 text-sm text-slate-300">{diagnosis.summary}</div>
+                    </div>
+                    <div className={`rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${diagnosis.tone === 'success' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : diagnosis.tone === 'failed' ? 'border-red-500/40 bg-red-500/10 text-red-200' : diagnosis.tone === 'running' ? 'border-blue-500/40 bg-blue-500/10 text-blue-200' : diagnosis.tone === 'waiting' ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-slate-700 bg-slate-950 text-slate-300'}`}>
+                      {diagnosis.label}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                      <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">What This Means</div>
+                      <div className="mt-2 text-sm text-slate-200">{diagnosis.detail}</div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                      <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Latest Owner / Recorder</div>
+                      <div className="mt-2 text-sm text-slate-200">{String(latestRecorder).toUpperCase()}</div>
+                      {stuckRemark && <div className="mt-2 text-xs text-red-200">{stuckRemark}</div>}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Operator Remark</div>
@@ -262,24 +364,42 @@ export default function RequestReportPanel({
               <div className="grid grid-cols-2 gap-3 text-xs text-slate-300">
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-3">
                   <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Last Update</div>
-                  <div className="mt-1 font-medium">{formatExactDateTime(getTelemetryUpdatedAt(selectedTrace))}</div>
+                  <div className="mt-1 font-medium">{formatExactDateTime(getTelemetryUpdatedAt(selectedTelemetry))}</div>
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-3">
                   <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Created</div>
-                  <div className="mt-1 font-medium">{formatExactDateTime(selectedTrace.created_at)}</div>
+                  <div className="mt-1 font-medium">{formatExactDateTime(selectedTelemetry.created_at)}</div>
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-3">
                   <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Started</div>
-                  <div className="mt-1 font-medium">{formatExactDateTime(selectedTrace.started_at)}</div>
+                  <div className="mt-1 font-medium">{formatExactDateTime(selectedTelemetry.started_at)}</div>
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-3">
                   <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Ended</div>
-                  <div className="mt-1 font-medium">{formatExactDateTime(selectedTrace.completed_at || selectedTrace.failed_at)}</div>
+                  <div className="mt-1 font-medium">{formatExactDateTime(selectedTelemetry.completed_at || selectedTelemetry.failed_at)}</div>
                 </div>
               </div>
 
               <div>
-                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Stage Timeline</div>
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Handoff Trail</div>
+                <div className="grid gap-2">
+                  {handoffTimeline.map(step => (
+                    <div key={step.id} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-200">{step.label}</div>
+                          <div className="mt-1 text-[11px] text-slate-500">{step.timestamp ? formatExactDateTime(step.timestamp) : 'No timestamp yet'}</div>
+                        </div>
+                        <ExecutionStateBadge state={step.state} />
+                      </div>
+                      <div className="mt-2 text-xs text-slate-300">{step.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Recorded Stage Timeline</div>
                 {detailLoading ? (
                   <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-400">Loading stage detail...</div>
                 ) : detailError ? (
