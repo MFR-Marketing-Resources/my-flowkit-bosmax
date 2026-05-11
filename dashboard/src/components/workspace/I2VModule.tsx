@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Upload, ArrowRight } from 'lucide-react'
+import { Upload, ArrowRight, Loader2 } from 'lucide-react'
 import type { UploadedAsset, Orientation } from '../../types'
 import { handleAssetUpload } from '../../api/assets'
 
@@ -28,16 +28,13 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
 
     setIsUploading(true)
     try {
-      console.log(`[I2V] Starting upload for ${type}...`)
       const asset = await handleAssetUpload(file)
-      console.log(`[I2V] Upload success for ${type}:`, asset.mediaId)
-      
       if (type === 'subject') setSubjectAsset(asset)
       else if (type === 'scene') setSceneAsset(asset)
       else setStyleAsset(asset)
-    } catch (error: any) {
-      console.error(`[I2V] ${type} upload failed:`, error)
-      alert(`UPLOAD ERROR: ${error.message || 'Unknown error'}. Make sure your local agent is running at http://127.0.0.1:8100`)
+    } catch (error) {
+      console.error('Upload failed:', error)
+      alert('Upload failed. Check if local agent is running.')
     } finally {
       setIsUploading(false)
     }
@@ -50,9 +47,9 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
       model,
       count,
       refs: { 
-        subjectAssetId: subjectAsset?.mediaId, 
-        sceneAssetId: sceneAsset?.mediaId, 
-        styleAssetId: styleAsset?.mediaId 
+        subjectAsset: subjectAsset, 
+        sceneAsset: sceneAsset, 
+        styleAsset: styleAsset 
       },
       mode: 'I2V'
     })
@@ -67,22 +64,22 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
             {/* Subject */}
             <div className="group relative aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
                {subjectAsset ? (
-                 <img src={subjectAsset.previewUrl} className="w-full h-full object-cover" alt="Subject" />
+                 <img src={subjectAsset.previewUrl} className="w-full h-full object-cover animate-in fade-in duration-500" alt="Subject" />
                ) : (
                  <>
                    <div className="p-3 rounded-full bg-slate-800 text-slate-400 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-colors">
-                     <Upload size={20} />
+                     {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Upload size={20} />}
                    </div>
                    <span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">Subject</span>
                  </>
                )}
-               <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('subject', e)} />
+               {!isUploading && <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('subject', e)} />}
             </div>
 
             {/* Scene */}
             <div className="group relative aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-purple-500/50 transition-all cursor-pointer overflow-hidden">
                {sceneAsset ? (
-                 <img src={sceneAsset.previewUrl} className="w-full h-full object-cover" alt="Scene" />
+                 <img src={sceneAsset.previewUrl} className="w-full h-full object-cover animate-in fade-in duration-500" alt="Scene" />
                ) : (
                  <>
                    <div className="p-3 rounded-full bg-slate-800 text-slate-400 group-hover:bg-purple-500/10 group-hover:text-purple-400 transition-colors">
@@ -91,13 +88,13 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
                    <span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">Scene</span>
                  </>
                )}
-               <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('scene', e)} />
+               {!isUploading && <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('scene', e)} />}
             </div>
 
             {/* Style */}
             <div className="group relative aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-pink-500/50 transition-all cursor-pointer overflow-hidden">
                {styleAsset ? (
-                 <img src={styleAsset.previewUrl} className="w-full h-full object-cover" alt="Style" />
+                 <img src={styleAsset.previewUrl} className="w-full h-full object-cover animate-in fade-in duration-500" alt="Style" />
                ) : (
                  <>
                    <div className="p-3 rounded-full bg-slate-800 text-slate-400 group-hover:bg-pink-500/10 group-hover:text-pink-400 transition-colors">
@@ -106,7 +103,7 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
                    <span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">Style</span>
                  </>
                )}
-               <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('style', e)} />
+               {!isUploading && <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('style', e)} />}
             </div>
           </div>
         </section>

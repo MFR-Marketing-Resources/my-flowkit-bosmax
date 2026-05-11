@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Upload, ArrowRight } from 'lucide-react'
+import { Upload, ArrowRight, Loader2 } from 'lucide-react'
 import type { UploadedAsset, Orientation } from '../../types'
 import { handleAssetUpload } from '../../api/assets'
 
@@ -27,15 +27,15 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
 
     setIsUploading(true)
     try {
-      console.log(`[F2V] Starting upload for ${type}...`)
+      console.log(`[F2V] Uploading ${type} to agent...`)
       const asset = await handleAssetUpload(file)
-      console.log(`[F2V] Upload success for ${type}:`, asset.mediaId)
+      console.log(`[F2V] Upload success:`, asset.mediaId)
       
       if (type === 'start') setStartAsset(asset)
       else setEndAsset(asset)
     } catch (error: any) {
       console.error(`[F2V] ${type} upload failed:`, error)
-      alert(`UPLOAD ERROR: ${error.message || 'Unknown error'}. Make sure your local agent is running at http://127.0.0.1:8100`)
+      alert(`UPLOAD ERROR: ${error.message || 'Unknown error'}. Check your agent.`)
     } finally {
       setIsUploading(false)
     }
@@ -47,10 +47,9 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
       orientation,
       model,
       count,
-      refs: { 
-        startAssetId: startAsset?.mediaId, 
-        endAssetId: endAsset?.mediaId 
-      },
+      // Pass the full asset object (including previewUrl/base64) so extension can use it directly
+      startAsset: startAsset,
+      endAsset: endAsset,
       mode: 'F2V'
     })
   }
@@ -64,25 +63,25 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
             {/* Start Frame */}
             <div className="group relative aspect-video rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-3 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
                {startAsset ? (
-                 <img src={startAsset.previewUrl} className="w-full h-full object-cover" alt="Start Frame" />
+                 <img src={startAsset.previewUrl} className="w-full h-full object-cover animate-in fade-in duration-500" alt="Start Frame" />
                ) : (
                  <>
                    <div className="p-4 rounded-full bg-slate-800 text-slate-400 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-colors">
-                     <Upload size={24} />
+                     {isUploading ? <Loader2 className="animate-spin" size={24} /> : <Upload size={24} />}
                    </div>
                    <div className="text-center">
                      <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Start Frame</p>
-                     <p className="text-[9px] text-slate-500 mt-1">Upload reference image</p>
+                     <p className="text-[9px] text-slate-500 mt-1">{isUploading ? 'Uploading...' : 'Click to upload'}</p>
                    </div>
                  </>
                )}
-               <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('start', e)} />
+               {!isUploading && <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('start', e)} />}
             </div>
 
             {/* End Frame */}
             <div className="group relative aspect-video rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-3 hover:border-purple-500/50 transition-all cursor-pointer overflow-hidden">
                {endAsset ? (
-                 <img src={endAsset.previewUrl} className="w-full h-full object-cover" alt="End Frame" />
+                 <img src={endAsset.previewUrl} className="w-full h-full object-cover animate-in fade-in duration-500" alt="End Frame" />
                ) : (
                  <>
                    <div className="p-4 rounded-full bg-slate-800 text-slate-400 group-hover:bg-purple-500/10 group-hover:text-purple-400 transition-colors">
@@ -90,11 +89,11 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
                    </div>
                    <div className="text-center">
                      <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">End Frame (Optional)</p>
-                     <p className="text-[9px] text-slate-500 mt-1">Upload reference image</p>
+                     <p className="text-[9px] text-slate-500 mt-1">Click to upload</p>
                    </div>
                  </>
                )}
-               <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('end', e)} />
+               {!isUploading && <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('end', e)} />}
             </div>
           </div>
         </section>
@@ -117,7 +116,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
             disabled={isExecuting || isUploading || !manualPrompt || !startAsset}
             className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
           >
-            {isUploading ? 'Uploading Assets...' : isExecuting ? 'Executing Frames Sequence...' : 'START GENERATION'}
+            {isUploading ? 'Preparing Assets...' : isExecuting ? 'Executing Sequence...' : 'START GENERATION'}
             {!isExecuting && !isUploading && <ArrowRight size={18} />}
           </button>
         </div>
@@ -152,13 +151,6 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
               </div>
             </div>
           </div>
-        </section>
-
-        <section className="p-6 rounded-2xl border border-blue-500/10 bg-blue-500/5">
-           <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-2">F2V Context</h4>
-           <div className="text-[10px] text-blue-300/60 leading-relaxed italic">
-             BOSMAX Studio is now in Pure Mirror Mode. UI reflects Google Flow's generation pipeline.
-           </div>
         </section>
       </div>
     </div>
