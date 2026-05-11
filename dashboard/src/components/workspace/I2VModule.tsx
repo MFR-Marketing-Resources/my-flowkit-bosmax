@@ -6,9 +6,10 @@ import { handleAssetUpload } from '../../api/assets'
 interface I2VModuleProps {
   onExecute: (data: any) => void
   isExecuting: boolean
+  compact?: boolean
 }
 
-export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
+export default function I2VModule({ onExecute, isExecuting, compact = false }: I2VModuleProps) {
   // --- States ---
   const [manualPrompt, setManualPrompt] = useState('')
   const [orientation, setOrientation] = useState<Orientation>('VERTICAL')
@@ -56,11 +57,11 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
   }
 
   return (
-    <div className="flex h-full gap-6">
-      <div className="flex-1 space-y-6 overflow-y-auto pr-2 pb-12">
+    <div className={`flex h-full gap-6 ${compact ? 'flex-col' : 'max-[1280px]:flex-col'}`}>
+      <div className={`flex-1 space-y-6 overflow-y-auto pb-12 ${compact ? 'pr-0' : 'pr-2'}`}>
         <section className="space-y-4">
           <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">1. Visual Assets (Subject / Scene / Style)</h3>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 min-[480px]:grid-cols-3">
             {/* Subject */}
             <div className="group relative aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
                {subjectAsset ? (
@@ -73,7 +74,7 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
                    <span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">Subject</span>
                  </>
                )}
-               {!isUploading && <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('subject', e)} />}
+               {!isUploading && <input type="file" accept="image/*" title="Upload subject reference" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('subject', e)} />}
             </div>
 
             {/* Scene */}
@@ -88,7 +89,7 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
                    <span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">Scene</span>
                  </>
                )}
-               {!isUploading && <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('scene', e)} />}
+               {!isUploading && <input type="file" accept="image/*" title="Upload scene reference" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('scene', e)} />}
             </div>
 
             {/* Style */}
@@ -103,7 +104,7 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
                    <span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">Style</span>
                  </>
                )}
-               {!isUploading && <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('style', e)} />}
+               {!isUploading && <input type="file" accept="image/*" title="Upload style reference" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('style', e)} />}
             </div>
           </div>
         </section>
@@ -132,7 +133,7 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
         </div>
       </div>
 
-      <div className="w-72 flex-shrink-0 flex flex-col gap-6 overflow-y-auto pb-12 text-slate-300">
+      <div className={`${compact ? 'w-full' : 'w-72 max-[1280px]:w-full'} flex-shrink-0 flex flex-col gap-6 overflow-y-auto pb-12 text-slate-300`}>
         <section className="space-y-4">
           <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">Flow Mirror Settings</h3>
           <div className="p-6 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-6">

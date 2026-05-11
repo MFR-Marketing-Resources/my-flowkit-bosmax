@@ -6,9 +6,10 @@ import { handleAssetUpload } from '../../api/assets'
 interface F2VModuleProps {
   onExecute: (data: any) => void
   isExecuting: boolean
+  compact?: boolean
 }
 
-export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
+export default function F2VModule({ onExecute, isExecuting, compact = false }: F2VModuleProps) {
   // --- States ---
   const [manualPrompt, setManualPrompt] = useState('')
   const [orientation, setOrientation] = useState<Orientation>('VERTICAL')
@@ -55,11 +56,11 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
   }
 
   return (
-    <div className="flex h-full gap-6">
-      <div className="flex-1 space-y-6 overflow-y-auto pr-2 pb-12">
+    <div className={`flex h-full gap-6 ${compact ? 'flex-col' : 'max-[1280px]:flex-col'}`}>
+      <div className={`flex-1 space-y-6 overflow-y-auto pb-12 ${compact ? 'pr-0' : 'pr-2'}`}>
         <section className="space-y-4">
           <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">1. Visual Assets (F2V Slots)</h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {/* Start Frame */}
             <div className="group relative aspect-video rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-3 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
                {startAsset ? (
@@ -75,7 +76,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
                    </div>
                  </>
                )}
-               {!isUploading && <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('start', e)} />}
+               {!isUploading && <input type="file" accept="image/*" title="Upload start frame" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('start', e)} />}
             </div>
 
             {/* End Frame */}
@@ -93,7 +94,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
                    </div>
                  </>
                )}
-               {!isUploading && <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('end', e)} />}
+               {!isUploading && <input type="file" accept="image/*" title="Upload end frame" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('end', e)} />}
             </div>
           </div>
         </section>
@@ -122,7 +123,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
         </div>
       </div>
 
-      <div className="w-72 flex-shrink-0 flex flex-col gap-6 overflow-y-auto pb-12">
+      <div className={`${compact ? 'w-full' : 'w-72 max-[1280px]:w-full'} flex-shrink-0 flex flex-col gap-6 overflow-y-auto pb-12`}>
         <section className="space-y-4">
           <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">Flow Mirror Settings</h3>
           <div className="p-6 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-6">
@@ -136,7 +137,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
             </div>
             <div className="space-y-3">
               <label className="text-xs font-bold text-slate-400">Generation Model</label>
-              <select value={model} onChange={(e) => setModel(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] font-bold text-slate-300 outline-none">
+              <select title="Select generation model" value={model} onChange={(e) => setModel(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] font-bold text-slate-300 outline-none">
                 <option>Veo 3.1 - Pro</option>
                 <option>Veo 3.1 - Lite</option>
                 <option>Nano Banana 2</option>

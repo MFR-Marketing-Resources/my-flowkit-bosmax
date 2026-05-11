@@ -1,4 +1,4 @@
-const DASHBOARD_PORTAL_URL = 'http://127.0.0.1:8100/operator';
+const DASHBOARD_PORTAL_URL = 'http://127.0.0.1:8100/operator?portal=side';
 
 function setPortalState(state, detail = '') {
   document.body.classList.toggle('ready', state === 'ready');

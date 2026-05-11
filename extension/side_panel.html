@@ -173,15 +173,15 @@
           <span class="pulse" aria-hidden="true"></span>
           <span id="portal-status">Connecting to localhost dashboard...</span>
         </div>
-        <div class="error-copy" id="portal-error">Dashboard iframe did not finish loading. Confirm the local agent is serving <strong>http://127.0.0.1:8100/operator</strong>.</div>
-        <span class="frame-url" id="portal-url">http://127.0.0.1:8100/operator</span>
+        <div class="error-copy" id="portal-error">Dashboard iframe did not finish loading. Confirm the local agent is serving <strong>http://127.0.0.1:8100/operator?portal=side</strong>.</div>
+        <span class="frame-url" id="portal-url">http://127.0.0.1:8100/operator?portal=side</span>
       </div>
     </div>
 
     <iframe
       id="dashboard-frame"
       title="BOSMAX Operator Dashboard"
-      src="http://127.0.0.1:8100/operator"
+      src="http://127.0.0.1:8100/operator?portal=side"
       allow="clipboard-write; clipboard-read"
       referrerpolicy="no-referrer"
       loading="eager"

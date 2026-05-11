@@ -61,23 +61,32 @@ function PageTitle() {
 function Layout() {
   const location = useLocation()
   const { isConnected } = useWebSocketContext()
-  const [isCompactNav, setIsCompactNav] = useState(() => window.innerWidth < 1180)
-  const [navOpen, setNavOpen] = useState(() => window.innerWidth >= 1180)
+  const isPortalMode = new URLSearchParams(location.search).get('portal') === 'side'
+  const [isCompactNav, setIsCompactNav] = useState(() => isPortalMode || window.innerWidth < 1180)
+  const [navOpen, setNavOpen] = useState(() => !isPortalMode && window.innerWidth >= 1180)
 
   useEffect(() => {
     const syncViewportMode = () => {
-      const compact = window.innerWidth < 1180
+      const compact = isPortalMode || window.innerWidth < 1180
       setIsCompactNav(compact)
-      setNavOpen(current => {
-        if (!compact) return true
-        return current && window.innerWidth > 720
-      })
+
+      if (!compact) {
+        setNavOpen(true)
+        return
+      }
+
+      if (isPortalMode) {
+        setNavOpen(false)
+        return
+      }
+
+      setNavOpen(current => current && window.innerWidth > 720)
     }
 
     syncViewportMode()
     window.addEventListener('resize', syncViewportMode)
     return () => window.removeEventListener('resize', syncViewportMode)
-  }, [])
+  }, [isPortalMode])
 
   useEffect(() => {
     if (isCompactNav) {
@@ -157,9 +166,9 @@ function Layout() {
       </aside>
 
       {/* Main area */}
-      <div className="flex flex-col flex-1 overflow-hidden bg-slate-950">
+      <div className={`flex flex-col flex-1 overflow-hidden bg-slate-950 ${isPortalMode ? 'relative' : ''}`}>
         {/* Top header */}
-        <header className="flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-950/50 px-4 py-3 backdrop-blur-md md:px-8 md:py-4 flex-shrink-0">
+        <header className={`flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-950/50 px-4 py-3 backdrop-blur-md flex-shrink-0 ${isPortalMode ? 'sticky top-0 z-20' : 'md:px-8 md:py-4'}`}>
           <div className="flex min-w-0 items-center gap-3">
             {isCompactNav && (
               <button
@@ -171,7 +180,7 @@ function Layout() {
                 <Menu size={16} />
               </button>
             )}
-            <h1 className="truncate text-sm font-semibold tracking-wide text-slate-100 md:text-base">
+            <h1 className={`truncate font-semibold tracking-wide text-slate-100 ${isPortalMode ? 'text-xs uppercase tracking-[0.18em]' : 'text-sm md:text-base'}`}>
               <PageTitle />
             </h1>
           </div>

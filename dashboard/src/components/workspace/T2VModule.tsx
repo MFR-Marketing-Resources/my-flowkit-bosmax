@@ -5,9 +5,10 @@ import type { Orientation } from '../../types'
 interface T2VModuleProps {
   onExecute: (data: any) => void
   isExecuting: boolean
+  compact?: boolean
 }
 
-export default function T2VModule({ onExecute, isExecuting }: T2VModuleProps) {
+export default function T2VModule({ onExecute, isExecuting, compact = false }: T2VModuleProps) {
   // --- States ---
   const [manualPrompt, setManualPrompt] = useState('')
   
@@ -28,9 +29,9 @@ export default function T2VModule({ onExecute, isExecuting }: T2VModuleProps) {
   }
 
   return (
-    <div className="flex h-full gap-6">
+    <div className={`flex h-full gap-6 ${compact ? 'flex-col' : 'max-[1280px]:flex-col'}`}>
       {/* Main Workspace */}
-      <div className="flex-1 space-y-6 overflow-y-auto pr-2 pb-12">
+      <div className={`flex-1 space-y-6 overflow-y-auto pb-12 ${compact ? 'pr-0' : 'pr-2'}`}>
         
         {/* 1. Prompt Injection - Mirroring Google Flow */}
         <section className="space-y-4">
@@ -64,7 +65,7 @@ export default function T2VModule({ onExecute, isExecuting }: T2VModuleProps) {
       </div>
 
       {/* Google Flow Mirror Panel */}
-      <div className="w-72 flex-shrink-0 flex flex-col gap-6 overflow-y-auto pb-12">
+      <div className={`${compact ? 'w-full' : 'w-72 max-[1280px]:w-full'} flex-shrink-0 flex flex-col gap-6 overflow-y-auto pb-12`}>
         <section className="space-y-4">
           <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">Flow Mirror Settings</h3>
           <div className="p-6 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-6">
@@ -89,6 +90,7 @@ export default function T2VModule({ onExecute, isExecuting }: T2VModuleProps) {
             <div className="space-y-3">
               <label className="text-xs font-bold text-slate-400">Generation Model</label>
               <select 
+                title="Select generation model"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] font-bold text-slate-300 outline-none"

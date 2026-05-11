@@ -60,8 +60,10 @@ interface OperatorPageProps {
 
 export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
   const location = useLocation()
+  const isPortalMode = new URLSearchParams(location.search).get('portal') === 'side'
   const [isExecuting, setIsExecuting] = useState(false)
   const [modeRequests, setModeRequests] = useState<TelemetryRequest[]>([])
+  const [compactPane, setCompactPane] = useState<'workspace' | 'jobs'>('workspace')
   const [notice, setNotice] = useState<OperatorNotice>({
     tone: 'idle',
     title: 'Idle',
@@ -72,6 +74,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
   const pathMode = location.pathname.split('/').pop()?.toUpperCase()
   const mode = propMode || (pathMode === 'T2V' || pathMode === 'F2V' || pathMode === 'I2V' || pathMode === 'IMG' ? pathMode : 'F2V')
+
+  useEffect(() => {
+    setCompactPane('workspace')
+  }, [isPortalMode, mode])
 
   useEffect(() => {
     return () => {
@@ -199,13 +205,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
   const renderModule = () => {
     switch (mode) {
       case 'F2V':
-        return <F2VModule onExecute={handleExecute} isExecuting={isExecuting} />
+        return <F2VModule onExecute={handleExecute} isExecuting={isExecuting} compact={isPortalMode} />
       case 'T2V':
-        return <T2VModule onExecute={handleExecute} isExecuting={isExecuting} />
+        return <T2VModule onExecute={handleExecute} isExecuting={isExecuting} compact={isPortalMode} />
       case 'I2V':
-        return <I2VModule onExecute={handleExecute} isExecuting={isExecuting} />
+        return <I2VModule onExecute={handleExecute} isExecuting={isExecuting} compact={isPortalMode} />
       case 'IMG':
-        return <IMGModule onExecute={handleExecute} isExecuting={isExecuting} />
+        return <IMGModule onExecute={handleExecute} isExecuting={isExecuting} compact={isPortalMode} />
       default:
         return <div className="p-8 text-slate-400">Please select a workspace module from the sidebar.</div>
     }
@@ -225,6 +231,25 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
         </div>
       </div>
 
+      {isPortalMode && (
+        <div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl border border-slate-800 bg-slate-900/40 p-2">
+          <button
+            type="button"
+            onClick={() => setCompactPane('workspace')}
+            className={`rounded-xl px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] transition ${compactPane === 'workspace' ? 'bg-blue-500/15 text-blue-200 shadow-inner shadow-blue-950/30' : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-200'}`}
+          >
+            Workspace
+          </button>
+          <button
+            type="button"
+            onClick={() => setCompactPane('jobs')}
+            className={`rounded-xl px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] transition ${compactPane === 'jobs' ? 'bg-blue-500/15 text-blue-200 shadow-inner shadow-blue-950/30' : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-200'}`}
+          >
+            Jobs {modeRequests.length > 0 ? `(${Math.min(modeRequests.length, 99)})` : ''}
+          </button>
+        </div>
+      )}
+
       <div className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${notice.tone === 'error' ? 'border-red-500/40 bg-red-500/10 text-red-200' : notice.tone === 'success' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : notice.tone === 'info' ? 'border-blue-500/40 bg-blue-500/10 text-blue-200' : 'border-slate-800 bg-slate-900/40 text-slate-300'}`}>
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -237,12 +262,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
         </div>
       </div>
 
-      <div className="grid flex-1 min-h-0 gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)]">
-        <div className="min-h-0">
+      <div className={`${isPortalMode ? 'flex-1 min-h-0' : 'grid flex-1 min-h-0 gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)]'}`}>
+        {(!isPortalMode || compactPane === 'workspace') && (
+          <div className="min-h-0">
           {renderModule()}
-        </div>
+          </div>
+        )}
 
-        <div className="min-h-0">
+        {(!isPortalMode || compactPane === 'jobs') && (
+          <div className="min-h-0">
           <RequestReportPanel
             requests={modeRequests}
             title={`${mode === 'F2V' ? 'Frames' : mode === 'T2V' ? 'Text to Video' : mode === 'I2V' ? 'Ingredients' : 'Image'} Workspace Jobs`}
@@ -250,7 +278,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
             emptyMessage="No jobs recorded for this workspace yet. New submissions from this page will appear here automatically."
             maxItems={18}
           />
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )
