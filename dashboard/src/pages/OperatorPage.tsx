@@ -1,5 +1,6 @@
 import { useLocation } from 'react-router-dom'
 import F2VModule from '../components/workspace/F2VModule'
+import T2VModule from '../components/workspace/T2VModule'
 
 interface OperatorPageProps {
   mode?: 'T2V' | 'F2V' | 'I2V' | 'IMG'
@@ -16,7 +17,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
       case 'F2V':
         return <F2VModule onExecute={(data) => console.log('F2V Execute', data)} isExecuting={false} />
       case 'T2V':
-        return <div className="flex items-center justify-center h-full text-slate-500 font-bold uppercase tracking-widest italic border-2 border-dashed border-slate-800 rounded-3xl">T2V Module (Coming Soon)</div>
+        return <T2VModule onExecute={(data) => console.log('T2V Execute', data)} isExecuting={false} />
       case 'I2V':
         return <div className="flex items-center justify-center h-full text-slate-500 font-bold uppercase tracking-widest italic border-2 border-dashed border-slate-800 rounded-3xl">Ingredients Module (Coming Soon)</div>
       case 'IMG':
