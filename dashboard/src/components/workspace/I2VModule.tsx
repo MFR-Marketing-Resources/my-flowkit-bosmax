@@ -21,7 +21,9 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
 
   // --- Handlers ---
   const handleUpload = (index: number, _e: React.ChangeEvent<HTMLInputElement>) => {
-    // Logic to upload ingredient at index
+    // Dummy logic for now
+    console.log('Upload at', index)
+    setAssets([...assets])
   }
 
   const handleExecute = () => {
