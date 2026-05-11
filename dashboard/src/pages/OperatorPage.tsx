@@ -7,9 +7,9 @@ interface OperatorPageProps {
 
 export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
   const location = useLocation()
-  
-  // Determine mode from prop or path
-  const mode = propMode || (location.pathname.split('/').pop()?.toUpperCase() as any)
+
+  const pathMode = location.pathname.split('/').pop()?.toUpperCase()
+  const mode = propMode || (pathMode === 'T2V' || pathMode === 'F2V' || pathMode === 'I2V' || pathMode === 'IMG' ? pathMode : 'F2V')
 
   const renderModule = () => {
     switch (mode) {

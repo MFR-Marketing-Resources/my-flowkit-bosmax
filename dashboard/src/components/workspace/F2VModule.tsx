@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react'
-import { Sparkles, Upload, ArrowRight, Info } from 'lucide-react'
-import { fetchAPI, postAPI } from '../../api/client'
-import type { Product, Scene, UploadedAsset, Orientation } from '../../types'
+import { useState, useEffect } from 'react'
+import { Upload, ArrowRight, Info } from 'lucide-react'
+import { fetchAPI } from '../../api/client'
+import type { Product, UploadedAsset, Orientation } from '../../types'
 
 interface F2VModuleProps {
   onExecute: (data: any) => void
@@ -14,8 +14,8 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
   const [prompt, setPrompt] = useState('')
   const [orientation, setOrientation] = useState<Orientation>('VERTICAL')
   const [model, setModel] = useState('Veo 3.1')
-  const [startAsset, setStartAsset] = useState<UploadedAsset | null>(null)
-  const [endAsset, setEndAsset] = useState<UploadedAsset | null>(null)
+  const [startAsset] = useState<UploadedAsset | null>(null)
+  const [endAsset] = useState<UploadedAsset | null>(null)
 
   useEffect(() => {
     fetchAPI<{ items: Product[] }>('/api/products?limit=50').then(res => {
@@ -23,12 +23,27 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
     })
   }, [])
 
-  const handleStartUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleStartUpload = () => {
     // Logic to upload start frame
   }
 
-  const handleEndUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleEndUpload = () => {
     // Logic to upload end frame
+  }
+
+  const handleExecute = () => {
+    if (!prompt || !startAsset) {
+      return
+    }
+
+    onExecute({
+      productId: selectedProduct?.id ?? null,
+      prompt,
+      orientation,
+      model,
+      startAsset,
+      endAsset,
+    })
   }
 
   return (
@@ -105,6 +120,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
         
         <div className="pt-4">
           <button 
+            onClick={handleExecute}
             disabled={isExecuting || !prompt || !startAsset}
             className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
           >

@@ -1,4 +1,4 @@
-import { BrowserRouter, NavLink, Routes, Route, useLocation } from 'react-router-dom'
+import { BrowserRouter, NavLink, Navigate, Routes, Route, useLocation } from 'react-router-dom'
 import { 
   LayoutDashboard, FolderOpen, ScrollText, Film, Sparkles, PackageSearch, 
   Video, Layers, Image as ImageIcon, Settings as SettingsIcon, Activity,
@@ -126,6 +126,7 @@ function Layout() {
         <main className="flex-1 overflow-auto">
           <Routes>
             {/* Modular Workspace Routes */}
+            <Route path="/operator" element={<Navigate to="/operator/f2v" replace />} />
             <Route path="/operator/t2v" element={<OperatorPage mode="T2V" />} />
             <Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
             <Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
