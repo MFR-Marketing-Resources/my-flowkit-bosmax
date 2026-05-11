@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { Sparkles, Upload, ArrowRight, Info, Filter, Camera, User, Palette } from 'lucide-react'
-import { fetchAPI, postAPI } from '../../api/client'
-import type { Product, Scene, UploadedAsset, Orientation } from '../../types'
+import { Upload, ArrowRight, Info, Camera, User, Palette } from 'lucide-react'
+import { fetchAPI } from '../../api/client'
+import type { Product, UploadedAsset, Orientation } from '../../types'
+import SearchableProductSelect from './SearchableProductSelect'
 
 interface F2VModuleProps {
   onExecute: (data: any) => void
@@ -25,8 +26,8 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
   // Mirror States
   const [orientation, setOrientation] = useState<Orientation>('VERTICAL')
   const [model, setModel] = useState('Veo 3.1 - Pro')
-  const [startAsset, setStartAsset] = useState<UploadedAsset | null>(null)
-  const [endAsset, setEndAsset] = useState<UploadedAsset | null>(null)
+  const [startAsset] = useState<UploadedAsset | null>(null)
+  const [endAsset] = useState<UploadedAsset | null>(null)
 
   // --- Data Fetching ---
   useEffect(() => {
@@ -36,14 +37,14 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
   }, [])
 
   // --- Computed Filters ---
-  const categories = useMemo(() => Array.from(new Set(products.map(p => p.category).filter(Boolean))), [products])
-  const subCategories = useMemo(() => Array.from(new Set(products.filter(p => !filterCategory || p.category === filterCategory).map(p => p.sub_category).filter(Boolean))), [products, filterCategory])
-  const types = useMemo(() => Array.from(new Set(products.filter(p => (!filterCategory || p.category === filterCategory) && (!filterSubCategory || p.sub_category === filterSubCategory)).map(p => p.type).filter(Boolean))), [products, filterCategory, filterSubCategory])
+  const categories = useMemo(() => Array.from(new Set(products.map(p => p.category).filter((c): c is string => !!c))), [products])
+  const subCategories = useMemo(() => Array.from(new Set(products.filter(p => !filterCategory || p.category === filterCategory).map(p => p.subcategory).filter((s): s is string => !!s))), [products, filterCategory])
+  const types = useMemo(() => Array.from(new Set(products.filter(p => (!filterCategory || p.category === filterCategory) && (!filterSubCategory || p.subcategory === filterSubCategory)).map(p => p.type).filter((t): t is string => !!t))), [products, filterCategory, filterSubCategory])
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
       if (filterCategory && p.category !== filterCategory) return false
-      if (filterSubCategory && p.sub_category !== filterSubCategory) return false
+      if (filterSubCategory && p.subcategory !== filterSubCategory) return false
       if (filterType && p.type !== filterType) return false
       return true
     })
@@ -65,12 +66,23 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
   const finalPrompt = manualPrompt || generatedPrompt
 
   // --- Handlers ---
-  const handleStartUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleStartUpload = (_e: React.ChangeEvent<HTMLInputElement>) => {
     // Logic to upload start frame
   }
 
-  const handleEndUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleEndUpload = (_e: React.ChangeEvent<HTMLInputElement>) => {
     // Logic to upload end frame
+  }
+
+  const handleExecute = () => {
+    onExecute({
+      product_id: selectedProduct?.id,
+      prompt: finalPrompt,
+      orientation,
+      model,
+      startAsset,
+      endAsset
+    })
   }
 
   return (
@@ -116,20 +128,12 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
               </select>
             </div>
 
-            {/* Product Selector */}
-            <select 
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-sm text-slate-200 outline-none focus:border-blue-500 transition-colors font-bold"
-              value={selectedProduct?.id || ''}
-              onChange={(e) => {
-                const p = products.find(p => p.id === e.target.value)
-                setSelectedProduct(p || null)
-              }}
-            >
-              <option value="">Select product for production...</option>
-              {filteredProducts.map(p => (
-                <option key={p.id} value={p.id}>{p.raw_product_title}</option>
-              ))}
-            </select>
+            {/* Product Selector (REPLACED WITH SEARCHABLE SELECT) */}
+            <SearchableProductSelect 
+              products={filteredProducts}
+              selectedProduct={selectedProduct}
+              onSelect={(p) => setSelectedProduct(p)}
+            />
           </div>
         </section>
 
@@ -189,7 +193,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
           <div className="grid grid-cols-2 gap-4">
             <div className="group relative aspect-[9/16] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
                {startAsset ? (
-                 <img src={`http://127.0.0.1:8100/api/products/${startAsset.mediaId}/image`} className="w-full h-full object-cover" />
+                 <img src={`http://127.0.0.1:8100/api/products/${startAsset.mediaId}/image`} className="w-full h-full object-cover" alt="Start" />
                ) : (
                  <>
                    <div className="p-3 rounded-full bg-slate-800 text-slate-400 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-colors">
@@ -203,7 +207,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
 
             <div className="group relative aspect-[9/16] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
                {endAsset ? (
-                 <img src={`http://127.0.0.1:8100/api/products/${endAsset.mediaId}/image`} className="w-full h-full object-cover" />
+                 <img src={`http://127.0.0.1:8100/api/products/${endAsset.mediaId}/image`} className="w-full h-full object-cover" alt="End" />
                ) : (
                  <>
                    <div className="p-3 rounded-full bg-slate-800 text-slate-400 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-colors">
@@ -241,6 +245,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
         
         <div className="pt-4">
           <button 
+            onClick={handleExecute}
             disabled={isExecuting || !finalPrompt || !startAsset}
             className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
           >
@@ -297,10 +302,11 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
 
         <section className="p-6 rounded-2xl border border-blue-500/10 bg-blue-500/5">
            <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-2">F2V Context</h4>
-           <p className="text-[10px] text-blue-300/60 leading-relaxed italic">
+           <div className="text-[10px] text-blue-300/60 leading-relaxed italic">
              Stability is guaranteed by your reference assets.
-             {selectedCharacter && ` Using reference Character: ${selectedCharacter}`}
-           </p>
+             {selectedCharacter && <div className="mt-1 text-blue-400 font-bold">Using Character: {selectedCharacter}</div>}
+             {selectedCamera && <div className="mt-1 text-purple-400 font-bold">Angle: {selectedCamera}</div>}
+           </div>
         </section>
       </div>
     </div>
