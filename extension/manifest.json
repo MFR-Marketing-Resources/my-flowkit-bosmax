@@ -12,6 +12,9 @@
     "http://127.0.0.1:5173/*",
     "http://localhost:5173/*"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-src http://127.0.0.1:8100 http://localhost:8100 http://127.0.0.1:5173 http://localhost:5173; connect-src 'self' http://127.0.0.1:8100 http://localhost:8100 http://127.0.0.1:5173 http://localhost:5173 ws://127.0.0.1:8100 ws://localhost:8100 ws://127.0.0.1:5173 ws://localhost:5173 ws://127.0.0.1:8101 ws://localhost:8101 https://labs.google https://aisandbox-pa.googleapis.com;"
+  },
   "background": {
     "service_worker": "background.js"
   },
