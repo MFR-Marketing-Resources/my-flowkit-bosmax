@@ -12,8 +12,9 @@
  */
 
 (function() {
-  const FLOW_KIT_DOM_VERSION = '2026-05-10-live-gates';
+  const FLOW_KIT_DOM_VERSION = '2026-05-11-multimode-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
+  const IMAGE_ASPECT_RATIOS = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
   if (window._flowKitDomInjectedVersion === FLOW_KIT_DOM_VERSION && window._flowKitDomListener) {
     console.log('[FlowAgent] Flow DOM Executor already present');
@@ -64,6 +65,7 @@
     COUNT_SELECTED: 'COUNT_SELECTED',
     MODEL_SELECTED: 'MODEL_SELECTED',
     FLOW_MODE_VERIFIED: 'FLOW_MODE_VERIFIED',
+    ASSETS_VERIFIED: 'ASSETS_VERIFIED',
     START_FRAME_ATTACHED: 'START_FRAME_ATTACHED',
     END_FRAME_ATTACHED: 'END_FRAME_ATTACHED',
     INGREDIENTS_ATTACHED: 'INGREDIENTS_ATTACHED',
@@ -172,6 +174,182 @@
       if (el.textContent.trim().toLowerCase().includes(text.toLowerCase())) return el;
     }
     return null;
+  }
+
+  function isSelectedControl(el, text) {
+    if (!el) return false;
+    if (el.getAttribute('data-state') === 'active') return true;
+    if (el.getAttribute('aria-selected') === 'true') return true;
+    if (el.getAttribute('aria-pressed') === 'true') return true;
+
+    const classes = el.classList.toString().toLowerCase();
+    if (classes.includes('active') || classes.includes('selected') || classes.includes('checked')) return true;
+
+    if (text && normalizeText(el.textContent).toLowerCase().includes(text.toLowerCase())) {
+      if (classes.includes('trigger') && (classes.includes('flow') || classes.includes('tab'))) return true;
+    }
+
+    return false;
+  }
+
+  function resolveRequestedAspectRatio(job) {
+    if (job?.aspectRatio) return job.aspectRatio;
+    if (job?.orientation === 'HORIZONTAL') return '16:9';
+    if (job?.orientation === 'VERTICAL') return '9:16';
+    return null;
+  }
+
+  function resolveRequestedModel(job) {
+    return job?.modelLabel || job?.model || null;
+  }
+
+  function resolveRequestedCount(job) {
+    const rawCount = Number(job?.count || 1);
+    const safeCount = Number.isFinite(rawCount) && rawCount >= 1 ? Math.min(4, Math.round(rawCount)) : 1;
+    return `${safeCount}x`;
+  }
+
+  function resolveAssetSourceId(assetSource) {
+    if (!assetSource) return null;
+    if (typeof assetSource === 'string') return assetSource;
+    if (typeof assetSource !== 'object') return null;
+    return assetSource.productId
+      || assetSource.product_id
+      || assetSource.mediaId
+      || assetSource.media_id
+      || assetSource.id
+      || assetSource.characterId
+      || null;
+  }
+
+  function getRefAssets(job) {
+    const refs = job?.refs || {};
+    return [
+      { slotLabel: 'Subject', assetSource: refs.subjectAsset || refs.subject },
+      { slotLabel: 'Scene', assetSource: refs.sceneAsset || refs.scene },
+      { slotLabel: 'Style', assetSource: refs.styleAsset || refs.style },
+    ].filter((item) => !!item.assetSource);
+  }
+
+  function getRequiredAssetSlots(job) {
+    if (job?.mode === 'F2V') {
+      const slots = ['Start'];
+      if (job?.endAsset || job?.endImageMediaId || job?.productId) slots.push('End');
+      return slots;
+    }
+
+    if (job?.mode === 'I2V' || job?.mode === 'IMG') {
+      const refAssets = getRefAssets(job);
+      if (refAssets.length > 0) return refAssets.map((item) => item.slotLabel);
+      return [job.mode === 'I2V' ? 'Ingredients' : 'Image'];
+    }
+
+    return [];
+  }
+
+  function containerHasVisualPreview(container) {
+    if (!container) return false;
+
+    const previewNodes = Array.from(container.querySelectorAll('img, canvas, video, picture img, [style*="background-image"]'));
+    return previewNodes.some((node) => {
+      if (!isVisible(node)) return false;
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 32 || rect.height < 32) return false;
+      if (node.tagName === 'IMG') {
+        return (node.naturalWidth || rect.width) >= 32 && (node.naturalHeight || rect.height) >= 32;
+      }
+      const backgroundImage = window.getComputedStyle(node).backgroundImage;
+      return !!backgroundImage && backgroundImage !== 'none';
+    });
+  }
+
+  function getSlotCandidateContainers(slotLabel, slotElement = null) {
+    const candidates = [];
+    const push = (el) => {
+      if (!el || candidates.includes(el)) return;
+      candidates.push(el);
+    };
+
+    push(slotElement);
+    push(slotElement?.closest('button'));
+    push(slotElement?.closest('[role="button"]'));
+
+    const labelNode = findElementByText('button, [role="button"], label, span, div, p', slotLabel);
+    push(labelNode);
+    push(labelNode?.closest('button'));
+    push(labelNode?.closest('[role="button"]'));
+
+    let current = slotElement || labelNode;
+    for (let depth = 0; current && depth < 4; depth += 1) {
+      push(current);
+      current = current.parentElement;
+    }
+
+    current = labelNode?.parentElement || null;
+    for (let depth = 0; current && depth < 4; depth += 1) {
+      push(current);
+      current = current.parentElement;
+    }
+
+    return candidates;
+  }
+
+  function slotHasVisiblePreview(slotLabel, slotElement = null) {
+    return getSlotCandidateContainers(slotLabel, slotElement).some(containerHasVisualPreview);
+  }
+
+  async function waitForCondition(check, timeoutMs = 7000, intervalMs = 250) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (check()) return true;
+      await sleep(intervalMs);
+    }
+    return check();
+  }
+
+  async function waitForAssetPreview(slotLabel, slotElement = null) {
+    return waitForCondition(() => slotHasVisiblePreview(slotLabel, slotElement), 7000, 300);
+  }
+
+  async function nudgeComposerHydration(composer) {
+    if (!composer) return;
+
+    const rect = composer.getBoundingClientRect();
+    composer.dispatchEvent(new MouseEvent('mousemove', {
+      bubbles: true,
+      clientX: rect.left + Math.min(rect.width - 2, 12),
+      clientY: rect.top + Math.min(rect.height - 2, 12),
+    }));
+
+    composer.focus();
+    await sleep(75);
+    insertTextLikeUser(composer, ' ');
+    await sleep(50);
+
+    if ('value' in composer) {
+      composer.value = composer.value.replace(/\s$/, '');
+      composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null }));
+    } else {
+      composer.textContent = (composer.textContent || '').replace(/\s$/, '');
+      composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null }));
+    }
+
+    composer.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true }));
+    composer.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', code: 'Space', bubbles: true }));
+    await sleep(200);
+  }
+
+  async function clearVideoSubmodeSelection() {
+    const cleared = [];
+    for (const label of ['Frames', 'Ingredients']) {
+      const button = findElementByText('button, [role="tab"], [role="button"], span', label);
+      if (isSelectedControl(button, label)) {
+        button.click();
+        cleared.push(label);
+        await sleep(800);
+      }
+    }
+    return cleared;
   }
 
   function findGenerateButtonNearComposer() {
@@ -302,7 +480,7 @@
     await sleep(300);
   }
 
-  async function simulateFileUpload(slotLabel, productId) {
+  async function simulateFileUpload(slotLabel, assetSource) {
     console.log(`[FlowAgent] Attempting to upload asset to slot: ${slotLabel}`);
     
     // 1. Find and click the slot button (Start/End/Ingredients)
@@ -314,13 +492,20 @@
     slotBtn.click();
     await sleep(500);
 
+    const assetId = resolveAssetSourceId(assetSource);
+    if (!assetId) {
+      console.warn(`[FlowAgent] No asset source id resolved for slot ${slotLabel}`);
+      return false;
+    }
+
     // 2. Fetch the image from local agent
-    const imageUrl = `http://127.0.0.1:8100/api/products/${productId}/image`;
+    const imageUrl = `http://127.0.0.1:8100/api/products/${assetId}/image`;
     let file;
     try {
       const resp = await fetch(imageUrl);
+      if (!resp.ok) throw new Error(`HTTP_${resp.status}`);
       const blob = await resp.blob();
-      file = new File([blob], `${productId}.jpg`, { type: 'image/jpeg' });
+      file = new File([blob], `${assetId}.jpg`, { type: 'image/jpeg' });
     } catch (err) {
       console.error(`[FlowAgent] Failed to fetch local image: ${err.message}`);
       return false;
@@ -346,7 +531,7 @@
     target.dispatchEvent(dropEvent);
     console.log(`[FlowAgent] Dispatched drop event for ${slotLabel}`);
     await sleep(1500); // Wait for upload to process
-    return true;
+    return slotBtn;
   }
 
   /**
@@ -376,32 +561,9 @@
       aspectRatio: 'UNKNOWN',
       count: 'UNKNOWN',
       visibleUploadSlots: [],
+      visibleAssetPreviews: [],
       composerPresent: false,
       generateButtonState: 'unknown'
-    };
-
-    // Helper to check which tab/mode is actually selected/active
-    const isSelected = (el, text) => {
-      if (!el) return false;
-      // 1. Radix UI / Data state (Highest priority for modern Flow)
-      if (el.getAttribute('data-state') === 'active') return true;
-      
-      // 2. Explicit ARIA state
-      if (el.getAttribute('aria-selected') === 'true') return true;
-      if (el.getAttribute('aria-pressed') === 'true') return true;
-      
-      // 3. Class based markers
-      const classes = el.classList.toString().toLowerCase();
-      if (classes.includes('active') || classes.includes('selected') || classes.includes('checked')) return true;
-      
-      // 4. Text based heuristic (Radix trigger button text reflects selection)
-      if (text && el.textContent.toLowerCase().includes(text.toLowerCase())) {
-        // If it's a trigger and it contains the text, and we don't have other active markers,
-        // we check if it looks visually active or has the specific Radix class.
-        if (classes.includes('trigger') && (classes.includes('flow') || classes.includes('tab'))) return true;
-      }
-      
-      return false;
     };
 
     // 1. Detect top mode (Image vs Video)
@@ -409,9 +571,9 @@
     const videoModeBtn = findElementByText('button, [role="tab"], [role="button"]', 'Video');
     const imageModeBtn = findElementByText('button, [role="tab"], [role="button"]', 'Image');
     
-    if (isSelected(videoModeBtn, 'Video')) {
+    if (isSelectedControl(videoModeBtn, 'Video')) {
       observed.topMode = 'Video';
-    } else if (isSelected(imageModeBtn, 'Image')) {
+    } else if (isSelectedControl(imageModeBtn, 'Image')) {
       observed.topMode = 'Image';
     } else {
       const bodyText = document.body.innerText;
@@ -428,9 +590,9 @@
       const framesBtn = findElementByText('button, [role="tab"], [role="button"]', 'Frames');
       const ingredientsBtn = findElementByText('button, [role="tab"], [role="button"]', 'Ingredients');
       
-      if (isSelected(framesBtn, 'Frames')) {
+      if (isSelectedControl(framesBtn, 'Frames')) {
         observed.subMode = 'Frames';
-      } else if (isSelected(ingredientsBtn, 'Ingredients')) {
+      } else if (isSelectedControl(ingredientsBtn, 'Ingredients')) {
         observed.subMode = 'Ingredients';
       } else {
         const bodyText = document.body.innerText;
@@ -438,6 +600,8 @@
           observed.subMode = 'Frames';
         } else if (bodyText.includes('Ingredients')) {
           observed.subMode = 'Ingredients';
+        } else {
+          observed.subMode = 'None';
         }
       }
     }
@@ -462,16 +626,11 @@
     for (const el of aspectElements) {
       if (!isVisible(el)) continue;
       const text = el.textContent.trim();
-      if (text.includes('9:16')) {
-        if (isSelected(el, '9:16') || isSelected(el.closest('button'), '9:16')) {
-           observed.aspectRatio = '9:16';
-           break;
-        }
-      } else if (text.includes('16:9')) {
-        if (isSelected(el, '16:9') || isSelected(el.closest('button'), '16:9')) {
-           observed.aspectRatio = '16:9';
-           break;
-        }
+      const matchedRatio = IMAGE_ASPECT_RATIOS.find((ratio) => text.includes(ratio));
+      if (!matchedRatio) continue;
+      if (isSelectedControl(el, matchedRatio) || isSelectedControl(el.closest('button'), matchedRatio)) {
+        observed.aspectRatio = matchedRatio;
+        break;
       }
     }
 
@@ -481,7 +640,7 @@
       if (!isVisible(el)) continue;
       const text = el.textContent.trim();
       if (/^[1-4]x$/.test(text)) {
-        if (isSelected(el, text) || isSelected(el.closest('button'), text)) {
+        if (isSelectedControl(el, text) || isSelectedControl(el.closest('button'), text)) {
           observed.count = text;
           break;
         }
@@ -489,7 +648,7 @@
     }
 
     // 6. Detect upload slots
-    const slotLabels = ['Start', 'End', 'Ingredients', 'Image'];
+    const slotLabels = ['Start', 'End', 'Ingredients', 'Image', 'Subject', 'Scene', 'Style'];
     for (const label of slotLabels) {
       // Find elements that exactly match or contain the label text in a small container
       const candidateLabels = Array.from(document.querySelectorAll('label, span, div, p'))
@@ -503,6 +662,10 @@
         if (partial && isVisible(partial)) {
           observed.visibleUploadSlots.push(label);
         }
+      }
+
+      if (slotHasVisiblePreview(label)) {
+        observed.visibleAssetPreviews.push(label);
       }
     }
     console.log(`[FlowAgent] Detected slots: ${observed.visibleUploadSlots.join(', ')}`);
@@ -702,6 +865,8 @@
     const result = { ok: true };
 
     const expectations = {};
+    const requestedAspectRatio = resolveRequestedAspectRatio(job);
+    const requiredSlots = getRequiredAssetSlots(job);
 
     // Define mode expectations
     if (job.mode === 'F2V') {
@@ -756,12 +921,41 @@
         result.observed = observed;
         return result;
       }
+    } else if (job.mode === 'T2V') {
+      expectations.topMode = 'Video';
+      expectations.subMode = 'None';
+      expectations.composerPresent = true;
+
+      if (observed.topMode !== 'Video') {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected topMode='Video', got '${observed.topMode}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (!['None', 'UNKNOWN'].includes(observed.subMode)) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected no active subMode, got '${observed.subMode}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (!observed.composerPresent) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = 'Composer not found';
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
     } else if (job.mode === 'I2V') {
       // I2V requirements
       expectations.topMode = 'Video';
       expectations.subMode = 'Ingredients';
       expectations.modelContains = 'Veo';
-      expectations.ingredientsSlotVisible = true;
+      expectations.requiredSlots = requiredSlots;
       expectations.noImageMode = true;
       expectations.noStartEndActive = true;
       expectations.composerPresent = true;
@@ -782,6 +976,22 @@
         result.observed = observed;
         return result;
       }
+      if (!observed.model.includes('Veo')) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected model to contain 'Veo', got '${observed.model}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (requiredSlots.some((slot) => !observed.visibleUploadSlots.includes(slot))) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected slots visible: ${requiredSlots.join(', ')}, got ${observed.visibleUploadSlots.join(', ')}`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
       if (!observed.composerPresent) {
         result.ok = false;
         result.error = 'FLOW_MODE_MISMATCH';
@@ -794,6 +1004,7 @@
       // IMG requirements
       expectations.topMode = 'Image';
       expectations.modelContains = 'Nano Banana';
+      expectations.requiredSlots = requiredSlots;
       expectations.noVideoMode = true;
       expectations.noFramesOrIngredients = true;
       expectations.composerPresent = true;
@@ -814,6 +1025,14 @@
         result.observed = observed;
         return result;
       }
+      if (requiredSlots.some((slot) => !observed.visibleUploadSlots.includes(slot))) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected slots visible: ${requiredSlots.join(', ')}, got ${observed.visibleUploadSlots.join(', ')}`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
       if (!observed.composerPresent) {
         result.ok = false;
         result.error = 'FLOW_MODE_MISMATCH';
@@ -824,7 +1043,36 @@
       }
     }
 
+    if (requestedAspectRatio && IMAGE_ASPECT_RATIOS.includes(requestedAspectRatio) && observed.aspectRatio !== 'UNKNOWN' && observed.aspectRatio !== requestedAspectRatio) {
+      result.ok = false;
+      result.error = 'FLOW_MODE_MISMATCH';
+      result.reason = `Expected aspectRatio='${requestedAspectRatio}', got '${observed.aspectRatio}'`;
+      result.expected = expectations;
+      result.observed = observed;
+      return result;
+    }
+
     return result;
+  }
+
+  async function verifyAssetChecklist(job, slotContexts = []) {
+    const requiredSlots = getRequiredAssetSlots(job);
+    if (requiredSlots.length === 0) {
+      return { ok: true, status: 'SKIPPED_NO_ASSETS_REQUIRED' };
+    }
+
+    const missing = [];
+    for (const slotLabel of requiredSlots) {
+      const slotContext = slotContexts.find((item) => item.slotLabel === slotLabel);
+      const previewReady = await waitForAssetPreview(slotLabel, slotContext?.slotElement || null);
+      if (!previewReady) missing.push(slotLabel);
+    }
+
+    if (missing.length > 0) {
+      return { ok: false, reason: `Asset previews not visible for ${missing.join(', ')}` };
+    }
+
+    return { ok: true, status: requiredSlots.join(', ') };
   }
 
   async function executeFlowJob(job) {
@@ -857,41 +1105,47 @@
       logStage(STAGES.FLOW_MODE_SELECTED, job.mode === 'IMG' ? 'Image' : 'Video');
 
       // 2. Select Submode (STRICT)
-      if (job.mode !== 'IMG') {
+      if (job.mode === 'F2V' || job.mode === 'I2V') {
         const submodeText = job.mode === 'F2V' ? 'Frames' : 'Ingredients';
         const submodeBtn = findElementByText('button, div[role="button"], span', submodeText);
         if (!submodeBtn) throw new Error(`Submode button ${submodeText} not found`);
         submodeBtn.click();
         await sleep(1000);
         logStage(STAGES.FLOW_SUBMODE_SELECTED, submodeText);
+      } else if (job.mode === 'T2V') {
+        const clearedSubmodes = await clearVideoSubmodeSelection();
+        logStage(STAGES.FLOW_SUBMODE_SELECTED, clearedSubmodes.length > 0 ? `CLEARED:${clearedSubmodes.join(',')}` : 'NONE');
       }
 
       // 3. Set Aspect Ratio
-      const aspectBtn = findElementByText('button, div[role="button"]', job.aspectRatio);
+      const requestedAspectRatio = resolveRequestedAspectRatio(job);
+      const aspectBtn = requestedAspectRatio ? findElementByText('button, div[role="button"]', requestedAspectRatio) : null;
       if (aspectBtn) {
         aspectBtn.click();
         await sleep(500);
-        logStage(STAGES.ASPECT_SELECTED, job.aspectRatio);
+        logStage(STAGES.ASPECT_SELECTED, requestedAspectRatio);
       }
 
       // 4. Set Count
-      const countBtn = findElementByText('button, div[role="button"]', '1x');
+      const requestedCount = resolveRequestedCount(job);
+      const countBtn = findElementByText('button, div[role="button"]', requestedCount);
       if (countBtn) {
         countBtn.click();
         await sleep(500);
-        logStage(STAGES.COUNT_SELECTED, '1x');
+        logStage(STAGES.COUNT_SELECTED, requestedCount);
       }
 
       // 5. Set Model
+      const requestedModel = resolveRequestedModel(job);
       const modelDropdown = document.querySelector('[aria-haspopup="listbox"]');
-      if (modelDropdown) {
+      if (modelDropdown && requestedModel) {
         modelDropdown.click();
         await sleep(800);
-        const modelOption = findElementByText('[role="option"], li, span', job.modelLabel);
+        const modelOption = findElementByText('[role="option"], li, span', requestedModel);
         if (modelOption) {
           modelOption.click();
           await sleep(800);
-          logStage(STAGES.MODEL_SELECTED, job.modelLabel);
+          logStage(STAGES.MODEL_SELECTED, requestedModel);
         }
       }
 
@@ -909,29 +1163,65 @@
       logStage(STAGES.FLOW_MODE_VERIFIED);
 
       // 6. Attach Assets (STRICT: Asset First, Prompt Second)
+      const assetSlotContexts = [];
       if (job.mode === 'F2V') {
         // Step 6a: Upload Start Frame
-        const okStart = await simulateFileUpload('Start', job.productId || job.startImageMediaId);
+        const okStart = await simulateFileUpload('Start', job.startAsset || job.productId || job.startImageMediaId);
         if (okStart) {
+          assetSlotContexts.push({ slotLabel: 'Start', slotElement: okStart });
           logStage(STAGES.START_FRAME_ATTACHED);
         } else {
-          console.warn('[FlowAgent] Start frame upload might have failed');
+          throw new Error('START_FRAME_UPLOAD_FAILED');
         }
 
         // Step 6b: Upload End Frame
-        if (job.endImageMediaId || job.productId) {
-          const okEnd = await simulateFileUpload('End', job.productId || job.endImageMediaId);
+        if (job.endAsset || job.endImageMediaId || job.productId) {
+          const okEnd = await simulateFileUpload('End', job.endAsset || job.productId || job.endImageMediaId);
           if (okEnd) {
+            assetSlotContexts.push({ slotLabel: 'End', slotElement: okEnd });
             logStage(STAGES.END_FRAME_ATTACHED);
+          } else {
+            throw new Error('END_FRAME_UPLOAD_FAILED');
           }
         }
       } else if (job.mode === 'I2V') {
-        await simulateFileUpload('Ingredients', job.productId || job.startImageMediaId);
-        logStage(STAGES.INGREDIENTS_ATTACHED);
+        const refAssets = getRefAssets(job);
+        if (refAssets.length > 0) {
+          for (const refAsset of refAssets) {
+            const uploadedSlot = await simulateFileUpload(refAsset.slotLabel, refAsset.assetSource);
+            if (!uploadedSlot) throw new Error(`${refAsset.slotLabel.toUpperCase()}_UPLOAD_FAILED`);
+            assetSlotContexts.push({ slotLabel: refAsset.slotLabel, slotElement: uploadedSlot });
+            logStage(STAGES.INGREDIENTS_ATTACHED, refAsset.slotLabel);
+          }
+        } else {
+          const uploadedSlot = await simulateFileUpload('Ingredients', job.productId || job.startImageMediaId);
+          if (!uploadedSlot) throw new Error('INGREDIENTS_UPLOAD_FAILED');
+          assetSlotContexts.push({ slotLabel: 'Ingredients', slotElement: uploadedSlot });
+          logStage(STAGES.INGREDIENTS_ATTACHED, 'Ingredients');
+        }
       } else if (job.mode === 'IMG') {
-        await simulateFileUpload('Image', job.productId || job.startImageMediaId);
-        logStage(STAGES.IMAGE_ASSET_ATTACHED);
+        const refAssets = getRefAssets(job);
+        if (refAssets.length > 0) {
+          for (const refAsset of refAssets) {
+            const uploadedSlot = await simulateFileUpload(refAsset.slotLabel, refAsset.assetSource);
+            if (!uploadedSlot) throw new Error(`${refAsset.slotLabel.toUpperCase()}_UPLOAD_FAILED`);
+            assetSlotContexts.push({ slotLabel: refAsset.slotLabel, slotElement: uploadedSlot });
+            logStage(STAGES.IMAGE_ASSET_ATTACHED, refAsset.slotLabel);
+          }
+        } else {
+          const uploadedSlot = await simulateFileUpload('Image', job.productId || job.startImageMediaId);
+          if (!uploadedSlot) throw new Error('IMAGE_UPLOAD_FAILED');
+          assetSlotContexts.push({ slotLabel: 'Image', slotElement: uploadedSlot });
+          logStage(STAGES.IMAGE_ASSET_ATTACHED, 'Image');
+        }
       }
+
+      const assetVerification = await verifyAssetChecklist(job, assetSlotContexts);
+      if (!assetVerification.ok) {
+        logStage(STAGES.ASSETS_VERIFIED, 'NO');
+        throw new Error(assetVerification.reason || 'ASSET_PREVIEW_NOT_VISIBLE');
+      }
+      logStage(STAGES.ASSETS_VERIFIED, assetVerification.status);
 
       // 7. Composer Setup (ONLY after assets)
       const composer = document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
@@ -964,14 +1254,22 @@
       logStage(STAGES.PROMPT_EDITABLE_AFTER_INSERT);
 
       // 9. Click Generate (ONLY after all verifications)
-      const generateBtn = findGenerateButtonNearComposer();
+      let generateBtn = findGenerateButtonNearComposer();
       if (!generateBtn) throw new Error('GENERATE_ARROW_NOT_FOUND');
 
       if (generateBtn.disabled) {
-        await sleep(2000);
+        await nudgeComposerHydration(composer);
+        await sleep(500);
+        generateBtn = findGenerateButtonNearComposer();
       }
 
-      if (generateBtn.disabled) {
+      if (generateBtn?.disabled) {
+        await nudgeComposerHydration(composer);
+        await sleep(1000);
+        generateBtn = findGenerateButtonNearComposer();
+      }
+
+      if (!generateBtn || generateBtn.disabled) {
         logStage(STAGES.GENERATE_ARROW_ENABLED, 'NO');
         throw new Error('GENERATE_ARROW_DISABLED_AFTER_PROMPT');
       }
