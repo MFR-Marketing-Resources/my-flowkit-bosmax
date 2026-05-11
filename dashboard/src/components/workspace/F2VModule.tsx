@@ -14,6 +14,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
   // Mirror States
   const [orientation, setOrientation] = useState<Orientation>('VERTICAL')
   const [model, setModel] = useState('Veo 3.1 - Pro')
+  const [count, setCount] = useState(1)
   const [startAsset] = useState<UploadedAsset | null>(null)
   const [endAsset] = useState<UploadedAsset | null>(null)
 
@@ -31,6 +32,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
       prompt: manualPrompt,
       orientation,
       model,
+      count,
       startAsset,
       endAsset
     })
@@ -144,8 +146,16 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
 
             <div className="space-y-3">
               <label className="text-xs font-bold text-slate-400">Count</label>
-              <div className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-bold text-slate-400">
-                1 Video
+              <div className="grid grid-cols-4 gap-2">
+                {[1, 2, 3, 4].map(v => (
+                  <button 
+                    key={v}
+                    onClick={() => setCount(v)}
+                    className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${count === v ? 'bg-purple-600/20 border-purple-500 text-purple-400' : 'bg-slate-950 border-slate-800 text-slate-500'}`}
+                  >
+                    {v}x
+                  </button>
+                ))}
               </div>
             </div>
           </div>
