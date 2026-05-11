@@ -15,6 +15,12 @@
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
   const IMAGE_ASPECT_RATIOS = ['16:9', '4:3', '1:1', '3:4', '9:16'];
+  const FLOW_MODE_CONFIG = {
+    F2V: { topMode: 'Video', subMode: 'Frames', defaultModel: 'Veo 3.1 - Lite', defaultOrientation: 'VERTICAL', defaultCount: 1 },
+    T2V: { topMode: 'Video', subMode: null },
+    I2V: { topMode: 'Video', subMode: 'Ingredients' },
+    IMG: { topMode: 'Image', subMode: null, defaultModel: 'Nano Banana 2' },
+  };
 
   if (window._flowKitDomInjectedVersion === FLOW_KIT_DOM_VERSION && window._flowKitDomListener) {
     console.log('[FlowAgent] Flow DOM Executor already present');
@@ -224,24 +230,20 @@
       || (job?.mode === 'F2V' ? 'Veo 3.1 - Lite' : null);
   }
 
+  function resolveFlowModeConfig(mode) {
+    return FLOW_MODE_CONFIG[String(mode || '').toUpperCase()] || null;
+  }
+
   function buildExpectedModeJob(mode) {
-    if (mode === 'F2V') {
-      return {
-        mode: 'F2V',
-        orientation: 'VERTICAL',
-        count: 1,
-        modelLabel: 'Veo 3.1 - Lite',
-      };
-    }
+    const normalizedMode = String(mode || '').toUpperCase();
+    const config = resolveFlowModeConfig(normalizedMode);
+    if (!config) return mode ? { mode } : null;
 
-    if (mode === 'IMG') {
-      return {
-        mode: 'IMG',
-        modelLabel: 'Nano Banana 2',
-      };
-    }
-
-    return mode ? { mode } : null;
+    const job = { mode: normalizedMode };
+    if (config.defaultOrientation) job.orientation = config.defaultOrientation;
+    if (config.defaultCount) job.count = config.defaultCount;
+    if (config.defaultModel) job.modelLabel = config.defaultModel;
+    return job;
   }
 
   function findFlowConfigLauncher() {
@@ -317,24 +319,33 @@
     return true;
   }
 
-  async function ensureF2VTypeControlsVisible() {
-    let videoBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Video');
-    let framesBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Frames');
-
-    if ((!videoBtn || !isVisible(videoBtn) || !framesBtn || !isVisible(framesBtn)) && await openCreateTypeChooser()) {
-      videoBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Video');
-      framesBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Frames');
+  async function ensureModeControlsVisible(mode) {
+    const config = resolveFlowModeConfig(mode);
+    if (!config) {
+      return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: `Unsupported mode '${mode}'` };
     }
 
-    if (!videoBtn || !isVisible(videoBtn)) {
-      return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: 'Video control not visible after opening type selector' };
+    let topBtn = findElementByText('button, [role="tab"], [role="button"], span', config.topMode);
+    let subBtn = config.subMode
+      ? findElementByText('button, [role="tab"], [role="button"], span', config.subMode)
+      : null;
+
+    if ((!topBtn || !isVisible(topBtn) || (config.subMode && (!subBtn || !isVisible(subBtn)))) && await openCreateTypeChooser()) {
+      topBtn = findElementByText('button, [role="tab"], [role="button"], span', config.topMode);
+      subBtn = config.subMode
+        ? findElementByText('button, [role="tab"], [role="button"], span', config.subMode)
+        : null;
     }
 
-    if (!framesBtn || !isVisible(framesBtn)) {
-      return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: 'Frames control not visible after opening type selector' };
+    if (!topBtn || !isVisible(topBtn)) {
+      return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: `${config.topMode} control not visible after opening type selector` };
     }
 
-    return { ok: true, videoBtn, framesBtn };
+    if (config.subMode && (!subBtn || !isVisible(subBtn))) {
+      return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: `${config.subMode} control not visible after opening type selector` };
+    }
+
+    return { ok: true, config, topBtn, subBtn };
   }
 
   function resolveRequestedCount(job) {
@@ -1256,7 +1267,7 @@
   }
 
   async function ensureVideoFramesEditorReady() {
-    const typeControls = await ensureF2VTypeControlsVisible();
+    const typeControls = await ensureModeControlsVisible('F2V');
     if (!typeControls.ok) {
       return {
         ok: false,
@@ -1274,14 +1285,14 @@
       };
     }
 
-    const { videoBtn, framesBtn } = typeControls;
-    if (videoBtn && isVisible(videoBtn) && !isSelectedControl(videoBtn, 'Video')) {
-      videoBtn.click();
+    const { topBtn, subBtn, config } = typeControls;
+    if (topBtn && isVisible(topBtn) && !isSelectedControl(topBtn, config.topMode)) {
+      topBtn.click();
       await sleep(800);
     }
 
-    if (framesBtn && isVisible(framesBtn) && !isSelectedControl(framesBtn, 'Frames')) {
-      framesBtn.click();
+    if (subBtn && isVisible(subBtn) && !isSelectedControl(subBtn, config.subMode)) {
+      subBtn.click();
       await sleep(800);
     }
 
@@ -1733,23 +1744,24 @@
       // 1. Select Top Mode (STRICT - must be correct mode)
       let modeBtn = null;
       if (job.mode === 'F2V') {
-        const typeControls = await ensureF2VTypeControlsVisible();
+        const typeControls = await ensureModeControlsVisible('F2V');
         if (!typeControls.ok) throw new Error(typeControls.error || 'ERR_MODE_SELECTION_FAILED');
-        modeBtn = typeControls.videoBtn;
+        modeBtn = typeControls.topBtn;
       } else {
-        modeBtn = findElementByText('button, div[role="button"], span', job.mode === 'IMG' ? 'Image' : 'Video');
+        const modeControls = await ensureModeControlsVisible(job.mode);
+        if (!modeControls.ok) throw new Error(modeControls.error || 'ERR_MODE_SELECTION_FAILED');
+        modeBtn = modeControls.topBtn;
       }
       if (!modeBtn) throw new Error(`Mode button ${job.mode} not found`);
       modeBtn.click();
       await sleep(1000);
-      logStage(STAGES.FLOW_MODE_SELECTED, job.mode === 'IMG' ? 'Image' : 'Video');
+      logStage(STAGES.FLOW_MODE_SELECTED, resolveFlowModeConfig(job.mode)?.topMode || job.mode);
 
       // 2. Select Submode (STRICT)
       if (job.mode === 'F2V' || job.mode === 'I2V') {
-        const submodeText = job.mode === 'F2V' ? 'Frames' : 'Ingredients';
-        const submodeBtn = job.mode === 'F2V'
-          ? (await ensureF2VTypeControlsVisible()).framesBtn
-          : findElementByText('button, div[role="button"], span', submodeText);
+        const submodeText = resolveFlowModeConfig(job.mode)?.subMode;
+        const modeControls = await ensureModeControlsVisible(job.mode);
+        const submodeBtn = modeControls.subBtn;
         if (!submodeBtn) throw new Error(`Submode button ${submodeText} not found`);
         submodeBtn.click();
         await sleep(1000);
