@@ -148,6 +148,10 @@ class OpenTargetFlowProjectRequest(BaseModel):
     flow_project_url: str
 
 
+class OpenFlowNewProjectRequest(BaseModel):
+    mode: str = "F2V"
+
+
 class FlowPageStateDiagnosticRequest(BaseModel):
     mode: str = "F2V"
 
@@ -588,6 +592,25 @@ async def open_target_flow_project(body: OpenTargetFlowProjectRequest):
     return {
         **result,
         "flow_project_url": body.flow_project_url,
+        "primary_blocker": primary_blocker,
+        "last_checked_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    }
+
+
+@router.post("/open-flow-new-project")
+async def open_flow_new_project(body: OpenFlowNewProjectRequest):
+    result = await get_flow_client().open_flow_new_project(body.mode)
+    primary_blocker = None
+    if not result.get("open_flow_root"):
+        primary_blocker = "FLOW_ROOT_OPEN_FAILED"
+    elif not result.get("project_list_or_landing_detected"):
+        primary_blocker = result.get("error") or "FLOW_PROJECT_LIST_OR_LANDING_NOT_DETECTED"
+    elif not result.get("new_project_clicked") and result.get("new_project_clicked") != "SKIPPED_ALREADY_IN_EDITOR":
+        primary_blocker = result.get("error") or "FLOW_PROJECT_CREATION_PATH_MISSING"
+    elif not result.get("editor_ready"):
+        primary_blocker = result.get("error") or "FLOW_EDITOR_NOT_READY"
+    return {
+        **result,
         "primary_blocker": primary_blocker,
         "last_checked_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
     }

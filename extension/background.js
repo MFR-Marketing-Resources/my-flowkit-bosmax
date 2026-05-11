@@ -127,6 +127,7 @@ const WS_METHOD_TIMEOUT_MS = {
   FLOW_PAGE_STATE_DIAGNOSTIC: 12000,
   RELOAD_FLOW_TAB: 12000,
   OPEN_TARGET_FLOW_PROJECT: 45000,
+  OPEN_FLOW_NEW_PROJECT: 75000,
   EXECUTE_FLOW_JOB: 125000,
   DEBUG_FLOW_DOM_EXECUTION: 65000,
 };
@@ -160,6 +161,10 @@ function getMethodStageField(method, phase) {
     OPEN_TARGET_FLOW_PROJECT: {
       received: 'BACKGROUND_RECEIVED_OPEN_TARGET_FLOW_PROJECT',
       sent: 'BACKGROUND_SENT_OPEN_TARGET_FLOW_PROJECT_RESPONSE',
+    },
+    OPEN_FLOW_NEW_PROJECT: {
+      received: 'BACKGROUND_RECEIVED_OPEN_FLOW_NEW_PROJECT',
+      sent: 'BACKGROUND_SENT_OPEN_FLOW_NEW_PROJECT_RESPONSE',
     },
   };
   return stageFields[method]?.[phase] || null;
@@ -613,6 +618,55 @@ async function handleOpenTargetFlowProject(flowProjectUrl) {
   };
 }
 
+async function handleOpenFlowNewProject(mode) {
+  const rootUrl = 'https://labs.google/fx/tools/flow';
+  const exactTabs = await chrome.tabs.query({ url: rootUrl });
+  let targetTab = exactTabs.length ? exactTabs[0] : null;
+
+  if (targetTab) {
+    targetTab = await focusTab(targetTab);
+  } else {
+    targetTab = await openTabInNormalWindow(rootUrl);
+  }
+
+  try {
+    targetTab = await waitForTabComplete(targetTab.id, 30000);
+  } catch (_) {
+    targetTab = await chrome.tabs.get(targetTab.id);
+  }
+
+  await ensureFlowDomScript(targetTab.id);
+  let result = await sendTabMessageSafe(targetTab.id, {
+    type: 'OPEN_FLOW_NEW_PROJECT',
+    mode,
+  }, 70000);
+
+  if (['ERR_MESSAGE_RESPONSE_TIMEOUT', 'ERR_NO_RECEIVER', 'ERR_CONTENT_SCRIPT_STALE', 'ERR_TAB_RELOADED'].includes(result?.error)) {
+    await ensureFlowDomScript(targetTab.id);
+    result = await sendTabMessageSafe(targetTab.id, {
+      type: 'OPEN_FLOW_NEW_PROJECT',
+      mode,
+    }, 70000);
+  }
+
+  const refreshedTab = await chrome.tabs.get(targetTab.id).catch(() => targetTab);
+  return {
+    ok: Boolean(result?.ok),
+    open_flow_root: Boolean(result?.open_flow_root),
+    project_list_or_landing_detected: Boolean(result?.project_list_or_landing_detected),
+    new_project_clicked: result?.new_project_clicked || false,
+    editor_ready: Boolean(result?.editor_ready),
+    error: result?.error || null,
+    detail: result?.detail || null,
+    flow_tab_id: refreshedTab?.id ?? targetTab?.id ?? null,
+    flow_url_before: rootUrl,
+    flow_url_after: refreshedTab?.url || targetTab?.url || rootUrl,
+    flow_url: refreshedTab?.url || targetTab?.url || rootUrl,
+    extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
+    ...result,
+  };
+}
+
 async function handleReloadFlowTab() {
   const flowTab = await getFlowTab();
   if (!flowTab) {
@@ -888,6 +942,12 @@ function connectToAgent() {
         const result = await executeWsMethodAndReply(
           msg,
           () => handleOpenTargetFlowProject(msg.params?.flow_project_url),
+        );
+        replyToAgent(msg, result);
+      } else if (msg.method === 'OPEN_FLOW_NEW_PROJECT') {
+        const result = await executeWsMethodAndReply(
+          msg,
+          () => handleOpenFlowNewProject(msg.params?.mode),
         );
         replyToAgent(msg, result);
       } else if (msg.method === 'EXECUTE_FLOW_JOB') {
@@ -1322,6 +1382,10 @@ async function handleMessage(msg, sender) {
     return await handleCheckFlowComposerReady(msg.mode);
   }
 
+  if (msg.type === 'OPEN_FLOW_NEW_PROJECT') {
+    return await handleOpenFlowNewProject(msg.mode);
+  }
+
   if (msg.type === 'RELOAD_FLOW_TAB') {
     return await handleReloadFlowTab();
   }
@@ -1390,6 +1454,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'CHECK_FLOW_COMPOSER_READY') {
     return respondAsync(sendResponse, async () => {
       const result = await handleCheckFlowComposerReady(message.mode);
+      return result && typeof result === 'object' && 'ok' in result
+        ? result
+        : { ok: true, data: result };
+    });
+  }
+
+  if (message.type === 'OPEN_FLOW_NEW_PROJECT') {
+    return respondAsync(sendResponse, async () => {
+      const result = await handleOpenFlowNewProject(message.mode);
       return result && typeof result === 'object' && 'ok' in result
         ? result
         : { ok: true, data: result };

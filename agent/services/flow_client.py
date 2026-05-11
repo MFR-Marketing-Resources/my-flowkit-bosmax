@@ -297,6 +297,18 @@ class FlowClient:
 
         return {"ok": False, "error": "invalid open target flow project payload"}
 
+    async def open_flow_new_project(self, mode: Optional[str] = None) -> dict:
+        """Open Google Flow root, create a new project, and wait for a ready editor."""
+        result = await self._send("OPEN_FLOW_NEW_PROJECT", {"mode": mode}, timeout=75)
+        if result.get("error"):
+            return {"ok": False, "error": result["error"]}
+
+        payload = result.get("result")
+        if isinstance(payload, dict):
+            return payload
+
+        return {"ok": False, "error": "invalid open flow new project payload"}
+
     async def smoke_execute_flow_job(self, job_data: dict, timeout: float = 5) -> dict:
         """Verify the EXECUTE_FLOW_JOB bridge path without triggering generation."""
         smoke_job = dict(job_data)

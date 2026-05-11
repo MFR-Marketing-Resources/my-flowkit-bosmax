@@ -1047,6 +1047,209 @@
     return result;
   }
 
+  function isRootFlowUrl(url) {
+    const value = String(url || '');
+    return /^https:\/\/labs\.google\/fx(?:\/[^/]+)?\/tools\/flow\/?(?:[#?].*)?$/.test(value);
+  }
+
+  function findNewProjectControl() {
+    const selectors = 'button, [role="button"], a, div[role="button"], span';
+    const candidates = [
+      'Create with Flow',
+      'Create new project',
+      'Create new',
+      'New project',
+      'Start creating',
+      'Create project',
+      'New video',
+    ];
+
+    for (const candidate of candidates) {
+      const match = findElementByText(selectors, candidate);
+      if (match && isVisible(match)) return match;
+    }
+
+    const buttonCandidates = Array.from(document.querySelectorAll('button, [role="button"], a'));
+    return buttonCandidates.find((el) => {
+      if (!isVisible(el)) return false;
+      const text = normalizeText(el.textContent || el.getAttribute('aria-label') || '').toLowerCase();
+      return text.includes('create') || text.includes('new project') || text.includes('new video');
+    }) || null;
+  }
+
+  function collectProjectCreationState() {
+    const diagnostic = collectFlowPageStateDiagnostic('F2V');
+    const markerSources = [
+      diagnostic.body_text_first_2000_chars,
+      diagnostic.document_title,
+      ...diagnostic.button_texts,
+      ...diagnostic.aria_labels,
+      ...diagnostic.textarea_placeholders,
+      ...diagnostic.contenteditable_texts,
+    ];
+
+    const landingMarkers = collectVisibleMarkers([
+      'Create with Flow',
+      'Projects',
+      'Recent',
+      'New project',
+      'Create new',
+      'Back to projects',
+    ], markerSources);
+
+    return {
+      diagnostic,
+      isRoot: isRootFlowUrl(window.location.href),
+      hasErrorPage: diagnostic.visible_error_markers.length > 0,
+      landingDetected: landingMarkers.length > 0 || !!findNewProjectControl(),
+      newProjectControlFound: !!findNewProjectControl(),
+      landingMarkers,
+    };
+  }
+
+  async function ensureVideoFramesEditorReady() {
+    const videoBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Video');
+    if (videoBtn && isVisible(videoBtn) && !isSelectedControl(videoBtn, 'Video')) {
+      videoBtn.click();
+      await sleep(800);
+    }
+
+    const framesBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Frames');
+    if (framesBtn && isVisible(framesBtn) && !isSelectedControl(framesBtn, 'Frames')) {
+      framesBtn.click();
+      await sleep(800);
+    }
+
+    return checkFlowComposerReady('F2V');
+  }
+
+  async function waitForNewProjectEditor(mode = 'F2V', timeoutMs = 45000) {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      const state = collectProjectCreationState();
+      if (state.hasErrorPage) {
+        return {
+          ok: false,
+          error: 'FLOW_PROJECT_URL_INVALID_OR_INACCESSIBLE',
+          detail: state.diagnostic.visible_error_markers.join(', ') || 'Flow error page visible',
+          diagnostic: state.diagnostic,
+        };
+      }
+
+      let readiness = checkFlowComposerReady(mode);
+      if (readiness.composer_found || readiness.generate_button_found || readiness.current_mode_visible !== 'UNKNOWN') {
+        readiness = await ensureVideoFramesEditorReady();
+      }
+
+      const modeVisible = String(readiness.current_mode_visible || '');
+      const modeReady = modeVisible.includes('Video/Frames');
+      if (readiness.composer_found && readiness.composer_editable && readiness.generate_button_found && modeReady) {
+        return {
+          ok: true,
+          editor_ready: true,
+          composer_found: readiness.composer_found,
+          composer_editable: readiness.composer_editable,
+          generate_button_found: readiness.generate_button_found,
+          current_mode_visible: readiness.current_mode_visible,
+          signed_in_likely: readiness.signed_in_likely,
+          blocking_modal_detected: readiness.blocking_modal_detected,
+          observed: readiness.observed,
+          diagnostic: state.diagnostic,
+        };
+      }
+
+      await sleep(1000);
+    }
+
+    const readiness = checkFlowComposerReady(mode);
+    return {
+      ok: false,
+      error: readiness.signed_in_likely ? 'FLOW_PROJECT_EDITOR_NOT_READY' : 'FLOW_PROJECT_CREATION_PATH_MISSING',
+      detail: readiness.error || 'Timed out waiting for Flow editor/composer',
+      editor_ready: false,
+      composer_found: readiness.composer_found,
+      composer_editable: readiness.composer_editable,
+      generate_button_found: readiness.generate_button_found,
+      current_mode_visible: readiness.current_mode_visible,
+      signed_in_likely: readiness.signed_in_likely,
+      blocking_modal_detected: readiness.blocking_modal_detected,
+      observed: readiness.observed,
+      diagnostic: collectFlowPageStateDiagnostic(mode),
+    };
+  }
+
+  async function openFlowNewProjectFlow(mode = 'F2V') {
+    const initialState = collectProjectCreationState();
+    if (initialState.hasErrorPage) {
+      return {
+        ok: false,
+        open_flow_root: initialState.isRoot,
+        project_list_or_landing_detected: false,
+        new_project_clicked: false,
+        editor_ready: false,
+        error: 'FLOW_PROJECT_URL_INVALID_OR_INACCESSIBLE',
+        detail: initialState.diagnostic.visible_error_markers.join(', ') || 'Flow error page visible',
+        flow_url: window.location.href,
+        ...initialState.diagnostic,
+      };
+    }
+
+    let newProjectClicked = false;
+    let projectListDetected = initialState.landingDetected;
+
+    const alreadyReady = await ensureVideoFramesEditorReady();
+    if (alreadyReady.composer_found && alreadyReady.composer_editable && alreadyReady.generate_button_found && String(alreadyReady.current_mode_visible || '').includes('Video/Frames')) {
+      return {
+        ok: true,
+        open_flow_root: initialState.isRoot,
+        project_list_or_landing_detected: true,
+        new_project_clicked: 'SKIPPED_ALREADY_IN_EDITOR',
+        editor_ready: true,
+        flow_url: window.location.href,
+        composer_found: alreadyReady.composer_found,
+        composer_editable: alreadyReady.composer_editable,
+        generate_button_found: alreadyReady.generate_button_found,
+        current_mode_visible: alreadyReady.current_mode_visible,
+        signed_in_likely: alreadyReady.signed_in_likely,
+        blocking_modal_detected: alreadyReady.blocking_modal_detected,
+        observed: alreadyReady.observed,
+        ...initialState.diagnostic,
+      };
+    }
+
+    const createControl = findNewProjectControl();
+    if (!createControl) {
+      return {
+        ok: false,
+        open_flow_root: initialState.isRoot,
+        project_list_or_landing_detected: projectListDetected,
+        new_project_clicked: false,
+        editor_ready: false,
+        error: initialState.landingDetected ? 'FLOW_PROJECT_CREATION_PATH_MISSING' : 'FLOW_PROJECT_LIST_OR_LANDING_NOT_DETECTED',
+        detail: 'New project control not found on Flow root/landing page',
+        flow_url: window.location.href,
+        ...initialState.diagnostic,
+      };
+    }
+
+    projectListDetected = true;
+    createControl.click();
+    newProjectClicked = true;
+    await sleep(1200);
+
+    const editor = await waitForNewProjectEditor(mode, 45000);
+    return {
+      ok: Boolean(editor.ok),
+      open_flow_root: initialState.isRoot,
+      project_list_or_landing_detected: projectListDetected,
+      new_project_clicked: newProjectClicked,
+      editor_ready: Boolean(editor.editor_ready),
+      flow_url: window.location.href,
+      ...editor,
+    };
+  }
+
   function runExecuteFlowJobSmoke(job) {
     const readiness = checkFlowComposerReady(job?.mode);
     const result = {
@@ -1641,6 +1844,10 @@
         });
       }
       return false;
+    }
+
+    if (msg.type === 'OPEN_FLOW_NEW_PROJECT') {
+      return respondAsync(sendResponse, async () => openFlowNewProjectFlow(msg.mode));
     }
 
     if (msg.type === 'EXECUTE_FLOW_JOB') {
