@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Upload, ArrowRight, Info } from 'lucide-react'
+import { Upload, ArrowRight } from 'lucide-react'
 import type { UploadedAsset, Orientation } from '../../types'
-import { uploadImageBase64 } from '../../api/client'
+import { handleAssetUpload } from '../../api/assets'
 
 interface F2VModuleProps {
   onExecute: (data: any) => void
@@ -11,8 +11,6 @@ interface F2VModuleProps {
 export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
   // --- States ---
   const [manualPrompt, setManualPrompt] = useState('')
-  
-  // Mirror States
   const [orientation, setOrientation] = useState<Orientation>('VERTICAL')
   const [model, setModel] = useState('Veo 3.1 - Pro')
   const [count, setCount] = useState(1)
@@ -29,24 +27,17 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
 
     setIsUploading(true)
     try {
-      const reader = new FileReader()
-      reader.readAsDataURL(file)
-      reader.onload = async () => {
-        const base64 = reader.result as string
-        const res = await uploadImageBase64(base64, file.name)
-        const asset: UploadedAsset = {
-          mediaId: res.media_id,
-          fileName: file.name,
-          previewUrl: base64
-        }
-        if (type === 'start') setStartAsset(asset)
-        else setEndAsset(asset)
-        setIsUploading(false)
-      }
-    } catch (error) {
-      console.error('Upload failed:', error)
+      console.log(`[F2V] Starting upload for ${type}...`)
+      const asset = await handleAssetUpload(file)
+      console.log(`[F2V] Upload success for ${type}:`, asset.mediaId)
+      
+      if (type === 'start') setStartAsset(asset)
+      else setEndAsset(asset)
+    } catch (error: any) {
+      console.error(`[F2V] ${type} upload failed:`, error)
+      alert(`UPLOAD ERROR: ${error.message || 'Unknown error'}. Make sure your local agent is running at http://127.0.0.1:8100`)
+    } finally {
       setIsUploading(false)
-      alert('Upload failed. Check if local agent is running.')
     }
   }
 
@@ -56,20 +47,21 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
       orientation,
       model,
       count,
-      startAsset,
-      endAsset
+      refs: { 
+        startAssetId: startAsset?.mediaId, 
+        endAssetId: endAsset?.mediaId 
+      },
+      mode: 'F2V'
     })
   }
 
   return (
     <div className="flex h-full gap-6">
-      {/* Main Workspace */}
       <div className="flex-1 space-y-6 overflow-y-auto pr-2 pb-12">
-        
-        {/* 1. Visual Assets (F2V Slots) - Mimicking Google Flow */}
         <section className="space-y-4">
           <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">1. Visual Assets (F2V Slots)</h3>
           <div className="grid grid-cols-2 gap-4">
+            {/* Start Frame */}
             <div className="group relative aspect-video rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-3 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
                {startAsset ? (
                  <img src={startAsset.previewUrl} className="w-full h-full object-cover" alt="Start Frame" />
@@ -84,9 +76,10 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
                    </div>
                  </>
                )}
-               <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('start', e)} />
+               <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('start', e)} />
             </div>
 
+            {/* End Frame */}
             <div className="group relative aspect-video rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-3 hover:border-purple-500/50 transition-all cursor-pointer overflow-hidden">
                {endAsset ? (
                  <img src={endAsset.previewUrl} className="w-full h-full object-cover" alt="End Frame" />
@@ -96,32 +89,25 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
                      <Upload size={24} />
                    </div>
                    <div className="text-center">
-                     <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">End Frame</p>
+                     <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">End Frame (Optional)</p>
                      <p className="text-[9px] text-slate-500 mt-1">Upload reference image</p>
                    </div>
                  </>
                )}
-               <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('end', e)} />
+               <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('end', e)} />
             </div>
           </div>
         </section>
 
-        {/* 2. Prompt Injection - Mimicking Google Flow */}
         <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">2. Prompt Injection</h3>
-          </div>
+          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">2. Prompt Injection</h3>
           <div className="p-4 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-4">
             <textarea 
               className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
-              placeholder="Describe what you want to generate..."
+              placeholder="Describe the golden transition..."
               value={manualPrompt}
               onChange={(e) => setManualPrompt(e.target.value)}
             />
-            <div className="flex items-center gap-2 text-[10px] text-slate-500 italic">
-              <Info size={12} />
-              <span>This prompt will be injected directly into Google Flow's composer.</span>
-            </div>
           </div>
         </section>
         
@@ -137,7 +123,6 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
         </div>
       </div>
 
-      {/* Google Flow Mirror Panel */}
       <div className="w-72 flex-shrink-0 flex flex-col gap-6 overflow-y-auto pb-12">
         <section className="space-y-4">
           <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">Flow Mirror Settings</h3>
@@ -145,45 +130,24 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
             <div className="space-y-3">
               <label className="text-xs font-bold text-slate-400">Aspect Ratio</label>
               <div className="grid grid-cols-2 gap-2">
-                <button 
-                  onClick={() => setOrientation('VERTICAL')}
-                  className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${orientation === 'VERTICAL' ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'bg-slate-950 border-slate-800 text-slate-500'}`}
-                >
-                  9:16 (Vertical)
-                </button>
-                <button 
-                  onClick={() => setOrientation('HORIZONTAL')}
-                  className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${orientation === 'HORIZONTAL' ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'bg-slate-950 border-slate-800 text-slate-500'}`}
-                >
-                  16:9 (Horizontal)
-                </button>
+                {['VERTICAL', 'HORIZONTAL'].map(o => (
+                  <button key={o} onClick={() => setOrientation(o as any)} className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${orientation === o ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>{o === 'VERTICAL' ? '9:16 (Vertical)' : '16:9 (Horizontal)'}</button>
+                ))}
               </div>
             </div>
-
             <div className="space-y-3">
               <label className="text-xs font-bold text-slate-400">Generation Model</label>
-              <select 
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] font-bold text-slate-300 outline-none"
-              >
+              <select value={model} onChange={(e) => setModel(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] font-bold text-slate-300 outline-none">
                 <option>Veo 3.1 - Pro</option>
                 <option>Veo 3.1 - Lite</option>
                 <option>Nano Banana 2</option>
               </select>
             </div>
-
             <div className="space-y-3">
               <label className="text-xs font-bold text-slate-400">Count</label>
               <div className="grid grid-cols-4 gap-2">
                 {[1, 2, 3, 4].map(v => (
-                  <button 
-                    key={v}
-                    onClick={() => setCount(v)}
-                    className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${count === v ? 'bg-purple-600/20 border-purple-500 text-purple-400' : 'bg-slate-950 border-slate-800 text-slate-500'}`}
-                  >
-                    {v}x
-                  </button>
+                  <button key={v} onClick={() => setCount(v)} className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${count === v ? 'bg-purple-600/20 border-purple-500 text-purple-400' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>{v}x</button>
                 ))}
               </div>
             </div>

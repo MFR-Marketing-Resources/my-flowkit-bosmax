@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Upload, ArrowRight, Info } from 'lucide-react'
+import { Upload, ArrowRight } from 'lucide-react'
 import type { UploadedAsset, Orientation } from '../../types'
-import { uploadImageBase64 } from '../../api/client'
+import { handleAssetUpload } from '../../api/assets'
 
 interface I2VModuleProps {
   onExecute: (data: any) => void
@@ -28,25 +28,18 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
 
     setIsUploading(true)
     try {
-      const reader = new FileReader()
-      reader.readAsDataURL(file)
-      reader.onload = async () => {
-        const base64 = reader.result as string
-        const res = await uploadImageBase64(base64, file.name)
-        const asset: UploadedAsset = {
-          mediaId: res.media_id,
-          fileName: file.name,
-          previewUrl: base64
-        }
-        if (type === 'subject') setSubjectAsset(asset)
-        else if (type === 'scene') setSceneAsset(asset)
-        else setStyleAsset(asset)
-        setIsUploading(false)
-      }
-    } catch (error) {
-      console.error('Upload failed:', error)
+      console.log(`[I2V] Starting upload for ${type}...`)
+      const asset = await handleAssetUpload(file)
+      console.log(`[I2V] Upload success for ${type}:`, asset.mediaId)
+      
+      if (type === 'subject') setSubjectAsset(asset)
+      else if (type === 'scene') setSceneAsset(asset)
+      else setStyleAsset(asset)
+    } catch (error: any) {
+      console.error(`[I2V] ${type} upload failed:`, error)
+      alert(`UPLOAD ERROR: ${error.message || 'Unknown error'}. Make sure your local agent is running at http://127.0.0.1:8100`)
+    } finally {
       setIsUploading(false)
-      alert('Upload failed. Check if local agent is running.')
     }
   }
 
@@ -83,7 +76,7 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
                    <span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">Subject</span>
                  </>
                )}
-               <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('subject', e)} />
+               <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('subject', e)} />
             </div>
 
             {/* Scene */}
@@ -98,7 +91,7 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
                    <span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">Scene</span>
                  </>
                )}
-               <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('scene', e)} />
+               <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('scene', e)} />
             </div>
 
             {/* Style */}
@@ -113,7 +106,7 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
                    <span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">Style</span>
                  </>
                )}
-               <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('style', e)} />
+               <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handleFileChange('style', e)} />
             </div>
           </div>
         </section>
@@ -143,7 +136,6 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
       </div>
 
       <div className="w-72 flex-shrink-0 flex flex-col gap-6 overflow-y-auto pb-12 text-slate-300">
-        {/* Mirror Settings Sidebar (Existing) */}
         <section className="space-y-4">
           <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">Flow Mirror Settings</h3>
           <div className="p-6 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-6">
