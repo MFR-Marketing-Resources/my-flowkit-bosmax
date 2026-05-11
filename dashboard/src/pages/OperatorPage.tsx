@@ -4,6 +4,9 @@ import F2VModule from '../components/workspace/F2VModule'
 import T2VModule from '../components/workspace/T2VModule'
 import I2VModule from '../components/workspace/I2VModule'
 import IMGModule from '../components/workspace/IMGModule'
+import { fetchAPI } from '../api/client'
+import RequestReportPanel from '../components/reporting/RequestReportPanel'
+import type { TelemetryRequest } from '../types'
 
 type OperatorNoticeTone = 'idle' | 'info' | 'success' | 'error'
 
@@ -58,6 +61,7 @@ interface OperatorPageProps {
 export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
   const location = useLocation()
   const [isExecuting, setIsExecuting] = useState(false)
+  const [modeRequests, setModeRequests] = useState<TelemetryRequest[]>([])
   const [notice, setNotice] = useState<OperatorNotice>({
     tone: 'idle',
     title: 'Idle',
@@ -76,6 +80,21 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
       }
     }
   }, [])
+
+  useEffect(() => {
+    const loadModeRequests = () => {
+      fetchAPI<TelemetryRequest[]>('/api/telemetry/requests?limit=120')
+        .then(items => {
+          const filtered = items.filter(trace => trace.request_type === 'MANUAL_FLOW_JOB' && trace.mode === mode)
+          setModeRequests(filtered)
+        })
+        .catch(() => {})
+    }
+
+    loadModeRequests()
+    const timer = window.setInterval(loadModeRequests, 4000)
+    return () => window.clearInterval(timer)
+  }, [mode])
 
   const handleExecute = async (data: any) => {
     setIsExecuting(true)
@@ -218,8 +237,20 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0">
-        {renderModule()}
+      <div className="grid flex-1 min-h-0 gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)]">
+        <div className="min-h-0">
+          {renderModule()}
+        </div>
+
+        <div className="min-h-0">
+          <RequestReportPanel
+            requests={modeRequests}
+            title={`${mode === 'F2V' ? 'Frames' : mode === 'T2V' ? 'Text to Video' : mode === 'I2V' ? 'Ingredients' : 'Image'} Workspace Jobs`}
+            description="This is the work list for the current operator page. Use it to confirm whether a run is waiting, processing, completed, or failed, and read the remark before troubleshooting."
+            emptyMessage="No jobs recorded for this workspace yet. New submissions from this page will appear here automatically."
+            maxItems={18}
+          />
+        </div>
       </div>
     </div>
   )

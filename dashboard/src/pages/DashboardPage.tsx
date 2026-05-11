@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { fetchAPI } from '../api/client'
 import { useWebSocketContext } from '../contexts/WebSocketContext'
 import type { Project, TelemetryRequest, Video } from '../types'
 import PipelineView from '../components/pipeline/PipelineView'
-import { buildStandardTraceLabel, getLatestTraceForProject, getLatestTraceForVideo, getTraceElapsedSeconds, getTraceIdleSeconds, getTraceMeta, getTraceStage, getTraceUpdatedAt, isActiveTelemetryStatus, shortId } from '../utils/requestTrace'
+import RequestReportPanel from '../components/reporting/RequestReportPanel'
+import { buildStandardTraceLabel, getLatestTraceForProject, getLatestTraceForVideo, shortId } from '../utils/requestTrace'
+import { getTelemetryModeLabel, getTelemetrySummaryCounts, sortTelemetryByUpdatedAt } from '../utils/telemetryReporting'
 
 interface SelectorOption {
   id: string
@@ -46,8 +48,7 @@ function TraceableSelect({
         type="button"
         disabled={disabled}
         onClick={() => !disabled && setOpen(prev => !prev)}
-        className="w-full px-3 py-2 rounded text-left border transition-opacity disabled:opacity-50"
-        style={{ background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--text)' }}
+        className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-left text-slate-100 transition-opacity disabled:opacity-50"
       >
         <div className="truncate text-xs font-semibold">{selected?.label || placeholder}</div>
         <div className="truncate text-[10px] opacity-60">{selected?.meta || 'Searchable, scrollable selector'}</div>
@@ -57,20 +58,18 @@ function TraceableSelect({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
-            className="absolute z-50 mt-1 w-full rounded border overflow-hidden shadow-2xl"
-            style={{ background: 'var(--card)', border: '1px solid var(--border)' }}
+            className="absolute z-50 mt-1 w-full overflow-hidden rounded border border-slate-700 bg-slate-950 shadow-2xl"
           >
-            <div className="p-2 border-b" style={{ borderBottomColor: 'var(--border)', background: 'var(--surface)' }}>
+            <div className="border-b border-slate-700 bg-slate-900 p-2">
               <input
                 autoFocus
                 value={search}
                 onChange={event => setSearch(event.target.value)}
                 placeholder="Search by short label, status, request ID, engine..."
-                className="w-full p-2 text-xs rounded border outline-none"
-                style={{ background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                className="w-full rounded border border-slate-700 bg-slate-950 p-2 text-xs text-slate-100 outline-none"
               />
             </div>
-            <div className="overflow-y-auto" style={{ maxHeight: '320px' }}>
+            <div className="max-h-80 overflow-y-auto">
               {filtered.length === 0 ? (
                 <div className="p-3 text-xs opacity-60">No matching items.</div>
               ) : filtered.map(option => (
@@ -82,8 +81,7 @@ function TraceableSelect({
                     setOpen(false)
                     setSearch('')
                   }}
-                  className="w-full p-3 text-left border-b hover:bg-blue-600/10"
-                  style={{ borderBottomColor: 'var(--border)' }}
+                  className="w-full border-b border-slate-700 p-3 text-left hover:bg-blue-600/10"
                 >
                   <div className="truncate text-xs font-semibold">{option.label}</div>
                   <div className="truncate text-[10px] opacity-60">{option.meta}</div>
@@ -105,19 +103,19 @@ export default function DashboardPage() {
   const [selectedVideo, setSelectedVideo] = useState<string>('')
   const { lastEvent } = useWebSocketContext()
 
+  const loadTelemetry = useCallback(() => {
+    fetchAPI<TelemetryRequest[]>('/api/telemetry/requests?limit=200').then(setTelemetryRequests).catch(() => {})
+  }, [])
+
   useEffect(() => {
     fetchAPI<Project[]>('/api/projects').then(setProjects).catch(() => {})
   }, [])
 
   useEffect(() => {
-    const loadTelemetry = () => {
-      fetchAPI<TelemetryRequest[]>('/api/telemetry/requests?limit=200').then(setTelemetryRequests).catch(() => {})
-    }
-
     loadTelemetry()
     const timer = window.setInterval(loadTelemetry, 4000)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [loadTelemetry])
 
   useEffect(() => {
     if (!selectedProject) {
@@ -139,9 +137,9 @@ export default function DashboardPage() {
     if (!lastEvent) return
     if (lastEvent.type === 'project_created' || lastEvent.type === 'request_created' || lastEvent.type === 'request_updated' || lastEvent.type === 'request_completed' || lastEvent.type === 'request_failed') {
       fetchAPI<Project[]>('/api/projects').then(setProjects).catch(() => {})
-      fetchAPI<TelemetryRequest[]>('/api/telemetry/requests?limit=200').then(setTelemetryRequests).catch(() => {})
+      loadTelemetry()
     }
-  }, [lastEvent])
+  }, [lastEvent, loadTelemetry])
 
   const selectedProjectRecord = projects.find(project => project.id === selectedProject) || null
 
@@ -163,88 +161,102 @@ export default function DashboardPage() {
     }
   }), [videos, telemetryRequests, selectedProjectRecord])
 
-  const activeJobs = useMemo(() => telemetryRequests
-    .filter(trace => isActiveTelemetryStatus(trace.status))
-    .map(trace => {
-      const project = projects.find(item => item.id === trace.project_id) || null
-      const video = videos.find(item => item.id === trace.video_id) || null
-      const meta = getTraceMeta(project, video)
-      return {
-        request_id: trace.request_id,
-        request_type: trace.request_type || 'UNKNOWN',
-        productShortName: meta.productShortName,
-        categoryPath: meta.categoryPath,
-        engine: meta.engine,
-        duration: meta.duration,
-        status: trace.status,
-        lastStage: getTraceStage(trace),
-        lastError: trace.error_message || '',
-        elapsedSeconds: getTraceElapsedSeconds(trace),
-        idleSeconds: getTraceIdleSeconds(trace),
-        createdAt: trace.created_at,
-        updatedAt: getTraceUpdatedAt(trace),
-      }
-    }), [projects, telemetryRequests, videos])
+  const visibleTelemetry = useMemo(() => sortTelemetryByUpdatedAt(
+    telemetryRequests.filter(trace => trace.request_type !== 'TELEMETRY_SELF_TEST'),
+  ), [telemetryRequests])
+
+  const summary = useMemo(() => getTelemetrySummaryCounts(visibleTelemetry), [visibleTelemetry])
+
+  const modeSummary = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const trace of visibleTelemetry) {
+      const modeLabel = getTelemetryModeLabel(trace)
+      counts.set(modeLabel, (counts.get(modeLabel) || 0) + 1)
+    }
+    return Array.from(counts.entries()).slice(0, 4)
+  }, [visibleTelemetry])
 
   return (
-    <div className="flex flex-col gap-4 h-full">
-      {/* Selectors */}
-      <div className="flex items-start gap-3 flex-wrap">
-        <TraceableSelect
-          value={selectedProject}
-          options={projectOptions}
-          placeholder="Select project..."
-          onChange={setSelectedProject}
-        />
-
-        <TraceableSelect
-          value={selectedVideo}
-          options={videoOptions}
-          placeholder="Select video..."
-          disabled={!selectedProject || videos.length === 0}
-          onChange={setSelectedVideo}
-        />
-      </div>
-
-      <div className="rounded-xl border p-4 grid gap-3" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Current Running Job</h3>
-          <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
-            traceable by request ID
-          </span>
-        </div>
-
-        {activeJobs.length === 0 ? (
-          <div className="text-xs" style={{ color: 'var(--muted)' }}>No active running job.</div>
-        ) : activeJobs.map(job => (
-          <div key={job.request_id} className="rounded-lg border p-3 grid gap-2" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 text-xs">
-              <div><span className="opacity-50">request_id:</span> <span className="font-mono">{job.request_id}</span></div>
-              <div><span className="opacity-50">request_type:</span> <span className="font-semibold">{job.request_type}</span></div>
-              <div><span className="opacity-50">product_short_name:</span> <span className="font-semibold">{job.productShortName}</span></div>
-              <div><span className="opacity-50">category/subcategory/type:</span> <span>{job.categoryPath}</span></div>
-              <div><span className="opacity-50">engine:</span> <span>{job.engine}</span></div>
-              <div><span className="opacity-50">duration:</span> <span>{job.duration}</span></div>
-              <div><span className="opacity-50">status:</span> <span>{job.status}</span></div>
-              <div><span className="opacity-50">last_stage:</span> <span className="font-mono">{job.lastStage}</span></div>
-              <div><span className="opacity-50">last_error:</span> <span>{job.lastError || '—'}</span></div>
-              <div><span className="opacity-50">elapsed_seconds:</span> <span className="font-mono">{job.elapsedSeconds}</span></div>
-              <div><span className="opacity-50">idle_seconds:</span> <span className="font-mono">{job.idleSeconds}</span></div>
-              <div><span className="opacity-50">created_at:</span> <span>{formatDateTime(job.createdAt)}</span></div>
-              <div><span className="opacity-50">updated_at:</span> <span>{formatDateTime(job.updatedAt)}</span></div>
-            </div>
+    <div className="flex flex-col gap-6 h-full">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          { label: 'Waiting', value: summary.waiting, tone: 'text-amber-200 border-amber-500/30 bg-amber-500/10' },
+          { label: 'Running', value: summary.running, tone: 'text-blue-200 border-blue-500/30 bg-blue-500/10' },
+          { label: 'Completed', value: summary.completed, tone: 'text-emerald-200 border-emerald-500/30 bg-emerald-500/10' },
+          { label: 'Failed', value: summary.failed, tone: 'text-red-200 border-red-500/30 bg-red-500/10' },
+        ].map(card => (
+          <div key={card.label} className={`rounded-3xl border px-5 py-4 ${card.tone}`}>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] opacity-80">{card.label}</div>
+            <div className="mt-3 text-3xl font-semibold">{card.value}</div>
           </div>
         ))}
       </div>
 
-      {/* Pipeline view */}
-      {selectedProject && selectedVideo ? (
-        <PipelineView projectId={selectedProject} videoId={selectedVideo} />
-      ) : (
-        <div className="flex items-center justify-center flex-1" style={{ color: 'var(--muted)' }}>
-          Select a project and video to view the pipeline
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.9fr)]">
+        <RequestReportPanel
+          requests={visibleTelemetry}
+          title="Work Reporting"
+          description="This is the main reporting surface for jobs across video, image, ingredients, frames, references, and upscale. Read status, current stage, and failure remark here first."
+          emptyMessage="No jobs recorded yet. Submit work from any operator page and it will appear here."
+          onRefresh={loadTelemetry}
+        />
+
+        <div className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+          <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-200">Reporting Guide</div>
+          <div className="mt-4 grid gap-3 text-sm text-slate-300">
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">How to Read Status</div>
+              <div className="mt-2">Waiting means job is accepted but not yet inside Flow. Running means worker or Google Flow is actively processing. Completed means job finished. Failed means the remark should be your first troubleshooting reference.</div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Most Recent Modes</div>
+              <div className="mt-3 grid gap-2">
+                {modeSummary.length === 0 ? (
+                  <div className="text-slate-400">No mode activity yet.</div>
+                ) : modeSummary.map(([modeLabel, count]) => (
+                  <div key={modeLabel} className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs">
+                    <span>{modeLabel}</span>
+                    <span className="font-semibold text-slate-100">{count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Pipeline Drill-Down</div>
+              <div className="mt-2 text-slate-300">Use the selectors below only when you want scene-by-scene pipeline detail for a specific project and video. It is no longer the main place to read operational status.</div>
+            </div>
+          </div>
         </div>
-      )}
+      </div>
+
+      <div className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+        <div className="flex items-start gap-3 flex-wrap">
+          <TraceableSelect
+            value={selectedProject}
+            options={projectOptions}
+            placeholder="Select project for pipeline drill-down..."
+            onChange={setSelectedProject}
+          />
+
+          <TraceableSelect
+            value={selectedVideo}
+            options={videoOptions}
+            placeholder="Select video for pipeline drill-down..."
+            disabled={!selectedProject || videos.length === 0}
+            onChange={setSelectedVideo}
+          />
+        </div>
+
+        <div className="mt-5">
+          {selectedProject && selectedVideo ? (
+            <PipelineView projectId={selectedProject} videoId={selectedVideo} />
+          ) : (
+            <div className="flex flex-1 items-center justify-center text-slate-400">
+              Select a project and video to view the pipeline
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

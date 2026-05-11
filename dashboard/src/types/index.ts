@@ -521,6 +521,21 @@ export interface TelemetryRequest {
   error_message: string | null
   created_at: string
 }
+
+export interface TelemetryStageEvent {
+  id: string
+  request_id: string
+  timestamp: string
+  stage: string
+  status: string
+  message: string | null
+  source: string
+}
+
+export interface TelemetryRequestDetail {
+  telemetry: TelemetryRequest
+  stages: TelemetryStageEvent[]
+}
 export interface ProductCreativeBrief {
   brief_id: string
   product_id: string
