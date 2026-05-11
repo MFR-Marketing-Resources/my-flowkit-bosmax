@@ -492,22 +492,29 @@
     slotBtn.click();
     await sleep(500);
 
-    const assetId = resolveAssetSourceId(assetSource);
-    if (!assetId) {
-      console.warn(`[FlowAgent] No asset source id resolved for slot ${slotLabel}`);
-      return false;
-    }
-
-    // 2. Fetch the image from local agent
-    const imageUrl = `http://127.0.0.1:8100/api/products/${assetId}/image`;
+    // 2. Fetch or Resolve the image
     let file;
     try {
-      const resp = await fetch(imageUrl);
-      if (!resp.ok) throw new Error(`HTTP_${resp.status}`);
-      const blob = await resp.blob();
-      file = new File([blob], `${assetId}.jpg`, { type: 'image/jpeg' });
+      if (assetSource && typeof assetSource === 'object' && assetSource.previewUrl) {
+        console.log(`[FlowAgent] Using direct base64 source for ${slotLabel}`);
+        const base64Data = assetSource.previewUrl;
+        const blob = await (await fetch(base64Data)).blob();
+        file = new File([blob], assetSource.fileName || `${slotLabel}.png`, { type: blob.type || 'image/png' });
+      } else {
+        const assetId = resolveAssetSourceId(assetSource);
+        if (!assetId) {
+          console.warn(`[FlowAgent] No asset source id resolved for slot ${slotLabel}`);
+          return false;
+        }
+        const imageUrl = `http://127.0.0.1:8100/api/products/${assetId}/image`;
+        console.log(`[FlowAgent] Fetching image from agent: ${imageUrl}`);
+        const resp = await fetch(imageUrl);
+        if (!resp.ok) throw new Error(`HTTP_${resp.status}`);
+        const blob = await resp.blob();
+        file = new File([blob], `${assetId}.jpg`, { type: 'image/jpeg' });
+      }
     } catch (err) {
-      console.error(`[FlowAgent] Failed to fetch local image: ${err.message}`);
+      console.error(`[FlowAgent] Failed to resolve/fetch image: ${err.message}`);
       return false;
     }
 
