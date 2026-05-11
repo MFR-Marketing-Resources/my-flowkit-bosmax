@@ -226,11 +226,12 @@ export interface CreatedState {
 export type ManualEntityType = 'character' | 'visual_asset'
 
 export interface UploadedAsset {
-  label: string
+  label?: string
   mediaId: string
-  characterId: string
-  entityType: ManualEntityType
+  characterId?: string
+  entityType?: ManualEntityType
   fileName: string
+  previewUrl?: string
 }
 
 export interface Product {
