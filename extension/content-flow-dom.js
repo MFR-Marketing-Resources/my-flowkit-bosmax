@@ -228,6 +228,7 @@
       { slotLabel: 'Subject', assetSource: refs.subjectAsset || refs.subject },
       { slotLabel: 'Scene', assetSource: refs.sceneAsset || refs.scene },
       { slotLabel: 'Style', assetSource: refs.styleAsset || refs.style },
+      { slotLabel: 'Image', assetSource: refs.imageAsset || refs.image },
     ].filter((item) => !!item.assetSource);
   }
 
