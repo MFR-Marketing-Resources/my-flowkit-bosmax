@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Upload, ArrowRight } from 'lucide-react'
+import { Upload, ArrowRight, Loader2 } from 'lucide-react'
 import type { UploadedAsset } from '../../types'
 import { handleAssetUpload } from '../../api/assets'
 
