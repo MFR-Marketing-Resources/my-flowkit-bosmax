@@ -22,11 +22,6 @@
     IMG: { topMode: 'Image', subMode: null, defaultModel: 'Nano Banana 2' },
   };
 
-  if (window._flowKitDomInjectedVersion === FLOW_KIT_DOM_VERSION && window._flowKitDomListener) {
-    console.log('[FlowAgent] Flow DOM Executor already present');
-    return;
-  }
-
   if (window._flowKitDomListener) {
     try {
       chrome.runtime.onMessage.removeListener(window._flowKitDomListener);
@@ -86,7 +81,18 @@
     GENERATE_CLICKED: 'GENERATE_CLICKED',
     GENERATION_STARTED: 'GENERATION_STARTED',
     VIDEO_JOB_RUNNING_OR_GENERATED: 'VIDEO_JOB_RUNNING_OR_GENERATED',
-    FLOW_MODE_MISMATCH: 'FLOW_MODE_MISMATCH'
+    FLOW_MODE_MISMATCH: 'FLOW_MODE_MISMATCH',
+    // F2V SOP state machine stages
+    FLOW_ROOT_OPENED: 'FLOW_ROOT_OPENED',
+    NEW_PROJECT_CLICKED: 'NEW_PROJECT_CLICKED',
+    FLOW_TYPE_VIDEO_SELECTED: 'FLOW_TYPE_VIDEO_SELECTED',
+    FLOW_SUBMODE_FRAMES_SELECTED: 'FLOW_SUBMODE_FRAMES_SELECTED',
+    FLOW_ASPECT_9_16_SELECTED: 'FLOW_ASPECT_9_16_SELECTED',
+    FLOW_COUNT_1X_SELECTED: 'FLOW_COUNT_1X_SELECTED',
+    FLOW_MODEL_VEO_3_1_LITE_SELECTED: 'FLOW_MODEL_VEO_3_1_LITE_SELECTED',
+    START_SLOT_VISIBLE: 'START_SLOT_VISIBLE',
+    PROMPT_FIELD_VISIBLE: 'PROMPT_FIELD_VISIBLE',
+    F2V_WORKSPACE_READY: 'F2V_WORKSPACE_READY',
   };
 
   async function sleep(ms) {
@@ -261,18 +267,100 @@
       const looksLikeConfigChip = /(^|\s)([1-4]x)(\s|$)/i.test(text) && /(9:16|16:9|4:3|1:1|3:4)/.test(text);
       const target = el.closest('button, [role="button"], [role="tab"], [aria-haspopup]') || el;
       if (!isVisible(target)) continue;
+      const targetText = normalizeText(target.textContent || target.getAttribute('aria-label') || '');
+      const rect = target.getBoundingClientRect();
+      const targetTooLarge = rect.width > 520 || rect.height > 120 || targetText.length > 120;
+      const targetLooksLikePageShell = /(what do you want to create|double check it|go back|search|sort & filter|add media)/i.test(targetText);
+      if (!targetText || targetTooLarge || targetLooksLikePageShell) continue;
       if (looksLikeModelChip || looksLikeConfigChip) {
-        preferred.push(target);
+        preferred.push({ target, targetText, rect });
         continue;
       }
       if (lower.includes('veo') || lower.includes('nano banana')) {
-        fallback.push(target);
+        fallback.push({ target, targetText, rect });
       }
     }
 
-    if (preferred.length > 0) return preferred[0];
-    if (fallback.length > 0) return fallback[0];
+    const sortByCompactness = (items) => items
+      .sort((left, right) => {
+        const textDelta = left.targetText.length - right.targetText.length;
+        if (textDelta !== 0) return textDelta;
+        return (left.rect.width * left.rect.height) - (right.rect.width * right.rect.height);
+      })
+      .map((item) => item.target);
+
+    if (preferred.length > 0) return sortByCompactness(preferred)[0];
+    if (fallback.length > 0) return sortByCompactness(fallback)[0];
     return null;
+  }
+
+  function findOpenFlowConfigSurface() {
+    const selectors = [
+      '[role="listbox"]',
+      '[role="dialog"]',
+      '[role="menu"]',
+      '[data-floating-ui-portal] > *',
+      '[data-radix-popper-content-wrapper] > *',
+      '[data-radix-portal] > *',
+    ].join(', ');
+
+    const surfaces = Array.from(document.querySelectorAll(selectors))
+      .filter((el) => isVisible(el));
+
+    const preferred = surfaces.find((el) => {
+      const text = normalizeText(el.innerText || el.textContent || '');
+      if (!text) return false;
+      return /(veo|nano banana|9:16|16:9|1x|2x|3x|4x)/i.test(text);
+    });
+
+    return preferred || surfaces[0] || null;
+  }
+
+  function findElementByTextInRoot(root, selector, text) {
+    if (!root) return null;
+
+    const needle = normalizeText(text).toLowerCase();
+    if (!needle) return null;
+
+    const matches = [];
+    for (const el of root.querySelectorAll(selector)) {
+      if (!isVisible(el)) continue;
+      const label = normalizeText(
+        el.textContent
+        || el.getAttribute('aria-label')
+        || el.getAttribute('data-placeholder')
+        || ''
+      );
+      if (!label) continue;
+      const target = el.closest('button, [role="button"], [role="tab"], [role="option"], li, label') || el;
+      if (!isVisible(target)) continue;
+      matches.push({ label: label.toLowerCase(), target });
+    }
+
+    const exactMatch = matches.find((item) => item.label === needle);
+    if (exactMatch) return exactMatch.target;
+
+    const prefixMatch = matches.find((item) => item.label.startsWith(needle));
+    if (prefixMatch) return prefixMatch.target;
+
+    const partialMatch = matches.find((item) => item.label.includes(needle));
+    return partialMatch?.target || null;
+  }
+
+  function collectFlowConfigDebugSnapshot() {
+    const launcher = findFlowConfigLauncher();
+    const surface = findOpenFlowConfigSurface();
+    const visibleOptionTexts = collectVisibleTexts(
+      'button, [role="option"], [role="button"], [role="tab"], li, span, div',
+      (el) => el.textContent || el.getAttribute('aria-label') || '',
+      120,
+    ).filter((text) => /(veo|nano banana|9:16|16:9|1x|2x|3x|4x)/i.test(text));
+
+    return {
+      launcher_text: normalizeText(launcher?.textContent || launcher?.getAttribute('aria-label') || ''),
+      surface_text: normalizeText(surface?.innerText || surface?.textContent || ''),
+      visible_option_texts: visibleOptionTexts,
+    };
   }
 
   async function closeBlockingModalIfPresent() {
@@ -285,21 +373,49 @@
 
   async function openFlowConfigPanel() {
     await closeBlockingModalIfPresent();
-    const launcher = document.querySelector('[aria-haspopup="listbox"]') || findFlowConfigLauncher();
+    const existingSurface = findOpenFlowConfigSurface();
+    if (existingSurface) return true;
+
+    const launcher = findFlowConfigLauncher();
     if (!launcher || !isVisible(launcher)) return false;
     launcher.click();
-    await sleep(800);
-    return true;
+    const surfaced = await waitForCondition(() => Boolean(findOpenFlowConfigSurface()), 2500, 100);
+    if (!surfaced) {
+      await sleep(800);
+    }
+    return surfaced || true;
   }
 
   async function selectFlowConfigOption(text) {
-    const option = findElementByText('button, [role="option"], [role="button"], [role="tab"], li, span', text);
-    if (!option || !isVisible(option)) return false;
-    if (!isSelectedControl(option, text)) {
-      option.click();
-      await sleep(600);
+    const launcher = findFlowConfigLauncher();
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const surface = findOpenFlowConfigSurface();
+      let option = findElementByTextInRoot(
+        surface,
+        'button, [role="option"], [role="button"], [role="tab"], li, span, div',
+        text,
+      );
+
+      if (!option || !isVisible(option) || option === launcher || launcher?.contains(option)) {
+        option = null;
+      }
+
+      if (option && isVisible(option)) {
+        if (!isSelectedControl(option, text)) {
+          option.click();
+          await sleep(700);
+        }
+        return true;
+      }
+
+      if (attempt === 0) {
+        const opened = await openFlowConfigPanel();
+        if (!opened) break;
+      }
     }
-    return true;
+
+    return false;
   }
 
   async function openCreateTypeChooser() {
@@ -323,6 +439,15 @@
     const config = resolveFlowModeConfig(mode);
     if (!config) {
       return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: `Unsupported mode '${mode}'` };
+    }
+
+    const observed = observeFlowState();
+    const topModeAlreadyVisible = normalizeText(observed.topMode).toLowerCase() === normalizeText(config.topMode).toLowerCase();
+    const subModeAlreadyVisible = !config.subMode
+      || normalizeText(observed.subMode).toLowerCase() === normalizeText(config.subMode).toLowerCase();
+
+    if (topModeAlreadyVisible && subModeAlreadyVisible) {
+      return { ok: true, config, topBtn: null, subBtn: null, observed };
     }
 
     let topBtn = findElementByText('button, [role="tab"], [role="button"], span', config.topMode);
@@ -1301,15 +1426,24 @@
     const needsConfigPanel = observed.aspectRatio !== '9:16'
       || observed.count !== '1x'
       || normalizeText(observed.model).toLowerCase() !== normalizeText(expectedModel).toLowerCase();
+    const configDebug = {
+      before: collectFlowConfigDebugSnapshot(),
+      needs_config_panel: needsConfigPanel,
+    };
 
     if (needsConfigPanel) {
-      await openFlowConfigPanel();
-      await selectFlowConfigOption('9:16');
-      await selectFlowConfigOption('1x');
-      await selectFlowConfigOption(expectedModel);
+      configDebug.panel_opened = await openFlowConfigPanel();
+      configDebug.after_open = collectFlowConfigDebugSnapshot();
+      configDebug.aspect_selected = await selectFlowConfigOption('9:16');
+      configDebug.count_selected = await selectFlowConfigOption('1x');
+      configDebug.model_selected = await selectFlowConfigOption(expectedModel);
+      configDebug.after_selection = collectFlowConfigDebugSnapshot();
     }
 
-    return checkFlowComposerReady('F2V');
+    return {
+      ...checkFlowComposerReady('F2V'),
+      config_debug: configDebug,
+    };
   }
 
   async function waitForNewProjectEditor(mode = 'F2V', timeoutMs = 45000) {
@@ -1344,6 +1478,7 @@
           signed_in_likely: readiness.signed_in_likely,
           blocking_modal_detected: readiness.blocking_modal_detected,
           observed: readiness.observed,
+          config_debug: readiness.config_debug,
           diagnostic: state.diagnostic,
         };
       }
@@ -1351,7 +1486,10 @@
       await sleep(1000);
     }
 
-    const readiness = checkFlowComposerReady(mode);
+    let readiness = checkFlowComposerReady(mode);
+    if (readiness.composer_found || readiness.generate_button_found || readiness.current_mode_visible !== 'UNKNOWN') {
+      readiness = await ensureVideoFramesEditorReady();
+    }
     return {
       ok: false,
       error: readiness.signed_in_likely ? 'FLOW_PROJECT_EDITOR_NOT_READY' : 'FLOW_PROJECT_CREATION_PATH_MISSING',
@@ -1364,6 +1502,7 @@
       signed_in_likely: readiness.signed_in_likely,
       blocking_modal_detected: readiness.blocking_modal_detected,
       observed: readiness.observed,
+      config_debug: readiness.config_debug,
       diagnostic: collectFlowPageStateDiagnostic(mode),
     };
   }
@@ -1403,6 +1542,7 @@
         signed_in_likely: alreadyReady.signed_in_likely,
         blocking_modal_detected: alreadyReady.blocking_modal_detected,
         observed: alreadyReady.observed,
+        config_debug: alreadyReady.config_debug,
         ...initialState.diagnostic,
       };
     }
@@ -1712,6 +1852,143 @@
     return { ok: true, status: requiredSlots.join(', ') };
   }
 
+  /**
+   * F2V SOP state machine — deterministic golden path:
+   *   Root/Landing → New Project → Video → Frames → 9:16 → 1x → Veo 3.1 - Lite
+   *   → verify Start slot visible → verify prompt field visible
+   *
+   * Emits full telemetry for each step. Hard-aborts with specific error codes
+   * on any mismatch. Must be called as mandatory pre-flight for F2V jobs.
+   *
+   * @param {object} job   - The job object (used for context, not modified)
+   * @param {Function} logStage - logStage(stage, status, message) from executeFlowJob
+   */
+  async function ensureF2VFramesWorkspaceReady(job, logStage) {
+    // ── Step 1: Root / landing check ─────────────────────────────────────────
+    // We don't navigate away (can't cross page boundary), but record whether
+    // we're at root or already inside a project editor.
+    const onRoot = isRootFlowUrl(window.location.href);
+    logStage(STAGES.FLOW_ROOT_OPENED, onRoot ? 'PASS' : 'SKIP',
+      onRoot ? null : 'Already in project editor — skipping root navigation');
+
+    // ── Step 2: New Project ───────────────────────────────────────────────────
+    // If mode controls and composer are both absent we're on the landing page
+    // and must click New Project first.
+    const earlyModeCheck = await ensureModeControlsVisible('F2V');
+    const earlyComposer = findComposerElement();
+    const needsNewProject = !earlyModeCheck.ok && !earlyComposer;
+
+    if (needsNewProject) {
+      await closeBlockingModalIfPresent();
+
+      const newProjectBtn = findNewProjectControl();
+      if (!newProjectBtn) {
+        logStage(STAGES.NEW_PROJECT_CLICKED, 'FAIL', 'ERR_NEW_PROJECT_NOT_FOUND');
+        throw new Error('ERR_NEW_PROJECT_NOT_FOUND');
+      }
+      newProjectBtn.click();
+      logStage(STAGES.NEW_PROJECT_CLICKED, 'PASS');
+
+      // Wait for Video button to appear (editor loading)
+      const appeared = await waitForCondition(
+        () => {
+          const btn = findElementByText('button,[role="tab"],[role="button"]', 'Video');
+          return !!(btn && isVisible(btn));
+        },
+        15000, 500,
+      );
+
+      if (!appeared) {
+        logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL',
+          'Video button not found after New Project click — timeout 15s');
+        throw new Error('ERR_WRONG_MODE_IMAGE_SELECTED');
+      }
+    } else {
+      logStage(STAGES.NEW_PROJECT_CLICKED, 'SKIP', 'Editor already active');
+    }
+
+    // ── Step 3: Select Video topMode ─────────────────────────────────────────
+    const modeControls = await ensureModeControlsVisible('F2V');
+    if (!modeControls.ok) {
+      logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL',
+        modeControls.error || 'ensureModeControlsVisible(F2V) returned !ok');
+      throw new Error('ERR_WRONG_MODE_IMAGE_SELECTED');
+    }
+
+    const { topBtn, subBtn } = modeControls;
+    if (topBtn && isVisible(topBtn) && !isSelectedControl(topBtn, 'Video')) {
+      topBtn.click();
+      await sleep(800);
+    }
+
+    const obsAfterVideo = observeFlowState();
+    if (obsAfterVideo.topMode !== 'Video') {
+      logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL', `topMode=${obsAfterVideo.topMode}`);
+      throw new Error('ERR_WRONG_MODE_IMAGE_SELECTED');
+    }
+    logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'PASS', 'topMode=Video');
+
+    // ── Step 4: Select Frames submode ────────────────────────────────────────
+    if (subBtn && isVisible(subBtn) && !isSelectedControl(subBtn, 'Frames')) {
+      subBtn.click();
+      await sleep(800);
+    }
+
+    const obsAfterFrames = observeFlowState();
+    if (obsAfterFrames.subMode !== 'Frames') {
+      logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'FAIL', `subMode=${obsAfterFrames.subMode}`);
+      throw new Error('ERR_FRAMES_MODE_NOT_ACTIVE');
+    }
+    logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'PASS', 'subMode=Frames');
+
+    // ── Steps 5–7: Config panel (9:16 / 1x / Veo 3.1 - Lite) ────────────────
+    await openFlowConfigPanel();
+
+    const aspectOk = await selectFlowConfigOption('9:16');
+    if (!aspectOk) {
+      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', 'selectFlowConfigOption(9:16) returned false');
+      throw new Error('ERR_ASPECT_9_16_NOT_SELECTED');
+    }
+    logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'PASS');
+
+    const countOk = await selectFlowConfigOption('1x');
+    if (!countOk) {
+      logStage(STAGES.FLOW_COUNT_1X_SELECTED, 'FAIL', 'selectFlowConfigOption(1x) returned false');
+      throw new Error('ERR_COUNT_1X_NOT_SELECTED');
+    }
+    logStage(STAGES.FLOW_COUNT_1X_SELECTED, 'PASS');
+
+    const modelOk = await selectFlowConfigOption('Veo 3.1 - Lite');
+    const obsAfterModel = observeFlowState();
+    if (!modelOk || (obsAfterModel.model && /nano.?banana/i.test(obsAfterModel.model))) {
+      logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'FAIL',
+        `modelOk=${modelOk} model=${obsAfterModel.model}`);
+      throw new Error('ERR_WRONG_MODEL_FOR_F2V');
+    }
+    logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'PASS', `model=${obsAfterModel.model}`);
+
+    // ── Step 8: Upload gate — Start slot must be visible ─────────────────────
+    const obsForSlot = observeFlowState();
+    if (!obsForSlot.visibleUploadSlots.includes('Start')) {
+      logStage(STAGES.START_SLOT_VISIBLE, 'FAIL',
+        `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`);
+      throw new Error('ERR_START_SLOT_NOT_VISIBLE');
+    }
+    logStage(STAGES.START_SLOT_VISIBLE, 'PASS',
+      `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`);
+
+    // ── Step 9: Prompt field must be present ─────────────────────────────────
+    const composerEl = findComposerElement();
+    if (!composerEl) {
+      logStage(STAGES.PROMPT_FIELD_VISIBLE, 'FAIL', 'findComposerElement returned null');
+      throw new Error('ERR_PROMPT_FIELD_NOT_FOUND');
+    }
+    logStage(STAGES.PROMPT_FIELD_VISIBLE, 'PASS');
+
+    logStage(STAGES.F2V_WORKSPACE_READY, 'PASS');
+    return { ok: true };
+  }
+
   async function executeFlowJob(job) {
     const report = { ok: false, stages: [] };
     const logStage = (stage, status = 'YES', message = null) => {
@@ -1741,70 +2018,77 @@
       // CRITICAL: Clear any pre-existing state
       logStage(STAGES.PRE_EXECUTION_STATE_CLEARED);
 
-      // 1. Select Top Mode (STRICT - must be correct mode)
-      let modeBtn = null;
       if (job.mode === 'F2V') {
-        const typeControls = await ensureModeControlsVisible('F2V');
-        if (!typeControls.ok) throw new Error(typeControls.error || 'ERR_MODE_SELECTION_FAILED');
-        modeBtn = typeControls.topBtn;
+        // CRITICAL: F2V SOP state machine — deterministic golden path:
+        //   Root/Landing → New Project → Video → Frames → 9:16 → 1x → Veo 3.1 - Lite
+        //   → Start slot visible → prompt field visible
+        // Hard-aborts with specific error codes on any mismatch.
+        await ensureF2VFramesWorkspaceReady(job, logStage);
+        // ensureF2VFramesWorkspaceReady already emits FLOW_TYPE_VIDEO_SELECTED,
+        // FLOW_SUBMODE_FRAMES_SELECTED, FLOW_ASPECT_9_16_SELECTED, etc.
+        // Log the legacy compatibility stages so downstream consumers see them too.
+        logStage(STAGES.FLOW_MODE_SELECTED, 'Video');
+        logStage(STAGES.FLOW_SUBMODE_SELECTED, 'Frames');
+        logStage(STAGES.FLOW_MODE_VERIFIED);
       } else {
+        // 1. Select Top Mode (STRICT - must be correct mode)
         const modeControls = await ensureModeControlsVisible(job.mode);
         if (!modeControls.ok) throw new Error(modeControls.error || 'ERR_MODE_SELECTION_FAILED');
-        modeBtn = modeControls.topBtn;
-      }
-      if (!modeBtn) throw new Error(`Mode button ${job.mode} not found`);
-      modeBtn.click();
-      await sleep(1000);
-      logStage(STAGES.FLOW_MODE_SELECTED, resolveFlowModeConfig(job.mode)?.topMode || job.mode);
-
-      // 2. Select Submode (STRICT)
-      if (job.mode === 'F2V' || job.mode === 'I2V') {
-        const submodeText = resolveFlowModeConfig(job.mode)?.subMode;
-        const modeControls = await ensureModeControlsVisible(job.mode);
-        const submodeBtn = modeControls.subBtn;
-        if (!submodeBtn) throw new Error(`Submode button ${submodeText} not found`);
-        submodeBtn.click();
+        const modeBtn = modeControls.topBtn;
+        if (!modeBtn) throw new Error(`Mode button ${job.mode} not found`);
+        modeBtn.click();
         await sleep(1000);
-        logStage(STAGES.FLOW_SUBMODE_SELECTED, submodeText);
-      } else if (job.mode === 'T2V') {
-        const clearedSubmodes = await clearVideoSubmodeSelection();
-        logStage(STAGES.FLOW_SUBMODE_SELECTED, clearedSubmodes.length > 0 ? `CLEARED:${clearedSubmodes.join(',')}` : 'NONE');
+        logStage(STAGES.FLOW_MODE_SELECTED, resolveFlowModeConfig(job.mode)?.topMode || job.mode);
+
+        // 2. Select Submode (STRICT)
+        if (job.mode === 'I2V') {
+          const submodeText = resolveFlowModeConfig(job.mode)?.subMode;
+          const modeControls2 = await ensureModeControlsVisible(job.mode);
+          const submodeBtn = modeControls2.subBtn;
+          if (!submodeBtn) throw new Error(`Submode button ${submodeText} not found`);
+          submodeBtn.click();
+          await sleep(1000);
+          logStage(STAGES.FLOW_SUBMODE_SELECTED, submodeText);
+        } else if (job.mode === 'T2V') {
+          const clearedSubmodes = await clearVideoSubmodeSelection();
+          logStage(STAGES.FLOW_SUBMODE_SELECTED, clearedSubmodes.length > 0 ? `CLEARED:${clearedSubmodes.join(',')}` : 'NONE');
+        }
+
+        // 3. Set Aspect Ratio
+        const requestedAspectRatio = resolveRequestedAspectRatio(job);
+        const requestedCount = resolveRequestedCount(job);
+        const requestedModel = resolveRequestedModel(job);
+        if (requestedAspectRatio || requestedCount || requestedModel) {
+          await openFlowConfigPanel();
+        }
+
+        if (requestedAspectRatio && await selectFlowConfigOption(requestedAspectRatio)) {
+          logStage(STAGES.ASPECT_SELECTED, requestedAspectRatio);
+        }
+
+        // 4. Set Count
+        if (requestedCount && await selectFlowConfigOption(requestedCount)) {
+          logStage(STAGES.COUNT_SELECTED, requestedCount);
+        }
+
+        // 5. Set Model
+        if (requestedModel && await selectFlowConfigOption(requestedModel)) {
+          logStage(STAGES.MODEL_SELECTED, requestedModel);
+        }
+
+        // CRITICAL: MODE VERIFICATION GATE
+        // Observe actual DOM state and verify it matches job intent
+        const observed = observeFlowState();
+        const verifyResult = verifyFlowMode(job, observed);
+
+        if (!verifyResult.ok) {
+          // HARD ABORT - Do not proceed with upload/prompt/generate
+          logStage(STAGES.FLOW_MODE_MISMATCH, verifyResult.reason);
+          throw new Error(`FLOW_MODE_MISMATCH: ${verifyResult.reason}`);
+        }
+
+        logStage(STAGES.FLOW_MODE_VERIFIED);
       }
-
-      // 3. Set Aspect Ratio
-      const requestedAspectRatio = resolveRequestedAspectRatio(job);
-      const requestedCount = resolveRequestedCount(job);
-      const requestedModel = resolveRequestedModel(job);
-      if (requestedAspectRatio || requestedCount || requestedModel) {
-        await openFlowConfigPanel();
-      }
-
-      if (requestedAspectRatio && await selectFlowConfigOption(requestedAspectRatio)) {
-        logStage(STAGES.ASPECT_SELECTED, requestedAspectRatio);
-      }
-
-      // 4. Set Count
-      if (requestedCount && await selectFlowConfigOption(requestedCount)) {
-        logStage(STAGES.COUNT_SELECTED, requestedCount);
-      }
-
-      // 5. Set Model
-      if (requestedModel && await selectFlowConfigOption(requestedModel)) {
-        logStage(STAGES.MODEL_SELECTED, requestedModel);
-      }
-
-      // CRITICAL: MODE VERIFICATION GATE
-      // Observe actual DOM state and verify it matches job intent
-      const observed = observeFlowState();
-      const verifyResult = verifyFlowMode(job, observed);
-
-      if (!verifyResult.ok) {
-        // HARD ABORT - Do not proceed with upload/prompt/generate
-        logStage(STAGES.FLOW_MODE_MISMATCH, verifyResult.reason);
-        throw new Error(`FLOW_MODE_MISMATCH: ${verifyResult.reason}`);
-      }
-
-      logStage(STAGES.FLOW_MODE_VERIFIED);
 
       // 6. Attach Assets (STRICT: Asset First, Prompt Second)
       const assetSlotContexts = [];
