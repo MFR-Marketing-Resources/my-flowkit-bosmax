@@ -294,27 +294,34 @@ function isRootFlowUrl(url) {
 
 function selectBestFlowTab(tabs, preferredUrl = null) {
   if (!tabs.length) {
+    console.log('[FlowAgent] No tabs found in query');
     return null;
   }
+
+  console.log('[FlowAgent] Found Flow tabs:', tabs.map(t => ({ id: t.id, url: t.url, status: t.status })));
 
   const normalizedPreferredUrl = String(preferredUrl || '').trim();
   if (normalizedPreferredUrl) {
     const exactMatch = tabs.find((tab) => tab.url === normalizedPreferredUrl);
     if (exactMatch) {
+      console.log('[FlowAgent] Using exact preferred match:', exactMatch.url);
       return exactMatch;
     }
   }
 
   const editorTab = tabs.find((tab) => isProjectEditorUrl(tab.url));
   if (editorTab) {
+    console.log('[FlowAgent] Using project editor tab:', editorTab.url);
     return editorTab;
   }
 
   const nonRootTab = tabs.find((tab) => !isRootFlowUrl(tab.url));
   if (nonRootTab) {
+    console.log('[FlowAgent] Using non-root tab:', nonRootTab.url);
     return nonRootTab;
   }
 
+  console.log('[FlowAgent] Falling back to first tab:', tabs[0].url);
   return tabs[0];
 }
 

@@ -302,6 +302,53 @@
     await sleep(300);
   }
 
+  async function simulateFileUpload(slotLabel, productId) {
+    console.log(`[FlowAgent] Attempting to upload asset to slot: ${slotLabel}`);
+    
+    // 1. Find and click the slot button (Start/End/Ingredients)
+    const slotBtn = findElementByText('button, [role="button"], span', slotLabel);
+    if (!slotBtn) {
+      console.warn(`[FlowAgent] Slot button ${slotLabel} not found`);
+      return false;
+    }
+    slotBtn.click();
+    await sleep(500);
+
+    // 2. Fetch the image from local agent
+    const imageUrl = `http://127.0.0.1:8100/api/products/${productId}/image`;
+    let file;
+    try {
+      const resp = await fetch(imageUrl);
+      const blob = await resp.blob();
+      file = new File([blob], `${productId}.jpg`, { type: 'image/jpeg' });
+    } catch (err) {
+      console.error(`[FlowAgent] Failed to fetch local image: ${err.message}`);
+      return false;
+    }
+
+    // 3. Find the dropzone/input
+    // Google Flow uses a hidden file input or a drop listener on the container
+    const fileInput = document.querySelector('input[type="file"]');
+    const dropzone = document.querySelector('[role="presentation"], .dropzone, [aria-label*="upload"]');
+    
+    const target = fileInput || dropzone || document.body;
+
+    // 4. Dispatch the drop event
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    
+    const dropEvent = new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: dataTransfer
+    });
+    
+    target.dispatchEvent(dropEvent);
+    console.log(`[FlowAgent] Dispatched drop event for ${slotLabel}`);
+    await sleep(1500); // Wait for upload to process
+    return true;
+  }
+
   /**
    * observeFlowState()
    * 
@@ -321,6 +368,7 @@
    * }
    */
   function observeFlowState() {
+    console.log('[FlowAgent] Observing Flow State...');
     const observed = {
       topMode: 'UNKNOWN',
       subMode: 'UNKNOWN',
@@ -332,58 +380,73 @@
       generateButtonState: 'unknown'
     };
 
-    // 1. Detect top mode (Image vs Video)
-    const videoModeBtn = findElementByText('button, div[role="button"]', 'Video');
-    const imageModeBtn = findElementByText('button, div[role="button"]', 'Image');
-    
-    // Check which tab/mode is actually selected/active
-    const isSelected = (el) => {
+    // Helper to check which tab/mode is actually selected/active
+    const isSelected = (el, text) => {
       if (!el) return false;
+      // 1. Radix UI / Data state (Highest priority for modern Flow)
+      if (el.getAttribute('data-state') === 'active') return true;
+      
+      // 2. Explicit ARIA state
       if (el.getAttribute('aria-selected') === 'true') return true;
-      if (el.classList.toString().includes('active')) return true;
-      // Check for material "selected" state (often a background color or border)
-      const style = window.getComputedStyle(el);
-      if (style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent') {
-         // This is heuristic, but often works when aria-selected is missing
+      if (el.getAttribute('aria-pressed') === 'true') return true;
+      
+      // 3. Class based markers
+      const classes = el.classList.toString().toLowerCase();
+      if (classes.includes('active') || classes.includes('selected') || classes.includes('checked')) return true;
+      
+      // 4. Text based heuristic (Radix trigger button text reflects selection)
+      if (text && el.textContent.toLowerCase().includes(text.toLowerCase())) {
+        // If it's a trigger and it contains the text, and we don't have other active markers,
+        // we check if it looks visually active or has the specific Radix class.
+        if (classes.includes('trigger') && (classes.includes('flow') || classes.includes('tab'))) return true;
       }
+      
       return false;
     };
 
-    if (isSelected(videoModeBtn)) {
+    // 1. Detect top mode (Image vs Video)
+    // In Radix UI, the triggers often have text like "play_circle Video"
+    const videoModeBtn = findElementByText('button, [role="tab"], [role="button"]', 'Video');
+    const imageModeBtn = findElementByText('button, [role="tab"], [role="button"]', 'Image');
+    
+    if (isSelected(videoModeBtn, 'Video')) {
       observed.topMode = 'Video';
-    } else if (isSelected(imageModeBtn)) {
+    } else if (isSelected(imageModeBtn, 'Image')) {
       observed.topMode = 'Image';
     } else {
-      // Final fallback: check for visible markers that only appear in one mode
-      if (document.body.innerText.includes('Frames') || document.body.innerText.includes('Start') || document.body.innerText.includes('End')) {
+      const bodyText = document.body.innerText;
+      if (bodyText.includes('Frames') || bodyText.includes('Start') || bodyText.includes('End')) {
         observed.topMode = 'Video';
-      } else if (document.body.innerText.includes('Nano Banana')) {
+      } else if (bodyText.includes('Nano Banana')) {
         observed.topMode = 'Image';
       }
     }
+    console.log(`[FlowAgent] Detected topMode: ${observed.topMode}`);
 
     // 2. Detect submode (Frames vs Ingredients)
     if (observed.topMode === 'Video') {
-      const framesBtn = findElementByText('button, div[role="button"]', 'Frames');
-      const ingredientsBtn = findElementByText('button, div[role="button"]', 'Ingredients');
+      const framesBtn = findElementByText('button, [role="tab"], [role="button"]', 'Frames');
+      const ingredientsBtn = findElementByText('button, [role="tab"], [role="button"]', 'Ingredients');
       
-      if (isSelected(framesBtn)) {
+      if (isSelected(framesBtn, 'Frames')) {
         observed.subMode = 'Frames';
-      } else if (isSelected(ingredientsBtn)) {
+      } else if (isSelected(ingredientsBtn, 'Ingredients')) {
         observed.subMode = 'Ingredients';
       } else {
-        // Fallback: check for visible upload slots
-        if (document.body.innerText.includes('Start') || document.body.innerText.includes('End')) {
+        const bodyText = document.body.innerText;
+        if (bodyText.includes('Start') || bodyText.includes('End')) {
           observed.subMode = 'Frames';
-        } else if (document.body.innerText.includes('Ingredients')) {
+        } else if (bodyText.includes('Ingredients')) {
           observed.subMode = 'Ingredients';
         }
       }
     }
+    console.log(`[FlowAgent] Detected subMode: ${observed.subMode}`);
 
     // 3. Detect model
-    const modelElements = document.querySelectorAll('button, span, div');
+    const modelElements = document.querySelectorAll('button, span, div, p');
     for (const el of modelElements) {
+      if (!isVisible(el)) continue;
       const text = el.textContent.trim();
       if (text.includes('Veo 3') || text.includes('Veo-3')) {
         observed.model = 'Veo 3.1';
@@ -395,47 +458,54 @@
     }
 
     // 4. Detect aspect ratio
-    const aspectElements = document.querySelectorAll('button, div[role="button"]');
+    const aspectElements = document.querySelectorAll('button, [role="tab"], [role="button"], span');
     for (const el of aspectElements) {
+      if (!isVisible(el)) continue;
       const text = el.textContent.trim();
-      if (text === '9:16' && el.getAttribute('aria-selected') === 'true') {
-        observed.aspectRatio = '9:16';
-        break;
-      } else if (text === '16:9' && el.getAttribute('aria-selected') === 'true') {
-        observed.aspectRatio = '16:9';
-        break;
+      if (text.includes('9:16')) {
+        if (isSelected(el, '9:16') || isSelected(el.closest('button'), '9:16')) {
+           observed.aspectRatio = '9:16';
+           break;
+        }
+      } else if (text.includes('16:9')) {
+        if (isSelected(el, '16:9') || isSelected(el.closest('button'), '16:9')) {
+           observed.aspectRatio = '16:9';
+           break;
+        }
       }
     }
 
     // 5. Detect count
-    const countElements = document.querySelectorAll('button, div[role="button"]');
+    const countElements = document.querySelectorAll('button, [role="tab"], [role="button"], span');
     for (const el of countElements) {
+      if (!isVisible(el)) continue;
       const text = el.textContent.trim();
-      if ((text === '1x' || text === '2x' || text === '3x' || text === '4x') && el.getAttribute('aria-selected') === 'true') {
-        observed.count = text;
-        break;
+      if (/^[1-4]x$/.test(text)) {
+        if (isSelected(el, text) || isSelected(el.closest('button'), text)) {
+          observed.count = text;
+          break;
+        }
       }
     }
 
     // 6. Detect upload slots
-    // Look for file inputs or dropzones near Start/End frame labels
-    const startSlotLabel = findElementByText('label, span, div', 'Start');
-    const endSlotLabel = findElementByText('label, span, div', 'End');
-    const ingredientsLabel = findElementByText('label, span, div', 'Ingredients');
-    const imageLabel = findElementByText('label, span, div', 'Image');
-
-    if (startSlotLabel && startSlotLabel.closest('[role="region"], div')) {
-      observed.visibleUploadSlots.push('Start');
+    const slotLabels = ['Start', 'End', 'Ingredients', 'Image'];
+    for (const label of slotLabels) {
+      // Find elements that exactly match or contain the label text in a small container
+      const candidateLabels = Array.from(document.querySelectorAll('label, span, div, p'))
+        .filter(el => isVisible(el) && el.textContent.trim() === label);
+      
+      if (candidateLabels.length > 0) {
+        observed.visibleUploadSlots.push(label);
+      } else {
+        // Fallback to partial search if exact fails
+        const partial = findElementByText('label, span, div, p', label);
+        if (partial && isVisible(partial)) {
+          observed.visibleUploadSlots.push(label);
+        }
+      }
     }
-    if (endSlotLabel && endSlotLabel.closest('[role="region"], div')) {
-      observed.visibleUploadSlots.push('End');
-    }
-    if (ingredientsLabel && ingredientsLabel.closest('[role="region"], div')) {
-      observed.visibleUploadSlots.push('Ingredients');
-    }
-    if (imageLabel && imageLabel.closest('[role="region"], div')) {
-      observed.visibleUploadSlots.push('Image');
-    }
+    console.log(`[FlowAgent] Detected slots: ${observed.visibleUploadSlots.join(', ')}`);
 
     // 7. Check composer
     observed.composerPresent = !!findComposerElement();
@@ -838,28 +908,29 @@
 
       logStage(STAGES.FLOW_MODE_VERIFIED);
 
-      // 6. Attach Assets (ONLY after mode verification passes)
-      // Route to correct slot based on job mode and observed state
+      // 6. Attach Assets (STRICT: Asset First, Prompt Second)
       if (job.mode === 'F2V') {
-        // Attach to Start frame slot
-        const startInput = document.querySelector('input[type="file"]');
-        if (startInput) {
-          // Simulate upload to Start slot
-          logStage(STAGES.START_FRAME_ATTACHED, job.startImageMediaId);
+        // Step 6a: Upload Start Frame
+        const okStart = await simulateFileUpload('Start', job.productId || job.startImageMediaId);
+        if (okStart) {
+          logStage(STAGES.START_FRAME_ATTACHED);
         } else {
-          throw new Error('DROPZONE_INPUT_NOT_FOUND');
+          console.warn('[FlowAgent] Start frame upload might have failed');
         }
 
-        // Attach to End frame slot if provided
-        if (job.endImageMediaId) {
-          logStage(STAGES.END_FRAME_ATTACHED, job.endImageMediaId);
+        // Step 6b: Upload End Frame
+        if (job.endImageMediaId || job.productId) {
+          const okEnd = await simulateFileUpload('End', job.productId || job.endImageMediaId);
+          if (okEnd) {
+            logStage(STAGES.END_FRAME_ATTACHED);
+          }
         }
       } else if (job.mode === 'I2V') {
-        // Attach to Ingredients slot
-        logStage(STAGES.INGREDIENTS_ATTACHED, job.startImageMediaId);
+        await simulateFileUpload('Ingredients', job.productId || job.startImageMediaId);
+        logStage(STAGES.INGREDIENTS_ATTACHED);
       } else if (job.mode === 'IMG') {
-        // Attach to Image workspace
-        logStage(STAGES.IMAGE_ASSET_ATTACHED, job.startImageMediaId);
+        await simulateFileUpload('Image', job.productId || job.startImageMediaId);
+        logStage(STAGES.IMAGE_ASSET_ATTACHED);
       }
 
       // 7. Composer Setup (ONLY after assets)
