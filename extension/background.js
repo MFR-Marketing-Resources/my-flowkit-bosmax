@@ -650,6 +650,11 @@ async function handleOpenFlowNewProject(mode) {
   }
 
   const refreshedTab = await chrome.tabs.get(targetTab.id).catch(() => targetTab);
+  const resolvedFlowUrl = String(result?.flow_url || refreshedTab?.url || targetTab?.url || rootUrl).trim();
+  if (isProjectEditorUrl(resolvedFlowUrl)) {
+    await setStoredFlowProjectUrl(resolvedFlowUrl);
+  }
+
   return {
     ok: Boolean(result?.ok),
     open_flow_root: Boolean(result?.open_flow_root),
@@ -660,8 +665,8 @@ async function handleOpenFlowNewProject(mode) {
     detail: result?.detail || null,
     flow_tab_id: refreshedTab?.id ?? targetTab?.id ?? null,
     flow_url_before: rootUrl,
-    flow_url_after: refreshedTab?.url || targetTab?.url || rootUrl,
-    flow_url: refreshedTab?.url || targetTab?.url || rootUrl,
+    flow_url_after: resolvedFlowUrl,
+    flow_url: resolvedFlowUrl,
     extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
     ...result,
   };

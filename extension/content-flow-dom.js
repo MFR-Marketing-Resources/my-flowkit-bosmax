@@ -12,7 +12,7 @@
  */
 
 (function() {
-  const FLOW_KIT_DOM_VERSION = '2026-05-11-multimode-gates';
+  const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
   const IMAGE_ASPECT_RATIOS = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
@@ -167,14 +167,32 @@
   }
 
   function findElementByText(selector, text) {
-    const elements = document.querySelectorAll(selector);
-    for (const el of elements) {
-      if (el.textContent.trim().toLowerCase() === text.toLowerCase()) return el;
+    const needle = normalizeText(text).toLowerCase();
+    if (!needle) return null;
+
+    const matches = [];
+    for (const el of document.querySelectorAll(selector)) {
+      if (!isVisible(el)) continue;
+      const label = normalizeText(
+        el.textContent
+        || el.getAttribute('aria-label')
+        || el.getAttribute('data-placeholder')
+        || ''
+      );
+      if (!label) continue;
+      const target = el.closest('button, [role="button"], [role="tab"], [role="option"], li, label') || el;
+      if (!isVisible(target)) continue;
+      matches.push({ label: label.toLowerCase(), target });
     }
-    for (const el of elements) {
-      if (el.textContent.trim().toLowerCase().includes(text.toLowerCase())) return el;
-    }
-    return null;
+
+    const exactMatch = matches.find((item) => item.label === needle);
+    if (exactMatch) return exactMatch.target;
+
+    const prefixMatch = matches.find((item) => item.label.startsWith(needle));
+    if (prefixMatch) return prefixMatch.target;
+
+    const partialMatch = matches.find((item) => item.label.includes(needle));
+    return partialMatch?.target || null;
   }
 
   function isSelectedControl(el, text) {
@@ -201,7 +219,122 @@
   }
 
   function resolveRequestedModel(job) {
-    return job?.modelLabel || job?.model || null;
+    return job?.modelLabel
+      || job?.model
+      || (job?.mode === 'F2V' ? 'Veo 3.1 - Lite' : null);
+  }
+
+  function buildExpectedModeJob(mode) {
+    if (mode === 'F2V') {
+      return {
+        mode: 'F2V',
+        orientation: 'VERTICAL',
+        count: 1,
+        modelLabel: 'Veo 3.1 - Lite',
+      };
+    }
+
+    if (mode === 'IMG') {
+      return {
+        mode: 'IMG',
+        modelLabel: 'Nano Banana 2',
+      };
+    }
+
+    return mode ? { mode } : null;
+  }
+
+  function findFlowConfigLauncher() {
+    const selectors = 'button, [role="button"], [role="tab"], [aria-haspopup], span, div';
+    const candidates = Array.from(document.querySelectorAll(selectors));
+    const preferred = [];
+    const fallback = [];
+
+    for (const el of candidates) {
+      if (!isVisible(el)) continue;
+      const text = normalizeText(el.textContent || el.getAttribute('aria-label') || '');
+      if (!text) continue;
+      const lower = text.toLowerCase();
+      const looksLikeModelChip = lower.includes('nano banana') || lower.includes('veo');
+      const looksLikeConfigChip = /(^|\s)([1-4]x)(\s|$)/i.test(text) && /(9:16|16:9|4:3|1:1|3:4)/.test(text);
+      const target = el.closest('button, [role="button"], [role="tab"], [aria-haspopup]') || el;
+      if (!isVisible(target)) continue;
+      if (looksLikeModelChip || looksLikeConfigChip) {
+        preferred.push(target);
+        continue;
+      }
+      if (lower.includes('veo') || lower.includes('nano banana')) {
+        fallback.push(target);
+      }
+    }
+
+    if (preferred.length > 0) return preferred[0];
+    if (fallback.length > 0) return fallback[0];
+    return null;
+  }
+
+  async function closeBlockingModalIfPresent() {
+    const closeButton = findElementByText('button, [role="button"], span', 'close');
+    if (!closeButton || !isVisible(closeButton)) return false;
+    closeButton.click();
+    await sleep(400);
+    return true;
+  }
+
+  async function openFlowConfigPanel() {
+    await closeBlockingModalIfPresent();
+    const launcher = document.querySelector('[aria-haspopup="listbox"]') || findFlowConfigLauncher();
+    if (!launcher || !isVisible(launcher)) return false;
+    launcher.click();
+    await sleep(800);
+    return true;
+  }
+
+  async function selectFlowConfigOption(text) {
+    const option = findElementByText('button, [role="option"], [role="button"], [role="tab"], li, span', text);
+    if (!option || !isVisible(option)) return false;
+    if (!isSelectedControl(option, text)) {
+      option.click();
+      await sleep(600);
+    }
+    return true;
+  }
+
+  async function openCreateTypeChooser() {
+    const candidates = Array.from(document.querySelectorAll('button, [role="button"], span, div'));
+    const trigger = candidates.find((el) => {
+      if (!isVisible(el)) return false;
+      const text = normalizeText(el.textContent || el.getAttribute('aria-label') || '');
+      if (!text) return false;
+      const lower = text.toLowerCase();
+      return lower.includes('create') && lower.includes('add_2') && !lower.includes('arrow_forward');
+    });
+
+    const target = trigger?.closest('button, [role="button"]') || trigger;
+    if (!target || !isVisible(target)) return false;
+    target.click();
+    await sleep(800);
+    return true;
+  }
+
+  async function ensureF2VTypeControlsVisible() {
+    let videoBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Video');
+    let framesBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Frames');
+
+    if ((!videoBtn || !isVisible(videoBtn) || !framesBtn || !isVisible(framesBtn)) && await openCreateTypeChooser()) {
+      videoBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Video');
+      framesBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Frames');
+    }
+
+    if (!videoBtn || !isVisible(videoBtn)) {
+      return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: 'Video control not visible after opening type selector' };
+    }
+
+    if (!framesBtn || !isVisible(framesBtn)) {
+      return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: 'Frames control not visible after opening type selector' };
+    }
+
+    return { ok: true, videoBtn, framesBtn };
   }
 
   function resolveRequestedCount(job) {
@@ -842,12 +975,15 @@
     const modelElements = document.querySelectorAll('button, span, div, p');
     for (const el of modelElements) {
       if (!isVisible(el)) continue;
-      const text = el.textContent.trim();
-      if (text.includes('Veo 3') || text.includes('Veo-3')) {
-        observed.model = 'Veo 3.1';
+      const text = normalizeText(el.textContent);
+      const veoMatch = text.match(/Veo(?:[-\s]?3(?:\.1)?(?:\s*-\s*(?:Lite|Pro))?)/i);
+      if (veoMatch) {
+        observed.model = normalizeText(veoMatch[0]);
         break;
-      } else if (text.includes('Nano Banana')) {
-        observed.model = 'Nano Banana';
+      }
+      const nanoBananaMatch = text.match(/Nano Banana(?:\s*2)?(?:\s*-\s*Pro|\s+Pro)?/i);
+      if (nanoBananaMatch) {
+        observed.model = normalizeText(nanoBananaMatch[0]);
         break;
       }
     }
@@ -1040,8 +1176,20 @@
       !result.blocking_modal_detected
     );
 
+    if (result.ok && mode) {
+      const expectedJob = buildExpectedModeJob(mode);
+      if (expectedJob) {
+        const verifyResult = verifyFlowMode(expectedJob, observed);
+        if (!verifyResult.ok) {
+          result.ok = false;
+          result.error = `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`;
+          result.verify = verifyResult;
+        }
+      }
+    }
+
     if (!result.ok) {
-      result.error = 'ABORT_FLOW_COMPOSER_NOT_READY';
+      result.error = result.error || 'ABORT_FLOW_COMPOSER_NOT_READY';
     }
 
     return result;
@@ -1108,16 +1256,46 @@
   }
 
   async function ensureVideoFramesEditorReady() {
-    const videoBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Video');
+    const typeControls = await ensureF2VTypeControlsVisible();
+    if (!typeControls.ok) {
+      return {
+        ok: false,
+        flow_tab_found: true,
+        flow_url: window.location.href,
+        signed_in_likely: true,
+        composer_found: !!findComposerElement(),
+        composer_editable: !!findComposerElement() && isComposerEditable(findComposerElement()),
+        generate_button_found: !!findGenerateButtonNearComposer(),
+        current_mode_visible: 'UNKNOWN',
+        blocking_modal_detected: !!detectBlockingModal(),
+        observed: observeFlowState(),
+        error: typeControls.error,
+        detail: typeControls.detail,
+      };
+    }
+
+    const { videoBtn, framesBtn } = typeControls;
     if (videoBtn && isVisible(videoBtn) && !isSelectedControl(videoBtn, 'Video')) {
       videoBtn.click();
       await sleep(800);
     }
 
-    const framesBtn = findElementByText('button, [role="tab"], [role="button"], span', 'Frames');
     if (framesBtn && isVisible(framesBtn) && !isSelectedControl(framesBtn, 'Frames')) {
       framesBtn.click();
       await sleep(800);
+    }
+
+    const expectedModel = resolveRequestedModel({ mode: 'F2V' });
+    const observed = observeFlowState();
+    const needsConfigPanel = observed.aspectRatio !== '9:16'
+      || observed.count !== '1x'
+      || normalizeText(observed.model).toLowerCase() !== normalizeText(expectedModel).toLowerCase();
+
+    if (needsConfigPanel) {
+      await openFlowConfigPanel();
+      await selectFlowConfigOption('9:16');
+      await selectFlowConfigOption('1x');
+      await selectFlowConfigOption(expectedModel);
     }
 
     return checkFlowComposerReady('F2V');
@@ -1144,7 +1322,7 @@
 
       const modeVisible = String(readiness.current_mode_visible || '');
       const modeReady = modeVisible.includes('Video/Frames');
-      if (readiness.composer_found && readiness.composer_editable && readiness.generate_button_found && modeReady) {
+      if (readiness.ok && readiness.composer_found && readiness.composer_editable && readiness.generate_button_found && modeReady) {
         return {
           ok: true,
           editor_ready: true,
@@ -1486,6 +1664,16 @@
       return result;
     }
 
+    const requestedCount = resolveRequestedCount(job);
+    if (requestedCount && observed.count !== 'UNKNOWN' && observed.count !== requestedCount) {
+      result.ok = false;
+      result.error = 'FLOW_MODE_MISMATCH';
+      result.reason = `Expected count='${requestedCount}', got '${observed.count}'`;
+      result.expected = expectations;
+      result.observed = observed;
+      return result;
+    }
+
     return result;
   }
 
@@ -1543,7 +1731,14 @@
       logStage(STAGES.PRE_EXECUTION_STATE_CLEARED);
 
       // 1. Select Top Mode (STRICT - must be correct mode)
-      const modeBtn = findElementByText('button, div[role="button"], span', job.mode === 'IMG' ? 'Image' : 'Video');
+      let modeBtn = null;
+      if (job.mode === 'F2V') {
+        const typeControls = await ensureF2VTypeControlsVisible();
+        if (!typeControls.ok) throw new Error(typeControls.error || 'ERR_MODE_SELECTION_FAILED');
+        modeBtn = typeControls.videoBtn;
+      } else {
+        modeBtn = findElementByText('button, div[role="button"], span', job.mode === 'IMG' ? 'Image' : 'Video');
+      }
       if (!modeBtn) throw new Error(`Mode button ${job.mode} not found`);
       modeBtn.click();
       await sleep(1000);
@@ -1552,7 +1747,9 @@
       // 2. Select Submode (STRICT)
       if (job.mode === 'F2V' || job.mode === 'I2V') {
         const submodeText = job.mode === 'F2V' ? 'Frames' : 'Ingredients';
-        const submodeBtn = findElementByText('button, div[role="button"], span', submodeText);
+        const submodeBtn = job.mode === 'F2V'
+          ? (await ensureF2VTypeControlsVisible()).framesBtn
+          : findElementByText('button, div[role="button"], span', submodeText);
         if (!submodeBtn) throw new Error(`Submode button ${submodeText} not found`);
         submodeBtn.click();
         await sleep(1000);
@@ -1564,34 +1761,24 @@
 
       // 3. Set Aspect Ratio
       const requestedAspectRatio = resolveRequestedAspectRatio(job);
-      const aspectBtn = requestedAspectRatio ? findElementByText('button, div[role="button"]', requestedAspectRatio) : null;
-      if (aspectBtn) {
-        aspectBtn.click();
-        await sleep(500);
+      const requestedCount = resolveRequestedCount(job);
+      const requestedModel = resolveRequestedModel(job);
+      if (requestedAspectRatio || requestedCount || requestedModel) {
+        await openFlowConfigPanel();
+      }
+
+      if (requestedAspectRatio && await selectFlowConfigOption(requestedAspectRatio)) {
         logStage(STAGES.ASPECT_SELECTED, requestedAspectRatio);
       }
 
       // 4. Set Count
-      const requestedCount = resolveRequestedCount(job);
-      const countBtn = findElementByText('button, div[role="button"]', requestedCount);
-      if (countBtn) {
-        countBtn.click();
-        await sleep(500);
+      if (requestedCount && await selectFlowConfigOption(requestedCount)) {
         logStage(STAGES.COUNT_SELECTED, requestedCount);
       }
 
       // 5. Set Model
-      const requestedModel = resolveRequestedModel(job);
-      const modelDropdown = document.querySelector('[aria-haspopup="listbox"]');
-      if (modelDropdown && requestedModel) {
-        modelDropdown.click();
-        await sleep(800);
-        const modelOption = findElementByText('[role="option"], li, span', requestedModel);
-        if (modelOption) {
-          modelOption.click();
-          await sleep(800);
-          logStage(STAGES.MODEL_SELECTED, requestedModel);
-        }
+      if (requestedModel && await selectFlowConfigOption(requestedModel)) {
+        logStage(STAGES.MODEL_SELECTED, requestedModel);
       }
 
       // CRITICAL: MODE VERIFICATION GATE

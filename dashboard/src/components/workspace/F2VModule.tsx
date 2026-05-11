@@ -13,7 +13,7 @@ export default function F2VModule({ onExecute, isExecuting, compact = false }: F
   // --- States ---
   const [manualPrompt, setManualPrompt] = useState('')
   const [orientation, setOrientation] = useState<Orientation>('VERTICAL')
-  const [model, setModel] = useState('Veo 3.1 - Pro')
+  const [model, setModel] = useState('Veo 3.1 - Lite')
   const [count, setCount] = useState(1)
   const [isUploading, setIsUploading] = useState(false)
   
@@ -138,8 +138,8 @@ export default function F2VModule({ onExecute, isExecuting, compact = false }: F
             <div className="space-y-3">
               <label className="text-xs font-bold text-slate-400">Generation Model</label>
               <select title="Select generation model" value={model} onChange={(e) => setModel(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] font-bold text-slate-300 outline-none">
-                <option>Veo 3.1 - Pro</option>
                 <option>Veo 3.1 - Lite</option>
+                <option>Veo 3.1 - Pro</option>
                 <option>Nano Banana 2</option>
               </select>
             </div>
