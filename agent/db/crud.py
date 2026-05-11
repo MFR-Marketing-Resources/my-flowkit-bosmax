@@ -56,7 +56,8 @@ async def _update(table: str, pk: str, pk_val: str, **kwargs) -> Optional[dict]:
     kwargs = _safe_kwargs(table, kwargs)
     if not kwargs:
         return await _get(table, pk, pk_val)
-    kwargs["updated_at"] = _now()
+    if "updated_at" in _COLUMNS.get(table, set()):
+        kwargs["updated_at"] = _now()
     sets = ", ".join(f"{k}=?" for k in kwargs)
     vals = list(kwargs.values()) + [pk_val]
     db = await get_db()
@@ -504,9 +505,9 @@ async def get_telemetry_summary() -> dict:
     cur = await db.execute("SELECT status, google_flow_stage, error_message FROM request_telemetry ORDER BY created_at DESC LIMIT 1")
     last = await cur.fetchone()
     if last:
-        summary["last_job_status"] = last["status"]
-        summary["last_stage"] = last["google_flow_stage"]
-        summary["last_error"] = last["error_message"]
+        summary["last_job_status"] = last["status"] or ""
+        summary["last_stage"] = last["google_flow_stage"] or ""
+        summary["last_error"] = last["error_message"] or ""
     else:
         summary["last_job_status"] = ""
         summary["last_stage"] = ""

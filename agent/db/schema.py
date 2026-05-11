@@ -138,9 +138,9 @@ CREATE TABLE IF NOT EXISTS request (
     video_id      TEXT REFERENCES video(id) ON DELETE CASCADE,
     scene_id      TEXT REFERENCES scene(id) ON DELETE CASCADE,
     character_id  TEXT REFERENCES character(id) ON DELETE CASCADE,
-    type          TEXT NOT NULL CHECK(type IN ('GENERATE_IMAGE','REGENERATE_IMAGE','EDIT_IMAGE','GENERATE_VIDEO','REGENERATE_VIDEO','GENERATE_VIDEO_REFS','TRUE_F2V','UPSCALE_VIDEO','GENERATE_CHARACTER_IMAGE','REGENERATE_CHARACTER_IMAGE','EDIT_CHARACTER_IMAGE')),
+    type          TEXT NOT NULL CHECK(type IN ('GENERATE_IMAGE','REGENERATE_IMAGE','EDIT_IMAGE','GENERATE_VIDEO','REGENERATE_VIDEO','GENERATE_VIDEO_REFS','TRUE_F2V','UPSCALE_VIDEO','GENERATE_CHARACTER_IMAGE','REGENERATE_CHARACTER_IMAGE','EDIT_CHARACTER_IMAGE','MANUAL_FLOW_JOB','TELEMETRY_SELF_TEST')),
     orientation   TEXT CHECK(orientation IN ('VERTICAL','HORIZONTAL')),
-    status        TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
+    status        TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','PROCESSING','WAITING_FLOW','FLOW_RUNNING','COMPLETED','FAILED')),
     request_id    TEXT,   -- external operation ID
     media_id  TEXT,
     output_url    TEXT,
@@ -382,6 +382,12 @@ async def init_db():
                 needs_recreate = True  # old GENERATE_IMAGES typo
             if 'REGENERATE_IMAGE' not in table_sql:
                 needs_recreate = True  # missing REGENERATE/EDIT types
+            if 'MANUAL_FLOW_JOB' not in table_sql or 'TELEMETRY_SELF_TEST' not in table_sql:
+                needs_recreate = True  # missing direct/manual request types
+            if 'WAITING_FLOW' not in table_sql or 'FLOW_RUNNING' not in table_sql:
+                needs_recreate = True  # missing manual flow statuses
+        if 'automation_report' not in request_columns:
+            needs_recreate = True  # request updates expect this column to exist
         if needs_recreate:
             await db.execute("PRAGMA foreign_keys=OFF")
             await db.execute("ALTER TABLE request RENAME TO _request_old")
@@ -392,9 +398,9 @@ CREATE TABLE IF NOT EXISTS request (
     video_id      TEXT REFERENCES video(id) ON DELETE CASCADE,
     scene_id      TEXT REFERENCES scene(id) ON DELETE CASCADE,
     character_id  TEXT REFERENCES character(id) ON DELETE CASCADE,
-    type          TEXT NOT NULL CHECK(type IN ('GENERATE_IMAGE','REGENERATE_IMAGE','EDIT_IMAGE','GENERATE_VIDEO','REGENERATE_VIDEO','GENERATE_VIDEO_REFS','TRUE_F2V','UPSCALE_VIDEO','GENERATE_CHARACTER_IMAGE','REGENERATE_CHARACTER_IMAGE','EDIT_CHARACTER_IMAGE')),
+    type          TEXT NOT NULL CHECK(type IN ('GENERATE_IMAGE','REGENERATE_IMAGE','EDIT_IMAGE','GENERATE_VIDEO','REGENERATE_VIDEO','GENERATE_VIDEO_REFS','TRUE_F2V','UPSCALE_VIDEO','GENERATE_CHARACTER_IMAGE','REGENERATE_CHARACTER_IMAGE','EDIT_CHARACTER_IMAGE','MANUAL_FLOW_JOB','TELEMETRY_SELF_TEST')),
     orientation   TEXT CHECK(orientation IN ('VERTICAL','HORIZONTAL')),
-    status        TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
+    status        TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','PROCESSING','WAITING_FLOW','FLOW_RUNNING','COMPLETED','FAILED')),
     request_id    TEXT,
     media_id      TEXT,
     output_url    TEXT,
@@ -410,11 +416,38 @@ CREATE TABLE IF NOT EXISTS request (
 CREATE INDEX IF NOT EXISTS idx_request_status ON request(status);
 CREATE INDEX IF NOT EXISTS idx_request_scene ON request(scene_id);
 """)
-            await db.execute("INSERT OR IGNORE INTO request SELECT * FROM _request_old")
-            await db.execute("UPDATE request SET type='GENERATE_IMAGE' WHERE type='GENERATE_IMAGES'")
+            await db.execute("""
+INSERT OR IGNORE INTO request (
+    id, project_id, video_id, scene_id, character_id, type, orientation, status,
+    request_id, media_id, output_url, error_message, automation_report,
+    retry_count, next_retry_at, edit_prompt, source_media_id, created_at, updated_at
+)
+SELECT
+    id,
+    project_id,
+    video_id,
+    scene_id,
+    character_id,
+    CASE WHEN type='GENERATE_IMAGES' THEN 'GENERATE_IMAGE' ELSE type END,
+    orientation,
+    status,
+    request_id,
+    media_id,
+    output_url,
+    error_message,
+    NULL,
+    COALESCE(retry_count, 0),
+    next_retry_at,
+    edit_prompt,
+    source_media_id,
+    created_at,
+    updated_at
+FROM _request_old
+""")
             await db.execute("DROP TABLE _request_old")
             await db.execute("PRAGMA foreign_keys=ON")
-            logger.info("Migrated: renamed GENERATE_IMAGES -> GENERATE_IMAGE in request table")
+            await db.commit()
+            logger.info("Migrated: rebuilt request table for current request types and statuses")
         # Migration: add source column to scene table
         cursor = await db.execute("PRAGMA table_info(scene)")
         scene_columns = {row[1] for row in await cursor.fetchall()}
@@ -734,6 +767,105 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
                 source        TEXT NOT NULL CHECK(source IN ('dashboard','backend','worker','extension','google_flow'))
             )""")
             logger.info("Migrated: created request_stage_event table")
+
+        cursor = await db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='request_telemetry'")
+        telemetry_row = await cursor.fetchone()
+        telemetry_sql = telemetry_row[0] if telemetry_row else ""
+        if telemetry_sql and ('_product_old' in telemetry_sql or '_request_old' in telemetry_sql):
+            logger.info("Migrating request_telemetry: repairing broken FK reference to renamed tables")
+            import sqlite3 as _sqlite3
+            _sync_path = str(DB_PATH) if str(DB_PATH) != ":memory:" else None
+            if _sync_path:
+                await db.commit()
+                _sync = _sqlite3.connect(_sync_path)
+                try:
+                    _sync.execute("PRAGMA foreign_keys=OFF")
+                    _sync.execute("""
+                        CREATE TABLE request_telemetry_new (
+                            request_id    TEXT PRIMARY KEY REFERENCES request(id) ON DELETE CASCADE,
+                            project_id    TEXT REFERENCES project(id) ON DELETE CASCADE,
+                            video_id      TEXT REFERENCES video(id) ON DELETE CASCADE,
+                            scene_id      TEXT REFERENCES scene(id) ON DELETE CASCADE,
+                            product_id    TEXT REFERENCES product(id) ON DELETE SET NULL,
+                            request_type  TEXT NOT NULL,
+                            mode          TEXT,
+                            status        TEXT NOT NULL DEFAULT 'QUEUED',
+                            google_flow_stage TEXT,
+                            extension_stage   TEXT,
+                            worker_stage      TEXT,
+                            created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                            queued_at         TEXT,
+                            started_at        TEXT,
+                            last_heartbeat_at TEXT,
+                            completed_at      TEXT,
+                            failed_at         TEXT,
+                            duration_seconds  REAL DEFAULT 0,
+                            idle_seconds      REAL DEFAULT 0,
+                            processing_seconds REAL DEFAULT 0,
+                            error_code        TEXT,
+                            error_message     TEXT
+                        )
+                    """)
+                    _sync.execute("""
+                        INSERT INTO request_telemetry_new (
+                            request_id, project_id, video_id, scene_id, product_id, request_type, mode, status,
+                            google_flow_stage, extension_stage, worker_stage, created_at, queued_at, started_at,
+                            last_heartbeat_at, completed_at, failed_at, duration_seconds, idle_seconds,
+                            processing_seconds, error_code, error_message
+                        )
+                        SELECT
+                            request_id, project_id, video_id, scene_id, product_id, request_type, mode, status,
+                            google_flow_stage, extension_stage, worker_stage, created_at, queued_at, started_at,
+                            last_heartbeat_at, completed_at, failed_at, duration_seconds, idle_seconds,
+                            processing_seconds, error_code, error_message
+                        FROM request_telemetry
+                    """)
+                    _sync.execute("DROP TABLE request_telemetry")
+                    _sync.execute("ALTER TABLE request_telemetry_new RENAME TO request_telemetry")
+                    _sync.commit()
+                    _sync.execute("PRAGMA foreign_keys=ON")
+                    logger.info("Migrated: request_telemetry FK reference repaired")
+                finally:
+                    _sync.close()
+
+        cursor = await db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='request_stage_event'")
+        stage_event_row = await cursor.fetchone()
+        stage_event_sql = stage_event_row[0] if stage_event_row else ""
+        if stage_event_sql and '_request_old' in stage_event_sql:
+            logger.info("Migrating request_stage_event: repairing broken FK reference to renamed request table")
+            import sqlite3 as _sqlite3
+            _sync_path = str(DB_PATH) if str(DB_PATH) != ":memory:" else None
+            if _sync_path:
+                await db.commit()
+                _sync = _sqlite3.connect(_sync_path)
+                try:
+                    _sync.execute("PRAGMA foreign_keys=OFF")
+                    _sync.execute("""
+                        CREATE TABLE request_stage_event_new (
+                            id            TEXT PRIMARY KEY,
+                            request_id    TEXT NOT NULL REFERENCES request(id) ON DELETE CASCADE,
+                            timestamp     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                            stage         TEXT NOT NULL,
+                            status        TEXT NOT NULL,
+                            message       TEXT,
+                            source        TEXT NOT NULL CHECK(source IN ('dashboard','backend','worker','extension','google_flow'))
+                        )
+                    """)
+                    _sync.execute("""
+                        INSERT INTO request_stage_event_new (
+                            id, request_id, timestamp, stage, status, message, source
+                        )
+                        SELECT
+                            id, request_id, timestamp, stage, status, message, source
+                        FROM request_stage_event
+                    """)
+                    _sync.execute("DROP TABLE request_stage_event")
+                    _sync.execute("ALTER TABLE request_stage_event_new RENAME TO request_stage_event")
+                    _sync.commit()
+                    _sync.execute("PRAGMA foreign_keys=ON")
+                    logger.info("Migrated: request_stage_event FK reference repaired")
+                finally:
+                    _sync.close()
 
         # Migration: create batch tables if missing
         cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='batch'")

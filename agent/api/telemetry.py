@@ -16,7 +16,7 @@ class TelemetrySummary(BaseModel):
     failed: int
     last_job_status: str
     last_stage: str
-    last_error: str
+    last_error: Optional[str] = None
     idle_seconds: float
 
 class StageEventCreate(BaseModel):
@@ -108,7 +108,7 @@ async def telemetry_self_test():
         "TELEMETRY_SELF_TEST",
         "PASS",
         "Harmless telemetry self-test event generated.",
-        "SYSTEM"
+        "backend"
     )
     return {
         "ok": True,
