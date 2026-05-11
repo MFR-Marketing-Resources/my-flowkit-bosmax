@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import type { Project, TelemetryRequest } from '../../types'
 import { formatKualaLumpurDateTime } from '../../utils/dateTime'
+import { buildCsv, downloadFile } from '../../utils/exportFiles'
 import {
   getTelemetryMode,
+  getTelemetryModeLabel,
   getTelemetryPrimaryRemark,
   getTelemetryRequestLabel,
   getTelemetryStatusLabel,
@@ -103,6 +105,51 @@ export default function ProjectHistoryPanel({ projects, requests }: ProjectHisto
       .sort((left, right) => new Date(right.latestUpdatedAt).getTime() - new Date(left.latestUpdatedAt).getTime())
   }, [filter, projects, requests, search])
 
+  const recentActivity = useMemo(() => sortTelemetryByUpdatedAt(requests).slice(0, 4), [requests])
+
+  const handleExportJson = () => {
+    const payload = rows.map(row => ({
+      project_id: row.project.id,
+      project_name: row.project.name,
+      project_status: row.latestTrace ? getTelemetryStatusLabel(row.latestTrace.status) : row.project.status,
+      latest_request_id: row.latestTrace?.request_id || '',
+      latest_mode: row.latestTrace ? getTelemetryModeLabel(row.latestTrace) : '',
+      latest_video_activity: row.latestVideoTrace ? getTelemetryRequestLabel(row.latestVideoTrace) : '',
+      latest_image_activity: row.latestImageTrace ? getTelemetryRequestLabel(row.latestImageTrace) : '',
+      waiting: row.counts.waiting,
+      running: row.counts.running,
+      completed: row.counts.completed,
+      failed: row.counts.failed,
+      latest_remark: row.latestRemark,
+      latest_updated_myt: formatKualaLumpurDateTime(row.latestUpdatedAt),
+    }))
+
+    downloadFile('bosmax-project-history.json', JSON.stringify(payload, null, 2), 'application/json;charset=utf-8')
+  }
+
+  const handleExportCsv = () => {
+    const csv = buildCsv(
+      ['project_id', 'project_name', 'status', 'latest_request_id', 'latest_mode', 'waiting', 'running', 'completed', 'failed', 'latest_video_activity', 'latest_image_activity', 'latest_remark', 'latest_updated_myt'],
+      rows.map(row => [
+        row.project.id,
+        row.project.name,
+        row.latestTrace ? getTelemetryStatusLabel(row.latestTrace.status) : row.project.status,
+        row.latestTrace?.request_id || '',
+        row.latestTrace ? getTelemetryModeLabel(row.latestTrace) : '',
+        row.counts.waiting,
+        row.counts.running,
+        row.counts.completed,
+        row.counts.failed,
+        row.latestVideoTrace ? getTelemetryRequestLabel(row.latestVideoTrace) : '',
+        row.latestImageTrace ? getTelemetryRequestLabel(row.latestImageTrace) : '',
+        row.latestRemark,
+        formatKualaLumpurDateTime(row.latestUpdatedAt),
+      ]),
+    )
+
+    downloadFile('bosmax-project-history.csv', csv, 'text/csv;charset=utf-8')
+  }
+
   return (
     <div className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/80">
       <div className="border-b border-slate-800 bg-slate-900/70 px-5 py-4">
@@ -111,8 +158,24 @@ export default function ProjectHistoryPanel({ projects, requests }: ProjectHisto
             <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-200">Project History</h3>
             <p className="mt-1 max-w-3xl text-xs text-slate-400">This is the operator-grade project history view. Check execution status, latest video and image work, failure remarks, and execution timestamps in Kuala Lumpur time.</p>
           </div>
-          <div className="rounded-full border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">
-            Kuala Lumpur time • MYT
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              className="rounded-full border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 transition hover:border-blue-400/50 hover:text-blue-200"
+            >
+              Export CSV
+            </button>
+            <button
+              type="button"
+              onClick={handleExportJson}
+              className="rounded-full border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 transition hover:border-blue-400/50 hover:text-blue-200"
+            >
+              Export JSON
+            </button>
+            <div className="rounded-full border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">
+              Kuala Lumpur time • MYT
+            </div>
           </div>
         </div>
 
@@ -134,6 +197,26 @@ export default function ProjectHistoryPanel({ projects, requests }: ProjectHisto
             placeholder="Search project, request ID, remark, error..."
             className="w-full rounded-full border border-slate-700 bg-slate-950 px-4 py-2 text-xs text-slate-200 outline-none placeholder:text-slate-500 focus:border-blue-400/50 sm:ml-auto sm:w-auto sm:min-w-[280px]"
           />
+        </div>
+
+        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          {recentActivity.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-950/50 px-4 py-3 text-xs text-slate-500 xl:col-span-4">
+              No live telemetry yet. As soon as the extension or operator submits real work, the latest execution context will appear here.
+            </div>
+          ) : recentActivity.map(trace => (
+            <div key={trace.request_id} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">{getTelemetryModeLabel(trace)}</div>
+                  <div className="mt-2 truncate text-sm font-medium text-slate-100">{getTelemetryRequestLabel(trace)}</div>
+                </div>
+                <StatusBadge tone={getTelemetryStatusTone(trace.status)} label={getTelemetryStatusLabel(trace.status)} />
+              </div>
+              <div className="mt-2 line-clamp-2 text-xs text-slate-400">{getTelemetryPrimaryRemark(trace)}</div>
+              <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-slate-500">{formatKualaLumpurDateTime(getTelemetryUpdatedAt(trace))}</div>
+            </div>
+          ))}
         </div>
       </div>
 
