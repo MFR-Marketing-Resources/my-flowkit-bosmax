@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { ArrowRight, Info } from 'lucide-react'
 import { fetchAPI } from '../../api/client'
 import type { Product, Orientation } from '../../types'
