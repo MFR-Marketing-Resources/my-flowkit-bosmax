@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Search, ChevronDown, Check } from 'lucide-react'
 import type { Product } from '../../types'
 
