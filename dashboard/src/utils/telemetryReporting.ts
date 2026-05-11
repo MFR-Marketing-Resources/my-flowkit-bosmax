@@ -1,4 +1,5 @@
 import type { TelemetryRequest, TelemetryRequestDetail } from '../types'
+import { formatKualaLumpurDateTime } from './dateTime'
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   MANUAL_FLOW_JOB: 'Manual Flow Run',
@@ -138,8 +139,7 @@ export function formatRelativeTime(value: string | null | undefined) {
 }
 
 export function formatExactDateTime(value: string | null | undefined) {
-  if (!value) return '—'
-  return new Date(value).toLocaleString()
+  return formatKualaLumpurDateTime(value)
 }
 
 export function getTelemetryUpdatedAt(trace: TelemetryRequest) {

@@ -3,8 +3,9 @@ import { BrowserRouter, NavLink, Navigate, Routes, Route, useLocation } from 're
 import { 
   LayoutDashboard, FolderOpen, ScrollText, Film, Sparkles, PackageSearch, 
   Video, Layers, Image as ImageIcon, Settings as SettingsIcon, Activity,
-  Briefcase, Menu, X
+  Briefcase, Menu, X, Siren
 } from 'lucide-react'
+import { fetchAPI } from './api/client'
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext'
 import DashboardPage from './pages/DashboardPage'
 import ProjectsPage from './pages/ProjectsPage'
@@ -14,6 +15,8 @@ import OperatorPage from './pages/OperatorPage'
 import ProductsSalesAnalyzerPage from './pages/ProductsSalesAnalyzerPage'
 import BatchesPage from './pages/BatchesPage'
 import SettingsPage from './pages/SettingsPage'
+import TroubleshootPage from './pages/TroubleshootPage'
+import type { TelemetrySummary } from './types'
 
 const NAV_GROUPS = [
   {
@@ -39,6 +42,7 @@ const NAV_GROUPS = [
     items: [
       { to: '/settings', icon: SettingsIcon, label: 'Settings' },
       { to: '/health', icon: Activity, label: 'Health' },
+      { to: '/troubleshoot', icon: Siren, label: 'Troubleshoot' },
       { to: '/logs', icon: ScrollText, label: 'Logs' },
       { to: '/', icon: LayoutDashboard, label: 'Overview', exact: true },
     ]
@@ -64,6 +68,12 @@ function Layout() {
   const isPortalMode = new URLSearchParams(location.search).get('portal') === 'side'
   const [isCompactNav, setIsCompactNav] = useState(() => isPortalMode || window.innerWidth < 1180)
   const [navOpen, setNavOpen] = useState(() => !isPortalMode && window.innerWidth >= 1180)
+  const [portalSummary, setPortalSummary] = useState<TelemetrySummary | null>(null)
+
+  const withPortalQuery = (path: string) => {
+    if (!isPortalMode) return path
+    return `${path}${path.includes('?') ? '&' : '?'}portal=side`
+  }
 
   useEffect(() => {
     const syncViewportMode = () => {
@@ -93,6 +103,36 @@ function Layout() {
       setNavOpen(false)
     }
   }, [isCompactNav, location.pathname])
+
+  useEffect(() => {
+    if (!isPortalMode) {
+      setPortalSummary(null)
+      return
+    }
+
+    const loadSummary = () => {
+      fetchAPI<TelemetrySummary>('/api/telemetry/summary')
+        .then(setPortalSummary)
+        .catch(() => {})
+    }
+
+    loadSummary()
+    const timer = window.setInterval(loadSummary, 4000)
+    return () => window.clearInterval(timer)
+  }, [isPortalMode])
+
+  const portalQuickLinks = [
+    { to: '/', label: 'Ops' },
+    { to: '/operator/t2v', label: 'T2V' },
+    { to: '/operator/f2v', label: 'F2V' },
+    { to: '/operator/i2v', label: 'I2V' },
+    { to: '/operator/img', label: 'IMG' },
+    { to: '/troubleshoot', label: 'Issues' },
+  ]
+
+  const portalLiveLabel = portalSummary
+    ? `${portalSummary.processing + portalSummary.flow_running} live • ${portalSummary.queued + portalSummary.waiting_flow} waiting • ${portalSummary.failed} failed`
+    : 'Loading live system state'
 
   return (
     <div className="relative flex h-screen overflow-hidden bg-slate-950 text-slate-200">
@@ -136,7 +176,7 @@ function Layout() {
                 {group.items.map(({ to, icon: Icon, label, exact }) => (
                   <NavLink
                     key={to}
-                    to={to}
+                    to={withPortalQuery(to)}
                     end={exact}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all duration-200 group ${
@@ -168,37 +208,62 @@ function Layout() {
       {/* Main area */}
       <div className={`flex flex-col flex-1 overflow-hidden bg-slate-950 ${isPortalMode ? 'relative' : ''}`}>
         {/* Top header */}
-        <header className={`flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-950/50 px-4 py-3 backdrop-blur-md flex-shrink-0 ${isPortalMode ? 'sticky top-0 z-20' : 'md:px-8 md:py-4'}`}>
-          <div className="flex min-w-0 items-center gap-3">
-            {isCompactNav && (
-              <button
-                type="button"
-                aria-label="Open navigation"
-                onClick={() => setNavOpen(true)}
-                className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/80 text-slate-300 hover:border-blue-400/50 hover:text-blue-200"
-              >
-                <Menu size={16} />
-              </button>
-            )}
-            <h1 className={`truncate font-semibold tracking-wide text-slate-100 ${isPortalMode ? 'text-xs uppercase tracking-[0.18em]' : 'text-sm md:text-base'}`}>
-              <PageTitle />
-            </h1>
+        <header className={`border-b border-slate-800 bg-slate-950/50 px-4 py-3 backdrop-blur-md flex-shrink-0 transition-all duration-300 ${isPortalMode ? 'sticky top-0 z-20' : 'md:px-8 md:py-4'}`}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              {isCompactNav && (
+                <button
+                  type="button"
+                  aria-label="Open navigation"
+                  onClick={() => setNavOpen(true)}
+                  className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/80 text-slate-300 hover:border-blue-400/50 hover:text-blue-200"
+                >
+                  <Menu size={16} />
+                </button>
+              )}
+              <h1 className={`truncate font-semibold tracking-wide text-slate-100 ${isPortalMode ? 'text-xs uppercase tracking-[0.18em]' : 'text-sm md:text-base'}`}>
+                <PageTitle />
+              </h1>
+            </div>
+            <div className="flex items-center gap-3">
+              {isPortalMode && (
+                <div className="hidden rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200 md:inline-flex">
+                  {portalLiveLabel}
+                </div>
+              )}
+              {isCompactNav && (
+                <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${isConnected ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-red-500/30 bg-red-500/10 text-red-200'}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                  {isConnected ? 'Agent Online' : 'Agent Offline'}
+                </div>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-4">
-            {isCompactNav && (
-              <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${isConnected ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-red-500/30 bg-red-500/10 text-red-200'}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? 'bg-emerald-400' : 'bg-red-400'}`} />
-                {isConnected ? 'Agent Online' : 'Agent Offline'}
+
+          {isPortalMode && (
+            <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1">
+              {portalQuickLinks.map(link => (
+                <NavLink
+                  key={link.to}
+                  to={withPortalQuery(link.to)}
+                  end={link.to === '/'}
+                  className={({ isActive }) => `inline-flex whitespace-nowrap rounded-full border px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] transition-all duration-200 ${isActive ? 'border-blue-400/60 bg-blue-500/15 text-blue-200' : 'border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-500 hover:text-slate-200'}`}
+                >
+                  {link.label}
+                </NavLink>
+              ))}
+              <div className="rounded-full border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 md:hidden">
+                {portalLiveLabel}
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </header>
 
         {/* Page content */}
         <main className="flex-1 overflow-auto">
           <Routes>
             {/* Modular Workspace Routes */}
-            <Route path="/operator" element={<Navigate to="/operator/f2v" replace />} />
+            <Route path="/operator" element={<Navigate to={withPortalQuery('/operator/f2v')} replace />} />
             <Route path="/operator/t2v" element={<OperatorPage mode="T2V" />} />
             <Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
             <Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
@@ -214,6 +279,7 @@ function Layout() {
             {/* System Routes */}
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/health" element={<div className="p-8 text-slate-400">Health Diagnostics Dashboard</div>} />
+            <Route path="/troubleshoot" element={<TroubleshootPage />} />
             
             {/* Default Dashboard */}
             <Route path="/" element={<DashboardPage />} />

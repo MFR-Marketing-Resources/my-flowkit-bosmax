@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { fetchAPI } from '../api/client'
 import { useWebSocketContext } from '../contexts/WebSocketContext'
 import type { Project, TelemetryRequest, Video } from '../types'
 import PipelineView from '../components/pipeline/PipelineView'
+import ProjectHistoryPanel from '../components/reporting/ProjectHistoryPanel'
 import RequestReportPanel from '../components/reporting/RequestReportPanel'
+import { formatKualaLumpurDateTime } from '../utils/dateTime'
 import { buildStandardTraceLabel, getLatestTraceForProject, getLatestTraceForVideo, shortId } from '../utils/requestTrace'
 import { getTelemetryModeLabel, getTelemetrySummaryCounts, sortTelemetryByUpdatedAt } from '../utils/telemetryReporting'
 
@@ -14,8 +17,7 @@ interface SelectorOption {
 }
 
 function formatDateTime(value: string | null | undefined) {
-  if (!value) return '—'
-  return new Date(value).toLocaleString()
+  return formatKualaLumpurDateTime(value)
 }
 
 function TraceableSelect({
@@ -96,12 +98,14 @@ function TraceableSelect({
 }
 
 export default function DashboardPage() {
+  const location = useLocation()
   const [projects, setProjects] = useState<Project[]>([])
   const [videos, setVideos] = useState<Video[]>([])
   const [telemetryRequests, setTelemetryRequests] = useState<TelemetryRequest[]>([])
   const [selectedProject, setSelectedProject] = useState<string>('')
   const [selectedVideo, setSelectedVideo] = useState<string>('')
   const { lastEvent } = useWebSocketContext()
+  const isPortalMode = new URLSearchParams(location.search).get('portal') === 'side'
 
   const loadTelemetry = useCallback(() => {
     fetchAPI<TelemetryRequest[]>('/api/telemetry/requests?limit=200').then(setTelemetryRequests).catch(() => {})
@@ -206,7 +210,7 @@ export default function DashboardPage() {
           <div className="mt-4 grid gap-3 text-sm text-slate-300">
             <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
               <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">How to Read Status</div>
-              <div className="mt-2">Waiting means job is accepted but not yet inside Flow. Running means worker or Google Flow is actively processing. Completed means job finished. Failed means the remark should be your first troubleshooting reference.</div>
+              <div className="mt-2">Waiting means job is accepted but not yet inside Flow. Running means worker or Google Flow is actively processing. Completed means job finished. Failed means the remark should be your first troubleshooting reference. Exact timestamps in this operations center are shown in Kuala Lumpur time.</div>
             </div>
             <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
               <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Most Recent Modes</div>
@@ -222,12 +226,21 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Pipeline Drill-Down</div>
-              <div className="mt-2 text-slate-300">Use the selectors below only when you want scene-by-scene pipeline detail for a specific project and video. It is no longer the main place to read operational status.</div>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Troubleshoot Desk</div>
+                  <div className="mt-2 text-slate-300">Open the dedicated troubleshoot page when you need a copy-ready AI brief for failed jobs, stage history, and live bug-facing event traces.</div>
+                </div>
+                <Link to={isPortalMode ? '/troubleshoot?portal=side' : '/troubleshoot'} className="rounded-full border border-slate-700 bg-slate-950 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300 hover:border-blue-400/50 hover:text-blue-200">
+                  Open
+                </Link>
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      <ProjectHistoryPanel projects={projects} requests={visibleTelemetry} />
 
       <div className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
         <div className="flex items-start gap-3 flex-wrap">
