@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { Upload, ArrowRight, Info, Camera, User, Palette } from 'lucide-react'
+import { Upload, ArrowRight, Info } from 'lucide-react'
 import { fetchAPI } from '../../api/client'
 import type { Product, UploadedAsset, Orientation } from '../../types'
 import SearchableProductSelect from './SearchableProductSelect'
@@ -10,17 +10,13 @@ interface F2VModuleProps {
 }
 
 export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
-  // --- States from Original Monolith ---
+  // --- States ---
   const [products, setProducts] = useState<Product[]>([])
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [filterCategory, setFilterCategory] = useState<string>('')
   const [filterSubCategory, setFilterSubCategory] = useState<string>('')
   const [filterType, setFilterType] = useState<string>('')
   
-  // Creative States
-  const [selectedCharacter, setSelectedCharacter] = useState<string>('')
-  const [selectedCamera, setSelectedCamera] = useState<string>('')
-  const [selectedStyle, setSelectedStyle] = useState<string>('')
   const [manualPrompt, setManualPrompt] = useState('')
   
   // Mirror States
@@ -50,18 +46,18 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
     })
   }, [products, filterCategory, filterSubCategory, filterType])
 
-  // --- Prompt Logic (Ported from Monolith) ---
+  // --- Prompt Logic (TRUE AUTOMATED DNA) ---
   const generatedPrompt = useMemo(() => {
     if (!selectedProduct) return ''
-    const parts = [
-      `A professional cinematic shot of ${selectedProduct.raw_product_title}`,
-      selectedCharacter ? `featuring ${selectedCharacter}` : '',
-      selectedCamera ? `shot from ${selectedCamera} angle` : '',
-      selectedStyle ? `in a ${selectedStyle} visual style` : 'realistic cinematic lighting',
-      '8k resolution, highly detailed textures, smooth motion'
-    ]
-    return parts.filter(Boolean).join(', ')
-  }, [selectedProduct, selectedCharacter, selectedCamera, selectedStyle])
+    const p = selectedProduct
+    
+    // Assemble from product DNA fields
+    const base = p.section_4_visual_action_prompt || p.raw_product_title
+    const physics = p.section_5_product_physics_prompt || ''
+    const context = p.scene_context || ''
+    
+    return [base, physics, context].filter(Boolean).join(', ')
+  }, [selectedProduct])
 
   const finalPrompt = manualPrompt || generatedPrompt
 
@@ -90,7 +86,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
       {/* Main Workspace */}
       <div className="flex-1 space-y-6 overflow-y-auto pr-2 pb-12">
         
-        {/* 1. Product Registry (Restored Filters) */}
+        {/* 1. Product Registry */}
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">1. Product Registry</h3>
@@ -128,68 +124,20 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
               </select>
             </div>
 
-            {/* Product Selector (REPLACED WITH SEARCHABLE SELECT) */}
             <SearchableProductSelect 
               products={filteredProducts}
               selectedProduct={selectedProduct}
-              onSelect={(p) => setSelectedProduct(p)}
+              onSelect={(p) => {
+                setSelectedProduct(p)
+                setManualPrompt('') // Reset manual override when changing product
+              }}
             />
           </div>
         </section>
 
-        {/* 2. Creative Suite (Restored Character/Camera) */}
+        {/* 2. Visual Assets (F2V Slots) */}
         <section className="space-y-4">
-          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">2. Creative Suite</h3>
-          <div className="grid grid-cols-3 gap-4">
-             <div className="p-4 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-2">
-                <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                  <User size={12} className="text-blue-500" /> Character
-                </label>
-                <select 
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none"
-                  value={selectedCharacter}
-                  onChange={e => setSelectedCharacter(e.target.value)}
-                >
-                  <option value="">No Character</option>
-                  <option value="Sumikko Baby">Sumikko Baby</option>
-                  <option value="Professional Model">Professional Model</option>
-                </select>
-             </div>
-             <div className="p-4 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-2">
-                <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                  <Camera size={12} className="text-purple-500" /> Camera Angle
-                </label>
-                <select 
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none"
-                  value={selectedCamera}
-                  onChange={e => setSelectedCamera(e.target.value)}
-                >
-                  <option value="">Default Angle</option>
-                  <option value="Close-up">Close-up</option>
-                  <option value="Low Angle">Low Angle</option>
-                  <option value="Top-down">Top-down</option>
-                </select>
-             </div>
-             <div className="p-4 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-2">
-                <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                  <Palette size={12} className="text-pink-500" /> Style
-                </label>
-                <select 
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none"
-                  value={selectedStyle}
-                  onChange={e => setSelectedStyle(e.target.value)}
-                >
-                  <option value="">Cinematic Realistic</option>
-                  <option value="3D Pixar Style">3D Pixar Style</option>
-                  <option value="Studio Product Shot">Studio Product Shot</option>
-                </select>
-             </div>
-          </div>
-        </section>
-
-        {/* 3. Visual Assets (F2V Slots) */}
-        <section className="space-y-4">
-          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">3. Visual Assets (F2V Slots)</h3>
+          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">2. Visual Assets (F2V Slots)</h3>
           <div className="grid grid-cols-2 gap-4">
             <div className="group relative aspect-[9/16] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
                {startAsset ? (
@@ -221,10 +169,10 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
           </div>
         </section>
 
-        {/* 4. Prompt Injection (Restored Logic) */}
+        {/* 3. Prompt Injection (TRUE AUTOMATED DNA) */}
         <section className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">4. Prompt Injection</h3>
+            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">3. Prompt Injection</h3>
             {manualPrompt && (
               <span className="text-[10px] text-yellow-500 font-bold animate-pulse">Manual Override Active</span>
             )}
@@ -232,13 +180,13 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
           <div className="p-4 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-4">
             <textarea 
               className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
-              placeholder="Your prompt will generate automatically from settings above..."
+              placeholder="Your prompt will generate automatically from product DNA..."
               value={finalPrompt}
               onChange={(e) => setManualPrompt(e.target.value)}
             />
             <div className="flex items-center gap-2 text-[10px] text-slate-500 italic">
               <Info size={12} />
-              <span>BOSMAX will inject this exact DNA into the Google Flow prompt field.</span>
+              <span>BOSMAX DNA injection is active. Prompt is built from Section 4/5/Creative Brief.</span>
             </div>
           </div>
         </section>
@@ -256,7 +204,7 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
       </div>
 
       {/* Google Flow Mirror Panel */}
-      <div className="w-72 flex-shrink-0 flex flex-col gap-6 overflow-y-auto">
+      <div className="w-72 flex-shrink-0 flex flex-col gap-6 overflow-y-auto pb-12">
         <section className="space-y-4">
           <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">Flow Mirror Settings</h3>
           <div className="p-6 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-6">
@@ -303,9 +251,16 @@ export default function F2VModule({ onExecute, isExecuting }: F2VModuleProps) {
         <section className="p-6 rounded-2xl border border-blue-500/10 bg-blue-500/5">
            <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-2">F2V Context</h4>
            <div className="text-[10px] text-blue-300/60 leading-relaxed italic">
-             Stability is guaranteed by your reference assets.
-             {selectedCharacter && <div className="mt-1 text-blue-400 font-bold">Using Character: {selectedCharacter}</div>}
-             {selectedCamera && <div className="mt-1 text-purple-400 font-bold">Angle: {selectedCamera}</div>}
+             {selectedProduct ? (
+               <>
+                 <div className="text-blue-400 font-bold mb-1">Product Intelligence Active:</div>
+                 <div>Physics DNA: {selectedProduct.physics_class || 'General'}</div>
+                 <div>Scale: {selectedProduct.product_scale || 'Normal'}</div>
+                 <div className="mt-2 text-slate-400">Google Flow will preserve product visual anchor.</div>
+               </>
+             ) : (
+               'Stability is guaranteed by your reference assets.'
+             )}
            </div>
         </section>
       </div>
