@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Upload, ArrowRight, Loader2 } from 'lucide-react'
+import { Upload, ArrowRight } from 'lucide-react'
 import type { UploadedAsset } from '../../types'
 import { handleAssetUpload } from '../../api/assets'
 
@@ -12,7 +12,7 @@ export default function IMGModule({ onExecute, isExecuting }: IMGModuleProps) {
   // --- States ---
   const [manualPrompt, setManualPrompt] = useState('')
   const [aspectRatio, setAspectRatio] = useState('9:16')
-  const [model, setModel] = useState('Nano Banana 2')
+  const [model] = useState('Nano Banana 2')
   const [count, setCount] = useState(1)
   const [isUploading, setIsUploading] = useState(false)
   

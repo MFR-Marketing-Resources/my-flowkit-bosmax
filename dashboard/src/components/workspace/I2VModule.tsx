@@ -12,7 +12,7 @@ export default function I2VModule({ onExecute, isExecuting }: I2VModuleProps) {
   // --- States ---
   const [manualPrompt, setManualPrompt] = useState('')
   const [orientation, setOrientation] = useState<Orientation>('VERTICAL')
-  const [model, setModel] = useState('Veo 3.1 - Pro')
+  const [model] = useState('Veo 3.1 - Pro')
   const [count, setCount] = useState(1)
   const [isUploading, setIsUploading] = useState(false)
   
