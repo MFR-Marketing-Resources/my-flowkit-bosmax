@@ -67,6 +67,7 @@
     FLOW_MODE_VERIFIED: 'FLOW_MODE_VERIFIED',
     ASSETS_VERIFIED: 'ASSETS_VERIFIED',
     START_FRAME_ATTACHED: 'START_FRAME_ATTACHED',
+    START_FRAME_VERIFIED: 'START_FRAME_VERIFIED',
     END_FRAME_ATTACHED: 'END_FRAME_ATTACHED',
     INGREDIENTS_ATTACHED: 'INGREDIENTS_ATTACHED',
     IMAGE_ASSET_ATTACHED: 'IMAGE_ASSET_ATTACHED',
@@ -248,20 +249,90 @@
     return [];
   }
 
-  function containerHasVisualPreview(container) {
+  function buildSlotErrorCode(slotLabel, suffix) {
+    return `ERR_${String(slotLabel || 'slot').toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_${suffix}`;
+  }
+
+  function describePreviewNode(node) {
+    if (!node || !isVisible(node)) return null;
+    const rect = node.getBoundingClientRect();
+    if (rect.width < 32 || rect.height < 32) return null;
+
+    const tagName = (node.tagName || '').toLowerCase();
+    let identity = tagName;
+    if (tagName === 'img') {
+      identity = node.currentSrc || node.src || node.getAttribute('src') || tagName;
+      if ((node.naturalWidth || rect.width) < 32 || (node.naturalHeight || rect.height) < 32) return null;
+    } else if (tagName === 'picture') {
+      const nestedImg = node.querySelector('img');
+      return nestedImg ? describePreviewNode(nestedImg) : null;
+    } else if (tagName === 'canvas') {
+      identity = `${tagName}:${node.width || Math.round(rect.width)}x${node.height || Math.round(rect.height)}`;
+    } else if (tagName === 'video') {
+      identity = node.currentSrc || node.getAttribute('src') || `${tagName}:${Math.round(rect.width)}x${Math.round(rect.height)}`;
+    } else {
+      const backgroundImage = window.getComputedStyle(node).backgroundImage;
+      if (!backgroundImage || backgroundImage === 'none') return null;
+      identity = backgroundImage;
+    }
+
+    return {
+      node,
+      rect,
+      tagName,
+      identity,
+    };
+  }
+
+  function getContainerPreviewDetails(container) {
+    if (!container) return {
+      previewFound: false,
+      previewCount: 0,
+      previewKey: 'none',
+      previewRect: null,
+    };
+
+    const previewNodes = Array.from(container.querySelectorAll('img, canvas, video, picture, [style*="background-image"]'));
+    const visiblePreviews = previewNodes
+      .map(describePreviewNode)
+      .filter(Boolean);
+
+    const primaryPreview = visiblePreviews[0] || null;
+    return {
+      previewFound: visiblePreviews.length > 0,
+      previewCount: visiblePreviews.length,
+      previewKey: visiblePreviews.map(item => item.identity).join('|') || 'none',
+      previewRect: primaryPreview ? {
+        width: Math.round(primaryPreview.rect.width),
+        height: Math.round(primaryPreview.rect.height),
+      } : null,
+    };
+  }
+
+  function hasUploadPending(container) {
     if (!container) return false;
 
-    const previewNodes = Array.from(container.querySelectorAll('img, canvas, video, picture img, [style*="background-image"]'));
-    return previewNodes.some((node) => {
-      if (!isVisible(node)) return false;
-      const rect = node.getBoundingClientRect();
-      if (rect.width < 32 || rect.height < 32) return false;
-      if (node.tagName === 'IMG') {
-        return (node.naturalWidth || rect.width) >= 32 && (node.naturalHeight || rect.height) >= 32;
-      }
-      const backgroundImage = window.getComputedStyle(node).backgroundImage;
-      return !!backgroundImage && backgroundImage !== 'none';
-    });
+    const busyNode = Array.from(container.querySelectorAll('[aria-busy="true"], [role="progressbar"], progress, .spinner, .loading'))
+      .find(isVisible);
+    if (busyNode) return true;
+
+    const text = normalizeText(container.innerText || '').toLowerCase();
+    return ['uploading', 'processing', 'loading', 'please wait'].some((token) => text.includes(token));
+  }
+
+  function snapshotSlot(container) {
+    const preview = getContainerPreviewDetails(container);
+    return {
+      previewFound: preview.previewFound,
+      previewCount: preview.previewCount,
+      previewKey: preview.previewKey,
+      previewRect: preview.previewRect,
+      uploadPending: hasUploadPending(container),
+    };
+  }
+
+  function containerHasVisualPreview(container) {
+    return getContainerPreviewDetails(container).previewFound;
   }
 
   function getSlotCandidateContainers(slotLabel, slotElement = null) {
@@ -295,6 +366,19 @@
     return candidates;
   }
 
+  function resolveSlotContainer(slotLabel, slotElement = null) {
+    const candidates = getSlotCandidateContainers(slotLabel, slotElement)
+      .filter((candidate) => candidate && isVisible(candidate));
+
+    const labelledCandidate = candidates.find((candidate) => normalizeText(candidate.innerText || '').toLowerCase().includes(String(slotLabel || '').toLowerCase()));
+    if (labelledCandidate) return labelledCandidate;
+
+    const previewCandidate = candidates.find((candidate) => containerHasVisualPreview(candidate));
+    if (previewCandidate) return previewCandidate;
+
+    return candidates[0] || null;
+  }
+
   function slotHasVisiblePreview(slotLabel, slotElement = null) {
     return getSlotCandidateContainers(slotLabel, slotElement).some(containerHasVisualPreview);
   }
@@ -308,8 +392,111 @@
     return check();
   }
 
-  async function waitForAssetPreview(slotLabel, slotElement = null) {
-    return waitForCondition(() => slotHasVisiblePreview(slotLabel, slotElement), 7000, 300);
+  async function waitForSlotPreviewChange({ slotLabel, slotContainer, beforeSnapshot, timeoutMs = 15000 }) {
+    if (!slotContainer) {
+      return {
+        ok: false,
+        error: buildSlotErrorCode(slotLabel, 'UPLOAD_TARGET_NOT_FOUND'),
+        snapshot: null,
+      };
+    }
+
+    const initialSnapshot = beforeSnapshot || snapshotSlot(slotContainer);
+    const hasPreviewChanged = () => {
+      const currentSnapshot = snapshotSlot(slotContainer);
+      const previewChanged = currentSnapshot.previewFound
+        && currentSnapshot.previewKey !== initialSnapshot.previewKey;
+      const countChanged = currentSnapshot.previewFound
+        && currentSnapshot.previewCount > initialSnapshot.previewCount;
+      const wasAlreadyReady = initialSnapshot.previewFound && !initialSnapshot.uploadPending;
+      const uploadSettled = !currentSnapshot.uploadPending;
+
+      if ((previewChanged || countChanged) && uploadSettled) {
+        return {
+          ok: true,
+          snapshot: currentSnapshot,
+        };
+      }
+
+      if (!wasAlreadyReady && currentSnapshot.previewFound && uploadSettled && initialSnapshot.previewKey === 'none') {
+        return {
+          ok: true,
+          snapshot: currentSnapshot,
+        };
+      }
+
+      return null;
+    };
+
+    const immediate = hasPreviewChanged();
+    if (immediate) return immediate;
+
+    return new Promise((resolve) => {
+      let settled = false;
+
+      const finish = (payload) => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        window.clearTimeout(timeoutId);
+        window.clearInterval(pollId);
+        resolve(payload);
+      };
+
+      const observer = new MutationObserver(() => {
+        const changed = hasPreviewChanged();
+        if (changed) finish(changed);
+      });
+      observer.observe(slotContainer, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['src', 'style', 'class', 'aria-busy'],
+      });
+
+      const pollId = window.setInterval(() => {
+        const changed = hasPreviewChanged();
+        if (changed) finish(changed);
+      }, 300);
+
+      const timeoutId = window.setTimeout(() => {
+        const currentSnapshot = snapshotSlot(slotContainer);
+        if (currentSnapshot.uploadPending) {
+          finish({
+            ok: false,
+            error: buildSlotErrorCode(slotLabel, 'UPLOAD_STILL_PENDING'),
+            snapshot: currentSnapshot,
+          });
+          return;
+        }
+
+        finish({
+          ok: false,
+          error: buildSlotErrorCode(slotLabel, 'PREVIEW_TIMEOUT'),
+          snapshot: currentSnapshot,
+        });
+      }, timeoutMs);
+    });
+  }
+
+  async function waitForAssetPreview(slotLabel, slotElement = null, options = {}) {
+    const slotContainer = options.slotContainer || resolveSlotContainer(slotLabel, slotElement);
+    const beforeSnapshot = options.beforeSnapshot || snapshotSlot(slotContainer);
+
+    if (!slotContainer) {
+      return {
+        ok: false,
+        error: buildSlotErrorCode(slotLabel, 'SLOT_NOT_FOUND'),
+        snapshot: null,
+      };
+    }
+
+    return waitForSlotPreviewChange({
+      slotLabel,
+      slotContainer,
+      beforeSnapshot,
+      timeoutMs: options.timeoutMs || 15000,
+    });
   }
 
   async function nudgeComposerHydration(composer) {
@@ -488,8 +675,10 @@
     const slotBtn = findElementByText('button, [role="button"], span', slotLabel);
     if (!slotBtn) {
       console.warn(`[FlowAgent] Slot button ${slotLabel} not found`);
-      return false;
+      return { ok: false, error: buildSlotErrorCode(slotLabel, 'SLOT_NOT_FOUND') };
     }
+    const slotContainer = resolveSlotContainer(slotLabel, slotBtn);
+    const beforeSnapshot = snapshotSlot(slotContainer);
     slotBtn.click();
     await sleep(500);
 
@@ -505,7 +694,7 @@
         const assetId = resolveAssetSourceId(assetSource);
         if (!assetId) {
           console.warn(`[FlowAgent] No asset source id resolved for slot ${slotLabel}`);
-          return false;
+          return { ok: false, error: buildSlotErrorCode(slotLabel, 'ASSET_MISSING') };
         }
         const imageUrl = `http://127.0.0.1:8100/api/products/${assetId}/image`;
         console.log(`[FlowAgent] Fetching image from agent: ${imageUrl}`);
@@ -516,30 +705,64 @@
       }
     } catch (err) {
       console.error(`[FlowAgent] Failed to resolve/fetch image: ${err.message}`);
-      return false;
+      return { ok: false, error: buildSlotErrorCode(slotLabel, 'FILE_RESOLVE_FAILED') };
     }
 
     // 3. Find the dropzone/input
     // Google Flow uses a hidden file input or a drop listener on the container
-    const fileInput = document.querySelector('input[type="file"]');
-    const dropzone = document.querySelector('[role="presentation"], .dropzone, [aria-label*="upload"]');
+    const fileInput = slotContainer?.querySelector('input[type="file"]') || document.querySelector('input[type="file"]');
+    const dropzone = slotContainer?.querySelector('[role="presentation"], .dropzone, [aria-label*="upload"]')
+      || document.querySelector('[role="presentation"], .dropzone, [aria-label*="upload"]');
     
-    const target = fileInput || dropzone || document.body;
+    const target = fileInput || dropzone || slotBtn || slotContainer || document.body;
+    if (!target) {
+      return { ok: false, error: buildSlotErrorCode(slotLabel, 'UPLOAD_TARGET_NOT_FOUND') };
+    }
 
-    // 4. Dispatch the drop event
-    const dataTransfer = new DataTransfer();
-    dataTransfer.items.add(file);
-    
-    const dropEvent = new DragEvent('drop', {
-      bubbles: true,
-      cancelable: true,
-      dataTransfer: dataTransfer
-    });
-    
-    target.dispatchEvent(dropEvent);
-    console.log(`[FlowAgent] Dispatched drop event for ${slotLabel}`);
-    await sleep(1500); // Wait for upload to process
-    return slotBtn;
+    try {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+
+      if (target.matches && target.matches('input[type="file"]')) {
+        Object.defineProperty(target, 'files', {
+          configurable: true,
+          value: dataTransfer.files,
+        });
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        const dragEnter = new DragEvent('dragenter', {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+        });
+        const dragOver = new DragEvent('dragover', {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+        });
+        const dropEvent = new DragEvent('drop', {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+        });
+        target.dispatchEvent(dragEnter);
+        target.dispatchEvent(dragOver);
+        target.dispatchEvent(dropEvent);
+      }
+    } catch (error) {
+      console.error(`[FlowAgent] Upload dispatch failed for ${slotLabel}: ${error.message}`);
+      return { ok: false, error: buildSlotErrorCode(slotLabel, 'UPLOAD_DISPATCH_FAILED') };
+    }
+
+    console.log(`[FlowAgent] Dispatched upload for ${slotLabel}`);
+    await sleep(600);
+    return {
+      ok: true,
+      slotElement: slotBtn,
+      slotContainer,
+      beforeSnapshot,
+    };
   }
 
   /**
@@ -1072,8 +1295,12 @@
     const missing = [];
     for (const slotLabel of requiredSlots) {
       const slotContext = slotContexts.find((item) => item.slotLabel === slotLabel);
-      const previewReady = await waitForAssetPreview(slotLabel, slotContext?.slotElement || null);
-      if (!previewReady) missing.push(slotLabel);
+      const previewReady = await waitForAssetPreview(slotLabel, slotContext?.slotElement || null, {
+        slotContainer: slotContext?.slotContainer || null,
+        beforeSnapshot: slotContext?.beforeSnapshot || null,
+        timeoutMs: 15000,
+      });
+      if (!previewReady.ok) missing.push(slotLabel);
     }
 
     if (missing.length > 0) {
@@ -1085,10 +1312,17 @@
 
   async function executeFlowJob(job) {
     const report = { ok: false, stages: [] };
-    const logStage = (stage, status = 'YES') => {
-      report.stages.push({ stage, status });
-      console.log(`[FlowAgent] Stage: ${stage} - ${status}`);
-      sendStageEvent(job.request_id, stage, status);
+    const logStage = (stage, status = 'YES', message = null) => {
+      report.stages.push({ stage, status, message });
+      console.log(`[FlowAgent] Stage: ${stage} - ${status}${message ? ` - ${message}` : ''}`);
+      sendRuntimeMessageNoThrow({
+        type: 'FLOW_STAGE_EVENT',
+        request_id: job.request_id,
+        stage,
+        status,
+        message,
+        source: 'google_flow',
+      });
     };
 
     try {
@@ -1175,21 +1409,52 @@
       if (job.mode === 'F2V') {
         // Step 6a: Upload Start Frame
         const okStart = await simulateFileUpload('Start', job.startAsset || job.productId || job.startImageMediaId);
-        if (okStart) {
-          assetSlotContexts.push({ slotLabel: 'Start', slotElement: okStart });
-          logStage(STAGES.START_FRAME_ATTACHED);
+        if (okStart?.ok) {
+          logStage(STAGES.START_FRAME_ATTACHED, 'PASS', 'slot=Start dispatch=ok');
+
+          const startPreview = await waitForAssetPreview('Start', okStart.slotElement || null, {
+            slotContainer: okStart.slotContainer || null,
+            beforeSnapshot: okStart.beforeSnapshot || null,
+            timeoutMs: 15000,
+          });
+
+          if (!startPreview.ok) {
+            logStage(STAGES.START_FRAME_VERIFIED, 'FAIL', startPreview.error || buildSlotErrorCode('Start', 'PREVIEW_TIMEOUT'));
+            throw new Error(startPreview.error || buildSlotErrorCode('Start', 'PREVIEW_TIMEOUT'));
+          }
+
+          const rect = startPreview.snapshot?.previewRect;
+          logStage(
+            STAGES.START_FRAME_VERIFIED,
+            'PASS',
+            `slot=Start preview_found=true pending=false rect=${rect ? `${rect.width}x${rect.height}` : 'unknown'}`,
+          );
+
+          assetSlotContexts.push({
+            slotLabel: 'Start',
+            slotElement: okStart.slotElement,
+            slotContainer: okStart.slotContainer,
+            beforeSnapshot: okStart.beforeSnapshot,
+          });
         } else {
-          throw new Error('START_FRAME_UPLOAD_FAILED');
+          logStage(STAGES.START_FRAME_ATTACHED, 'FAIL', okStart?.error || buildSlotErrorCode('Start', 'UPLOAD_DISPATCH_FAILED'));
+          throw new Error(okStart?.error || buildSlotErrorCode('Start', 'UPLOAD_DISPATCH_FAILED'));
         }
 
         // Step 6b: Upload End Frame
         if (job.endAsset || job.endImageMediaId || job.productId) {
           const okEnd = await simulateFileUpload('End', job.endAsset || job.productId || job.endImageMediaId);
-          if (okEnd) {
-            assetSlotContexts.push({ slotLabel: 'End', slotElement: okEnd });
-            logStage(STAGES.END_FRAME_ATTACHED);
+          if (okEnd?.ok) {
+            assetSlotContexts.push({
+              slotLabel: 'End',
+              slotElement: okEnd.slotElement,
+              slotContainer: okEnd.slotContainer,
+              beforeSnapshot: okEnd.beforeSnapshot,
+            });
+            logStage(STAGES.END_FRAME_ATTACHED, 'PASS', 'slot=End dispatch=ok');
           } else {
-            throw new Error('END_FRAME_UPLOAD_FAILED');
+            logStage(STAGES.END_FRAME_ATTACHED, 'FAIL', okEnd?.error || buildSlotErrorCode('End', 'UPLOAD_DISPATCH_FAILED'));
+            throw new Error(okEnd?.error || buildSlotErrorCode('End', 'UPLOAD_DISPATCH_FAILED'));
           }
         }
       } else if (job.mode === 'I2V') {
@@ -1197,14 +1462,24 @@
         if (refAssets.length > 0) {
           for (const refAsset of refAssets) {
             const uploadedSlot = await simulateFileUpload(refAsset.slotLabel, refAsset.assetSource);
-            if (!uploadedSlot) throw new Error(`${refAsset.slotLabel.toUpperCase()}_UPLOAD_FAILED`);
-            assetSlotContexts.push({ slotLabel: refAsset.slotLabel, slotElement: uploadedSlot });
+            if (!uploadedSlot?.ok) throw new Error(uploadedSlot?.error || `${refAsset.slotLabel.toUpperCase()}_UPLOAD_FAILED`);
+            assetSlotContexts.push({
+              slotLabel: refAsset.slotLabel,
+              slotElement: uploadedSlot.slotElement,
+              slotContainer: uploadedSlot.slotContainer,
+              beforeSnapshot: uploadedSlot.beforeSnapshot,
+            });
             logStage(STAGES.INGREDIENTS_ATTACHED, refAsset.slotLabel);
           }
         } else {
           const uploadedSlot = await simulateFileUpload('Ingredients', job.productId || job.startImageMediaId);
-          if (!uploadedSlot) throw new Error('INGREDIENTS_UPLOAD_FAILED');
-          assetSlotContexts.push({ slotLabel: 'Ingredients', slotElement: uploadedSlot });
+          if (!uploadedSlot?.ok) throw new Error(uploadedSlot?.error || 'INGREDIENTS_UPLOAD_FAILED');
+          assetSlotContexts.push({
+            slotLabel: 'Ingredients',
+            slotElement: uploadedSlot.slotElement,
+            slotContainer: uploadedSlot.slotContainer,
+            beforeSnapshot: uploadedSlot.beforeSnapshot,
+          });
           logStage(STAGES.INGREDIENTS_ATTACHED, 'Ingredients');
         }
       } else if (job.mode === 'IMG') {
@@ -1212,14 +1487,24 @@
         if (refAssets.length > 0) {
           for (const refAsset of refAssets) {
             const uploadedSlot = await simulateFileUpload(refAsset.slotLabel, refAsset.assetSource);
-            if (!uploadedSlot) throw new Error(`${refAsset.slotLabel.toUpperCase()}_UPLOAD_FAILED`);
-            assetSlotContexts.push({ slotLabel: refAsset.slotLabel, slotElement: uploadedSlot });
+            if (!uploadedSlot?.ok) throw new Error(uploadedSlot?.error || `${refAsset.slotLabel.toUpperCase()}_UPLOAD_FAILED`);
+            assetSlotContexts.push({
+              slotLabel: refAsset.slotLabel,
+              slotElement: uploadedSlot.slotElement,
+              slotContainer: uploadedSlot.slotContainer,
+              beforeSnapshot: uploadedSlot.beforeSnapshot,
+            });
             logStage(STAGES.IMAGE_ASSET_ATTACHED, refAsset.slotLabel);
           }
         } else {
           const uploadedSlot = await simulateFileUpload('Image', job.productId || job.startImageMediaId);
-          if (!uploadedSlot) throw new Error('IMAGE_UPLOAD_FAILED');
-          assetSlotContexts.push({ slotLabel: 'Image', slotElement: uploadedSlot });
+          if (!uploadedSlot?.ok) throw new Error(uploadedSlot?.error || 'IMAGE_UPLOAD_FAILED');
+          assetSlotContexts.push({
+            slotLabel: 'Image',
+            slotElement: uploadedSlot.slotElement,
+            slotContainer: uploadedSlot.slotContainer,
+            beforeSnapshot: uploadedSlot.beforeSnapshot,
+          });
           logStage(STAGES.IMAGE_ASSET_ATTACHED, 'Image');
         }
       }
