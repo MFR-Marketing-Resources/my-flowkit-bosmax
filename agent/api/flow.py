@@ -254,3 +254,19 @@ async def upload_image_base64(body: UploadImageBase64Request):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
     media_id = result.get("_mediaId")
     return {"media_id": media_id, "raw": result.get("data", result)}
+@router.post("/execute-flow-job")
+async def execute_flow_job(body: dict):
+    """Trigger manual DOM automation in the extension for a generation job."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    
+    # Ensure request_id exists for tracking
+    import uuid
+    if "request_id" not in body:
+        body["request_id"] = f"manual_{uuid.uuid4().hex[:8]}"
+        
+    result = await client.execute_flow_job(body)
+    if result.get("error"):
+        raise HTTPException(502, result["error"])
+    return result
