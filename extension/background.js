@@ -1402,10 +1402,27 @@ async function handleExecuteFlowJob(job) {
 
   await ensureFlowDomScript(flowTab.id);
 
-  return await sendTabMessageSafe(flowTab.id, {
+  const initialHealth = await pingFlowDomScript(flowTab);
+  if (initialHealth?.raw_error) {
+    console.warn('[FlowAgent] Flow DOM ping failed before execute, retrying injection:', initialHealth.raw_error);
+    await ensureFlowDomScript(flowTab.id);
+  }
+
+  let result = await sendTabMessageSafe(flowTab.id, {
     type: 'EXECUTE_FLOW_JOB',
     job
   });
+
+  if (['ERR_MESSAGE_RESPONSE_TIMEOUT', 'ERR_NO_RECEIVER', 'ERR_CONTENT_SCRIPT_STALE', 'ERR_TAB_RELOADED'].includes(result?.error)) {
+    console.warn('[FlowAgent] EXECUTE_FLOW_JOB bridge failed, reinjecting and retrying once:', result.error);
+    await ensureFlowDomScript(flowTab.id);
+    result = await sendTabMessageSafe(flowTab.id, {
+      type: 'EXECUTE_FLOW_JOB',
+      job
+    });
+  }
+
+  return result;
 }
 
 async function handleDebugFlowDomExecution(mode, job) {

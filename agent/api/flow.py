@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from agent.services.flow_client import get_flow_client
+from agent.db import crud
 
 router = APIRouter(prefix="/flow", tags=["flow"])
 
@@ -265,8 +266,50 @@ async def execute_flow_job(body: dict):
     import uuid
     if "request_id" not in body:
         body["request_id"] = f"manual_{uuid.uuid4().hex[:8]}"
+
+    request_row = await crud.get_request(body["request_id"])
+    if not request_row:
+        now = crud._now()
+        db = await crud.get_db()
+        async with crud._db_lock:
+            await db.execute(
+                """INSERT INTO request (id, type, status, created_at, updated_at)
+                   VALUES (?,?,?,?,?)""",
+                (body["request_id"], "MANUAL_FLOW_JOB", "WAITING_FLOW", now, now),
+            )
+            await db.commit()
+
+    await crud.upsert_request_telemetry(
+        body["request_id"],
+        request_type="MANUAL_FLOW_JOB",
+        mode=body.get("mode"),
+        status="WAITING_FLOW",
+        queued_at=crud._now(),
+        last_heartbeat_at=crud._now(),
+    )
+    await crud.add_stage_event(
+        body["request_id"],
+        "MANUAL_SUBMIT_ACCEPTED",
+        "WAITING_FLOW",
+        "Operator workspace submitted manual Flow job.",
+        "dashboard",
+    )
         
     result = await client.execute_flow_job(body)
     if result.get("error"):
+        await crud.upsert_request_telemetry(
+            body["request_id"],
+            status="FAILED",
+            failed_at=crud._now(),
+            error_message=result["error"],
+            last_heartbeat_at=crud._now(),
+        )
+        await crud.add_stage_event(
+            body["request_id"],
+            "FAILED",
+            "FAILED",
+            result["error"],
+            "backend",
+        )
         raise HTTPException(502, result["error"])
     return result
