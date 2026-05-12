@@ -1383,7 +1383,8 @@
           chrome.runtime.sendMessage({
             type: 'RESOLVE_LOCAL_ASSET',
             assetId,
-            filename: `${assetId}.jpg`
+            filename: `${assetId}.jpg`,
+            request_id: request_id // From executeFlowJob scope
           }, (resp) => {
             clearTimeout(proxyTimeout);
             resolve(resp);
@@ -2775,6 +2776,7 @@
             asset_filename: assetFilename,
             body_shell_markers: shellMarkers,
             active_element_text: document.activeElement?.textContent?.slice(0, 50) || 'none',
+            detail: okStart?.detail || null,
           };
           logStage(STAGES.START_FRAME_ATTACHED, 'FAIL', `${okStart?.error || 'UPLOAD_DISPATCH_FAILED'} — ${JSON.stringify(diag)}`);
           throw new Error(okStart?.error || buildSlotErrorCode('Start', 'UPLOAD_DISPATCH_FAILED'));

@@ -1421,9 +1421,24 @@ async function handleMessage(msg, sender) {
   }
 
   if (msg.type === 'RESOLVE_LOCAL_ASSET') {
-    const { assetId, filename } = msg;
+    const { assetId, filename, request_id } = msg;
     const url = `http://127.0.0.1:8100/api/products/${assetId}/image`;
     console.log(`[FlowAgent] Background proxy resolving asset: ${assetId} from ${url}`);
+    
+    if (request_id) {
+      fetch('http://127.0.0.1:8100/api/telemetry/stage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request_id,
+          stage: 'BACKGROUND_ASSET_PROXY_RECEIVED',
+          status: 'PASS',
+          message: `assetId=${assetId}`,
+          source: 'extension'
+        })
+      }).catch(() => {});
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
