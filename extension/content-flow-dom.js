@@ -911,6 +911,57 @@
     return getContainerPreviewDetails(container).previewFound;
   }
 
+  function findUploadSlotByLabel(slotLabel) {
+    const isStart = String(slotLabel).toLowerCase() === 'start';
+    const isEnd = String(slotLabel).toLowerCase() === 'end';
+
+    // 1. Find all candidate label elements using inclusive detection logic
+    const candidates = Array.from(document.querySelectorAll('label, span, div, p, button, [role="button"]'))
+      .filter((el) => {
+        if (!isVisible(el)) return false;
+        const text = normalizeText(el.textContent || '');
+        if (isStart) {
+          // Evidence-backed: Must include Start, but exclude End to avoid cross-contamination
+          return text.includes('Start') && !text.includes('End');
+        }
+        if (isEnd) {
+          return text.includes('End');
+        }
+        return text.includes(slotLabel);
+      });
+
+    // 2. Resolve the best container for each candidate
+    for (const labelNode of candidates) {
+      let current = labelNode;
+      // Search up to 5 levels for a container that looks like a slot
+      for (let depth = 0; current && depth < 5; depth += 1) {
+        const text = normalizeText(current.textContent || '');
+        // Preferably near upload/add/media/image placeholder
+        const hasUploadMarker = /(upload|add|media|image|browse)/i.test(text);
+        const isClickable = current.matches('button, [role="button"], label, a');
+
+        if (hasUploadMarker || isClickable) {
+          // Strict exclusion: Do not accept Start if it has End text in this container level
+          if (isStart && text.includes('End')) {
+            current = current.parentElement;
+            continue;
+          }
+          // Reject global Add Media/Scenebuilder if they don't contain the specific slot label
+          const containerText = normalizeText(current.textContent || '');
+          if (!containerText.includes(slotLabel)) {
+            current = current.parentElement;
+            continue;
+          }
+
+          return { container: current, labelNode };
+        }
+        current = current.parentElement;
+      }
+    }
+
+    return null;
+  }
+
   function getSlotCandidateContainers(slotLabel, slotElement = null) {
     const candidates = [];
     const push = (el) => {
@@ -918,11 +969,17 @@
       candidates.push(el);
     };
 
+    const slotInfo = findUploadSlotByLabel(slotLabel);
+    if (slotInfo) {
+      push(slotInfo.container);
+      push(slotInfo.labelNode);
+    }
+
     push(slotElement);
     push(slotElement?.closest('button'));
     push(slotElement?.closest('[role="button"]'));
 
-    const labelNode = findElementByText('button, [role="button"], label, span, div, p', slotLabel);
+    const labelNode = slotInfo?.labelNode || findElementByText('button, [role="button"], label, span, div, p', slotLabel);
     push(labelNode);
     push(labelNode?.closest('button'));
     push(labelNode?.closest('[role="button"]'));
@@ -933,20 +990,22 @@
       current = current.parentElement;
     }
 
-    current = labelNode?.parentElement || null;
-    for (let depth = 0; current && depth < 4; depth += 1) {
-      push(current);
-      current = current.parentElement;
-    }
-
     return candidates;
   }
 
   function resolveSlotContainer(slotLabel, slotElement = null) {
+    const slotInfo = findUploadSlotByLabel(slotLabel);
+    if (slotInfo?.container) return slotInfo.container;
+
     const candidates = getSlotCandidateContainers(slotLabel, slotElement)
       .filter((candidate) => candidate && isVisible(candidate));
 
-    const labelledCandidate = candidates.find((candidate) => normalizeText(candidate.innerText || '').toLowerCase().includes(String(slotLabel || '').toLowerCase()));
+    const labelledCandidate = candidates.find((candidate) => {
+      const text = normalizeText(candidate.innerText || '').toLowerCase();
+      const needle = String(slotLabel || '').toLowerCase();
+      if (needle === 'start') return text.includes('start') && !text.includes('end');
+      return text.includes(needle);
+    });
     if (labelledCandidate) return labelledCandidate;
 
     const previewCandidate = candidates.find((candidate) => containerHasVisualPreview(candidate));
@@ -1246,14 +1305,40 @@
 
   async function simulateFileUpload(slotLabel, assetSource) {
     console.log(`[FlowAgent] Attempting to upload asset to slot: ${slotLabel}`);
-    
-    // 1. Find and click the slot button (Start/End/Ingredients)
-    const slotBtn = findElementByText('button, [role="button"], span', slotLabel);
-    if (!slotBtn) {
-      console.warn(`[FlowAgent] Slot button ${slotLabel} not found`);
-      return { ok: false, error: buildSlotErrorCode(slotLabel, 'SLOT_NOT_FOUND') };
+
+    // 1. Find and click the slot button using robust resolution
+    const slotInfo = findUploadSlotByLabel(slotLabel);
+    const slotContainer = slotInfo?.container || resolveSlotContainer(slotLabel);
+    // Prefer the label node or a button inside the container for the click
+    const slotBtn = slotInfo?.labelNode?.closest('button, [role="button"]')
+      || slotInfo?.labelNode
+      || slotContainer?.querySelector('button, [role="button"]')
+      || slotContainer;
+
+    if (!slotContainer || !slotBtn) {
+      const observed = observeFlowState();
+      const bodyText = normalizeText(document.body?.innerText || '').slice(0, 150);
+      const candidates = Array.from(document.querySelectorAll('label, span, div, p'))
+        .filter((el) => isVisible(el) && normalizeText(el.textContent || '').includes(slotLabel))
+        .map((el) => normalizeText(el.textContent || '').slice(0, 30));
+
+      const diag = {
+        visible_upload_slots: observed.visibleUploadSlots,
+        start_label_found: Boolean(slotInfo?.labelNode),
+        start_container_text: normalizeText(slotContainer?.textContent || '').slice(0, 100),
+        start_container_outerHTML: slotContainer?.outerHTML?.slice(0, 500),
+        candidate_slot_texts: candidates,
+        body_text_snippet: bodyText,
+      };
+
+      console.warn(`[FlowAgent] Slot ${slotLabel} not found or not clickable. Diag:`, diag);
+      return {
+        ok: false,
+        error: buildSlotErrorCode(slotLabel, 'SLOT_NOT_FOUND'),
+        detail: `ERR_START_SLOT_NOT_FOUND — ${JSON.stringify(diag)}`,
+      };
     }
-    const slotContainer = resolveSlotContainer(slotLabel, slotBtn);
+
     const beforeSnapshot = snapshotSlot(slotContainer);
     slotBtn.click();
     await sleep(500);
@@ -1285,14 +1370,27 @@
     }
 
     // 3. Find the dropzone/input
-    // Google Flow uses a hidden file input or a drop listener on the container
-    const fileInput = slotContainer?.querySelector('input[type="file"]') || document.querySelector('input[type="file"]');
-    const dropzone = slotContainer?.querySelector('[role="presentation"], .dropzone, [aria-label*="upload"]')
-      || document.querySelector('[role="presentation"], .dropzone, [aria-label*="upload"]');
-    
-    const target = fileInput || dropzone || slotBtn || slotContainer || document.body;
-    if (!target) {
-      return { ok: false, error: buildSlotErrorCode(slotLabel, 'UPLOAD_TARGET_NOT_FOUND') };
+    // Scoped resolution: Resolve clickable target from the slot container
+    const fileInput = slotContainer.querySelector('input[type="file"]');
+    const dropzone = slotContainer.querySelector('[role="presentation"], .dropzone, [aria-label*="upload"]');
+
+    // Fallback: Resolve clickable target inside the slot
+    const internalClickable = slotContainer.querySelector('button, [role="button"], label, div[onclick]');
+
+    const target = fileInput || dropzone || internalClickable || slotBtn;
+
+    if (!target || !slotContainer.contains(target)) {
+      const diag = {
+        start_container_outerHTML: slotContainer.outerHTML.slice(0, 500),
+        file_input_found: Boolean(fileInput),
+        clickable_target_found: Boolean(internalClickable || slotBtn),
+        clickable_target_outerHTML: (internalClickable || slotBtn)?.outerHTML?.slice(0, 500),
+      };
+      return {
+        ok: false,
+        error: buildSlotErrorCode(slotLabel, 'UPLOAD_TARGET_NOT_FOUND'),
+        detail: `ERR_START_UPLOAD_TARGET_NOT_FOUND — ${JSON.stringify(diag)}`,
+      };
     }
 
     try {
