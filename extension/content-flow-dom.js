@@ -2386,15 +2386,49 @@
       throw new Error('ERR_WRONG_MODE_IMAGE_SELECTED');
     }
 
-    const { topBtn, subBtn } = modeControls;
-    if (topBtn && isVisible(topBtn) && !isSelectedControl(topBtn, 'Video')) {
-      topBtn.click();
-      await sleep(800);
+    const { topBtn: initialTopBtn, subBtn } = modeControls;
+    let clickMethodUsed = 'none';
+    let videoTargetFound = false;
+    let videoTargetVisible = false;
+    let videoTargetText = '';
+    let videoTargetOuterHTML = '';
+
+    if (initialTopBtn && isVisible(initialTopBtn) && !isSelectedControl(initialTopBtn, 'Video')) {
+      const videoTarget = findElementByText('button, [role="tab"], [role="button"], span, div', 'Video');
+      const target = videoTarget?.closest('button, [role="tab"], [role="button"]') || videoTarget;
+
+      videoTargetFound = Boolean(target);
+      videoTargetVisible = Boolean(target && isVisible(target));
+      videoTargetText = normalizeText(target?.textContent || '');
+      videoTargetOuterHTML = target?.outerHTML?.slice(0, 500) || '';
+
+      if (target && isVisible(target) && videoTargetText.includes('Video')) {
+        target.scrollIntoView({ block: 'center', inline: 'center' });
+        await sleep(150);
+
+        const rect = target.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const eventInit = { bubbles: true, cancelable: true, view: window, clientX: centerX, clientY: centerY };
+
+        clickMethodUsed = 'pointer_sequence';
+        target.dispatchEvent(new PointerEvent('pointerdown', { ...eventInit, pointerType: 'mouse' }));
+        target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+        target.dispatchEvent(new PointerEvent('pointerup', { ...eventInit, pointerType: 'mouse' }));
+        target.dispatchEvent(new MouseEvent('mouseup', eventInit));
+        target.dispatchEvent(new MouseEvent('click', eventInit));
+
+        const transitioned = await waitForCondition(() => observeFlowState().topMode === 'Video', 1500, 150);
+        if (!transitioned) {
+          clickMethodUsed = 'pointer_sequence_plus_fallback_click';
+          target.click();
+        }
+      }
     }
 
     const activeVideo = await waitForCondition(
       () => observeFlowState().topMode === 'Video',
-      5000, 150,
+      3500, 150,
     );
 
     if (!activeVideo) {
@@ -2411,9 +2445,14 @@
       const roleMenuCount = document.querySelectorAll('[role="menu"]').length;
       const roleListboxCount = document.querySelectorAll('[role="listbox"]').length;
 
-      const detail = 'ERR_VIDEO_MODE_NOT_ACTIVE_AFTER_CLICK — '
+      const detail = 'ERR_VIDEO_MODE_NOT_ACTIVE_AFTER_POINTER_CLICK — '
         + `topMode=${obs.topMode} `
         + `subMode=${obs.subMode} `
+        + `video_target_found=${videoTargetFound} `
+        + `video_target_visible=${videoTargetVisible} `
+        + `video_target_text=${JSON.stringify(videoTargetText)} `
+        + `video_target_outerHTML=${JSON.stringify(videoTargetOuterHTML)} `
+        + `click_method_used=${clickMethodUsed} `
         + `url=${window.location.href} `
         + `candidates=[${candidates.join(',')}] `
         + `shellMarkers=[${shellMarkers.join(',')}] `
