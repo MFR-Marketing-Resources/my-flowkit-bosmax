@@ -663,8 +663,19 @@
     const target = trigger?.closest('button, [role="button"]') || trigger;
     if (!target || !isVisible(target)) return false;
     target.click();
-    await sleep(800);
-    return true;
+
+    const selector = 'button, [role="tab"], [role="button"], span, div';
+    const surfaced = await waitForCondition(() => {
+      const menu = document.querySelector('[role="menu"], [role="listbox"]');
+      if (menu && isVisible(menu)) return true;
+      const video = findElementByText(selector, 'Video');
+      if (video && isVisible(video)) return true;
+      const image = findElementByText(selector, 'Image');
+      if (image && isVisible(image)) return true;
+      return false;
+    }, 1000, 200);
+
+    return surfaced;
   }
 
   async function ensureModeControlsVisible(mode) {
@@ -2153,17 +2164,54 @@
       }
 
       // Wait for Video control to become visible after workspace opens.
+      let goBackClicked = false;
       const appeared = await waitForCondition(
         () => {
-          const btn = findElementByText('button,[role="tab"],[role="button"]', 'Video');
-          return !!(btn && isVisible(btn));
+          const btn = findElementByText('button, [role="tab"], [role="button"], span, div', 'Video');
+          if (btn && isVisible(btn)) return true;
+
+          // Early shell recovery: detect Scenebuilder / Add Media traps
+          const bodyText = document.body.innerText;
+          const isShell = bodyText.includes('Scenebuilder') || bodyText.includes('Add Media');
+          if (isShell && !goBackClicked) {
+            const goBackBtn = findElementByText('button, [role="button"], span, div', 'Go Back');
+            if (goBackBtn && isVisible(goBackBtn)) {
+              console.log('[FlowAgent] Shell detected, clicking Go Back');
+              goBackBtn.click();
+              goBackClicked = true;
+            }
+          }
+          return false;
         },
         15000, 500,
       );
 
       if (!appeared) {
-        logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL',
-          'Video button not found after new-project/chooser click — timeout 15s');
+        const obs = observeFlowState();
+        const bodyText = document.body.innerText;
+        const shellMarkers = [];
+        if (bodyText.includes('Scenebuilder')) shellMarkers.push('Scenebuilder');
+        if (bodyText.includes('Add Media')) shellMarkers.push('Add Media');
+        if (bodyText.includes('Go Back')) shellMarkers.push('Go Back');
+
+        const candidateSelector = 'button, [role="tab"], [role="button"], span, div';
+        const candidates = collectVisibleTexts(candidateSelector, el => el.textContent || '').slice(0, 20);
+
+        const roleMenuCount = document.querySelectorAll('[role="menu"]').length;
+        const roleListboxCount = document.querySelectorAll('[role="listbox"]').length;
+
+        const detail = `FLOW_TYPE_VIDEO_SELECTED FAIL — `
+          + `ERR_VIDEO_BUTTON_NOT_FOUND — `
+          + `url=${window.location.href} `
+          + `topMode=${obs.topMode} `
+          + `subMode=${obs.subMode} `
+          + `shellMarkers=[${shellMarkers.join(',')}] `
+          + `roleMenuCount=${roleMenuCount} `
+          + `roleListboxCount=${roleListboxCount} `
+          + `goBackClicked=${goBackClicked} `
+          + `candidates=[${candidates.join(',')}]`;
+
+        logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL', detail);
         throw new Error('ERR_WRONG_MODE_IMAGE_SELECTED');
       }
     }
