@@ -1301,6 +1301,8 @@ function broadcastStatus() {
   sendRuntimeMessageNoThrow({ type: 'STATUS_PUSH' });
 }
 
+const BUILD_ID = 'f2v_proxy_v3';
+
 async function handleMessage(msg, sender) {
   if (msg.type === 'STATUS') {
     return {
@@ -1316,6 +1318,7 @@ async function handleMessage(msg, sender) {
         lastError: metrics.lastError,
       },
       state,
+      buildId: BUILD_ID,
     };
   }
 

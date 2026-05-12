@@ -2601,7 +2601,7 @@
     };
 
     try {
-      logStage(STAGES.FLOW_TAB_FOUND, 'YES', `background_conn=${testConn?.ok || (testConn && typeof testConn === 'object')}`);
+      logStage(STAGES.FLOW_TAB_FOUND, 'YES', `background_conn=true build=${testConn?.buildId || 'legacy'}`);
 
       // 0. Log job received
       if (job.prompt) {
