@@ -1387,8 +1387,9 @@
             filename: `${assetId}.jpg`,
             request_id: requestIdForProxy
           }, (resp) => {
+            const err = chrome.runtime.lastError;
             clearTimeout(proxyTimeout);
-            resolve(resp);
+            resolve(resp || { ok: false, error: err?.message || 'UNKNOWN_ERROR' });
           });
         });
 
@@ -2581,7 +2582,10 @@
 
   async function executeFlowJob(job) {
     const testConn = await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'STATUS' }, resolve);
+      chrome.runtime.sendMessage({ type: 'STATUS' }, (resp) => {
+        const err = chrome.runtime.lastError;
+        resolve(resp || { ok: false, error: err?.message || 'UNKNOWN_ERROR' });
+      });
     });
     console.log('[FlowAgent] Background connection test:', testConn);
 
