@@ -2744,7 +2744,7 @@
           const startPreview = await waitForAssetPreview('Start', okStart.slotElement || null, {
             slotContainer: okStart.slotContainer || null,
             beforeSnapshot: okStart.beforeSnapshot || null,
-            timeoutMs: 15000,
+            timeoutMs: 30000,
           });
 
           if (!startPreview.ok) {
