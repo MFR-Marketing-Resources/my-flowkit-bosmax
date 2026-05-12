@@ -2392,9 +2392,35 @@
       await sleep(800);
     }
 
-    const obsAfterVideo = observeFlowState();
-    if (obsAfterVideo.topMode !== 'Video') {
-      logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL', `topMode=${obsAfterVideo.topMode}`);
+    const activeVideo = await waitForCondition(
+      () => observeFlowState().topMode === 'Video',
+      5000, 150,
+    );
+
+    if (!activeVideo) {
+      const obs = observeFlowState();
+      const bodyText = document.body.innerText;
+      const shellMarkers = [];
+      if (bodyText.includes('Scenebuilder')) shellMarkers.push('Scenebuilder');
+      if (bodyText.includes('Add Media')) shellMarkers.push('Add Media');
+      if (bodyText.includes('Go Back')) shellMarkers.push('Go Back');
+
+      const candidateSelector = 'button, [role="tab"], [role="button"], span, div';
+      const candidates = collectVisibleTexts(candidateSelector, (el) => el.textContent || '').slice(0, 20);
+
+      const roleMenuCount = document.querySelectorAll('[role="menu"]').length;
+      const roleListboxCount = document.querySelectorAll('[role="listbox"]').length;
+
+      const detail = 'ERR_VIDEO_MODE_NOT_ACTIVE_AFTER_CLICK — '
+        + `topMode=${obs.topMode} `
+        + `subMode=${obs.subMode} `
+        + `url=${window.location.href} `
+        + `candidates=[${candidates.join(',')}] `
+        + `shellMarkers=[${shellMarkers.join(',')}] `
+        + `roleMenuCount=${roleMenuCount} `
+        + `roleListboxCount=${roleListboxCount}`;
+
+      logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL', detail);
       throw new Error('ERR_WRONG_MODE_IMAGE_SELECTED');
     }
     logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'PASS', 'topMode=Video');
