@@ -409,14 +409,47 @@
   }
 
   async function ensureOpenF2VConfigMenu() {
-    if (findOpenF2VConfigMenu()) return true;
+    const roleMenuCountBefore = document.querySelectorAll('[role="menu"]').length;
+    const existingMenu = findOpenF2VConfigMenu();
+    if (existingMenu) {
+      return {
+        ok: true,
+        detail: `role_menu_count_before=${roleMenuCountBefore} launcher_found=false launcher_visible=false launcher_text='' launcher_aria_expanded_before='' launcher_data_state_before='' click_method=HTMLElement.click role_menu_count_after=${roleMenuCountBefore} launcher_aria_expanded_after='' launcher_data_state_after='' first_menu_text_snippet_after=${JSON.stringify(normalizeText(existingMenu.innerText || existingMenu.textContent || '').slice(0, 120))}`,
+      };
+    }
 
     const launcher = findCollapsedF2VConfigLauncher();
-    if (!launcher || !isVisible(launcher)) return false;
+    const launcherFound = Boolean(launcher);
+    const launcherVisible = Boolean(launcher && isVisible(launcher));
+    const launcherText = normalizeText(launcher?.innerText || launcher?.textContent || '');
+    const launcherAriaExpandedBefore = launcher?.getAttribute('aria-expanded') || '';
+    const launcherDataStateBefore = launcher?.getAttribute('data-state') || '';
+
+    if (!launcherFound || !launcherVisible) {
+      return {
+        ok: false,
+        detail: `role_menu_count_before=${roleMenuCountBefore} launcher_found=${launcherFound} launcher_visible=${launcherVisible} launcher_text=${JSON.stringify(launcherText)} launcher_aria_expanded_before=${launcherAriaExpandedBefore} launcher_data_state_before=${launcherDataStateBefore} click_method=HTMLElement.click role_menu_count_after=${roleMenuCountBefore} launcher_aria_expanded_after=${launcherAriaExpandedBefore} launcher_data_state_after=${launcherDataStateBefore} first_menu_text_snippet_after=''`,
+      };
+    }
 
     launcher.click();
     const opened = await waitForCondition(() => Boolean(findOpenF2VConfigMenu()), 2500, 100);
-    return Boolean(opened && findOpenF2VConfigMenu());
+    const roleMenuCountAfter = document.querySelectorAll('[role="menu"]').length;
+    const launcherAriaExpandedAfter = launcher.getAttribute('aria-expanded') || '';
+    const launcherDataStateAfter = launcher.getAttribute('data-state') || '';
+    const menuAfter = findOpenF2VConfigMenu();
+    const firstMenuTextSnippetAfter = normalizeText(
+      menuAfter?.innerText
+      || menuAfter?.textContent
+      || document.querySelector('[role="menu"]')?.innerText
+      || document.querySelector('[role="menu"]')?.textContent
+      || '',
+    ).slice(0, 120);
+
+    return {
+      ok: Boolean(opened && menuAfter),
+      detail: `role_menu_count_before=${roleMenuCountBefore} launcher_found=${launcherFound} launcher_visible=${launcherVisible} launcher_text=${JSON.stringify(launcherText)} launcher_aria_expanded_before=${launcherAriaExpandedBefore} launcher_data_state_before=${launcherDataStateBefore} click_method=HTMLElement.click role_menu_count_after=${roleMenuCountAfter} launcher_aria_expanded_after=${launcherAriaExpandedAfter} launcher_data_state_after=${launcherDataStateAfter} first_menu_text_snippet_after=${JSON.stringify(firstMenuTextSnippetAfter)}`,
+    };
   }
 
   async function ensureF2VVerifiedAspectCountAndModel() {
@@ -2052,8 +2085,8 @@
 
     // ── Steps 5–7: Config panel (9:16 / 1x / Veo 3.1 - Lite) ────────────────
     const configMenuOpen = await ensureOpenF2VConfigMenu();
-    if (!configMenuOpen) {
-      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', 'ERR_F2V_CONFIG_MENU_NOT_OPEN');
+    if (!configMenuOpen.ok) {
+      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', `ERR_F2V_CONFIG_MENU_NOT_OPEN — ${configMenuOpen.detail}`);
       throw new Error('ERR_F2V_CONFIG_MENU_NOT_OPEN');
     }
     const configCheck = await ensureF2VVerifiedAspectCountAndModel();
