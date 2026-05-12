@@ -88,6 +88,7 @@
     NEW_PROJECT_CLICKED: 'NEW_PROJECT_CLICKED',
     FLOW_TYPE_VIDEO_SELECTED: 'FLOW_TYPE_VIDEO_SELECTED',
     FLOW_SUBMODE_FRAMES_SELECTED: 'FLOW_SUBMODE_FRAMES_SELECTED',
+    F2V_COMPOSER_READY: 'F2V_COMPOSER_READY',
     FLOW_ASPECT_9_16_SELECTED: 'FLOW_ASPECT_9_16_SELECTED',
     FLOW_COUNT_1X_SELECTED: 'FLOW_COUNT_1X_SELECTED',
     FLOW_MODEL_VEO_3_1_LITE_SELECTED: 'FLOW_MODEL_VEO_3_1_LITE_SELECTED',
@@ -406,6 +407,108 @@
         && text.includes('1x')
         && (text.includes('crop_9_16') || text.includes('9:16'));
     }) || null;
+  }
+
+  async function ensureF2VComposerReadyBeforeConfig() {
+    const collectComposerSnapshot = () => {
+      const observed = observeFlowState();
+      const composer = findComposerElement();
+      const launcher = findCollapsedF2VConfigLauncher();
+      const visibleMenus = Array.from(document.querySelectorAll('[role="menu"]')).filter(isVisible);
+      const f2vMenu = findOpenF2VConfigMenu();
+      const bodyText = normalizeText(document.body?.innerText || '');
+      const shellMarkers = [];
+      if (bodyText.includes('Scenebuilder')) shellMarkers.push('Scenebuilder');
+      if (bodyText.includes('Add Media')) shellMarkers.push('Add Media');
+      const goBackControl = findElementByText(
+        'button, [role="button"], a, [role="tab"], [role="option"], li, label, span, div',
+        'Go Back',
+      );
+
+      return {
+        observed,
+        startSlotVisible: observed.visibleUploadSlots.includes('Start'),
+        composerFound: Boolean(composer),
+        composerVisible: Boolean(composer && isVisible(composer)),
+        composerEditable: Boolean(composer && isVisible(composer) && isComposerEditable(composer)),
+        launcherFound: Boolean(launcher),
+        launcherVisible: Boolean(launcher && isVisible(launcher)),
+        roleMenuCount: visibleMenus.length,
+        hasBlockingNonF2VMenu: visibleMenus.length > 0 && !f2vMenu,
+        shellMarkers,
+        goBackVisible: Boolean(goBackControl && isVisible(goBackControl)),
+        goBackControl,
+      };
+    };
+
+    const isReady = (snapshot) => (
+      snapshot.observed.topMode === 'Video'
+      && snapshot.observed.subMode === 'Frames'
+      && snapshot.startSlotVisible
+      && snapshot.composerFound
+      && snapshot.composerVisible
+      && snapshot.composerEditable
+      && snapshot.launcherVisible
+      && !snapshot.hasBlockingNonF2VMenu
+      && snapshot.roleMenuCount === 0
+    );
+
+    const formatDetail = (snapshot, goBackClicked) => (
+      `topMode=${snapshot.observed.topMode}`
+      + ` subMode=${snapshot.observed.subMode}`
+      + ` start_slot_visible=${snapshot.startSlotVisible}`
+      + ` composer_found=${snapshot.composerFound}`
+      + ` composer_visible=${snapshot.composerVisible}`
+      + ` composer_editable=${snapshot.composerEditable}`
+      + ` launcher_found=${snapshot.launcherFound}`
+      + ` launcher_visible=${snapshot.launcherVisible}`
+      + ` role_menu_count=${snapshot.roleMenuCount}`
+      + ` shell_markers=${JSON.stringify(snapshot.shellMarkers)}`
+      + ` go_back_clicked=${goBackClicked}`
+    );
+
+    let goBackClicked = false;
+    let snapshot = collectComposerSnapshot();
+    if (isReady(snapshot)) {
+      return { ok: true, detail: formatDetail(snapshot, goBackClicked) };
+    }
+
+    if (snapshot.hasBlockingNonF2VMenu) {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+      await sleep(400);
+      snapshot = collectComposerSnapshot();
+      if (isReady(snapshot)) {
+        return { ok: true, detail: formatDetail(snapshot, goBackClicked) };
+      }
+    }
+
+    if (!isReady(snapshot)
+      && snapshot.shellMarkers.some((marker) => marker === 'Scenebuilder' || marker === 'Add Media')
+      && snapshot.goBackVisible) {
+      const goBackTarget = snapshot.goBackControl?.closest('button, [role="button"], a, [role="tab"], [role="option"], li, label') || snapshot.goBackControl;
+      if (goBackTarget && isVisible(goBackTarget)) {
+        goBackTarget.click();
+        goBackClicked = true;
+        await sleep(800);
+        snapshot = collectComposerSnapshot();
+        if (isReady(snapshot)) {
+          return { ok: true, detail: formatDetail(snapshot, goBackClicked) };
+        }
+      }
+    }
+
+    let error = 'ERR_F2V_COMPOSER_NOT_READY';
+    if (!snapshot.launcherFound || !snapshot.launcherVisible) {
+      error = 'ERR_F2V_CONFIG_LAUNCHER_NOT_FOUND';
+    } else if (snapshot.shellMarkers.some((marker) => marker === 'Scenebuilder' || marker === 'Add Media')) {
+      error = 'ERR_F2V_SCENEBUILDER_STATE';
+    }
+
+    return {
+      ok: false,
+      error,
+      detail: formatDetail(snapshot, goBackClicked),
+    };
   }
 
   async function ensureOpenF2VConfigMenu() {
@@ -2098,6 +2201,13 @@
       throw new Error('ERR_FRAMES_MODE_NOT_ACTIVE');
     }
     logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'PASS', 'subMode=Frames');
+
+    const composerReady = await ensureF2VComposerReadyBeforeConfig();
+    if (!composerReady.ok) {
+      logStage(STAGES.F2V_COMPOSER_READY, 'FAIL', `${composerReady.error} — ${composerReady.detail}`);
+      throw new Error(composerReady.error);
+    }
+    logStage(STAGES.F2V_COMPOSER_READY, 'PASS', composerReady.detail);
 
     // ── Steps 5–7: Config panel (9:16 / 1x / Veo 3.1 - Lite) ────────────────
     const configMenuOpen = await ensureOpenF2VConfigMenu();
