@@ -1420,8 +1420,31 @@ async function handleMessage(msg, sender) {
     return { ok: true };
   }
 
-  if (msg.type === 'DEBUG_FLOW_DOM_EXECUTION') {
-    return await handleDebugFlowDomExecution(msg.params?.mode, msg.params?.job);
+  if (msg.type === 'RESOLVE_LOCAL_ASSET') {
+    const { assetId, filename } = msg;
+    const url = `http://127.0.0.1:8100/api/products/${assetId}/image`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const resp = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!resp.ok) {
+        return { ok: false, error: 'ERR_BACKGROUND_ASSET_FETCH_FAILED', detail: `HTTP_${resp.status}` };
+      }
+      const blob = await resp.blob();
+      const buffer = await blob.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const dataUrl = `data:${blob.type || 'image/jpeg'};base64,${btoa(binary)}`;
+      return { ok: true, dataUrl, mimeType: blob.type, filename };
+    } catch (e) {
+      clearTimeout(timeoutId);
+      return { ok: false, error: 'ERR_BACKGROUND_ASSET_FETCH_FAILED', detail: e.message };
+    }
   }
 
   return { ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' };

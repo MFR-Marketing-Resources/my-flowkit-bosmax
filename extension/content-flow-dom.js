@@ -1371,12 +1371,28 @@
           console.warn(`[FlowAgent] No asset source id resolved for slot ${slotLabel}`);
           return { ok: false, error: buildSlotErrorCode(slotLabel, 'ASSET_MISSING'), lastCheckpoint };
         }
-        const imageUrl = `http://127.0.0.1:8100/api/products/${assetId}/image`;
-        console.log(`[FlowAgent] Fetching image from agent: ${imageUrl}`);
-        const resp = await fetch(imageUrl);
-        if (!resp.ok) throw new Error(`HTTP_${resp.status}`);
-        const blob = await resp.blob();
-        file = new File([blob], `${assetId}.jpg`, { type: 'image/jpeg' });
+        
+        console.log(`[FlowAgent] Resolving local asset via background proxy: ${assetId}`);
+        const proxyResp = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({
+            type: 'RESOLVE_LOCAL_ASSET',
+            assetId,
+            filename: `${assetId}.jpg`
+          }, resolve);
+        });
+
+        if (!proxyResp?.ok) {
+          console.error(`[FlowAgent] Background asset resolution failed: ${proxyResp?.error}`);
+          return { 
+            ok: false, 
+            error: buildSlotErrorCode(slotLabel, 'FILE_RESOLVE_FAILED'),
+            detail: `ERR_START_FILE_RESOLVE_FAILED — ${proxyResp?.error || 'UNKNOWN_PROXY_ERROR'} — ${proxyResp?.detail || ''}`,
+            lastCheckpoint 
+          };
+        }
+
+        const blob = await (await fetch(proxyResp.dataUrl)).blob();
+        file = new File([blob], proxyResp.filename || `${assetId}.jpg`, { type: proxyResp.mimeType || 'image/jpeg' });
       }
       setCheckpoint('UPLOAD_ASSET_RESOLVED');
 
