@@ -77,6 +77,7 @@
     PROMPT_INSERT_METHOD: 'PROMPT_INSERT_METHOD',
     PROMPT_VISIBLE: 'PROMPT_VISIBLE',
     PROMPT_EDITABLE_AFTER_INSERT: 'PROMPT_EDITABLE_AFTER_INSERT',
+    STOP_AFTER_STAGE_REACHED: 'STOP_AFTER_STAGE_REACHED',
     GENERATE_ARROW_ENABLED: 'GENERATE_ARROW_ENABLED',
     GENERATE_CLICKED: 'GENERATE_CLICKED',
     GENERATION_STARTED: 'GENERATION_STARTED',
@@ -384,6 +385,64 @@
       await sleep(800);
     }
     return surfaced || true;
+  }
+
+  function findOpenF2VConfigMenu() {
+    return Array.from(document.querySelectorAll('[role="menu"][data-radix-menu-content]')).find((el) => {
+      if (!isVisible(el)) return false;
+      const text = normalizeText(el.innerText || el.textContent || '');
+      return text.includes('Video')
+        && text.includes('Frames')
+        && text.includes('9:16')
+        && text.includes('1x');
+    }) || null;
+  }
+
+  async function ensureF2VVerifiedAspectCountAndModel() {
+    const menu = findOpenF2VConfigMenu();
+    if (!menu) {
+      return { ok: false, error: 'ERR_ASPECT_9_16_NOT_SELECTED', detail: 'F2V config menu not open' };
+    }
+
+    const aspectBtn = menu.querySelector('button[role="tab"][aria-controls$="content-PORTRAIT"]');
+    if (!aspectBtn || !isVisible(aspectBtn)) {
+      return { ok: false, error: 'ERR_ASPECT_9_16_NOT_SELECTED', detail: 'Verified 9:16 control not found' };
+    }
+    if (aspectBtn.getAttribute('aria-selected') !== 'true') {
+      aspectBtn.click();
+      await sleep(500);
+    }
+    if (aspectBtn.getAttribute('aria-selected') !== 'true') {
+      return { ok: false, error: 'ERR_ASPECT_9_16_NOT_SELECTED', detail: 'aria-selected did not become true for 9:16' };
+    }
+
+    const countBtn = menu.querySelector('button[role="tab"][aria-controls$="content-1"]');
+    if (!countBtn || !isVisible(countBtn)) {
+      return { ok: false, error: 'ERR_COUNT_1X_NOT_SELECTED', detail: 'Verified 1x control not found' };
+    }
+    if (countBtn.getAttribute('aria-selected') !== 'true') {
+      countBtn.click();
+      await sleep(500);
+    }
+    if (countBtn.getAttribute('aria-selected') !== 'true') {
+      return { ok: false, error: 'ERR_COUNT_1X_NOT_SELECTED', detail: 'aria-selected did not become true for 1x' };
+    }
+
+    const modelBtn = Array.from(menu.querySelectorAll('button[aria-haspopup="menu"]')).find((el) => {
+      if (!isVisible(el)) return false;
+      const text = normalizeText(el.innerText || el.textContent || '');
+      return /veo|nano banana|banana/i.test(text);
+    });
+    const modelText = normalizeText(modelBtn?.innerText || modelBtn?.textContent || '');
+    if (!modelBtn || !isVisible(modelBtn) || /nano.?banana/i.test(modelText) || !modelText.includes('Veo 3.1 - Lite')) {
+      return {
+        ok: false,
+        error: 'ERR_WRONG_MODEL_FOR_F2V',
+        detail: `MODEL_SWITCHING_NOT_IMPLEMENTED_OPENED_OPTION_DOM_NOT_VERIFIED model=${modelText || 'UNKNOWN'}`,
+      };
+    }
+
+    return { ok: true, modelText };
   }
 
   async function selectFlowConfigOption(text) {
@@ -1972,29 +2031,24 @@
 
     // ── Steps 5–7: Config panel (9:16 / 1x / Veo 3.1 - Lite) ────────────────
     await openFlowConfigPanel();
-
-    const aspectOk = await selectFlowConfigOption('9:16');
-    if (!aspectOk) {
-      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', 'selectFlowConfigOption(9:16) returned false');
+    const configCheck = await ensureF2VVerifiedAspectCountAndModel();
+    if (!configCheck.ok && configCheck.error === 'ERR_ASPECT_9_16_NOT_SELECTED') {
+      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', configCheck.detail);
       throw new Error('ERR_ASPECT_9_16_NOT_SELECTED');
     }
     logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'PASS');
 
-    const countOk = await selectFlowConfigOption('1x');
-    if (!countOk) {
-      logStage(STAGES.FLOW_COUNT_1X_SELECTED, 'FAIL', 'selectFlowConfigOption(1x) returned false');
+    if (!configCheck.ok && configCheck.error === 'ERR_COUNT_1X_NOT_SELECTED') {
+      logStage(STAGES.FLOW_COUNT_1X_SELECTED, 'FAIL', configCheck.detail);
       throw new Error('ERR_COUNT_1X_NOT_SELECTED');
     }
     logStage(STAGES.FLOW_COUNT_1X_SELECTED, 'PASS');
 
-    const modelOk = await selectFlowConfigOption('Veo 3.1 - Lite');
-    const obsAfterModel = observeFlowState();
-    if (!modelOk || (obsAfterModel.model && /nano.?banana/i.test(obsAfterModel.model))) {
-      logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'FAIL',
-        `modelOk=${modelOk} model=${obsAfterModel.model}`);
+    if (!configCheck.ok && configCheck.error === 'ERR_WRONG_MODEL_FOR_F2V') {
+      logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'FAIL', configCheck.detail);
       throw new Error('ERR_WRONG_MODEL_FOR_F2V');
     }
-    logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'PASS', `model=${obsAfterModel.model}`);
+    logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'PASS', `model=${configCheck.modelText}`);
 
     // ── Step 8: Upload gate — Start slot must be visible ─────────────────────
     const obsForSlot = observeFlowState();
@@ -2260,6 +2314,16 @@
         throw new Error('PROMPT_INSERT_LOCKED_OR_UNTRUSTED');
       }
       logStage(STAGES.PROMPT_EDITABLE_AFTER_INSERT);
+
+      if (job.stop_after_stage === 'PROMPT_EDITABLE_AFTER_INSERT') {
+        logStage(STAGES.STOP_AFTER_STAGE_REACHED, 'PASS');
+        return {
+          ok: true,
+          stopped_at_stage: STAGES.PROMPT_EDITABLE_AFTER_INSERT,
+          stopped_before_generate: true,
+          stages: report.stages,
+        };
+      }
 
       // 9. Click Generate (ONLY after all verifications)
       let generateBtn = findGenerateButtonNearComposer();
