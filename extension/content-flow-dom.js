@@ -398,6 +398,27 @@
     }) || null;
   }
 
+  function findCollapsedF2VConfigLauncher() {
+    return Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).find((el) => {
+      if (!isVisible(el)) return false;
+      const text = normalizeText(el.innerText || el.textContent || '');
+      return text.includes('Video')
+        && text.includes('1x')
+        && (text.includes('crop_9_16') || text.includes('9:16'));
+    }) || null;
+  }
+
+  async function ensureOpenF2VConfigMenu() {
+    if (findOpenF2VConfigMenu()) return true;
+
+    const launcher = findCollapsedF2VConfigLauncher();
+    if (!launcher || !isVisible(launcher)) return false;
+
+    launcher.click();
+    const opened = await waitForCondition(() => Boolean(findOpenF2VConfigMenu()), 2500, 100);
+    return Boolean(opened && findOpenF2VConfigMenu());
+  }
+
   async function ensureF2VVerifiedAspectCountAndModel() {
     const menu = findOpenF2VConfigMenu();
     if (!menu) {
@@ -2030,7 +2051,11 @@
     logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'PASS', 'subMode=Frames');
 
     // ── Steps 5–7: Config panel (9:16 / 1x / Veo 3.1 - Lite) ────────────────
-    await openFlowConfigPanel();
+    const configMenuOpen = await ensureOpenF2VConfigMenu();
+    if (!configMenuOpen) {
+      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', 'ERR_F2V_CONFIG_MENU_NOT_OPEN');
+      throw new Error('ERR_F2V_CONFIG_MENU_NOT_OPEN');
+    }
     const configCheck = await ensureF2VVerifiedAspectCountAndModel();
     if (!configCheck.ok && configCheck.error === 'ERR_ASPECT_9_16_NOT_SELECTED') {
       logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', configCheck.detail);
