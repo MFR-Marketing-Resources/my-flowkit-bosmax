@@ -1467,7 +1467,7 @@ async function handleMessage(msg, sender) {
     }
   }
 
-  return { ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' };
+  return { ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE', detail: `type=${msg.type}` };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
