@@ -1477,7 +1477,12 @@
       };
     } catch (error) {
       console.error(`[FlowAgent] Upload dispatch failed for ${slotLabel}: ${error.message}`);
-      return { ok: false, error: buildSlotErrorCode(slotLabel, 'UPLOAD_DISPATCH_FAILED'), lastCheckpoint };
+      return { 
+        ok: false, 
+        error: buildSlotErrorCode(slotLabel, 'UPLOAD_DISPATCH_FAILED'), 
+        detail: `CATCH_ERROR: ${error.message} — stack: ${error.stack?.slice(0, 200)}`,
+        lastCheckpoint 
+      };
     }
   }
 
