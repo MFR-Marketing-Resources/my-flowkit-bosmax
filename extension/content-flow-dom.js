@@ -2428,7 +2428,7 @@
 
     const activeVideo = await waitForCondition(
       () => observeFlowState().topMode === 'Video',
-      3500, 150,
+      5000, 150,
     );
 
     if (!activeVideo) {
