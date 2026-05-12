@@ -388,7 +388,7 @@
   }
 
   function findOpenF2VConfigMenu() {
-    return Array.from(document.querySelectorAll('[role="menu"][data-radix-menu-content]')).find((el) => {
+    return Array.from(document.querySelectorAll('[role="menu"]')).find((el) => {
       if (!isVisible(el)) return false;
       const text = normalizeText(el.innerText || el.textContent || '');
       return text.includes('Video')
