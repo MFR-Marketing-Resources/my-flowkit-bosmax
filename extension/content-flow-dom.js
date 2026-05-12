@@ -512,17 +512,17 @@
   }
 
   async function ensureOpenF2VConfigMenu() {
-    const roleMenuCountBefore = document.querySelectorAll('[role="menu"]').length;
+    const roleMenuCountBeforeOrig = document.querySelectorAll('[role="menu"]').length;
     const existingMenu = findOpenF2VConfigMenu();
     if (existingMenu) {
       return {
         ok: true,
-        detail: `role_menu_count_before=${roleMenuCountBefore} launcher_found=false launcher_visible=false launcher_text='' launcher_aria_expanded_before='' launcher_data_state_before='' click_method=HTMLElement.click role_menu_count_after=${roleMenuCountBefore} launcher_aria_expanded_after='' launcher_data_state_after='' first_menu_text_snippet_after=${JSON.stringify(normalizeText(existingMenu.innerText || existingMenu.textContent || '').slice(0, 120))}`,
+        detail: `role_menu_count_before=${roleMenuCountBeforeOrig} launcher_found=false launcher_visible=false launcher_text='' launcher_aria_expanded_before='' launcher_data_state_before='' click_method=none role_menu_count_after=${roleMenuCountBeforeOrig} launcher_aria_expanded_after='' launcher_data_state_after='' first_menu_text_snippet_after=${JSON.stringify(normalizeText(existingMenu.innerText || existingMenu.textContent || '').slice(0, 120))}`,
       };
     }
 
     let roleMenuTextSnippetsBeforeClose = [];
-    if (roleMenuCountBefore > 0) {
+    if (roleMenuCountBeforeOrig > 0) {
       roleMenuTextSnippetsBeforeClose = Array.from(document.querySelectorAll('[role="menu"]')).map((el) => (
         normalizeText(el.innerText || el.textContent || '').slice(0, 120)
       ));
@@ -535,39 +535,103 @@
     }
 
     const roleMenuCountAfterClose = document.querySelectorAll('[role="menu"]').length;
+
+    // 1. Re-query launcher immediately before click
     const launcher = findCollapsedF2VConfigLauncher();
-    const launcherFoundAfterClose = Boolean(launcher);
     const launcherFound = Boolean(launcher);
     const launcherVisible = Boolean(launcher && isVisible(launcher));
     const launcherText = normalizeText(launcher?.innerText || launcher?.textContent || '');
+
+    // 2. Verify launcher state
+    const isLauncherValid = launcherFound && launcherVisible
+      && launcherText.includes('Video')
+      && launcherText.includes('1x')
+      && (launcherText.includes('crop_9_16') || launcherText.includes('9:16'));
+
     const launcherAriaExpandedBefore = launcher?.getAttribute('aria-expanded') || '';
     const launcherDataStateBefore = launcher?.getAttribute('data-state') || '';
-    const bodyTextSnippet = normalizeText(document.body?.innerText || '').slice(0, 120);
+    const rect = launcher?.getBoundingClientRect();
+    const activeElementTextBefore = normalizeText(document.activeElement?.innerText || document.activeElement?.textContent || '').slice(0, 50);
 
-    if (!launcherFound || !launcherVisible) {
+    const diagBefore = {
+      launcher_found_before_click: launcherFound,
+      launcher_visible_before_click: launcherVisible,
+      launcher_text_before_click: launcherText,
+      launcher_outerHTML_before_click: launcher?.outerHTML?.slice(0, 200),
+      launcher_aria_expanded_before: launcherAriaExpandedBefore,
+      launcher_data_state_before: launcherDataStateBefore,
+      launcher_bounding_rect: rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null,
+      active_element_text_before: activeElementTextBefore,
+      role_menu_count_before: roleMenuCountAfterClose,
+    };
+
+    if (!isLauncherValid) {
+      const bodyTextSnippet = normalizeText(document.body?.innerText || '').slice(0, 120);
       return {
         ok: false,
-        detail: `role_menu_count_before=${roleMenuCountBefore} role_menu_text_snippets_before_close=${JSON.stringify(roleMenuTextSnippetsBeforeClose)} role_menu_count_after_close=${roleMenuCountAfterClose} launcher_found_after_close=${launcherFoundAfterClose} launcher_found=${launcherFound} launcher_visible=${launcherVisible} launcher_text=${JSON.stringify(launcherText)} launcher_aria_expanded_before=${launcherAriaExpandedBefore} launcher_data_state_before=${launcherDataStateBefore} click_method=HTMLElement.click role_menu_count_after=${roleMenuCountAfterClose} launcher_aria_expanded_after=${launcherAriaExpandedBefore} launcher_data_state_after=${launcherDataStateBefore} first_menu_text_snippet_after='' body_text_snippet=${JSON.stringify(bodyTextSnippet)}`,
+        detail: `ERR_F2V_CONFIG_LAUNCHER_INVALID — ${JSON.stringify(diagBefore)} body_text_snippet=${JSON.stringify(bodyTextSnippet)}`,
       };
     }
 
-    launcher.click();
-    const opened = await waitForCondition(() => Boolean(findOpenF2VConfigMenu()), 2500, 100);
+    // 4. Scroll launcher into view
+    launcher.scrollIntoView({ block: 'center', inline: 'center' });
+    await sleep(150);
+
+    // 5. Dispatch realistic synthetic click sequence
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    const eventInit = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: centerX,
+      clientY: centerY,
+    };
+
+    let clickMethodUsed = 'pointer_sequence';
+    launcher.dispatchEvent(new PointerEvent('pointerdown', { ...eventInit, pointerType: 'mouse' }));
+    launcher.dispatchEvent(new MouseEvent('mousedown', eventInit));
+    launcher.dispatchEvent(new PointerEvent('pointerup', { ...eventInit, pointerType: 'mouse' }));
+    launcher.dispatchEvent(new MouseEvent('mouseup', eventInit));
+    launcher.dispatchEvent(new MouseEvent('click', eventInit));
+
+    // 6. Fallback if still not open
+    let opened = await waitForCondition(() => Boolean(findOpenF2VConfigMenu()), 1500, 150);
+    if (!opened) {
+      clickMethodUsed = 'pointer_sequence_plus_fallback_click';
+      launcher.click();
+      opened = await waitForCondition(() => Boolean(findOpenF2VConfigMenu()), 1500, 150);
+    }
+
     const roleMenuCountAfter = document.querySelectorAll('[role="menu"]').length;
     const launcherAriaExpandedAfter = launcher.getAttribute('aria-expanded') || '';
     const launcherDataStateAfter = launcher.getAttribute('data-state') || '';
     const menuAfter = findOpenF2VConfigMenu();
-    const firstMenuTextSnippetAfter = normalizeText(
-      menuAfter?.innerText
-      || menuAfter?.textContent
-      || document.querySelector('[role="menu"]')?.innerText
-      || document.querySelector('[role="menu"]')?.textContent
-      || '',
-    ).slice(0, 120);
+    const roleMenuTextSnippetsAfter = Array.from(document.querySelectorAll('[role="menu"]')).map((el) => (
+      normalizeText(el.innerText || el.textContent || '').slice(0, 120)
+    ));
+    const activeElementTextAfter = normalizeText(document.activeElement?.innerText || document.activeElement?.textContent || '').slice(0, 50);
+
+    const bodyShellMarkersAfter = [];
+    const bodyTextAfter = document.body?.innerText || '';
+    if (bodyTextAfter.includes('Scenebuilder')) bodyShellMarkersAfter.push('Scenebuilder');
+    if (bodyTextAfter.includes('Add Media')) bodyShellMarkersAfter.push('Add Media');
+
+    const diagAfter = {
+      ...diagBefore,
+      click_method_used: clickMethodUsed,
+      launcher_aria_expanded_after: launcherAriaExpandedAfter,
+      launcher_data_state_after: launcherDataStateAfter,
+      role_menu_count_after: roleMenuCountAfter,
+      role_menu_text_snippets_after: roleMenuTextSnippetsAfter,
+      active_element_text_after: activeElementTextAfter,
+      body_shell_markers_after: bodyShellMarkersAfter,
+    };
 
     return {
       ok: Boolean(opened && menuAfter),
-      detail: `role_menu_count_before=${roleMenuCountBefore} role_menu_text_snippets_before_close=${JSON.stringify(roleMenuTextSnippetsBeforeClose)} role_menu_count_after_close=${roleMenuCountAfterClose} launcher_found_after_close=${launcherFoundAfterClose} launcher_found=${launcherFound} launcher_visible=${launcherVisible} launcher_text=${JSON.stringify(launcherText)} launcher_aria_expanded_before=${launcherAriaExpandedBefore} launcher_data_state_before=${launcherDataStateBefore} click_method=HTMLElement.click role_menu_count_after=${roleMenuCountAfter} launcher_aria_expanded_after=${launcherAriaExpandedAfter} launcher_data_state_after=${launcherDataStateAfter} first_menu_text_snippet_after=${JSON.stringify(firstMenuTextSnippetAfter)} body_text_snippet=${JSON.stringify(bodyTextSnippet)}`,
+      detail: JSON.stringify(diagAfter),
     };
   }
 
