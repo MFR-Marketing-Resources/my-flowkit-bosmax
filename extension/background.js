@@ -1423,16 +1423,19 @@ async function handleMessage(msg, sender) {
   if (msg.type === 'RESOLVE_LOCAL_ASSET') {
     const { assetId, filename } = msg;
     const url = `http://127.0.0.1:8100/api/products/${assetId}/image`;
+    console.log(`[FlowAgent] Background proxy resolving asset: ${assetId} from ${url}`);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     try {
       const resp = await fetch(url, { signal: controller.signal });
       clearTimeout(timeoutId);
+      console.log(`[FlowAgent] Background fetch status: ${resp.status}`);
       if (!resp.ok) {
         return { ok: false, error: 'ERR_BACKGROUND_ASSET_FETCH_FAILED', detail: `HTTP_${resp.status}` };
       }
       const blob = await resp.blob();
+      console.log(`[FlowAgent] Background fetch blob: ${blob.size} bytes, type: ${blob.type}`);
       const buffer = await blob.arrayBuffer();
       const bytes = new Uint8Array(buffer);
       let binary = '';
@@ -1440,9 +1443,11 @@ async function handleMessage(msg, sender) {
         binary += String.fromCharCode(bytes[i]);
       }
       const dataUrl = `data:${blob.type || 'image/jpeg'};base64,${btoa(binary)}`;
+      console.log(`[FlowAgent] Background proxy success: ${dataUrl.length} chars`);
       return { ok: true, dataUrl, mimeType: blob.type, filename };
     } catch (e) {
       clearTimeout(timeoutId);
+      console.error(`[FlowAgent] Background proxy error: ${e.message}`);
       return { ok: false, error: 'ERR_BACKGROUND_ASSET_FETCH_FAILED', detail: e.message };
     }
   }

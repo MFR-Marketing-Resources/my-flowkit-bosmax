@@ -1373,12 +1373,21 @@
         }
         
         console.log(`[FlowAgent] Resolving local asset via background proxy: ${assetId}`);
+        setCheckpoint('UPLOAD_ASSET_PROXY_SEND');
         const proxyResp = await new Promise((resolve) => {
+          const proxyTimeout = setTimeout(() => {
+            console.warn(`[FlowAgent] Background proxy timeout for ${assetId}`);
+            resolve({ ok: false, error: 'ERR_PROXY_MESSAGE_TIMEOUT' });
+          }, 15000);
+
           chrome.runtime.sendMessage({
             type: 'RESOLVE_LOCAL_ASSET',
             assetId,
             filename: `${assetId}.jpg`
-          }, resolve);
+          }, (resp) => {
+            clearTimeout(proxyTimeout);
+            resolve(resp);
+          });
         });
 
         if (!proxyResp?.ok) {
@@ -1391,6 +1400,7 @@
           };
         }
 
+        setCheckpoint('UPLOAD_ASSET_PROXY_RECEIVE');
         const blob = await (await fetch(proxyResp.dataUrl)).blob();
         file = new File([blob], proxyResp.filename || `${assetId}.jpg`, { type: proxyResp.mimeType || 'image/jpeg' });
       }
