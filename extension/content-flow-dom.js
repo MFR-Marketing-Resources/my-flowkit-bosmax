@@ -1372,6 +1372,7 @@
           return { ok: false, error: buildSlotErrorCode(slotLabel, 'ASSET_MISSING'), lastCheckpoint };
         }
         
+        const requestIdForProxy = stateObj?.request_id || null;
         console.log(`[FlowAgent] Resolving local asset via background proxy: ${assetId}`);
         setCheckpoint('UPLOAD_ASSET_PROXY_SEND');
         const proxyResp = await new Promise((resolve) => {
@@ -1384,7 +1385,7 @@
             type: 'RESOLVE_LOCAL_ASSET',
             assetId,
             filename: `${assetId}.jpg`,
-            request_id: request_id // From executeFlowJob scope
+            request_id: requestIdForProxy
           }, (resp) => {
             clearTimeout(proxyTimeout);
             resolve(resp);
@@ -2700,7 +2701,7 @@
           setTimeout(() => reject(new Error('ERR_START_UPLOAD_TIMEOUT')), 20000)
         );
 
-        const uploadState = { lastCheckpoint: 'NONE' };
+        const uploadState = { lastCheckpoint: 'NONE', request_id };
         let okStart;
         try {
           okStart = await Promise.race([
