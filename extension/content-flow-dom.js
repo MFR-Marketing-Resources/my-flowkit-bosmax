@@ -2573,7 +2573,13 @@
   }
 
   async function executeFlowJob(job) {
+    const testConn = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'STATUS' }, resolve);
+    });
+    console.log('[FlowAgent] Background connection test:', testConn);
+
     const report = { ok: false, stages: [] };
+    const request_id = job.request_id || `flow_${Date.now()}`;
     const logStage = (stage, status = 'YES', message = null) => {
       report.stages.push({ stage, status, message });
       console.log(`[FlowAgent] Stage: ${stage} - ${status}${message ? ` - ${message}` : ''}`);
@@ -2588,7 +2594,7 @@
     };
 
     try {
-      logStage(STAGES.FLOW_TAB_FOUND);
+      logStage(STAGES.FLOW_TAB_FOUND, 'YES', `background_conn=${testConn?.ok || (testConn && typeof testConn === 'object')}`);
 
       // 0. Log job received
       if (job.prompt) {
