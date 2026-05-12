@@ -66,8 +66,8 @@
     COUNT_SELECTED: 'COUNT_SELECTED',
     MODEL_SELECTED: 'MODEL_SELECTED',
     FLOW_MODE_VERIFIED: 'FLOW_MODE_VERIFIED',
-    ASSETS_VERIFIED: 'ASSETS_VERIFIED',
     START_FRAME_UPLOAD_ATTEMPTED: 'START_FRAME_UPLOAD_ATTEMPTED',
+    ASSETS_VERIFIED: 'ASSETS_VERIFIED',
     START_FRAME_ATTACHED: 'START_FRAME_ATTACHED',
     START_FRAME_VERIFIED: 'START_FRAME_VERIFIED',
     END_FRAME_ATTACHED: 'END_FRAME_ATTACHED',
@@ -1304,10 +1304,11 @@
     await sleep(300);
   }
 
-  async function simulateFileUpload(slotLabel, assetSource) {
+  async function simulateFileUpload(slotLabel, assetSource, stateObj = null) {
     let lastCheckpoint = 'NONE';
     const setCheckpoint = (cp) => {
       lastCheckpoint = cp;
+      if (stateObj) stateObj.lastCheckpoint = cp;
       console.log(`[FlowAgent] Upload Checkpoint (${slotLabel}): ${cp}`);
     };
 
@@ -2661,10 +2662,11 @@
           setTimeout(() => reject(new Error('ERR_START_UPLOAD_TIMEOUT')), 20000)
         );
 
+        const uploadState = { lastCheckpoint: 'NONE' };
         let okStart;
         try {
           okStart = await Promise.race([
-            simulateFileUpload('Start', startAssetSource),
+            simulateFileUpload('Start', startAssetSource, uploadState),
             uploadTimeoutPromise
           ]);
         } catch (err) {
@@ -2680,7 +2682,7 @@
             if (bodyText.includes('Go Back')) shellMarkers.push('Go Back');
 
             const diag = {
-              last_checkpoint: 'TIMEOUT_DURING_SIMULATE',
+              last_checkpoint: uploadState.lastCheckpoint,
               slotLabel: 'Start',
               visible_upload_slots: obs.visibleUploadSlots,
               slot_container_outerHTML: slotContainer?.outerHTML?.slice(0, 500),
@@ -2699,6 +2701,7 @@
         if (okStart?.ok) {
           logStage(STAGES.START_FRAME_ATTACHED, 'PASS', `slot=Start dispatch=ok last_checkpoint=${okStart.lastCheckpoint}`);
 
+          uploadState.lastCheckpoint = 'UPLOAD_PREVIEW_WAIT_STARTED';
           const startPreview = await waitForAssetPreview('Start', okStart.slotElement || null, {
             slotContainer: okStart.slotContainer || null,
             beforeSnapshot: okStart.beforeSnapshot || null,
@@ -2710,6 +2713,7 @@
             throw new Error(startPreview.error || buildSlotErrorCode('Start', 'PREVIEW_TIMEOUT'));
           }
 
+          uploadState.lastCheckpoint = 'UPLOAD_PREVIEW_VERIFIED';
           const rect = startPreview.snapshot?.previewRect;
           logStage(
             STAGES.START_FRAME_VERIFIED,
