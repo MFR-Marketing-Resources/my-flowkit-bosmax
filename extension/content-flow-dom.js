@@ -67,6 +67,7 @@
     MODEL_SELECTED: 'MODEL_SELECTED',
     FLOW_MODE_VERIFIED: 'FLOW_MODE_VERIFIED',
     ASSETS_VERIFIED: 'ASSETS_VERIFIED',
+    START_FRAME_UPLOAD_ATTEMPTED: 'START_FRAME_UPLOAD_ATTEMPTED',
     START_FRAME_ATTACHED: 'START_FRAME_ATTACHED',
     START_FRAME_VERIFIED: 'START_FRAME_VERIFIED',
     END_FRAME_ATTACHED: 'END_FRAME_ATTACHED',
@@ -1304,48 +1305,60 @@
   }
 
   async function simulateFileUpload(slotLabel, assetSource) {
-    console.log(`[FlowAgent] Attempting to upload asset to slot: ${slotLabel}`);
+    let lastCheckpoint = 'NONE';
+    const setCheckpoint = (cp) => {
+      lastCheckpoint = cp;
+      console.log(`[FlowAgent] Upload Checkpoint (${slotLabel}): ${cp}`);
+    };
 
-    // 1. Find and click the slot button using robust resolution
-    const slotInfo = findUploadSlotByLabel(slotLabel);
-    const slotContainer = slotInfo?.container || resolveSlotContainer(slotLabel);
-    // Prefer the label node or a button inside the container for the click
-    const slotBtn = slotInfo?.labelNode?.closest('button, [role="button"]')
-      || slotInfo?.labelNode
-      || slotContainer?.querySelector('button, [role="button"]')
-      || slotContainer;
-
-    if (!slotContainer || !slotBtn) {
-      const observed = observeFlowState();
-      const bodyText = normalizeText(document.body?.innerText || '').slice(0, 150);
-      const candidates = Array.from(document.querySelectorAll('label, span, div, p'))
-        .filter((el) => isVisible(el) && normalizeText(el.textContent || '').includes(slotLabel))
-        .map((el) => normalizeText(el.textContent || '').slice(0, 30));
-
-      const diag = {
-        visible_upload_slots: observed.visibleUploadSlots,
-        start_label_found: Boolean(slotInfo?.labelNode),
-        start_container_text: normalizeText(slotContainer?.textContent || '').slice(0, 100),
-        start_container_outerHTML: slotContainer?.outerHTML?.slice(0, 500),
-        candidate_slot_texts: candidates,
-        body_text_snippet: bodyText,
-      };
-
-      console.warn(`[FlowAgent] Slot ${slotLabel} not found or not clickable. Diag:`, diag);
-      return {
-        ok: false,
-        error: buildSlotErrorCode(slotLabel, 'SLOT_NOT_FOUND'),
-        detail: `ERR_START_SLOT_NOT_FOUND — ${JSON.stringify(diag)}`,
-      };
-    }
-
-    const beforeSnapshot = snapshotSlot(slotContainer);
-    slotBtn.click();
-    await sleep(500);
-
-    // 2. Fetch or Resolve the image
-    let file;
     try {
+      setCheckpoint('UPLOAD_SLOT_RESOLUTION_STARTED');
+      console.log(`[FlowAgent] Attempting to upload asset to slot: ${slotLabel}`);
+
+      // 1. Find and click the slot button using robust resolution
+      const slotInfo = findUploadSlotByLabel(slotLabel);
+      const slotContainer = slotInfo?.container || resolveSlotContainer(slotLabel);
+      // Prefer the label node or a button inside the container for the click
+      const slotBtn = slotInfo?.labelNode?.closest('button, [role="button"]')
+        || slotInfo?.labelNode
+        || slotContainer?.querySelector('button, [role="button"]')
+        || slotContainer;
+
+      if (!slotContainer || !slotBtn) {
+        const observed = observeFlowState();
+        const bodyText = normalizeText(document.body?.innerText || '').slice(0, 150);
+        const candidates = Array.from(document.querySelectorAll('label, span, div, p'))
+          .filter((el) => isVisible(el) && normalizeText(el.textContent || '').includes(slotLabel))
+          .map((el) => normalizeText(el.textContent || '').slice(0, 30));
+
+        const diag = {
+          visible_upload_slots: observed.visibleUploadSlots,
+          start_label_found: Boolean(slotInfo?.labelNode),
+          start_container_text: normalizeText(slotContainer?.textContent || '').slice(0, 100),
+          start_container_outerHTML: slotContainer?.outerHTML?.slice(0, 500),
+          candidate_slot_texts: candidates,
+          body_text_snippet: bodyText,
+        };
+
+        console.warn(`[FlowAgent] Slot ${slotLabel} not found or not clickable. Diag:`, diag);
+        return {
+          ok: false,
+          error: buildSlotErrorCode(slotLabel, 'SLOT_NOT_FOUND'),
+          detail: `ERR_START_SLOT_NOT_FOUND — ${JSON.stringify(diag)}`,
+          lastCheckpoint,
+        };
+      }
+
+      setCheckpoint('UPLOAD_SLOT_RESOLVED');
+      const beforeSnapshot = snapshotSlot(slotContainer);
+
+      setCheckpoint('UPLOAD_SLOT_CLICKED');
+      slotBtn.click();
+      await sleep(500);
+
+      // 2. Fetch or Resolve the image
+      setCheckpoint('UPLOAD_ASSET_RESOLVE_STARTED');
+      let file;
       if (assetSource && typeof assetSource === 'object' && assetSource.previewUrl) {
         console.log(`[FlowAgent] Using direct base64 source for ${slotLabel}`);
         const base64Data = assetSource.previewUrl;
@@ -1355,7 +1368,7 @@
         const assetId = resolveAssetSourceId(assetSource);
         if (!assetId) {
           console.warn(`[FlowAgent] No asset source id resolved for slot ${slotLabel}`);
-          return { ok: false, error: buildSlotErrorCode(slotLabel, 'ASSET_MISSING') };
+          return { ok: false, error: buildSlotErrorCode(slotLabel, 'ASSET_MISSING'), lastCheckpoint };
         }
         const imageUrl = `http://127.0.0.1:8100/api/products/${assetId}/image`;
         console.log(`[FlowAgent] Fetching image from agent: ${imageUrl}`);
@@ -1364,36 +1377,35 @@
         const blob = await resp.blob();
         file = new File([blob], `${assetId}.jpg`, { type: 'image/jpeg' });
       }
-    } catch (err) {
-      console.error(`[FlowAgent] Failed to resolve/fetch image: ${err.message}`);
-      return { ok: false, error: buildSlotErrorCode(slotLabel, 'FILE_RESOLVE_FAILED') };
-    }
+      setCheckpoint('UPLOAD_ASSET_RESOLVED');
 
-    // 3. Find the dropzone/input
-    // Scoped resolution: Resolve clickable target from the slot container
-    const fileInput = slotContainer.querySelector('input[type="file"]');
-    const dropzone = slotContainer.querySelector('[role="presentation"], .dropzone, [aria-label*="upload"]');
+      // 3. Find the dropzone/input
+      // Scoped resolution: Resolve clickable target from the slot container
+      const fileInput = slotContainer.querySelector('input[type="file"]');
+      const dropzone = slotContainer.querySelector('[role="presentation"], .dropzone, [aria-label*="upload"]');
 
-    // Fallback: Resolve clickable target inside the slot
-    const internalClickable = slotContainer.querySelector('button, [role="button"], label, div[onclick]');
+      // Fallback: Resolve clickable target inside the slot
+      const internalClickable = slotContainer.querySelector('button, [role="button"], label, div[onclick]');
 
-    const target = fileInput || dropzone || internalClickable || slotBtn;
+      const target = fileInput || dropzone || internalClickable || slotBtn;
 
-    if (!target || !slotContainer.contains(target)) {
-      const diag = {
-        start_container_outerHTML: slotContainer.outerHTML.slice(0, 500),
-        file_input_found: Boolean(fileInput),
-        clickable_target_found: Boolean(internalClickable || slotBtn),
-        clickable_target_outerHTML: (internalClickable || slotBtn)?.outerHTML?.slice(0, 500),
-      };
-      return {
-        ok: false,
-        error: buildSlotErrorCode(slotLabel, 'UPLOAD_TARGET_NOT_FOUND'),
-        detail: `ERR_START_UPLOAD_TARGET_NOT_FOUND — ${JSON.stringify(diag)}`,
-      };
-    }
+      if (!target || !slotContainer.contains(target)) {
+        const diag = {
+          start_container_outerHTML: slotContainer.outerHTML.slice(0, 500),
+          file_input_found: Boolean(fileInput),
+          clickable_target_found: Boolean(internalClickable || slotBtn),
+          clickable_target_outerHTML: (internalClickable || slotBtn)?.outerHTML?.slice(0, 500),
+        };
+        return {
+          ok: false,
+          error: buildSlotErrorCode(slotLabel, 'UPLOAD_TARGET_NOT_FOUND'),
+          detail: `ERR_START_UPLOAD_TARGET_NOT_FOUND — ${JSON.stringify(diag)}`,
+          lastCheckpoint,
+        };
+      }
+      setCheckpoint('UPLOAD_TARGET_RESOLVED');
 
-    try {
+      setCheckpoint('UPLOAD_DISPATCH_STARTED');
       const dataTransfer = new DataTransfer();
       dataTransfer.items.add(file);
 
@@ -1424,19 +1436,21 @@
         target.dispatchEvent(dragOver);
         target.dispatchEvent(dropEvent);
       }
+      setCheckpoint('UPLOAD_DISPATCH_COMPLETED');
+
+      console.log(`[FlowAgent] Dispatched upload for ${slotLabel}`);
+      await sleep(600);
+      return {
+        ok: true,
+        slotElement: slotBtn,
+        slotContainer,
+        beforeSnapshot,
+        lastCheckpoint,
+      };
     } catch (error) {
       console.error(`[FlowAgent] Upload dispatch failed for ${slotLabel}: ${error.message}`);
-      return { ok: false, error: buildSlotErrorCode(slotLabel, 'UPLOAD_DISPATCH_FAILED') };
+      return { ok: false, error: buildSlotErrorCode(slotLabel, 'UPLOAD_DISPATCH_FAILED'), lastCheckpoint };
     }
-
-    console.log(`[FlowAgent] Dispatched upload for ${slotLabel}`);
-    await sleep(600);
-    return {
-      ok: true,
-      slotElement: slotBtn,
-      slotContainer,
-      beforeSnapshot,
-    };
   }
 
   /**
@@ -2636,9 +2650,54 @@
       const assetSlotContexts = [];
       if (job.mode === 'F2V') {
         // Step 6a: Upload Start Frame
-        const okStart = await simulateFileUpload('Start', job.startAsset || job.productId || job.startImageMediaId);
+        const startAssetSource = job.startAsset || job.productId || job.startImageMediaId;
+        const assetSourceType = !startAssetSource ? 'missing' : typeof startAssetSource === 'string' ? (startAssetSource.startsWith('data:') ? 'data_url' : (startAssetSource.startsWith('http') ? 'url' : 'path/id')) : 'object';
+        const assetFilename = (typeof startAssetSource === 'object' && startAssetSource) ? startAssetSource.fileName : 'unknown';
+
+        logStage(STAGES.START_FRAME_UPLOAD_ATTEMPTED, 'PASS', 
+          `slot=Start asset_source_type=${assetSourceType} asset_filename=${assetFilename} visible_upload_slots=${observeFlowState().visibleUploadSlots.join(',')}`);
+
+        const uploadTimeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('ERR_START_UPLOAD_TIMEOUT')), 20000)
+        );
+
+        let okStart;
+        try {
+          okStart = await Promise.race([
+            simulateFileUpload('Start', startAssetSource),
+            uploadTimeoutPromise
+          ]);
+        } catch (err) {
+          if (err.message === 'ERR_START_UPLOAD_TIMEOUT') {
+            const obs = observeFlowState();
+            const slotInfo = findUploadSlotByLabel('Start');
+            const slotContainer = slotInfo?.container || resolveSlotContainer('Start');
+            
+            const shellMarkers = [];
+            const bodyText = document.body.innerText;
+            if (bodyText.includes('Scenebuilder')) shellMarkers.push('Scenebuilder');
+            if (bodyText.includes('Add Media')) shellMarkers.push('Add Media');
+            if (bodyText.includes('Go Back')) shellMarkers.push('Go Back');
+
+            const diag = {
+              last_checkpoint: 'TIMEOUT_DURING_SIMULATE',
+              slotLabel: 'Start',
+              visible_upload_slots: obs.visibleUploadSlots,
+              slot_container_outerHTML: slotContainer?.outerHTML?.slice(0, 500),
+              asset_source_type: assetSourceType,
+              asset_filename: assetFilename,
+              body_shell_markers: shellMarkers,
+              role_menu_count: document.querySelectorAll('[role="menu"]').length,
+              active_element_text: document.activeElement?.textContent?.slice(0, 50) || 'none',
+            };
+            logStage(STAGES.START_FRAME_ATTACHED, 'FAIL', `ERR_START_UPLOAD_TIMEOUT — ${JSON.stringify(diag)}`);
+            throw err;
+          }
+          throw err;
+        }
+
         if (okStart?.ok) {
-          logStage(STAGES.START_FRAME_ATTACHED, 'PASS', 'slot=Start dispatch=ok');
+          logStage(STAGES.START_FRAME_ATTACHED, 'PASS', `slot=Start dispatch=ok last_checkpoint=${okStart.lastCheckpoint}`);
 
           const startPreview = await waitForAssetPreview('Start', okStart.slotElement || null, {
             slotContainer: okStart.slotContainer || null,
@@ -2665,7 +2724,23 @@
             beforeSnapshot: okStart.beforeSnapshot,
           });
         } else {
-          logStage(STAGES.START_FRAME_ATTACHED, 'FAIL', okStart?.error || buildSlotErrorCode('Start', 'UPLOAD_DISPATCH_FAILED'));
+          const obs = observeFlowState();
+          const shellMarkers = [];
+          const bodyText = document.body.innerText;
+          if (bodyText.includes('Scenebuilder')) shellMarkers.push('Scenebuilder');
+          if (bodyText.includes('Add Media')) shellMarkers.push('Add Media');
+          if (bodyText.includes('Go Back')) shellMarkers.push('Go Back');
+
+          const diag = {
+            last_checkpoint: okStart?.lastCheckpoint || 'NONE',
+            slotLabel: 'Start',
+            visible_upload_slots: obs.visibleUploadSlots,
+            asset_source_type: assetSourceType,
+            asset_filename: assetFilename,
+            body_shell_markers: shellMarkers,
+            active_element_text: document.activeElement?.textContent?.slice(0, 50) || 'none',
+          };
+          logStage(STAGES.START_FRAME_ATTACHED, 'FAIL', `${okStart?.error || 'UPLOAD_DISPATCH_FAILED'} — ${JSON.stringify(diag)}`);
           throw new Error(okStart?.error || buildSlotErrorCode('Start', 'UPLOAD_DISPATCH_FAILED'));
         }
 
