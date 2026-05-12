@@ -418,17 +418,33 @@
       };
     }
 
+    let roleMenuTextSnippetsBeforeClose = [];
+    if (roleMenuCountBefore > 0) {
+      roleMenuTextSnippetsBeforeClose = Array.from(document.querySelectorAll('[role="menu"]')).map((el) => (
+        normalizeText(el.innerText || el.textContent || '').slice(0, 120)
+      ));
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+      await sleep(350);
+      if (document.querySelectorAll('[role="menu"]').length > 0 && !findCollapsedF2VConfigLauncher()) {
+        document.body?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        await sleep(350);
+      }
+    }
+
+    const roleMenuCountAfterClose = document.querySelectorAll('[role="menu"]').length;
     const launcher = findCollapsedF2VConfigLauncher();
+    const launcherFoundAfterClose = Boolean(launcher);
     const launcherFound = Boolean(launcher);
     const launcherVisible = Boolean(launcher && isVisible(launcher));
     const launcherText = normalizeText(launcher?.innerText || launcher?.textContent || '');
     const launcherAriaExpandedBefore = launcher?.getAttribute('aria-expanded') || '';
     const launcherDataStateBefore = launcher?.getAttribute('data-state') || '';
+    const bodyTextSnippet = normalizeText(document.body?.innerText || '').slice(0, 120);
 
     if (!launcherFound || !launcherVisible) {
       return {
         ok: false,
-        detail: `role_menu_count_before=${roleMenuCountBefore} launcher_found=${launcherFound} launcher_visible=${launcherVisible} launcher_text=${JSON.stringify(launcherText)} launcher_aria_expanded_before=${launcherAriaExpandedBefore} launcher_data_state_before=${launcherDataStateBefore} click_method=HTMLElement.click role_menu_count_after=${roleMenuCountBefore} launcher_aria_expanded_after=${launcherAriaExpandedBefore} launcher_data_state_after=${launcherDataStateBefore} first_menu_text_snippet_after=''`,
+        detail: `role_menu_count_before=${roleMenuCountBefore} role_menu_text_snippets_before_close=${JSON.stringify(roleMenuTextSnippetsBeforeClose)} role_menu_count_after_close=${roleMenuCountAfterClose} launcher_found_after_close=${launcherFoundAfterClose} launcher_found=${launcherFound} launcher_visible=${launcherVisible} launcher_text=${JSON.stringify(launcherText)} launcher_aria_expanded_before=${launcherAriaExpandedBefore} launcher_data_state_before=${launcherDataStateBefore} click_method=HTMLElement.click role_menu_count_after=${roleMenuCountAfterClose} launcher_aria_expanded_after=${launcherAriaExpandedBefore} launcher_data_state_after=${launcherDataStateBefore} first_menu_text_snippet_after='' body_text_snippet=${JSON.stringify(bodyTextSnippet)}`,
       };
     }
 
@@ -448,7 +464,7 @@
 
     return {
       ok: Boolean(opened && menuAfter),
-      detail: `role_menu_count_before=${roleMenuCountBefore} launcher_found=${launcherFound} launcher_visible=${launcherVisible} launcher_text=${JSON.stringify(launcherText)} launcher_aria_expanded_before=${launcherAriaExpandedBefore} launcher_data_state_before=${launcherDataStateBefore} click_method=HTMLElement.click role_menu_count_after=${roleMenuCountAfter} launcher_aria_expanded_after=${launcherAriaExpandedAfter} launcher_data_state_after=${launcherDataStateAfter} first_menu_text_snippet_after=${JSON.stringify(firstMenuTextSnippetAfter)}`,
+      detail: `role_menu_count_before=${roleMenuCountBefore} role_menu_text_snippets_before_close=${JSON.stringify(roleMenuTextSnippetsBeforeClose)} role_menu_count_after_close=${roleMenuCountAfterClose} launcher_found_after_close=${launcherFoundAfterClose} launcher_found=${launcherFound} launcher_visible=${launcherVisible} launcher_text=${JSON.stringify(launcherText)} launcher_aria_expanded_before=${launcherAriaExpandedBefore} launcher_data_state_before=${launcherDataStateBefore} click_method=HTMLElement.click role_menu_count_after=${roleMenuCountAfter} launcher_aria_expanded_after=${launcherAriaExpandedAfter} launcher_data_state_after=${launcherDataStateAfter} first_menu_text_snippet_after=${JSON.stringify(firstMenuTextSnippetAfter)} body_text_snippet=${JSON.stringify(bodyTextSnippet)}`,
     };
   }
 
