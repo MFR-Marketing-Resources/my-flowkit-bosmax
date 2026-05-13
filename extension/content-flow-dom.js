@@ -1242,6 +1242,337 @@
     return dialogs.find(isVisible) || null;
   }
 
+  const ASSET_PICKER_TEXT_RE = /(upload|choose|select|browse|image|asset|add media)/i;
+  const ASSET_PICKER_ACTION_RE = /(upload|choose|browse|add|select)/i;
+
+  function getModalLikeSurfaces() {
+    const selectors = [
+      '[role="dialog"]',
+      '[aria-modal="true"]',
+      'dialog',
+      '[data-floating-ui-portal] > *',
+      '[data-radix-portal] > *',
+      '[data-radix-popper-content-wrapper] > *',
+      'body > div',
+      'body > section',
+    ].join(', ');
+
+    return Array.from(document.querySelectorAll(selectors)).filter((el) => {
+      if (!isVisible(el)) return false;
+      const style = window.getComputedStyle(el);
+      return el.matches('[role="dialog"], [aria-modal="true"], dialog')
+        || style.position === 'fixed'
+        || style.position === 'sticky';
+    });
+  }
+
+  function getAssociatedFileInput(node, scope = document) {
+    if (!node) return null;
+
+    if (node.matches?.('input[type="file"]')) {
+      return node;
+    }
+
+    const descendantInput = node.querySelector?.('input[type="file"]');
+    if (descendantInput) return descendantInput;
+
+    const htmlFor = node.getAttribute?.('for');
+    if (htmlFor) {
+      try {
+        const linkedInput = scope.querySelector(`#${CSS.escape(htmlFor)}`);
+        if (linkedInput?.matches?.('input[type="file"]')) return linkedInput;
+      } catch (_error) {
+        // Ignore malformed ids and continue fallback resolution.
+      }
+    }
+
+    const labelledById = node.getAttribute?.('id');
+    if (labelledById) {
+      const labelledInput = scope.querySelector(`input[type="file"][aria-labelledby="${labelledById}"]`);
+      if (labelledInput) return labelledInput;
+    }
+
+    return null;
+  }
+
+  function isAssetPickerDropTarget(node) {
+    if (!node || !isVisible(node)) return false;
+    const text = normalizeText(
+      node.innerText
+      || node.textContent
+      || node.getAttribute('aria-label')
+      || node.getAttribute('title')
+      || ''
+    );
+    if (ASSET_PICKER_ACTION_RE.test(text) && /(upload|browse|drop|select|add)/i.test(text)) return true;
+    return node.matches?.([
+      '[role="presentation"]',
+      '.dropzone',
+      '[data-dropzone]',
+      '[data-testid*="upload"]',
+      '[data-testid*="drop"]',
+      '[aria-label*="upload" i]',
+      '[aria-label*="browse" i]',
+      '[aria-label*="select" i]',
+    ].join(', '));
+  }
+
+  function resolveAssetPickerTargets(modal) {
+    if (!modal) {
+      return {
+        fileInput: null,
+        labelTarget: null,
+        buttonTarget: null,
+        dropzoneTarget: null,
+        dispatchTarget: null,
+      };
+    }
+
+    const fileInput = modal.querySelector('input[type="file"]');
+
+    const labelTarget = Array.from(modal.querySelectorAll('label'))
+      .find((el) => {
+        if (!isVisible(el)) return false;
+        const text = normalizeText(
+          el.innerText
+          || el.textContent
+          || el.getAttribute('aria-label')
+          || ''
+        );
+        return Boolean(getAssociatedFileInput(el, modal)) && ASSET_PICKER_ACTION_RE.test(text || 'Upload');
+      }) || null;
+
+    const buttonTarget = Array.from(modal.querySelectorAll('button, [role="button"]'))
+      .find((el) => {
+        if (!isVisible(el)) return false;
+        const text = normalizeText(
+          el.innerText
+          || el.textContent
+          || el.getAttribute('aria-label')
+          || el.getAttribute('title')
+          || ''
+        );
+        return ASSET_PICKER_ACTION_RE.test(text);
+      }) || null;
+
+    const dropzoneTarget = Array.from(modal.querySelectorAll('label, button, [role="button"], div, section'))
+      .find(isAssetPickerDropTarget) || null;
+
+    return {
+      fileInput,
+      labelTarget,
+      buttonTarget,
+      dropzoneTarget,
+      dispatchTarget: fileInput || getAssociatedFileInput(labelTarget, modal) || dropzoneTarget || buttonTarget || labelTarget || null,
+    };
+  }
+
+  function findVisibleAssetPickerModal() {
+    const surfaces = getModalLikeSurfaces();
+    for (const surface of surfaces) {
+      const text = normalizeText(surface.innerText || surface.textContent || '');
+      const targets = resolveAssetPickerTargets(surface);
+      const hasUploadText = ASSET_PICKER_TEXT_RE.test(text);
+      const hasProgrammableTarget = Boolean(
+        targets.fileInput
+        || targets.labelTarget
+        || targets.buttonTarget
+        || targets.dropzoneTarget
+      );
+
+      if (hasUploadText && hasProgrammableTarget) {
+        return {
+          modal: surface,
+          text,
+          targets,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  async function waitForAssetPickerModal(timeoutMs = 1800) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const found = findVisibleAssetPickerModal();
+      if (found) return found;
+      await sleep(120);
+    }
+    return findVisibleAssetPickerModal();
+  }
+
+  function assignFilesToInput(input, files) {
+    try {
+      input.files = files;
+      return;
+    } catch (_error) {
+      // Fall through to explicit property override.
+    }
+
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: files,
+    });
+  }
+
+  function dispatchDragSequence(target, dataTransfer) {
+    if (!target) return;
+    const dragEnter = new DragEvent('dragenter', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    });
+    const dragOver = new DragEvent('dragover', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    });
+    const dropEvent = new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    });
+    target.dispatchEvent(dragEnter);
+    target.dispatchEvent(dragOver);
+    target.dispatchEvent(dropEvent);
+  }
+
+  function slotPreviewAcceptanceMet(beforeSnapshot, currentSnapshot) {
+    if (!beforeSnapshot || !currentSnapshot) return false;
+
+    const previewChanged = currentSnapshot.previewFound
+      && currentSnapshot.previewKey !== beforeSnapshot.previewKey;
+    const countChanged = currentSnapshot.previewFound
+      && currentSnapshot.previewCount > beforeSnapshot.previewCount;
+    const uploadSettled = !currentSnapshot.uploadPending;
+    const initialEmpty = beforeSnapshot.previewKey === 'none';
+
+    return Boolean(
+      ((previewChanged || countChanged) && uploadSettled)
+      || (currentSnapshot.previewFound && uploadSettled && initialEmpty)
+    );
+  }
+
+  function findAssetChipEvidence(fileName, roots = []) {
+    const fileStem = String(fileName || '')
+      .replace(/\.[a-z0-9]+$/i, '')
+      .trim()
+      .toLowerCase();
+
+    for (const entry of roots) {
+      const root = entry?.root || entry;
+      const allowPreviewEvidence = Boolean(entry?.allowPreviewEvidence);
+      if (!root) continue;
+
+      const previewNode = allowPreviewEvidence
+        ? Array.from(root.querySelectorAll('img, canvas, picture, [role="img"], [style*="background-image"]'))
+          .find((node) => describePreviewNode(node))
+        : null;
+      if (previewNode) {
+        return { kind: 'preview-node' };
+      }
+
+      if (!fileStem) continue;
+      const matchingText = Array.from(root.querySelectorAll('button, [role="button"], span, div, p, li'))
+        .find((node) => {
+          if (!isVisible(node)) return false;
+          const text = normalizeText(node.innerText || node.textContent || '').toLowerCase();
+          return text.includes(fileStem);
+        });
+      if (matchingText) {
+        return { kind: 'asset-chip', text: normalizeText(matchingText.innerText || matchingText.textContent || '').slice(0, 120) };
+      }
+    }
+
+    return null;
+  }
+
+  async function waitForUploadAcceptance({
+    slotLabel,
+    slotElement = null,
+    slotContainer = null,
+    beforeSnapshot = null,
+    modal = null,
+    fileName = '',
+    timeoutMs = 8000,
+  }) {
+    const deadline = Date.now() + timeoutMs;
+    const modalWasVisible = Boolean(modal && modal.isConnected && isVisible(modal));
+
+    while (Date.now() < deadline) {
+      const resolvedContainer = resolveSlotContainer(slotLabel, slotElement) || slotContainer;
+      const snapshot = resolvedContainer ? snapshotSlot(resolvedContainer) : null;
+      if (slotPreviewAcceptanceMet(beforeSnapshot, snapshot)) {
+        return {
+          ok: true,
+          reason: 'preview-visible',
+          slotContainer: resolvedContainer,
+          snapshot,
+          modalClosed: modalWasVisible && (!modal?.isConnected || !isVisible(modal)),
+        };
+      }
+
+      const assetEvidence = findAssetChipEvidence(fileName, [
+        { root: resolvedContainer, allowPreviewEvidence: true },
+        { root: modal, allowPreviewEvidence: false },
+      ]);
+      if (assetEvidence) {
+        return {
+          ok: true,
+          reason: assetEvidence.kind,
+          slotContainer: resolvedContainer,
+          snapshot,
+          modalClosed: modalWasVisible && (!modal?.isConnected || !isVisible(modal)),
+        };
+      }
+
+      if (modalWasVisible && (!modal?.isConnected || !isVisible(modal))) {
+        return {
+          ok: true,
+          reason: 'modal-closed',
+          slotContainer: resolvedContainer,
+          snapshot,
+          modalClosed: true,
+        };
+      }
+
+      await sleep(250);
+    }
+
+    const resolvedContainer = resolveSlotContainer(slotLabel, slotElement) || slotContainer;
+    return {
+      ok: false,
+      reason: 'timeout',
+      slotContainer: resolvedContainer,
+      snapshot: resolvedContainer ? snapshotSlot(resolvedContainer) : null,
+      modalClosed: modalWasVisible && (!modal?.isConnected || !isVisible(modal)),
+    };
+  }
+
+  function buildAssetPickerFailureDetail({
+    slotLabel,
+    modalInfo = null,
+    modalTargets = null,
+    target = null,
+    lastCheckpoint = 'NONE',
+    slotContainer = null,
+  }) {
+    const observed = observeFlowState();
+    const startSlot = resolveSlotContainer('Start') || slotContainer || null;
+    return {
+      modal_found: Boolean(modalInfo?.modal),
+      modal_text: modalInfo?.text?.slice(0, 500) || '',
+      modal_outerHTML: modalInfo?.modal?.outerHTML?.slice(0, 1000) || '',
+      file_input_found: Boolean(modalTargets?.fileInput),
+      dropzone_found: Boolean(modalTargets?.dropzoneTarget || modalTargets?.buttonTarget || modalTargets?.labelTarget),
+      target_outerHTML: target?.outerHTML?.slice(0, 500) || '',
+      last_checkpoint: lastCheckpoint,
+      visible_upload_slots: observed.visibleUploadSlots,
+      start_slot_outerHTML: (slotLabel === 'Start' ? slotContainer : startSlot)?.outerHTML?.slice(0, 500) || '',
+    };
+  }
+
   function inferSignedInLikely(composer, observed) {
     if (composer) return true;
     if (observed.topMode !== 'UNKNOWN') return true;
@@ -1355,7 +1686,13 @@
 
       setCheckpoint('UPLOAD_SLOT_CLICKED');
       slotBtn.click();
-      await sleep(500);
+      const modalInfo = await waitForAssetPickerModal(1800);
+      const modalTargets = modalInfo?.targets || null;
+      if (modalInfo?.modal) {
+        setCheckpoint('UPLOAD_ASSET_PICKER_MODAL_DETECTED');
+      } else {
+        await sleep(500);
+      }
 
       // 2. Fetch or Resolve the image
       setCheckpoint('UPLOAD_ASSET_RESOLVE_STARTED');
@@ -1410,22 +1747,46 @@
       setCheckpoint('UPLOAD_ASSET_RESOLVED');
 
       // 3. Find the dropzone/input
-      // Scoped resolution: Resolve clickable target from the slot container
       const fileInput = slotContainer.querySelector('input[type="file"]');
-      const dropzone = slotContainer.querySelector('[role="presentation"], .dropzone, [aria-label*="upload"]');
-
-      // Fallback: Resolve clickable target inside the slot
+      const dropzone = slotContainer.querySelector('[role="presentation"], .dropzone, [aria-label*="upload" i], [aria-label*="browse" i]');
       const internalClickable = slotContainer.querySelector('button, [role="button"], label, div[onclick]');
+      const directTarget = fileInput || dropzone || internalClickable || slotBtn;
+      const target = modalInfo?.modal ? (modalTargets?.dispatchTarget || null) : directTarget;
 
-      const target = fileInput || dropzone || internalClickable || slotBtn;
+      if (modalInfo?.modal) {
+        if (modalTargets?.fileInput) {
+          setCheckpoint('UPLOAD_MODAL_INPUT_FOUND');
+        }
+        if (modalTargets?.dropzoneTarget || modalTargets?.buttonTarget || modalTargets?.labelTarget) {
+          setCheckpoint('UPLOAD_MODAL_DROPZONE_FOUND');
+        }
+      }
 
-      if (!target || !slotContainer.contains(target)) {
+      if (!target || (!modalInfo?.modal && !slotContainer.contains(target))) {
         const diag = {
           start_container_outerHTML: slotContainer.outerHTML.slice(0, 500),
           file_input_found: Boolean(fileInput),
           clickable_target_found: Boolean(internalClickable || slotBtn),
           clickable_target_outerHTML: (internalClickable || slotBtn)?.outerHTML?.slice(0, 500),
         };
+
+        if (modalInfo?.modal) {
+          const modalDiag = buildAssetPickerFailureDetail({
+            slotLabel,
+            modalInfo,
+            modalTargets,
+            target,
+            lastCheckpoint,
+            slotContainer,
+          });
+          return {
+            ok: false,
+            error: buildSlotErrorCode(slotLabel, 'ASSET_PICKER_UPLOAD_FAILED'),
+            detail: `ERR_START_ASSET_PICKER_UPLOAD_FAILED — ${JSON.stringify(modalDiag)}`,
+            lastCheckpoint,
+          };
+        }
+
         return {
           ok: false,
           error: buildSlotErrorCode(slotLabel, 'UPLOAD_TARGET_NOT_FOUND'),
@@ -1435,46 +1796,81 @@
       }
       setCheckpoint('UPLOAD_TARGET_RESOLVED');
 
-      setCheckpoint('UPLOAD_DISPATCH_STARTED');
+      setCheckpoint(modalInfo?.modal ? 'UPLOAD_MODAL_DISPATCH_STARTED' : 'UPLOAD_DISPATCH_STARTED');
       const dataTransfer = new DataTransfer();
       dataTransfer.items.add(file);
 
-      if (target.matches && target.matches('input[type="file"]')) {
-        Object.defineProperty(target, 'files', {
-          configurable: true,
-          value: dataTransfer.files,
-        });
+      if (modalInfo?.modal && modalTargets?.fileInput) {
+        assignFilesToInput(modalTargets.fileInput, dataTransfer.files);
+        modalTargets.fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+        modalTargets.fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        if (modalTargets.dropzoneTarget && modalTargets.dropzoneTarget !== modalTargets.fileInput) {
+          dispatchDragSequence(modalTargets.dropzoneTarget, dataTransfer);
+        }
+      } else if (target.matches && target.matches('input[type="file"]')) {
+        assignFilesToInput(target, dataTransfer.files);
         target.dispatchEvent(new Event('input', { bubbles: true }));
         target.dispatchEvent(new Event('change', { bubbles: true }));
       } else {
-        const dragEnter = new DragEvent('dragenter', {
-          bubbles: true,
-          cancelable: true,
-          dataTransfer,
-        });
-        const dragOver = new DragEvent('dragover', {
-          bubbles: true,
-          cancelable: true,
-          dataTransfer,
-        });
-        const dropEvent = new DragEvent('drop', {
-          bubbles: true,
-          cancelable: true,
-          dataTransfer,
-        });
-        target.dispatchEvent(dragEnter);
-        target.dispatchEvent(dragOver);
-        target.dispatchEvent(dropEvent);
+        dispatchDragSequence(target, dataTransfer);
       }
-      setCheckpoint('UPLOAD_DISPATCH_COMPLETED');
+      setCheckpoint(modalInfo?.modal ? 'UPLOAD_MODAL_DISPATCH_COMPLETED' : 'UPLOAD_DISPATCH_COMPLETED');
 
       console.log(`[FlowAgent] Dispatched upload for ${slotLabel}`);
-      await sleep(600);
-      return {
-        ok: true,
+      const acceptance = await waitForUploadAcceptance({
+        slotLabel,
         slotElement: slotBtn,
         slotContainer,
         beforeSnapshot,
+        modal: modalInfo?.modal || null,
+        fileName: file?.name || '',
+        timeoutMs: modalInfo?.modal ? 9000 : 10000,
+      });
+
+      if (modalInfo?.modal && !acceptance.ok) {
+        const modalDiag = buildAssetPickerFailureDetail({
+          slotLabel,
+          modalInfo,
+          modalTargets,
+          target,
+          lastCheckpoint,
+          slotContainer,
+        });
+        return {
+          ok: false,
+          error: buildSlotErrorCode(slotLabel, 'ASSET_PICKER_UPLOAD_FAILED'),
+          detail: `ERR_START_ASSET_PICKER_UPLOAD_FAILED — ${JSON.stringify(modalDiag)}`,
+          lastCheckpoint,
+        };
+      }
+
+      if (!modalInfo?.modal && !acceptance.ok) {
+        return {
+          ok: false,
+          error: buildSlotErrorCode(slotLabel, 'PREVIEW_TIMEOUT'),
+          detail: `ERR_${String(slotLabel || 'slot').toUpperCase()}_PREVIEW_TIMEOUT — ${JSON.stringify({
+            last_checkpoint: lastCheckpoint,
+            visible_upload_slots: observeFlowState().visibleUploadSlots,
+            start_slot_outerHTML: resolveSlotContainer(slotLabel, slotBtn)?.outerHTML?.slice(0, 500) || '',
+          })}`,
+          lastCheckpoint,
+        };
+      }
+
+      if (modalInfo?.modal) {
+        setCheckpoint('UPLOAD_MODAL_ACCEPTED');
+        if (acceptance.modalClosed || acceptance.reason === 'preview-visible' || acceptance.reason === 'preview-node') {
+          setCheckpoint('UPLOAD_MODAL_CLOSED_OR_PREVIEW_VISIBLE');
+        }
+      }
+
+      return {
+        ok: true,
+        slotElement: slotBtn,
+        slotContainer: acceptance.slotContainer || slotContainer,
+        beforeSnapshot,
+        acceptanceReason: acceptance.reason,
+        modalFound: Boolean(modalInfo?.modal),
         lastCheckpoint,
       };
     } catch (error) {
@@ -2742,7 +3138,11 @@
         }
 
         if (okStart?.ok) {
-          logStage(STAGES.START_FRAME_ATTACHED, 'PASS', `slot=Start dispatch=ok last_checkpoint=${okStart.lastCheckpoint}`);
+          logStage(
+            STAGES.START_FRAME_ATTACHED,
+            'PASS',
+            `slot=Start accepted=${okStart.acceptanceReason || 'unknown'} modal=${okStart.modalFound ? 'true' : 'false'} last_checkpoint=${okStart.lastCheckpoint}`,
+          );
 
           uploadState.lastCheckpoint = 'UPLOAD_PREVIEW_WAIT_STARTED';
           const startPreview = await waitForAssetPreview('Start', okStart.slotElement || null, {
