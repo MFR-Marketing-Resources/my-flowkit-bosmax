@@ -34,6 +34,7 @@ from agent.api.local_agent import (
 )
 from agent.api.operator import router as operator_router
 from agent.api.products import router as products_router
+from agent.api.prompt_preview import router as prompt_preview_router
 from agent.worker.processor import get_worker_controller
 from agent.services.flow_client import get_flow_client
 from agent.services.event_bus import event_bus
@@ -139,6 +140,7 @@ app.add_middleware(
 )
 
 app.include_router(products_router, prefix="/api")
+app.include_router(prompt_preview_router, prefix="/api")
 app.include_router(characters_router, prefix="/api")
 app.include_router(projects_router, prefix="/api")
 app.include_router(videos_router, prefix="/api")
