@@ -1044,17 +1044,9 @@
         && currentSnapshot.previewKey !== initialSnapshot.previewKey;
       const countChanged = currentSnapshot.previewFound
         && currentSnapshot.previewCount > initialSnapshot.previewCount;
-      const wasAlreadyReady = initialSnapshot.previewFound && !initialSnapshot.uploadPending;
       const uploadSettled = !currentSnapshot.uploadPending;
 
       if ((previewChanged || countChanged) && uploadSettled) {
-        return {
-          ok: true,
-          snapshot: currentSnapshot,
-        };
-      }
-
-      if (!wasAlreadyReady && currentSnapshot.previewFound && uploadSettled && initialSnapshot.previewKey === 'none') {
         return {
           ok: true,
           snapshot: currentSnapshot,
@@ -1242,10 +1234,151 @@
     return dialogs.find(isVisible) || null;
   }
 
-  const ASSET_PICKER_TEXT_RE = /(upload|choose|select|browse|image|asset|add media)/i;
+  const ASSET_PICKER_TEXT_RE = /(upload image|search for assets|recent|upload|choose|select|browse|image|asset|add media)/i;
   const ASSET_PICKER_ACTION_RE = /(upload|choose|browse|add|select)/i;
+  const ASSET_PICKER_DIAGNOSTIC_MARKERS = ['Upload image', 'Search for Assets', 'Recent', 'Upload', 'Image'];
 
-  function getModalLikeSurfaces() {
+  function appendUniqueNode(list, seen, node) {
+    if (!node || seen.has(node)) return;
+    seen.add(node);
+    list.push(node);
+  }
+
+  function getRootText(root) {
+    if (!root) return '';
+    if (root === document) {
+      return normalizeText(document.body?.innerText || document.body?.textContent || '');
+    }
+    return normalizeText(
+      root.innerText
+      || root.textContent
+      || root.host?.innerText
+      || root.host?.textContent
+      || ''
+    );
+  }
+
+  function collectDeepSearchState() {
+    const shadowRoots = [];
+    const shadowHosts = [];
+    const seenRoots = new Set();
+    const queue = [document];
+
+    while (queue.length > 0) {
+      const root = queue.shift();
+      if (!root?.querySelectorAll) continue;
+
+      for (const el of root.querySelectorAll('*')) {
+        if (!el.shadowRoot || seenRoots.has(el.shadowRoot)) continue;
+        seenRoots.add(el.shadowRoot);
+        shadowRoots.push(el.shadowRoot);
+        shadowHosts.push(el);
+        queue.push(el.shadowRoot);
+      }
+    }
+
+    return {
+      shadowRoots,
+      shadowHosts,
+    };
+  }
+
+  function collectMatchesInRoot(root, selector) {
+    if (!root?.querySelectorAll) return [];
+    const matches = [];
+    if (root instanceof Element && root.matches?.(selector)) {
+      matches.push(root);
+    }
+    return matches.concat(Array.from(root.querySelectorAll(selector)));
+  }
+
+  function collectQueryRoots(preferred = [], deepState = null) {
+    const roots = [];
+    const seen = new Set();
+
+    for (const node of preferred) {
+      appendUniqueNode(roots, seen, node);
+    }
+
+    const activeRoot = document.activeElement?.getRootNode?.() || null;
+    if (activeRoot?.querySelectorAll) {
+      appendUniqueNode(roots, seen, activeRoot);
+    }
+
+    appendUniqueNode(roots, seen, document);
+
+    for (const shadowRoot of deepState?.shadowRoots || []) {
+      appendUniqueNode(roots, seen, shadowRoot);
+    }
+
+    return roots.filter((root) => typeof root?.querySelectorAll === 'function');
+  }
+
+  function getRootContext(root) {
+    const shadowRoot = root instanceof ShadowRoot
+      ? root
+      : (root?.getRootNode?.() instanceof ShadowRoot ? root.getRootNode() : null);
+    const host = shadowRoot?.host || null;
+
+    return {
+      root,
+      rootKind: root === document
+        ? 'document'
+        : root instanceof ShadowRoot
+          ? 'shadow-root'
+          : root instanceof Element
+            ? 'element'
+            : 'unknown',
+      host,
+      hostOuterHTML: host?.outerHTML?.slice(0, 500) || '',
+    };
+  }
+
+  function findFirstInRoots(roots, selector, predicate = null) {
+    for (const root of roots) {
+      const matches = collectMatchesInRoot(root, selector);
+      for (const el of matches) {
+        if (!isVisible(el)) continue;
+        if (!predicate || predicate(el, root)) return el;
+      }
+    }
+    return null;
+  }
+
+  function extractVisibleTextSnippet(sourceText, marker, radius = 120) {
+    const haystack = normalizeText(sourceText || '');
+    const lowerHaystack = haystack.toLowerCase();
+    const lowerMarker = String(marker || '').toLowerCase();
+    if (!lowerMarker) return '';
+    const index = lowerHaystack.indexOf(lowerMarker);
+    if (index === -1) return '';
+    const start = Math.max(0, index - radius);
+    const end = Math.min(haystack.length, index + lowerMarker.length + radius);
+    return haystack.slice(start, end);
+  }
+
+  function collectFixedOverlayCandidates(roots) {
+    const overlays = [];
+    const seen = new Set();
+
+    for (const root of roots) {
+      for (const el of collectMatchesInRoot(root, 'div, section, aside, article, dialog')) {
+        if (!isVisible(el) || seen.has(el)) continue;
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        if (rect.width < 160 || rect.height < 120) continue;
+        if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+        seen.add(el);
+        overlays.push(el);
+      }
+    }
+
+    return overlays;
+  }
+
+  function getModalLikeSurfaces(deepState = null, roots = null) {
+    const activeDeepState = deepState || collectDeepSearchState();
+    const activeRoots = roots || collectQueryRoots([], activeDeepState);
     const selectors = [
       '[role="dialog"]',
       '[aria-modal="true"]',
@@ -1253,17 +1386,33 @@
       '[data-floating-ui-portal] > *',
       '[data-radix-portal] > *',
       '[data-radix-popper-content-wrapper] > *',
-      'body > div',
-      'body > section',
     ].join(', ');
 
-    return Array.from(document.querySelectorAll(selectors)).filter((el) => {
-      if (!isVisible(el)) return false;
-      const style = window.getComputedStyle(el);
-      return el.matches('[role="dialog"], [aria-modal="true"], dialog')
-        || style.position === 'fixed'
-        || style.position === 'sticky';
-    });
+    const surfaces = [];
+    const seen = new Set();
+
+    for (const root of activeRoots) {
+      for (const el of collectMatchesInRoot(root, selectors)) {
+        if (!isVisible(el) || seen.has(el)) continue;
+        const style = window.getComputedStyle(el);
+        if (
+          el.matches('[role="dialog"], [aria-modal="true"], dialog')
+          || style.position === 'fixed'
+          || style.position === 'sticky'
+        ) {
+          seen.add(el);
+          surfaces.push(el);
+        }
+      }
+    }
+
+    for (const overlay of collectFixedOverlayCandidates(activeRoots)) {
+      if (seen.has(overlay)) continue;
+      seen.add(overlay);
+      surfaces.push(overlay);
+    }
+
+    return surfaces;
   }
 
   function getAssociatedFileInput(node, scope = document) {
@@ -1317,61 +1466,105 @@
     ].join(', '));
   }
 
-  function resolveAssetPickerTargets(modal) {
-    if (!modal) {
+  function resolveAssetPickerTargets(modal, extraRoots = [], deepState = null) {
+    const modalRoot = modal?.getRootNode?.() || null;
+    const queryRoots = collectQueryRoots([
+      ...(modal ? [modal] : []),
+      ...(modalRoot ? [modalRoot] : []),
+      ...extraRoots,
+    ], deepState);
+
+    if (queryRoots.length === 0) {
       return {
         fileInput: null,
         labelTarget: null,
         buttonTarget: null,
         dropzoneTarget: null,
         dispatchTarget: null,
+        queryRoots: [],
       };
     }
 
-    const fileInput = modal.querySelector('input[type="file"]');
+    const fileInput = findFirstInRoots(queryRoots, 'input[type="file"]');
 
-    const labelTarget = Array.from(modal.querySelectorAll('label'))
-      .find((el) => {
-        if (!isVisible(el)) return false;
-        const text = normalizeText(
-          el.innerText
-          || el.textContent
-          || el.getAttribute('aria-label')
-          || ''
-        );
-        return Boolean(getAssociatedFileInput(el, modal)) && ASSET_PICKER_ACTION_RE.test(text || 'Upload');
-      }) || null;
+    const labelTarget = findFirstInRoots(queryRoots, 'label', (el, root) => {
+      const text = normalizeText(
+        el.innerText
+        || el.textContent
+        || el.getAttribute('aria-label')
+        || ''
+      );
+      return Boolean(getAssociatedFileInput(el, root)) && ASSET_PICKER_ACTION_RE.test(text || 'Upload');
+    });
 
-    const buttonTarget = Array.from(modal.querySelectorAll('button, [role="button"]'))
-      .find((el) => {
-        if (!isVisible(el)) return false;
-        const text = normalizeText(
-          el.innerText
-          || el.textContent
-          || el.getAttribute('aria-label')
-          || el.getAttribute('title')
-          || ''
-        );
-        return ASSET_PICKER_ACTION_RE.test(text);
-      }) || null;
+    const buttonTarget = findFirstInRoots(queryRoots, 'button, [role="button"]', (el) => {
+      const text = normalizeText(
+        el.innerText
+        || el.textContent
+        || el.getAttribute('aria-label')
+        || el.getAttribute('title')
+        || ''
+      );
+      return ASSET_PICKER_ACTION_RE.test(text);
+    });
 
-    const dropzoneTarget = Array.from(modal.querySelectorAll('label, button, [role="button"], div, section'))
-      .find(isAssetPickerDropTarget) || null;
+    const dropzoneTarget = findFirstInRoots(queryRoots, 'label, button, [role="button"], div, section', (el) => isAssetPickerDropTarget(el));
 
     return {
       fileInput,
       labelTarget,
       buttonTarget,
       dropzoneTarget,
-      dispatchTarget: fileInput || getAssociatedFileInput(labelTarget, modal) || dropzoneTarget || buttonTarget || labelTarget || null,
+      dispatchTarget: fileInput || getAssociatedFileInput(labelTarget, modalRoot || modal) || dropzoneTarget || buttonTarget || labelTarget || null,
+      queryRoots,
+    };
+  }
+
+  function buildModalSearchDiagnostics(deepState = null, roots = []) {
+    const bodyText = normalizeText(document.body?.innerText || document.body?.textContent || '');
+    const visibleBodyTextSnippets = {};
+    const visibleRootTextSnippets = {};
+
+    for (const marker of ASSET_PICKER_DIAGNOSTIC_MARKERS) {
+      const snippet = extractVisibleTextSnippet(bodyText, marker);
+      if (snippet) {
+        visibleBodyTextSnippets[marker] = snippet.slice(0, 240);
+      }
+
+      if (!visibleRootTextSnippets[marker]) {
+        for (const root of roots) {
+          const rootText = getRootText(root);
+          const rootSnippet = extractVisibleTextSnippet(rootText, marker);
+          if (rootSnippet) {
+            visibleRootTextSnippets[marker] = rootSnippet.slice(0, 240);
+            break;
+          }
+        }
+      }
+    }
+
+    return {
+      visibleBodyTextSnippets,
+      visibleRootTextSnippets,
+      markerSnippetCount: Object.keys(visibleBodyTextSnippets).length,
+      markerRootSnippetCount: Object.keys(visibleRootTextSnippets).length,
+      openShadowRootFound: (deepState?.shadowRoots?.length || 0) > 0,
+      openShadowRootCount: deepState?.shadowRoots?.length || 0,
+      shadowHostOuterHTML: deepState?.shadowHosts?.[0]?.outerHTML?.slice(0, 500) || '',
+      candidateFixedOverlaysCount: collectFixedOverlayCandidates(roots).length,
+      activeElementOuterHTML: document.activeElement?.outerHTML?.slice(0, 500) || '',
     };
   }
 
   function findVisibleAssetPickerModal() {
-    const surfaces = getModalLikeSurfaces();
+    const deepState = collectDeepSearchState();
+    const roots = collectQueryRoots([], deepState);
+    const diagnostics = buildModalSearchDiagnostics(deepState, roots);
+    const surfaces = getModalLikeSurfaces(deepState, roots);
+
     for (const surface of surfaces) {
-      const text = normalizeText(surface.innerText || surface.textContent || '');
-      const targets = resolveAssetPickerTargets(surface);
+      const text = getRootText(surface);
+      const targets = resolveAssetPickerTargets(surface, [surface.getRootNode?.() || null], deepState);
       const hasUploadText = ASSET_PICKER_TEXT_RE.test(text);
       const hasProgrammableTarget = Boolean(
         targets.fileInput
@@ -1385,21 +1578,73 @@
           modal: surface,
           text,
           targets,
+          diagnostics,
+          foundInShadowRoot: surface.getRootNode?.() instanceof ShadowRoot,
+          rootContext: getRootContext(surface.getRootNode?.() || surface),
         };
       }
     }
 
-    return null;
+    for (const root of roots) {
+      const text = getRootText(root);
+      const targets = resolveAssetPickerTargets(null, [root], deepState);
+      const hasUploadText = ASSET_PICKER_TEXT_RE.test(text);
+      const hasProgrammableTarget = Boolean(
+        targets.fileInput
+        || targets.labelTarget
+        || targets.buttonTarget
+        || targets.dropzoneTarget
+      );
+
+      if (hasUploadText && hasProgrammableTarget) {
+        const rootContext = getRootContext(root);
+        return {
+          modal: rootContext.host || (root instanceof Element ? root : null),
+          text,
+          targets,
+          diagnostics,
+          foundInShadowRoot: root instanceof ShadowRoot || rootContext.rootKind === 'shadow-root',
+          rootContext,
+        };
+      }
+    }
+
+    return {
+      modal: null,
+      text: '',
+      targets: null,
+      diagnostics,
+      foundInShadowRoot: false,
+      rootContext: null,
+    };
   }
 
-  async function waitForAssetPickerModal(timeoutMs = 1800) {
+  async function waitForAssetPickerModal(timeoutMs = 1800, setCheckpoint = null) {
+    setCheckpoint?.('UPLOAD_MODAL_SHADOW_SCAN_STARTED');
     const deadline = Date.now() + timeoutMs;
+    let lastResult = findVisibleAssetPickerModal();
+    if (lastResult.modal) {
+      setCheckpoint?.('UPLOAD_MODAL_SHADOW_SCAN_FOUND');
+      return lastResult;
+    }
+
     while (Date.now() < deadline) {
-      const found = findVisibleAssetPickerModal();
-      if (found) return found;
+      lastResult = findVisibleAssetPickerModal();
+      if (lastResult.modal) {
+        setCheckpoint?.('UPLOAD_MODAL_SHADOW_SCAN_FOUND');
+        return lastResult;
+      }
       await sleep(120);
     }
-    return findVisibleAssetPickerModal();
+
+    lastResult = findVisibleAssetPickerModal();
+    if (lastResult.modal) {
+      setCheckpoint?.('UPLOAD_MODAL_SHADOW_SCAN_FOUND');
+      return lastResult;
+    }
+
+    setCheckpoint?.('UPLOAD_MODAL_SHADOW_SCAN_EMPTY');
+    return lastResult;
   }
 
   function assignFilesToInput(input, files) {
@@ -1446,11 +1691,15 @@
     const countChanged = currentSnapshot.previewFound
       && currentSnapshot.previewCount > beforeSnapshot.previewCount;
     const uploadSettled = !currentSnapshot.uploadPending;
-    const initialEmpty = beforeSnapshot.previewKey === 'none';
 
+    return Boolean((previewChanged || countChanged) && uploadSettled);
+  }
+
+  function rootHasVisualPreview(root) {
+    if (!root?.querySelectorAll) return false;
     return Boolean(
-      ((previewChanged || countChanged) && uploadSettled)
-      || (currentSnapshot.previewFound && uploadSettled && initialEmpty)
+      Array.from(root.querySelectorAll('img, canvas, video, picture, [role="img"], [style*="background-image"]'))
+        .find((node) => describePreviewNode(node))
     );
   }
 
@@ -1462,16 +1711,7 @@
 
     for (const entry of roots) {
       const root = entry?.root || entry;
-      const allowPreviewEvidence = Boolean(entry?.allowPreviewEvidence);
       if (!root) continue;
-
-      const previewNode = allowPreviewEvidence
-        ? Array.from(root.querySelectorAll('img, canvas, picture, [role="img"], [style*="background-image"]'))
-          .find((node) => describePreviewNode(node))
-        : null;
-      if (previewNode) {
-        return { kind: 'preview-node' };
-      }
 
       if (!fileStem) continue;
       const matchingText = Array.from(root.querySelectorAll('button, [role="button"], span, div, p, li'))
@@ -1496,57 +1736,64 @@
     modal = null,
     fileName = '',
     timeoutMs = 8000,
+    setCheckpoint = null,
   }) {
-    const deadline = Date.now() + timeoutMs;
+    const startTime = Date.now();
+    const deadline = startTime + timeoutMs;
     const modalWasVisible = Boolean(modal && modal.isConnected && isVisible(modal));
+    let weakRejectLogged = false;
+    const originalSlotContainer = slotContainer?.isConnected ? slotContainer : null;
 
     while (Date.now() < deadline) {
-      const resolvedContainer = resolveSlotContainer(slotLabel, slotElement) || slotContainer;
+      const resolvedContainer = originalSlotContainer || resolveSlotContainer(slotLabel, slotElement) || slotContainer;
       const snapshot = resolvedContainer ? snapshotSlot(resolvedContainer) : null;
-      if (slotPreviewAcceptanceMet(beforeSnapshot, snapshot)) {
+      const previewConfirmed = slotPreviewAcceptanceMet(beforeSnapshot, snapshot);
+      const modalClosed = modalWasVisible && (!modal?.isConnected || !isVisible(modal));
+      const modalClosedWithStartPreview = Boolean(
+        modalClosed
+        && snapshot?.previewFound
+        && !snapshot?.uploadPending
+        && (snapshot?.previewKey !== beforeSnapshot?.previewKey || snapshot?.previewCount > beforeSnapshot?.previewCount)
+      );
+
+      if (previewConfirmed || modalClosedWithStartPreview) {
+        setCheckpoint?.('UPLOAD_START_SLOT_PREVIEW_CONFIRMED');
         return {
           ok: true,
-          reason: 'preview-visible',
+          reason: previewConfirmed ? 'start-slot-preview' : 'modal-closed-start-preview',
           slotContainer: resolvedContainer,
           snapshot,
-          modalClosed: modalWasVisible && (!modal?.isConnected || !isVisible(modal)),
+          modalClosed,
         };
       }
 
       const assetEvidence = findAssetChipEvidence(fileName, [
-        { root: resolvedContainer, allowPreviewEvidence: true },
-        { root: modal, allowPreviewEvidence: false },
+        resolvedContainer,
+        modal,
+        modal?.getRootNode?.() || null,
+        document.activeElement?.getRootNode?.() || null,
       ]);
-      if (assetEvidence) {
-        return {
-          ok: true,
-          reason: assetEvidence.kind,
-          slotContainer: resolvedContainer,
-          snapshot,
-          modalClosed: modalWasVisible && (!modal?.isConnected || !isVisible(modal)),
-        };
-      }
-
-      if (modalWasVisible && (!modal?.isConnected || !isVisible(modal))) {
-        return {
-          ok: true,
-          reason: 'modal-closed',
-          slotContainer: resolvedContainer,
-          snapshot,
-          modalClosed: true,
-        };
+      const modalPreviewVisible = rootHasVisualPreview(modal);
+      if (
+        !weakRejectLogged
+        && (Date.now() - startTime) >= 1000
+        && (assetEvidence || modalPreviewVisible)
+      ) {
+        setCheckpoint?.('UPLOAD_MODAL_ACCEPTANCE_WEAK_REJECTED');
+        weakRejectLogged = true;
       }
 
       await sleep(250);
     }
 
-    const resolvedContainer = resolveSlotContainer(slotLabel, slotElement) || slotContainer;
+    const resolvedContainer = originalSlotContainer || resolveSlotContainer(slotLabel, slotElement) || slotContainer;
     return {
       ok: false,
-      reason: 'timeout',
+      reason: 'acceptance-not-verified',
       slotContainer: resolvedContainer,
       snapshot: resolvedContainer ? snapshotSlot(resolvedContainer) : null,
       modalClosed: modalWasVisible && (!modal?.isConnected || !isVisible(modal)),
+      weakRejectLogged,
     };
   }
 
@@ -1563,13 +1810,21 @@
     return {
       modal_found: Boolean(modalInfo?.modal),
       modal_text: modalInfo?.text?.slice(0, 500) || '',
-      modal_outerHTML: modalInfo?.modal?.outerHTML?.slice(0, 1000) || '',
+      modal_outerHTML: modalInfo?.modal?.outerHTML?.slice(0, 1000) || modalInfo?.rootContext?.hostOuterHTML || '',
+      modal_root_kind: modalInfo?.rootContext?.rootKind || 'unknown',
       file_input_found: Boolean(modalTargets?.fileInput),
       dropzone_found: Boolean(modalTargets?.dropzoneTarget || modalTargets?.buttonTarget || modalTargets?.labelTarget),
       target_outerHTML: target?.outerHTML?.slice(0, 500) || '',
       last_checkpoint: lastCheckpoint,
       visible_upload_slots: observed.visibleUploadSlots,
       start_slot_outerHTML: (slotLabel === 'Start' ? slotContainer : startSlot)?.outerHTML?.slice(0, 500) || '',
+      visible_body_text_snippets: modalInfo?.diagnostics?.visibleBodyTextSnippets || {},
+      visible_root_text_snippets: modalInfo?.diagnostics?.visibleRootTextSnippets || {},
+      open_shadow_root_found: Boolean(modalInfo?.diagnostics?.openShadowRootFound),
+      open_shadow_root_count: modalInfo?.diagnostics?.openShadowRootCount || 0,
+      shadow_host_outerHTML: modalInfo?.rootContext?.hostOuterHTML || modalInfo?.diagnostics?.shadowHostOuterHTML || '',
+      candidate_fixed_overlays_count: modalInfo?.diagnostics?.candidateFixedOverlaysCount || 0,
+      active_element_outerHTML: modalInfo?.diagnostics?.activeElementOuterHTML || '',
     };
   }
 
@@ -1686,7 +1941,7 @@
 
       setCheckpoint('UPLOAD_SLOT_CLICKED');
       slotBtn.click();
-      const modalInfo = await waitForAssetPickerModal(1800);
+      const modalInfo = await waitForAssetPickerModal(1800, setCheckpoint);
       const modalTargets = modalInfo?.targets || null;
       if (modalInfo?.modal) {
         setCheckpoint('UPLOAD_ASSET_PICKER_MODAL_DETECTED');
@@ -1825,9 +2080,16 @@
         modal: modalInfo?.modal || null,
         fileName: file?.name || '',
         timeoutMs: modalInfo?.modal ? 9000 : 10000,
+        setCheckpoint,
       });
 
-      if (modalInfo?.modal && !acceptance.ok) {
+      const likelyAssetPickerPath = Boolean(
+        modalInfo?.modal
+        || (modalInfo?.diagnostics?.markerSnippetCount || 0) > 0
+        || (modalInfo?.diagnostics?.openShadowRootCount || 0) > 0
+      );
+
+      if (likelyAssetPickerPath && !acceptance.ok) {
         const modalDiag = buildAssetPickerFailureDetail({
           slotLabel,
           modalInfo,
@@ -1838,8 +2100,8 @@
         });
         return {
           ok: false,
-          error: buildSlotErrorCode(slotLabel, 'ASSET_PICKER_UPLOAD_FAILED'),
-          detail: `ERR_START_ASSET_PICKER_UPLOAD_FAILED — ${JSON.stringify(modalDiag)}`,
+          error: buildSlotErrorCode(slotLabel, 'ASSET_PICKER_ACCEPTANCE_NOT_VERIFIED'),
+          detail: `ERR_START_ASSET_PICKER_ACCEPTANCE_NOT_VERIFIED — ${JSON.stringify(modalDiag)}`,
           lastCheckpoint,
         };
       }
@@ -1859,7 +2121,7 @@
 
       if (modalInfo?.modal) {
         setCheckpoint('UPLOAD_MODAL_ACCEPTED');
-        if (acceptance.modalClosed || acceptance.reason === 'preview-visible' || acceptance.reason === 'preview-node') {
+        if (acceptance.modalClosed || acceptance.reason === 'start-slot-preview' || acceptance.reason === 'modal-closed-start-preview') {
           setCheckpoint('UPLOAD_MODAL_CLOSED_OR_PREVIEW_VISIBLE');
         }
       }
