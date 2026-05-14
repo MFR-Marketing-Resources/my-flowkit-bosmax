@@ -359,6 +359,15 @@ export interface Product {
 	updated_at: string;
 }
 
+export interface ProductCatalogResponse {
+	total_count: number;
+	returned_count: number;
+	has_pagination: boolean;
+	limit: number;
+	offset: number;
+	items: Product[];
+}
+
 export interface ProductMapping {
 	product_id: string;
 	raw_product_title: string;
