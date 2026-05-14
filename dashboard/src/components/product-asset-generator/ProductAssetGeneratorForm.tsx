@@ -20,8 +20,26 @@ type ProductReadinessStatus =
 	| "FAILED"
 	| "STALE";
 
-type PersistenceStatus = "SAVED" | "EPHEMERAL_ONLY" | "NOT_ANALYZED";
+type ProfileSourceStatus =
+	| "NOT_ANALYZED"
+	| "EPHEMERAL_PREVIEW"
+	| "PRODUCT_ROW_DERIVED"
+	| "PERSISTED_PROFILE";
 type RecommendedMode = "TEXT_TO_VIDEO" | "FRAMES" | "INGREDIENTS" | "IMAGE";
+type CopyReadinessStatus =
+	| "COPY_READY"
+	| "COPY_MISSING"
+	| "COPY_DERIVED_SUGGESTION";
+type CharacterReadinessStatus =
+	| "CHARACTER_CONCEPT_ONLY"
+	| "CHARACTER_ASSET_READY"
+	| "NOT_PROVIDED";
+type AssetReadinessStatus =
+	| "PROMPT_ONLY"
+	| "NEEDS_ASSET"
+	| "NEEDS_ASSET_BUNDLE";
+type ExecutionReadinessStatus = "DRY_RUN_ONLY" | "NOT_GOOGLE_FLOW_READY";
+type PersistenceTruthStatus = "NOT_PERSISTED" | "PERSISTED";
 
 type ProfileCardRecord = {
 	label: "UGC_IPHONE" | "CINEMATIC_PRO";
@@ -48,6 +66,17 @@ type ModeReadinessRecord = {
 	key: RecommendedMode;
 	status: string;
 	detail: string;
+};
+
+type ProfileTruthSummary = {
+	profile_source_status: ProfileSourceStatus;
+	product_mapping_status: "READY" | "NEEDS_REVIEW" | "MISSING";
+	copy_readiness_status: CopyReadinessStatus;
+	copy_readiness_detail: string;
+	character_readiness_status: CharacterReadinessStatus;
+	asset_readiness_status: AssetReadinessStatus;
+	execution_readiness_status: ExecutionReadinessStatus;
+	persistence_truth: PersistenceTruthStatus;
 };
 
 function parseJsonObject(input: string): Record<string, unknown> | null {
@@ -156,10 +185,18 @@ function outputTypeForMode(mode: RecommendedMode): string {
 	return "PROMPT_BLOCK_PLAN";
 }
 
+function hasReadableSignal(value: string | null | undefined): boolean {
+	if (!value) {
+		return false;
+	}
+	const normalized = value.trim();
+	return Boolean(normalized) && normalized !== "NOT_FOUND";
+}
+
 function statusTone(
-	status: ProductReadinessStatus | PersistenceStatus | string,
+	status: ProductReadinessStatus | ProfileSourceStatus | string,
 ): string {
-	if (status === "READY" || status === "SAVED") {
+	if (status === "READY" || status === "PERSISTED_PROFILE") {
 		return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
 	}
 	if (status === "ANALYZING") {
@@ -179,7 +216,7 @@ function StatusBadge({
 	value,
 }: {
 	label: string;
-	value: ProductReadinessStatus | PersistenceStatus | string;
+	value: ProductReadinessStatus | ProfileSourceStatus | string;
 }) {
 	return (
 		<div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
@@ -270,23 +307,31 @@ function buildReadinessStatus({
 	return "READY";
 }
 
-function buildPersistenceStatus({
+function buildProfileSourceStatus({
 	productId,
 	productPayload,
 	result,
+	truthStatus,
 }: {
 	productId: string;
 	productPayload: Record<string, unknown> | null;
 	result: ProductAssetGeneratorResponse | null;
-}): PersistenceStatus {
+	truthStatus: Record<string, unknown> | null;
+}): ProfileSourceStatus {
 	if (!result && !productId && !productPayload) {
 		return "NOT_ANALYZED";
 	}
-	if (productId) {
-		return "SAVED";
+	if (
+		truthStatus?.profile_source_status === "PERSISTED_PROFILE" ||
+		truthStatus?.persistence_truth === "PERSISTED"
+	) {
+		return "PERSISTED_PROFILE";
 	}
-	if (productPayload) {
-		return "EPHEMERAL_ONLY";
+	if (result) {
+		return "EPHEMERAL_PREVIEW";
+	}
+	if (productId || productPayload) {
+		return "PRODUCT_ROW_DERIVED";
 	}
 	return "NOT_ANALYZED";
 }
@@ -321,6 +366,60 @@ function buildProfileWarnings({
 		}
 	}
 	return Array.from(combined);
+}
+
+function buildCopyReadinessStatus(
+	selectedCopySignals: Record<string, string | null | undefined>,
+): {
+	status: CopyReadinessStatus;
+	detail: string;
+} {
+	const signals = [
+		["hook", selectedCopySignals.hook],
+		["usp_1", selectedCopySignals.usp_1],
+		["usp_2", selectedCopySignals.usp_2],
+		["usp_3", selectedCopySignals.usp_3],
+		["cta", selectedCopySignals.cta],
+	] as const;
+	const missing = signals
+		.filter(([, value]) => !hasReadableSignal(value))
+		.map(([label]) => label);
+	if (missing.length === 0) {
+		return {
+			status: "COPY_READY",
+			detail: "Hook, USP, and CTA are present for prompt planning.",
+		};
+	}
+	return {
+		status: "COPY_MISSING",
+		detail:
+			"COPY_MISSING — hook/USP/CTA must be generated before TEXT_TO_VIDEO can be READY.",
+	};
+}
+
+function buildCharacterReadinessStatus({
+	result,
+	draft,
+}: {
+	result: ProductAssetGeneratorResponse | null;
+	draft: ProductAssetGeneratorDraft;
+}): CharacterReadinessStatus {
+	if (
+		result?.truth_status?.character_readiness_status === "CHARACTER_ASSET_READY"
+	) {
+		return "CHARACTER_ASSET_READY";
+	}
+	if (
+		result ||
+		draft.gender ||
+		draft.ethnicity ||
+		draft.age_range ||
+		draft.wardrobe ||
+		draft.headwear
+	) {
+		return "CHARACTER_CONCEPT_ONLY";
+	}
+	return "NOT_PROVIDED";
 }
 
 function buildProfileCard({
@@ -424,14 +523,14 @@ function buildProfileCard({
 
 function buildModeReadiness({
 	selectedProduct,
-	selectedCopySignals,
 	draft,
 	inlinePayload,
+	copyReadiness,
 }: {
 	selectedProduct: Product | null;
-	selectedCopySignals: Record<string, string | null | undefined>;
 	draft: ProductAssetGeneratorDraft;
 	inlinePayload: Record<string, unknown> | null;
+	copyReadiness: CopyReadinessStatus;
 }): {
 	records: ModeReadinessRecord[];
 	recommended_first_mode: RecommendedMode;
@@ -443,13 +542,6 @@ function buildModeReadiness({
 		(draft.camera_style || selectedProduct?.camera_style) &&
 			(draft.camera_behavior || selectedProduct?.camera_behavior),
 	);
-	const copyReady = Boolean(
-		selectedCopySignals.hook &&
-			selectedCopySignals.usp_1 &&
-			selectedCopySignals.usp_2 &&
-			selectedCopySignals.usp_3 &&
-			selectedCopySignals.cta,
-	);
 	const hasProduct = Boolean(
 		selectedProduct || inlinePayload || draft.product_payload,
 	);
@@ -460,7 +552,7 @@ function buildModeReadiness({
 	);
 	const hasStyle = Boolean(draft.camera_style || selectedProduct?.camera_style);
 	const textStatus =
-		hasProduct && sceneReady && cameraReady && copyReady
+		hasProduct && sceneReady && cameraReady && copyReadiness === "COPY_READY"
 			? "READY"
 			: "NEEDS_REVIEW";
 	const imageStatus =
@@ -483,7 +575,9 @@ function buildModeReadiness({
 				key: "TEXT_TO_VIDEO",
 				status: textStatus,
 				detail:
-					"READY only when product, scene, camera, and copy signals are present.",
+					copyReadiness === "COPY_READY"
+						? "READY only when product, scene, camera, and copy signals are present."
+						: "NEEDS_REVIEW while hook/USP/CTA are missing.",
 			},
 			{
 				key: "FRAMES",
@@ -501,10 +595,62 @@ function buildModeReadiness({
 				key: "IMAGE",
 				status: imageStatus,
 				detail:
-					"READY_FOR_PROMPT when product plus scene/style context exists.",
+					"READY_FOR_PROMPT when product plus scene/style context exists. Prompt-ready only. No real image generation.",
 			},
 		],
 		recommended_first_mode,
+	};
+}
+
+function buildProfileTruthSummary({
+	profileSourceStatus,
+	selectedProduct,
+	result,
+	copyReadiness,
+	characterReadinessStatus,
+	assetReadinessStatus,
+}: {
+	profileSourceStatus: ProfileSourceStatus;
+	selectedProduct: Product | null;
+	result: ProductAssetGeneratorResponse | null;
+	copyReadiness: {
+		status: CopyReadinessStatus;
+		detail: string;
+	};
+	characterReadinessStatus: CharacterReadinessStatus;
+	assetReadinessStatus: AssetReadinessStatus;
+}): ProfileTruthSummary {
+	return {
+		profile_source_status:
+			(result?.truth_status?.profile_source_status as ProfileSourceStatus) ||
+			profileSourceStatus,
+		product_mapping_status:
+			(result?.truth_status?.product_mapping_status as
+				| "READY"
+				| "NEEDS_REVIEW"
+				| "MISSING") ||
+			selectedProduct?.mapping_status ||
+			(selectedProduct ? "NEEDS_REVIEW" : "MISSING"),
+		copy_readiness_status:
+			(result?.truth_status?.copy_readiness_status as CopyReadinessStatus) ||
+			copyReadiness.status,
+		copy_readiness_detail:
+			(result?.truth_status?.copy_readiness_detail as string) ||
+			copyReadiness.detail,
+		character_readiness_status:
+			(result?.truth_status
+				?.character_readiness_status as CharacterReadinessStatus) ||
+			characterReadinessStatus,
+		asset_readiness_status:
+			(result?.truth_status?.asset_readiness_status as AssetReadinessStatus) ||
+			assetReadinessStatus,
+		execution_readiness_status:
+			(result?.truth_status
+				?.execution_readiness_status as ExecutionReadinessStatus) ||
+			"DRY_RUN_ONLY",
+		persistence_truth:
+			(result?.truth_status?.persistence_truth as PersistenceTruthStatus) ||
+			"NOT_PERSISTED",
 	};
 }
 
@@ -679,22 +825,43 @@ export default function ProductAssetGeneratorForm({
 		currentSignature,
 		analysisSignature,
 	});
-	const persistenceStatus = buildPersistenceStatus({
+	const profileSourceStatus = buildProfileSourceStatus({
 		productId: draft.product_id || "",
 		productPayload: inlinePayload || draft.product_payload || null,
 		result,
+		truthStatus:
+			(result?.truth_status as Record<string, unknown> | null) || null,
 	});
 	const profileVisible = Boolean(
 		selectedProduct || inlinePayload || draft.product_payload || result,
 	);
+	const copyReadiness = buildCopyReadinessStatus(selectedCopySignals);
 	const { records: modeReadiness, recommended_first_mode } = buildModeReadiness(
 		{
 			selectedProduct,
-			selectedCopySignals,
 			draft,
 			inlinePayload,
+			copyReadiness: copyReadiness.status,
 		},
 	);
+	const assetReadinessStatus: AssetReadinessStatus =
+		recommended_first_mode === "INGREDIENTS"
+			? "NEEDS_ASSET_BUNDLE"
+			: recommended_first_mode === "FRAMES"
+				? "NEEDS_ASSET"
+				: "PROMPT_ONLY";
+	const characterReadinessStatus = buildCharacterReadinessStatus({
+		result,
+		draft,
+	});
+	const profileTruthSummary = buildProfileTruthSummary({
+		profileSourceStatus,
+		selectedProduct,
+		result,
+		copyReadiness,
+		characterReadinessStatus,
+		assetReadinessStatus,
+	});
 	const ugcProfile = buildProfileCard({
 		variant: "UGC_IPHONE",
 		selectedProduct,
@@ -726,7 +893,9 @@ export default function ProductAssetGeneratorForm({
 					<div className="mt-1 text-[11px] text-slate-400">
 						Product selection leads the workflow. Analyze Product builds a
 						readiness profile first, then manual controls remain available in
-						Advanced Manual Override.
+						Advanced Manual Override. Analyze Product creates an offline
+						preview-derived readiness profile. It is not persisted unless a
+						persisted profile API is implemented.
 					</div>
 				</div>
 				<span className="inline-flex rounded-full border border-slate-600 bg-slate-950 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-200">
@@ -803,7 +972,10 @@ export default function ProductAssetGeneratorForm({
 
 					<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
 						<StatusBadge label="Readiness Status" value={readinessStatus} />
-						<StatusBadge label="Persistence Status" value={persistenceStatus} />
+						<StatusBadge
+							label="Profile Source Status"
+							value={profileSourceStatus}
+						/>
 					</div>
 				</div>
 			</div>
@@ -903,6 +1075,58 @@ export default function ProductAssetGeneratorForm({
 						<div className="flex flex-wrap items-center justify-between gap-3">
 							<div>
 								<div className="text-sm font-semibold text-slate-100">
+									Profile Truth Summary
+								</div>
+								<div className="mt-1 text-[11px] text-slate-400">
+									Analyze Product creates an offline preview-derived readiness
+									profile. It is not persisted unless a persisted profile API is
+									implemented.
+								</div>
+							</div>
+							<div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-300">
+								persistence_truth={profileTruthSummary.persistence_truth}
+							</div>
+						</div>
+						<div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+							<ProfileField
+								label="profile_source_status"
+								value={profileTruthSummary.profile_source_status}
+							/>
+							<ProfileField
+								label="product_mapping_status"
+								value={profileTruthSummary.product_mapping_status}
+							/>
+							<ProfileField
+								label="copy_readiness_status"
+								value={profileTruthSummary.copy_readiness_status}
+							/>
+							<ProfileField
+								label="character_readiness_status"
+								value={profileTruthSummary.character_readiness_status}
+							/>
+							<ProfileField
+								label="asset_readiness_status"
+								value={profileTruthSummary.asset_readiness_status}
+							/>
+							<ProfileField
+								label="execution_readiness_status"
+								value={profileTruthSummary.execution_readiness_status}
+							/>
+							<ProfileField
+								label="persistence_truth"
+								value={profileTruthSummary.persistence_truth}
+							/>
+							<ProfileField
+								label="copy_readiness_detail"
+								value={profileTruthSummary.copy_readiness_detail}
+							/>
+						</div>
+					</section>
+
+					<section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+						<div className="flex flex-wrap items-center justify-between gap-3">
+							<div>
+								<div className="text-sm font-semibold text-slate-100">
 									Video/Image Readiness
 								</div>
 								<div className="mt-1 text-[11px] text-slate-400">
@@ -938,7 +1162,7 @@ export default function ProductAssetGeneratorForm({
 				</div>
 			) : (
 				<div className="mt-4 rounded-2xl border border-dashed border-slate-700 bg-slate-950/50 p-4 text-[11px] text-slate-400">
-					Select a saved product or use Advanced Manual Override to paste an
+					Select a product row or use Advanced Manual Override to paste an
 					ephemeral product payload, then run Analyze Product to build the
 					readiness profile.
 				</div>

@@ -257,6 +257,50 @@ def _build_product_context(
     }
 
 
+def _has_copy_signal_value(value: Any) -> bool:
+    if value is None:
+        return False
+    normalized = str(value).strip()
+    return bool(normalized) and normalized != "NOT_FOUND"
+
+
+def _build_copy_readiness_status(product: dict[str, Any]) -> tuple[str, str]:
+    copy_keys = ("hook", "usp_1", "usp_2", "usp_3", "cta")
+    missing = [key for key in copy_keys if not _has_copy_signal_value(product.get(key))]
+    if not missing:
+        return "COPY_READY", "Hook, USP, and CTA are present."
+    return (
+        "COPY_MISSING",
+        "COPY_MISSING — hook/USP/CTA must be generated before TEXT_TO_VIDEO can be READY.",
+    )
+
+
+def _build_character_attribute_truth(value: str | None) -> str:
+    return "INPUT_SLOT_ONLY" if value else "NOT_PROVIDED"
+
+
+def _build_character_readiness_status(product: dict[str, Any]) -> str:
+    if product.get("subject_character_asset_ready"):
+        return "CHARACTER_ASSET_READY"
+    return "CHARACTER_CONCEPT_ONLY"
+
+
+def _build_asset_readiness_status(
+    request: ProductAssetGeneratorRequest,
+    product: dict[str, Any],
+) -> str:
+    has_scene = bool(request.scene_context or product.get("scene_context"))
+    has_style = bool(request.camera_style or product.get("camera_style"))
+    has_product = bool(product.get("id") or product.get("product_id"))
+    if request.target_destination_mode == "INGREDIENTS":
+        return "NEEDS_ASSET_BUNDLE"
+    if request.target_destination_mode == "FRAMES":
+        return "NEEDS_ASSET"
+    if has_product and has_scene and has_style:
+        return "PROMPT_ONLY"
+    return "NEEDS_ASSET"
+
+
 def _character_description(product: dict[str, Any], request: ProductAssetGeneratorRequest) -> str:
     segments = []
     age = request.age_range or "adult"
@@ -280,15 +324,24 @@ def _build_truth_status(
     product: dict[str, Any],
     registry_hints: dict[str, Any],
 ) -> dict[str, Any]:
+    copy_readiness_status, copy_readiness_detail = _build_copy_readiness_status(product)
     return {
         "overall_source_status": "DERIVED_FROM_PRODUCT_DATA",
+        "profile_source_status": "EPHEMERAL_PREVIEW",
+        "persistence_truth": "NOT_PERSISTED",
         "canonical_status": "NOT_CANONICAL",
+        "product_mapping_status": product.get("mapping_status") or "MISSING",
+        "copy_readiness_status": copy_readiness_status,
+        "copy_readiness_detail": copy_readiness_detail,
+        "character_readiness_status": _build_character_readiness_status(product),
+        "asset_readiness_status": _build_asset_readiness_status(request, product),
+        "execution_readiness_status": "DRY_RUN_ONLY",
         "product_dimensions": "NOT_VERIFIED",
         "product_claims": "NOT_HARD_ENFORCED",
         "character_attributes": {
-            "gender": "INPUT_SLOT_ONLY" if request.gender else "DERIVED_FROM_PRODUCT_DATA",
-            "ethnicity": "INPUT_SLOT_ONLY" if request.ethnicity else "DERIVED_FROM_PRODUCT_DATA",
-            "age_range": "INPUT_SLOT_ONLY" if request.age_range else "DERIVED_FROM_PRODUCT_DATA",
+            "gender": _build_character_attribute_truth(request.gender),
+            "ethnicity": _build_character_attribute_truth(request.ethnicity),
+            "age_range": _build_character_attribute_truth(request.age_range),
         },
         "wardrobe": registry_hints["WARDROBE"].source_status,
         "headwear": registry_hints["HEADWEAR"].source_status,
@@ -309,6 +362,7 @@ def _build_common_warnings(
         "CHARACTER_IMAGE_NOT_GENERATED_YET",
         "NOT_CHROME_EXTENSION_VISIBLE_YET",
         "NOT_GOOGLE_FLOW_READY_EXECUTION",
+        "READINESS_PROFILE_NOT_PERSISTED",
         "PRODUCT_CLAIMS_NOT_HARD_ENFORCED",
         "PRODUCT_HANDLING_INFERRED_FROM_RULES",
         "PHYSICS_HANDLING_DERIVED_FROM_PRODUCT_RULES",
@@ -330,6 +384,9 @@ def _build_common_warnings(
         warnings.append("LANGUAGE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
     if request.platform or registry_hints["PLATFORM"].source_status != "REPO_VERIFIED":
         warnings.append("PLATFORM_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
+    copy_readiness_status, _ = _build_copy_readiness_status(product)
+    if copy_readiness_status == "COPY_MISSING":
+        warnings.append("COPY_MISSING_TEXT_TO_VIDEO_NOT_READY")
     return warnings
 
 

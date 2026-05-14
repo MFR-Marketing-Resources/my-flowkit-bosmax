@@ -17,7 +17,7 @@ def test_product_readiness_profile_primary_workflow_exists():
     assert "Product Selector" in form_source
     assert "Analyze Product" in form_source
     assert "Readiness Status" in form_source
-    assert "Persistence Status" in form_source
+    assert "Profile Source Status" in form_source
 
 
 def test_product_readiness_profile_cards_exist():
@@ -31,6 +31,9 @@ def test_product_readiness_profile_cards_exist():
     assert "voiceover_style" in form_source
     assert "Video/Image Readiness" in form_source
     assert "recommended_first_mode" in form_source
+    assert "Profile Truth Summary" in form_source
+    assert "copy_readiness_status" in form_source
+    assert "execution_readiness_status" in form_source
 
 
 def test_advanced_manual_override_exists_and_old_manual_fields_are_not_primary():
