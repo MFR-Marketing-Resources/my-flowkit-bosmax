@@ -117,6 +117,66 @@
       color: var(--text);
     }
 
+    .runtime-panel {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.72);
+      padding: 10px 12px;
+    }
+
+    .runtime-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 12px;
+    }
+
+    .runtime-item {
+      min-width: 0;
+    }
+
+    .runtime-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .runtime-value {
+      margin-top: 4px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text);
+      word-break: break-word;
+    }
+
+    .runtime-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .runtime-btn {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(56, 189, 248, 0.08);
+      color: var(--text);
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .runtime-btn:hover {
+      border-color: rgba(56, 189, 248, 0.5);
+      background: rgba(56, 189, 248, 0.16);
+    }
+
     .frame-shell {
       position: relative;
       min-height: 0;
@@ -253,6 +313,41 @@
         <button type="button" class="launcher-btn" data-dashboard-route="registry">Asset Registry</button>
       </div>
       <div class="route-meta">Current route: <strong id="route-label">Operator Dashboard</strong></div>
+      <div class="runtime-panel">
+        <div class="runtime-grid">
+          <div class="runtime-item">
+            <div class="runtime-label">Launcher Build</div>
+            <div class="runtime-value" id="launcher-build-label">Launcher build: pending</div>
+          </div>
+          <div class="runtime-item">
+            <div class="runtime-label">Dashboard Status</div>
+            <div class="runtime-value" id="runtime-status-label">Dashboard status: unknown</div>
+          </div>
+          <div class="runtime-item">
+            <div class="runtime-label">Current Route Key</div>
+            <div class="runtime-value" id="current-route-key">operator</div>
+          </div>
+          <div class="runtime-item">
+            <div class="runtime-label">Last Click</div>
+            <div class="runtime-value" id="last-click-at">No click recorded</div>
+          </div>
+          <div class="runtime-item">
+            <div class="runtime-label">Last Action</div>
+            <div class="runtime-value" id="last-action-copy">Boot pending</div>
+          </div>
+          <div class="runtime-item">
+            <div class="runtime-label">Iframe Src</div>
+            <div class="runtime-value" id="iframe-src-copy">not-set</div>
+          </div>
+          <div class="runtime-item" style="grid-column: 1 / -1;">
+            <div class="runtime-label">Selected Route URL</div>
+            <div class="runtime-value" id="selected-route-url">http://127.0.0.1:8100/operator?portal=side</div>
+          </div>
+        </div>
+        <div class="runtime-actions">
+          <button type="button" class="runtime-btn" id="btn-open-selected-route">Open selected route in browser tab</button>
+        </div>
+      </div>
     </div>
 
     <div class="frame-shell">
