@@ -1,12 +1,19 @@
 # CURRENT_STATE
 
 ## Current Repo Head
-- Current local and remote `main` head: `987ef372f08f2079f8bdac5550d6176e7f7d3695`
+- Live `main` head must be verified from Git at runtime using:
+  - `git rev-parse HEAD`
+  - `git rev-parse origin/main`
+  - `git ls-remote origin refs/heads/main`
+- This file does not self-declare an immutable current `main` SHA because merging this file creates a new `main` SHA.
+- If live Git output conflicts with this file's historical checkpoints, live Git output wins for current-head detection.
 
 ## Historical Verified Checkpoints
 - User-verified architecture-reset checkpoint: `26e327e11a48c30ccbbb350f3042f041f0c7df34`
 - User-verified harness commit included: `81e78719e4f5281d77986dfe9c091681de31b954`
 - Round 10 Product-to-Asset Generator merge: `2729d9004d4b6bd467102bea46ae75ed0e12ff31`
+- Repo memory/governance commit: `987ef372f08f2079f8bdac5550d6176e7f7d3695`
+- Governance reconciliation PR #23 merge: `779ef57b45cf624752d1c9d3df83921298b061b9`
 
 ## Current Verified State
 - Architecture reset is confirmed.
