@@ -72,6 +72,10 @@ def test_prompt_preview_form_locks_dry_run_only_true_and_shows_offline_safety_co
     assert "dry_run_only: true" in form_source
     assert "dry_run_only=true" in form_source
     assert "offline-only" in form_source.lower()
+    assert "!result.dry_run_only" not in result_source
+    assert "value={result.dry_run_only}" in result_source
+    assert "dry_run_only" in result_source
+    assert "offline-only" in result_source.lower()
     assert "no Google Flow execution".lower() in page_source.lower()
     assert "no Chrome extension execution".lower() in page_source.lower()
     assert "batch execution".lower() in result_source.lower()

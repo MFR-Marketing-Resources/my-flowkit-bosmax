@@ -78,7 +78,7 @@ export default function PromptPreviewResultPanel({
 						/>
 						<Flag
 							label="dry_run_only"
-							value={!result.dry_run_only ? true : false}
+							value={result.dry_run_only}
 						/>
 					</div>
 
