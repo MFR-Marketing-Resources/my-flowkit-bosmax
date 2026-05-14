@@ -38,6 +38,10 @@ def test_truth_summary_and_copy_readiness_labels_exist():
     assert "NOT_PERSISTED" in form_source
     assert "CHARACTER_CONCEPT_ONLY" in form_source
     assert "NOT_PROVIDED" in form_source
+    assert "scale_truth_status" in form_source
+    assert "camera_truth_status" in form_source
+    assert "text_to_video_readiness_status" in form_source
+    assert "image_prompt_readiness_status" in form_source
 
 
 def test_null_character_attributes_are_not_marked_derived_from_product_data():
@@ -60,6 +64,9 @@ def test_result_panel_truth_copy_stays_preview_only_and_not_persisted():
     assert "Not Chrome extension execution." in result_source
     assert "Not Google" in result_source
     assert "Flow ready." in result_source
+    assert "Product Scale Prompt" in result_source
+    assert "UGC iPhone Raw Camera Lock" in result_source
+    assert "Cinematic Camera Prompt" in result_source
 
 
 def test_truth_status_ui_contains_no_forbidden_execution_controls():

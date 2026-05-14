@@ -123,6 +123,29 @@ export default function ProductAssetGeneratorResultPanel({
 									result.truth_status.persistence_truth || "NOT_PERSISTED",
 								),
 							],
+							[
+								"Scale Truth Status",
+								String(
+									result.truth_status.scale_truth_status ||
+										result.product_context.scale_truth_status ||
+										"SCALE_NOT_FOUND",
+								),
+							],
+							[
+								"Camera Capture Mode",
+								String(
+									result.product_context.camera_capture_mode ||
+										"UGC_IPHONE_RAW",
+								),
+							],
+							[
+								"camera_truth_status",
+								String(
+									result.truth_status.camera_truth_status ||
+										result.product_context.camera_truth_status ||
+										"CAMERA_LOCK_MISSING",
+								),
+							],
 						].map(([label, value]) => (
 							<div
 								key={label}
@@ -152,6 +175,39 @@ export default function ProductAssetGeneratorResultPanel({
 								TEXT_TO_VIDEO can be READY.
 							</div>
 						) : null}
+						{result.product_context.scale_warning ? (
+							<div className="mt-2">{String(result.product_context.scale_warning)}</div>
+						) : null}
+						<div className="mt-2">
+							PRODUCT_SCALE_DERIVED_NOT_DIMENSION_VERIFIED remains visible when the scale lock is inferred rather than dimension-verified.
+						</div>
+					</div>
+
+					<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+						{[
+							[
+								"Product Scale Prompt",
+								String(result.product_context.product_scale_prompt || "NOT_FOUND"),
+							],
+							[
+								"UGC iPhone Raw Camera Lock",
+								String(result.product_context.ugc_camera_lock_prompt || "NOT_FOUND"),
+							],
+							[
+								"Cinematic Camera Prompt",
+								String(result.product_context.cinematic_camera_prompt || "NOT_FOUND"),
+							],
+						].map(([label, value]) => (
+							<div
+								key={label}
+								className="rounded-xl border border-slate-800 bg-slate-950/70 p-3"
+							>
+								<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+									{label}
+								</div>
+								<div className="mt-2 text-[11px] text-slate-200">{value}</div>
+							</div>
+						))}
 					</div>
 
 					{result.warning_summary.length > 0 ? (

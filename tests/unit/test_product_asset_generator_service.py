@@ -158,6 +158,7 @@ async def test_product_lifestyle_image_prompt_returns_scene_camera_and_placement
     suggestion = result.prompt_suggestions[0]
     assert suggestion["suggestion_type"] == "image_prompt"
     assert suggestion["scene_prompt"] == "Premium vanity table."
+    assert suggestion["product_scale_prompt"]
     assert result.scene_notes
     assert result.camera_notes
 
@@ -204,6 +205,62 @@ async def test_unverified_dimensions_emit_warning():
 
     assert "PRODUCT_DIMENSIONS_NOT_REPO_VERIFIED" in result.warnings
     assert result.truth_status["product_dimensions"] == "NOT_VERIFIED"
+
+
+@pytest.mark.asyncio
+async def test_preview_result_includes_scale_truth_and_camera_lock_fields():
+    result = await generate_product_asset_preview(
+        {
+            "product_payload": _product_row(),
+            "target_asset_intent": "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+            "target_destination_mode": "TEXT_TO_VIDEO",
+            "dry_run_only": True,
+        }
+    )
+
+    assert result.product_context["product_scale_prompt"]
+    assert result.product_context["scale_truth_status"] == "DERIVED_RELATIVE_SCALE"
+    assert result.product_context["ugc_camera_lock_prompt"]
+    assert result.product_context["cinematic_camera_prompt"]
+    assert result.product_context["camera_capture_mode"] == "UGC_IPHONE_RAW"
+
+
+@pytest.mark.asyncio
+async def test_text_to_video_readiness_stays_needs_review_when_scale_is_missing():
+    result = await generate_product_asset_preview(
+        {
+            "product_payload": _product_row(
+                product_scale=None,
+                type=None,
+                product_type=None,
+                recommended_grip=None,
+                hand_object_interaction=None,
+                section_5_product_physics_prompt=None,
+            ),
+            "target_asset_intent": "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+            "target_destination_mode": "TEXT_TO_VIDEO",
+            "dry_run_only": True,
+        }
+    )
+
+    assert result.truth_status["scale_truth_status"] == "SCALE_NOT_FOUND"
+    assert result.truth_status["text_to_video_readiness_status"] == "NEEDS_REVIEW"
+    assert "PRODUCT_SCALE_PROMPT_MISSING" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_preview_includes_generated_copy_signals_for_safe_direct_product():
+    result = await generate_product_asset_preview(
+        {
+            "product_payload": _product_row(),
+            "target_asset_intent": "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+            "dry_run_only": True,
+        }
+    )
+
+    assert result.product_context["hook"]
+    assert result.product_context["usp_1"]
+    assert result.product_context["cta"]
 
 
 @pytest.mark.asyncio

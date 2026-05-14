@@ -9,6 +9,7 @@ from agent.models.product_asset_generator import (
     ProductAssetGeneratorResponse,
 )
 from agent.services.asset_registry_service import list_assets_by_type
+from agent.services.copy_signal_generator_service import build_copy_signal_response_for_product
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import evaluate_prompt_readiness, resolve_product_physics
 from agent.services.product_preflight import (
@@ -222,8 +223,10 @@ def _has_product_image(product: dict[str, Any]) -> bool:
 def _build_product_context(
     product: dict[str, Any],
     request: ProductAssetGeneratorRequest,
+    ugc_copy_signal: dict[str, Any] | None = None,
+    cinematic_copy_signal: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    context = {
         "product_id": product.get("id") or product.get("product_id"),
         "source": product.get("source"),
         "raw_product_title": product.get("raw_product_title"),
@@ -255,6 +258,31 @@ def _build_product_context(
             "platform": request.platform,
         },
     }
+    if ugc_copy_signal:
+        context.update(
+            {
+                "hook": ugc_copy_signal.get("copy_signals", {}).get("hook"),
+                "usp_1": ugc_copy_signal.get("copy_signals", {}).get("usp_1"),
+                "usp_2": ugc_copy_signal.get("copy_signals", {}).get("usp_2"),
+                "usp_3": ugc_copy_signal.get("copy_signals", {}).get("usp_3"),
+                "cta": ugc_copy_signal.get("copy_signals", {}).get("cta"),
+                "copy_route": ugc_copy_signal.get("route"),
+                "copy_review_status": ugc_copy_signal.get("review_status"),
+                "product_scale_prompt": ugc_copy_signal.get("product_context", {}).get("product_scale_prompt"),
+                "scale_truth_status": ugc_copy_signal.get("product_context", {}).get("scale_truth_status"),
+                "scale_warning": ugc_copy_signal.get("product_context", {}).get("scale_warning"),
+                "camera_capture_mode": ugc_copy_signal.get("product_context", {}).get("camera_capture_mode"),
+                "ugc_camera_lock_prompt": ugc_copy_signal.get("product_context", {}).get("ugc_camera_lock_prompt"),
+                "camera_truth_status": ugc_copy_signal.get("product_context", {}).get("camera_truth_status"),
+                "claim_safety": ugc_copy_signal.get("claim_safety", {}),
+                "visual_dialogue_isolation": ugc_copy_signal.get("visual_dialogue_isolation", {}),
+            }
+        )
+    if cinematic_copy_signal:
+        context["cinematic_camera_prompt"] = cinematic_copy_signal.get(
+            "product_context", {}
+        ).get("cinematic_camera_prompt")
+    return context
 
 
 def _has_copy_signal_value(value: Any) -> bool:
@@ -264,7 +292,21 @@ def _has_copy_signal_value(value: Any) -> bool:
     return bool(normalized) and normalized != "NOT_FOUND"
 
 
-def _build_copy_readiness_status(product: dict[str, Any]) -> tuple[str, str]:
+def _build_copy_readiness_status(
+    product: dict[str, Any],
+    ugc_copy_signal: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    if ugc_copy_signal:
+        status = ugc_copy_signal.get("copy_signals", {}).get(
+            "copy_readiness_status", "COPY_MISSING"
+        )
+        if status == "COPY_READY":
+            return "COPY_READY", "Hook, USP, and CTA are present."
+        if status == "COPY_DERIVED_SUGGESTION":
+            return (
+                "COPY_DERIVED_SUGGESTION",
+                "COPY_DERIVED_SUGGESTION — hook/USP/CTA exist as derived prompt suggestions.",
+            )
     copy_keys = ("hook", "usp_1", "usp_2", "usp_3", "cta")
     missing = [key for key in copy_keys if not _has_copy_signal_value(product.get(key))]
     if not missing:
@@ -323,8 +365,42 @@ def _build_truth_status(
     request: ProductAssetGeneratorRequest,
     product: dict[str, Any],
     registry_hints: dict[str, Any],
+    ugc_copy_signal: dict[str, Any] | None = None,
+    cinematic_copy_signal: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    copy_readiness_status, copy_readiness_detail = _build_copy_readiness_status(product)
+    copy_readiness_status, copy_readiness_detail = _build_copy_readiness_status(
+        product, ugc_copy_signal
+    )
+    product_scale_prompt = (ugc_copy_signal or {}).get("product_context", {}).get(
+        "product_scale_prompt"
+    )
+    ugc_camera_lock_prompt = (ugc_copy_signal or {}).get("product_context", {}).get(
+        "ugc_camera_lock_prompt"
+    )
+    cinematic_camera_prompt = (cinematic_copy_signal or {}).get(
+        "product_context", {}
+    ).get("cinematic_camera_prompt")
+    claim_safety = (ugc_copy_signal or {}).get("claim_safety", {})
+    visual_dialogue_isolation = (ugc_copy_signal or {}).get(
+        "visual_dialogue_isolation", {}
+    )
+    has_product = bool(product.get("id") or product.get("product_id"))
+    has_scene = bool(request.scene_context or product.get("scene_context"))
+    has_camera = bool(
+        (request.camera_style or product.get("camera_style"))
+        and (request.camera_behavior or product.get("camera_behavior"))
+    )
+    text_to_video_ready = (
+        has_product
+        and has_scene
+        and has_camera
+        and bool(product_scale_prompt)
+        and bool(ugc_camera_lock_prompt)
+        and copy_readiness_status in {"COPY_READY", "COPY_DERIVED_SUGGESTION"}
+        and not claim_safety.get("requires_human_review", False)
+        and visual_dialogue_isolation.get("status") in {"ENFORCED", "PASS"}
+    )
+    image_ready = has_product and has_scene and bool(product_scale_prompt)
     return {
         "overall_source_status": "DERIVED_FROM_PRODUCT_DATA",
         "profile_source_status": "EPHEMERAL_PREVIEW",
@@ -337,6 +413,19 @@ def _build_truth_status(
         "asset_readiness_status": _build_asset_readiness_status(request, product),
         "execution_readiness_status": "DRY_RUN_ONLY",
         "product_dimensions": "NOT_VERIFIED",
+        "scale_truth_status": (ugc_copy_signal or {}).get("product_context", {}).get(
+            "scale_truth_status", "SCALE_NOT_FOUND"
+        ),
+        "camera_truth_status": (ugc_copy_signal or {}).get("product_context", {}).get(
+            "camera_truth_status", "CAMERA_LOCK_MISSING"
+        ),
+        "camera_capture_mode": (ugc_copy_signal or {}).get("product_context", {}).get(
+            "camera_capture_mode", "UGC_IPHONE_RAW"
+        ),
+        "text_to_video_readiness_status": "READY" if text_to_video_ready else "NEEDS_REVIEW",
+        "image_prompt_readiness_status": "READY_FOR_PROMPT" if image_ready else "NEEDS_REVIEW",
+        "claim_safety_requires_human_review": claim_safety.get("requires_human_review", False),
+        "visual_dialogue_isolation_status": visual_dialogue_isolation.get("status", "PASS"),
         "product_claims": "NOT_HARD_ENFORCED",
         "character_attributes": {
             "gender": _build_character_attribute_truth(request.gender),
@@ -349,6 +438,8 @@ def _build_truth_status(
         "camera_behavior": registry_hints["CAMERA_BEHAVIOR"].source_status,
         "language": registry_hints["LANGUAGE"].source_status,
         "platform": registry_hints["PLATFORM"].source_status,
+        "ugc_camera_lock_prompt": ugc_camera_lock_prompt,
+        "cinematic_camera_prompt": cinematic_camera_prompt,
     }
 
 
@@ -356,6 +447,7 @@ def _build_common_warnings(
     request: ProductAssetGeneratorRequest,
     product: dict[str, Any],
     registry_hints: dict[str, Any],
+    ugc_copy_signal: dict[str, Any] | None = None,
 ) -> list[str]:
     warnings: list[str] = [
         "PREVIEW_ONLY_NOT_GENERATED_ASSET",
@@ -384,9 +476,17 @@ def _build_common_warnings(
         warnings.append("LANGUAGE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
     if request.platform or registry_hints["PLATFORM"].source_status != "REPO_VERIFIED":
         warnings.append("PLATFORM_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
-    copy_readiness_status, _ = _build_copy_readiness_status(product)
+    copy_readiness_status, _ = _build_copy_readiness_status(product, ugc_copy_signal)
     if copy_readiness_status == "COPY_MISSING":
         warnings.append("COPY_MISSING_TEXT_TO_VIDEO_NOT_READY")
+    if ugc_copy_signal:
+        scale_warning = ugc_copy_signal.get("product_context", {}).get("scale_warning")
+        if scale_warning:
+            warnings.append(scale_warning)
+        if ugc_copy_signal.get("claim_safety", {}).get("requires_human_review"):
+            warnings.append("COPY_ROUTE_REVIEW_REQUIRED")
+        if ugc_copy_signal.get("product_context", {}).get("scale_truth_status") == "SCALE_NOT_FOUND":
+            warnings.append("PRODUCT_SCALE_PROMPT_MISSING")
     return warnings
 
 
@@ -570,6 +670,8 @@ def _build_camera_notes(product: dict[str, Any], request: ProductAssetGeneratorR
 def _build_prompt_suggestions(
     request: ProductAssetGeneratorRequest,
     product: dict[str, Any],
+    ugc_copy_signal: dict[str, Any] | None = None,
+    cinematic_copy_signal: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     product_name = product.get("product_display_name") or product.get("raw_product_title") or "the product"
     scene_context = request.scene_context or product.get("scene_context") or "clean studio environment"
@@ -580,6 +682,15 @@ def _build_prompt_suggestions(
     interaction = product.get("hand_object_interaction") or "keep the product readable without claiming exact dimensions"
     language = request.language or "default language"
     platform = request.platform or "generic platform"
+    product_scale_prompt = (ugc_copy_signal or {}).get("product_context", {}).get(
+        "product_scale_prompt"
+    ) or "PRODUCT_SCALE_PROMPT_MISSING"
+    ugc_camera_lock_prompt = (ugc_copy_signal or {}).get("product_context", {}).get(
+        "ugc_camera_lock_prompt"
+    ) or "UGC_CAMERA_LOCK_MISSING"
+    cinematic_camera_prompt = (cinematic_copy_signal or {}).get("product_context", {}).get(
+        "cinematic_camera_prompt"
+    ) or "CINEMATIC_CAMERA_LOCK_MISSING"
 
     prompts: dict[str, list[dict[str, Any]]] = {
         "CHARACTER_CONCEPT": [
@@ -588,6 +699,9 @@ def _build_prompt_suggestions(
                 "character_description": character_description,
                 "wardrobe_note": request.wardrobe or "Wardrobe remains an input-slot suggestion.",
                 "headwear_note": request.headwear or "Headwear remains an input-slot suggestion.",
+                "product_scale_prompt": product_scale_prompt,
+                "ugc_camera_lock_prompt": ugc_camera_lock_prompt,
+                "cinematic_camera_prompt": cinematic_camera_prompt,
             }
         ],
         "CHARACTER_HOLDING_PRODUCT_IMAGE_PROMPT": [
@@ -596,10 +710,12 @@ def _build_prompt_suggestions(
                 "image_prompt_text": (
                     f"Create a preview-only concept for {character_description} holding {product_name} "
                     f"in a {scene_context}. Use {camera_style} framing with {camera_behavior}. "
-                    f"Show {handling}. Hand interaction: {interaction}. Keep product claims neutral and avoid invented dimensions."
+                    f"Show {handling}. Hand interaction: {interaction}. Scale lock: {product_scale_prompt}. "
+                    f"UGC camera lock: {ugc_camera_lock_prompt}. Keep product claims neutral and avoid invented dimensions."
                 ),
                 "product_handling_note": handling,
                 "hand_object_interaction_note": interaction,
+                "product_scale_prompt": product_scale_prompt,
             }
         ],
         "PRODUCT_LIFESTYLE_IMAGE_PROMPT": [
@@ -608,10 +724,11 @@ def _build_prompt_suggestions(
                 "image_prompt_text": (
                     f"Create a preview-only lifestyle concept for {product_name} in {scene_context}. "
                     f"Use {camera_style} with {camera_behavior}. Product placement should respect "
-                    "derived handling and avoid unverified dimension or claim assertions."
+                    f"derived handling and avoid unverified dimension or claim assertions. Scale lock: {product_scale_prompt}."
                 ),
                 "scene_prompt": scene_context,
                 "product_placement_note": "Keep the product hero-readable without implying verified measurements.",
+                "product_scale_prompt": product_scale_prompt,
             }
         ],
         "SCENE_REFERENCE_PROMPT": [
@@ -621,8 +738,9 @@ def _build_prompt_suggestions(
                 "background_environment": f"{scene_context} tuned for {platform} delivery.",
                 "prompt_text": (
                     f"Preview-only scene reference: {scene_context}. Present {product_name} in a way that supports "
-                    f"{language} copy without claiming execution readiness."
+                    f"{language} copy without claiming execution readiness. Scale lock: {product_scale_prompt}."
                 ),
+                "product_scale_prompt": product_scale_prompt,
             }
         ],
         "STYLE_REFERENCE_PROMPT": [
@@ -632,8 +750,10 @@ def _build_prompt_suggestions(
                 "camera_behavior": camera_behavior,
                 "prompt_text": (
                     f"Preview-only style reference for {product_name}: {camera_style}, {camera_behavior}, "
-                    "product-led composition, neutral claim-safe presentation."
+                    f"product-led composition, neutral claim-safe presentation. Scale lock: {product_scale_prompt}."
                 ),
+                "ugc_camera_lock_prompt": ugc_camera_lock_prompt,
+                "cinematic_camera_prompt": cinematic_camera_prompt,
             }
         ],
         "INGREDIENTS_ASSET_BUNDLE": [
@@ -648,6 +768,7 @@ def _build_prompt_suggestions(
                     "product_dimensions",
                     "product_claims",
                 ],
+                "product_scale_prompt": product_scale_prompt,
             }
         ],
     }
@@ -709,8 +830,27 @@ async def generate_product_asset_preview(
     enriched_product = _build_enriched_product(product_seed or {})
     registry_hints = await _load_registry_hints()
     provenance = _build_provenance(product_seed or {}, registry_hints)
-    product_context = _build_product_context(enriched_product, request)
-    truth_status = _build_truth_status(request, enriched_product, registry_hints)
+    ugc_copy_signal = build_copy_signal_response_for_product(
+        enriched_product,
+        content_style_mode="UGC_IPHONE",
+    ).model_dump()
+    cinematic_copy_signal = build_copy_signal_response_for_product(
+        enriched_product,
+        content_style_mode="CINEMATIC_PRO",
+    ).model_dump()
+    product_context = _build_product_context(
+        enriched_product,
+        request,
+        ugc_copy_signal,
+        cinematic_copy_signal,
+    )
+    truth_status = _build_truth_status(
+        request,
+        enriched_product,
+        registry_hints,
+        ugc_copy_signal,
+        cinematic_copy_signal,
+    )
 
     if errors:
         return _build_failure_response(
@@ -722,7 +862,14 @@ async def generate_product_asset_preview(
             truth_status=truth_status,
         )
 
-    warnings.extend(_build_common_warnings(request, enriched_product, registry_hints))
+    warnings.extend(
+        _build_common_warnings(
+            request,
+            enriched_product,
+            registry_hints,
+            ugc_copy_signal,
+        )
+    )
     handling_notes = _build_handling_notes(enriched_product, request)
     physics_notes = _build_physics_notes(enriched_product)
     scene_notes = _build_scene_notes(enriched_product, request)
@@ -730,7 +877,12 @@ async def generate_product_asset_preview(
     derived_asset_suggestions = _build_derived_asset_suggestions(
         request, enriched_product, registry_hints
     )
-    prompt_suggestions = _build_prompt_suggestions(request, enriched_product)
+    prompt_suggestions = _build_prompt_suggestions(
+        request,
+        enriched_product,
+        ugc_copy_signal,
+        cinematic_copy_signal,
+    )
     required_assets = _build_required_assets(request, enriched_product)
     missing_assets = _build_missing_assets(request, enriched_product)
 

@@ -34,6 +34,11 @@ def test_product_readiness_profile_cards_exist():
     assert "Profile Truth Summary" in form_source
     assert "copy_readiness_status" in form_source
     assert "execution_readiness_status" in form_source
+    assert "Product Scale Prompt" in form_source
+    assert "Scale Truth Status" in form_source
+    assert "Camera Capture Mode" in form_source
+    assert "UGC iPhone Raw Camera Lock" in form_source
+    assert "Cinematic Camera Prompt" in form_source
 
 
 def test_advanced_manual_override_exists_and_old_manual_fields_are_not_primary():
@@ -59,6 +64,9 @@ def test_product_readiness_profile_supports_prompt_preview_handoff():
     assert "Use this profile in Prompt Preview" in form_source
     assert 'navigate("/prompt-preview"' in form_source
     assert "productReadinessProfile" in form_source
+    assert "product_scale_prompt" in form_source
+    assert "ugc_camera_lock_prompt" in form_source
+    assert "cinematic_camera_prompt" in form_source
     assert "productReadinessProfile" in preview_page_source
 
 

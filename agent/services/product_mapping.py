@@ -96,7 +96,7 @@ def _resolve_source_label(
 ) -> str:
     if has_explicit_override:
         return "explicit"
-    source = (source_hint or product.get("source") if product else source_hint or "").upper()
+    source = (source_hint or (product.get("source") if product else "") or "").upper()
     if matched and source in {"MANUAL_PROJECT", "MANUAL"}:
         return "manual"
     if matched:
