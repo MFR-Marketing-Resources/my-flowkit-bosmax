@@ -1,0 +1,10 @@
+{
+  "name": "flowkit-local-harness",
+  "private": true,
+  "scripts": {
+    "test:f2v-asset-picker-modal": "node scripts/test-f2v-asset-picker-modal.js"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}

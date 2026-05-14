@@ -14,6 +14,8 @@
 (function() {
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
+  const FLOW_KIT_TEST_MODE = Boolean(window.__FLOWKIT_TEST_MODE__);
+  const FLOW_KIT_ENABLE_TEST_HOOKS = FLOW_KIT_TEST_MODE || Boolean(window.__FLOWKIT_ENABLE_TEST_HOOKS__);
   const IMAGE_ASPECT_RATIOS = ['16:9', '4:3', '1:1', '3:4', '9:16'];
   const FLOW_MODE_CONFIG = {
     F2V: { topMode: 'Video', subMode: 'Frames', defaultModel: 'Veo 3.1 - Lite', defaultOrientation: 'VERTICAL', defaultCount: 1 },
@@ -22,7 +24,7 @@
     IMG: { topMode: 'Image', subMode: null, defaultModel: 'Nano Banana 2' },
   };
 
-  if (window._flowKitDomListener) {
+  if (!FLOW_KIT_TEST_MODE && window._flowKitDomListener) {
     try {
       chrome.runtime.onMessage.removeListener(window._flowKitDomListener);
     } catch (error) {
@@ -1446,6 +1448,22 @@
 
   function isAssetPickerDropTarget(node) {
     if (!node || !isVisible(node)) return false;
+    if (node.matches?.('[role="dialog"], [aria-modal="true"], dialog')) {
+      const nestedProgrammableTarget = node.querySelector?.([
+        'input[type="file"]',
+        'label',
+        'button',
+        '[role="button"]',
+        '.dropzone',
+        '[data-dropzone]',
+        '[data-testid*="upload"]',
+        '[data-testid*="drop"]',
+        '[aria-label*="upload" i]',
+        '[aria-label*="browse" i]',
+        '[aria-label*="select" i]',
+      ].join(', '));
+      if (nestedProgrammableTarget) return false;
+    }
     const text = normalizeText(
       node.innerText
       || node.textContent
@@ -3720,7 +3738,19 @@
     return false;
   };
 
-  window._flowKitDomListener = flowDomMessageListener;
-  chrome.runtime.onMessage.addListener(flowDomMessageListener);
+  if (FLOW_KIT_ENABLE_TEST_HOOKS) {
+    window.__FLOWKIT_TEST_HOOKS__ = {
+      findVisibleAssetPickerModal,
+      waitForAssetPickerModal,
+      waitForUploadAcceptance,
+      resolveAssetPickerTargets,
+      simulateFileUpload,
+    };
+  }
+
+  if (!FLOW_KIT_TEST_MODE) {
+    window._flowKitDomListener = flowDomMessageListener;
+    chrome.runtime.onMessage.addListener(flowDomMessageListener);
+  }
 
 })();
