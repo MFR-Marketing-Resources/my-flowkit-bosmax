@@ -781,3 +781,55 @@ export interface PromptPreviewResponse {
 	batch_execution_allowed: boolean;
 	dry_run_only: boolean;
 }
+
+export type ProductAssetIntent =
+	| "CHARACTER_CONCEPT"
+	| "CHARACTER_HOLDING_PRODUCT_IMAGE_PROMPT"
+	| "PRODUCT_LIFESTYLE_IMAGE_PROMPT"
+	| "SCENE_REFERENCE_PROMPT"
+	| "STYLE_REFERENCE_PROMPT"
+	| "INGREDIENTS_ASSET_BUNDLE";
+
+export interface ProductAssetGeneratorRequest {
+	product_id?: string | null;
+	product_payload?: Record<string, unknown> | null;
+	target_asset_intent: ProductAssetIntent | string;
+	gender?: string | null;
+	ethnicity?: string | null;
+	age_range?: string | null;
+	scene_context?: string | null;
+	platform?: string | null;
+	language?: string | null;
+	camera_style?: string | null;
+	camera_behavior?: string | null;
+	wardrobe?: string | null;
+	headwear?: string | null;
+	include_product_in_hand?: boolean;
+	target_destination_mode?: string | null;
+	strict_validation?: boolean;
+	dry_run_only: boolean;
+}
+
+export interface ProductAssetGeneratorResponse {
+	preview_status: "PASS" | "WARN" | "FAIL" | string;
+	target_asset_intent?: string | null;
+	product_context: Record<string, unknown>;
+	derived_asset_suggestions: Record<string, unknown>[];
+	prompt_suggestions: Record<string, unknown>[];
+	required_assets: Record<string, unknown>[];
+	missing_assets: Record<string, unknown>[];
+	handling_notes: string[];
+	physics_notes: string[];
+	scene_notes: string[];
+	camera_notes: string[];
+	warning_summary: string[];
+	warnings: string[];
+	errors: string[];
+	provenance: Record<string, unknown>;
+	truth_status: Record<string, unknown>;
+	dry_run_only: boolean;
+	execution_allowed: boolean;
+	image_generation_allowed: boolean;
+	flow_execution_allowed: boolean;
+	batch_execution_allowed: boolean;
+}
