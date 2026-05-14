@@ -1,0 +1,13 @@
+---
+description: Antigravity and live UAT lockdown
+globs: [".ai/**/*", "docs/**/*", "scratch/**/*"]
+alwaysApply: false
+---
+
+# UAT Lockdown
+
+- Antigravity is one-shot UAT only.
+- Reject `REQUEST_ID=N/A`.
+- Reject `build=legacy`.
+- Reject screenshot-only proof.
+- Require raw telemetry plus `PASS_STAGES`, `ABSENT_STAGES`, and `FIRST_FAIL_STAGE`.

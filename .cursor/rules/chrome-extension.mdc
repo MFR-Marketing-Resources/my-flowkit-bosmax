@@ -1,0 +1,12 @@
+---
+description: Chrome extension implementation guardrails
+globs: ["extension/**/*", "manifest.json", "scripts/**/*", "tests/**/*"]
+alwaysApply: false
+---
+
+# Chrome Extension Guardrails
+
+- Do not rewrite proven mode/config logic unless the harness proves a regression.
+- Do not add tactical upload fallbacks without tests.
+- Keep runtime handshake, selector registry, telemetry lockdown, and upload strategy aligned with the active phase docs.
+- No live UAT as a substitute for local proof.

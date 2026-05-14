@@ -1,0 +1,13 @@
+---
+description: BOSMAX Flow Kit repo-wide operating contract
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# BOSMAX Flow Kit Rule
+
+- Read `AGENTS.md` and `.ai/status/CURRENT_STATE.md` before editing.
+- Obey the `.ai/contracts/*.md` pack.
+- Freeze proven mode/config logic.
+- No live Google Flow before local harness and preflight pass.
+- Antigravity is one-shot UAT only.
