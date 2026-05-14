@@ -83,6 +83,12 @@ function TextField({
 	);
 }
 
+function toSelectOptions(
+	options: Array<{ value: string; label: string }>,
+): Array<{ value: string; label: string }> {
+	return options.map((option) => ({ value: option.value, label: option.label }));
+}
+
 export function buildProductAssetGeneratorRequest(
 	draft: ProductAssetGeneratorDraft,
 ): ProductAssetGeneratorRequest {
@@ -135,7 +141,11 @@ export default function ProductAssetGeneratorForm({
 	const selectedProduct = draft.product_id
 		? hydration.productById[draft.product_id]
 		: null;
-	const selectedOperatorProduct = hydration.getOperatorProductFor(draft.product_id);
+	const selectedAuthorityContext = hydration.getProductContext(draft.product_id);
+	const selectedCopySignals = hydration.getCopySignals(draft.product_id);
+	const selectedContextWarnings = hydration.getFieldWarnings(
+		selectedAuthorityContext,
+	);
 
 	useEffect(() => {
 		if (!draft.product_id) {
@@ -154,6 +164,15 @@ export default function ProductAssetGeneratorForm({
 			camera_style: selectedProduct.camera_style,
 			camera_behavior: selectedProduct.camera_behavior,
 			formula: selectedProduct.formula,
+			product_handling:
+				selectedAuthorityContext?.visual.product_handling ||
+				selectedProduct.handling_notes ||
+				undefined,
+			product_physics:
+				selectedAuthorityContext?.visual.product_physics ||
+				selectedProduct.section_5_product_physics_prompt ||
+				undefined,
+			overlay_hint: selectedAuthorityContext?.visual.overlay_hint || undefined,
 		};
 		onChange({
 			product_payload: productPayload,
@@ -162,36 +181,15 @@ export default function ProductAssetGeneratorForm({
 			camera_style: selectedProduct.camera_style || "",
 			camera_behavior: selectedProduct.camera_behavior || "",
 		});
-	}, [draft.product_id, onChange, selectedProduct]);
+	}, [draft.product_id, onChange, selectedAuthorityContext, selectedProduct]);
 
-	const productOptions = hydration.products.map((product) => ({
-		value: product.id,
-		label: `${product.product_display_name} (${product.id})`,
-	}));
-	const sceneContextOptions = hydration.sceneContextOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const languageOptions = hydration.languageOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const platformOptions = hydration.platformOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const cameraStyleOptions = hydration.cameraStyleOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const cameraBehaviorOptions = hydration.cameraBehaviorOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const headwearOptions = hydration.headwearOptions.map((value) => ({
-		value,
-		label: value,
-	}));
+	const productOptions = toSelectOptions(hydration.productOptions);
+	const sceneContextOptions = toSelectOptions(hydration.sceneContextOptions);
+	const languageOptions = toSelectOptions(hydration.languageOptions);
+	const platformOptions = toSelectOptions(hydration.platformOptions);
+	const cameraStyleOptions = toSelectOptions(hydration.cameraStyleOptions);
+	const cameraBehaviorOptions = toSelectOptions(hydration.cameraBehaviorOptions);
+	const headwearOptions = toSelectOptions(hydration.headwearOptions);
 
 	return (
 		<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
@@ -270,7 +268,7 @@ export default function ProductAssetGeneratorForm({
 
 				<FieldShell
 					label="Product"
-					helper="Selecting a product hydrates payload JSON plus scene and camera fields from the product row."
+					helper="Selecting a product hydrates payload JSON plus scene, camera, product handling, and product physics fields from BOSMAX authority context."
 				>
 					<SelectField
 						value={draft.product_id || ""}
@@ -348,7 +346,7 @@ export default function ProductAssetGeneratorForm({
 
 				<FieldShell
 					label="Wardrobe"
-					helper="No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required."
+					helper={`No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required. ${hydration.wardrobeFallback.reason}`}
 				>
 					<TextField
 						value={draft.wardrobe || ""}
@@ -358,7 +356,7 @@ export default function ProductAssetGeneratorForm({
 
 				<FieldShell
 					label="Headwear"
-					helper="Operator-pack headwear suggestions are not canonical registry truth."
+					helper="Operator-pack headwear suggestions are not canonical registry truth. Headwear suggestions remain OPERATOR_PACK and non-canonical in the authority adapter."
 				>
 					<SelectField
 						value={draft.headwear || ""}
@@ -373,28 +371,49 @@ export default function ProductAssetGeneratorForm({
 				<div className="mt-4 grid gap-4 lg:grid-cols-2">
 					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
 						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-							Product Autofill
+							Authority Product Context
 						</div>
 						<div className="mt-3 grid gap-2 md:grid-cols-2">
 							<div>Scene: {selectedProduct.scene_context || "NOT_PROVIDED"}</div>
 							<div>Camera style: {selectedProduct.camera_style || "NOT_PROVIDED"}</div>
 							<div>Camera behavior: {selectedProduct.camera_behavior || "NOT_PROVIDED"}</div>
 							<div>Formula: {selectedProduct.formula || "NOT_PROVIDED"}</div>
+							<div>Product handling: {selectedAuthorityContext?.visual.product_handling || "NOT_FOUND"}</div>
+							<div>Product physics: {selectedAuthorityContext?.visual.product_physics || "NOT_FOUND"}</div>
+							<div>Overlay hint: {selectedAuthorityContext?.visual.overlay_hint || "NOT_FOUND"}</div>
+							<div>Style references: {hydration.styleReferenceOptions.slice(0, 3).map((item) => item.label).join(", ") || "NOT_FOUND"}</div>
 						</div>
 					</div>
 					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
 						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-							Operator Pack Copy Signals
+							Authority Copy Signals
 						</div>
 						<div className="mt-2 text-[10px] text-slate-500">
-							Hook, USP, and CTA come from the operator workbook when a matching product exists. They are not canonical asset-registry truth.
+							Hook, USP, CTA, and authority source warnings now come from the BOSMAX authority adapter. Manual fallback still remains available.
 						</div>
 						<div className="mt-3 grid gap-2">
-							<div>Hook: {selectedOperatorProduct?.hook || "NOT_FOUND"}</div>
-							<div>USP 1: {selectedOperatorProduct?.usp_1 || "NOT_FOUND"}</div>
-							<div>USP 2: {selectedOperatorProduct?.usp_2 || "NOT_FOUND"}</div>
-							<div>USP 3: {selectedOperatorProduct?.usp_3 || "NOT_FOUND"}</div>
-							<div>CTA: {selectedOperatorProduct?.cta || "NOT_FOUND"}</div>
+							<div>Hook: {selectedCopySignals.hook || "NOT_FOUND"}</div>
+							<div>USP 1: {selectedCopySignals.usp_1 || "NOT_FOUND"}</div>
+							<div>USP 2: {selectedCopySignals.usp_2 || "NOT_FOUND"}</div>
+							<div>USP 3: {selectedCopySignals.usp_3 || "NOT_FOUND"}</div>
+							<div>CTA: {selectedCopySignals.cta || "NOT_FOUND"}</div>
+						</div>
+					</div>
+					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300 lg:col-span-2">
+						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+							Source Warnings
+						</div>
+						<div className="mt-2 grid gap-2 md:grid-cols-2">
+							{selectedContextWarnings.length > 0 ? (
+								selectedContextWarnings.map((warning) => (
+									<div key={warning}>{warning}</div>
+								))
+							) : (
+								<div>No selected-product source warnings.</div>
+							)}
+							{hydration.missingSources.slice(0, 4).map((item) => (
+								<div key={item.label}>{item.label}: {item.source_status}</div>
+							))}
 						</div>
 					</div>
 				</div>

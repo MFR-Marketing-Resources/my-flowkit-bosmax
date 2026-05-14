@@ -1,79 +1,67 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchAssetsByType } from "../../api/assetRegistry";
-import { fetchOperatorContentPack } from "../../api/operator";
+import { fetchBosmaxPromptToolContext } from "../../api/bosmaxAuthority";
 import { fetchProductCatalog } from "../../api/products";
 import type {
-	AssetOptionsResponse,
-	ContentPackSummary,
-	OperatorProduct,
+	BosmaxAuthorityFallback,
+	BosmaxAuthorityOption,
+	BosmaxFieldProvenance,
+	BosmaxProductContext,
+	BosmaxPromptToolContextResponse,
 	Product,
 } from "../../types";
-
-const REGISTRY_TYPES = [
-	"CHARACTER",
-	"SCENE_CONTEXT",
-	"CAMERA_STYLE",
-	"CAMERA_BEHAVIOR",
-	"COPYWRITING_FORMULA",
-	"LANGUAGE",
-	"PLATFORM",
-	"ENGINE_PROFILE",
-] as const;
-
-type RegistryType = (typeof REGISTRY_TYPES)[number];
 
 type HydrationState = {
 	loading: boolean;
 	error: string | null;
 	products: Product[];
-	operatorPack: ContentPackSummary | null;
-	assetOptionsByType: Partial<Record<RegistryType, AssetOptionsResponse>>;
+	authority: BosmaxPromptToolContextResponse | null;
 };
 
-function normalizeProductKey(value: string | null | undefined): string {
-	return (value || "").trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function mergeUniqueStrings(
-	...groups: Array<Array<string | null | undefined> | undefined>
-): string[] {
-	const seen = new Set<string>();
-	const merged: string[] = [];
-	for (const group of groups) {
-		for (const raw of group || []) {
-			const value = (raw || "").trim();
-			if (!value) {
-				continue;
-			}
-			if (seen.has(value)) {
-				continue;
-			}
-			seen.add(value);
-			merged.push(value);
-		}
-	}
-	return merged;
-}
-
-function buildOperatorProductLookup(
-	operatorPack: ContentPackSummary | null,
-): Record<string, OperatorProduct> {
-	const lookup: Record<string, OperatorProduct> = {};
-	for (const product of operatorPack?.products || []) {
-		for (const key of [
-			product.product_id,
-			product.product_name,
-			product.raw_product_title,
-			product.product_display_name,
-			product.product_short_name,
-		]) {
-			const normalized = normalizeProductKey(key);
-			if (normalized && !lookup[normalized]) {
-				lookup[normalized] = product;
-			}
-		}
-	}
-	return lookup;
+function makeProductStub(context: BosmaxProductContext): Product {
+	return {
+		id: context.product_id,
+		product_id: context.product.product_id || context.product_id,
+		source:
+			((context.product.source || "IMPORTED") as Product["source"]) ||
+			"IMPORTED",
+		raw_product_title: context.product.raw_product_title || "",
+		product_display_name:
+			context.product.product_display_name || context.product_id,
+		product_short_name:
+			context.product.product_display_name || context.product_id,
+		category: context.product.category || null,
+		subcategory: context.product.subcategory || null,
+		type: context.product.type || null,
+		price: null,
+		currency: null,
+		commission_amount: null,
+		commission_rate: null,
+		product_type_id: null,
+		product_type: context.product.product_type || null,
+		silo: context.creative.silo || null,
+		trigger_id: context.creative.trigger_id || null,
+		formula: context.creative.formula || null,
+		copywriting_angle: context.creative.copywriting_angle || null,
+		claim_risk_level: context.product.claim_risk_level || null,
+		shop_name: null,
+		price_min: null,
+		price_max: null,
+		commission: null,
+		image_url: null,
+		tiktok_product_url: null,
+		fastmoss_source_file: null,
+		scene_context: context.visual.scene_context || null,
+		camera_style: context.visual.camera_style || null,
+		camera_behavior: context.visual.camera_behavior || null,
+		handling_notes: context.visual.product_handling || null,
+		section_5_product_physics_prompt: context.visual.product_physics || null,
+		section_9_overlay_hint: context.visual.overlay_hint || null,
+		asset_status: "UNRESOLVED",
+		media_id: null,
+		local_image_path: null,
+		created_at: "",
+		updated_at: "",
+	};
 }
 
 export function usePromptToolHydration() {
@@ -81,8 +69,7 @@ export function usePromptToolHydration() {
 		loading: true,
 		error: null,
 		products: [],
-		operatorPack: null,
-		assetOptionsByType: {},
+		authority: null,
 	});
 
 	useEffect(() => {
@@ -92,18 +79,21 @@ export function usePromptToolHydration() {
 			setState((current) => ({ ...current, loading: true, error: null }));
 
 			const results = await Promise.allSettled([
+				fetchBosmaxPromptToolContext(),
 				fetchProductCatalog(),
-				fetchOperatorContentPack(),
-				...REGISTRY_TYPES.map((assetType) => fetchAssetsByType(assetType)),
 			]);
 
 			if (cancelled) {
 				return;
 			}
 
-			const [productsResult, operatorResult, ...assetResults] = results;
+			const [authorityResult, productsResult] = results;
 			const errors: string[] = [];
-			const nextAssetOptions: Partial<Record<RegistryType, AssetOptionsResponse>> = {};
+			const authority =
+				authorityResult.status === "fulfilled" ? authorityResult.value : null;
+			if (authorityResult.status === "rejected") {
+				errors.push("bosmax-authority");
+			}
 
 			const products =
 				productsResult.status === "fulfilled"
@@ -113,21 +103,6 @@ export function usePromptToolHydration() {
 				errors.push("products");
 			}
 
-			const operatorPack =
-				operatorResult.status === "fulfilled" ? operatorResult.value : null;
-			if (operatorResult.status === "rejected") {
-				errors.push("operator-pack");
-			}
-
-			assetResults.forEach((result, index) => {
-				const assetType = REGISTRY_TYPES[index];
-				if (result.status === "fulfilled") {
-					nextAssetOptions[assetType] = result.value;
-					return;
-				}
-				errors.push(assetType.toLowerCase());
-			});
-
 			setState({
 				loading: false,
 				error:
@@ -135,8 +110,7 @@ export function usePromptToolHydration() {
 						? `Some dropdown sources are unavailable: ${errors.join(", ")}`
 						: null,
 				products,
-				operatorPack,
-				assetOptionsByType: nextAssetOptions,
+				authority,
 			});
 		}
 
@@ -148,94 +122,129 @@ export function usePromptToolHydration() {
 	}, []);
 
 	return useMemo(() => {
+		const authorityContexts = state.authority?.product.contexts || [];
 		const productById = Object.fromEntries(
-			state.products.map((product) => [product.id, product]),
+			authorityContexts.map((context) => {
+				const repoProduct = state.products.find(
+					(product) => product.id === context.product_id,
+				);
+				return [
+					context.product_id,
+					repoProduct ? { ...makeProductStub(context), ...repoProduct } : makeProductStub(context),
+				];
+			}),
 		) as Record<string, Product>;
-		const operatorProductLookup = buildOperatorProductLookup(state.operatorPack);
 
-		const characterOptions = state.assetOptionsByType.CHARACTER?.options || [];
-		const sceneContextOptions = mergeUniqueStrings(
-			state.assetOptionsByType.SCENE_CONTEXT?.options.map((option) => option.label),
-			state.products.map((product) => product.scene_context),
-		);
-		const cameraStyleOptions = mergeUniqueStrings(
-			state.assetOptionsByType.CAMERA_STYLE?.options.map((option) => option.label),
-			state.operatorPack?.camera_styles,
-			state.products.map((product) => product.camera_style),
-		);
-		const cameraBehaviorOptions = mergeUniqueStrings(
-			state.assetOptionsByType.CAMERA_BEHAVIOR?.options.map((option) => option.label),
-			state.products.map((product) => product.camera_behavior),
-		);
-		const formulaOptions = mergeUniqueStrings(
-			state.assetOptionsByType.COPYWRITING_FORMULA?.options.map(
-				(option) => option.label,
-			),
-			state.operatorPack?.formulas,
-			state.products.map((product) => product.formula),
-		);
-		const triggerOptions = mergeUniqueStrings(
-			state.operatorPack?.triggers,
-			state.products.map((product) => product.trigger_id),
-		);
-		const siloOptions = mergeUniqueStrings(
-			state.operatorPack?.silos,
-			state.products.map((product) => product.silo),
-		);
-		const languageOptions = mergeUniqueStrings(
-			state.assetOptionsByType.LANGUAGE?.options.map((option) => option.label),
-			state.operatorPack?.language_defaults,
-		);
-		const platformOptions = mergeUniqueStrings(
-			state.assetOptionsByType.PLATFORM?.options.map((option) => option.label),
-		);
-		const engineOptions = mergeUniqueStrings(
-			state.assetOptionsByType.ENGINE_PROFILE?.options.map(
-				(option) => option.label,
-			),
-			state.operatorPack?.engines,
-		);
-		const headwearOptions = mergeUniqueStrings(state.operatorPack?.headwear_styles);
-		const avatarOptions = mergeUniqueStrings(state.operatorPack?.avatars);
-		const requestedCharacterOptions = mergeUniqueStrings(
-			characterOptions.map((option) => option.label),
-		);
+		const productOptions =
+			state.authority?.product.options ||
+			state.products.map((product) => ({
+				value: product.id,
+				label: `${product.product_display_name} (${product.id})`,
+				source_status: "PRODUCT_DERIVED",
+				warnings: [],
+				metadata: {},
+			} as BosmaxAuthorityOption));
+		const characterOptions = state.authority?.character.character_options || [];
+		const avatarOptions = state.authority?.character.avatar_options || [];
+		const headwearOptions = state.authority?.character.headwear_suggestions || [];
+		const sceneContextOptions = state.authority?.visual.scene_context_options || [];
+		const cameraStyleOptions = state.authority?.visual.camera_style_options || [];
+		const cameraBehaviorOptions =
+			state.authority?.visual.camera_behavior_options || [];
+		const styleReferenceOptions =
+			state.authority?.visual.style_reference_options || [];
+		const overlayHintOptions =
+			state.authority?.visual.overlay_hint_options || [];
+		const productHandlingOptions =
+			state.authority?.visual.product_handling_options || [];
+		const productPhysicsOptions =
+			state.authority?.visual.product_physics_options || [];
+		const formulaOptions = state.authority?.creative.formula_options || [];
+		const triggerOptions = state.authority?.creative.trigger_options || [];
+		const siloOptions = state.authority?.creative.silo_options || [];
+		const copySignalProducts =
+			state.authority?.creative.products_with_copy_signals || [];
+		const languageOptions = state.authority?.execution.language_options || [];
+		const platformOptions = state.authority?.execution.platform_options || [];
+		const engineOptions = state.authority?.execution.engine_options || [];
+		const durationOptions = state.authority?.execution.duration_options || [];
+		const sourceRouteOptions =
+			state.authority?.execution.source_route_options || [];
+		const destinationModeOptions =
+			state.authority?.execution.destination_mode_options || [];
+		const outputTypeOptions =
+			state.authority?.execution.output_type_options || [];
+		const wardrobeFallback =
+			state.authority?.character.wardrobe_fallback ||
+			({
+				label: "Wardrobe manual fallback",
+				reason:
+					"Canonical wardrobe registry is not present in this checkout. Manual override remains available.",
+				source_status: "NOT_FOUND",
+				warnings: ["MANUAL_FALLBACK"],
+			} as BosmaxAuthorityFallback);
+		const missingSources = state.authority?.provenance.missing_sources || [];
+		const sourceMatrix = state.authority?.provenance.source_matrix || [];
+		const provenanceWarnings = state.authority?.provenance.warnings || [];
 
 		return {
 			loading: state.loading,
 			error: state.error,
 			products: state.products,
 			productById,
-			operatorPack: state.operatorPack,
+			productOptions,
+			characterOptions,
 			avatarOptions,
-			requestedCharacterOptions,
+			requestedCharacterOptions: characterOptions,
 			sceneContextOptions,
 			cameraStyleOptions,
 			cameraBehaviorOptions,
+			styleReferenceOptions,
+			overlayHintOptions,
+			productHandlingOptions,
+			productPhysicsOptions,
 			formulaOptions,
 			triggerOptions,
 			siloOptions,
 			languageOptions,
 			platformOptions,
 			engineOptions,
+			durationOptions,
+			sourceRouteOptions,
+			destinationModeOptions,
+			outputTypeOptions,
 			headwearOptions,
-			getOperatorProductFor(productId: string | null | undefined) {
-				const product = productId ? productById[productId] : null;
-				if (!product) {
-					return null;
+			wardrobeFallback,
+			missingSources,
+			sourceMatrix,
+			provenanceWarnings,
+			copySignalProducts,
+			getProductContext(productId: string | null | undefined) {
+				return productId
+					? authorityContexts.find((context) => context.product_id === productId) ||
+						null
+					: null;
+			},
+			getCopySignals(productId: string | null | undefined) {
+				const option = productId
+					? copySignalProducts.find((item) => item.value === productId) || null
+					: null;
+				return (option?.metadata || {}) as Record<string, string | null | undefined>;
+			},
+			getFieldWarnings(context: BosmaxProductContext | null): string[] {
+				if (!context) {
+					return [];
 				}
-				for (const key of [
-					product.id,
-					product.product_display_name,
-					product.raw_product_title,
-					product.product_short_name,
-				]) {
-					const normalized = normalizeProductKey(key);
-					if (normalized && operatorProductLookup[normalized]) {
-						return operatorProductLookup[normalized];
+				const warnings = new Set<string>(context.warnings);
+				for (const item of context.provenance) {
+					for (const warning of item.warnings || []) {
+						warnings.add(`${item.field}: ${warning}`);
 					}
 				}
-				return null;
+				return Array.from(warnings);
+			},
+			getFieldProvenance(context: BosmaxProductContext | null): BosmaxFieldProvenance[] {
+				return context?.provenance || [];
 			},
 		};
 	}, [state]);

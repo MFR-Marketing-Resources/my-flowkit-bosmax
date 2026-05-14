@@ -739,6 +739,154 @@ export interface AssetCompatibilityResponse {
 	provenance: Record<string, unknown>;
 }
 
+export type BosmaxSourceStatus =
+	| "REPO_VERIFIED"
+	| "PRODUCT_DERIVED"
+	| "OPERATOR_PACK"
+	| "INPUT_SLOT_ONLY"
+	| "NOT_FOUND"
+	| string;
+
+export interface BosmaxAuthorityOption {
+	value: string;
+	label: string;
+	source_status: BosmaxSourceStatus;
+	source_file?: string | null;
+	source_endpoint?: string | null;
+	source_origin?: string | null;
+	warnings: string[];
+	metadata: Record<string, unknown>;
+}
+
+export interface BosmaxAuthorityFallback {
+	label: string;
+	reason: string;
+	source_status: BosmaxSourceStatus;
+	source_file?: string | null;
+	source_endpoint?: string | null;
+	source_origin?: string | null;
+	warnings: string[];
+}
+
+export interface BosmaxFieldProvenance {
+	field: string;
+	source_status: BosmaxSourceStatus;
+	source_file?: string | null;
+	source_endpoint?: string | null;
+	source_origin?: string | null;
+	warnings: string[];
+}
+
+export interface BosmaxSourceMatrixEntry {
+	key: string;
+	label: string;
+	source_status: BosmaxSourceStatus;
+	source_file?: string | null;
+	source_endpoint?: string | null;
+	source_origin?: string | null;
+	warnings: string[];
+	details: Record<string, unknown>;
+}
+
+export interface BosmaxProductContextRecord {
+	product_id?: string | null;
+	product_display_name?: string | null;
+	category?: string | null;
+	subcategory?: string | null;
+	type?: string | null;
+	product_type?: string | null;
+	source?: string | null;
+	claim_risk_level?: string | null;
+	raw_product_title?: string | null;
+}
+
+export interface BosmaxCreativeContextRecord {
+	trigger_id?: string | null;
+	silo?: string | null;
+	formula?: string | null;
+	hook?: string | null;
+	usp_1?: string | null;
+	usp_2?: string | null;
+	usp_3?: string | null;
+	cta?: string | null;
+	copywriting_angle?: string | null;
+	creative_mapping?: Record<string, unknown> | null;
+}
+
+export interface BosmaxVisualContextRecord {
+	scene_context?: string | null;
+	camera_style?: string | null;
+	camera_behavior?: string | null;
+	style_reference?: string | null;
+	overlay_hint?: string | null;
+	product_handling?: string | null;
+	product_physics?: string | null;
+}
+
+export interface BosmaxProductContext {
+	product_id: string;
+	product: BosmaxProductContextRecord;
+	creative: BosmaxCreativeContextRecord;
+	visual: BosmaxVisualContextRecord;
+	warnings: string[];
+	provenance: BosmaxFieldProvenance[];
+}
+
+export interface BosmaxProductGroup {
+	options: BosmaxAuthorityOption[];
+	contexts: BosmaxProductContext[];
+}
+
+export interface BosmaxCreativeGroup {
+	trigger_options: BosmaxAuthorityOption[];
+	silo_options: BosmaxAuthorityOption[];
+	formula_options: BosmaxAuthorityOption[];
+	products_with_copy_signals: BosmaxAuthorityOption[];
+}
+
+export interface BosmaxVisualGroup {
+	scene_context_options: BosmaxAuthorityOption[];
+	camera_style_options: BosmaxAuthorityOption[];
+	camera_behavior_options: BosmaxAuthorityOption[];
+	style_reference_options: BosmaxAuthorityOption[];
+	overlay_hint_options: BosmaxAuthorityOption[];
+	product_handling_options: BosmaxAuthorityOption[];
+	product_physics_options: BosmaxAuthorityOption[];
+}
+
+export interface BosmaxCharacterGroup {
+	character_options: BosmaxAuthorityOption[];
+	avatar_options: BosmaxAuthorityOption[];
+	headwear_suggestions: BosmaxAuthorityOption[];
+	wardrobe_fallback: BosmaxAuthorityFallback;
+}
+
+export interface BosmaxExecutionGroup {
+	language_options: BosmaxAuthorityOption[];
+	platform_options: BosmaxAuthorityOption[];
+	engine_options: BosmaxAuthorityOption[];
+	duration_options: BosmaxAuthorityOption[];
+	source_route_options: BosmaxAuthorityOption[];
+	destination_mode_options: BosmaxAuthorityOption[];
+	output_type_options: BosmaxAuthorityOption[];
+}
+
+export interface BosmaxProvenanceGroup {
+	source_matrix: BosmaxSourceMatrixEntry[];
+	missing_sources: BosmaxAuthorityFallback[];
+	warnings: string[];
+	sales_analyzer_wired_to_prompt_tools: boolean;
+}
+
+export interface BosmaxPromptToolContextResponse {
+	product: BosmaxProductGroup;
+	creative: BosmaxCreativeGroup;
+	visual: BosmaxVisualGroup;
+	character: BosmaxCharacterGroup;
+	execution: BosmaxExecutionGroup;
+	provenance: BosmaxProvenanceGroup;
+}
+
 export interface PromptPreviewRequest {
 	source_route?: string | null;
 	destination_mode?: string | null;

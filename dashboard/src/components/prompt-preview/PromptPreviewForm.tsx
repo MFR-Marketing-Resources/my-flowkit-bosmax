@@ -90,6 +90,12 @@ function TextField({
 	);
 }
 
+function toSelectOptions(
+	options: Array<{ value: string; label: string }>,
+): Array<{ value: string; label: string }> {
+	return options.map((option) => ({ value: option.value, label: option.label }));
+}
+
 export function buildPromptPreviewRequest(
 	draft: PromptPreviewDraft,
 ): PromptPreviewRequest {
@@ -157,7 +163,14 @@ export default function PromptPreviewForm({
 	const selectedProduct = draft.product_id
 		? hydration.productById[draft.product_id]
 		: null;
-	const selectedOperatorProduct = hydration.getOperatorProductFor(draft.product_id);
+	const selectedAuthorityContext = hydration.getProductContext(draft.product_id);
+	const selectedCopySignals = hydration.getCopySignals(draft.product_id);
+	const selectedContextWarnings = hydration.getFieldWarnings(
+		selectedAuthorityContext,
+	);
+	const selectedFieldProvenance = hydration.getFieldProvenance(
+		selectedAuthorityContext,
+	);
 
 	useEffect(() => {
 		if (!draft.product_id) {
@@ -181,6 +194,26 @@ export default function PromptPreviewForm({
 			trigger_id: selectedProduct.trigger_id,
 			silo: selectedProduct.silo,
 			formula: selectedProduct.formula,
+			copywriting_angle:
+				selectedAuthorityContext?.creative.copywriting_angle ||
+				selectedProduct.copywriting_angle ||
+				undefined,
+			claim_risk_level:
+				selectedAuthorityContext?.product.claim_risk_level ||
+				selectedProduct.claim_risk_level ||
+				undefined,
+			overlay_hint:
+				selectedAuthorityContext?.visual.overlay_hint ||
+				selectedProduct.section_9_overlay_hint ||
+				undefined,
+			product_handling:
+				selectedAuthorityContext?.visual.product_handling ||
+				selectedProduct.handling_notes ||
+				undefined,
+			product_physics:
+				selectedAuthorityContext?.visual.product_physics ||
+				selectedProduct.section_5_product_physics_prompt ||
+				undefined,
 		};
 		onChange({
 			product_payload: productPayload,
@@ -192,55 +225,30 @@ export default function PromptPreviewForm({
 			silo: selectedProduct.silo || "",
 			formula: selectedProduct.formula || "",
 			requested_scene: selectedProduct.scene_context || "",
-			output_type:
-				draft.source_route === "PRODUCT_DRIVEN_AUTO"
-					? "VIDEO_9_SECTION_PROMPT"
-					: draft.output_type,
+			source_route: "PRODUCT_DRIVEN_AUTO",
+			output_type: "VIDEO_9_SECTION_PROMPT",
 		});
-	}, [draft.output_type, draft.product_id, draft.source_route, onChange, selectedProduct]);
+	}, [draft.product_id, onChange, selectedAuthorityContext, selectedProduct]);
 
-	const productOptions = hydration.products.map((product) => ({
-		value: product.id,
-		label: `${product.product_display_name} (${product.id})`,
-	}));
-	const avatarOptions = hydration.avatarOptions.map((value) => ({ value, label: value }));
-	const requestedCharacterOptions = hydration.requestedCharacterOptions.map(
-		(value) => ({ value, label: value }),
+	const productOptions = toSelectOptions(hydration.productOptions);
+	const avatarOptions = toSelectOptions(hydration.avatarOptions);
+	const requestedCharacterOptions = toSelectOptions(
+		hydration.requestedCharacterOptions,
 	);
-	const sceneContextOptions = hydration.sceneContextOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const cameraStyleOptions = hydration.cameraStyleOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const cameraBehaviorOptions = hydration.cameraBehaviorOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const triggerOptions = hydration.triggerOptions.map((value) => ({ value, label: value }));
-	const siloOptions = hydration.siloOptions.map((value) => ({ value, label: value }));
-	const formulaOptions = hydration.formulaOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const languageOptions = hydration.languageOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const platformOptions = hydration.platformOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const engineOptions = hydration.engineOptions.map((value) => ({
-		value,
-		label: value,
-	}));
-	const headwearOptions = hydration.headwearOptions.map((value) => ({
-		value,
-		label: value,
-	}));
+	const sceneContextOptions = toSelectOptions(hydration.sceneContextOptions);
+	const cameraStyleOptions = toSelectOptions(hydration.cameraStyleOptions);
+	const cameraBehaviorOptions = toSelectOptions(hydration.cameraBehaviorOptions);
+	const triggerOptions = toSelectOptions(hydration.triggerOptions);
+	const siloOptions = toSelectOptions(hydration.siloOptions);
+	const formulaOptions = toSelectOptions(hydration.formulaOptions);
+	const languageOptions = toSelectOptions(hydration.languageOptions);
+	const platformOptions = toSelectOptions(hydration.platformOptions);
+	const engineOptions = toSelectOptions(hydration.engineOptions);
+	const headwearOptions = toSelectOptions(hydration.headwearOptions);
+	const sourceRouteOptions = toSelectOptions(hydration.sourceRouteOptions);
+	const destinationModeOptions = toSelectOptions(hydration.destinationModeOptions);
+	const outputTypeOptions = toSelectOptions(hydration.outputTypeOptions);
+	const durationOptions = toSelectOptions(hydration.durationOptions);
 
 	return (
 		<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
@@ -275,16 +283,7 @@ export default function PromptPreviewForm({
 					<SelectField
 						value={draft.source_route || "PRODUCT_DRIVEN_AUTO"}
 						onChange={(value) => onChange({ source_route: value })}
-						options={[
-							{
-								value: "PRODUCT_DRIVEN_AUTO",
-								label: "PRODUCT_DRIVEN_AUTO",
-							},
-							{
-								value: "REGISTRY_DRIVEN_MANUAL_ASSISTED",
-								label: "REGISTRY_DRIVEN_MANUAL_ASSISTED",
-							},
-						]}
+						options={sourceRouteOptions}
 						placeholder="Select a route"
 					/>
 				</FieldShell>
@@ -293,12 +292,7 @@ export default function PromptPreviewForm({
 					<SelectField
 						value={draft.destination_mode || "IMAGE"}
 						onChange={(value) => onChange({ destination_mode: value })}
-						options={[
-							{ value: "TEXT_TO_VIDEO", label: "TEXT_TO_VIDEO" },
-							{ value: "FRAMES", label: "FRAMES" },
-							{ value: "INGREDIENTS", label: "INGREDIENTS" },
-							{ value: "IMAGE", label: "IMAGE" },
-						]}
+						options={destinationModeOptions}
 						placeholder="Select a destination mode"
 					/>
 				</FieldShell>
@@ -310,14 +304,7 @@ export default function PromptPreviewForm({
 					<SelectField
 						value={draft.output_type || "VIDEO_9_SECTION_PROMPT"}
 						onChange={(value) => onChange({ output_type: value })}
-						options={[
-							{ value: "IMAGE_PROMPT", label: "IMAGE_PROMPT" },
-							{
-								value: "VIDEO_9_SECTION_PROMPT",
-								label: "VIDEO_9_SECTION_PROMPT",
-							},
-							{ value: "PROMPT_BLOCK_PLAN", label: "PROMPT_BLOCK_PLAN" },
-						]}
+						options={outputTypeOptions}
 						placeholder="Select an output type"
 					/>
 				</FieldShell>
@@ -336,7 +323,7 @@ export default function PromptPreviewForm({
 
 				<FieldShell
 					label="Avatar ID"
-					helper="Avatar IDs come from the operator pack. They are not character-row registry truth."
+					helper="Avatar IDs come from the BOSMAX authority adapter and remain OPERATOR_PACK, not character-row registry truth."
 				>
 					<SelectField
 						value={draft.avatar_id || ""}
@@ -348,7 +335,7 @@ export default function PromptPreviewForm({
 
 				<FieldShell
 					label="Wardrobe ID"
-					helper="No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required."
+					helper={`No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required. ${hydration.wardrobeFallback.reason}`}
 				>
 					<TextField
 						value={draft.wardrobe_id || ""}
@@ -358,7 +345,7 @@ export default function PromptPreviewForm({
 
 				<FieldShell
 					label="Headwear Style"
-					helper="Operator-pack headwear suggestions are not canonical registry truth."
+					helper="Operator-pack headwear suggestions are not canonical registry truth. Headwear suggestions remain OPERATOR_PACK and non-canonical in the authority adapter."
 				>
 					<SelectField
 						value={draft.headwear_style || ""}
@@ -476,12 +463,7 @@ export default function PromptPreviewForm({
 						onChange={(value) =>
 							onChange({ target_duration_seconds: Number(value) })
 						}
-						options={[
-							{ value: "8", label: "8" },
-							{ value: "16", label: "16" },
-							{ value: "24", label: "24" },
-							{ value: "32", label: "32" },
-						]}
+						options={durationOptions}
 					/>
 				</FieldShell>
 
@@ -516,7 +498,7 @@ export default function PromptPreviewForm({
 				<div className="mt-4 grid gap-4 lg:grid-cols-2">
 					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
 						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-							Product Autofill
+							Authority Product Context
 						</div>
 						<div className="mt-3 grid gap-2 md:grid-cols-2">
 							<div>Scene: {selectedProduct.scene_context || "NOT_PROVIDED"}</div>
@@ -525,21 +507,48 @@ export default function PromptPreviewForm({
 							<div>Trigger: {selectedProduct.trigger_id || "NOT_PROVIDED"}</div>
 							<div>Silo: {selectedProduct.silo || "NOT_PROVIDED"}</div>
 							<div>Formula: {selectedProduct.formula || "NOT_PROVIDED"}</div>
+							<div>Claim risk: {selectedAuthorityContext?.product.claim_risk_level || "NOT_PROVIDED"}</div>
+							<div>Overlay hint: {selectedAuthorityContext?.visual.overlay_hint || "NOT_FOUND"}</div>
+							<div>Product handling: {selectedAuthorityContext?.visual.product_handling || "NOT_FOUND"}</div>
+							<div>Product physics: {selectedAuthorityContext?.visual.product_physics || "NOT_FOUND"}</div>
 						</div>
 					</div>
 					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
 						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-							Operator Pack Copy Signals
+							Authority Copy Signals
 						</div>
 						<div className="mt-2 text-[10px] text-slate-500">
-							Hook, USP, and CTA come from the operator workbook when a matching product exists. They are not canonical asset-registry truth.
+							Hook, USP, CTA, product physics, and source warnings now come from the BOSMAX authority adapter. OPERATOR_PACK and NOT_FOUND signals remain explicit.
 						</div>
 						<div className="mt-3 grid gap-2">
-							<div>Hook: {selectedOperatorProduct?.hook || "NOT_FOUND"}</div>
-							<div>USP 1: {selectedOperatorProduct?.usp_1 || "NOT_FOUND"}</div>
-							<div>USP 2: {selectedOperatorProduct?.usp_2 || "NOT_FOUND"}</div>
-							<div>USP 3: {selectedOperatorProduct?.usp_3 || "NOT_FOUND"}</div>
-							<div>CTA: {selectedOperatorProduct?.cta || "NOT_FOUND"}</div>
+							<div>Hook: {selectedCopySignals.hook || "NOT_FOUND"}</div>
+							<div>USP 1: {selectedCopySignals.usp_1 || "NOT_FOUND"}</div>
+							<div>USP 2: {selectedCopySignals.usp_2 || "NOT_FOUND"}</div>
+							<div>USP 3: {selectedCopySignals.usp_3 || "NOT_FOUND"}</div>
+							<div>CTA: {selectedCopySignals.cta || "NOT_FOUND"}</div>
+							<div>Style references: {hydration.styleReferenceOptions.slice(0, 3).map((item) => item.label).join(", ") || "NOT_FOUND"}</div>
+						</div>
+					</div>
+					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300 lg:col-span-2">
+						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+							Source Warnings
+						</div>
+						<div className="mt-2 grid gap-2 md:grid-cols-2">
+							{selectedContextWarnings.length > 0 ? (
+								selectedContextWarnings.map((warning) => (
+									<div key={warning}>{warning}</div>
+								))
+							) : (
+								<div>No selected-product source warnings.</div>
+							)}
+							{hydration.missingSources.slice(0, 4).map((item) => (
+								<div key={item.label}>{item.label}: {item.source_status}</div>
+							))}
+						</div>
+						<div className="mt-3 grid gap-2 md:grid-cols-2">
+							{selectedFieldProvenance.slice(0, 6).map((item) => (
+								<div key={item.field}>{item.field}: {item.source_status}</div>
+							))}
 						</div>
 					</div>
 				</div>
