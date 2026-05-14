@@ -35,6 +35,7 @@ import DashboardPage from "./pages/DashboardPage";
 import GalleryPage from "./pages/GalleryPage";
 import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
+import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
 import ProductsSalesAnalyzerPage from "./pages/ProductsSalesAnalyzerPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import PromptPreviewPage from "./pages/PromptPreviewPage";
@@ -57,6 +58,11 @@ const NAV_GROUPS = [
 		label: "ASSETS",
 		items: [
 			{ to: "/asset-registry", icon: Layers, label: "Asset Registry" },
+			{
+				to: "/product-asset-generator",
+				icon: Sparkles,
+				label: "Product Asset Generator",
+			},
 			{ to: "/products", icon: PackageSearch, label: "Products" },
 			{ to: "/projects", icon: FolderOpen, label: "Projects" },
 			{ to: "/gallery", icon: Film, label: "Gallery" },
@@ -332,6 +338,10 @@ function Layout() {
 
 						<Route path="/batches" element={<BatchesPage />} />
 						<Route path="/asset-registry" element={<AssetRegistryPage />} />
+						<Route
+							path="/product-asset-generator"
+							element={<ProductAssetGeneratorPage />}
+						/>
 						<Route path="/products" element={<ProductsSalesAnalyzerPage />} />
 						<Route path="/projects" element={<ProjectsPage />} />
 						<Route path="/projects/:id" element={<ProjectsPage />} />
