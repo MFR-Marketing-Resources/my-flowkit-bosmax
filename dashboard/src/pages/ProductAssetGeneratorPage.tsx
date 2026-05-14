@@ -16,9 +16,8 @@ type ProductAssetGeneratorDraft = ProductAssetGeneratorRequest & {
 function createInitialDraft(): ProductAssetGeneratorDraft {
 	return {
 		product_id: "",
-		product_payload_text:
-			'{\n  "id": "prod-001",\n  "product_display_name": "Atlas Bottle",\n  "raw_product_title": "Atlas Bottle Original"\n}',
-		target_asset_intent: "CHARACTER_CONCEPT",
+		product_payload_text: "",
+		target_asset_intent: "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
 		gender: "",
 		ethnicity: "",
 		age_range: "",
@@ -42,6 +41,9 @@ export default function ProductAssetGeneratorPage() {
 	const [result, setResult] = useState<ProductAssetGeneratorResponse | null>(
 		null,
 	);
+	const [analysisSignature, setAnalysisSignature] = useState<string | null>(
+		null,
+	);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -52,6 +54,7 @@ export default function ProductAssetGeneratorPage() {
 			const request = buildProductAssetGeneratorRequest(draft);
 			const preview = await runProductAssetGeneratorPreview(request);
 			setResult(preview);
+			setAnalysisSignature(JSON.stringify(request));
 		} catch (err) {
 			setError(
 				err instanceof Error
@@ -104,6 +107,8 @@ export default function ProductAssetGeneratorPage() {
 					onSubmit={handleSubmit}
 					loading={loading}
 					error={error}
+					result={result}
+					analysisSignature={analysisSignature}
 				/>
 				<ProductAssetGeneratorResultPanel result={result} />
 			</div>
