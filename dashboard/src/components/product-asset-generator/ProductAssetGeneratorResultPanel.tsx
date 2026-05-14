@@ -36,7 +36,7 @@ export default function ProductAssetGeneratorResultPanel({
 			<div className="mt-1 text-[11px] text-slate-400">
 				This output is preview-only. It is not real image generation, not a
 				Google Flow execution surface, and not a Chrome extension execution
-				surface.
+				surface. It is also not a persisted readiness profile.
 			</div>
 
 			{!result ? (
@@ -90,8 +90,68 @@ export default function ProductAssetGeneratorResultPanel({
 						<Flag label="dry_run_only" value={result.dry_run_only} />
 						<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
 							Unverified assets are not canonical truth. Preview outputs are not
-							generated assets and remain offline-only.
+							generated assets, not persisted readiness profiles, and remain
+							offline-only.
 						</div>
+					</div>
+
+					<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+						{[
+							[
+								"Profile Source Status",
+								String(
+									result.truth_status.profile_source_status ||
+										"EPHEMERAL_PREVIEW",
+								),
+							],
+							[
+								"Copy Readiness",
+								String(
+									result.truth_status.copy_readiness_status || "COPY_MISSING",
+								),
+							],
+							[
+								"Execution Readiness",
+								String(
+									result.truth_status.execution_readiness_status ||
+										"DRY_RUN_ONLY",
+								),
+							],
+							[
+								"Persistence Truth",
+								String(
+									result.truth_status.persistence_truth || "NOT_PERSISTED",
+								),
+							],
+						].map(([label, value]) => (
+							<div
+								key={label}
+								className="rounded-xl border border-slate-800 bg-slate-950/70 p-3"
+							>
+								<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+									{label}
+								</div>
+								<div className="mt-2 text-xs font-semibold text-slate-200">
+									{value}
+								</div>
+							</div>
+						))}
+					</div>
+
+					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+						<div>
+							Preview-only readiness profile. No persistence write happened.
+						</div>
+						<div className="mt-2">
+							Not a generated asset. Not Chrome extension execution. Not Google
+							Flow ready.
+						</div>
+						{result.truth_status.copy_readiness_status === "COPY_MISSING" ? (
+							<div className="mt-2">
+								COPY_MISSING — hook/USP/CTA must be generated before
+								TEXT_TO_VIDEO can be READY.
+							</div>
+						) : null}
 					</div>
 
 					{result.warning_summary.length > 0 ? (

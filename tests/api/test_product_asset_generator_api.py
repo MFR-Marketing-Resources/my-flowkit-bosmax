@@ -41,7 +41,13 @@ def test_preview_endpoint_returns_expected_shape(monkeypatch):
             warnings=["PREVIEW_ONLY_NOT_GENERATED_ASSET"],
             errors=[],
             provenance={"scope": "ROUND_10_PRODUCT_TO_ASSET_GENERATOR_PREVIEW_ONLY"},
-            truth_status={"overall_source_status": "DERIVED_FROM_PRODUCT_DATA"},
+            truth_status={
+                "overall_source_status": "DERIVED_FROM_PRODUCT_DATA",
+                "profile_source_status": "EPHEMERAL_PREVIEW",
+                "copy_readiness_status": "COPY_MISSING",
+                "execution_readiness_status": "DRY_RUN_ONLY",
+                "persistence_truth": "NOT_PERSISTED",
+            },
             dry_run_only=True,
             execution_allowed=False,
             image_generation_allowed=False,
@@ -61,6 +67,9 @@ def test_preview_endpoint_returns_expected_shape(monkeypatch):
     payload = response.json()
     assert payload["preview_status"] == "WARN"
     assert payload["product_context"]["product_id"] == "prod-001"
+    assert payload["truth_status"]["profile_source_status"] == "EPHEMERAL_PREVIEW"
+    assert payload["truth_status"]["copy_readiness_status"] == "COPY_MISSING"
+    assert payload["truth_status"]["persistence_truth"] == "NOT_PERSISTED"
     assert payload["execution_allowed"] is False
     assert payload["image_generation_allowed"] is False
     assert payload["flow_execution_allowed"] is False
