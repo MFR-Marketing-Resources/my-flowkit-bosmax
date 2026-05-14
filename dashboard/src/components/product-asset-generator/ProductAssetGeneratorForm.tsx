@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { usePromptToolHydration } from "../prompt-tool/usePromptToolHydration";
 import type { ProductAssetGeneratorRequest } from "../../types";
 
 type ProductAssetGeneratorDraft = ProductAssetGeneratorRequest & {
@@ -11,6 +12,75 @@ function parseJsonObject(input: string): Record<string, unknown> | null {
 	return parsed && typeof parsed === "object" && !Array.isArray(parsed)
 		? (parsed as Record<string, unknown>)
 		: null;
+}
+
+function buildProductPayloadText(product: Record<string, unknown>): string {
+	return JSON.stringify(product, null, 2);
+}
+
+function FieldShell({
+	label,
+	children,
+	helper,
+}: {
+	label: string;
+	children: React.ReactNode;
+	helper?: string;
+}) {
+	return (
+		<label className="block rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+			<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+				{label}
+			</div>
+			<div className="mt-2">{children}</div>
+			{helper ? (
+				<div className="mt-2 text-[10px] text-slate-500">{helper}</div>
+			) : null}
+		</label>
+	);
+}
+
+function SelectField({
+	value,
+	onChange,
+	options,
+	placeholder = "Select an option",
+}: {
+	value: string;
+	onChange: (value: string) => void;
+	options: Array<{ value: string; label: string }>;
+	placeholder?: string;
+}) {
+	return (
+		<select
+			value={value}
+			onChange={(event) => onChange(event.target.value)}
+			className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+		>
+			<option value="">{placeholder}</option>
+			{options.map((option) => (
+				<option key={`${option.value}:${option.label}`} value={option.value}>
+					{option.label}
+				</option>
+			))}
+		</select>
+	);
+}
+
+function TextField({
+	value,
+	onChange,
+}: {
+	value: string;
+	onChange: (value: string) => void;
+}) {
+	return (
+		<input
+			value={value}
+			onChange={(event) => onChange(event.target.value)}
+			className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+		/>
+	);
 }
 
 export function buildProductAssetGeneratorRequest(
@@ -53,6 +123,8 @@ export default function ProductAssetGeneratorForm({
 	loading: boolean;
 	error: string | null;
 }) {
+	const hydration = usePromptToolHydration();
+	const lastHydratedProductId = useRef<string | null>(null);
 	const previewRequest = useMemo(() => {
 		try {
 			return buildProductAssetGeneratorRequest(draft);
@@ -60,6 +132,66 @@ export default function ProductAssetGeneratorForm({
 			return null;
 		}
 	}, [draft]);
+	const selectedProduct = draft.product_id
+		? hydration.productById[draft.product_id]
+		: null;
+	const selectedOperatorProduct = hydration.getOperatorProductFor(draft.product_id);
+
+	useEffect(() => {
+		if (!draft.product_id) {
+			lastHydratedProductId.current = null;
+			return;
+		}
+		if (lastHydratedProductId.current === draft.product_id || !selectedProduct) {
+			return;
+		}
+		lastHydratedProductId.current = draft.product_id;
+		const productPayload = {
+			id: selectedProduct.id,
+			product_display_name: selectedProduct.product_display_name,
+			raw_product_title: selectedProduct.raw_product_title,
+			scene_context: selectedProduct.scene_context,
+			camera_style: selectedProduct.camera_style,
+			camera_behavior: selectedProduct.camera_behavior,
+			formula: selectedProduct.formula,
+		};
+		onChange({
+			product_payload: productPayload,
+			product_payload_text: buildProductPayloadText(productPayload),
+			scene_context: selectedProduct.scene_context || "",
+			camera_style: selectedProduct.camera_style || "",
+			camera_behavior: selectedProduct.camera_behavior || "",
+		});
+	}, [draft.product_id, onChange, selectedProduct]);
+
+	const productOptions = hydration.products.map((product) => ({
+		value: product.id,
+		label: `${product.product_display_name} (${product.id})`,
+	}));
+	const sceneContextOptions = hydration.sceneContextOptions.map((value) => ({
+		value,
+		label: value,
+	}));
+	const languageOptions = hydration.languageOptions.map((value) => ({
+		value,
+		label: value,
+	}));
+	const platformOptions = hydration.platformOptions.map((value) => ({
+		value,
+		label: value,
+	}));
+	const cameraStyleOptions = hydration.cameraStyleOptions.map((value) => ({
+		value,
+		label: value,
+	}));
+	const cameraBehaviorOptions = hydration.cameraBehaviorOptions.map((value) => ({
+		value,
+		label: value,
+	}));
+	const headwearOptions = hydration.headwearOptions.map((value) => ({
+		value,
+		label: value,
+	}));
 
 	return (
 		<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
@@ -79,89 +211,194 @@ export default function ProductAssetGeneratorForm({
 				</span>
 			</div>
 
+			{hydration.loading ? (
+				<div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-[11px] text-slate-400">
+					Loading product, registry, and operator-pack dropdown sources...
+				</div>
+			) : null}
+			{hydration.error ? (
+				<div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+					{hydration.error}
+				</div>
+			) : null}
+
 			<div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-				<label className="block rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-					<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-						Target Asset Intent
-					</div>
-					<select
+				<FieldShell label="Target Asset Intent">
+					<SelectField
 						value={draft.target_asset_intent}
-						onChange={(event) =>
-							onChange({ target_asset_intent: event.target.value })
-						}
-						className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
-					>
-						<option value="CHARACTER_CONCEPT">CHARACTER_CONCEPT</option>
-						<option value="CHARACTER_HOLDING_PRODUCT_IMAGE_PROMPT">
-							CHARACTER_HOLDING_PRODUCT_IMAGE_PROMPT
-						</option>
-						<option value="PRODUCT_LIFESTYLE_IMAGE_PROMPT">
-							PRODUCT_LIFESTYLE_IMAGE_PROMPT
-						</option>
-						<option value="SCENE_REFERENCE_PROMPT">
-							SCENE_REFERENCE_PROMPT
-						</option>
-						<option value="STYLE_REFERENCE_PROMPT">
-							STYLE_REFERENCE_PROMPT
-						</option>
-						<option value="INGREDIENTS_ASSET_BUNDLE">
-							INGREDIENTS_ASSET_BUNDLE
-						</option>
-					</select>
-				</label>
+						onChange={(value) => onChange({ target_asset_intent: value })}
+						options={[
+							{ value: "CHARACTER_CONCEPT", label: "CHARACTER_CONCEPT" },
+							{
+								value: "CHARACTER_HOLDING_PRODUCT_IMAGE_PROMPT",
+								label: "CHARACTER_HOLDING_PRODUCT_IMAGE_PROMPT",
+							},
+							{
+								value: "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+								label: "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+							},
+							{
+								value: "SCENE_REFERENCE_PROMPT",
+								label: "SCENE_REFERENCE_PROMPT",
+							},
+							{
+								value: "STYLE_REFERENCE_PROMPT",
+								label: "STYLE_REFERENCE_PROMPT",
+							},
+							{
+								value: "INGREDIENTS_ASSET_BUNDLE",
+								label: "INGREDIENTS_ASSET_BUNDLE",
+							},
+						]}
+						placeholder="Select a target asset intent"
+					/>
+				</FieldShell>
 
-				<label className="block rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-					<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-						Target Destination Mode
-					</div>
-					<select
+				<FieldShell label="Target Destination Mode">
+					<SelectField
 						value={draft.target_destination_mode || "IMAGE"}
-						onChange={(event) =>
-							onChange({ target_destination_mode: event.target.value })
-						}
-						className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
-					>
-						<option value="TEXT_TO_VIDEO">TEXT_TO_VIDEO</option>
-						<option value="FRAMES">FRAMES</option>
-						<option value="INGREDIENTS">INGREDIENTS</option>
-						<option value="IMAGE">IMAGE</option>
-					</select>
-				</label>
+						onChange={(value) => onChange({ target_destination_mode: value })}
+						options={[
+							{ value: "TEXT_TO_VIDEO", label: "TEXT_TO_VIDEO" },
+							{ value: "FRAMES", label: "FRAMES" },
+							{ value: "INGREDIENTS", label: "INGREDIENTS" },
+							{ value: "IMAGE", label: "IMAGE" },
+						]}
+						placeholder="Select a target destination mode"
+					/>
+				</FieldShell>
 
-				{[
-					["product_id", "Product ID"],
-					["gender", "Gender"],
-					["ethnicity", "Ethnicity"],
-					["age_range", "Age Range"],
-					["scene_context", "Scene Context"],
-					["language", "Language"],
-					["platform", "Platform"],
-					["camera_style", "Camera Style"],
-					["camera_behavior", "Camera Behavior"],
-					["wardrobe", "Wardrobe"],
-					["headwear", "Headwear"],
-				].map(([key, label]) => (
-					<label
-						key={key}
-						className="block rounded-xl border border-slate-800 bg-slate-950/70 p-3"
-					>
-						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-							{label}
-						</div>
-						<input
-							value={String(
-								(draft as unknown as Record<string, unknown>)[key] || "",
-							)}
-							onChange={(event) =>
-								onChange({
-									[key]: event.target.value,
-								} as Partial<ProductAssetGeneratorDraft>)
-							}
-							className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
-						/>
-					</label>
-				))}
+				<FieldShell
+					label="Product"
+					helper="Selecting a product hydrates payload JSON plus scene and camera fields from the product row."
+				>
+					<SelectField
+						value={draft.product_id || ""}
+						onChange={(value) => onChange({ product_id: value })}
+						options={productOptions}
+						placeholder="Select a product to hydrate"
+					/>
+				</FieldShell>
+
+				<FieldShell label="Gender">
+					<TextField
+						value={draft.gender || ""}
+						onChange={(value) => onChange({ gender: value })}
+					/>
+				</FieldShell>
+
+				<FieldShell label="Ethnicity">
+					<TextField
+						value={draft.ethnicity || ""}
+						onChange={(value) => onChange({ ethnicity: value })}
+					/>
+				</FieldShell>
+
+				<FieldShell label="Age Range">
+					<TextField
+						value={draft.age_range || ""}
+						onChange={(value) => onChange({ age_range: value })}
+					/>
+				</FieldShell>
+
+				<FieldShell label="Scene Context">
+					<SelectField
+						value={draft.scene_context || ""}
+						onChange={(value) => onChange({ scene_context: value })}
+						options={sceneContextOptions}
+						placeholder="Select scene context"
+					/>
+				</FieldShell>
+
+				<FieldShell label="Language">
+					<SelectField
+						value={draft.language || ""}
+						onChange={(value) => onChange({ language: value })}
+						options={languageOptions}
+						placeholder="Select language"
+					/>
+				</FieldShell>
+
+				<FieldShell label="Platform">
+					<SelectField
+						value={draft.platform || ""}
+						onChange={(value) => onChange({ platform: value })}
+						options={platformOptions}
+						placeholder="Select platform"
+					/>
+				</FieldShell>
+
+				<FieldShell label="Camera Style">
+					<SelectField
+						value={draft.camera_style || ""}
+						onChange={(value) => onChange({ camera_style: value })}
+						options={cameraStyleOptions}
+						placeholder="Select camera style"
+					/>
+				</FieldShell>
+
+				<FieldShell label="Camera Behavior">
+					<SelectField
+						value={draft.camera_behavior || ""}
+						onChange={(value) => onChange({ camera_behavior: value })}
+						options={cameraBehaviorOptions}
+						placeholder="Select camera behavior"
+					/>
+				</FieldShell>
+
+				<FieldShell
+					label="Wardrobe"
+					helper="No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required."
+				>
+					<TextField
+						value={draft.wardrobe || ""}
+						onChange={(value) => onChange({ wardrobe: value })}
+					/>
+				</FieldShell>
+
+				<FieldShell
+					label="Headwear"
+					helper="Operator-pack headwear suggestions are not canonical registry truth."
+				>
+					<SelectField
+						value={draft.headwear || ""}
+						onChange={(value) => onChange({ headwear: value })}
+						options={headwearOptions}
+						placeholder="Select operator-pack headwear"
+					/>
+				</FieldShell>
 			</div>
+
+			{selectedProduct ? (
+				<div className="mt-4 grid gap-4 lg:grid-cols-2">
+					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+							Product Autofill
+						</div>
+						<div className="mt-3 grid gap-2 md:grid-cols-2">
+							<div>Scene: {selectedProduct.scene_context || "NOT_PROVIDED"}</div>
+							<div>Camera style: {selectedProduct.camera_style || "NOT_PROVIDED"}</div>
+							<div>Camera behavior: {selectedProduct.camera_behavior || "NOT_PROVIDED"}</div>
+							<div>Formula: {selectedProduct.formula || "NOT_PROVIDED"}</div>
+						</div>
+					</div>
+					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+							Operator Pack Copy Signals
+						</div>
+						<div className="mt-2 text-[10px] text-slate-500">
+							Hook, USP, and CTA come from the operator workbook when a matching product exists. They are not canonical asset-registry truth.
+						</div>
+						<div className="mt-3 grid gap-2">
+							<div>Hook: {selectedOperatorProduct?.hook || "NOT_FOUND"}</div>
+							<div>USP 1: {selectedOperatorProduct?.usp_1 || "NOT_FOUND"}</div>
+							<div>USP 2: {selectedOperatorProduct?.usp_2 || "NOT_FOUND"}</div>
+							<div>USP 3: {selectedOperatorProduct?.usp_3 || "NOT_FOUND"}</div>
+							<div>CTA: {selectedOperatorProduct?.cta || "NOT_FOUND"}</div>
+						</div>
+					</div>
+				</div>
+			) : null}
 
 			<div className="mt-4 grid gap-4 lg:grid-cols-2">
 				<label className="block rounded-xl border border-slate-800 bg-slate-950/70 p-3">

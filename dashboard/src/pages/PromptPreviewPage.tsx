@@ -15,7 +15,7 @@ function createInitialDraft(): PromptPreviewDraft {
 	return {
 		source_route: "PRODUCT_DRIVEN_AUTO",
 		destination_mode: "IMAGE",
-		output_type: "IMAGE_PROMPT",
+		output_type: "VIDEO_9_SECTION_PROMPT",
 		product_id: "",
 		asset_bindings: [],
 		product_payload_text:

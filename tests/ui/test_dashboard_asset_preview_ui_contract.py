@@ -20,6 +20,8 @@ def test_dashboard_routes_and_nav_include_asset_registry_and_prompt_preview():
 def test_dashboard_api_helpers_only_call_approved_round_7_and_round_8_endpoints():
     asset_registry_api = _read("dashboard/src/api/assetRegistry.ts")
     prompt_preview_api = _read("dashboard/src/api/promptPreview.ts")
+    products_api = _read("dashboard/src/api/products.ts")
+    operator_api = _read("dashboard/src/api/operator.ts")
 
     assert "/api/asset-registry/catalog" in asset_registry_api
     assert "/api/asset-registry/assets?" in asset_registry_api
@@ -27,11 +29,15 @@ def test_dashboard_api_helpers_only_call_approved_round_7_and_round_8_endpoints(
     assert "/api/asset-registry/resolve-selection" in asset_registry_api
     assert "/api/asset-registry/compatibility-check" in asset_registry_api
     assert "/api/prompt-preview/offline" in prompt_preview_api
+    assert "/api/products?limit=" in products_api
+    assert "/api/operator/content-pack" in operator_api
 
 
 def test_dashboard_ui_contains_no_forbidden_execution_controls_or_runtime_imports():
     targets = [
       "dashboard/src/api/assetRegistry.ts",
+    "dashboard/src/api/products.ts",
+    "dashboard/src/api/operator.ts",
       "dashboard/src/api/promptPreview.ts",
       "dashboard/src/components/asset-registry/AssetSourceStatusBadge.tsx",
       "dashboard/src/components/asset-registry/AssetCatalogSummary.tsx",
@@ -72,6 +78,11 @@ def test_prompt_preview_form_locks_dry_run_only_true_and_shows_offline_safety_co
     assert "dry_run_only: true" in form_source
     assert "dry_run_only=true" in form_source
     assert "offline-only" in form_source.lower()
+    assert "VIDEO_9_SECTION_PROMPT" in form_source
+    assert 'output_type: "VIDEO_9_SECTION_PROMPT"' in page_source
+    assert "No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required." in form_source
+    assert "Operator-pack headwear suggestions are not canonical registry truth." in form_source
+    assert "Selecting a product hydrates payload JSON" in form_source
     assert "!result.dry_run_only" not in result_source
     assert "value={result.dry_run_only}" in result_source
     assert "dry_run_only" in result_source

@@ -17,9 +17,13 @@ def test_product_asset_generator_route_and_nav_exist():
 
 def test_product_asset_generator_ui_calls_only_the_preview_endpoint():
     api_source = _read("dashboard/src/api/productAssetGenerator.ts")
+    products_api = _read("dashboard/src/api/products.ts")
+    operator_api = _read("dashboard/src/api/operator.ts")
 
     assert "/api/product-asset-generator/preview" in api_source
     assert "dry_run_only: true" in api_source
+    assert "/api/products?limit=" in products_api
+    assert "/api/operator/content-pack" in operator_api
 
 
 def test_product_asset_generator_form_locks_dry_run_only_true_and_shows_truth_copy():
@@ -31,6 +35,9 @@ def test_product_asset_generator_form_locks_dry_run_only_true_and_shows_truth_co
     assert "dry_run_only: true" in form_source
     assert "dry_run_only=true" in form_source
     assert "Derived suggestions are not canonical truth." in form_source
+    assert "No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required." in form_source
+    assert "Operator-pack headwear suggestions are not canonical registry truth." in form_source
+    assert "Selecting a product hydrates payload JSON" in form_source
     assert "Preview is offline-only" in page_source
     assert "No real image generation" in page_source
     assert "No Google Flow execution" in page_source
@@ -57,6 +64,8 @@ def test_product_asset_generator_result_panel_displays_warnings_provenance_and_f
 
 def test_product_asset_generator_ui_contains_no_forbidden_execution_controls_or_runtime_imports():
     targets = [
+        "dashboard/src/api/products.ts",
+        "dashboard/src/api/operator.ts",
         "dashboard/src/api/productAssetGenerator.ts",
         "dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx",
         "dashboard/src/components/product-asset-generator/ProductAssetGeneratorResultPanel.tsx",
