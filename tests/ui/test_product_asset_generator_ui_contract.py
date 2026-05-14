@@ -38,6 +38,8 @@ def test_product_asset_generator_form_locks_dry_run_only_true_and_shows_truth_co
     assert "No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required." in form_source
     assert "Operator-pack headwear suggestions are not canonical registry truth." in form_source
     assert "Selecting a product hydrates payload JSON" in form_source
+    assert "Advanced Manual Override" in form_source
+    assert "Use this profile in Prompt Preview" in form_source
     assert "Preview is offline-only" in page_source
     assert "No real image generation" in page_source
     assert "No Google Flow execution" in page_source

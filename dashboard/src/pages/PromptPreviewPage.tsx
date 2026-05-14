@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { runOfflinePromptPreview } from "../api/promptPreview";
 import PromptPreviewForm, {
 	buildPromptPreviewRequest,
@@ -10,6 +11,14 @@ type PromptPreviewDraft = PromptPreviewRequest & {
 	asset_bindings_text: string;
 	product_payload_text: string;
 };
+
+type PromptPreviewLocationState = {
+	productReadinessProfile?: Partial<PromptPreviewDraft>;
+};
+
+function buildProductPayloadText(product: Record<string, unknown>): string {
+	return JSON.stringify(product, null, 2);
+}
 
 function createInitialDraft(): PromptPreviewDraft {
 	return {
@@ -45,10 +54,34 @@ function createInitialDraft(): PromptPreviewDraft {
 }
 
 export default function PromptPreviewPage() {
+	const location = useLocation();
+	const appliedHandoffRef = useRef(false);
 	const [draft, setDraft] = useState<PromptPreviewDraft>(createInitialDraft);
 	const [result, setResult] = useState<PromptPreviewResponse | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (appliedHandoffRef.current) {
+			return;
+		}
+		const state = location.state as PromptPreviewLocationState | null;
+		const handoff = state?.productReadinessProfile;
+		if (!handoff) {
+			return;
+		}
+		appliedHandoffRef.current = true;
+		setDraft((current) => ({
+			...current,
+			...handoff,
+			product_payload_text:
+				handoff.product_payload_text ||
+				(handoff.product_payload
+					? buildProductPayloadText(handoff.product_payload)
+					: current.product_payload_text),
+			dry_run_only: true,
+		}));
+	}, [location.state]);
 
 	async function handleSubmit() {
 		setLoading(true);

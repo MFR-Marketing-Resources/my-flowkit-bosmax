@@ -1,9 +1,53 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import type {
+	BosmaxFieldProvenance,
+	Product,
+	ProductAssetGeneratorRequest,
+	ProductAssetGeneratorResponse,
+} from "../../types";
 import { usePromptToolHydration } from "../prompt-tool/usePromptToolHydration";
-import type { ProductAssetGeneratorRequest } from "../../types";
 
 type ProductAssetGeneratorDraft = ProductAssetGeneratorRequest & {
 	product_payload_text: string;
+};
+
+type ProductReadinessStatus =
+	| "RAW"
+	| "ANALYZING"
+	| "READY"
+	| "NEEDS_REVIEW"
+	| "FAILED"
+	| "STALE";
+
+type PersistenceStatus = "SAVED" | "EPHEMERAL_ONLY" | "NOT_ANALYZED";
+type RecommendedMode = "TEXT_TO_VIDEO" | "FRAMES" | "INGREDIENTS" | "IMAGE";
+
+type ProfileCardRecord = {
+	label: "UGC_IPHONE" | "CINEMATIC_PRO";
+	character_strategy: string;
+	wardrobe_strategy: string;
+	headwear_strategy: string;
+	scene_context: string;
+	camera_style: string;
+	camera_behavior: string;
+	story_style_label: string;
+	story_style: string;
+	hook: string;
+	usp_1: string;
+	usp_2: string;
+	usp_3: string;
+	cta: string;
+	product_handling: string;
+	product_physics: string;
+	warnings: string[];
+	provenance: string;
+};
+
+type ModeReadinessRecord = {
+	key: RecommendedMode;
+	status: string;
+	detail: string;
 };
 
 function parseJsonObject(input: string): Record<string, unknown> | null {
@@ -28,7 +72,7 @@ function FieldShell({
 	helper?: string;
 }) {
 	return (
-		<label className="block rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+		<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
 			<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
 				{label}
 			</div>
@@ -36,7 +80,7 @@ function FieldShell({
 			{helper ? (
 				<div className="mt-2 text-[10px] text-slate-500">{helper}</div>
 			) : null}
-		</label>
+		</div>
 	);
 }
 
@@ -86,7 +130,80 @@ function TextField({
 function toSelectOptions(
 	options: Array<{ value: string; label: string }>,
 ): Array<{ value: string; label: string }> {
-	return options.map((option) => ({ value: option.value, label: option.label }));
+	return options.map((option) => ({
+		value: option.value,
+		label: option.label,
+	}));
+}
+
+function summarizeProvenance(provenance: BosmaxFieldProvenance[]): string {
+	if (!provenance.length) {
+		return "No BOSMAX field provenance loaded yet.";
+	}
+	return provenance
+		.slice(0, 4)
+		.map((item) => `${item.field}:${item.source_status}`)
+		.join(" | ");
+}
+
+function outputTypeForMode(mode: RecommendedMode): string {
+	if (mode === "IMAGE") {
+		return "IMAGE_PROMPT";
+	}
+	if (mode === "TEXT_TO_VIDEO") {
+		return "VIDEO_9_SECTION_PROMPT";
+	}
+	return "PROMPT_BLOCK_PLAN";
+}
+
+function statusTone(
+	status: ProductReadinessStatus | PersistenceStatus | string,
+): string {
+	if (status === "READY" || status === "SAVED") {
+		return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+	}
+	if (status === "ANALYZING") {
+		return "border-blue-500/30 bg-blue-500/10 text-blue-200";
+	}
+	if (status === "FAILED") {
+		return "border-red-500/30 bg-red-500/10 text-red-200";
+	}
+	if (status === "STALE") {
+		return "border-orange-500/30 bg-orange-500/10 text-orange-200";
+	}
+	return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+}
+
+function StatusBadge({
+	label,
+	value,
+}: {
+	label: string;
+	value: ProductReadinessStatus | PersistenceStatus | string;
+}) {
+	return (
+		<div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+			<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+				{label}
+			</div>
+			<div
+				className={`mt-2 inline-flex rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${statusTone(value)}`}
+			>
+				{value}
+			</div>
+		</div>
+	);
+}
+
+function ProfileField({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+			<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+				{label}
+			</div>
+			<div className="mt-2 text-[11px] text-slate-200">{value}</div>
+		</div>
+	);
 }
 
 export function buildProductAssetGeneratorRequest(
@@ -116,20 +233,360 @@ export function buildProductAssetGeneratorRequest(
 	};
 }
 
+function buildReadinessStatus({
+	loading,
+	error,
+	result,
+	selectedProduct,
+	currentSignature,
+	analysisSignature,
+}: {
+	loading: boolean;
+	error: string | null;
+	result: ProductAssetGeneratorResponse | null;
+	selectedProduct: Product | null;
+	currentSignature: string | null;
+	analysisSignature: string | null;
+}): ProductReadinessStatus {
+	if (loading) {
+		return "ANALYZING";
+	}
+	if (error || result?.preview_status === "FAIL") {
+		return "FAILED";
+	}
+	if (result && analysisSignature && currentSignature !== analysisSignature) {
+		return "STALE";
+	}
+	if (!result) {
+		return "RAW";
+	}
+	if (
+		selectedProduct?.prompt_readiness_status === "NEEDS_REVIEW" ||
+		selectedProduct?.prompt_readiness_status === "MISSING_FIELDS" ||
+		result.preview_status === "WARN"
+	) {
+		return "NEEDS_REVIEW";
+	}
+	return "READY";
+}
+
+function buildPersistenceStatus({
+	productId,
+	productPayload,
+	result,
+}: {
+	productId: string;
+	productPayload: Record<string, unknown> | null;
+	result: ProductAssetGeneratorResponse | null;
+}): PersistenceStatus {
+	if (!result && !productId && !productPayload) {
+		return "NOT_ANALYZED";
+	}
+	if (productId) {
+		return "SAVED";
+	}
+	if (productPayload) {
+		return "EPHEMERAL_ONLY";
+	}
+	return "NOT_ANALYZED";
+}
+
+function buildProfileWarnings({
+	selectedContextWarnings,
+	selectedProduct,
+	result,
+}: {
+	selectedContextWarnings: string[];
+	selectedProduct: Product | null;
+	result: ProductAssetGeneratorResponse | null;
+}): string[] {
+	const combined = new Set<string>();
+	for (const warning of selectedContextWarnings) {
+		combined.add(warning);
+	}
+	for (const warning of result?.warning_summary || []) {
+		if (
+			warning.includes("NOT_VERIFIED") ||
+			warning.includes("INPUT_SLOT_ONLY") ||
+			warning.includes("NOT_CANONICAL") ||
+			warning.includes("NOT_READY") ||
+			warning.includes("PREVIEW_ONLY")
+		) {
+			combined.add(warning);
+		}
+	}
+	if (selectedProduct?.prompt_missing_fields?.length) {
+		for (const item of selectedProduct.prompt_missing_fields) {
+			combined.add(`PROMPT_MISSING:${item}`);
+		}
+	}
+	return Array.from(combined);
+}
+
+function buildProfileCard({
+	variant,
+	selectedProduct,
+	selectedCopySignals,
+	selectedAuthorityContextWarnings,
+	selectedFieldProvenance,
+	draft,
+	result,
+	hydrationWardrobeReason,
+}: {
+	variant: "UGC_IPHONE" | "CINEMATIC_PRO";
+	selectedProduct: Product | null;
+	selectedCopySignals: Record<string, string | null | undefined>;
+	selectedAuthorityContextWarnings: string[];
+	selectedFieldProvenance: BosmaxFieldProvenance[];
+	draft: ProductAssetGeneratorDraft;
+	result: ProductAssetGeneratorResponse | null;
+	hydrationWardrobeReason: string;
+}): ProfileCardRecord {
+	const productName =
+		selectedProduct?.product_display_name ||
+		selectedProduct?.raw_product_title ||
+		"Selected product";
+	const sceneContext =
+		draft.scene_context || selectedProduct?.scene_context || "NOT_PROVIDED";
+	const cameraStyle =
+		draft.camera_style || selectedProduct?.camera_style || "NOT_PROVIDED";
+	const cameraBehavior =
+		draft.camera_behavior || selectedProduct?.camera_behavior || "NOT_PROVIDED";
+	const productHandling =
+		(result?.product_context.product_handling as string | undefined) ||
+		result?.handling_notes[0] ||
+		selectedProduct?.handling_notes ||
+		"NOT_PROVIDED";
+	const productPhysics =
+		(result?.product_context.product_physics as string | undefined) ||
+		result?.physics_notes[0] ||
+		selectedProduct?.section_5_product_physics_prompt ||
+		"NOT_PROVIDED";
+	const wardrobeStrategy = draft.wardrobe
+		? `Manual override: ${draft.wardrobe}`
+		: `Manual fallback remains required. ${hydrationWardrobeReason}`;
+	const headwearStrategy = draft.headwear
+		? `Operator-pack selection: ${draft.headwear}`
+		: "Operator-pack/non-canonical fallback. Headwear remains optional.";
+	const provenance = summarizeProvenance(selectedFieldProvenance);
+	const warnings = buildProfileWarnings({
+		selectedContextWarnings: selectedAuthorityContextWarnings,
+		selectedProduct,
+		result,
+	});
+
+	if (variant === "UGC_IPHONE") {
+		return {
+			label: variant,
+			character_strategy: `Relatable handheld presenter strategy for ${productName}. Keep the operator voice native, casual, and product-led.`,
+			wardrobe_strategy: wardrobeStrategy,
+			headwear_strategy: headwearStrategy,
+			scene_context: sceneContext,
+			camera_style: cameraStyle,
+			camera_behavior: cameraBehavior,
+			story_style_label: "dialogue_style",
+			story_style:
+				"Short-form spoken hook, direct product demo language, and conversational CTA cadence.",
+			hook: selectedCopySignals.hook || "NOT_FOUND",
+			usp_1: selectedCopySignals.usp_1 || "NOT_FOUND",
+			usp_2: selectedCopySignals.usp_2 || "NOT_FOUND",
+			usp_3: selectedCopySignals.usp_3 || "NOT_FOUND",
+			cta: selectedCopySignals.cta || "NOT_FOUND",
+			product_handling: productHandling,
+			product_physics: productPhysics,
+			warnings,
+			provenance,
+		};
+	}
+
+	return {
+		label: variant,
+		character_strategy: `Polished cinematic presenter strategy for ${productName}. Keep the performer composed and hero-framed rather than casual-first.`,
+		wardrobe_strategy: wardrobeStrategy,
+		headwear_strategy: headwearStrategy,
+		scene_context: sceneContext,
+		camera_style: cameraStyle,
+		camera_behavior: cameraBehavior,
+		story_style_label: "voiceover_style",
+		story_style:
+			"Measured premium voiceover rhythm with compositional pauses that support visual hero framing.",
+		hook: selectedCopySignals.hook || "NOT_FOUND",
+		usp_1: selectedCopySignals.usp_1 || "NOT_FOUND",
+		usp_2: selectedCopySignals.usp_2 || "NOT_FOUND",
+		usp_3: selectedCopySignals.usp_3 || "NOT_FOUND",
+		cta: selectedCopySignals.cta || "NOT_FOUND",
+		product_handling: productHandling,
+		product_physics: productPhysics,
+		warnings,
+		provenance,
+	};
+}
+
+function buildModeReadiness({
+	selectedProduct,
+	selectedCopySignals,
+	draft,
+	inlinePayload,
+}: {
+	selectedProduct: Product | null;
+	selectedCopySignals: Record<string, string | null | undefined>;
+	draft: ProductAssetGeneratorDraft;
+	inlinePayload: Record<string, unknown> | null;
+}): {
+	records: ModeReadinessRecord[];
+	recommended_first_mode: RecommendedMode;
+} {
+	const sceneReady = Boolean(
+		draft.scene_context || selectedProduct?.scene_context,
+	);
+	const cameraReady = Boolean(
+		(draft.camera_style || selectedProduct?.camera_style) &&
+			(draft.camera_behavior || selectedProduct?.camera_behavior),
+	);
+	const copyReady = Boolean(
+		selectedCopySignals.hook &&
+			selectedCopySignals.usp_1 &&
+			selectedCopySignals.usp_2 &&
+			selectedCopySignals.usp_3 &&
+			selectedCopySignals.cta,
+	);
+	const hasProduct = Boolean(
+		selectedProduct || inlinePayload || draft.product_payload,
+	);
+	const hasImage = Boolean(
+		selectedProduct?.image_url ||
+			selectedProduct?.local_image_path ||
+			selectedProduct?.media_id,
+	);
+	const hasStyle = Boolean(draft.camera_style || selectedProduct?.camera_style);
+	const textStatus =
+		hasProduct && sceneReady && cameraReady && copyReady
+			? "READY"
+			: "NEEDS_REVIEW";
+	const imageStatus =
+		hasProduct && sceneReady && hasStyle ? "READY_FOR_PROMPT" : "NEEDS_REVIEW";
+	const framesStatus = hasImage ? "NEEDS_ASSET" : "NEEDS_ASSET";
+	const ingredientsStatus =
+		hasProduct && sceneReady && hasStyle
+			? "NEEDS_ASSET_BUNDLE"
+			: "NEEDS_ASSET_BUNDLE";
+	const recommended_first_mode: RecommendedMode =
+		textStatus === "READY"
+			? "TEXT_TO_VIDEO"
+			: imageStatus === "READY_FOR_PROMPT"
+				? "IMAGE"
+				: "FRAMES";
+
+	return {
+		records: [
+			{
+				key: "TEXT_TO_VIDEO",
+				status: textStatus,
+				detail:
+					"READY only when product, scene, camera, and copy signals are present.",
+			},
+			{
+				key: "FRAMES",
+				status: framesStatus,
+				detail:
+					"Requires start/end image asset readiness. This cockpit does not create those assets.",
+			},
+			{
+				key: "INGREDIENTS",
+				status: ingredientsStatus,
+				detail:
+					"Requires a subject, scene, and style bundle. Missing bundle stays explicit.",
+			},
+			{
+				key: "IMAGE",
+				status: imageStatus,
+				detail:
+					"READY_FOR_PROMPT when product plus scene/style context exists.",
+			},
+		],
+		recommended_first_mode,
+	};
+}
+
+function buildPromptPreviewHandoff({
+	draft,
+	selectedProduct,
+	recommendedMode,
+	inlinePayload,
+}: {
+	draft: ProductAssetGeneratorDraft;
+	selectedProduct: Product | null;
+	recommendedMode: RecommendedMode;
+	inlinePayload: Record<string, unknown> | null;
+}) {
+	const productPayload =
+		inlinePayload ||
+		draft.product_payload ||
+		(selectedProduct
+			? {
+					id: selectedProduct.id,
+					product_display_name: selectedProduct.product_display_name,
+					raw_product_title: selectedProduct.raw_product_title,
+					scene_context: draft.scene_context || selectedProduct.scene_context,
+					camera_style: draft.camera_style || selectedProduct.camera_style,
+					camera_behavior:
+						draft.camera_behavior || selectedProduct.camera_behavior,
+					trigger_id: selectedProduct.trigger_id,
+					silo: selectedProduct.silo,
+					formula: selectedProduct.formula,
+				}
+			: undefined);
+
+	return {
+		productReadinessProfile: {
+			source_route: "PRODUCT_DRIVEN_AUTO",
+			destination_mode: recommendedMode,
+			output_type: outputTypeForMode(recommendedMode),
+			product_id: draft.product_id || "",
+			product_payload: productPayload,
+			product_payload_text: productPayload
+				? buildProductPayloadText(productPayload)
+				: "",
+			scene_context:
+				draft.scene_context || selectedProduct?.scene_context || "",
+			camera_style: draft.camera_style || selectedProduct?.camera_style || "",
+			camera_behavior:
+				draft.camera_behavior || selectedProduct?.camera_behavior || "",
+			trigger_id: selectedProduct?.trigger_id || "",
+			silo: selectedProduct?.silo || "",
+			formula: selectedProduct?.formula || "",
+			language: draft.language || "Malay",
+			platform: draft.platform || "TikTok",
+			headwear_style: draft.headwear || "",
+			wardrobe_id: draft.wardrobe || "",
+			requested_scene:
+				draft.scene_context || selectedProduct?.scene_context || "",
+			include_temporal_plan: recommendedMode === "TEXT_TO_VIDEO",
+			dry_run_only: true,
+		},
+	};
+}
+
 export default function ProductAssetGeneratorForm({
 	draft,
 	onChange,
 	onSubmit,
 	loading,
 	error,
+	result,
+	analysisSignature,
 }: {
 	draft: ProductAssetGeneratorDraft;
 	onChange: (patch: Partial<ProductAssetGeneratorDraft>) => void;
 	onSubmit: () => void;
 	loading: boolean;
 	error: string | null;
+	result: ProductAssetGeneratorResponse | null;
+	analysisSignature: string | null;
 }) {
 	const hydration = usePromptToolHydration();
+	const navigate = useNavigate();
+	const [advancedOpen, setAdvancedOpen] = useState(false);
 	const lastHydratedProductId = useRef<string | null>(null);
 	const previewRequest = useMemo(() => {
 		try {
@@ -138,12 +595,31 @@ export default function ProductAssetGeneratorForm({
 			return null;
 		}
 	}, [draft]);
+	const inlinePayload = useMemo(() => {
+		try {
+			return parseJsonObject(draft.product_payload_text);
+		} catch {
+			return null;
+		}
+	}, [draft.product_payload_text]);
+	const currentSignature = useMemo(() => {
+		try {
+			return JSON.stringify(buildProductAssetGeneratorRequest(draft));
+		} catch {
+			return null;
+		}
+	}, [draft]);
 	const selectedProduct = draft.product_id
 		? hydration.productById[draft.product_id]
 		: null;
-	const selectedAuthorityContext = hydration.getProductContext(draft.product_id);
+	const selectedAuthorityContext = hydration.getProductContext(
+		draft.product_id,
+	);
 	const selectedCopySignals = hydration.getCopySignals(draft.product_id);
 	const selectedContextWarnings = hydration.getFieldWarnings(
+		selectedAuthorityContext,
+	);
+	const selectedFieldProvenance = hydration.getFieldProvenance(
 		selectedAuthorityContext,
 	);
 
@@ -152,7 +628,10 @@ export default function ProductAssetGeneratorForm({
 			lastHydratedProductId.current = null;
 			return;
 		}
-		if (lastHydratedProductId.current === draft.product_id || !selectedProduct) {
+		if (
+			lastHydratedProductId.current === draft.product_id ||
+			!selectedProduct
+		) {
 			return;
 		}
 		lastHydratedProductId.current = draft.product_id;
@@ -188,20 +667,66 @@ export default function ProductAssetGeneratorForm({
 	const languageOptions = toSelectOptions(hydration.languageOptions);
 	const platformOptions = toSelectOptions(hydration.platformOptions);
 	const cameraStyleOptions = toSelectOptions(hydration.cameraStyleOptions);
-	const cameraBehaviorOptions = toSelectOptions(hydration.cameraBehaviorOptions);
+	const cameraBehaviorOptions = toSelectOptions(
+		hydration.cameraBehaviorOptions,
+	);
 	const headwearOptions = toSelectOptions(hydration.headwearOptions);
+	const readinessStatus = buildReadinessStatus({
+		loading,
+		error,
+		result,
+		selectedProduct,
+		currentSignature,
+		analysisSignature,
+	});
+	const persistenceStatus = buildPersistenceStatus({
+		productId: draft.product_id || "",
+		productPayload: inlinePayload || draft.product_payload || null,
+		result,
+	});
+	const profileVisible = Boolean(
+		selectedProduct || inlinePayload || draft.product_payload || result,
+	);
+	const { records: modeReadiness, recommended_first_mode } = buildModeReadiness(
+		{
+			selectedProduct,
+			selectedCopySignals,
+			draft,
+			inlinePayload,
+		},
+	);
+	const ugcProfile = buildProfileCard({
+		variant: "UGC_IPHONE",
+		selectedProduct,
+		selectedCopySignals,
+		selectedAuthorityContextWarnings: selectedContextWarnings,
+		selectedFieldProvenance,
+		draft,
+		result,
+		hydrationWardrobeReason: hydration.wardrobeFallback.reason,
+	});
+	const cinematicProfile = buildProfileCard({
+		variant: "CINEMATIC_PRO",
+		selectedProduct,
+		selectedCopySignals,
+		selectedAuthorityContextWarnings: selectedContextWarnings,
+		selectedFieldProvenance,
+		draft,
+		result,
+		hydrationWardrobeReason: hydration.wardrobeFallback.reason,
+	});
 
 	return (
 		<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
 			<div className="flex items-start justify-between gap-3">
 				<div>
 					<div className="text-sm font-semibold text-slate-100">
-						Product Asset Generator Preview
+						Product Readiness Profile
 					</div>
 					<div className="mt-1 text-[11px] text-slate-400">
-						Preview-only generator. No real image generation, no upload, no
-						Google Flow execution, no Chrome extension execution, and no batch
-						execution.
+						Product selection leads the workflow. Analyze Product builds a
+						readiness profile first, then manual controls remain available in
+						Advanced Manual Override.
 					</div>
 				</div>
 				<span className="inline-flex rounded-full border border-slate-600 bg-slate-950 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-200">
@@ -220,255 +745,424 @@ export default function ProductAssetGeneratorForm({
 				</div>
 			) : null}
 
-			<div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-				<FieldShell label="Target Asset Intent">
-					<SelectField
-						value={draft.target_asset_intent}
-						onChange={(value) => onChange({ target_asset_intent: value })}
-						options={[
-							{ value: "CHARACTER_CONCEPT", label: "CHARACTER_CONCEPT" },
-							{
-								value: "CHARACTER_HOLDING_PRODUCT_IMAGE_PROMPT",
-								label: "CHARACTER_HOLDING_PRODUCT_IMAGE_PROMPT",
-							},
-							{
-								value: "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
-								label: "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
-							},
-							{
-								value: "SCENE_REFERENCE_PROMPT",
-								label: "SCENE_REFERENCE_PROMPT",
-							},
-							{
-								value: "STYLE_REFERENCE_PROMPT",
-								label: "STYLE_REFERENCE_PROMPT",
-							},
-							{
-								value: "INGREDIENTS_ASSET_BUNDLE",
-								label: "INGREDIENTS_ASSET_BUNDLE",
-							},
-						]}
-						placeholder="Select a target asset intent"
-					/>
-				</FieldShell>
+			<div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+				<div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+					<div className="space-y-3">
+						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+							Primary Workflow
+						</div>
+						<FieldShell
+							label="Product Selector"
+							helper="Selecting a product hydrates payload JSON plus scene, camera, product handling, and product physics fields from BOSMAX authority context."
+						>
+							<SelectField
+								value={draft.product_id || ""}
+								onChange={(value) => onChange({ product_id: value })}
+								options={productOptions}
+								placeholder="Select a product to analyze"
+							/>
+						</FieldShell>
+						<div className="flex flex-wrap gap-3">
+							<button
+								type="button"
+								onClick={onSubmit}
+								disabled={
+									loading ||
+									!previewRequest ||
+									(!previewRequest.product_id &&
+										!previewRequest.product_payload)
+								}
+								className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-xs font-semibold text-blue-200 disabled:opacity-50"
+							>
+								{loading ? "Analyzing Product..." : "Analyze Product"}
+							</button>
+							<button
+								type="button"
+								onClick={() =>
+									navigate("/prompt-preview", {
+										state: buildPromptPreviewHandoff({
+											draft,
+											selectedProduct,
+											recommendedMode: recommended_first_mode,
+											inlinePayload,
+										}),
+									})
+								}
+								disabled={!profileVisible}
+								className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-200 disabled:opacity-50"
+							>
+								Use this profile in Prompt Preview
+							</button>
+						</div>
+						<div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-300">
+							Dashboard tools are preview-only. No Google Flow execution, no
+							Chrome extension execution, no batch execution, and no generated
+							asset write happen from this cockpit.
+						</div>
+					</div>
 
-				<FieldShell label="Target Destination Mode">
-					<SelectField
-						value={draft.target_destination_mode || "IMAGE"}
-						onChange={(value) => onChange({ target_destination_mode: value })}
-						options={[
-							{ value: "TEXT_TO_VIDEO", label: "TEXT_TO_VIDEO" },
-							{ value: "FRAMES", label: "FRAMES" },
-							{ value: "INGREDIENTS", label: "INGREDIENTS" },
-							{ value: "IMAGE", label: "IMAGE" },
-						]}
-						placeholder="Select a target destination mode"
-					/>
-				</FieldShell>
-
-				<FieldShell
-					label="Product"
-					helper="Selecting a product hydrates payload JSON plus scene, camera, product handling, and product physics fields from BOSMAX authority context."
-				>
-					<SelectField
-						value={draft.product_id || ""}
-						onChange={(value) => onChange({ product_id: value })}
-						options={productOptions}
-						placeholder="Select a product to hydrate"
-					/>
-				</FieldShell>
-
-				<FieldShell label="Gender">
-					<TextField
-						value={draft.gender || ""}
-						onChange={(value) => onChange({ gender: value })}
-					/>
-				</FieldShell>
-
-				<FieldShell label="Ethnicity">
-					<TextField
-						value={draft.ethnicity || ""}
-						onChange={(value) => onChange({ ethnicity: value })}
-					/>
-				</FieldShell>
-
-				<FieldShell label="Age Range">
-					<TextField
-						value={draft.age_range || ""}
-						onChange={(value) => onChange({ age_range: value })}
-					/>
-				</FieldShell>
-
-				<FieldShell label="Scene Context">
-					<SelectField
-						value={draft.scene_context || ""}
-						onChange={(value) => onChange({ scene_context: value })}
-						options={sceneContextOptions}
-						placeholder="Select scene context"
-					/>
-				</FieldShell>
-
-				<FieldShell label="Language">
-					<SelectField
-						value={draft.language || ""}
-						onChange={(value) => onChange({ language: value })}
-						options={languageOptions}
-						placeholder="Select language"
-					/>
-				</FieldShell>
-
-				<FieldShell label="Platform">
-					<SelectField
-						value={draft.platform || ""}
-						onChange={(value) => onChange({ platform: value })}
-						options={platformOptions}
-						placeholder="Select platform"
-					/>
-				</FieldShell>
-
-				<FieldShell label="Camera Style">
-					<SelectField
-						value={draft.camera_style || ""}
-						onChange={(value) => onChange({ camera_style: value })}
-						options={cameraStyleOptions}
-						placeholder="Select camera style"
-					/>
-				</FieldShell>
-
-				<FieldShell label="Camera Behavior">
-					<SelectField
-						value={draft.camera_behavior || ""}
-						onChange={(value) => onChange({ camera_behavior: value })}
-						options={cameraBehaviorOptions}
-						placeholder="Select camera behavior"
-					/>
-				</FieldShell>
-
-				<FieldShell
-					label="Wardrobe"
-					helper={`No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required. ${hydration.wardrobeFallback.reason}`}
-				>
-					<TextField
-						value={draft.wardrobe || ""}
-						onChange={(value) => onChange({ wardrobe: value })}
-					/>
-				</FieldShell>
-
-				<FieldShell
-					label="Headwear"
-					helper="Operator-pack headwear suggestions are not canonical registry truth. Headwear suggestions remain OPERATOR_PACK and non-canonical in the authority adapter."
-				>
-					<SelectField
-						value={draft.headwear || ""}
-						onChange={(value) => onChange({ headwear: value })}
-						options={headwearOptions}
-						placeholder="Select operator-pack headwear"
-					/>
-				</FieldShell>
+					<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
+						<StatusBadge label="Readiness Status" value={readinessStatus} />
+						<StatusBadge label="Persistence Status" value={persistenceStatus} />
+					</div>
+				</div>
 			</div>
 
-			{selectedProduct ? (
-				<div className="mt-4 grid gap-4 lg:grid-cols-2">
-					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
-						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-							Authority Product Context
-						</div>
-						<div className="mt-3 grid gap-2 md:grid-cols-2">
-							<div>Scene: {selectedProduct.scene_context || "NOT_PROVIDED"}</div>
-							<div>Camera style: {selectedProduct.camera_style || "NOT_PROVIDED"}</div>
-							<div>Camera behavior: {selectedProduct.camera_behavior || "NOT_PROVIDED"}</div>
-							<div>Formula: {selectedProduct.formula || "NOT_PROVIDED"}</div>
-							<div>Product handling: {selectedAuthorityContext?.visual.product_handling || "NOT_FOUND"}</div>
-							<div>Product physics: {selectedAuthorityContext?.visual.product_physics || "NOT_FOUND"}</div>
-							<div>Overlay hint: {selectedAuthorityContext?.visual.overlay_hint || "NOT_FOUND"}</div>
-							<div>Style references: {hydration.styleReferenceOptions.slice(0, 3).map((item) => item.label).join(", ") || "NOT_FOUND"}</div>
-						</div>
+			{profileVisible ? (
+				<div className="mt-4 space-y-4">
+					<div className="grid gap-4 xl:grid-cols-2">
+						{[ugcProfile, cinematicProfile].map((profile) => (
+							<section
+								key={profile.label}
+								className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4"
+							>
+								<div className="flex items-center justify-between gap-3">
+									<div className="text-sm font-semibold text-slate-100">
+										{profile.label}
+									</div>
+									<span className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-300">
+										Derived profile
+									</span>
+								</div>
+								<div className="mt-4 grid gap-3 md:grid-cols-2">
+									<ProfileField
+										label="character_strategy"
+										value={profile.character_strategy}
+									/>
+									<ProfileField
+										label="wardrobe_strategy"
+										value={profile.wardrobe_strategy}
+									/>
+									<ProfileField
+										label="headwear_strategy"
+										value={profile.headwear_strategy}
+									/>
+									<ProfileField
+										label="scene_context"
+										value={profile.scene_context}
+									/>
+									<ProfileField
+										label="camera_style"
+										value={profile.camera_style}
+									/>
+									<ProfileField
+										label="camera_behavior"
+										value={profile.camera_behavior}
+									/>
+									<ProfileField
+										label={profile.story_style_label}
+										value={profile.story_style}
+									/>
+									<ProfileField label="hook" value={profile.hook} />
+									<ProfileField label="USP 1" value={profile.usp_1} />
+									<ProfileField label="USP 2" value={profile.usp_2} />
+									<ProfileField label="USP 3" value={profile.usp_3} />
+									<ProfileField label="CTA" value={profile.cta} />
+									<ProfileField
+										label="product_handling"
+										value={profile.product_handling}
+									/>
+									<ProfileField
+										label="product_physics"
+										value={profile.product_physics}
+									/>
+								</div>
+								<div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+									<div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
+										<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200">
+											warnings
+										</div>
+										<div className="mt-2 space-y-2 text-[11px] text-amber-100">
+											{profile.warnings.length > 0 ? (
+												profile.warnings
+													.slice(0, 6)
+													.map((warning) => (
+														<div key={`${profile.label}:${warning}`}>
+															{warning}
+														</div>
+													))
+											) : (
+												<div>No derived warnings loaded yet.</div>
+											)}
+										</div>
+									</div>
+									<div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+										<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+											provenance
+										</div>
+										<div className="mt-2 text-[11px] text-slate-300">
+											{profile.provenance}
+										</div>
+									</div>
+								</div>
+							</section>
+						))}
 					</div>
-					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
-						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-							Authority Copy Signals
+
+					<section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+						<div className="flex flex-wrap items-center justify-between gap-3">
+							<div>
+								<div className="text-sm font-semibold text-slate-100">
+									Video/Image Readiness
+								</div>
+								<div className="mt-1 text-[11px] text-slate-400">
+									Mode readiness stays explicit. Missing assets stay visible and
+									are not auto-generated from this panel.
+								</div>
+							</div>
+							<div className="rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-200">
+								recommended_first_mode={recommended_first_mode}
+							</div>
 						</div>
-						<div className="mt-2 text-[10px] text-slate-500">
-							Hook, USP, CTA, and authority source warnings now come from the BOSMAX authority adapter. Manual fallback still remains available.
-						</div>
-						<div className="mt-3 grid gap-2">
-							<div>Hook: {selectedCopySignals.hook || "NOT_FOUND"}</div>
-							<div>USP 1: {selectedCopySignals.usp_1 || "NOT_FOUND"}</div>
-							<div>USP 2: {selectedCopySignals.usp_2 || "NOT_FOUND"}</div>
-							<div>USP 3: {selectedCopySignals.usp_3 || "NOT_FOUND"}</div>
-							<div>CTA: {selectedCopySignals.cta || "NOT_FOUND"}</div>
-						</div>
-					</div>
-					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300 lg:col-span-2">
-						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-							Source Warnings
-						</div>
-						<div className="mt-2 grid gap-2 md:grid-cols-2">
-							{selectedContextWarnings.length > 0 ? (
-								selectedContextWarnings.map((warning) => (
-									<div key={warning}>{warning}</div>
-								))
-							) : (
-								<div>No selected-product source warnings.</div>
-							)}
-							{hydration.missingSources.slice(0, 4).map((item) => (
-								<div key={item.label}>{item.label}: {item.source_status}</div>
+						<div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+							{modeReadiness.map((item) => (
+								<div
+									key={item.key}
+									className="rounded-xl border border-slate-800 bg-slate-900/60 p-3"
+								>
+									<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+										{item.key}
+									</div>
+									<div
+										className={`mt-2 inline-flex rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${statusTone(item.status)}`}
+									>
+										{item.status}
+									</div>
+									<div className="mt-3 text-[11px] text-slate-300">
+										{item.detail}
+									</div>
+								</div>
 							))}
 						</div>
-					</div>
+					</section>
 				</div>
-			) : null}
-
-			<div className="mt-4 grid gap-4 lg:grid-cols-2">
-				<label className="block rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-					<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-						Product Payload JSON
-					</div>
-					<textarea
-						value={draft.product_payload_text}
-						onChange={(event) =>
-							onChange({ product_payload_text: event.target.value })
-						}
-						rows={10}
-						className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
-						placeholder='{"id":"prod-001","product_display_name":"Atlas Bottle"}'
-					/>
-				</label>
-
-				<div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-					<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-						Guardrails
-					</div>
-					<div className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-3 text-[11px] text-slate-300">
-						Derived suggestions are not canonical truth. NOT_VERIFIED and
-						DERIVED_FROM_PRODUCT_DATA warnings remain visible.
-					</div>
-					<div className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-3 text-[11px] text-slate-300">
-						This response is preview-only. No generated character image exists
-						yet, and nothing is Google-Flow-ready or Chrome-extension-visible
-						yet.
-					</div>
-					<label className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
-						<input
-							type="checkbox"
-							checked={Boolean(draft.include_product_in_hand)}
-							onChange={(event) =>
-								onChange({ include_product_in_hand: event.target.checked })
-							}
-						/>
-						Include Product In Hand
-					</label>
-					<label className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
-						<input
-							type="checkbox"
-							checked={Boolean(draft.strict_validation)}
-							onChange={(event) =>
-								onChange({ strict_validation: event.target.checked })
-							}
-						/>
-						Strict Validation
-					</label>
+			) : (
+				<div className="mt-4 rounded-2xl border border-dashed border-slate-700 bg-slate-950/50 p-4 text-[11px] text-slate-400">
+					Select a saved product or use Advanced Manual Override to paste an
+					ephemeral product payload, then run Analyze Product to build the
+					readiness profile.
 				</div>
+			)}
+
+			<div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70">
+				<button
+					type="button"
+					onClick={() => setAdvancedOpen((current) => !current)}
+					className="flex w-full items-center justify-between px-4 py-4 text-left"
+				>
+					<div>
+						<div className="text-sm font-semibold text-slate-100">
+							Advanced Manual Override
+						</div>
+						<div className="mt-1 text-[11px] text-slate-400">
+							Manual fallback stays available. The old manual fields are still
+							here, but they are no longer the primary top-level workflow.
+						</div>
+					</div>
+					<span className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-300">
+						{advancedOpen ? "Expanded" : "Collapsed"}
+					</span>
+				</button>
+
+				{advancedOpen ? (
+					<div className="border-t border-slate-800 p-4">
+						<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+							<FieldShell label="Target Asset Intent">
+								<SelectField
+									value={draft.target_asset_intent}
+									onChange={(value) => onChange({ target_asset_intent: value })}
+									options={[
+										{ value: "CHARACTER_CONCEPT", label: "CHARACTER_CONCEPT" },
+										{
+											value: "CHARACTER_HOLDING_PRODUCT_IMAGE_PROMPT",
+											label: "CHARACTER_HOLDING_PRODUCT_IMAGE_PROMPT",
+										},
+										{
+											value: "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+											label: "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+										},
+										{
+											value: "SCENE_REFERENCE_PROMPT",
+											label: "SCENE_REFERENCE_PROMPT",
+										},
+										{
+											value: "STYLE_REFERENCE_PROMPT",
+											label: "STYLE_REFERENCE_PROMPT",
+										},
+										{
+											value: "INGREDIENTS_ASSET_BUNDLE",
+											label: "INGREDIENTS_ASSET_BUNDLE",
+										},
+									]}
+									placeholder="Select a target asset intent"
+								/>
+							</FieldShell>
+
+							<FieldShell label="Target Destination Mode">
+								<SelectField
+									value={draft.target_destination_mode || "IMAGE"}
+									onChange={(value) =>
+										onChange({ target_destination_mode: value })
+									}
+									options={[
+										{ value: "TEXT_TO_VIDEO", label: "TEXT_TO_VIDEO" },
+										{ value: "FRAMES", label: "FRAMES" },
+										{ value: "INGREDIENTS", label: "INGREDIENTS" },
+										{ value: "IMAGE", label: "IMAGE" },
+									]}
+									placeholder="Select a target destination mode"
+								/>
+							</FieldShell>
+
+							<FieldShell label="Gender">
+								<TextField
+									value={draft.gender || ""}
+									onChange={(value) => onChange({ gender: value })}
+								/>
+							</FieldShell>
+
+							<FieldShell label="Ethnicity">
+								<TextField
+									value={draft.ethnicity || ""}
+									onChange={(value) => onChange({ ethnicity: value })}
+								/>
+							</FieldShell>
+
+							<FieldShell label="Age Range">
+								<TextField
+									value={draft.age_range || ""}
+									onChange={(value) => onChange({ age_range: value })}
+								/>
+							</FieldShell>
+
+							<FieldShell label="Scene Context">
+								<SelectField
+									value={draft.scene_context || ""}
+									onChange={(value) => onChange({ scene_context: value })}
+									options={sceneContextOptions}
+									placeholder="Select scene context"
+								/>
+							</FieldShell>
+
+							<FieldShell label="Language">
+								<SelectField
+									value={draft.language || ""}
+									onChange={(value) => onChange({ language: value })}
+									options={languageOptions}
+									placeholder="Select language"
+								/>
+							</FieldShell>
+
+							<FieldShell label="Platform">
+								<SelectField
+									value={draft.platform || ""}
+									onChange={(value) => onChange({ platform: value })}
+									options={platformOptions}
+									placeholder="Select platform"
+								/>
+							</FieldShell>
+
+							<FieldShell label="Camera Style">
+								<SelectField
+									value={draft.camera_style || ""}
+									onChange={(value) => onChange({ camera_style: value })}
+									options={cameraStyleOptions}
+									placeholder="Select camera style"
+								/>
+							</FieldShell>
+
+							<FieldShell label="Camera Behavior">
+								<SelectField
+									value={draft.camera_behavior || ""}
+									onChange={(value) => onChange({ camera_behavior: value })}
+									options={cameraBehaviorOptions}
+									placeholder="Select camera behavior"
+								/>
+							</FieldShell>
+
+							<FieldShell
+								label="Wardrobe"
+								helper={`No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required. ${hydration.wardrobeFallback.reason}`}
+							>
+								<TextField
+									value={draft.wardrobe || ""}
+									onChange={(value) => onChange({ wardrobe: value })}
+								/>
+							</FieldShell>
+
+							<FieldShell
+								label="Headwear"
+								helper="Operator-pack headwear suggestions are not canonical registry truth. Headwear suggestions remain OPERATOR_PACK and non-canonical in the authority adapter."
+							>
+								<SelectField
+									value={draft.headwear || ""}
+									onChange={(value) => onChange({ headwear: value })}
+									options={headwearOptions}
+									placeholder="Select operator-pack headwear"
+								/>
+							</FieldShell>
+						</div>
+
+						<div className="mt-4 grid gap-4 lg:grid-cols-2">
+							<label className="block rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+								<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+									Product Payload JSON
+								</div>
+								<textarea
+									value={draft.product_payload_text}
+									onChange={(event) =>
+										onChange({ product_payload_text: event.target.value })
+									}
+									rows={10}
+									className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+									placeholder='{"id":"prod-001","product_display_name":"Atlas Bottle"}'
+								/>
+							</label>
+
+							<div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+								<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+									Guardrails
+								</div>
+								<div className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-3 text-[11px] text-slate-300">
+									Derived suggestions are not canonical truth. NOT_VERIFIED and
+									DERIVED_FROM_PRODUCT_DATA warnings remain visible.
+								</div>
+								<div className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-3 text-[11px] text-slate-300">
+									This response is preview-only. No generated character image
+									exists yet, and nothing is Google-Flow-ready or
+									Chrome-extension-visible yet.
+								</div>
+								<label className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
+									<input
+										type="checkbox"
+										checked={Boolean(draft.include_product_in_hand)}
+										onChange={(event) =>
+											onChange({
+												include_product_in_hand: event.target.checked,
+											})
+										}
+									/>
+									Include Product In Hand
+								</label>
+								<label className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
+									<input
+										type="checkbox"
+										checked={Boolean(draft.strict_validation)}
+										onChange={(event) =>
+											onChange({ strict_validation: event.target.checked })
+										}
+									/>
+									Strict Validation
+								</label>
+							</div>
+						</div>
+
+						<div className="mt-4 text-[10px] text-slate-500">
+							Request payload is validated locally before Analyze Product runs.
+							Invalid JSON blocks submission.
+						</div>
+					</div>
+				) : null}
 			</div>
 
 			{error ? (
@@ -476,21 +1170,6 @@ export default function ProductAssetGeneratorForm({
 					{error}
 				</div>
 			) : null}
-
-			<div className="mt-4 flex items-center justify-between gap-4">
-				<div className="text-[10px] text-slate-500">
-					Request payload is validated locally before submit. Invalid JSON
-					blocks submission.
-				</div>
-				<button
-					type="button"
-					onClick={onSubmit}
-					disabled={loading || !previewRequest}
-					className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-xs font-semibold text-blue-200 disabled:opacity-50"
-				>
-					{loading ? "Running Preview Generator..." : "Run Preview Generator"}
-				</button>
-			</div>
 		</section>
 	);
 }
