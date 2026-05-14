@@ -52,6 +52,17 @@ CINEMATIC_CAMERA_LOCK = (
     "Controlled cinematic camera with stable hero framing, smooth push-in, controlled pan, "
     "premium product lighting, and clean commercial composition."
 )
+COPY_QUALITY_FORBIDDEN_PHRASES = [
+    "review the prompt package",
+    "before any execution",
+    "keep the demo grounded",
+    "show the product clearly before",
+    "not generated asset",
+    "preview-only",
+    "prompt package",
+    "execution",
+]
+COPY_QUALITY_WARNING = "COPY_QUALITY_FALLBACK_DRAFT"
 
 
 def _normalize_text(value: Any) -> str:
@@ -319,26 +330,424 @@ def _copy_value(value: str | None, fallback: str) -> str:
     return text or fallback
 
 
-def _derived_copy_signals(
+def _normalize_language(product: dict[str, Any]) -> str:
+    for field in (
+        "language",
+        "requested_language",
+        "language_default",
+        "spoken_language",
+    ):
+        value = _normalize_text(product.get(field)).casefold()
+        if value:
+            if any(token in value for token in ["malay", "bahasa melayu", "bahasa malaysia", "bm"]):
+                return "MALAY"
+            return "ENGLISH"
+    return "ENGLISH"
+
+
+def _copy_haystack(product: dict[str, Any]) -> str:
+    return " ".join(
+        _normalize_text(product.get(field))
+        for field in [
+            "raw_product_title",
+            "product_display_name",
+            "product_short_name",
+            "category",
+            "subcategory",
+            "type",
+            "product_type",
+            "product_type_id",
+        ]
+    ).casefold()
+
+
+def _classify_direct_copy_category(product: dict[str, Any]) -> str:
+    haystack = _copy_haystack(product)
+    if any(
+        token in haystack
+        for token in [
+            "sleepwear",
+            "loungewear",
+            "nightdress",
+            "nightdresses",
+            "nightie",
+            "baju tidur",
+            "kelawar",
+            "apparel",
+            "womenswear",
+            "women's sleepwear",
+            "fashion",
+        ]
+    ):
+        return "APPAREL_SLEEPWEAR"
+    if any(
+        token in haystack
+        for token in [
+            "household",
+            "home living",
+            "kitchen",
+            "storage",
+            "organizer",
+            "cleaning",
+            "houseware",
+        ]
+    ):
+        return "HOUSEHOLD"
+    if any(
+        token in haystack
+        for token in [
+            "beauty",
+            "personal care",
+            "skincare",
+            "cosmetic",
+            "serum",
+            "lip balm",
+            "makeup",
+        ]
+    ):
+        return "BEAUTY_PERSONAL_CARE"
+    if any(
+        token in haystack
+        for token in [
+            "accessory",
+            "accessories",
+            "brooch",
+            "pin",
+            "earring",
+            "pendant",
+            "keychain",
+            "small item",
+            "charms",
+        ]
+    ):
+        return "ACCESSORY_SMALL_ITEM"
+    return "GENERAL"
+
+
+def _safe_product_label(product: dict[str, Any]) -> str:
+    return _normalize_text(
+        product.get("product_short_name")
+        or product.get("product_display_name")
+        or product.get("raw_product_title")
+        or "produk ini"
+    )
+
+
+def _detect_bad_copy_fields(copy_signals: dict[str, Any]) -> list[str]:
+    values = [
+        _normalize_text(copy_signals.get(key)).casefold()
+        for key in [
+            "hook",
+            "usp_1",
+            "usp_2",
+            "usp_3",
+            "cta",
+            "overlay_copy",
+            "dialogue_opening",
+            "dialogue_body",
+            "dialogue_cta",
+            "problem",
+            "agitate",
+            "solution",
+        ]
+    ]
+    hits: list[str] = []
+    for value in values:
+        if not value:
+            continue
+        for phrase in COPY_QUALITY_FORBIDDEN_PHRASES:
+            if phrase in value and phrase not in hits:
+                hits.append(phrase)
+        if re.search(r"\buse\b.+\bwith use\b", value) and "use_product_with_use" not in hits:
+            hits.append("use_product_with_use")
+    return hits
+
+
+def _direct_copy_templates_malay(
+    category_key: str,
+    product_label: str,
+) -> tuple[dict[str, str], bool]:
+    if category_key == "APPAREL_SLEEPWEAR":
+        return (
+            {
+                "hook": "Baju tidur nak selesa tapi tetap nampak kemas?",
+                "usp_1": "Potongan longgar senang dipakai untuk rehat harian.",
+                "usp_2": "Kain nampak ringan dan mudah digayakan di rumah.",
+                "usp_3": "Sesuai untuk video demo sebab bentuk dan jatuhan kain jelas nampak.",
+                "cta": "Pilih warna dan size yang sesuai sebelum checkout.",
+                "overlay_copy": f"{product_label} nampak selesa, kemas, dan mudah digaya.",
+                "dialogue_opening": "Baju tidur nak selesa tapi tetap nampak kemas?",
+                "dialogue_body": "Potongan nampak longgar, kain pula jatuh elok dan senang ditunjuk dalam demo harian dekat rumah.",
+                "dialogue_cta": "Pilih warna dan size yang sesuai sebelum checkout.",
+            },
+            False,
+        )
+    if category_key == "HOUSEHOLD":
+        return (
+            {
+                "hook": "Nak rumah nampak lebih tersusun tanpa banyak barang?",
+                "usp_1": "Mudah digunakan untuk rutin harian.",
+                "usp_2": "Design praktikal, senang tunjuk fungsi dekat kamera.",
+                "usp_3": "Sesuai untuk demo sebelum dan selepas yang selamat.",
+                "cta": "Tambah ke cart dan pilih variasi yang kau nak.",
+                "overlay_copy": f"{product_label} bantu rutin rumah nampak lebih kemas.",
+                "dialogue_opening": "Nak rumah nampak lebih tersusun tanpa tambah kerja?",
+                "dialogue_body": "Bentuknya nampak praktikal, mudah tunjuk cara guna, dan sesuai untuk demo rutin harian yang jelas dekat kamera.",
+                "dialogue_cta": "Tambah ke cart dan pilih variasi yang kau nak.",
+            },
+            False,
+        )
+    if category_key == "BEAUTY_PERSONAL_CARE":
+        return (
+            {
+                "hook": "Nak nampak kemas tanpa routine yang leceh?",
+                "usp_1": "Mudah ditunjuk dalam demo close-up.",
+                "usp_2": "Saiz produk sesuai untuk genggaman tangan.",
+                "usp_3": "Sesuai untuk routine harian tanpa claim berlebihan.",
+                "cta": "Check pilihan produk dan cuba ikut keperluan kau.",
+                "overlay_copy": f"{product_label} sesuai untuk demo close-up yang ringkas.",
+                "dialogue_opening": "Nak routine nampak kemas tanpa rasa serabut?",
+                "dialogue_body": "Saiz produk senang digenggam, close-up nampak jelas, dan penggunaan harian boleh ditunjuk dengan cara yang terus faham.",
+                "dialogue_cta": "Check pilihan produk dan cuba ikut keperluan kau.",
+            },
+            False,
+        )
+    if category_key == "ACCESSORY_SMALL_ITEM":
+        return (
+            {
+                "hook": "Detail kecil macam ni boleh terus naikkan gaya.",
+                "usp_1": "Saiz kecil, mudah ditunjuk dekat kamera.",
+                "usp_2": "Detail produk nampak jelas bila close-up.",
+                "usp_3": "Senang padankan dengan gaya harian.",
+                "cta": "Pilih design yang kau suka sekarang.",
+                "overlay_copy": f"{product_label} bagi sentuhan gaya yang terus nampak dekat kamera.",
+                "dialogue_opening": "Kadang-kadang detail kecil yang paling cepat ubah gaya.",
+                "dialogue_body": "Bila close-up, detail produk lebih jelas, saiz pun mudah ditunjuk, jadi senang sangat nak padankan dengan gaya harian.",
+                "dialogue_cta": "Pilih design yang kau suka sekarang.",
+            },
+            False,
+        )
+    return (
+        {
+            "hook": f"Nak tunjuk {product_label} dengan cara yang lebih jelas dan mudah faham?",
+            "usp_1": "Boleh digunakan untuk demo produk ringkas yang fokus pada rupa dan fungsi asas.",
+            "usp_2": "Sesuai untuk penerangan pendek tanpa claim berlebihan.",
+            "usp_3": "Masih perlukan semakan manusia sebelum dijadikan copy produksi penuh.",
+            "cta": "Semak butiran produk dulu sebelum terus guna untuk produksi.",
+            "overlay_copy": f"{product_label} perlukan copy yang diperkemaskan sebelum produksi.",
+            "dialogue_opening": f"Nak tunjuk {product_label} dengan cara yang lebih jelas?",
+            "dialogue_body": "Asas copy untuk produk ini sudah ada, tetapi nada komersial dan sudut jualan masih perlukan penajaman sebelum digunakan terus.",
+            "dialogue_cta": "Semak butiran produk dulu sebelum terus guna untuk produksi.",
+        },
+        True,
+    )
+
+
+def _direct_copy_templates_english(
+    category_key: str,
+    product_label: str,
+) -> tuple[dict[str, str], bool]:
+    if category_key == "APPAREL_SLEEPWEAR":
+        return (
+            {
+                "hook": "Want sleepwear that feels comfortable and still looks neat?",
+                "usp_1": "Relaxed cutting makes it easy to wear for everyday rest.",
+                "usp_2": "The fabric reads light and easy to style at home.",
+                "usp_3": "Works well for short demos because the shape and drape show clearly.",
+                "cta": "Choose the color and size that fits before checkout.",
+                "overlay_copy": f"{product_label} looks comfortable, neat, and easy to wear.",
+                "dialogue_opening": "Want sleepwear that feels comfortable and still looks neat?",
+                "dialogue_body": "The cut looks relaxed, the fabric drapes clearly on camera, and the overall look stays tidy for an everyday home demo.",
+                "dialogue_cta": "Choose the color and size that fits before checkout.",
+            },
+            False,
+        )
+    if category_key == "HOUSEHOLD":
+        return (
+            {
+                "hook": "Want your space to look more organized without adding clutter?",
+                "usp_1": "Easy to use in a daily routine.",
+                "usp_2": "Practical design that shows its function clearly on camera.",
+                "usp_3": "Safe for before-and-after style demos.",
+                "cta": "Add it to cart and choose the variation you want.",
+                "overlay_copy": f"{product_label} helps daily routines look more organized.",
+                "dialogue_opening": "Want your space to feel more organized with less effort?",
+                "dialogue_body": "The format looks practical, the use case is easy to show, and the routine benefit reads clearly in a short demo.",
+                "dialogue_cta": "Add it to cart and choose the variation you want.",
+            },
+            False,
+        )
+    if category_key == "BEAUTY_PERSONAL_CARE":
+        return (
+            {
+                "hook": "Want a neater routine without adding extra hassle?",
+                "usp_1": "Easy to show in a close-up demo.",
+                "usp_2": "Product size sits naturally in hand.",
+                "usp_3": "Fits an everyday routine without exaggerated claims.",
+                "cta": "Check the option that fits your needs.",
+                "overlay_copy": f"{product_label} fits a simple close-up routine demo.",
+                "dialogue_opening": "Want your routine to look cleaner without feeling complicated?",
+                "dialogue_body": "The size reads well in hand, close-up details stay visible, and the daily-use angle is easy to understand in a short video.",
+                "dialogue_cta": "Check the option that fits your needs.",
+            },
+            False,
+        )
+    if category_key == "ACCESSORY_SMALL_ITEM":
+        return (
+            {
+                "hook": "A small detail like this can lift the whole look fast.",
+                "usp_1": "Compact size makes it easy to show on camera.",
+                "usp_2": "Details stay visible in close-up.",
+                "usp_3": "Easy to pair with everyday styling.",
+                "cta": "Choose the design you like now.",
+                "overlay_copy": f"{product_label} adds a quick style detail that reads on camera.",
+                "dialogue_opening": "Sometimes a small detail changes the whole look.",
+                "dialogue_body": "The close-up detail reads clearly, the size is easy to handle on camera, and it fits naturally into everyday styling.",
+                "dialogue_cta": "Choose the design you like now.",
+            },
+            False,
+        )
+    return (
+        {
+            "hook": f"Need a clearer way to present {product_label} to shoppers?",
+            "usp_1": "Usable for a simple product demo focused on visible form and basic function.",
+            "usp_2": "Fits a short explanation without exaggerated claims.",
+            "usp_3": "Still needs a stronger commercial angle before production use.",
+            "cta": "Review the product details before using this in production.",
+            "overlay_copy": f"{product_label} still needs sharper production-ready copy.",
+            "dialogue_opening": f"Need a clearer way to present {product_label}?",
+            "dialogue_body": "The basic copy structure is present, but the sales angle still needs refinement before it is ready for production output.",
+            "dialogue_cta": "Review the product details before using this in production.",
+        },
+        True,
+    )
+
+
+def _build_direct_commercial_copy(
+    product: dict[str, Any],
+    operator_product: OperatorProduct | None,
+) -> tuple[dict[str, str], bool]:
+    product_label = _safe_product_label(product)
+    language = _normalize_language(product)
+    category_key = _classify_direct_copy_category(product)
+    if operator_product:
+        candidate = {
+            "hook": _copy_value(operator_product.hook, ""),
+            "usp_1": _copy_value(operator_product.usp_1, ""),
+            "usp_2": _copy_value(operator_product.usp_2, ""),
+            "usp_3": _copy_value(operator_product.usp_3, ""),
+            "cta": _copy_value(operator_product.cta, ""),
+        }
+        if not _detect_bad_copy_fields(candidate) and all(candidate.values()):
+            overlay_copy = (
+                f"{product_label} nampak lebih jelas dalam demo ringkas."
+                if language == "MALAY"
+                else f"{product_label} looks clear and easy to understand in a short demo."
+            )
+            dialogue_opening = candidate["hook"]
+            dialogue_body = " ".join(
+                [candidate["usp_1"], candidate["usp_2"], candidate["usp_3"]]
+            )
+            return (
+                {
+                    **candidate,
+                    "overlay_copy": overlay_copy,
+                    "dialogue_opening": dialogue_opening,
+                    "dialogue_body": dialogue_body,
+                    "dialogue_cta": candidate["cta"],
+                },
+                False,
+            )
+    if language == "MALAY":
+        return _direct_copy_templates_malay(category_key, product_label)
+    return _direct_copy_templates_english(category_key, product_label)
+
+
+def _build_stealth_copy_signals(
     product: dict[str, Any],
     dialogue_metaphor_hint: str | None,
+    route_reason: str,
 ) -> dict[str, str]:
-    product_name = _normalize_text(product.get("product_display_name") or product.get("raw_product_title") or "This product")
-    angle = _normalize_text(product.get("copywriting_angle") or product.get("section_6_copy_hint") or "Grounded product-first framing")
-    handling = _normalize_text(product.get("handling_notes") or product.get("recommended_grip") or "Natural product handling")
-    scene = _normalize_text(product.get("scene_context") or "real-world context")
-    metaphor = _normalize_text(dialogue_metaphor_hint)
-    hook = f"{product_name} leads with {angle.lower()}."
-    if metaphor:
-        hook = f"{hook} Dialogue cue: {metaphor}."
+    metaphor = _normalize_text(dialogue_metaphor_hint) or "lapisan tenang untuk rutin harian"
+    product_label = _safe_product_label(product)
+    language = _normalize_language(product)
+    silo = _normalize_text(product.get("silo") or "STEALTH_UNSPECIFIED")
+    formula = _normalize_text(product.get("formula") or "STEALTH_DIALOGUE_SAFE")
+    if language == "MALAY":
+        hook = "Bila hari terasa panjang, ramai suka cari rutin yang rasa lebih teratur."
+        problem = "Bila mesej jualan terlalu terus terang, audiens cepat rasa menjauh."
+        agitate = "Nada yang keras boleh buat produk sensitif nampak tidak selesa untuk ditonton."
+        solution = f"Gunakan metafora dialog selamat seperti '{metaphor}' sambil kekalkan visual produk literal dan jelas."
+        usp_1 = f"{product_label} boleh dibingkaikan melalui rutin harian yang lebih lembut."
+        usp_2 = "Dialog boleh fokus pada disiplin, rasa tersusun, dan konsistensi tanpa claim sensitif."
+        usp_3 = "Semua mesej perlu semakan manusia sebelum masuk ke produksi."
+        cta = "Semak naratif dialog ini dulu sebelum guna untuk output video."
+    else:
+        hook = "When the day feels heavy, audiences respond better to a calmer routine-led story."
+        problem = "Sensitive products lose trust fast when the message sounds too direct."
+        agitate = "Hard-sell language can make the product feel unsafe or non-compliant on camera."
+        solution = f"Use a dialogue-safe metaphor such as '{metaphor}' while keeping the visual product demo literal and grounded."
+        usp_1 = f"{product_label} can be framed through a softer everyday-routine narrative."
+        usp_2 = "Dialogue can stay focused on discipline, rhythm, and routine without sensitive claims."
+        usp_3 = "Human review is still required before any production use."
+        cta = "Review this dialogue narrative before using it in video output."
     return {
+        "stealth_silo": silo,
+        "metaphor_family": "DIALOGUE_SAFE_ROUTINE",
+        "formula": formula,
         "hook": hook,
-        "usp_1": f"Use {product_name} with {handling.lower()}.",
-        "usp_2": f"Keep the demo grounded in {scene.lower()}.",
-        "usp_3": "Show the product clearly before any performance implication.",
-        "cta": f"Review the prompt package for {product_name} before any execution.",
-        "copy_readiness_status": "COPY_DERIVED_SUGGESTION",
+        "problem": problem,
+        "agitate": agitate,
+        "solution": solution,
+        "usp_1": usp_1,
+        "usp_2": usp_2,
+        "usp_3": usp_3,
+        "cta": cta,
+        "overlay_copy": metaphor,
+        "dialogue_opening": hook,
+        "dialogue_body": " ".join([problem, agitate, solution]),
+        "dialogue_cta": cta,
+        "human_review_reason": route_reason,
     }
+
+
+def _assess_copy_quality(
+    product: dict[str, Any],
+    route: str,
+    review_status: str,
+    copy_signals: dict[str, Any],
+    is_general_fallback: bool,
+) -> tuple[str, str, list[str], str]:
+    required_fields = ["hook", "usp_1", "usp_2", "usp_3", "cta"]
+    if any(not _normalize_text(copy_signals.get(field)) for field in required_fields):
+        return (
+            "COPY_MISSING",
+            "Copy fields are incomplete and cannot support production output yet.",
+            ["COPY_MISSING_TEXT_TO_VIDEO_NOT_READY"],
+            "COPY_MISSING",
+        )
+    if route in {"STEALTH", "REVIEW_REQUIRED"} or review_status == "REVIEW_REQUIRED":
+        return (
+            "REVIEW_REQUIRED",
+            "Sensitive or stealth copy stays review-gated even when dialogue-safe suggestions exist.",
+            ["COPY_ROUTE_REVIEW_REQUIRED"],
+            "NEEDS_REVIEW",
+        )
+    bad_phrases = _detect_bad_copy_fields(copy_signals)
+    if bad_phrases or is_general_fallback:
+        warnings = [COPY_QUALITY_WARNING]
+        return (
+            "FALLBACK_COPY_DRAFT",
+            "Copy exists, but it is still generic or internally framed and must be upgraded before production use.",
+            warnings,
+            "NEEDS_REVIEW",
+        )
+    return (
+        "COMMERCIAL_COPY_READY",
+        "Copy is consumer-facing, product-safe, and ready for production planning.",
+        [],
+        "READY",
+    )
 
 
 def build_copy_signal_response_for_product(
@@ -356,24 +765,38 @@ def build_copy_signal_response_for_product(
     product_scale_prompt, scale_truth_status, scale_warning, scale_warnings = _build_scale_lock(product)
     camera_capture_mode, ugc_camera_lock_prompt, cinematic_camera_prompt, camera_truth_status = _camera_fields(content_style_mode)
 
-    if operator_product and route == "DIRECT":
-        copy_signals = {
-            "hook": _copy_value(operator_product.hook, "Hook not found."),
-            "usp_1": _copy_value(operator_product.usp_1, "USP 1 not found."),
-            "usp_2": _copy_value(operator_product.usp_2, "USP 2 not found."),
-            "usp_3": _copy_value(operator_product.usp_3, "USP 3 not found."),
-            "cta": _copy_value(operator_product.cta, "CTA not found."),
-            "copy_readiness_status": "COPY_READY",
-        }
+    is_general_fallback = False
+    if route == "DIRECT":
+        copy_signals, is_general_fallback = _build_direct_commercial_copy(
+            product,
+            operator_product if route == "DIRECT" else None,
+        )
     else:
-        copy_signals = _derived_copy_signals(
+        copy_signals = _build_stealth_copy_signals(
             product,
             normalized_hint if route == "STEALTH" else None,
+            route_reason,
         )
+    copy_quality_status, copy_quality_detail, quality_warnings, text_to_video_status = _assess_copy_quality(
+        product,
+        route,
+        review_status,
+        copy_signals,
+        is_general_fallback,
+    )
+    copy_signals.update(
+        {
+            "copy_quality_status": copy_quality_status,
+            "copy_quality_detail": copy_quality_detail,
+            "warning": COPY_QUALITY_WARNING if COPY_QUALITY_WARNING in quality_warnings else None,
+        }
+    )
 
     warnings = list(scale_warnings)
+    warnings.extend(quality_warnings)
     if route != "DIRECT":
-        warnings.append("COPY_ROUTE_REVIEW_REQUIRED")
+        if "COPY_ROUTE_REVIEW_REQUIRED" not in warnings:
+            warnings.append("COPY_ROUTE_REVIEW_REQUIRED")
     if route == "DIRECT" and not operator_product:
         warnings.append("COPY_SIGNAL_DERIVED_OPERATOR_PACK_FALLBACK")
     if not ugc_camera_lock_prompt and _normalize_text(content_style_mode).upper() == "UGC_IPHONE":
@@ -400,12 +823,16 @@ def build_copy_signal_response_for_product(
         "ugc_camera_lock_prompt": ugc_camera_lock_prompt,
         "cinematic_camera_prompt": cinematic_camera_prompt or CINEMATIC_CAMERA_LOCK,
         "camera_truth_status": camera_truth_status,
+        "copy_quality_status": copy_quality_status,
+        "copy_quality_detail": copy_quality_detail,
     }
 
     return CopySignalGenerateResponse(
         scope=COPY_SIGNAL_SCOPE,
         route=route,
         review_status=review_status,
+        copy_quality_status=copy_quality_status,
+        text_to_video_readiness_status=text_to_video_status,
         content_style_mode=_normalize_text(content_style_mode).upper() or "UGC_IPHONE",
         authority_files_found=found_files,
         product_context=product_context,
@@ -452,6 +879,8 @@ async def generate_copy_signal_response(
             scope=COPY_SIGNAL_SCOPE,
             route="REVIEW_REQUIRED",
             review_status="REVIEW_REQUIRED",
+            copy_quality_status="COPY_MISSING",
+            text_to_video_readiness_status="COPY_MISSING",
             content_style_mode=request.content_style_mode,
             warnings=["PRODUCT_NOT_FOUND"],
             provenance={"scope": COPY_SIGNAL_SCOPE},
@@ -461,6 +890,8 @@ async def generate_copy_signal_response(
             scope=COPY_SIGNAL_SCOPE,
             route="REVIEW_REQUIRED",
             review_status="REVIEW_REQUIRED",
+            copy_quality_status="COPY_MISSING",
+            text_to_video_readiness_status="COPY_MISSING",
             content_style_mode=request.content_style_mode,
             warnings=["PRODUCT_CONTEXT_REQUIRED"],
             provenance={"scope": COPY_SIGNAL_SCOPE},

@@ -28,6 +28,8 @@ class CopySignalGenerateResponse(BaseModel):
     scope: str
     route: str
     review_status: str
+    copy_quality_status: str = ""
+    text_to_video_readiness_status: str = ""
     content_style_mode: str
     authority_files_found: list[str] = Field(default_factory=list)
     product_context: dict[str, Any] = Field(default_factory=dict)

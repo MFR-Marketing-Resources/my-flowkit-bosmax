@@ -32,7 +32,11 @@ def test_product_readiness_profile_cards_exist():
     assert "Video/Image Readiness" in form_source
     assert "recommended_first_mode" in form_source
     assert "Profile Truth Summary" in form_source
-    assert "copy_readiness_status" in form_source
+    assert "Copy Quality Status" in form_source
+    assert "copy_quality_status" in form_source
+    assert "Dialogue Opening" in form_source
+    assert "Dialogue Body" in form_source
+    assert "Dialogue CTA" in form_source
     assert "execution_readiness_status" in form_source
     assert "Product Scale Prompt" in form_source
     assert "Scale Truth Status" in form_source
@@ -68,6 +72,20 @@ def test_product_readiness_profile_supports_prompt_preview_handoff():
     assert "ugc_camera_lock_prompt" in form_source
     assert "cinematic_camera_prompt" in form_source
     assert "productReadinessProfile" in preview_page_source
+
+
+def test_product_readiness_profile_absents_internal_fallback_phrases_from_fixtures():
+    form_source = _read(
+        "dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx"
+    )
+
+    for token in [
+        "Review the prompt package for",
+        "Use Atlas Bottle with",
+        "Keep the demo grounded in",
+        "Show the product clearly before any performance implication",
+    ]:
+        assert token not in form_source
 
 
 def test_product_readiness_profile_contains_no_forbidden_execution_controls():

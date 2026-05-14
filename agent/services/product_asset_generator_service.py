@@ -266,8 +266,21 @@ def _build_product_context(
                 "usp_2": ugc_copy_signal.get("copy_signals", {}).get("usp_2"),
                 "usp_3": ugc_copy_signal.get("copy_signals", {}).get("usp_3"),
                 "cta": ugc_copy_signal.get("copy_signals", {}).get("cta"),
+                "overlay_copy": ugc_copy_signal.get("copy_signals", {}).get("overlay_copy"),
+                "dialogue_opening": ugc_copy_signal.get("copy_signals", {}).get("dialogue_opening"),
+                "dialogue_body": ugc_copy_signal.get("copy_signals", {}).get("dialogue_body"),
+                "dialogue_cta": ugc_copy_signal.get("copy_signals", {}).get("dialogue_cta"),
+                "problem": ugc_copy_signal.get("copy_signals", {}).get("problem"),
+                "agitate": ugc_copy_signal.get("copy_signals", {}).get("agitate"),
+                "solution": ugc_copy_signal.get("copy_signals", {}).get("solution"),
+                "stealth_silo": ugc_copy_signal.get("copy_signals", {}).get("stealth_silo"),
+                "metaphor_family": ugc_copy_signal.get("copy_signals", {}).get("metaphor_family"),
+                "formula": ugc_copy_signal.get("copy_signals", {}).get("formula"),
+                "human_review_reason": ugc_copy_signal.get("copy_signals", {}).get("human_review_reason"),
                 "copy_route": ugc_copy_signal.get("route"),
                 "copy_review_status": ugc_copy_signal.get("review_status"),
+                "copy_quality_status": ugc_copy_signal.get("copy_quality_status"),
+                "copy_quality_detail": ugc_copy_signal.get("copy_signals", {}).get("copy_quality_detail"),
                 "product_scale_prompt": ugc_copy_signal.get("product_context", {}).get("product_scale_prompt"),
                 "scale_truth_status": ugc_copy_signal.get("product_context", {}).get("scale_truth_status"),
                 "scale_warning": ugc_copy_signal.get("product_context", {}).get("scale_warning"),
@@ -297,15 +310,21 @@ def _build_copy_readiness_status(
     ugc_copy_signal: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     if ugc_copy_signal:
-        status = ugc_copy_signal.get("copy_signals", {}).get(
-            "copy_readiness_status", "COPY_MISSING"
+        status = ugc_copy_signal.get(
+            "copy_quality_status",
+            ugc_copy_signal.get("copy_signals", {}).get("copy_quality_status", "COPY_MISSING"),
         )
-        if status == "COPY_READY":
+        if status == "COMMERCIAL_COPY_READY":
             return "COPY_READY", "Hook, USP, and CTA are present."
-        if status == "COPY_DERIVED_SUGGESTION":
+        if status == "FALLBACK_COPY_DRAFT":
             return (
                 "COPY_DERIVED_SUGGESTION",
-                "COPY_DERIVED_SUGGESTION — hook/USP/CTA exist as derived prompt suggestions.",
+                "Fallback draft exists, but commercial copy quality still needs improvement before production.",
+            )
+        if status == "REVIEW_REQUIRED":
+            return (
+                "COPY_DERIVED_SUGGESTION",
+                "Review-gated copy exists, but a human must approve it before production.",
             )
     copy_keys = ("hook", "usp_1", "usp_2", "usp_3", "cta")
     missing = [key for key in copy_keys if not _has_copy_signal_value(product.get(key))]
@@ -371,6 +390,14 @@ def _build_truth_status(
     copy_readiness_status, copy_readiness_detail = _build_copy_readiness_status(
         product, ugc_copy_signal
     )
+    copy_quality_status = (ugc_copy_signal or {}).get(
+        "copy_quality_status",
+        (ugc_copy_signal or {}).get("copy_signals", {}).get("copy_quality_status", "COPY_MISSING"),
+    )
+    copy_quality_detail = (ugc_copy_signal or {}).get("copy_signals", {}).get(
+        "copy_quality_detail",
+        copy_readiness_detail,
+    )
     product_scale_prompt = (ugc_copy_signal or {}).get("product_context", {}).get(
         "product_scale_prompt"
     )
@@ -396,17 +423,25 @@ def _build_truth_status(
         and has_camera
         and bool(product_scale_prompt)
         and bool(ugc_camera_lock_prompt)
-        and copy_readiness_status in {"COPY_READY", "COPY_DERIVED_SUGGESTION"}
+        and copy_quality_status == "COMMERCIAL_COPY_READY"
         and not claim_safety.get("requires_human_review", False)
         and visual_dialogue_isolation.get("status") in {"ENFORCED", "PASS"}
     )
     image_ready = has_product and has_scene and bool(product_scale_prompt)
+    if copy_quality_status == "COPY_MISSING":
+        text_to_video_readiness_status = "COPY_MISSING"
+    elif text_to_video_ready:
+        text_to_video_readiness_status = "READY"
+    else:
+        text_to_video_readiness_status = "NEEDS_REVIEW"
     return {
         "overall_source_status": "DERIVED_FROM_PRODUCT_DATA",
         "profile_source_status": "EPHEMERAL_PREVIEW",
         "persistence_truth": "NOT_PERSISTED",
         "canonical_status": "NOT_CANONICAL",
         "product_mapping_status": product.get("mapping_status") or "MISSING",
+        "copy_quality_status": copy_quality_status,
+        "copy_quality_detail": copy_quality_detail,
         "copy_readiness_status": copy_readiness_status,
         "copy_readiness_detail": copy_readiness_detail,
         "character_readiness_status": _build_character_readiness_status(product),
@@ -422,7 +457,7 @@ def _build_truth_status(
         "camera_capture_mode": (ugc_copy_signal or {}).get("product_context", {}).get(
             "camera_capture_mode", "UGC_IPHONE_RAW"
         ),
-        "text_to_video_readiness_status": "READY" if text_to_video_ready else "NEEDS_REVIEW",
+        "text_to_video_readiness_status": text_to_video_readiness_status,
         "image_prompt_readiness_status": "READY_FOR_PROMPT" if image_ready else "NEEDS_REVIEW",
         "claim_safety_requires_human_review": claim_safety.get("requires_human_review", False),
         "visual_dialogue_isolation_status": visual_dialogue_isolation.get("status", "PASS"),
@@ -477,8 +512,14 @@ def _build_common_warnings(
     if request.platform or registry_hints["PLATFORM"].source_status != "REPO_VERIFIED":
         warnings.append("PLATFORM_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
     copy_readiness_status, _ = _build_copy_readiness_status(product, ugc_copy_signal)
+    copy_quality_status = (ugc_copy_signal or {}).get(
+        "copy_quality_status",
+        (ugc_copy_signal or {}).get("copy_signals", {}).get("copy_quality_status", "COPY_MISSING"),
+    )
     if copy_readiness_status == "COPY_MISSING":
         warnings.append("COPY_MISSING_TEXT_TO_VIDEO_NOT_READY")
+    if copy_quality_status == "FALLBACK_COPY_DRAFT":
+        warnings.append("COPY_QUALITY_FALLBACK_DRAFT")
     if ugc_copy_signal:
         scale_warning = ugc_copy_signal.get("product_context", {}).get("scale_warning")
         if scale_warning:
@@ -828,14 +869,19 @@ async def generate_product_asset_preview(
         )
 
     enriched_product = _build_enriched_product(product_seed or {})
+    copy_signal_product = dict(enriched_product)
+    if request.language:
+        copy_signal_product["language"] = request.language
+    if request.platform:
+        copy_signal_product["platform"] = request.platform
     registry_hints = await _load_registry_hints()
     provenance = _build_provenance(product_seed or {}, registry_hints)
     ugc_copy_signal = build_copy_signal_response_for_product(
-        enriched_product,
+        copy_signal_product,
         content_style_mode="UGC_IPHONE",
     ).model_dump()
     cinematic_copy_signal = build_copy_signal_response_for_product(
-        enriched_product,
+        copy_signal_product,
         content_style_mode="CINEMATIC_PRO",
     ).model_dump()
     product_context = _build_product_context(

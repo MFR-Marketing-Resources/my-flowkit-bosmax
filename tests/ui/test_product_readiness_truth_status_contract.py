@@ -31,7 +31,10 @@ def test_truth_summary_and_copy_readiness_labels_exist():
 
     assert "Profile Truth Summary" in form_source
     assert "profile_source_status" in form_source
-    assert "copy_readiness_status" in form_source
+    assert "copy_quality_status" in form_source
+    assert "COMMERCIAL_COPY_READY" in form_source
+    assert "FALLBACK_COPY_DRAFT" in form_source
+    assert "REVIEW_REQUIRED" in form_source
     assert "COPY_MISSING" in form_source
     assert "execution_readiness_status" in form_source
     assert "DRY_RUN_ONLY" in form_source
@@ -60,6 +63,7 @@ def test_result_panel_truth_copy_stays_preview_only_and_not_persisted():
 
     assert "not a persisted readiness profile" in result_source
     assert "Preview-only readiness profile. No persistence write happened." in result_source
+    assert "Copy Quality Status" in result_source
     assert "COPY_MISSING" in result_source
     assert "Not Chrome extension execution." in result_source
     assert "Not Google" in result_source
@@ -67,6 +71,9 @@ def test_result_panel_truth_copy_stays_preview_only_and_not_persisted():
     assert "Product Scale Prompt" in result_source
     assert "UGC iPhone Raw Camera Lock" in result_source
     assert "Cinematic Camera Prompt" in result_source
+    assert "Dialogue Opening" in result_source
+    assert "Dialogue Body" in result_source
+    assert "Dialogue CTA" in result_source
 
 
 def test_truth_status_ui_contains_no_forbidden_execution_controls():
