@@ -17,7 +17,9 @@ const DASHBOARD_ROUTES = {
 	},
 };
 
+const LAUNCHER_BUILD_LABEL = "PR25+route-hotfix";
 let navigationToken = 0;
+let selectedRouteKey = "operator";
 
 function setPortalState(state, detail = "") {
 	document.body.classList.toggle("ready", state === "ready");
@@ -38,6 +40,84 @@ function setPortalState(state, detail = "") {
 		errorEl.textContent =
 			"Dashboard iframe did not finish loading. Confirm the local agent is serving the selected BOSMAX dashboard route on http://127.0.0.1:8100.";
 	}
+
+	const runtimeStatusEl = document.getElementById("runtime-status-label");
+	if (runtimeStatusEl) {
+		runtimeStatusEl.textContent =
+			state === "ready"
+				? "Dashboard status: online"
+				: state === "error"
+					? "Dashboard status: offline"
+					: "Dashboard status: loading";
+	}
+}
+
+function setRuntimeCopy(id, value) {
+	const element = document.getElementById(id);
+	if (element) {
+		element.textContent = value;
+	}
+}
+
+function setLastAction(message) {
+	setRuntimeCopy("last-action-copy", message);
+}
+
+function setCurrentRoute(routeKey, routeUrl) {
+	selectedRouteKey = routeKey;
+	setRuntimeCopy("current-route-key", routeKey);
+	setRuntimeCopy("selected-route-url", routeUrl);
+}
+
+function setIframeSrcCopy(value) {
+	setRuntimeCopy("iframe-src-copy", value || "not-set");
+}
+
+function recordClick(routeLabel, routeUrl) {
+	const stamp = new Date().toLocaleString("en-GB", {
+		hour12: false,
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+	});
+	setRuntimeCopy("last-click-at", `${stamp}`);
+	setLastAction(`Clicked: ${routeLabel}`);
+	setRuntimeCopy("selected-route-url", routeUrl);
+}
+
+function openRouteInBrowserTab(route) {
+	if (!route) {
+		setLastAction("Open selected route failed: route is missing.");
+		return;
+	}
+
+	if (
+		typeof chrome !== "undefined" &&
+		chrome.tabs &&
+		typeof chrome.tabs.create === "function"
+	) {
+		chrome.tabs.create({ url: route.url }, () => {
+			if (chrome.runtime?.lastError) {
+				setLastAction(
+					`Open selected route failed: ${chrome.runtime.lastError.message}`,
+				);
+				return;
+			}
+			setLastAction(`Opened selected route in browser tab: ${route.label}`);
+		});
+		return;
+	}
+
+	if (typeof window.open === "function") {
+		window.open(route.url, "_blank");
+		setLastAction(`Opened selected route with window.open: ${route.label}`);
+		return;
+	}
+
+	setLastAction("Open selected route failed: no browser tab API available.");
 }
 
 function setActiveButton(routeKey) {
@@ -56,6 +136,7 @@ function navigateToRoute(routeKey) {
 	const routeLabelEl = document.getElementById("route-label");
 	if (!frame) {
 		setPortalState("error", "Dashboard iframe element is missing.");
+		setLastAction("Error: dashboard iframe element is missing.");
 		return;
 	}
 
@@ -65,10 +146,13 @@ function navigateToRoute(routeKey) {
 	let timeoutId = null;
 
 	setActiveButton(routeKey);
+	setCurrentRoute(routeKey, route.url);
+	recordClick(route.label, route.url);
 
 	if (urlEl) {
 		urlEl.textContent = route.url;
 	}
+	setIframeSrcCopy(route.url);
 	if (titleEl) {
 		titleEl.textContent = `Loading ${route.label.toLowerCase()}`;
 	}
@@ -82,6 +166,7 @@ function navigateToRoute(routeKey) {
 		if (timeoutId !== null) {
 			window.clearTimeout(timeoutId);
 		}
+		setLastAction(`Iframe loaded: ${route.label}`);
 		setPortalState("ready", `${route.label} online.`);
 	};
 
@@ -95,6 +180,7 @@ function navigateToRoute(routeKey) {
 		if (errorEl && message) {
 			errorEl.textContent = message;
 		}
+		setLastAction(`Iframe error: ${message || `${route.label} offline.`}`);
 		setPortalState("error", message || `${route.label} offline.`);
 	};
 
@@ -117,11 +203,50 @@ function navigateToRoute(routeKey) {
 	}, 12000);
 
 	frame.src = route.url;
+	setIframeSrcCopy(frame.src);
+	setLastAction(`Iframe src updated: ${route.url}`);
 	setPortalState("loading", `Connecting to ${route.label}...`);
 }
 
 function bootSidePortal() {
-	document.querySelectorAll("[data-dashboard-route]").forEach((button) => {
+	setRuntimeCopy(
+		"launcher-build-label",
+		`Launcher build: ${LAUNCHER_BUILD_LABEL}`,
+	);
+
+	const buttons = document.querySelectorAll("[data-dashboard-route]");
+	const frame = document.getElementById("dashboard-frame");
+	const openSelectedRouteButton = document.getElementById(
+		"btn-open-selected-route",
+	);
+
+	if (!frame) {
+		setPortalState("error", "Dashboard iframe element is missing.");
+		setLastAction("Error: dashboard iframe element is missing.");
+		return;
+	}
+
+	if (!buttons.length) {
+		setPortalState("error", "No launcher buttons were found in the side panel.");
+		setLastAction("Error: no launcher buttons were found.");
+		return;
+	}
+
+	if (!openSelectedRouteButton) {
+		setPortalState("error", "Open-route fallback control is missing.");
+		setLastAction("Error: open-route fallback control is missing.");
+		return;
+	}
+
+	openSelectedRouteButton.addEventListener("click", () => {
+		openRouteInBrowserTab(
+			DASHBOARD_ROUTES[selectedRouteKey] || DASHBOARD_ROUTES.operator,
+		);
+	});
+
+	setLastAction(`Launcher bindings attached: ${buttons.length} buttons ready.`);
+
+	buttons.forEach((button) => {
 		button.addEventListener("click", () => {
 			const routeKey =
 				button.getAttribute("data-dashboard-route") || "operator";

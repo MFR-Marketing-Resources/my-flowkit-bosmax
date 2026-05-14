@@ -80,6 +80,14 @@ const portalTitle = new FakeElement("portal-title");
 const routeLabel = new FakeElement("route-label");
 const portalStatus = new FakeElement("portal-status");
 const portalError = new FakeElement("portal-error");
+const launcherBuildLabel = new FakeElement("launcher-build-label");
+const runtimeStatusLabel = new FakeElement("runtime-status-label");
+const currentRouteKey = new FakeElement("current-route-key");
+const lastClickAt = new FakeElement("last-click-at");
+const lastActionCopy = new FakeElement("last-action-copy");
+const iframeSrcCopy = new FakeElement("iframe-src-copy");
+const selectedRouteUrl = new FakeElement("selected-route-url");
+const openSelectedRouteButton = new FakeButton("open-selected-route");
 const buttons = [
 	new FakeButton("operator"),
 	new FakeButton("product"),
@@ -98,6 +106,14 @@ const document = {
 			"route-label": routeLabel,
 			"portal-status": portalStatus,
 			"portal-error": portalError,
+			"launcher-build-label": launcherBuildLabel,
+			"runtime-status-label": runtimeStatusLabel,
+			"current-route-key": currentRouteKey,
+			"last-click-at": lastClickAt,
+			"last-action-copy": lastActionCopy,
+			"iframe-src-copy": iframeSrcCopy,
+			"selected-route-url": selectedRouteUrl,
+			"btn-open-selected-route": openSelectedRouteButton,
 		}[id] || null;
 	},
 	querySelectorAll(selector) {
@@ -113,6 +129,8 @@ const document = {
 
 let nextTimerId = 1;
 const timers = new Map();
+const tabCreates = [];
+const windowOpenCalls = [];
 const windowObj = {
 	setTimeout(handler, delay) {
 		const id = nextTimerId++;
@@ -122,12 +140,26 @@ const windowObj = {
 	clearTimeout(id) {
 		timers.delete(id);
 	},
+	open(url, target) {
+		windowOpenCalls.push({ url, target });
+	},
 };
 
 const context = vm.createContext({
 	console,
 	document,
 	window: windowObj,
+	chrome: {
+		runtime: {
+			lastError: null,
+		},
+		tabs: {
+			create({ url }, callback) {
+				tabCreates.push(url);
+				if (callback) callback();
+			},
+		},
+	},
 });
 
 const scriptPath = path.join(
@@ -161,6 +193,18 @@ assert(
 	frame.src === "http://127.0.0.1:8100/operator?portal=side",
 	"boot route should target operator dashboard",
 );
+assert(
+	launcherBuildLabel.textContent === "Launcher build: PR25+route-hotfix",
+	"build label should be visible after boot",
+);
+assert(
+	currentRouteKey.textContent === "operator",
+	"current route key should initialize to operator",
+);
+assert(
+	iframeSrcCopy.textContent === "http://127.0.0.1:8100/operator?portal=side",
+	"iframe src copy should initialize to operator URL",
+);
 
 frame.onload();
 flushTimers(250);
@@ -171,6 +215,10 @@ assert(
 assert(
 	portalStatus.textContent === "Operator Dashboard online.",
 	"operator status should report online after iframe load",
+);
+assert(
+	runtimeStatusLabel.textContent === "Dashboard status: online",
+	"runtime status should report online after iframe load",
 );
 
 flushTimers(12000);
@@ -193,9 +241,32 @@ const expectedRoutes = {
 for (const button of buttons) {
 	button.click();
 	assert(
+		currentRouteKey.textContent === button.getAttribute("data-dashboard-route"),
+		`current route key did not update for ${button.getAttribute("data-dashboard-route")}`,
+	);
+	assert(
 		frame.src === expectedRoutes[button.getAttribute("data-dashboard-route")],
 		`route click failed for ${button.getAttribute("data-dashboard-route")}`,
 	);
+	assert(
+		iframeSrcCopy.textContent === expectedRoutes[button.getAttribute("data-dashboard-route")],
+		`iframe src copy failed for ${button.getAttribute("data-dashboard-route")}`,
+	);
+	assert(
+		lastActionCopy.textContent === `Iframe src updated: ${expectedRoutes[button.getAttribute("data-dashboard-route")]}`,
+		`last action copy failed for ${button.getAttribute("data-dashboard-route")}`,
+	);
+	assert(lastClickAt.textContent !== "No click recorded", "last click timestamp was not updated");
 }
+
+openSelectedRouteButton.click();
+assert(
+	tabCreates.at(-1) === expectedRoutes.registry,
+	"open selected route fallback should use the currently selected route",
+);
+assert(
+	windowOpenCalls.length === 0,
+	"window.open fallback should not be used when chrome.tabs.create exists",
+);
 
 console.log("PASS side_panel route wiring harness");
