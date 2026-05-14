@@ -32,18 +32,94 @@
       overflow: hidden;
     }
 
-    body {
-      position: relative;
-    }
-
     .shell {
-      position: relative;
+      display: grid;
+      grid-template-rows: auto 1fr;
       width: 100%;
       height: 100%;
       background:
         radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 28%),
         radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.16), transparent 30%),
         var(--bg);
+    }
+
+    .launcher-bar {
+      position: relative;
+      z-index: 2;
+      border-bottom: 1px solid var(--border);
+      background: rgba(5, 8, 22, 0.92);
+      padding: 14px 16px 12px;
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+    }
+
+    .launcher-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .launcher-copy {
+      margin-top: 6px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text);
+    }
+
+    .launcher-truth {
+      margin-top: 8px;
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+
+    .launcher-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .launcher-btn {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.82);
+      color: var(--text);
+      padding: 10px 12px;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+    }
+
+    .launcher-btn:hover {
+      border-color: rgba(56, 189, 248, 0.45);
+      background: rgba(30, 41, 59, 0.9);
+      transform: translateY(-1px);
+    }
+
+    .launcher-btn.active {
+      border-color: rgba(56, 189, 248, 0.7);
+      background: rgba(56, 189, 248, 0.12);
+      color: #f8fafc;
+    }
+
+    .route-meta {
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .route-meta strong {
+      color: var(--text);
+    }
+
+    .frame-shell {
+      position: relative;
+      min-height: 0;
     }
 
     #dashboard-frame {
@@ -164,28 +240,45 @@
 </head>
 <body>
   <div class="shell">
-    <div class="veil" id="portal-veil" aria-live="polite">
-      <div class="card">
-        <div class="eyebrow">BOSMAX Side Portal</div>
-        <h1 class="title">Loading operator dashboard</h1>
-        <p class="body-copy">This side panel now hosts the BOSMAX operator dashboard directly, so generation can run side-by-side with Google Flow without tab switching.</p>
-        <div class="status-row">
-          <span class="pulse" aria-hidden="true"></span>
-          <span id="portal-status">Connecting to localhost dashboard...</span>
-        </div>
-        <div class="error-copy" id="portal-error">Dashboard iframe did not finish loading. Confirm the local agent is serving <strong>http://127.0.0.1:8100/operator?portal=side</strong>.</div>
-        <span class="frame-url" id="portal-url">http://127.0.0.1:8100/operator?portal=side</span>
+    <div class="launcher-bar">
+      <div class="launcher-title">BOSMAX Dashboard Launchers</div>
+      <div class="launcher-copy">Prompt tools open in BOSMAX Dashboard.</div>
+      <div class="launcher-truth">
+        Dashboard tools are preview-only. No Google Flow execution is triggered by these controls. Local BOSMAX dashboard must be running on 127.0.0.1:8100.
       </div>
+      <div class="launcher-grid">
+        <button type="button" class="launcher-btn active" data-dashboard-route="operator">Operator Dashboard</button>
+        <button type="button" class="launcher-btn" data-dashboard-route="product">Product Asset Generator</button>
+        <button type="button" class="launcher-btn" data-dashboard-route="prompt">Prompt Preview</button>
+        <button type="button" class="launcher-btn" data-dashboard-route="registry">Asset Registry</button>
+      </div>
+      <div class="route-meta">Current route: <strong id="route-label">Operator Dashboard</strong></div>
     </div>
 
-    <iframe
-      id="dashboard-frame"
-      title="BOSMAX Operator Dashboard"
-      src="http://127.0.0.1:8100/operator?portal=side"
-      allow="clipboard-write; clipboard-read"
-      referrerpolicy="no-referrer"
-      loading="eager"
-    ></iframe>
+    <div class="frame-shell">
+      <div class="veil" id="portal-veil" aria-live="polite">
+        <div class="card">
+          <div class="eyebrow">BOSMAX Side Portal</div>
+          <h1 class="title" id="portal-title">Loading operator dashboard</h1>
+          <p class="body-copy">This side panel hosts existing BOSMAX dashboard tools directly, so prompt planning can stay beside Google Flow without adding extension-native execution controls.</p>
+          <div class="status-row">
+            <span class="pulse" aria-hidden="true"></span>
+            <span id="portal-status">Connecting to localhost dashboard...</span>
+          </div>
+          <div class="error-copy" id="portal-error">Dashboard iframe did not finish loading. Confirm the local agent is serving <strong>http://127.0.0.1:8100/operator?portal=side</strong>.</div>
+          <span class="frame-url" id="portal-url">http://127.0.0.1:8100/operator?portal=side</span>
+        </div>
+      </div>
+
+      <iframe
+        id="dashboard-frame"
+        title="BOSMAX Operator Dashboard"
+        src="http://127.0.0.1:8100/operator?portal=side"
+        allow="clipboard-write; clipboard-read"
+        referrerpolicy="no-referrer"
+        loading="eager"
+      ></iframe>
+    </div>
   </div>
 
   <script src="side_panel.js"></script>

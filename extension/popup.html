@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Flow Kit</title>
@@ -65,6 +65,62 @@
     }
 
     #btn-panel:hover { background: var(--accent); }
+
+    .launcher-panel {
+      padding: 10px 12px 12px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(19,19,42,0.98), rgba(13,13,26,0.98));
+    }
+
+    .launcher-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .launcher-copy {
+      margin-top: 6px;
+      color: var(--text);
+      font-size: 10px;
+      line-height: 1.6;
+    }
+
+    .launcher-truth {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 9px;
+      line-height: 1.6;
+    }
+
+    .launcher-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .launcher-btn {
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(59,130,246,0.08);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: border-color 0.12s, background 0.12s, transform 0.12s;
+    }
+
+    .launcher-btn:hover {
+      background: rgba(59,130,246,0.18);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
 
     .log-header {
       display: flex;
@@ -230,8 +286,22 @@
 <body>
   <header>
     <div class="header-title"><span>Flow Kit</span> Extension</div>
-    <button id="btn-panel">Side Panel</button>
+    <button type="button" id="btn-panel">Side Panel</button>
   </header>
+
+  <section class="launcher-panel">
+    <div class="launcher-title">Dashboard Launchers</div>
+    <div class="launcher-copy">Prompt tools open in BOSMAX Dashboard.</div>
+    <div class="launcher-truth">
+      Dashboard tools are preview-only. No Google Flow execution is triggered by these controls. Local BOSMAX dashboard must be running on 127.0.0.1:8100.
+    </div>
+    <div class="launcher-grid">
+      <button type="button" class="launcher-btn" data-dashboard-route="product">Product Asset Generator</button>
+      <button type="button" class="launcher-btn" data-dashboard-route="prompt">Prompt Preview</button>
+      <button type="button" class="launcher-btn" data-dashboard-route="registry">Asset Registry</button>
+      <button type="button" class="launcher-btn" data-dashboard-route="operator">Operator Dashboard</button>
+    </div>
+  </section>
 
   <div class="log-header">
     Recent Requests
