@@ -27,9 +27,10 @@ type ProfileSourceStatus =
 	| "PERSISTED_PROFILE";
 type RecommendedMode = "TEXT_TO_VIDEO" | "FRAMES" | "INGREDIENTS" | "IMAGE";
 type CopyReadinessStatus =
-	| "COPY_READY"
+	| "COMMERCIAL_COPY_READY"
+	| "FALLBACK_COPY_DRAFT"
+	| "REVIEW_REQUIRED"
 	| "COPY_MISSING"
-	| "COPY_DERIVED_SUGGESTION";
 type CharacterReadinessStatus =
 	| "CHARACTER_CONCEPT_ONLY"
 	| "CHARACTER_ASSET_READY"
@@ -51,11 +52,18 @@ type ProfileCardRecord = {
 	camera_behavior: string;
 	story_style_label: string;
 	story_style: string;
+	copy_quality_status: string;
+	copy_route: string;
+	copy_review_status: string;
 	hook: string;
 	usp_1: string;
 	usp_2: string;
 	usp_3: string;
 	cta: string;
+	overlay_copy: string;
+	dialogue_opening: string;
+	dialogue_body: string;
+	dialogue_cta: string;
 	product_scale_prompt: string;
 	scale_truth_status: string;
 	scale_warning: string;
@@ -77,8 +85,8 @@ type ModeReadinessRecord = {
 type ProfileTruthSummary = {
 	profile_source_status: ProfileSourceStatus;
 	product_mapping_status: "READY" | "NEEDS_REVIEW" | "MISSING";
-	copy_readiness_status: CopyReadinessStatus;
-	copy_readiness_detail: string;
+	copy_quality_status: CopyReadinessStatus;
+	copy_quality_detail: string;
 	character_readiness_status: CharacterReadinessStatus;
 	asset_readiness_status: AssetReadinessStatus;
 	execution_readiness_status: ExecutionReadinessStatus;
@@ -197,6 +205,23 @@ function hasReadableSignal(value: string | null | undefined): boolean {
 	}
 	const normalized = value.trim();
 	return Boolean(normalized) && normalized !== "NOT_FOUND";
+}
+
+function hasBadCopyPhrase(value: string | null | undefined): boolean {
+	const normalized = value?.trim().toLowerCase() || "";
+	if (!normalized) {
+		return false;
+	}
+	return [
+		"review the prompt package",
+		"before any execution",
+		"keep the demo grounded",
+		"show the product clearly before",
+		"not generated asset",
+		"preview-only",
+		"prompt package",
+		"execution",
+	].some((phrase) => normalized.includes(phrase));
 }
 
 function statusTone(
@@ -361,7 +386,9 @@ function buildProfileWarnings({
 			warning.includes("INPUT_SLOT_ONLY") ||
 			warning.includes("NOT_CANONICAL") ||
 			warning.includes("NOT_READY") ||
-			warning.includes("PREVIEW_ONLY")
+			warning.includes("PREVIEW_ONLY") ||
+			warning.includes("COPY_QUALITY") ||
+			warning.includes("COPY_ROUTE")
 		) {
 			combined.add(warning);
 		}
@@ -384,17 +411,28 @@ function buildCopyReadinessStatus(
 	const backendStatus = result?.truth_status?.copy_readiness_status as
 		| CopyReadinessStatus
 		| undefined;
-	if (backendStatus === "COPY_READY") {
+	const backendQualityStatus = result?.truth_status?.copy_quality_status as
+		| CopyReadinessStatus
+		| undefined;
+	const resolvedBackendStatus = backendQualityStatus || backendStatus;
+	if (resolvedBackendStatus === "COMMERCIAL_COPY_READY") {
 		return {
-			status: "COPY_READY",
-			detail: "Hook, USP, and CTA are present for prompt planning.",
+			status: "COMMERCIAL_COPY_READY",
+			detail: "Consumer-facing hook, USP, and CTA are ready for production planning.",
 		};
 	}
-	if (backendStatus === "COPY_DERIVED_SUGGESTION") {
+	if (resolvedBackendStatus === "FALLBACK_COPY_DRAFT") {
 		return {
-			status: "COPY_DERIVED_SUGGESTION",
+			status: "FALLBACK_COPY_DRAFT",
 			detail:
-				"COPY_DERIVED_SUGGESTION — hook/USP/CTA exist as derived prompt suggestions.",
+				"This copy is a fallback draft and must be improved before production video output.",
+		};
+	}
+	if (resolvedBackendStatus === "REVIEW_REQUIRED") {
+		return {
+			status: "REVIEW_REQUIRED",
+			detail:
+				"Copy exists but remains review-gated because the route is stealth or otherwise sensitive.",
 		};
 	}
 	const signals = [
@@ -428,15 +466,24 @@ function buildCopyReadinessStatus(
 		.filter(([, value]) => !hasReadableSignal(value))
 		.map(([label]) => label);
 	if (missing.length === 0) {
+		const hasFallbackPhrase = signals.some(([, value]) =>
+			hasBadCopyPhrase(value),
+		);
+		if (hasFallbackPhrase) {
+			return {
+				status: "FALLBACK_COPY_DRAFT",
+				detail:
+					"This copy is a fallback draft and must be improved before production video output.",
+			};
+		}
 		return {
-			status: "COPY_READY",
-			detail: "Hook, USP, and CTA are present for prompt planning.",
+			status: "COMMERCIAL_COPY_READY",
+			detail: "Consumer-facing hook, USP, and CTA are ready for production planning.",
 		};
 	}
 	return {
 		status: "COPY_MISSING",
-		detail:
-			"COPY_MISSING — hook/USP/CTA must be generated before TEXT_TO_VIDEO can be READY.",
+		detail: "COPY_MISSING — hook/USP/CTA must be generated before TEXT_TO_VIDEO can be READY.",
 	};
 }
 
@@ -516,6 +563,15 @@ function buildProfileCard({
 		selectedProduct,
 		result,
 	});
+	const copyQualityStatus =
+		(result?.truth_status?.copy_quality_status as string | undefined) ||
+		(result?.product_context.copy_quality_status as string | undefined) ||
+		"COPY_MISSING";
+	const copyRoute =
+		(result?.product_context.copy_route as string | undefined) || "NOT_FOUND";
+	const copyReviewStatus =
+		(result?.product_context.copy_review_status as string | undefined) ||
+		"NOT_FOUND";
 	const hook =
 		(result?.product_context.hook as string | undefined) ||
 		selectedCopySignals.hook ||
@@ -536,6 +592,16 @@ function buildProfileCard({
 		(result?.product_context.cta as string | undefined) ||
 		selectedCopySignals.cta ||
 		"NOT_FOUND";
+	const overlayCopy =
+		(result?.product_context.overlay_copy as string | undefined) || "NOT_FOUND";
+	const dialogueOpening =
+		(result?.product_context.dialogue_opening as string | undefined) ||
+		"NOT_FOUND";
+	const dialogueBody =
+		(result?.product_context.dialogue_body as string | undefined) ||
+		"NOT_FOUND";
+	const dialogueCta =
+		(result?.product_context.dialogue_cta as string | undefined) || "NOT_FOUND";
 	const productScalePrompt =
 		(result?.product_context.product_scale_prompt as string | undefined) ||
 		"NOT_FOUND";
@@ -569,11 +635,18 @@ function buildProfileCard({
 			story_style_label: "dialogue_style",
 			story_style:
 				"Short-form spoken hook, direct product demo language, and conversational CTA cadence.",
+			copy_quality_status: copyQualityStatus,
+			copy_route: copyRoute,
+			copy_review_status: copyReviewStatus,
 			hook,
 			usp_1: usp1,
 			usp_2: usp2,
 			usp_3: usp3,
 			cta,
+			overlay_copy: overlayCopy,
+			dialogue_opening: dialogueOpening,
+			dialogue_body: dialogueBody,
+			dialogue_cta: dialogueCta,
 			product_scale_prompt: productScalePrompt,
 			scale_truth_status: scaleTruthStatus,
 			scale_warning: scaleWarning,
@@ -598,11 +671,18 @@ function buildProfileCard({
 		story_style_label: "voiceover_style",
 		story_style:
 			"Measured premium voiceover rhythm with compositional pauses that support visual hero framing.",
+		copy_quality_status: copyQualityStatus,
+		copy_route: copyRoute,
+		copy_review_status: copyReviewStatus,
 		hook,
 		usp_1: usp1,
 		usp_2: usp2,
 		usp_3: usp3,
 		cta,
+		overlay_copy: overlayCopy,
+		dialogue_opening: dialogueOpening,
+		dialogue_body: dialogueBody,
+		dialogue_cta: dialogueCta,
 		product_scale_prompt: productScalePrompt,
 		scale_truth_status: scaleTruthStatus,
 		scale_warning: scaleWarning,
@@ -650,7 +730,10 @@ function buildModeReadiness({
 	const hasStyle = Boolean(draft.camera_style || selectedProduct?.camera_style);
 	const textStatus =
 		(result?.truth_status?.text_to_video_readiness_status as string | undefined) ||
-		(hasProduct && sceneReady && cameraReady && copyReadiness === "COPY_READY"
+		(hasProduct &&
+		sceneReady &&
+		cameraReady &&
+		copyReadiness === "COMMERCIAL_COPY_READY"
 			? "READY"
 			: "NEEDS_REVIEW");
 	const imageStatus =
@@ -730,11 +813,11 @@ function buildProfileTruthSummary({
 				| "MISSING") ||
 			selectedProduct?.mapping_status ||
 			(selectedProduct ? "NEEDS_REVIEW" : "MISSING"),
-		copy_readiness_status:
-			(result?.truth_status?.copy_readiness_status as CopyReadinessStatus) ||
+		copy_quality_status:
+			(result?.truth_status?.copy_quality_status as CopyReadinessStatus) ||
 			copyReadiness.status,
-		copy_readiness_detail:
-			(result?.truth_status?.copy_readiness_detail as string) ||
+		copy_quality_detail:
+			(result?.truth_status?.copy_quality_detail as string) ||
 			copyReadiness.detail,
 		character_readiness_status:
 			(result?.truth_status
@@ -1137,11 +1220,39 @@ export default function ProductAssetGeneratorForm({
 										label={profile.story_style_label}
 										value={profile.story_style}
 									/>
+									<ProfileField
+										label="Copy Quality Status"
+										value={profile.copy_quality_status}
+									/>
+									<ProfileField
+										label="Copy Route"
+										value={profile.copy_route}
+									/>
+									<ProfileField
+										label="Copy Review Status"
+										value={profile.copy_review_status}
+									/>
 									<ProfileField label="hook" value={profile.hook} />
 									<ProfileField label="USP 1" value={profile.usp_1} />
 									<ProfileField label="USP 2" value={profile.usp_2} />
 									<ProfileField label="USP 3" value={profile.usp_3} />
 									<ProfileField label="CTA" value={profile.cta} />
+									<ProfileField
+										label="Overlay Copy"
+										value={profile.overlay_copy}
+									/>
+									<ProfileField
+										label="Dialogue Opening"
+										value={profile.dialogue_opening}
+									/>
+									<ProfileField
+										label="Dialogue Body"
+										value={profile.dialogue_body}
+									/>
+									<ProfileField
+										label="Dialogue CTA"
+										value={profile.dialogue_cta}
+									/>
 									<ProfileField
 										label="Product Scale Prompt"
 										value={profile.product_scale_prompt}
@@ -1175,6 +1286,11 @@ export default function ProductAssetGeneratorForm({
 										value={profile.product_physics}
 									/>
 								</div>
+								{profile.copy_quality_status === "FALLBACK_COPY_DRAFT" ? (
+									<div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-3 text-[11px] text-amber-100">
+										This copy is a fallback draft and must be improved before production video output.
+									</div>
+								) : null}
 								<div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
 									<div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
 										<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200">
@@ -1233,8 +1349,8 @@ export default function ProductAssetGeneratorForm({
 								value={profileTruthSummary.product_mapping_status}
 							/>
 							<ProfileField
-								label="copy_readiness_status"
-								value={profileTruthSummary.copy_readiness_status}
+								label="copy_quality_status"
+								value={profileTruthSummary.copy_quality_status}
 							/>
 							<ProfileField
 								label="character_readiness_status"
@@ -1281,8 +1397,8 @@ export default function ProductAssetGeneratorForm({
 								value={profileTruthSummary.persistence_truth}
 							/>
 							<ProfileField
-								label="copy_readiness_detail"
-								value={profileTruthSummary.copy_readiness_detail}
+								label="copy_quality_detail"
+								value={profileTruthSummary.copy_quality_detail}
 							/>
 						</div>
 					</section>

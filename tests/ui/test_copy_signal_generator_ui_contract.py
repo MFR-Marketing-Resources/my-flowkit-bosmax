@@ -18,6 +18,12 @@ def test_copy_signal_generator_ui_shows_scale_and_camera_lock_fields():
 
     combined = form_source + "\n" + result_source
     for token in [
+        "Copy Quality Status",
+        "Copy Route",
+        "Copy Review Status",
+        "Dialogue Opening",
+        "Dialogue Body",
+        "Dialogue CTA",
         "Product Scale Prompt",
         "Scale Truth Status",
         "Camera Capture Mode",
@@ -44,3 +50,17 @@ def test_copy_signal_generator_ui_contains_no_forbidden_execution_controls():
     combined = "\n".join(_read(path) for path in targets)
     for token in banned_tokens:
         assert token not in combined
+
+
+def test_copy_signal_generator_ui_shows_fallback_warning():
+    combined = "\n".join(
+        [
+            _read("dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx"),
+            _read("dashboard/src/components/product-asset-generator/ProductAssetGeneratorResultPanel.tsx"),
+        ]
+    )
+
+    assert (
+        "This copy is a fallback draft and must be improved before production video output."
+        in combined
+    )

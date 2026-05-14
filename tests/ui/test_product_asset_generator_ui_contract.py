@@ -42,9 +42,13 @@ def test_product_asset_generator_form_locks_dry_run_only_true_and_shows_truth_co
     assert "Use this profile in Prompt Preview" in form_source
     assert "Profile Source Status" in form_source
     assert "Profile Truth Summary" in form_source
+    assert "Copy Quality Status" in form_source
     assert "Product Scale Prompt" in form_source
     assert "UGC iPhone Raw Camera Lock" in form_source
     assert "Cinematic Camera Prompt" in form_source
+    assert "Dialogue Opening" in form_source
+    assert "Dialogue Body" in form_source
+    assert "Dialogue CTA" in form_source
     assert "EPHEMERAL_PREVIEW" in form_source
     assert "PRODUCT_ROW_DERIVED" in form_source
     assert "NOT_PERSISTED" in form_source
@@ -63,6 +67,7 @@ def test_product_asset_generator_result_panel_displays_warnings_provenance_and_f
         "warning_summary",
         "provenance",
         "truth_status",
+        "copy_quality_status",
         "copy_readiness_status",
         "scale_truth_status",
         "camera_truth_status",

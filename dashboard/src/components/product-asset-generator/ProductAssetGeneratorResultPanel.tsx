@@ -105,6 +105,22 @@ export default function ProductAssetGeneratorResultPanel({
 								),
 							],
 							[
+								"Copy Quality Status",
+								String(
+									result.truth_status.copy_quality_status || "COPY_MISSING",
+								),
+							],
+							[
+								"Copy Route",
+								String(result.product_context.copy_route || "NOT_FOUND"),
+							],
+							[
+								"Copy Review Status",
+								String(
+									result.product_context.copy_review_status || "NOT_FOUND",
+								),
+							],
+							[
 								"Copy Readiness",
 								String(
 									result.truth_status.copy_readiness_status || "COPY_MISSING",
@@ -169,6 +185,12 @@ export default function ProductAssetGeneratorResultPanel({
 							Not a generated asset. Not Chrome extension execution. Not Google
 							Flow ready.
 						</div>
+						{result.truth_status.copy_quality_status ===
+						"FALLBACK_COPY_DRAFT" ? (
+							<div className="mt-2">
+								This copy is a fallback draft and must be improved before production video output.
+							</div>
+						) : null}
 						{result.truth_status.copy_readiness_status === "COPY_MISSING" ? (
 							<div className="mt-2">
 								COPY_MISSING — hook/USP/CTA must be generated before
@@ -185,6 +207,35 @@ export default function ProductAssetGeneratorResultPanel({
 
 					<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
 						{[
+							[
+								"Hook",
+								String(result.product_context.hook || "NOT_FOUND"),
+							],
+							[
+								"USP 1",
+								String(result.product_context.usp_1 || "NOT_FOUND"),
+							],
+							[
+								"USP 2",
+								String(result.product_context.usp_2 || "NOT_FOUND"),
+							],
+							[
+								"USP 3",
+								String(result.product_context.usp_3 || "NOT_FOUND"),
+							],
+							["CTA", String(result.product_context.cta || "NOT_FOUND")],
+							[
+								"Dialogue Opening",
+								String(result.product_context.dialogue_opening || "NOT_FOUND"),
+							],
+							[
+								"Dialogue Body",
+								String(result.product_context.dialogue_body || "NOT_FOUND"),
+							],
+							[
+								"Dialogue CTA",
+								String(result.product_context.dialogue_cta || "NOT_FOUND"),
+							],
 							[
 								"Product Scale Prompt",
 								String(result.product_context.product_scale_prompt || "NOT_FOUND"),

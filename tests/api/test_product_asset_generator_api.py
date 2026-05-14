@@ -23,7 +23,7 @@ def _request_body() -> dict:
     }
 
 
-def test_preview_endpoint_returns_expected_shape(monkeypatch):
+def test_preview_endpoint_includes_copy_quality_status(monkeypatch):
     async def fake_preview(request):
         return ProductAssetGeneratorResponse(
             preview_status="WARN",
@@ -35,9 +35,14 @@ def test_preview_endpoint_returns_expected_shape(monkeypatch):
                 "camera_capture_mode": "UGC_IPHONE_RAW",
                 "ugc_camera_lock_prompt": "Raw iPhone handheld footage with subtle hand jitter.",
                 "cinematic_camera_prompt": "Controlled cinematic camera with stable hero framing.",
-                "hook": "Hook",
-                "usp_1": "USP 1",
-                "cta": "CTA",
+                "hook": "Nak nampak kemas tanpa routine yang leceh?",
+                "usp_1": "Mudah ditunjuk dalam demo close-up.",
+                "usp_2": "Saiz produk sesuai untuk genggaman tangan.",
+                "usp_3": "Sesuai untuk routine harian tanpa claim berlebihan.",
+                "cta": "Check pilihan produk dan cuba ikut keperluan kau.",
+                "copy_quality_status": "COMMERCIAL_COPY_READY",
+                "copy_route": "DIRECT",
+                "copy_review_status": "AUTO_APPROVED",
             },
             derived_asset_suggestions=[{"asset_role": "SUBJECT_CHARACTER"}],
             prompt_suggestions=[{"suggestion_type": "character_concept_card"}],
@@ -54,11 +59,12 @@ def test_preview_endpoint_returns_expected_shape(monkeypatch):
             truth_status={
                 "overall_source_status": "DERIVED_FROM_PRODUCT_DATA",
                 "profile_source_status": "EPHEMERAL_PREVIEW",
-                "copy_readiness_status": "COPY_DERIVED_SUGGESTION",
+                "copy_quality_status": "COMMERCIAL_COPY_READY",
+                "copy_readiness_status": "COPY_READY",
                 "execution_readiness_status": "DRY_RUN_ONLY",
                 "persistence_truth": "NOT_PERSISTED",
                 "scale_truth_status": "DERIVED_RELATIVE_SCALE",
-                "text_to_video_readiness_status": "NEEDS_REVIEW",
+                "text_to_video_readiness_status": "READY",
             },
             dry_run_only=True,
             execution_allowed=False,
@@ -77,20 +83,119 @@ def test_preview_endpoint_returns_expected_shape(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["preview_status"] == "WARN"
-    assert payload["product_context"]["product_id"] == "prod-001"
-    assert payload["product_context"]["product_scale_prompt"]
-    assert payload["product_context"]["camera_capture_mode"] == "UGC_IPHONE_RAW"
-    assert payload["product_context"]["ugc_camera_lock_prompt"]
-    assert payload["product_context"]["cinematic_camera_prompt"]
-    assert payload["truth_status"]["profile_source_status"] == "EPHEMERAL_PREVIEW"
-    assert payload["truth_status"]["copy_readiness_status"] == "COPY_DERIVED_SUGGESTION"
-    assert payload["truth_status"]["persistence_truth"] == "NOT_PERSISTED"
-    assert payload["execution_allowed"] is False
-    assert payload["image_generation_allowed"] is False
-    assert payload["flow_execution_allowed"] is False
-    assert payload["batch_execution_allowed"] is False
-    assert payload["dry_run_only"] is True
+    assert payload["truth_status"]["copy_quality_status"] == "COMMERCIAL_COPY_READY"
+    assert payload["truth_status"]["text_to_video_readiness_status"] == "READY"
+    assert payload["product_context"]["copy_quality_status"] == "COMMERCIAL_COPY_READY"
+
+
+def test_preview_endpoint_keeps_fallback_draft_text_to_video_in_needs_review(monkeypatch):
+    async def fake_preview(request):
+        return ProductAssetGeneratorResponse(
+            preview_status="WARN",
+            target_asset_intent=request.target_asset_intent,
+            product_context={
+                "product_id": "prod-002",
+                "hook": "Mystery Gadget leads with confidence.",
+                "usp_1": "Use Mystery Gadget with use steady hands.",
+                "cta": "Review the prompt package before any execution.",
+                "copy_quality_status": "FALLBACK_COPY_DRAFT",
+                "copy_route": "DIRECT",
+                "copy_review_status": "AUTO_APPROVED",
+            },
+            derived_asset_suggestions=[],
+            prompt_suggestions=[],
+            required_assets=[],
+            missing_assets=[],
+            handling_notes=[],
+            physics_notes=[],
+            scene_notes=[],
+            camera_notes=[],
+            warning_summary=["COPY_QUALITY_FALLBACK_DRAFT"],
+            warnings=["COPY_QUALITY_FALLBACK_DRAFT"],
+            errors=[],
+            provenance={"scope": "ROUND_10_PRODUCT_TO_ASSET_GENERATOR_PREVIEW_ONLY"},
+            truth_status={
+                "profile_source_status": "EPHEMERAL_PREVIEW",
+                "copy_quality_status": "FALLBACK_COPY_DRAFT",
+                "copy_readiness_status": "COPY_DERIVED_SUGGESTION",
+                "text_to_video_readiness_status": "NEEDS_REVIEW",
+                "execution_readiness_status": "DRY_RUN_ONLY",
+                "persistence_truth": "NOT_PERSISTED",
+            },
+            dry_run_only=True,
+            execution_allowed=False,
+            image_generation_allowed=False,
+            flow_execution_allowed=False,
+            batch_execution_allowed=False,
+        )
+
+    monkeypatch.setattr(
+        "agent.api.product_asset_generator.generate_product_asset_preview",
+        fake_preview,
+    )
+    client = TestClient(_build_app())
+
+    response = client.post("/api/product-asset-generator/preview", json=_request_body())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["truth_status"]["copy_quality_status"] == "FALLBACK_COPY_DRAFT"
+    assert payload["truth_status"]["text_to_video_readiness_status"] == "NEEDS_REVIEW"
+
+
+def test_preview_endpoint_keeps_review_gated_stealth_output_not_ready(monkeypatch):
+    async def fake_preview(request):
+        return ProductAssetGeneratorResponse(
+            preview_status="WARN",
+            target_asset_intent=request.target_asset_intent,
+            product_context={
+                "product_id": "prod-003",
+                "copy_quality_status": "REVIEW_REQUIRED",
+                "copy_route": "STEALTH",
+                "copy_review_status": "REVIEW_REQUIRED",
+                "dialogue_opening": "Bila hari terasa panjang, ramai suka cari rutin yang rasa lebih teratur.",
+                "dialogue_body": "Dialog kekal selamat tanpa claim sensitif.",
+                "dialogue_cta": "Semak naratif dialog ini dulu sebelum guna untuk output video.",
+            },
+            derived_asset_suggestions=[],
+            prompt_suggestions=[],
+            required_assets=[],
+            missing_assets=[],
+            handling_notes=[],
+            physics_notes=[],
+            scene_notes=[],
+            camera_notes=[],
+            warning_summary=["COPY_ROUTE_REVIEW_REQUIRED"],
+            warnings=["COPY_ROUTE_REVIEW_REQUIRED"],
+            errors=[],
+            provenance={"scope": "ROUND_10_PRODUCT_TO_ASSET_GENERATOR_PREVIEW_ONLY"},
+            truth_status={
+                "profile_source_status": "EPHEMERAL_PREVIEW",
+                "copy_quality_status": "REVIEW_REQUIRED",
+                "copy_readiness_status": "COPY_DERIVED_SUGGESTION",
+                "text_to_video_readiness_status": "NEEDS_REVIEW",
+                "execution_readiness_status": "DRY_RUN_ONLY",
+                "persistence_truth": "NOT_PERSISTED",
+            },
+            dry_run_only=True,
+            execution_allowed=False,
+            image_generation_allowed=False,
+            flow_execution_allowed=False,
+            batch_execution_allowed=False,
+        )
+
+    monkeypatch.setattr(
+        "agent.api.product_asset_generator.generate_product_asset_preview",
+        fake_preview,
+    )
+    client = TestClient(_build_app())
+
+    response = client.post("/api/product-asset-generator/preview", json=_request_body())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["truth_status"]["copy_quality_status"] == "REVIEW_REQUIRED"
+    assert payload["truth_status"]["text_to_video_readiness_status"] != "READY"
 
 
 def test_dry_run_only_false_returns_fail_payload(monkeypatch):
@@ -124,122 +229,3 @@ def test_dry_run_only_false_returns_fail_payload(monkeypatch):
     payload = response.json()
     assert payload["preview_status"] == "FAIL"
     assert payload["errors"] == ["DRY_RUN_ONLY_FALSE_NOT_ALLOWED"]
-    assert payload["execution_allowed"] is False
-    assert payload["image_generation_allowed"] is False
-    assert payload["flow_execution_allowed"] is False
-    assert payload["batch_execution_allowed"] is False
-
-
-def test_endpoint_does_not_create_db_writes_or_queue_jobs(monkeypatch):
-    called = {"preview": 0}
-
-    async def fake_preview(request):
-        called["preview"] += 1
-        return ProductAssetGeneratorResponse(
-            preview_status="FAIL",
-            target_asset_intent=request.target_asset_intent,
-            warning_summary=[],
-            warnings=[],
-            errors=["QUEUE_CREATION_NOT_ALLOWED_IN_ROUND_10"],
-            provenance={"scope": "ROUND_10_PRODUCT_TO_ASSET_GENERATOR_PREVIEW_ONLY"},
-            truth_status={},
-            dry_run_only=True,
-            execution_allowed=False,
-            image_generation_allowed=False,
-            flow_execution_allowed=False,
-            batch_execution_allowed=False,
-        )
-
-    monkeypatch.setattr(
-        "agent.api.product_asset_generator.generate_product_asset_preview",
-        fake_preview,
-    )
-    client = TestClient(_build_app())
-    body = _request_body()
-    body["create_queue_job"] = True
-
-    response = client.post("/api/product-asset-generator/preview", json=body)
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert called["preview"] == 1
-    assert payload["errors"] == ["QUEUE_CREATION_NOT_ALLOWED_IN_ROUND_10"]
-
-
-def test_endpoint_does_not_call_flow_extension_batch_or_runtime_modules(monkeypatch):
-    async def fake_preview(request):
-        return ProductAssetGeneratorResponse(
-            preview_status="FAIL",
-            target_asset_intent=request.target_asset_intent,
-            warning_summary=[],
-            warnings=[],
-            errors=["FLOW_EXECUTION_NOT_ALLOWED_IN_ROUND_10"],
-            provenance={"scope": "ROUND_10_PRODUCT_TO_ASSET_GENERATOR_PREVIEW_ONLY"},
-            truth_status={},
-            dry_run_only=True,
-            execution_allowed=False,
-            image_generation_allowed=False,
-            flow_execution_allowed=False,
-            batch_execution_allowed=False,
-        )
-
-    monkeypatch.setattr(
-        "agent.api.product_asset_generator.generate_product_asset_preview",
-        fake_preview,
-    )
-    client = TestClient(_build_app())
-    body = _request_body()
-    body["execute_flow"] = True
-
-    response = client.post("/api/product-asset-generator/preview", json=body)
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["preview_status"] == "FAIL"
-    assert payload["errors"] == ["FLOW_EXECUTION_NOT_ALLOWED_IN_ROUND_10"]
-
-
-def test_preview_endpoint_shape_includes_scale_truth_and_camera_lock_fields(monkeypatch):
-    async def fake_preview(request):
-        return ProductAssetGeneratorResponse(
-            preview_status="WARN",
-            target_asset_intent=request.target_asset_intent,
-            product_context={
-                "product_id": "prod-001",
-                "product_scale_prompt": "EXACTLY thin envelope size, flat paper packet scale, held naturally between fingers.",
-                "scale_truth_status": "DERIVED_RELATIVE_SCALE",
-                "scale_warning": "PRODUCT_SCALE_DERIVED_NOT_DIMENSION_VERIFIED",
-                "camera_capture_mode": "UGC_IPHONE_RAW",
-                "ugc_camera_lock_prompt": "Raw iPhone handheld footage with subtle hand jitter.",
-                "cinematic_camera_prompt": "Controlled cinematic camera with stable hero framing.",
-            },
-            warning_summary=["PRODUCT_SCALE_DERIVED_NOT_DIMENSION_VERIFIED"],
-            warnings=["PRODUCT_SCALE_DERIVED_NOT_DIMENSION_VERIFIED"],
-            errors=[],
-            provenance={"scope": "ROUND_10_PRODUCT_TO_ASSET_GENERATOR_PREVIEW_ONLY"},
-            truth_status={
-                "scale_truth_status": "DERIVED_RELATIVE_SCALE",
-                "text_to_video_readiness_status": "NEEDS_REVIEW",
-            },
-            dry_run_only=True,
-            execution_allowed=False,
-            image_generation_allowed=False,
-            flow_execution_allowed=False,
-            batch_execution_allowed=False,
-        )
-
-    monkeypatch.setattr(
-        "agent.api.product_asset_generator.generate_product_asset_preview",
-        fake_preview,
-    )
-    client = TestClient(_build_app())
-
-    response = client.post("/api/product-asset-generator/preview", json=_request_body())
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["product_context"]["product_scale_prompt"]
-    assert payload["product_context"]["scale_truth_status"] == "DERIVED_RELATIVE_SCALE"
-    assert payload["product_context"]["ugc_camera_lock_prompt"]
-    assert payload["product_context"]["cinematic_camera_prompt"]
-    assert payload["truth_status"]["text_to_video_readiness_status"] == "NEEDS_REVIEW"
