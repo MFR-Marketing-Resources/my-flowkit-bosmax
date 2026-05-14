@@ -56,6 +56,12 @@ type ProfileCardRecord = {
 	usp_2: string;
 	usp_3: string;
 	cta: string;
+	product_scale_prompt: string;
+	scale_truth_status: string;
+	scale_warning: string;
+	camera_capture_mode: string;
+	ugc_camera_lock_prompt: string;
+	cinematic_camera_prompt: string;
 	product_handling: string;
 	product_physics: string;
 	warnings: string[];
@@ -370,16 +376,53 @@ function buildProfileWarnings({
 
 function buildCopyReadinessStatus(
 	selectedCopySignals: Record<string, string | null | undefined>,
+	result: ProductAssetGeneratorResponse | null,
 ): {
 	status: CopyReadinessStatus;
 	detail: string;
 } {
+	const backendStatus = result?.truth_status?.copy_readiness_status as
+		| CopyReadinessStatus
+		| undefined;
+	if (backendStatus === "COPY_READY") {
+		return {
+			status: "COPY_READY",
+			detail: "Hook, USP, and CTA are present for prompt planning.",
+		};
+	}
+	if (backendStatus === "COPY_DERIVED_SUGGESTION") {
+		return {
+			status: "COPY_DERIVED_SUGGESTION",
+			detail:
+				"COPY_DERIVED_SUGGESTION — hook/USP/CTA exist as derived prompt suggestions.",
+		};
+	}
 	const signals = [
-		["hook", selectedCopySignals.hook],
-		["usp_1", selectedCopySignals.usp_1],
-		["usp_2", selectedCopySignals.usp_2],
-		["usp_3", selectedCopySignals.usp_3],
-		["cta", selectedCopySignals.cta],
+		[
+			"hook",
+			(result?.product_context.hook as string | undefined) ||
+				selectedCopySignals.hook,
+		],
+		[
+			"usp_1",
+			(result?.product_context.usp_1 as string | undefined) ||
+				selectedCopySignals.usp_1,
+		],
+		[
+			"usp_2",
+			(result?.product_context.usp_2 as string | undefined) ||
+				selectedCopySignals.usp_2,
+		],
+		[
+			"usp_3",
+			(result?.product_context.usp_3 as string | undefined) ||
+				selectedCopySignals.usp_3,
+		],
+		[
+			"cta",
+			(result?.product_context.cta as string | undefined) ||
+				selectedCopySignals.cta,
+		],
 	] as const;
 	const missing = signals
 		.filter(([, value]) => !hasReadableSignal(value))
@@ -473,6 +516,46 @@ function buildProfileCard({
 		selectedProduct,
 		result,
 	});
+	const hook =
+		(result?.product_context.hook as string | undefined) ||
+		selectedCopySignals.hook ||
+		"NOT_FOUND";
+	const usp1 =
+		(result?.product_context.usp_1 as string | undefined) ||
+		selectedCopySignals.usp_1 ||
+		"NOT_FOUND";
+	const usp2 =
+		(result?.product_context.usp_2 as string | undefined) ||
+		selectedCopySignals.usp_2 ||
+		"NOT_FOUND";
+	const usp3 =
+		(result?.product_context.usp_3 as string | undefined) ||
+		selectedCopySignals.usp_3 ||
+		"NOT_FOUND";
+	const cta =
+		(result?.product_context.cta as string | undefined) ||
+		selectedCopySignals.cta ||
+		"NOT_FOUND";
+	const productScalePrompt =
+		(result?.product_context.product_scale_prompt as string | undefined) ||
+		"NOT_FOUND";
+	const scaleTruthStatus =
+		(result?.truth_status?.scale_truth_status as string | undefined) ||
+		(result?.product_context.scale_truth_status as string | undefined) ||
+		"SCALE_NOT_FOUND";
+	const scaleWarning =
+		(result?.product_context.scale_warning as string | undefined) || "NONE";
+	const ugcCameraLockPrompt =
+		(result?.product_context.ugc_camera_lock_prompt as string | undefined) ||
+		"NOT_FOUND";
+	const cinematicCameraPrompt =
+		(result?.product_context.cinematic_camera_prompt as string | undefined) ||
+		"NOT_FOUND";
+	const cameraCaptureMode =
+		variant === "UGC_IPHONE"
+			? ((result?.product_context.camera_capture_mode as string | undefined) ||
+				"UGC_IPHONE_RAW")
+			: "CINEMATIC_PRO_CONTROLLED";
 
 	if (variant === "UGC_IPHONE") {
 		return {
@@ -486,11 +569,17 @@ function buildProfileCard({
 			story_style_label: "dialogue_style",
 			story_style:
 				"Short-form spoken hook, direct product demo language, and conversational CTA cadence.",
-			hook: selectedCopySignals.hook || "NOT_FOUND",
-			usp_1: selectedCopySignals.usp_1 || "NOT_FOUND",
-			usp_2: selectedCopySignals.usp_2 || "NOT_FOUND",
-			usp_3: selectedCopySignals.usp_3 || "NOT_FOUND",
-			cta: selectedCopySignals.cta || "NOT_FOUND",
+			hook,
+			usp_1: usp1,
+			usp_2: usp2,
+			usp_3: usp3,
+			cta,
+			product_scale_prompt: productScalePrompt,
+			scale_truth_status: scaleTruthStatus,
+			scale_warning: scaleWarning,
+			camera_capture_mode: cameraCaptureMode,
+			ugc_camera_lock_prompt: ugcCameraLockPrompt,
+			cinematic_camera_prompt: cinematicCameraPrompt,
 			product_handling: productHandling,
 			product_physics: productPhysics,
 			warnings,
@@ -509,11 +598,17 @@ function buildProfileCard({
 		story_style_label: "voiceover_style",
 		story_style:
 			"Measured premium voiceover rhythm with compositional pauses that support visual hero framing.",
-		hook: selectedCopySignals.hook || "NOT_FOUND",
-		usp_1: selectedCopySignals.usp_1 || "NOT_FOUND",
-		usp_2: selectedCopySignals.usp_2 || "NOT_FOUND",
-		usp_3: selectedCopySignals.usp_3 || "NOT_FOUND",
-		cta: selectedCopySignals.cta || "NOT_FOUND",
+		hook,
+		usp_1: usp1,
+		usp_2: usp2,
+		usp_3: usp3,
+		cta,
+		product_scale_prompt: productScalePrompt,
+		scale_truth_status: scaleTruthStatus,
+		scale_warning: scaleWarning,
+		camera_capture_mode: cameraCaptureMode,
+		ugc_camera_lock_prompt: ugcCameraLockPrompt,
+		cinematic_camera_prompt: cinematicCameraPrompt,
 		product_handling: productHandling,
 		product_physics: productPhysics,
 		warnings,
@@ -526,11 +621,13 @@ function buildModeReadiness({
 	draft,
 	inlinePayload,
 	copyReadiness,
+	result,
 }: {
 	selectedProduct: Product | null;
 	draft: ProductAssetGeneratorDraft;
 	inlinePayload: Record<string, unknown> | null;
 	copyReadiness: CopyReadinessStatus;
+	result: ProductAssetGeneratorResponse | null;
 }): {
 	records: ModeReadinessRecord[];
 	recommended_first_mode: RecommendedMode;
@@ -552,11 +649,13 @@ function buildModeReadiness({
 	);
 	const hasStyle = Boolean(draft.camera_style || selectedProduct?.camera_style);
 	const textStatus =
-		hasProduct && sceneReady && cameraReady && copyReadiness === "COPY_READY"
+		(result?.truth_status?.text_to_video_readiness_status as string | undefined) ||
+		(hasProduct && sceneReady && cameraReady && copyReadiness === "COPY_READY"
 			? "READY"
-			: "NEEDS_REVIEW";
+			: "NEEDS_REVIEW");
 	const imageStatus =
-		hasProduct && sceneReady && hasStyle ? "READY_FOR_PROMPT" : "NEEDS_REVIEW";
+		(result?.truth_status?.image_prompt_readiness_status as string | undefined) ||
+		(hasProduct && sceneReady && hasStyle ? "READY_FOR_PROMPT" : "NEEDS_REVIEW");
 	const framesStatus = hasImage ? "NEEDS_ASSET" : "NEEDS_ASSET";
 	const ingredientsStatus =
 		hasProduct && sceneReady && hasStyle
@@ -575,9 +674,9 @@ function buildModeReadiness({
 				key: "TEXT_TO_VIDEO",
 				status: textStatus,
 				detail:
-					copyReadiness === "COPY_READY"
-						? "READY only when product, scene, camera, and copy signals are present."
-						: "NEEDS_REVIEW while hook/USP/CTA are missing.",
+					textStatus === "READY"
+						? "READY only when product, scene, camera, product scale, camera lock, and copy signals are present."
+						: "NEEDS_REVIEW while product scale, camera lock, or copy signals are missing or routed for review.",
 			},
 			{
 				key: "FRAMES",
@@ -659,11 +758,13 @@ function buildPromptPreviewHandoff({
 	selectedProduct,
 	recommendedMode,
 	inlinePayload,
+	result,
 }: {
 	draft: ProductAssetGeneratorDraft;
 	selectedProduct: Product | null;
 	recommendedMode: RecommendedMode;
 	inlinePayload: Record<string, unknown> | null;
+	result: ProductAssetGeneratorResponse | null;
 }) {
 	const productPayload =
 		inlinePayload ||
@@ -677,6 +778,15 @@ function buildPromptPreviewHandoff({
 					camera_style: draft.camera_style || selectedProduct.camera_style,
 					camera_behavior:
 						draft.camera_behavior || selectedProduct.camera_behavior,
+					product_scale_prompt:
+						(result?.product_context.product_scale_prompt as string | undefined) ||
+						undefined,
+					ugc_camera_lock_prompt:
+						(result?.product_context.ugc_camera_lock_prompt as string | undefined) ||
+						undefined,
+					cinematic_camera_prompt:
+						(result?.product_context.cinematic_camera_prompt as string | undefined) ||
+						undefined,
 					trigger_id: selectedProduct.trigger_id,
 					silo: selectedProduct.silo,
 					formula: selectedProduct.formula,
@@ -835,13 +945,14 @@ export default function ProductAssetGeneratorForm({
 	const profileVisible = Boolean(
 		selectedProduct || inlinePayload || draft.product_payload || result,
 	);
-	const copyReadiness = buildCopyReadinessStatus(selectedCopySignals);
+	const copyReadiness = buildCopyReadinessStatus(selectedCopySignals, result);
 	const { records: modeReadiness, recommended_first_mode } = buildModeReadiness(
 		{
 			selectedProduct,
 			draft,
 			inlinePayload,
 			copyReadiness: copyReadiness.status,
+			result,
 		},
 	);
 	const assetReadinessStatus: AssetReadinessStatus =
@@ -954,6 +1065,7 @@ export default function ProductAssetGeneratorForm({
 											selectedProduct,
 											recommendedMode: recommended_first_mode,
 											inlinePayload,
+											result,
 										}),
 									})
 								}
@@ -1030,6 +1142,30 @@ export default function ProductAssetGeneratorForm({
 									<ProfileField label="USP 2" value={profile.usp_2} />
 									<ProfileField label="USP 3" value={profile.usp_3} />
 									<ProfileField label="CTA" value={profile.cta} />
+									<ProfileField
+										label="Product Scale Prompt"
+										value={profile.product_scale_prompt}
+									/>
+									<ProfileField
+										label="Scale Truth Status"
+										value={profile.scale_truth_status}
+									/>
+									<ProfileField
+										label="Camera Capture Mode"
+										value={profile.camera_capture_mode}
+									/>
+									<ProfileField
+										label="UGC iPhone Raw Camera Lock"
+										value={profile.ugc_camera_lock_prompt}
+									/>
+									<ProfileField
+										label="Cinematic Camera Prompt"
+										value={profile.cinematic_camera_prompt}
+									/>
+									<ProfileField
+										label="Scale Warning"
+										value={profile.scale_warning}
+									/>
 									<ProfileField
 										label="product_handling"
 										value={profile.product_handling}
@@ -1111,6 +1247,34 @@ export default function ProductAssetGeneratorForm({
 							<ProfileField
 								label="execution_readiness_status"
 								value={profileTruthSummary.execution_readiness_status}
+							/>
+							<ProfileField
+								label="scale_truth_status"
+								value={
+									(result?.truth_status?.scale_truth_status as string | undefined) ||
+									"SCALE_NOT_FOUND"
+								}
+							/>
+							<ProfileField
+								label="camera_truth_status"
+								value={
+									(result?.truth_status?.camera_truth_status as string | undefined) ||
+									"CAMERA_LOCK_MISSING"
+								}
+							/>
+							<ProfileField
+								label="text_to_video_readiness_status"
+								value={
+									(result?.truth_status?.text_to_video_readiness_status as string | undefined) ||
+									"NEEDS_REVIEW"
+								}
+							/>
+							<ProfileField
+								label="image_prompt_readiness_status"
+								value={
+									(result?.truth_status?.image_prompt_readiness_status as string | undefined) ||
+									"NEEDS_REVIEW"
+								}
 							/>
 							<ProfileField
 								label="persistence_truth"

@@ -89,6 +89,20 @@ def test_unknown_manual_product_needs_review():
     assert "category" in result["missing_fields"]
 
 
+def test_inline_product_without_source_does_not_crash_source_label_resolution():
+    result = resolve_product_mapping(
+        product={
+            "raw_product_title": "Atlas Lip Balm Original",
+            "product_display_name": "Atlas Lip Balm",
+            "type": "Lip Balm",
+        },
+        product_name="Atlas Lip Balm Original",
+        source_hint=None,
+    )
+
+    assert result["mapping_source"] in {"rule", "heuristic", "manual", "fallback"}
+
+
 def test_explicit_override_marks_mapping_source_explicit():
     result = resolve_product_mapping(
         product_name="Mystery artisanal item",
