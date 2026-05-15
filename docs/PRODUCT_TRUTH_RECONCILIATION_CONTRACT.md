@@ -1,9 +1,10 @@
 # BOSMAX Product Truth Reconciliation Contract
 
-**Status:** Architecture locked for Phase 1 implementation  
+**Status:** Architecture locked for Phase 1 implementation after Antigravity contract review  
 **Contract scope:** `PRODUCT_TRUTH_RECONCILIATION_CONTRACT`  
 **First coding scope:** `PRODUCT_TRUTH_PROFILE_READ_ONLY_BUILDER`  
 **Base checkpoint:** after PR #41 merge (`47eb8f7995547a526c646c8c94c311c53805ee66`)  
+**Review status:** `APPROVE_WITH_PATCHES` resolved by this contract revision  
 
 ---
 
@@ -113,6 +114,32 @@ Rule:
 FastMoss source taxonomy must become a source anchor, not a volatile field that keyword rules can casually override.
 ```
 
+#### FastMoss primary anchor specificity
+
+For FastMoss Lane, the Primary Anchor is defined as follows:
+
+```text
+Primary anchor, when present:
+- `Category` column from the `Copywriting_Product_Map` sheet or equivalent FastMoss source row.
+- `Sub Category` / `Subcategory` column from the `Copywriting_Product_Map` sheet or equivalent FastMoss source row.
+- `Product Type` / `Type` / `Type Angle` column when available.
+
+Fallback anchor:
+- `fastmoss_source_file` name or file/category hint, for example `Carpet_List.xlsx`, `Health_Products.xlsx`, or equivalent source pack label.
+```
+
+Phase 1 must not assume these columns always exist. The builder must report:
+
+```text
+SOURCE_ANCHOR_PRESENT
+SOURCE_ANCHOR_PARTIAL
+SOURCE_ANCHOR_MISSING
+SOURCE_ANCHOR_WEAK_FILE_HINT_ONLY
+SOURCE_ANCHOR_COLUMN_NOT_FOUND
+```
+
+If the sheet or column name differs, Phase 1 must surface the discovered field name in provenance instead of silently guessing.
+
 ### 4.2 State 2 — TikTok Shop Link Lane
 
 User provides a TikTok Shop link.
@@ -180,6 +207,7 @@ The Product Truth Profile is the computed evidence object produced before Produc
   "visual_evidence": {},
   "commerce_evidence": {},
   "claim_evidence": {},
+  "negative_constraints": {},
   "reconciliation": {},
   "final_output_preview": {}
 }
@@ -208,8 +236,10 @@ The Product Truth Profile is the computed evidence object produced before Produc
   "source_category": "string | null",
   "source_subcategory": "string | null",
   "source_product_type": "string | null",
-  "source_anchor_status": "PRESENT | PARTIAL | MISSING | UNVERIFIED",
-  "source_anchor_origin": "FASTMOSS_ROW | FASTMOSS_WORKBOOK | TIKTOKSHOP_DOM | MANUAL_DECLARED | UNKNOWN"
+  "source_anchor_status": "PRESENT | PARTIAL | MISSING | UNVERIFIED | WEAK_FILE_HINT_ONLY | COLUMN_NOT_FOUND",
+  "source_anchor_origin": "FASTMOSS_ROW | FASTMOSS_WORKBOOK | FASTMOSS_SOURCE_FILE_HINT | TIKTOKSHOP_DOM | MANUAL_DECLARED | UNKNOWN",
+  "source_anchor_columns": [],
+  "source_anchor_notes": []
 }
 ```
 
@@ -232,6 +262,7 @@ The Product Truth Profile is the computed evidence object produced before Produc
   "raw_title": "string | null",
   "normalized_title": "string | null",
   "description": "string | null",
+  "description_sources": [],
   "extracted_keywords": [],
   "keyword_matches": [],
   "negative_exclusion_matches": []
@@ -245,11 +276,31 @@ The Product Truth Profile is the computed evidence object produced before Produc
   "raw_specs": {},
   "normalized_specs": {},
   "dimension_evidence": "string | null",
+  "dimension_normalized_cm": {
+    "length_cm": "number | null",
+    "width_cm": "number | null",
+    "height_cm": "number | null",
+    "display": "L x W x H cm | null"
+  },
   "material_evidence": "string | null",
   "power_voltage_evidence": "string | null",
   "spec_status": "PRESENT | PARTIAL | MISSING"
 }
 ```
+
+Dimension evidence must be normalized to centimeters before any comparison against scale thresholds.
+
+Examples:
+
+```text
+Raw: 9.6cm x 5.7cm x 3cm
+Normalized: length_cm=9.6, width_cm=5.7, height_cm=3.0, display="9.6 x 5.7 x 3.0 cm"
+
+Raw: 96mm x 57mm x 30mm
+Normalized: length_cm=9.6, width_cm=5.7, height_cm=3.0, display="9.6 x 5.7 x 3.0 cm"
+```
+
+If only two dimensions are available, store the known axes and set the missing axis to null. Do not invent missing dimensions.
 
 #### `visual_evidence`
 
@@ -291,13 +342,47 @@ The Product Truth Profile is the computed evidence object produced before Produc
 }
 ```
 
+Claim tokens must be extracted from all available non-visual sources before OCR exists:
+
+```text
+- product title
+- product display name
+- product short name
+- description
+- product specs
+- source category/subcategory/type when relevant
+- workbook copywriting/category/angle columns when available
+- manual declared claims
+```
+
+If OCR/vision is not configured, do not infer claim tokens from images. When OCR is later configured, image text may become an additional claim source.
+
+#### `negative_constraints`
+
+```json
+{
+  "category_boundary_locks": [],
+  "forbidden_family_transitions": [],
+  "negative_keyword_rules": [],
+  "matched_negative_constraints": []
+}
+```
+
+Examples:
+
+```text
+If anchor is Baby Care / Baby Hygiene, fragrance keywords must not move the product to beauty_fragrance.
+If anchor is Electronics / Wearable, male/fashion/gender tokens must not move the product to MALE_HEALTH_SENSITIVE.
+If anchor is Beauty / Makeup, matte/powder tokens must not move the product to HOME_TEXTILE.
+```
+
 #### `reconciliation`
 
 ```json
 {
   "contradiction_flags": [],
   "evidence_scores": {},
-  "authority_decision": "SOURCE_ANCHOR | TIKTOKSHOP_DOM | MANUAL_DECLARED | KEYWORD_RULE | IMAGE_CORROBORATED | REVIEW_REQUIRED",
+  "authority_decision": "SOURCE_ANCHOR | TIKTOKSHOP_DOM | MANUAL_DECLARED | KEYWORD_RULE | IMAGE_CORROBORATED | RECONCILIATION_FAILED | REVIEW_REQUIRED",
   "confidence_score": "number",
   "confidence_label": "HIGH | MEDIUM | LOW | NEEDS_REVIEW",
   "warnings": [],
@@ -365,15 +450,45 @@ Rules:
 - If image is `ANALYZED + HIGH`, it can strongly support package form, scale, visible dimensions, and physical state.
 - If claim tokens exist, claim gate may require review even when product family is correct.
 
-Contradiction flags include:
+### 7.1 Required contradiction flag IDs
+
+Implement these exact contradiction/review IDs so telemetry, tests, and future agents use stable names:
 
 ```text
-KEYWORD_VS_ANCHOR_TAXONOMY
-MANUAL_INPUT_CONTRADICTION_REVIEW_REQUIRED
-IMAGE_VS_SOURCE_PHYSICS_CONFLICT
-SOURCE_ANCHOR_MISSING
-SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE
-TIKTOKSHOP_EXTRACTION_INCOMPLETE
+FLAG_KEYWORD_VS_ANCHOR_TAXONOMY
+FLAG_MANUAL_INPUT_CONTRADICTION_REVIEW_REQUIRED
+FLAG_IMAGE_VS_SOURCE_PHYSICS_CONFLICT
+FLAG_SOURCE_ANCHOR_MISSING
+FLAG_SOURCE_ANCHOR_WEAK_FILE_HINT_ONLY
+FLAG_SOURCE_ANCHOR_COLUMN_NOT_FOUND
+FLAG_SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE
+FLAG_TIKTOKSHOP_EXTRACTION_INCOMPLETE
+FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION
+FLAG_NEGATIVE_CONSTRAINT_MATCHED
+FLAG_CLAIM_REVIEW_REQUIRED
+```
+
+### 7.2 Category Boundary Lock
+
+The builder must implement Category Boundary Lock.
+
+If a keyword match attempts to map a product to a family outside the defined source anchor, the builder must not silently accept the keyword result.
+
+Required behavior:
+
+```text
+authority_decision = RECONCILIATION_FAILED
+confidence_label = LOW or NEEDS_REVIEW
+contradiction_flags includes FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION
+contradiction_flags includes FLAG_KEYWORD_VS_ANCHOR_TAXONOMY
+```
+
+Example:
+
+```text
+Anchor: Baby Care / Baby Hygiene
+Keyword candidate: fragrance -> beauty_fragrance
+Result: reject keyword family transition, force review/low confidence.
 ```
 
 ---
@@ -539,8 +654,12 @@ Before any coding task in this architecture:
 - Image analysis truth is represented honestly.
 - Manual fields are represented as declared evidence, not absolute truth.
 - Source anchors are clearly separated from keywords.
-- Contradiction flags are computed.
+- Contradiction flags are computed using the required stable flag IDs.
 - Confidence label is computed without single-keyword HIGH inflation.
+- Category Boundary Lock is enforced.
+- Negative constraints are represented and matched when applicable.
+- Dimension evidence is normalized to centimeters when present.
+- Claim tokens are extracted from available non-visual text/spec/manual sources.
 - Current false-mapping examples surface as contradiction/review cases.
 - Existing Product Intelligence and Product Asset Generator tests still pass.
 - Dashboard build passes if dashboard types are touched.
@@ -552,6 +671,7 @@ Required proof examples:
 - Smartwatch: must not silently become `MALE_HEALTH_SENSITIVE` with HIGH confidence.
 - Normal fashion/pants: must not silently become `MALE_HEALTH_SENSITIVE` with HIGH confidence.
 - One true male-health sensitive sample: must still be representable as sensitive when evidence is real.
+- Power-saving plug-in device: dimension evidence must normalize to cm and claim gate must surface review posture for energy-saving / surge / bill-reduction claims when such text is present.
 
 ---
 
