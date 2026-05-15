@@ -12,6 +12,16 @@ class ProductIntelligenceResolveRequest(BaseModel):
     product_payload: dict[str, Any] | None = None
 
 
+class ProductImageAnalysisResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    product_id: str | None = None
+    product_payload: dict[str, Any] | None = None
+    image_url: str | None = None
+    local_image_path: str | None = None
+    raw_product_title: str | None = None
+
+
 class ProductIntelligenceSalesMetrics(BaseModel):
     sold_count: int | None = None
     shop_count: int | None = None
@@ -24,8 +34,14 @@ class ProductIntelligenceImageAnalysis(BaseModel):
     image_url: str | None = None
     local_image_path: str | None = None
     detected_package: str | None = None
-    detected_text: str | None = None
-    confidence: str = "NOT_VERIFIED"
+    detected_text: list[str] = Field(default_factory=list)
+    detected_brand: str | None = None
+    detected_size_text: str | None = None
+    detected_form_factor: str | None = None
+    visual_confidence: str = "NOT_VERIFIED"
+    evidence: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    provider: str = "not_configured"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

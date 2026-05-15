@@ -138,6 +138,19 @@ export default function ProductAssetGeneratorResultPanel({
 }: {
 	result: ProductAssetGeneratorResponse | null;
 }) {
+	const imageAnalysis = (result?.product_context?.image_analysis ?? null) as
+		| {
+				status?: string;
+				provider?: string;
+				visual_confidence?: string;
+				detected_package?: string | null;
+				detected_size_text?: string | null;
+				detected_text?: string[];
+				warnings?: string[];
+				evidence?: string[];
+		  }
+		| null;
+
 	return (
 		<section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
 			<div className="text-sm font-semibold text-slate-100">
@@ -345,9 +358,71 @@ export default function ProductAssetGeneratorResultPanel({
 										"CAMERA_LOCK_MISSING",
 								),
 							],
+							[
+								"Image Analysis Status",
+								String(
+									result.truth_status.image_analysis_status ||
+										result.product_context.image_analysis_status ||
+										imageAnalysis?.status ||
+										"NOT_AVAILABLE",
+								),
+							],
+							[
+								"Image Analysis Provider",
+								String(
+									result.truth_status.image_analysis_provider ||
+										result.product_context.image_analysis_provider ||
+										imageAnalysis?.provider ||
+										"not_configured",
+								),
+							],
+							[
+								"Visual Confidence",
+								String(
+									result.truth_status.image_analysis_visual_confidence ||
+										result.product_context.image_analysis_visual_confidence ||
+										imageAnalysis?.visual_confidence ||
+										"NOT_VERIFIED",
+								),
+							],
+							[
+								"Detected Package",
+								String(
+									imageAnalysis?.detected_package ||
+										"NOT_DETECTED",
+								),
+							],
+							[
+								"Detected Size Text",
+								String(
+									imageAnalysis?.detected_size_text ||
+										"NOT_DETECTED",
+								),
+							],
 						].map(([label, value]) => (
 							<DataCard key={label} label={label} value={String(value)} />
 						))}
+					</div>
+
+					<div className="bosmax-auto-fit-grid">
+						<DataCard
+							label="Detected Text"
+							value={Array.isArray(imageAnalysis?.detected_text)
+								? imageAnalysis.detected_text.join(", ") || "NOT_DETECTED"
+								: "NOT_DETECTED"}
+						/>
+						<DataCard
+							label="Image Analysis Warnings"
+							value={Array.isArray(imageAnalysis?.warnings)
+								? imageAnalysis.warnings.join(", ") || "NO_WARNINGS"
+								: "NO_WARNINGS"}
+						/>
+						<DataCard
+							label="Image Analysis Evidence"
+							value={Array.isArray(imageAnalysis?.evidence)
+								? imageAnalysis.evidence.join(", ") || "NO_EVIDENCE"
+								: "NO_EVIDENCE"}
+						/>
 					</div>
 
 					<div className="bosmax-auto-fit-grid">

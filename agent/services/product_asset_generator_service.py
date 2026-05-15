@@ -477,6 +477,7 @@ def _build_truth_status(
         if isinstance(product.get("product_intelligence"), dict)
         else resolve_product_intelligence_profile(product)
     )
+    image_analysis = intelligence.get("image_analysis") or {}
     copy_readiness_status, copy_readiness_detail = _build_copy_readiness_status(
         product, ugc_copy_signal
     )
@@ -567,7 +568,10 @@ def _build_truth_status(
         "claim_gate": claim_gate,
         "claim_tokens": claim_tokens,
         "sales_metrics": intelligence.get("sales_metrics", {}),
-        "image_analysis_status": (intelligence.get("image_analysis") or {}).get("status"),
+        "image_analysis": image_analysis,
+        "image_analysis_status": image_analysis.get("status"),
+        "image_analysis_provider": image_analysis.get("provider"),
+        "image_analysis_visual_confidence": image_analysis.get("visual_confidence"),
         "intelligence_confidence": intelligence.get("confidence"),
         "intelligence_status": intelligence.get("intelligence_status"),
         "copy_quality_status": copy_quality_status,
@@ -629,6 +633,8 @@ def _build_warning_buckets(
         "PHYSICS_HANDLING_DERIVED_FROM_PRODUCT_RULES",
     ]
     truth_warnings: list[str] = ["PRODUCT_DIMENSIONS_NOT_REPO_VERIFIED"]
+    for warning in intelligence.get("image_analysis", {}).get("warnings", []):
+        _unique_append(truth_warnings, str(warning))
     if not _has_product_image(product):
         truth_warnings.append("PRODUCT_IMAGE_MISSING")
     if request.gender or request.ethnicity or request.age_range:

@@ -301,8 +301,14 @@ export interface Product {
 		image_url: string | null;
 		local_image_path: string | null;
 		detected_package: string | null;
-		detected_text: string | null;
-		confidence: string;
+		detected_text: string[];
+		detected_brand?: string | null;
+		detected_size_text?: string | null;
+		detected_form_factor?: string | null;
+		visual_confidence: string;
+		evidence?: string[];
+		warnings?: string[];
+		provider: string;
 		metadata?: Record<string, unknown>;
 	};
 	destination_readiness?: Record<string, string>;
