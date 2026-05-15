@@ -921,3 +921,13 @@ async def get_generated_prompt(product_id: str, mode: str = "F2V"):
         "prompt_length": len(prompt),
         "prompt_source": "SYSTEM",
     }
+
+@router.get("/{product_id}/truth-audit")
+async def get_product_truth_audit(product_id: str):
+    product = await _find_product_by_lookup(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    from agent.services.product_truth_service import ProductTruthService
+    profile = ProductTruthService.build_computed_profile(dict(product))
+    return profile
