@@ -1,0 +1,9 @@
+{
+	"mode": "F2V",
+	"start_image": "877821e9-2613-43c4-aac9-dc2df3173ee2",
+	"prompt": "UAT PROOF: Cinematic video of a Bosmax product.",
+	"stop_after_stage": "PROMPT_EDITABLE_AFTER_INSERT",
+	"orientation": "VERTICAL",
+	"count": 1,
+	"modelLabel": "Veo 3.1 - Lite"
+}

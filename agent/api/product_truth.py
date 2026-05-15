@@ -28,3 +28,13 @@ async def get_reconciliation_audit(sample_limit: int = Query(default=20, ge=1, l
         "samples": profiles[:sample_limit],
         "no_write_back": True
     }
+
+@router.get("/fastmoss-taxonomy-audit")
+async def get_fastmoss_taxonomy_audit(sample_limit: int = Query(default=20, ge=1, le=100)):
+    """
+    Specific FastMoss taxonomy reconciliation audit.
+    Identifies mapping contamination and raw source availability.
+    """
+    from agent.services.fastmoss_taxonomy_reconciliation_service import FastMossTaxonomyReconciliationService
+    report = await FastMossTaxonomyReconciliationService.perform_full_fastmoss_audit(limit=sample_limit)
+    return report

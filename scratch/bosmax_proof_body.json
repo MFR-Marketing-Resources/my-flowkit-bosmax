@@ -1,0 +1,7 @@
+{
+	"request_id": "bosmax_live_proof_final",
+	"mode": "F2V",
+	"prompt": "Cinematic 3D animation of Bosmax baby diaper, soft lighting, 4k detail, realistic texture.",
+	"image": "C:\\Users\\USER\\Downloads\\Bosmax image.jpg",
+	"stop_after_stage": "PROMPT_EDITABLE_AFTER_INSERT"
+}
