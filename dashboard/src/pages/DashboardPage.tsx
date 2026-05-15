@@ -45,15 +45,15 @@ function TraceableSelect({
   const selected = options.find(option => option.id === value)
 
   return (
-    <div className="relative min-w-[320px] max-w-full">
+    <div className="relative min-w-0 w-full md:min-w-[320px] max-w-full">
       <button
         type="button"
         disabled={disabled}
         onClick={() => !disabled && setOpen(prev => !prev)}
         className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-left text-slate-100 transition-opacity disabled:opacity-50"
       >
-        <div className="truncate text-xs font-semibold">{selected?.label || placeholder}</div>
-        <div className="truncate text-[10px] opacity-60">{selected?.meta || 'Searchable, scrollable selector'}</div>
+        <div className="bosmax-wrap-safe text-xs font-semibold">{selected?.label || placeholder}</div>
+        <div className="bosmax-wrap-safe mt-1 text-[10px] opacity-60">{selected?.meta || 'Searchable, scrollable selector'}</div>
       </button>
 
       {open && !disabled && (
@@ -85,8 +85,8 @@ function TraceableSelect({
                   }}
                   className="w-full border-b border-slate-700 p-3 text-left hover:bg-blue-600/10"
                 >
-                  <div className="truncate text-xs font-semibold">{option.label}</div>
-                  <div className="truncate text-[10px] opacity-60">{option.meta}</div>
+                  <div className="bosmax-wrap-safe text-xs font-semibold">{option.label}</div>
+                  <div className="bosmax-wrap-safe mt-1 text-[10px] opacity-60">{option.meta}</div>
                 </button>
               ))}
             </div>

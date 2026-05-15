@@ -93,8 +93,35 @@ def test_product_asset_generator_result_panel_displays_warnings_provenance_and_f
         "product_scale_prompt",
         "ugc_camera_lock_prompt",
         "cinematic_camera_prompt",
+        "bosmax-warning-list",
+        "bosmax-warning-chip",
+        "bosmax-provenance-list",
+        "bosmax-json-block",
+        "bosmax-pre-wrap-safe",
     ]:
         assert token in result_source
+
+
+def test_product_asset_generator_uses_wrap_safe_warning_and_provenance_layout():
+    form_source = _read(
+        "dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx"
+    )
+    result_source = _read(
+        "dashboard/src/components/product-asset-generator/ProductAssetGeneratorResultPanel.tsx"
+    )
+
+    for token in [
+        "bosmax-auto-fit-grid",
+        "WarningList",
+        "ProvenanceList",
+        "bosmax-kv-row",
+        "bosmax-pre-wrap-safe",
+        "Product Truth Warnings",
+        "Preview Constraints",
+    ]:
+        assert token in form_source
+
+    assert "overflow-hidden" not in result_source
 
 
 def test_product_asset_generator_ui_contains_no_forbidden_execution_controls_or_runtime_imports():

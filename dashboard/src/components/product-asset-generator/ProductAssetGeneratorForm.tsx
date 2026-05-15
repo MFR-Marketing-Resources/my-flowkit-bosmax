@@ -83,7 +83,7 @@ type ProfileCardRecord = {
 	product_physics: string;
 	truth_warnings: string[];
 	preview_warnings: string[];
-	provenance: string;
+	provenance: BosmaxFieldProvenance[];
 };
 
 type ModeReadinessRecord = {
@@ -189,16 +189,6 @@ function toSelectOptions(
 	}));
 }
 
-function summarizeProvenance(provenance: BosmaxFieldProvenance[]): string {
-	if (!provenance.length) {
-		return "No BOSMAX field provenance loaded yet.";
-	}
-	return provenance
-		.slice(0, 4)
-		.map((item) => `${item.field}:${item.source_status}`)
-		.join(" | ");
-}
-
 function outputTypeForMode(mode: RecommendedMode): string {
 	if (mode === "IMAGE") {
 		return "IMAGE_PROMPT";
@@ -275,11 +265,148 @@ function StatusBadge({
 
 function ProfileField({ label, value }: { label: string; value: string }) {
 	return (
-		<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+		<div className="min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
 			<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
 				{label}
 			</div>
-			<div className="mt-2 text-[11px] text-slate-200">{value}</div>
+			<div className="bosmax-pre-wrap-safe mt-2 text-[11px] text-slate-200">
+				{value}
+			</div>
+		</div>
+	);
+}
+
+function WarningList({
+	title,
+	items,
+	emptyLabel,
+	tone,
+}: {
+	title: string;
+	items: string[];
+	emptyLabel: string;
+	tone: "truth" | "preview";
+}) {
+	const toneClasses =
+		tone === "truth"
+			? "border-red-500/20 bg-red-500/10 text-red-100"
+			: "border-amber-500/20 bg-amber-500/10 text-amber-100";
+	const titleTone = tone === "truth" ? "text-red-200" : "text-amber-200";
+
+	return (
+		<div className={`min-w-0 rounded-xl border p-3 ${toneClasses}`}>
+			<div
+				className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${titleTone}`}
+			>
+				{title}
+			</div>
+			<div className="bosmax-warning-list mt-2">
+				{items.length > 0 ? (
+					items.map((item) => (
+						<div
+							key={`${title}:${item}`}
+							className="bosmax-warning-chip rounded-lg border border-current/20 bg-black/10 px-3 py-2 text-[11px]"
+							title={item}
+						>
+							{item}
+						</div>
+					))
+				) : (
+					<div className="bosmax-warning-chip rounded-lg border border-current/20 bg-black/10 px-3 py-2 text-[11px]">
+						{emptyLabel}
+					</div>
+				)}
+			</div>
+		</div>
+	);
+}
+
+function ProvenanceList({
+	items,
+}: {
+	items: BosmaxFieldProvenance[];
+}) {
+	return (
+		<div className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+			<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+				Provenance
+			</div>
+			<div className="bosmax-provenance-list mt-2">
+				{items.length > 0 ? (
+					items.map((item) => (
+						<div
+							key={`${item.field}:${item.source_status}:${item.source_file || "none"}`}
+							className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2"
+						>
+							<div className="bosmax-kv-list">
+								<div className="bosmax-kv-row">
+									<div className="bosmax-kv-label text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+										field
+									</div>
+									<div className="bosmax-kv-value text-[11px] text-slate-200">
+										{item.field}
+									</div>
+								</div>
+								<div className="bosmax-kv-row">
+									<div className="bosmax-kv-label text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+										source_status
+									</div>
+									<div className="bosmax-kv-value text-[11px] text-slate-300">
+										{item.source_status}
+									</div>
+								</div>
+								{item.source_origin ? (
+									<div className="bosmax-kv-row">
+										<div className="bosmax-kv-label text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+											source_origin
+										</div>
+										<div className="bosmax-kv-value text-[11px] text-slate-300">
+											{item.source_origin}
+										</div>
+									</div>
+								) : null}
+								{item.source_file ? (
+									<div className="bosmax-kv-row">
+										<div className="bosmax-kv-label text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+											source_file
+										</div>
+										<div className="bosmax-kv-value text-[11px] text-slate-300">
+											{item.source_file}
+										</div>
+									</div>
+								) : null}
+								{item.source_endpoint ? (
+									<div className="bosmax-kv-row">
+										<div className="bosmax-kv-label text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+											source_endpoint
+										</div>
+										<div className="bosmax-kv-value text-[11px] text-slate-300">
+											{item.source_endpoint}
+										</div>
+									</div>
+								) : null}
+								{item.warnings.length > 0 ? (
+									<div className="bosmax-warning-list">
+										{item.warnings.map((warning) => (
+											<div
+												key={`${item.field}:${warning}`}
+												className="bosmax-warning-chip rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-[11px] text-slate-300"
+												title={warning}
+											>
+												{warning}
+											</div>
+										))}
+									</div>
+								) : null}
+							</div>
+						</div>
+					))
+				) : (
+					<div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-[11px] text-slate-300">
+						No BOSMAX field provenance loaded yet.
+					</div>
+				)}
+			</div>
 		</div>
 	);
 }
@@ -577,7 +704,7 @@ function buildProfileCard({
 	const headwearStrategy = draft.headwear
 		? `Operator-pack selection: ${draft.headwear}`
 		: "Operator-pack/non-canonical fallback. Headwear remains optional.";
-	const provenance = summarizeProvenance(selectedFieldProvenance);
+	const provenance = selectedFieldProvenance.slice(0, 6);
 	const truthWarnings = buildProfileTruthWarnings({
 		selectedProduct,
 		result,
@@ -1455,43 +1582,20 @@ export default function ProductAssetGeneratorForm({
 										This copy is a fallback draft and must be improved before production video output.
 									</div>
 								) : null}
-								<div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(0,0.8fr)]">
-									<div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3">
-										<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-red-200">
-											Product Truth Warnings
-										</div>
-										<div className="mt-2 space-y-2 text-[11px] text-red-100">
-											{profile.truth_warnings.length > 0 ? (
-												profile.truth_warnings.slice(0, 6).map((warning) => (
-													<div key={`${profile.label}:truth:${warning}`}>{warning}</div>
-												))
-											) : (
-												<div>No product-truth blockers detected.</div>
-											)}
-										</div>
-									</div>
-									<div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
-										<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200">
-											Preview Constraints
-										</div>
-										<div className="mt-2 space-y-2 text-[11px] text-amber-100">
-											{profile.preview_warnings.length > 0 ? (
-												profile.preview_warnings.slice(0, 6).map((warning) => (
-													<div key={`${profile.label}:preview:${warning}`}>{warning}</div>
-												))
-											) : (
-												<div>No preview-only constraints loaded yet.</div>
-											)}
-										</div>
-									</div>
-									<div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-										<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-											provenance
-										</div>
-										<div className="mt-2 text-[11px] text-slate-300">
-											{profile.provenance}
-										</div>
-									</div>
+								<div className="bosmax-auto-fit-grid mt-4">
+									<WarningList
+										title="Product Truth Warnings"
+										items={profile.truth_warnings}
+										emptyLabel="No product-truth blockers detected."
+										tone="truth"
+									/>
+									<WarningList
+										title="Preview Constraints"
+										items={profile.preview_warnings}
+										emptyLabel="No preview-only constraints loaded yet."
+										tone="preview"
+									/>
+									<ProvenanceList items={profile.provenance} />
 								</div>
 							</section>
 						))}
@@ -1513,7 +1617,7 @@ export default function ProductAssetGeneratorForm({
 								persistence_truth={profileTruthSummary.persistence_truth}
 							</div>
 						</div>
-						<div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+								<div className="bosmax-auto-fit-grid mt-4">
 							<ProfileField
 								label="profile_source_status"
 								value={profileTruthSummary.profile_source_status}
@@ -1681,7 +1785,7 @@ export default function ProductAssetGeneratorForm({
 								recommended_first_mode={recommended_first_mode}
 							</div>
 						</div>
-						<div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+						<div className="bosmax-auto-fit-grid mt-4">
 							{modeReadiness.map((item) => (
 								<div
 									key={item.key}

@@ -257,7 +257,7 @@ function Layout() {
 
 			{/* Main area */}
 			<div
-				className={`flex flex-col flex-1 overflow-hidden bg-slate-950 ${isPortalMode ? "relative" : ""}`}
+				className={`flex min-w-0 flex-col flex-1 overflow-hidden bg-slate-950 ${isPortalMode ? "relative" : ""}`}
 			>
 				{/* Top header */}
 				<header
@@ -322,7 +322,7 @@ function Layout() {
 				</header>
 
 				{/* Page content */}
-				<main className="flex-1 overflow-auto">
+				<main className="min-w-0 flex-1 overflow-auto">
 					<Routes>
 						{/* Modular Workspace Routes */}
 						<Route
