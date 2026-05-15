@@ -299,14 +299,21 @@ export default function ProductAssetGeneratorResultPanel({
 								"Product Scale Prompt",
 								String(result.product_context.product_scale_prompt || "NOT_FOUND"),
 							],
-							[
-								"UGC iPhone Raw Camera Lock",
-								String(result.product_context.ugc_camera_lock_prompt || "NOT_FOUND"),
-							],
-							[
-								"Cinematic Camera Prompt",
-								String(result.product_context.cinematic_camera_prompt || "NOT_FOUND"),
-							],
+							result.product_context.camera_capture_mode === "CINEMATIC_PRO"
+								? [
+										"Cinematic Camera Prompt",
+										String(
+											result.product_context.cinematic_camera_prompt ||
+												"NOT_FOUND",
+										),
+									]
+								: [
+										"UGC iPhone Raw Camera Lock",
+										String(
+											result.product_context.ugc_camera_lock_prompt ||
+												"NOT_FOUND",
+										),
+									],
 						].map(([label, value]) => (
 							<div
 								key={label}
