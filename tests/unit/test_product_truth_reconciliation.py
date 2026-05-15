@@ -89,7 +89,7 @@ def test_source_anchor_missing():
     }
     
     mock_audit = {
-        "source_anchor_status": "MISSING",
+        "source_anchor_status": "SOURCE_ANCHOR_MISSING",
         "source_anchor_origin": "NONE",
         "reconciliation_status": "RAW_SOURCE_NOT_AVAILABLE",
         "discovered_columns": [],

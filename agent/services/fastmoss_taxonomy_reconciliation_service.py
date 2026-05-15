@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Status constants from contract
 STATUS_SOURCE_ANCHOR_PRESENT = "SOURCE_ANCHOR_PRESENT"
 STATUS_SOURCE_ANCHOR_PARTIAL = "SOURCE_ANCHOR_PARTIAL"
-STATUS_SOURCE_ANCHOR_MISSING = "STATUS_SOURCE_ANCHOR_MISSING"
+STATUS_SOURCE_ANCHOR_MISSING = "SOURCE_ANCHOR_MISSING"
 STATUS_SOURCE_ANCHOR_WEAK_FILE_HINT_ONLY = "SOURCE_ANCHOR_WEAK_FILE_HINT_ONLY"
 STATUS_SOURCE_ANCHOR_COLUMN_NOT_FOUND = "SOURCE_ANCHOR_COLUMN_NOT_FOUND"
 STATUS_SOURCE_ANCHOR_POTENTIALLY_CONTAMINATED = "SOURCE_ANCHOR_POTENTIALLY_CONTAMINATED"
@@ -32,6 +32,23 @@ FASTMOSS_WORKBOOK_NAME = "FASTMOSS_COMBINED_10_FILES_WORKBOOK.xlsx"
 FASTMOSS_TARGET_SHEET = "Copywriting_Product_Map"
 
 class FastMossTaxonomyReconciliationService:
+    """
+    Service for auditing FastMoss product taxonomy against raw source workbook data.
+    
+    DEPENDENCY DISCLOSURE:
+    - This service depends on the presence of FASTMOSS_COMBINED_10_FILES_WORKBOOK.xlsx in OPERATOR_PACK_DIR.
+    - Specifically requires the 'Copywriting_Product_Map' sheet.
+    - If the workbook is missing, the service reports RAW_SOURCE_NOT_AVAILABLE.
+    - If the sheet or specific columns ('Category', 'Sub Category', 'Type / Product Angle') are missing, 
+      it reports RAW_SOURCE_COLUMNS_MISSING or RAW_SOURCE_NOT_AVAILABLE as appropriate.
+    - The audit remains useful as a 'read-only' diagnostic tool even if source is partially missing, 
+      as it still surface-audits DB state against current keyword rules.
+
+    MATCHING LIMITATIONS:
+    - Currently uses EXACT MATCH on normalized titles.
+    - If the DB title has been mutated significantly since ingestion, it may fail to find the row in the workbook.
+    - Future phases may implement Source URL or SKU-based fuzzy matching.
+    """
     @staticmethod
     @lru_cache(maxsize=1)
     def load_fastmoss_source_data() -> Dict[str, Dict[str, Any]]:
@@ -172,10 +189,11 @@ class FastMossTaxonomyReconciliationService:
         contaminated_count = 0
         
         for p in fastmoss_products:
-            audit = FastMossTaxonomyReconciliationService.audit_fastmoss_product(dict(p))
+            p_dict = dict(p)
+            audit = FastMossTaxonomyReconciliationService.audit_fastmoss_product(p_dict)
             results.append({
-                "product_id": p.id,
-                "title": p.raw_product_title,
+                "product_id": p_dict.get("id"),
+                "title": p_dict.get("raw_product_title") or p_dict.get("product_display_name"),
                 **audit
             })
             

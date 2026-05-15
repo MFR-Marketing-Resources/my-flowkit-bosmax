@@ -1,0 +1,451 @@
+﻿{
+    "preview_status":  "WARN",
+    "target_asset_intent":  "CHARACTER_HOLDING_PRODUCT_IMAGE_PROMPT",
+    "target_destination_mode":  null,
+    "product_context":  {
+                            "product_id":  "50aae071-b519-47ae-925a-67dea1c122da",
+                            "source":  "FASTMOSS",
+                            "raw_product_title":  "3 IN 1 SABUN DOBI (DETERGENT) VIRAL ANTIBAKTERIA",
+                            "product_display_name":  "Sabun Dobi Malaya Combo isi ulang 10 KG (5+5kg/L)",
+                            "product_short_name":  "Sabun Dobi Malaya Combo",
+                            "group":  "LAUNDRY_CARE",
+                            "sub_group":  "LAUNDRY_CARE",
+                            "type_of_product":  "LIQUID_LAUNDRY_DETERGENT",
+                            "bosmax_product_family":  "LAUNDRY_DETERGENT_LIQUID_REFILL",
+                            "package_form":  "bottle_or_refill_pack",
+                            "physical_state":  "liquid",
+                            "product_scale_class":  "liquid_bottle_or_refill_pack",
+                            "category":  "Home Supplies",
+                            "subcategory":  "Home Care Supplies",
+                            "type":  "Household Cleaners",
+                            "product_type":  "UNIVERSAL",
+                            "product_type_id":  "HOUSEHOLD_LAUNDRY_DETERGENT",
+                            "claim_risk_level":  "LOW",
+                            "claim_gate":  "CLAIM_REVIEW_REQUIRED",
+                            "claim_tokens":  [
+                                                 "antibakteria",
+                                                 "antibacterial_claim"
+                                             ],
+                            "mapping_status":  "READY",
+                            "mapping_review_status":  "BLOCKED",
+                            "prompt_readiness_status":  "READY",
+                            "sales_metrics":  {
+                                                  "sold_count":  2893668,
+                                                  "shop_count":  1,
+                                                  "shop_names":  [
+                                                                     "Sabun dobi malaya"
+                                                                 ],
+                                                  "source_status":  "FOUND"
+                                              },
+                            "shop_count":  1,
+                            "shop_names":  [
+                                               "Sabun dobi malaya"
+                                           ],
+                            "sold_count":  2893668,
+                            "image_analysis":  {
+                                                   "status":  "NOT_ANALYZED",
+                                                   "image_url":  "https://s.500fd.com/tt_product/8507291b51ed4b849a60e556976b793b~tplv-aphluv4xwc-resize-jpeg:800:800.jpeg",
+                                                   "local_image_path":  null,
+                                                   "detected_package":  null,
+                                                   "detected_text":  null,
+                                                   "confidence":  "NOT_VERIFIED",
+                                                   "metadata":  {
+
+                                                                }
+                                               },
+                            "image_analysis_status":  "NOT_ANALYZED",
+                            "intelligence_confidence":  "HIGH",
+                            "intelligence_status":  "READY",
+                            "taxonomy_conflict":  false,
+                            "taxonomy_conflict_reason":  null,
+                            "scene_context":  "clean laundry corner, washing area, or utility shelf with refill-pack practicality",
+                            "camera_style":  "generic commercial close-up",
+                            "camera_behavior":  "practical carry-and-pour reveal with label lock and cap/nozzle detail",
+                            "product_scale":  "MEDIUM_OBJECT",
+                            "recommended_grip":  "side carry grip, bottom support, or front-readable two-hand hold depending on pack size",
+                            "hand_object_interaction":  "stable pack, bottle, pouch, or boxed-goods handling with front readability and practical utility emphasis",
+                            "image_url":  "https://s.500fd.com/tt_product/8507291b51ed4b849a60e556976b793b~tplv-aphluv4xwc-resize-jpeg:800:800.jpeg",
+                            "local_image_path":  null,
+                            "media_id":  null,
+                            "user_controls":  {
+                                                  "gender":  null,
+                                                  "ethnicity":  null,
+                                                  "age_range":  null,
+                                                  "wardrobe":  null,
+                                                  "headwear":  null,
+                                                  "language":  null,
+                                                  "platform":  null
+                                              },
+                            "hook":  "A refill detergent format like this works well when the daily laundry value is obvious on camera.",
+                            "usp_1":  "Large refill sizing gives a clear everyday-utility and value angle.",
+                            "usp_2":  "Label, cap, and handling cues are easy to show in a practical demo.",
+                            "usp_3":  "Fits a clothes-cleaning and freshness routine angle without exaggerated claims.",
+                            "cta":  "Choose the variation that fits your laundry routine and add it to cart.",
+                            "overlay_copy":  "Sabun Dobi Malaya Combo fits a practical laundry routine demo.",
+                            "dialogue_opening":  "If you wash clothes often, a refill format like this is easy to explain in a short demo.",
+                            "dialogue_body":  "The product size reads as practical value, the label stays visible, and the way you carry or pour it makes sense for a laundry-routine video.",
+                            "dialogue_cta":  "Choose the variation that fits your laundry routine and add it to cart.",
+                            "problem":  null,
+                            "agitate":  null,
+                            "solution":  null,
+                            "stealth_silo":  null,
+                            "metaphor_family":  null,
+                            "formula":  null,
+                            "human_review_reason":  null,
+                            "copy_route":  "DIRECT",
+                            "copy_review_status":  "AUTO_APPROVED",
+                            "copy_quality_status":  "COMMERCIAL_COPY_READY",
+                            "copy_quality_detail":  "Copy is consumer-facing, product-safe, and semantically aligned to the derived BOSMAX product family.",
+                            "copy_source":  "BOSMAX_FAMILY_TEMPLATE",
+                            "copy_quality_reason":  "SEMANTIC_FIT_CONFIRMED",
+                            "product_scale_prompt":  "EXACTLY refill detergent pouch or heavy utility bottle size, carried with visible weight, stable two-hand support, label lock, and cap/nozzle/pour detail. No fold or fluff. Grip: side carry grip, bottom support, or front-readable two-hand hold depending on pack size. Hand interaction: stable pack, bottle, pouch, or boxed-goods handling with front readability and practical utility emphasis. Product physics: Physics DNA: HOUSEHOLD_PACKAGED_GOODS. Scale: MEDIUM_OBJECT. Hand-object interaction: stable pack, bottle, pouch, or boxed-goods handling with front readability and practical utility emphasis. Recommended grip: side carry grip, bottom support, or front-readable two-hand hold depending on pack size. Air-gap rule: keep hands clear of the key label area and any opening, nozzle, or closure mechanism. Material behavior: flexible pouch, rigid bottle, or lightweight boxed packaging with realistic carry weight and closure resistance. Surface behavior: plastic, paper, or laminated household packaging with readable front panels and closure details. Fragility: LOW. Camera handling notes: Show utility cues through clean orientation and grip clarity rather than dramatic motion or fake usage effects.. Avoid: avoid leaking contents; avoid upside-down handling that hides the label; avoid unsupported safety claims..",
+                            "scale_truth_status":  "DERIVED_RELATIVE_SCALE",
+                            "scale_warning":  "PRODUCT_SCALE_DERIVED_NOT_DIMENSION_VERIFIED",
+                            "camera_capture_mode":  "UGC_IPHONE_RAW",
+                            "ugc_camera_lock_prompt":  "Raw iPhone handheld footage with subtle hand jitter, natural micro-shake, imperfect creator framing, quick autofocus breathing, and close-up product-in-hand demo under natural room light. Do not make it cinematic or overly stabilized.",
+                            "camera_truth_status":  "CAMERA_LOCK_PRESENT",
+                            "bosmax_source_taxonomy_conflict":  false,
+                            "bosmax_source_taxonomy_conflict_reason":  null,
+                            "claim_safety":  {
+                                                 "requires_human_review":  true,
+                                                 "claim_risk_level":  "LOW",
+                                                 "claim_gate":  "CLAIM_REVIEW_REQUIRED",
+                                                 "claim_tokens":  [
+                                                                      "antibakteria",
+                                                                      "antibacterial_claim"
+                                                                  ],
+                                                 "reason":  "DIRECT_ROUTE_CLAIM_REVIEW_REQUIRED"
+                                             },
+                            "visual_dialogue_isolation":  {
+                                                              "status":  "PASS",
+                                                              "visual_metaphor_allowed":  false,
+                                                              "dialogue_metaphor_allowed":  false,
+                                                              "dialogue_metaphor_hint":  null,
+                                                              "blocked_visual_fields":  [
+                                                                                            "product_scale_prompt",
+                                                                                            "ugc_camera_lock_prompt",
+                                                                                            "cinematic_camera_prompt",
+                                                                                            "scene_context",
+                                                                                            "camera_behavior",
+                                                                                            "product_handling"
+                                                                                        ]
+                                                          },
+                            "cinematic_camera_prompt":  "Controlled cinematic camera with stable hero framing, smooth push-in, controlled pan, premium product lighting, and clean commercial composition."
+                        },
+    "derived_asset_suggestions":  [
+                                      {
+                                          "asset_role":  "SUBJECT_CHARACTER",
+                                          "asset_type":  "CHARACTER",
+                                          "label":  "Sabun Dobi Malaya Combo isi ulang 10 KG (5+5kg/L) Presenter Concept",
+                                          "description":  "adult product presenter, styled for Sabun Dobi Malaya Combo isi ulang 10 KG (5+5kg/L)",
+                                          "source_status":  "DERIVED_FROM_PRODUCT_DATA",
+                                          "verified_level":  "DERIVED_NOT_CANONICAL",
+                                          "is_canonical":  false,
+                                          "warnings":  [
+                                                           "CHARACTER_CONCEPT_PREVIEW_ONLY_NOT_GENERATED_ASSET"
+                                                       ],
+                                          "provenance":  {
+                                                             "derived_from":  "product + optional user controls"
+                                                         }
+                                      },
+                                      {
+                                          "asset_role":  "PRODUCT_REFERENCE",
+                                          "asset_type":  "PRODUCT_REFERENCE",
+                                          "label":  "Sabun Dobi Malaya Combo isi ulang 10 KG (5+5kg/L)",
+                                          "description":  "Derived product reference from the product row or inline product payload.",
+                                          "source_status":  "DERIVED_FROM_PRODUCT_DATA",
+                                          "verified_level":  "DERIVED_NOT_CANONICAL",
+                                          "is_canonical":  false,
+                                          "warnings":  [
+                                                           "PRODUCT_REFERENCE_IS_NOT_CANONICAL_REGISTRY_TRUTH"
+                                                       ],
+                                          "provenance":  {
+                                                             "derived_from":  "product row or payload"
+                                                         }
+                                      },
+                                      {
+                                          "asset_role":  "SCENE_REFERENCE",
+                                          "asset_type":  "SCENE_CONTEXT",
+                                          "label":  "clean laundry corner, washing area, or utility shelf with refill-pack practicality",
+                                          "description":  "Suggested scene context for preview planning.",
+                                          "source_status":  "DERIVED_FROM_PRODUCT_DATA",
+                                          "verified_level":  "DERIVED_NOT_CANONICAL",
+                                          "is_canonical":  false,
+                                          "warnings":  [
+
+                                                       ],
+                                          "provenance":  {
+                                                             "scope":  "ROUND_8_ASSET_REGISTRY_API_ONLY",
+                                                             "asset_registry_service":  "agent.services.asset_registry_service",
+                                                             "safe_read_only_mode":  true,
+                                                             "uses_flow_execution":  false,
+                                                             "uses_extension_runtime":  false,
+                                                             "uses_batch_execution":  false,
+                                                             "uses_ui_modules":  false,
+                                                             "uses_runtime_orchestration":  false,
+                                                             "uses_db_writes":  false
+                                                         }
+                                      },
+                                      {
+                                          "asset_role":  "STYLE_REFERENCE",
+                                          "asset_type":  "STYLE_REFERENCE",
+                                          "label":  "generic commercial close-up",
+                                          "description":  "Suggested visual style reference for preview planning.",
+                                          "source_status":  "REPO_VERIFIED",
+                                          "verified_level":  "DERIVED_NOT_CANONICAL",
+                                          "is_canonical":  false,
+                                          "warnings":  [
+
+                                                       ],
+                                          "provenance":  {
+                                                             "scope":  "ROUND_8_ASSET_REGISTRY_API_ONLY",
+                                                             "asset_registry_service":  "agent.services.asset_registry_service",
+                                                             "safe_read_only_mode":  true,
+                                                             "uses_flow_execution":  false,
+                                                             "uses_extension_runtime":  false,
+                                                             "uses_batch_execution":  false,
+                                                             "uses_ui_modules":  false,
+                                                             "uses_runtime_orchestration":  false,
+                                                             "uses_db_writes":  false
+                                                         }
+                                      }
+                                  ],
+    "prompt_suggestions":  [
+                               {
+                                   "suggestion_type":  "image_prompt",
+                                   "image_prompt_text":  "Create a preview-only concept for adult product presenter, styled for Sabun Dobi Malaya Combo isi ulang 10 KG (5+5kg/L) holding Sabun Dobi Malaya Combo isi ulang 10 KG (5+5kg/L) in a clean laundry corner, washing area, or utility shelf with refill-pack practicality. Use generic commercial close-up framing with practical carry-and-pour reveal with label lock and cap/nozzle detail. Show side carry grip, bottom support, or front-readable two-hand hold depending on pack size. Hand interaction: stable pack, bottle, pouch, or boxed-goods handling with front readability and practical utility emphasis. Scale lock: EXACTLY refill detergent pouch or heavy utility bottle size, carried with visible weight, stable two-hand support, label lock, and cap/nozzle/pour detail. No fold or fluff. Grip: side carry grip, bottom support, or front-readable two-hand hold depending on pack size. Hand interaction: stable pack, bottle, pouch, or boxed-goods handling with front readability and practical utility emphasis. Product physics: Physics DNA: HOUSEHOLD_PACKAGED_GOODS. Scale: MEDIUM_OBJECT. Hand-object interaction: stable pack, bottle, pouch, or boxed-goods handling with front readability and practical utility emphasis. Recommended grip: side carry grip, bottom support, or front-readable two-hand hold depending on pack size. Air-gap rule: keep hands clear of the key label area and any opening, nozzle, or closure mechanism. Material behavior: flexible pouch, rigid bottle, or lightweight boxed packaging with realistic carry weight and closure resistance. Surface behavior: plastic, paper, or laminated household packaging with readable front panels and closure details. Fragility: LOW. Camera handling notes: Show utility cues through clean orientation and grip clarity rather than dramatic motion or fake usage effects.. Avoid: avoid leaking contents; avoid upside-down handling that hides the label; avoid unsupported safety claims... UGC camera lock: Raw iPhone handheld footage with subtle hand jitter, natural micro-shake, imperfect creator framing, quick autofocus breathing, and close-up product-in-hand demo under natural room light. Do not make it cinematic or overly stabilized.. Keep product claims neutral and avoid invented dimensions.",
+                                   "product_handling_note":  "side carry grip, bottom support, or front-readable two-hand hold depending on pack size",
+                                   "hand_object_interaction_note":  "stable pack, bottle, pouch, or boxed-goods handling with front readability and practical utility emphasis",
+                                   "product_scale_prompt":  "EXACTLY refill detergent pouch or heavy utility bottle size, carried with visible weight, stable two-hand support, label lock, and cap/nozzle/pour detail. No fold or fluff. Grip: side carry grip, bottom support, or front-readable two-hand hold depending on pack size. Hand interaction: stable pack, bottle, pouch, or boxed-goods handling with front readability and practical utility emphasis. Product physics: Physics DNA: HOUSEHOLD_PACKAGED_GOODS. Scale: MEDIUM_OBJECT. Hand-object interaction: stable pack, bottle, pouch, or boxed-goods handling with front readability and practical utility emphasis. Recommended grip: side carry grip, bottom support, or front-readable two-hand hold depending on pack size. Air-gap rule: keep hands clear of the key label area and any opening, nozzle, or closure mechanism. Material behavior: flexible pouch, rigid bottle, or lightweight boxed packaging with realistic carry weight and closure resistance. Surface behavior: plastic, paper, or laminated household packaging with readable front panels and closure details. Fragility: LOW. Camera handling notes: Show utility cues through clean orientation and grip clarity rather than dramatic motion or fake usage effects.. Avoid: avoid leaking contents; avoid upside-down handling that hides the label; avoid unsupported safety claims.."
+                               }
+                           ],
+    "required_assets":  [
+                            {
+                                "asset_role":  "SUBJECT_CHARACTER",
+                                "asset_type":  "CHARACTER",
+                                "required":  true
+                            },
+                            {
+                                "asset_role":  "PRODUCT_REFERENCE",
+                                "asset_type":  "PRODUCT_REFERENCE",
+                                "required":  true
+                            },
+                            {
+                                "asset_role":  "SCENE_REFERENCE",
+                                "asset_type":  "SCENE_CONTEXT",
+                                "required":  true
+                            },
+                            {
+                                "asset_role":  "STYLE_REFERENCE",
+                                "asset_type":  "STYLE_REFERENCE",
+                                "required":  true
+                            },
+                            {
+                                "asset_role":  "PRODUCT_IN_HAND_BEHAVIOR",
+                                "asset_type":  "PRODUCT_HANDLING",
+                                "required":  true,
+                                "recommended_grip":  "side carry grip, bottom support, or front-readable two-hand hold depending on pack size"
+                            }
+                        ],
+    "missing_assets":  [
+                           {
+                               "asset_role":  "SUBJECT_CHARACTER_IMAGE",
+                               "reason":  "Character image does not exist yet; this response is preview-only.",
+                               "source_status":  "EMPTY_NOT_VERIFIED"
+                           }
+                       ],
+    "handling_notes":  [
+                           "Recommended grip: side carry grip, bottom support, or front-readable two-hand hold depending on pack size",
+                           "Hand-object interaction: stable pack, bottle, pouch, or boxed-goods handling with front readability and practical utility emphasis",
+                           "Use steady hands, preserve label readability, and keep the product physically plausible."
+                       ],
+    "physics_notes":  [
+                          "Physics class: HOUSEHOLD_PACKAGED_GOODS",
+                          "Product scale: MEDIUM_OBJECT",
+                          "Material behavior: flexible pouch, rigid bottle, or lightweight boxed packaging with realistic carry weight and closure resistance",
+                          "Surface behavior: plastic, paper, or laminated household packaging with readable front panels and closure details",
+                          "Fragility: LOW",
+                          "Camera handling: Show utility cues through clean orientation and grip clarity rather than dramatic motion or fake usage effects."
+                      ],
+    "scene_notes":  [
+                        "Scene context: clean laundry corner, washing area, or utility shelf with refill-pack practicality",
+                        "Visual action hint: Demonstrate the detergent through practical laundry-use cues, refill scale, and clean label visibility.",
+                        "Overlay hint: Overlay Sabun Dobi Malaya Combo with one concise household cleaners benefit line."
+                    ],
+    "camera_notes":  [
+                         "Camera style: generic commercial close-up",
+                         "Camera behavior: practical carry-and-pour reveal with label lock and cap/nozzle detail",
+                         "Camera shot: hero close-up with contextual secondary angle"
+                     ],
+    "warning_summary":  [
+                            "PRODUCT_DIMENSIONS_NOT_REPO_VERIFIED",
+                            "PRODUCT_MAPPING_REVIEW_BLOCKED",
+                            "CLAIM_GATE_REVIEW_REQUIRED",
+                            "PRODUCT_SCALE_DERIVED_NOT_DIMENSION_VERIFIED",
+                            "PRODUCT_CLAIMS_NOT_HARD_ENFORCED",
+                            "PREVIEW_ONLY_NOT_GENERATED_ASSET",
+                            "CHARACTER_IMAGE_NOT_GENERATED_YET",
+                            "NOT_CHROME_EXTENSION_VISIBLE_YET",
+                            "NOT_GOOGLE_FLOW_READY_EXECUTION",
+                            "READINESS_PROFILE_NOT_PERSISTED",
+                            "PRODUCT_HANDLING_INFERRED_FROM_RULES",
+                            "PHYSICS_HANDLING_DERIVED_FROM_PRODUCT_RULES",
+                            "WARDROBE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                            "HEADWEAR_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                            "CAMERA_STYLE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                            "CAMERA_BEHAVIOR_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                            "LANGUAGE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                            "PLATFORM_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                            "OPERATOR_PACK_COPY_SIGNALS_NOT_FOUND"
+                        ],
+    "warnings":  [
+                     "PRODUCT_DIMENSIONS_NOT_REPO_VERIFIED",
+                     "PRODUCT_MAPPING_REVIEW_BLOCKED",
+                     "CLAIM_GATE_REVIEW_REQUIRED",
+                     "PRODUCT_SCALE_DERIVED_NOT_DIMENSION_VERIFIED",
+                     "PRODUCT_CLAIMS_NOT_HARD_ENFORCED",
+                     "PREVIEW_ONLY_NOT_GENERATED_ASSET",
+                     "CHARACTER_IMAGE_NOT_GENERATED_YET",
+                     "NOT_CHROME_EXTENSION_VISIBLE_YET",
+                     "NOT_GOOGLE_FLOW_READY_EXECUTION",
+                     "READINESS_PROFILE_NOT_PERSISTED",
+                     "PRODUCT_HANDLING_INFERRED_FROM_RULES",
+                     "PHYSICS_HANDLING_DERIVED_FROM_PRODUCT_RULES",
+                     "WARDROBE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                     "HEADWEAR_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                     "CAMERA_STYLE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                     "CAMERA_BEHAVIOR_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                     "LANGUAGE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                     "PLATFORM_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                     "OPERATOR_PACK_COPY_SIGNALS_NOT_FOUND"
+                 ],
+    "truth_warnings":  [
+                           "PRODUCT_DIMENSIONS_NOT_REPO_VERIFIED",
+                           "PRODUCT_MAPPING_REVIEW_BLOCKED",
+                           "CLAIM_GATE_REVIEW_REQUIRED",
+                           "PRODUCT_SCALE_DERIVED_NOT_DIMENSION_VERIFIED",
+                           "PRODUCT_CLAIMS_NOT_HARD_ENFORCED"
+                       ],
+    "preview_warnings":  [
+                             "PREVIEW_ONLY_NOT_GENERATED_ASSET",
+                             "CHARACTER_IMAGE_NOT_GENERATED_YET",
+                             "NOT_CHROME_EXTENSION_VISIBLE_YET",
+                             "NOT_GOOGLE_FLOW_READY_EXECUTION",
+                             "READINESS_PROFILE_NOT_PERSISTED",
+                             "PRODUCT_HANDLING_INFERRED_FROM_RULES",
+                             "PHYSICS_HANDLING_DERIVED_FROM_PRODUCT_RULES",
+                             "WARDROBE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                             "HEADWEAR_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                             "CAMERA_STYLE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                             "CAMERA_BEHAVIOR_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                             "LANGUAGE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                             "PLATFORM_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED",
+                             "OPERATOR_PACK_COPY_SIGNALS_NOT_FOUND"
+                         ],
+    "errors":  [
+
+               ],
+    "provenance":  {
+                       "scope":  "ROUND_10_PRODUCT_TO_ASSET_GENERATOR_PREVIEW_ONLY",
+                       "product_lookup":  "crud.get_product",
+                       "reused_services":  [
+                                               "agent.services.product_intelligence_service.resolve_product_intelligence_profile",
+                                               "agent.services.product_mapping.resolve_product_mapping",
+                                               "agent.services.product_physics.resolve_product_physics",
+                                               "agent.services.product_physics.evaluate_prompt_readiness",
+                                               "agent.services.product_preflight.resolve_creative_profile",
+                                               "agent.services.product_preflight.evaluate_mapping_status",
+                                               "agent.services.product_preflight.build_product_preflight",
+                                               "agent.services.asset_registry_service.list_assets_by_type"
+                                           ],
+                       "registry_hint_asset_types":  [
+                                                         "CAMERA_BEHAVIOR",
+                                                         "CAMERA_STYLE",
+                                                         "HEADWEAR",
+                                                         "LANGUAGE",
+                                                         "PLATFORM",
+                                                         "PRODUCT_REFERENCE",
+                                                         "SCENE_CONTEXT",
+                                                         "STYLE_REFERENCE",
+                                                         "WARDROBE"
+                                                     ],
+                       "preview_only":  true,
+                       "execution_allowed":  false,
+                       "image_generation_allowed":  false,
+                       "flow_execution_allowed":  false,
+                       "batch_execution_allowed":  false,
+                       "uses_flow_execution":  false,
+                       "uses_extension_runtime":  false,
+                       "uses_batch_execution":  false,
+                       "uses_queue_jobs":  false,
+                       "uses_persistence_writes":  false
+                   },
+    "truth_status":  {
+                         "overall_source_status":  "DERIVED_FROM_PRODUCT_DATA",
+                         "profile_source_status":  "EPHEMERAL_PREVIEW",
+                         "persistence_truth":  "NOT_PERSISTED",
+                         "canonical_status":  "NOT_CANONICAL",
+                         "product_mapping_status":  "NEEDS_REVIEW",
+                         "mapping_review_status":  "BLOCKED",
+                         "product_type_id":  "HOUSEHOLD_LAUNDRY_DETERGENT",
+                         "group":  "LAUNDRY_CARE",
+                         "sub_group":  "LAUNDRY_CARE",
+                         "type_of_product":  "LIQUID_LAUNDRY_DETERGENT",
+                         "bosmax_product_family":  "LAUNDRY_DETERGENT_LIQUID_REFILL",
+                         "package_form":  "bottle_or_refill_pack",
+                         "physical_state":  "liquid",
+                         "product_scale_class":  "liquid_bottle_or_refill_pack",
+                         "bosmax_source_taxonomy_conflict":  false,
+                         "bosmax_source_taxonomy_conflict_reason":  null,
+                         "claim_gate":  "CLAIM_REVIEW_REQUIRED",
+                         "claim_tokens":  [
+                                              "antibakteria",
+                                              "antibacterial_claim"
+                                          ],
+                         "sales_metrics":  {
+                                               "sold_count":  2893668,
+                                               "shop_count":  1,
+                                               "shop_names":  [
+                                                                  "Sabun dobi malaya"
+                                                              ],
+                                               "source_status":  "FOUND"
+                                           },
+                         "image_analysis_status":  "NOT_ANALYZED",
+                         "intelligence_confidence":  "HIGH",
+                         "intelligence_status":  "READY",
+                         "copy_quality_status":  "COMMERCIAL_COPY_READY",
+                         "copy_quality_detail":  "Copy is consumer-facing, product-safe, and semantically aligned to the derived BOSMAX product family.",
+                         "copy_readiness_status":  "COPY_READY",
+                         "copy_readiness_detail":  "Hook, USP, and CTA are present.",
+                         "character_readiness_status":  "CHARACTER_CONCEPT_ONLY",
+                         "asset_readiness_status":  "PROMPT_ONLY",
+                         "execution_readiness_status":  "DRY_RUN_ONLY",
+                         "product_dimensions":  "NOT_VERIFIED",
+                         "scale_truth_status":  "DERIVED_RELATIVE_SCALE",
+                         "camera_truth_status":  "CAMERA_LOCK_PRESENT",
+                         "camera_capture_mode":  "UGC_IPHONE_RAW",
+                         "text_to_video_readiness_status":  "NEEDS_REVIEW",
+                         "image_prompt_readiness_status":  "READY_FOR_PROMPT",
+                         "claim_safety_requires_human_review":  true,
+                         "visual_dialogue_isolation_status":  "PASS",
+                         "product_claims":  "NOT_HARD_ENFORCED",
+                         "character_attributes":  {
+                                                      "gender":  "NOT_PROVIDED",
+                                                      "ethnicity":  "NOT_PROVIDED",
+                                                      "age_range":  "NOT_PROVIDED"
+                                                  },
+                         "wardrobe":  "INPUT_SLOT_ONLY",
+                         "headwear":  "INPUT_SLOT_ONLY",
+                         "camera_style":  "DERIVED_FROM_PRODUCT_DATA",
+                         "camera_behavior":  "DERIVED_FROM_PRODUCT_DATA",
+                         "language":  "INPUT_SLOT_ONLY",
+                         "platform":  "INPUT_SLOT_ONLY",
+                         "ugc_camera_lock_prompt":  "Raw iPhone handheld footage with subtle hand jitter, natural micro-shake, imperfect creator framing, quick autofocus breathing, and close-up product-in-hand demo under natural room light. Do not make it cinematic or overly stabilized.",
+                         "cinematic_camera_prompt":  "Controlled cinematic camera with stable hero framing, smooth push-in, controlled pan, premium product lighting, and clean commercial composition."
+                     },
+    "dry_run_only":  true,
+    "execution_allowed":  false,
+    "image_generation_allowed":  false,
+    "flow_execution_allowed":  false,
+    "batch_execution_allowed":  false
+}

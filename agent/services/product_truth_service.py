@@ -188,7 +188,7 @@ class ProductTruthService:
         
         elif source == "MANUAL":
             anchors.source_anchor_origin = "MANUAL_DECLARED"
-            anchors.source_anchor_status = "UNVERIFIED"
+            anchors.source_anchor_status = "SOURCE_ANCHOR_UNVERIFIED"
             
         return anchors
 
@@ -278,7 +278,7 @@ class ProductTruthService:
         source = str(product.get("source") or "").upper()
         
         # 1. Check for Missing Anchors
-        if source_anchors.source_anchor_status == "MISSING":
+        if source_anchors.source_anchor_status == "SOURCE_ANCHOR_MISSING":
             recon.contradiction_flags.append(FLAG_SOURCE_ANCHOR_MISSING)
         elif source_anchors.source_anchor_status == "WEAK_FILE_HINT_ONLY":
             recon.contradiction_flags.append(FLAG_SOURCE_ANCHOR_WEAK_FILE_HINT_ONLY)
