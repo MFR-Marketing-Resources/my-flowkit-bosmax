@@ -9,6 +9,9 @@ from agent.services.product_intelligence_service import (
     get_product_intelligence_summary,
     resolve_product_intelligence_request,
 )
+from agent.services.all_product_mapping_audit_service import (
+    get_all_product_mapping_audit,
+)
 
 
 router = APIRouter(prefix="/product-intelligence", tags=["product-intelligence"])
@@ -22,6 +25,11 @@ async def product_intelligence_summary() -> dict:
 @router.post("/backfill-preview")
 async def product_intelligence_backfill_preview() -> dict:
     return await get_product_intelligence_backfill_preview()
+
+
+@router.get("/mapping-audit")
+async def product_intelligence_mapping_audit(sample_limit: int = 20) -> dict:
+    return await get_all_product_mapping_audit(sample_limit=sample_limit)
 
 
 @router.post("/resolve")

@@ -33,7 +33,10 @@ def test_app_shell_and_pages_propagate_min_width_safety():
     products_page = _read("dashboard/src/pages/ProductsSalesAnalyzerPage.tsx")
 
     assert "min-w-0 flex-1 overflow-auto" in app_source
-    assert "grid min-w-0 gap-6" in product_page
-    assert "grid min-w-0 gap-6" in preview_page
-    assert "grid min-w-0 gap-6" in asset_page
-    assert "grid h-full min-w-0 gap-4 overflow-hidden" in products_page
+    assert "grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,1fr)]" in product_page
+    assert "flex min-w-0 flex-col gap-6 p-4 md:p-6" in preview_page
+    assert "grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]" in preview_page
+    assert "flex min-w-0 flex-col gap-6 p-4 md:p-6" in asset_page
+    assert "grid min-w-0 gap-6 2xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.95fr)]" in asset_page
+    assert "grid min-h-full min-w-0 gap-4 p-4 md:p-6" in products_page
+    assert "lg:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)]" in products_page

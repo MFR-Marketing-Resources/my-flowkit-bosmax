@@ -117,3 +117,42 @@ class ProductIntelligenceBackfillPreviewResponse(BaseModel):
     sample_failures: list[dict[str, Any]] = Field(default_factory=list)
     sample_conflicts: list[dict[str, Any]] = Field(default_factory=list)
     write_back_status: str = "READ_ONLY_NO_DB_WRITES"
+
+
+class AllProductMappingAuditExample(BaseModel):
+    product_id: str
+    title: str
+    source_category: str | None = None
+    source_subcategory: str | None = None
+    source_type: str | None = None
+    bosmax_group: str
+    bosmax_family: str
+    confidence: str
+    copy_route: str
+    claim_gate: str
+    reason: str
+
+
+class AllProductMappingAuditResponse(BaseModel):
+    total_products: int
+    source_distribution: dict[str, int] = Field(default_factory=dict)
+    image_readiness_distribution: dict[str, int] = Field(default_factory=dict)
+    image_analysis_status_distribution: dict[str, int] = Field(default_factory=dict)
+    group_distribution: dict[str, int] = Field(default_factory=dict)
+    sub_group_distribution: dict[str, int] = Field(default_factory=dict)
+    type_of_product_distribution: dict[str, int] = Field(default_factory=dict)
+    bosmax_family_distribution: dict[str, int] = Field(default_factory=dict)
+    copy_route_distribution: dict[str, int] = Field(default_factory=dict)
+    claim_gate_distribution: dict[str, int] = Field(default_factory=dict)
+    intelligence_confidence_distribution: dict[str, int] = Field(default_factory=dict)
+    taxonomy_conflict_count: int = 0
+    needs_review_count: int = 0
+    unknown_review_required_count: int = 0
+    low_confidence_count: int = 0
+    suspicious_high_confidence_count: int = 0
+    source_taxonomy_contradiction_count: int = 0
+    image_missing_count: int = 0
+    semantic_unavailable_count: int = 0
+    missing_sales_metrics_count: int = 0
+    examples: list[AllProductMappingAuditExample] = Field(default_factory=list)
+    write_back_status: str = "READ_ONLY_NO_DB_WRITES"
