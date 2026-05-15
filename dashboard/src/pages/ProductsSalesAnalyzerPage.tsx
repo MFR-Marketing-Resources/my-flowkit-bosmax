@@ -80,11 +80,11 @@ function StatBadge({ label, tone = 'neutral' }: { label: string; tone?: 'neutral
 
 function Panel({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border p-4" style={{ background: 'linear-gradient(180deg, rgba(15,23,42,0.8), rgba(15,23,42,0.42))', borderColor: 'var(--border)' }}>
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div>
+    <section className="min-w-0 rounded-2xl border p-4" style={{ background: 'linear-gradient(180deg, rgba(15,23,42,0.8), rgba(15,23,42,0.42))', borderColor: 'var(--border)' }}>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
           <h2 className="text-sm font-bold" style={{ color: 'var(--text)' }}>{title}</h2>
-          {subtitle ? <div className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>{subtitle}</div> : null}
+          {subtitle ? <div className="bosmax-wrap-safe mt-1 text-[11px]" style={{ color: 'var(--muted)' }}>{subtitle}</div> : null}
         </div>
       </div>
       {children}
@@ -94,9 +94,9 @@ function Panel({ title, subtitle, children }: { title: string; subtitle?: string
 
 function KV({ label, value }: { label: string; value: string | number | null | undefined }) {
   return (
-    <div className="grid grid-cols-[150px_1fr] gap-2 text-[11px] items-start border-b border-[var(--border)] py-1 last:border-0 hover:bg-slate-800/50">
-      <div style={{ color: 'var(--muted)' }} className="font-semibold">{label}</div>
-      <div style={{ color: 'var(--text)' }}>{fieldValue(value)}</div>
+    <div className="bosmax-kv-row border-b border-[var(--border)] py-1 text-[11px] last:border-0 hover:bg-slate-800/50">
+      <div style={{ color: 'var(--muted)' }} className="bosmax-kv-label font-semibold">{label}</div>
+      <div style={{ color: 'var(--text)' }} className="bosmax-kv-value">{fieldValue(value)}</div>
     </div>
   )
 }
@@ -450,18 +450,18 @@ export default function ProductsSalesAnalyzerPage() {
   }
 
   return (
-    <div className="grid grid-cols-[380px_1fr] h-full overflow-hidden">
+    <div className="grid h-full min-w-0 gap-4 overflow-hidden xl:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)]">
 
       {/* Left: Complete Catalog Browser */}
-      <div className="border-r flex flex-col bg-slate-900/30 overflow-hidden" style={{ borderColor: 'var(--border)' }}>
+      <div className="flex min-w-0 flex-col overflow-hidden border-r bg-slate-900/30" style={{ borderColor: 'var(--border)' }}>
         <div className="p-4 border-b" style={{ borderColor: 'var(--border)' }}>
           <h2 className="text-sm font-bold mb-3">Products / Sales Analyzer</h2>
-          <div className="grid grid-cols-2 gap-2 mb-3 text-[10px]">
-            <div className="rounded border border-emerald-500/20 bg-emerald-500/10 p-2 text-emerald-200">READY: {imageReadinessSummary.READY}</div>
-            <div className="rounded border border-sky-500/20 bg-sky-500/10 p-2 text-sky-200">CACHE_READY: {imageReadinessSummary.CACHE_READY}</div>
-            <div className="rounded border border-amber-500/20 bg-amber-500/10 p-2 text-amber-200">URL_MISSING: {imageReadinessSummary.URL_MISSING}</div>
-            <div className="rounded border border-rose-500/20 bg-rose-500/10 p-2 text-rose-200">DOWNLOAD_FAILED: {imageReadinessSummary.DOWNLOAD_FAILED}</div>
-            <div className="rounded border border-slate-500/20 bg-slate-500/10 p-2 text-slate-200 col-span-2">NOT_AVAILABLE: {imageReadinessSummary.NOT_AVAILABLE} | TOTAL: {filteredProducts.length}</div>
+          <div className="bosmax-auto-fit-grid mb-3 text-[10px]">
+            <div className="bosmax-wrap-safe rounded border border-emerald-500/20 bg-emerald-500/10 p-2 text-emerald-200">READY: {imageReadinessSummary.READY}</div>
+            <div className="bosmax-wrap-safe rounded border border-sky-500/20 bg-sky-500/10 p-2 text-sky-200">CACHE_READY: {imageReadinessSummary.CACHE_READY}</div>
+            <div className="bosmax-wrap-safe rounded border border-amber-500/20 bg-amber-500/10 p-2 text-amber-200">URL_MISSING: {imageReadinessSummary.URL_MISSING}</div>
+            <div className="bosmax-wrap-safe rounded border border-rose-500/20 bg-rose-500/10 p-2 text-rose-200">DOWNLOAD_FAILED: {imageReadinessSummary.DOWNLOAD_FAILED}</div>
+            <div className="bosmax-wrap-safe rounded border border-slate-500/20 bg-slate-500/10 p-2 text-slate-200">NOT_AVAILABLE: {imageReadinessSummary.NOT_AVAILABLE} | TOTAL: {filteredProducts.length}</div>
           </div>
           <div className="space-y-2">
             <input
@@ -528,23 +528,23 @@ export default function ProductsSalesAnalyzerPage() {
               <div
                 key={product.id}
                 onClick={() => setSelectedId(product.id)}
-                className={`flex gap-3 p-2 rounded cursor-pointer transition-colors ${selectedId === product.id ? 'bg-blue-900/30 border-blue-500/50 border' : 'hover:bg-slate-800 border border-transparent'}`}
+                className={`flex min-w-0 gap-3 rounded border p-2 cursor-pointer transition-colors ${selectedId === product.id ? 'border border-blue-500/50 bg-blue-900/30' : 'border border-transparent hover:bg-slate-800'}`}
               >
                 <div className="flex-shrink-0 w-16 h-16 rounded overflow-hidden bg-slate-800">
                    <ImageFallback src={product.rendered_img_src} alt={product.product_short_name} className="w-full h-full object-cover" emptyLabel={imageStatusLabel(product)} errorLabel={imageErrorLabel(product)} />
                 </div>
                 <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                   <div className="flex items-center gap-2 min-w-0">
-                    <div className="text-xs font-semibold truncate text-slate-200" title={product.raw_product_title}>{product.product_short_name || product.raw_product_title}</div>
+                    <div className="bosmax-wrap-safe text-xs font-semibold text-slate-200" title={product.raw_product_title}>{product.product_short_name || product.raw_product_title}</div>
                     {product.is_test_product ? <StatBadge label="TEST" tone="risk" /> : null}
                   </div>
-                  <div className="text-[10px] text-slate-400 truncate mt-0.5">{formatTaxonomyPath(product.category, product.subcategory, product.type)}</div>
-                  <div className="text-[10px] text-sky-300 truncate mt-0.5">{product.group || 'UNKNOWN_REVIEW_REQUIRED'} / {product.bosmax_product_family || 'UNKNOWN_REVIEW_REQUIRED'}</div>
-                  <div className="text-[10px] text-slate-500 truncate mt-0.5">copy_route={product.copy_route || 'NOT_FOUND'} | claim_gate={product.claim_gate || 'CLAIM_REVIEW_REQUIRED'} | confidence={product.intelligence_confidence || 'LOW'}</div>
-                  <div className="text-[10px] text-slate-500 truncate mt-0.5">{imageStatusLabel(product)}</div>
-                  <div className="flex items-center justify-between mt-1 text-[10px]">
-                    <span className="text-emerald-400">{formatCurrencyDisplay(product.price, product.currency)}</span>
-                    <span className="text-orange-300">{product.sold_count ?? 'NO_SALES_METRIC'} sold</span>
+                  <div className="bosmax-wrap-safe mt-0.5 text-[10px] text-slate-400">{formatTaxonomyPath(product.category, product.subcategory, product.type)}</div>
+                  <div className="bosmax-wrap-safe mt-0.5 text-[10px] text-sky-300">{product.group || 'UNKNOWN_REVIEW_REQUIRED'} / {product.bosmax_product_family || 'UNKNOWN_REVIEW_REQUIRED'}</div>
+                  <div className="bosmax-wrap-safe mt-0.5 text-[10px] text-slate-500">copy_route={product.copy_route || 'NOT_FOUND'} | claim_gate={product.claim_gate || 'CLAIM_REVIEW_REQUIRED'} | confidence={product.intelligence_confidence || 'LOW'}</div>
+                  <div className="bosmax-wrap-safe mt-0.5 text-[10px] text-slate-500">{imageStatusLabel(product)}</div>
+                  <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                    <span className="bosmax-wrap-safe text-emerald-400">{formatCurrencyDisplay(product.price, product.currency)}</span>
+                    <span className="bosmax-wrap-safe text-orange-300">{product.sold_count ?? 'NO_SALES_METRIC'} sold</span>
                   </div>
                 </div>
               </div>
@@ -554,11 +554,11 @@ export default function ProductsSalesAnalyzerPage() {
       </div>
 
       {/* Right: Selected Detail / Forms */}
-      <div className="overflow-y-auto p-6" style={{ scrollbarWidth: 'thin' }}>
+      <div className="min-w-0 overflow-y-auto p-4 md:p-6" style={{ scrollbarWidth: 'thin' }}>
         {error && <div className="mb-4 bg-red-900/30 border border-red-500/30 text-red-400 p-3 rounded text-sm text-center">{error}</div>}
         {saveSuccess && <div className="mb-4 bg-emerald-900/30 border border-emerald-500/30 text-emerald-400 p-3 rounded text-sm text-center flex justify-between"><span>{saveSuccess}</span><button onClick={() => setSaveSuccess(null)}>✕</button></div>}
 
-        <div className="grid grid-cols-[1fr_300px] gap-6 items-start">
+        <div className="grid min-w-0 gap-6 items-start 2xl:grid-cols-[minmax(0,1fr)_300px]">
           <div className="space-y-6">
 
             {selectedProduct && (
@@ -583,8 +583,8 @@ export default function ProductsSalesAnalyzerPage() {
                        <ImageFallback src={selectedProduct.rendered_img_src} alt="Product Thumbnail" className="w-full h-full object-cover" emptyLabel={imageStatusLabel(selectedProduct)} errorLabel={imageErrorLabel(selectedProduct)} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-lg font-bold truncate text-slate-100">{selectedProduct.product_short_name || selectedProduct.raw_product_title}</div>
-                      <div className="text-xs text-slate-400 mt-1 pb-2 border-b border-slate-800">{selectedProduct.raw_product_title}</div>
+                      <div className="bosmax-wrap-safe text-lg font-bold text-slate-100">{selectedProduct.product_short_name || selectedProduct.raw_product_title}</div>
+                      <div className="bosmax-pre-wrap-safe mt-1 border-b border-slate-800 pb-2 text-xs text-slate-400">{selectedProduct.raw_product_title}</div>
                       <div className="flex flex-wrap gap-2 mt-2">
                         {selectedProduct.prompt_readiness_status === 'READY' ? <StatBadge label="READY" tone="ready" /> : <StatBadge label={selectedProduct.prompt_readiness_status || 'MISSING_FIELDS'} tone="warn" />}
                         {selectedProduct.physics_class ? <StatBadge label={`DNA: ${selectedProduct.physics_class}`} tone="ready" /> : <StatBadge label="DNA: NONE" tone="neutral" />}
@@ -715,15 +715,15 @@ export default function ProductsSalesAnalyzerPage() {
                     <div className="space-y-2">
                       {Object.entries(selectedProduct.mode_readiness || {}).map(([mode, readiness]) => (
                         <div key={mode} className="rounded border border-slate-800 bg-slate-900/60 p-2">
-                          <div className="flex items-center justify-between gap-2 text-[11px]">
-                            <span className="font-semibold text-slate-200">{mode}</span>
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                            <span className="bosmax-wrap-safe font-semibold text-slate-200">{mode}</span>
                             <StatBadge
                               label={readiness.status}
                               tone={readiness.status === 'READY' ? 'ready' : readiness.status === 'READY_OR_NEEDS_REVIEW' ? 'warn' : 'risk'}
                             />
                           </div>
-                          <div className="mt-1 text-[10px] text-slate-400">{readiness.detail}</div>
-                          {'asset_strategy' in readiness && readiness.asset_strategy ? <div className="mt-1 text-[10px] text-slate-500">Asset Strategy: {readiness.asset_strategy}</div> : null}
+                          <div className="bosmax-wrap-safe mt-1 text-[10px] text-slate-400">{readiness.detail}</div>
+                          {'asset_strategy' in readiness && readiness.asset_strategy ? <div className="bosmax-wrap-safe mt-1 text-[10px] text-slate-500">Asset Strategy: {readiness.asset_strategy}</div> : null}
                         </div>
                       ))}
                     </div>
@@ -735,19 +735,19 @@ export default function ProductsSalesAnalyzerPage() {
                 {activeTab === 'BRIEF' && brief && (
                   <div className="space-y-6">
                     <Panel title="Product Creative Brief" subtitle={`Brief ID: ${brief.brief_id}`}>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-4 lg:grid-cols-2">
                         <div className="space-y-4">
                           <h3 className="text-xs font-bold text-slate-300">Readiness Status</h3>
                           <div className="space-y-2">
                             {Object.entries(brief.readiness).map(([k, v]) => (
-                              <div key={k} className="flex justify-between items-center text-[11px] p-2 bg-slate-900/50 rounded border border-slate-800">
-                                <span className="text-slate-400">{k}</span>
+                              <div key={k} className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-900/50 p-2 text-[11px]">
+                                <span className="bosmax-wrap-safe text-slate-400">{k}</span>
                                 <StatBadge label={v as string} tone={v === 'READY' ? 'ready' : 'risk'} />
                               </div>
                             ))}
                           </div>
                           {brief.missing_fields.length > 0 && (
-                            <div className="p-3 bg-red-900/10 border border-red-500/20 rounded text-[10px] text-red-300">
+                            <div className="bosmax-pre-wrap-safe rounded border border-red-500/20 bg-red-900/10 p-3 text-[10px] text-red-300">
                               <strong>Missing Fields:</strong> {brief.missing_fields.join(', ')}
                             </div>
                           )}
@@ -765,7 +765,7 @@ export default function ProductsSalesAnalyzerPage() {
                     </Panel>
 
                     <Panel title="Physics DNA" subtitle="Biometric and material properties">
-                       <div className="grid grid-cols-2 gap-4">
+                       <div className="grid gap-4 lg:grid-cols-2">
                          <div className="space-y-1">
                            <KV label="Class" value={brief.physics_dna.physics_class} />
                            <KV label="Scale" value={brief.physics_dna.product_scale} />
@@ -776,7 +776,7 @@ export default function ProductsSalesAnalyzerPage() {
                            <KV label="Surface" value={brief.physics_dna.surface_behavior} />
                          </div>
                        </div>
-                       <div className="mt-4 p-3 bg-slate-900/80 rounded border border-slate-800 font-mono text-[10px] text-purple-300">
+                       <div className="bosmax-pre-wrap-safe mt-4 rounded border border-slate-800 bg-slate-900/80 p-3 font-mono text-[10px] text-purple-300">
                          {brief.physics_dna.section_5_product_physics_prompt}
                        </div>
                     </Panel>
@@ -788,11 +788,11 @@ export default function ProductsSalesAnalyzerPage() {
                     <div className="space-y-4">
                       {variations.map((v) => (
                         <div key={v.variant_id} className="p-4 rounded-xl border border-slate-800 bg-slate-900/40 hover:bg-slate-900/60 transition-all">
-                          <div className="flex justify-between items-start mb-3">
-                             <div className="text-xs font-bold text-blue-400">Variant #{v.variation_index}</div>
+                          <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                             <div className="bosmax-wrap-safe text-xs font-bold text-blue-400">Variant #{v.variation_index}</div>
                              <StatBadge label={v.readiness} tone={v.readiness === 'READY' ? 'ready' : 'risk'} />
                           </div>
-                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 mb-4">
+                          <div className="mb-4 grid gap-x-6 gap-y-2 lg:grid-cols-2">
                             <KV label="Hook Angle" value={v.hook_angle} />
                             <KV label="Scene Context" value={v.scene_context} />
                             <KV label="Camera Route" value={v.camera_route} />
@@ -817,10 +817,10 @@ export default function ProductsSalesAnalyzerPage() {
                       <div className="text-center py-12 text-slate-500 text-xs">Compiling prompt...</div>
                     ) : promptPreview ? (
                       <div className="space-y-4">
-                        <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 font-mono text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap select-all">
+                        <div className="bosmax-pre-wrap-safe select-all rounded-xl border border-slate-800 bg-slate-950 p-4 font-mono text-[11px] leading-relaxed text-slate-300">
                           {promptPreview}
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                            <button
                              onClick={() => { navigator.clipboard.writeText(promptPreview); setSaveSuccess("Prompt copied to clipboard"); }}
                              className="flex-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 py-2 rounded text-xs font-bold"

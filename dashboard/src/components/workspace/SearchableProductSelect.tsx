@@ -28,17 +28,17 @@ export default function SearchableProductSelect({ products, selectedProduct, onS
   }, [])
 
   return (
-    <div className="relative" ref={containerRef}>
+    <div className="relative min-w-0" ref={containerRef}>
       {/* Trigger Button */}
       <div 
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 flex items-center justify-between cursor-pointer hover:border-blue-500/50 transition-all group"
+        className="flex w-full min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 transition-all group hover:border-blue-500/50 cursor-pointer"
       >
-        <div className="flex-1 truncate">
+        <div className="min-w-0 flex-1">
           {selectedProduct ? (
-            <span className="text-sm font-bold text-slate-200">{selectedProduct.raw_product_title}</span>
+            <span className="bosmax-wrap-safe block text-sm font-bold text-slate-200">{selectedProduct.raw_product_title}</span>
           ) : (
-            <span className="text-sm text-slate-500">Search and select product...</span>
+            <span className="bosmax-wrap-safe block text-sm text-slate-500">Search and select product...</span>
           )}
         </div>
         <ChevronDown size={18} className={`text-slate-500 group-hover:text-blue-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
@@ -46,7 +46,7 @@ export default function SearchableProductSelect({ products, selectedProduct, onS
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute z-50 w-full mt-2 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl shadow-black/50 overflow-hidden backdrop-blur-xl">
+        <div className="absolute z-50 mt-2 w-full min-w-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-900 shadow-2xl shadow-black/50 backdrop-blur-xl">
           {/* Search Input */}
           <div className="p-3 border-bottom border-slate-800 bg-slate-950/50 flex items-center gap-2">
             <Search size={14} className="text-slate-500" />
@@ -72,9 +72,9 @@ export default function SearchableProductSelect({ products, selectedProduct, onS
                     setIsOpen(false)
                     setSearch('')
                   }}
-                  className={`px-4 py-3 text-[11px] cursor-pointer flex items-center justify-between transition-colors ${selectedProduct?.id === p.id ? 'bg-blue-600/20 text-blue-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+                className={`flex items-start justify-between gap-3 px-4 py-3 text-[11px] transition-colors cursor-pointer ${selectedProduct?.id === p.id ? 'bg-blue-600/20 text-blue-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
                 >
-                  <span className="truncate pr-4">{p.raw_product_title}</span>
+                  <span className="bosmax-wrap-safe min-w-0 flex-1 pr-2">{p.raw_product_title}</span>
                   {selectedProduct?.id === p.id && <Check size={14} />}
                 </div>
               ))

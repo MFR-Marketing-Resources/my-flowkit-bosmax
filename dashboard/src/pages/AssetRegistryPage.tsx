@@ -138,18 +138,18 @@ export default function AssetRegistryPage() {
 	}
 
 	return (
-		<div className="flex flex-col gap-6 p-4 md:p-6">
+		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
 				<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
 					Asset Registry
 				</div>
-				<div className="mt-2 max-w-4xl text-sm text-slate-300">
+				<div className="bosmax-wrap-safe mt-2 max-w-4xl text-sm text-slate-300">
 					This screen is read-only. Unverified assets are not canonical truth.
 					Empty registries are not bugs; they mean repo-verified datasets do not
 					exist yet. No Google Flow execution, no Chrome extension execution,
 					and no batch execution are exposed here.
 				</div>
-				<div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-400">
+				<div className="bosmax-pre-wrap-safe mt-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-400">
 					Supported asset types: {supportedTypes || "Loading..."}
 				</div>
 				{error ? (
@@ -174,7 +174,7 @@ export default function AssetRegistryPage() {
 						}}
 					/>
 
-					<div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(340px,0.95fr)]">
+					<div className="grid min-w-0 gap-6 2xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.95fr)]">
 						<AssetOptionsTable
 							listing={activeListing}
 							selectedAssetId={selectedAsset?.asset_id || null}

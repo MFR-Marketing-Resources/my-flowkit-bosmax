@@ -54,6 +54,10 @@ def test_product_readiness_profile_cards_exist():
     assert "Camera Capture Mode" in form_source
     assert "UGC iPhone Raw Camera Lock" in form_source
     assert "Cinematic Camera Prompt" in form_source
+    assert "bosmax-auto-fit-grid" in form_source
+    assert "bosmax-warning-list" in form_source
+    assert "bosmax-provenance-list" in form_source
+    assert "bosmax-kv-row" in form_source
 
 
 def test_advanced_manual_override_exists_and_old_manual_fields_are_not_primary():
@@ -97,6 +101,17 @@ def test_product_readiness_profile_absents_internal_fallback_phrases_from_fixtur
         "Show the product clearly before any performance implication",
     ]:
         assert token not in form_source
+
+
+def test_product_readiness_profile_warning_and_provenance_cards_are_wrap_safe():
+    form_source = _read(
+        "dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx"
+    )
+
+    assert "Product Truth Warnings" in form_source
+    assert "Preview Constraints" in form_source
+    assert "ProvenanceList items={profile.provenance}" in form_source
+    assert "text-[11px] text-slate-200" in form_source
 
 
 def test_product_readiness_profile_contains_no_forbidden_execution_controls():
