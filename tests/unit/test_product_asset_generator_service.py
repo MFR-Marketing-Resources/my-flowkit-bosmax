@@ -230,12 +230,18 @@ async def test_text_to_video_readiness_stays_needs_review_when_scale_is_missing(
     result = await generate_product_asset_preview(
         {
             "product_payload": _product_row(
+                category="General Goods",
+                subcategory="Unknown",
                 product_scale=None,
                 type=None,
                 product_type=None,
+                product_type_id=None,
                 recommended_grip=None,
                 hand_object_interaction=None,
                 section_5_product_physics_prompt=None,
+                raw_product_title="Mystery artisanal item",
+                product_display_name="Mystery artisanal item",
+                product_short_name="Mystery artisanal item",
             ),
             "target_asset_intent": "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
             "target_destination_mode": "TEXT_TO_VIDEO",
@@ -246,6 +252,34 @@ async def test_text_to_video_readiness_stays_needs_review_when_scale_is_missing(
     assert result.truth_status["scale_truth_status"] == "SCALE_NOT_FOUND"
     assert result.truth_status["text_to_video_readiness_status"] == "NEEDS_REVIEW"
     assert "PRODUCT_SCALE_PROMPT_MISSING" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_truth_and_preview_warnings_are_split():
+    result = await generate_product_asset_preview(
+        {
+            "product_payload": _product_row(
+                category="Home Supplies",
+                subcategory="Home Care Supplies",
+                type="Household Cleaners",
+                product_type_id="GENERIC_PRODUCT",
+                mapping_review_status="BLOCKED",
+                raw_product_title="5 LITER/5 KG isi ulang- Sabun Dobi Malaya Liquid detergen",
+                product_display_name="Sabun Dobi Malaya Liquid",
+                product_short_name="Sabun Dobi Malaya Liquid",
+            ),
+            "target_asset_intent": "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+            "target_destination_mode": "TEXT_TO_VIDEO",
+            "dry_run_only": True,
+        }
+    )
+
+    assert "PRODUCT_MAPPING_REVIEW_BLOCKED" in result.truth_warnings
+    assert "PREVIEW_ONLY_NOT_GENERATED_ASSET" in result.preview_warnings
+    assert "WARDROBE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED" in result.preview_warnings
+    assert result.truth_status["product_mapping_status"] == "NEEDS_REVIEW"
+    assert result.truth_status["mapping_review_status"] == "BLOCKED"
+    assert result.truth_status["bosmax_product_family"] == "LAUNDRY_DETERGENT_LIQUID_REFILL"
 
 
 @pytest.mark.asyncio

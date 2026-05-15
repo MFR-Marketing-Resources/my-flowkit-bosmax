@@ -14,9 +14,11 @@ from agent.models.copy_signal_generator import (
     CopySignalGenerateResponse,
     CopySignalRoutesResponse,
 )
+from agent.services.bosmax_product_family import derive_bosmax_product_family
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import evaluate_prompt_readiness, resolve_product_physics
 from agent.services.product_preflight import (
+    apply_creative_profile_overrides,
     build_product_preflight,
     evaluate_mapping_status,
     resolve_creative_profile,
@@ -111,6 +113,7 @@ def _enrich_product(product_seed: dict[str, Any]) -> dict[str, Any]:
             payload[key] = value
 
     creative_profile = resolve_creative_profile(payload)
+    payload = apply_creative_profile_overrides(payload, creative_profile)
     for key, value in creative_profile.items():
         if payload.get(key) in (None, "", []):
             payload[key] = value
@@ -245,6 +248,24 @@ def _extract_verified_dimensions(product: dict[str, Any]) -> str | None:
 
 
 def _scale_anchor(product: dict[str, Any]) -> str | None:
+    family = derive_bosmax_product_family(product)["bosmax_product_family"]
+    if family == "LAUNDRY_DETERGENT_LIQUID_REFILL":
+        return "EXACTLY refill detergent pouch or heavy utility bottle size, carried with visible weight and stable two-hand support."
+    if family == "FABRIC_SOFTENER_LIQUID":
+        return "EXACTLY fabric-softener pouch or bottle size, held upright with label, cap, and pour direction visible."
+    if family == "HOUSEHOLD_CLEANER_GENERAL":
+        return "EXACTLY household cleaner bottle, pouch, or refill size with stable label-forward utility handling."
+    if family == "HOUSEHOLD_STORAGE_ORGANIZER":
+        return "EXACTLY organizer or storage-container size, held with both hands to show shape, opening, or stackability."
+    if family == "HOME_TEXTILE":
+        return "EXACTLY home-textile scale with natural two-hand spread, fold, or drape and no enlargement."
+    if family in {"APPAREL_SLEEPWEAR", "fashion_modestwear", "fashion_sportswear", "fashion_apparel"}:
+        return "EXACTLY wearable sleepwear scale with natural two-hand drape and no enlargement."
+    if family == "ACCESSORY_SMALL_ITEM":
+        return "EXACTLY small accessory size, pinched lightly between fingertips without enlargement."
+    if family in {"BEAUTY_PERSONAL_CARE", "beauty_fragrance"}:
+        return "EXACTLY palm-sized beauty or personal-care product scale unless verified dimensions say otherwise."
+
     haystack = " ".join(
         _normalize_text(product.get(field))
         for field in [
@@ -361,67 +382,8 @@ def _copy_haystack(product: dict[str, Any]) -> str:
     ).casefold()
 
 
-def _classify_direct_copy_category(product: dict[str, Any]) -> str:
-    haystack = _copy_haystack(product)
-    if any(
-        token in haystack
-        for token in [
-            "sleepwear",
-            "loungewear",
-            "nightdress",
-            "nightdresses",
-            "nightie",
-            "baju tidur",
-            "kelawar",
-            "apparel",
-            "womenswear",
-            "women's sleepwear",
-            "fashion",
-        ]
-    ):
-        return "APPAREL_SLEEPWEAR"
-    if any(
-        token in haystack
-        for token in [
-            "household",
-            "home living",
-            "kitchen",
-            "storage",
-            "organizer",
-            "cleaning",
-            "houseware",
-        ]
-    ):
-        return "HOUSEHOLD"
-    if any(
-        token in haystack
-        for token in [
-            "beauty",
-            "personal care",
-            "skincare",
-            "cosmetic",
-            "serum",
-            "lip balm",
-            "makeup",
-        ]
-    ):
-        return "BEAUTY_PERSONAL_CARE"
-    if any(
-        token in haystack
-        for token in [
-            "accessory",
-            "accessories",
-            "brooch",
-            "pin",
-            "earring",
-            "pendant",
-            "keychain",
-            "small item",
-            "charms",
-        ]
-    ):
-        return "ACCESSORY_SMALL_ITEM"
-    return "GENERAL"
+def _resolve_direct_copy_family(product: dict[str, Any]) -> str:
+    return str(derive_bosmax_product_family(product)["bosmax_product_family"])
 
 
 def _safe_product_label(product: dict[str, Any]) -> str:
@@ -464,10 +426,10 @@ def _detect_bad_copy_fields(copy_signals: dict[str, Any]) -> list[str]:
 
 
 def _direct_copy_templates_malay(
-    category_key: str,
+    family: str,
     product_label: str,
 ) -> tuple[dict[str, str], bool]:
-    if category_key == "APPAREL_SLEEPWEAR":
+    if family in {"APPAREL_SLEEPWEAR", "fashion_modestwear", "fashion_sportswear", "fashion_apparel"}:
         return (
             {
                 "hook": "Baju tidur nak selesa tapi tetap nampak kemas?",
@@ -482,7 +444,52 @@ def _direct_copy_templates_malay(
             },
             False,
         )
-    if category_key == "HOUSEHOLD":
+    if family == "LAUNDRY_DETERGENT_LIQUID_REFILL":
+        return (
+            {
+                "hook": "Sabun dobi isi ulang macam ni memang senang masuk rutin basuh harian.",
+                "usp_1": "Format refill besar nampak jelas untuk angle nilai dan kegunaan harian.",
+                "usp_2": "Senang tunjuk label, penutup, dan cara pegang produk dalam demo praktikal.",
+                "usp_3": "Sesuai untuk angle pakaian bersih, wangi, dan stok rumah yang tahan lebih lama tanpa claim berlebihan.",
+                "cta": "Pilih variasi yang sesuai dan terus tambah ke cart sebelum checkout.",
+                "overlay_copy": f"{product_label} sesuai untuk demo rutin basuh yang praktikal dan jelas.",
+                "dialogue_opening": "Kalau basuh baju hari-hari, format isi ulang macam ni memang lagi praktikal.",
+                "dialogue_body": "Saiz produk terus nampak value, label senang dibaca dekat kamera, dan cara pegang atau tuang pun mudah dijadikan demo rutin laundry.",
+                "dialogue_cta": "Pilih variasi yang sesuai dan terus tambah ke cart sebelum checkout.",
+            },
+            False,
+        )
+    if family == "FABRIC_SOFTENER_LIQUID":
+        return (
+            {
+                "hook": "Kalau suka pakaian rasa lebih lembut dan wangi, format macam ni memang senang demo.",
+                "usp_1": "Botol atau refill nampak praktikal untuk rutin cucian harian.",
+                "usp_2": "Label, penutup, dan arah tuang mudah ditunjuk dalam close-up ringkas.",
+                "usp_3": "Sesuai untuk angle pakaian wangi dan rutin dobi yang lebih kemas tanpa claim berlebihan.",
+                "cta": "Check variasi yang sesuai dengan rutin cucian kau dan tambah ke cart.",
+                "overlay_copy": f"{product_label} bantu demo rutin fabric-care yang lebih jelas.",
+                "dialogue_opening": "Kalau rutin dobi kau memang pentingkan rasa lembut dan wangi, produk macam ni senang sangat nak tunjuk.",
+                "dialogue_body": "Format produk nampak praktikal, close-up pada label dan penutup pun jelas, jadi senang nak explain kegunaan dia dalam rutin fabric-care harian.",
+                "dialogue_cta": "Check variasi yang sesuai dengan rutin cucian kau dan tambah ke cart.",
+            },
+            False,
+        )
+    if family == "HOUSEHOLD_CLEANER_GENERAL":
+        return (
+            {
+                "hook": "Produk pembersih macam ni lagi mudah jual bila fungsi dia nampak terus dekat kamera.",
+                "usp_1": "Format produk nampak praktikal untuk rutin bersih-bersih harian.",
+                "usp_2": "Label dan penutup mudah ditunjuk dalam demo ringkas yang terus faham.",
+                "usp_3": "Sesuai untuk angle kegunaan rumah yang jelas tanpa masuk claim berlebihan.",
+                "cta": "Pilih variasi yang sesuai dan tambah ke cart sekarang.",
+                "overlay_copy": f"{product_label} sesuai untuk demo pembersihan rumah yang praktikal.",
+                "dialogue_opening": "Kalau produk pembersih tu senang tunjuk fungsi dia, video pun cepat orang faham.",
+                "dialogue_body": "Bentuk produk nampak jelas, cara pegang pun stabil, jadi senang sangat nak explain penggunaan dia dalam rutin bersih-bersih harian.",
+                "dialogue_cta": "Pilih variasi yang sesuai dan tambah ke cart sekarang.",
+            },
+            False,
+        )
+    if family == "HOUSEHOLD_STORAGE_ORGANIZER":
         return (
             {
                 "hook": "Nak rumah nampak lebih tersusun tanpa banyak barang?",
@@ -497,7 +504,22 @@ def _direct_copy_templates_malay(
             },
             False,
         )
-    if category_key == "BEAUTY_PERSONAL_CARE":
+    if family == "HOME_TEXTILE":
+        return (
+            {
+                "hook": "Tekstur dan rasa selesa macam ni memang cepat nampak bila demo dibuat betul.",
+                "usp_1": "Mudah tunjuk ketebalan, tekstur, dan saiz produk dekat kamera.",
+                "usp_2": "Sesuai untuk angle keselesaan rumah dan kegunaan harian.",
+                "usp_3": "Boleh dijadikan demo lipat, bentang, atau sentuh tanpa perlu claim berlebihan.",
+                "cta": "Pilih saiz atau variasi yang sesuai dan terus tambah ke cart.",
+                "overlay_copy": f"{product_label} tonjolkan tekstur dan keselesaan dengan jelas.",
+                "dialogue_opening": "Produk tekstil rumah macam ni memang lagi senang jual bila tekstur dia betul-betul nampak.",
+                "dialogue_body": "Bila dibentang atau dipegang dengan stabil, ketebalan dan permukaan produk terus jelas, jadi angle keselesaan rumah lebih mudah masuk.",
+                "dialogue_cta": "Pilih saiz atau variasi yang sesuai dan terus tambah ke cart.",
+            },
+            False,
+        )
+    if family in {"BEAUTY_PERSONAL_CARE", "beauty_fragrance"}:
         return (
             {
                 "hook": "Nak nampak kemas tanpa routine yang leceh?",
@@ -512,7 +534,7 @@ def _direct_copy_templates_malay(
             },
             False,
         )
-    if category_key == "ACCESSORY_SMALL_ITEM":
+    if family == "ACCESSORY_SMALL_ITEM":
         return (
             {
                 "hook": "Detail kecil macam ni boleh terus naikkan gaya.",
@@ -544,10 +566,10 @@ def _direct_copy_templates_malay(
 
 
 def _direct_copy_templates_english(
-    category_key: str,
+    family: str,
     product_label: str,
 ) -> tuple[dict[str, str], bool]:
-    if category_key == "APPAREL_SLEEPWEAR":
+    if family == "APPAREL_SLEEPWEAR":
         return (
             {
                 "hook": "Want sleepwear that feels comfortable and still looks neat?",
@@ -562,7 +584,52 @@ def _direct_copy_templates_english(
             },
             False,
         )
-    if category_key == "HOUSEHOLD":
+    if family == "LAUNDRY_DETERGENT_LIQUID_REFILL":
+        return (
+            {
+                "hook": "A refill detergent format like this works well when the daily laundry value is obvious on camera.",
+                "usp_1": "Large refill sizing gives a clear everyday-utility and value angle.",
+                "usp_2": "Label, cap, and handling cues are easy to show in a practical demo.",
+                "usp_3": "Fits a clothes-cleaning and freshness routine angle without exaggerated claims.",
+                "cta": "Choose the variation that fits your laundry routine and add it to cart.",
+                "overlay_copy": f"{product_label} fits a practical laundry routine demo.",
+                "dialogue_opening": "If you wash clothes often, a refill format like this is easy to explain in a short demo.",
+                "dialogue_body": "The product size reads as practical value, the label stays visible, and the way you carry or pour it makes sense for a laundry-routine video.",
+                "dialogue_cta": "Choose the variation that fits your laundry routine and add it to cart.",
+            },
+            False,
+        )
+    if family == "FABRIC_SOFTENER_LIQUID":
+        return (
+            {
+                "hook": "Fabric-care products like this work best when the softness and freshness routine feels easy to picture.",
+                "usp_1": "Bottle or refill format reads clearly in a daily laundry setting.",
+                "usp_2": "Label, cap, and pour direction are easy to show in close-up.",
+                "usp_3": "Supports a freshness and fabric-care angle without exaggerated claims.",
+                "cta": "Check the variation that fits your laundry routine and add it to cart.",
+                "overlay_copy": f"{product_label} supports a practical fabric-care demo.",
+                "dialogue_opening": "If your audience cares about a softer, fresher laundry routine, this format is easy to explain.",
+                "dialogue_body": "The product shape looks practical, the close-up details stay visible, and the routine angle is easy to understand in a short demo.",
+                "dialogue_cta": "Check the variation that fits your laundry routine and add it to cart.",
+            },
+            False,
+        )
+    if family == "HOUSEHOLD_CLEANER_GENERAL":
+        return (
+            {
+                "hook": "Cleaner products like this work best when the function is obvious right away on camera.",
+                "usp_1": "Practical format makes the daily-use angle easy to explain.",
+                "usp_2": "Label and opening details stay readable in a short demo.",
+                "usp_3": "Fits a clear household-cleaning angle without exaggerated claims.",
+                "cta": "Choose the variation that fits your needs and add it to cart.",
+                "overlay_copy": f"{product_label} works for a clear household-cleaning demo.",
+                "dialogue_opening": "When a cleaner is easy to demonstrate, the video lands faster.",
+                "dialogue_body": "The shape looks practical, the handling stays stable, and the use case is easy to understand in a short household-cleaning demo.",
+                "dialogue_cta": "Choose the variation that fits your needs and add it to cart.",
+            },
+            False,
+        )
+    if family == "HOUSEHOLD_STORAGE_ORGANIZER":
         return (
             {
                 "hook": "Want your space to look more organized without adding clutter?",
@@ -577,7 +644,22 @@ def _direct_copy_templates_english(
             },
             False,
         )
-    if category_key == "BEAUTY_PERSONAL_CARE":
+    if family == "HOME_TEXTILE":
+        return (
+            {
+                "hook": "Products like this sell faster when the texture and comfort are easy to see.",
+                "usp_1": "Thickness, texture, and size are easy to show on camera.",
+                "usp_2": "Fits a comfort-led home-use angle.",
+                "usp_3": "Works for fold, spread, or touch-led demos without exaggerated claims.",
+                "cta": "Choose the size or variation that fits and add it to cart.",
+                "overlay_copy": f"{product_label} makes texture and comfort easier to show.",
+                "dialogue_opening": "Home textiles like this work best when the surface and feel come through clearly.",
+                "dialogue_body": "Once the product is spread or held steadily, the texture, thickness, and home-comfort angle read much more clearly on camera.",
+                "dialogue_cta": "Choose the size or variation that fits and add it to cart.",
+            },
+            False,
+        )
+    if family == "BEAUTY_PERSONAL_CARE":
         return (
             {
                 "hook": "Want a neater routine without adding extra hassle?",
@@ -592,7 +674,7 @@ def _direct_copy_templates_english(
             },
             False,
         )
-    if category_key == "ACCESSORY_SMALL_ITEM":
+    if family == "ACCESSORY_SMALL_ITEM":
         return (
             {
                 "hook": "A small detail like this can lift the whole look fast.",
@@ -623,13 +705,49 @@ def _direct_copy_templates_english(
     )
 
 
+def _detect_family_copy_mismatch(copy_signals: dict[str, Any], family: str) -> list[str]:
+    haystack = " ".join(
+        _normalize_text(copy_signals.get(key))
+        for key in [
+            "hook",
+            "usp_1",
+            "usp_2",
+            "usp_3",
+            "cta",
+            "overlay_copy",
+            "dialogue_opening",
+            "dialogue_body",
+            "dialogue_cta",
+        ]
+    ).casefold()
+    mismatches: list[str] = []
+    if family in {
+        "LAUNDRY_DETERGENT_LIQUID_REFILL",
+        "FABRIC_SOFTENER_LIQUID",
+        "HOUSEHOLD_CLEANER_GENERAL",
+    }:
+        for phrase in [
+            "rumah nampak lebih tersusun",
+            "tanpa banyak barang",
+            "organized without adding clutter",
+            "space to look more organized",
+        ]:
+            if phrase in haystack and phrase not in mismatches:
+                mismatches.append(phrase)
+    if family == "HOUSEHOLD_STORAGE_ORGANIZER":
+        for phrase in ["pakaian bersih", "laundry routine", "sabun dobi", "detergent"]:
+            if phrase in haystack and phrase not in mismatches:
+                mismatches.append(phrase)
+    return mismatches
+
+
 def _build_direct_commercial_copy(
     product: dict[str, Any],
     operator_product: OperatorProduct | None,
-) -> tuple[dict[str, str], bool]:
+) -> tuple[dict[str, str], str, bool, str]:
     product_label = _safe_product_label(product)
     language = _normalize_language(product)
-    category_key = _classify_direct_copy_category(product)
+    family = _resolve_direct_copy_family(product)
     if operator_product:
         candidate = {
             "hook": _copy_value(operator_product.hook, ""),
@@ -638,7 +756,11 @@ def _build_direct_commercial_copy(
             "usp_3": _copy_value(operator_product.usp_3, ""),
             "cta": _copy_value(operator_product.cta, ""),
         }
-        if not _detect_bad_copy_fields(candidate) and all(candidate.values()):
+        if (
+            not _detect_bad_copy_fields(candidate)
+            and not _detect_family_copy_mismatch(candidate, family)
+            and all(candidate.values())
+        ):
             overlay_copy = (
                 f"{product_label} nampak lebih jelas dalam demo ringkas."
                 if language == "MALAY"
@@ -656,11 +778,20 @@ def _build_direct_commercial_copy(
                     "dialogue_body": dialogue_body,
                     "dialogue_cta": candidate["cta"],
                 },
+                "OPERATOR_PACK",
                 False,
+                family,
             )
     if language == "MALAY":
-        return _direct_copy_templates_malay(category_key, product_label)
-    return _direct_copy_templates_english(category_key, product_label)
+        payload, is_general = _direct_copy_templates_malay(family, product_label)
+    else:
+        payload, is_general = _direct_copy_templates_english(family, product_label)
+    return (
+        payload,
+        "GENERIC_FALLBACK" if is_general else "BOSMAX_FAMILY_TEMPLATE",
+        is_general,
+        family,
+    )
 
 
 def _build_stealth_copy_signals(
@@ -717,7 +848,9 @@ def _assess_copy_quality(
     review_status: str,
     copy_signals: dict[str, Any],
     is_general_fallback: bool,
-) -> tuple[str, str, list[str], str]:
+    family: str,
+    copy_source: str,
+) -> tuple[str, str, list[str], str, str]:
     required_fields = ["hook", "usp_1", "usp_2", "usp_3", "cta"]
     if any(not _normalize_text(copy_signals.get(field)) for field in required_fields):
         return (
@@ -725,6 +858,7 @@ def _assess_copy_quality(
             "Copy fields are incomplete and cannot support production output yet.",
             ["COPY_MISSING_TEXT_TO_VIDEO_NOT_READY"],
             "COPY_MISSING",
+            "COPY_FIELDS_INCOMPLETE",
         )
     if route in {"STEALTH", "REVIEW_REQUIRED"} or review_status == "REVIEW_REQUIRED":
         return (
@@ -732,8 +866,18 @@ def _assess_copy_quality(
             "Sensitive or stealth copy stays review-gated even when dialogue-safe suggestions exist.",
             ["COPY_ROUTE_REVIEW_REQUIRED"],
             "NEEDS_REVIEW",
+            "STEALTH_OR_SENSITIVE_ROUTE_REQUIRES_REVIEW",
         )
     bad_phrases = _detect_bad_copy_fields(copy_signals)
+    mismatch_phrases = _detect_family_copy_mismatch(copy_signals, family)
+    if mismatch_phrases:
+        return (
+            "FALLBACK_COPY_DRAFT",
+            "Copy theme does not semantically match the derived BOSMAX product family and must be corrected before production use.",
+            [COPY_QUALITY_WARNING, "COPY_FAMILY_SEMANTIC_MISMATCH"],
+            "NEEDS_REVIEW",
+            "SEMANTIC_MISMATCH_WITH_BOSMAX_PRODUCT_FAMILY",
+        )
     if bad_phrases or is_general_fallback:
         warnings = [COPY_QUALITY_WARNING]
         return (
@@ -741,12 +885,14 @@ def _assess_copy_quality(
             "Copy exists, but it is still generic or internally framed and must be upgraded before production use.",
             warnings,
             "NEEDS_REVIEW",
+            "GENERIC_OR_INTERNAL_COPY_FALLBACK",
         )
     return (
         "COMMERCIAL_COPY_READY",
-        "Copy is consumer-facing, product-safe, and ready for production planning.",
+        "Copy is consumer-facing, product-safe, and semantically aligned to the derived BOSMAX product family.",
         [],
         "READY",
+        "SEMANTIC_FIT_CONFIRMED",
     )
 
 
@@ -762,12 +908,15 @@ def build_copy_signal_response_for_product(
     operator_lookup = _build_operator_lookup(operator_pack)
     operator_product = _match_operator_product(product, operator_lookup)
     normalized_hint = _normalize_text(dialogue_metaphor_hint)
+    family_context = derive_bosmax_product_family(product)
     product_scale_prompt, scale_truth_status, scale_warning, scale_warnings = _build_scale_lock(product)
     camera_capture_mode, ugc_camera_lock_prompt, cinematic_camera_prompt, camera_truth_status = _camera_fields(content_style_mode)
 
     is_general_fallback = False
+    copy_source = "GENERIC_FALLBACK"
+    derived_family = str(family_context["bosmax_product_family"])
     if route == "DIRECT":
-        copy_signals, is_general_fallback = _build_direct_commercial_copy(
+        copy_signals, copy_source, is_general_fallback, derived_family = _build_direct_commercial_copy(
             product,
             operator_product if route == "DIRECT" else None,
         )
@@ -777,37 +926,52 @@ def build_copy_signal_response_for_product(
             normalized_hint if route == "STEALTH" else None,
             route_reason,
         )
-    copy_quality_status, copy_quality_detail, quality_warnings, text_to_video_status = _assess_copy_quality(
+        copy_source = "STEALTH_DIALOGUE_SAFE"
+    copy_quality_status, copy_quality_detail, quality_warnings, text_to_video_status, copy_quality_reason = _assess_copy_quality(
         product,
         route,
         review_status,
         copy_signals,
         is_general_fallback,
+        derived_family,
+        copy_source,
     )
     copy_signals.update(
         {
             "copy_quality_status": copy_quality_status,
             "copy_quality_detail": copy_quality_detail,
+            "copy_quality_reason": copy_quality_reason,
+            "copy_source": copy_source,
             "warning": COPY_QUALITY_WARNING if COPY_QUALITY_WARNING in quality_warnings else None,
         }
     )
 
-    warnings = list(scale_warnings)
-    warnings.extend(quality_warnings)
+    truth_warnings = list(scale_warnings)
+    truth_warnings.extend(quality_warnings)
+    preview_warnings: list[str] = []
     if route != "DIRECT":
-        if "COPY_ROUTE_REVIEW_REQUIRED" not in warnings:
-            warnings.append("COPY_ROUTE_REVIEW_REQUIRED")
-    if route == "DIRECT" and not operator_product:
-        warnings.append("COPY_SIGNAL_DERIVED_OPERATOR_PACK_FALLBACK")
+        if "COPY_ROUTE_REVIEW_REQUIRED" not in truth_warnings:
+            truth_warnings.append("COPY_ROUTE_REVIEW_REQUIRED")
+    if route == "DIRECT" and not operator_product and copy_source == "GENERIC_FALLBACK":
+        truth_warnings.append("COPY_SIGNAL_GENERIC_FAMILY_FALLBACK")
     if not ugc_camera_lock_prompt and _normalize_text(content_style_mode).upper() == "UGC_IPHONE":
-        warnings.append("UGC_CAMERA_LOCK_MISSING")
+        truth_warnings.append("UGC_CAMERA_LOCK_MISSING")
     if scale_truth_status == "SCALE_NOT_FOUND":
-        warnings.append("PRODUCT_SCALE_PROMPT_MISSING")
+        truth_warnings.append("PRODUCT_SCALE_PROMPT_MISSING")
+    if family_context["bosmax_source_taxonomy_conflict"]:
+        truth_warnings.append("BOSMAX_FAMILY_OVERRIDES_SOURCE_TAXONOMY")
+    if route == "DIRECT" and not operator_product and copy_source == "BOSMAX_FAMILY_TEMPLATE":
+        preview_warnings.append("OPERATOR_PACK_COPY_SIGNALS_NOT_FOUND")
+    warnings = truth_warnings + preview_warnings
 
     product_context = {
         "product_id": product.get("id") or product.get("product_id"),
         "product_display_name": product.get("product_display_name"),
         "raw_product_title": product.get("raw_product_title"),
+        "bosmax_product_family": derived_family,
+        "bosmax_product_family_reason": family_context["bosmax_product_family_reason"],
+        "bosmax_source_taxonomy_conflict": family_context["bosmax_source_taxonomy_conflict"],
+        "bosmax_source_taxonomy_conflict_reason": family_context["bosmax_source_taxonomy_conflict_reason"],
         "product_type": product.get("product_type") or product.get("product_type_id"),
         "scene_context": product.get("scene_context"),
         "camera_style": product.get("camera_style"),
@@ -825,6 +989,8 @@ def build_copy_signal_response_for_product(
         "camera_truth_status": camera_truth_status,
         "copy_quality_status": copy_quality_status,
         "copy_quality_detail": copy_quality_detail,
+        "copy_source": copy_source,
+        "copy_quality_reason": copy_quality_reason,
     }
 
     return CopySignalGenerateResponse(
@@ -857,10 +1023,12 @@ def build_copy_signal_response_for_product(
             ],
         },
         warnings=warnings,
+        truth_warnings=truth_warnings,
+        preview_warnings=preview_warnings,
         provenance={
             "scope": COPY_SIGNAL_SCOPE,
             "operator_pack_available": bool(operator_pack),
-            "operator_pack_copy_signals_used": bool(operator_product and route == "DIRECT"),
+            "operator_pack_copy_signals_used": copy_source == "OPERATOR_PACK",
         },
     )
 

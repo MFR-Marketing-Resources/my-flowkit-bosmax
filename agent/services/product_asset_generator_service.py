@@ -9,10 +9,12 @@ from agent.models.product_asset_generator import (
     ProductAssetGeneratorResponse,
 )
 from agent.services.asset_registry_service import list_assets_by_type
+from agent.services.bosmax_product_family import derive_bosmax_product_family
 from agent.services.copy_signal_generator_service import build_copy_signal_response_for_product
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import evaluate_prompt_readiness, resolve_product_physics
 from agent.services.product_preflight import (
+    apply_creative_profile_overrides,
     build_product_preflight,
     evaluate_mapping_status,
     resolve_creative_profile,
@@ -141,6 +143,7 @@ def _build_enriched_product(product_seed: dict[str, Any]) -> dict[str, Any]:
             payload[key] = value
 
     creative_profile = resolve_creative_profile(payload)
+    payload = apply_creative_profile_overrides(payload, creative_profile)
     for key, value in creative_profile.items():
         if payload.get(key) in (None, "", []):
             payload[key] = value
@@ -232,12 +235,15 @@ def _build_product_context(
         "raw_product_title": product.get("raw_product_title"),
         "product_display_name": product.get("product_display_name"),
         "product_short_name": product.get("product_short_name"),
+        "bosmax_product_family": product.get("bosmax_product_family"),
         "category": product.get("category"),
         "subcategory": product.get("subcategory"),
         "type": product.get("type"),
         "product_type": product.get("product_type"),
+        "product_type_id": product.get("product_type_id"),
         "claim_risk_level": product.get("claim_risk_level"),
         "mapping_status": product.get("mapping_status"),
+        "mapping_review_status": product.get("mapping_review_status"),
         "prompt_readiness_status": product.get("prompt_readiness_status"),
         "scene_context": request.scene_context or product.get("scene_context"),
         "camera_style": request.camera_style or product.get("camera_style"),
@@ -281,12 +287,16 @@ def _build_product_context(
                 "copy_review_status": ugc_copy_signal.get("review_status"),
                 "copy_quality_status": ugc_copy_signal.get("copy_quality_status"),
                 "copy_quality_detail": ugc_copy_signal.get("copy_signals", {}).get("copy_quality_detail"),
+                "copy_source": ugc_copy_signal.get("copy_signals", {}).get("copy_source"),
+                "copy_quality_reason": ugc_copy_signal.get("copy_signals", {}).get("copy_quality_reason"),
                 "product_scale_prompt": ugc_copy_signal.get("product_context", {}).get("product_scale_prompt"),
                 "scale_truth_status": ugc_copy_signal.get("product_context", {}).get("scale_truth_status"),
                 "scale_warning": ugc_copy_signal.get("product_context", {}).get("scale_warning"),
                 "camera_capture_mode": ugc_copy_signal.get("product_context", {}).get("camera_capture_mode"),
                 "ugc_camera_lock_prompt": ugc_copy_signal.get("product_context", {}).get("ugc_camera_lock_prompt"),
                 "camera_truth_status": ugc_copy_signal.get("product_context", {}).get("camera_truth_status"),
+                "bosmax_source_taxonomy_conflict": ugc_copy_signal.get("product_context", {}).get("bosmax_source_taxonomy_conflict"),
+                "bosmax_source_taxonomy_conflict_reason": ugc_copy_signal.get("product_context", {}).get("bosmax_source_taxonomy_conflict_reason"),
                 "claim_safety": ugc_copy_signal.get("claim_safety", {}),
                 "visual_dialogue_isolation": ugc_copy_signal.get("visual_dialogue_isolation", {}),
             }
@@ -387,6 +397,7 @@ def _build_truth_status(
     ugc_copy_signal: dict[str, Any] | None = None,
     cinematic_copy_signal: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    family_context = derive_bosmax_product_family(product)
     copy_readiness_status, copy_readiness_detail = _build_copy_readiness_status(
         product, ugc_copy_signal
     )
@@ -411,6 +422,18 @@ def _build_truth_status(
     visual_dialogue_isolation = (ugc_copy_signal or {}).get(
         "visual_dialogue_isolation", {}
     )
+    mapping_review_status = str(product.get("mapping_review_status") or "").strip() or "NOT_RECORDED"
+    product_type_id = str(product.get("product_type_id") or "").strip() or "MISSING"
+    mapping_truth_blocked = (
+        mapping_review_status == "BLOCKED"
+        or product_type_id in {"GENERIC_PRODUCT", "UNIVERSAL", "MISSING"}
+        or bool(family_context["bosmax_source_taxonomy_conflict"])
+    )
+    product_mapping_status = (
+        "NEEDS_REVIEW"
+        if mapping_truth_blocked
+        else (product.get("mapping_status") or "MISSING")
+    )
     has_product = bool(product.get("id") or product.get("product_id"))
     has_scene = bool(request.scene_context or product.get("scene_context"))
     has_camera = bool(
@@ -426,6 +449,7 @@ def _build_truth_status(
         and copy_quality_status == "COMMERCIAL_COPY_READY"
         and not claim_safety.get("requires_human_review", False)
         and visual_dialogue_isolation.get("status") in {"ENFORCED", "PASS"}
+        and not mapping_truth_blocked
     )
     image_ready = has_product and has_scene and bool(product_scale_prompt)
     if copy_quality_status == "COPY_MISSING":
@@ -439,7 +463,12 @@ def _build_truth_status(
         "profile_source_status": "EPHEMERAL_PREVIEW",
         "persistence_truth": "NOT_PERSISTED",
         "canonical_status": "NOT_CANONICAL",
-        "product_mapping_status": product.get("mapping_status") or "MISSING",
+        "product_mapping_status": product_mapping_status,
+        "mapping_review_status": mapping_review_status,
+        "product_type_id": product_type_id,
+        "bosmax_product_family": family_context["bosmax_product_family"],
+        "bosmax_source_taxonomy_conflict": family_context["bosmax_source_taxonomy_conflict"],
+        "bosmax_source_taxonomy_conflict_reason": family_context["bosmax_source_taxonomy_conflict_reason"],
         "copy_quality_status": copy_quality_status,
         "copy_quality_detail": copy_quality_detail,
         "copy_readiness_status": copy_readiness_status,
@@ -478,57 +507,68 @@ def _build_truth_status(
     }
 
 
-def _build_common_warnings(
+def _build_warning_buckets(
     request: ProductAssetGeneratorRequest,
     product: dict[str, Any],
     registry_hints: dict[str, Any],
     ugc_copy_signal: dict[str, Any] | None = None,
-) -> list[str]:
-    warnings: list[str] = [
+) -> tuple[list[str], list[str]]:
+    family_context = derive_bosmax_product_family(product)
+    preview_warnings: list[str] = [
         "PREVIEW_ONLY_NOT_GENERATED_ASSET",
         "CHARACTER_IMAGE_NOT_GENERATED_YET",
         "NOT_CHROME_EXTENSION_VISIBLE_YET",
         "NOT_GOOGLE_FLOW_READY_EXECUTION",
         "READINESS_PROFILE_NOT_PERSISTED",
-        "PRODUCT_CLAIMS_NOT_HARD_ENFORCED",
         "PRODUCT_HANDLING_INFERRED_FROM_RULES",
         "PHYSICS_HANDLING_DERIVED_FROM_PRODUCT_RULES",
     ]
-    warnings.append("PRODUCT_DIMENSIONS_NOT_REPO_VERIFIED")
+    truth_warnings: list[str] = ["PRODUCT_DIMENSIONS_NOT_REPO_VERIFIED"]
     if not _has_product_image(product):
-        warnings.append("PRODUCT_IMAGE_MISSING")
+        truth_warnings.append("PRODUCT_IMAGE_MISSING")
     if request.gender or request.ethnicity or request.age_range:
-        warnings.append("CHARACTER_ATTRIBUTES_USER_SUPPLIED_OR_DERIVED_NOT_CANONICAL")
+        preview_warnings.append("CHARACTER_ATTRIBUTES_USER_SUPPLIED_OR_DERIVED_NOT_CANONICAL")
     if request.wardrobe or registry_hints["WARDROBE"].source_status != "REPO_VERIFIED":
-        warnings.append("WARDROBE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
+        preview_warnings.append("WARDROBE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
     if request.headwear or registry_hints["HEADWEAR"].source_status != "REPO_VERIFIED":
-        warnings.append("HEADWEAR_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
+        preview_warnings.append("HEADWEAR_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
     if request.camera_style or registry_hints["CAMERA_STYLE"].source_status != "REPO_VERIFIED":
-        warnings.append("CAMERA_STYLE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
+        preview_warnings.append("CAMERA_STYLE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
     if request.camera_behavior or registry_hints["CAMERA_BEHAVIOR"].source_status != "REPO_VERIFIED":
-        warnings.append("CAMERA_BEHAVIOR_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
+        preview_warnings.append("CAMERA_BEHAVIOR_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
     if request.language or registry_hints["LANGUAGE"].source_status != "REPO_VERIFIED":
-        warnings.append("LANGUAGE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
+        preview_warnings.append("LANGUAGE_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
     if request.platform or registry_hints["PLATFORM"].source_status != "REPO_VERIFIED":
-        warnings.append("PLATFORM_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
+        preview_warnings.append("PLATFORM_DATASET_INPUT_SLOT_ONLY_OR_NOT_VERIFIED")
     copy_readiness_status, _ = _build_copy_readiness_status(product, ugc_copy_signal)
     copy_quality_status = (ugc_copy_signal or {}).get(
         "copy_quality_status",
         (ugc_copy_signal or {}).get("copy_signals", {}).get("copy_quality_status", "COPY_MISSING"),
     )
+    if str(product.get("mapping_review_status") or "").strip() == "BLOCKED":
+        truth_warnings.append("PRODUCT_MAPPING_REVIEW_BLOCKED")
+    if str(product.get("product_type_id") or "").strip() in {"GENERIC_PRODUCT", "UNIVERSAL"}:
+        truth_warnings.append("PRODUCT_TAXONOMY_GENERIC_REVIEW_REQUIRED")
+    if family_context["bosmax_source_taxonomy_conflict"]:
+        truth_warnings.append("BOSMAX_FAMILY_OVERRIDES_SOURCE_TAXONOMY")
     if copy_readiness_status == "COPY_MISSING":
-        warnings.append("COPY_MISSING_TEXT_TO_VIDEO_NOT_READY")
+        truth_warnings.append("COPY_MISSING_TEXT_TO_VIDEO_NOT_READY")
     if copy_quality_status == "FALLBACK_COPY_DRAFT":
-        warnings.append("COPY_QUALITY_FALLBACK_DRAFT")
+        truth_warnings.append("COPY_QUALITY_FALLBACK_DRAFT")
     if ugc_copy_signal:
+        for warning in ugc_copy_signal.get("truth_warnings", []):
+            _unique_append(truth_warnings, warning)
+        for warning in ugc_copy_signal.get("preview_warnings", []):
+            _unique_append(preview_warnings, warning)
         scale_warning = ugc_copy_signal.get("product_context", {}).get("scale_warning")
         if scale_warning:
-            warnings.append(scale_warning)
+            _unique_append(truth_warnings, scale_warning)
         if ugc_copy_signal.get("claim_safety", {}).get("requires_human_review"):
-            warnings.append("COPY_ROUTE_REVIEW_REQUIRED")
+            _unique_append(truth_warnings, "COPY_ROUTE_REVIEW_REQUIRED")
         if ugc_copy_signal.get("product_context", {}).get("scale_truth_status") == "SCALE_NOT_FOUND":
-            warnings.append("PRODUCT_SCALE_PROMPT_MISSING")
-    return warnings
+            _unique_append(truth_warnings, "PRODUCT_SCALE_PROMPT_MISSING")
+    _unique_append(truth_warnings, "PRODUCT_CLAIMS_NOT_HARD_ENFORCED")
+    return truth_warnings, preview_warnings
 
 
 def _build_derived_asset_suggestions(
@@ -820,7 +860,6 @@ async def generate_product_asset_preview(
     request_input: dict[str, Any] | ProductAssetGeneratorRequest,
 ) -> ProductAssetGeneratorResponse:
     request, raw_request = _normalize_request(request_input)
-    warnings: list[str] = []
     errors: list[str] = []
 
     if request.target_asset_intent not in ALLOWED_TARGET_ASSET_INTENTS:
@@ -908,14 +947,13 @@ async def generate_product_asset_preview(
             truth_status=truth_status,
         )
 
-    warnings.extend(
-        _build_common_warnings(
-            request,
-            enriched_product,
-            registry_hints,
-            ugc_copy_signal,
-        )
+    truth_warnings, preview_warnings = _build_warning_buckets(
+        request,
+        enriched_product,
+        registry_hints,
+        ugc_copy_signal,
     )
+    warnings = truth_warnings + preview_warnings
     handling_notes = _build_handling_notes(enriched_product, request)
     physics_notes = _build_physics_notes(enriched_product)
     scene_notes = _build_scene_notes(enriched_product, request)
@@ -947,6 +985,8 @@ async def generate_product_asset_preview(
         camera_notes=camera_notes,
         warning_summary=warnings,
         warnings=warnings,
+        truth_warnings=truth_warnings,
+        preview_warnings=preview_warnings,
         errors=errors,
         provenance=provenance,
         truth_status=truth_status,

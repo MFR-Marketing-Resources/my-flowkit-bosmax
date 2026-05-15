@@ -40,6 +40,8 @@ class ProductAssetGeneratorResponse(BaseModel):
     camera_notes: list[str] = Field(default_factory=list)
     warning_summary: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    truth_warnings: list[str] = Field(default_factory=list)
+    preview_warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     provenance: dict[str, Any] = Field(default_factory=dict)
     truth_status: dict[str, Any] = Field(default_factory=dict)

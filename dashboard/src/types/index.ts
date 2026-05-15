@@ -981,6 +981,8 @@ export interface ProductAssetGeneratorResponse {
 	camera_notes: string[];
 	warning_summary: string[];
 	warnings: string[];
+	truth_warnings: string[];
+	preview_warnings: string[];
 	errors: string[];
 	provenance: Record<string, unknown>;
 	truth_status: Record<string, unknown>;
