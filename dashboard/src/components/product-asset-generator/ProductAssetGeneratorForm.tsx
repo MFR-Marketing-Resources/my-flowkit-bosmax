@@ -414,12 +414,13 @@ function ProvenanceList({
 export function buildProductAssetGeneratorRequest(
 	draft: ProductAssetGeneratorDraft,
 ): ProductAssetGeneratorRequest {
+	const inlinePayload = parseJsonObject(draft.product_payload_text);
+	const manualOverridePayload = draft.product_id
+		? undefined
+		: inlinePayload || draft.product_payload || undefined;
 	return {
 		product_id: draft.product_id || undefined,
-		product_payload:
-			parseJsonObject(draft.product_payload_text) ||
-			draft.product_payload ||
-			undefined,
+		product_payload: manualOverridePayload,
 		target_asset_intent: draft.target_asset_intent,
 		gender: draft.gender || undefined,
 		ethnicity: draft.ethnicity || undefined,
@@ -688,16 +689,16 @@ function buildProfileCard({
 		draft.camera_style || selectedProduct?.camera_style || "NOT_PROVIDED";
 	const cameraBehavior =
 		draft.camera_behavior || selectedProduct?.camera_behavior || "NOT_PROVIDED";
-	const productHandling =
-		(result?.product_context.product_handling as string | undefined) ||
-		result?.handling_notes[0] ||
-		selectedProduct?.handling_notes ||
-		"NOT_PROVIDED";
-	const productPhysics =
-		(result?.product_context.product_physics as string | undefined) ||
-		result?.physics_notes[0] ||
-		selectedProduct?.section_5_product_physics_prompt ||
-		"NOT_PROVIDED";
+	const productHandling = result
+		? (result?.product_context.product_handling as string | undefined) ||
+			result?.handling_notes[0] ||
+			"NOT_PROVIDED"
+		: selectedProduct?.handling_notes || "NOT_PROVIDED";
+	const productPhysics = result
+		? (result?.product_context.product_physics as string | undefined) ||
+			result?.physics_notes[0] ||
+			"NOT_PROVIDED"
+		: selectedProduct?.section_5_product_physics_prompt || "NOT_PROVIDED";
 	const wardrobeStrategy = draft.wardrobe
 		? `Manual override: ${draft.wardrobe}`
 		: `Manual fallback remains required. ${hydrationWardrobeReason}`;
@@ -1232,27 +1233,9 @@ export default function ProductAssetGeneratorForm({
 			return;
 		}
 		lastHydratedProductId.current = draft.product_id;
-		const productPayload = {
-			id: selectedProduct.id,
-			product_display_name: selectedProduct.product_display_name,
-			raw_product_title: selectedProduct.raw_product_title,
-			scene_context: selectedProduct.scene_context,
-			camera_style: selectedProduct.camera_style,
-			camera_behavior: selectedProduct.camera_behavior,
-			formula: selectedProduct.formula,
-			product_handling:
-				selectedAuthorityContext?.visual.product_handling ||
-				selectedProduct.handling_notes ||
-				undefined,
-			product_physics:
-				selectedAuthorityContext?.visual.product_physics ||
-				selectedProduct.section_5_product_physics_prompt ||
-				undefined,
-			overlay_hint: selectedAuthorityContext?.visual.overlay_hint || undefined,
-		};
 		onChange({
-			product_payload: productPayload,
-			product_payload_text: buildProductPayloadText(productPayload),
+			product_payload: undefined,
+			product_payload_text: "",
 			scene_context: selectedProduct.scene_context || "",
 			camera_style: selectedProduct.camera_style || "",
 			camera_behavior: selectedProduct.camera_behavior || "",
@@ -1372,10 +1355,10 @@ export default function ProductAssetGeneratorForm({
 						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
 							Primary Workflow
 						</div>
-						<FieldShell
-							label="Product Selector"
-							helper="Selecting a product hydrates payload JSON plus scene, camera, product handling, and product physics fields from BOSMAX authority context."
-						>
+							<FieldShell
+								label="Product Selector"
+								helper="Selecting a product uses product_id preview authority. Inline payload JSON is cleared so Analyze Product resolves fresh intelligence and physics from the backend."
+							>
 							<SelectField
 								value={draft.product_id || ""}
 								onChange={(value) => onChange({ product_id: value })}

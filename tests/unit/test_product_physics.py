@@ -130,6 +130,38 @@ def test_household_cleaner_uses_household_packaged_goods_family():
     assert "label" in result["recommended_grip"] or "support" in result["recommended_grip"]
 
 
+def test_intelligence_family_overrides_stale_textile_detergent_fields():
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "3 IN 1 SABUN DOBI+WANGI+PELEMBUT+ANTIBAKTIRIA 500ML LIQUID LAUNDRY DETERGENT",
+            "category": "Baby & Maternity",
+            "subcategory": "Baby Care & Health",
+            "type": "Laundry Detergent",
+            "bosmax_product_family": "LAUNDRY_DETERGENT_LIQUID_REFILL",
+            "product_scale": "LARGE_SOFT_GOOD",
+            "hand_object_interaction": "two-hand lift, fold, roll, unroll, or fluff presentation",
+            "material_behavior": "textile fiber body with bend, roll, compression, and rebound",
+            "surface_behavior": "visible fiber texture, pile direction, and soft shadowing",
+        }
+    )
+
+    combined = " ".join(
+        [
+            result["product_scale"],
+            result["hand_object_interaction"],
+            result["material_behavior"],
+            result["surface_behavior"],
+            result["section_5_product_physics_prompt"],
+        ]
+    ).lower()
+
+    assert result["physics_class"] == "LAUNDRY_LIQUID_REFILL"
+    for token in ["fold", "roll", "unroll", "fluff", "textile", "fabric", "pile"]:
+        assert token not in combined
+    assert "refill" in combined
+    assert "bottle" in combined
+
+
 def test_square_hijab_uses_modestwear_family():
     result = resolve_product_physics(
         product_name="Amyrahijab chiffon premium",

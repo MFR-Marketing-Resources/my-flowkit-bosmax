@@ -87,6 +87,21 @@ FORBIDDEN_TRUTH_OVERRIDE_KEYS = {
 }
 FORBIDDEN_DIMENSION_INVENTION_KEYS = {"invent_product_dimensions", "invent_dimensions"}
 FORBIDDEN_CLAIM_INVENTION_KEYS = {"invent_product_claims", "invent_claims"}
+PHYSICS_AUTHORITY_FIELDS = (
+    "physics_class",
+    "product_scale",
+    "hand_object_interaction",
+    "recommended_grip",
+    "air_gap_rule",
+    "material_behavior",
+    "surface_behavior",
+    "fragility_level",
+    "handling_notes",
+    "camera_handling_notes",
+    "unsafe_handling_rules",
+    "section_5_product_physics_prompt",
+    "section_5_physics_hint",
+)
 
 
 def _unique_append(items: list[str], value: str) -> None:
@@ -114,16 +129,43 @@ async def _resolve_product_seed(
         existing = await crud.get_product(request.product_id)
         if not existing:
             return None, "PRODUCT_NOT_FOUND"
-        if request.product_payload:
-            merged = dict(existing)
-            merged.update(request.product_payload)
-            return merged, None
         return dict(existing), None
 
     if request.product_payload:
         return dict(request.product_payload), None
 
     return None, "PRODUCT_CONTEXT_REQUIRED"
+
+
+def _apply_resolved_physics_authority(
+    payload: dict[str, Any],
+    physics: dict[str, Any],
+) -> dict[str, Any]:
+    enriched = dict(payload)
+    resolved = dict(physics)
+    for key in PHYSICS_AUTHORITY_FIELDS:
+        enriched[key] = resolved.get(key, enriched.get(key))
+    enriched["resolved_physics"] = resolved
+    enriched["product_handling"] = (
+        resolved.get("handling_notes")
+        or resolved.get("camera_handling_notes")
+        or enriched.get("product_handling")
+        or ""
+    )
+    enriched["product_physics"] = (
+        resolved.get("section_5_product_physics_prompt")
+        or resolved.get("physics_class")
+        or enriched.get("product_physics")
+        or ""
+    )
+    return enriched
+
+
+def _resolved_physics_from_product(product: dict[str, Any]) -> dict[str, Any]:
+    resolved = product.get("resolved_physics")
+    if isinstance(resolved, dict) and resolved:
+        return resolved
+    return {key: product.get(key) for key in PHYSICS_AUTHORITY_FIELDS}
 
 
 def _build_enriched_product(product_seed: dict[str, Any]) -> dict[str, Any]:
@@ -145,9 +187,7 @@ def _build_enriched_product(product_seed: dict[str, Any]) -> dict[str, Any]:
     payload = inject_product_intelligence_fields(payload, intelligence)
 
     physics = resolve_product_physics(product=payload)
-    for key, value in physics.items():
-        if payload.get(key) in (None, "", []):
-            payload[key] = value
+    payload = _apply_resolved_physics_authority(payload, physics)
 
     creative_profile = resolve_creative_profile(payload)
     payload = apply_creative_profile_overrides(payload, creative_profile)
@@ -237,6 +277,7 @@ def _build_product_context(
     ugc_copy_signal: dict[str, Any] | None = None,
     cinematic_copy_signal: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    resolved_physics = _resolved_physics_from_product(product)
     context = {
         "product_id": product.get("id") or product.get("product_id"),
         "source": product.get("source"),
@@ -274,9 +315,15 @@ def _build_product_context(
         "scene_context": request.scene_context or product.get("scene_context"),
         "camera_style": request.camera_style or product.get("camera_style"),
         "camera_behavior": request.camera_behavior or product.get("camera_behavior"),
-        "product_scale": product.get("product_scale"),
-        "recommended_grip": product.get("recommended_grip"),
-        "hand_object_interaction": product.get("hand_object_interaction"),
+        "product_scale": resolved_physics.get("product_scale"),
+        "recommended_grip": resolved_physics.get("recommended_grip"),
+        "hand_object_interaction": resolved_physics.get("hand_object_interaction"),
+        "product_handling": product.get("product_handling")
+        or resolved_physics.get("handling_notes")
+        or resolved_physics.get("camera_handling_notes"),
+        "product_physics": product.get("product_physics")
+        or resolved_physics.get("section_5_product_physics_prompt")
+        or resolved_physics.get("physics_class"),
         "image_url": product.get("image_url"),
         "local_image_path": product.get("local_image_path"),
         "media_id": product.get("media_id"),
@@ -760,13 +807,21 @@ def _build_missing_assets(
 
 
 def _build_handling_notes(product: dict[str, Any], request: ProductAssetGeneratorRequest) -> list[str]:
+    resolved_physics = _resolved_physics_from_product(product)
     notes = []
-    if product.get("recommended_grip"):
-        notes.append(f"Recommended grip: {product['recommended_grip']}")
-    if product.get("hand_object_interaction"):
-        notes.append(f"Hand-object interaction: {product['hand_object_interaction']}")
-    if product.get("handling_notes"):
-        notes.append(str(product["handling_notes"]))
+    if resolved_physics.get("recommended_grip"):
+        notes.append(f"Recommended grip: {resolved_physics['recommended_grip']}")
+    if resolved_physics.get("hand_object_interaction"):
+        notes.append(
+            f"Hand-object interaction: {resolved_physics['hand_object_interaction']}"
+        )
+    if product.get("product_handling") or resolved_physics.get("handling_notes"):
+        notes.append(
+            str(
+                product.get("product_handling")
+                or resolved_physics.get("handling_notes")
+            )
+        )
     if request.include_product_in_hand:
         notes.append("Product should remain clearly readable in hand without implying exact verified dimensions.")
     if not notes:
@@ -775,6 +830,7 @@ def _build_handling_notes(product: dict[str, Any], request: ProductAssetGenerato
 
 
 def _build_physics_notes(product: dict[str, Any]) -> list[str]:
+    resolved_physics = _resolved_physics_from_product(product)
     notes = []
     for key, label in (
         ("physics_class", "Physics class"),
@@ -783,10 +839,10 @@ def _build_physics_notes(product: dict[str, Any]) -> list[str]:
         ("surface_behavior", "Surface behavior"),
         ("fragility_level", "Fragility"),
     ):
-        if product.get(key):
-            notes.append(f"{label}: {product[key]}")
-    if product.get("camera_handling_notes"):
-        notes.append(f"Camera handling: {product['camera_handling_notes']}")
+        if resolved_physics.get(key):
+            notes.append(f"{label}: {resolved_physics[key]}")
+    if resolved_physics.get("camera_handling_notes"):
+        notes.append(f"Camera handling: {resolved_physics['camera_handling_notes']}")
     if not notes:
         notes.append("Physics guidance is derived from product rules and remains not fully verified.")
     return notes
