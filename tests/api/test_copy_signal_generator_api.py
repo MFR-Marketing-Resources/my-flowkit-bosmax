@@ -41,6 +41,8 @@ def test_generate_endpoint_includes_copy_quality_and_direct_commercial_copy(monk
             scope="COPY_SIGNAL_GENERATOR_WITH_STEALTH_ROUTER",
             route="DIRECT",
             review_status="AUTO_APPROVED",
+            claim_gate="CLAIM_SAFE",
+            claim_tokens=[],
             copy_quality_status="COMMERCIAL_COPY_READY",
             text_to_video_readiness_status="READY",
             content_style_mode=request.content_style_mode,
@@ -108,6 +110,8 @@ def test_generate_endpoint_keeps_stealth_payload_review_gated(monkeypatch):
             scope="COPY_SIGNAL_GENERATOR_WITH_STEALTH_ROUTER",
             route="STEALTH",
             review_status="REVIEW_REQUIRED",
+            claim_gate="CLAIM_REVIEW_REQUIRED",
+            claim_tokens=["male_health_sensitive"],
             copy_quality_status="REVIEW_REQUIRED",
             text_to_video_readiness_status="NEEDS_REVIEW",
             content_style_mode=request.content_style_mode,
@@ -174,6 +178,8 @@ def test_generate_endpoint_does_not_mark_bad_fallback_copy_commercial_ready(monk
             scope="COPY_SIGNAL_GENERATOR_WITH_STEALTH_ROUTER",
             route="DIRECT",
             review_status="AUTO_APPROVED",
+            claim_gate="CLAIM_REVIEW_REQUIRED",
+            claim_tokens=["antibakteria"],
             copy_quality_status="FALLBACK_COPY_DRAFT",
             text_to_video_readiness_status="NEEDS_REVIEW",
             content_style_mode=request.content_style_mode,
@@ -216,4 +222,5 @@ def test_generate_endpoint_does_not_mark_bad_fallback_copy_commercial_ready(monk
     payload = response.json()
     assert payload["copy_quality_status"] == "FALLBACK_COPY_DRAFT"
     assert payload["text_to_video_readiness_status"] == "NEEDS_REVIEW"
+    assert payload["claim_gate"] == "CLAIM_REVIEW_REQUIRED"
     assert payload["copy_signals"]["warning"] == "COPY_QUALITY_FALLBACK_DRAFT"

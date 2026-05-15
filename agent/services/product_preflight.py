@@ -65,6 +65,13 @@ def _contains_any(haystack: str, keywords: list[str]) -> bool:
 
 
 def resolve_product_family(product: dict[str, Any]) -> str:
+    explicit_family = str(
+        product.get("bosmax_product_family")
+        or ((product.get("product_intelligence") or {}).get("bosmax_product_family") if isinstance(product.get("product_intelligence"), dict) else "")
+        or ""
+    ).strip()
+    if explicit_family:
+        return explicit_family
     return str(derive_bosmax_product_family(product)["bosmax_product_family"])
 
 

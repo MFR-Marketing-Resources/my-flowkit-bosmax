@@ -11,6 +11,10 @@ from agent.services.flow_client import get_flow_client
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
 from agent.services.product_preflight import build_product_preflight, evaluate_mapping_status, resolve_creative_profile
+from agent.services.product_intelligence_service import (
+    inject_product_intelligence_fields,
+    resolve_product_intelligence_profile,
+)
 from agent.config import BASE_DIR
 
 logger = logging.getLogger(__name__)
@@ -230,6 +234,8 @@ async def enrich_product(product: dict[str, Any], *, persist: bool = False) -> d
 
     mapping = resolve_product_mapping(product=payload, source_hint=payload.get("source"))
     payload.update(mapping)
+    intelligence = resolve_product_intelligence_profile(payload)
+    payload = inject_product_intelligence_fields(payload, intelligence)
     physics = resolve_product_physics(product=payload)
     payload.update(physics)
     creative_profile = resolve_creative_profile(payload)
@@ -256,6 +262,10 @@ async def enrich_product(product: dict[str, Any], *, persist: bool = False) -> d
     payload["mapping_review_status"] = payload.get("mapping_review_status") or payload.get("mapping_status") or (
         "NEEDS_REVIEW" if payload.get("mapping_confidence") == "NEEDS_REVIEW" else "AUTO_MAPPED"
     )
+    payload["claim_gate"] = intelligence.get("claim_gate")
+    payload["claim_tokens"] = intelligence.get("claim_tokens", [])
+    payload["copy_route"] = intelligence.get("copy_route")
+    payload["destination_readiness"] = intelligence.get("destination_readiness", {})
     payload["preflight"] = build_product_preflight(payload)
 
     if persist and payload.get("id"):

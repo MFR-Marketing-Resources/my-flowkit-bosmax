@@ -126,6 +126,11 @@ export default function ProductsSalesAnalyzerPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [sourceFilter, setSourceFilter] = useState('FASTMOSS')
+  const [groupFilter, setGroupFilter] = useState('ALL')
+  const [familyFilter, setFamilyFilter] = useState('ALL')
+  const [copyRouteFilter, setCopyRouteFilter] = useState('ALL')
+  const [claimGateFilter, setClaimGateFilter] = useState('ALL')
+  const [confidenceFilter, setConfidenceFilter] = useState('ALL')
   const [readinessFilter] = useState('ALL')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -142,7 +147,28 @@ export default function ProductsSalesAnalyzerPage() {
   const [promptPreview, setPromptPreview] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
 
-  const selectedProduct = useMemo(() => products.find(product => product.id === selectedId) || null, [products, selectedId])
+  const hasTextValue = <T extends string>(value: T | null | undefined): value is T => typeof value === 'string' && value.trim().length > 0
+  const filterOptions = useMemo(() => {
+    const values = {
+      groups: Array.from(new Set(products.map(product => product.group).filter(hasTextValue))).sort(),
+      families: Array.from(new Set(products.map(product => product.bosmax_product_family).filter(hasTextValue))).sort(),
+      copyRoutes: Array.from(new Set(products.map(product => product.copy_route).filter(hasTextValue))).sort(),
+      claimGates: Array.from(new Set(products.map(product => product.claim_gate).filter(hasTextValue))).sort(),
+      confidences: Array.from(new Set(products.map(product => product.intelligence_confidence).filter(hasTextValue))).sort(),
+    }
+    return values
+  }, [products])
+  const filteredProducts = useMemo(() => {
+    return products.filter(product => {
+      if (groupFilter !== 'ALL' && product.group !== groupFilter) return false
+      if (familyFilter !== 'ALL' && product.bosmax_product_family !== familyFilter) return false
+      if (copyRouteFilter !== 'ALL' && product.copy_route !== copyRouteFilter) return false
+      if (claimGateFilter !== 'ALL' && product.claim_gate !== claimGateFilter) return false
+      if (confidenceFilter !== 'ALL' && product.intelligence_confidence !== confidenceFilter) return false
+      return true
+    })
+  }, [products, groupFilter, familyFilter, copyRouteFilter, claimGateFilter, confidenceFilter])
+  const selectedProduct = useMemo(() => filteredProducts.find(product => product.id === selectedId) || null, [filteredProducts, selectedId])
   const imageReadinessSummary = useMemo(() => {
     const summary = {
       READY: 0,
@@ -152,7 +178,7 @@ export default function ProductsSalesAnalyzerPage() {
       NOT_AVAILABLE: 0,
     }
 
-    for (const product of products) {
+    for (const product of filteredProducts) {
       switch (product.image_readiness_status) {
         case 'IMAGE_READY':
           summary.READY += 1
@@ -171,7 +197,12 @@ export default function ProductsSalesAnalyzerPage() {
       }
     }
     return summary
-  }, [products])
+  }, [filteredProducts])
+
+  useEffect(() => {
+    if (selectedId && filteredProducts.some(product => product.id === selectedId)) return
+    setSelectedId(filteredProducts[0]?.id || null)
+  }, [filteredProducts, selectedId])
 
   useEffect(() => {
     setSelectedImageUrl(selectedProduct?.image_url || '')
@@ -430,7 +461,7 @@ export default function ProductsSalesAnalyzerPage() {
             <div className="rounded border border-sky-500/20 bg-sky-500/10 p-2 text-sky-200">CACHE_READY: {imageReadinessSummary.CACHE_READY}</div>
             <div className="rounded border border-amber-500/20 bg-amber-500/10 p-2 text-amber-200">URL_MISSING: {imageReadinessSummary.URL_MISSING}</div>
             <div className="rounded border border-rose-500/20 bg-rose-500/10 p-2 text-rose-200">DOWNLOAD_FAILED: {imageReadinessSummary.DOWNLOAD_FAILED}</div>
-            <div className="rounded border border-slate-500/20 bg-slate-500/10 p-2 text-slate-200 col-span-2">NOT_AVAILABLE: {imageReadinessSummary.NOT_AVAILABLE} | TOTAL: {products.length}</div>
+            <div className="rounded border border-slate-500/20 bg-slate-500/10 p-2 text-slate-200 col-span-2">NOT_AVAILABLE: {imageReadinessSummary.NOT_AVAILABLE} | TOTAL: {filteredProducts.length}</div>
           </div>
           <div className="space-y-2">
             <input
@@ -463,15 +494,37 @@ export default function ProductsSalesAnalyzerPage() {
                 Search
               </button>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <select value={groupFilter} onChange={e => setGroupFilter(e.target.value)} aria-label="Filter products by group" className="bg-slate-900 border text-xs px-2 py-1.5 rounded" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <option value="ALL">All Groups</option>
+                {filterOptions.groups.map(value => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select value={familyFilter} onChange={e => setFamilyFilter(e.target.value)} aria-label="Filter products by family" className="bg-slate-900 border text-xs px-2 py-1.5 rounded" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <option value="ALL">All Families</option>
+                {filterOptions.families.map(value => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select value={copyRouteFilter} onChange={e => setCopyRouteFilter(e.target.value)} aria-label="Filter products by copy route" className="bg-slate-900 border text-xs px-2 py-1.5 rounded" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <option value="ALL">All Copy Routes</option>
+                {filterOptions.copyRoutes.map(value => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select value={claimGateFilter} onChange={e => setClaimGateFilter(e.target.value)} aria-label="Filter products by claim gate" className="bg-slate-900 border text-xs px-2 py-1.5 rounded" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <option value="ALL">All Claim Gates</option>
+                {filterOptions.claimGates.map(value => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select value={confidenceFilter} onChange={e => setConfidenceFilter(e.target.value)} aria-label="Filter products by intelligence confidence" className="col-span-2 bg-slate-900 border text-xs px-2 py-1.5 rounded" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <option value="ALL">All Intelligence Confidence</option>
+                {filterOptions.confidences.map(value => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </div>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-2" style={{ scrollbarWidth: 'thin' }}>
           {loading && <div className="text-center py-4 text-xs" style={{ color: 'var(--muted)' }}>Loading catalog...</div>}
-          {!loading && products.length === 0 && <div className="text-center py-4 text-xs" style={{ color: 'var(--muted)' }}>No products found</div>}
+          {!loading && filteredProducts.length === 0 && <div className="text-center py-4 text-xs" style={{ color: 'var(--muted)' }}>No products found</div>}
 
           <div className="space-y-1">
-            {products.map(product => (
+            {filteredProducts.map(product => (
               <div
                 key={product.id}
                 onClick={() => setSelectedId(product.id)}
@@ -486,10 +539,12 @@ export default function ProductsSalesAnalyzerPage() {
                     {product.is_test_product ? <StatBadge label="TEST" tone="risk" /> : null}
                   </div>
                   <div className="text-[10px] text-slate-400 truncate mt-0.5">{formatTaxonomyPath(product.category, product.subcategory, product.type)}</div>
+                  <div className="text-[10px] text-sky-300 truncate mt-0.5">{product.group || 'UNKNOWN_REVIEW_REQUIRED'} / {product.bosmax_product_family || 'UNKNOWN_REVIEW_REQUIRED'}</div>
+                  <div className="text-[10px] text-slate-500 truncate mt-0.5">copy_route={product.copy_route || 'NOT_FOUND'} | claim_gate={product.claim_gate || 'CLAIM_REVIEW_REQUIRED'} | confidence={product.intelligence_confidence || 'LOW'}</div>
                   <div className="text-[10px] text-slate-500 truncate mt-0.5">{imageStatusLabel(product)}</div>
                   <div className="flex items-center justify-between mt-1 text-[10px]">
                     <span className="text-emerald-400">{formatCurrencyDisplay(product.price, product.currency)}</span>
-                    <span className="text-orange-300">{formatCommissionDisplay(product)}</span>
+                    <span className="text-orange-300">{product.sold_count ?? 'NO_SALES_METRIC'} sold</span>
                   </div>
                 </div>
               </div>
@@ -552,6 +607,30 @@ export default function ProductsSalesAnalyzerPage() {
                 </Panel>
 
                 <Panel title="Product Handling / Physics DNA" subtitle="Resolved behavior properties">
+                  <div className="space-y-1 mb-4">
+                    <KV label="Group" value={selectedProduct.group} />
+                    <KV label="Sub Group" value={selectedProduct.sub_group} />
+                    <KV label="Type Of Product" value={selectedProduct.type_of_product} />
+                    <KV label="BOSMAX Product Family" value={selectedProduct.bosmax_product_family} />
+                    <KV label="Package Form" value={selectedProduct.package_form} />
+                    <KV label="Physical State" value={selectedProduct.physical_state} />
+                    <KV label="Product Scale Class" value={selectedProduct.product_scale_class} />
+                    <KV label="Handling Profile" value={selectedProduct.handling_profile} />
+                    <KV label="Scene Profile" value={selectedProduct.scene_profile} />
+                    <KV label="Camera Profile" value={selectedProduct.camera_profile} />
+                    <KV label="Copy Route" value={selectedProduct.copy_route} />
+                    <KV label="Claim Gate" value={selectedProduct.claim_gate} />
+                    <KV label="Claim Tokens" value={(selectedProduct.claim_tokens || []).join(', ')} />
+                    <KV label="Copy Formula" value={selectedProduct.copy_formula} />
+                    <KV label="Intelligence Confidence" value={selectedProduct.intelligence_confidence} />
+                    <KV label="Intelligence Status" value={selectedProduct.intelligence_status} />
+                    <KV label="Taxonomy Conflict" value={selectedProduct.taxonomy_conflict ? 'YES' : 'NO'} />
+                    <KV label="Taxonomy Conflict Reason" value={selectedProduct.taxonomy_conflict_reason} />
+                    <KV label="Sold Count" value={selectedProduct.sold_count} />
+                    <KV label="Shop Count" value={selectedProduct.shop_count} />
+                    <KV label="Shop Names" value={(selectedProduct.shop_names || []).join(', ')} />
+                    <KV label="Image Analysis Status" value={selectedProduct.image_analysis_status} />
+                  </div>
                   <div className="space-y-1">
                     <KV label="Physics Class" value={selectedProduct.physics_class} />
                     <KV label="Scale / Fragility" value={`${selectedProduct.product_scale} | Fragility: ${selectedProduct.fragility_level}`} />
@@ -577,6 +656,8 @@ export default function ProductsSalesAnalyzerPage() {
                     <KV label="Rendered Image Src" value={selectedProduct.rendered_img_src} />
                     <KV label="Image HTTP Status" value={selectedProduct.image_http_status} />
                     <KV label="Catalog Label" value={selectedProduct.catalog_label} />
+                    <KV label="Intelligence Warnings" value={(selectedProduct.intelligence_warnings || []).join('; ')} />
+                    <KV label="Intelligence Provenance" value={(selectedProduct.intelligence_provenance || []).join('; ')} />
                   </div>
 
                   {imageStatusDetail(selectedProduct) ? (

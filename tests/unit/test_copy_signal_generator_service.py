@@ -110,7 +110,7 @@ def test_commercial_direct_copy_does_not_use_internal_execution_language():
     assert "use product with use" not in combined
 
 
-def test_unknown_category_direct_copy_stays_fallback_draft():
+def test_unknown_category_routes_review_required():
     result = build_copy_signal_response_for_product(
         _product(
             product_display_name="Mystery Gadget",
@@ -126,10 +126,10 @@ def test_unknown_category_direct_copy_stays_fallback_draft():
         operator_pack=None,
     )
 
-    assert result.route == "DIRECT"
-    assert result.copy_quality_status == "FALLBACK_COPY_DRAFT"
+    assert result.route == "REVIEW_REQUIRED"
+    assert result.copy_quality_status == "REVIEW_REQUIRED"
     assert result.text_to_video_readiness_status == "NEEDS_REVIEW"
-    assert "COPY_QUALITY_FALLBACK_DRAFT" in result.warnings
+    assert "COPY_ROUTE_REVIEW_REQUIRED" in result.warnings
 
 
 def test_laundry_detergent_refill_generates_laundry_specific_malay_copy():
@@ -180,12 +180,40 @@ def test_wrong_baby_taxonomy_laundry_row_is_overridden_by_bosmax_family_for_copy
     assert "rumah nampak lebih tersusun" not in result.copy_signals["hook"].lower()
 
 
+def test_claim_sensitive_detergent_stays_direct_but_text_to_video_needs_review():
+    result = build_copy_signal_response_for_product(
+        _product(
+            product_display_name="Sabun Dobi Antibakteria 5KG",
+            raw_product_title="Sabun Dobi Antibakteria Liquid Refill 5KG",
+            product_short_name="Sabun Dobi Antibakteria",
+            category="Home Supplies",
+            subcategory="Home Care Supplies",
+            type="Household Cleaners",
+            product_type="UNIVERSAL",
+            language="Malay",
+        ),
+        content_style_mode="UGC_IPHONE",
+        operator_pack=None,
+    )
+
+    combined = " ".join(
+        str(result.copy_signals[key])
+        for key in ["hook", "usp_1", "usp_2", "usp_3", "cta", "dialogue_body"]
+    ).lower()
+    assert result.route == "DIRECT"
+    assert result.claim_gate == "CLAIM_REVIEW_REQUIRED"
+    assert result.copy_quality_status == "COMMERCIAL_COPY_READY"
+    assert result.text_to_video_readiness_status == "NEEDS_REVIEW"
+    assert "metaphor" not in combined
+    assert "stealth" not in combined
+
+
 def test_stealth_product_copy_quality_remains_review_required():
     result = build_copy_signal_response_for_product(
         _product(
-            product_display_name="Atlas Relief Capsules",
-            raw_product_title="Atlas Relief Capsules",
-            type="Supplement Bottle",
+            product_display_name="Atlas Kuat Lelaki Capsules",
+            raw_product_title="Atlas Kuat Lelaki Tahan Lama Capsules",
+            type="Male Health",
             product_type="Supplement",
             category="Health",
             silo="health_supp_stealth_01",
@@ -225,19 +253,19 @@ def test_bad_copy_detector_flags_internal_system_phrases():
 def test_operator_pack_with_internal_copy_is_not_marked_commercial_ready():
     result = build_copy_signal_response_for_product(
         _product(
-            product_display_name="Mystery Gadget",
-            raw_product_title="Mystery Gadget",
-            product_short_name="Mystery Gadget",
-            category="General Goods",
-            subcategory="Unknown",
-            type="Unknown",
-            product_type="Unknown",
+            product_display_name="Atlas Lip Balm",
+            raw_product_title="Atlas Lip Balm Original",
+            product_short_name="Atlas Lip Balm",
+            category="Beauty Personal Care",
+            subcategory="Skincare",
+            type="Lip Balm",
+            product_type="Lip Balm",
             language="English",
         ),
         content_style_mode="UGC_IPHONE",
         operator_pack=_operator_pack(
-            hook="Mystery Gadget leads with confidence.",
-            usp_1="Use Mystery Gadget with use steady hands.",
+            hook="Atlas Lip Balm leads with confidence.",
+            usp_1="Use Atlas Lip Balm with use steady hands.",
             usp_2="Keep the demo grounded in a studio setup.",
             usp_3="Show the product clearly before any performance implication.",
             cta="Review the prompt package before any execution.",

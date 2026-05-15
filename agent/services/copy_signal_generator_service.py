@@ -23,6 +23,10 @@ from agent.services.product_preflight import (
     evaluate_mapping_status,
     resolve_creative_profile,
 )
+from agent.services.product_intelligence_service import (
+    inject_product_intelligence_fields,
+    resolve_product_intelligence_profile,
+)
 
 
 COPY_SIGNAL_SCOPE = "COPY_SIGNAL_GENERATOR_WITH_STEALTH_ROUTER"
@@ -107,6 +111,9 @@ def _enrich_product(product_seed: dict[str, Any]) -> dict[str, Any]:
         if payload.get(key) in (None, "", []):
             payload[key] = value
 
+    intelligence = resolve_product_intelligence_profile(payload)
+    payload = inject_product_intelligence_fields(payload, intelligence)
+
     physics = resolve_product_physics(product=payload)
     for key, value in physics.items():
         if payload.get(key) in (None, "", []):
@@ -190,30 +197,55 @@ def get_copy_signal_routes_summary() -> CopySignalRoutesResponse:
     )
 
 
-def _build_route(product: dict[str, Any]) -> tuple[str, str, bool, str]:
-    haystack = " ".join(
-        _normalize_text(product.get(field))
-        for field in [
-            "raw_product_title",
-            "product_display_name",
-            "product_short_name",
-            "category",
-            "subcategory",
-            "type",
-            "product_type",
-            "product_type_id",
-            "silo",
-            "trigger_id",
-        ]
-    ).casefold()
-    claim_risk = _normalize_text(product.get("claim_risk_level")).upper()
-    is_stealth = any(keyword in haystack for keyword in STEALTH_KEYWORDS) or "stealth" in _normalize_text(product.get("silo")).casefold()
-    requires_review = is_stealth or claim_risk in REVIEW_CLAIM_LEVELS
-    if is_stealth:
-        return "STEALTH", "REVIEW_REQUIRED", True, "STEALTH_PRODUCT_REQUIRES_DIALOGUE_ONLY_REVIEW"
-    if requires_review:
-        return "REVIEW_REQUIRED", "REVIEW_REQUIRED", True, "CLAIM_SAFETY_REVIEW_REQUIRED"
-    return "DIRECT", "AUTO_APPROVED", False, "SAFE_DIRECT_PRODUCT"
+def _resolve_product_intelligence(product: dict[str, Any]) -> dict[str, Any]:
+    existing = product.get("product_intelligence")
+    if isinstance(existing, dict) and existing.get("bosmax_product_family"):
+        return existing
+    return resolve_product_intelligence_profile(product)
+
+
+def _build_route(product: dict[str, Any]) -> tuple[str, str, bool, str, str, list[str]]:
+    intelligence = _resolve_product_intelligence(product)
+    route = str(intelligence.get("copy_route") or "REVIEW_REQUIRED")
+    claim_gate = str(intelligence.get("claim_gate") or "CLAIM_REVIEW_REQUIRED")
+    claim_tokens = list(intelligence.get("claim_tokens") or [])
+    if route == "STEALTH":
+        return (
+            "STEALTH",
+            "REVIEW_REQUIRED",
+            True,
+            "STEALTH_PRODUCT_REQUIRES_DIALOGUE_ONLY_REVIEW",
+            claim_gate,
+            claim_tokens,
+        )
+    if route == "REVIEW_REQUIRED":
+        return (
+            "REVIEW_REQUIRED",
+            "REVIEW_REQUIRED",
+            True,
+            "PRODUCT_INTELLIGENCE_REQUIRES_REVIEW",
+            claim_gate,
+            claim_tokens,
+        )
+    if claim_gate == "CLAIM_BLOCKED":
+        return (
+            "DIRECT",
+            "AUTO_APPROVED",
+            False,
+            "DIRECT_ROUTE_CLAIM_BLOCKED",
+            claim_gate,
+            claim_tokens,
+        )
+    if claim_gate == "CLAIM_REVIEW_REQUIRED":
+        return (
+            "DIRECT",
+            "AUTO_APPROVED",
+            False,
+            "DIRECT_ROUTE_CLAIM_REVIEW_REQUIRED",
+            claim_gate,
+            claim_tokens,
+        )
+    return ("DIRECT", "AUTO_APPROVED", False, "SAFE_DIRECT_PRODUCT", claim_gate, claim_tokens)
 
 
 def _extract_verified_dimensions(product: dict[str, Any]) -> str | None:
@@ -248,7 +280,7 @@ def _extract_verified_dimensions(product: dict[str, Any]) -> str | None:
 
 
 def _scale_anchor(product: dict[str, Any]) -> str | None:
-    family = derive_bosmax_product_family(product)["bosmax_product_family"]
+    family = str(product.get("bosmax_product_family") or derive_bosmax_product_family(product)["bosmax_product_family"])
     if family == "LAUNDRY_DETERGENT_LIQUID_REFILL":
         return "EXACTLY refill detergent pouch or heavy utility bottle size, carried with visible weight and stable two-hand support."
     if family == "FABRIC_SOFTENER_LIQUID":
@@ -383,7 +415,7 @@ def _copy_haystack(product: dict[str, Any]) -> str:
 
 
 def _resolve_direct_copy_family(product: dict[str, Any]) -> str:
-    return str(derive_bosmax_product_family(product)["bosmax_product_family"])
+    return str(product.get("bosmax_product_family") or derive_bosmax_product_family(product)["bosmax_product_family"])
 
 
 def _safe_product_label(product: dict[str, Any]) -> str:
@@ -748,6 +780,7 @@ def _build_direct_commercial_copy(
     product_label = _safe_product_label(product)
     language = _normalize_language(product)
     family = _resolve_direct_copy_family(product)
+    operator_pack_rejected = False
     if operator_product:
         candidate = {
             "hook": _copy_value(operator_product.hook, ""),
@@ -782,10 +815,18 @@ def _build_direct_commercial_copy(
                 False,
                 family,
             )
+        operator_pack_rejected = True
     if language == "MALAY":
         payload, is_general = _direct_copy_templates_malay(family, product_label)
     else:
         payload, is_general = _direct_copy_templates_english(family, product_label)
+    if operator_pack_rejected:
+        return (
+            payload,
+            "OPERATOR_PACK_REJECTED_FALLBACK",
+            True,
+            family,
+        )
     return (
         payload,
         "GENERIC_FALLBACK" if is_general else "BOSMAX_FAMILY_TEMPLATE",
@@ -904,11 +945,26 @@ def build_copy_signal_response_for_product(
     operator_pack: ContentPackSummary | None = None,
 ) -> CopySignalGenerateResponse:
     found_files, _ = _authority_files()
-    route, review_status, requires_review, route_reason = _build_route(product)
+    intelligence = _resolve_product_intelligence(product)
+    route, review_status, requires_review, route_reason, claim_gate, claim_tokens = _build_route(product)
     operator_lookup = _build_operator_lookup(operator_pack)
     operator_product = _match_operator_product(product, operator_lookup)
     normalized_hint = _normalize_text(dialogue_metaphor_hint)
-    family_context = derive_bosmax_product_family(product)
+    family_context = {
+        "bosmax_product_family": intelligence.get("bosmax_product_family"),
+        "bosmax_product_family_reason": next(
+            (
+                entry
+                for entry in intelligence.get("provenance", [])
+                if entry.startswith("title_evidence:")
+                or entry.startswith("family_resolver:")
+                or entry.startswith("taxonomy_fallback:")
+            ),
+            None,
+        ),
+        "bosmax_source_taxonomy_conflict": intelligence.get("taxonomy_conflict"),
+        "bosmax_source_taxonomy_conflict_reason": intelligence.get("taxonomy_conflict_reason"),
+    }
     product_scale_prompt, scale_truth_status, scale_warning, scale_warnings = _build_scale_lock(product)
     camera_capture_mode, ugc_camera_lock_prompt, cinematic_camera_prompt, camera_truth_status = _camera_fields(content_style_mode)
 
@@ -936,6 +992,8 @@ def build_copy_signal_response_for_product(
         derived_family,
         copy_source,
     )
+    if text_to_video_status == "READY" and claim_gate != "CLAIM_SAFE":
+        text_to_video_status = "NEEDS_REVIEW"
     copy_signals.update(
         {
             "copy_quality_status": copy_quality_status,
@@ -960,18 +1018,37 @@ def build_copy_signal_response_for_product(
         truth_warnings.append("PRODUCT_SCALE_PROMPT_MISSING")
     if family_context["bosmax_source_taxonomy_conflict"]:
         truth_warnings.append("BOSMAX_FAMILY_OVERRIDES_SOURCE_TAXONOMY")
+    if claim_gate == "CLAIM_REVIEW_REQUIRED":
+        truth_warnings.append("CLAIM_GATE_REVIEW_REQUIRED")
+    if claim_gate == "CLAIM_BLOCKED":
+        truth_warnings.append("CLAIM_GATE_BLOCKED")
     if route == "DIRECT" and not operator_product and copy_source == "BOSMAX_FAMILY_TEMPLATE":
         preview_warnings.append("OPERATOR_PACK_COPY_SIGNALS_NOT_FOUND")
     warnings = truth_warnings + preview_warnings
 
     product_context = {
         "product_id": product.get("id") or product.get("product_id"),
+        "group": intelligence.get("group"),
+        "sub_group": intelligence.get("sub_group"),
+        "type_of_product": intelligence.get("type_of_product"),
         "product_display_name": product.get("product_display_name"),
         "raw_product_title": product.get("raw_product_title"),
         "bosmax_product_family": derived_family,
         "bosmax_product_family_reason": family_context["bosmax_product_family_reason"],
         "bosmax_source_taxonomy_conflict": family_context["bosmax_source_taxonomy_conflict"],
         "bosmax_source_taxonomy_conflict_reason": family_context["bosmax_source_taxonomy_conflict_reason"],
+        "package_form": intelligence.get("package_form"),
+        "physical_state": intelligence.get("physical_state"),
+        "product_scale_class": intelligence.get("product_scale_class"),
+        "claim_gate": claim_gate,
+        "claim_tokens": claim_tokens,
+        "copy_route": route,
+        "sales_metrics": intelligence.get("sales_metrics", {}),
+        "image_analysis": intelligence.get("image_analysis", {}),
+        "intelligence_confidence": intelligence.get("confidence"),
+        "taxonomy_conflict": intelligence.get("taxonomy_conflict"),
+        "intelligence_warnings": intelligence.get("warnings", []),
+        "intelligence_provenance": intelligence.get("provenance", []),
         "product_type": product.get("product_type") or product.get("product_type_id"),
         "scene_context": product.get("scene_context"),
         "camera_style": product.get("camera_style"),
@@ -997,6 +1074,8 @@ def build_copy_signal_response_for_product(
         scope=COPY_SIGNAL_SCOPE,
         route=route,
         review_status=review_status,
+        claim_gate=claim_gate,
+        claim_tokens=claim_tokens,
         copy_quality_status=copy_quality_status,
         text_to_video_readiness_status=text_to_video_status,
         content_style_mode=_normalize_text(content_style_mode).upper() or "UGC_IPHONE",
@@ -1004,8 +1083,10 @@ def build_copy_signal_response_for_product(
         product_context=product_context,
         copy_signals=copy_signals,
         claim_safety={
-            "requires_human_review": requires_review,
+            "requires_human_review": requires_review or claim_gate != "CLAIM_SAFE",
             "claim_risk_level": _normalize_text(product.get("claim_risk_level")),
+            "claim_gate": claim_gate,
+            "claim_tokens": claim_tokens,
             "reason": route_reason,
         },
         visual_dialogue_isolation={
@@ -1029,6 +1110,7 @@ def build_copy_signal_response_for_product(
             "scope": COPY_SIGNAL_SCOPE,
             "operator_pack_available": bool(operator_pack),
             "operator_pack_copy_signals_used": copy_source == "OPERATOR_PACK",
+            "product_intelligence_provenance": intelligence.get("provenance", []),
         },
     )
 

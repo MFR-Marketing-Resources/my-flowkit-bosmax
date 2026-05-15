@@ -28,6 +28,8 @@ class CopySignalGenerateResponse(BaseModel):
     scope: str
     route: str
     review_status: str
+    claim_gate: str = ""
+    claim_tokens: list[str] = Field(default_factory=list)
     copy_quality_status: str = ""
     text_to_video_readiness_status: str = ""
     content_style_mode: str

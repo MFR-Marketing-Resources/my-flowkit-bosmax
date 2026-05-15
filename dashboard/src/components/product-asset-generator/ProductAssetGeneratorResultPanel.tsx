@@ -112,11 +112,51 @@ export default function ProductAssetGeneratorResultPanel({
 								),
 							],
 							[
+								"Group",
+								String(
+									result.truth_status.group ||
+										result.product_context.group ||
+										"UNKNOWN_REVIEW_REQUIRED",
+								),
+							],
+							[
+								"Sub Group",
+								String(
+									result.truth_status.sub_group ||
+										result.product_context.sub_group ||
+										"UNKNOWN_REVIEW_REQUIRED",
+								),
+							],
+							[
+								"Type Of Product",
+								String(
+									result.truth_status.type_of_product ||
+										result.product_context.type_of_product ||
+										"UNKNOWN_REVIEW_REQUIRED",
+								),
+							],
+							[
 								"BOSMAX Product Family",
 								String(
 									result.truth_status.bosmax_product_family ||
 										result.product_context.bosmax_product_family ||
 										"NOT_CLASSIFIED",
+								),
+							],
+							[
+								"Claim Gate",
+								String(
+									result.truth_status.claim_gate ||
+										result.product_context.claim_gate ||
+										"CLAIM_REVIEW_REQUIRED",
+								),
+							],
+							[
+								"Intelligence Confidence",
+								String(
+									result.truth_status.intelligence_confidence ||
+										result.product_context.intelligence_confidence ||
+										"LOW",
 								),
 							],
 							[

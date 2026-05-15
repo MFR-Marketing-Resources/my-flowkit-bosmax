@@ -283,6 +283,36 @@ async def test_truth_and_preview_warnings_are_split():
 
 
 @pytest.mark.asyncio
+async def test_claim_gated_detergent_preview_stays_direct_and_needs_review_without_stealth_metaphor():
+    result = await generate_product_asset_preview(
+        {
+            "product_payload": _product_row(
+                raw_product_title="Sabun Dobi Liquid Antibakteria Refill 5KG",
+                product_display_name="Sabun Dobi Liquid Antibakteria",
+                product_short_name="Sabun Dobi Liquid",
+                category="Home Supplies",
+                subcategory="Home Care Supplies",
+                type="Household Cleaners",
+                product_type_id="HOUSEHOLD_LAUNDRY_DETERGENT",
+                mapping_review_status="AUTO_MAPPED",
+                claim_risk_level="LOW",
+            ),
+            "target_asset_intent": "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+            "target_destination_mode": "TEXT_TO_VIDEO",
+            "language": "Malay",
+            "dry_run_only": True,
+        }
+    )
+
+    assert result.product_context["copy_route"] == "DIRECT"
+    assert result.product_context["claim_gate"] == "CLAIM_REVIEW_REQUIRED"
+    assert result.truth_status["text_to_video_readiness_status"] == "NEEDS_REVIEW"
+    assert result.truth_status["physical_state"] == "liquid"
+    assert "STEALTH" not in str(result.product_context.get("dialogue_body", "")).upper()
+    assert "pour" in str(result.product_context["product_scale_prompt"]).lower() or "refill" in str(result.product_context["product_scale_prompt"]).lower()
+
+
+@pytest.mark.asyncio
 async def test_preview_includes_generated_copy_signals_for_safe_direct_product():
     result = await generate_product_asset_preview(
         {

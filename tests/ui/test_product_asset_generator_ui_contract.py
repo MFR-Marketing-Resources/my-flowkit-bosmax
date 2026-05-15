@@ -43,6 +43,11 @@ def test_product_asset_generator_form_locks_dry_run_only_true_and_shows_truth_co
     assert "Profile Source Status" in form_source
     assert "Profile Truth Summary" in form_source
     assert "Copy Quality Status" in form_source
+    assert "Claim Gate" in form_source
+    assert "Claim Tokens" in form_source
+    assert "Group" in form_source
+    assert "Sub Group" in form_source
+    assert "Type Of Product" in form_source
     assert "Product Scale Prompt" in form_source
     assert "UGC iPhone Raw Camera Lock" in form_source
     assert "Cinematic Camera Prompt" in form_source
@@ -71,6 +76,10 @@ def test_product_asset_generator_result_panel_displays_warnings_provenance_and_f
         "truth_status",
         "copy_quality_status",
         "copy_readiness_status",
+        "claim_gate",
+        "group",
+        "sub_group",
+        "type_of_product",
         "bosmax_product_family",
         "mapping_review_status",
         "scale_truth_status",

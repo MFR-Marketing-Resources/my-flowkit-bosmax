@@ -64,6 +64,10 @@ def test_result_panel_truth_copy_stays_preview_only_and_not_persisted():
     assert "not a persisted readiness profile" in result_source
     assert "Preview-only readiness profile. No persistence write happened." in result_source
     assert "Copy Quality Status" in result_source
+    assert "Claim Gate" in result_source
+    assert "Group" in result_source
+    assert "Sub Group" in result_source
+    assert "Type Of Product" in result_source
     assert "COPY_MISSING" in result_source
     assert "Not Chrome extension execution." in result_source
     assert "Not Google" in result_source
