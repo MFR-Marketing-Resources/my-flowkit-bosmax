@@ -37,7 +37,7 @@ def test_product_asset_generator_form_locks_dry_run_only_true_and_shows_truth_co
     assert "Derived suggestions are not canonical truth." in form_source
     assert "No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required." in form_source
     assert "Operator-pack headwear suggestions are not canonical registry truth." in form_source
-    assert "Selecting a product hydrates payload JSON" in form_source
+    assert "Selecting a product uses product_id preview authority." in form_source
     assert "Advanced Manual Override" in form_source
     assert "Use this profile in Prompt Preview" in form_source
     assert "Profile Source Status" in form_source
@@ -122,6 +122,23 @@ def test_product_asset_generator_uses_wrap_safe_warning_and_provenance_layout():
         assert token in form_source
 
     assert "overflow-hidden" not in result_source
+
+
+def test_product_asset_generator_selector_clears_inline_payload_and_uses_result_authority():
+    form_source = _read(
+        "dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx"
+    )
+    hydration_source = _read(
+        "dashboard/src/components/prompt-tool/usePromptToolHydration.ts"
+    )
+
+    assert "const manualOverridePayload = draft.product_id" in form_source
+    assert "product_payload: undefined" in form_source
+    assert 'product_payload_text: ""' in form_source
+    assert "const productHandling = result" in form_source
+    assert "const productPhysics = result" in form_source
+    assert "mergeHydratedProduct" in hydration_source
+    assert "section_5_product_physics_prompt" in hydration_source
 
 
 def test_product_asset_generator_ui_contains_no_forbidden_execution_controls_or_runtime_imports():

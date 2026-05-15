@@ -64,6 +64,43 @@ function makeProductStub(context: BosmaxProductContext): Product {
 	};
 }
 
+function mergeHydratedProduct(
+	repoProduct: Product | undefined,
+	context: BosmaxProductContext,
+): Product {
+	const stub = makeProductStub(context);
+	if (!repoProduct) {
+		return stub;
+	}
+	return {
+		...repoProduct,
+		scene_context: stub.scene_context || repoProduct.scene_context,
+		camera_style: stub.camera_style || repoProduct.camera_style,
+		camera_behavior: stub.camera_behavior || repoProduct.camera_behavior,
+		handling_notes: stub.handling_notes || repoProduct.handling_notes,
+		section_5_product_physics_prompt:
+			stub.section_5_product_physics_prompt ||
+			repoProduct.section_5_product_physics_prompt,
+		section_9_overlay_hint:
+			stub.section_9_overlay_hint || repoProduct.section_9_overlay_hint,
+		product_display_name:
+			stub.product_display_name || repoProduct.product_display_name,
+		product_short_name:
+			stub.product_short_name || repoProduct.product_short_name,
+		raw_product_title: stub.raw_product_title || repoProduct.raw_product_title,
+		category: stub.category || repoProduct.category,
+		subcategory: stub.subcategory || repoProduct.subcategory,
+		type: stub.type || repoProduct.type,
+		product_type: stub.product_type || repoProduct.product_type,
+		trigger_id: stub.trigger_id || repoProduct.trigger_id,
+		silo: stub.silo || repoProduct.silo,
+		formula: stub.formula || repoProduct.formula,
+		copywriting_angle:
+			stub.copywriting_angle || repoProduct.copywriting_angle,
+		claim_risk_level: stub.claim_risk_level || repoProduct.claim_risk_level,
+	};
+}
+
 export function usePromptToolHydration() {
 	const [state, setState] = useState<HydrationState>({
 		loading: true,
@@ -128,10 +165,7 @@ export function usePromptToolHydration() {
 				const repoProduct = state.products.find(
 					(product) => product.id === context.product_id,
 				);
-				return [
-					context.product_id,
-					repoProduct ? { ...makeProductStub(context), ...repoProduct } : makeProductStub(context),
-				];
+				return [context.product_id, mergeHydratedProduct(repoProduct, context)];
 			}),
 		) as Record<string, Product>;
 

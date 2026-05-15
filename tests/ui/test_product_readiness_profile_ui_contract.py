@@ -89,6 +89,20 @@ def test_product_readiness_profile_supports_prompt_preview_handoff():
     assert "productReadinessProfile" in preview_page_source
 
 
+def test_product_readiness_profile_selector_flow_uses_backend_authority_not_stale_inline_payload():
+    form_source = _read(
+        "dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx"
+    )
+    hydration_source = _read(
+        "dashboard/src/components/prompt-tool/usePromptToolHydration.ts"
+    )
+
+    assert "Selecting a product uses product_id preview authority." in form_source
+    assert "Inline payload JSON is cleared" in form_source
+    assert 'product_payload_text: ""' in form_source
+    assert "mergeHydratedProduct" in hydration_source
+
+
 def test_product_readiness_profile_absents_internal_fallback_phrases_from_fixtures():
     form_source = _read(
         "dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx"

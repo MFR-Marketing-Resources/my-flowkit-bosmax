@@ -66,6 +66,34 @@ def _product_row(**overrides):
     return payload
 
 
+def _stale_detergent_row(**overrides):
+    payload = _product_row(
+        id="prod-detergent-001",
+        source="FASTMOSS",
+        raw_product_title="3 IN 1 SABUN DOBI+WANGI+PELEMBUT+ANTIBAKTIRIA 500ML LIQUID LAUNDRY DETERGENT",
+        product_display_name="3 IN 1 Sabun Dobi",
+        product_short_name="Sabun Dobi",
+        category="Baby & Maternity",
+        subcategory="Baby Care & Health",
+        type="Laundry Detergent",
+        product_type_id="GENERIC_PRODUCT",
+        product_type="Generic Product",
+        copywriting_angle="Trust-led baby care and parenting support",
+        claim_risk_level="LOW",
+        product_scale="LARGE_SOFT_GOOD",
+        recommended_grip="two-hand corner lift or broad palm support",
+        hand_object_interaction="two-hand lift, fold, roll, unroll, or fluff presentation",
+        material_behavior="textile fiber body with bend, roll, compression, and rebound",
+        surface_behavior="visible fiber texture, pile direction, and soft shadowing",
+        handling_notes="Use two-hand fabric spread and fold handling.",
+        camera_handling_notes="Show thickness and recovery without abrupt shaking.",
+        section_5_product_physics_prompt="Physics DNA: D. Scale: LARGE_SOFT_GOOD. Hand-object interaction: two-hand lift, fold, roll, unroll, or fluff presentation. Material behavior: textile fiber body with bend, roll, compression, and rebound. Surface behavior: visible fiber texture, pile direction, and soft shadowing. Avoid unrealistic floating folds.",
+        mapping_review_status="BLOCKED",
+    )
+    payload.update(overrides)
+    return payload
+
+
 @pytest.mark.asyncio
 async def test_product_id_path_returns_preview_only_suggestions(monkeypatch):
     async def fake_get_product(product_id):
@@ -310,6 +338,106 @@ async def test_claim_gated_detergent_preview_stays_direct_and_needs_review_witho
     assert result.truth_status["physical_state"] == "liquid"
     assert "STEALTH" not in str(result.product_context.get("dialogue_body", "")).upper()
     assert "pour" in str(result.product_context["product_scale_prompt"]).lower() or "refill" in str(result.product_context["product_scale_prompt"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_stale_detergent_row_does_not_survive_final_preview_authority():
+    result = await generate_product_asset_preview(
+        {
+            "product_payload": _stale_detergent_row(),
+            "target_asset_intent": "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+            "target_destination_mode": "TEXT_TO_VIDEO",
+            "language": "Malay",
+            "dry_run_only": True,
+        }
+    )
+
+    combined = " ".join(
+        [
+            str(result.product_context.get("product_scale_prompt", "")),
+            str(result.product_context.get("product_handling", "")),
+            str(result.product_context.get("product_physics", "")),
+            " ".join(result.handling_notes),
+            " ".join(result.physics_notes),
+        ]
+    ).lower()
+
+    assert result.product_context["group"] == "LAUNDRY_CARE"
+    assert result.product_context["type_of_product"] == "LIQUID_LAUNDRY_DETERGENT"
+    assert result.product_context["physical_state"] == "liquid"
+    assert result.product_context["package_form"] == "bottle_or_refill_pack"
+    assert result.product_context["copy_route"] == "DIRECT"
+    assert result.product_context["copy_review_status"] == "AUTO_APPROVED"
+    assert result.product_context["claim_gate"] == "CLAIM_REVIEW_REQUIRED"
+    assert "antibacterial_claim" in result.product_context["claim_tokens"]
+    assert result.product_context["usp_2"]
+    assert "CLAIM_GATE_REVIEW_REQUIRED" in result.warning_summary
+    assert "COPY_ROUTE_REVIEW_REQUIRED" not in result.warning_summary
+    for token in ["fold", "roll", "unroll", "fluff", "textile", "fabric", "pile", "floating folds"]:
+        assert token not in combined
+    for token in ["bottle", "refill", "label", "cap", "pour"]:
+        assert token in combined
+    assert result.execution_allowed is False
+    assert result.image_generation_allowed is False
+    assert result.flow_execution_allowed is False
+    assert result.batch_execution_allowed is False
+
+
+@pytest.mark.asyncio
+async def test_product_id_path_ignores_stale_selector_payload_and_matches_inline_authority(monkeypatch):
+    async def fake_get_product(product_id):
+        assert product_id == "prod-detergent-001"
+        return _stale_detergent_row()
+
+    monkeypatch.setattr(
+        "agent.services.product_asset_generator_service.crud.get_product",
+        fake_get_product,
+    )
+
+    stale_selector_payload = {
+        "id": "prod-detergent-001",
+        "raw_product_title": "3 IN 1 SABUN DOBI+WANGI+PELEMBUT+ANTIBAKTIRIA 500ML LIQUID LAUNDRY DETERGENT",
+        "product_display_name": "3 IN 1 Sabun Dobi",
+        "product_handling": "two-hand lift, fold, roll, unroll, or fluff presentation",
+        "product_physics": "textile fiber body with bend, roll, compression, and rebound",
+    }
+
+    inline_result = await generate_product_asset_preview(
+        {
+            "product_payload": _stale_detergent_row(),
+            "target_asset_intent": "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+            "target_destination_mode": "TEXT_TO_VIDEO",
+            "language": "Malay",
+            "dry_run_only": True,
+        }
+    )
+    product_id_result = await generate_product_asset_preview(
+        {
+            "product_id": "prod-detergent-001",
+            "product_payload": stale_selector_payload,
+            "target_asset_intent": "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+            "target_destination_mode": "TEXT_TO_VIDEO",
+            "language": "Malay",
+            "dry_run_only": True,
+        }
+    )
+
+    for key in [
+        "group",
+        "type_of_product",
+        "physical_state",
+        "package_form",
+        "copy_route",
+        "copy_review_status",
+        "claim_gate",
+        "product_scale_prompt",
+        "product_handling",
+        "product_physics",
+        "usp_2",
+    ]:
+        assert product_id_result.product_context[key] == inline_result.product_context[key]
+
+    assert product_id_result.warning_summary == inline_result.warning_summary
 
 
 @pytest.mark.asyncio
