@@ -47,7 +47,13 @@ type ProfileCardRecord = {
 	character_strategy: string;
 	wardrobe_strategy: string;
 	headwear_strategy: string;
+	group: string;
+	sub_group: string;
+	type_of_product: string;
 	bosmax_product_family: string;
+	package_form: string;
+	physical_state: string;
+	intelligence_confidence: string;
 	scene_context: string;
 	camera_style: string;
 	camera_behavior: string;
@@ -56,6 +62,8 @@ type ProfileCardRecord = {
 	copy_quality_status: string;
 	copy_route: string;
 	copy_review_status: string;
+	claim_gate: string;
+	claim_tokens: string;
 	hook: string;
 	usp_1: string;
 	usp_2: string;
@@ -644,10 +652,34 @@ function buildProfileCard({
 			character_strategy: `Relatable handheld presenter strategy for ${productName}. Keep the operator voice native, casual, and product-led.`,
 			wardrobe_strategy: wardrobeStrategy,
 			headwear_strategy: headwearStrategy,
+			group:
+				(result?.truth_status?.group as string | undefined) ||
+				(result?.product_context.group as string | undefined) ||
+				"UNKNOWN_REVIEW_REQUIRED",
+			sub_group:
+				(result?.truth_status?.sub_group as string | undefined) ||
+				(result?.product_context.sub_group as string | undefined) ||
+				"UNKNOWN_REVIEW_REQUIRED",
+			type_of_product:
+				(result?.truth_status?.type_of_product as string | undefined) ||
+				(result?.product_context.type_of_product as string | undefined) ||
+				"UNKNOWN_REVIEW_REQUIRED",
 			bosmax_product_family:
 				(result?.truth_status?.bosmax_product_family as string | undefined) ||
 				(result?.product_context.bosmax_product_family as string | undefined) ||
 				"NOT_CLASSIFIED",
+			package_form:
+				(result?.truth_status?.package_form as string | undefined) ||
+				(result?.product_context.package_form as string | undefined) ||
+				"unknown",
+			physical_state:
+				(result?.truth_status?.physical_state as string | undefined) ||
+				(result?.product_context.physical_state as string | undefined) ||
+				"unknown",
+			intelligence_confidence:
+				(result?.truth_status?.intelligence_confidence as string | undefined) ||
+				(result?.product_context.intelligence_confidence as string | undefined) ||
+				"LOW",
 			scene_context: sceneContext,
 			camera_style: cameraStyle,
 			camera_behavior: cameraBehavior,
@@ -657,6 +689,13 @@ function buildProfileCard({
 			copy_quality_status: copyQualityStatus,
 			copy_route: copyRoute,
 			copy_review_status: copyReviewStatus,
+			claim_gate:
+				(result?.truth_status?.claim_gate as string | undefined) ||
+				(result?.product_context.claim_gate as string | undefined) ||
+				"CLAIM_REVIEW_REQUIRED",
+			claim_tokens: Array.isArray(result?.product_context.claim_tokens)
+				? (result?.product_context.claim_tokens as string[]).join(", ")
+				: "NOT_FOUND",
 			hook,
 			usp_1: usp1,
 			usp_2: usp2,
@@ -685,10 +724,34 @@ function buildProfileCard({
 		character_strategy: `Polished cinematic presenter strategy for ${productName}. Keep the performer composed and hero-framed rather than casual-first.`,
 		wardrobe_strategy: wardrobeStrategy,
 		headwear_strategy: headwearStrategy,
+		group:
+			(result?.truth_status?.group as string | undefined) ||
+			(result?.product_context.group as string | undefined) ||
+			"UNKNOWN_REVIEW_REQUIRED",
+		sub_group:
+			(result?.truth_status?.sub_group as string | undefined) ||
+			(result?.product_context.sub_group as string | undefined) ||
+			"UNKNOWN_REVIEW_REQUIRED",
+		type_of_product:
+			(result?.truth_status?.type_of_product as string | undefined) ||
+			(result?.product_context.type_of_product as string | undefined) ||
+			"UNKNOWN_REVIEW_REQUIRED",
 		bosmax_product_family:
 			(result?.truth_status?.bosmax_product_family as string | undefined) ||
 			(result?.product_context.bosmax_product_family as string | undefined) ||
 			"NOT_CLASSIFIED",
+		package_form:
+			(result?.truth_status?.package_form as string | undefined) ||
+			(result?.product_context.package_form as string | undefined) ||
+			"unknown",
+		physical_state:
+			(result?.truth_status?.physical_state as string | undefined) ||
+			(result?.product_context.physical_state as string | undefined) ||
+			"unknown",
+		intelligence_confidence:
+			(result?.truth_status?.intelligence_confidence as string | undefined) ||
+			(result?.product_context.intelligence_confidence as string | undefined) ||
+			"LOW",
 		scene_context: sceneContext,
 		camera_style: cameraStyle,
 		camera_behavior: cameraBehavior,
@@ -698,6 +761,13 @@ function buildProfileCard({
 		copy_quality_status: copyQualityStatus,
 		copy_route: copyRoute,
 		copy_review_status: copyReviewStatus,
+		claim_gate:
+			(result?.truth_status?.claim_gate as string | undefined) ||
+			(result?.product_context.claim_gate as string | undefined) ||
+			"CLAIM_REVIEW_REQUIRED",
+		claim_tokens: Array.isArray(result?.product_context.claim_tokens)
+			? (result?.product_context.claim_tokens as string[]).join(", ")
+			: "NOT_FOUND",
 		hook,
 		usp_1: usp1,
 		usp_2: usp2,
@@ -895,6 +965,42 @@ function buildPromptPreviewHandoff({
 					cinematic_camera_prompt:
 						(result?.product_context.cinematic_camera_prompt as string | undefined) ||
 						undefined,
+					group:
+						(result?.truth_status?.group as string | undefined) ||
+						(selectedProduct?.group as string | undefined) ||
+						undefined,
+					sub_group:
+						(result?.truth_status?.sub_group as string | undefined) ||
+						(selectedProduct?.sub_group as string | undefined) ||
+						undefined,
+					type_of_product:
+						(result?.truth_status?.type_of_product as string | undefined) ||
+						(selectedProduct?.type_of_product as string | undefined) ||
+						undefined,
+					bosmax_product_family:
+						(result?.truth_status?.bosmax_product_family as string | undefined) ||
+						(selectedProduct?.bosmax_product_family as string | undefined) ||
+						undefined,
+					package_form:
+						(result?.truth_status?.package_form as string | undefined) ||
+						(selectedProduct?.package_form as string | undefined) ||
+						undefined,
+					physical_state:
+						(result?.truth_status?.physical_state as string | undefined) ||
+						(selectedProduct?.physical_state as string | undefined) ||
+						undefined,
+					copy_route:
+						(result?.product_context.copy_route as string | undefined) || undefined,
+					claim_gate:
+						(result?.truth_status?.claim_gate as string | undefined) ||
+						(result?.product_context.claim_gate as string | undefined) ||
+						undefined,
+					claim_tokens:
+						(Array.isArray(result?.truth_status?.claim_tokens)
+							? result?.truth_status?.claim_tokens
+							: Array.isArray(result?.product_context.claim_tokens)
+								? result?.product_context.claim_tokens
+								: undefined) || undefined,
 					trigger_id: selectedProduct.trigger_id,
 					silo: selectedProduct.silo,
 					formula: selectedProduct.formula,
@@ -1229,9 +1335,30 @@ export default function ProductAssetGeneratorForm({
 										label="headwear_strategy"
 										value={profile.headwear_strategy}
 									/>
+									<ProfileField label="Group" value={profile.group} />
+									<ProfileField
+										label="Sub Group"
+										value={profile.sub_group}
+									/>
+									<ProfileField
+										label="Type Of Product"
+										value={profile.type_of_product}
+									/>
 									<ProfileField
 										label="BOSMAX Product Family"
 										value={profile.bosmax_product_family}
+									/>
+									<ProfileField
+										label="Package Form"
+										value={profile.package_form}
+									/>
+									<ProfileField
+										label="Physical State"
+										value={profile.physical_state}
+									/>
+									<ProfileField
+										label="Intelligence Confidence"
+										value={profile.intelligence_confidence}
 									/>
 									<ProfileField
 										label="scene_context"
@@ -1260,6 +1387,14 @@ export default function ProductAssetGeneratorForm({
 									<ProfileField
 										label="Copy Review Status"
 										value={profile.copy_review_status}
+									/>
+									<ProfileField
+										label="Claim Gate"
+										value={profile.claim_gate}
+									/>
+									<ProfileField
+										label="Claim Tokens"
+										value={profile.claim_tokens}
 									/>
 									<ProfileField label="hook" value={profile.hook} />
 									<ProfileField label="USP 1" value={profile.usp_1} />
@@ -1403,11 +1538,77 @@ export default function ProductAssetGeneratorForm({
 								}
 							/>
 							<ProfileField
+								label="group"
+								value={
+									(result?.truth_status?.group as string | undefined) ||
+									(result?.product_context.group as string | undefined) ||
+									"UNKNOWN_REVIEW_REQUIRED"
+								}
+							/>
+							<ProfileField
+								label="sub_group"
+								value={
+									(result?.truth_status?.sub_group as string | undefined) ||
+									(result?.product_context.sub_group as string | undefined) ||
+									"UNKNOWN_REVIEW_REQUIRED"
+								}
+							/>
+							<ProfileField
+								label="type_of_product"
+								value={
+									(result?.truth_status?.type_of_product as string | undefined) ||
+									(result?.product_context.type_of_product as string | undefined) ||
+									"UNKNOWN_REVIEW_REQUIRED"
+								}
+							/>
+							<ProfileField
 								label="bosmax_product_family"
 								value={
 									(result?.truth_status?.bosmax_product_family as string | undefined) ||
 									(result?.product_context.bosmax_product_family as string | undefined) ||
 									"NOT_CLASSIFIED"
+								}
+							/>
+							<ProfileField
+								label="package_form"
+								value={
+									(result?.truth_status?.package_form as string | undefined) ||
+									(result?.product_context.package_form as string | undefined) ||
+									"unknown"
+								}
+							/>
+							<ProfileField
+								label="physical_state"
+								value={
+									(result?.truth_status?.physical_state as string | undefined) ||
+									(result?.product_context.physical_state as string | undefined) ||
+									"unknown"
+								}
+							/>
+							<ProfileField
+								label="claim_gate"
+								value={
+									(result?.truth_status?.claim_gate as string | undefined) ||
+									(result?.product_context.claim_gate as string | undefined) ||
+									"CLAIM_REVIEW_REQUIRED"
+								}
+							/>
+							<ProfileField
+								label="claim_tokens"
+								value={
+									Array.isArray(result?.truth_status?.claim_tokens)
+										? (result?.truth_status?.claim_tokens as string[]).join(", ")
+										: Array.isArray(result?.product_context.claim_tokens)
+											? (result?.product_context.claim_tokens as string[]).join(", ")
+											: "NOT_FOUND"
+								}
+							/>
+							<ProfileField
+								label="intelligence_confidence"
+								value={
+									(result?.truth_status?.intelligence_confidence as string | undefined) ||
+									(result?.product_context.intelligence_confidence as string | undefined) ||
+									"LOW"
 								}
 							/>
 							<ProfileField

@@ -34,7 +34,13 @@ def test_product_readiness_profile_cards_exist():
     assert "Profile Truth Summary" in form_source
     assert "Copy Quality Status" in form_source
     assert "copy_quality_status" in form_source
+    assert "group" in form_source
+    assert "sub_group" in form_source
+    assert "type_of_product" in form_source
     assert "BOSMAX Product Family" in form_source
+    assert "Claim Gate" in form_source
+    assert "claim_gate" in form_source
+    assert "Claim Tokens" in form_source
     assert "Dialogue Opening" in form_source
     assert "Dialogue Body" in form_source
     assert "Dialogue CTA" in form_source

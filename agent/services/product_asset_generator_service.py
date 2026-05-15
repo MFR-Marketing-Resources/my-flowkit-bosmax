@@ -19,6 +19,10 @@ from agent.services.product_preflight import (
     evaluate_mapping_status,
     resolve_creative_profile,
 )
+from agent.services.product_intelligence_service import (
+    inject_product_intelligence_fields,
+    resolve_product_intelligence_profile,
+)
 
 
 ALLOWED_TARGET_ASSET_INTENTS = {
@@ -137,6 +141,9 @@ def _build_enriched_product(product_seed: dict[str, Any]) -> dict[str, Any]:
         if payload.get(key) in (None, "", []):
             payload[key] = value
 
+    intelligence = resolve_product_intelligence_profile(payload)
+    payload = inject_product_intelligence_fields(payload, intelligence)
+
     physics = resolve_product_physics(product=payload)
     for key, value in physics.items():
         if payload.get(key) in (None, "", []):
@@ -171,6 +178,7 @@ def _build_provenance(
         if product_seed.get("id") or product_seed.get("product_id")
         else "inline_payload",
         "reused_services": [
+            "agent.services.product_intelligence_service.resolve_product_intelligence_profile",
             "agent.services.product_mapping.resolve_product_mapping",
             "agent.services.product_physics.resolve_product_physics",
             "agent.services.product_physics.evaluate_prompt_readiness",
@@ -235,16 +243,34 @@ def _build_product_context(
         "raw_product_title": product.get("raw_product_title"),
         "product_display_name": product.get("product_display_name"),
         "product_short_name": product.get("product_short_name"),
+        "group": product.get("group"),
+        "sub_group": product.get("sub_group"),
+        "type_of_product": product.get("type_of_product"),
         "bosmax_product_family": product.get("bosmax_product_family"),
+        "package_form": product.get("package_form"),
+        "physical_state": product.get("physical_state"),
+        "product_scale_class": product.get("product_scale_class"),
         "category": product.get("category"),
         "subcategory": product.get("subcategory"),
         "type": product.get("type"),
         "product_type": product.get("product_type"),
         "product_type_id": product.get("product_type_id"),
         "claim_risk_level": product.get("claim_risk_level"),
+        "claim_gate": product.get("claim_gate"),
+        "claim_tokens": product.get("claim_tokens") or [],
         "mapping_status": product.get("mapping_status"),
         "mapping_review_status": product.get("mapping_review_status"),
         "prompt_readiness_status": product.get("prompt_readiness_status"),
+        "sales_metrics": product.get("sales_metrics") or {},
+        "shop_count": product.get("shop_count"),
+        "shop_names": product.get("shop_names") or [],
+        "sold_count": product.get("sold_count"),
+        "image_analysis": product.get("image_analysis") or {},
+        "image_analysis_status": product.get("image_analysis_status"),
+        "intelligence_confidence": product.get("intelligence_confidence"),
+        "intelligence_status": product.get("intelligence_status"),
+        "taxonomy_conflict": product.get("taxonomy_conflict"),
+        "taxonomy_conflict_reason": product.get("taxonomy_conflict_reason"),
         "scene_context": request.scene_context or product.get("scene_context"),
         "camera_style": request.camera_style or product.get("camera_style"),
         "camera_behavior": request.camera_behavior or product.get("camera_behavior"),
@@ -286,6 +312,8 @@ def _build_product_context(
                 "copy_route": ugc_copy_signal.get("route"),
                 "copy_review_status": ugc_copy_signal.get("review_status"),
                 "copy_quality_status": ugc_copy_signal.get("copy_quality_status"),
+                "claim_gate": ugc_copy_signal.get("claim_gate"),
+                "claim_tokens": ugc_copy_signal.get("claim_tokens", []),
                 "copy_quality_detail": ugc_copy_signal.get("copy_signals", {}).get("copy_quality_detail"),
                 "copy_source": ugc_copy_signal.get("copy_signals", {}).get("copy_source"),
                 "copy_quality_reason": ugc_copy_signal.get("copy_signals", {}).get("copy_quality_reason"),
@@ -397,7 +425,11 @@ def _build_truth_status(
     ugc_copy_signal: dict[str, Any] | None = None,
     cinematic_copy_signal: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    family_context = derive_bosmax_product_family(product)
+    intelligence = (
+        product.get("product_intelligence")
+        if isinstance(product.get("product_intelligence"), dict)
+        else resolve_product_intelligence_profile(product)
+    )
     copy_readiness_status, copy_readiness_detail = _build_copy_readiness_status(
         product, ugc_copy_signal
     )
@@ -419,6 +451,16 @@ def _build_truth_status(
         "product_context", {}
     ).get("cinematic_camera_prompt")
     claim_safety = (ugc_copy_signal or {}).get("claim_safety", {})
+    claim_gate = str(
+        (ugc_copy_signal or {}).get("claim_gate")
+        or intelligence.get("claim_gate")
+        or "CLAIM_REVIEW_REQUIRED"
+    )
+    claim_tokens = list(
+        (ugc_copy_signal or {}).get("claim_tokens")
+        or intelligence.get("claim_tokens")
+        or []
+    )
     visual_dialogue_isolation = (ugc_copy_signal or {}).get(
         "visual_dialogue_isolation", {}
     )
@@ -427,7 +469,7 @@ def _build_truth_status(
     mapping_truth_blocked = (
         mapping_review_status == "BLOCKED"
         or product_type_id in {"GENERIC_PRODUCT", "UNIVERSAL", "MISSING"}
-        or bool(family_context["bosmax_source_taxonomy_conflict"])
+        or bool(intelligence.get("taxonomy_conflict"))
     )
     product_mapping_status = (
         "NEEDS_REVIEW"
@@ -447,7 +489,7 @@ def _build_truth_status(
         and bool(product_scale_prompt)
         and bool(ugc_camera_lock_prompt)
         and copy_quality_status == "COMMERCIAL_COPY_READY"
-        and not claim_safety.get("requires_human_review", False)
+        and claim_gate == "CLAIM_SAFE"
         and visual_dialogue_isolation.get("status") in {"ENFORCED", "PASS"}
         and not mapping_truth_blocked
     )
@@ -466,9 +508,21 @@ def _build_truth_status(
         "product_mapping_status": product_mapping_status,
         "mapping_review_status": mapping_review_status,
         "product_type_id": product_type_id,
-        "bosmax_product_family": family_context["bosmax_product_family"],
-        "bosmax_source_taxonomy_conflict": family_context["bosmax_source_taxonomy_conflict"],
-        "bosmax_source_taxonomy_conflict_reason": family_context["bosmax_source_taxonomy_conflict_reason"],
+        "group": intelligence.get("group"),
+        "sub_group": intelligence.get("sub_group"),
+        "type_of_product": intelligence.get("type_of_product"),
+        "bosmax_product_family": intelligence.get("bosmax_product_family"),
+        "package_form": intelligence.get("package_form"),
+        "physical_state": intelligence.get("physical_state"),
+        "product_scale_class": intelligence.get("product_scale_class"),
+        "bosmax_source_taxonomy_conflict": intelligence.get("taxonomy_conflict"),
+        "bosmax_source_taxonomy_conflict_reason": intelligence.get("taxonomy_conflict_reason"),
+        "claim_gate": claim_gate,
+        "claim_tokens": claim_tokens,
+        "sales_metrics": intelligence.get("sales_metrics", {}),
+        "image_analysis_status": (intelligence.get("image_analysis") or {}).get("status"),
+        "intelligence_confidence": intelligence.get("confidence"),
+        "intelligence_status": intelligence.get("intelligence_status"),
         "copy_quality_status": copy_quality_status,
         "copy_quality_detail": copy_quality_detail,
         "copy_readiness_status": copy_readiness_status,
@@ -488,7 +542,7 @@ def _build_truth_status(
         ),
         "text_to_video_readiness_status": text_to_video_readiness_status,
         "image_prompt_readiness_status": "READY_FOR_PROMPT" if image_ready else "NEEDS_REVIEW",
-        "claim_safety_requires_human_review": claim_safety.get("requires_human_review", False),
+        "claim_safety_requires_human_review": claim_gate != "CLAIM_SAFE" or claim_safety.get("requires_human_review", False),
         "visual_dialogue_isolation_status": visual_dialogue_isolation.get("status", "PASS"),
         "product_claims": "NOT_HARD_ENFORCED",
         "character_attributes": {
@@ -513,7 +567,11 @@ def _build_warning_buckets(
     registry_hints: dict[str, Any],
     ugc_copy_signal: dict[str, Any] | None = None,
 ) -> tuple[list[str], list[str]]:
-    family_context = derive_bosmax_product_family(product)
+    intelligence = (
+        product.get("product_intelligence")
+        if isinstance(product.get("product_intelligence"), dict)
+        else resolve_product_intelligence_profile(product)
+    )
     preview_warnings: list[str] = [
         "PREVIEW_ONLY_NOT_GENERATED_ASSET",
         "CHARACTER_IMAGE_NOT_GENERATED_YET",
@@ -545,16 +603,25 @@ def _build_warning_buckets(
         "copy_quality_status",
         (ugc_copy_signal or {}).get("copy_signals", {}).get("copy_quality_status", "COPY_MISSING"),
     )
+    claim_gate = str(
+        (ugc_copy_signal or {}).get("claim_gate")
+        or intelligence.get("claim_gate")
+        or "CLAIM_REVIEW_REQUIRED"
+    )
     if str(product.get("mapping_review_status") or "").strip() == "BLOCKED":
         truth_warnings.append("PRODUCT_MAPPING_REVIEW_BLOCKED")
     if str(product.get("product_type_id") or "").strip() in {"GENERIC_PRODUCT", "UNIVERSAL"}:
         truth_warnings.append("PRODUCT_TAXONOMY_GENERIC_REVIEW_REQUIRED")
-    if family_context["bosmax_source_taxonomy_conflict"]:
+    if intelligence.get("taxonomy_conflict"):
         truth_warnings.append("BOSMAX_FAMILY_OVERRIDES_SOURCE_TAXONOMY")
     if copy_readiness_status == "COPY_MISSING":
         truth_warnings.append("COPY_MISSING_TEXT_TO_VIDEO_NOT_READY")
     if copy_quality_status == "FALLBACK_COPY_DRAFT":
         truth_warnings.append("COPY_QUALITY_FALLBACK_DRAFT")
+    if claim_gate == "CLAIM_REVIEW_REQUIRED":
+        truth_warnings.append("CLAIM_GATE_REVIEW_REQUIRED")
+    if claim_gate == "CLAIM_BLOCKED":
+        truth_warnings.append("CLAIM_GATE_BLOCKED")
     if ugc_copy_signal:
         for warning in ugc_copy_signal.get("truth_warnings", []):
             _unique_append(truth_warnings, warning)
@@ -563,7 +630,7 @@ def _build_warning_buckets(
         scale_warning = ugc_copy_signal.get("product_context", {}).get("scale_warning")
         if scale_warning:
             _unique_append(truth_warnings, scale_warning)
-        if ugc_copy_signal.get("claim_safety", {}).get("requires_human_review"):
+        if claim_gate != "CLAIM_SAFE" or ugc_copy_signal.get("claim_safety", {}).get("requires_human_review"):
             _unique_append(truth_warnings, "COPY_ROUTE_REVIEW_REQUIRED")
         if ugc_copy_signal.get("product_context", {}).get("scale_truth_status") == "SCALE_NOT_FOUND":
             _unique_append(truth_warnings, "PRODUCT_SCALE_PROMPT_MISSING")

@@ -30,6 +30,10 @@ def test_preview_endpoint_includes_copy_quality_status(monkeypatch):
             target_asset_intent=request.target_asset_intent,
             product_context={
                 "product_id": "prod-001",
+                "group": "BEAUTY_AND_PERSONAL_CARE",
+                "sub_group": "PERSONAL_CARE",
+                "type_of_product": "BEAUTY_PERSONAL_CARE_PRODUCT",
+                "claim_gate": "CLAIM_SAFE",
                 "product_scale_prompt": "EXACTLY palm-sized bottle scale unless verified dimensions say otherwise.",
                 "scale_truth_status": "DERIVED_RELATIVE_SCALE",
                 "camera_capture_mode": "UGC_IPHONE_RAW",
@@ -59,6 +63,10 @@ def test_preview_endpoint_includes_copy_quality_status(monkeypatch):
             truth_status={
                 "overall_source_status": "DERIVED_FROM_PRODUCT_DATA",
                 "profile_source_status": "EPHEMERAL_PREVIEW",
+                "group": "BEAUTY_AND_PERSONAL_CARE",
+                "sub_group": "PERSONAL_CARE",
+                "type_of_product": "BEAUTY_PERSONAL_CARE_PRODUCT",
+                "claim_gate": "CLAIM_SAFE",
                 "copy_quality_status": "COMMERCIAL_COPY_READY",
                 "copy_readiness_status": "COPY_READY",
                 "execution_readiness_status": "DRY_RUN_ONLY",
@@ -85,6 +93,7 @@ def test_preview_endpoint_includes_copy_quality_status(monkeypatch):
     payload = response.json()
     assert payload["truth_status"]["copy_quality_status"] == "COMMERCIAL_COPY_READY"
     assert payload["truth_status"]["text_to_video_readiness_status"] == "READY"
+    assert payload["truth_status"]["claim_gate"] == "CLAIM_SAFE"
     assert payload["product_context"]["copy_quality_status"] == "COMMERCIAL_COPY_READY"
 
 

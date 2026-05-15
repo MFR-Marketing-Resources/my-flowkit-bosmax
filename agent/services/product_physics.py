@@ -481,6 +481,62 @@ def _resolve_physics_family(title: str, category: str, subcategory: str, type_na
     return None
 
 
+def _resolve_intelligence_physics_rule(product: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not product:
+        return None
+    family = normalize_mapping_text(
+        product.get("bosmax_product_family")
+        or ((product.get("product_intelligence") or {}).get("bosmax_product_family") if isinstance(product.get("product_intelligence"), dict) else "")
+    )
+    if family == "laundry_detergent_liquid_refill":
+        return _rule(
+            physics_class="LAUNDRY_LIQUID_REFILL",
+            product_scale="HEAVY_REFILL_PACK",
+            hand_object_interaction="lift, grip, and pour a heavy refill pouch or utility bottle with the front label, cap, and pour direction clearly visible",
+            recommended_grip="two-hand bottom support, top-corner grip, or cap-side bottle support",
+            air_gap_rule="keep fingers clear of the front label, cap, nozzle, and pour edge so detergent format cues stay readable",
+            material_behavior="liquid-filled refill pouch or rigid detergent bottle with visible carry weight, slosh resistance, and realistic pour control",
+            surface_behavior="laminated refill surface or rigid plastic bottle with label-forward reflections and clear cap or spout geometry",
+            fragility_level="LOW",
+            handling_notes="Keep the detergent label readable and the container upright, stable, and visibly weight-bearing during carry or pour gestures.",
+            camera_handling_notes="Show refill scale, cap or nozzle detail, and carry weight. Avoid textile-style drape, fold, roll, fluff, or spread gestures.",
+            unsafe_handling_rules=["avoid fold presentation", "avoid roll presentation", "avoid fluff or textile handling", "avoid unsupported antibacterial or hygiene claims"],
+        )
+    if family == "fabric_softener_liquid":
+        return _rule(
+            physics_class="FABRIC_SOFTENER_LIQUID",
+            product_scale="MEDIUM_REFILL_PACK",
+            hand_object_interaction="support the bottle or pouch upright with the front label, cap, and pour direction visible",
+            recommended_grip="side hold, bottom support, or cap-side grip",
+            air_gap_rule="keep the front label and pour edge unobstructed",
+            material_behavior="liquid-filled bottle or pouch with soft slosh cues and realistic closure resistance",
+            surface_behavior="label-forward liquid-care packaging with visible cap, nozzle, or pouch seal detail",
+            fragility_level="LOW",
+            handling_notes="Show the softener as a practical laundry-care product with stable orientation and readable label surfaces.",
+            camera_handling_notes="Use practical bottle or pouch handling and avoid garment or textile presentation verbs.",
+            unsafe_handling_rules=["avoid textile spread handling", "avoid unsupported performance claims"],
+        )
+    if family in {"apparel_sleepwear", "fashion_modestwear", "fashion_sportswear", "fashion_apparel"}:
+        return dict(PHYSICS_FAMILY_RULES["fashion_apparel_textile"])
+    if family == "home_textile":
+        return dict(PHYSICS_FAMILY_RULES["home_textile_soft_good"])
+    if family in {"beauty_personal_care", "beauty_fragrance"}:
+        return dict(PHYSICS_FAMILY_RULES["beauty_bottle_or_tube"])
+    if family == "stationery_paper":
+        return dict(PHYSICS_FAMILY_RULES["stationery_pack"])
+    if family == "accessory_small_item":
+        return dict(PHYSICS_FAMILY_RULES["fashion_accessory_small_object"])
+    if family == "health_supplement":
+        return dict(PHYSICS_FAMILY_RULES["supplement_bottle"])
+    if family == "male_health_sensitive":
+        return dict(PHYSICS_FAMILY_RULES["supplement_bottle"])
+    if family == "household_storage_organizer":
+        return dict(PHYSICS_FAMILY_RULES["household_packaged_goods"])
+    if family == "household_cleaner_general":
+        return dict(PHYSICS_FAMILY_RULES["household_packaged_goods"])
+    return None
+
+
 def resolve_product_physics(
     *,
     product: dict[str, Any] | None = None,
@@ -517,6 +573,10 @@ def resolve_product_physics(
         if part
     )
     haystack = f"{title} {taxonomy}".strip()
+
+    intelligence_rule = _resolve_intelligence_physics_rule(product)
+    if intelligence_rule:
+        return intelligence_rule
 
     for keywords, rule in PHYSICS_RULES:
         if any(normalize_mapping_text(keyword) in haystack for keyword in keywords):

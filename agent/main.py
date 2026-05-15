@@ -39,6 +39,7 @@ from agent.api.asset_registry import router as asset_registry_router
 from agent.api.bosmax_authority import router as bosmax_authority_router
 from agent.api.copy_signals import router as copy_signals_router
 from agent.api.product_asset_generator import router as product_asset_generator_router
+from agent.api.product_intelligence import router as product_intelligence_router
 from agent.worker.processor import get_worker_controller
 from agent.services.flow_client import get_flow_client
 from agent.services.event_bus import event_bus
@@ -149,6 +150,7 @@ app.include_router(asset_registry_router, prefix="/api")
 app.include_router(bosmax_authority_router, prefix="/api")
 app.include_router(copy_signals_router, prefix="/api")
 app.include_router(product_asset_generator_router, prefix="/api")
+app.include_router(product_intelligence_router, prefix="/api")
 app.include_router(characters_router, prefix="/api")
 app.include_router(projects_router, prefix="/api")
 app.include_router(videos_router, prefix="/api")

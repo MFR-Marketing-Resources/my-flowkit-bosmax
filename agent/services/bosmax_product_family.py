@@ -14,8 +14,6 @@ def _joined_text(product: dict[str, Any]) -> str:
         product.get("subcategory"),
         product.get("type"),
         product.get("product_type"),
-        product.get("product_type_id"),
-        product.get("copywriting_angle"),
     ]
     return " ".join(normalize_mapping_text(part) for part in parts if part)
 
@@ -43,7 +41,6 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
             "detergent refill",
             "fabric cleaner",
             "pencuci baju",
-            "pakaian",
             "isi ulang",
         ],
     ):
@@ -226,7 +223,7 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
         family = "BEAUTY_PERSONAL_CARE"
         reason = "Beauty taxonomy fallback matched."
     elif category in {"womenswear and underwear", "fashion", "muslim fashion"}:
-        family = "APPAREL_SLEEPWEAR"
+        family = "fashion_apparel"
         reason = "Apparel taxonomy fallback matched."
     elif category in {"food beverage", "food and beverage"}:
         family = "food_packaged"
