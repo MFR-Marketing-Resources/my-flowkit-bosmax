@@ -484,55 +484,57 @@ def _resolve_physics_family(title: str, category: str, subcategory: str, type_na
 def _resolve_intelligence_physics_rule(product: dict[str, Any] | None) -> dict[str, Any] | None:
     if not product:
         return None
-    family = normalize_mapping_text(
+    family_raw = (
         product.get("bosmax_product_family")
         or ((product.get("product_intelligence") or {}).get("bosmax_product_family") if isinstance(product.get("product_intelligence"), dict) else "")
     )
-    if family == "laundry_detergent_liquid_refill":
+    family = str(family_raw or "").strip().upper()
+
+    if family == "LAUNDRY_DETERGENT_LIQUID_REFILL":
         return _rule(
             physics_class="LAUNDRY_LIQUID_REFILL",
-            product_scale="HEAVY_REFILL_PACK",
-            hand_object_interaction="lift, grip, and pour a heavy refill pouch or utility bottle with the front label, cap, and pour direction clearly visible",
-            recommended_grip="two-hand bottom support, top-corner grip, or cap-side bottle support",
+            product_scale="LIQUID_BOTTLE_OR_REFILL_PACK",
+            hand_object_interaction="stable bottle/refill grip, cap/nozzle/label visibility, pour-angle demonstration",
+            recommended_grip="firm palm support or stable two-hand bottle/refill support",
             air_gap_rule="keep fingers clear of the front label, cap, nozzle, and pour edge so detergent format cues stay readable",
             material_behavior="liquid-filled refill pouch or rigid detergent bottle with visible carry weight, slosh resistance, and realistic pour control",
             surface_behavior="laminated refill surface or rigid plastic bottle with label-forward reflections and clear cap or spout geometry",
             fragility_level="LOW",
-            handling_notes="Keep the detergent label readable and the container upright, stable, and visibly weight-bearing during carry or pour gestures.",
-            camera_handling_notes="Show refill scale, cap or nozzle detail, and carry weight. Avoid textile-style drape, fold, roll, fluff, or spread gestures.",
-            unsafe_handling_rules=["avoid fold presentation", "avoid roll presentation", "avoid fluff or textile handling", "avoid unsupported antibacterial or hygiene claims"],
+            handling_notes="Keep the detergent label readable and the container upright, stable, and visibly weight-bearing. Show cap, nozzle, or pour detail clearly.",
+            camera_handling_notes="Show refill detergent pouch or bottle scale, visible liquid-container weight, and stable support. Avoid non-rigid material behaviors or soft-surface spread.",
+            unsafe_handling_rules=["avoid collapsible presentation", "avoid cylindrical-wrap presentation", "avoid soft-material handling", "avoid non-rigid drape or spread"],
         )
-    if family == "fabric_softener_liquid":
+    if family == "FABRIC_SOFTENER_LIQUID":
         return _rule(
             physics_class="FABRIC_SOFTENER_LIQUID",
-            product_scale="MEDIUM_REFILL_PACK",
-            hand_object_interaction="support the bottle or pouch upright with the front label, cap, and pour direction visible",
-            recommended_grip="side hold, bottom support, or cap-side grip",
+            product_scale="LIQUID_BOTTLE_OR_REFILL_PACK",
+            hand_object_interaction="stable bottle/refill grip, cap/nozzle/label visibility, pour-angle demonstration",
+            recommended_grip="firm palm support or stable two-hand bottle/refill support",
             air_gap_rule="keep the front label and pour edge unobstructed",
             material_behavior="liquid-filled bottle or pouch with soft slosh cues and realistic closure resistance",
             surface_behavior="label-forward liquid-care packaging with visible cap, nozzle, or pouch seal detail",
             fragility_level="LOW",
             handling_notes="Show the softener as a practical laundry-care product with stable orientation and readable label surfaces.",
-            camera_handling_notes="Use practical bottle or pouch handling and avoid garment or textile presentation verbs.",
-            unsafe_handling_rules=["avoid textile spread handling", "avoid unsupported performance claims"],
+            camera_handling_notes="Show refill or bottle scale, visible weight, and stable support. Avoid non-rigid material behaviors or soft-surface spread.",
+            unsafe_handling_rules=["avoid collapsible presentation", "avoid cylindrical-wrap presentation", "avoid soft-material handling", "avoid non-rigid drape or spread"],
         )
-    if family in {"apparel_sleepwear", "fashion_modestwear", "fashion_sportswear", "fashion_apparel"}:
+    if family in {"APPAREL_SLEEPWEAR", "FASHION_MODESTWEAR", "FASHION_SPORTSWEAR", "FASHION_APPAREL"}:
         return dict(PHYSICS_FAMILY_RULES["fashion_apparel_textile"])
-    if family == "home_textile":
+    if family == "HOME_TEXTILE":
         return dict(PHYSICS_FAMILY_RULES["home_textile_soft_good"])
-    if family in {"beauty_personal_care", "beauty_fragrance"}:
+    if family in {"BEAUTY_PERSONAL_CARE", "BEAUTY_FRAGRANCE"}:
         return dict(PHYSICS_FAMILY_RULES["beauty_bottle_or_tube"])
-    if family == "stationery_paper":
+    if family == "STATIONERY_PAPER":
         return dict(PHYSICS_FAMILY_RULES["stationery_pack"])
-    if family == "accessory_small_item":
+    if family == "ACCESSORY_SMALL_ITEM":
         return dict(PHYSICS_FAMILY_RULES["fashion_accessory_small_object"])
-    if family == "health_supplement":
+    if family == "HEALTH_SUPPLEMENT":
         return dict(PHYSICS_FAMILY_RULES["supplement_bottle"])
-    if family == "male_health_sensitive":
+    if family == "MALE_HEALTH_SENSITIVE":
         return dict(PHYSICS_FAMILY_RULES["supplement_bottle"])
-    if family == "household_storage_organizer":
+    if family == "HOUSEHOLD_STORAGE_ORGANIZER":
         return dict(PHYSICS_FAMILY_RULES["household_packaged_goods"])
-    if family == "household_cleaner_general":
+    if family == "HOUSEHOLD_CLEANER_GENERAL":
         return dict(PHYSICS_FAMILY_RULES["household_packaged_goods"])
     return None
 

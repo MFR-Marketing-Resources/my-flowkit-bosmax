@@ -24,6 +24,7 @@ from agent.services.product_mapping import normalize_mapping_text
 
 REVIEW_CLAIM_TOKENS = {
     "antibakteria",
+    "antibaktiria",
     "antibacterial",
     "anti bacterial",
     "antibacteria",
@@ -74,8 +75,8 @@ FAMILY_PROFILES: dict[str, dict[str, str]] = {
         "type_of_product": "LIQUID_LAUNDRY_DETERGENT",
         "package_form": "bottle_or_refill_pack",
         "physical_state": "liquid",
-        "product_scale_class": "heavy_refill_pack",
-        "handling_profile": "lift_grip_pour_label_cap_visibility",
+        "product_scale_class": "liquid_bottle_or_refill_pack",
+        "handling_profile": "stable bottle/refill grip, cap/nozzle/label visibility, pour-angle demonstration",
         "scene_profile": "laundry_routine_utility_demo",
         "camera_profile": "label_forward_pour_ready_ugc",
         "copy_route": "DIRECT",
@@ -87,8 +88,8 @@ FAMILY_PROFILES: dict[str, dict[str, str]] = {
         "type_of_product": "LIQUID_FABRIC_SOFTENER",
         "package_form": "bottle_or_refill_pack",
         "physical_state": "liquid",
-        "product_scale_class": "medium_refill_pack",
-        "handling_profile": "lift_grip_pour_label_cap_visibility",
+        "product_scale_class": "liquid_bottle_or_refill_pack",
+        "handling_profile": "stable bottle/refill grip, cap/nozzle/label visibility, pour-angle demonstration",
         "scene_profile": "laundry_routine_utility_demo",
         "camera_profile": "label_forward_pour_ready_ugc",
         "copy_route": "DIRECT",
@@ -753,6 +754,9 @@ def _resolve_claim_gate(
         warnings.append("claim_gate:blocked_tokens_present")
         return "CLAIM_BLOCKED", matched_review + matched_blocked, warnings
     if matched_review:
+        if any(token in matched_review for token in ["antibakteria", "antibaktiria", "antibacterial", "anti bacterial", "antibacteria"]):
+            if "antibacterial_claim" not in matched_review:
+                matched_review.append("antibacterial_claim")
         warnings.append("claim_gate:review_tokens_present")
         return "CLAIM_REVIEW_REQUIRED", matched_review, warnings
     if copy_route in {"STEALTH", "REVIEW_REQUIRED"}:

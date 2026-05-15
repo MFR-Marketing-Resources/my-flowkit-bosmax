@@ -282,20 +282,20 @@ def _extract_verified_dimensions(product: dict[str, Any]) -> str | None:
 def _scale_anchor(product: dict[str, Any]) -> str | None:
     family = str(product.get("bosmax_product_family") or derive_bosmax_product_family(product)["bosmax_product_family"])
     if family == "LAUNDRY_DETERGENT_LIQUID_REFILL":
-        return "EXACTLY refill detergent pouch or heavy utility bottle size, carried with visible weight and stable two-hand support."
+        return "EXACTLY refill detergent pouch or heavy utility bottle size, carried with visible weight, stable two-hand support, label lock, and cap/nozzle/pour detail. Keep container rigid."
     if family == "FABRIC_SOFTENER_LIQUID":
-        return "EXACTLY fabric-softener pouch or bottle size, held upright with label, cap, and pour direction visible."
+        return "EXACTLY fabric-softener pouch or bottle size, held upright with label, cap, and pour direction visible. Avoid soft-surface spread."
     if family == "HOUSEHOLD_CLEANER_GENERAL":
         return "EXACTLY household cleaner bottle, pouch, or refill size with stable label-forward utility handling."
     if family == "HOUSEHOLD_STORAGE_ORGANIZER":
         return "EXACTLY organizer or storage-container size, held with both hands to show shape, opening, or stackability."
     if family == "HOME_TEXTILE":
         return "EXACTLY home-textile scale with natural two-hand spread, fold, or drape and no enlargement."
-    if family in {"APPAREL_SLEEPWEAR", "fashion_modestwear", "fashion_sportswear", "fashion_apparel"}:
-        return "EXACTLY wearable sleepwear scale with natural two-hand drape and no enlargement."
+    if family in {"APPAREL_SLEEPWEAR", "FASHION_MODESTWEAR", "FASHION_SPORTSWEAR", "FASHION_APPAREL"}:
+        return "EXACTLY wearable apparel scale with natural two-hand drape and no enlargement."
     if family == "ACCESSORY_SMALL_ITEM":
         return "EXACTLY small accessory size, pinched lightly between fingertips without enlargement."
-    if family in {"BEAUTY_PERSONAL_CARE", "beauty_fragrance"}:
+    if family in {"BEAUTY_PERSONAL_CARE", "BEAUTY_FRAGRANCE"}:
         return "EXACTLY palm-sized beauty or personal-care product scale unless verified dimensions say otherwise."
 
     haystack = " ".join(

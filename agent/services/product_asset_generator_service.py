@@ -630,8 +630,12 @@ def _build_warning_buckets(
         scale_warning = ugc_copy_signal.get("product_context", {}).get("scale_warning")
         if scale_warning:
             _unique_append(truth_warnings, scale_warning)
-        if claim_gate != "CLAIM_SAFE" or ugc_copy_signal.get("claim_safety", {}).get("requires_human_review"):
+        copy_route = str(intelligence.get("copy_route") or "DIRECT")
+        if copy_route in {"STEALTH", "REVIEW_REQUIRED"}:
             _unique_append(truth_warnings, "COPY_ROUTE_REVIEW_REQUIRED")
+        if claim_gate != "CLAIM_SAFE" or ugc_copy_signal.get("claim_safety", {}).get("requires_human_review"):
+            if "CLAIM_GATE_REVIEW_REQUIRED" not in truth_warnings:
+                _unique_append(truth_warnings, "CLAIM_GATE_REVIEW_REQUIRED")
         if ugc_copy_signal.get("product_context", {}).get("scale_truth_status") == "SCALE_NOT_FOUND":
             _unique_append(truth_warnings, "PRODUCT_SCALE_PROMPT_MISSING")
     _unique_append(truth_warnings, "PRODUCT_CLAIMS_NOT_HARD_ENFORCED")
@@ -1041,6 +1045,7 @@ async def generate_product_asset_preview(
     return ProductAssetGeneratorResponse(
         preview_status=preview_status,
         target_asset_intent=request.target_asset_intent,
+        target_destination_mode=request.target_destination_mode,
         product_context=product_context,
         derived_asset_suggestions=derived_asset_suggestions,
         prompt_suggestions=prompt_suggestions,
