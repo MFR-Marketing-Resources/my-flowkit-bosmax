@@ -48,6 +48,12 @@ FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION = "FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION"
 FLAG_NEGATIVE_CONSTRAINT_MATCHED = "FLAG_NEGATIVE_CONSTRAINT_MATCHED"
 FLAG_CLAIM_REVIEW_REQUIRED = "FLAG_CLAIM_REVIEW_REQUIRED"
 
+# Phase 2 Flags: FastMoss Taxonomy Reconciliation
+FLAG_FASTMOSS_SOURCE_ANCHOR_POTENTIALLY_CONTAMINATED = "FLAG_FASTMOSS_SOURCE_ANCHOR_POTENTIALLY_CONTAMINATED"
+FLAG_FASTMOSS_SOURCE_ANCHOR_KEYWORD_DERIVED = "FLAG_FASTMOSS_SOURCE_ANCHOR_KEYWORD_DERIVED"
+FLAG_FASTMOSS_RAW_SOURCE_NOT_AVAILABLE = "FLAG_FASTMOSS_RAW_SOURCE_NOT_AVAILABLE"
+FLAG_FASTMOSS_RAW_SOURCE_COLUMNS_MISSING = "FLAG_FASTMOSS_RAW_SOURCE_COLUMNS_MISSING"
+
 
 class ProductTruthService:
     @staticmethod
@@ -154,20 +160,31 @@ class ProductTruthService:
         
         if source == "FASTMOSS":
             # In FastMoss lane, we expect category/subcategory to be preserved from workbook
-            anchors.source_category = product.get("category")
-            anchors.source_subcategory = product.get("subcategory")
             anchors.source_product_type = product.get("type")
-            anchors.source_anchor_origin = "FASTMOSS_ROW"
             
-            if anchors.source_category and anchors.source_subcategory:
-                anchors.source_anchor_status = "PRESENT"
-            elif anchors.source_category or anchors.source_subcategory:
-                anchors.source_anchor_status = "PARTIAL"
-            elif product.get("fastmoss_source_file"):
-                anchors.source_anchor_status = "WEAK_FILE_HINT_ONLY"
-                anchors.source_anchor_origin = "FASTMOSS_SOURCE_FILE_HINT"
+            # Phase 2: Perform FastMoss Taxonomy Audit against Raw Source
+            from agent.services.fastmoss_taxonomy_reconciliation_service import FastMossTaxonomyReconciliationService
+            audit = FastMossTaxonomyReconciliationService.audit_fastmoss_product(product)
+            
+            anchors.source_anchor_status = audit["source_anchor_status"]
+            anchors.source_anchor_origin = audit["source_anchor_origin"]
+            
+            # Enrich anchors with audit metadata
+            if audit.get("raw_values"):
+                # We prioritize raw values as the "True" anchors
+                anchors.source_category = audit["raw_values"]["category"]
+                anchors.source_subcategory = audit["raw_values"]["subcategory"]
+                anchors.source_product_type = audit["raw_values"]["type"]
             else:
-                anchors.source_anchor_status = "MISSING"
+                anchors.source_category = product.get("category")
+                anchors.source_subcategory = product.get("subcategory")
+                anchors.source_product_type = product.get("type")
+
+            # Add notes from audit
+            if audit.get("notes"):
+                anchors.source_anchor_notes = audit["notes"]
+            
+            anchors.source_anchor_columns = audit.get("discovered_columns") or []
         
         elif source == "MANUAL":
             anchors.source_anchor_origin = "MANUAL_DECLARED"
@@ -258,12 +275,22 @@ class ProductTruthService:
         product: dict[str, Any]
     ) -> ProductTruthReconciliation:
         recon = ProductTruthReconciliation()
+        source = str(product.get("source") or "").upper()
         
         # 1. Check for Missing Anchors
         if source_anchors.source_anchor_status == "MISSING":
             recon.contradiction_flags.append(FLAG_SOURCE_ANCHOR_MISSING)
         elif source_anchors.source_anchor_status == "WEAK_FILE_HINT_ONLY":
             recon.contradiction_flags.append(FLAG_SOURCE_ANCHOR_WEAK_FILE_HINT_ONLY)
+        
+        # FastMoss Specific Contradiction Flags
+        if source == "FASTMOSS":
+            if source_anchors.source_anchor_status == "SOURCE_ANCHOR_KEYWORD_DERIVED":
+                recon.contradiction_flags.append(FLAG_FASTMOSS_SOURCE_ANCHOR_KEYWORD_DERIVED)
+            if "POTENTIALLY_CONTAMINATED" in source_anchors.source_anchor_status:
+                recon.contradiction_flags.append(FLAG_FASTMOSS_SOURCE_ANCHOR_POTENTIALLY_CONTAMINATED)
+            if "RAW_SOURCE_NOT_AVAILABLE" in source_anchors.source_anchor_status:
+                recon.contradiction_flags.append(FLAG_FASTMOSS_RAW_SOURCE_NOT_AVAILABLE)
 
         # 2. Check for Image Analysis Availability
         if visual_evidence.image_analysis_status == "VISION_PROVIDER_NOT_CONFIGURED":
@@ -289,16 +316,17 @@ class ProductTruthService:
                 recon.contradiction_flags.append(FLAG_KEYWORD_VS_ANCHOR_TAXONOMY)
                 recon.matched_negative_constraints.append(f"FORBIDDEN_TRANSITION:{mapped_family}")
 
-        # 5. Specific Hallucination Checks (from contract)
+        # 5. Specific known Hallucination Patterns (Cross-check Title vs Mapping)
         title = text_evidence.normalized_title
-        
-        # Baby Wipes Hallucination (Mapped to beauty_fragrance)
-        if "baby" in title and ("wipes" in title or "tisu" in title) and mapped_category == "beauty":
-            recon.contradiction_flags.append(FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION)
-            
-        # Smartwatch Hallucination (Mapped to MALE_HEALTH_SENSITIVE)
-        if "smartwatch" in title and mapped_category == "male health sensitive":
+        # Baby Wipes Hallucination (Mapped to Beauty)
+        if "baby" in title and ("wipes" in title or "tisu" in title) and "beauty" in mapped_category:
              recon.contradiction_flags.append(FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION)
+             recon.provenance_notes.append("Hallucination check: baby wipes mapped to beauty lane suspected.")
+
+        # Smartwatch Hallucination (Mapped to Health)
+        if "smartwatch" in title and ("health" in mapped_category or "male" in mapped_category):
+             recon.contradiction_flags.append(FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION)
+             recon.provenance_notes.append("Hallucination check: smartwatch mapped to health lane suspected.")
 
         # 6. Confidence Scoring
         # HIGH requires source anchor AND corroborating signal AND no contradictions
