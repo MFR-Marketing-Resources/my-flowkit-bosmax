@@ -461,10 +461,10 @@ export default function ProductsSalesAnalyzerPage() {
   }
 
   return (
-    <div className="grid h-full min-w-0 gap-4 overflow-hidden xl:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)]">
+    <div className="grid min-h-full min-w-0 gap-4 p-4 md:p-6 lg:min-h-0 lg:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)] lg:overflow-hidden">
 
       {/* Left: Complete Catalog Browser */}
-      <div className="flex min-w-0 flex-col overflow-hidden border-r bg-slate-900/30" style={{ borderColor: 'var(--border)' }}>
+      <div className="flex min-w-0 flex-col overflow-hidden rounded-2xl border bg-slate-900/30 lg:min-h-0" style={{ borderColor: 'var(--border)' }}>
         <div className="p-4 border-b" style={{ borderColor: 'var(--border)' }}>
           <h2 className="text-sm font-bold mb-3">Products / Sales Analyzer</h2>
           <div className="bosmax-auto-fit-grid mb-3 text-[10px]">
@@ -484,12 +484,12 @@ export default function ProductsSalesAnalyzerPage() {
               style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
               onKeyDown={e => e.key === 'Enter' && loadProducts()}
             />
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <select
                 value={sourceFilter}
                 onChange={e => setSourceFilter(e.target.value)}
                 aria-label="Filter products by source"
-                className="flex-1 bg-slate-900 border text-xs px-2 py-1.5 rounded"
+                className="min-w-0 flex-1 bg-slate-900 border text-xs px-2 py-1.5 rounded"
                 style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
               >
                 <option value="FASTMOSS">FastMoss</option>
@@ -505,7 +505,7 @@ export default function ProductsSalesAnalyzerPage() {
                 Search
               </button>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
               <select value={groupFilter} onChange={e => setGroupFilter(e.target.value)} aria-label="Filter products by group" className="bg-slate-900 border text-xs px-2 py-1.5 rounded" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
                 <option value="ALL">All Groups</option>
                 {filterOptions.groups.map(value => <option key={value} value={value}>{value}</option>)}
@@ -534,7 +534,7 @@ export default function ProductsSalesAnalyzerPage() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-2" style={{ scrollbarWidth: 'thin' }}>
+        <div className="min-h-[280px] flex-1 overflow-y-auto p-2 lg:min-h-0" style={{ scrollbarWidth: 'thin' }}>
           {loading && <div className="text-center py-4 text-xs" style={{ color: 'var(--muted)' }}>Loading catalog...</div>}
           {!loading && filteredProducts.length === 0 && <div className="text-center py-4 text-xs" style={{ color: 'var(--muted)' }}>No products found</div>}
 
@@ -573,7 +573,7 @@ export default function ProductsSalesAnalyzerPage() {
       </div>
 
       {/* Right: Selected Detail / Forms */}
-      <div className="min-w-0 overflow-y-auto p-4 md:p-6" style={{ scrollbarWidth: 'thin' }}>
+      <div className="min-w-0 rounded-2xl border bg-slate-900/20 p-4 md:p-6 lg:min-h-0 lg:overflow-y-auto" style={{ borderColor: 'var(--border)', scrollbarWidth: 'thin' }}>
         {error && <div className="mb-4 bg-red-900/30 border border-red-500/30 text-red-400 p-3 rounded text-sm text-center">{error}</div>}
         {saveSuccess && <div className="mb-4 bg-emerald-900/30 border border-emerald-500/30 text-emerald-400 p-3 rounded text-sm text-center flex justify-between"><span>{saveSuccess}</span><button onClick={() => setSaveSuccess(null)}>✕</button></div>}
 
@@ -582,7 +582,7 @@ export default function ProductsSalesAnalyzerPage() {
 
             {selectedProduct && (
               <div className="space-y-6">
-                <div className="flex gap-1 border-b border-slate-800 pb-px">
+                <div className="flex flex-wrap gap-1 border-b border-slate-800 pb-px">
                   {(['DETAILS', 'BRIEF', 'VARIATIONS', 'PREVIEW'] as const).map(tab => (
                     <button
                       key={tab}
@@ -597,7 +597,7 @@ export default function ProductsSalesAnalyzerPage() {
                 {activeTab === 'DETAILS' && (
                   <>
                 <Panel title="Database Record" subtitle={`ID: ${selectedProduct.id} | Source: ${selectedProduct.source}`}>
-                  <div className="flex gap-4 mb-4">
+                  <div className="mb-4 flex flex-col gap-4 sm:flex-row">
                     <div className="w-24 h-24 rounded border border-slate-700 overflow-hidden flex-shrink-0">
                        <ImageFallback src={selectedProduct.rendered_img_src} alt="Product Thumbnail" className="w-full h-full object-cover" emptyLabel={imageStatusLabel(selectedProduct)} errorLabel={imageErrorLabel(selectedProduct)} />
                     </div>
@@ -704,7 +704,7 @@ export default function ProductsSalesAnalyzerPage() {
                         placeholder="Paste image URL"
                         className="w-full bg-slate-900 border border-slate-700 text-xs p-2 rounded text-slate-200"
                       />
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         <button
                           type="button"
                           disabled={imageActionBusy || !selectedImageUrl.trim()}
@@ -762,7 +762,7 @@ export default function ProductsSalesAnalyzerPage() {
                 {activeTab === 'BRIEF' && brief && (
                   <div className="space-y-6">
                     <Panel title="Product Creative Brief" subtitle={`Brief ID: ${brief.brief_id}`}>
-                      <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="grid gap-4 lg:grid-cols-2">
                         <div className="space-y-4">
                           <h3 className="text-xs font-bold text-slate-300">Readiness Status</h3>
                           <div className="space-y-2">
@@ -878,7 +878,7 @@ export default function ProductsSalesAnalyzerPage() {
             <div className="border-t border-slate-800 my-8 pt-8">
               <Panel title="Manual Product Intake" subtitle="Inject non-FastMoss products directly using the identical intelligence schema.">
                 <form onSubmit={handleManualSubmit} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                      <div>
                        <label className="block text-[11px] mb-1 text-slate-400">Raw Title (Platform name) *</label>
                        <input required className="w-full bg-slate-900 border border-slate-700 text-xs p-2 rounded text-slate-200 focus:border-blue-500" value={manualForm.raw_product_title || ''} onChange={e => setManualForm(f => ({ ...f, raw_product_title: e.target.value }))} />
@@ -913,7 +913,7 @@ export default function ProductsSalesAnalyzerPage() {
                      </div>
                      <div className="col-span-2">
                        <label className="block text-[11px] mb-1 text-slate-400">Image Source (URL or Upload File)</label>
-                       <div className="flex gap-2 items-center">
+                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                          <input type="text" placeholder="https://" className="flex-1 bg-slate-900 border border-slate-700 text-xs p-2 rounded text-slate-200" value={manualForm.image_url || ''} onChange={e => setManualForm(f => ({ ...f, image_url: e.target.value }))} />
                          <span className="text-xs text-slate-500 text-center">OR</span>
                          <input type="file" accept="image/*" onChange={handleImageUpload} className="flex-1 text-xs file:bg-slate-800 file:border-0 file:rounded file:px-3 file:py-1 file:text-slate-300" />
@@ -931,7 +931,7 @@ export default function ProductsSalesAnalyzerPage() {
             </div>
           </div>
 
-          <div className="space-y-6 sticky top-6">
+          <div className="space-y-6 2xl:sticky 2xl:top-6">
             <Panel title="Image Acquisition" subtitle="Bulk import existing image/source URLs and commission metadata.">
               <label className={`flex items-center justify-center rounded border border-dashed border-slate-700 px-3 py-4 text-xs text-slate-300 ${imageMapImportBusy ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-sky-500/50 hover:text-sky-200'}`}>
                 {imageMapImportBusy ? 'Importing image map...' : 'Import Image Map CSV / JSON'}

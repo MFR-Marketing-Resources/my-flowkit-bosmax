@@ -19,7 +19,10 @@ def test_products_sales_analyzer_uses_wrap_safe_layout_and_kv_structure():
         "bosmax-pre-wrap-safe",
         "bosmax-auto-fit-grid",
         "2xl:grid-cols-[minmax(0,1fr)_300px]",
-        "xl:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)]",
+        "lg:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)]",
+        "rounded-2xl border bg-slate-900/30 lg:min-h-0",
+        "min-h-[280px] flex-1 overflow-y-auto p-2 lg:min-h-0",
+        "2xl:sticky 2xl:top-6",
         "Shop Names",
         "Commission Amount",
         "Commission Rate",
@@ -36,6 +39,8 @@ def test_products_sales_analyzer_uses_wrap_safe_layout_and_kv_structure():
     ]:
         assert token in source
 
+    assert "grid h-full min-w-0 gap-4 overflow-hidden xl:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)]" not in source
+
 
 def test_products_sales_analyzer_does_not_truncate_long_product_and_shop_text():
     source = _read("dashboard/src/pages/ProductsSalesAnalyzerPage.tsx")
@@ -51,3 +56,11 @@ def test_product_display_util_formats_currency_with_commas_and_two_decimals():
     assert "minimumFractionDigits: 2" in source
     assert "maximumFractionDigits: 2" in source
     assert "formatCountDisplay" in source
+
+
+def test_products_sales_analyzer_detail_panel_is_not_plain_sticky_overlay_in_primary_layout():
+    source = _read("dashboard/src/pages/ProductsSalesAnalyzerPage.tsx")
+
+    assert "sticky top-6" not in source
+    assert "2xl:sticky 2xl:top-6" in source
+    assert "flex flex-wrap gap-1 border-b border-slate-800 pb-px" in source
