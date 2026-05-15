@@ -1,5 +1,16 @@
 import type { Product } from '../types'
 
+const INTEGER_FORMATTER = new Intl.NumberFormat('en-MY', {
+  maximumFractionDigits: 0,
+})
+
+function formatDecimalValue(value: number): string {
+  return value.toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+}
+
 function normalizeMoneyValue(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined || value === '') return null
   const numericValue = Number(value)
@@ -18,7 +29,7 @@ export function formatCurrencyDisplay(value: number | string | null | undefined,
   const normalizedValue = normalizeMoneyValue(value)
   if (normalizedValue === null) return 'NOT_AVAILABLE'
   const currencyCode = (currency || 'MYR').trim() || 'MYR'
-  return `${currencyCode} ${normalizedValue.toFixed(2)}`
+  return `${currencyCode} ${formatDecimalValue(normalizedValue)}`
 }
 
 export function formatCommissionRateDisplay(rate: string | null | undefined): string {
@@ -40,6 +51,13 @@ export function formatCommissionDisplay(product: Pick<Product, 'price' | 'curren
   const amountLabel = commissionAmount === null ? 'NOT_AVAILABLE' : formatCurrencyDisplay(commissionAmount, product.currency)
   const rateLabel = formatCommissionRateDisplay(product.commission_rate)
   return `Comm: ${amountLabel} / ${rateLabel}`
+}
+
+export function formatCountDisplay(value: number | string | null | undefined): string {
+  if (value === null || value === undefined || value === '') return 'NOT_AVAILABLE'
+  const numericValue = Number(value)
+  if (!Number.isFinite(numericValue)) return String(value)
+  return INTEGER_FORMATTER.format(numericValue)
 }
 
 export function formatTaxonomyPath(category: string | null | undefined, subcategory: string | null | undefined, type: string | null | undefined): string {

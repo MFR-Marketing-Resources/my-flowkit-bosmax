@@ -21,6 +21,12 @@ def test_products_sales_analyzer_uses_wrap_safe_layout_and_kv_structure():
         "2xl:grid-cols-[minmax(0,1fr)_300px]",
         "xl:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)]",
         "Shop Names",
+        "Commission Amount",
+        "Commission Rate",
+        "Highest Sold",
+        "Product Name A-Z",
+        "formatCountDisplay",
+        "formatCommissionRateDisplay",
     ]:
         assert token in source
 
@@ -30,3 +36,12 @@ def test_products_sales_analyzer_does_not_truncate_long_product_and_shop_text():
 
     assert "truncate text-slate-200" not in source
     assert "truncate mt-0.5" not in source
+
+
+def test_product_display_util_formats_currency_with_commas_and_two_decimals():
+    source = _read("dashboard/src/utils/productDisplay.ts")
+
+    assert "toLocaleString('en-MY'" in source
+    assert "minimumFractionDigits: 2" in source
+    assert "maximumFractionDigits: 2" in source
+    assert "formatCountDisplay" in source

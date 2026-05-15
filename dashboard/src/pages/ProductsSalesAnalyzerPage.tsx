@@ -3,7 +3,7 @@ import type { ChangeEvent, FormEvent } from 'react'
 
 import { fetchAPI, patchAPI, postAPI } from '../api/client'
 import type { Product } from '../types'
-import { formatCommissionDisplay, formatCurrencyDisplay, formatTaxonomyPath } from '../utils/productDisplay'
+import { formatCommissionDisplay, formatCommissionRateDisplay, formatCountDisplay, formatCurrencyDisplay, formatTaxonomyPath } from '../utils/productDisplay'
 
 type ManualFormState = Partial<Product> & {
   image_base64?: string | null
@@ -14,6 +14,8 @@ type TikTokFormState = {
   url: string
   raw_product_title: string
 }
+
+type ProductSortMode = 'SOLD_DESC' | 'PRODUCT_NAME_ASC'
 
 function emptyManualForm(): ManualFormState {
   return {
@@ -131,6 +133,7 @@ export default function ProductsSalesAnalyzerPage() {
   const [copyRouteFilter, setCopyRouteFilter] = useState('ALL')
   const [claimGateFilter, setClaimGateFilter] = useState('ALL')
   const [confidenceFilter, setConfidenceFilter] = useState('ALL')
+  const [sortMode, setSortMode] = useState<ProductSortMode>('SOLD_DESC')
   const [readinessFilter] = useState('ALL')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -159,7 +162,7 @@ export default function ProductsSalesAnalyzerPage() {
     return values
   }, [products])
   const filteredProducts = useMemo(() => {
-    return products.filter(product => {
+    const filtered = products.filter(product => {
       if (groupFilter !== 'ALL' && product.group !== groupFilter) return false
       if (familyFilter !== 'ALL' && product.bosmax_product_family !== familyFilter) return false
       if (copyRouteFilter !== 'ALL' && product.copy_route !== copyRouteFilter) return false
@@ -167,7 +170,15 @@ export default function ProductsSalesAnalyzerPage() {
       if (confidenceFilter !== 'ALL' && product.intelligence_confidence !== confidenceFilter) return false
       return true
     })
-  }, [products, groupFilter, familyFilter, copyRouteFilter, claimGateFilter, confidenceFilter])
+    return filtered.sort((left, right) => {
+      if (sortMode === 'PRODUCT_NAME_ASC') {
+        const leftName = (left.product_short_name || left.raw_product_title || '').toLowerCase()
+        const rightName = (right.product_short_name || right.raw_product_title || '').toLowerCase()
+        return leftName.localeCompare(rightName)
+      }
+      return Number(right.sold_count || 0) - Number(left.sold_count || 0)
+    })
+  }, [products, groupFilter, familyFilter, copyRouteFilter, claimGateFilter, confidenceFilter, sortMode])
   const selectedProduct = useMemo(() => filteredProducts.find(product => product.id === selectedId) || null, [filteredProducts, selectedId])
   const imageReadinessSummary = useMemo(() => {
     const summary = {
@@ -515,6 +526,10 @@ export default function ProductsSalesAnalyzerPage() {
                 <option value="ALL">All Intelligence Confidence</option>
                 {filterOptions.confidences.map(value => <option key={value} value={value}>{value}</option>)}
               </select>
+              <select value={sortMode} onChange={e => setSortMode(e.target.value as ProductSortMode)} aria-label="Sort products" className="col-span-2 bg-slate-900 border text-xs px-2 py-1.5 rounded" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <option value="SOLD_DESC">Highest Sold</option>
+                <option value="PRODUCT_NAME_ASC">Product Name A-Z</option>
+              </select>
             </div>
           </div>
         </div>
@@ -544,7 +559,11 @@ export default function ProductsSalesAnalyzerPage() {
                   <div className="bosmax-wrap-safe mt-0.5 text-[10px] text-slate-500">{imageStatusLabel(product)}</div>
                   <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[10px]">
                     <span className="bosmax-wrap-safe text-emerald-400">{formatCurrencyDisplay(product.price, product.currency)}</span>
-                    <span className="bosmax-wrap-safe text-orange-300">{product.sold_count ?? 'NO_SALES_METRIC'} sold</span>
+                    <span className="bosmax-wrap-safe text-orange-300">{formatCountDisplay(product.sold_count)} sold</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                    <span className="bosmax-wrap-safe text-cyan-300">Comm: {formatCommissionRateDisplay(product.commission_rate)}</span>
+                    <span className="bosmax-wrap-safe text-cyan-200">{formatCurrencyDisplay(product.commission_amount, product.currency)}</span>
                   </div>
                 </div>
               </div>
@@ -598,6 +617,8 @@ export default function ProductsSalesAnalyzerPage() {
                     <KV label="Category Taxonomy" value={formatTaxonomyPath(selectedProduct.category, selectedProduct.subcategory, selectedProduct.type)} />
                     <KV label="Price & Currency" value={formatCurrencyDisplay(selectedProduct.price, selectedProduct.currency)} />
                     <KV label="Commission" value={formatCommissionDisplay(selectedProduct)} />
+                    <KV label="Commission Amount" value={formatCurrencyDisplay(selectedProduct.commission_amount, selectedProduct.currency)} />
+                    <KV label="Commission Rate" value={formatCommissionRateDisplay(selectedProduct.commission_rate)} />
                     <KV label="Product Type ID" value={selectedProduct.product_type} />
                     <KV label="Silo" value={selectedProduct.silo} />
                     <KV label="Copywriting Angle" value={selectedProduct.copywriting_angle} />
@@ -626,8 +647,8 @@ export default function ProductsSalesAnalyzerPage() {
                     <KV label="Intelligence Status" value={selectedProduct.intelligence_status} />
                     <KV label="Taxonomy Conflict" value={selectedProduct.taxonomy_conflict ? 'YES' : 'NO'} />
                     <KV label="Taxonomy Conflict Reason" value={selectedProduct.taxonomy_conflict_reason} />
-                    <KV label="Sold Count" value={selectedProduct.sold_count} />
-                    <KV label="Shop Count" value={selectedProduct.shop_count} />
+                    <KV label="Sold Count" value={formatCountDisplay(selectedProduct.sold_count)} />
+                    <KV label="Shop Count" value={formatCountDisplay(selectedProduct.shop_count)} />
                     <KV label="Shop Names" value={(selectedProduct.shop_names || []).join(', ')} />
                     <KV label="Image Analysis Status" value={selectedProduct.image_analysis_status} />
                   </div>
