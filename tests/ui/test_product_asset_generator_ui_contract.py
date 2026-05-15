@@ -65,10 +65,14 @@ def test_product_asset_generator_result_panel_displays_warnings_provenance_and_f
 
     for token in [
         "warning_summary",
+        "truth_warnings",
+        "preview_warnings",
         "provenance",
         "truth_status",
         "copy_quality_status",
         "copy_readiness_status",
+        "bosmax_product_family",
+        "mapping_review_status",
         "scale_truth_status",
         "camera_truth_status",
         "persistence_truth",

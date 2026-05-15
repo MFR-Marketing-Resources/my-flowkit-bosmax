@@ -34,10 +34,15 @@ def test_product_readiness_profile_cards_exist():
     assert "Profile Truth Summary" in form_source
     assert "Copy Quality Status" in form_source
     assert "copy_quality_status" in form_source
+    assert "BOSMAX Product Family" in form_source
     assert "Dialogue Opening" in form_source
     assert "Dialogue Body" in form_source
     assert "Dialogue CTA" in form_source
     assert "execution_readiness_status" in form_source
+    assert "mapping_review_status" in form_source
+    assert "product_type_id" in form_source
+    assert "Product Truth Warnings" in form_source
+    assert "Preview Constraints" in form_source
     assert "Product Scale Prompt" in form_source
     assert "Scale Truth Status" in form_source
     assert "Camera Capture Mode" in form_source

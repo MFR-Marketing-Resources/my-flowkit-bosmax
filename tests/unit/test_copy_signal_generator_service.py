@@ -132,6 +132,54 @@ def test_unknown_category_direct_copy_stays_fallback_draft():
     assert "COPY_QUALITY_FALLBACK_DRAFT" in result.warnings
 
 
+def test_laundry_detergent_refill_generates_laundry_specific_malay_copy():
+    result = build_copy_signal_response_for_product(
+        _product(
+            product_display_name="5 LITER/5 KG isi ulang- Sabun Dobi Malaya Liquid",
+            raw_product_title="5 LITER/5 KG isi ulang- Sabun Dobi Malaya Liquid detergen",
+            product_short_name="Sabun Dobi Malaya Liquid",
+            category="Home Supplies",
+            subcategory="Home Care Supplies",
+            type="Household Cleaners",
+            product_type="UNIVERSAL",
+            language="Malay",
+        ),
+        content_style_mode="UGC_IPHONE",
+        operator_pack=None,
+    )
+
+    combined = " ".join(
+        str(result.copy_signals[key])
+        for key in ["hook", "usp_1", "usp_2", "usp_3", "cta", "dialogue_opening", "dialogue_body"]
+    ).lower()
+    assert result.copy_quality_status == "COMMERCIAL_COPY_READY"
+    assert result.product_context["bosmax_product_family"] == "LAUNDRY_DETERGENT_LIQUID_REFILL"
+    assert "sabun dobi" in combined or "laundry" in combined or "basuh" in combined
+    assert "rumah nampak lebih tersusun" not in combined
+    assert "tanpa banyak barang" not in combined
+
+
+def test_wrong_baby_taxonomy_laundry_row_is_overridden_by_bosmax_family_for_copy():
+    result = build_copy_signal_response_for_product(
+        _product(
+            product_display_name="SABUN DOBI LIQUID LAUNDRY IMBA DETERGENT REFILL PACK 2KG",
+            raw_product_title="SABUN DOBI LIQUID LAUNDRY IMBA DETERGENT REFILL PACK 2KG",
+            product_short_name="SABUN DOBI LIQUID LAUNDRY",
+            category="Baby & Maternity",
+            subcategory="Baby Care & Health",
+            type="Laundry Detergent",
+            product_type="UNIVERSAL",
+            language="Malay",
+        ),
+        content_style_mode="UGC_IPHONE",
+        operator_pack=None,
+    )
+
+    assert result.product_context["bosmax_product_family"] == "LAUNDRY_DETERGENT_LIQUID_REFILL"
+    assert "BOSMAX_FAMILY_OVERRIDES_SOURCE_TAXONOMY" in result.truth_warnings
+    assert "rumah nampak lebih tersusun" not in result.copy_signals["hook"].lower()
+
+
 def test_stealth_product_copy_quality_remains_review_required():
     result = build_copy_signal_response_for_product(
         _product(
@@ -208,7 +256,7 @@ def test_small_product_keeps_scale_lock_and_ugc_camera_lock():
     )
 
     prompt = result.product_context["ugc_camera_lock_prompt"]
-    assert "EXACTLY lip balm size" in result.product_context["product_scale_prompt"]
+    assert "palm-sized beauty or personal-care product scale" in result.product_context["product_scale_prompt"]
     assert result.product_context["scale_truth_status"] == "DERIVED_RELATIVE_SCALE"
     assert result.product_context["scale_warning"] == "PRODUCT_SCALE_DERIVED_NOT_DIMENSION_VERIFIED"
     assert result.product_context["camera_capture_mode"] == "UGC_IPHONE_RAW"

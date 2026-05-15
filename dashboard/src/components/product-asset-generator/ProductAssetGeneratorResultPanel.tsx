@@ -53,7 +53,8 @@ export default function ProductAssetGeneratorResultPanel({
 								"Target Asset Intent",
 								result.target_asset_intent || "NOT_PROVIDED",
 							],
-							["Warnings", String(result.warning_summary.length)],
+							["Truth Warnings", String(result.truth_warnings.length)],
+							["Preview Warnings", String(result.preview_warnings.length)],
 							["Errors", String(result.errors.length)],
 						].map(([label, value]) => (
 							<div
@@ -111,6 +112,14 @@ export default function ProductAssetGeneratorResultPanel({
 								),
 							],
 							[
+								"BOSMAX Product Family",
+								String(
+									result.truth_status.bosmax_product_family ||
+										result.product_context.bosmax_product_family ||
+										"NOT_CLASSIFIED",
+								),
+							],
+							[
 								"Copy Route",
 								String(result.product_context.copy_route || "NOT_FOUND"),
 							],
@@ -125,6 +134,16 @@ export default function ProductAssetGeneratorResultPanel({
 								String(
 									result.truth_status.copy_readiness_status || "COPY_MISSING",
 								),
+							],
+							[
+								"Mapping Review Status",
+								String(
+									result.truth_status.mapping_review_status || "NOT_RECORDED",
+								),
+							],
+							[
+								"product_type_id",
+								String(result.truth_status.product_type_id || "MISSING"),
 							],
 							[
 								"Execution Readiness",
@@ -261,11 +280,24 @@ export default function ProductAssetGeneratorResultPanel({
 						))}
 					</div>
 
-					{result.warning_summary.length > 0 ? (
+					{result.truth_warnings.length > 0 ? (
 						<div className="space-y-2">
-							{result.warning_summary.map((warning) => (
+							{result.truth_warnings.map((warning) => (
 								<div
-									key={warning}
+									key={`truth:${warning}`}
+									className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-200"
+								>
+									{warning}
+								</div>
+							))}
+						</div>
+					) : null}
+
+					{result.preview_warnings.length > 0 ? (
+						<div className="space-y-2">
+							{result.preview_warnings.map((warning) => (
+								<div
+									key={`preview:${warning}`}
 									className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200"
 								>
 									{warning}
@@ -299,6 +331,12 @@ export default function ProductAssetGeneratorResultPanel({
 								Truth Status
 							</div>
 							<JsonBlock value={result.truth_status} />
+						</div>
+						<div>
+							<div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+								warning_summary
+							</div>
+							<JsonBlock value={result.warning_summary} />
 						</div>
 						<div>
 							<div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">

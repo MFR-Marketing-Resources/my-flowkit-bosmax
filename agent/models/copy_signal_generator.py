@@ -37,4 +37,6 @@ class CopySignalGenerateResponse(BaseModel):
     claim_safety: dict[str, Any] = Field(default_factory=dict)
     visual_dialogue_isolation: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    truth_warnings: list[str] = Field(default_factory=list)
+    preview_warnings: list[str] = Field(default_factory=list)
     provenance: dict[str, Any] = Field(default_factory=dict)

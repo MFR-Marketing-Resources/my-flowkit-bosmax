@@ -47,6 +47,7 @@ type ProfileCardRecord = {
 	character_strategy: string;
 	wardrobe_strategy: string;
 	headwear_strategy: string;
+	bosmax_product_family: string;
 	scene_context: string;
 	camera_style: string;
 	camera_behavior: string;
@@ -72,7 +73,8 @@ type ProfileCardRecord = {
 	cinematic_camera_prompt: string;
 	product_handling: string;
 	product_physics: string;
-	warnings: string[];
+	truth_warnings: string[];
+	preview_warnings: string[];
 	provenance: string;
 };
 
@@ -328,10 +330,18 @@ function buildReadinessStatus({
 	if (!result) {
 		return "RAW";
 	}
+	const truthWarnings = result.truth_warnings || [];
+	const truthStatus = result.truth_status || {};
 	if (
 		selectedProduct?.prompt_readiness_status === "NEEDS_REVIEW" ||
 		selectedProduct?.prompt_readiness_status === "MISSING_FIELDS" ||
-		result.preview_status === "WARN"
+		truthWarnings.length > 0 ||
+		truthStatus.product_mapping_status === "NEEDS_REVIEW" ||
+		truthStatus.text_to_video_readiness_status === "NEEDS_REVIEW" ||
+		truthStatus.text_to_video_readiness_status === "COPY_MISSING" ||
+		truthStatus.copy_quality_status === "FALLBACK_COPY_DRAFT" ||
+		truthStatus.copy_quality_status === "REVIEW_REQUIRED" ||
+		truthStatus.copy_quality_status === "COPY_MISSING"
 	) {
 		return "NEEDS_REVIEW";
 	}
@@ -367,36 +377,38 @@ function buildProfileSourceStatus({
 	return "NOT_ANALYZED";
 }
 
-function buildProfileWarnings({
-	selectedContextWarnings,
+function buildProfileTruthWarnings({
 	selectedProduct,
 	result,
 }: {
-	selectedContextWarnings: string[];
 	selectedProduct: Product | null;
+	result: ProductAssetGeneratorResponse | null;
+}): string[] {
+	const combined = new Set<string>();
+	for (const warning of result?.truth_warnings || []) {
+		combined.add(warning);
+	}
+	if (selectedProduct?.prompt_missing_fields?.length) {
+		for (const item of selectedProduct.prompt_missing_fields) {
+			combined.add(`PROMPT_MISSING:${item}`);
+		}
+	}
+	return Array.from(combined);
+}
+
+function buildProfilePreviewWarnings({
+	selectedContextWarnings,
+	result,
+}: {
+	selectedContextWarnings: string[];
 	result: ProductAssetGeneratorResponse | null;
 }): string[] {
 	const combined = new Set<string>();
 	for (const warning of selectedContextWarnings) {
 		combined.add(warning);
 	}
-	for (const warning of result?.warning_summary || []) {
-		if (
-			warning.includes("NOT_VERIFIED") ||
-			warning.includes("INPUT_SLOT_ONLY") ||
-			warning.includes("NOT_CANONICAL") ||
-			warning.includes("NOT_READY") ||
-			warning.includes("PREVIEW_ONLY") ||
-			warning.includes("COPY_QUALITY") ||
-			warning.includes("COPY_ROUTE")
-		) {
-			combined.add(warning);
-		}
-	}
-	if (selectedProduct?.prompt_missing_fields?.length) {
-		for (const item of selectedProduct.prompt_missing_fields) {
-			combined.add(`PROMPT_MISSING:${item}`);
-		}
+	for (const warning of result?.preview_warnings || []) {
+		combined.add(warning);
 	}
 	return Array.from(combined);
 }
@@ -558,9 +570,12 @@ function buildProfileCard({
 		? `Operator-pack selection: ${draft.headwear}`
 		: "Operator-pack/non-canonical fallback. Headwear remains optional.";
 	const provenance = summarizeProvenance(selectedFieldProvenance);
-	const warnings = buildProfileWarnings({
-		selectedContextWarnings: selectedAuthorityContextWarnings,
+	const truthWarnings = buildProfileTruthWarnings({
 		selectedProduct,
+		result,
+	});
+	const previewWarnings = buildProfilePreviewWarnings({
+		selectedContextWarnings: selectedAuthorityContextWarnings,
 		result,
 	});
 	const copyQualityStatus =
@@ -629,6 +644,10 @@ function buildProfileCard({
 			character_strategy: `Relatable handheld presenter strategy for ${productName}. Keep the operator voice native, casual, and product-led.`,
 			wardrobe_strategy: wardrobeStrategy,
 			headwear_strategy: headwearStrategy,
+			bosmax_product_family:
+				(result?.truth_status?.bosmax_product_family as string | undefined) ||
+				(result?.product_context.bosmax_product_family as string | undefined) ||
+				"NOT_CLASSIFIED",
 			scene_context: sceneContext,
 			camera_style: cameraStyle,
 			camera_behavior: cameraBehavior,
@@ -655,7 +674,8 @@ function buildProfileCard({
 			cinematic_camera_prompt: cinematicCameraPrompt,
 			product_handling: productHandling,
 			product_physics: productPhysics,
-			warnings,
+			truth_warnings: truthWarnings,
+			preview_warnings: previewWarnings,
 			provenance,
 		};
 	}
@@ -665,6 +685,10 @@ function buildProfileCard({
 		character_strategy: `Polished cinematic presenter strategy for ${productName}. Keep the performer composed and hero-framed rather than casual-first.`,
 		wardrobe_strategy: wardrobeStrategy,
 		headwear_strategy: headwearStrategy,
+		bosmax_product_family:
+			(result?.truth_status?.bosmax_product_family as string | undefined) ||
+			(result?.product_context.bosmax_product_family as string | undefined) ||
+			"NOT_CLASSIFIED",
 		scene_context: sceneContext,
 		camera_style: cameraStyle,
 		camera_behavior: cameraBehavior,
@@ -691,7 +715,8 @@ function buildProfileCard({
 		cinematic_camera_prompt: cinematicCameraPrompt,
 		product_handling: productHandling,
 		product_physics: productPhysics,
-		warnings,
+		truth_warnings: truthWarnings,
+		preview_warnings: previewWarnings,
 		provenance,
 	};
 }
@@ -1205,6 +1230,10 @@ export default function ProductAssetGeneratorForm({
 										value={profile.headwear_strategy}
 									/>
 									<ProfileField
+										label="BOSMAX Product Family"
+										value={profile.bosmax_product_family}
+									/>
+									<ProfileField
 										label="scene_context"
 										value={profile.scene_context}
 									/>
@@ -1291,22 +1320,32 @@ export default function ProductAssetGeneratorForm({
 										This copy is a fallback draft and must be improved before production video output.
 									</div>
 								) : null}
-								<div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+								<div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(0,0.8fr)]">
+									<div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3">
+										<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-red-200">
+											Product Truth Warnings
+										</div>
+										<div className="mt-2 space-y-2 text-[11px] text-red-100">
+											{profile.truth_warnings.length > 0 ? (
+												profile.truth_warnings.slice(0, 6).map((warning) => (
+													<div key={`${profile.label}:truth:${warning}`}>{warning}</div>
+												))
+											) : (
+												<div>No product-truth blockers detected.</div>
+											)}
+										</div>
+									</div>
 									<div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
 										<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200">
-											warnings
+											Preview Constraints
 										</div>
 										<div className="mt-2 space-y-2 text-[11px] text-amber-100">
-											{profile.warnings.length > 0 ? (
-												profile.warnings
-													.slice(0, 6)
-													.map((warning) => (
-														<div key={`${profile.label}:${warning}`}>
-															{warning}
-														</div>
-													))
+											{profile.preview_warnings.length > 0 ? (
+												profile.preview_warnings.slice(0, 6).map((warning) => (
+													<div key={`${profile.label}:preview:${warning}`}>{warning}</div>
+												))
 											) : (
-												<div>No derived warnings loaded yet.</div>
+												<div>No preview-only constraints loaded yet.</div>
 											)}
 										</div>
 									</div>
@@ -1347,6 +1386,29 @@ export default function ProductAssetGeneratorForm({
 							<ProfileField
 								label="product_mapping_status"
 								value={profileTruthSummary.product_mapping_status}
+							/>
+							<ProfileField
+								label="mapping_review_status"
+								value={
+									(result?.truth_status?.mapping_review_status as string | undefined) ||
+									"NOT_RECORDED"
+								}
+							/>
+							<ProfileField
+								label="product_type_id"
+								value={
+									(result?.truth_status?.product_type_id as string | undefined) ||
+									(selectedProduct?.product_type_id as string | undefined) ||
+									"MISSING"
+								}
+							/>
+							<ProfileField
+								label="bosmax_product_family"
+								value={
+									(result?.truth_status?.bosmax_product_family as string | undefined) ||
+									(result?.product_context.bosmax_product_family as string | undefined) ||
+									"NOT_CLASSIFIED"
+								}
 							/>
 							<ProfileField
 								label="copy_quality_status"
