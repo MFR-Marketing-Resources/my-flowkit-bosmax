@@ -3,22 +3,21 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
 
-from agent.config import BASE_DIR, OPERATOR_PACK_DIR
+from agent.config import OPERATOR_PACK_DIR
 from agent.db import crud
 from agent.models.product_intelligence import (
     ProductIntelligenceBackfillPreviewResponse,
-    ProductIntelligenceImageAnalysis,
     ProductIntelligenceProfile,
     ProductIntelligenceResolveRequest,
     ProductIntelligenceSalesMetrics,
     ProductIntelligenceSummaryResponse,
 )
 from agent.services.bosmax_product_family import derive_bosmax_product_family
+from agent.services.product_image_analysis_service import analyze_product_image_payload
 from agent.services.product_mapping import normalize_mapping_text
 
 
@@ -691,37 +690,69 @@ def _resolve_sales_metrics(product: dict[str, Any]) -> tuple[ProductIntelligence
     )
 
 
-def _resolve_image_analysis(product: dict[str, Any]) -> ProductIntelligenceImageAnalysis:
-    image_url = _normalize_text(product.get("image_url")) or None
-    local_image_path = _normalize_text(product.get("local_image_path")) or None
-    metadata: dict[str, Any] = {}
-    if local_image_path:
-        candidate = Path(local_image_path)
-        if not candidate.is_absolute():
-            candidate = BASE_DIR / candidate
-        metadata["local_file_exists"] = candidate.exists()
-        if candidate.exists():
-            metadata["local_file_size_bytes"] = candidate.stat().st_size
+def _resolve_image_analysis(product: dict[str, Any]) -> dict[str, Any]:
+    return analyze_product_image_payload(product)
 
-    if not image_url and not local_image_path:
-        return ProductIntelligenceImageAnalysis(
-            status="NOT_AVAILABLE",
-            image_url=None,
-            local_image_path=None,
-            detected_package=None,
-            detected_text=None,
-            confidence="NOT_VERIFIED",
-            metadata=metadata,
-        )
-    return ProductIntelligenceImageAnalysis(
-        status="NOT_ANALYZED",
-        image_url=image_url,
-        local_image_path=local_image_path,
-        detected_package=None,
-        detected_text=None,
-        confidence="NOT_VERIFIED",
-        metadata=metadata,
+
+IMAGE_PACKAGE_FORM_MAP = {
+    "bottle": "bottle_or_refill_pack",
+    "refill_pouch": "bottle_or_refill_pack",
+    "tube": "small_bottle_tube_or_compact",
+    "box": "boxed_item",
+    "packet": "flat_packet",
+    "garment": "garment",
+    "jar": "jar_container",
+    "roll_on_bottle": "small_roll_on_bottle",
+}
+
+IMAGE_PHYSICAL_STATE_MAP = {
+    "garment": "textile",
+    "packet": "paper",
+    "box": "solid",
+}
+
+
+def _image_analysis_is_high_confidence(image_analysis: dict[str, Any]) -> bool:
+    return (
+        str(image_analysis.get("status")) == "ANALYZED"
+        and str(image_analysis.get("visual_confidence")) == "HIGH"
     )
+
+
+def _apply_image_evidence_to_profile(
+    *,
+    profile: dict[str, str],
+    family: str,
+    image_analysis: dict[str, Any],
+    warnings: list[str],
+    provenance: list[str],
+) -> tuple[dict[str, str], bool]:
+    updated = dict(profile)
+    changed = False
+    detected_package = str(image_analysis.get("detected_package") or "").strip()
+    if not _image_analysis_is_high_confidence(image_analysis) or not detected_package:
+        return updated, changed
+
+    image_package_form = IMAGE_PACKAGE_FORM_MAP.get(detected_package)
+    image_physical_state = IMAGE_PHYSICAL_STATE_MAP.get(detected_package)
+
+    if image_package_form and updated.get("package_form") != image_package_form:
+        updated["package_form"] = image_package_form
+        provenance.append(f"image_analysis:package_form={image_package_form}")
+        changed = True
+    if image_physical_state and updated.get("physical_state") in {"unknown", "liquid_or_semi_liquid"}:
+        updated["physical_state"] = image_physical_state
+        provenance.append(f"image_analysis:physical_state={image_physical_state}")
+        changed = True
+
+    if family in {"LAUNDRY_DETERGENT_LIQUID_REFILL", "FABRIC_SOFTENER_LIQUID"} and detected_package == "garment":
+        warnings.append("IMAGE_TITLE_CONFLICT_REVIEW_REQUIRED")
+        provenance.append("image_analysis:title_conflict=garment_vs_liquid_detergent")
+    if family.startswith("fashion") and detected_package in {"bottle", "refill_pouch", "tube", "jar", "roll_on_bottle"}:
+        warnings.append("IMAGE_TITLE_CONFLICT_REVIEW_REQUIRED")
+        provenance.append("image_analysis:title_conflict=container_vs_apparel")
+
+    return updated, changed
 
 
 def _resolve_claim_gate(
@@ -975,7 +1006,11 @@ def _destination_readiness(
 ) -> dict[str, str]:
     review_required = copy_route != "DIRECT" or claim_gate != "CLAIM_SAFE" or confidence == "LOW"
     text_to_video = "READY" if not review_required else "NEEDS_REVIEW"
-    image_capable = image_analysis_status != "NOT_AVAILABLE"
+    image_capable = image_analysis_status not in {
+        "IMAGE_MISSING",
+        "IMAGE_INACCESSIBLE",
+        "UNSUPPORTED_IMAGE_FORMAT",
+    }
     frames = "READY" if image_capable and not review_required else "NEEDS_REVIEW"
     ingredients = "READY" if image_capable and confidence in {"HIGH", "MEDIUM"} else "NEEDS_REVIEW"
     image = "READY" if not review_required else "NEEDS_REVIEW"
@@ -1011,7 +1046,7 @@ def resolve_product_intelligence_profile(product: dict[str, Any]) -> dict[str, A
         copy_route=copy_route,
         claim_gate=claim_gate,
         confidence=confidence,
-        image_analysis_status=image_analysis.status,
+        image_analysis_status=str(image_analysis.get("status") or ""),
     )
 
     warnings: list[str] = []
@@ -1021,6 +1056,13 @@ def resolve_product_intelligence_profile(product: dict[str, Any]) -> dict[str, A
         f"family:{family}",
         family_reason,
     ]
+    profile, image_profile_changed = _apply_image_evidence_to_profile(
+        profile=profile,
+        family=family,
+        image_analysis=image_analysis,
+        warnings=warnings,
+        provenance=provenance,
+    )
     if taxonomy_conflict:
         warnings.append("TAXONOMY_CONFLICT")
         provenance.append("taxonomy_conflict:source_taxonomy_overridden")
@@ -1033,13 +1075,24 @@ def resolve_product_intelligence_profile(product: dict[str, Any]) -> dict[str, A
         warnings.append("SALES_METRICS_NOT_FOUND")
     else:
         provenance.extend(sales_provenance)
-    if image_analysis.status == "NOT_ANALYZED":
-        warnings.append("IMAGE_ANALYSIS_NOT_WIRED")
-        provenance.append("image_analysis:metadata_only_no_semantic_vision")
-    elif image_analysis.status == "NOT_AVAILABLE":
+    image_warnings = [str(warning) for warning in image_analysis.get("warnings", []) if str(warning).strip()]
+    warnings.extend(image_warnings)
+    if image_analysis.get("status") == "VISION_PROVIDER_NOT_CONFIGURED":
+        provenance.append("image_analysis:provider_not_configured")
+    elif image_analysis.get("status") == "IMAGE_MISSING":
         warnings.append("IMAGE_NOT_AVAILABLE")
+    elif image_analysis.get("status") == "IMAGE_INACCESSIBLE":
+        warnings.append("IMAGE_INACCESSIBLE")
+    elif image_analysis.get("status") == "UNSUPPORTED_IMAGE_FORMAT":
+        warnings.append("UNSUPPORTED_IMAGE_FORMAT")
+    elif image_analysis.get("status") == "ANALYSIS_FAILED":
+        warnings.append("SEMANTIC_IMAGE_ANALYSIS_FAILED")
+    if image_profile_changed:
+        provenance.append("image_analysis:high_confidence_support_applied")
     if confidence == "LOW":
         warnings.append("INTELLIGENCE_LOW_CONFIDENCE")
+    if "IMAGE_TITLE_CONFLICT_REVIEW_REQUIRED" in warnings:
+        confidence = "MEDIUM" if confidence == "HIGH" else confidence
 
     intelligence_status = "READY" if confidence in {"HIGH", "MEDIUM"} and family != "UNKNOWN_REVIEW_REQUIRED" else "NEEDS_REVIEW"
     if family == "UNKNOWN_REVIEW_REQUIRED":
@@ -1196,9 +1249,20 @@ async def get_product_intelligence_summary() -> dict[str, Any]:
             if not _first_non_empty(product.get("category")) or not _first_non_empty(product.get("type"))
         ),
         products_with_source_taxonomy_conflict_risk=sum(1 for profile in profiles if profile["taxonomy_conflict"]),
-        products_with_image_available=sum(1 for profile in profiles if profile["image_analysis"]["status"] == "AVAILABLE"),
-        products_with_image_not_available=sum(1 for profile in profiles if profile["image_analysis"]["status"] == "NOT_AVAILABLE"),
-        products_with_image_not_analyzed=sum(1 for profile in profiles if profile["image_analysis"]["status"] == "NOT_ANALYZED"),
+        products_with_image_available=sum(
+            1
+            for profile in profiles
+            if profile["image_analysis"]["status"]
+            not in {"IMAGE_MISSING", "IMAGE_INACCESSIBLE", "UNSUPPORTED_IMAGE_FORMAT"}
+        ),
+        products_with_image_not_available=sum(
+            1 for profile in profiles if profile["image_analysis"]["status"] == "IMAGE_MISSING"
+        ),
+        products_with_image_not_analyzed=sum(
+            1
+            for profile in profiles
+            if profile["image_analysis"]["status"] in {"NOT_ANALYZED", "VISION_PROVIDER_NOT_CONFIGURED"}
+        ),
         products_with_sold_count_available=sum(1 for profile in profiles if profile["sales_metrics"]["sold_count"] is not None),
         products_with_shop_count_available=sum(1 for profile in profiles if profile["sales_metrics"]["shop_count"] is not None),
         products_with_shop_names_available=sum(1 for profile in profiles if bool(profile["sales_metrics"]["shop_names"])),

@@ -19,6 +19,14 @@ def test_get_product_intelligence_by_id(monkeypatch):
             "bosmax_product_family": "LAUNDRY_DETERGENT_LIQUID_REFILL",
             "copy_route": "DIRECT",
             "claim_gate": "CLAIM_REVIEW_REQUIRED",
+            "image_analysis": {
+                "status": "VISION_PROVIDER_NOT_CONFIGURED",
+                "provider": "not_configured",
+                "detected_package": None,
+                "detected_text": [],
+                "visual_confidence": "NOT_VERIFIED",
+                "warnings": ["SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE"],
+            },
         }
 
     monkeypatch.setattr(
@@ -33,6 +41,7 @@ def test_get_product_intelligence_by_id(monkeypatch):
     payload = response.json()
     assert payload["group"] == "LAUNDRY_CARE"
     assert payload["bosmax_product_family"] == "LAUNDRY_DETERGENT_LIQUID_REFILL"
+    assert payload["image_analysis"]["status"] == "VISION_PROVIDER_NOT_CONFIGURED"
 
 
 def test_post_product_intelligence_resolve(monkeypatch):

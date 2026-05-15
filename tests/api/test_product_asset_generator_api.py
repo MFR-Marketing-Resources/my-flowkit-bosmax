@@ -34,6 +34,14 @@ def test_preview_endpoint_includes_copy_quality_status(monkeypatch):
                 "sub_group": "PERSONAL_CARE",
                 "type_of_product": "BEAUTY_PERSONAL_CARE_PRODUCT",
                 "claim_gate": "CLAIM_SAFE",
+                "image_analysis": {
+                    "status": "VISION_PROVIDER_NOT_CONFIGURED",
+                    "provider": "not_configured",
+                    "detected_package": None,
+                    "detected_text": [],
+                    "visual_confidence": "NOT_VERIFIED",
+                    "warnings": ["SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE"],
+                },
                 "product_scale_prompt": "EXACTLY palm-sized bottle scale unless verified dimensions say otherwise.",
                 "scale_truth_status": "DERIVED_RELATIVE_SCALE",
                 "camera_capture_mode": "UGC_IPHONE_RAW",
@@ -67,6 +75,17 @@ def test_preview_endpoint_includes_copy_quality_status(monkeypatch):
                 "sub_group": "PERSONAL_CARE",
                 "type_of_product": "BEAUTY_PERSONAL_CARE_PRODUCT",
                 "claim_gate": "CLAIM_SAFE",
+                "image_analysis": {
+                    "status": "VISION_PROVIDER_NOT_CONFIGURED",
+                    "provider": "not_configured",
+                    "detected_package": None,
+                    "detected_text": [],
+                    "visual_confidence": "NOT_VERIFIED",
+                    "warnings": ["SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE"],
+                },
+                "image_analysis_status": "VISION_PROVIDER_NOT_CONFIGURED",
+                "image_analysis_provider": "not_configured",
+                "image_analysis_visual_confidence": "NOT_VERIFIED",
                 "copy_quality_status": "COMMERCIAL_COPY_READY",
                 "copy_readiness_status": "COPY_READY",
                 "execution_readiness_status": "DRY_RUN_ONLY",
@@ -95,6 +114,8 @@ def test_preview_endpoint_includes_copy_quality_status(monkeypatch):
     assert payload["truth_status"]["text_to_video_readiness_status"] == "READY"
     assert payload["truth_status"]["claim_gate"] == "CLAIM_SAFE"
     assert payload["product_context"]["copy_quality_status"] == "COMMERCIAL_COPY_READY"
+    assert payload["product_context"]["image_analysis"]["status"] == "VISION_PROVIDER_NOT_CONFIGURED"
+    assert payload["truth_status"]["image_analysis_provider"] == "not_configured"
 
 
 def test_preview_endpoint_keeps_fallback_draft_text_to_video_in_needs_review(monkeypatch):

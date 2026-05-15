@@ -651,6 +651,8 @@ export default function ProductsSalesAnalyzerPage() {
                     <KV label="Shop Count" value={formatCountDisplay(selectedProduct.shop_count)} />
                     <KV label="Shop Names" value={(selectedProduct.shop_names || []).join(', ')} />
                     <KV label="Image Analysis Status" value={selectedProduct.image_analysis_status} />
+                    <KV label="Visual Confidence" value={selectedProduct.image_analysis?.visual_confidence} />
+                    <KV label="Semantic Analysis Provider" value={selectedProduct.image_analysis?.provider} />
                   </div>
                   <div className="space-y-1">
                     <KV label="Physics Class" value={selectedProduct.physics_class} />
@@ -674,6 +676,10 @@ export default function ProductsSalesAnalyzerPage() {
                     <KV label="Image Readiness" value={selectedProduct.image_readiness_status} />
                     <KV label="Image Readiness Detail" value={selectedProduct.image_readiness_detail || selectedProduct.image_failure_detail} />
                     <KV label="Local Image Path" value={selectedProduct.local_image_path} />
+                    <KV label="Detected Package" value={selectedProduct.image_analysis?.detected_package} />
+                    <KV label="Detected Text" value={(selectedProduct.image_analysis?.detected_text || []).join(', ')} />
+                    <KV label="Detected Size Text" value={selectedProduct.image_analysis?.detected_size_text} />
+                    <KV label="Image Analysis Warnings" value={(selectedProduct.image_analysis?.warnings || []).join('; ')} />
                     <KV label="Rendered Image Src" value={selectedProduct.rendered_img_src} />
                     <KV label="Image HTTP Status" value={selectedProduct.image_http_status} />
                     <KV label="Catalog Label" value={selectedProduct.catalog_label} />

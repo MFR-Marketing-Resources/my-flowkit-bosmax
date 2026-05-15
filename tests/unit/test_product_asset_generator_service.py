@@ -219,6 +219,35 @@ async def test_missing_product_image_emits_warning():
 
     assert "PRODUCT_IMAGE_MISSING" in result.warnings
     assert any(item["asset_role"] == "PRODUCT_IMAGE" for item in result.missing_assets)
+    assert result.product_context["image_analysis"]["status"] == "IMAGE_MISSING"
+
+
+@pytest.mark.asyncio
+async def test_preview_includes_image_analysis_truth_when_provider_is_not_configured():
+    result = await generate_product_asset_preview(
+        {
+            "product_payload": _product_row(
+                raw_product_title="Sabun Dobi Liquid Antibakteria Refill 5KG",
+                product_display_name="Sabun Dobi Liquid Antibakteria",
+                product_short_name="Sabun Dobi Liquid",
+                category="Home Supplies",
+                subcategory="Home Care Supplies",
+                type="Household Cleaners",
+                product_type_id="HOUSEHOLD_LAUNDRY_DETERGENT",
+            ),
+            "target_asset_intent": "PRODUCT_LIFESTYLE_IMAGE_PROMPT",
+            "target_destination_mode": "TEXT_TO_VIDEO",
+            "dry_run_only": True,
+        }
+    )
+
+    assert result.product_context["image_analysis"]["status"] == "VISION_PROVIDER_NOT_CONFIGURED"
+    assert result.product_context["image_analysis"]["provider"] == "not_configured"
+    assert result.product_context["image_analysis"]["detected_package"] is None
+    assert result.product_context["image_analysis"]["detected_text"] == []
+    assert result.truth_status["image_analysis_status"] == "VISION_PROVIDER_NOT_CONFIGURED"
+    assert result.truth_status["image_analysis_provider"] == "not_configured"
+    assert "SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE" in result.warnings
 
 
 @pytest.mark.asyncio

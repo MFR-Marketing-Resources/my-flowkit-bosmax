@@ -192,6 +192,118 @@ def test_unknown_product_returns_low_confidence_and_needs_review():
     assert result["intelligence_status"] == "NEEDS_REVIEW"
 
 
+def test_semantic_image_warning_appears_when_provider_unavailable():
+    result = resolve_product_intelligence_profile(
+        _product(
+            raw_product_title="Atlas Lip Balm Original",
+            image_url="https://example.com/product.jpg",
+            local_image_path="",
+        )
+    )
+
+    assert result["image_analysis"]["status"] == "VISION_PROVIDER_NOT_CONFIGURED"
+    assert "SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE" in result["warnings"]
+
+
+def test_high_confidence_provider_result_can_influence_package_form(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_intelligence_service.analyze_product_image_payload",
+        lambda product: {
+            "status": "ANALYZED",
+            "image_url": product.get("image_url"),
+            "local_image_path": product.get("local_image_path"),
+            "detected_package": "packet",
+            "detected_text": ["Sampul Premium"],
+            "detected_brand": None,
+            "detected_size_text": None,
+            "detected_form_factor": "flat_packet",
+            "visual_confidence": "HIGH",
+            "evidence": ["provider:mock"],
+            "warnings": [],
+            "provider": "mock_provider",
+            "metadata": {},
+        },
+    )
+
+    result = resolve_product_intelligence_profile(
+        _product(
+            raw_product_title="Mystery Product",
+            category="",
+            subcategory="",
+            type="",
+            image_url="https://example.com/product.jpg",
+        )
+    )
+
+    assert result["package_form"] == "flat_packet"
+
+
+def test_low_confidence_provider_result_does_not_override_package_form(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_intelligence_service.analyze_product_image_payload",
+        lambda product: {
+            "status": "ANALYZED",
+            "image_url": product.get("image_url"),
+            "local_image_path": product.get("local_image_path"),
+            "detected_package": "packet",
+            "detected_text": ["Sampul Premium"],
+            "detected_brand": None,
+            "detected_size_text": None,
+            "detected_form_factor": "flat_packet",
+            "visual_confidence": "LOW",
+            "evidence": ["provider:mock"],
+            "warnings": [],
+            "provider": "mock_provider",
+            "metadata": {},
+        },
+    )
+
+    result = resolve_product_intelligence_profile(
+        _product(
+            raw_product_title="Mystery Product",
+            category="",
+            subcategory="",
+            type="",
+            image_url="https://example.com/product.jpg",
+        )
+    )
+
+    assert result["package_form"] == "unknown"
+
+
+def test_title_vs_image_conflict_triggers_review_warning(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_intelligence_service.analyze_product_image_payload",
+        lambda product: {
+            "status": "ANALYZED",
+            "image_url": product.get("image_url"),
+            "local_image_path": product.get("local_image_path"),
+            "detected_package": "garment",
+            "detected_text": ["Baju"],
+            "detected_brand": None,
+            "detected_size_text": None,
+            "detected_form_factor": "garment",
+            "visual_confidence": "HIGH",
+            "evidence": ["provider:mock"],
+            "warnings": [],
+            "provider": "mock_provider",
+            "metadata": {},
+        },
+    )
+
+    result = resolve_product_intelligence_profile(
+        _product(
+            raw_product_title="Sabun Dobi Liquid Refill 5KG",
+            category="Home Supplies",
+            subcategory="Home Care Supplies",
+            type="Household Cleaners",
+            image_url="https://example.com/product.jpg",
+        )
+    )
+
+    assert "IMAGE_TITLE_CONFLICT_REVIEW_REQUIRED" in result["warnings"]
+
+
 @pytest.mark.asyncio
 async def test_backfill_preview_returns_distribution_counts_and_does_not_write_db(monkeypatch):
     rows = [
