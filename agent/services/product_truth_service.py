@@ -253,7 +253,7 @@ class ProductTruthService:
         # Example Boundary Locks from Contract
         if category in {"baby care", "baby and maternity", "baby hygiene"}:
             constraints.category_boundary_locks.append("BABY_HYGIENE_BOUNDARY")
-            constraints.forbidden_family_transitions.append("beauty_fragrance")
+            constraints.forbidden_family_transitions.extend(["beauty_fragrance", "HOME_TEXTILE"])
         
         if category in {"electronics", "electronics and gadgets"} or subcategory == "wearable device":
             constraints.category_boundary_locks.append("ELECTRONICS_BOUNDARY")
@@ -262,6 +262,14 @@ class ProductTruthService:
         if category in {"beauty", "beauty and personal care"}:
             constraints.category_boundary_locks.append("BEAUTY_BOUNDARY")
             constraints.forbidden_family_transitions.append("HOME_TEXTILE")
+
+        if category in {"fashion", "fashion and apparel", "clothing", "bottoms", "tops"}:
+            constraints.category_boundary_locks.append("FASHION_BOUNDARY")
+            constraints.forbidden_family_transitions.extend(["MALE_HEALTH_SENSITIVE", "HEALTH_SUPPLEMENT", "BABY_WIPES", "BABY_DIAPER", "HOUSEHOLD_CLEANER_GENERAL"])
+
+        if category in {"home", "home improvement", "home living", "household"}:
+            constraints.category_boundary_locks.append("HOME_BOUNDARY")
+            constraints.forbidden_family_transitions.extend(["BEAUTY_PERSONAL_CARE", "beauty_fragrance", "MALE_HEALTH_SENSITIVE"])
             
         return constraints
 
@@ -318,10 +326,10 @@ class ProductTruthService:
 
         # 5. Specific known Hallucination Patterns (Cross-check Title vs Mapping)
         title = text_evidence.normalized_title
-        # Baby Wipes Hallucination (Mapped to Beauty)
-        if "baby" in title and ("wipes" in title or "tisu" in title) and "beauty" in mapped_category:
+        # Baby Wipes Hallucination (Mapped to Beauty or Textile)
+        if "baby" in title and ("wipes" in title or "tisu" in title) and ("beauty" in mapped_category or "textile" in mapped_category):
              recon.contradiction_flags.append(FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION)
-             recon.provenance_notes.append("Hallucination check: baby wipes mapped to beauty lane suspected.")
+             recon.provenance_notes.append("Hallucination check: baby wipes mapped to beauty or textile lane suspected.")
 
         # Smartwatch Hallucination (Mapped to Health)
         if "smartwatch" in title and ("health" in mapped_category or "male" in mapped_category):
@@ -330,24 +338,40 @@ class ProductTruthService:
 
         # 6. Confidence Scoring
         # HIGH requires source anchor AND corroborating signal AND no contradictions
-        has_anchor = source_anchors.source_anchor_status == "PRESENT"
-        has_contradiction = len(recon.contradiction_flags) > 0
+        present_statuses = {
+            "PRESENT", 
+            "SOURCE_ANCHOR_PRESENT", 
+            "SOURCE_ANCHOR_VERIFIED_FROM_RAW_SOURCE",
+            "SOURCE_ANCHOR_PARTIAL"
+        }
+        has_anchor = source_anchors.source_anchor_status in present_statuses
         
-        if has_contradiction:
+        # Severe contradictions: category locks or taxonomy conflicts
+        severe_contradictions = {
+            "FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION",
+            "FLAG_SOURCE_TAXONOMY_CONFLICT",
+            "FLAG_FASTMOSS_TAXONOMY_RECONCILIATION_FAILED"
+        }
+        has_severe_contradiction = any(flag in severe_contradictions for flag in recon.contradiction_flags)
+        
+        if has_severe_contradiction:
             recon.confidence_label = "NEEDS_REVIEW"
             recon.confidence_score = 0.2
         elif not has_anchor:
             recon.confidence_label = "LOW"
             recon.confidence_score = 0.4
         else:
-            # Anchor exists and no contradictions
+            # Anchor exists and no severe contradictions
             recon.confidence_label = "MEDIUM"
             recon.confidence_score = 0.7
-            # In Phase 1 we don't have enough corroboration logic to reach HIGH safely
-            # as per contract: "A single weak keyword match must never produce HIGH."
+            
+            # Allow HIGH if it's VERIFIED_FROM_RAW_SOURCE and no severe contradictions
+            if source_anchors.source_anchor_status == "SOURCE_ANCHOR_VERIFIED_FROM_RAW_SOURCE" and not has_severe_contradiction:
+                recon.confidence_label = "HIGH"
+                recon.confidence_score = 0.9
             
         recon.authority_decision = "SOURCE_ANCHOR" if has_anchor else "KEYWORD_RULE"
-        if has_contradiction:
+        if has_severe_contradiction:
             recon.authority_decision = "RECONCILIATION_FAILED"
             
         return recon

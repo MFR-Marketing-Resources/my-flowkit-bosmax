@@ -821,8 +821,12 @@ def _resolve_family_from_title(product: dict[str, Any]) -> tuple[str | None, str
         return ("FABRIC_SOFTENER_LIQUID", "title_evidence:fabric_softener_keywords")
     if _contains_any(
         haystack,
-        ["male health", "lelaki", "suami isteri", "batin", "tahan lama", "kuat lelaki"],
+        ["male health", "suami isteri", "batin", "kuat lelaki"],
+    ) or (
+        "tahan lama" in haystack and not _contains_any(haystack, ["makeup", "kosmetik", "lipstick", "lipmatte", "setting spray", "baju", "pants", "seluar"])
     ):
+        # Strict Isolation: MALE_HEALTH_SENSITIVE requires specific sensitive health tokens.
+        # 'tahan lama' alone in makeup/fashion context is not sensitive.
         return ("MALE_HEALTH_SENSITIVE", "title_evidence:male_health_sensitive_keywords")
     if _contains_any(
         haystack,
@@ -854,11 +858,19 @@ def _resolve_family_from_title(product: dict[str, Any]) -> tuple[str | None, str
         ["jersey", "jersi", "athleisure", "baju sukan", "quick dry"],
     ):
         return ("fashion_sportswear", "title_evidence:sportswear_keywords")
+    if _contains_any(haystack, ["baby wipes", "wet wipes", "wet tissue", "tisu basah"]):
+        return ("BABY_WIPES", "title_evidence:baby_wipes_keywords")
+    if _contains_any(haystack, ["diaper", "lampin", "pull ups", "pull-ups", "baby diaper"]):
+        return ("BABY_DIAPER", "title_evidence:baby_diaper_keywords")
     if _contains_any(
         haystack,
         ["body spray", "perfume", "fragrance", "body mist", "mist"],
     ):
-        return ("beauty_fragrance", "title_evidence:fragrance_keywords")
+        # Guardrail: avoid matching 'fragrance-free' as fragrance
+        if "fragrance-free" in haystack or "fragrance free" in haystack:
+             pass # let it fall through
+        else:
+             return ("beauty_fragrance", "title_evidence:fragrance_keywords")
     if _contains_any(
         haystack,
         [
@@ -884,13 +896,16 @@ def _resolve_family_from_title(product: dict[str, Any]) -> tuple[str | None, str
         return ("stationery_paper", "title_evidence:paper_packet_keywords")
     if _contains_any(
         haystack,
-        ["towel", "tuala", "blanket", "comforter", "selimut", "bedsheet", "cadar", "curtain", "pillow", "mat-rug", "rug", "mat", "bedding"],
+        ["towel", "tuala", "blanket", "comforter", "selimut", "bedsheet", "cadar", "curtain", "pillow", "mat-rug", "rug", "bedding"],
     ):
-        return ("HOME_TEXTILE", "title_evidence:home_textile_keywords")
-    if _contains_any(haystack, ["baby wipes", "wet wipes", "wet tissue", "tisu basah"]):
-        return ("BABY_WIPES", "title_evidence:baby_wipes_keywords")
-    if _contains_any(haystack, ["diaper", "lampin", "pull ups", "pull-ups", "baby diaper"]):
-        return ("BABY_DIAPER", "title_evidence:baby_diaper_keywords")
+        # Guardrail: HOME_TEXTILE must not hijack beauty products with 'matte' or 'powder'
+        if _contains_any(haystack, ["matte", "powder", "lipmatte"]) and not _contains_any(haystack, ["towel", "blanket", "bedsheet"]):
+             pass
+        else:
+             return ("HOME_TEXTILE", "title_evidence:home_textile_keywords")
+    # Isolated 'mat' check to avoid partial matches like 'lipmatte'
+    if re.search(r"\bmat\b", haystack) and not _contains_any(haystack, ["matte", "lipmatte"]):
+         return ("HOME_TEXTILE", "title_evidence:home_textile_keywords")
     if _contains_any(haystack, ["cat food", "cat treat", "pet", "kucing"]):
         return ("PET_CARE_GENERAL", "title_evidence:petcare_keywords")
     if _contains_any(haystack, ["sauce", "sambal", "popcorn", "chocolate", "biscuits", "cookies", "food"]):
@@ -1042,13 +1057,6 @@ def resolve_product_intelligence_profile(product: dict[str, Any]) -> dict[str, A
         family,
         source_taxonomy,
     )
-    readiness = _destination_readiness(
-        copy_route=copy_route,
-        claim_gate=claim_gate,
-        confidence=confidence,
-        image_analysis_status=str(image_analysis.get("status") or ""),
-    )
-
     warnings: list[str] = []
     provenance = [
         "resolver:product_intelligence_service",
@@ -1063,9 +1071,50 @@ def resolve_product_intelligence_profile(product: dict[str, Any]) -> dict[str, A
         warnings=warnings,
         provenance=provenance,
     )
+
+    # 2. Consume ProductTruthService for read-only reconciliation audit
+    from agent.services.product_truth_service import ProductTruthService
+    truth_profile = ProductTruthService.build_computed_profile(payload)
+    recon = truth_profile.reconciliation
+    
+    # 3. Apply Reconciliation Overrides
+    # If ProductTruth identifies a category boundary lock violation or a severe contradiction, 
+    # we MUST NOT allow HIGH confidence.
+    if recon.confidence_label == "NEEDS_REVIEW" or "FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION" in recon.contradiction_flags:
+        confidence = "LOW"
+        warnings.append("MAPPING_RECONCILIATION_CONTRADICTION")
+        provenance.append(f"reconciliation:flagged_{recon.confidence_label}")
+    else:
+        # Cap intelligence confidence by reconciliation confidence
+        if recon.confidence_label == "LOW" and confidence != "LOW":
+             confidence = "LOW"
+             warnings.append("MAPPING_RECONCILIATION_WEAK_SIGNAL")
+        elif recon.confidence_label == "MEDIUM" and confidence == "HIGH":
+             confidence = "MEDIUM"
+             warnings.append("MAPPING_RECONCILIATION_UNCERTAIN")
+
+    # Special Case: MALE_HEALTH_SENSITIVE guardrail
+    # If it was mapped to MALE_HEALTH_SENSITIVE but Truth doesn't corroborate it (e.g. it's actually fashion), 
+    # we force it back to fashion or unknown.
+    if family == "MALE_HEALTH_SENSITIVE" and "FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION" in recon.contradiction_flags:
+        # If the title says 'seluar' or 'pants', it's likely fashion
+        if _contains_any(_joined_title_text(payload), ["seluar", "pants", "jersey", "baju"]):
+             family = "fashion_apparel"
+             profile = _profile_for_family(family)
+             provenance.append("reconciliation:male_health_to_fashion_recovery")
+
+    # 4. Final readiness and status
+    readiness = _destination_readiness(
+        copy_route=copy_route,
+        claim_gate=claim_gate,
+        confidence=confidence,
+        image_analysis_status=str(image_analysis.get("status") or ""),
+    )
+
     if taxonomy_conflict:
         warnings.append("TAXONOMY_CONFLICT")
         provenance.append("taxonomy_conflict:source_taxonomy_overridden")
+    
     warnings.extend(
         warning
         for warning in claim_warnings
@@ -1075,8 +1124,10 @@ def resolve_product_intelligence_profile(product: dict[str, Any]) -> dict[str, A
         warnings.append("SALES_METRICS_NOT_FOUND")
     else:
         provenance.extend(sales_provenance)
+    
     image_warnings = [str(warning) for warning in image_analysis.get("warnings", []) if str(warning).strip()]
     warnings.extend(image_warnings)
+    
     if image_analysis.get("status") == "VISION_PROVIDER_NOT_CONFIGURED":
         provenance.append("image_analysis:provider_not_configured")
     elif image_analysis.get("status") == "IMAGE_MISSING":
@@ -1087,6 +1138,7 @@ def resolve_product_intelligence_profile(product: dict[str, Any]) -> dict[str, A
         warnings.append("UNSUPPORTED_IMAGE_FORMAT")
     elif image_analysis.get("status") == "ANALYSIS_FAILED":
         warnings.append("SEMANTIC_IMAGE_ANALYSIS_FAILED")
+        
     if image_profile_changed:
         provenance.append("image_analysis:high_confidence_support_applied")
     if confidence == "LOW":
