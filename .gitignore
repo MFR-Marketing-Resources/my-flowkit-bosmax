@@ -39,3 +39,4 @@ f2v_job_body.json
 test_image.jpg
 test_image_b64.txt
 data/products/images/*.jpg
+data/fastmoss/imports/

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 
-import { fetchAPI, patchAPI, postAPI } from '../api/client'
-import type { Product } from '../types'
+import { fetchAPI, patchAPI, postAPI, postMultipartAPI } from '../api/client'
+import type { FastMossImportBatchReport, Product } from '../types'
 import { formatCommissionDisplay, formatCommissionRateDisplay, formatCountDisplay, formatCurrencyDisplay, formatTaxonomyPath } from '../utils/productDisplay'
 
 type ManualFormState = Partial<Product> & {
@@ -16,6 +16,30 @@ type TikTokFormState = {
 }
 
 type ProductSortMode = 'SOLD_DESC' | 'PRODUCT_NAME_ASC'
+type FastMossImportFieldKey =
+  | 'creator_search'
+  | 'export_ad_list'
+  | 'export_advertiser_list'
+  | 'shop_list'
+  | 'sales_rank'
+  | 'new_products_ranking'
+  | 'product_search_data'
+  | 'product_search_sales_rank'
+  | 'most_promoted_products_rank'
+  | 'video_product_list'
+
+const FASTMOSS_IMPORT_FIELDS: Array<{ key: FastMossImportFieldKey; label: string }> = [
+  { key: 'creator_search', label: 'Creator Search' },
+  { key: 'export_ad_list', label: 'Export Ad List' },
+  { key: 'export_advertiser_list', label: 'Export Advertiser List' },
+  { key: 'shop_list', label: 'Shop List' },
+  { key: 'sales_rank', label: 'Sales Rank' },
+  { key: 'new_products_ranking', label: 'New Products Ranking' },
+  { key: 'product_search_data', label: 'Product Search Data' },
+  { key: 'product_search_sales_rank', label: 'Product Search Sales Rank' },
+  { key: 'most_promoted_products_rank', label: 'Most Promoted Products Rank' },
+  { key: 'video_product_list', label: 'Video Product List' },
+]
 
 function emptyManualForm(): ManualFormState {
   return {
@@ -52,6 +76,21 @@ function emptyManualForm(): ManualFormState {
 function fieldValue(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === '') return 'NOT_AVAILABLE'
   return String(value)
+}
+
+function emptyFastMossImportState(): Record<FastMossImportFieldKey, File | null> {
+  return {
+    creator_search: null,
+    export_ad_list: null,
+    export_advertiser_list: null,
+    shop_list: null,
+    sales_rank: null,
+    new_products_ranking: null,
+    product_search_data: null,
+    product_search_sales_rank: null,
+    most_promoted_products_rank: null,
+    video_product_list: null,
+  }
 }
 
 async function fileToBase64(file: File) {
@@ -141,6 +180,9 @@ export default function ProductsSalesAnalyzerPage() {
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
   const [imageActionBusy, setImageActionBusy] = useState(false)
   const [imageMapImportBusy, setImageMapImportBusy] = useState(false)
+  const [fastMossImportBusy, setFastMossImportBusy] = useState(false)
+  const [fastMossImportFiles, setFastMossImportFiles] = useState<Record<FastMossImportFieldKey, File | null>>(emptyFastMossImportState)
+  const [fastMossImportReport, setFastMossImportReport] = useState<FastMossImportBatchReport | null>(null)
   const [selectedImageUrl, setSelectedImageUrl] = useState('')
   const [manualForm, setManualForm] = useState<ManualFormState>(emptyManualForm)
   const [tikTokForm, setTikTokForm] = useState<TikTokFormState>({ url: '', raw_product_title: '' })
@@ -270,6 +312,18 @@ export default function ProductsSalesAnalyzerPage() {
     loadProducts()
   }, [])
 
+  useEffect(() => {
+    async function loadLatestFastMossImportReport() {
+      try {
+        const report = await fetchAPI<FastMossImportBatchReport>('/api/fastmoss/import-batch/latest')
+        setFastMossImportReport(report)
+      } catch {
+        setFastMossImportReport(null)
+      }
+    }
+    loadLatestFastMossImportReport()
+  }, [])
+
   async function handleManualSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSaving(true)
@@ -301,6 +355,33 @@ export default function ProductsSalesAnalyzerPage() {
       setManualForm(f => ({ ...f, image_base64: base64, image_filename: file.name }))
     } catch (err) {
       alert('Failed to read image file')
+    }
+  }
+
+  function handleFastMossFileChange(fieldKey: FastMossImportFieldKey, event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] || null
+    setFastMossImportFiles(current => ({ ...current, [fieldKey]: file }))
+  }
+
+  async function handleFastMossImportSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setFastMossImportBusy(true)
+    setError(null)
+    setSaveSuccess(null)
+    try {
+      const formData = new FormData()
+      for (const field of FASTMOSS_IMPORT_FIELDS) {
+        const file = fastMossImportFiles[field.key]
+        if (file) formData.append(field.key, file)
+      }
+      const report = await postMultipartAPI<FastMossImportBatchReport>('/api/fastmoss/import-batch', formData)
+      setFastMossImportReport(report)
+      setFastMossImportFiles(emptyFastMossImportState())
+      setSaveSuccess(`FastMoss latest import batch parsed: ${report.batch_id}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to import FastMoss latest batch')
+    } finally {
+      setFastMossImportBusy(false)
     }
   }
 
@@ -940,6 +1021,108 @@ export default function ProductsSalesAnalyzerPage() {
               <div className="mt-2 text-[10px] text-slate-500 leading-relaxed">
                 Supported columns: product_id, raw_product_title, product_short_name, image_url, source_url, commission_amount, commission_rate.
               </div>
+            </Panel>
+
+            <Panel title="FastMoss Latest Import Refresh" subtitle="Upload the latest affiliate reference files as a read-only parse batch.">
+              <div className="rounded border border-amber-500/20 bg-amber-500/10 p-3 text-[10px] leading-relaxed text-amber-200">
+                FastMoss affiliate data is latest reference only. No weekly/growth analytics.
+              </div>
+
+              <form onSubmit={handleFastMossImportSubmit} className="mt-4 space-y-3">
+                {FASTMOSS_IMPORT_FIELDS.map(field => (
+                  <div key={field.key} className="rounded border border-slate-800 bg-slate-950/60 p-3">
+                    <label className="block text-[11px] font-semibold text-slate-200">{field.label}</label>
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      onChange={(event) => handleFastMossFileChange(field.key, event)}
+                      aria-label={`Upload ${field.label}`}
+                      className="mt-2 w-full text-[11px] file:mr-3 file:rounded file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-slate-300"
+                      disabled={fastMossImportBusy}
+                    />
+                    <div className="mt-2 bosmax-wrap-safe text-[10px] text-slate-500">
+                      {fastMossImportFiles[field.key]?.name || 'No file selected'}
+                    </div>
+                  </div>
+                ))}
+
+                <button
+                  type="submit"
+                  disabled={fastMossImportBusy}
+                  className="w-full rounded border border-fuchsia-500/30 bg-fuchsia-600/20 px-3 py-2 text-xs font-semibold text-fuchsia-200 disabled:opacity-50"
+                >
+                  {fastMossImportBusy ? 'Parsing latest FastMoss batch...' : 'Upload Latest FastMoss Batch'}
+                </button>
+              </form>
+
+              {fastMossImportReport ? (
+                <div className="mt-4 space-y-3 rounded border border-slate-800 bg-slate-950/60 p-3">
+                  <div className="text-[11px] font-semibold text-slate-200">Latest Import Report</div>
+                  <div className="space-y-1">
+                    <KV label="Batch ID" value={fastMossImportReport.batch_id} />
+                    <KV label="Import Status" value={fastMossImportReport.import_status} />
+                    <KV label="Write Back Status" value={fastMossImportReport.write_back_status} />
+                    <KV label="Latest Reference Only" value={fastMossImportReport.latest_reference_only ? 'true' : 'false'} />
+                    <KV label="Growth Analytics Enabled" value={fastMossImportReport.growth_analytics_enabled ? 'true' : 'false'} />
+                    <KV label="Ready For Processing" value={fastMossImportReport.ready_for_processing ? 'true' : 'false'} />
+                    <KV label="Uploaded Files" value={fastMossImportReport.uploaded_files} />
+                    <KV label="Recognized File Types" value={fastMossImportReport.recognized_file_types.join(', ')} />
+                    <KV label="Missing Expected File Types" value={fastMossImportReport.missing_expected_file_types.join(', ')} />
+                    <KV label="Duplicate File Types" value={fastMossImportReport.duplicate_file_types.join(', ')} />
+                    <KV label="Raw File Storage Path" value={fastMossImportReport.raw_file_storage_path} />
+                  </div>
+
+                  <div>
+                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Row Counts</div>
+                    <div className="space-y-1 text-[10px] text-slate-300">
+                      {Object.entries(fastMossImportReport.row_counts_by_file_type).map(([fileType, rowCount]) => (
+                        <div key={fileType} className="flex items-center justify-between gap-2 rounded border border-slate-800 bg-slate-900/60 px-2 py-1">
+                          <span className="bosmax-wrap-safe">{fileType}</span>
+                          <span>{formatCountDisplay(rowCount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Column Validation</div>
+                    <div className="space-y-1">
+                      {Object.entries(fastMossImportReport.column_validation_by_file_type).map(([fileType, validation]) => (
+                        <div key={fileType} className="rounded border border-slate-800 bg-slate-900/60 px-2 py-2 text-[10px] text-slate-300">
+                          <div className="bosmax-wrap-safe font-semibold text-slate-200">{fileType}</div>
+                          <div className="bosmax-wrap-safe mt-1">status={validation.parse_status}</div>
+                          <div className="bosmax-wrap-safe mt-1">required={validation.required_columns_present.join(', ') || 'NONE'}</div>
+                          <div className="bosmax-wrap-safe mt-1">missing={validation.missing_required_columns.join(', ') || 'NONE'}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Sales Metric Scope Summary</div>
+                    <div className="space-y-1">
+                      {fastMossImportReport.sales_metric_scope_report.map((entry, index) => (
+                        <div key={`${entry.file_type_id}-${entry.source_column}-${index}`} className="rounded border border-slate-800 bg-slate-900/60 px-2 py-2 text-[10px] text-slate-300">
+                          <div className="bosmax-wrap-safe font-semibold text-slate-200">{entry.file_type_id} :: {entry.source_column}</div>
+                          <div className="bosmax-wrap-safe mt-1">{entry.metric_name} | scope={entry.metric_scope} | truth={entry.truth_status}</div>
+                          {entry.warning ? <div className="bosmax-wrap-safe mt-1 text-amber-300">{entry.warning}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {fastMossImportReport.parse_warnings.length ? (
+                    <div className="rounded border border-amber-500/20 bg-amber-500/10 p-2 text-[10px] text-amber-200">
+                      {fastMossImportReport.parse_warnings.join(' | ')}
+                    </div>
+                  ) : null}
+                  {fastMossImportReport.parse_errors.length ? (
+                    <div className="rounded border border-rose-500/20 bg-rose-500/10 p-2 text-[10px] text-rose-200">
+                      {fastMossImportReport.parse_errors.join(' | ')}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </Panel>
 
             <Panel title="TikTok Shop Import" subtitle="Register a draft for maintenance.">
