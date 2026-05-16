@@ -127,6 +127,26 @@ def test_sensitive_male_health_routes_to_stealth_and_claim_review():
     assert result["claim_gate"] == "CLAIM_REVIEW_REQUIRED"
 
 
+def test_manual_male_health_taxonomy_without_explicit_title_still_resolves_sensitive_family():
+    result = resolve_product_intelligence_profile(
+        _product(
+            source="MANUAL",
+            raw_product_title="Bosmax Herbs 5 ML",
+            product_display_name="Bosmax Herbs 5 ML",
+            product_short_name="Bosmax Herbs 5 ML",
+            category="Health",
+            subcategory="Supplements",
+            type="Male Health",
+            image_url="",
+        )
+    )
+
+    assert result["bosmax_product_family"] == "MALE_HEALTH_SENSITIVE"
+    assert result["claim_gate"] == "CLAIM_REVIEW_REQUIRED"
+    assert "male_health_sensitive" in result["claim_tokens"]
+    assert "IMAGE_REFERENCE_REQUIRED" in result["warnings"]
+
+
 def test_claim_sensitive_supplement_routes_review_required_not_stealth():
     result = resolve_product_intelligence_profile(
         _product(

@@ -33,10 +33,14 @@ class ProductKnowledgeCompleteResponse(BaseModel):
     completion_status: str  # COMPLETION_READY / NEEDS_REVIEW / BLOCKED
     input_quality_status: str  # SUFFICIENT / PARTIAL / POOR
     declared_evidence_summary: str
+    declared_input_fields: dict[str, Any] = Field(default_factory=dict)
     extracted_product_facts: dict[str, Any]
     
     # Suggested fields (candidates for canonical)
     suggested_normalized_name: str | None = None
+    suggested_size_or_volume: str | None = None
+    suggested_package_notes: str | None = None
+    suggested_source_lane: str | None = None
     suggested_category: str | None = None
     suggested_subcategory: str | None = None
     suggested_type: str | None = None
@@ -80,9 +84,15 @@ class ProductKnowledgeCompleteResponse(BaseModel):
 class AIFormImportResponse(BaseModel):
     import_id: str
     parse_status: str  # PARSED / PARSE_ERROR / VALIDATION_ERROR
+    parse_error_code: str | None = None
+    parse_error_detail: str | None = None
     parsed_request: ProductKnowledgeCompleteRequest | None = None
     parse_warnings: list[str] = Field(default_factory=list)
     parse_errors: list[str] = Field(default_factory=list)
+    accepted_formats: list[str] = Field(default_factory=list)
+    detected_extension: str | None = None
+    detected_content_type: str | None = None
+    parser_strategy_used: str | None = None
     completion_response: ProductKnowledgeCompleteResponse | None = None
     write_back_status: str = "READ_ONLY_COMPLETION_PREVIEW"
     user_review_required: bool = True

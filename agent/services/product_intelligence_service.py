@@ -59,12 +59,25 @@ REVIEW_CLAIM_TOKENS = {
     "gugur",
     "medical",
     "health",
+    "tenaga batin",
+    "batin lelaki",
+    "bahagian intim",
+    "intim lelaki",
+    "ketegangan",
+    "kelelakian",
+    "stamina lelaki",
+    "prestasi fizikal lelaki",
+    "keyakinan kelelakian",
+    "otot kelelakian",
 }
 BLOCKED_CLAIM_TOKENS = {
     "cure",
     "cures",
     "menyembuhkan",
     "merawat",
+    "membesarkan",
+    "memanjangkan",
+    "mati pucuk",
 }
 
 
@@ -413,6 +426,13 @@ def _joined_title_text(product: dict[str, Any]) -> str:
             "product_short_name",
             "product_type",
             "brand",
+            "product_knowledge_text",
+            "benefits",
+            "usage",
+            "target_customer",
+            "warnings",
+            "ingredients",
+            "package_notes",
         )
         if product.get(field)
     )
@@ -430,6 +450,13 @@ def _joined_product_text(product: dict[str, Any]) -> str:
             "type",
             "product_type",
             "brand",
+            "product_knowledge_text",
+            "benefits",
+            "usage",
+            "target_customer",
+            "warnings",
+            "ingredients",
+            "package_notes",
         )
         if product.get(field)
     )
@@ -1194,6 +1221,8 @@ def _resolve_family_from_taxonomy(product: dict[str, Any]) -> tuple[str, str]:
         if "wipes" in taxonomy:
             return "BABY_WIPES", "taxonomy_fallback:baby_wipes"
         return "BABY_DIAPER", "taxonomy_fallback:baby_diaper"
+    if "male health" in taxonomy:
+        return "MALE_HEALTH_SENSITIVE", "taxonomy_fallback:male_health_sensitive"
     if any(token in taxonomy for token in ["food & beverage", "food & beverages", "kitchenware"]):
         return "food_packaged", "taxonomy_fallback:food"
     if any(token in taxonomy for token in ["health", "supplements"]):
@@ -1391,6 +1420,7 @@ def resolve_product_intelligence_profile(product: dict[str, Any]) -> dict[str, A
         provenance.append("image_analysis:provider_not_configured")
     elif image_analysis.get("status") == "IMAGE_MISSING":
         warnings.append("IMAGE_NOT_AVAILABLE")
+        warnings.append("IMAGE_REFERENCE_REQUIRED")
     elif image_analysis.get("status") == "IMAGE_INACCESSIBLE":
         warnings.append("IMAGE_INACCESSIBLE")
     elif image_analysis.get("status") == "UNSUPPORTED_IMAGE_FORMAT":

@@ -31,12 +31,26 @@ Random text.
 Footer.
 """
     parsed = _parse_ai_form_content(md)
-    assert parsed == {"key": "value", "nested": {"a": 1}}
+    assert parsed.parsed_json == {"key": "value", "nested": {"a": 1}}
+    assert parsed.strategy_used == "FENCED_JSON"
 
 def test_parse_raw_json():
     raw = '{"key": "value"}'
     parsed = _parse_ai_form_content(raw)
-    assert parsed == {"key": "value"}
+    assert parsed.parsed_json == {"key": "value"}
+    assert parsed.strategy_used == "RAW_JSON"
+
+def test_parse_raw_json_txt_strategy():
+    raw = '{"key": "value"}'
+    parsed = _parse_ai_form_content(raw, file_name="Bosmax 5ML.txt", content_type="text/plain")
+    assert parsed.parsed_json == {"key": "value"}
+    assert parsed.strategy_used == "RAW_JSON_TEXT"
+
+def test_parse_bom_whitespace_json():
+    raw = "\ufeff   {\"key\": \"value\"}   "
+    parsed = _parse_ai_form_content(raw, file_name="bom.JSON", content_type="application/json")
+    assert parsed.parsed_json == {"key": "value"}
+    assert parsed.strategy_used == "RAW_JSON"
 
 def test_import_ai_form_valid():
     md = """
@@ -56,6 +70,7 @@ def test_import_ai_form_valid():
 """
     result = import_ai_form(md, "test.md")
     assert result.parse_status == "PARSED"
+    assert result.parser_strategy_used == "FENCED_JSON"
     assert result.parsed_request.product_name == "AI Product"
     assert result.completion_response is not None
     assert any("AI_INFERRED_FACTS_DETECTED" in w for w in result.parse_warnings)
@@ -64,13 +79,54 @@ def test_import_ai_form_malformed():
     md = "```json { malformed } ```"
     result = import_ai_form(md, "bad.md")
     assert result.parse_status == "PARSE_ERROR"
+    assert result.parse_error_code == "INVALID_JSON"
+    assert result.parse_error_detail is not None
     assert len(result.parse_errors) > 0
 
 def test_import_ai_form_unsupported_version():
     md = '```json {"bosmax_product_knowledge_form_version": "2.0"} ```'
     result = import_ai_form(md, "old.md")
     assert result.parse_status == "VALIDATION_ERROR"
+    assert result.parse_error_code == "UNSUPPORTED_VERSION"
     assert any("UNSUPPORTED_VERSION" in e for e in result.parse_errors)
+
+def test_import_ai_form_raw_json_txt():
+    raw = json.dumps({
+        "bosmax_product_knowledge_form_version": "1.0",
+        "product_name": "Bosmax Herbs",
+        "source_lane": "OWNED",
+        "size_or_volume": "5 ML",
+        "user_review_status": "USER_REVIEW_REQUIRED",
+    })
+    result = import_ai_form(raw, "Bosmax 5ML.txt", "text/plain")
+    assert result.parse_status == "PARSED"
+    assert result.parser_strategy_used == "RAW_JSON_TEXT"
+    assert result.detected_extension == "txt"
+    assert result.parsed_request.product_name == "Bosmax Herbs"
+
+def test_import_ai_form_uppercase_json():
+    raw = json.dumps({
+        "bosmax_product_knowledge_form_version": "1.0",
+        "product_name": "Bosmax Herbs",
+        "source_lane": "OWNED",
+        "user_review_status": "USER_REVIEW_REQUIRED",
+    })
+    result = import_ai_form(raw, "Bosmax 5ML.JSON", "application/json")
+    assert result.parse_status == "PARSED"
+    assert result.parser_strategy_used == "RAW_JSON"
+    assert result.detected_extension == "JSON"
+
+def test_import_ai_form_no_json_found():
+    result = import_ai_form("this is not json", "bad.txt", "text/plain")
+    assert result.parse_status == "PARSE_ERROR"
+    assert result.parse_error_code == "NO_JSON_FOUND"
+    assert result.parse_error_detail is not None
+
+def test_import_ai_form_multiple_json_objects():
+    raw = '{"a":1}\n{"b":2}'
+    result = import_ai_form(raw, "two.txt", "text/plain")
+    assert result.parse_status == "PARSE_ERROR"
+    assert result.parse_error_code == "MULTIPLE_JSON_OBJECTS_FOUND"
 
 def test_import_risky_claim():
     md = """

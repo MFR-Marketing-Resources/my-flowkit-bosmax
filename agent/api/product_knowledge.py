@@ -39,5 +39,24 @@ async def product_knowledge_import_ai_form(
     file: UploadFile = File(...),
 ) -> AIFormImportResponse:
     content = await file.read()
-    file_content = content.decode("utf-8")
-    return import_ai_form(file_content, file.filename)
+    try:
+        file_content = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        return AIFormImportResponse(
+            import_id="decode-error",
+            parse_status="PARSE_ERROR",
+            parse_error_code="INVALID_JSON",
+            parse_error_detail=f"Uploaded file must be valid UTF-8 text: {exc}",
+            parse_errors=["Uploaded file must be valid UTF-8 text."],
+            accepted_formats=[
+                ".md with fenced ```json block",
+                ".markdown with fenced ```json block",
+                ".json raw object",
+                ".JSON raw object",
+                ".txt raw JSON text",
+            ],
+            detected_extension=(file.filename or "").rsplit(".", 1)[-1] if file.filename and "." in file.filename else "",
+            detected_content_type=file.content_type,
+            provenance=["product_knowledge_import_api:v1"],
+        )
+    return import_ai_form(file_content, file.filename or "uploaded-form.txt", file.content_type)
