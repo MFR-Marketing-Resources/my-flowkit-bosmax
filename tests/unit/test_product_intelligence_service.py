@@ -1,7 +1,9 @@
 import pytest
 
 from agent.services.product_intelligence_service import (
+    _resolve_sales_metrics,
     get_product_intelligence_backfill_preview,
+    inject_product_intelligence_fields,
     resolve_product_intelligence_profile,
 )
 
@@ -339,3 +341,204 @@ async def test_backfill_preview_returns_distribution_counts_and_does_not_write_d
     assert result["group_distribution"]["LAUNDRY_CARE"] == 1
     assert result["group_distribution"]["FASHION_AND_APPAREL"] == 1
     assert result["write_back_status"] == "READ_ONLY_NO_DB_WRITES"
+
+
+def test_latest_import_batch_metrics_are_preferred_over_legacy(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_intelligence_service._latest_sales_metrics_index",
+        lambda: {
+            "source": "LATEST_FASTMOSS_IMPORT_BATCH",
+            "batch_id": "batch-latest",
+            "records": [],
+            "by_name": {
+                "atlas product": [
+                    {
+                        "file_type_id": "PRODUCT_SEARCH_SALES_RANK",
+                        "names": ["Atlas Product"],
+                        "shop_names": ["Atlas Shop"],
+                        "metric_values": [
+                            {
+                                "metric_name": "product_sold_count",
+                                "source_column": "Total Units Sold",
+                                "metric_scope": "PRODUCT",
+                                "truth_status": "VERIFIED_PRODUCT_LEVEL",
+                                "warning": None,
+                                "value": 88,
+                            }
+                        ],
+                    }
+                ]
+            },
+            "by_source_url": {},
+            "by_tiktok_url": {},
+        },
+    )
+    monkeypatch.setattr(
+        "agent.services.product_intelligence_service._sales_metrics_index",
+        lambda: {
+            "source": "LEGACY_COMBINED_WORKBOOK",
+            "batch_id": None,
+            "records": [],
+            "by_name": {
+                "atlas product": [
+                    {
+                        "sheet": "Product Sales Rank",
+                        "file_type_id": "Product Sales Rank",
+                        "names": ["Atlas Product"],
+                        "shop_names": ["Atlas Shop"],
+                        "metric_values": [
+                            {
+                                "metric_name": "product_sold_count",
+                                "source_column": "Total Units Sold",
+                                "metric_scope": "PRODUCT",
+                                "truth_status": "VERIFIED_PRODUCT_LEVEL",
+                                "warning": None,
+                                "value": 12,
+                            }
+                        ],
+                    }
+                ]
+            },
+            "by_source_url": {},
+            "by_tiktok_url": {},
+        },
+    )
+
+    metrics, _ = _resolve_sales_metrics(_product())
+
+    assert metrics.sales_metrics_source == "LATEST_FASTMOSS_IMPORT_BATCH"
+    assert metrics.sales_metrics_batch_id == "batch-latest"
+    assert metrics.product_sold_count == 88
+    assert metrics.sold_count == 88
+    assert metrics.sold_count_truth_status == "VERIFIED_PRODUCT_LEVEL"
+
+
+def test_legacy_combined_workbook_fallback_still_works_when_latest_missing(monkeypatch):
+    monkeypatch.setattr("agent.services.product_intelligence_service._latest_sales_metrics_index", lambda: None)
+    monkeypatch.setattr(
+        "agent.services.product_intelligence_service._sales_metrics_index",
+        lambda: {
+            "source": "LEGACY_COMBINED_WORKBOOK",
+            "batch_id": None,
+            "records": [],
+            "by_name": {
+                "atlas product": [
+                    {
+                        "sheet": "Most Promoted Products",
+                        "file_type_id": "Most Promoted Products",
+                        "names": ["Atlas Product"],
+                        "shop_names": ["Atlas Shop"],
+                        "metric_values": [
+                            {
+                                "metric_name": "shop_total_sold_count",
+                                "source_column": "Shop Units Sold",
+                                "metric_scope": "SHOP",
+                                "truth_status": "SHOP_LEVEL_AGGREGATE",
+                                "warning": "SHOP_LEVEL_METRIC_NOT_PRODUCT_SALES",
+                                "value": 74561117,
+                            }
+                        ],
+                    }
+                ]
+            },
+            "by_source_url": {},
+            "by_tiktok_url": {},
+        },
+    )
+
+    metrics, _ = _resolve_sales_metrics(_product())
+
+    assert metrics.sales_metrics_source == "LEGACY_COMBINED_WORKBOOK"
+    assert metrics.product_sold_count is None
+    assert metrics.sold_count is None
+    assert metrics.shop_total_sold_count == 74561117
+    assert metrics.sold_count_metric_scope == "SHOP"
+    assert metrics.sold_count_truth_status == "SHOP_LEVEL_AGGREGATE"
+    assert "SHOP_LEVEL_METRIC_NOT_PRODUCT_SALES" in metrics.sales_metric_warnings
+
+
+def test_unknown_sales_metric_does_not_become_product_sold_count(monkeypatch):
+    monkeypatch.setattr("agent.services.product_intelligence_service._latest_sales_metrics_index", lambda: None)
+    monkeypatch.setattr(
+        "agent.services.product_intelligence_service._sales_metrics_index",
+        lambda: {
+            "source": "LEGACY_COMBINED_WORKBOOK",
+            "batch_id": None,
+            "records": [],
+            "by_name": {
+                "atlas product": [
+                    {
+                        "sheet": "Product Search Data",
+                        "file_type_id": "Product Search Data",
+                        "names": ["Atlas Product"],
+                        "shop_names": ["Atlas Shop"],
+                        "metric_values": [
+                            {
+                                "metric_name": "total_sales_volume",
+                                "source_column": "Total Sales Volume",
+                                "metric_scope": "UNKNOWN",
+                                "truth_status": "NOT_VERIFIED",
+                                "warning": "SALES_METRIC_SCOPE_NOT_VERIFIED",
+                                "value": 1200,
+                            }
+                        ],
+                    }
+                ]
+            },
+            "by_source_url": {},
+            "by_tiktok_url": {},
+        },
+    )
+
+    metrics, _ = _resolve_sales_metrics(_product())
+
+    assert metrics.product_sold_count is None
+    assert metrics.sold_count is None
+    assert metrics.shop_total_sold_count is None
+    assert metrics.sold_count_metric_scope == "UNKNOWN"
+    assert metrics.sold_count_truth_status == "NOT_VERIFIED"
+    assert "SALES_METRIC_SCOPE_NOT_VERIFIED" in metrics.sales_metric_warnings
+
+
+def test_inject_product_intelligence_fields_exposes_sales_metric_truth_fields(monkeypatch):
+    monkeypatch.setattr("agent.services.product_intelligence_service._latest_sales_metrics_index", lambda: None)
+    monkeypatch.setattr(
+        "agent.services.product_intelligence_service._sales_metrics_index",
+        lambda: {
+            "source": "LEGACY_COMBINED_WORKBOOK",
+            "batch_id": None,
+            "records": [],
+            "by_name": {
+                "atlas product": [
+                    {
+                        "sheet": "Most Promoted Products",
+                        "file_type_id": "Most Promoted Products",
+                        "names": ["Atlas Product"],
+                        "shop_names": ["Atlas Shop"],
+                        "metric_values": [
+                            {
+                                "metric_name": "shop_total_sold_count",
+                                "source_column": "Shop Units Sold",
+                                "metric_scope": "SHOP",
+                                "truth_status": "SHOP_LEVEL_AGGREGATE",
+                                "warning": "SHOP_LEVEL_METRIC_NOT_PRODUCT_SALES",
+                                "value": 74561117,
+                            }
+                        ],
+                    }
+                ]
+            },
+            "by_source_url": {},
+            "by_tiktok_url": {},
+        },
+    )
+
+    profile = resolve_product_intelligence_profile(_product())
+    enriched = inject_product_intelligence_fields(_product(), profile)
+
+    assert enriched["sales_metrics_source"] == "LEGACY_COMBINED_WORKBOOK"
+    assert enriched["sold_count"] is None
+    assert enriched["product_sold_count"] is None
+    assert enriched["shop_total_sold_count"] == 74561117
+    assert enriched["sold_count_metric_scope"] == "SHOP"
+    assert enriched["sold_count_truth_status"] == "SHOP_LEVEL_AGGREGATE"

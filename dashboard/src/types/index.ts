@@ -281,8 +281,19 @@ export interface Product {
 	claim_tokens?: string[];
 	copy_formula?: string | null;
 	sold_count?: number | null;
+	product_sold_count?: number | null;
+	shop_total_sold_count?: number | null;
 	shop_count?: number | null;
 	shop_names?: string[];
+	sold_count_metric_scope?: "PRODUCT" | "SHOP" | "UNKNOWN" | null;
+	sold_count_truth_status?: "VERIFIED_PRODUCT_LEVEL" | "SHOP_LEVEL_AGGREGATE" | "NOT_VERIFIED" | null;
+	sales_metric_warnings?: string[];
+	sales_metric_provenance?: string[];
+	sales_metrics_source?: "LATEST_FASTMOSS_IMPORT_BATCH" | "LEGACY_COMBINED_WORKBOOK" | "NOT_FOUND" | null;
+	sales_metrics_batch_id?: string | null;
+	matched_file_type?: string | null;
+	matched_by?: string | null;
+	raw_metric_column?: string | null;
 	image_analysis_status?: string | null;
 	intelligence_confidence?: "HIGH" | "MEDIUM" | "LOW" | null;
 	intelligence_status?: string | null;
@@ -292,9 +303,20 @@ export interface Product {
 	taxonomy_conflict_reason?: string | null;
 	sales_metrics?: {
 		sold_count: number | null;
+		product_sold_count?: number | null;
+		shop_total_sold_count?: number | null;
 		shop_count: number | null;
 		shop_names: string[];
 		source_status: string;
+		sold_count_metric_scope?: "PRODUCT" | "SHOP" | "UNKNOWN";
+		sold_count_truth_status?: "VERIFIED_PRODUCT_LEVEL" | "SHOP_LEVEL_AGGREGATE" | "NOT_VERIFIED";
+		sales_metric_warnings?: string[];
+		sales_metric_provenance?: string[];
+		sales_metrics_source?: "LATEST_FASTMOSS_IMPORT_BATCH" | "LEGACY_COMBINED_WORKBOOK" | "NOT_FOUND";
+		sales_metrics_batch_id?: string | null;
+		matched_file_type?: string | null;
+		matched_by?: string | null;
+		raw_metric_column?: string | null;
 	};
 	image_analysis?: {
 		status: string;

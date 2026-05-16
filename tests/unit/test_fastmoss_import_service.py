@@ -117,7 +117,7 @@ def test_classify_sales_metric_column_separates_product_shop_and_unknown():
     assert shop_metric.warning == "SHOP_LEVEL_METRIC_NOT_PRODUCT_SALES"
 
     assert unknown_metric is not None
-    assert unknown_metric.metric_scope == "PRODUCT"
+    assert unknown_metric.metric_scope == "UNKNOWN"
     assert unknown_metric.truth_status == "NOT_VERIFIED"
 
 

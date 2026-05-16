@@ -5,6 +5,7 @@ import io
 import json
 import re
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -199,15 +200,11 @@ def classify_sales_metric_column(file_type_id: str, column_name: str) -> FastMos
         warning = None
     elif normalized in {"orders", "order_count"}:
         metric_name = "order_count"
-        metric_scope = "PRODUCT" if file_type_id in {
-            "SALES_RANK",
-            "MOST_PROMOTED_PRODUCTS_RANK",
-            "EXPORT_AD_LIST",
-        } else "UNKNOWN"
+        metric_scope = "UNKNOWN"
         truth_status = "NOT_VERIFIED"
     elif "total_sales_volume" in normalized or "sales_volume" in normalized:
         metric_name = "total_sales_volume"
-        metric_scope = "SHOP" if file_type_id in {"SHOP_LIST", "EXPORT_ADVERTISER_LIST"} else "PRODUCT"
+        metric_scope = "SHOP" if file_type_id in {"SHOP_LIST", "EXPORT_ADVERTISER_LIST"} else "UNKNOWN"
         truth_status = "SHOP_LEVEL_AGGREGATE" if metric_scope == "SHOP" else "NOT_VERIFIED"
         warning = "SHOP_LEVEL_METRIC_NOT_PRODUCT_SALES" if metric_scope == "SHOP" else "SALES_METRIC_SCOPE_NOT_VERIFIED"
     else:
@@ -502,3 +499,225 @@ def get_latest_fastmoss_import_batch() -> dict[str, Any]:
     if not report_path.exists():
         raise HTTPException(status_code=404, detail="Latest FastMoss import report is missing")
     return _read_json(report_path)
+
+
+FASTMOSS_REFERENCE_COLUMN_HINTS: dict[str, dict[str, list[str]]] = {
+    "EXPORT_AD_LIST": {
+        "name_columns": ["Product Name", "Description"],
+        "shop_columns": ["Shop Name", "Handle"],
+        "source_url_columns": ["FastMoss Product Detail", "Homepage", "Video Url"],
+        "tiktok_url_columns": ["TikTok Product Detail"],
+    },
+    "EXPORT_ADVERTISER_LIST": {
+        "name_columns": ["Name"],
+        "shop_columns": ["Shop Name", "Name"],
+        "source_url_columns": [],
+        "tiktok_url_columns": [],
+    },
+    "SHOP_LIST": {
+        "name_columns": [],
+        "shop_columns": ["Shop Name", "Company Name"],
+        "source_url_columns": ["FastMoss Shop Detail", "FastMoss Shop Detail Page Link"],
+        "tiktok_url_columns": [],
+    },
+    "SALES_RANK": {
+        "name_columns": ["Product Name"],
+        "shop_columns": ["Shop Name", "Company Name"],
+        "source_url_columns": ["FastMoss Product Detail", "FastMoss Shop Detail", "FastMoss Shop Detail Page Link"],
+        "tiktok_url_columns": ["TikTok Product Detail"],
+    },
+    "NEW_PRODUCTS_RANKING": {
+        "name_columns": ["Product Name"],
+        "shop_columns": ["Shop"],
+        "source_url_columns": ["FastMoss Product Detail", "FastMoss Product Detail Page Link"],
+        "tiktok_url_columns": ["TikTok Product Detail"],
+    },
+    "PRODUCT_SEARCH_DATA": {
+        "name_columns": ["Product Name"],
+        "shop_columns": ["Store Name"],
+        "source_url_columns": ["FastMoss", "FastMoss Product Detail", "FastMoss Shop"],
+        "tiktok_url_columns": ["TikTok", "TikTok Product Detail"],
+    },
+    "PRODUCT_SEARCH_SALES_RANK": {
+        "name_columns": ["Product Name"],
+        "shop_columns": ["Shop Name", "Shop"],
+        "source_url_columns": ["FastMoss Product Detail", "FastMoss Shop Detail"],
+        "tiktok_url_columns": ["TikTok Product Detail"],
+    },
+    "MOST_PROMOTED_PRODUCTS_RANK": {
+        "name_columns": ["Product Name"],
+        "shop_columns": ["Shop Name"],
+        "source_url_columns": ["FastMoss Product Detail", "FastMoss Shop Detail"],
+        "tiktok_url_columns": ["TikTok Product Detail"],
+    },
+    "VIDEO_PRODUCT_LIST": {
+        "name_columns": ["Product Title"],
+        "shop_columns": [],
+        "source_url_columns": ["FastMoss Product Detail Page Link", "Video Link"],
+        "tiktok_url_columns": ["TikTok Product Link"],
+    },
+}
+
+
+def _to_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    text = _normalize_header(value).replace(",", "")
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
+
+
+def _iter_saved_report_rows(*, storage_path: Path, extension: str, selected_sheet: str, headers: list[str]) -> list[dict[str, Any]]:
+    normalized_headers = [_normalize_header(header) for header in headers if _normalize_header(header)]
+    if not normalized_headers:
+        return []
+
+    def _map_rows(rows: list[list[Any]]) -> list[dict[str, Any]]:
+        header_index = -1
+        expected = [_normalize_key(header) for header in normalized_headers]
+        for index, row in enumerate(rows[:20]):
+            candidate = [_normalize_key(value) for value in row[: len(normalized_headers)]]
+            if candidate == expected:
+                header_index = index
+                break
+        if header_index < 0:
+            return []
+        mapped: list[dict[str, Any]] = []
+        for row in rows[header_index + 1 :]:
+            if not any(_normalize_header(cell) for cell in row):
+                continue
+            mapped.append(
+                {
+                    normalized_headers[idx]: row[idx]
+                    for idx in range(min(len(normalized_headers), len(row)))
+                    if normalized_headers[idx]
+                }
+            )
+        return mapped
+
+    if extension in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        workbook = load_workbook(filename=storage_path, read_only=True, data_only=True)
+        if selected_sheet not in workbook.sheetnames:
+            return []
+        rows = [list(row) for row in workbook[selected_sheet].iter_rows(values_only=True)]
+        return _map_rows(rows)
+
+    if extension == ".csv":
+        text = storage_path.read_text(encoding="utf-8-sig")
+        rows = list(csv.reader(io.StringIO(text)))
+        return _map_rows(rows)
+
+    return []
+
+
+def _non_empty_values(row: dict[str, Any], columns: list[str]) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    normalized_row = {_normalize_key(key): value for key, value in row.items()}
+    for column in columns:
+        value = normalized_row.get(_normalize_key(column))
+        text = _normalize_header(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        values.append(text)
+    return values
+
+
+@lru_cache(maxsize=4)
+def _latest_reference_index(batch_id: str, report_mtime: float) -> dict[str, Any]:
+    report_path = FASTMOSS_IMPORTS_DIR / batch_id / "report.json"
+    report = _read_json(report_path)
+    records: list[dict[str, Any]] = []
+
+    for file_report in report.get("files", []):
+        file_type_id = str(file_report.get("file_type_id") or "").strip()
+        storage_path = Path(str(file_report.get("storage_path") or ""))
+        if not file_type_id or not storage_path.exists():
+            continue
+        if file_report.get("parse_errors"):
+            continue
+        column_hints = FASTMOSS_REFERENCE_COLUMN_HINTS.get(file_type_id, {})
+        metric_columns = file_report.get("sales_metric_scope_report") or []
+        if not metric_columns:
+            continue
+
+        rows = _iter_saved_report_rows(
+            storage_path=storage_path,
+            extension=str(file_report.get("extension") or "").lower(),
+            selected_sheet=str(file_report.get("selected_sheet") or ""),
+            headers=list(file_report.get("headers") or []),
+        )
+        for row in rows:
+            metric_values = []
+            for metric in metric_columns:
+                source_column = str(metric.get("source_column") or "")
+                value = _to_int(row.get(source_column))
+                if value is None:
+                    continue
+                metric_values.append(
+                    {
+                        "metric_name": metric.get("metric_name"),
+                        "source_column": source_column,
+                        "metric_scope": metric.get("metric_scope"),
+                        "truth_status": metric.get("truth_status"),
+                        "warning": metric.get("warning"),
+                        "value": value,
+                    }
+                )
+            if not metric_values:
+                continue
+
+            names = _non_empty_values(row, column_hints.get("name_columns", []))
+            source_urls = _non_empty_values(row, column_hints.get("source_url_columns", []))
+            tiktok_urls = _non_empty_values(row, column_hints.get("tiktok_url_columns", []))
+            shop_names = _non_empty_values(row, column_hints.get("shop_columns", []))
+            if not names and not source_urls and not tiktok_urls:
+                continue
+
+            records.append(
+                {
+                    "batch_id": batch_id,
+                    "file_type_id": file_type_id,
+                    "detected_by": file_report.get("detected_by") or "field_key",
+                    "names": names,
+                    "shop_names": shop_names,
+                    "source_urls": source_urls,
+                    "tiktok_urls": tiktok_urls,
+                    "metric_values": metric_values,
+                }
+            )
+
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    by_source_url: dict[str, list[dict[str, Any]]] = {}
+    by_tiktok_url: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        for name in record["names"]:
+            by_name.setdefault(_normalize_key(name), []).append(record)
+        for url in record["source_urls"]:
+            by_source_url.setdefault(_normalize_header(url), []).append(record)
+        for url in record["tiktok_urls"]:
+            by_tiktok_url.setdefault(_normalize_header(url), []).append(record)
+    return {
+        "batch_id": batch_id,
+        "report": report,
+        "records": records,
+        "by_name": by_name,
+        "by_source_url": by_source_url,
+        "by_tiktok_url": by_tiktok_url,
+    }
+
+
+def get_latest_fastmoss_reference_index() -> dict[str, Any] | None:
+    if not LATEST_BATCH_POINTER.exists():
+        return None
+    pointer = _read_json(LATEST_BATCH_POINTER)
+    batch_id = str(pointer.get("batch_id") or "").strip()
+    report_path = FASTMOSS_IMPORTS_DIR / batch_id / "report.json"
+    if not batch_id or not report_path.exists():
+        return None
+    return _latest_reference_index(batch_id, report_path.stat().st_mtime)

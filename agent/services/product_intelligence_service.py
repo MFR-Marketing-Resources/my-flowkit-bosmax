@@ -17,6 +17,7 @@ from agent.models.product_intelligence import (
     ProductIntelligenceSummaryResponse,
 )
 from agent.services.bosmax_product_family import derive_bosmax_product_family
+from agent.services.fastmoss_import_service import get_latest_fastmoss_reference_index
 from agent.services.product_image_analysis_service import analyze_product_image_payload
 from agent.services.product_mapping import normalize_mapping_text
 
@@ -510,7 +511,29 @@ def _iter_sales_workbook_records() -> list[dict[str, Any]]:
             "shop_fields": ["Shop Name"],
             "source_fields": ["FastMoss Product Detail", "FastMoss Shop Detail"],
             "tiktok_fields": ["TikTok Product Detail"],
-            "sold_fields": ["Total Units Sold", "Orders", "Shop Total Units Sold"],
+            "metric_fields": [
+                {
+                    "source_column": "Total Units Sold",
+                    "metric_name": "product_sold_count",
+                    "metric_scope": "PRODUCT",
+                    "truth_status": "VERIFIED_PRODUCT_LEVEL",
+                    "warning": None,
+                },
+                {
+                    "source_column": "Shop Total Units Sold",
+                    "metric_name": "shop_total_sold_count",
+                    "metric_scope": "SHOP",
+                    "truth_status": "SHOP_LEVEL_AGGREGATE",
+                    "warning": "SHOP_LEVEL_METRIC_NOT_PRODUCT_SALES",
+                },
+                {
+                    "source_column": "Orders",
+                    "metric_name": "order_count",
+                    "metric_scope": "UNKNOWN",
+                    "truth_status": "NOT_VERIFIED",
+                    "warning": "SALES_METRIC_SCOPE_NOT_VERIFIED",
+                },
+            ],
         },
         {
             "sheet": "Most Promoted Products",
@@ -518,7 +541,22 @@ def _iter_sales_workbook_records() -> list[dict[str, Any]]:
             "shop_fields": ["Shop Name"],
             "source_fields": ["FastMoss Product Detail", "FastMoss Shop Detail"],
             "tiktok_fields": ["TikTok Product Detail"],
-            "sold_fields": ["Total Units Sold", "Shop Units Sold"],
+            "metric_fields": [
+                {
+                    "source_column": "Total Units Sold",
+                    "metric_name": "product_sold_count",
+                    "metric_scope": "PRODUCT",
+                    "truth_status": "VERIFIED_PRODUCT_LEVEL",
+                    "warning": None,
+                },
+                {
+                    "source_column": "Shop Units Sold",
+                    "metric_name": "shop_total_sold_count",
+                    "metric_scope": "SHOP",
+                    "truth_status": "SHOP_LEVEL_AGGREGATE",
+                    "warning": "SHOP_LEVEL_METRIC_NOT_PRODUCT_SALES",
+                },
+            ],
         },
         {
             "sheet": "Video Product List",
@@ -526,7 +564,22 @@ def _iter_sales_workbook_records() -> list[dict[str, Any]]:
             "shop_fields": [],
             "source_fields": ["FastMoss Product Detail Page Link"],
             "tiktok_fields": ["TikTok Product Link"],
-            "sold_fields": ["Video Total Units Sold", "Video Units Sold"],
+            "metric_fields": [
+                {
+                    "source_column": "Video Total Units Sold",
+                    "metric_name": "product_sold_count",
+                    "metric_scope": "PRODUCT",
+                    "truth_status": "VERIFIED_PRODUCT_LEVEL",
+                    "warning": None,
+                },
+                {
+                    "source_column": "Video Units Sold",
+                    "metric_name": "product_sold_count",
+                    "metric_scope": "PRODUCT",
+                    "truth_status": "VERIFIED_PRODUCT_LEVEL",
+                    "warning": None,
+                },
+            ],
         },
         {
             "sheet": "Product Search Data",
@@ -534,7 +587,22 @@ def _iter_sales_workbook_records() -> list[dict[str, Any]]:
             "shop_fields": ["Store Name"],
             "source_fields": ["FastMoss", "FastMoss Shop"],
             "tiktok_fields": ["TikTok"],
-            "sold_fields": ["Total Sales Volume", "7-Day Sales Volume"],
+            "metric_fields": [
+                {
+                    "source_column": "Total Sales Volume",
+                    "metric_name": "total_sales_volume",
+                    "metric_scope": "UNKNOWN",
+                    "truth_status": "NOT_VERIFIED",
+                    "warning": "SALES_METRIC_SCOPE_NOT_VERIFIED",
+                },
+                {
+                    "source_column": "7-Day Sales Volume",
+                    "metric_name": "total_sales_volume",
+                    "metric_scope": "UNKNOWN",
+                    "truth_status": "NOT_VERIFIED",
+                    "warning": "SALES_METRIC_SCOPE_NOT_VERIFIED",
+                },
+            ],
         },
         {
             "sheet": "New Products Ranking",
@@ -542,7 +610,22 @@ def _iter_sales_workbook_records() -> list[dict[str, Any]]:
             "shop_fields": ["Shop"],
             "source_fields": [],
             "tiktok_fields": [],
-            "sold_fields": ["Units Sold", "Shop Units Sold"],
+            "metric_fields": [
+                {
+                    "source_column": "Units Sold",
+                    "metric_name": "product_sold_count",
+                    "metric_scope": "PRODUCT",
+                    "truth_status": "VERIFIED_PRODUCT_LEVEL",
+                    "warning": None,
+                },
+                {
+                    "source_column": "Shop Units Sold",
+                    "metric_name": "shop_total_sold_count",
+                    "metric_scope": "SHOP",
+                    "truth_status": "SHOP_LEVEL_AGGREGATE",
+                    "warning": "SHOP_LEVEL_METRIC_NOT_PRODUCT_SALES",
+                },
+            ],
         },
         {
             "sheet": "Copywriting_Product_Map",
@@ -550,7 +633,22 @@ def _iter_sales_workbook_records() -> list[dict[str, Any]]:
             "shop_fields": ["Shop Name"],
             "source_fields": [],
             "tiktok_fields": [],
-            "sold_fields": ["Total Units Sold", "Orders"],
+            "metric_fields": [
+                {
+                    "source_column": "Total Units Sold",
+                    "metric_name": "product_sold_count",
+                    "metric_scope": "PRODUCT",
+                    "truth_status": "VERIFIED_PRODUCT_LEVEL",
+                    "warning": None,
+                },
+                {
+                    "source_column": "Orders",
+                    "metric_name": "order_count",
+                    "metric_scope": "UNKNOWN",
+                    "truth_status": "NOT_VERIFIED",
+                    "warning": "SALES_METRIC_SCOPE_NOT_VERIFIED",
+                },
+            ],
         },
     ]
 
@@ -574,19 +672,23 @@ def _iter_sales_workbook_records() -> list[dict[str, Any]]:
             if not names:
                 continue
             shop_names = _unique([data.get(field) for field in config["shop_fields"]])
-            sold_values = [
-                value
-                for field in config["sold_fields"]
-                if (value := _to_int(data.get(field))) is not None
+            metric_values = [
+                {**metric, "value": value}
+                for metric in config["metric_fields"]
+                if (value := _to_int(data.get(metric["source_column"]))) is not None
             ]
             source_urls = _unique([data.get(field) for field in config["source_fields"]])
             tiktok_urls = _unique([data.get(field) for field in config["tiktok_fields"]])
             rows.append(
                 {
+                    "source": "LEGACY_COMBINED_WORKBOOK",
                     "sheet": config["sheet"],
+                    "file_type_id": config["sheet"],
+                    "matched_by": "legacy_combined_workbook",
+                    "batch_id": None,
                     "names": names,
                     "shop_names": shop_names,
-                    "sold_values": sold_values,
+                    "metric_values": metric_values,
                     "source_urls": source_urls,
                     "tiktok_urls": tiktok_urls,
                 }
@@ -608,6 +710,8 @@ def _sales_metrics_index() -> dict[str, Any]:
         for url in record["tiktok_urls"]:
             by_tiktok_url[_normalize_text(url)].append(record)
     return {
+        "source": "LEGACY_COMBINED_WORKBOOK",
+        "batch_id": None,
         "records": records,
         "by_name": by_name,
         "by_source_url": by_source_url,
@@ -615,19 +719,35 @@ def _sales_metrics_index() -> dict[str, Any]:
     }
 
 
-def _resolve_sales_metrics(product: dict[str, Any]) -> tuple[ProductIntelligenceSalesMetrics, list[str]]:
-    index = _sales_metrics_index()
+def _latest_sales_metrics_index() -> dict[str, Any] | None:
+    latest = get_latest_fastmoss_reference_index()
+    if not latest or not latest.get("records"):
+        return None
+    return {
+        "source": "LATEST_FASTMOSS_IMPORT_BATCH",
+        "batch_id": latest.get("batch_id"),
+        "records": latest["records"],
+        "by_name": latest["by_name"],
+        "by_source_url": latest["by_source_url"],
+        "by_tiktok_url": latest["by_tiktok_url"],
+    }
+
+
+def _match_sales_records(index: dict[str, Any], product: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str], str | None]:
     matched: list[dict[str, Any]] = []
     provenance: list[str] = []
+    matched_by: str | None = None
 
     source_url = _normalize_text(product.get("source_url"))
     tiktok_url = _normalize_text(product.get("tiktok_product_url"))
     if source_url and source_url in index["by_source_url"]:
         matched.extend(index["by_source_url"][source_url])
         provenance.append("sales_metrics:matched_source_url")
+        matched_by = matched_by or "SOURCE_URL"
     if tiktok_url and tiktok_url in index["by_tiktok_url"]:
         matched.extend(index["by_tiktok_url"][tiktok_url])
         provenance.append("sales_metrics:matched_tiktok_product_url")
+        matched_by = matched_by or "TIKTOK_PRODUCT_URL"
 
     if not matched:
         for name in _product_names(product):
@@ -635,6 +755,7 @@ def _resolve_sales_metrics(product: dict[str, Any]) -> tuple[ProductIntelligence
             if normalized in index["by_name"]:
                 matched.extend(index["by_name"][normalized])
                 provenance.append("sales_metrics:matched_exact_name")
+                matched_by = "EXACT_NAME"
                 break
 
     if not matched:
@@ -653,54 +774,169 @@ def _resolve_sales_metrics(product: dict[str, Any]) -> tuple[ProductIntelligence
             if len(fuzzy) == 1:
                 matched.extend(fuzzy)
                 provenance.append("sales_metrics:matched_unique_fuzzy_name")
+                matched_by = "UNIQUE_FUZZY_NAME"
                 break
-
-    if not matched:
-        return (
-            ProductIntelligenceSalesMetrics(
-                sold_count=None,
-                shop_count=None,
-                shop_names=[],
-                source_status="NOT_FOUND",
-            ),
-            provenance,
-        )
 
     unique_records: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, tuple[str, ...]]] = set()
     for record in matched:
         record_key = (
-            record["sheet"],
+            str(record.get("file_type_id") or record.get("sheet") or "UNKNOWN"),
             tuple(sorted(_normalize_key(name) for name in record["names"])),
         )
         if record_key in seen_keys:
             continue
         seen_keys.add(record_key)
         unique_records.append(record)
+    return unique_records, provenance, matched_by
 
-    sold_candidates = [
-        value
-        for record in unique_records
-        for value in record["sold_values"]
-        if value is not None
-    ]
-    shop_names = _unique(
-        shop_name
-        for record in unique_records
-        for shop_name in record["shop_names"]
-    )
-    sheets = sorted({record["sheet"] for record in unique_records})
-    if sheets:
-        provenance.append("sales_metrics:sheets=" + ",".join(sheets))
-    return (
-        ProductIntelligenceSalesMetrics(
-            sold_count=max(sold_candidates) if sold_candidates else None,
-            shop_count=len(shop_names) if shop_names else None,
-            shop_names=shop_names,
-            source_status="FOUND",
-        ),
-        provenance,
-    )
+
+def _resolve_sales_metrics(product: dict[str, Any]) -> tuple[ProductIntelligenceSalesMetrics, list[str]]:
+    def _resolved_from_index(index: dict[str, Any]) -> tuple[ProductIntelligenceSalesMetrics, list[str]]:
+        unique_records, provenance, matched_by = _match_sales_records(index, product)
+        if not unique_records:
+            return (
+                ProductIntelligenceSalesMetrics(
+                    sold_count=None,
+                    product_sold_count=None,
+                    shop_total_sold_count=None,
+                    shop_count=None,
+                    shop_names=[],
+                    source_status="NOT_FOUND",
+                    sold_count_metric_scope="UNKNOWN",
+                    sold_count_truth_status="NOT_VERIFIED",
+                    sales_metric_warnings=[],
+                    sales_metric_provenance=[f"sales_metrics:source={index['source']}"],
+                    sales_metrics_source=index["source"],
+                    sales_metrics_batch_id=index.get("batch_id"),
+                ),
+                provenance,
+            )
+
+        metric_candidates = [
+            {
+                **metric,
+                "file_type_id": record.get("file_type_id") or record.get("sheet"),
+                "matched_by": matched_by,
+            }
+            for record in unique_records
+            for metric in record.get("metric_values", [])
+            if metric.get("value") is not None
+        ]
+        product_candidates = [
+            candidate
+            for candidate in metric_candidates
+            if candidate.get("metric_scope") == "PRODUCT"
+            and candidate.get("truth_status") == "VERIFIED_PRODUCT_LEVEL"
+        ]
+        shop_candidates = [
+            candidate
+            for candidate in metric_candidates
+            if candidate.get("metric_scope") == "SHOP"
+            and candidate.get("truth_status") == "SHOP_LEVEL_AGGREGATE"
+        ]
+        unknown_candidates = [
+            candidate
+            for candidate in metric_candidates
+            if candidate.get("truth_status") == "NOT_VERIFIED"
+            or candidate.get("metric_scope") == "UNKNOWN"
+        ]
+
+        product_metric = max(product_candidates, key=lambda item: int(item["value"])) if product_candidates else None
+        shop_metric = max(shop_candidates, key=lambda item: int(item["value"])) if shop_candidates else None
+        unknown_metric = max(unknown_candidates, key=lambda item: int(item["value"])) if unknown_candidates else None
+        selected_metric = product_metric or shop_metric or unknown_metric
+        shop_names = _unique(
+            shop_name
+            for record in unique_records
+            for shop_name in record["shop_names"]
+        )
+        sheets = sorted(
+            {
+                str(record.get("file_type_id") or record.get("sheet") or "UNKNOWN")
+                for record in unique_records
+            }
+        )
+        if sheets:
+            provenance.append("sales_metrics:sources=" + ",".join(sheets))
+
+        warnings: list[str] = []
+        scope = "UNKNOWN"
+        truth_status = "NOT_VERIFIED"
+        product_sold_count = None
+        shop_total_sold_count = None
+        if product_metric:
+            product_sold_count = int(product_metric["value"])
+            scope = "PRODUCT"
+            truth_status = "VERIFIED_PRODUCT_LEVEL"
+        elif shop_metric:
+            shop_total_sold_count = int(shop_metric["value"])
+            scope = "SHOP"
+            truth_status = "SHOP_LEVEL_AGGREGATE"
+            warnings.append("SHOP_LEVEL_METRIC_NOT_PRODUCT_SALES")
+        elif unknown_metric:
+            scope = "UNKNOWN"
+            truth_status = "NOT_VERIFIED"
+            warnings.append("SALES_METRIC_SCOPE_NOT_VERIFIED")
+
+        metric_provenance = [
+            f"sales_metrics:source={index['source']}",
+            *([f"sales_metrics:batch_id={index['batch_id']}"] if index.get("batch_id") else []),
+            *([f"sales_metrics:matched_by={matched_by}"] if matched_by else []),
+            *([f"sales_metrics:file_type={selected_metric['file_type_id']}"] if selected_metric and selected_metric.get("file_type_id") else []),
+            *([f"sales_metrics:column={selected_metric['source_column']}"] if selected_metric and selected_metric.get("source_column") else []),
+        ]
+
+        return (
+            ProductIntelligenceSalesMetrics(
+                sold_count=product_sold_count,
+                product_sold_count=product_sold_count,
+                shop_total_sold_count=shop_total_sold_count,
+                shop_count=len(shop_names) if shop_names else None,
+                shop_names=shop_names,
+                source_status="FOUND",
+                sold_count_metric_scope=scope,
+                sold_count_truth_status=truth_status,
+                sales_metric_warnings=_unique(warnings),
+                sales_metric_provenance=_unique(metric_provenance),
+                sales_metrics_source=index["source"],
+                sales_metrics_batch_id=index.get("batch_id"),
+                matched_file_type=str(selected_metric.get("file_type_id")) if selected_metric else None,
+                matched_by=matched_by,
+                raw_metric_column=str(selected_metric.get("source_column")) if selected_metric else None,
+            ),
+            provenance,
+        )
+
+    latest_index = _latest_sales_metrics_index()
+    if latest_index:
+        latest_metrics, latest_provenance = _resolved_from_index(latest_index)
+        if latest_metrics.source_status == "FOUND":
+            return latest_metrics, latest_provenance
+
+    legacy_metrics, legacy_provenance = _resolved_from_index(_sales_metrics_index())
+    if latest_index and legacy_metrics.source_status == "NOT_FOUND":
+        return (
+            ProductIntelligenceSalesMetrics(
+                sold_count=None,
+                product_sold_count=None,
+                shop_total_sold_count=None,
+                shop_count=None,
+                shop_names=[],
+                source_status="NOT_FOUND",
+                sold_count_metric_scope="UNKNOWN",
+                sold_count_truth_status="NOT_VERIFIED",
+                sales_metric_warnings=[],
+                sales_metric_provenance=[
+                    "sales_metrics:source=NOT_FOUND",
+                    f"sales_metrics:latest_batch_id={latest_index.get('batch_id')}",
+                ],
+                sales_metrics_source="NOT_FOUND",
+                sales_metrics_batch_id=latest_index.get("batch_id"),
+            ),
+            legacy_provenance,
+        )
+    return legacy_metrics, legacy_provenance
 
 
 def _resolve_image_analysis(product: dict[str, Any]) -> dict[str, Any]:
@@ -1136,7 +1372,17 @@ def resolve_product_intelligence_profile(product: dict[str, Any]) -> dict[str, A
     if sales_metrics.source_status == "NOT_FOUND":
         warnings.append("SALES_METRICS_NOT_FOUND")
     else:
-        provenance.extend(sales_provenance)
+        warnings.extend(
+            warning
+            for warning in sales_metrics.sales_metric_warnings
+            if warning not in warnings
+        )
+    provenance.extend(sales_provenance)
+    provenance.extend(
+        note
+        for note in sales_metrics.sales_metric_provenance
+        if note not in provenance
+    )
     
     image_warnings = [str(warning) for warning in image_analysis.get("warnings", []) if str(warning).strip()]
     warnings.extend(image_warnings)
@@ -1241,6 +1487,17 @@ def inject_product_intelligence_fields(product: dict[str, Any], profile: dict[st
     payload["shop_count"] = profile["sales_metrics"]["shop_count"]
     payload["shop_names"] = profile["sales_metrics"]["shop_names"]
     payload["sold_count"] = profile["sales_metrics"]["sold_count"]
+    payload["product_sold_count"] = profile["sales_metrics"]["product_sold_count"]
+    payload["shop_total_sold_count"] = profile["sales_metrics"]["shop_total_sold_count"]
+    payload["sold_count_metric_scope"] = profile["sales_metrics"]["sold_count_metric_scope"]
+    payload["sold_count_truth_status"] = profile["sales_metrics"]["sold_count_truth_status"]
+    payload["sales_metric_warnings"] = profile["sales_metrics"]["sales_metric_warnings"]
+    payload["sales_metric_provenance"] = profile["sales_metrics"]["sales_metric_provenance"]
+    payload["sales_metrics_source"] = profile["sales_metrics"]["sales_metrics_source"]
+    payload["sales_metrics_batch_id"] = profile["sales_metrics"]["sales_metrics_batch_id"]
+    payload["matched_file_type"] = profile["sales_metrics"]["matched_file_type"]
+    payload["matched_by"] = profile["sales_metrics"]["matched_by"]
+    payload["raw_metric_column"] = profile["sales_metrics"]["raw_metric_column"]
     payload["image_analysis_status"] = profile["image_analysis"]["status"]
     return payload
 

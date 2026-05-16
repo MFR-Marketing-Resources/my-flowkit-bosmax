@@ -15,7 +15,7 @@ type TikTokFormState = {
   raw_product_title: string
 }
 
-type ProductSortMode = 'SOLD_DESC' | 'PRODUCT_NAME_ASC'
+type ProductSortMode = 'PRODUCT_SOLD_VERIFIED_DESC' | 'SHOP_TOTAL_SOLD_DESC' | 'PRODUCT_NAME_ASC'
 type FastMossImportFieldKey =
   | 'creator_search'
   | 'export_ad_list'
@@ -76,6 +76,26 @@ function emptyManualForm(): ManualFormState {
 function fieldValue(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === '') return 'NOT_AVAILABLE'
   return String(value)
+}
+
+function salesMetricScope(product: Product) {
+  return product.sold_count_metric_scope || product.sales_metrics?.sold_count_metric_scope || 'UNKNOWN'
+}
+
+function salesMetricTruthStatus(product: Product) {
+  return product.sold_count_truth_status || product.sales_metrics?.sold_count_truth_status || 'NOT_VERIFIED'
+}
+
+function productSoldCount(product: Product) {
+  return product.product_sold_count ?? product.sales_metrics?.product_sold_count ?? null
+}
+
+function shopTotalSoldCount(product: Product) {
+  return product.shop_total_sold_count ?? product.sales_metrics?.shop_total_sold_count ?? null
+}
+
+function salesMetricWarnings(product: Product) {
+  return product.sales_metric_warnings || product.sales_metrics?.sales_metric_warnings || []
 }
 
 function emptyFastMossImportState(): Record<FastMossImportFieldKey, File | null> {
@@ -172,7 +192,7 @@ export default function ProductsSalesAnalyzerPage() {
   const [copyRouteFilter, setCopyRouteFilter] = useState('ALL')
   const [claimGateFilter, setClaimGateFilter] = useState('ALL')
   const [confidenceFilter, setConfidenceFilter] = useState('ALL')
-  const [sortMode, setSortMode] = useState<ProductSortMode>('SOLD_DESC')
+  const [sortMode, setSortMode] = useState<ProductSortMode>('PRODUCT_NAME_ASC')
   const [readinessFilter] = useState('ALL')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -218,7 +238,24 @@ export default function ProductsSalesAnalyzerPage() {
         const rightName = (right.product_short_name || right.raw_product_title || '').toLowerCase()
         return leftName.localeCompare(rightName)
       }
-      return Number(right.sold_count || 0) - Number(left.sold_count || 0)
+      if (sortMode === 'PRODUCT_SOLD_VERIFIED_DESC') {
+        const leftSold = productSoldCount(left)
+        const rightSold = productSoldCount(right)
+        if (leftSold !== null && rightSold !== null) return rightSold - leftSold
+        if (leftSold !== null) return -1
+        if (rightSold !== null) return 1
+        const leftName = (left.product_short_name || left.raw_product_title || '').toLowerCase()
+        const rightName = (right.product_short_name || right.raw_product_title || '').toLowerCase()
+        return leftName.localeCompare(rightName)
+      }
+      const leftShopTotal = shopTotalSoldCount(left)
+      const rightShopTotal = shopTotalSoldCount(right)
+      if (leftShopTotal !== null && rightShopTotal !== null) return rightShopTotal - leftShopTotal
+      if (leftShopTotal !== null) return -1
+      if (rightShopTotal !== null) return 1
+      const leftName = (left.product_short_name || left.raw_product_title || '').toLowerCase()
+      const rightName = (right.product_short_name || right.raw_product_title || '').toLowerCase()
+      return leftName.localeCompare(rightName)
     })
   }, [products, groupFilter, familyFilter, copyRouteFilter, claimGateFilter, confidenceFilter, sortMode])
   const selectedProduct = useMemo(() => filteredProducts.find(product => product.id === selectedId) || null, [filteredProducts, selectedId])
@@ -608,8 +645,9 @@ export default function ProductsSalesAnalyzerPage() {
                 {filterOptions.confidences.map(value => <option key={value} value={value}>{value}</option>)}
               </select>
               <select value={sortMode} onChange={e => setSortMode(e.target.value as ProductSortMode)} aria-label="Sort products" className="col-span-2 bg-slate-900 border text-xs px-2 py-1.5 rounded" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
-                <option value="SOLD_DESC">Highest Sold</option>
                 <option value="PRODUCT_NAME_ASC">Product Name A-Z</option>
+                <option value="PRODUCT_SOLD_VERIFIED_DESC">Product Sold Verified</option>
+                <option value="SHOP_TOTAL_SOLD_DESC">Shop Total Sold</option>
               </select>
             </div>
           </div>
@@ -640,8 +678,20 @@ export default function ProductsSalesAnalyzerPage() {
                   <div className="bosmax-wrap-safe mt-0.5 text-[10px] text-slate-500">{imageStatusLabel(product)}</div>
                   <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[10px]">
                     <span className="bosmax-wrap-safe text-emerald-400">{formatCurrencyDisplay(product.price, product.currency)}</span>
-                    <span className="bosmax-wrap-safe text-orange-300">{formatCountDisplay(product.sold_count)} sold</span>
+                    {salesMetricTruthStatus(product) === 'VERIFIED_PRODUCT_LEVEL' ? (
+                      <span className="bosmax-wrap-safe text-orange-300">Product sold: {formatCountDisplay(productSoldCount(product))}</span>
+                    ) : salesMetricTruthStatus(product) === 'SHOP_LEVEL_AGGREGATE' ? (
+                      <span className="bosmax-wrap-safe text-orange-300">Shop total sold: {formatCountDisplay(shopTotalSoldCount(product))}</span>
+                    ) : (
+                      <span className="bosmax-wrap-safe text-slate-400">Product sold: NOT_VERIFIED</span>
+                    )}
                   </div>
+                  {salesMetricTruthStatus(product) === 'SHOP_LEVEL_AGGREGATE' ? (
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                      <span className="bosmax-wrap-safe text-slate-400">Product sold: NOT_VERIFIED</span>
+                      <StatBadge label="SHOP_LEVEL_METRIC_NOT_PRODUCT_SALES" tone="warn" />
+                    </div>
+                  ) : null}
                   <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[10px]">
                     <span className="bosmax-wrap-safe text-cyan-300">Comm: {formatCommissionRateDisplay(product.commission_rate)}</span>
                     <span className="bosmax-wrap-safe text-cyan-200">{formatCurrencyDisplay(product.commission_amount, product.currency)}</span>
@@ -728,9 +778,19 @@ export default function ProductsSalesAnalyzerPage() {
                     <KV label="Intelligence Status" value={selectedProduct.intelligence_status} />
                     <KV label="Taxonomy Conflict" value={selectedProduct.taxonomy_conflict ? 'YES' : 'NO'} />
                     <KV label="Taxonomy Conflict Reason" value={selectedProduct.taxonomy_conflict_reason} />
-                    <KV label="Sold Count" value={formatCountDisplay(selectedProduct.sold_count)} />
+                    <KV label="Sales Metrics Source" value={selectedProduct.sales_metrics_source || selectedProduct.sales_metrics?.sales_metrics_source || selectedProduct.sales_metrics?.source_status} />
+                    <KV label="Sales Metrics Batch ID" value={selectedProduct.sales_metrics_batch_id || selectedProduct.sales_metrics?.sales_metrics_batch_id} />
+                    <KV label="Matched File Type" value={selectedProduct.matched_file_type || selectedProduct.sales_metrics?.matched_file_type} />
+                    <KV label="Matched By" value={selectedProduct.matched_by || selectedProduct.sales_metrics?.matched_by} />
+                    <KV label="Raw Metric Column" value={selectedProduct.raw_metric_column || selectedProduct.sales_metrics?.raw_metric_column} />
+                    <KV label="Sold Count Metric Scope" value={salesMetricScope(selectedProduct)} />
+                    <KV label="Sold Count Truth Status" value={salesMetricTruthStatus(selectedProduct)} />
+                    <KV label="Product Sold Count" value={productSoldCount(selectedProduct) === null ? 'NOT_VERIFIED' : formatCountDisplay(productSoldCount(selectedProduct))} />
+                    <KV label="Shop Total Sold Count" value={shopTotalSoldCount(selectedProduct) === null ? 'NOT_AVAILABLE' : formatCountDisplay(shopTotalSoldCount(selectedProduct))} />
                     <KV label="Shop Count" value={formatCountDisplay(selectedProduct.shop_count)} />
                     <KV label="Shop Names" value={(selectedProduct.shop_names || []).join(', ')} />
+                    <KV label="Sales Metric Warnings" value={salesMetricWarnings(selectedProduct).join('; ')} />
+                    <KV label="Sales Metric Provenance" value={(selectedProduct.sales_metric_provenance || selectedProduct.sales_metrics?.sales_metric_provenance || []).join('; ')} />
                     <KV label="Image Analysis Status" value={selectedProduct.image_analysis_status} />
                     <KV label="Visual Confidence" value={selectedProduct.image_analysis?.visual_confidence} />
                     <KV label="Semantic Analysis Provider" value={selectedProduct.image_analysis?.provider} />
