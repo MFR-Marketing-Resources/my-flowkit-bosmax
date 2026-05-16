@@ -16,6 +16,8 @@ type TikTokFormState = {
 }
 
 type ProductSortMode = 'PRODUCT_SOLD_VERIFIED_DESC' | 'SHOP_TOTAL_SOLD_DESC' | 'PRODUCT_NAME_ASC'
+type LifecycleFilterMode = 'ACTIVE_ONLY' | 'INCLUDE_ARCHIVED' | 'ARCHIVED_ONLY'
+type LifecycleActionType = 'ARCHIVE' | 'UNARCHIVE' | 'DELETE_TEST_ROW'
 type FastMossImportFieldKey =
   | 'creator_search'
   | 'export_ad_list'
@@ -96,6 +98,22 @@ function shopTotalSoldCount(product: Product) {
 
 function salesMetricWarnings(product: Product) {
   return product.sales_metric_warnings || product.sales_metrics?.sales_metric_warnings || []
+}
+
+function lifecycleStatus(product: Product | null) {
+  return product?.lifecycle_status || 'ACTIVE'
+}
+
+function isArchivedProduct(product: Product | null) {
+  return lifecycleStatus(product) === 'ARCHIVED'
+}
+
+function isDeleteTestEligible(product: Product | null) {
+  if (!product) return false
+  const titles = [product.raw_product_title, product.product_display_name, product.product_short_name]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map(value => value.trim().toUpperCase())
+  return product.source !== 'FASTMOSS' && titles.some(value => value.endsWith('TEST_DO_NOT_USE'))
 }
 
 function emptyFastMossImportState(): Record<FastMossImportFieldKey, File | null> {
@@ -192,6 +210,7 @@ export default function ProductsSalesAnalyzerPage() {
   const [copyRouteFilter, setCopyRouteFilter] = useState('ALL')
   const [claimGateFilter, setClaimGateFilter] = useState('ALL')
   const [confidenceFilter, setConfidenceFilter] = useState('ALL')
+  const [lifecycleFilter, setLifecycleFilter] = useState<LifecycleFilterMode>('ACTIVE_ONLY')
   const [sortMode, setSortMode] = useState<ProductSortMode>('PRODUCT_NAME_ASC')
   const [readinessFilter] = useState('ALL')
   const [loading, setLoading] = useState(false)
@@ -211,6 +230,12 @@ export default function ProductsSalesAnalyzerPage() {
   const [variations, setVariations] = useState<any[]>([])
   const [promptPreview, setPromptPreview] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [lifecycleModal, setLifecycleModal] = useState<{
+    action: LifecycleActionType
+    product: Product
+    reason: string
+    confirmationPhrase: string
+  } | null>(null)
 
   const hasTextValue = <T extends string>(value: T | null | undefined): value is T => typeof value === 'string' && value.trim().length > 0
   const filterOptions = useMemo(() => {
@@ -331,6 +356,11 @@ export default function ProductsSalesAnalyzerPage() {
       if (search.trim()) params.set('q', search.trim())
       if (sourceFilter !== 'ALL') params.set('source', sourceFilter)
       if (readinessFilter !== 'ALL') params.set('readiness', readinessFilter)
+      if (lifecycleFilter === 'INCLUDE_ARCHIVED') params.set('include_archived', 'true')
+      if (lifecycleFilter === 'ARCHIVED_ONLY') {
+        params.set('include_archived', 'true')
+        params.set('lifecycle_status', 'ARCHIVED')
+      }
       params.set('limit', '500')
       const query = params.toString()
       const res = await fetchAPI<{items: Product[], total_count: number}>(`/api/products${query ? `?${query}` : ''}`)
@@ -347,7 +377,7 @@ export default function ProductsSalesAnalyzerPage() {
 
   useEffect(() => {
     loadProducts()
-  }, [])
+  }, [lifecycleFilter])
 
   useEffect(() => {
     async function loadLatestFastMossImportReport() {
@@ -578,6 +608,57 @@ export default function ProductsSalesAnalyzerPage() {
     }
   }
 
+  function openLifecycleModal(action: LifecycleActionType, product: Product) {
+    setLifecycleModal({
+      action,
+      product,
+      reason: '',
+      confirmationPhrase: '',
+    })
+  }
+
+  async function handleLifecycleActionSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!lifecycleModal) return
+    setSaving(true)
+    setError(null)
+    setSaveSuccess(null)
+    try {
+      const endpoint = lifecycleModal.action === 'ARCHIVE'
+        ? `/api/products/${lifecycleModal.product.id}/archive`
+        : lifecycleModal.action === 'UNARCHIVE'
+          ? `/api/products/${lifecycleModal.product.id}/unarchive`
+          : `/api/products/${lifecycleModal.product.id}/delete-test-row`
+      const response = await postAPI<{ deleted?: boolean; lifecycle_status?: string }>(endpoint, {
+        reason: lifecycleModal.reason,
+        confirmation_phrase: lifecycleModal.confirmationPhrase,
+      })
+      await loadProducts()
+      if (lifecycleModal.action === 'DELETE_TEST_ROW') {
+        setSelectedId(current => current === lifecycleModal.product.id ? null : current)
+        setSaveSuccess(`Deleted test row: ${lifecycleModal.product.id}`)
+      } else {
+        setSelectedId(current => current === lifecycleModal.product.id && lifecycleFilter === 'ACTIVE_ONLY' && response.lifecycle_status === 'ARCHIVED' ? null : current)
+        setSaveSuccess(
+          lifecycleModal.action === 'ARCHIVE'
+            ? `Archived product: ${lifecycleModal.product.id}`
+            : `Unarchived product: ${lifecycleModal.product.id}`,
+        )
+      }
+      setLifecycleModal(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to apply lifecycle action')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function lifecycleExpectedPhrase(action: LifecycleActionType) {
+    if (action === 'ARCHIVE') return 'ARCHIVE_PRODUCT'
+    if (action === 'UNARCHIVE') return 'UNARCHIVE_PRODUCT'
+    return 'DELETE_TEST_ROW_ONLY'
+  }
+
   return (
     <div className="grid min-h-full min-w-0 gap-4 p-4 md:p-6 lg:min-h-0 lg:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)] lg:overflow-hidden">
 
@@ -644,6 +725,11 @@ export default function ProductsSalesAnalyzerPage() {
                 <option value="ALL">All Intelligence Confidence</option>
                 {filterOptions.confidences.map(value => <option key={value} value={value}>{value}</option>)}
               </select>
+              <select value={lifecycleFilter} onChange={e => setLifecycleFilter(e.target.value as LifecycleFilterMode)} aria-label="Filter products by lifecycle status" className="col-span-2 bg-slate-900 border text-xs px-2 py-1.5 rounded" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <option value="ACTIVE_ONLY">Active only</option>
+                <option value="INCLUDE_ARCHIVED">Include archived</option>
+                <option value="ARCHIVED_ONLY">Archived only</option>
+              </select>
               <select value={sortMode} onChange={e => setSortMode(e.target.value as ProductSortMode)} aria-label="Sort products" className="col-span-2 bg-slate-900 border text-xs px-2 py-1.5 rounded" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
                 <option value="PRODUCT_NAME_ASC">Product Name A-Z</option>
                 <option value="PRODUCT_SOLD_VERIFIED_DESC">Product Sold Verified</option>
@@ -670,6 +756,7 @@ export default function ProductsSalesAnalyzerPage() {
                 <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="bosmax-wrap-safe text-xs font-semibold text-slate-200" title={product.raw_product_title}>{product.product_short_name || product.raw_product_title}</div>
+                    {isArchivedProduct(product) ? <StatBadge label="ARCHIVED" tone="warn" /> : null}
                     {product.is_test_product ? <StatBadge label="TEST" tone="risk" /> : null}
                   </div>
                   <div className="bosmax-wrap-safe mt-0.5 text-[10px] text-slate-400">{formatTaxonomyPath(product.category, product.subcategory, product.type)}</div>
@@ -739,12 +826,44 @@ export default function ProductsSalesAnalyzerPage() {
                         {selectedProduct.prompt_readiness_status === 'READY' ? <StatBadge label="READY" tone="ready" /> : <StatBadge label={selectedProduct.prompt_readiness_status || 'MISSING_FIELDS'} tone="warn" />}
                         {selectedProduct.physics_class ? <StatBadge label={`DNA: ${selectedProduct.physics_class}`} tone="ready" /> : <StatBadge label="DNA: NONE" tone="neutral" />}
                         <StatBadge label={`${selectedProduct.mapping_source} | ${selectedProduct.mapping_confidence}`} tone="neutral" />
+                        {isArchivedProduct(selectedProduct) ? <StatBadge label="ARCHIVED" tone="warn" /> : <StatBadge label="ACTIVE" tone="ready" />}
                         {selectedProduct.is_test_product ? <StatBadge label="TEST" tone="risk" /> : null}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {isArchivedProduct(selectedProduct) ? (
+                          <button
+                            type="button"
+                            onClick={() => openLifecycleModal('UNARCHIVE', selectedProduct)}
+                            className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[10px] font-bold text-emerald-300"
+                          >
+                            Unarchive
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => openLifecycleModal('ARCHIVE', selectedProduct)}
+                            className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold text-amber-300"
+                          >
+                            Archive
+                          </button>
+                        )}
+                        {isDeleteTestEligible(selectedProduct) ? (
+                          <button
+                            type="button"
+                            onClick={() => openLifecycleModal('DELETE_TEST_ROW', selectedProduct)}
+                            className="rounded border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-[10px] font-bold text-red-300"
+                          >
+                            Delete Test Row
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   </div>
 
                   <div className="space-y-1 mt-4">
+                    <KV label="Lifecycle Status" value={lifecycleStatus(selectedProduct)} />
+                    <KV label="Archived At" value={selectedProduct.archived_at} />
+                    <KV label="Archived Reason" value={selectedProduct.archived_reason} />
                     <KV label="Category Taxonomy" value={formatTaxonomyPath(selectedProduct.category, selectedProduct.subcategory, selectedProduct.type)} />
                     <KV label="Price & Currency" value={formatCurrencyDisplay(selectedProduct.price, selectedProduct.currency)} />
                     <KV label="Commission" value={formatCommissionDisplay(selectedProduct)} />
@@ -1226,6 +1345,59 @@ export default function ProductsSalesAnalyzerPage() {
 
         </div>
       </div>
+
+      {lifecycleModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl">
+            <div className="text-sm font-bold text-slate-100">
+              {lifecycleModal.action === 'ARCHIVE' ? 'Archive Product' : lifecycleModal.action === 'UNARCHIVE' ? 'Unarchive Product' : 'Delete Test Row'}
+            </div>
+            <div className="bosmax-wrap-safe mt-2 text-xs text-slate-400">
+              Product: {lifecycleModal.product.product_short_name || lifecycleModal.product.raw_product_title}
+            </div>
+            <div className="bosmax-wrap-safe mt-1 text-[11px] text-slate-500">
+              Confirmation required: {lifecycleExpectedPhrase(lifecycleModal.action)}
+            </div>
+            <form onSubmit={handleLifecycleActionSubmit} className="mt-4 space-y-3">
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reason</label>
+                <textarea
+                  required
+                  value={lifecycleModal.reason}
+                  onChange={event => setLifecycleModal(current => current ? { ...current, reason: event.target.value } : current)}
+                  className="min-h-[88px] w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Confirmation Phrase</label>
+                <input
+                  required
+                  value={lifecycleModal.confirmationPhrase}
+                  onChange={event => setLifecycleModal(current => current ? { ...current, confirmationPhrase: event.target.value } : current)}
+                  className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+                  placeholder={lifecycleExpectedPhrase(lifecycleModal.action)}
+                />
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLifecycleModal(null)}
+                  className="rounded border border-slate-700 bg-slate-800 px-3 py-2 text-[11px] font-bold text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[11px] font-bold text-blue-300 disabled:opacity-50"
+                >
+                  Confirm
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

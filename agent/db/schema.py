@@ -247,6 +247,13 @@ CREATE TABLE IF NOT EXISTS product (
     mapping_missing_fields TEXT,
     prompt_readiness_status TEXT,
     prompt_missing_fields TEXT,
+    lifecycle_status    TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(lifecycle_status IN ('ACTIVE','ARCHIVED')),
+    archived_at         TEXT,
+    archived_reason     TEXT,
+    archived_by         TEXT,
+    unarchived_at       TEXT,
+    unarchived_reason   TEXT,
+    lifecycle_provenance TEXT,
     asset_status        TEXT NOT NULL DEFAULT 'UNRESOLVED' CHECK(asset_status IN ('UNRESOLVED','DOWNLOADED','UPLOADED_TO_FLOW')),
     media_id            TEXT, -- Google Flow media_id after upload
     local_image_path    TEXT, -- Path to cached image
@@ -559,6 +566,13 @@ CREATE TABLE IF NOT EXISTS product (
     mapping_missing_fields TEXT,
     prompt_readiness_status TEXT,
     prompt_missing_fields TEXT,
+    lifecycle_status    TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(lifecycle_status IN ('ACTIVE','ARCHIVED')),
+    archived_at         TEXT,
+    archived_reason     TEXT,
+    archived_by         TEXT,
+    unarchived_at       TEXT,
+    unarchived_reason   TEXT,
+    lifecycle_provenance TEXT,
     asset_status        TEXT NOT NULL DEFAULT 'UNRESOLVED' CHECK(asset_status IN ('UNRESOLVED','DOWNLOADED','UPLOADED_TO_FLOW')),
     media_id            TEXT,
     local_image_path    TEXT,
@@ -574,7 +588,8 @@ INSERT INTO product (
     id, source, source_url, brand, raw_product_title, product_display_name, product_short_name,
     category, subcategory, type, shop_name, price, currency, commission_amount, commission_rate,
     price_min, price_max, commission, image_url, tiktok_product_url, fastmoss_source_file,
-    image_asset_status, asset_status, media_id, local_image_path, image_failure_detail, created_at, updated_at
+    image_asset_status, lifecycle_status, archived_at, archived_reason, archived_by, unarchived_at, unarchived_reason,
+    lifecycle_provenance, asset_status, media_id, local_image_path, image_failure_detail, created_at, updated_at
 )
 SELECT
     id,
@@ -599,6 +614,13 @@ SELECT
     tiktok_product_url,
     fastmoss_source_file,
     asset_status,
+    'ACTIVE',
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
     asset_status,
     media_id,
     local_image_path,
@@ -610,6 +632,30 @@ FROM _product_old
             await db.execute("DROP TABLE _product_old")
             await db.execute("PRAGMA foreign_keys=ON")
             logger.info("Migrated: upgraded product table for product intelligence fields")
+
+        cursor = await db.execute("PRAGMA table_info(product)")
+        product_columns = {row[1] for row in await cursor.fetchall()}
+        if "lifecycle_status" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'ACTIVE'")
+            logger.info("Migrated: added lifecycle_status column to product table")
+        if "archived_at" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN archived_at TEXT")
+            logger.info("Migrated: added archived_at column to product table")
+        if "archived_reason" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN archived_reason TEXT")
+            logger.info("Migrated: added archived_reason column to product table")
+        if "archived_by" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN archived_by TEXT")
+            logger.info("Migrated: added archived_by column to product table")
+        if "unarchived_at" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN unarchived_at TEXT")
+            logger.info("Migrated: added unarchived_at column to product table")
+        if "unarchived_reason" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN unarchived_reason TEXT")
+            logger.info("Migrated: added unarchived_reason column to product table")
+        if "lifecycle_provenance" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN lifecycle_provenance TEXT")
+            logger.info("Migrated: added lifecycle_provenance column to product table")
 
         cursor = await db.execute("SELECT sql FROM sqlite_master WHERE name='batch' AND type='table'")
         batch_sql_row = await cursor.fetchone()

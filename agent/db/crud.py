@@ -31,7 +31,7 @@ _COLUMNS = {
               "vertical_end_scene_media_id", "horizontal_end_scene_media_id",
               "trim_start", "trim_end", "duration", "display_order", "source", "transition_prompt", "narrator_text", "updated_at"},
     "request": {"status", "request_id", "media_id", "output_url", "error_message", "retry_count", "next_retry_at", "source_media_id", "updated_at", "automation_report"},
-    "product": {"source", "source_url", "brand", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price", "currency", "commission_amount", "commission_rate", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "image_asset_status", "image_failure_detail", "product_type", "product_type_id", "silo", "trigger_id", "formula", "copywriting_angle", "claim_risk_level", "mode_recommendations", "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint", "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields", "prompt_readiness_status", "prompt_missing_fields", "asset_status", "media_id", "local_image_path", "updated_at"},
+    "product": {"source", "source_url", "brand", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price", "currency", "commission_amount", "commission_rate", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "image_asset_status", "image_failure_detail", "product_type", "product_type_id", "silo", "trigger_id", "formula", "copywriting_angle", "claim_risk_level", "mode_recommendations", "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint", "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields", "prompt_readiness_status", "prompt_missing_fields", "lifecycle_status", "archived_at", "archived_reason", "archived_by", "unarchived_at", "unarchived_reason", "lifecycle_provenance", "asset_status", "media_id", "local_image_path", "updated_at"},
     "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message"},
     "request_stage_event": {"request_id", "timestamp", "stage", "status", "message", "source"},
 }
@@ -56,7 +56,7 @@ async def _update(table: str, pk: str, pk_val: str, **kwargs) -> Optional[dict]:
     kwargs = _safe_kwargs(table, kwargs)
     if not kwargs:
         return await _get(table, pk, pk_val)
-    if "updated_at" in _COLUMNS.get(table, set()):
+    if "updated_at" in _COLUMNS.get(table, set()) and "updated_at" not in kwargs:
         kwargs["updated_at"] = _now()
     sets = ", ".join(f"{k}=?" for k in kwargs)
     vals = list(kwargs.values()) + [pk_val]
@@ -390,7 +390,14 @@ async def count_products(source: str = None, query: str = None) -> int:
     row = await cur.fetchone()
     return row[0] if row else 0
 
-async def list_products(source: str = None, query: str = None, limit: int = None, offset: int = None) -> list[dict]:
+async def list_products(
+    source: str = None,
+    query: str = None,
+    limit: int = None,
+    offset: int = None,
+    include_archived: bool = True,
+    lifecycle_status: str | None = None,
+) -> list[dict]:
     db = await get_db()
     q, params = "SELECT * FROM product WHERE 1=1", []
     if source:
@@ -399,6 +406,11 @@ async def list_products(source: str = None, query: str = None, limit: int = None
         q += " AND (product_short_name LIKE ? OR product_display_name LIKE ? OR raw_product_title LIKE ?)"
         lk = f"%{query}%"
         params.extend([lk, lk, lk])
+    if lifecycle_status:
+        q += " AND COALESCE(lifecycle_status, 'ACTIVE')=?"
+        params.append(lifecycle_status)
+    elif not include_archived:
+        q += " AND COALESCE(lifecycle_status, 'ACTIVE')='ACTIVE'"
     q += " ORDER BY created_at DESC"
     if limit is not None:
         q += " LIMIT ?"

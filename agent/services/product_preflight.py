@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent.services.bosmax_product_family import derive_bosmax_product_family
+from agent.services.product_lifecycle_service import lifecycle_status
 from agent.services.product_mapping import normalize_mapping_text
 
 
@@ -388,6 +389,7 @@ def evaluate_mapping_status(product: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_product_preflight(product: dict[str, Any], flow_readiness: dict[str, Any] | None = None) -> dict[str, Any]:
+    product_lifecycle_status = lifecycle_status(product)
     creative_missing = [
         field for field in [
             "scene_context",
@@ -406,7 +408,9 @@ def build_product_preflight(product: dict[str, Any], flow_readiness: dict[str, A
     flow_status = flow_readiness.get("status") if flow_readiness else "NOT_CHECKED"
 
     blocking_reason = None
-    if product.get("mapping_status") == "BLOCKED":
+    if product_lifecycle_status == "ARCHIVED":
+        blocking_reason = "PRODUCT_ARCHIVED"
+    elif product.get("mapping_status") == "BLOCKED":
         blocking_reason = f"MAPPING_BLOCKED:{','.join(mapping_missing)}"
     elif product.get("mapping_status") == "NEEDS_REVIEW":
         blocking_reason = f"MAPPING_NEEDS_REVIEW:{','.join(mapping_missing)}"
@@ -419,6 +423,7 @@ def build_product_preflight(product: dict[str, Any], flow_readiness: dict[str, A
 
     return {
         "product_id": product.get("id") or product.get("product_id"),
+        "lifecycle_status": product_lifecycle_status,
         "mapping_status": product.get("mapping_status") or "BLOCKED",
         "missing_fields": mapping_missing,
         "physics_dna_status": product.get("physics_dna_status") or ("READY" if product.get("physics_class") else "MISSING_FIELDS"),
@@ -432,4 +437,5 @@ def build_product_preflight(product: dict[str, Any], flow_readiness: dict[str, A
         "backfill_action": "/api/products/backfill-mapping",
         "flow_readiness_action": "/api/operator/flow-readiness-smoke",
         "build_allowed": not blocking_reason,
+        "safe_to_generate_prompt": blocking_reason is None,
     }
