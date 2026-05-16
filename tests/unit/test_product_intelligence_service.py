@@ -1,5 +1,6 @@
 import pytest
 
+from agent.services.product_intelligence import enrich_product
 from agent.services.product_intelligence_service import (
     _resolve_sales_metrics,
     get_product_intelligence_backfill_preview,
@@ -562,3 +563,18 @@ def test_inject_product_intelligence_fields_exposes_sales_metric_truth_fields(mo
     assert enriched["shop_total_sold_count"] == 74561117
     assert enriched["sold_count_metric_scope"] == "SHOP"
     assert enriched["sold_count_truth_status"] == "SHOP_LEVEL_AGGREGATE"
+
+
+async def test_archived_product_fail_closes_mode_readiness_and_preflight():
+    enriched = await enrich_product(
+        _product(
+            lifecycle_status="ARCHIVED",
+            image_url="https://example.com/product.jpg",
+        )
+    )
+
+    assert enriched["lifecycle_status"] == "ARCHIVED"
+    assert enriched["mode_readiness"]["Text to Video"]["status"] == "PRODUCT_ARCHIVED"
+    assert enriched["mode_readiness"]["Images"]["status"] == "PRODUCT_ARCHIVED"
+    assert enriched["preflight"]["blocking_reason"] == "PRODUCT_ARCHIVED"
+    assert enriched["preflight"]["safe_to_generate_prompt"] is False

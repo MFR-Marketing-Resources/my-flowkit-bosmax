@@ -18,6 +18,7 @@ from agent.models.product_intelligence import (
 )
 from agent.services.bosmax_product_family import derive_bosmax_product_family
 from agent.services.fastmoss_import_service import get_latest_fastmoss_reference_index
+from agent.services.product_lifecycle_service import lifecycle_status as resolve_lifecycle_status
 from agent.services.product_image_analysis_service import analyze_product_image_payload
 from agent.services.product_mapping import normalize_mapping_text
 
@@ -1570,7 +1571,12 @@ async def get_product_intelligence_by_id(product_id: str) -> dict[str, Any]:
             "status": "PRODUCT_NOT_FOUND",
             "product_id": product_id,
         }
-    return resolve_product_intelligence_profile(product)
+    profile = resolve_product_intelligence_profile(product)
+    profile["lifecycle_status"] = resolve_lifecycle_status(product)
+    if profile["lifecycle_status"] == "ARCHIVED":
+        profile["safe_to_generate_prompt"] = False
+        profile["blocker"] = "PRODUCT_ARCHIVED"
+    return profile
 
 
 def _distribution(profiles: list[dict[str, Any]], key: str) -> dict[str, int]:
@@ -1579,7 +1585,7 @@ def _distribution(profiles: list[dict[str, Any]], key: str) -> dict[str, int]:
 
 
 async def get_product_intelligence_summary() -> dict[str, Any]:
-    products = await crud.list_products(limit=10000)
+    products = await crud.list_products(limit=10000, include_archived=False)
     profiles = [resolve_product_intelligence_profile(product) for product in products]
     products_by_source = Counter(_coerce_source(product.get("source")) for product in products)
     products_by_current_category = Counter(
@@ -1638,7 +1644,7 @@ async def get_product_intelligence_summary() -> dict[str, Any]:
 
 
 async def get_product_intelligence_backfill_preview() -> dict[str, Any]:
-    products = await crud.list_products(limit=10000)
+    products = await crud.list_products(limit=10000, include_archived=False)
     profiles = [resolve_product_intelligence_profile(product) for product in products]
     failures = [
         {

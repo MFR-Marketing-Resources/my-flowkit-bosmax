@@ -261,6 +261,13 @@ export interface Product {
 	id: string;
 	product_id?: string;
 	source: "FASTMOSS" | "TIKTOKSHOP" | "MANUAL" | "IMPORTED";
+	lifecycle_status?: "ACTIVE" | "ARCHIVED" | "DELETED_TEST_ONLY" | null;
+	archived_at?: string | null;
+	archived_reason?: string | null;
+	archived_by?: string | null;
+	unarchived_at?: string | null;
+	unarchived_reason?: string | null;
+	lifecycle_provenance?: Array<Record<string, unknown>>;
 	source_url?: string | null;
 	brand?: string | null;
 	raw_product_title: string;
@@ -574,6 +581,7 @@ export interface OperatorBatchContext {
 
 export interface ProductPreflight {
 	product_id: string | null;
+	lifecycle_status?: "ACTIVE" | "ARCHIVED" | "DELETED_TEST_ONLY" | null;
 	mapping_status: "READY" | "NEEDS_REVIEW" | "BLOCKED";
 	missing_fields: string[];
 	physics_dna_status: string;
@@ -587,6 +595,7 @@ export interface ProductPreflight {
 	backfill_action: string;
 	flow_readiness_action: string;
 	build_allowed: boolean;
+	safe_to_generate_prompt?: boolean;
 }
 
 export interface OperatorPreflightResponse {

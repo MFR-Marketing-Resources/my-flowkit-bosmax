@@ -8,6 +8,7 @@ from pathlib import Path
 from agent.db import crud
 from agent.utils.paths import product_image_path
 from agent.services.flow_client import get_flow_client
+from agent.services.product_lifecycle_service import is_archived, lifecycle_status
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
 from agent.services.product_preflight import build_product_preflight, evaluate_mapping_status, resolve_creative_profile
@@ -181,6 +182,23 @@ def resolve_image_readiness(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 def mode_readiness(payload: dict[str, Any]) -> dict[str, dict[str, str | list[str]]]:
+    if is_archived(payload):
+        return {
+            "Text to Video": {
+                "status": "PRODUCT_ARCHIVED",
+                "detail": "PRODUCT_ARCHIVED: archived products are excluded from prompt generation.",
+                "missing_fields": [],
+                "asset_strategy": "DISABLED",
+            },
+            **{
+                mode: {
+                    "status": "PRODUCT_ARCHIVED",
+                    "detail": "PRODUCT_ARCHIVED: archived products are excluded from media generation.",
+                    "missing_fields": [],
+                }
+                for mode in MODE_IMAGE_DEPENDENT
+            },
+        }
     missing_fields = [field for field in (payload.get("prompt_missing_fields") or []) if field != "image_url"]
     has_image = payload.get("image_readiness_status") in IMAGE_READY_STATES
     text_status = "READY_OR_NEEDS_REVIEW" if not missing_fields else "MISSING_FIELDS"
@@ -217,6 +235,7 @@ def mode_readiness(payload: dict[str, Any]) -> dict[str, dict[str, str | list[st
 
 async def enrich_product(product: dict[str, Any], *, persist: bool = False) -> dict[str, Any]:
     payload = dict(product)
+    payload["lifecycle_status"] = lifecycle_status(payload)
     payload["source"] = normalize_source(payload.get("source"))
     payload["source_url"] = payload.get("source_url") or payload.get("tiktok_product_url")
     payload["price"] = normalize_currency_amount(payload.get("price") if payload.get("price") is not None else payload.get("price_min"))
@@ -269,10 +288,10 @@ async def enrich_product(product: dict[str, Any], *, persist: bool = False) -> d
     payload["preflight"] = build_product_preflight(payload)
 
     if persist and payload.get("id"):
-        await persist_intelligence(payload["id"], payload)
+        await persist_intelligence(payload["id"], payload, updated_at=payload.get("updated_at"))
     return payload
 
-async def persist_intelligence(product_id: str, payload: dict[str, Any]) -> None:
+async def persist_intelligence(product_id: str, payload: dict[str, Any], *, updated_at: str | None = None) -> None:
     await crud.update_product(
         product_id,
         source=normalize_source(payload.get("source")),
@@ -331,6 +350,7 @@ async def persist_intelligence(product_id: str, payload: dict[str, Any]) -> None
         prompt_missing_fields=json_dump_list(payload.get("prompt_missing_fields") or []),
         asset_status=payload.get("asset_status") or None,
         local_image_path=payload.get("local_image_path") or None,
+        updated_at=updated_at,
     )
 
 async def generate_product_prompt(product: dict, mode: str) -> str:

@@ -26,6 +26,14 @@ from agent.services.product_intelligence import (
     is_test_product as _is_test_product,
 )
 from agent.services.product_catalog_audit import build_mapping_summary
+from agent.services.product_lifecycle_service import (
+    archive_product as archive_product_row,
+    delete_test_row as delete_test_product_row,
+    get_product_lifecycle,
+    is_archived as is_product_archived,
+    lifecycle_status as resolve_lifecycle_status,
+    unarchive_product as unarchive_product_row,
+)
 from agent.services.product_preflight import build_product_preflight
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
@@ -127,6 +135,11 @@ class ProductPatchRequest(BaseModel):
     section_9_overlay_hint: str | None = None
     image_base64: str | None = None
     image_filename: str | None = None
+
+
+class ProductLifecycleActionRequest(BaseModel):
+    reason: str
+    confirmation_phrase: str
 
 
 class ImportTikTokShopRequest(BaseModel):
@@ -397,14 +410,29 @@ async def _list_products_response(
     q: str | None = None,
     source: str | None = None,
     readiness: str | None = None,
+    include_archived: bool = False,
+    lifecycle_status: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ):
     requested_source = (source or "").strip().upper() or None
     db_source = _normalize_source(requested_source) if requested_source in {"FASTMOSS", "MANUAL", "TIKTOKSHOP", "IMPORTED"} else None
-    all_products = await crud.list_products(source=db_source, query=q)
+    requested_lifecycle = (lifecycle_status or "").strip().upper() or None
+    db_include_archived = include_archived or requested_lifecycle == "ARCHIVED"
+    all_products = await crud.list_products(
+        source=db_source,
+        query=q,
+        include_archived=db_include_archived,
+        lifecycle_status=requested_lifecycle,
+    )
     enriched_all = [await _enrich_product(product) for product in all_products]
-    filtered_all = _filter_products_for_catalog(enriched_all, source=requested_source, readiness=readiness)
+    filtered_all = _filter_products_for_catalog(
+        enriched_all,
+        source=requested_source,
+        readiness=readiness,
+        include_archived=db_include_archived,
+        lifecycle_status=requested_lifecycle,
+    )
     total = len(filtered_all)
     enriched = filtered_all[offset:offset + limit]
 
@@ -418,10 +446,11 @@ async def _list_products_response(
     }
 
 
-def _catalog_priority(product: dict[str, Any]) -> tuple[int, int, int, int]:
+def _catalog_priority(product: dict[str, Any]) -> tuple[int, int, int, int, int]:
     source = (product.get("source") or "").upper()
     prompt_status = product.get("prompt_readiness_status")
     image_status = product.get("image_readiness_status")
+    lifecycle_rank = 1 if resolve_lifecycle_status(product) == "ARCHIVED" else 0
 
     source_rank = {
         "FASTMOSS": 0,
@@ -432,7 +461,7 @@ def _catalog_priority(product: dict[str, Any]) -> tuple[int, int, int, int]:
     prompt_rank = {"READY": 0, "NEEDS_REVIEW": 1}.get(prompt_status, 2)
     image_rank = 0 if image_status in {"IMAGE_READY", "IMAGE_CACHE_READY"} else 1
     test_rank = 1 if product.get("is_test_product") else 0
-    return (test_rank, source_rank, prompt_rank, image_rank)
+    return (lifecycle_rank, test_rank, source_rank, prompt_rank, image_rank)
 
 
 def _matches_catalog_source(product: dict[str, Any], requested_source: str | None) -> bool:
@@ -452,8 +481,14 @@ def _filter_products_for_catalog(
     *,
     source: str | None,
     readiness: str | None,
+    include_archived: bool = False,
+    lifecycle_status: str | None = None,
 ) -> list[dict[str, Any]]:
     filtered = [product for product in products if _matches_catalog_source(product, source)]
+    if lifecycle_status:
+        filtered = [product for product in filtered if resolve_lifecycle_status(product) == lifecycle_status]
+    elif not include_archived:
+        filtered = [product for product in filtered if not is_product_archived(product)]
     if readiness:
         filtered = [product for product in filtered if product.get("prompt_readiness_status") == readiness]
 
@@ -467,19 +502,37 @@ async def list_products(
     q: str | None = Query(default=None),
     source: str | None = Query(default=None),
     readiness: str | None = Query(default=None),
+    include_archived: bool = Query(default=False),
+    lifecycle_status: str | None = Query(default=None),
     limit: int = Query(default=50),
     offset: int = Query(default=0),
 ):
-    return await _list_products_response(q=q, source=source, readiness=readiness, limit=limit, offset=offset)
+    return await _list_products_response(
+        q=q,
+        source=source,
+        readiness=readiness,
+        include_archived=include_archived,
+        lifecycle_status=lifecycle_status,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/search")
 async def search_products(
     q: str | None = Query(default=None),
+    include_archived: bool = Query(default=False),
+    lifecycle_status: str | None = Query(default=None),
     limit: int = Query(default=25),
     offset: int = Query(default=0),
 ):
-    return await _list_products_response(q=q, limit=limit, offset=offset)
+    return await _list_products_response(
+        q=q,
+        include_archived=include_archived,
+        lifecycle_status=lifecycle_status,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("/map")
@@ -521,7 +574,7 @@ async def map_product(data: ProductMapRequest):
 
 @router.post("/backfill-mapping")
 async def backfill_product_mapping(product_id: str | None = None):
-    products = [await crud.get_product(product_id)] if product_id else await crud.list_products(limit=5000)
+    products = [await crud.get_product(product_id)] if product_id else await crud.list_products(limit=5000, include_archived=False)
     products = [product for product in products if product]
     excluded_test_fixtures = 0
     if product_id is None:
@@ -564,7 +617,7 @@ async def backfill_product_mapping(product_id: str | None = None):
 
 @router.get("/mapping-summary")
 async def get_product_mapping_summary(sample_limit: int = Query(default=30, ge=1, le=100)):
-    raw_products = await crud.list_products(limit=10000)
+    raw_products = await crud.list_products(limit=10000, include_archived=False)
     enriched_products = [await _enrich_product(product, persist=False) for product in raw_products]
     return build_mapping_summary(raw_products, enriched_products, sample_limit=sample_limit)
 
@@ -850,6 +903,38 @@ async def get_product(product_id: str):
     return await _enrich_product(product, persist=True)
 
 
+@router.get("/{product_id}/lifecycle")
+async def get_product_lifecycle_status(product_id: str):
+    return await get_product_lifecycle(product_id)
+
+
+@router.post("/{product_id}/archive")
+async def archive_product_lifecycle(product_id: str, data: ProductLifecycleActionRequest):
+    return await archive_product_row(
+        product_id,
+        reason=data.reason,
+        confirmation_phrase=data.confirmation_phrase,
+    )
+
+
+@router.post("/{product_id}/unarchive")
+async def unarchive_product_lifecycle(product_id: str, data: ProductLifecycleActionRequest):
+    return await unarchive_product_row(
+        product_id,
+        reason=data.reason,
+        confirmation_phrase=data.confirmation_phrase,
+    )
+
+
+@router.post("/{product_id}/delete-test-row")
+async def delete_test_row(product_id: str, data: ProductLifecycleActionRequest):
+    return await delete_test_product_row(
+        product_id,
+        reason=data.reason,
+        confirmation_phrase=data.confirmation_phrase,
+    )
+
+
 @router.get("/{product_id}/image")
 async def get_product_image(product_id: str):
     product = await crud.get_product(product_id)
@@ -889,11 +974,21 @@ async def patch_product(product_id: str, data: ProductPatchRequest):
 
 @router.post("/{product_id}/resolve-assets")
 async def resolve_assets(product_id: str):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if is_product_archived(product):
+        raise HTTPException(status_code=409, detail="PRODUCT_ARCHIVED")
     return await resolve_product_assets(product_id)
 
 
 @router.post("/{product_id}/upload-to-flow")
 async def upload_to_flow(product_id: str):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if is_product_archived(product):
+        raise HTTPException(status_code=409, detail="PRODUCT_ARCHIVED")
     return await upload_product_to_flow(product_id)
 
 
@@ -910,6 +1005,16 @@ async def get_generated_prompt(product_id: str, mode: str = "F2V"):
             "product_short_name": mapping["product_short_name"],
             "category": mapping["category"],
         }
+    if is_product_archived(product):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "product_id": product.get("id") or product_id,
+                "lifecycle_status": resolve_lifecycle_status(product),
+                "safe_to_generate_prompt": False,
+                "blocker": "PRODUCT_ARCHIVED",
+            },
+        )
 
     enriched = await _enrich_product(product)
     normalized_mode = {"TRUE_F2V": "F2V", "GENERATE_VIDEO": "I2V", "GENERATE_VIDEO_REFS": "I2V"}.get(mode, mode)

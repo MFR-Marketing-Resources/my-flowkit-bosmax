@@ -272,5 +272,5 @@ def build_all_product_mapping_audit(
 
 
 async def get_all_product_mapping_audit(*, sample_limit: int = 20) -> dict[str, Any]:
-    raw_products = await crud.list_products(limit=10000)
+    raw_products = await crud.list_products(limit=10000, include_archived=False)
     return build_all_product_mapping_audit(raw_products, sample_limit=sample_limit)
