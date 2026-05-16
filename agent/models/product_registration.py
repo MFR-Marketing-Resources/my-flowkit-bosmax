@@ -49,3 +49,48 @@ class ProductRegistrationEvaluateResponse(BaseModel):
     registration_errors: list[str] = Field(default_factory=list)
     provenance: dict[str, Any] = Field(default_factory=dict)
     no_db_write_reason: str | None = None
+
+
+class RegistrationReviewDraft(BaseModel):
+    review_draft_id: str
+    review_status: str  # REVIEW_READY / NEEDS_HUMAN_REVIEW / BLOCKED
+    source_lane: str
+    
+    # Evidence vs Candidates
+    declared_evidence_fields: dict[str, Any] = Field(default_factory=dict)
+    system_inferred_fields: dict[str, Any] = Field(default_factory=dict)
+    canonical_candidate_fields: dict[str, Any] = Field(default_factory=dict)
+    
+    # Review / Safety
+    human_review_fields: list[str] = Field(default_factory=list)
+    blocked_fields: list[str] = Field(default_factory=list)
+    missing_required_evidence: list[str] = Field(default_factory=list)
+    
+    # Gate statuses (mirroring ProductRegistrationEvaluateResponse)
+    claim_gate: str = "CLAIM_REVIEW_REQUIRED"
+    claim_tokens: list[str] = Field(default_factory=list)
+    claim_risk_level: str = "HIGH"
+    copy_safety_notes: str | None = None
+    
+    taxonomy_status: str = "NEEDS_REVIEW"
+    taxonomy_conflict: bool = False
+    taxonomy_conflict_reason: str | None = None
+    
+    product_family_status: str = "NEEDS_REVIEW"
+    physics_status: str = "NEEDS_REVIEW"
+    scale_truth_status: str = "NEEDS_REVIEW"
+    registration_gate_status: str = "NEEDS_REVIEW"
+    
+    # Governance
+    write_back_allowed: bool = False
+    write_back_performed: bool = False
+    write_back_status: str = "READ_ONLY_REVIEW_PREVIEW"
+    
+    user_actions: list[str] = Field(default_factory=list)
+    approval_checklist: dict[str, bool] = Field(default_factory=dict)
+    
+    readiness_by_mode: dict[str, Any] = Field(default_factory=dict)
+    
+    provenance: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)

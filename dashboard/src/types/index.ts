@@ -1198,3 +1198,35 @@ export interface AIFormImportResponse {
   user_review_required: boolean;
   provenance: string[];
 }
+
+export interface RegistrationReviewDraft {
+  review_draft_id: string;
+  review_status: 'REVIEW_READY' | 'NEEDS_HUMAN_REVIEW' | 'BLOCKED';
+  source_lane: string;
+  declared_evidence_fields: Record<string, any>;
+  system_inferred_fields: Record<string, any>;
+  canonical_candidate_fields: Record<string, any>;
+  human_review_fields: string[];
+  blocked_fields: string[];
+  missing_required_evidence: string[];
+  claim_gate: string;
+  claim_tokens: string[];
+  claim_risk_level: string;
+  copy_safety_notes: string | null;
+  taxonomy_status: string;
+  taxonomy_conflict: boolean;
+  taxonomy_conflict_reason: string | null;
+  product_family_status: string;
+  physics_status: string;
+  scale_truth_status: string;
+  registration_gate_status: string;
+  write_back_allowed: boolean;
+  write_back_performed: boolean;
+  write_back_status: string;
+  user_actions: string[];
+  approval_checklist: Record<string, boolean>;
+  readiness_by_mode: Record<string, ModeReadiness>;
+  provenance: string[];
+  warnings: string[];
+  errors: string[];
+}

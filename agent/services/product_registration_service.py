@@ -6,7 +6,9 @@ from agent.db import crud
 from agent.models.product_registration import (
     ProductRegistrationEvaluateRequest,
     ProductRegistrationEvaluateResponse,
+    RegistrationReviewDraft,
 )
+from agent.models.product_knowledge import ProductKnowledgeCompleteResponse
 from agent.services.product_intelligence_service import (
     inject_product_intelligence_fields,
     resolve_product_intelligence_profile,
@@ -14,6 +16,7 @@ from agent.services.product_intelligence_service import (
 from agent.services.product_mapping import normalize_mapping_text
 from agent.services.product_physics import resolve_product_physics
 from agent.services.product_truth_service import ProductTruthService
+import uuid
 
 
 AFFILIATE_SOURCES = {"FASTMOSS", "TIKTOKSHOP", "IMPORTED"}
@@ -440,3 +443,84 @@ async def evaluate_product_registration(
         no_db_write_reason="WRITE_BACK_NOT_ENABLED_IN_THIS_PR",
     )
     return response
+
+
+def create_registration_review_draft(
+    completion: ProductKnowledgeCompleteResponse,
+) -> RegistrationReviewDraft:
+    """Converts a Product Knowledge Completion response into a Registration Review Draft.
+    
+    This is the authority gate before any canonical registration.
+    """
+    draft_id = f"draft-{uuid.uuid4().hex[:8]}"
+    
+    # 1. Map Declared Evidence
+    declared_evidence = dict(completion.extracted_product_facts)
+    # Ensure source lane is captured
+    source_lane = "UNKNOWN"
+    for warning in completion.warnings:
+        if "AFFILIATE_LANE_CONTAMINATION_RISK" in warning:
+            source_lane = "AFFILIATE_CONTAMINATED"
+    
+    # 2. Map Canonical Candidates
+    # We extract all suggested_* fields into a candidate dict
+    candidates = {}
+    suggested_prefix = "suggested_"
+    for field, value in completion.model_dump().items():
+        if field.startswith(suggested_prefix):
+            clean_field = field[len(suggested_prefix):]
+            candidates[clean_field] = value
+            
+    # 3. Determine Review Status
+    review_status = "REVIEW_READY"
+    if completion.completion_status == "BLOCKED" or completion.claim_gate == "CLAIM_BLOCKED":
+        review_status = "BLOCKED"
+    elif completion.completion_status == "NEEDS_REVIEW" or completion.claim_gate == "CLAIM_REVIEW_REQUIRED":
+        review_status = "NEEDS_HUMAN_REVIEW"
+    
+    # 4. Filter Candidates based on Risks
+    # If a field is in blocked_fields, remove it from candidates
+    for blocked in completion.blocked_fields:
+        if blocked in candidates:
+            candidates.pop(blocked)
+            
+    # 5. Handle Affiliate Risk in status
+    for warning in completion.warnings:
+        if "AFFILIATE_LANE_CONTAMINATION_RISK" in warning:
+            if review_status != "BLOCKED":
+                review_status = "NEEDS_HUMAN_REVIEW"
+
+    # 6. Map Inferred Fields
+    # For now, inferred fields are just candidates that didn't exist in declared evidence
+    system_inferred = {k: v for k, v in candidates.items() if k not in declared_evidence}
+
+    return RegistrationReviewDraft(
+        review_draft_id=draft_id,
+        review_status=review_status,
+        source_lane=source_lane,
+        declared_evidence_fields=declared_evidence,
+        system_inferred_fields=system_inferred,
+        canonical_candidate_fields=candidates,
+        human_review_fields=completion.human_review_fields,
+        blocked_fields=completion.blocked_fields,
+        missing_required_evidence=completion.missing_required_evidence,
+        claim_gate=completion.claim_gate,
+        claim_tokens=completion.claim_tokens,
+        claim_risk_level=completion.claim_risk_level,
+        copy_safety_notes=completion.copy_safety_notes,
+        # Placeholder for deeper gate logic
+        taxonomy_status="READY" if "category" not in completion.human_review_fields else "NEEDS_REVIEW",
+        product_family_status="READY" if "bosmax_product_family" not in completion.human_review_fields else "NEEDS_REVIEW",
+        physics_status="READY" if "physics_profile" not in completion.human_review_fields else "NEEDS_REVIEW",
+        scale_truth_status="READY" if "SIZE_OR_VOLUME_EVIDENCE" not in completion.missing_required_evidence else "NEEDS_REVIEW",
+        registration_gate_status=review_status,
+        write_back_allowed=False,
+        write_back_performed=False,
+        write_back_status="READ_ONLY_REVIEW_PREVIEW",
+        user_actions=["APPROVE_CANDIDATE_FIELD", "REJECT_CANDIDATE_FIELD", "CLEAR_DRAFT"],
+        approval_checklist={f: False for f in candidates.keys()},
+        readiness_by_mode=completion.readiness_by_mode,
+        provenance=completion.provenance + ["registration_review_service:v1"],
+        warnings=completion.warnings,
+        errors=completion.errors,
+    )

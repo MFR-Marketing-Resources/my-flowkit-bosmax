@@ -54,3 +54,14 @@ def test_ai_form_pack_contract():
     assert "Parse & Run Smart Completion" in content
     assert "/api/product-knowledge/import-ai-form" in content
     assert "AIFormImportResponse" in content
+
+def test_product_registration_review_draft_ui_contract():
+    root = Path(__file__).parent.parent.parent
+    path = root / "dashboard/src/pages/ProductRegistrationPage.tsx"
+    content = path.read_text(encoding="utf-8")
+    
+    # Verify Review Queue integration
+    assert "Registration Review Queue" in content
+    assert "Create Review Draft" in content
+    assert "RegistrationReviewDraftPanel" in content
+    assert "review-draft-section" in content
