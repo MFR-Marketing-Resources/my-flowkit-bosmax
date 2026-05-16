@@ -40,3 +40,4 @@ test_image.jpg
 test_image_b64.txt
 data/products/images/*.jpg
 data/fastmoss/imports/
+data/product_knowledge/imports/

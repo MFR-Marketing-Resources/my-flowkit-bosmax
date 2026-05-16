@@ -1186,3 +1186,15 @@ export interface ProductKnowledgeCompleteResponse {
 	warnings: string[];
 	errors: string[];
 }
+
+export interface AIFormImportResponse {
+  import_id: string;
+  parse_status: 'PARSED' | 'PARSE_ERROR' | 'VALIDATION_ERROR';
+  parsed_request: ProductKnowledgeCompleteRequest | null;
+  parse_warnings: string[];
+  parse_errors: string[];
+  completion_response: ProductKnowledgeCompleteResponse | null;
+  write_back_status: string;
+  user_review_required: boolean;
+  provenance: string[];
+}

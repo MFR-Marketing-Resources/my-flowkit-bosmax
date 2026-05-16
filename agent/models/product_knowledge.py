@@ -75,3 +75,15 @@ class ProductKnowledgeCompleteResponse(BaseModel):
     provenance: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+class AIFormImportResponse(BaseModel):
+    import_id: str
+    parse_status: str  # PARSED / PARSE_ERROR / VALIDATION_ERROR
+    parsed_request: ProductKnowledgeCompleteRequest | None = None
+    parse_warnings: list[str] = Field(default_factory=list)
+    parse_errors: list[str] = Field(default_factory=list)
+    completion_response: ProductKnowledgeCompleteResponse | None = None
+    write_back_status: str = "READ_ONLY_COMPLETION_PREVIEW"
+    user_review_required: bool = True
+    provenance: list[str] = Field(default_factory=list)
