@@ -1416,6 +1416,57 @@ export default function ProductAssetGeneratorForm({
 				</div>
 			</div>
 
+			{selectedProduct ? (
+				<div className="mt-4 grid gap-4 lg:grid-cols-2">
+					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+							Authority Product Context
+						</div>
+						<div className="mt-3 grid gap-2 md:grid-cols-2">
+							<div>Scene: {selectedProduct.scene_context || "NOT_PROVIDED"}</div>
+							<div>Camera style: {selectedProduct.camera_style || "NOT_PROVIDED"}</div>
+							<div>Camera behavior: {selectedProduct.camera_behavior || "NOT_PROVIDED"}</div>
+							<div>Trigger: {selectedProduct.trigger_id || "NOT_PROVIDED"}</div>
+							<div>Silo: {selectedProduct.silo || "NOT_PROVIDED"}</div>
+							<div>Formula: {selectedProduct.formula || "NOT_PROVIDED"}</div>
+							<div>Claim risk: {selectedAuthorityContext?.product.claim_risk_level || "NOT_PROVIDED"}</div>
+							<div>Overlay hint: {selectedAuthorityContext?.visual.overlay_hint || "NOT_FOUND"}</div>
+							<div>Product handling: {selectedAuthorityContext?.visual.product_handling || "NOT_FOUND"}</div>
+							<div>Product physics: {selectedAuthorityContext?.visual.product_physics || "NOT_FOUND"}</div>
+						</div>
+					</div>
+					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+							Authority Copy Signals
+						</div>
+						<div className="mt-2 text-[10px] text-slate-500">
+							Hook, USP, CTA, product physics, and source warnings now come from the BOSMAX authority adapter. OPERATOR_PACK and NOT_FOUND signals remain explicit.
+						</div>
+						<div className="mt-3 grid gap-2">
+							<div>Hook: {selectedCopySignals.hook || "NOT_FOUND"}</div>
+							<div>USP 1: {selectedCopySignals.usp_1 || "NOT_FOUND"}</div>
+							<div>USP 2: {selectedCopySignals.usp_2 || "NOT_FOUND"}</div>
+							<div>USP 3: {selectedCopySignals.usp_3 || "NOT_FOUND"}</div>
+							<div>CTA: {selectedCopySignals.cta || "NOT_FOUND"}</div>
+						</div>
+					</div>
+					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300 lg:col-span-2">
+						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+							Source Warnings
+						</div>
+						<div className="mt-2 grid gap-2 md:grid-cols-2">
+							{selectedContextWarnings.length > 0 ? (
+								selectedContextWarnings.map((warning) => (
+									<div key={warning}>{warning}</div>
+								))
+							) : (
+								<div>No selected-product source warnings.</div>
+							)}
+						</div>
+					</div>
+				</div>
+			) : null}
+
 			{profileVisible ? (
 				<div className="mt-4 space-y-4">
 					<div className="grid gap-4 xl:grid-cols-2">
