@@ -37,6 +37,7 @@ from agent.services.product_lifecycle_service import (
 from agent.services.product_preflight import build_product_preflight
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
+from agent.services.prompt_pipeline_readiness_service import PromptPipelineReadinessService
 from agent.utils.paths import product_image_path
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -1026,6 +1027,13 @@ async def get_generated_prompt(product_id: str, mode: str = "F2V"):
         "prompt_length": len(prompt),
         "prompt_source": "SYSTEM",
     }
+
+@router.get("/{product_id}/prompt-readiness")
+async def get_product_prompt_readiness(product_id: str):
+    product = await _find_product_by_lookup(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return await PromptPipelineReadinessService.get_readiness_report(product)
 
 @router.get("/{product_id}/truth-audit")
 async def get_product_truth_audit(product_id: str):
