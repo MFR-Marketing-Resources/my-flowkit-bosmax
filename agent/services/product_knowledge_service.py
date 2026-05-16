@@ -258,6 +258,26 @@ def _resolve_taxonomy_candidate(
         "otot kelelakian",
         "male_health_sensitive",
     }
+    female_health_tokens = {
+        "jamu perapat",
+        "jamu wanita",
+        "kewanitaan",
+        "miss v",
+        "faraj",
+        "vagina",
+        "keputihan",
+        "bau",
+        "gatal",
+        "rapat",
+        "ketat",
+        "anjal",
+        "postpartum",
+        "selepas bersalin",
+        "intimate",
+        "feminine hygiene",
+        "feminine care",
+        "female_health_sensitive",
+    }
     owned_lane = str(request.source_lane or "").upper() in {"OWNED", "MANUAL"}
     if owned_lane and (
         any(token in male_health_tokens for token in claim_tokens)
@@ -270,6 +290,19 @@ def _resolve_taxonomy_candidate(
                 "type": "Male Health",
                 "silo": "health_supp_stealth_01",
                 "trigger_id": "EGO_01",
+            }
+        )
+    elif owned_lane and (
+        any(token in female_health_tokens for token in claim_tokens)
+        or any(token in combined_text for token in female_health_tokens if token != "female_health_sensitive")
+    ):
+        candidate.update(
+            {
+                "category": "Health",
+                "subcategory": "Feminine Care",
+                "type": "Female Health",
+                "silo": "female_health_stealth_01",
+                "trigger_id": "FEMALE_01",
             }
         )
     return candidate
@@ -305,6 +338,7 @@ def _evaluate_completion_status(
 
 def _analyze_claims(request: ProductKnowledgeCompleteRequest, facts: dict[str, Any]) -> tuple[str, list[str], str, str]:
     combined_text = normalize_mapping_text(" ".join(filter(None, [
+        request.product_name,
         request.product_knowledge_text,
         request.benefits_text,
         request.ingredients_text,
