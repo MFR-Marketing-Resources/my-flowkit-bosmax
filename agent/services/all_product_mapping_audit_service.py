@@ -62,7 +62,7 @@ MALE_HEALTH_KEYWORDS = (
     "nafsu",
 )
 
-BEAUTY_TAXONOMY_KEYWORDS = ("beauty", "fragrance", "cosmetic", "bath", "body care")
+BEAUTY_TAXONOMY_KEYWORDS = ("beauty", "fragrance", "cosmetic", "bath body", "body care", "skin care")
 FASHION_TAXONOMY_KEYWORDS = ("fashion", "womenswear", "muslim fashion", "underwear", "sportswear")
 BABY_TAXONOMY_KEYWORDS = ("baby", "diaper")
 HOME_TEXTILE_FAMILIES = {"HOME_TEXTILE"}
