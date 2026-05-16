@@ -24,9 +24,20 @@ class ProductImageAnalysisResolveRequest(BaseModel):
 
 class ProductIntelligenceSalesMetrics(BaseModel):
     sold_count: int | None = None
+    product_sold_count: int | None = None
+    shop_total_sold_count: int | None = None
     shop_count: int | None = None
     shop_names: list[str] = Field(default_factory=list)
     source_status: str = "NOT_FOUND"
+    sold_count_metric_scope: str = "UNKNOWN"
+    sold_count_truth_status: str = "NOT_VERIFIED"
+    sales_metric_warnings: list[str] = Field(default_factory=list)
+    sales_metric_provenance: list[str] = Field(default_factory=list)
+    sales_metrics_source: str = "NOT_FOUND"
+    sales_metrics_batch_id: str | None = None
+    matched_file_type: str | None = None
+    matched_by: str | None = None
+    raw_metric_column: str | None = None
 
 
 class ProductIntelligenceImageAnalysis(BaseModel):

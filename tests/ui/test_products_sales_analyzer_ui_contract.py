@@ -32,8 +32,20 @@ def test_products_sales_analyzer_uses_wrap_safe_layout_and_kv_structure():
         "Detected Package",
         "Detected Text",
         "Image Analysis Warnings",
-        "Highest Sold",
+        "Product Sold Verified",
+        "Shop Total Sold",
         "Product Name A-Z",
+        "Product sold: NOT_VERIFIED",
+        "Shop total sold:",
+        "SHOP_LEVEL_METRIC_NOT_PRODUCT_SALES",
+        "Sales Metrics Source",
+        "Sales Metrics Batch ID",
+        "Sold Count Metric Scope",
+        "Sold Count Truth Status",
+        "Product Sold Count",
+        "Shop Total Sold Count",
+        "Sales Metric Warnings",
+        "Sales Metric Provenance",
         "formatCountDisplay",
         "formatCommissionRateDisplay",
         "FastMoss Latest Import Refresh",
@@ -58,6 +70,8 @@ def test_products_sales_analyzer_uses_wrap_safe_layout_and_kv_structure():
         assert token in source
 
     assert "grid h-full min-w-0 gap-4 overflow-hidden xl:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)]" not in source
+    assert "Highest Sold" not in source
+    assert "formatCountDisplay(product.sold_count)} sold" not in source
 
 
 def test_products_sales_analyzer_does_not_truncate_long_product_and_shop_text():

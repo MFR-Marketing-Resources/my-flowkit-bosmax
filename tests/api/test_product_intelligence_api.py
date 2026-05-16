@@ -19,6 +19,11 @@ def test_get_product_intelligence_by_id(monkeypatch):
             "bosmax_product_family": "LAUNDRY_DETERGENT_LIQUID_REFILL",
             "copy_route": "DIRECT",
             "claim_gate": "CLAIM_REVIEW_REQUIRED",
+            "sales_metrics_source": "LATEST_FASTMOSS_IMPORT_BATCH",
+            "sales_metrics_batch_id": "batch-001",
+            "sold_count_metric_scope": "PRODUCT",
+            "sold_count_truth_status": "VERIFIED_PRODUCT_LEVEL",
+            "product_sold_count": 88,
             "image_analysis": {
                 "status": "VISION_PROVIDER_NOT_CONFIGURED",
                 "provider": "not_configured",
@@ -41,6 +46,8 @@ def test_get_product_intelligence_by_id(monkeypatch):
     payload = response.json()
     assert payload["group"] == "LAUNDRY_CARE"
     assert payload["bosmax_product_family"] == "LAUNDRY_DETERGENT_LIQUID_REFILL"
+    assert payload["sales_metrics_source"] == "LATEST_FASTMOSS_IMPORT_BATCH"
+    assert payload["product_sold_count"] == 88
     assert payload["image_analysis"]["status"] == "VISION_PROVIDER_NOT_CONFIGURED"
 
 
