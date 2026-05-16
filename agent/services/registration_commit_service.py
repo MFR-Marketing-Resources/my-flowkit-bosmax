@@ -110,7 +110,6 @@ class RegistrationCommitService:
         # 3. Execute Write-Back
         try:
             product = await crud.create_product(
-                raw_product_title=final_fields.get("raw_product_title"),
                 **final_fields
             )
             

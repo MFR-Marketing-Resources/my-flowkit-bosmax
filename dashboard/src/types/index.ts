@@ -1201,7 +1201,7 @@ export interface AIFormImportResponse {
 
 export interface RegistrationReviewDraft {
   review_draft_id: string;
-  review_status: 'REVIEW_READY' | 'NEEDS_HUMAN_REVIEW' | 'BLOCKED';
+  review_status: 'REVIEW_READY' | 'NEEDS_HUMAN_REVIEW' | 'BLOCKED' | 'COMMITTED';
   source_lane: string;
   declared_evidence_fields: Record<string, any>;
   system_inferred_fields: Record<string, any>;
