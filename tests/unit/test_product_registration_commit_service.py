@@ -12,6 +12,7 @@ def mock_storage():
 def mock_crud():
     with patch("agent.services.registration_commit_service.crud") as mock:
         mock.create_product = AsyncMock(return_value={"id": "prod-123"})
+        mock.list_products = AsyncMock(return_value=[])
         yield mock
 
 @pytest.mark.asyncio
@@ -32,11 +33,12 @@ async def test_commit_blocked_invalid_phrase(mock_storage):
     assert "INVALID_CONFIRMATION_PHRASE" in result["blocked_reasons"]
 
 @pytest.mark.asyncio
-async def test_commit_blocked_unresolved_fields(mock_storage):
+async def test_commit_allows_partial_safe_fields(mock_storage, mock_crud):
     mock_storage.get_draft.return_value = RegistrationReviewDraft(
         review_draft_id="d2", review_status="NEEDS_REVIEW", source_lane="MANUAL",
         human_review_fields=["category"],
-        approval_checklist={"normalized_name": True, "category": False}
+        approval_checklist={"normalized_name": True, "category": False},
+        canonical_candidate_fields={"normalized_name": "Review Product", "category": "Health"}
     )
     
     req = RegistrationCommitRequest(
@@ -46,15 +48,17 @@ async def test_commit_blocked_unresolved_fields(mock_storage):
     )
     
     result = await RegistrationCommitService.commit_draft(req)
-    assert result["commit_status"] == "BLOCKED"
-    assert "UNRESOLVED_REVIEW_FIELDS: category" in result["blocked_reasons"]
+    assert result["commit_status"] == "COMMITTED"
+    assert result["write_back_performed"] is True
+    assert "category" in result["excluded_fields"]
 
 @pytest.mark.asyncio
 async def test_successful_commit(mock_storage, mock_crud):
     mock_storage.get_draft.return_value = RegistrationReviewDraft(
         review_draft_id="d3", review_status="READY", source_lane="MANUAL",
         approval_checklist={"normalized_name": True},
-        canonical_candidate_fields={"normalized_name": "Test Product"}
+        declared_evidence_fields={"product_name": "Test Product", "size_or_volume": "5 ML"},
+        canonical_candidate_fields={"normalized_name": "Test Product 5 ML", "size_or_volume": "5 ML"}
     )
     
     req = RegistrationCommitRequest(
@@ -68,3 +72,29 @@ async def test_successful_commit(mock_storage, mock_crud):
     assert result["write_back_performed"] is True
     assert result["committed_product_id"] == "prod-123"
     mock_crud.create_product.assert_called_once()
+    assert mock_crud.create_product.await_args.kwargs["raw_product_title"] == "Test Product 5 ML"
+
+@pytest.mark.asyncio
+async def test_commit_blocked_duplicate_owned_product(mock_storage, mock_crud):
+    mock_storage.get_draft.return_value = RegistrationReviewDraft(
+        review_draft_id="d4", review_status="READY", source_lane="MANUAL",
+        approval_checklist={"normalized_name": True},
+        declared_evidence_fields={"product_name": "Bosmax Herbs", "size_or_volume": "5 ML"},
+        canonical_candidate_fields={"normalized_name": "Bosmax Herbs 5 ML"}
+    )
+    mock_crud.list_products = AsyncMock(return_value=[{
+        "id": "prod-existing",
+        "raw_product_title": "Bosmax Herbs 5 ML",
+        "product_display_name": "Bosmax Herbs 5 ML",
+        "product_short_name": "Bosmax Herbs 5 ML",
+    }])
+
+    req = RegistrationCommitRequest(
+        draft_id="d4",
+        write_back_confirmed=True,
+        user_confirmation_phrase="REGISTER_OWNED_PRODUCT"
+    )
+
+    result = await RegistrationCommitService.commit_draft(req)
+    assert result["commit_status"] == "BLOCKED"
+    assert "DUPLICATE_OWNED_PRODUCT_CANDIDATE:prod-existing" in result["blocked_reasons"]

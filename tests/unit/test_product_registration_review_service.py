@@ -7,8 +7,10 @@ def test_create_review_draft_basic():
         completion_status="COMPLETION_READY",
         input_quality_status="SUFFICIENT",
         declared_evidence_summary="Name: Test Product",
+        declared_input_fields={"product_name": "Test Product", "source_lane": "OWNED", "size_or_volume": "5 ML"},
         extracted_product_facts={"product_name": "Test Product", "price": 10.0},
         suggested_normalized_name="Test Product",
+        suggested_size_or_volume="5 ML",
         suggested_category="Electronics",
         claim_gate="CLAIM_SAFE",
         claim_risk_level="LOW",
@@ -21,8 +23,10 @@ def test_create_review_draft_basic():
     
     assert draft.review_status == "REVIEW_READY"
     assert draft.canonical_candidate_fields["normalized_name"] == "Test Product"
+    assert draft.canonical_candidate_fields["size_or_volume"] == "5 ML"
     assert draft.canonical_candidate_fields["category"] == "Electronics"
     assert draft.declared_evidence_fields["product_name"] == "Test Product"
+    assert draft.source_lane == "OWNED"
     assert draft.write_back_allowed is False
     assert draft.write_back_status == "READ_ONLY_REVIEW_PREVIEW"
 

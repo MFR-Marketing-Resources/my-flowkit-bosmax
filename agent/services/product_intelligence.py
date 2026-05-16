@@ -204,7 +204,7 @@ def mode_readiness(payload: dict[str, Any]) -> dict[str, dict[str, str | list[st
         elif not has_image:
             readiness[mode] = {
                 "status": "BLOCKED_IMAGE_MISSING",
-                "detail": "Requires image_url or local_image_path.",
+                "detail": "IMAGE_REFERENCE_REQUIRED: requires image_url or local_image_path.",
                 "missing_fields": ["image_url"],
             }
         else:

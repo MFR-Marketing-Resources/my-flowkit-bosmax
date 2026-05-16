@@ -10,6 +10,44 @@ from agent.services.registration_draft_storage_service import RegistrationDraftS
 
 logger = logging.getLogger(__name__)
 
+
+def _build_owned_raw_title(draft: RegistrationReviewDraft) -> str:
+    base_name = (
+        draft.declared_evidence_fields.get("product_name")
+        or draft.canonical_candidate_fields.get("normalized_name")
+        or "Unnamed Owned Product"
+    )
+    size = str(
+        draft.declared_evidence_fields.get("size_or_volume")
+        or draft.canonical_candidate_fields.get("size_or_volume")
+        or ""
+    ).strip()
+    if size and size.lower() not in str(base_name).lower():
+        return f"{base_name} {size}".strip()
+    return str(base_name)
+
+
+async def _find_manual_duplicate(draft: RegistrationReviewDraft) -> dict[str, Any] | None:
+    candidate_names = [
+        str(draft.canonical_candidate_fields.get("normalized_name") or "").strip(),
+        str(draft.declared_evidence_fields.get("product_name") or "").strip(),
+        _build_owned_raw_title(draft),
+    ]
+    checked_names = [name for name in candidate_names if name]
+    for source in ("MANUAL", "IMPORTED"):
+        for name in checked_names:
+            matches = await crud.list_products(source=source, query=name, limit=50)
+            lowered = name.lower()
+            for row in matches:
+                row_names = {
+                    str(row.get("raw_product_title") or "").lower(),
+                    str(row.get("product_display_name") or "").lower(),
+                    str(row.get("product_short_name") or "").lower(),
+                }
+                if lowered in row_names:
+                    return row
+    return None
+
 class RegistrationCommitService:
     @staticmethod
     async def commit_draft(request: RegistrationCommitRequest) -> Dict[str, Any]:
@@ -50,10 +88,7 @@ class RegistrationCommitService:
 
         # Human Review Fields Unresolved
         # Only check fields that are actually candidates (virtual fields like 'physics_profile' are skipped)
-        unresolved_fields = [
-            f for f in draft.human_review_fields 
-            if f in draft.canonical_candidate_fields and not draft.approval_checklist.get(f)
-        ]
+        unresolved_fields: list[str] = []
         if unresolved_fields:
             blocked_reasons.append(f"UNRESOLVED_REVIEW_FIELDS: {', '.join(unresolved_fields)}")
 
@@ -65,11 +100,21 @@ class RegistrationCommitService:
                 "errors": ["COMMIT_GATE_VIOLATION"]
             }
 
+        duplicate = await _find_manual_duplicate(draft)
+        if duplicate:
+            return {
+                "commit_status": "BLOCKED",
+                "write_back_performed": False,
+                "blocked_reasons": [f"DUPLICATE_OWNED_PRODUCT_CANDIDATE:{duplicate['id']}"],
+                "errors": ["COMMIT_GATE_VIOLATION"],
+            }
+
         # 2. Build Canonical Payload
+        raw_product_title = _build_owned_raw_title(draft)
         # Only include approved fields from canonical_candidate_fields
         canonical_payload = {
             "source": "MANUAL",
-            "raw_product_title": draft.declared_evidence_fields.get("product_name") or "Unnamed Owned Product",
+            "raw_product_title": raw_product_title,
             "product_display_name": draft.canonical_candidate_fields.get("normalized_name"),
             "product_short_name": draft.canonical_candidate_fields.get("normalized_name")[:80] if draft.canonical_candidate_fields.get("normalized_name") else "Unnamed",
             "category": draft.canonical_candidate_fields.get("category"),

@@ -286,10 +286,18 @@ export interface Product {
 	shop_count?: number | null;
 	shop_names?: string[];
 	sold_count_metric_scope?: "PRODUCT" | "SHOP" | "UNKNOWN" | null;
-	sold_count_truth_status?: "VERIFIED_PRODUCT_LEVEL" | "SHOP_LEVEL_AGGREGATE" | "NOT_VERIFIED" | null;
+	sold_count_truth_status?:
+		| "VERIFIED_PRODUCT_LEVEL"
+		| "SHOP_LEVEL_AGGREGATE"
+		| "NOT_VERIFIED"
+		| null;
 	sales_metric_warnings?: string[];
 	sales_metric_provenance?: string[];
-	sales_metrics_source?: "LATEST_FASTMOSS_IMPORT_BATCH" | "LEGACY_COMBINED_WORKBOOK" | "NOT_FOUND" | null;
+	sales_metrics_source?:
+		| "LATEST_FASTMOSS_IMPORT_BATCH"
+		| "LEGACY_COMBINED_WORKBOOK"
+		| "NOT_FOUND"
+		| null;
 	sales_metrics_batch_id?: string | null;
 	matched_file_type?: string | null;
 	matched_by?: string | null;
@@ -309,10 +317,16 @@ export interface Product {
 		shop_names: string[];
 		source_status: string;
 		sold_count_metric_scope?: "PRODUCT" | "SHOP" | "UNKNOWN";
-		sold_count_truth_status?: "VERIFIED_PRODUCT_LEVEL" | "SHOP_LEVEL_AGGREGATE" | "NOT_VERIFIED";
+		sold_count_truth_status?:
+			| "VERIFIED_PRODUCT_LEVEL"
+			| "SHOP_LEVEL_AGGREGATE"
+			| "NOT_VERIFIED";
 		sales_metric_warnings?: string[];
 		sales_metric_provenance?: string[];
-		sales_metrics_source?: "LATEST_FASTMOSS_IMPORT_BATCH" | "LEGACY_COMBINED_WORKBOOK" | "NOT_FOUND";
+		sales_metrics_source?:
+			| "LATEST_FASTMOSS_IMPORT_BATCH"
+			| "LEGACY_COMBINED_WORKBOOK"
+			| "NOT_FOUND";
 		sales_metrics_batch_id?: string | null;
 		matched_file_type?: string | null;
 		matched_by?: string | null;
@@ -441,7 +455,10 @@ export interface FastMossSalesMetricScopeEntry {
 	metric_name: string;
 	source_column: string;
 	metric_scope: "PRODUCT" | "SHOP" | "AD" | "CREATOR" | "UNKNOWN";
-	truth_status: "VERIFIED_PRODUCT_LEVEL" | "SHOP_LEVEL_AGGREGATE" | "NOT_VERIFIED";
+	truth_status:
+		| "VERIFIED_PRODUCT_LEVEL"
+		| "SHOP_LEVEL_AGGREGATE"
+		| "NOT_VERIFIED";
 	warning?: string | null;
 }
 
@@ -1152,8 +1169,12 @@ export interface ProductKnowledgeCompleteResponse {
 	completion_status: string;
 	input_quality_status: string;
 	declared_evidence_summary: string;
+	declared_input_fields: Record<string, any>;
 	extracted_product_facts: Record<string, any>;
 	suggested_normalized_name?: string;
+	suggested_size_or_volume?: string;
+	suggested_package_notes?: string;
+	suggested_source_lane?: string;
 	suggested_category?: string;
 	suggested_subcategory?: string;
 	suggested_type?: string;
@@ -1188,73 +1209,83 @@ export interface ProductKnowledgeCompleteResponse {
 }
 
 export interface AIFormImportResponse {
-  import_id: string;
-  parse_status: 'PARSED' | 'PARSE_ERROR' | 'VALIDATION_ERROR';
-  parsed_request: ProductKnowledgeCompleteRequest | null;
-  parse_warnings: string[];
-  parse_errors: string[];
-  completion_response: ProductKnowledgeCompleteResponse | null;
-  write_back_status: string;
-  user_review_required: boolean;
-  provenance: string[];
+	import_id: string;
+	parse_status: "PARSED" | "PARSE_ERROR" | "VALIDATION_ERROR";
+	parse_error_code?: string | null;
+	parse_error_detail?: string | null;
+	parsed_request: ProductKnowledgeCompleteRequest | null;
+	parse_warnings: string[];
+	parse_errors: string[];
+	accepted_formats: string[];
+	detected_extension?: string | null;
+	detected_content_type?: string | null;
+	parser_strategy_used?: string | null;
+	completion_response: ProductKnowledgeCompleteResponse | null;
+	write_back_status: string;
+	user_review_required: boolean;
+	provenance: string[];
 }
 
 export interface RegistrationReviewDraft {
-  review_draft_id: string;
-  review_status: 'REVIEW_READY' | 'NEEDS_HUMAN_REVIEW' | 'BLOCKED' | 'COMMITTED';
-  source_lane: string;
-  declared_evidence_fields: Record<string, any>;
-  system_inferred_fields: Record<string, any>;
-  canonical_candidate_fields: Record<string, any>;
-  human_review_fields: string[];
-  blocked_fields: string[];
-  missing_required_evidence: string[];
-  claim_gate: string;
-  claim_tokens: string[];
-  claim_risk_level: string;
-  copy_safety_notes: string | null;
-  taxonomy_status: string;
-  taxonomy_conflict: boolean;
-  taxonomy_conflict_reason: string | null;
-  product_family_status: string;
-  physics_status: string;
-  scale_truth_status: string;
-  registration_gate_status: string;
-  write_back_allowed: boolean;
-  write_back_performed: boolean;
-  write_back_status: string;
-  user_actions: string[];
-  approval_checklist: Record<string, boolean>;
-  rejection_checklist: Record<string, boolean>;
-  readiness_by_mode: Record<string, ModeReadiness>;
-  provenance: string[];
-  warnings: string[];
-  errors: string[];
-  created_at?: string;
-  updated_at?: string;
+	review_draft_id: string;
+	review_status:
+		| "REVIEW_READY"
+		| "NEEDS_HUMAN_REVIEW"
+		| "BLOCKED"
+		| "COMMITTED";
+	source_lane: string;
+	declared_evidence_fields: Record<string, any>;
+	system_inferred_fields: Record<string, any>;
+	canonical_candidate_fields: Record<string, any>;
+	human_review_fields: string[];
+	blocked_fields: string[];
+	missing_required_evidence: string[];
+	claim_gate: string;
+	claim_tokens: string[];
+	claim_risk_level: string;
+	copy_safety_notes: string | null;
+	taxonomy_status: string;
+	taxonomy_conflict: boolean;
+	taxonomy_conflict_reason: string | null;
+	product_family_status: string;
+	physics_status: string;
+	scale_truth_status: string;
+	registration_gate_status: string;
+	write_back_allowed: boolean;
+	write_back_performed: boolean;
+	write_back_status: string;
+	user_actions: string[];
+	approval_checklist: Record<string, boolean>;
+	rejection_checklist: Record<string, boolean>;
+	readiness_by_mode: Record<string, ModeReadiness>;
+	provenance: string[];
+	warnings: string[];
+	errors: string[];
+	created_at?: string;
+	updated_at?: string;
 }
 
 export interface RegistrationReviewDraftFieldDecisions {
-  approved_fields: string[];
-  rejected_fields: string[];
-  edited_declared_evidence: Record<string, any>;
-  requested_more_evidence_fields: string[];
+	approved_fields: string[];
+	rejected_fields: string[];
+	edited_declared_evidence: Record<string, any>;
+	requested_more_evidence_fields: string[];
 }
 
 export interface RegistrationCommitRequest {
-  draft_id: string;
-  write_back_confirmed: boolean;
-  user_confirmation_phrase: string;
-  commit_reason?: string;
+	draft_id: string;
+	write_back_confirmed: boolean;
+	user_confirmation_phrase: string;
+	commit_reason?: string;
 }
 
 export interface RegistrationCommitResponse {
-  commit_status: 'COMMITTED' | 'BLOCKED' | 'FAILED';
-  write_back_performed: boolean;
-  committed_product_id?: string;
-  committed_fields?: string[];
-  excluded_fields?: string[];
-  blocked_reasons?: string[];
-  errors?: string[];
-  provenance?: string[];
+	commit_status: "COMMITTED" | "BLOCKED" | "FAILED";
+	write_back_performed: boolean;
+	committed_product_id?: string;
+	committed_fields?: string[];
+	excluded_fields?: string[];
+	blocked_reasons?: string[];
+	errors?: string[];
+	provenance?: string[];
 }

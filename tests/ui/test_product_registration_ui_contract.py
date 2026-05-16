@@ -54,6 +54,11 @@ def test_ai_form_pack_contract():
     assert "Parse & Run Smart Completion" in content
     assert "/api/product-knowledge/import-ai-form" in content
     assert "AIFormImportResponse" in content
+    assert 'accept=".md,.markdown,.json,.JSON,.txt"' in content
+    assert "Accepted formats:" in content
+    assert "Error Code:" in content
+    assert "Parser Strategy" in content
+    assert "Create Review Draft" in Path(root / "dashboard/src/pages/ProductRegistrationPage.tsx").read_text(encoding="utf-8")
 
 def test_product_registration_review_draft_ui_contract():
     root = Path(__file__).parent.parent.parent

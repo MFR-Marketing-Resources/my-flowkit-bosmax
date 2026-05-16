@@ -6,6 +6,8 @@ def test_product_knowledge_complete_api():
     response = client.post("/api/product-knowledge/complete", json={
         "product_name": "Bosmax Liquid Detergent",
         "product_knowledge_text": "Sabun dobi wangi 1.2kg botol biru",
+        "price": 12.9,
+        "commission_rate": "10%",
         "source_lane": "MANUAL"
     })
     
@@ -13,4 +15,5 @@ def test_product_knowledge_complete_api():
     data = response.json()
     assert data["completion_status"] == "COMPLETION_READY"
     assert data["suggested_bosmax_product_family"] == "LAUNDRY_DETERGENT_LIQUID_REFILL"
+    assert data["suggested_physics_class"] == "LAUNDRY_LIQUID_REFILL"
     assert "1.2kg" in data["extracted_product_facts"]["size_or_volume"]

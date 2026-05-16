@@ -455,9 +455,9 @@ def create_registration_review_draft(
     draft_id = f"draft-{uuid.uuid4().hex[:8]}"
     
     # 1. Map Declared Evidence
-    declared_evidence = dict(completion.extracted_product_facts)
+    declared_evidence = dict(completion.declared_input_fields or completion.extracted_product_facts)
     # Ensure source lane is captured
-    source_lane = "UNKNOWN"
+    source_lane = str(declared_evidence.get("source_lane") or "UNKNOWN")
     for warning in completion.warnings:
         if "AFFILIATE_LANE_CONTAMINATION_RISK" in warning:
             source_lane = "AFFILIATE_CONTAMINATED"
