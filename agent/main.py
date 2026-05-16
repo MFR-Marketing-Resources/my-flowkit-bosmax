@@ -51,6 +51,7 @@ from agent.api.creative_brief import router as creative_brief_router
 from agent.api.batches import router as batches_router
 from agent.api.batch_executor import router as batch_executor_router
 from agent.api.product_truth import router as product_truth_router
+from agent.api.product_registration import router as product_registration_router
 from agent.sdk import init_sdk
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -175,6 +176,7 @@ app.include_router(creative_brief_router, prefix="/api")
 app.include_router(batches_router, prefix="/api")
 app.include_router(batch_executor_router, prefix="/api")
 app.include_router(product_truth_router, prefix="/api")
+app.include_router(product_registration_router, prefix="/api")
 
 
 
