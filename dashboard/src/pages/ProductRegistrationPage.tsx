@@ -20,7 +20,7 @@ export default function ProductRegistrationPage() {
     if (!result) return
     setIsProcessing(true)
     try {
-      const draft = await postAPI<RegistrationReviewDraft>('/product-registration/review-draft', result)
+      const draft = await postAPI<RegistrationReviewDraft>('/api/product-registration/review-draft', result)
       setReviewDraft(draft)
       // Smooth scroll to draft
       setTimeout(() => {
