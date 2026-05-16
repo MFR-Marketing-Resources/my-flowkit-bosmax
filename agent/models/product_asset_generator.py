@@ -45,6 +45,18 @@ class ProductAssetGeneratorResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
     provenance: dict[str, Any] = Field(default_factory=dict)
     truth_status: dict[str, Any] = Field(default_factory=dict)
+    
+    # Truth Authority Block
+    product_truth_status: str = "UNVERIFIED"
+    truth_authority_source: str = "EPHEMERAL_DERIVED"
+    source_anchor_status: str = "MISSING"
+    mapping_v2_status: str = "NEEDS_REVIEW"
+    mapping_confidence: str = "LOW"
+    taxonomy_conflict: bool = False
+    taxonomy_conflict_reason: Optional[str] = None
+    scale_truth_status: str = "SCALE_NOT_FOUND"
+    image_analysis_status: str = "NOT_CONFIGURED"
+    
     dry_run_only: bool = True
     execution_allowed: bool = False
     image_generation_allowed: bool = False

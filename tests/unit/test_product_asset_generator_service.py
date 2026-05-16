@@ -638,3 +638,26 @@ def test_service_does_not_import_or_call_flow_extension_batch_queue_persistence_
 
     for token in banned_tokens:
         assert token not in source
+
+
+@pytest.mark.asyncio
+async def test_preview_response_includes_truth_authority_block():
+    result = await generate_product_asset_preview(
+        {
+            "product_payload": _product_row(
+                id="truth-test-001",
+                source="FASTMOSS",
+                raw_product_title="Glad2Glow Serum",
+            ),
+            "target_asset_intent": "CHARACTER_CONCEPT",
+            "dry_run_only": True,
+        }
+    )
+
+    # Verify top-level truth authority fields exist and are populated
+    assert result.product_truth_status in {"HIGH", "MEDIUM", "LOW", "NEEDS_REVIEW", "UNVERIFIED"}
+    assert result.truth_authority_source in {"SOURCE_ANCHOR", "KEYWORD_RULE", "EPHEMERAL_DERIVED", "RECONCILIATION_FAILED"}
+    assert result.source_anchor_status is not None
+    assert result.mapping_v2_status == result.truth_status["product_mapping_status"]
+    assert result.mapping_confidence == result.truth_status["intelligence_confidence"]
+    assert isinstance(result.taxonomy_conflict, bool)

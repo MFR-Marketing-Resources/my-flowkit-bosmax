@@ -23,6 +23,7 @@ from agent.services.product_intelligence_service import (
     inject_product_intelligence_fields,
     resolve_product_intelligence_profile,
 )
+from agent.services.product_truth_service import ProductTruthService
 
 
 ALLOWED_TARGET_ASSET_INTENTS = {
@@ -186,6 +187,19 @@ def _build_enriched_product(product_seed: dict[str, Any]) -> dict[str, Any]:
     intelligence = resolve_product_intelligence_profile(payload)
     payload = inject_product_intelligence_fields(payload, intelligence)
 
+    # Inject Product Truth Reconciliation Authority
+    truth_profile = ProductTruthService.build_computed_profile(payload)
+    payload["product_truth"] = truth_profile
+    recon = truth_profile.reconciliation
+    
+    # Authority Overrides: If Truth flags a conflict, Mapping V2 must respect it
+    if recon.confidence_label == "NEEDS_REVIEW" or "FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION" in recon.contradiction_flags:
+        payload["intelligence_confidence"] = "LOW"
+        payload["intelligence_status"] = "NEEDS_REVIEW"
+        payload["mapping_status"] = "NEEDS_REVIEW"
+        payload["taxonomy_conflict"] = True
+        payload["taxonomy_conflict_reason"] = "PRODUCT_TRUTH_RECONCILIATION_CONFLICT"
+
     physics = resolve_product_physics(product=payload)
     payload = _apply_resolved_physics_authority(payload, physics)
 
@@ -226,6 +240,7 @@ def _build_provenance(
             "agent.services.product_preflight.evaluate_mapping_status",
             "agent.services.product_preflight.build_product_preflight",
             "agent.services.asset_registry_service.list_assets_by_type",
+            "agent.services.product_truth_service.ProductTruthService.build_computed_profile",
         ],
         "registry_hint_asset_types": sorted(registry_hints.keys()),
         "preview_only": True,
@@ -477,6 +492,15 @@ def _build_truth_status(
         if isinstance(product.get("product_intelligence"), dict)
         else resolve_product_intelligence_profile(product)
     )
+    
+    # 1. Authority Check: Product Truth Profile
+    truth_profile = product.get("product_truth")
+    if not truth_profile:
+        truth_profile = ProductTruthService.build_computed_profile(product)
+    
+    recon = truth_profile.reconciliation
+    source_anchors = truth_profile.source_anchors
+    
     image_analysis = intelligence.get("image_analysis") or {}
     copy_readiness_status, copy_readiness_detail = _build_copy_readiness_status(
         product, ugc_copy_signal
@@ -514,11 +538,26 @@ def _build_truth_status(
     )
     mapping_review_status = str(product.get("mapping_review_status") or "").strip() or "NOT_RECORDED"
     product_type_id = str(product.get("product_type_id") or "").strip() or "MISSING"
+    
+    # Authority Rule: Gating on Truth
+    truth_blocked_by_conflict = (
+        recon.confidence_label == "NEEDS_REVIEW"
+        or "FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION" in recon.contradiction_flags
+        or "FLAG_SOURCE_TAXONOMY_CONFLICT" in recon.contradiction_flags
+    )
+    truth_blocked_by_generic = product_type_id in {"GENERIC_PRODUCT", "UNIVERSAL", "MISSING"}
+    truth_blocked_by_anchor_missing = (
+        recon.authority_decision == "KEYWORD_RULE"
+        and source_anchors.source_anchor_status == "SOURCE_ANCHOR_MISSING"
+    )
+    
     mapping_truth_blocked = (
         mapping_review_status == "BLOCKED"
-        or product_type_id in {"GENERIC_PRODUCT", "UNIVERSAL", "MISSING"}
-        or bool(intelligence.get("taxonomy_conflict"))
+        or truth_blocked_by_conflict
+        or truth_blocked_by_generic
+        or truth_blocked_by_anchor_missing
     )
+    
     product_mapping_status = (
         "NEEDS_REVIEW"
         if mapping_truth_blocked
@@ -530,26 +569,36 @@ def _build_truth_status(
         (request.camera_style or product.get("camera_style"))
         and (request.camera_behavior or product.get("camera_behavior"))
     )
+    
+    # Scale Gating: Must have product_scale_prompt from authority, not invented
+    scale_ready = bool(product_scale_prompt) and (ugc_copy_signal or {}).get("product_context", {}).get("scale_truth_status") != "SCALE_NOT_FOUND"
+
     text_to_video_ready = (
         has_product
         and has_scene
         and has_camera
-        and bool(product_scale_prompt)
+        and scale_ready
         and bool(ugc_camera_lock_prompt)
         and copy_quality_status == "COMMERCIAL_COPY_READY"
         and claim_gate == "CLAIM_SAFE"
         and visual_dialogue_isolation.get("status") in {"ENFORCED", "PASS"}
         and not mapping_truth_blocked
+        and recon.confidence_label in {"HIGH", "MEDIUM"}
     )
-    image_ready = has_product and has_scene and bool(product_scale_prompt)
+    image_ready = has_product and has_scene and scale_ready
+    
     if copy_quality_status == "COPY_MISSING":
         text_to_video_readiness_status = "COPY_MISSING"
     elif text_to_video_ready:
         text_to_video_readiness_status = "READY"
     else:
         text_to_video_readiness_status = "NEEDS_REVIEW"
+        
     return {
-        "overall_source_status": "DERIVED_FROM_PRODUCT_DATA",
+        "product_truth_status": recon.confidence_label,
+        "truth_authority_source": recon.authority_decision,
+        "source_anchor_status": source_anchors.source_anchor_status,
+        "overall_source_status": "VERIFIED_TRUTH_AUTHORITY" if recon.confidence_label == "HIGH" else "DERIVED_FROM_PRODUCT_DATA",
         "profile_source_status": "EPHEMERAL_PREVIEW",
         "persistence_truth": "NOT_PERSISTED",
         "canonical_status": "NOT_CANONICAL",
@@ -563,8 +612,8 @@ def _build_truth_status(
         "package_form": intelligence.get("package_form"),
         "physical_state": intelligence.get("physical_state"),
         "product_scale_class": intelligence.get("product_scale_class"),
-        "bosmax_source_taxonomy_conflict": intelligence.get("taxonomy_conflict"),
-        "bosmax_source_taxonomy_conflict_reason": intelligence.get("taxonomy_conflict_reason"),
+        "bosmax_source_taxonomy_conflict": intelligence.get("taxonomy_conflict") or truth_blocked_by_conflict,
+        "bosmax_source_taxonomy_conflict_reason": intelligence.get("taxonomy_conflict_reason") or (recon.contradiction_flags[0] if recon.contradiction_flags else None),
         "claim_gate": claim_gate,
         "claim_tokens": claim_tokens,
         "sales_metrics": intelligence.get("sales_metrics", {}),
@@ -661,20 +710,27 @@ def _build_warning_buckets(
         or intelligence.get("claim_gate")
         or "CLAIM_REVIEW_REQUIRED"
     )
-    if str(product.get("mapping_review_status") or "").strip() == "BLOCKED":
-        truth_warnings.append("PRODUCT_MAPPING_REVIEW_BLOCKED")
-    if str(product.get("product_type_id") or "").strip() in {"GENERIC_PRODUCT", "UNIVERSAL"}:
-        truth_warnings.append("PRODUCT_TAXONOMY_GENERIC_REVIEW_REQUIRED")
-    if intelligence.get("taxonomy_conflict"):
-        truth_warnings.append("BOSMAX_FAMILY_OVERRIDES_SOURCE_TAXONOMY")
-    if copy_readiness_status == "COPY_MISSING":
-        truth_warnings.append("COPY_MISSING_TEXT_TO_VIDEO_NOT_READY")
-    if copy_quality_status == "FALLBACK_COPY_DRAFT":
-        truth_warnings.append("COPY_QUALITY_FALLBACK_DRAFT")
-    if claim_gate == "CLAIM_REVIEW_REQUIRED":
-        truth_warnings.append("CLAIM_GATE_REVIEW_REQUIRED")
     if claim_gate == "CLAIM_BLOCKED":
         truth_warnings.append("CLAIM_GATE_BLOCKED")
+    
+    if str(product.get("mapping_review_status") or "").strip() == "BLOCKED":
+        truth_warnings.append("PRODUCT_MAPPING_REVIEW_BLOCKED")
+
+    truth_profile = product.get("product_truth")
+    if truth_profile:
+        recon = truth_profile.reconciliation
+        source_anchors = truth_profile.source_anchors
+        if recon.confidence_label == "NEEDS_REVIEW":
+            truth_warnings.append("PRODUCT_TRUTH_RECONCILIATION_FAILED_REVIEW_REQUIRED")
+        if "FLAG_SOURCE_ANCHOR_MISSING" in recon.contradiction_flags or source_anchors.source_anchor_status == "SOURCE_ANCHOR_MISSING":
+            truth_warnings.append("PRODUCT_TRUTH_SOURCE_ANCHOR_MISSING_KEYWORD_ONLY")
+        if "FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION" in recon.contradiction_flags:
+            truth_warnings.append("PRODUCT_TRUTH_CATEGORY_BOUNDARY_LOCK_VIOLATION")
+        if "FLAG_SOURCE_TAXONOMY_CONFLICT" in recon.contradiction_flags:
+            truth_warnings.append("PRODUCT_TRUTH_SOURCE_TAXONOMY_CONFLICT")
+        if recon.authority_decision == "KEYWORD_RULE":
+            truth_warnings.append("PRODUCT_TRUTH_AUTHORITY_KEYWORD_DERIVED_UNVERIFIED")
+
     if ugc_copy_signal:
         for warning in ugc_copy_signal.get("truth_warnings", []):
             _unique_append(truth_warnings, warning)
@@ -1124,6 +1180,18 @@ async def generate_product_asset_preview(
         errors=errors,
         provenance=provenance,
         truth_status=truth_status,
+        
+        # Truth Authority Block
+        product_truth_status=truth_status.get("product_truth_status", "UNVERIFIED"),
+        truth_authority_source=truth_status.get("truth_authority_source", "EPHEMERAL_DERIVED"),
+        source_anchor_status=truth_status.get("source_anchor_status", "MISSING"),
+        mapping_v2_status=truth_status.get("product_mapping_status", "NEEDS_REVIEW"),
+        mapping_confidence=truth_status.get("intelligence_confidence", "LOW"),
+        taxonomy_conflict=truth_status.get("bosmax_source_taxonomy_conflict", False),
+        taxonomy_conflict_reason=truth_status.get("bosmax_source_taxonomy_conflict_reason"),
+        scale_truth_status=truth_status.get("scale_truth_status", "SCALE_NOT_FOUND"),
+        image_analysis_status=truth_status.get("image_analysis_status", "NOT_CONFIGURED"),
+        
         dry_run_only=True,
         execution_allowed=False,
         image_generation_allowed=False,
