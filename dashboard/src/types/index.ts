@@ -414,6 +414,69 @@ export interface ProductCatalogResponse {
 	items: Product[];
 }
 
+export interface FastMossSalesMetricScopeEntry {
+	file_type_id: string;
+	metric_name: string;
+	source_column: string;
+	metric_scope: "PRODUCT" | "SHOP" | "AD" | "CREATOR" | "UNKNOWN";
+	truth_status: "VERIFIED_PRODUCT_LEVEL" | "SHOP_LEVEL_AGGREGATE" | "NOT_VERIFIED";
+	warning?: string | null;
+}
+
+export interface FastMossImportFileReport {
+	upload_field_key: string;
+	file_type_id?: string | null;
+	label?: string | null;
+	original_filename: string;
+	detected_by: string;
+	storage_path: string;
+	extension: string;
+	sheet_names: string[];
+	selected_sheet?: string | null;
+	headers: string[];
+	row_count: number;
+	required_columns_present: string[];
+	optional_columns_present: string[];
+	missing_required_columns: string[];
+	unknown_columns: string[];
+	parse_status: string;
+	parse_warnings: string[];
+	parse_errors: string[];
+	sales_metric_scope_report: FastMossSalesMetricScopeEntry[];
+	sample_records: Record<string, unknown>[];
+}
+
+export interface FastMossImportBatchReport {
+	batch_id: string;
+	import_status: string;
+	write_back_status: string;
+	latest_reference_only: boolean;
+	growth_analytics_enabled: boolean;
+	uploaded_files: number;
+	recognized_file_types: string[];
+	missing_expected_file_types: string[];
+	duplicate_file_types: string[];
+	row_counts_by_file_type: Record<string, number>;
+	column_validation_by_file_type: Record<
+		string,
+		{
+			required_columns_present: string[];
+			missing_required_columns: string[];
+			optional_columns_present: string[];
+			unknown_columns: string[];
+			parse_status: string;
+		}
+	>;
+	sales_metric_scope_report: FastMossSalesMetricScopeEntry[];
+	product_reference_sample: Record<string, unknown>[];
+	parse_warnings: string[];
+	parse_errors: string[];
+	ready_for_processing: boolean;
+	raw_file_storage_path: string;
+	provenance: string[];
+	files: FastMossImportFileReport[];
+}
+
 export interface ProductMapping {
 	product_id: string;
 	raw_product_title: string;

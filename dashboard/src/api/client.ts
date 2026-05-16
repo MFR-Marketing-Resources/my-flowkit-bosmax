@@ -20,6 +20,18 @@ export async function postAPI<T>(path: string, body: Record<string, unknown>): P
   return fetchAPI<T>(path, { method: 'POST', body: JSON.stringify(body) })
 }
 
+export async function postMultipartAPI<T>(path: string, body: FormData): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    body,
+  })
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.statusText)
+    throw new Error(`API ${res.status}: ${err}`)
+  }
+  return res.json()
+}
+
 export async function uploadImageBase64(base64: string, fileName: string): Promise<{ media_id: string }> {
   return postAPI('/api/flow/upload-image-base64', {
     image_base64: base64,
