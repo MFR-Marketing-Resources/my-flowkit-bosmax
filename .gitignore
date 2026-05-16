@@ -1,9 +1,12 @@
 __pycache__/
 *.pyc
 *.db
+*.sqlite
 *.db-shm
 *.db-wal
 *.db-journal
+agent_db.sqlite
+flow_agent.db
 .env
 output/
 youtube
@@ -18,3 +21,21 @@ GEMINI.md
 .venv/
 .pytest_cache/
 .local-agent/
+
+# Dependencies and Scratch
+node_modules/
+scratch/
+*.log
+
+# Artifacts and Payloads
+diag.json
+diagnostic*.json
+bosmax_search*.json
+smoke_body.json
+upload_body.json
+verify*.json
+f2v_job_body.json
+*_body.json
+test_image.jpg
+test_image_b64.txt
+data/products/images/*.jpg
