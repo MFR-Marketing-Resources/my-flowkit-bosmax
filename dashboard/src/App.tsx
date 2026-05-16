@@ -37,6 +37,7 @@ import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
 import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
 import ProductsSalesAnalyzerPage from "./pages/ProductsSalesAnalyzerPage";
+import ProductRegistrationPage from "./pages/ProductRegistrationPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import PromptPreviewPage from "./pages/PromptPreviewPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -63,6 +64,7 @@ const NAV_GROUPS = [
 				icon: Sparkles,
 				label: "Product Asset Generator",
 			},
+			{ to: "/product-registration", icon: ScrollText, label: "Smart Registration" },
 			{ to: "/products", icon: PackageSearch, label: "Products" },
 			{ to: "/projects", icon: FolderOpen, label: "Projects" },
 			{ to: "/gallery", icon: Film, label: "Gallery" },
@@ -341,6 +343,10 @@ function Layout() {
 						<Route
 							path="/product-asset-generator"
 							element={<ProductAssetGeneratorPage />}
+						/>
+						<Route
+							path="/product-registration"
+							element={<ProductRegistrationPage />}
 						/>
 						<Route path="/products" element={<ProductsSalesAnalyzerPage />} />
 						<Route path="/projects" element={<ProjectsPage />} />

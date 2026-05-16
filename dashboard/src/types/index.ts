@@ -1123,3 +1123,66 @@ export interface ProductAssetGeneratorResponse {
 	flow_execution_allowed: boolean;
 	batch_execution_allowed: boolean;
 }
+
+export interface ModeReadiness {
+	status: string;
+	detail: string;
+	missing_evidence: string[];
+}
+
+export interface ProductKnowledgeCompleteRequest {
+	product_name?: string;
+	product_knowledge_text?: string;
+	benefits_text?: string;
+	usage_text?: string;
+	target_customer_text?: string;
+	ingredients_text?: string;
+	warnings_text?: string;
+	price?: number;
+	commission_rate?: string;
+	size_or_volume?: string;
+	package_notes?: string;
+	source_lane?: string;
+	image_url?: string;
+	product_url?: string;
+	paste_anything_about_product?: string;
+}
+
+export interface ProductKnowledgeCompleteResponse {
+	completion_status: string;
+	input_quality_status: string;
+	declared_evidence_summary: string;
+	extracted_product_facts: Record<string, any>;
+	suggested_normalized_name?: string;
+	suggested_category?: string;
+	suggested_subcategory?: string;
+	suggested_type?: string;
+	suggested_bosmax_product_family?: string;
+	suggested_package_form?: string;
+	suggested_physical_state?: string;
+	suggested_product_scale_class?: string;
+	suggested_physics_class?: string;
+	suggested_handling_profile?: string;
+	suggested_recommended_grip?: string;
+	suggested_section_5_product_physics_prompt?: string;
+	suggested_copy_route?: string;
+	suggested_copy_formula?: string;
+	suggested_silo?: string;
+	suggested_trigger_id?: string;
+	suggested_target_customer?: string;
+	suggested_usage_summary?: string;
+	suggested_usp_list: string[];
+	suggested_hook_angles: string[];
+	suggested_cta_angles: string[];
+	claim_tokens: string[];
+	claim_gate: string;
+	claim_risk_level: string;
+	copy_safety_notes?: string;
+	missing_required_evidence: string[];
+	human_review_fields: string[];
+	blocked_fields: string[];
+	readiness_by_mode: Record<string, ModeReadiness>;
+	provenance: string[];
+	warnings: string[];
+	errors: string[];
+}
