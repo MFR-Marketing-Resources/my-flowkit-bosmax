@@ -1,4 +1,4 @@
-import { ProductKnowledgeCompleteResponse } from '../../types'
+import type { ProductKnowledgeCompleteResponse } from '../../types'
 
 interface Props {
   result: ProductKnowledgeCompleteResponse

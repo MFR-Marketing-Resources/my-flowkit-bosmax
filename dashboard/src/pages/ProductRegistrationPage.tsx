@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import ProductKnowledgeIntakeForm from '../components/product-registration/ProductKnowledgeIntakeForm'
 import ProductKnowledgeResultPanel from '../components/product-registration/ProductKnowledgeResultPanel'
-import { ProductKnowledgeCompleteResponse } from '../types'
+import type { ProductKnowledgeCompleteResponse } from '../types'
 
 export default function ProductRegistrationPage() {
   const [result, setResult] = useState<ProductKnowledgeCompleteResponse | null>(null)

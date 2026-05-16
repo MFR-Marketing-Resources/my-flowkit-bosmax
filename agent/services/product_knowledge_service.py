@@ -126,6 +126,7 @@ def _build_temp_product(request: ProductKnowledgeCompleteRequest, extracted_fact
         "benefits": request.benefits_text,
         "usage": request.usage_text,
         "warnings": request.warnings_text,
+        "target_customer": request.target_customer_text,
     }
 
 
