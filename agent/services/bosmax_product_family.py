@@ -214,6 +214,10 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
         # Simple 'lelaki' or 'men' or 'pants' are handled by fashion logic below.
         family = "MALE_HEALTH_SENSITIVE"
         reason = "Sensitive male-health keywords matched."
+    elif _contains_any(haystack, ["female health", "wanita", "perempuan", "perapat", "ketat", "keputihan", "miss v", "intim wanita", "kewanitaan", "jamu wanita"]):
+        # Strict Isolation: FEMALE_HEALTH_SENSITIVE requires specific sensitive health tokens.
+        family = "FEMALE_HEALTH_SENSITIVE"
+        reason = "Sensitive female-health keywords matched."
     elif _contains_any(haystack, ["toy", "mainan"]):
         family = "toy_play"
         reason = "Toy / play keywords matched."
