@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import ProductKnowledgeIntakeForm from '../components/product-registration/ProductKnowledgeIntakeForm'
 import ProductKnowledgeResultPanel from '../components/product-registration/ProductKnowledgeResultPanel'
+import AIFormPack from '../components/product-registration/AIFormPack'
 import type { ProductKnowledgeCompleteResponse } from '../types'
 
 export default function ProductRegistrationPage() {
@@ -27,6 +28,12 @@ export default function ProductRegistrationPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8">
         <div className="space-y-8">
+          <AIFormPack 
+            onComplete={handleComplete}
+            setIsProcessing={setIsProcessing}
+            isProcessing={isProcessing}
+          />
+
           <section className="rounded-3xl border border-slate-800 bg-slate-900/40 p-6 shadow-2xl backdrop-blur-sm">
             <div className="mb-6">
               <h3 className="text-lg font-semibold text-white">Product Knowledge Intake</h3>

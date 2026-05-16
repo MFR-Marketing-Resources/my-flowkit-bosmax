@@ -41,3 +41,16 @@ def test_product_knowledge_result_panel_contract():
     assert "claim_gate" in content
     assert "readiness_by_mode" in content
     assert "suggested_usp_list" in content
+
+
+def test_ai_form_pack_contract():
+    root = Path(__file__).parent.parent.parent
+    file_path = "dashboard/src/components/product-registration/AIFormPack.tsx"
+    assert (root / file_path).exists(), f"Missing UI file: {file_path}"
+    
+    content = (root / file_path).read_text(encoding="utf-8")
+    assert "Download Form Template" in content
+    assert "Copy AI Coaching Prompt" in content
+    assert "Parse & Run Smart Completion" in content
+    assert "/api/product-knowledge/import-ai-form" in content
+    assert "AIFormImportResponse" in content
