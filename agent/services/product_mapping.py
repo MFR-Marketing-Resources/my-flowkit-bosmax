@@ -258,7 +258,7 @@ def resolve_product_mapping(
         profile = _match_profile(base["category"], base["subcategory"], base["type"])
         matched = bool(base["category"] or base["subcategory"] or base["type"])
         base["mapping_confidence"] = "HIGH" if all([override_category, override_subcategory, override_type]) else "MEDIUM"
-        base["notes"].append("Applied advanced override for category taxonomy.")
+        base["notes"].append("Applied explicit override for category taxonomy.")
 
     if not matched:
         keyword_rule, conflict_notes = _match_keyword_rule(normalized_title)
@@ -270,7 +270,9 @@ def resolve_product_mapping(
             base["claim_risk_level"] = keyword_rule.get("claim_risk_level", "")
             profile = _match_profile(base["category"], base["subcategory"], base["type"])
             matched = True
-            base["mapping_confidence"] = "HIGH"
+            # Mapping V2: Keyword matches are MEDIUM by default unless corroborated by anchors or other signals.
+            # Here we set to MEDIUM; ProductIntelligenceService will upgrade to HIGH if corroborated.
+            base["mapping_confidence"] = "MEDIUM"
             base["notes"].append(f"Matched keyword rule: {keyword_rule['id']}")
             if conflict_notes:
                 base["notes"].extend(conflict_notes)

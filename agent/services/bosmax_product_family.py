@@ -87,10 +87,18 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
             "curtain",
             "pillow",
             "quilt",
+            "carpet",
+            "karpet",
+            "rug",
         ],
     ):
-        family = "HOME_TEXTILE"
-        reason = "Home textile keywords matched."
+        # Guardrail: HOME_TEXTILE must not hijack beauty powder/matte products.
+        # We check if 'matte' or 'powder' is present and if it's likely beauty.
+        if _contains_any(haystack, ["matte", "powder", "compact powder", "foundation"]) and not _contains_any(haystack, ["carpet", "rug", "towel"]):
+            pass # Let it fall through to beauty or unknown
+        else:
+            family = "HOME_TEXTILE"
+            reason = "Home textile keywords matched."
     elif _contains_any(
         haystack,
         [
@@ -186,16 +194,7 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
     ):
         family = "ACCESSORY_SMALL_ITEM"
         reason = "Accessory / small-item keywords matched."
-    elif _contains_any(
-        haystack,
-        [
-            "baby wipes",
-            "wet wipes",
-            "wet tissue",
-            "tisu basah",
-            "baby tissue",
-        ],
-    ):
+    elif _contains_any(haystack, ["baby wipes", "wet wipes", "wet tissue", "tisu basah", "baby tissue"]):
         family = "BABY_WIPES"
         reason = "Baby wipes keywords matched."
     elif _contains_any(haystack, ["diaper", "lampin", "pull ups", "baby diaper"]):
@@ -210,6 +209,11 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
     elif _contains_any(haystack, ["smartwatch", "wearable", "jam tangan"]):
         family = "electronics_wearable"
         reason = "Wearable-device keywords matched."
+    elif _contains_any(haystack, ["male health", "suami isteri", "batin", "tahan lama", "kuat lelaki"]):
+        # Strict Isolation: MALE_HEALTH_SENSITIVE requires specific sensitive health tokens.
+        # Simple 'lelaki' or 'men' or 'pants' are handled by fashion logic below.
+        family = "MALE_HEALTH_SENSITIVE"
+        reason = "Sensitive male-health keywords matched."
     elif _contains_any(haystack, ["toy", "mainan"]):
         family = "toy_play"
         reason = "Toy / play keywords matched."
