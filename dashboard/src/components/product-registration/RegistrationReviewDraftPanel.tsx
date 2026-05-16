@@ -107,7 +107,11 @@ export default function RegistrationReviewDraftPanel({ draft, onUpdate, onClear 
     draft.review_status !== 'COMMITTED' &&
     draft.claim_gate !== 'CLAIM_BLOCKED' &&
     approvals['normalized_name'] === true &&
-    draft.human_review_fields.every(f => approvals[f] === true)
+    draft.human_review_fields.every(f => {
+      // Skip validation for virtual fields (like 'physics_profile') that don't have a direct toggle
+      if (approvals[f] === undefined) return true
+      return approvals[f] === true
+    })
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -184,7 +188,10 @@ export default function RegistrationReviewDraftPanel({ draft, onUpdate, onClear 
             </h4>
             <div className="space-y-3">
               {Object.entries(draft.canonical_candidate_fields).map(([key, value]) => {
-                if (value === null || value === undefined || value === '') return null
+                const isReviewRequired = draft.human_review_fields.includes(key)
+                // Hide empty fields UNLESS they require human review
+                if ((value === null || value === undefined || value === '') && !isReviewRequired) return null
+                
                 const isApproved = approvals[key]
                 const isRejected = draft.rejection_checklist[key]
                 return (
