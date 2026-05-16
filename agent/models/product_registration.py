@@ -94,3 +94,21 @@ class RegistrationReviewDraft(BaseModel):
     provenance: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    
+    created_at: str | None = None
+    updated_at: str | None = None
+    rejection_checklist: dict[str, bool] = Field(default_factory=dict)
+
+
+class RegistrationReviewDraftFieldDecisions(BaseModel):
+    approved_fields: list[str] = Field(default_factory=list)
+    rejected_fields: list[str] = Field(default_factory=list)
+    edited_declared_evidence: dict[str, Any] = Field(default_factory=dict)
+    requested_more_evidence_fields: list[str] = Field(default_factory=list)
+
+
+class RegistrationCommitRequest(BaseModel):
+    draft_id: str
+    write_back_confirmed: bool = False
+    user_confirmation_phrase: str | None = None  # Expected: REGISTER_OWNED_PRODUCT
+    commit_reason: str | None = None
