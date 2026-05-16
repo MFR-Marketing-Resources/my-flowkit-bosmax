@@ -12,6 +12,10 @@ export async function fetchAPI<T>(path: string, options?: RequestInit): Promise<
   return res.json()
 }
 
+export async function getAPI<T>(path: string): Promise<T> {
+  return fetchAPI<T>(path, { method: 'GET' })
+}
+
 export async function patchAPI<T>(path: string, body: any): Promise<T> {
   return fetchAPI<T>(path, { method: 'PATCH', body: JSON.stringify(body) })
 }

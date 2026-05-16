@@ -1,15 +1,33 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import ProductKnowledgeIntakeForm from '../components/product-registration/ProductKnowledgeIntakeForm'
 import ProductKnowledgeResultPanel from '../components/product-registration/ProductKnowledgeResultPanel'
 import AIFormPack from '../components/product-registration/AIFormPack'
 import RegistrationReviewDraftPanel from '../components/product-registration/RegistrationReviewDraftPanel'
 import type { ProductKnowledgeCompleteResponse, RegistrationReviewDraft } from '../types'
-import { postAPI } from '../api/client'
+import { postAPI, getAPI } from '../api/client'
 
 export default function ProductRegistrationPage() {
   const [result, setResult] = useState<ProductKnowledgeCompleteResponse | null>(null)
   const [reviewDraft, setReviewDraft] = useState<RegistrationReviewDraft | null>(null)
+  const [savedDrafts, setSavedDrafts] = useState<RegistrationReviewDraft[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isLoadingDrafts, setIsLoadingDrafts] = useState(false)
+
+  useEffect(() => {
+    fetchDrafts()
+  }, [])
+
+  const fetchDrafts = async () => {
+    setIsLoadingDrafts(true)
+    try {
+      const drafts = await getAPI<RegistrationReviewDraft[]>('/api/product-registration/review-drafts')
+      setSavedDrafts(drafts)
+    } catch (err) {
+      console.error('Failed to fetch drafts:', err)
+    } finally {
+      setIsLoadingDrafts(false)
+    }
+  }
 
   const handleComplete = (data: ProductKnowledgeCompleteResponse) => {
     setResult(data)
@@ -21,7 +39,10 @@ export default function ProductRegistrationPage() {
     setIsProcessing(true)
     try {
       const draft = await postAPI<RegistrationReviewDraft>('/api/product-registration/review-draft', result)
-      setReviewDraft(draft)
+      // Persist the draft immediately
+      const saved = await postAPI<RegistrationReviewDraft>('/api/product-registration/review-drafts', draft)
+      setReviewDraft(saved)
+      fetchDrafts()
       // Smooth scroll to draft
       setTimeout(() => {
         document.getElementById('review-draft-section')?.scrollIntoView({ behavior: 'smooth' })
@@ -34,6 +55,14 @@ export default function ProductRegistrationPage() {
     }
   }
 
+  const handleSelectDraft = (draft: RegistrationReviewDraft) => {
+    setReviewDraft(draft)
+    setResult(null)
+    setTimeout(() => {
+      document.getElementById('review-draft-section')?.scrollIntoView({ behavior: 'smooth' })
+    }, 100)
+  }
+
   return (
     <div className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-8 overflow-y-auto">
       <div className="mb-6 flex flex-col gap-4 lg:mb-8 lg:flex-row lg:items-center lg:justify-between">
@@ -43,31 +72,33 @@ export default function ProductRegistrationPage() {
         </div>
         <div className="flex items-center gap-3">
            <div className="px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-bold uppercase tracking-widest">
-             Phase 3: Product Knowledge Intake
+             Phase 4: Controlled Registration Authority
            </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8">
         <div className="space-y-8 pb-20">
-          <AIFormPack 
-            onComplete={handleComplete}
-            setIsProcessing={setIsProcessing}
-            isProcessing={isProcessing}
-          />
-
           {!reviewDraft && (
-            <section className="rounded-3xl border border-slate-800 bg-slate-900/40 p-6 shadow-2xl backdrop-blur-sm">
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold text-white">Product Knowledge Intake</h3>
-                <p className="text-xs text-slate-500 mt-1">Paste any text, ingredients, or benefits. The system will extract facts and suggest a profile.</p>
-              </div>
-              <ProductKnowledgeIntakeForm 
-                onComplete={handleComplete} 
+            <>
+              <AIFormPack 
+                onComplete={handleComplete}
                 setIsProcessing={setIsProcessing}
                 isProcessing={isProcessing}
               />
-            </section>
+
+              <section className="rounded-3xl border border-slate-800 bg-slate-900/40 p-6 shadow-2xl backdrop-blur-sm">
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-white">Product Knowledge Intake</h3>
+                  <p className="text-xs text-slate-500 mt-1">Paste any text, ingredients, or benefits. The system will extract facts and suggest a profile.</p>
+                </div>
+                <ProductKnowledgeIntakeForm 
+                  onComplete={handleComplete} 
+                  setIsProcessing={setIsProcessing}
+                  isProcessing={isProcessing}
+                />
+              </section>
+            </>
           )}
 
           {result && !reviewDraft && (
@@ -100,7 +131,10 @@ export default function ProductRegistrationPage() {
               <div className="flex items-center justify-between">
                 <h3 className="text-xl font-bold text-white">Registration Review Queue</h3>
                 <button
-                  onClick={() => setReviewDraft(null)}
+                  onClick={() => {
+                    setReviewDraft(null)
+                    fetchDrafts()
+                  }}
                   className="text-xs font-bold text-slate-500 hover:text-white transition-colors uppercase tracking-widest"
                 >
                   Back to Intake
@@ -108,9 +142,14 @@ export default function ProductRegistrationPage() {
               </div>
               <RegistrationReviewDraftPanel 
                 draft={reviewDraft} 
+                onUpdate={(updated) => {
+                  setReviewDraft(updated)
+                  fetchDrafts()
+                }}
                 onClear={() => {
                   setReviewDraft(null)
                   setResult(null)
+                  fetchDrafts()
                 }}
               />
             </section>
@@ -118,44 +157,73 @@ export default function ProductRegistrationPage() {
         </div>
 
         <aside className="space-y-6">
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-500">Review Draft Queue</h4>
+              <button onClick={fetchDrafts} className="p-1 hover:text-white text-slate-500 transition-colors">
+                <svg className={`w-3.5 h-3.5 ${isLoadingDrafts ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+              {savedDrafts.length === 0 ? (
+                <p className="text-[10px] text-slate-600 italic">No active review drafts.</p>
+              ) : (
+                savedDrafts.map(d => (
+                  <button
+                    key={d.review_draft_id}
+                    onClick={() => handleSelectDraft(d)}
+                    className={`w-full p-3 rounded-xl border text-left transition-all group ${
+                      reviewDraft?.review_draft_id === d.review_draft_id 
+                        ? 'bg-indigo-500/10 border-indigo-500/40 ring-1 ring-indigo-500/20' 
+                        : 'bg-slate-800/30 border-slate-700/50 hover:border-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-200 truncate pr-2">{d.review_draft_id}</span>
+                      <span className={`text-[8px] font-bold px-1 rounded ${
+                        d.review_status === 'COMMITTED' ? 'bg-blue-500/20 text-blue-400' :
+                        d.review_status === 'BLOCKED' ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'
+                      }`}>
+                        {d.review_status}
+                      </span>
+                    </div>
+                    <div className="text-xs text-white font-medium truncate">
+                      {d.declared_evidence_fields.product_name || 'Unnamed Product'}
+                    </div>
+                    <div className="text-[8px] text-slate-500 mt-1 uppercase tracking-widest">
+                      {d.updated_at ? new Date(d.updated_at).toLocaleDateString() : 'Unknown date'}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          </section>
+
           <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
             <h4 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4">Governance & Authority</h4>
             <div className="space-y-4 text-xs">
               <div className="flex items-start gap-3">
                 <div className="mt-0.5 h-2 w-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
                 <p className="text-slate-400 leading-relaxed">
-                  <strong className="text-slate-200">Declared Evidence:</strong> All manual input is treated as "Declared" and requires Source Anchor verification for canonical truth.
+                  <strong className="text-slate-200">Controlled Storage:</strong> Review drafts are persisted locally. Progress is saved automatically during the review process.
                 </p>
               </div>
               <div className="flex items-start gap-3">
                 <div className="mt-0.5 h-2 w-2 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
                 <p className="text-slate-400 leading-relaxed">
-                  <strong className="text-slate-200">Review Queue:</strong> The system proposes canonical candidates. Operator review is mandatory before registration.
+                  <strong className="text-slate-200">Gated Commit:</strong> Registration requires approval of all review fields and a confirmation phrase to prevent unauthorized mutations.
                 </p>
               </div>
               <div className="flex items-start gap-3">
-                <div className="mt-0.5 h-2 w-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
+                <div className="mt-0.5 h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
                 <p className="text-slate-400 leading-relaxed">
-                  <strong className="text-slate-200">Claim Gate:</strong> Any health or medical keywords trigger <code className="bg-slate-800 px-1 rounded text-amber-300">CLAIM_REVIEW_REQUIRED</code>.
-                </p>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 h-2 w-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
-                <p className="text-slate-400 leading-relaxed">
-                  <strong className="text-slate-200">No DB Writes:</strong> This module is currently <strong className="text-red-400 italic">PREVIEW ONLY</strong>. Database mutation is disabled.
+                  <strong className="text-slate-200">Canonical Truth:</strong> Once committed, the product becomes part of the BOSMAX canonical dataset for asset generation.
                 </p>
               </div>
             </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-             <h4 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4">Intake Tips</h4>
-             <ul className="list-disc list-inside text-xs text-slate-400 space-y-2">
-               <li>Review the "Canonical Candidates" carefully.</li>
-               <li>Approve fields that match the evidence.</li>
-               <li>Missing evidence (e.g. Size/Volume) will block registration.</li>
-               <li>Risky claims will be flagged for manual rewrite.</li>
-             </ul>
           </div>
         </aside>
       </div>

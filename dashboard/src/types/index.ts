@@ -1201,7 +1201,7 @@ export interface AIFormImportResponse {
 
 export interface RegistrationReviewDraft {
   review_draft_id: string;
-  review_status: 'REVIEW_READY' | 'NEEDS_HUMAN_REVIEW' | 'BLOCKED';
+  review_status: 'REVIEW_READY' | 'NEEDS_HUMAN_REVIEW' | 'BLOCKED' | 'COMMITTED';
   source_lane: string;
   declared_evidence_fields: Record<string, any>;
   system_inferred_fields: Record<string, any>;
@@ -1225,8 +1225,36 @@ export interface RegistrationReviewDraft {
   write_back_status: string;
   user_actions: string[];
   approval_checklist: Record<string, boolean>;
+  rejection_checklist: Record<string, boolean>;
   readiness_by_mode: Record<string, ModeReadiness>;
   provenance: string[];
   warnings: string[];
   errors: string[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface RegistrationReviewDraftFieldDecisions {
+  approved_fields: string[];
+  rejected_fields: string[];
+  edited_declared_evidence: Record<string, any>;
+  requested_more_evidence_fields: string[];
+}
+
+export interface RegistrationCommitRequest {
+  draft_id: string;
+  write_back_confirmed: boolean;
+  user_confirmation_phrase: string;
+  commit_reason?: string;
+}
+
+export interface RegistrationCommitResponse {
+  commit_status: 'COMMITTED' | 'BLOCKED' | 'FAILED';
+  write_back_performed: boolean;
+  committed_product_id?: string;
+  committed_fields?: string[];
+  excluded_fields?: string[];
+  blocked_reasons?: string[];
+  errors?: string[];
+  provenance?: string[];
 }

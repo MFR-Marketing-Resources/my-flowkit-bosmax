@@ -78,6 +78,7 @@ OUTPUT_DIR = BASE_DIR / "output"
 SHARED_OUTPUT_DIR = OUTPUT_DIR / "_shared"
 TTS_TEMPLATES_DIR = SHARED_OUTPUT_DIR / "tts_templates"
 MUSIC_OUTPUT_DIR = SHARED_OUTPUT_DIR / "music"
+PRODUCT_REGISTRATION_DRAFTS_DIR = BASE_DIR / "data" / "product_registration" / "drafts"
 
 # ─── TTS (OmniVoice) ─────────────────────────────────────────
 TTS_MODEL = os.environ.get("TTS_MODEL", "k2-fsa/OmniVoice")
