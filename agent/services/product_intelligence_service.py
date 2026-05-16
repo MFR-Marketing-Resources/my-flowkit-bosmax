@@ -70,6 +70,24 @@ REVIEW_CLAIM_TOKENS = {
     "prestasi fizikal lelaki",
     "keyakinan kelelakian",
     "otot kelelakian",
+    "jamu perapat",
+    "jamu wanita",
+    "kewanitaan",
+    "miss v",
+    "faraj",
+    "vagina",
+    "keputihan",
+    "bau",
+    "gatal",
+    "rapat",
+    "ketat",
+    "anjal",
+    "postpartum",
+    "selepas bersalin",
+    "intimate",
+    "feminine hygiene",
+    "feminine care",
+    "perapat",
 }
 BLOCKED_CLAIM_TOKENS = {
     "cure",
@@ -79,6 +97,10 @@ BLOCKED_CLAIM_TOKENS = {
     "membesarkan",
     "memanjangkan",
     "mati pucuk",
+    "fertility claim",
+    "hormone claim",
+    "infection treatment",
+    "fungus treatment",
 }
 
 
@@ -325,6 +347,19 @@ FAMILY_PROFILES: dict[str, dict[str, str]] = {
         "physical_state": "solid_or_liquid_container",
         "product_scale_class": "small_handheld",
         "handling_profile": "bottle_box_label_visibility",
+        "scene_profile": "literal_product_demo_review_required",
+        "camera_profile": "literal_product_closeup_review_required",
+        "copy_route": "STEALTH",
+        "copy_formula": "STEALTH_DIALOGUE_SAFE",
+    },
+    "FEMALE_HEALTH_SENSITIVE": {
+        "group": "FEMALE_HEALTH_SENSITIVE",
+        "sub_group": "FEMALE_HEALTH_SENSITIVE",
+        "type_of_product": "SENSITIVE_FEMALE_HEALTH_PRODUCT",
+        "package_form": "small_bottle_tube_or_jar",
+        "physical_state": "solid_or_liquid_container",
+        "product_scale_class": "small_handheld",
+        "handling_profile": "bottle_jar_label_visibility",
         "scene_profile": "literal_product_demo_review_required",
         "camera_profile": "literal_product_closeup_review_required",
         "copy_route": "STEALTH",
@@ -1053,14 +1088,19 @@ def _resolve_claim_gate(
         }
     )
     warnings: list[str] = []
+    if matched_blocked:
+        warnings.append("claim_gate:blocked_tokens_present")
+        return "CLAIM_BLOCKED", matched_review + matched_blocked, warnings
     if family == "MALE_HEALTH_SENSITIVE":
         if "male_health_sensitive" not in matched_review:
             matched_review.append("male_health_sensitive")
         warnings.append("claim_gate:male_health_sensitive")
         return "CLAIM_REVIEW_REQUIRED", matched_review, warnings
-    if matched_blocked:
-        warnings.append("claim_gate:blocked_tokens_present")
-        return "CLAIM_BLOCKED", matched_review + matched_blocked, warnings
+    if family == "FEMALE_HEALTH_SENSITIVE":
+        if "female_health_sensitive" not in matched_review:
+            matched_review.append("female_health_sensitive")
+        warnings.append("claim_gate:female_health_sensitive")
+        return "CLAIM_REVIEW_REQUIRED", matched_review, warnings
     if matched_review:
         if any(token in matched_review for token in ["antibakteria", "antibaktiria", "antibacterial", "anti bacterial", "antibacteria"]):
             if "antibacterial_claim" not in matched_review:
@@ -1105,6 +1145,11 @@ def _resolve_family_from_title(product: dict[str, Any]) -> tuple[str | None, str
         # Strict Isolation: MALE_HEALTH_SENSITIVE requires specific sensitive health tokens.
         # 'tahan lama' alone in makeup/fashion context is not sensitive.
         return ("MALE_HEALTH_SENSITIVE", "title_evidence:male_health_sensitive_keywords")
+    if _contains_any(
+        haystack,
+        ["female health", "wanita", "perempuan", "perapat", "ketat", "keputihan", "miss v", "intim wanita", "kewanitaan", "jamu wanita"],
+    ):
+        return ("FEMALE_HEALTH_SENSITIVE", "title_evidence:female_health_sensitive_keywords")
     if _contains_any(
         haystack,
         ["supplement", "capsule", "vitamin", "wellness supplement", "beauty supplement"],
@@ -1224,6 +1269,8 @@ def _resolve_family_from_taxonomy(product: dict[str, Any]) -> tuple[str, str]:
         return "BABY_DIAPER", "taxonomy_fallback:baby_diaper"
     if "male health" in taxonomy:
         return "MALE_HEALTH_SENSITIVE", "taxonomy_fallback:male_health_sensitive"
+    if "female health" in taxonomy or "feminine care" in taxonomy:
+        return "FEMALE_HEALTH_SENSITIVE", "taxonomy_fallback:female_health_sensitive"
     if any(token in taxonomy for token in ["food & beverage", "food & beverages", "kitchenware"]):
         return "food_packaged", "taxonomy_fallback:food"
     if any(token in taxonomy for token in ["health", "supplements"]):
