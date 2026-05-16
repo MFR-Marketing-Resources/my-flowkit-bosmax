@@ -49,7 +49,11 @@ class RegistrationCommitService:
             blocked_reasons.append("PRODUCT_NAME_NOT_APPROVED")
 
         # Human Review Fields Unresolved
-        unresolved_fields = [f for f in draft.human_review_fields if not draft.approval_checklist.get(f)]
+        # Only check fields that are actually candidates (virtual fields like 'physics_profile' are skipped)
+        unresolved_fields = [
+            f for f in draft.human_review_fields 
+            if f in draft.canonical_candidate_fields and not draft.approval_checklist.get(f)
+        ]
         if unresolved_fields:
             blocked_reasons.append(f"UNRESOLVED_REVIEW_FIELDS: {', '.join(unresolved_fields)}")
 
