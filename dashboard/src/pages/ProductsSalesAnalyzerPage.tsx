@@ -1136,7 +1136,10 @@ export default function ProductsSalesAnalyzerPage() {
             )}
 
             <div className="border-t border-slate-800 my-8 pt-8">
-              <Panel title="Manual Product Intake" subtitle="Inject non-FastMoss products directly using the identical intelligence schema.">
+              <Panel title="Legacy Manual Intake / Admin Quick Patch" subtitle="Maintenance-only patch lane. Use Smart Registration for canonical product registration.">
+                <div className="mb-4 rounded border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-amber-200">
+                  Use Smart Registration for canonical product registration. This legacy panel is maintenance-only and may bypass the full review workflow.
+                </div>
                 <form onSubmit={handleManualSubmit} className="space-y-4">
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                      <div>
@@ -1304,7 +1307,10 @@ export default function ProductsSalesAnalyzerPage() {
               ) : null}
             </Panel>
 
-            <Panel title="TikTok Shop Import" subtitle="Register a draft for maintenance.">
+            <Panel title="TikTok Shop Import" subtitle="Maintenance-only draft link lane. Prefer Smart Registration TikTok intake.">
+              <div className="mb-3 rounded border border-sky-500/20 bg-sky-500/10 p-3 text-[10px] leading-relaxed text-sky-200">
+                Use Smart Registration TikTok Intake for governed review-draft flow. This maintenance panel only creates a draft with NOT_IMPLEMENTED extraction when scraping is unavailable.
+              </div>
               <form onSubmit={handleTikTokSubmit} className="space-y-3">
                 <div>
                   <label className="block text-[10px] mb-1 opacity-70">Shop URL</label>

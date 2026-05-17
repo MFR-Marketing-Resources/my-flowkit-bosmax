@@ -31,6 +31,16 @@ def test_product_knowledge_intake_form_contract():
     assert "/api/product-knowledge/complete" in content
     assert "product_name" in content
     assert "product_knowledge_text" in content
+    assert "Image URL" in content
+    assert "Upload Product Image" in content
+    assert "Product URL / Source URL" in content
+    assert "TikTok Shop Product / Shop URL" in content
+    assert "Commission Amount" in content
+    assert "Commission Rate" in content
+    assert "Currency" in content
+    assert "Package Notes" in content
+    assert "FASTMOSS_REFERENCE" in content
+    assert "TIKTOKSHOP_DRAFT" in content
     assert "Run Smart Completion" in content
 
 def test_product_knowledge_result_panel_contract():
@@ -41,6 +51,9 @@ def test_product_knowledge_result_panel_contract():
     assert "claim_gate" in content
     assert "readiness_by_mode" in content
     assert "suggested_usp_list" in content
+    assert "Image Analysis Status" in content
+    assert "Image Provider" in content
+    assert "Extraction Status" in content
 
 
 def test_ai_form_pack_contract():
@@ -70,3 +83,4 @@ def test_product_registration_review_draft_ui_contract():
     assert "Create Review Draft" in content
     assert "RegistrationReviewDraftPanel" in content
     assert "review-draft-section" in content
+    assert "Smart Product Registration" in content

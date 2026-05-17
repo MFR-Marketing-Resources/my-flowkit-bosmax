@@ -1,4 +1,6 @@
 import logging
+import shutil
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent.db import crud
@@ -7,6 +9,7 @@ from agent.models.product_registration import (
     RegistrationCommitRequest
 )
 from agent.services.registration_draft_storage_service import RegistrationDraftStorageService
+from agent.utils.paths import product_image_path
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +120,7 @@ class RegistrationCommitService:
             "raw_product_title": raw_product_title,
             "product_display_name": draft.canonical_candidate_fields.get("normalized_name"),
             "product_short_name": draft.canonical_candidate_fields.get("normalized_name")[:80] if draft.canonical_candidate_fields.get("normalized_name") else "Unnamed",
+            "source_url": draft.declared_evidence_fields.get("source_url") or draft.declared_evidence_fields.get("product_url") or draft.declared_evidence_fields.get("tiktok_product_url") or draft.declared_evidence_fields.get("tiktok_shop_url"),
             "category": draft.canonical_candidate_fields.get("category"),
             "subcategory": draft.canonical_candidate_fields.get("subcategory"),
             "type": draft.canonical_candidate_fields.get("type"),
@@ -128,6 +132,13 @@ class RegistrationCommitService:
             "product_scale": draft.canonical_candidate_fields.get("product_scale_class"),
             "recommended_grip": draft.canonical_candidate_fields.get("recommended_grip"),
             "section_5_product_physics_prompt": draft.canonical_candidate_fields.get("section_5_product_physics_prompt"),
+            "price": draft.declared_evidence_fields.get("price"),
+            "currency": draft.declared_evidence_fields.get("currency"),
+            "commission_amount": draft.declared_evidence_fields.get("commission_amount"),
+            "commission_rate": draft.declared_evidence_fields.get("commission_rate"),
+            "commission": draft.declared_evidence_fields.get("commission_rate"),
+            "image_url": draft.declared_evidence_fields.get("image_url"),
+            "tiktok_product_url": draft.declared_evidence_fields.get("tiktok_product_url") or draft.declared_evidence_fields.get("tiktok_shop_url"),
             "mapping_status": "APPROVED",
             "mapping_review_status": "REVIEWED_OWNED_COMMIT",
         }
@@ -161,6 +172,20 @@ class RegistrationCommitService:
             product = await crud.create_product(
                 **final_fields
             )
+            local_image_path = str(draft.declared_evidence_fields.get("local_image_path") or "").strip()
+            if local_image_path:
+                source_path = Path(local_image_path)
+                if source_path.exists():
+                    ext = source_path.suffix.lstrip(".").lower() or "jpg"
+                    dest = product_image_path(product["id"], ext=ext)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(source_path, dest)
+                    await crud.update_product(
+                        product["id"],
+                        local_image_path=str(dest),
+                        asset_status="DOWNLOADED",
+                        image_asset_status="DOWNLOADED",
+                    )
             
             # Update Draft Status
             draft.write_back_performed = True

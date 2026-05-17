@@ -180,6 +180,24 @@ export default function RegistrationReviewDraftPanel({ draft, onUpdate, onClear 
             </div>
           </section>
 
+          <section className="p-6 rounded-2xl bg-slate-900/50 border border-slate-800">
+            <h4 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+              System Inferred Fields
+            </h4>
+            <div className="space-y-3">
+              {Object.entries(draft.system_inferred_fields).map(([key, value]) => (
+                <div key={key} className="flex justify-between items-start gap-4 p-3 rounded-lg bg-slate-800/30 border border-slate-700/50">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0 mt-1">{key.replace(/_/g, ' ')}</span>
+                  <span className="text-xs text-slate-300 text-right line-clamp-3">{Array.isArray(value) ? value.join(', ') : String(value)}</span>
+                </div>
+              ))}
+              {Object.keys(draft.system_inferred_fields).length === 0 && (
+                <div className="text-xs text-slate-500">No inferred fields captured.</div>
+              )}
+            </div>
+          </section>
+
           {/* Canonical Candidates */}
           <section className="p-6 rounded-2xl bg-slate-900/50 border border-slate-800">
             <h4 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">

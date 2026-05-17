@@ -493,6 +493,19 @@ def create_registration_review_draft(
     # 6. Map Inferred Fields
     # For now, inferred fields are just candidates that didn't exist in declared evidence
     system_inferred = {k: v for k, v in candidates.items() if k not in declared_evidence}
+    system_inferred.update(
+        {
+            "image_analysis_status": completion.image_analysis_status,
+            "image_analysis_provider": completion.image_analysis_provider,
+            "image_analysis_visual_confidence": completion.image_analysis_visual_confidence,
+            "image_analysis_warnings": completion.image_analysis_warnings,
+            "image_analysis_detected_package": completion.image_analysis_detected_package,
+            "image_analysis_detected_text": completion.image_analysis_detected_text,
+            "image_analysis_image_url": completion.image_analysis_image_url,
+            "image_analysis_local_image_path": completion.image_analysis_local_image_path,
+            "extraction_status": completion.extraction_status,
+        }
+    )
 
     return RegistrationReviewDraft(
         review_draft_id=draft_id,

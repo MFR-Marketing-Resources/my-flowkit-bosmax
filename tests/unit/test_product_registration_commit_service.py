@@ -13,6 +13,7 @@ def mock_crud():
     with patch("agent.services.registration_commit_service.crud") as mock:
         mock.create_product = AsyncMock(return_value={"id": "prod-123"})
         mock.list_products = AsyncMock(return_value=[])
+        mock.update_product = AsyncMock(return_value={"id": "prod-123"})
         yield mock
 
 @pytest.mark.asyncio
@@ -53,11 +54,24 @@ async def test_commit_allows_partial_safe_fields(mock_storage, mock_crud):
     assert "category" in result["excluded_fields"]
 
 @pytest.mark.asyncio
-async def test_successful_commit(mock_storage, mock_crud):
+async def test_successful_commit(mock_storage, mock_crud, tmp_path):
+    image_path = tmp_path / "draft-product.jpg"
+    image_path.write_bytes(b"draft-image")
+
     mock_storage.get_draft.return_value = RegistrationReviewDraft(
         review_draft_id="d3", review_status="READY", source_lane="MANUAL",
         approval_checklist={"normalized_name": True},
-        declared_evidence_fields={"product_name": "Test Product", "size_or_volume": "5 ML"},
+        declared_evidence_fields={
+            "product_name": "Test Product",
+            "size_or_volume": "5 ML",
+            "source_url": "https://example.com/product",
+            "image_url": "https://example.com/product.jpg",
+            "local_image_path": str(image_path),
+            "price": 15.0,
+            "currency": "MYR",
+            "commission_amount": 1.5,
+            "commission_rate": "10%",
+        },
         canonical_candidate_fields={"normalized_name": "Test Product 5 ML", "size_or_volume": "5 ML"}
     )
     
@@ -73,6 +87,10 @@ async def test_successful_commit(mock_storage, mock_crud):
     assert result["committed_product_id"] == "prod-123"
     mock_crud.create_product.assert_called_once()
     assert mock_crud.create_product.await_args.kwargs["raw_product_title"] == "Test Product 5 ML"
+    assert mock_crud.create_product.await_args.kwargs["source_url"] == "https://example.com/product"
+    assert mock_crud.create_product.await_args.kwargs["image_url"] == "https://example.com/product.jpg"
+    assert mock_crud.create_product.await_args.kwargs["price"] == 15.0
+    assert mock_crud.update_product.await_count == 1
 
 @pytest.mark.asyncio
 async def test_commit_blocked_duplicate_owned_product(mock_storage, mock_crud):

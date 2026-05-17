@@ -7,7 +7,11 @@ def test_product_knowledge_complete_api():
         "product_name": "Bosmax Liquid Detergent",
         "product_knowledge_text": "Sabun dobi wangi 1.2kg botol biru",
         "price": 12.9,
+        "currency": "MYR",
+        "commission_amount": 1.29,
         "commission_rate": "10%",
+        "image_url": "https://example.com/detergent.jpg",
+        "product_url": "https://example.com/detergent",
         "source_lane": "MANUAL"
     })
     
@@ -17,3 +21,4 @@ def test_product_knowledge_complete_api():
     assert data["suggested_bosmax_product_family"] == "LAUNDRY_DETERGENT_LIQUID_REFILL"
     assert data["suggested_physics_class"] == "LAUNDRY_LIQUID_REFILL"
     assert "1.2kg" in data["extracted_product_facts"]["size_or_volume"]
+    assert data["image_analysis_status"] == "VISION_PROVIDER_NOT_CONFIGURED"
