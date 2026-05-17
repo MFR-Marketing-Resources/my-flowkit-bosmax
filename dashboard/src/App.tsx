@@ -29,6 +29,7 @@ import {
 	useWebSocketContext,
 	WebSocketProvider,
 } from "./contexts/WebSocketContext";
+import ApprovedPackagesPage from "./pages/ApprovedPackagesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
 import BatchesPage from "./pages/BatchesPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -36,8 +37,8 @@ import GalleryPage from "./pages/GalleryPage";
 import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
 import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
-import ProductsSalesAnalyzerPage from "./pages/ProductsSalesAnalyzerPage";
 import ProductRegistrationPage from "./pages/ProductRegistrationPage";
+import ProductsSalesAnalyzerPage from "./pages/ProductsSalesAnalyzerPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import PromptPreviewPage from "./pages/PromptPreviewPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -52,6 +53,11 @@ const NAV_GROUPS = [
 			{ to: "/operator/f2v", icon: Sparkles, label: "Frames (F2V)" },
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
+			{
+				to: "/approved-packages",
+				icon: PackageSearch,
+				label: "Approved Packages",
+			},
 			{ to: "/batches", icon: Briefcase, label: "Batch Manager" },
 		],
 	},
@@ -64,7 +70,11 @@ const NAV_GROUPS = [
 				icon: Sparkles,
 				label: "Product Asset Generator",
 			},
-			{ to: "/product-registration", icon: ScrollText, label: "Smart Registration" },
+			{
+				to: "/product-registration",
+				icon: ScrollText,
+				label: "Smart Registration",
+			},
 			{ to: "/products", icon: PackageSearch, label: "Products" },
 			{ to: "/projects", icon: FolderOpen, label: "Projects" },
 			{ to: "/gallery", icon: Film, label: "Gallery" },
@@ -145,7 +155,7 @@ function Layout() {
 		if (isCompactNav) {
 			setNavOpen(false);
 		}
-	}, [isCompactNav, location.pathname]);
+	}, [isCompactNav]);
 
 	useEffect(() => {
 		if (!isPortalMode) {
@@ -337,6 +347,10 @@ function Layout() {
 						<Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
 						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
 						<Route path="/operator/img" element={<OperatorPage mode="IMG" />} />
+						<Route
+							path="/approved-packages"
+							element={<ApprovedPackagesPage />}
+						/>
 
 						<Route path="/batches" element={<BatchesPage />} />
 						<Route path="/asset-registry" element={<AssetRegistryPage />} />

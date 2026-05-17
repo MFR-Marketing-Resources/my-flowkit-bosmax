@@ -1,0 +1,32 @@
+version: 1
+domains:
+  - name: workspace
+    status: IN_PROGRESS
+    owned_paths:
+      - docs/MODULE_STATUS.yaml
+      - .dependency-cruiser.cjs
+      - scripts/mandor-check.ts
+      - agent/api/flow.py
+      - agent/api/products.py
+      - agent/api/workspace_packages.py
+      - agent/db/crud.py
+      - agent/db/schema.py
+      - agent/main.py
+      - agent/services/approved_product_package_service.py
+      - agent/services/workspace_execution_package_service.py
+      - agent/services/batch_planner.py
+      - dashboard/src/App.tsx
+      - dashboard/src/api/workspacePackages.ts
+      - dashboard/src/pages/ApprovedPackagesPage.tsx
+      - dashboard/src/pages/OperatorPage.tsx
+      - dashboard/src/components/workspace/T2VModule.tsx
+      - dashboard/src/components/workspace/F2VModule.tsx
+      - dashboard/src/components/workspace/I2VModule.tsx
+      - dashboard/src/components/workspace/IMGModule.tsx
+      - dashboard/src/types/index.ts
+      - tests/unit/test_approved_product_package_service.py
+      - tests/unit/test_workspace_execution_package_service.py
+      - tests/api/test_approved_product_package_api.py
+      - tests/api/test_workspace_execution_package_api.py
+      - tests/api/test_flow_request_lineage_payload_api.py
+      - tests/ui/test_workspace_package_bridge_ui_contract.py

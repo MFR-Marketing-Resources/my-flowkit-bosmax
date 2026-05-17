@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package"})
 
 
 def _validate_table(table: str) -> None:
@@ -32,8 +32,9 @@ _COLUMNS = {
               "trim_start", "trim_end", "duration", "display_order", "source", "transition_prompt", "narrator_text", "updated_at"},
     "request": {"status", "request_id", "media_id", "output_url", "error_message", "retry_count", "next_retry_at", "source_media_id", "updated_at", "automation_report"},
     "product": {"source", "source_url", "brand", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price", "currency", "commission_amount", "commission_rate", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "image_asset_status", "image_failure_detail", "product_type", "product_type_id", "silo", "trigger_id", "formula", "copywriting_angle", "claim_risk_level", "mode_recommendations", "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint", "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields", "prompt_readiness_status", "prompt_missing_fields", "claim_safe_copy_status", "claim_safe_copy_payload", "claim_safe_copy_updated_at", "production_prompt_approval_status", "production_prompt_approved_modes", "production_prompt_approved_at", "production_prompt_approval_note", "production_prompt_approval_provenance", "lifecycle_status", "archived_at", "archived_reason", "archived_by", "unarchived_at", "unarchived_reason", "lifecycle_provenance", "asset_status", "media_id", "local_image_path", "updated_at"},
-    "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message"},
+    "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message"},
     "request_stage_event": {"request_id", "timestamp", "stage", "status", "message", "source"},
+    "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
 }
 
 
@@ -473,6 +474,109 @@ async def list_request_telemetry(project_id: str = None, video_id: str = None, l
     if video_id:
         q += " AND video_id=?"; params.append(video_id)
     q += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def create_or_replace_workspace_execution_package(
+    workspace_execution_package_id: str,
+    *,
+    product_id: str,
+    mode: str,
+    duration_seconds: int,
+    aspect_ratio: str,
+    model: str,
+    manual_override: bool,
+    prompt_text: str,
+    prompt_fingerprint: str,
+    prompt_package_snapshot_id: str,
+    asset_slots: str,
+    resolved_assets: str,
+    readiness: str,
+    execution_allowed: bool,
+    production_generation_allowed: bool,
+    manual_fallback: str,
+    blockers: str,
+    request_lineage_payload: str,
+    source_of_truth_notes: str,
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """
+            INSERT INTO workspace_execution_package (
+                workspace_execution_package_id, product_id, mode, duration_seconds, aspect_ratio, model,
+                manual_override, prompt_text, prompt_fingerprint, prompt_package_snapshot_id, asset_slots,
+                resolved_assets, readiness, execution_allowed, production_generation_allowed, manual_fallback,
+                blockers, request_lineage_payload, source_of_truth_notes, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(workspace_execution_package_id) DO UPDATE SET
+                product_id=excluded.product_id,
+                mode=excluded.mode,
+                duration_seconds=excluded.duration_seconds,
+                aspect_ratio=excluded.aspect_ratio,
+                model=excluded.model,
+                manual_override=excluded.manual_override,
+                prompt_text=excluded.prompt_text,
+                prompt_fingerprint=excluded.prompt_fingerprint,
+                prompt_package_snapshot_id=excluded.prompt_package_snapshot_id,
+                asset_slots=excluded.asset_slots,
+                resolved_assets=excluded.resolved_assets,
+                readiness=excluded.readiness,
+                execution_allowed=excluded.execution_allowed,
+                production_generation_allowed=excluded.production_generation_allowed,
+                manual_fallback=excluded.manual_fallback,
+                blockers=excluded.blockers,
+                request_lineage_payload=excluded.request_lineage_payload,
+                source_of_truth_notes=excluded.source_of_truth_notes,
+                updated_at=excluded.updated_at
+            """,
+            (
+                workspace_execution_package_id,
+                product_id,
+                mode,
+                duration_seconds,
+                aspect_ratio,
+                model,
+                1 if manual_override else 0,
+                prompt_text,
+                prompt_fingerprint,
+                prompt_package_snapshot_id,
+                asset_slots,
+                resolved_assets,
+                readiness,
+                1 if execution_allowed else 0,
+                1 if production_generation_allowed else 0,
+                manual_fallback,
+                blockers,
+                request_lineage_payload,
+                source_of_truth_notes,
+                now,
+                now,
+            ),
+        )
+        await db.commit()
+    return await _get_with_db(db, "workspace_execution_package", "workspace_execution_package_id", workspace_execution_package_id)
+
+
+async def list_workspace_execution_packages(
+    *,
+    product_id: str | None = None,
+    mode: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM workspace_execution_package WHERE 1=1"
+    params: list = []
+    if product_id:
+        q += " AND product_id=?"
+        params.append(product_id)
+    if mode:
+        q += " AND mode=?"
+        params.append(mode)
+    q += " ORDER BY updated_at DESC LIMIT ?"
     params.append(limit)
     cur = await db.execute(q, params)
     return [dict(r) for r in await cur.fetchall()]

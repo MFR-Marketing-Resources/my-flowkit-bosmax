@@ -3,6 +3,7 @@ import uuid
 import json
 from typing import Any
 from agent.db import crud
+from agent.services.approved_product_package_service import get_approved_product_package, normalize_mode
 from agent.services.product_creative_brief import get_creative_brief
 from agent.services.variation_matrix import generate_variation_plan
 from agent.services.prompt_compiler_9_section import compile_9_section_prompt
@@ -28,6 +29,13 @@ async def create_batch_draft(batch_data: dict[str, Any]) -> dict[str, Any]:
 
     # 3. Generate Variations
     raw_variants = await generate_variation_plan(product_id, quantity=quantity)
+    approved_package_snapshot = None
+    resolved_mode = normalize_mode(batch_data.get("mode"))
+    if resolved_mode in {"T2V", "F2V", "I2V", "IMG"}:
+        try:
+            approved_package_snapshot = await get_approved_product_package(product_id, resolved_mode)
+        except Exception as exc:
+            logger.warning("Batch package snapshot unavailable for %s %s: %s", product_id, resolved_mode, exc)
     
     # 4. Compile Prompts & Finalize Variants
     final_variants = []
@@ -84,13 +92,18 @@ async def create_batch_draft(batch_data: dict[str, Any]) -> dict[str, Any]:
                     variant_id, batch_id, product_id, brief_id, variation_index,
                     hook_angle, scene_context, camera_route, copywriting_formula,
                     overlay_strategy, cta_style, google_flow_mode, asset_strategy,
-                    diversity_fingerprint, prompt_9_section, readiness, blocked_reason, queue_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    diversity_fingerprint, prompt_9_section, prompt_package_snapshot_id,
+                    prompt_package_snapshot, prompt_fingerprint, readiness, blocked_reason, queue_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 v["variant_id"], batch_id, product_id, v["brief_id"], v["variation_index"],
                 v["hook_angle"], v["scene_context"], v["camera_route"], v["copywriting_formula"],
                 v["overlay_strategy"], v["cta_style"], v["google_flow_mode"], v["asset_strategy"],
-                v["diversity_fingerprint"], v["prompt_9_section"], v["readiness"], 
+                v["diversity_fingerprint"], v["prompt_9_section"],
+                approved_package_snapshot.get("prompt_package_snapshot_id") if approved_package_snapshot else None,
+                json.dumps(approved_package_snapshot) if approved_package_snapshot else None,
+                approved_package_snapshot.get("prompt_fingerprint") if approved_package_snapshot else None,
+                v["readiness"], 
                 json.dumps(v.get("blocked_reason", [])), "READY"
             ))
         
