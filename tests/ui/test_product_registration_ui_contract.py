@@ -39,6 +39,7 @@ def test_product_knowledge_intake_form_contract():
     assert "Commission Rate" in content
     assert "Currency" in content
     assert "Package Notes" in content
+    assert "Media, Source & Commercial Evidence" in content
     assert "FASTMOSS_REFERENCE" in content
     assert "TIKTOKSHOP_DRAFT" in content
     assert "Run Smart Completion" in content
@@ -72,6 +73,10 @@ def test_ai_form_pack_contract():
     assert "Error Code:" in content
     assert "Parser Strategy" in content
     assert "Create Review Draft" in Path(root / "dashboard/src/pages/ProductRegistrationPage.tsx").read_text(encoding="utf-8")
+    service_content = (root / "agent/services/product_knowledge_service.py").read_text(encoding="utf-8")
+    assert '"image_url": "UNKNOWN"' in service_content
+    assert '"tiktok_shop_url": "UNKNOWN"' in service_content
+    assert "commission amount" in service_content.lower()
 
 def test_product_registration_review_draft_ui_contract():
     root = Path(__file__).parent.parent.parent

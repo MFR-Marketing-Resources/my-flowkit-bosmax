@@ -140,87 +140,98 @@ export default function ProductKnowledgeIntakeForm({ onComplete, setIsProcessing
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="space-y-2">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Commission Amount</label>
-          <input
-            type="number"
-            step="0.01"
-            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
-            placeholder="0.00"
-            value={formData.commission_amount ?? ''}
-            onChange={e => setFormData({ ...formData, commission_amount: e.target.value ? parseFloat(e.target.value) : undefined })}
-          />
+      <section className="space-y-4 rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-5">
+        <div className="space-y-1">
+          <h4 className="text-[11px] font-bold uppercase tracking-[0.24em] text-indigo-300">
+            Media, Source & Commercial Evidence
+          </h4>
+          <p className="text-xs text-slate-400">
+            Capture URLs, pricing, commission, packaging, and product image evidence here. Missing facts are allowed, but this section should stay visible and explicit during intake.
+          </p>
         </div>
-        <div className="space-y-2">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Commission Rate</label>
-          <input
-            type="text"
-            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
-            placeholder="e.g. 15%"
-            value={formData.commission_rate || ''}
-            onChange={e => setFormData({ ...formData, commission_rate: e.target.value })}
-          />
-        </div>
-        <div className="space-y-2 lg:col-span-2">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Package Notes</label>
-          <input
-            type="text"
-            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
-            placeholder="e.g. Trial bottle, dropper cap, roll on"
-            value={formData.package_notes || ''}
-            onChange={e => setFormData({ ...formData, package_notes: e.target.value })}
-          />
-        </div>
-      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="space-y-2">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Product URL / Source URL</label>
-          <input
-            type="url"
-            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
-            placeholder="https://"
-            value={formData.product_url || formData.source_url || ''}
-            onChange={e => setFormData({ ...formData, product_url: e.target.value, source_url: e.target.value })}
-          />
-        </div>
-        <div className="space-y-2">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">TikTok Shop Product / Shop URL</label>
-          <input
-            type="url"
-            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
-            placeholder="https://shop.tiktok.com/..."
-            value={formData.tiktok_product_url || formData.tiktok_shop_url || ''}
-            onChange={e => setFormData({ ...formData, tiktok_product_url: e.target.value, tiktok_shop_url: e.target.value })}
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="space-y-2">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Image URL</label>
-          <input
-            type="url"
-            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
-            placeholder="https://example.com/product.jpg"
-            value={formData.image_url || ''}
-            onChange={e => setFormData({ ...formData, image_url: e.target.value })}
-          />
-        </div>
-        <div className="space-y-2">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Upload Product Image</label>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={handleImageUpload}
-            className="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-500/10 file:text-indigo-400 hover:file:bg-indigo-500/20 transition-all cursor-pointer"
-          />
-          <div className="text-[11px] text-slate-500">
-            {selectedImageName ? `Selected image: ${selectedImageName}` : 'Optional. Stored as draft evidence until controlled commit.'}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Commission Amount</label>
+            <input
+              type="number"
+              step="0.01"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+              placeholder="0.00"
+              value={formData.commission_amount ?? ''}
+              onChange={e => setFormData({ ...formData, commission_amount: e.target.value ? parseFloat(e.target.value) : undefined })}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Commission Rate</label>
+            <input
+              type="text"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+              placeholder="e.g. 15%"
+              value={formData.commission_rate || ''}
+              onChange={e => setFormData({ ...formData, commission_rate: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2 lg:col-span-2">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Package Notes</label>
+            <input
+              type="text"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+              placeholder="e.g. Trial bottle, dropper cap, roll on"
+              value={formData.package_notes || ''}
+              onChange={e => setFormData({ ...formData, package_notes: e.target.value })}
+            />
           </div>
         </div>
-      </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Product URL / Source URL</label>
+            <input
+              type="url"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+              placeholder="https://"
+              value={formData.product_url || formData.source_url || ''}
+              onChange={e => setFormData({ ...formData, product_url: e.target.value, source_url: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">TikTok Shop Product / Shop URL</label>
+            <input
+              type="url"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+              placeholder="https://shop.tiktok.com/..."
+              value={formData.tiktok_product_url || formData.tiktok_shop_url || ''}
+              onChange={e => setFormData({ ...formData, tiktok_product_url: e.target.value, tiktok_shop_url: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Image URL</label>
+            <input
+              type="url"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+              placeholder="https://example.com/product.jpg"
+              value={formData.image_url || ''}
+              onChange={e => setFormData({ ...formData, image_url: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Upload Product Image</label>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleImageUpload}
+              className="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-500/10 file:text-indigo-400 hover:file:bg-indigo-500/20 transition-all cursor-pointer"
+            />
+            <div className="text-[11px] text-slate-500">
+              {selectedImageName ? `Selected image: ${selectedImageName}` : 'Optional. Stored as draft evidence until controlled commit.'}
+            </div>
+          </div>
+        </div>
+      </section>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-2">

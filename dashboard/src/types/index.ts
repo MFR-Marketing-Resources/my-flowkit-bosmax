@@ -1170,6 +1170,9 @@ export interface ProductKnowledgeCompleteRequest {
 	commission_rate?: string;
 	size_or_volume?: string;
 	package_notes?: string;
+	image_notes?: string;
+	product_form_factor?: string;
+	packaging_description?: string;
 	source_lane?: string;
 	image_url?: string;
 	product_url?: string;

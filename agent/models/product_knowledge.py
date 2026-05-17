@@ -19,6 +19,9 @@ class ProductKnowledgeCompleteRequest(BaseModel):
     commission_rate: str | None = None
     size_or_volume: str | None = None
     package_notes: str | None = None
+    image_notes: str | None = None
+    product_form_factor: str | None = None
+    packaging_description: str | None = None
     source_lane: str = "OWNED"  # OWNED / MANUAL / FASTMOSS / TIKTOKSHOP / UNKNOWN
     image_url: str | None = None
     product_url: str | None = None

@@ -13,10 +13,13 @@ def test_create_review_draft_basic():
             "size_or_volume": "5 ML",
             "image_url": "https://example.com/product.jpg",
             "product_url": "https://example.com/product",
+            "source_url": "https://example.com/source/product",
             "price": 10.0,
             "currency": "MYR",
             "commission_amount": 1.5,
             "commission_rate": "15%",
+            "image_notes": "Primary front-pack shot",
+            "packaging_description": "small matte-black bottle",
         },
         extracted_product_facts={"product_name": "Test Product", "price": 10.0},
         suggested_normalized_name="Test Product",
@@ -43,7 +46,9 @@ def test_create_review_draft_basic():
     assert draft.declared_evidence_fields["product_name"] == "Test Product"
     assert draft.declared_evidence_fields["image_url"] == "https://example.com/product.jpg"
     assert draft.declared_evidence_fields["product_url"] == "https://example.com/product"
+    assert draft.declared_evidence_fields["source_url"] == "https://example.com/source/product"
     assert draft.declared_evidence_fields["currency"] == "MYR"
+    assert draft.declared_evidence_fields["image_notes"] == "Primary front-pack shot"
     assert draft.system_inferred_fields["image_analysis_status"] == "VISION_PROVIDER_NOT_CONFIGURED"
     assert draft.source_lane == "OWNED"
     assert draft.write_back_allowed is False
