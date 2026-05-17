@@ -235,6 +235,7 @@ export default function ProductsSalesAnalyzerPage() {
     product: Product
     reason: string
     confirmationPhrase: string
+    errorMessage?: string
   } | null>(null)
 
   const hasTextValue = <T extends string>(value: T | null | undefined): value is T => typeof value === 'string' && value.trim().length > 0
@@ -614,12 +615,20 @@ export default function ProductsSalesAnalyzerPage() {
       product,
       reason: '',
       confirmationPhrase: '',
+      errorMessage: ''
     })
   }
 
   async function handleLifecycleActionSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!lifecycleModal) return
+
+    const expectedPhrase = lifecycleExpectedPhrase(lifecycleModal.action)
+    if (lifecycleModal.confirmationPhrase.trim() !== expectedPhrase) {
+      setLifecycleModal(current => current ? { ...current, errorMessage: `Archive confirmation phrase did not match. Required: ${expectedPhrase}.` } : current)
+      return
+    }
+
     setSaving(true)
     setError(null)
     setSaveSuccess(null)
@@ -631,7 +640,7 @@ export default function ProductsSalesAnalyzerPage() {
           : `/api/products/${lifecycleModal.product.id}/delete-test-row`
       const response = await postAPI<{ deleted?: boolean; lifecycle_status?: string }>(endpoint, {
         reason: lifecycleModal.reason,
-        confirmation_phrase: lifecycleModal.confirmationPhrase,
+        confirmation_phrase: lifecycleModal.confirmationPhrase.trim(),
       })
       await loadProducts()
       if (lifecycleModal.action === 'DELETE_TEST_ROW') {
@@ -647,7 +656,11 @@ export default function ProductsSalesAnalyzerPage() {
       }
       setLifecycleModal(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to apply lifecycle action')
+      let msg = err instanceof Error ? err.message : 'Failed to apply lifecycle action'
+      if (msg.includes('ARCHIVE_CONFIRMATION_REQUIRED') || msg.includes('UNARCHIVE_CONFIRMATION_REQUIRED') || msg.includes('CONFIRMATION_REQUIRED')) {
+        msg = `Archive confirmation phrase did not match. Required: ${expectedPhrase}.`
+      }
+      setLifecycleModal(current => current ? { ...current, errorMessage: msg } : current)
     } finally {
       setSaving(false)
     }
@@ -658,6 +671,10 @@ export default function ProductsSalesAnalyzerPage() {
     if (action === 'UNARCHIVE') return 'UNARCHIVE_PRODUCT'
     return 'DELETE_TEST_ROW_ONLY'
   }
+
+  const lifecycleCanSubmit = lifecycleModal
+    ? lifecycleModal.reason.trim().length > 0 && lifecycleModal.confirmationPhrase.trim() === lifecycleExpectedPhrase(lifecycleModal.action)
+    : false
 
   return (
     <div className="grid min-h-full min-w-0 gap-4 p-4 md:p-6 lg:min-h-0 lg:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)] lg:overflow-hidden">
@@ -1379,10 +1396,39 @@ export default function ProductsSalesAnalyzerPage() {
                 <input
                   required
                   value={lifecycleModal.confirmationPhrase}
-                  onChange={event => setLifecycleModal(current => current ? { ...current, confirmationPhrase: event.target.value } : current)}
+                  onChange={event => setLifecycleModal(current => current ? { ...current, confirmationPhrase: event.target.value, errorMessage: '' } : current)}
                   className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
                   placeholder={lifecycleExpectedPhrase(lifecycleModal.action)}
                 />
+                {lifecycleModal.confirmationPhrase.trim().length > 0 && lifecycleModal.confirmationPhrase.trim() !== lifecycleExpectedPhrase(lifecycleModal.action) && (
+                  <div className="mt-1 text-[10px] text-red-400">
+                    Type {lifecycleExpectedPhrase(lifecycleModal.action)} exactly to continue.
+                  </div>
+                )}
+                {lifecycleModal.errorMessage && (
+                  <div className="mt-1 text-[10px] text-red-400 font-semibold">
+                    {lifecycleModal.errorMessage}
+                  </div>
+                )}
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-500">
+                  <span>Type the exact phrase above to unlock submit.</span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard.writeText(lifecycleExpectedPhrase(lifecycleModal.action))}
+                      className="rounded border border-slate-700 bg-slate-800 px-2 py-1 font-bold text-slate-300"
+                    >
+                      Copy Phrase
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLifecycleModal(current => current ? { ...current, confirmationPhrase: lifecycleExpectedPhrase(current.action), errorMessage: '' } : current)}
+                      className="rounded border border-slate-700 bg-slate-800 px-2 py-1 font-bold text-slate-300"
+                    >
+                      Use Expected Phrase
+                    </button>
+                  </div>
+                </div>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
                 <button
@@ -1394,8 +1440,8 @@ export default function ProductsSalesAnalyzerPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={saving}
-                  className="rounded border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[11px] font-bold text-blue-300 disabled:opacity-50"
+                  disabled={saving || !lifecycleCanSubmit}
+                  className="rounded border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[11px] font-bold text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Confirm
                 </button>
