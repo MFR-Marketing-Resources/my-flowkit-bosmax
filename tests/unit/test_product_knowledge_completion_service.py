@@ -7,7 +7,11 @@ def test_complete_product_knowledge_basic():
         product_name="Bosmax Liquid Detergent",
         product_knowledge_text="Sabun dobi wangi 1.2kg botol biru",
         price=12.9,
+        currency="MYR",
+        commission_amount=1.29,
         commission_rate="10%",
+        image_url="https://example.com/detergent.jpg",
+        product_url="https://example.com/detergent",
         source_lane="MANUAL"
     )
     response = complete_product_knowledge(request)
@@ -16,6 +20,8 @@ def test_complete_product_knowledge_basic():
     assert response.suggested_bosmax_product_family == "LAUNDRY_DETERGENT_LIQUID_REFILL"
     assert response.claim_gate == "CLAIM_SAFE"
     assert "1.2kg" in response.extracted_product_facts["size_or_volume"]
+    assert response.image_analysis_status == "VISION_PROVIDER_NOT_CONFIGURED"
+    assert response.image_analysis_image_url == "https://example.com/detergent.jpg"
 
 def test_complete_product_knowledge_claim_gate_review():
     request = ProductKnowledgeCompleteRequest(
@@ -68,3 +74,20 @@ def test_complete_product_knowledge_insufficient_data():
     
     assert response.completion_status == "NEEDS_REVIEW"
     assert "PRODUCT_NAME" in response.missing_required_evidence
+
+
+def test_complete_product_knowledge_tiktok_draft_fails_closed_without_fake_scrape():
+    request = ProductKnowledgeCompleteRequest(
+        product_name="TikTok Draft Product",
+        source_lane="TIKTOKSHOP_DRAFT",
+        tiktok_product_url="https://shop.tiktok.com/view/product/123",
+        product_url="https://shop.tiktok.com/view/product/123",
+        price=19.9,
+        currency="MYR",
+    )
+
+    response = complete_product_knowledge(request)
+
+    assert response.extraction_status == "NOT_IMPLEMENTED"
+    assert "TIKTOKSHOP_MANUAL_COMPLETION_REQUIRED" in response.missing_required_evidence
+    assert "TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED" in response.warnings

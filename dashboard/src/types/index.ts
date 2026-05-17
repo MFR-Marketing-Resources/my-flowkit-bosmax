@@ -1165,12 +1165,20 @@ export interface ProductKnowledgeCompleteRequest {
 	ingredients_text?: string;
 	warnings_text?: string;
 	price?: number;
+	currency?: string;
+	commission_amount?: number;
 	commission_rate?: string;
 	size_or_volume?: string;
 	package_notes?: string;
 	source_lane?: string;
 	image_url?: string;
 	product_url?: string;
+	source_url?: string;
+	tiktok_product_url?: string;
+	tiktok_shop_url?: string;
+	local_image_path?: string;
+	image_base64?: string;
+	image_filename?: string;
 	paste_anything_about_product?: string;
 }
 
@@ -1208,6 +1216,15 @@ export interface ProductKnowledgeCompleteResponse {
 	claim_gate: string;
 	claim_risk_level: string;
 	copy_safety_notes?: string;
+	image_analysis_status: string;
+	image_analysis_provider: string;
+	image_analysis_visual_confidence: string;
+	image_analysis_warnings: string[];
+	image_analysis_detected_package?: string;
+	image_analysis_detected_text: string[];
+	image_analysis_local_image_path?: string;
+	image_analysis_image_url?: string;
+	extraction_status?: string | null;
 	missing_required_evidence: string[];
 	human_review_fields: string[];
 	blocked_fields: string[];

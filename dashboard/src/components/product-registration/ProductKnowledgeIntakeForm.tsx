@@ -8,6 +8,15 @@ interface Props {
   isProcessing: boolean
 }
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('Failed to read image file'))
+    reader.readAsDataURL(file)
+  })
+}
+
 export default function ProductKnowledgeIntakeForm({ onComplete, setIsProcessing, isProcessing }: Props) {
   const [formData, setFormData] = useState<ProductKnowledgeCompleteRequest>({
     product_name: '',
@@ -18,17 +27,29 @@ export default function ProductKnowledgeIntakeForm({ onComplete, setIsProcessing
     target_customer_text: '',
     warnings_text: '',
     price: undefined,
+    currency: 'MYR',
+    commission_amount: undefined,
     commission_rate: '',
     size_or_volume: '',
-    source_lane: 'MANUAL',
-    paste_anything_about_product: ''
+    package_notes: '',
+    source_lane: 'OWNED',
+    image_url: '',
+    product_url: '',
+    source_url: '',
+    tiktok_product_url: '',
+    tiktok_shop_url: '',
+    paste_anything_about_product: '',
+    image_base64: '',
+    image_filename: '',
   })
+
+  const [selectedImageName, setSelectedImageName] = useState('')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsProcessing(true)
     try {
-      const result = await postAPI<ProductKnowledgeCompleteResponse>('/api/product-knowledge/complete', formData as any)
+      const result = await postAPI<ProductKnowledgeCompleteResponse>('/api/product-knowledge/complete', formData)
       onComplete(result)
     } catch (err) {
       console.error('Completion failed:', err)
@@ -38,57 +59,97 @@ export default function ProductKnowledgeIntakeForm({ onComplete, setIsProcessing
     }
   }
 
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const imageBase64 = await readFileAsDataUrl(file)
+      setSelectedImageName(file.name)
+      setFormData(prev => ({
+        ...prev,
+        image_base64: imageBase64,
+        image_filename: file.name,
+      }))
+    } catch (err) {
+      console.error('Failed to read selected image:', err)
+      alert('Failed to load image file.')
+    }
+  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Row 1: Basic Identity */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-2 space-y-2">
           <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Product Name</label>
           <input
             type="text"
             className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/20 transition-all"
-            placeholder="e.g. Bosmax Liquid Detergent"
+            placeholder="e.g. Bosmax Herbs"
             value={formData.product_name}
             onChange={e => setFormData({ ...formData, product_name: e.target.value })}
             required
           />
         </div>
         <div className="space-y-2">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Intake Lane</label>
-          <select 
+          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Source Lane</label>
+          <select
             className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white outline-none focus:border-indigo-500/50 transition-all"
             value={formData.source_lane}
             onChange={e => setFormData({ ...formData, source_lane: e.target.value })}
           >
-            <option value="MANUAL">MANUAL (Owned Brand)</option>
-            <option value="FASTMOSS">FASTMOSS (Affiliate Draft)</option>
-            <option value="TIKTOKSHOP">TIKTOKSHOP (Affiliate Draft)</option>
+            <option value="OWNED">OWNED</option>
+            <option value="MANUAL">MANUAL</option>
+            <option value="FASTMOSS_REFERENCE">FASTMOSS_REFERENCE</option>
+            <option value="TIKTOKSHOP_DRAFT">TIKTOKSHOP_DRAFT</option>
+            <option value="UNKNOWN_REVIEW_REQUIRED">UNKNOWN_REVIEW_REQUIRED</option>
           </select>
         </div>
       </div>
 
-      {/* Row 2: Specs & Commercials */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="space-y-2">
           <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Size / Volume</label>
           <input
             type="text"
             className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
-            placeholder="e.g. 500ml, 1.2kg"
+            placeholder="e.g. 5 ML, 500ml, 1.2kg"
             value={formData.size_or_volume}
             onChange={e => setFormData({ ...formData, size_or_volume: e.target.value })}
           />
         </div>
         <div className="space-y-2">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Price (RM)</label>
+          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Price</label>
           <input
             type="number"
             step="0.01"
             className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
             placeholder="0.00"
-            value={formData.price || ''}
+            value={formData.price ?? ''}
             onChange={e => setFormData({ ...formData, price: e.target.value ? parseFloat(e.target.value) : undefined })}
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Currency</label>
+          <input
+            type="text"
+            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+            placeholder="MYR"
+            value={formData.currency || ''}
+            onChange={e => setFormData({ ...formData, currency: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="space-y-2">
+          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Commission Amount</label>
+          <input
+            type="number"
+            step="0.01"
+            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+            placeholder="0.00"
+            value={formData.commission_amount ?? ''}
+            onChange={e => setFormData({ ...formData, commission_amount: e.target.value ? parseFloat(e.target.value) : undefined })}
           />
         </div>
         <div className="space-y-2">
@@ -97,13 +158,70 @@ export default function ProductKnowledgeIntakeForm({ onComplete, setIsProcessing
             type="text"
             className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
             placeholder="e.g. 15%"
-            value={formData.commission_rate}
+            value={formData.commission_rate || ''}
             onChange={e => setFormData({ ...formData, commission_rate: e.target.value })}
+          />
+        </div>
+        <div className="space-y-2 lg:col-span-2">
+          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Package Notes</label>
+          <input
+            type="text"
+            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+            placeholder="e.g. Trial bottle, dropper cap, roll on"
+            value={formData.package_notes || ''}
+            onChange={e => setFormData({ ...formData, package_notes: e.target.value })}
           />
         </div>
       </div>
 
-      {/* Row 3: Main Knowledge */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-2">
+          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Product URL / Source URL</label>
+          <input
+            type="url"
+            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+            placeholder="https://"
+            value={formData.product_url || formData.source_url || ''}
+            onChange={e => setFormData({ ...formData, product_url: e.target.value, source_url: e.target.value })}
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">TikTok Shop Product / Shop URL</label>
+          <input
+            type="url"
+            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+            placeholder="https://shop.tiktok.com/..."
+            value={formData.tiktok_product_url || formData.tiktok_shop_url || ''}
+            onChange={e => setFormData({ ...formData, tiktok_product_url: e.target.value, tiktok_shop_url: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-2">
+          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Image URL</label>
+          <input
+            type="url"
+            className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+            placeholder="https://example.com/product.jpg"
+            value={formData.image_url || ''}
+            onChange={e => setFormData({ ...formData, image_url: e.target.value })}
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Upload Product Image</label>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleImageUpload}
+            className="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-500/10 file:text-indigo-400 hover:file:bg-indigo-500/20 transition-all cursor-pointer"
+          />
+          <div className="text-[11px] text-slate-500">
+            {selectedImageName ? `Selected image: ${selectedImageName}` : 'Optional. Stored as draft evidence until controlled commit.'}
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-2">
           <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Product Description</label>
@@ -125,7 +243,6 @@ export default function ProductKnowledgeIntakeForm({ onComplete, setIsProcessing
         </div>
       </div>
 
-      {/* Row 4: Attributes */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="space-y-2">
           <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Benefits / USP</label>
@@ -171,7 +288,7 @@ export default function ProductKnowledgeIntakeForm({ onComplete, setIsProcessing
           <input
             type="text"
             className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
-            placeholder="e.g. Mothers with babies, gym enthusiasts"
+            placeholder="e.g. married men, gym enthusiasts, feminine care users"
             value={formData.target_customer_text}
             onChange={e => setFormData({ ...formData, target_customer_text: e.target.value })}
           />

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 import re
@@ -32,6 +33,17 @@ AI_FORM_ACCEPTED_FORMATS = [
     ".txt raw JSON text",
 ]
 
+SOURCE_LANE_ALIASES = {
+    "OWNED": "OWNED",
+    "MANUAL": "MANUAL",
+    "FASTMOSS": "FASTMOSS",
+    "FASTMOSS_REFERENCE": "FASTMOSS",
+    "TIKTOKSHOP": "TIKTOKSHOP",
+    "TIKTOKSHOP_DRAFT": "TIKTOKSHOP",
+    "UNKNOWN": "UNKNOWN",
+    "UNKNOWN_REVIEW_REQUIRED": "UNKNOWN",
+}
+
 
 @dataclass
 class _AIFormParseResult:
@@ -42,9 +54,69 @@ class _AIFormParseResult:
     error_detail: str | None = None
 
 
+def _normalize_source_lane(value: str | None) -> str:
+    normalized = str(value or "OWNED").strip().upper()
+    return SOURCE_LANE_ALIASES.get(normalized, normalized or "OWNED")
+
+
+def _infer_image_extension(filename: str | None) -> str:
+    if filename and "." in filename:
+        suffix = filename.rsplit(".", 1)[-1].strip().lower()
+        if suffix:
+            return suffix
+    return "jpg"
+
+
+def _persist_intake_image(image_base64: str | None, image_filename: str | None) -> str | None:
+    if not image_base64:
+        return None
+    payload = image_base64.split(",", 1)[-1]
+    data = base64.b64decode(payload)
+    intake_dir = BASE_DIR / "data" / "product_registration" / "intake_images"
+    intake_dir.mkdir(parents=True, exist_ok=True)
+    dest = intake_dir / f"{uuid.uuid4().hex}.{_infer_image_extension(image_filename)}"
+    dest.write_bytes(data)
+    return str(dest)
+
+
+def _normalize_completion_request(
+    request: ProductKnowledgeCompleteRequest,
+) -> ProductKnowledgeCompleteRequest:
+    local_image_path = request.local_image_path
+    if not local_image_path and request.image_base64:
+        local_image_path = _persist_intake_image(request.image_base64, request.image_filename)
+
+    source_url = request.source_url or request.product_url or request.tiktok_product_url or request.tiktok_shop_url
+    product_url = request.product_url or request.source_url or request.tiktok_product_url
+    tiktok_product_url = request.tiktok_product_url or (
+        source_url if _normalize_source_lane(request.source_lane) == "TIKTOKSHOP" else None
+    )
+
+    return request.model_copy(
+        update={
+            "source_lane": _normalize_source_lane(request.source_lane),
+            "local_image_path": local_image_path,
+            "source_url": source_url,
+            "product_url": product_url,
+            "tiktok_product_url": tiktok_product_url,
+            "currency": request.currency or "MYR",
+        }
+    )
+
+
+def _resolve_extraction_status(request: ProductKnowledgeCompleteRequest) -> str | None:
+    if request.source_lane == "TIKTOKSHOP" and (
+        request.tiktok_product_url or request.tiktok_shop_url or request.product_url or request.source_url
+    ):
+        return "NOT_IMPLEMENTED"
+    return None
+
+
 def complete_product_knowledge(
     request: ProductKnowledgeCompleteRequest,
 ) -> ProductKnowledgeCompleteResponse:
+    request = _normalize_completion_request(request)
+
     # 1. Fact Extraction from messy text
     extracted_facts = _extract_facts(request)
 
@@ -74,6 +146,13 @@ def complete_product_knowledge(
         suggested_usp_list = [line.strip("- *•").strip() for line in request.benefits_text.split("\n") if line.strip()]
 
     normalized_name = _build_normalized_name(request, extracted_facts)
+    image_analysis = dict(intelligence.get("image_analysis") or {})
+    warnings = list(intelligence.get("warnings", []))
+    extraction_status = _resolve_extraction_status(request)
+    if extraction_status == "NOT_IMPLEMENTED":
+        warnings.append("TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED")
+        if "TIKTOKSHOP_MANUAL_COMPLETION_REQUIRED" not in missing_evidence:
+            missing_evidence.append("TIKTOKSHOP_MANUAL_COMPLETION_REQUIRED")
 
     return ProductKnowledgeCompleteResponse(
         completion_status=completion_status,
@@ -105,11 +184,20 @@ def complete_product_knowledge(
         claim_gate=claim_gate,
         claim_risk_level=claim_risk,
         copy_safety_notes=copy_safety,
+        image_analysis_status=str(image_analysis.get("status") or "IMAGE_MISSING"),
+        image_analysis_provider=str(image_analysis.get("provider") or "metadata_only"),
+        image_analysis_visual_confidence=str(image_analysis.get("visual_confidence") or "NOT_VERIFIED"),
+        image_analysis_warnings=list(image_analysis.get("warnings") or []),
+        image_analysis_detected_package=image_analysis.get("detected_package"),
+        image_analysis_detected_text=list(image_analysis.get("detected_text") or []),
+        image_analysis_local_image_path=image_analysis.get("local_image_path"),
+        image_analysis_image_url=image_analysis.get("image_url"),
+        extraction_status=extraction_status,
         missing_required_evidence=missing_evidence,
         human_review_fields=_identify_review_fields(intelligence, physics, claim_gate),
         readiness_by_mode=readiness,
         provenance=["product_knowledge_completion_service:v1"],
-        warnings=intelligence.get("warnings", []) + (["AFFILIATE_LANE_CONTAMINATION_RISK"] if request.source_lane in ["FASTMOSS", "TIKTOKSHOP"] else []),
+        warnings=warnings + (["AFFILIATE_LANE_CONTAMINATION_RISK"] if request.source_lane in ["FASTMOSS", "TIKTOKSHOP"] else []),
         errors=intelligence.get("errors", [])
     )
 
@@ -171,6 +259,13 @@ def _build_temp_product(
         "target_customer": request.target_customer_text,
         "product_knowledge_text": request.product_knowledge_text,
         "package_notes": request.package_notes,
+        "currency": request.currency,
+        "commission_amount": request.commission_amount,
+        "commission_rate": request.commission_rate,
+        "image_url": request.image_url,
+        "local_image_path": request.local_image_path,
+        "source_url": request.source_url or request.product_url,
+        "tiktok_product_url": request.tiktok_product_url or request.tiktok_shop_url,
     }
 
 
@@ -194,7 +289,7 @@ def _build_declared_input_fields(request: ProductKnowledgeCompleteRequest) -> di
     return {
         key: value
         for key, value in payload.items()
-        if value not in (None, "", [], {})
+        if key not in {"image_base64"} and value not in (None, "", [], {})
     }
 
 
@@ -322,6 +417,12 @@ def _evaluate_completion_status(
         missing.append("SIZE_OR_VOLUME_EVIDENCE")
     if request.price is None:
         missing.append("PRICE_EVIDENCE")
+    if not request.currency:
+        missing.append("CURRENCY_EVIDENCE")
+    if request.commission_amount is None and (
+        not request.commission_rate or str(request.commission_rate).strip().upper() == "UNKNOWN"
+    ):
+        missing.append("COMMISSION_EVIDENCE")
     if not request.commission_rate or str(request.commission_rate).strip().upper() == "UNKNOWN":
         missing.append("COMMISSION_RATE_EVIDENCE")
     
@@ -379,7 +480,8 @@ def _evaluate_mode_readiness(intelligence: dict[str, Any], physics: dict[str, An
         missing_evidence=[m for m in missing_evidence if "PHYSICS" in m or "SIZE" in m]
     )
 
-    has_image_reference = bool(intelligence.get("image_analysis", {}).get("image_url"))
+    image_analysis = dict(intelligence.get("image_analysis") or {})
+    has_image_reference = bool(image_analysis.get("image_url") or image_analysis.get("local_image_path"))
     image_missing = [] if has_image_reference else ["IMAGE_REFERENCE_REQUIRED"]
     t2v_status = "READY" if not missing_evidence else "NEEDS_REVIEW"
     image_mode_status = "READY" if has_image_reference else "IMAGE_REFERENCE_REQUIRED"
@@ -433,6 +535,16 @@ def _build_evidence_summary(request: ProductKnowledgeCompleteRequest, facts: dic
         summary.append(f"Size: {facts['size_or_volume']}")
     if request.source_lane:
         summary.append(f"Source: {request.source_lane}")
+    if request.currency:
+        summary.append(f"Currency: {request.currency}")
+    if request.commission_amount is not None:
+        summary.append(f"Commission Amount: {request.commission_amount}")
+    if request.commission_rate:
+        summary.append(f"Commission Rate: {request.commission_rate}")
+    if request.product_url or request.source_url:
+        summary.append(f"Source URL: {request.product_url or request.source_url}")
+    if request.image_url or request.local_image_path:
+        summary.append("Image Evidence: PRESENT")
     return " | ".join(summary)
 
 
@@ -483,11 +595,16 @@ The goal is to normalize unstructured product information into a structured JSON
   "ingredients_text": "",
   "warnings_text": "",
   "price": null,
+  "currency": "MYR",
+  "commission_amount": null,
   "commission_rate": "",
   "size_or_volume": "",
   "package_notes": "",
   "image_url": "",
   "product_url": "",
+  "source_url": "",
+  "tiktok_product_url": "",
+  "tiktok_shop_url": "",
   "paste_anything_about_product": "",
   "evidence_notes": {
     "what_user_confirmed": [],
@@ -611,14 +728,20 @@ def import_ai_form(
         ingredients_text=parsed_json.get("ingredients_text"),
         warnings_text=parsed_json.get("warnings_text"),
         price=parsed_json.get("price"),
+        currency=parsed_json.get("currency"),
+        commission_amount=parsed_json.get("commission_amount"),
         commission_rate=parsed_json.get("commission_rate"),
         size_or_volume=parsed_json.get("size_or_volume"),
         package_notes=parsed_json.get("package_notes"),
         source_lane=parsed_json.get("source_lane", "OWNED"),
         image_url=parsed_json.get("image_url"),
         product_url=parsed_json.get("product_url"),
+        source_url=parsed_json.get("source_url"),
+        tiktok_product_url=parsed_json.get("tiktok_product_url"),
+        tiktok_shop_url=parsed_json.get("tiktok_shop_url"),
         paste_anything_about_product=parsed_json.get("paste_anything_about_product")
     )
+    request = _normalize_completion_request(request)
     
     # 5. Handle AI inference warnings
     warnings = list(parse_result.warnings)

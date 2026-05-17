@@ -14,12 +14,20 @@ class ProductKnowledgeCompleteRequest(BaseModel):
     ingredients_text: str | None = None
     warnings_text: str | None = None
     price: float | None = None
+    currency: str | None = "MYR"
+    commission_amount: float | None = None
     commission_rate: str | None = None
     size_or_volume: str | None = None
     package_notes: str | None = None
     source_lane: str = "OWNED"  # OWNED / MANUAL / FASTMOSS / TIKTOKSHOP / UNKNOWN
     image_url: str | None = None
     product_url: str | None = None
+    source_url: str | None = None
+    tiktok_product_url: str | None = None
+    tiktok_shop_url: str | None = None
+    local_image_path: str | None = None
+    image_base64: str | None = None
+    image_filename: str | None = None
     paste_anything_about_product: str | None = None
 
 
@@ -67,6 +75,16 @@ class ProductKnowledgeCompleteResponse(BaseModel):
     claim_gate: str = "CLAIM_REVIEW_REQUIRED"
     claim_risk_level: str = "HIGH"
     copy_safety_notes: str | None = None
+
+    image_analysis_status: str = "IMAGE_MISSING"
+    image_analysis_provider: str = "metadata_only"
+    image_analysis_visual_confidence: str = "NOT_VERIFIED"
+    image_analysis_warnings: list[str] = Field(default_factory=list)
+    image_analysis_detected_package: str | None = None
+    image_analysis_detected_text: list[str] = Field(default_factory=list)
+    image_analysis_local_image_path: str | None = None
+    image_analysis_image_url: str | None = None
+    extraction_status: str | None = None
     
     # Missing / Review Fields
     missing_required_evidence: list[str] = Field(default_factory=list)

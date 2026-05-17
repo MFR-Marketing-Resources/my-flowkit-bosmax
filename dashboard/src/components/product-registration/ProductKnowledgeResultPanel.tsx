@@ -7,6 +7,25 @@ interface Props {
 export default function ProductKnowledgeResultPanel({ result }: Props) {
   return (
     <div className="space-y-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+          <label className="text-[9px] font-bold uppercase tracking-widest text-slate-500 block mb-2">Image Analysis Status</label>
+          <div className="text-sm text-slate-200 font-medium truncate">{result.image_analysis_status || '—'}</div>
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+          <label className="text-[9px] font-bold uppercase tracking-widest text-slate-500 block mb-2">Image Provider</label>
+          <div className="text-sm text-slate-200 font-medium truncate">{result.image_analysis_provider || '—'}</div>
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+          <label className="text-[9px] font-bold uppercase tracking-widest text-slate-500 block mb-2">Visual Confidence</label>
+          <div className="text-sm text-slate-200 font-medium truncate">{result.image_analysis_visual_confidence || '—'}</div>
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+          <label className="text-[9px] font-bold uppercase tracking-widest text-slate-500 block mb-2">Extraction Status</label>
+          <div className="text-sm text-slate-200 font-medium truncate">{result.extraction_status || 'DIRECT_MANUAL'}</div>
+        </div>
+      </div>
+
       {/* 1. Taxonomy & Family */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
@@ -140,6 +159,25 @@ export default function ProductKnowledgeResultPanel({ result }: Props) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {result.image_analysis_warnings.length > 0 && (
+        <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4">
+          <div className="text-[10px] font-bold text-sky-400 uppercase tracking-[0.2em] mb-2">Image Analysis Notes</div>
+          <ul className="space-y-1">
+            {result.image_analysis_warnings.map((warning, idx) => (
+              <li key={idx} className="text-xs text-sky-200/70 flex items-center gap-2">
+                <span className="text-sky-400">•</span> {warning}
+              </li>
+            ))}
+          </ul>
+          {(result.image_analysis_image_url || result.image_analysis_local_image_path) && (
+            <div className="mt-3 space-y-1 text-[11px] text-slate-300">
+              {result.image_analysis_image_url ? <div>Image URL: {result.image_analysis_image_url}</div> : null}
+              {result.image_analysis_local_image_path ? <div>Draft Image Path: {result.image_analysis_local_image_path}</div> : null}
+            </div>
+          )}
         </div>
       )}
     </div>

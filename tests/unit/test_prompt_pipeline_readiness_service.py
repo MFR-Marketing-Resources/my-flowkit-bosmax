@@ -34,3 +34,23 @@ async def test_readiness_archived():
     assert report["readiness_by_mode"]["T2V"] == "BLOCKED_PRODUCT_ARCHIVED"
     assert "PRODUCT_ARCHIVED" in report["blockers"]
     assert report["safe_to_generate_prompt"] is False
+
+
+@pytest.mark.asyncio
+async def test_readiness_uses_image_reference_when_present():
+    product = {
+        "id": "prod-image-001",
+        "raw_product_title": "Ready Image Product",
+        "source": "MANUAL",
+        "lifecycle_status": "ACTIVE",
+        "category": "Household",
+        "subcategory": "Laundry",
+        "type": "Detergent",
+        "physics_class": "LAUNDRY_LIQUID_REFILL",
+        "image_url": "https://example.com/product.jpg",
+    }
+
+    report = await PromptPipelineReadinessService.get_readiness_report(product)
+
+    assert report["image_reference_status"] in {"IMAGE_READY", "IMAGE_CACHE_READY"}
+    assert "IMAGE_REFERENCE_MISSING" not in report["blockers"]

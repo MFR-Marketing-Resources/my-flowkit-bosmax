@@ -84,6 +84,10 @@ def test_products_sales_analyzer_uses_wrap_safe_layout_and_kv_structure():
         "ARCHIVED",
         "isDeleteTestEligible",
         "lifecycle_status",
+        "Legacy Manual Intake / Admin Quick Patch",
+        "Use Smart Registration for canonical product registration.",
+        "maintenance-only and may bypass the full review workflow",
+        "Use Smart Registration TikTok Intake",
     ]:
         assert token in source
 

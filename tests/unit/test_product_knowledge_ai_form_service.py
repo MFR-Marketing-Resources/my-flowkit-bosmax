@@ -12,6 +12,10 @@ def test_get_ai_form_template():
     assert template["filename"] == "BOSMAX_PRODUCT_KNOWLEDGE_INTAKE_FORM_v1.md"
     assert "bosmax_product_knowledge_form_version" in template["content"]
     assert "```json" in template["content"]
+    assert '"commission_amount": null' in template["content"]
+    assert '"currency": "MYR"' in template["content"]
+    assert '"source_url": ""' in template["content"]
+    assert '"tiktok_product_url": ""' in template["content"]
 
 def test_get_ai_coaching_prompt():
     prompt = get_ai_coaching_prompt()
@@ -60,6 +64,11 @@ def test_import_ai_form_valid():
   "product_name": "AI Product",
   "source_lane": "OWNED",
   "product_knowledge_text": "Smart info",
+  "currency": "MYR",
+  "commission_amount": 12.5,
+  "commission_rate": "10%",
+  "image_url": "https://example.com/product.jpg",
+  "product_url": "https://example.com/product",
   "size_or_volume": "100ml",
   "user_review_status": "USER_APPROVED",
   "evidence_notes": {
@@ -72,6 +81,10 @@ def test_import_ai_form_valid():
     assert result.parse_status == "PARSED"
     assert result.parser_strategy_used == "FENCED_JSON"
     assert result.parsed_request.product_name == "AI Product"
+    assert result.parsed_request.image_url == "https://example.com/product.jpg"
+    assert result.parsed_request.product_url == "https://example.com/product"
+    assert result.parsed_request.currency == "MYR"
+    assert result.parsed_request.commission_amount == 12.5
     assert result.completion_response is not None
     assert any("AI_INFERRED_FACTS_DETECTED" in w for w in result.parse_warnings)
 

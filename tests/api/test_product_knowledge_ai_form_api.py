@@ -25,6 +25,11 @@ def test_import_ai_form_api():
         "product_name": "API Import Product",
         "source_lane": "OWNED",
         "product_knowledge_text": "From API",
+        "image_url": "https://example.com/product.jpg",
+        "product_url": "https://example.com/product",
+        "currency": "MYR",
+        "commission_amount": 11.25,
+        "commission_rate": "9%",
         "user_review_status": "USER_REVIEW_REQUIRED",
     })
     files = {"file": ("test.JSON", io.BytesIO(raw_content.encode("utf-8")), "application/json")}
@@ -34,6 +39,9 @@ def test_import_ai_form_api():
     assert data["parse_status"] == "PARSED"
     assert data["parser_strategy_used"] == "RAW_JSON"
     assert data["parsed_request"]["product_name"] == "API Import Product"
+    assert data["parsed_request"]["image_url"] == "https://example.com/product.jpg"
+    assert data["parsed_request"]["product_url"] == "https://example.com/product"
+    assert data["parsed_request"]["commission_amount"] == 11.25
     assert data["completion_response"] is not None
 
 def test_import_ai_form_api_txt_raw_json():

@@ -7,13 +7,28 @@ def test_create_review_draft_basic():
         completion_status="COMPLETION_READY",
         input_quality_status="SUFFICIENT",
         declared_evidence_summary="Name: Test Product",
-        declared_input_fields={"product_name": "Test Product", "source_lane": "OWNED", "size_or_volume": "5 ML"},
+        declared_input_fields={
+            "product_name": "Test Product",
+            "source_lane": "OWNED",
+            "size_or_volume": "5 ML",
+            "image_url": "https://example.com/product.jpg",
+            "product_url": "https://example.com/product",
+            "price": 10.0,
+            "currency": "MYR",
+            "commission_amount": 1.5,
+            "commission_rate": "15%",
+        },
         extracted_product_facts={"product_name": "Test Product", "price": 10.0},
         suggested_normalized_name="Test Product",
         suggested_size_or_volume="5 ML",
         suggested_category="Electronics",
         claim_gate="CLAIM_SAFE",
         claim_risk_level="LOW",
+        image_analysis_status="VISION_PROVIDER_NOT_CONFIGURED",
+        image_analysis_provider="not_configured",
+        image_analysis_visual_confidence="NOT_VERIFIED",
+        image_analysis_warnings=["SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE"],
+        image_analysis_image_url="https://example.com/product.jpg",
         readiness_by_mode={
             "registration": ModeReadiness(status="READY", detail="Ready")
         }
@@ -26,6 +41,10 @@ def test_create_review_draft_basic():
     assert draft.canonical_candidate_fields["size_or_volume"] == "5 ML"
     assert draft.canonical_candidate_fields["category"] == "Electronics"
     assert draft.declared_evidence_fields["product_name"] == "Test Product"
+    assert draft.declared_evidence_fields["image_url"] == "https://example.com/product.jpg"
+    assert draft.declared_evidence_fields["product_url"] == "https://example.com/product"
+    assert draft.declared_evidence_fields["currency"] == "MYR"
+    assert draft.system_inferred_fields["image_analysis_status"] == "VISION_PROVIDER_NOT_CONFIGURED"
     assert draft.source_lane == "OWNED"
     assert draft.write_back_allowed is False
     assert draft.write_back_status == "READ_ONLY_REVIEW_PREVIEW"
