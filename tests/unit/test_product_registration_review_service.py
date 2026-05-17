@@ -25,6 +25,8 @@ def test_create_review_draft_basic():
         suggested_normalized_name="Test Product",
         suggested_size_or_volume="5 ML",
         suggested_category="Electronics",
+        suggested_hook_angles=["Clean positioning"],
+        suggested_cta_angles=["Shop now safely"],
         claim_gate="CLAIM_SAFE",
         claim_risk_level="LOW",
         image_analysis_status="VISION_PROVIDER_NOT_CONFIGURED",
@@ -43,6 +45,8 @@ def test_create_review_draft_basic():
     assert draft.canonical_candidate_fields["normalized_name"] == "Test Product"
     assert draft.canonical_candidate_fields["size_or_volume"] == "5 ML"
     assert draft.canonical_candidate_fields["category"] == "Electronics"
+    assert draft.canonical_candidate_fields["hook_angles"] == ["Clean positioning"]
+    assert draft.canonical_candidate_fields["cta_angles"] == ["Shop now safely"]
     assert draft.declared_evidence_fields["product_name"] == "Test Product"
     assert draft.declared_evidence_fields["image_url"] == "https://example.com/product.jpg"
     assert draft.declared_evidence_fields["product_url"] == "https://example.com/product"
@@ -50,9 +54,12 @@ def test_create_review_draft_basic():
     assert draft.declared_evidence_fields["currency"] == "MYR"
     assert draft.declared_evidence_fields["image_notes"] == "Primary front-pack shot"
     assert draft.system_inferred_fields["image_analysis_status"] == "VISION_PROVIDER_NOT_CONFIGURED"
+    assert draft.system_inferred_fields["image_asset_status"] == "IMAGE_REFERENCE_READY"
     assert draft.source_lane == "OWNED"
     assert draft.write_back_allowed is False
     assert draft.write_back_status == "READ_ONLY_REVIEW_PREVIEW"
+    assert draft.draft_freshness_status == "FRESH"
+    assert draft.last_recomputed_at is not None
 
 def test_create_review_draft_risky_claim():
     completion = ProductKnowledgeCompleteResponse(

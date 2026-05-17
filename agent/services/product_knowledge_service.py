@@ -23,6 +23,9 @@ from agent.services.product_intelligence_service import (
 from agent.services.product_physics import resolve_product_physics
 from agent.services.product_mapping import normalize_mapping_text, resolve_product_mapping
 from agent.config import BASE_DIR
+from agent.services.registration_hook_cta_generation_service import (
+    generate_registration_hook_cta,
+)
 
 
 AI_FORM_ACCEPTED_FORMATS = [
@@ -99,7 +102,6 @@ def _normalize_completion_request(
 
     return request.model_copy(
         update={
-            "source_lane": _normalize_source_lane(request.source_lane),
             "local_image_path": local_image_path,
             "source_url": source_url,
             "product_url": product_url,
@@ -111,7 +113,7 @@ def _normalize_completion_request(
 
 
 def _resolve_extraction_status(request: ProductKnowledgeCompleteRequest) -> str | None:
-    if request.source_lane == "TIKTOKSHOP" and (
+    if _normalize_source_lane(request.source_lane) == "TIKTOKSHOP" and (
         request.tiktok_product_url or request.tiktok_shop_url or request.product_url or request.source_url
     ):
         return "NOT_IMPLEMENTED"
@@ -146,12 +148,24 @@ def complete_product_knowledge(
     readiness = _evaluate_mode_readiness(intelligence, physics, missing_evidence)
     
     # 7. Map suggested fields
+    normalized_name = _build_normalized_name(request, extracted_facts)
     suggested_usp_list = extracted_facts.get("usp_list", [])
     if not suggested_usp_list and request.benefits_text:
         # Basic split by newline or bullet
         suggested_usp_list = [line.strip("- *•").strip() for line in request.benefits_text.split("\n") if line.strip()]
+    hook_cta = generate_registration_hook_cta(
+        {
+            "product_name": normalized_name or request.product_name,
+            "benefits_text": request.benefits_text,
+            "target_customer_text": request.target_customer_text,
+            "usage_text": request.usage_text,
+            "claim_gate": claim_gate,
+            "claim_tokens": claim_tokens,
+            "copy_route": intelligence.get("copy_route"),
+            "silo": taxonomy_candidate.get("silo"),
+        }
+    )
 
-    normalized_name = _build_normalized_name(request, extracted_facts)
     image_analysis = dict(intelligence.get("image_analysis") or {})
     warnings = list(intelligence.get("warnings", []))
     extraction_status = _resolve_extraction_status(request)
@@ -185,7 +199,11 @@ def complete_product_knowledge(
         suggested_copy_formula=intelligence.get("copy_formula"),
         suggested_silo=taxonomy_candidate.get("silo"),
         suggested_trigger_id=taxonomy_candidate.get("trigger_id"),
+        suggested_target_customer=hook_cta.get("target_customer"),
+        suggested_usage_summary=hook_cta.get("usage_summary"),
         suggested_usp_list=suggested_usp_list[:5],
+        suggested_hook_angles=list(hook_cta.get("hook_angles") or []),
+        suggested_cta_angles=list(hook_cta.get("cta_angles") or []),
         claim_tokens=claim_tokens,
         claim_gate=claim_gate,
         claim_risk_level=claim_risk,
@@ -203,7 +221,7 @@ def complete_product_knowledge(
         human_review_fields=_identify_review_fields(intelligence, physics, claim_gate),
         readiness_by_mode=readiness,
         provenance=["product_knowledge_completion_service:v1"],
-        warnings=warnings + (["AFFILIATE_LANE_CONTAMINATION_RISK"] if request.source_lane in ["FASTMOSS", "TIKTOKSHOP"] else []),
+        warnings=warnings + (["AFFILIATE_LANE_CONTAMINATION_RISK"] if _normalize_source_lane(request.source_lane) in ["FASTMOSS", "TIKTOKSHOP"] else []),
         errors=intelligence.get("errors", [])
     )
 
@@ -252,7 +270,7 @@ def _build_temp_product(
     return {
         "raw_product_title": name,
         "product_display_name": name,
-        "source": request.source_lane or "MANUAL",
+        "source": _normalize_source_lane(request.source_lane) or "MANUAL",
         "category": taxonomy_candidate.get("category"),
         "subcategory": taxonomy_candidate.get("subcategory"),
         "type": taxonomy_candidate.get("type"),
@@ -325,9 +343,9 @@ def _resolve_taxonomy_candidate(
         "raw_product_title": mapping_seed_text or normalized_name,
         "product_display_name": normalized_name,
         "product_short_name": normalized_name,
-        "source": request.source_lane or "MANUAL",
+        "source": _normalize_source_lane(request.source_lane) or "MANUAL",
     }
-    mapping = resolve_product_mapping(product=base_product, source_hint=request.source_lane)
+    mapping = resolve_product_mapping(product=base_product, source_hint=_normalize_source_lane(request.source_lane))
     candidate = {
         "category": mapping.get("category") or None,
         "subcategory": mapping.get("subcategory") or None,
@@ -382,7 +400,7 @@ def _resolve_taxonomy_candidate(
         "feminine care",
         "female_health_sensitive",
     }
-    owned_lane = str(request.source_lane or "").upper() in {"OWNED", "MANUAL"}
+    owned_lane = _normalize_source_lane(request.source_lane) in {"OWNED", "MANUAL"}
     if owned_lane and (
         any(token in male_health_tokens for token in claim_tokens)
         or any(token in combined_text for token in male_health_tokens if token != "male_health_sensitive")
@@ -788,7 +806,7 @@ def import_ai_form(
     completion = complete_product_knowledge(request)
     
     # Add affiliate warning if lane matches
-    if request.source_lane in ["FASTMOSS", "TIKTOKSHOP"]:
+    if _normalize_source_lane(request.source_lane) in ["FASTMOSS", "TIKTOKSHOP"]:
         warnings.append("AFFILIATE_LANE_CONTAMINATION_RISK")
 
     return AIFormImportResponse(

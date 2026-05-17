@@ -17,6 +17,7 @@ from agent.services.product_mapping import normalize_mapping_text
 from agent.services.product_physics import resolve_product_physics
 from agent.services.product_truth_service import ProductTruthService
 import uuid
+from datetime import datetime, timezone
 
 
 AFFILIATE_SOURCES = {"FASTMOSS", "TIKTOKSHOP", "IMPORTED"}
@@ -86,6 +87,20 @@ def _unique(values: list[str]) -> list[str]:
         seen.add(item)
         ordered.append(item)
     return ordered
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _draft_image_asset_state(declared_evidence: dict[str, Any]) -> tuple[str, str]:
+    local_image_path = str(declared_evidence.get("local_image_path") or "").strip()
+    image_url = str(declared_evidence.get("image_url") or "").strip()
+    if local_image_path:
+        return "IMAGE_CACHE_READY", "Cached draft image is available locally."
+    if image_url:
+        return "IMAGE_REFERENCE_READY", "Image URL is available for draft review."
+    return "IMAGE_REFERENCE_MISSING", "No draft image evidence is currently attached."
 
 
 def _normalize_compare(value: Any) -> str:
@@ -506,6 +521,10 @@ def create_registration_review_draft(
             "extraction_status": completion.extraction_status,
         }
     )
+    image_asset_status, image_asset_detail = _draft_image_asset_state(declared_evidence)
+    system_inferred["image_asset_status"] = image_asset_status
+    system_inferred["image_asset_detail"] = image_asset_detail
+    now = _now()
 
     return RegistrationReviewDraft(
         review_draft_id=draft_id,
@@ -530,10 +549,22 @@ def create_registration_review_draft(
         write_back_allowed=False,
         write_back_performed=False,
         write_back_status="READ_ONLY_REVIEW_PREVIEW",
-        user_actions=["APPROVE_CANDIDATE_FIELD", "REJECT_CANDIDATE_FIELD", "CLEAR_DRAFT"],
+        user_actions=[
+            "APPROVE_CANDIDATE_FIELD",
+            "REJECT_CANDIDATE_FIELD",
+            "SAVE_DRAFT_EVIDENCE",
+            "RECOMPUTE_DRAFT",
+            "UPLOAD_DRAFT_IMAGE",
+            "CLEAR_DRAFT",
+        ],
         approval_checklist={f: False for f in candidates.keys()},
         readiness_by_mode=completion.readiness_by_mode,
         provenance=completion.provenance + ["registration_review_service:v1"],
         warnings=completion.warnings,
         errors=completion.errors,
+        draft_freshness_status="FRESH",
+        last_evidence_edit_at=now,
+        last_recomputed_at=now,
+        image_asset_status=image_asset_status,
+        image_asset_detail=image_asset_detail,
     )

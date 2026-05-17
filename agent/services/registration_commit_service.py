@@ -2,6 +2,7 @@ import logging
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from datetime import datetime
 
 from agent.db import crud
 from agent.models.product_registration import (
@@ -80,6 +81,33 @@ class RegistrationCommitService:
         # Source Lane Authority
         if draft.source_lane == "AFFILIATE_CONTAMINATED":
             blocked_reasons.append("AFFILIATE_LANE_CONTAMINATION_BLOCKED")
+        if draft.source_lane in {
+            "FASTMOSS_REFERENCE",
+            "FASTMOSS",
+            "TIKTOKSHOP_DRAFT",
+            "TIKTOKSHOP",
+            "UNKNOWN_REVIEW_REQUIRED",
+        }:
+            blocked_reasons.append("SOURCE_LANE_NOT_ALLOWED_FOR_OWNED_COMMIT")
+
+        if draft.draft_freshness_status != "FRESH":
+            blocked_reasons.append("DRAFT_RECOMPUTE_REQUIRED")
+
+        if not draft.last_recomputed_at:
+            blocked_reasons.append("DRAFT_RECOMPUTE_REQUIRED")
+
+        def _parse_timestamp(value: str | None) -> datetime | None:
+            if not value:
+                return None
+            try:
+                return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                return None
+
+        evidence_edit_at = _parse_timestamp(draft.last_evidence_edit_at)
+        recomputed_at = _parse_timestamp(draft.last_recomputed_at)
+        if evidence_edit_at and recomputed_at and evidence_edit_at > recomputed_at:
+            blocked_reasons.append("DRAFT_RECOMPUTE_REQUIRED")
             
         # Claim Gate
         if draft.claim_gate == "CLAIM_BLOCKED":
@@ -91,9 +119,18 @@ class RegistrationCommitService:
 
         # Human Review Fields Unresolved
         # Only check fields that are actually candidates (virtual fields like 'physics_profile' are skipped)
-        unresolved_fields: list[str] = []
+        unresolved_fields = [
+            field
+            for field in draft.human_review_fields
+            if field in draft.approval_checklist and not draft.approval_checklist.get(field)
+        ]
         if unresolved_fields:
             blocked_reasons.append(f"UNRESOLVED_REVIEW_FIELDS: {', '.join(unresolved_fields)}")
+
+        if draft.missing_required_evidence:
+            blocked_reasons.append(
+                f"MISSING_REQUIRED_EVIDENCE: {', '.join(draft.missing_required_evidence)}"
+            )
 
         if blocked_reasons:
             return {

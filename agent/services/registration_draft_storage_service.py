@@ -73,10 +73,6 @@ class RegistrationDraftStorageService:
             if field in draft.approval_checklist:
                 draft.approval_checklist[field] = False
                 
-        # Update declared evidence
-        if decisions.edited_declared_evidence:
-            draft.declared_evidence_fields.update(decisions.edited_declared_evidence)
-            
         # Update human review fields (remove if approved/rejected)
         reviewed_fields = set(decisions.approved_fields + decisions.rejected_fields)
         draft.human_review_fields = [f for f in draft.human_review_fields if f not in reviewed_fields]
