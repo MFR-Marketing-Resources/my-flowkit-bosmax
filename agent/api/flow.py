@@ -1,4 +1,5 @@
 """Direct Flow API endpoints — for manual operations outside the queue."""
+import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -281,8 +282,14 @@ async def execute_flow_job(body: dict):
 
     await crud.upsert_request_telemetry(
         body["request_id"],
+        product_id=body.get("product_id"),
         request_type="MANUAL_FLOW_JOB",
         mode=body.get("mode"),
+        prompt_package_snapshot_id=body.get("prompt_package_snapshot_id"),
+        workspace_execution_package_id=body.get("workspace_execution_package_id"),
+        prompt_fingerprint=body.get("prompt_fingerprint"),
+        asset_fingerprints=json.dumps(body.get("asset_fingerprints", [])),
+        request_lineage_payload=json.dumps(body.get("request_lineage_payload", {})),
         status="WAITING_FLOW",
         queued_at=crud._now(),
         last_heartbeat_at=crud._now(),

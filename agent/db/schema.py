@@ -162,6 +162,11 @@ CREATE TABLE IF NOT EXISTS request_telemetry (
     product_id    TEXT REFERENCES product(id) ON DELETE SET NULL,
     request_type  TEXT NOT NULL,
     mode          TEXT,
+    prompt_package_snapshot_id TEXT,
+    workspace_execution_package_id TEXT,
+    prompt_fingerprint TEXT,
+    asset_fingerprints TEXT,
+    request_lineage_payload TEXT,
     status        TEXT NOT NULL DEFAULT 'QUEUED',
     google_flow_stage TEXT,
     extension_stage   TEXT,
@@ -187,6 +192,30 @@ CREATE TABLE IF NOT EXISTS request_stage_event (
     status        TEXT NOT NULL,
     message       TEXT,
     source        TEXT NOT NULL CHECK(source IN ('dashboard','backend','worker','extension','google_flow'))
+);
+
+CREATE TABLE IF NOT EXISTS workspace_execution_package (
+    workspace_execution_package_id TEXT PRIMARY KEY,
+    product_id    TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    mode          TEXT NOT NULL,
+    duration_seconds INTEGER NOT NULL DEFAULT 8,
+    aspect_ratio  TEXT NOT NULL DEFAULT '9:16',
+    model         TEXT NOT NULL,
+    manual_override INTEGER NOT NULL DEFAULT 0,
+    prompt_text   TEXT NOT NULL,
+    prompt_fingerprint TEXT NOT NULL,
+    prompt_package_snapshot_id TEXT NOT NULL,
+    asset_slots   TEXT NOT NULL,
+    resolved_assets TEXT NOT NULL,
+    readiness     TEXT NOT NULL,
+    execution_allowed INTEGER NOT NULL DEFAULT 0,
+    production_generation_allowed INTEGER NOT NULL DEFAULT 0,
+    manual_fallback TEXT NOT NULL,
+    blockers      TEXT NOT NULL DEFAULT '[]',
+    request_lineage_payload TEXT NOT NULL,
+    source_of_truth_notes TEXT NOT NULL DEFAULT '[]',
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS product (
@@ -310,6 +339,11 @@ CREATE TABLE IF NOT EXISTS batch_variant (
     asset_strategy          TEXT,
     diversity_fingerprint   TEXT,
     prompt_9_section        TEXT,
+    prompt_package_snapshot_id TEXT,
+    prompt_package_snapshot TEXT,
+    workspace_execution_package_id TEXT,
+    prompt_fingerprint      TEXT,
+    asset_fingerprints      TEXT,
     readiness               TEXT DEFAULT 'PENDING',
     blocked_reason          TEXT,
     queue_status            TEXT DEFAULT 'READY' CHECK(queue_status IN ('READY','QUEUED','DRY_RUN_VALIDATED','WAITING_INTERVAL','RUNNING','FLOW_MODE_VERIFIED','PROMPT_INSERTED','GENERATION_STARTED','GENERATED','DOWNLOADED','QA_PASSED','QA_FAILED','FAILED','RETRY_PENDING','CANCELLED')),
@@ -335,6 +369,7 @@ CREATE INDEX IF NOT EXISTS idx_request_scene ON request(scene_id);
 CREATE INDEX IF NOT EXISTS idx_video_project ON video(project_id);
 CREATE INDEX IF NOT EXISTS idx_product_source ON product(source);
 CREATE INDEX IF NOT EXISTS idx_product_name ON product(product_short_name);
+CREATE INDEX IF NOT EXISTS idx_workspace_execution_package_product ON workspace_execution_package(product_id, mode);
 CREATE INDEX IF NOT EXISTS idx_batch_product ON batch(product_id);
 CREATE INDEX IF NOT EXISTS idx_batch_variant_batch ON batch_variant(batch_id);
 CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_status);
@@ -916,6 +951,20 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
                 finally:
                     _sync.close()
 
+        cursor = await db.execute("PRAGMA table_info(request_telemetry)")
+        telemetry_columns = {row[1] for row in await cursor.fetchall()}
+        telemetry_column_defs = {
+            "prompt_package_snapshot_id": "TEXT",
+            "workspace_execution_package_id": "TEXT",
+            "prompt_fingerprint": "TEXT",
+            "asset_fingerprints": "TEXT",
+            "request_lineage_payload": "TEXT",
+        }
+        for column_name, column_type in telemetry_column_defs.items():
+            if column_name not in telemetry_columns:
+                await db.execute(f"ALTER TABLE request_telemetry ADD COLUMN {column_name} {column_type}")
+                logger.info("Migrated: added %s column to request_telemetry", column_name)
+
         cursor = await db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='request_stage_event'")
         stage_event_row = await cursor.fetchone()
         stage_event_sql = stage_event_row[0] if stage_event_row else ""
@@ -1088,6 +1137,20 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
             else:
                 # In-memory DB (tests): schema already has DRY_RUN_VALIDATED, skip migration
                 logger.info("In-memory DB detected: skipping batch_variant migration (schema already correct)")
+
+        cursor = await db.execute("PRAGMA table_info(batch_variant)")
+        batch_variant_columns = {row[1] for row in await cursor.fetchall()}
+        batch_variant_column_defs = {
+            "prompt_package_snapshot_id": "TEXT",
+            "prompt_package_snapshot": "TEXT",
+            "workspace_execution_package_id": "TEXT",
+            "prompt_fingerprint": "TEXT",
+            "asset_fingerprints": "TEXT",
+        }
+        for column_name, column_type in batch_variant_column_defs.items():
+            if column_name not in batch_variant_columns:
+                await db.execute(f"ALTER TABLE batch_variant ADD COLUMN {column_name} {column_type}")
+                logger.info("Migrated: added %s column to batch_variant", column_name)
 
         # Migration: repair broken batch_queue_event FK reference to _batch_variant_old
         # A previous rename-based migration caused SQLite to auto-update the FK reference

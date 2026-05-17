@@ -47,6 +47,7 @@ from agent.services.production_prompt_approval_service import (
     APPROVAL_PHRASE as PRODUCTION_PROMPT_APPROVAL_PHRASE,
     approve_production_prompt_package,
 )
+from agent.services.approved_product_package_service import get_approved_product_package
 from agent.services.prompt_package_dryrun_service import generate_prompt_dryrun
 from agent.utils.paths import product_image_path
 
@@ -1121,6 +1122,28 @@ async def post_production_prompt_approval(product_id: str, request: ProductionPr
     readiness = await PromptPipelineReadinessService.get_readiness_report(refreshed_product or product)
     result["readiness_after_approval"] = readiness
     return result
+
+
+@router.get("/{product_id}/approved-package")
+async def get_product_approved_package(product_id: str, mode: str = "T2V"):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if is_product_archived(product):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "product_id": product_id,
+                "lifecycle_status": resolve_lifecycle_status(product),
+                "blocker": "PRODUCT_ARCHIVED",
+            },
+        )
+    try:
+        return await get_approved_product_package(product_id, mode)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message == "PRODUCT_NOT_FOUND" else 409
+        raise HTTPException(status_code=status_code, detail=message) from exc
 
 
 @router.get("/{product_id}/prompt-dryrun")

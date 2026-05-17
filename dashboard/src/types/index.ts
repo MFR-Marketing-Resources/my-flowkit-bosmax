@@ -250,11 +250,135 @@ export type ManualEntityType = "character" | "visual_asset";
 
 export interface UploadedAsset {
 	label?: string;
-	mediaId: string;
+	mediaId: string | null;
 	characterId?: string;
 	entityType?: ManualEntityType;
 	fileName: string;
 	previewUrl?: string;
+	downloadUrl?: string;
+	assetId?: string;
+	assetFingerprint?: string;
+	assetSource?: string;
+	isDefaultPackageAsset?: boolean;
+}
+
+export type WorkspaceMode = "T2V" | "F2V" | "I2V" | "IMG";
+type DisplayFieldValue =
+	| string
+	| number
+	| boolean
+	| null
+	| undefined
+	| string[]
+	| number[]
+	| boolean[];
+
+export interface WorkspaceExecutePayload {
+	prompt: string;
+	orientation?: Orientation;
+	aspectRatio?: string;
+	model?: string;
+	count?: number;
+	startAsset?: UploadedAsset | null;
+	endAsset?: UploadedAsset | null;
+	refs?: {
+		subjectAsset?: UploadedAsset | null;
+		sceneAsset?: UploadedAsset | null;
+		styleAsset?: UploadedAsset | null;
+	};
+	product_id?: string | null;
+	prompt_package_snapshot_id?: string | null;
+	workspace_execution_package_id?: string | null;
+	prompt_fingerprint?: string | null;
+	asset_fingerprints?: string[];
+	request_lineage_payload?: {
+		product_id?: string;
+		mode?: WorkspaceMode;
+		prompt_package_snapshot_id?: string;
+		workspace_execution_package_id?: string;
+		prompt_fingerprint?: string;
+		asset_fingerprints?: string[];
+	};
+	mode: WorkspaceMode;
+}
+
+export interface ApprovedPackageResolvedAsset {
+	asset_id: string;
+	asset_fingerprint: string;
+	slot_key: string;
+	asset_source: string;
+	label: string;
+	file_name: string;
+	preview_url: string;
+	download_url: string;
+	media_id: string | null;
+}
+
+export interface ApprovedPackageAssetSlot {
+	slot_key: string;
+	required: boolean;
+	default_source: string;
+	allowed_sources: string[];
+	resolved_asset: ApprovedPackageResolvedAsset | null;
+}
+
+export interface ApprovedProductPackage {
+	prompt_package_snapshot_id: string;
+	product_id: string;
+	product_name: string;
+	mode: WorkspaceMode;
+	approval_status: string;
+	production_generation_allowed: boolean;
+	prompt_text: string;
+	prompt_fingerprint: string;
+	claim_safe_rewrite: string;
+	image_reference_status: string;
+	asset_requirements: string[];
+	asset_slots: ApprovedPackageAssetSlot[];
+	manual_fallback: {
+		allowed: boolean;
+		copy_prompt_available: boolean;
+		image_preview_url: string | null;
+		image_download_url: string | null;
+		asset_slots: string[];
+		execution_checklist: string[];
+		operator_warning: string;
+	};
+	provenance: string[];
+	warnings: string[];
+	blockers: string[];
+	source_of_truth_notes: string[];
+}
+
+export interface WorkspaceExecutionPackage {
+	workspace_execution_package_id: string;
+	product_id: string;
+	product_name: string;
+	mode: WorkspaceMode;
+	duration_seconds: number;
+	aspect_ratio: string;
+	model: string;
+	manual_override: boolean;
+	prompt_text: string;
+	prompt_fingerprint: string;
+	prompt_package_snapshot_id: string;
+	asset_slots: ApprovedPackageAssetSlot[];
+	resolved_assets: ApprovedPackageResolvedAsset[];
+	readiness: string;
+	execution_allowed: boolean;
+	production_generation_allowed: boolean;
+	manual_fallback: ApprovedProductPackage["manual_fallback"];
+	blockers: string[];
+	request_lineage_payload: {
+		product_id: string;
+		mode: WorkspaceMode;
+		prompt_package_snapshot_id: string;
+		workspace_execution_package_id: string;
+		prompt_fingerprint: string;
+		asset_fingerprints: string[];
+	};
+	source_of_truth_notes: string[];
+	prompt_preview?: string;
 }
 
 export interface Product {
@@ -1189,8 +1313,8 @@ export interface ProductKnowledgeCompleteResponse {
 	completion_status: string;
 	input_quality_status: string;
 	declared_evidence_summary: string;
-	declared_input_fields: Record<string, any>;
-	extracted_product_facts: Record<string, any>;
+	declared_input_fields: Record<string, DisplayFieldValue>;
+	extracted_product_facts: Record<string, DisplayFieldValue>;
 	suggested_normalized_name?: string;
 	suggested_size_or_volume?: string;
 	suggested_package_notes?: string;
@@ -1263,9 +1387,9 @@ export interface RegistrationReviewDraft {
 		| "BLOCKED"
 		| "COMMITTED";
 	source_lane: string;
-	declared_evidence_fields: Record<string, any>;
-	system_inferred_fields: Record<string, any>;
-	canonical_candidate_fields: Record<string, any>;
+	declared_evidence_fields: Record<string, DisplayFieldValue>;
+	system_inferred_fields: Record<string, DisplayFieldValue>;
+	canonical_candidate_fields: Record<string, DisplayFieldValue>;
 	human_review_fields: string[];
 	blocked_fields: string[];
 	missing_required_evidence: string[];
@@ -1297,7 +1421,7 @@ export interface RegistrationReviewDraft {
 export interface RegistrationReviewDraftFieldDecisions {
 	approved_fields: string[];
 	rejected_fields: string[];
-	edited_declared_evidence: Record<string, any>;
+	edited_declared_evidence: Record<string, DisplayFieldValue>;
 	requested_more_evidence_fields: string[];
 }
 
