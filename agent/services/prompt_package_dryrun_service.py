@@ -8,6 +8,7 @@ from agent.services.claim_safe_rewrite_service import (
     STATUS_REVIEW_READY,
     get_stored_claim_safe_package,
 )
+from agent.services.production_prompt_approval_service import is_mode_production_approved
 from agent.services.product_intelligence import enrich_product
 
 
@@ -78,18 +79,19 @@ async def generate_prompt_dryrun(product_id: str, mode: str) -> dict[str, Any]:
             "product_id": product_id,
         }
     prompt_preview = _t2v_prompt(enriched, package) if normalized_mode == "T2V" else _img_prompt(enriched, package)
+    production_mode_approved = is_mode_production_approved(product, normalized_mode)
     warnings = []
-    if package.get("claim_safe_copy_status") == STATUS_REVIEW_READY:
+    if not production_mode_approved and package.get("claim_safe_copy_status") == STATUS_REVIEW_READY:
         warnings.append("PRODUCTION_CLAIM_REVIEW_STILL_REQUIRED")
     return {
-        "status": "DRY_RUN_READY",
+        "status": "PRODUCTION_READY" if production_mode_approved else "DRY_RUN_READY",
         "product_id": product_id,
         "mode": normalized_mode,
         "prompt_preview": prompt_preview,
         "prompt_length": len(prompt_preview),
         "claim_safe_copy_status": package.get("claim_safe_copy_status"),
         "dry_run_preview_allowed": True,
-        "production_generation_allowed": package.get("claim_safe_copy_status") == STATUS_APPROVED,
+        "production_generation_allowed": production_mode_approved or package.get("claim_safe_copy_status") == STATUS_APPROVED,
         "warnings": warnings,
         "provenance": [
             "prompt_package_dryrun_service:v1",

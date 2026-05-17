@@ -77,3 +77,29 @@ async def test_readiness_allows_dry_run_after_claim_safe_review_ready():
     assert report["production_generation_allowed"] is False
     assert report["readiness_by_mode"]["T2V"] == "DRY_RUN_READY"
     assert "CLAIM_SAFE_COPY_REQUIRED" not in report["blockers"]
+
+
+@pytest.mark.asyncio
+async def test_readiness_allows_production_after_explicit_prompt_approval():
+    product = {
+        "id": "prod-bosmax-production-approved",
+        "raw_product_title": "Bosmax Herbs 5 ML",
+        "source": "MANUAL",
+        "lifecycle_status": "ACTIVE",
+        "category": "Health",
+        "subcategory": "Supplements",
+        "type": "Male Health",
+        "physics_class": "SUPPLEMENT_BOTTLE",
+        "image_url": "https://example.com/bosmax.jpg",
+        "claim_safe_copy_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+        "production_prompt_approval_status": "PRODUCTION_PROMPT_APPROVED",
+        "production_prompt_approved_modes": '["T2V","IMG"]',
+    }
+
+    report = await PromptPipelineReadinessService.get_readiness_report(product)
+
+    assert report["production_generation_allowed"] is True
+    assert report["readiness_by_mode"]["T2V"] == "PRODUCTION_READY"
+    assert report["readiness_by_mode"]["IMG"] == "PRODUCTION_READY"
+    assert report["readiness_by_mode"]["PromptGeneration"] == "PRODUCTION_READY"
+    assert "CLAIM_REVIEW_REQUIRED_FOR_PRODUCTION" not in report["blockers"]

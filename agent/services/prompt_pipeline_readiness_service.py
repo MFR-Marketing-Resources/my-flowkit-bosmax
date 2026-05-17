@@ -7,6 +7,10 @@ from agent.services.claim_safe_rewrite_service import (
     STATUS_APPROVED,
     STATUS_REVIEW_READY,
 )
+from agent.services.production_prompt_approval_service import (
+    get_production_approved_modes,
+    is_production_prompt_approved,
+)
 
 class PromptPipelineReadinessService:
     @staticmethod
@@ -31,6 +35,9 @@ class PromptPipelineReadinessService:
         claim_tokens = enriched.get("claim_tokens", [])
         claim_risk_level = enriched.get("claim_risk_level")
         claim_safe_copy_status = enriched.get("claim_safe_copy_status")
+        production_prompt_approval_status = enriched.get("production_prompt_approval_status")
+        production_prompt_approved_modes = get_production_approved_modes(enriched)
+        production_prompt_approved = is_production_prompt_approved(enriched)
         claim_safe_copy_review_ready = claim_safe_copy_status in {STATUS_REVIEW_READY, STATUS_APPROVED}
         claim_safe_copy_required = (
             (claim_gate == "CLAIM_REVIEW_REQUIRED" or claim_gate == "CLAIM_BLOCKED")
@@ -61,11 +68,15 @@ class PromptPipelineReadinessService:
         else:
             # T2V
             t2v_status = "READY"
-            if claim_safe_copy_required:
+            if production_prompt_approved and "T2V" in production_prompt_approved_modes:
+                t2v_status = "PRODUCTION_READY"
+            elif claim_safe_copy_required:
                 t2v_status = "NEEDS_REVIEW"
             elif claim_safe_copy_review_ready and claim_gate != "CLAIM_SAFE":
                 t2v_status = "DRY_RUN_READY"
-            if enriched.get("bosmax_product_family") == "MALE_HEALTH_SENSITIVE":
+            if enriched.get("bosmax_product_family") == "MALE_HEALTH_SENSITIVE" and not (
+                production_prompt_approved and "T2V" in production_prompt_approved_modes
+            ):
                 t2v_status = "DRY_RUN_READY" if claim_safe_copy_review_ready else "NEEDS_REVIEW"
             readiness_by_mode["T2V"] = t2v_status
             
@@ -74,6 +85,8 @@ class PromptPipelineReadinessService:
             for mode in img_modes:
                 if not has_image:
                     readiness_by_mode[mode] = "IMAGE_REFERENCE_REQUIRED"
+                elif production_prompt_approved and mode in production_prompt_approved_modes:
+                    readiness_by_mode[mode] = "PRODUCTION_READY"
                 elif claim_safe_copy_review_ready and claim_gate != "CLAIM_SAFE":
                     readiness_by_mode[mode] = "DRY_RUN_READY"
                 elif claim_safe_copy_required:
@@ -88,7 +101,9 @@ class PromptPipelineReadinessService:
                 readiness_by_mode["ProductAssetGenerator"] = "NEEDS_FIELDS"
                 
             # PromptGeneration
-            if all(readiness_by_mode[m] == "READY" for m in ["T2V", "IMG", "F2V"]):
+            if production_prompt_approved and {"T2V", "IMG"}.issubset(set(production_prompt_approved_modes)):
+                readiness_by_mode["PromptGeneration"] = "PRODUCTION_READY"
+            elif all(readiness_by_mode[m] == "READY" for m in ["T2V", "IMG", "F2V"]):
                 readiness_by_mode["PromptGeneration"] = "READY"
             elif claim_safe_copy_review_ready and has_image and taxonomy_status == "READY":
                 readiness_by_mode["PromptGeneration"] = "DRY_RUN_READY"
@@ -104,7 +119,7 @@ class PromptPipelineReadinessService:
             blockers.append("IMAGE_REFERENCE_MISSING")
         if claim_safe_copy_required:
             blockers.append("CLAIM_SAFE_COPY_REQUIRED")
-        elif claim_safe_copy_review_ready and claim_gate != "CLAIM_SAFE":
+        elif not production_prompt_approved and claim_safe_copy_review_ready and claim_gate != "CLAIM_SAFE":
             blockers.append("CLAIM_REVIEW_REQUIRED_FOR_PRODUCTION")
         if taxonomy_status != "READY":
             blockers.append("TAXONOMY_MISSING")
@@ -116,7 +131,7 @@ class PromptPipelineReadinessService:
             next_required_inputs.append("UPLOAD_IMAGE")
         if claim_safe_copy_required:
             next_required_inputs.append("CLAIM_SAFE_COPY_REWRITE")
-        elif claim_safe_copy_review_ready and claim_gate != "CLAIM_SAFE":
+        elif not production_prompt_approved and claim_safe_copy_review_ready and claim_gate != "CLAIM_SAFE":
             next_required_inputs.append("HUMAN_PRODUCTION_APPROVAL")
         if taxonomy_status != "READY":
             next_required_inputs.append("MANUAL_MAPPING_REVIEW")
@@ -133,12 +148,13 @@ class PromptPipelineReadinessService:
             and taxonomy_status == "READY"
             and (
                 claim_gate == "CLAIM_SAFE"
+                or {"T2V", "IMG"}.issubset(set(production_prompt_approved_modes))
                 or (claim_gate != "CLAIM_SAFE" and claim_safe_copy_status == STATUS_APPROVED)
             )
         )
         safe_to_generate_prompt = production_generation_allowed
         # Special case for BOSMAX Herbs 5 ML: MALE_HEALTH_SENSITIVE requires review
-        if enriched.get("bosmax_product_family") == "MALE_HEALTH_SENSITIVE":
+        if enriched.get("bosmax_product_family") == "MALE_HEALTH_SENSITIVE" and not production_generation_allowed:
              safe_to_generate_prompt = False
              production_generation_allowed = False
 
@@ -153,6 +169,8 @@ class PromptPipelineReadinessService:
             "claim_tokens": claim_tokens,
             "claim_risk_level": claim_risk_level,
             "claim_safe_copy_status": claim_safe_copy_status,
+            "production_prompt_approval_status": production_prompt_approval_status,
+            "production_prompt_approved_modes": production_prompt_approved_modes,
             "claim_safe_copy_required": claim_safe_copy_required,
             "physics_class": physics_class,
             "physics_status": physics_status,
