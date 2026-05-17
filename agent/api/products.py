@@ -38,6 +38,12 @@ from agent.services.product_preflight import build_product_preflight
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
 from agent.services.prompt_pipeline_readiness_service import PromptPipelineReadinessService
+from agent.services.claim_safe_rewrite_service import (
+    APPROVAL_PHRASE as CLAIM_SAFE_APPROVAL_PHRASE,
+    approve_claim_safe_rewrite,
+    preview_claim_safe_rewrite,
+)
+from agent.services.prompt_package_dryrun_service import generate_prompt_dryrun
 from agent.utils.paths import product_image_path
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -141,6 +147,11 @@ class ProductPatchRequest(BaseModel):
 class ProductLifecycleActionRequest(BaseModel):
     reason: str
     confirmation_phrase: str
+
+
+class ClaimSafeRewriteApprovalRequest(BaseModel):
+    confirmation_phrase: str
+    approval_note: str | None = None
 
 
 class ImportTikTokShopRequest(BaseModel):
@@ -1027,6 +1038,68 @@ async def get_generated_prompt(product_id: str, mode: str = "F2V"):
         "prompt_length": len(prompt),
         "prompt_source": "SYSTEM",
     }
+
+
+@router.get("/{product_id}/claim-safe-rewrite-preview")
+async def get_claim_safe_rewrite_preview(product_id: str):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if is_product_archived(product):
+        raise HTTPException(status_code=409, detail="PRODUCT_ARCHIVED")
+    return await preview_claim_safe_rewrite(product_id)
+
+
+@router.post("/{product_id}/claim-safe-rewrite-approval")
+async def post_claim_safe_rewrite_approval(product_id: str, request: ClaimSafeRewriteApprovalRequest):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if is_product_archived(product):
+        raise HTTPException(status_code=409, detail="PRODUCT_ARCHIVED")
+    try:
+        result = await approve_claim_safe_rewrite(
+            product_id,
+            confirmation_phrase=request.confirmation_phrase,
+            approval_note=request.approval_note,
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": str(exc),
+                "approval_phrase": CLAIM_SAFE_APPROVAL_PHRASE,
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    refreshed_product = await crud.get_product(product_id)
+    readiness = await PromptPipelineReadinessService.get_readiness_report(refreshed_product or product)
+    result["readiness_after_approval"] = readiness
+    return result
+
+
+@router.get("/{product_id}/prompt-dryrun")
+async def get_prompt_dryrun(product_id: str, mode: str = "T2V"):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if is_product_archived(product):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "product_id": product_id,
+                "lifecycle_status": resolve_lifecycle_status(product),
+                "safe_to_generate_prompt": False,
+                "blocker": "PRODUCT_ARCHIVED",
+            },
+        )
+    result = await generate_prompt_dryrun(product_id, mode)
+    if result.get("status") == "CLAIM_SAFE_COPY_REWRITE_REQUIRED":
+        raise HTTPException(status_code=409, detail=result)
+    if result.get("status") == "INVALID_MODE":
+        raise HTTPException(status_code=400, detail=result)
+    return result
 
 @router.get("/{product_id}/prompt-readiness")
 async def get_product_prompt_readiness(product_id: str):

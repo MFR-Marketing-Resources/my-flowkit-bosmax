@@ -54,3 +54,26 @@ async def test_readiness_uses_image_reference_when_present():
 
     assert report["image_reference_status"] in {"IMAGE_READY", "IMAGE_CACHE_READY"}
     assert "IMAGE_REFERENCE_MISSING" not in report["blockers"]
+
+
+@pytest.mark.asyncio
+async def test_readiness_allows_dry_run_after_claim_safe_review_ready():
+    product = {
+        "id": "prod-bosmax-review-ready",
+        "raw_product_title": "Bosmax Herbs 5 ML",
+        "source": "MANUAL",
+        "lifecycle_status": "ACTIVE",
+        "category": "Health",
+        "subcategory": "Supplements",
+        "type": "Male Health",
+        "physics_class": "SUPPLEMENT_BOTTLE",
+        "image_url": "https://example.com/bosmax.jpg",
+        "claim_safe_copy_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+    }
+
+    report = await PromptPipelineReadinessService.get_readiness_report(product)
+
+    assert report["dry_run_preview_allowed"] is True
+    assert report["production_generation_allowed"] is False
+    assert report["readiness_by_mode"]["T2V"] == "DRY_RUN_READY"
+    assert "CLAIM_SAFE_COPY_REQUIRED" not in report["blockers"]

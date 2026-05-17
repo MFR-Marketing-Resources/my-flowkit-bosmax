@@ -247,6 +247,9 @@ CREATE TABLE IF NOT EXISTS product (
     mapping_missing_fields TEXT,
     prompt_readiness_status TEXT,
     prompt_missing_fields TEXT,
+    claim_safe_copy_status TEXT,
+    claim_safe_copy_payload TEXT,
+    claim_safe_copy_updated_at TEXT,
     lifecycle_status    TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(lifecycle_status IN ('ACTIVE','ARCHIVED')),
     archived_at         TEXT,
     archived_reason     TEXT,
@@ -498,7 +501,8 @@ FROM _request_old
             "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint",
             "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint",
             "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields",
-            "prompt_readiness_status", "prompt_missing_fields",
+            "prompt_readiness_status", "prompt_missing_fields", "claim_safe_copy_status", "claim_safe_copy_payload",
+            "claim_safe_copy_updated_at",
         }
         if "MANUAL_PROJECT" in product_sql:
             product_needs_recreate = True
@@ -566,6 +570,9 @@ CREATE TABLE IF NOT EXISTS product (
     mapping_missing_fields TEXT,
     prompt_readiness_status TEXT,
     prompt_missing_fields TEXT,
+    claim_safe_copy_status TEXT,
+    claim_safe_copy_payload TEXT,
+    claim_safe_copy_updated_at TEXT,
     lifecycle_status    TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(lifecycle_status IN ('ACTIVE','ARCHIVED')),
     archived_at         TEXT,
     archived_reason     TEXT,
@@ -656,6 +663,15 @@ FROM _product_old
         if "lifecycle_provenance" not in product_columns:
             await db.execute("ALTER TABLE product ADD COLUMN lifecycle_provenance TEXT")
             logger.info("Migrated: added lifecycle_provenance column to product table")
+        if "claim_safe_copy_status" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN claim_safe_copy_status TEXT")
+            logger.info("Migrated: added claim_safe_copy_status column to product table")
+        if "claim_safe_copy_payload" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN claim_safe_copy_payload TEXT")
+            logger.info("Migrated: added claim_safe_copy_payload column to product table")
+        if "claim_safe_copy_updated_at" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN claim_safe_copy_updated_at TEXT")
+            logger.info("Migrated: added claim_safe_copy_updated_at column to product table")
 
         cursor = await db.execute("SELECT sql FROM sqlite_master WHERE name='batch' AND type='table'")
         batch_sql_row = await cursor.fetchone()
