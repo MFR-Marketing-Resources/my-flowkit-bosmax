@@ -14,13 +14,21 @@ def test_get_ai_form_template():
     assert "```json" in template["content"]
     assert '"commission_amount": null' in template["content"]
     assert '"currency": "MYR"' in template["content"]
-    assert '"source_url": ""' in template["content"]
-    assert '"tiktok_product_url": ""' in template["content"]
+    assert '"image_url": "UNKNOWN"' in template["content"]
+    assert '"source_url": "UNKNOWN"' in template["content"]
+    assert '"tiktok_product_url": "UNKNOWN"' in template["content"]
+    assert '"image_notes": ""' in template["content"]
+    assert '"product_form_factor": ""' in template["content"]
+    assert '"packaging_description": ""' in template["content"]
 
 def test_get_ai_coaching_prompt():
     prompt = get_ai_coaching_prompt()
     assert "BOSMAX Product Intelligence Coach" in prompt
-    assert "Markdown template" in prompt
+    assert "currency" in prompt
+    assert "commission amount" in prompt
+    assert "TikTok product URL" in prompt
+    assert "product image URL" in prompt
+    assert "valid raw JSON" in prompt
 
 def test_parse_markdown_json_block():
     md = """
@@ -69,6 +77,12 @@ def test_import_ai_form_valid():
   "commission_rate": "10%",
   "image_url": "https://example.com/product.jpg",
   "product_url": "https://example.com/product",
+  "source_url": "https://example.com/source",
+  "tiktok_product_url": "https://shop.tiktok.com/view/product/123",
+  "tiktok_shop_url": "https://shop.tiktok.com/view/shop/999",
+  "image_notes": "Black bottle with roll-on cap.",
+  "product_form_factor": "roll on oil bottle",
+  "packaging_description": "small matte-black bottle",
   "size_or_volume": "100ml",
   "user_review_status": "USER_APPROVED",
   "evidence_notes": {
@@ -83,8 +97,14 @@ def test_import_ai_form_valid():
     assert result.parsed_request.product_name == "AI Product"
     assert result.parsed_request.image_url == "https://example.com/product.jpg"
     assert result.parsed_request.product_url == "https://example.com/product"
+    assert result.parsed_request.source_url == "https://example.com/source"
+    assert result.parsed_request.tiktok_product_url == "https://shop.tiktok.com/view/product/123"
+    assert result.parsed_request.tiktok_shop_url == "https://shop.tiktok.com/view/shop/999"
     assert result.parsed_request.currency == "MYR"
     assert result.parsed_request.commission_amount == 12.5
+    assert result.parsed_request.image_notes == "Black bottle with roll-on cap."
+    assert result.parsed_request.product_form_factor == "roll on oil bottle"
+    assert result.parsed_request.packaging_description == "small matte-black bottle"
     assert result.completion_response is not None
     assert any("AI_INFERRED_FACTS_DETECTED" in w for w in result.parse_warnings)
 

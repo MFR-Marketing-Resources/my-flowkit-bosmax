@@ -71,6 +71,8 @@ async def test_successful_commit(mock_storage, mock_crud, tmp_path):
             "currency": "MYR",
             "commission_amount": 1.5,
             "commission_rate": "10%",
+            "image_notes": "Front bottle image",
+            "packaging_description": "small bottle with cap",
         },
         canonical_candidate_fields={"normalized_name": "Test Product 5 ML", "size_or_volume": "5 ML"}
     )

@@ -12,6 +12,10 @@ def test_complete_product_knowledge_basic():
         commission_rate="10%",
         image_url="https://example.com/detergent.jpg",
         product_url="https://example.com/detergent",
+        source_url="https://example.com/source/detergent",
+        image_notes="Front label visible in uploaded image.",
+        product_form_factor="refill pouch",
+        packaging_description="Soft blue pouch with cap",
         source_lane="MANUAL"
     )
     response = complete_product_knowledge(request)
@@ -22,6 +26,10 @@ def test_complete_product_knowledge_basic():
     assert "1.2kg" in response.extracted_product_facts["size_or_volume"]
     assert response.image_analysis_status == "VISION_PROVIDER_NOT_CONFIGURED"
     assert response.image_analysis_image_url == "https://example.com/detergent.jpg"
+    assert response.declared_input_fields["source_url"] == "https://example.com/source/detergent"
+    assert response.declared_input_fields["image_notes"] == "Front label visible in uploaded image."
+    assert response.declared_input_fields["product_form_factor"] == "refill pouch"
+    assert response.declared_input_fields["packaging_description"] == "Soft blue pouch with cap"
 
 def test_complete_product_knowledge_claim_gate_review():
     request = ProductKnowledgeCompleteRequest(

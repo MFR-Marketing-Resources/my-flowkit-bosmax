@@ -86,6 +86,11 @@ def _normalize_completion_request(
     if not local_image_path and request.image_base64:
         local_image_path = _persist_intake_image(request.image_base64, request.image_filename)
 
+    normalized_package_notes = (
+        request.package_notes
+        or request.packaging_description
+        or request.product_form_factor
+    )
     source_url = request.source_url or request.product_url or request.tiktok_product_url or request.tiktok_shop_url
     product_url = request.product_url or request.source_url or request.tiktok_product_url
     tiktok_product_url = request.tiktok_product_url or (
@@ -100,6 +105,7 @@ def _normalize_completion_request(
             "product_url": product_url,
             "tiktok_product_url": tiktok_product_url,
             "currency": request.currency or "MYR",
+            "package_notes": normalized_package_notes,
         }
     )
 
@@ -259,6 +265,9 @@ def _build_temp_product(
         "target_customer": request.target_customer_text,
         "product_knowledge_text": request.product_knowledge_text,
         "package_notes": request.package_notes,
+        "image_notes": request.image_notes,
+        "product_form_factor": request.product_form_factor,
+        "packaging_description": request.packaging_description,
         "currency": request.currency,
         "commission_amount": request.commission_amount,
         "commission_rate": request.commission_rate,
@@ -567,15 +576,18 @@ This form is designed to be completed by an AI assistant during a user interview
 The goal is to normalize unstructured product information into a structured JSON block.
 
 ## Instructions for AI Assistant:
-1. Interview the user to collect all required fields.
-2. Ask questions one-by-one or in small groups to avoid overwhelming the user.
-3. If the user doesn't know a fact, use `null` or `"UNKNOWN"`. Do NOT hallucinate.
-4. Detect risky medical/health/beauty claims and list them in `claim_safety_notes`.
-5. When complete, provide the full Markdown content back to the user including the JSON block.
+1. Interview the user to collect all required and recommended evidence fields.
+2. Ask follow-up questions before filling missing facts. Do NOT invent data.
+3. Use `null` or `"UNKNOWN"` for missing commercial, image, or source evidence.
+4. Detect risky medical/health/beauty/sexual claims and preserve them in `claim_safety_notes` for audit.
+5. Keep safe rewrite suggestions separate from risky original wording.
+6. When complete, return valid raw JSON matching the schema below. Markdown wrapper is optional.
 
 ## Required Checklist:
 - Product Identity (Name, Lane)
-- Product Specs (Price, Size, Volume, Packaging)
+- Product Specs (Price, Currency, Commission, Size, Volume, Packaging)
+- Source Evidence (Product URL, Source URL, TikTok URLs)
+- Image Evidence (Image URL or separate uploaded image notes)
 - Product Knowledge (Description, Benefits, Usage, Ingredients, Warnings)
 - Target Customer
 - Evidence/Inference notes
@@ -597,14 +609,17 @@ The goal is to normalize unstructured product information into a structured JSON
   "price": null,
   "currency": "MYR",
   "commission_amount": null,
-  "commission_rate": "",
+  "commission_rate": "UNKNOWN",
   "size_or_volume": "",
   "package_notes": "",
-  "image_url": "",
-  "product_url": "",
-  "source_url": "",
-  "tiktok_product_url": "",
-  "tiktok_shop_url": "",
+  "image_url": "UNKNOWN",
+  "product_url": "UNKNOWN",
+  "source_url": "UNKNOWN",
+  "tiktok_product_url": "UNKNOWN",
+  "tiktok_shop_url": "UNKNOWN",
+  "image_notes": "",
+  "product_form_factor": "",
+  "packaging_description": "",
   "paste_anything_about_product": "",
   "evidence_notes": {
     "what_user_confirmed": [],
@@ -622,27 +637,40 @@ The goal is to normalize unstructured product information into a structured JSON
 ```
 """
 
-AI_COACHING_PROMPT_V1 = """You are the BOSMAX Product Intelligence Coach. Your mission is to help the user complete their product registration by interviewing them and filling out a structured form.
+AI_COACHING_PROMPT_V1 = """You are the BOSMAX Product Intelligence Coach. Your mission is to interview the user until the Smart Registration intake has enough defensible evidence for governed completion.
 
 I will provide you with a Markdown template called "BOSMAX_PRODUCT_KNOWLEDGE_INTAKE_FORM_v1.md".
 
 Your process:
-1. Greet the user and explain that you will help them register their product.
-2. Look at the JSON schema in the template.
-3. Start interviewing the user to fill in the missing fields:
-   - What is the product name?
-   - What does it do? (Description/Benefits)
-   - How do people use it?
-   - Who is it for?
-   - What are the ingredients and warnings?
-   - What is the price and size?
-4. If the user provides messy text (e.g., WhatsApp chats, raw notes), extract the facts yourself but list them in "what_ai_inferred".
-5. NEVER hallucinate facts. If the user doesn't provide it, keep it null or "UNKNOWN".
-6. Be vigilant for risky claims (medical, "cure", "miracle", "whitening", "slimming"). Flag these in "risky_claims_detected".
-7. Once you have enough information, generate the final Markdown file content with the completed JSON block.
-8. Tell the user: "Here is your completed intake form. Copy this entire message, save it as a .md file, and upload it back to the BOSMAX dashboard."
+1. Ask for the product name first.
+2. Then collect this evidence, asking follow-up questions until each item is user-confirmed, AI-inferred, or explicitly unknown:
+   - product type/category if known
+   - size/volume/variant
+   - selling price
+   - currency (default MYR unless the user states otherwise)
+   - commission amount
+   - commission rate
+   - product URL or source URL
+   - TikTok product URL or TikTok shop URL
+   - product image URL or instruction that the image will be attached separately
+   - package notes or visible packaging description
+   - ingredients or materials
+   - benefits or USP
+   - usage or cara guna
+   - warnings, pantang, allergy, age restrictions
+   - target customer
+   - claim-sensitive words used by seller or user
+   - safe copy rewrite suggestions
+3. If the user provides messy text such as chats, descriptions, or notes, extract facts carefully and list them in `what_ai_inferred`.
+4. NEVER hallucinate facts. Use `UNKNOWN` or `null` for missing price, commission, image, or source data.
+5. Preserve risky claim tokens for audit. Do NOT convert risky claims into safe verified claims.
+6. For male-health or female-health sensitive products, set the posture to `CLAIM_REVIEW_REQUIRED` or `CLAIM_BLOCKED` in your reasoning notes.
+7. Avoid explicit unsafe anatomy, tightening, enlargement, or sexual performance terms in safe copy rewrites.
+8. Keep risky original claims under `risky_claims_detected` and put safer alternatives under `safe_rewording_suggestions`.
+9. When enough evidence is gathered, output final valid raw JSON matching the template exactly. No markdown wrapper unless the user explicitly asks for it.
+10. The JSON must be upload-ready for BOSMAX Smart Registration.
 
-Let's begin. What product are we registering today?
+Begin the interview now by asking: What product are we registering today?
 """
 
 def get_ai_form_template() -> dict[str, str]:
@@ -733,6 +761,9 @@ def import_ai_form(
         commission_rate=parsed_json.get("commission_rate"),
         size_or_volume=parsed_json.get("size_or_volume"),
         package_notes=parsed_json.get("package_notes"),
+        image_notes=parsed_json.get("image_notes"),
+        product_form_factor=parsed_json.get("product_form_factor"),
+        packaging_description=parsed_json.get("packaging_description"),
         source_lane=parsed_json.get("source_lane", "OWNED"),
         image_url=parsed_json.get("image_url"),
         product_url=parsed_json.get("product_url"),
