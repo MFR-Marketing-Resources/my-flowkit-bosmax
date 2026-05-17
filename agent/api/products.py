@@ -43,6 +43,10 @@ from agent.services.claim_safe_rewrite_service import (
     approve_claim_safe_rewrite,
     preview_claim_safe_rewrite,
 )
+from agent.services.production_prompt_approval_service import (
+    APPROVAL_PHRASE as PRODUCTION_PROMPT_APPROVAL_PHRASE,
+    approve_production_prompt_package,
+)
 from agent.services.prompt_package_dryrun_service import generate_prompt_dryrun
 from agent.utils.paths import product_image_path
 
@@ -152,6 +156,13 @@ class ProductLifecycleActionRequest(BaseModel):
 class ClaimSafeRewriteApprovalRequest(BaseModel):
     confirmation_phrase: str
     approval_note: str | None = None
+
+
+class ProductionPromptApprovalRequest(BaseModel):
+    approval_phrase: str
+    approved_modes: list[str]
+    reviewer_note: str | None = None
+    confirm_no_google_flow_execution: bool
 
 
 class ImportTikTokShopRequest(BaseModel):
@@ -1073,6 +1084,39 @@ async def post_claim_safe_rewrite_approval(product_id: str, request: ClaimSafeRe
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    refreshed_product = await crud.get_product(product_id)
+    readiness = await PromptPipelineReadinessService.get_readiness_report(refreshed_product or product)
+    result["readiness_after_approval"] = readiness
+    return result
+
+
+@router.post("/{product_id}/production-prompt-approval")
+async def post_production_prompt_approval(product_id: str, request: ProductionPromptApprovalRequest):
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if is_product_archived(product):
+        raise HTTPException(status_code=409, detail="PRODUCT_ARCHIVED")
+    try:
+        result = await approve_production_prompt_package(
+            product_id,
+            approval_phrase=request.approval_phrase,
+            approved_modes=request.approved_modes,
+            reviewer_note=request.reviewer_note,
+            confirm_no_google_flow_execution=request.confirm_no_google_flow_execution,
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": str(exc),
+                "approval_phrase": PRODUCTION_PROMPT_APPROVAL_PHRASE,
+            },
+        ) from exc
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message == "PRODUCT_NOT_FOUND" else 409
+        raise HTTPException(status_code=status_code, detail=message) from exc
     refreshed_product = await crud.get_product(product_id)
     readiness = await PromptPipelineReadinessService.get_readiness_report(refreshed_product or product)
     result["readiness_after_approval"] = readiness
