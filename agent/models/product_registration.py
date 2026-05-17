@@ -94,6 +94,12 @@ class RegistrationReviewDraft(BaseModel):
     provenance: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+    draft_freshness_status: str = "FRESH"
+    last_evidence_edit_at: str | None = None
+    last_recomputed_at: str | None = None
+    image_asset_status: str = "IMAGE_REFERENCE_MISSING"
+    image_asset_detail: str | None = None
     
     created_at: str | None = None
     updated_at: str | None = None
@@ -105,6 +111,38 @@ class RegistrationReviewDraftFieldDecisions(BaseModel):
     rejected_fields: list[str] = Field(default_factory=list)
     edited_declared_evidence: dict[str, Any] = Field(default_factory=dict)
     requested_more_evidence_fields: list[str] = Field(default_factory=list)
+
+
+class RegistrationReviewDraftEvidencePatchRequest(BaseModel):
+    product_name: str | None = None
+    product_knowledge_text: str | None = None
+    benefits_text: str | None = None
+    usage_text: str | None = None
+    target_customer_text: str | None = None
+    ingredients_text: str | None = None
+    warnings_text: str | None = None
+    paste_anything_about_product: str | None = None
+
+    price: float | None = None
+    currency: str | None = None
+    commission_amount: float | None = None
+    commission_rate: str | None = None
+
+    size_or_volume: str | None = None
+    package_notes: str | None = None
+
+    product_url: str | None = None
+    source_url: str | None = None
+    tiktok_product_url: str | None = None
+    tiktok_shop_url: str | None = None
+    image_url: str | None = None
+    local_image_path: str | None = None
+    image_base64: str | None = None
+    image_filename: str | None = None
+
+    hook_angles: list[str] | None = None
+    cta_angles: list[str] | None = None
+    recompute: bool = True
 
 
 class RegistrationCommitRequest(BaseModel):

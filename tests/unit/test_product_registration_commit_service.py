@@ -20,7 +20,10 @@ def mock_crud():
 async def test_commit_blocked_invalid_phrase(mock_storage):
     mock_storage.get_draft.return_value = RegistrationReviewDraft(
         review_draft_id="d1", review_status="READY", source_lane="MANUAL",
-        approval_checklist={"normalized_name": True}
+        approval_checklist={"normalized_name": True},
+        draft_freshness_status="FRESH",
+        last_evidence_edit_at="2026-05-17T10:00:00Z",
+        last_recomputed_at="2026-05-17T10:00:00Z",
     )
     
     req = RegistrationCommitRequest(
@@ -34,12 +37,15 @@ async def test_commit_blocked_invalid_phrase(mock_storage):
     assert "INVALID_CONFIRMATION_PHRASE" in result["blocked_reasons"]
 
 @pytest.mark.asyncio
-async def test_commit_allows_partial_safe_fields(mock_storage, mock_crud):
+async def test_commit_blocks_unapproved_human_review_fields(mock_storage, mock_crud):
     mock_storage.get_draft.return_value = RegistrationReviewDraft(
         review_draft_id="d2", review_status="NEEDS_REVIEW", source_lane="MANUAL",
         human_review_fields=["category"],
         approval_checklist={"normalized_name": True, "category": False},
-        canonical_candidate_fields={"normalized_name": "Review Product", "category": "Health"}
+        canonical_candidate_fields={"normalized_name": "Review Product", "category": "Health"},
+        draft_freshness_status="FRESH",
+        last_evidence_edit_at="2026-05-17T10:00:00Z",
+        last_recomputed_at="2026-05-17T10:00:00Z",
     )
     
     req = RegistrationCommitRequest(
@@ -49,9 +55,8 @@ async def test_commit_allows_partial_safe_fields(mock_storage, mock_crud):
     )
     
     result = await RegistrationCommitService.commit_draft(req)
-    assert result["commit_status"] == "COMMITTED"
-    assert result["write_back_performed"] is True
-    assert "category" in result["excluded_fields"]
+    assert result["commit_status"] == "BLOCKED"
+    assert "UNRESOLVED_REVIEW_FIELDS: category" in result["blocked_reasons"]
 
 @pytest.mark.asyncio
 async def test_successful_commit(mock_storage, mock_crud, tmp_path):
@@ -74,7 +79,10 @@ async def test_successful_commit(mock_storage, mock_crud, tmp_path):
             "image_notes": "Front bottle image",
             "packaging_description": "small bottle with cap",
         },
-        canonical_candidate_fields={"normalized_name": "Test Product 5 ML", "size_or_volume": "5 ML"}
+        canonical_candidate_fields={"normalized_name": "Test Product 5 ML", "size_or_volume": "5 ML"},
+        draft_freshness_status="FRESH",
+        last_evidence_edit_at="2026-05-17T10:00:00Z",
+        last_recomputed_at="2026-05-17T10:00:00Z",
     )
     
     req = RegistrationCommitRequest(
@@ -100,7 +108,10 @@ async def test_commit_blocked_duplicate_owned_product(mock_storage, mock_crud):
         review_draft_id="d4", review_status="READY", source_lane="MANUAL",
         approval_checklist={"normalized_name": True},
         declared_evidence_fields={"product_name": "Bosmax Herbs", "size_or_volume": "5 ML"},
-        canonical_candidate_fields={"normalized_name": "Bosmax Herbs 5 ML"}
+        canonical_candidate_fields={"normalized_name": "Bosmax Herbs 5 ML"},
+        draft_freshness_status="FRESH",
+        last_evidence_edit_at="2026-05-17T10:00:00Z",
+        last_recomputed_at="2026-05-17T10:00:00Z",
     )
     mock_crud.list_products = AsyncMock(return_value=[{
         "id": "prod-existing",
@@ -118,3 +129,49 @@ async def test_commit_blocked_duplicate_owned_product(mock_storage, mock_crud):
     result = await RegistrationCommitService.commit_draft(req)
     assert result["commit_status"] == "BLOCKED"
     assert "DUPLICATE_OWNED_PRODUCT_CANDIDATE:prod-existing" in result["blocked_reasons"]
+
+
+@pytest.mark.asyncio
+async def test_commit_blocks_reference_lane_from_owned_canonical_writeback(mock_storage):
+    mock_storage.get_draft.return_value = RegistrationReviewDraft(
+        review_draft_id="d6",
+        review_status="READY",
+        source_lane="FASTMOSS_REFERENCE",
+        approval_checklist={"normalized_name": True},
+        draft_freshness_status="FRESH",
+        last_evidence_edit_at="2026-05-17T10:00:00Z",
+        last_recomputed_at="2026-05-17T10:00:00Z",
+    )
+
+    req = RegistrationCommitRequest(
+        draft_id="d6",
+        write_back_confirmed=True,
+        user_confirmation_phrase="REGISTER_OWNED_PRODUCT",
+    )
+
+    result = await RegistrationCommitService.commit_draft(req)
+    assert result["commit_status"] == "BLOCKED"
+    assert "SOURCE_LANE_NOT_ALLOWED_FOR_OWNED_COMMIT" in result["blocked_reasons"]
+
+
+@pytest.mark.asyncio
+async def test_commit_blocked_when_draft_recompute_required(mock_storage):
+    mock_storage.get_draft.return_value = RegistrationReviewDraft(
+        review_draft_id="d5",
+        review_status="READY",
+        source_lane="MANUAL",
+        approval_checklist={"normalized_name": True},
+        draft_freshness_status="STALE",
+        last_evidence_edit_at="2026-05-17T10:05:00Z",
+        last_recomputed_at="2026-05-17T10:00:00Z",
+    )
+
+    req = RegistrationCommitRequest(
+        draft_id="d5",
+        write_back_confirmed=True,
+        user_confirmation_phrase="REGISTER_OWNED_PRODUCT",
+    )
+
+    result = await RegistrationCommitService.commit_draft(req)
+    assert result["commit_status"] == "BLOCKED"
+    assert "DRAFT_RECOMPUTE_REQUIRED" in result["blocked_reasons"]

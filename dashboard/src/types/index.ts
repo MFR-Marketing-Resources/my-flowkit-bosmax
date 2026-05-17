@@ -1414,6 +1414,11 @@ export interface RegistrationReviewDraft {
 	provenance: string[];
 	warnings: string[];
 	errors: string[];
+	draft_freshness_status: string;
+	last_evidence_edit_at?: string;
+	last_recomputed_at?: string;
+	image_asset_status: string;
+	image_asset_detail?: string | null;
 	created_at?: string;
 	updated_at?: string;
 }
@@ -1423,6 +1428,34 @@ export interface RegistrationReviewDraftFieldDecisions {
 	rejected_fields: string[];
 	edited_declared_evidence: Record<string, DisplayFieldValue>;
 	requested_more_evidence_fields: string[];
+}
+
+export interface RegistrationReviewDraftEvidencePatchRequest {
+	product_name?: string;
+	product_knowledge_text?: string;
+	benefits_text?: string;
+	usage_text?: string;
+	target_customer_text?: string;
+	ingredients_text?: string;
+	warnings_text?: string;
+	paste_anything_about_product?: string;
+	price?: number;
+	currency?: string;
+	commission_amount?: number;
+	commission_rate?: string;
+	size_or_volume?: string;
+	package_notes?: string;
+	product_url?: string;
+	source_url?: string;
+	tiktok_product_url?: string;
+	tiktok_shop_url?: string;
+	image_url?: string;
+	local_image_path?: string;
+	image_base64?: string;
+	image_filename?: string;
+	hook_angles?: string[];
+	cta_angles?: string[];
+	recompute?: boolean;
 }
 
 export interface RegistrationCommitRequest {
