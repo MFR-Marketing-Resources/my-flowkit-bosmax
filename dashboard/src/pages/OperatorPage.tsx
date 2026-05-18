@@ -522,6 +522,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		promptConfig?.shot_count_policy[String(block1Duration)] ?? null;
 	const shotPolicy2 =
 		promptConfig?.shot_count_policy[String(block2Duration)] ?? null;
+	const isExtendMode = generationMode === "EXTEND";
 	const compilerControlsVisible = mode === "F2V";
 	const compilerButtonLabel =
 		workspacePackage && compilerControlsVisible
@@ -707,30 +708,38 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									Recommended Shots: {shotPolicy1?.recommended ?? "-"}
 								</div>
 							</div>
-							<div className="space-y-2">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-									Block 2 Duration
+							{isExtendMode ? (
+								<div className="space-y-2">
+									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+										Block 2 Duration
+									</div>
+									<select
+										title="Block 2 duration"
+										value={String(block2Duration)}
+										onChange={(e) => setBlock2Duration(Number(e.target.value))}
+										className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+									>
+										{allowedDurations.map((duration) => (
+											<option key={duration} value={duration}>
+												{duration}s
+											</option>
+										))}
+									</select>
+									<div className="text-[11px] text-slate-400">
+										Recommended Shots: {shotPolicy2?.recommended ?? "-"}
+									</div>
 								</div>
-								<select
-									title="Block 2 duration"
-									value={String(block2Duration)}
-									onChange={(e) => setBlock2Duration(Number(e.target.value))}
-									disabled={generationMode !== "EXTEND"}
-									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 disabled:opacity-50"
-								>
-									{allowedDurations.map((duration) => (
-										<option key={duration} value={duration}>
-											{duration}s
-										</option>
-									))}
-								</select>
-								<div className="text-[11px] text-slate-400">
-									Recommended Shots:{" "}
-									{generationMode === "EXTEND"
-										? (shotPolicy2?.recommended ?? "-")
-										: "Single mode only"}
+							) : (
+								<div className="space-y-2">
+									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+										Block Structure
+									</div>
+									<div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-400">
+										Single mode compiles one anchor block. Switch Generation
+										Mode to Extend to unlock Block 2 duration.
+									</div>
 								</div>
-							</div>
+							)}
 							<div className="space-y-2">
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
 									Camera Style

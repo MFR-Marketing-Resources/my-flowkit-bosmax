@@ -274,7 +274,7 @@ export default function WorkspaceJobsPage() {
 	}, [filteredRequests]);
 
 	return (
-		<div className="flex h-full flex-col gap-6 bg-slate-950 px-4 py-4 md:px-8 md:py-8">
+		<div className="min-h-full space-y-6 bg-slate-950 px-4 py-4 md:px-8 md:py-8">
 			<div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
 				<div>
 					<h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">
@@ -390,9 +390,9 @@ export default function WorkspaceJobsPage() {
 				</div>
 			</div>
 
-			<div className="grid flex-1 min-h-0 gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)]">
-				<div className="min-h-0 overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/80">
-					<div className="overflow-auto">
+			<div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)]">
+				<div className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/80">
+					<div className="overflow-x-auto">
 						<table className="min-w-[1040px] w-full border-collapse text-left">
 							<thead className="sticky top-0 z-10 bg-slate-900/95">
 								<tr className="border-b border-slate-800 text-[10px] uppercase tracking-[0.18em] text-slate-500">
@@ -488,7 +488,7 @@ export default function WorkspaceJobsPage() {
 					</div>
 				</div>
 
-				<div className="min-h-0 overflow-auto rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+				<div className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5 xl:sticky xl:top-4">
 					{!selectedTelemetry ? (
 						<div className="text-sm text-slate-400">
 							Select a job to inspect its request metadata, stage history, and

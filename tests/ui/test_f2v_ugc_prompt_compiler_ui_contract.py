@@ -37,3 +37,13 @@ def test_f2v_workspace_surfaces_ugc_prompt_compiler_controls():
         "fetchPromptCompilerRuntimeConfig",
     ]:
         assert token in api_source
+
+
+def test_f2v_single_mode_hides_block_2_duration_until_extend():
+    operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
+
+    assert 'const isExtendMode = generationMode === "EXTEND";' in operator_source
+    assert "Single mode compiles one anchor block." in operator_source
+    assert "Switch Generation" in operator_source
+    assert "Mode to Extend to unlock Block 2 duration." in operator_source
+    assert "{isExtendMode ? (" in operator_source
