@@ -32,6 +32,7 @@ import {
 import ApprovedPackagesPage from "./pages/ApprovedPackagesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
 import BatchesPage from "./pages/BatchesPage";
+import CreativeLibraryPage from "./pages/CreativeLibraryPage";
 import DashboardPage from "./pages/DashboardPage";
 import GalleryPage from "./pages/GalleryPage";
 import LogsPage from "./pages/LogsPage";
@@ -66,6 +67,11 @@ const NAV_GROUPS = [
 	{
 		label: "ASSETS",
 		items: [
+			{
+				to: "/assets/creative-library",
+				icon: Briefcase,
+				label: "Creative Library",
+			},
 			{ to: "/asset-registry", icon: Layers, label: "Asset Registry" },
 			{
 				to: "/product-asset-generator",
@@ -358,6 +364,10 @@ function Layout() {
 
 						<Route path="/batches" element={<BatchesPage />} />
 						<Route path="/asset-registry" element={<AssetRegistryPage />} />
+						<Route
+							path="/assets/creative-library"
+							element={<CreativeLibraryPage />}
+						/>
 						<Route
 							path="/product-asset-generator"
 							element={<ProductAssetGeneratorPage />}

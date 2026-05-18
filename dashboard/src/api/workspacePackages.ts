@@ -1,5 +1,7 @@
 import type {
 	ApprovedProductPackage,
+	I2VRecipeId,
+	I2VSemanticSlotResolverResponse,
 	PromptCameraStyle,
 	PromptCharacterPresence,
 	PromptCompilerRuntimeConfig,
@@ -34,6 +36,11 @@ export async function createWorkspaceExecutionPackage(input: {
 	creator_persona?: string;
 	overlay_enabled?: boolean;
 	dialogue_enabled?: boolean;
+	recipe_id?: I2VRecipeId;
+	product_reference_asset_id?: string | null;
+	character_reference_asset_id?: string | null;
+	scene_context_reference_asset_id?: string | null;
+	style_reference_asset_id?: string | null;
 	blocks?: Array<{
 		block_index: number;
 		duration_seconds: number;
@@ -52,6 +59,11 @@ export async function createWorkspaceExecutionPackage(input: {
 			creator_persona: "DEFAULT_CREATOR",
 			overlay_enabled: true,
 			dialogue_enabled: true,
+			recipe_id: "PRODUCT_HELD_BY_CHARACTER_IN_SCENE",
+			product_reference_asset_id: null,
+			character_reference_asset_id: null,
+			scene_context_reference_asset_id: null,
+			style_reference_asset_id: null,
 			blocks: [],
 			...input,
 		},
@@ -85,5 +97,26 @@ export async function fetchWorkspacePackageReadiness(input: {
 export async function fetchPromptCompilerRuntimeConfig(): Promise<PromptCompilerRuntimeConfig> {
 	return fetchAPI<PromptCompilerRuntimeConfig>(
 		"/api/workspace/prompt-compiler-config",
+	);
+}
+
+export async function resolveI2VSemanticSlots(input: {
+	product_id: string;
+	recipe_id: I2VRecipeId;
+	product_reference_asset_id?: string | null;
+	character_reference_asset_id?: string | null;
+	scene_context_reference_asset_id?: string | null;
+	style_reference_asset_id?: string | null;
+}): Promise<I2VSemanticSlotResolverResponse> {
+	return postAPI<I2VSemanticSlotResolverResponse>(
+		"/api/workspace/i2v/resolve-slots",
+		{
+			mode: "I2V",
+			product_reference_asset_id: null,
+			character_reference_asset_id: null,
+			scene_context_reference_asset_id: null,
+			style_reference_asset_id: null,
+			...input,
+		},
 	);
 }

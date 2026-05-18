@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset"})
 
 
 def _validate_table(table: str) -> None:
@@ -35,6 +35,7 @@ _COLUMNS = {
     "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message"},
     "request_stage_event": {"request_id", "timestamp", "stage", "status", "message", "source"},
     "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
+    "creative_asset": {"semantic_role", "display_name", "description", "source_type", "storage_kind", "preview_url", "download_url", "media_id", "local_file_path", "remote_source_url", "product_id", "category", "silo", "product_type", "allowed_modes", "engine_slot_eligibility", "mode_a_metadata_handoff", "visual_dna_summary", "character_dna", "scene_context_dna", "style_mood_dna", "source_prompt_fingerprint", "source_workspace_execution_package_id", "source_prompt_package_snapshot_id", "status", "updated_at"},
 }
 
 
@@ -576,6 +577,122 @@ async def list_workspace_execution_packages(
     if mode:
         q += " AND mode=?"
         params.append(mode)
+    q += " ORDER BY updated_at DESC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def create_creative_asset(
+    *,
+    asset_id: str,
+    semantic_role: str,
+    display_name: str,
+    description: str | None,
+    source_type: str,
+    storage_kind: str,
+    preview_url: str | None,
+    download_url: str | None,
+    media_id: str | None,
+    local_file_path: str | None,
+    remote_source_url: str | None,
+    product_id: str | None,
+    category: str | None,
+    silo: str | None,
+    product_type: str | None,
+    allowed_modes: str,
+    engine_slot_eligibility: str,
+    mode_a_metadata_handoff: str | None,
+    visual_dna_summary: str | None,
+    character_dna: str | None,
+    scene_context_dna: str | None,
+    style_mood_dna: str | None,
+    source_prompt_fingerprint: str | None,
+    source_workspace_execution_package_id: str | None,
+    source_prompt_package_snapshot_id: str | None,
+    status: str,
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """
+            INSERT INTO creative_asset (
+                asset_id, semantic_role, display_name, description, source_type, storage_kind,
+                preview_url, download_url, media_id, local_file_path, remote_source_url, product_id,
+                category, silo, product_type, allowed_modes, engine_slot_eligibility,
+                mode_a_metadata_handoff, visual_dna_summary, character_dna, scene_context_dna,
+                style_mood_dna, source_prompt_fingerprint, source_workspace_execution_package_id,
+                source_prompt_package_snapshot_id, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                asset_id,
+                semantic_role,
+                display_name,
+                description,
+                source_type,
+                storage_kind,
+                preview_url,
+                download_url,
+                media_id,
+                local_file_path,
+                remote_source_url,
+                product_id,
+                category,
+                silo,
+                product_type,
+                allowed_modes,
+                engine_slot_eligibility,
+                mode_a_metadata_handoff,
+                visual_dna_summary,
+                character_dna,
+                scene_context_dna,
+                style_mood_dna,
+                source_prompt_fingerprint,
+                source_workspace_execution_package_id,
+                source_prompt_package_snapshot_id,
+                status,
+                now,
+                now,
+            ),
+        )
+        await db.commit()
+    return await _get_with_db(db, "creative_asset", "asset_id", asset_id)
+
+
+async def get_creative_asset(asset_id: str):
+    return await _get("creative_asset", "asset_id", asset_id)
+
+
+async def update_creative_asset(asset_id: str, **kw):
+    return await _update("creative_asset", "asset_id", asset_id, **kw)
+
+
+async def list_creative_assets(
+    *,
+    semantic_role: str | None = None,
+    status: str | None = None,
+    product_id: str | None = None,
+    search: str | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM creative_asset WHERE 1=1"
+    params: list[object] = []
+    if semantic_role:
+        q += " AND semantic_role=?"
+        params.append(semantic_role)
+    if status:
+        q += " AND status=?"
+        params.append(status)
+    if product_id:
+        q += " AND product_id=?"
+        params.append(product_id)
+    if search:
+        like = f"%{search.lower()}%"
+        q += " AND (lower(display_name) LIKE ? OR lower(coalesce(description, '')) LIKE ? OR lower(coalesce(category, '')) LIKE ? OR lower(coalesce(silo, '')) LIKE ? OR lower(coalesce(product_id, '')) LIKE ?)"
+        params.extend([like, like, like, like, like])
     q += " ORDER BY updated_at DESC LIMIT ?"
     params.append(limit)
     cur = await db.execute(q, params)

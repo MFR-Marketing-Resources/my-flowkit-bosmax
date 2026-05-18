@@ -1,0 +1,299 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import mimetypes
+import uuid
+from pathlib import Path
+from typing import Any
+
+from agent.config import BASE_DIR
+from agent.db import crud
+from agent.models.creative_asset import (
+    CreativeAssetCreateRequest,
+    CreativeAssetEngineSlot,
+    CreativeAssetRecord,
+    CreativeAssetUpdateRequest,
+    CreativeAssetValidationResult,
+)
+
+
+CREATIVE_ASSET_UPLOAD_DIR = BASE_DIR / ".local-agent" / "creative-assets"
+ACTIVE_STATUS = "ACTIVE"
+ARCHIVED_STATUS = "ARCHIVED"
+
+
+def _json_text(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=True)
+
+
+def _parse_json_text(value: str | None, default: Any) -> Any:
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return default
+
+
+def _normalize_record(row: dict[str, Any]) -> CreativeAssetRecord:
+    payload = dict(row)
+    payload["allowed_modes"] = _parse_json_text(payload.get("allowed_modes"), [])
+    payload["engine_slot_eligibility"] = _parse_json_text(
+        payload.get("engine_slot_eligibility"),
+        [],
+    )
+    payload["mode_a_metadata_handoff"] = _parse_json_text(
+        payload.get("mode_a_metadata_handoff"),
+        payload.get("mode_a_metadata_handoff"),
+    )
+    return CreativeAssetRecord(**payload)
+
+
+def _asset_file_path(asset_id: str, file_name: str | None, mime_type: str | None = None) -> Path:
+    guessed_ext = Path(file_name or "").suffix
+    if not guessed_ext and mime_type:
+        guessed_ext = mimetypes.guess_extension(mime_type) or ""
+    if not guessed_ext:
+        guessed_ext = ".png"
+    CREATIVE_ASSET_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    return CREATIVE_ASSET_UPLOAD_DIR / f"{asset_id}{guessed_ext.lower()}"
+
+
+def _decode_base64_image(image_base64: str) -> tuple[bytes, str | None]:
+    stripped = image_base64.strip()
+    mime_type = None
+    if stripped.startswith("data:") and "," in stripped:
+        header, stripped = stripped.split(",", 1)
+        if ";base64" in header:
+            mime_type = header[5:].split(";", 1)[0]
+    return base64.b64decode(stripped), mime_type
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _build_local_preview_url(asset_id: str) -> str:
+    return f"/api/creative-assets/{asset_id}/preview"
+
+
+def _build_local_download_url(asset_id: str) -> str:
+    return f"/api/creative-assets/{asset_id}/download"
+
+
+def _fingerprint(asset_id: str, slot_key: str, source_value: str) -> str:
+    digest = hashlib.sha1(f"{asset_id}||{slot_key}||{source_value}".encode("utf-8")).hexdigest()
+    return f"creative_{digest[:16]}"
+
+
+async def create_creative_asset(request: CreativeAssetCreateRequest) -> CreativeAssetRecord:
+    asset_id = f"ca_{uuid.uuid4().hex[:16]}"
+    preview_url = _normalize_optional_text(request.preview_url)
+    download_url = _normalize_optional_text(request.download_url)
+    local_file_path = _normalize_optional_text(request.local_file_path)
+    remote_source_url = _normalize_optional_text(request.remote_source_url)
+    media_id = _normalize_optional_text(request.media_id)
+
+    if request.image_base64:
+        raw_bytes, mime_type = _decode_base64_image(request.image_base64)
+        target = _asset_file_path(asset_id, request.file_name, mime_type)
+        target.write_bytes(raw_bytes)
+        local_file_path = str(target)
+        preview_url = _build_local_preview_url(asset_id)
+        download_url = _build_local_download_url(asset_id)
+    elif request.storage_kind == "REMOTE_URL":
+        if not (remote_source_url or preview_url or download_url):
+            raise ValueError("REMOTE_SOURCE_URL_REQUIRED")
+        remote_source_url = remote_source_url or preview_url or download_url
+        preview_url = preview_url or remote_source_url
+        download_url = download_url or remote_source_url
+    elif request.storage_kind == "MEDIA_ID":
+        if not media_id:
+            raise ValueError("MEDIA_ID_REQUIRED")
+    elif request.storage_kind == "PRODUCT_IMAGE_CACHE":
+        if not request.product_id:
+            raise ValueError("PRODUCT_ID_REQUIRED")
+        preview_url = preview_url or f"/api/products/{request.product_id}/image"
+        download_url = download_url or f"/api/products/{request.product_id}/image"
+    elif request.storage_kind == "LOCAL_FILE":
+        if not local_file_path:
+            raise ValueError("LOCAL_FILE_REQUIRED")
+
+    row = await crud.create_creative_asset(
+        asset_id=asset_id,
+        semantic_role=request.semantic_role,
+        display_name=request.display_name,
+        description=request.description,
+        source_type=request.source_type,
+        storage_kind=request.storage_kind,
+        preview_url=preview_url,
+        download_url=download_url,
+        media_id=media_id,
+        local_file_path=local_file_path,
+        remote_source_url=remote_source_url,
+        product_id=request.product_id,
+        category=request.category,
+        silo=request.silo,
+        product_type=request.product_type,
+        allowed_modes=_json_text(request.allowed_modes),
+        engine_slot_eligibility=_json_text(request.engine_slot_eligibility),
+        mode_a_metadata_handoff=(
+            _json_text(request.mode_a_metadata_handoff)
+            if isinstance(request.mode_a_metadata_handoff, dict)
+            else request.mode_a_metadata_handoff
+        ),
+        visual_dna_summary=request.visual_dna_summary,
+        character_dna=request.character_dna,
+        scene_context_dna=request.scene_context_dna,
+        style_mood_dna=request.style_mood_dna,
+        source_prompt_fingerprint=request.source_prompt_fingerprint,
+        source_workspace_execution_package_id=request.source_workspace_execution_package_id,
+        source_prompt_package_snapshot_id=request.source_prompt_package_snapshot_id,
+        status=ACTIVE_STATUS,
+    )
+    return _normalize_record(row)
+
+
+async def list_creative_assets(
+    *,
+    semantic_role: str | None = None,
+    status: str | None = None,
+    allowed_mode: str | None = None,
+    engine_slot: CreativeAssetEngineSlot | None = None,
+    product_id: str | None = None,
+    search: str | None = None,
+    limit: int = 200,
+) -> list[CreativeAssetRecord]:
+    rows = await crud.list_creative_assets(
+        semantic_role=semantic_role,
+        status=status,
+        product_id=product_id,
+        search=search,
+        limit=limit,
+    )
+    items = [_normalize_record(row) for row in rows]
+    filtered: list[CreativeAssetRecord] = []
+    for item in items:
+        if allowed_mode and item.allowed_modes and allowed_mode not in item.allowed_modes:
+            continue
+        if engine_slot and item.engine_slot_eligibility and engine_slot not in item.engine_slot_eligibility:
+            continue
+        filtered.append(item)
+    return filtered
+
+
+async def get_creative_asset(asset_id: str) -> CreativeAssetRecord | None:
+    row = await crud.get_creative_asset(asset_id)
+    if not row:
+        return None
+    return _normalize_record(row)
+
+
+async def update_creative_asset(
+    asset_id: str,
+    request: CreativeAssetUpdateRequest,
+) -> CreativeAssetRecord:
+    current = await crud.get_creative_asset(asset_id)
+    if not current:
+        raise ValueError("CREATIVE_ASSET_NOT_FOUND")
+    payload = request.model_dump(exclude_unset=True)
+    if "allowed_modes" in payload:
+        payload["allowed_modes"] = _json_text(payload["allowed_modes"])
+    if "engine_slot_eligibility" in payload:
+        payload["engine_slot_eligibility"] = _json_text(payload["engine_slot_eligibility"])
+    if "mode_a_metadata_handoff" in payload and isinstance(payload["mode_a_metadata_handoff"], dict):
+        payload["mode_a_metadata_handoff"] = _json_text(payload["mode_a_metadata_handoff"])
+    row = await crud.update_creative_asset(asset_id, **payload)
+    return _normalize_record(row)
+
+
+async def archive_creative_asset(asset_id: str) -> CreativeAssetRecord:
+    row = await crud.update_creative_asset(asset_id, status=ARCHIVED_STATUS)
+    if not row:
+        raise ValueError("CREATIVE_ASSET_NOT_FOUND")
+    return _normalize_record(row)
+
+
+async def unarchive_creative_asset(asset_id: str) -> CreativeAssetRecord:
+    row = await crud.update_creative_asset(asset_id, status=ACTIVE_STATUS)
+    if not row:
+        raise ValueError("CREATIVE_ASSET_NOT_FOUND")
+    return _normalize_record(row)
+
+
+async def validate_selectable_asset(
+    asset_id: str,
+    *,
+    semantic_role: str,
+    allowed_mode: str,
+    engine_slot: CreativeAssetEngineSlot,
+) -> CreativeAssetValidationResult:
+    asset = await get_creative_asset(asset_id)
+    if not asset:
+        return CreativeAssetValidationResult(
+            valid=False,
+            blockers=["ASSET_NOT_FOUND"],
+            warnings=[],
+            asset=None,
+        )
+
+    blockers: list[str] = []
+    if asset.status != ACTIVE_STATUS:
+        blockers.append("ASSET_ARCHIVED")
+    if asset.semantic_role != semantic_role:
+        blockers.append("SEMANTIC_ROLE_MISMATCH")
+    if asset.allowed_modes and allowed_mode not in asset.allowed_modes:
+        blockers.append("MODE_NOT_ALLOWED")
+    if asset.engine_slot_eligibility and engine_slot not in asset.engine_slot_eligibility:
+        blockers.append("ENGINE_SLOT_NOT_ALLOWED")
+
+    return CreativeAssetValidationResult(
+        valid=not blockers,
+        blockers=blockers,
+        warnings=[],
+        asset=asset,
+    )
+
+
+async def get_creative_asset_file_path(asset_id: str) -> Path | None:
+    asset = await get_creative_asset(asset_id)
+    if not asset or not asset.local_file_path:
+        return None
+    path = Path(asset.local_file_path)
+    if not path.exists():
+        return None
+    return path
+
+
+def build_resolved_workspace_asset(
+    *,
+    asset: CreativeAssetRecord,
+    slot_key: str,
+) -> dict[str, Any]:
+    source_value = (
+        asset.local_file_path
+        or asset.remote_source_url
+        or asset.preview_url
+        or asset.media_id
+        or asset.asset_id
+    )
+    return {
+        "asset_id": asset.asset_id,
+        "asset_fingerprint": _fingerprint(asset.asset_id, slot_key, source_value),
+        "slot_key": slot_key,
+        "asset_source": asset.source_type,
+        "label": asset.display_name,
+        "file_name": Path(asset.local_file_path or asset.download_url or asset.preview_url or asset.asset_id).name,
+        "preview_url": asset.preview_url,
+        "download_url": asset.download_url,
+        "media_id": asset.media_id,
+        "preview_renderable_status": "RENDERABLE" if asset.preview_url else "NOT_AVAILABLE",
+        "preview_error_detail": None if asset.preview_url else "Preview URL is not available.",
+        "local_image_path_present": bool(asset.local_file_path),
+        "remote_image_url_present": bool(asset.remote_source_url),
+    }

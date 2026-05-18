@@ -53,5 +53,6 @@ def test_workspace_modules_prefill_from_approved_package_payload():
 
     assert "Approved product package loaded" in t2v_source
     assert "Resolved product image loads by default" in f2v_source
-    assert "Resolved product image is the default subject" in i2v_source
+    assert "Selected product auto-resolves as the trusted product_reference" in i2v_source
+    assert "Resolved Engine Slots" in i2v_source
     assert "Resolved product image is the default subject" in img_source

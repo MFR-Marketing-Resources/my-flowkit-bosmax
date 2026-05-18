@@ -218,6 +218,54 @@ CREATE TABLE IF NOT EXISTS workspace_execution_package (
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS creative_asset (
+    asset_id      TEXT PRIMARY KEY,
+    semantic_role TEXT NOT NULL CHECK(semantic_role IN (
+        'PRODUCT_REFERENCE',
+        'CHARACTER_REFERENCE',
+        'SCENE_CONTEXT_REFERENCE',
+        'STYLE_REFERENCE',
+        'COMPOSITE_FRAME_REFERENCE'
+    )),
+    display_name  TEXT NOT NULL,
+    description   TEXT,
+    source_type   TEXT NOT NULL CHECK(source_type IN (
+        'UPLOAD',
+        'GENERATED_IMAGE',
+        'PRODUCT_CACHE',
+        'REMOTE_URL',
+        'SYSTEM_SEED'
+    )),
+    storage_kind  TEXT NOT NULL CHECK(storage_kind IN (
+        'LOCAL_FILE',
+        'REMOTE_URL',
+        'MEDIA_ID',
+        'PRODUCT_IMAGE_CACHE'
+    )),
+    preview_url   TEXT,
+    download_url  TEXT,
+    media_id      TEXT,
+    local_file_path TEXT,
+    remote_source_url TEXT,
+    product_id    TEXT REFERENCES product(id) ON DELETE SET NULL,
+    category      TEXT,
+    silo          TEXT,
+    product_type  TEXT,
+    allowed_modes TEXT NOT NULL DEFAULT '[]',
+    engine_slot_eligibility TEXT NOT NULL DEFAULT '[]',
+    mode_a_metadata_handoff TEXT,
+    visual_dna_summary TEXT,
+    character_dna TEXT,
+    scene_context_dna TEXT,
+    style_mood_dna TEXT,
+    source_prompt_fingerprint TEXT,
+    source_workspace_execution_package_id TEXT,
+    source_prompt_package_snapshot_id TEXT,
+    status        TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'ARCHIVED')),
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
 CREATE TABLE IF NOT EXISTS product (
     id                  TEXT PRIMARY KEY,
     source              TEXT NOT NULL DEFAULT 'FASTMOSS' CHECK(source IN ('FASTMOSS','TIKTOKSHOP','MANUAL','IMPORTED')),
@@ -370,6 +418,8 @@ CREATE INDEX IF NOT EXISTS idx_video_project ON video(project_id);
 CREATE INDEX IF NOT EXISTS idx_product_source ON product(source);
 CREATE INDEX IF NOT EXISTS idx_product_name ON product(product_short_name);
 CREATE INDEX IF NOT EXISTS idx_workspace_execution_package_product ON workspace_execution_package(product_id, mode);
+CREATE INDEX IF NOT EXISTS idx_creative_asset_role_status ON creative_asset(semantic_role, status);
+CREATE INDEX IF NOT EXISTS idx_creative_asset_product ON creative_asset(product_id, status);
 CREATE INDEX IF NOT EXISTS idx_batch_product ON batch(product_id);
 CREATE INDEX IF NOT EXISTS idx_batch_variant_batch ON batch_variant(batch_id);
 CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_status);

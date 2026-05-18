@@ -60,7 +60,8 @@ def test_operator_authoring_pages_keep_workspace_controls_and_modules():
     assert "<I2VModule" in operator_source
     assert "<IMGModule" in operator_source
     assert "Approved product package loaded" in t2v_source
-    assert "Resolved product image is the default subject" in i2v_source
+    assert "Semantic Asset Resolver" in i2v_source
+    assert "Resolved Engine Slots" in i2v_source
     assert "Resolved product image is the default subject" in img_source
 
 
@@ -77,8 +78,8 @@ def test_workspace_modules_use_page_scroll_and_clear_auto_vs_manual_sections():
         assert "xl:sticky xl:top-4" in source
 
     assert "Auto Asset Baseline" in f2v_source
-    assert "Auto Asset Baseline" in i2v_source
+    assert "Product Reference" in i2v_source
     assert "Auto Asset Baseline" in img_source
     assert "Manual Asset Upload" in f2v_source
-    assert "Manual Asset Upload" in i2v_source
+    assert "Manual Override" in i2v_source
     assert "Manual Asset Upload" in img_source
