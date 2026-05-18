@@ -37,6 +37,7 @@ from agent.api.products import router as products_router
 from agent.api.workspace_packages import router as workspace_packages_router
 from agent.api.prompt_preview import router as prompt_preview_router
 from agent.api.asset_registry import router as asset_registry_router
+from agent.api.creative_assets import router as creative_assets_router
 from agent.api.bosmax_authority import router as bosmax_authority_router
 from agent.api.copy_signals import router as copy_signals_router
 from agent.api.product_asset_generator import router as product_asset_generator_router
@@ -154,6 +155,7 @@ app.include_router(products_router, prefix="/api")
 app.include_router(workspace_packages_router, prefix="/api")
 app.include_router(prompt_preview_router, prefix="/api")
 app.include_router(asset_registry_router, prefix="/api")
+app.include_router(creative_assets_router, prefix="/api")
 app.include_router(bosmax_authority_router, prefix="/api")
 app.include_router(copy_signals_router, prefix="/api")
 app.include_router(product_asset_generator_router, prefix="/api")

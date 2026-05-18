@@ -558,6 +558,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						isExecuting={isExecuting}
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
+						onWorkspacePackageUpdated={setWorkspacePackage}
 					/>
 				);
 			case "IMG":

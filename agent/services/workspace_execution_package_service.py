@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from typing import Any
@@ -15,6 +16,12 @@ from agent.services.production_prompt_approval_service import scan_prompt_text
 from agent.services.prompt_compiler_runtime_config_service import get_runtime_config
 from agent.services.ugc_video_prompt_compiler_service import (
     compile_ugc_video_prompt,
+)
+from agent.services.i2v_semantic_slot_resolver_service import (
+    resolve_i2v_semantic_slots,
+)
+from agent.models.i2v_semantic_slot_resolver import (
+    I2VSemanticSlotResolverRequest,
 )
 
 
@@ -59,6 +66,37 @@ def _resolved_assets(asset_slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [slot["resolved_asset"] for slot in asset_slots if slot.get("resolved_asset")]
 
 
+def _merge_i2v_resolved_assets(
+    asset_slots: list[dict[str, Any]],
+    resolver_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    resolved_by_slot = {
+        item["slot_key"]: {
+            "asset_id": item["asset_id"],
+            "asset_fingerprint": item.get("asset_fingerprint"),
+            "slot_key": item["slot_key"],
+            "asset_source": item.get("asset_source"),
+            "label": item.get("display_name"),
+            "file_name": item.get("asset_id"),
+            "preview_url": item.get("preview_url"),
+            "download_url": item.get("download_url"),
+            "media_id": item.get("media_id"),
+            "preview_renderable_status": "RENDERABLE" if item.get("preview_url") else "NOT_AVAILABLE",
+            "preview_error_detail": None if item.get("preview_url") else "Preview URL is not available.",
+            "local_image_path_present": item.get("local_image_path_present"),
+            "remote_image_url_present": item.get("remote_image_url_present"),
+        }
+        for item in resolver_payload.get("resolved_assets", [])
+    }
+    merged = copy.deepcopy(asset_slots)
+    for slot in merged:
+        slot_key = slot.get("slot_key")
+        if slot_key in resolved_by_slot:
+            slot["resolved_asset"] = resolved_by_slot[slot_key]
+            slot["default_source"] = resolved_by_slot[slot_key].get("asset_source") or slot.get("default_source")
+    return merged
+
+
 def _default_model_for_mode(mode: str) -> str:
     if mode == "IMG":
         return "Nano Banana 2"
@@ -81,6 +119,11 @@ async def create_workspace_execution_package(
     creator_persona: str = "DEFAULT_CREATOR",
     overlay_enabled: bool = True,
     dialogue_enabled: bool = True,
+    recipe_id: str = "PRODUCT_HELD_BY_CHARACTER_IN_SCENE",
+    product_reference_asset_id: str | None = None,
+    character_reference_asset_id: str | None = None,
+    scene_context_reference_asset_id: str | None = None,
+    style_reference_asset_id: str | None = None,
     blocks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     package = await get_approved_product_package(product_id, mode)
@@ -115,8 +158,32 @@ async def create_workspace_execution_package(
         compiler_result["camera_style"],
         compiler_result["character_presence"],
     )
-    resolved_assets = _resolved_assets(package["asset_slots"])
-    asset_fingerprints = [asset["asset_fingerprint"] for asset in resolved_assets if asset.get("asset_fingerprint")]
+    semantic_slot_resolver: dict[str, Any] | None = None
+    package_asset_slots = copy.deepcopy(package["asset_slots"])
+    if normalized_mode == "I2V":
+        semantic_slot_resolver = (
+            await resolve_i2v_semantic_slots(
+                I2VSemanticSlotResolverRequest(
+                    product_id=product_id,
+                    recipe_id=recipe_id,
+                    product_reference_asset_id=product_reference_asset_id,
+                    character_reference_asset_id=character_reference_asset_id,
+                    scene_context_reference_asset_id=scene_context_reference_asset_id,
+                    style_reference_asset_id=style_reference_asset_id,
+                )
+            )
+        ).model_dump()
+        package_asset_slots = _merge_i2v_resolved_assets(
+            package_asset_slots,
+            semantic_slot_resolver,
+        )
+
+    resolved_assets = _resolved_assets(package_asset_slots)
+    asset_fingerprints = [
+        asset["asset_fingerprint"]
+        for asset in resolved_assets
+        if asset.get("asset_fingerprint")
+    ]
     request_lineage_payload = {
         "product_id": product_id,
         "mode": normalized_mode,
@@ -139,7 +206,29 @@ async def create_workspace_execution_package(
             "warnings": compiler_result["warnings"],
         },
     }
-    readiness = "READY" if not package["blockers"] else "BLOCKED"
+    if semantic_slot_resolver:
+        request_lineage_payload.update(
+            {
+                "recipe_id": semantic_slot_resolver["recipe_id"],
+                "semantic_roles": semantic_slot_resolver["semantic_roles"],
+                "engine_slot_mapping": semantic_slot_resolver["engine_slot_mapping"],
+                "creative_asset_ids": semantic_slot_resolver["creative_asset_ids"],
+                "resolved_assets": semantic_slot_resolver["resolved_assets"],
+                "compiler_context_summary": semantic_slot_resolver["compiler_context_summary"],
+                "resolver_warnings": semantic_slot_resolver["warnings"],
+                "resolver_blockers": semantic_slot_resolver["blockers"],
+                "semantic_slot_resolver": semantic_slot_resolver,
+            }
+        )
+    all_blockers = [
+        *list(package["blockers"]),
+        *(
+            list(semantic_slot_resolver["blockers"])
+            if semantic_slot_resolver
+            else []
+        ),
+    ]
+    readiness = "READY" if not all_blockers else "BLOCKED"
     execution_allowed = readiness == "READY"
 
     await crud.create_or_replace_workspace_execution_package(
@@ -153,18 +242,23 @@ async def create_workspace_execution_package(
         prompt_package_snapshot_id=package["prompt_package_snapshot_id"],
         prompt_fingerprint=prompt_fingerprint,
         prompt_text=compiler_result["final_compiled_prompt_text"],
-        asset_slots=_json(package["asset_slots"]),
+        asset_slots=_json(package_asset_slots),
         resolved_assets=_json(resolved_assets),
         readiness=readiness,
         execution_allowed=execution_allowed,
         production_generation_allowed=package["production_generation_allowed"],
         manual_fallback=_json(package["manual_fallback"]),
-        blockers=_json(package["blockers"]),
+        blockers=_json(all_blockers),
         request_lineage_payload=_json(request_lineage_payload),
         source_of_truth_notes=_json(
             [
                 *package["source_of_truth_notes"],
                 *compiler_result["source_of_truth_notes"],
+                *(
+                    [f"I2V semantic recipe: {semantic_slot_resolver['recipe_id']}"]
+                    if semantic_slot_resolver
+                    else []
+                ),
             ],
         ),
     )
@@ -181,18 +275,24 @@ async def create_workspace_execution_package(
         "prompt_text": compiler_result["final_compiled_prompt_text"],
         "prompt_fingerprint": prompt_fingerprint,
         "prompt_package_snapshot_id": package["prompt_package_snapshot_id"],
-        "asset_slots": package["asset_slots"],
+        "asset_slots": package_asset_slots,
         "resolved_assets": resolved_assets,
         "readiness": readiness,
         "execution_allowed": execution_allowed,
         "production_generation_allowed": package["production_generation_allowed"],
         "manual_fallback": package["manual_fallback"],
-        "blockers": package["blockers"],
+        "blockers": all_blockers,
         "request_lineage_payload": request_lineage_payload,
         "source_of_truth_notes": [
             *package["source_of_truth_notes"],
             *compiler_result["source_of_truth_notes"],
+            *(
+                [f"I2V semantic recipe: {semantic_slot_resolver['recipe_id']}"]
+                if semantic_slot_resolver
+                else []
+            ),
         ],
+        "semantic_slot_resolver": semantic_slot_resolver,
         "compiler_version": compiler_result["compiler_version"],
         "generation_mode": compiler_result["generation_mode"],
         "total_duration_seconds": compiler_result["total_duration_seconds"],

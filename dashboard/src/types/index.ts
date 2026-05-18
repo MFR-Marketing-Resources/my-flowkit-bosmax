@@ -267,6 +267,34 @@ export interface UploadedAsset {
 }
 
 export type WorkspaceMode = "T2V" | "F2V" | "I2V" | "IMG";
+export type CreativeAssetSemanticRole =
+	| "PRODUCT_REFERENCE"
+	| "CHARACTER_REFERENCE"
+	| "SCENE_CONTEXT_REFERENCE"
+	| "STYLE_REFERENCE"
+	| "COMPOSITE_FRAME_REFERENCE";
+export type CreativeAssetStatus = "ACTIVE" | "ARCHIVED";
+export type CreativeAssetSourceType =
+	| "UPLOAD"
+	| "GENERATED_IMAGE"
+	| "PRODUCT_CACHE"
+	| "REMOTE_URL"
+	| "SYSTEM_SEED";
+export type CreativeAssetStorageKind =
+	| "LOCAL_FILE"
+	| "REMOTE_URL"
+	| "MEDIA_ID"
+	| "PRODUCT_IMAGE_CACHE";
+export type CreativeAssetEngineSlot =
+	| "subject"
+	| "scene"
+	| "style"
+	| "start_frame"
+	| "end_frame";
+export type I2VRecipeId =
+	| "PRODUCT_HELD_BY_CHARACTER_IN_SCENE"
+	| "CHARACTER_FIRST_PRODUCT_DEMO"
+	| "STYLE_MOOD_DOMINANT_PRODUCT_SPOT";
 export type PromptGenerationMode = "SINGLE" | "EXTEND";
 export type PromptCameraStyle = "UGC_IPHONE_RAW" | "CINEMATIC_PRO";
 export type PromptCharacterPresence = "VISIBLE_CREATOR" | "FACELESS";
@@ -306,8 +334,82 @@ export interface WorkspaceExecutePayload {
 		workspace_execution_package_id?: string;
 		prompt_fingerprint?: string;
 		asset_fingerprints?: string[];
+		recipe_id?: string;
+		semantic_roles?: Record<string, string | null>;
+		engine_slot_mapping?: Record<string, string>;
+		creative_asset_ids?: Record<string, string | null>;
+		resolved_assets?: Array<Record<string, unknown>>;
+		compiler_context_summary?: string;
+		resolver_warnings?: string[];
+		resolver_blockers?: string[];
+		semantic_slot_resolver?:
+			| I2VSemanticSlotResolverResponse
+			| Record<string, unknown>;
+		manual_slot_overrides?: Record<string, string | null>;
 	};
 	mode: WorkspaceMode;
+}
+
+export interface CreativeAsset {
+	asset_id: string;
+	semantic_role: CreativeAssetSemanticRole;
+	display_name: string;
+	description: string | null;
+	source_type: CreativeAssetSourceType;
+	storage_kind: CreativeAssetStorageKind;
+	preview_url: string | null;
+	download_url: string | null;
+	media_id: string | null;
+	local_file_path: string | null;
+	remote_source_url: string | null;
+	product_id: string | null;
+	category: string | null;
+	silo: string | null;
+	product_type: string | null;
+	allowed_modes: WorkspaceMode[];
+	engine_slot_eligibility: CreativeAssetEngineSlot[];
+	mode_a_metadata_handoff?: Record<string, unknown> | string | null;
+	visual_dna_summary: string | null;
+	character_dna: string | null;
+	scene_context_dna: string | null;
+	style_mood_dna: string | null;
+	source_prompt_fingerprint: string | null;
+	source_workspace_execution_package_id: string | null;
+	source_prompt_package_snapshot_id: string | null;
+	status: CreativeAssetStatus;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface CreativeAssetListResponse {
+	items: CreativeAsset[];
+	total: number;
+}
+
+export interface I2VSemanticResolvedAsset {
+	slot_key: "subject" | "scene" | "style";
+	semantic_role: string;
+	asset_id: string;
+	display_name?: string | null;
+	asset_source?: string | null;
+	asset_fingerprint?: string | null;
+	preview_url?: string | null;
+	download_url?: string | null;
+	media_id?: string | null;
+	local_image_path_present?: boolean | null;
+	remote_image_url_present?: boolean | null;
+}
+
+export interface I2VSemanticSlotResolverResponse {
+	mode: "I2V";
+	recipe_id: I2VRecipeId;
+	semantic_roles: Record<string, string | null>;
+	engine_slot_mapping: Record<string, string>;
+	creative_asset_ids: Record<string, string | null>;
+	resolved_assets: I2VSemanticResolvedAsset[];
+	compiler_context_summary: string;
+	warnings: string[];
+	blockers: string[];
 }
 
 export interface ApprovedPackageResolvedAsset {
@@ -389,10 +491,20 @@ export interface WorkspaceExecutionPackage {
 		workspace_execution_package_id: string;
 		prompt_fingerprint: string;
 		asset_fingerprints: string[];
+		recipe_id?: string;
+		semantic_roles?: Record<string, string | null>;
+		engine_slot_mapping?: Record<string, string>;
+		creative_asset_ids?: Record<string, string | null>;
+		resolved_assets?: Array<Record<string, unknown>>;
+		compiler_context_summary?: string;
+		resolver_warnings?: string[];
+		resolver_blockers?: string[];
+		semantic_slot_resolver?: I2VSemanticSlotResolverResponse;
 		compiler?: Record<string, unknown>;
 	};
 	source_of_truth_notes: string[];
 	prompt_preview?: string;
+	semantic_slot_resolver?: I2VSemanticSlotResolverResponse | null;
 	compiler_version?: string;
 	generation_mode?: PromptGenerationMode;
 	camera_style?: PromptCameraStyle;

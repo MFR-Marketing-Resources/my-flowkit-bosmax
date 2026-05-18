@@ -11,6 +11,12 @@ from agent.services.workspace_execution_package_service import (
     create_workspace_execution_package,
     list_workspace_execution_packages,
 )
+from agent.services.i2v_semantic_slot_resolver_service import (
+    resolve_i2v_semantic_slots,
+)
+from agent.models.i2v_semantic_slot_resolver import (
+    I2VSemanticSlotResolverRequest,
+)
 from agent.services.approved_product_package_service import (
     get_product_package_readiness,
     normalize_mode,
@@ -39,6 +45,11 @@ class WorkspaceExecutionPackageRequest(BaseModel):
     creator_persona: str = "DEFAULT_CREATOR"
     overlay_enabled: bool = True
     dialogue_enabled: bool = True
+    recipe_id: str = "PRODUCT_HELD_BY_CHARACTER_IN_SCENE"
+    product_reference_asset_id: str | None = None
+    character_reference_asset_id: str | None = None
+    scene_context_reference_asset_id: str | None = None
+    style_reference_asset_id: str | None = None
     blocks: list[WorkspacePromptBlockRequest] = Field(default_factory=list)
 
 
@@ -78,6 +89,11 @@ async def post_workspace_execution_package(request: WorkspaceExecutionPackageReq
             creator_persona=request.creator_persona,
             overlay_enabled=request.overlay_enabled,
             dialogue_enabled=request.dialogue_enabled,
+            recipe_id=request.recipe_id,
+            product_reference_asset_id=request.product_reference_asset_id,
+            character_reference_asset_id=request.character_reference_asset_id,
+            scene_context_reference_asset_id=request.scene_context_reference_asset_id,
+            style_reference_asset_id=request.style_reference_asset_id,
             blocks=[block.model_dump() for block in request.blocks],
         )
     except ValueError as exc:
@@ -133,4 +149,16 @@ async def post_workspace_prompt_compile(request: WorkspacePromptCompileRequest):
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if message == "PRODUCT_NOT_FOUND" else 409
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+
+@router.post("/i2v/resolve-slots")
+async def post_i2v_semantic_slot_resolver(
+    request: I2VSemanticSlotResolverRequest,
+):
+    try:
+        return await resolve_i2v_semantic_slots(request=request)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message in {"PRODUCT_NOT_FOUND", "CREATIVE_ASSET_NOT_FOUND"} else 409
         raise HTTPException(status_code=status_code, detail=message) from exc
