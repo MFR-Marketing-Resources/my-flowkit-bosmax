@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
+import { fetchProductCatalog } from "../api/products";
 import {
 	createF2VGenerationPackage,
 	createI2VGenerationPackage,
 } from "../api/workspaceGenerationPackages";
-import type { WorkspaceGenerationPackage } from "../types";
-import { fetchProductCatalog } from "../api/products";
 import {
 	createWorkspaceExecutionPackage,
 	fetchPromptCompilerRuntimeConfig,
@@ -28,6 +27,7 @@ import type {
 	TelemetryRequest,
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
+	WorkspaceGenerationPackage,
 	WorkspaceMode,
 	WorkspacePackageReadinessItem,
 } from "../types";
@@ -137,7 +137,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		new URLSearchParams(location.search).get("portal") === "side";
 	const [isExecuting, setIsExecuting] = useState(false);
 	const [isSavingPackage, setIsSavingPackage] = useState(false);
-	const [savedGenPackage, setSavedGenPackage] = useState<WorkspaceGenerationPackage | null>(null);
+	const [savedGenPackage, setSavedGenPackage] =
+		useState<WorkspaceGenerationPackage | null>(null);
 	const [savePackageError, setSavePackageError] = useState<string | null>(null);
 	const [modeRequests, setModeRequests] = useState<TelemetryRequest[]>([]);
 	const [compactPane, setCompactPane] = useState<"workspace" | "jobs">(
@@ -458,6 +459,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 	const handleSaveGenerationPackage = useCallback(async () => {
 		if (!selectedProduct || !workspacePackage) return;
+		if (selectedProduct.reference_only) {
+			setSavePackageError(
+				"REFERENCE_ONLY_PRODUCT — Convert/Register this product via Smart Registration before saving a generation package.",
+			);
+			return;
+		}
 		setIsSavingPackage(true);
 		setSavePackageError(null);
 		setSavedGenPackage(null);
@@ -466,7 +473,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			if (mode === "F2V") {
 				pkg = await createF2VGenerationPackage({
 					product_id: selectedProduct.id,
-					workspace_execution_package_id: workspacePackage.workspace_execution_package_id,
+					workspace_execution_package_id:
+						workspacePackage.workspace_execution_package_id,
 					generation_mode: generationMode,
 					target_language: targetLanguage,
 					camera_style: cameraStyle,
@@ -476,13 +484,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					dialogue_enabled: true,
 					blocks: [
 						{ block_index: 1, duration_seconds: block1Duration },
-						...(generationMode === "EXTEND" ? [{ block_index: 2, duration_seconds: block2Duration }] : []),
+						...(generationMode === "EXTEND"
+							? [{ block_index: 2, duration_seconds: block2Duration }]
+							: []),
 					],
 				});
 			} else if (mode === "I2V") {
 				pkg = await createI2VGenerationPackage({
 					product_id: selectedProduct.id,
-					workspace_execution_package_id: workspacePackage.workspace_execution_package_id,
+					workspace_execution_package_id:
+						workspacePackage.workspace_execution_package_id,
 					generation_mode: generationMode,
 					target_language: targetLanguage,
 					camera_style: cameraStyle,
@@ -490,7 +501,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					creator_persona: creatorPersona,
 				});
 			} else {
-				throw new Error(`Generate / Save Package not supported for mode ${mode} yet.`);
+				throw new Error(
+					`Generate / Save Package not supported for mode ${mode} yet.`,
+				);
 			}
 			setSavedGenPackage(pkg);
 		} catch (e) {
@@ -498,7 +511,18 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		} finally {
 			setIsSavingPackage(false);
 		}
-	}, [selectedProduct, workspacePackage, mode, generationMode, targetLanguage, cameraStyle, characterPresence, creatorPersona, block1Duration, block2Duration]);
+	}, [
+		selectedProduct,
+		workspacePackage,
+		mode,
+		generationMode,
+		targetLanguage,
+		cameraStyle,
+		characterPresence,
+		creatorPersona,
+		block1Duration,
+		block2Duration,
+	]);
 
 	const handleLoadPackage = async () => {
 		if (!selectedProduct || selectedReadiness?.readiness_status !== "READY") {
@@ -687,6 +711,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						selectedProduct={selectedProduct}
 						onSelect={setSelectedProduct}
 						readinessByProductId={packageReadiness}
+						isLoadingReadiness={isLoadingReadiness}
 					/>
 					<button
 						type="button"
@@ -886,7 +911,28 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</div>
 					</div>
 				) : null}
-				{selectedReadiness ? (
+				{/* Reference-only product — always show blocker regardless of readiness load state */}
+				{selectedProduct?.reference_only && !selectedReadiness ? (
+					<div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
+						<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-400 mb-2">
+							Reference-Only Product
+						</div>
+						<div className="text-xs text-amber-200 mb-3">
+							REFERENCE_ONLY_PRODUCT —{" "}
+							{selectedProduct.catalog_visibility_reason ||
+								"FastMoss reference is visible for review only. Use Smart Registration to convert it into product truth before package load/generation."}
+						</div>
+						<div className="flex flex-wrap gap-2">
+							<button
+								type="button"
+								onClick={() => navigate("/product-registration")}
+								className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-[11px] font-semibold text-indigo-100"
+							>
+								Convert / Register Product
+							</button>
+						</div>
+					</div>
+				) : selectedReadiness ? (
 					<div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
 						<div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
 							<div>
@@ -969,7 +1015,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							</div>
 						) : null}
 					</div>
-				) : !isLoadingReadiness ? (
+				) : null}
+				{!selectedProduct?.reference_only &&
+				!selectedReadiness &&
+				!isLoadingReadiness ? (
 					<div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-xs text-slate-400">
 						No {humanizeWorkspaceMode(mode as WorkspaceMode)}-ready products are
 						auto-selected. Choose a product and review its readiness checklist
@@ -1008,7 +1057,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				) : null}
 
 				{/* Generate / Save Package — F2V and I2V */}
-				{workspacePackage && (mode === "F2V" || mode === "I2V") ? (
+				{workspacePackage &&
+				(mode === "F2V" || mode === "I2V") &&
+				!selectedProduct?.reference_only ? (
 					<div className="mt-4 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4">
 						<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-indigo-400 mb-3">
 							Prompt Handoff Bank
@@ -1020,7 +1071,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								disabled={isSavingPackage}
 								className="rounded-xl border border-indigo-500/40 bg-indigo-500/15 px-4 py-2.5 text-sm font-semibold text-indigo-100 hover:bg-indigo-500/25 disabled:opacity-50 transition-colors"
 							>
-								{isSavingPackage ? "Saving Package…" : "Generate / Save Package"}
+								{isSavingPackage
+									? "Saving Package…"
+									: "Generate / Save Package"}
 							</button>
 							{savedGenPackage && (
 								<>
@@ -1041,8 +1094,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							)}
 						</div>
 						<p className="mt-2 text-[11px] text-indigo-300/60">
-							Saves a durable package with final prompt, selected assets, upload order, and DOM scaffold.
-							DOM execution is not triggered. package_id is stored in Prompt Handoff Bank.
+							Saves a durable package with final prompt, selected assets, upload
+							order, and DOM scaffold. DOM execution is not triggered.
+							package_id is stored in Prompt Handoff Bank.
 						</p>
 					</div>
 				) : null}

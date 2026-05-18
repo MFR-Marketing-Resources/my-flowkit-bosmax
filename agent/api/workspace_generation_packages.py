@@ -3,6 +3,29 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
+# Known blocker codes that map to 409 Conflict (not 500 Internal Error).
+_BLOCKER_409 = frozenset({
+    "REFERENCE_ONLY_PRODUCT",
+    "CLAIM_SAFE_PACKAGE_NOT_READY",
+    "PRODUCTION_APPROVAL_REQUIRED",
+    "PRODUCT_ARCHIVED",
+    "PACKAGE_SCAN_FAILED",
+    "UNSUPPORTED_MODE",
+    "START_FRAME_REQUIRED",
+    "SUBJECT_REQUIRED",
+})
+
+
+def _http_exc_for(exc: Exception) -> HTTPException:
+    """Convert a ValueError blocker into a structured 409 or fall back to 500."""
+    message = str(exc)
+    if isinstance(exc, ValueError) and message in _BLOCKER_409:
+        return HTTPException(
+            status_code=409,
+            detail={"blocker": message, "error": message},
+        )
+    return HTTPException(status_code=500, detail=message)
+
 from agent.models.workspace_generation_package import (
     F2VGenerationPackageRequest,
     I2VGenerationPackageRequest,
@@ -61,7 +84,7 @@ async def create_f2v_package(request: F2VGenerationPackageRequest):
         )
         return package
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _http_exc_for(exc) from exc
 
 
 @router.post("/i2v")
@@ -87,7 +110,7 @@ async def create_i2v_package(request: I2VGenerationPackageRequest):
         )
         return package
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _http_exc_for(exc) from exc
 
 
 @router.get("/{package_id}")
