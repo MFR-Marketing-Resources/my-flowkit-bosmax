@@ -49,6 +49,11 @@ from agent.services.production_prompt_approval_service import (
 )
 from agent.services.approved_product_package_service import get_approved_product_package
 from agent.services.prompt_package_dryrun_service import generate_prompt_dryrun
+from agent.services.fastmoss_product_reference_service import (
+    FASTMOSS_REFERENCE_LANE,
+    is_fastmoss_reference_product_id,
+    list_fastmoss_reference_products,
+)
 from agent.utils.paths import product_image_path
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -433,6 +438,7 @@ async def _list_products_response(
     *,
     q: str | None = None,
     source: str | None = None,
+    source_lane: str | None = None,
     readiness: str | None = None,
     include_archived: bool = False,
     lifecycle_status: str | None = None,
@@ -440,19 +446,26 @@ async def _list_products_response(
     offset: int = 0,
 ):
     requested_source = (source or "").strip().upper() or None
+    requested_source_lane = (source_lane or "").strip().upper() or None
     db_source = _normalize_source(requested_source) if requested_source in {"FASTMOSS", "MANUAL", "TIKTOKSHOP", "IMPORTED"} else None
     requested_lifecycle = (lifecycle_status or "").strip().upper() or None
     db_include_archived = include_archived or requested_lifecycle == "ARCHIVED"
-    all_products = await crud.list_products(
+    db_products = await crud.list_products(
         source=db_source,
-        query=q,
         include_archived=db_include_archived,
         lifecycle_status=requested_lifecycle,
     )
-    enriched_all = [await _enrich_product(product) for product in all_products]
-    filtered_all = _filter_products_for_catalog(
+    enriched_all = [await _enrich_product(product) for product in db_products]
+    merged_products = await _merge_catalog_products(
         enriched_all,
+        requested_source=requested_source,
+        requested_source_lane=requested_source_lane,
+    )
+    filtered_all = _filter_products_for_catalog(
+        merged_products,
+        query=q,
         source=requested_source,
+        source_lane=requested_source_lane,
         readiness=readiness,
         include_archived=db_include_archived,
         lifecycle_status=requested_lifecycle,
@@ -500,15 +513,84 @@ def _matches_catalog_source(product: dict[str, Any], requested_source: str | Non
     return (product.get("source") or "").upper() == requested_source
 
 
+def _matches_catalog_source_lane(
+    product: dict[str, Any],
+    requested_source_lane: str | None,
+) -> bool:
+    if not requested_source_lane or requested_source_lane == "ALL":
+        return True
+    return (product.get("source_lane") or product.get("source") or "").upper() == requested_source_lane
+
+
+def _matches_catalog_query(product: dict[str, Any], query: str | None) -> bool:
+    if not query:
+        return True
+    needle = query.lower()
+    haystacks = [
+        product.get("raw_product_title"),
+        product.get("product_display_name"),
+        product.get("product_short_name"),
+        product.get("shop_name"),
+        product.get("source_url"),
+        product.get("source_lane"),
+        product.get("source_label"),
+    ]
+    return any(needle in str(value or "").lower() for value in haystacks)
+
+
+def _catalog_identity_keys(product: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for field in ("source_url", "tiktok_product_url", "raw_product_title", "product_short_name"):
+        value = str(product.get(field) or "").strip().lower()
+        if value:
+            keys.add(f"{field}:{value}")
+    return keys
+
+
+async def _merge_catalog_products(
+    persisted_products: list[dict[str, Any]],
+    *,
+    requested_source: str | None,
+    requested_source_lane: str | None,
+) -> list[dict[str, Any]]:
+    include_fastmoss_reference = (
+        requested_source in {None, "ALL", "FASTMOSS"}
+        and requested_source_lane in {None, "ALL", FASTMOSS_REFERENCE_LANE}
+    ) or requested_source_lane == FASTMOSS_REFERENCE_LANE
+    if not include_fastmoss_reference:
+        return persisted_products
+
+    reference_products = await list_fastmoss_reference_products(limit=500)
+    seen_keys = {
+        identity_key
+        for product in persisted_products
+        for identity_key in _catalog_identity_keys(product)
+    }
+    merged = list(persisted_products)
+    for reference_product in reference_products:
+        if _catalog_identity_keys(reference_product) & seen_keys:
+            continue
+        merged.append(reference_product)
+    return merged
+
+
 def _filter_products_for_catalog(
     products: list[dict[str, Any]],
     *,
+    query: str | None,
     source: str | None,
+    source_lane: str | None,
     readiness: str | None,
     include_archived: bool = False,
     lifecycle_status: str | None = None,
 ) -> list[dict[str, Any]]:
-    filtered = [product for product in products if _matches_catalog_source(product, source)]
+    filtered = [
+        product
+        for product in products
+        if _matches_catalog_source(product, source)
+        and _matches_catalog_source_lane(product, source_lane)
+        and _matches_catalog_query(product, query)
+    ]
     if lifecycle_status:
         filtered = [product for product in filtered if resolve_lifecycle_status(product) == lifecycle_status]
     elif not include_archived:
@@ -525,6 +607,7 @@ def _filter_products_for_catalog(
 async def list_products(
     q: str | None = Query(default=None),
     source: str | None = Query(default=None),
+    source_lane: str | None = Query(default=None),
     readiness: str | None = Query(default=None),
     include_archived: bool = Query(default=False),
     lifecycle_status: str | None = Query(default=None),
@@ -534,6 +617,7 @@ async def list_products(
     return await _list_products_response(
         q=q,
         source=source,
+        source_lane=source_lane,
         readiness=readiness,
         include_archived=include_archived,
         lifecycle_status=lifecycle_status,
@@ -545,6 +629,8 @@ async def list_products(
 @router.get("/search")
 async def search_products(
     q: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    source_lane: str | None = Query(default=None),
     include_archived: bool = Query(default=False),
     lifecycle_status: str | None = Query(default=None),
     limit: int = Query(default=25),
@@ -552,6 +638,8 @@ async def search_products(
 ):
     return await _list_products_response(
         q=q,
+        source=source,
+        source_lane=source_lane,
         include_archived=include_archived,
         lifecycle_status=lifecycle_status,
         limit=limit,
@@ -1129,7 +1217,7 @@ async def post_production_prompt_approval(product_id: str, request: ProductionPr
 @router.get("/{product_id}/approved-package")
 async def get_product_approved_package(product_id: str, mode: str = "T2V"):
     product = await crud.get_product(product_id)
-    if not product:
+    if not product and not is_fastmoss_reference_product_id(product_id):
         raise HTTPException(status_code=404, detail="Product not found")
     if is_product_archived(product):
         raise HTTPException(

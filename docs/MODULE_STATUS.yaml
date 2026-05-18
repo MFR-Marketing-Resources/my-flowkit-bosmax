@@ -18,6 +18,7 @@ domains:
       - agent/models/i2v_semantic_slot_resolver.py
       - agent/services/approved_product_package_service.py
       - agent/services/creative_asset_service.py
+      - agent/services/fastmoss_product_reference_service.py
       - agent/services/i2v_slot_recipe_config.py
       - agent/services/i2v_semantic_slot_resolver_service.py
       - agent/services/prompt_compiler_runtime_config_service.py
@@ -34,10 +35,12 @@ domains:
       - agent/services/registration_hook_cta_generation_service.py
       - dashboard/src/App.tsx
       - dashboard/src/api/creativeAssets.ts
+      - dashboard/src/api/products.ts
       - dashboard/src/api/workspacePackages.ts
       - dashboard/src/pages/ApprovedPackagesPage.tsx
       - dashboard/src/pages/CreativeLibraryPage.tsx
       - dashboard/src/pages/OperatorPage.tsx
+      - dashboard/src/pages/ProductsSalesAnalyzerPage.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
       - dashboard/src/pages/ProductRegistrationPage.tsx
       - dashboard/src/components/product-registration/ProductKnowledgeIntakeForm.tsx
@@ -59,6 +62,7 @@ domains:
       - tests/unit/test_i2v_semantic_slot_resolver_service.py
       - tests/api/test_approved_product_package_api.py
       - tests/api/test_creative_asset_api.py
+      - tests/api/test_fastmoss_product_visibility_api.py
       - tests/api/test_i2v_semantic_slot_resolver_api.py
       - tests/api/test_product_image_preview_api.py
       - tests/api/test_ugc_video_prompt_compiler_api.py
@@ -66,6 +70,7 @@ domains:
       - tests/api/test_flow_request_lineage_payload_api.py
       - tests/ui/test_creative_library_page_ui_contract.py
       - tests/ui/test_f2v_ugc_prompt_compiler_ui_contract.py
+      - tests/ui/test_fastmoss_product_visibility_ui_contract.py
       - tests/ui/test_i2v_creative_asset_resolver_ui_contract.py
       - tests/ui/test_workspace_image_preview_ui_contract.py
       - tests/ui/test_workspace_authoring_layout_ui_contract.py

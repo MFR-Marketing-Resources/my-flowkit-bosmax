@@ -598,6 +598,7 @@ export interface WorkspacePackageReadinessItem {
 	mode: WorkspaceMode;
 	readiness_status:
 		| "READY"
+		| "REFERENCE_ONLY_PRODUCT"
 		| "CLAIM_SAFE_PACKAGE_NOT_READY"
 		| "PRODUCTION_APPROVAL_REQUIRED"
 		| "START_FRAME_REQUIRED"
@@ -627,6 +628,11 @@ export interface Product {
 	id: string;
 	product_id?: string;
 	source: "FASTMOSS" | "TIKTOKSHOP" | "MANUAL" | "IMPORTED";
+	source_lane?: string | null;
+	source_label?: string | null;
+	reference_only?: boolean;
+	catalog_visibility_reason?: string | null;
+	catalog_blockers?: string[];
 	lifecycle_status?: "ACTIVE" | "ARCHIVED" | "DELETED_TEST_ONLY" | null;
 	archived_at?: string | null;
 	archived_reason?: string | null;

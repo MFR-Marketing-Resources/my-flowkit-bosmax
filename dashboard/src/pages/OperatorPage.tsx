@@ -90,13 +90,15 @@ function humanizeWorkspaceMode(mode: WorkspaceMode) {
 function parseWorkspaceBlocker(error: unknown): string | null {
 	const message = error instanceof Error ? error.message : String(error || "");
 	const match = message.match(
-		/CLAIM_SAFE_PACKAGE_NOT_READY|PRODUCTION_APPROVAL_REQUIRED|START_FRAME_REQUIRED|SUBJECT_REQUIRED|PRODUCT_ARCHIVED|UNSUPPORTED_MODE/,
+		/REFERENCE_ONLY_PRODUCT|CLAIM_SAFE_PACKAGE_NOT_READY|PRODUCTION_APPROVAL_REQUIRED|START_FRAME_REQUIRED|SUBJECT_REQUIRED|PRODUCT_ARCHIVED|UNSUPPORTED_MODE/,
 	);
 	return match?.[0] ?? null;
 }
 
 function blockerMessage(blocker: string | null, mode: WorkspaceMode) {
 	switch (blocker) {
+		case "REFERENCE_ONLY_PRODUCT":
+			return "FastMoss reference products stay visible for review, but Smart Registration must convert them into product truth before package load.";
 		case "CLAIM_SAFE_PACKAGE_NOT_READY":
 			return "This product has no approved claim-safe package yet. Complete claim-safe review before loading a generation package.";
 		case "PRODUCTION_APPROVAL_REQUIRED":

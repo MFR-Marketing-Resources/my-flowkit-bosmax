@@ -17,6 +17,12 @@ from agent.services.production_prompt_approval_service import (
     scan_prompt_text,
 )
 from agent.services.prompt_package_dryrun_service import generate_prompt_dryrun
+from agent.services.fastmoss_product_reference_service import (
+    FASTMOSS_REFERENCE_BLOCKER,
+    FASTMOSS_REFERENCE_REASON,
+    get_fastmoss_reference_product,
+    is_fastmoss_reference_product_id,
+)
 
 
 SUPPORTED_MODES = {"T2V", "F2V", "I2V", "IMG"}
@@ -33,6 +39,7 @@ MODE_ALIASES = {
     "IMG": "IMG",
 }
 DERIVED_APPROVAL_STATUS = "DERIVED_FROM_APPROVED_PRODUCT_PACKAGE"
+REFERENCE_ONLY_BLOCKER = FASTMOSS_REFERENCE_BLOCKER
 
 
 def normalize_mode(mode: str | None) -> str:
@@ -93,6 +100,8 @@ def _detail_for_blocker(blocker: str, *, mode: str, image_reference_status: str 
         return "This workspace mode is not supported by the approved package bridge."
     if blocker == "PRODUCT_NOT_FOUND":
         return "Product not found."
+    if blocker == REFERENCE_ONLY_BLOCKER:
+        return FASTMOSS_REFERENCE_REASON
     if blocker == "PACKAGE_SCAN_FAILED":
         return "The approved package failed safety scanning and cannot be loaded."
     if blocker == "IMAGE_REQUIRED":
@@ -334,6 +343,56 @@ async def get_product_package_readiness(product_id: str, mode: str) -> dict[str,
         }
 
     product = await crud.get_product(product_id)
+    reference_product = None
+    if not product and is_fastmoss_reference_product_id(product_id):
+        reference_product = await get_fastmoss_reference_product(product_id)
+    if reference_product:
+        image_reference_status = _clean(reference_product.get("image_readiness_status")) or "IMAGE_NOT_AVAILABLE"
+        image_requirement_ready = normalized_mode not in IMAGE_REQUIRED_MODES or image_reference_status in IMAGE_READY_STATES
+        return {
+            "product_id": product_id,
+            "product_name": reference_product.get("product_display_name") or reference_product.get("raw_product_title"),
+            "mode": normalized_mode,
+            "readiness_status": REFERENCE_ONLY_BLOCKER,
+            "blocker": REFERENCE_ONLY_BLOCKER,
+            "detail": _detail_for_blocker(REFERENCE_ONLY_BLOCKER, mode=normalized_mode, image_reference_status=image_reference_status),
+            "image_reference_status": image_reference_status,
+            "claim_safe_copy_status": "REFERENCE_ONLY",
+            "production_prompt_approved_modes": [],
+            "checklist": [
+                _checklist_entry(
+                    "reference_lane",
+                    "Reference lane",
+                    False,
+                    FASTMOSS_REFERENCE_REASON,
+                ),
+                _checklist_entry(
+                    "image_reference",
+                    "Image cache / subject / start frame",
+                    image_requirement_ready,
+                    "Reference image is visible for review."
+                    if image_requirement_ready
+                    else _detail_for_blocker(_image_gate_for_mode(normalized_mode), mode=normalized_mode, image_reference_status=image_reference_status),
+                ),
+                _checklist_entry(
+                    "claim_safe_package",
+                    "Claim-safe package",
+                    False,
+                    "Reference-only FastMoss products do not carry an approved claim-safe package.",
+                ),
+                _checklist_entry(
+                    "production_approval",
+                    "Production approval",
+                    False,
+                    "Reference-only FastMoss products are not production-approved until registration completes.",
+                ),
+            ],
+            "quick_actions": {
+                "smart_registration_path": "/product-registration",
+                "approved_packages_path": "/approved-packages",
+                "products_path": "/products",
+            },
+        }
     if not product:
         blocker = "PRODUCT_NOT_FOUND"
         return {
@@ -447,6 +506,9 @@ async def get_approved_product_package(product_id: str, mode: str) -> dict[str, 
         raise ValueError("UNSUPPORTED_MODE")
 
     product = await crud.get_product(product_id)
+    if not product and is_fastmoss_reference_product_id(product_id):
+        if await get_fastmoss_reference_product(product_id):
+            raise ValueError(REFERENCE_ONLY_BLOCKER)
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
 
