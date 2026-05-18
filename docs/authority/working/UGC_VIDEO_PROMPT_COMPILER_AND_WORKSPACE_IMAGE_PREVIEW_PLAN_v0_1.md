@@ -121,6 +121,23 @@ some image_url exists somewhere in product truth
 1. Workspace execution package must store compiled prompt lineage and
    selected workspace controls.
 
+### Prompt Compiler Runtime Configuration Truth
+
+Before Control Tower UI exists, compiler runtime policy must come from
+one central config service or config file. It must not live as scattered
+constants across frontend and backend files.
+
+This interim runtime configuration is the source of truth for:
+
+1. `generation_mode`
+1. allowed block durations
+1. per-language WPS policy
+1. deterministic shot-count policy
+1. camera style registry
+1. persona and character default registry
+1. continuation policy
+1. engine and mode capability policy
+
 ## 6. Wave A Scope
 
 ### WAVE A
@@ -189,6 +206,114 @@ UGC_VIDEO_PROMPT_COMPILER_V1_AND_WORKSPACE_CONTROLS
 1. `BM_MS` target language
 1. Vertical `9:16`
 
+### Generation Mode Contract
+
+#### SINGLE
+
+1. one compiled final prompt block
+1. one selected duration
+1. output is final engine-ready prompt
+
+#### EXTEND
+
+1. two compiled final prompt blocks
+1. `Block 1 = ANCHOR`
+1. `Block 2 = CONTINUATION`
+1. Block 2 must continue Block 1 narrative, dialogue, character,
+   product, and camera logic
+1. Block 1 and Block 2 may have different durations
+
+Allowed standard durations:
+
+1. `6` seconds
+1. `8` seconds
+1. `10` seconds
+1. `12` seconds
+1. `15` seconds
+1. `20` seconds
+1. `25` seconds
+
+Hardcoded `8-second` logic is forbidden.
+
+### Duration, WPS, and Shot Policy Contract
+
+The compiler must use deterministic and config-driven runtime policy for:
+
+1. language-aware WPS policy
+1. `BM_MS` and `EN_US` as initial required language keys
+1. deterministic shot-count policy by duration
+1. dialogue allowance derived from selected duration and selected
+   language
+1. shot plan derived from duration config, not ad hoc guessing
+
+Required config example:
+
+```json
+{
+  "allowed_block_durations_seconds": [6, 8, 10, 12, 15, 20, 25],
+  "default_block_duration_seconds": 8,
+  "shot_count_policy": {
+    "6": { "recommended": 1, "max": 2 },
+    "8": { "recommended": 2, "max": 2 },
+    "10": { "recommended": 3, "max": 3 },
+    "12": { "recommended": 3, "max": 3 },
+    "15": { "recommended": 4, "max": 4 },
+    "20": { "recommended": 5, "max": 5 },
+    "25": { "recommended": 6, "max": 6 }
+  },
+  "language_wps_policy": {
+    "BM_MS": {
+      "hook_wps": 2.4,
+      "body_wps": 1.7,
+      "cta_wps": 2.2,
+      "absolute_ceiling_wps": 3.0
+    },
+    "EN_US": {
+      "hook_wps": 2.7,
+      "body_wps": 2.0,
+      "cta_wps": 2.5,
+      "absolute_ceiling_wps": 3.2
+    }
+  }
+}
+```
+
+Exact WPS and shot defaults may be tuned later, but implementation must
+remain deterministic and config-driven.
+
+Compiler lineage must include:
+
+1. `generation_mode`
+1. `block_duration_seconds`
+1. `language_policy_id`
+1. `shot_count_policy_id`
+
+### EXTEND Continuation Contract
+
+The compiler must support and persist:
+
+1. `block_index`
+1. `block_role` as `ANCHOR` or `CONTINUATION`
+1. `duration_seconds`
+1. `shot_count`
+1. `continuation_from_block_id`
+1. `continuation_strategy`
+1. character continuity
+1. wardrobe and appearance continuity
+1. product state continuity
+1. scene continuity
+1. dialogue and narrative continuity
+1. camera continuity
+1. safe claim and copy continuity
+
+Example:
+
+```text
+Block 1 = 10 seconds, 3 shots
+Block 2 = 6 seconds, 1-2 shots
+Total = 16 seconds
+```
+
 ### Compiler Output
 
 1. `final_compiled_prompt_text`
@@ -226,16 +351,26 @@ Correct UX sequence:
 ```text
 Load product package
 -> confirm image truth
+-> choose generation mode: Single / Extend
+-> choose language
+-> choose Block 1 duration
+-> if Extend, choose Block 2 duration
 -> choose camera style
 -> choose character/persona
--> choose shot plan
+-> accept/generated shot plan from duration config
 -> Generate Final Prompt
--> textarea displays final compiled prompt
+-> textarea displays final compiled prompt block(s)
 -> Start Generation sends final prompt
 ```
 
-The textarea must display the final compiled UGC prompt, not compiler
-instructions.
+For `EXTEND`:
+
+1. UI must show Block 1 and Block 2 outputs separately
+1. Block 2 must be visibly labelled as continuation
+1. User must not receive two disconnected prompts
+
+The textarea must display the final compiled UGC prompt block or blocks,
+not compiler instructions.
 
 ## 9. BOSMAX Authority Caveat
 
@@ -252,6 +387,28 @@ Compiler v1 may use:
 
 Future wave may ingest external Sovereign, Satellite, or Script Registry
 packs after they are physically present and contract-authorized.
+
+### Future Governance Dependency
+
+This UGC wave must align with Issue `#71`.
+
+Future Control Tower is the governance owner for:
+
+1. admin settings
+1. prompt compiler config
+1. character and persona library
+1. camera and shot preset library
+1. user management
+1. RBAC
+1. page permissions
+1. product content visibility
+1. subscription-ready governance
+
+Current UGC implementation may use a central config service or config
+file as interim source of truth.
+
+This UGC wave must not implement full Control Tower UI unless
+separately authorized.
 
 ## 10. Safety Rules
 
@@ -282,9 +439,15 @@ This wave does not authorize claim-safe bypass.
 1. Smart Registration rewrite
 1. FastMoss importer rewrite
 1. TikTok scraping
-1. temporal extension
+1. temporal extension beyond the bounded Single and Extend contract
 1. result download or import automation
 1. fake Sovereign, Satellite, or Script Registry YAML creation
+1. Control Tower admin UI
+1. RBAC implementation
+1. page permission enforcement redesign
+1. product visibility management UI
+1. user management
+1. subscription billing or governance implementation
 
 ## 12. Acceptance Criteria
 
@@ -301,12 +464,22 @@ This wave does not authorize claim-safe bypass.
 
 1. F2V textarea displays final compiled UGC prompt
 1. default prompt includes visible creator
-1. prompt includes `3-shot` plan
+1. prompt includes `3-shot` plan where duration policy resolves to three
+   shots
 1. prompt includes camera details
 1. prompt includes product handling
 1. prompt remains claim-safe
 1. prompt is not generic instruction text
 1. camera style can switch `UGC_IPHONE_RAW` and `CINEMATIC_PRO`
+1. supports `SINGLE | EXTEND`
+1. allowed durations include `6, 8, 10, 12, 15, 20, 25`
+1. no hardcoded `8-second` logic
+1. per-language WPS policy is applied
+1. deterministic shot count is derived by duration
+1. Extend allows different duration per block
+1. continuation lineage persists
+1. Block 2 continues from Block 1
+1. central config service or config file drives compiler policy
 1. prompt lineage is persisted in workspace execution package
 
 ## 13. Validation Matrix
@@ -325,6 +498,16 @@ This wave does not authorize claim-safe bypass.
 1. UGC video prompt compiler API tests
 1. UGC video prompt compiler UI tests
 1. F2V workspace compiler UI contract tests
+1. duration registry tests
+1. WPS policy tests
+1. shot-count policy tests
+1. `SINGLE` mode tests
+1. `EXTEND` mode tests
+1. different duration per block tests
+1. continuation lineage tests
+1. central config service or config file contract tests
+1. workspace UI control tests for language, generation mode, and
+   duration
 1. existing approved package tests
 1. existing workspace execution package tests
 
@@ -354,7 +537,8 @@ Runtime proof target product:
 1. F2V workspace loads final compiled prompt
 1. prompt includes `UGC_IPHONE_RAW` default
 1. prompt includes visible creator
-1. prompt includes `3-shot` structure
+1. prompt includes `3-shot` structure where duration policy resolves to
+   three shots
 1. prompt includes camera details
 1. prompt includes product handling
 1. prompt includes claim-safe copy
