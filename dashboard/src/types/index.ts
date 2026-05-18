@@ -1723,3 +1723,133 @@ export interface RegistrationCommitResponse {
 	errors?: string[];
 	provenance?: string[];
 }
+
+// ─── Workspace Generation Package (Prompt Handoff Bank) ─────
+
+export type WorkspaceGenerationPackageStatus =
+	| "DRAFT"
+	| "READY_MANUAL"
+	| "READY_DOM_STAGED"
+	| "BLOCKED";
+
+export interface WorkspaceGenerationPackageAsset {
+	slot_key: string;
+	label: string;
+	asset_id: string | null;
+	preview_url: string | null;
+	download_url: string | null;
+	source?: string;
+}
+
+export interface WorkspaceGenerationPackageManualHandoff {
+	copy_prompt_available: boolean;
+	final_prompt_text: string;
+	upload_order: string[];
+	actions: Array<{
+		action: string;
+		label: string;
+		slot_key?: string;
+		preview_url?: string | null;
+		download_url?: string | null;
+		available: boolean;
+	}>;
+	blockers: string[];
+	warnings: string[];
+	manual_fallback_ready: boolean;
+	dom_handoff_note: string;
+}
+
+export interface WorkspaceGenerationPackageDomScaffold {
+	mode: string;
+	lineage: {
+		product_id: string;
+		prompt_package_snapshot_id: string;
+		workspace_execution_package_id: string | null;
+		workspace_generation_package_id: string;
+		prompt_fingerprint: string;
+		asset_fingerprints: string[];
+	};
+	prompt: {
+		final_text: string;
+		blocks: unknown[];
+		generation_mode: string;
+	};
+	assets: Record<string, WorkspaceGenerationPackageAsset | null>;
+	settings: Record<string, unknown>;
+	semantic_resolution: Record<string, unknown>;
+	manual_handoff: { upload_order: string[] };
+	readiness: {
+		manual_handoff_ready: boolean;
+		dom_handoff_ready: false; // always false in this wave
+		blockers: string[];
+		warnings: string[];
+	};
+}
+
+export interface WorkspaceGenerationPackage {
+	workspace_generation_package_id: string;
+	mode: string;
+	product_id: string;
+	product_name_snapshot: string;
+	source_lane: string;
+	prompt_package_snapshot_id: string;
+	workspace_execution_package_id: string | null;
+	generation_mode: string;
+	final_prompt_text: string;
+	prompt_blocks_json: unknown[];
+	selected_assets_json: Record<string, unknown>;
+	resolved_engine_slots_json: Record<string, string | null>;
+	resolver_output_json: Record<string, unknown>;
+	image_assets_json: Record<string, WorkspaceGenerationPackageAsset | null>;
+	manual_handoff_json: WorkspaceGenerationPackageManualHandoff;
+	dom_handoff_payload_json: WorkspaceGenerationPackageDomScaffold;
+	blockers_json: string[];
+	warnings_json: string[];
+	status: WorkspaceGenerationPackageStatus;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface WorkspaceGenerationPackageListResponse {
+	packages: WorkspaceGenerationPackage[];
+	count: number;
+}
+
+export interface F2VGenerationPackageRequest {
+	product_id: string;
+	workspace_execution_package_id?: string | null;
+	generation_mode?: string;
+	duration_seconds?: number;
+	target_language?: string;
+	camera_style?: string;
+	character_presence?: string;
+	creator_persona?: string;
+	overlay_enabled?: boolean;
+	dialogue_enabled?: boolean;
+	blocks?: Array<{ block_index: number; duration_seconds: number }>;
+	start_frame_asset_id?: string | null;
+	start_frame_preview_url?: string | null;
+	start_frame_download_url?: string | null;
+	end_frame_asset_id?: string | null;
+	end_frame_preview_url?: string | null;
+	end_frame_download_url?: string | null;
+	operator_notes?: string | null;
+}
+
+export interface I2VGenerationPackageRequest {
+	product_id: string;
+	workspace_execution_package_id?: string | null;
+	recipe_id?: string;
+	generation_mode?: string;
+	target_language?: string;
+	camera_style?: string;
+	character_presence?: string;
+	creator_persona?: string;
+	overlay_enabled?: boolean;
+	dialogue_enabled?: boolean;
+	product_reference_asset_id?: string | null;
+	character_reference_asset_id?: string | null;
+	scene_context_reference_asset_id?: string | null;
+	style_reference_asset_id?: string | null;
+	operator_notes?: string | null;
+}

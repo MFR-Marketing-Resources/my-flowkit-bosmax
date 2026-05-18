@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package"})
 
 
 def _validate_table(table: str) -> None:
@@ -32,10 +32,11 @@ _COLUMNS = {
               "trim_start", "trim_end", "duration", "display_order", "source", "transition_prompt", "narrator_text", "updated_at"},
     "request": {"status", "request_id", "media_id", "output_url", "error_message", "retry_count", "next_retry_at", "source_media_id", "updated_at", "automation_report"},
     "product": {"source", "source_url", "brand", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price", "currency", "commission_amount", "commission_rate", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "image_asset_status", "image_failure_detail", "product_type", "product_type_id", "silo", "trigger_id", "formula", "copywriting_angle", "claim_risk_level", "mode_recommendations", "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint", "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields", "prompt_readiness_status", "prompt_missing_fields", "claim_safe_copy_status", "claim_safe_copy_payload", "claim_safe_copy_updated_at", "production_prompt_approval_status", "production_prompt_approved_modes", "production_prompt_approved_at", "production_prompt_approval_note", "production_prompt_approval_provenance", "lifecycle_status", "archived_at", "archived_reason", "archived_by", "unarchived_at", "unarchived_reason", "lifecycle_provenance", "asset_status", "media_id", "local_image_path", "updated_at"},
-    "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message"},
+    "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "workspace_generation_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message"},
     "request_stage_event": {"request_id", "timestamp", "stage", "status", "message", "source"},
     "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
     "creative_asset": {"semantic_role", "display_name", "description", "source_type", "storage_kind", "preview_url", "download_url", "media_id", "local_file_path", "remote_source_url", "product_id", "category", "silo", "product_type", "allowed_modes", "engine_slot_eligibility", "mode_a_metadata_handoff", "visual_dna_summary", "character_dna", "scene_context_dna", "style_mood_dna", "source_prompt_fingerprint", "source_workspace_execution_package_id", "source_prompt_package_snapshot_id", "status", "updated_at"},
+    "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "updated_at"},
 }
 
 
@@ -749,3 +750,82 @@ async def get_telemetry_summary() -> dict:
     summary["idle_seconds"] = 0 
     
     return summary
+
+
+# ─── Workspace Generation Package ───────────────────────────
+
+async def create_workspace_generation_package(
+    workspace_generation_package_id: str,
+    *,
+    mode: str,
+    product_id: str,
+    product_name_snapshot: str,
+    source_lane: str,
+    prompt_package_snapshot_id: str,
+    workspace_execution_package_id: str | None,
+    generation_mode: str,
+    final_prompt_text: str,
+    prompt_blocks_json: str,
+    selected_assets_json: str,
+    resolved_engine_slots_json: str,
+    resolver_output_json: str,
+    image_assets_json: str,
+    manual_handoff_json: str,
+    dom_handoff_payload_json: str,
+    blockers_json: str,
+    warnings_json: str,
+    status: str,
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """
+            INSERT INTO workspace_generation_package (
+                workspace_generation_package_id, mode, product_id, product_name_snapshot,
+                source_lane, prompt_package_snapshot_id, workspace_execution_package_id,
+                generation_mode, final_prompt_text, prompt_blocks_json, selected_assets_json,
+                resolved_engine_slots_json, resolver_output_json, image_assets_json,
+                manual_handoff_json, dom_handoff_payload_json, blockers_json, warnings_json,
+                status, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                workspace_generation_package_id, mode, product_id, product_name_snapshot,
+                source_lane, prompt_package_snapshot_id, workspace_execution_package_id,
+                generation_mode, final_prompt_text, prompt_blocks_json, selected_assets_json,
+                resolved_engine_slots_json, resolver_output_json, image_assets_json,
+                manual_handoff_json, dom_handoff_payload_json, blockers_json, warnings_json,
+                status, now, now,
+            ),
+        )
+        await db.commit()
+    return await _get_with_db(db, "workspace_generation_package", "workspace_generation_package_id", workspace_generation_package_id)
+
+
+async def get_workspace_generation_package(wgp_id: str):
+    return await _get("workspace_generation_package", "workspace_generation_package_id", wgp_id)
+
+
+async def update_workspace_generation_package(wgp_id: str, **kw):
+    return await _update("workspace_generation_package", "workspace_generation_package_id", wgp_id, **kw)
+
+
+async def list_workspace_generation_packages(
+    mode: str | None = None,
+    status: str | None = None,
+    product_id: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    db = await get_db()
+    q, params = "SELECT * FROM workspace_generation_package WHERE 1=1", []
+    if mode:
+        q += " AND mode=?"; params.append(mode)
+    if status:
+        q += " AND status=?"; params.append(status)
+    if product_id:
+        q += " AND product_id=?"; params.append(product_id)
+    q += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]

@@ -45,6 +45,7 @@ import PromptPreviewPage from "./pages/PromptPreviewPage";
 import SettingsPage from "./pages/SettingsPage";
 import TroubleshootPage from "./pages/TroubleshootPage";
 import WorkspaceJobsPage from "./pages/WorkspaceJobsPage";
+import WorkspaceGenerationPackagesPage from "./pages/WorkspaceGenerationPackagesPage";
 import type { TelemetrySummary } from "./types";
 
 const NAV_GROUPS = [
@@ -56,6 +57,7 @@ const NAV_GROUPS = [
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
 			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
+			{ to: "/workspace/generation-packages", icon: PackageSearch, label: "Prompt Handoff Bank" },
 			{
 				to: "/approved-packages",
 				icon: PackageSearch,
@@ -357,6 +359,7 @@ function Layout() {
 						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
 						<Route path="/operator/img" element={<OperatorPage mode="IMG" />} />
 						<Route path="/workspace/jobs" element={<WorkspaceJobsPage />} />
+						<Route path="/workspace/generation-packages" element={<WorkspaceGenerationPackagesPage />} />
 						<Route
 							path="/approved-packages"
 							element={<ApprovedPackagesPage />}

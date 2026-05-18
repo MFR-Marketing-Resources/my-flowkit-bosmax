@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
+import {
+	createF2VGenerationPackage,
+	createI2VGenerationPackage,
+} from "../api/workspaceGenerationPackages";
+import type { WorkspaceGenerationPackage } from "../types";
 import { fetchProductCatalog } from "../api/products";
 import {
 	createWorkspaceExecutionPackage,
@@ -131,6 +136,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const isPortalMode =
 		new URLSearchParams(location.search).get("portal") === "side";
 	const [isExecuting, setIsExecuting] = useState(false);
+	const [isSavingPackage, setIsSavingPackage] = useState(false);
+	const [savedGenPackage, setSavedGenPackage] = useState<WorkspaceGenerationPackage | null>(null);
+	const [savePackageError, setSavePackageError] = useState<string | null>(null);
 	const [modeRequests, setModeRequests] = useState<TelemetryRequest[]>([]);
 	const [compactPane, setCompactPane] = useState<"workspace" | "jobs">(
 		"workspace",
@@ -447,6 +455,50 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			setIsExecuting(false);
 		}
 	};
+
+	const handleSaveGenerationPackage = useCallback(async () => {
+		if (!selectedProduct || !workspacePackage) return;
+		setIsSavingPackage(true);
+		setSavePackageError(null);
+		setSavedGenPackage(null);
+		try {
+			let pkg: WorkspaceGenerationPackage;
+			if (mode === "F2V") {
+				pkg = await createF2VGenerationPackage({
+					product_id: selectedProduct.id,
+					workspace_execution_package_id: workspacePackage.workspace_execution_package_id,
+					generation_mode: generationMode,
+					target_language: targetLanguage,
+					camera_style: cameraStyle,
+					character_presence: characterPresence,
+					creator_persona: creatorPersona,
+					overlay_enabled: true,
+					dialogue_enabled: true,
+					blocks: [
+						{ block_index: 1, duration_seconds: block1Duration },
+						...(generationMode === "EXTEND" ? [{ block_index: 2, duration_seconds: block2Duration }] : []),
+					],
+				});
+			} else if (mode === "I2V") {
+				pkg = await createI2VGenerationPackage({
+					product_id: selectedProduct.id,
+					workspace_execution_package_id: workspacePackage.workspace_execution_package_id,
+					generation_mode: generationMode,
+					target_language: targetLanguage,
+					camera_style: cameraStyle,
+					character_presence: characterPresence,
+					creator_persona: creatorPersona,
+				});
+			} else {
+				throw new Error(`Generate / Save Package not supported for mode ${mode} yet.`);
+			}
+			setSavedGenPackage(pkg);
+		} catch (e) {
+			setSavePackageError(String(e));
+		} finally {
+			setIsSavingPackage(false);
+		}
+	}, [selectedProduct, workspacePackage, mode, generationMode, targetLanguage, cameraStyle, characterPresence, creatorPersona, block1Duration, block2Duration]);
 
 	const handleLoadPackage = async () => {
 		if (!selectedProduct || selectedReadiness?.readiness_status !== "READY") {
@@ -952,6 +1004,46 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									: "Unavailable"}
 							</div>
 						</div>
+					</div>
+				) : null}
+
+				{/* Generate / Save Package — F2V and I2V */}
+				{workspacePackage && (mode === "F2V" || mode === "I2V") ? (
+					<div className="mt-4 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4">
+						<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-indigo-400 mb-3">
+							Prompt Handoff Bank
+						</div>
+						<div className="flex flex-wrap items-center gap-3">
+							<button
+								type="button"
+								onClick={() => void handleSaveGenerationPackage()}
+								disabled={isSavingPackage}
+								className="rounded-xl border border-indigo-500/40 bg-indigo-500/15 px-4 py-2.5 text-sm font-semibold text-indigo-100 hover:bg-indigo-500/25 disabled:opacity-50 transition-colors"
+							>
+								{isSavingPackage ? "Saving Package…" : "Generate / Save Package"}
+							</button>
+							{savedGenPackage && (
+								<>
+									<span className="text-xs text-emerald-300 font-mono">
+										✓ Saved: {savedGenPackage.workspace_generation_package_id}
+									</span>
+									<button
+										type="button"
+										onClick={() => navigate(`/workspace/generation-packages`)}
+										className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-semibold text-slate-200 hover:bg-slate-800 transition-colors"
+									>
+										Open Prompt Handoff Bank
+									</button>
+								</>
+							)}
+							{savePackageError && (
+								<span className="text-xs text-red-400">{savePackageError}</span>
+							)}
+						</div>
+						<p className="mt-2 text-[11px] text-indigo-300/60">
+							Saves a durable package with final prompt, selected assets, upload order, and DOM scaffold.
+							DOM execution is not triggered. package_id is stored in Prompt Handoff Bank.
+						</p>
 					</div>
 				) : null}
 			</div>
