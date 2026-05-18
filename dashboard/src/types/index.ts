@@ -260,9 +260,17 @@ export interface UploadedAsset {
 	assetFingerprint?: string;
 	assetSource?: string;
 	isDefaultPackageAsset?: boolean;
+	previewRenderableStatus?: string;
+	previewErrorDetail?: string | null;
+	localImagePathPresent?: boolean;
+	remoteImageUrlPresent?: boolean;
 }
 
 export type WorkspaceMode = "T2V" | "F2V" | "I2V" | "IMG";
+export type PromptGenerationMode = "SINGLE" | "EXTEND";
+export type PromptCameraStyle = "UGC_IPHONE_RAW" | "CINEMATIC_PRO";
+export type PromptCharacterPresence = "VISIBLE_CREATOR" | "FACELESS";
+export type PromptTargetLanguage = "BM_MS" | "EN_US";
 type DisplayFieldValue =
 	| string
 	| number
@@ -312,6 +320,10 @@ export interface ApprovedPackageResolvedAsset {
 	preview_url: string;
 	download_url: string;
 	media_id: string | null;
+	preview_renderable_status?: string;
+	preview_error_detail?: string | null;
+	local_image_path_present?: boolean;
+	remote_image_url_present?: boolean;
 }
 
 export interface ApprovedPackageAssetSlot {
@@ -356,6 +368,7 @@ export interface WorkspaceExecutionPackage {
 	product_name: string;
 	mode: WorkspaceMode;
 	duration_seconds: number;
+	total_duration_seconds?: number;
 	aspect_ratio: string;
 	model: string;
 	manual_override: boolean;
@@ -376,9 +389,126 @@ export interface WorkspaceExecutionPackage {
 		workspace_execution_package_id: string;
 		prompt_fingerprint: string;
 		asset_fingerprints: string[];
+		compiler?: Record<string, unknown>;
 	};
 	source_of_truth_notes: string[];
 	prompt_preview?: string;
+	compiler_version?: string;
+	generation_mode?: PromptGenerationMode;
+	camera_style?: PromptCameraStyle;
+	character_presence?: PromptCharacterPresence;
+	creator_persona?: string;
+	target_language?: PromptTargetLanguage;
+	shot_plan?: Array<{
+		block_index: number;
+		shot_count: number;
+		shots: string[];
+	}>;
+	dialogue_word_budget_per_block?: number[];
+	prompt_blocks?: Array<{
+		block_id?: string;
+		block_index: number;
+		block_role: "ANCHOR" | "CONTINUATION";
+		duration_seconds: number;
+		shot_count: number;
+		dialogue_word_budget: number;
+		continuation_from_block_id?: string | null;
+		compiled_prompt_text: string;
+		shot_plan?: string[];
+	}>;
+	warnings?: string[];
+	compiler_blockers?: string[];
+	continuation_lineage?: Array<{
+		block_index: number;
+		continuation_from_block_id: string;
+		continuation_strategy: string;
+	}>;
+	runtime_config_snapshot?: PromptCompilerRuntimeConfig;
+}
+
+export interface PromptCompilerRuntimeConfig {
+	generation_modes: PromptGenerationMode[];
+	allowed_block_durations_seconds: number[];
+	default_block_duration_seconds: number;
+	camera_styles: Array<{
+		id: PromptCameraStyle;
+		label: string;
+		notes: string[];
+	}>;
+	character_presence_options: Array<{
+		id: PromptCharacterPresence;
+		label: string;
+		is_default: boolean;
+		warning: string | null;
+	}>;
+	persona_registry: Array<{
+		id: string;
+		label: string;
+		presentation: string;
+		tone: string;
+		continuity_notes: string;
+	}>;
+	language_wps_policy: Record<
+		PromptTargetLanguage,
+		{
+			hook_wps: number;
+			body_wps: number;
+			cta_wps: number;
+			absolute_ceiling_wps: number;
+		}
+	>;
+	shot_count_policy: Record<string, { recommended: number; max: number }>;
+	continuation_policy: Record<string, boolean>;
+	engine_mode_capability_policy: Record<string, Record<string, unknown>>;
+	defaults: {
+		generation_mode: PromptGenerationMode;
+		block_duration_seconds: number;
+		camera_style: PromptCameraStyle;
+		character_presence: PromptCharacterPresence;
+		target_language: PromptTargetLanguage;
+		creator_persona: string;
+		overlay_enabled: boolean;
+		dialogue_enabled: boolean;
+		block_2_duration_seconds: number;
+	};
+}
+
+export interface WorkspacePackageReadinessChecklistEntry {
+	key: string;
+	label: string;
+	ready: boolean;
+	detail: string;
+}
+
+export interface WorkspacePackageReadinessItem {
+	product_id: string;
+	product_name?: string | null;
+	mode: WorkspaceMode;
+	readiness_status:
+		| "READY"
+		| "CLAIM_SAFE_PACKAGE_NOT_READY"
+		| "PRODUCTION_APPROVAL_REQUIRED"
+		| "START_FRAME_REQUIRED"
+		| "SUBJECT_REQUIRED"
+		| "PRODUCT_ARCHIVED"
+		| "UNSUPPORTED_MODE"
+		| "PRODUCT_NOT_FOUND";
+	blocker?: string | null;
+	detail: string;
+	image_reference_status?: string | null;
+	claim_safe_copy_status?: string | null;
+	production_prompt_approved_modes?: string[];
+	checklist: WorkspacePackageReadinessChecklistEntry[];
+	quick_actions: {
+		smart_registration_path: string;
+		approved_packages_path: string;
+		products_path: string;
+	};
+}
+
+export interface WorkspacePackageReadinessResponse {
+	mode: WorkspaceMode;
+	items: WorkspacePackageReadinessItem[];
 }
 
 export interface Product {

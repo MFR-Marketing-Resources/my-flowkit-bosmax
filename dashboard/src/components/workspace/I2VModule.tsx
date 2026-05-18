@@ -1,4 +1,4 @@
-import { ArrowRight, Loader2, Upload } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { handleAssetUpload } from "../../api/assets";
 import type {
@@ -7,6 +7,7 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
+import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface I2VModuleProps {
 	onExecute: (data: WorkspaceExecutePayload) => void;
@@ -32,6 +33,10 @@ function toUploadedAsset(
 		assetFingerprint: asset.asset_fingerprint,
 		assetSource: asset.asset_source,
 		isDefaultPackageAsset: true,
+		previewRenderableStatus: asset.preview_renderable_status,
+		previewErrorDetail: asset.preview_error_detail ?? null,
+		localImagePathPresent: asset.local_image_path_present,
+		remoteImageUrlPresent: asset.remote_image_url_present,
 	};
 }
 
@@ -139,96 +144,48 @@ export default function I2VModule({
 						1. Visual Assets (Subject / Scene / Style)
 					</h3>
 					<div className="grid grid-cols-1 gap-4 min-[480px]:grid-cols-3">
-						{/* Subject */}
-						<div className="group relative aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
-							{subjectAsset ? (
-								<img
-									src={subjectAsset.previewUrl}
-									className="w-full h-full object-cover animate-in fade-in duration-500"
-									alt="Subject"
-								/>
-							) : (
-								<>
-									<div className="p-3 rounded-full bg-slate-800 text-slate-400 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-colors">
-										{isUploading ? (
-											<Loader2 size={20} className="animate-spin" />
-										) : (
-											<Upload size={20} />
-										)}
-									</div>
-									<span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">
-										Subject
-									</span>
-								</>
-							)}
-							{!isUploading && (
-								<input
-									type="file"
-									accept="image/*"
-									title="Upload subject reference"
-									className="absolute inset-0 opacity-0 cursor-pointer"
-									onChange={(e) => handleFileChange("subject", e)}
-								/>
-							)}
-						</div>
-
-						{/* Scene */}
-						<div className="group relative aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-purple-500/50 transition-all cursor-pointer overflow-hidden">
-							{sceneAsset ? (
-								<img
-									src={sceneAsset.previewUrl}
-									className="w-full h-full object-cover animate-in fade-in duration-500"
-									alt="Scene"
-								/>
-							) : (
-								<>
-									<div className="p-3 rounded-full bg-slate-800 text-slate-400 group-hover:bg-purple-500/10 group-hover:text-purple-400 transition-colors">
-										<Upload size={20} />
-									</div>
-									<span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">
-										Scene
-									</span>
-								</>
-							)}
-							{!isUploading && (
-								<input
-									type="file"
-									accept="image/*"
-									title="Upload scene reference"
-									className="absolute inset-0 opacity-0 cursor-pointer"
-									onChange={(e) => handleFileChange("scene", e)}
-								/>
-							)}
-						</div>
-
-						{/* Style */}
-						<div className="group relative aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-2 hover:border-pink-500/50 transition-all cursor-pointer overflow-hidden">
-							{styleAsset ? (
-								<img
-									src={styleAsset.previewUrl}
-									className="w-full h-full object-cover animate-in fade-in duration-500"
-									alt="Style"
-								/>
-							) : (
-								<>
-									<div className="p-3 rounded-full bg-slate-800 text-slate-400 group-hover:bg-pink-500/10 group-hover:text-pink-400 transition-colors">
-										<Upload size={20} />
-									</div>
-									<span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-300 uppercase tracking-widest">
-										Style
-									</span>
-								</>
-							)}
-							{!isUploading && (
-								<input
-									type="file"
-									accept="image/*"
-									title="Upload style reference"
-									className="absolute inset-0 opacity-0 cursor-pointer"
-									onChange={(e) => handleFileChange("style", e)}
-								/>
-							)}
-						</div>
+						<WorkspaceImageAssetSlot
+							key={
+								subjectAsset?.assetFingerprint ??
+								subjectAsset?.previewUrl ??
+								"subject-empty"
+							}
+							title="Subject"
+							description="Resolved product image is the default subject"
+							asset={subjectAsset}
+							isUploading={isUploading}
+							accentClassName="group-hover:bg-blue-500/10 group-hover:text-blue-400"
+							uploadTitle="Upload subject reference"
+							onFileChange={(e) => handleFileChange("subject", e)}
+						/>
+						<WorkspaceImageAssetSlot
+							key={
+								sceneAsset?.assetFingerprint ??
+								sceneAsset?.previewUrl ??
+								"scene-empty"
+							}
+							title="Scene"
+							description="Upload an optional scene reference"
+							asset={sceneAsset}
+							isUploading={isUploading}
+							accentClassName="group-hover:bg-purple-500/10 group-hover:text-purple-400"
+							uploadTitle="Upload scene reference"
+							onFileChange={(e) => handleFileChange("scene", e)}
+						/>
+						<WorkspaceImageAssetSlot
+							key={
+								styleAsset?.assetFingerprint ??
+								styleAsset?.previewUrl ??
+								"style-empty"
+							}
+							title="Style"
+							description="Upload an optional style reference"
+							asset={styleAsset}
+							isUploading={isUploading}
+							accentClassName="group-hover:bg-pink-500/10 group-hover:text-pink-400"
+							uploadTitle="Upload style reference"
+							onFileChange={(e) => handleFileChange("style", e)}
+						/>
 					</div>
 				</section>
 

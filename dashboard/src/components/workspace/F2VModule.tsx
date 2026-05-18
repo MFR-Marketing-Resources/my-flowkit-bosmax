@@ -1,4 +1,4 @@
-import { ArrowRight, Loader2, Upload } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { handleAssetUpload } from "../../api/assets";
 import type {
@@ -7,6 +7,7 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
+import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface F2VModuleProps {
 	onExecute: (data: WorkspaceExecutePayload) => void;
@@ -32,6 +33,10 @@ function toUploadedAsset(
 		assetFingerprint: asset.asset_fingerprint,
 		assetSource: asset.asset_source,
 		isDefaultPackageAsset: true,
+		previewRenderableStatus: asset.preview_renderable_status,
+		previewErrorDetail: asset.preview_error_detail ?? null,
+		localImagePathPresent: asset.local_image_path_present,
+		remoteImageUrlPresent: asset.remote_image_url_present,
 	};
 }
 
@@ -48,6 +53,7 @@ export default function F2VModule({
 	const [model, setModel] = useState("Veo 3.1 - Lite");
 	const [count, setCount] = useState(1);
 	const [isUploading, setIsUploading] = useState(false);
+	const [startPreviewFailed, setStartPreviewFailed] = useState(false);
 
 	// Frame Assets
 	const [startAsset, setStartAsset] = useState<UploadedAsset | null>(null);
@@ -75,6 +81,7 @@ export default function F2VModule({
 			),
 		);
 		setIsManualOverride(false);
+		setStartPreviewFailed(false);
 	}, [workspacePackage]);
 
 	// --- Handlers ---
@@ -91,8 +98,10 @@ export default function F2VModule({
 			const asset = await handleAssetUpload(file);
 			console.log(`[F2V] Upload success:`, asset.mediaId);
 
-			if (type === "start") setStartAsset(asset);
-			else setEndAsset(asset);
+			if (type === "start") {
+				setStartAsset(asset);
+				setStartPreviewFailed(false);
+			} else setEndAsset(asset);
 			setIsManualOverride(Boolean(workspacePackage));
 		} catch (error: unknown) {
 			const message = error instanceof Error ? error.message : "Unknown error";
@@ -136,81 +145,39 @@ export default function F2VModule({
 						1. Visual Assets (F2V Slots)
 					</h3>
 					<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-						{/* Start Frame */}
-						<div className="group relative aspect-video rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-3 hover:border-blue-500/50 transition-all cursor-pointer overflow-hidden">
-							{startAsset ? (
-								<img
-									src={startAsset.previewUrl}
-									className="w-full h-full object-cover animate-in fade-in duration-500"
-									alt="Start Frame"
-								/>
-							) : (
-								<>
-									<div className="p-4 rounded-full bg-slate-800 text-slate-400 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-colors">
-										{isUploading ? (
-											<Loader2 className="animate-spin" size={24} />
-										) : (
-											<Upload size={24} />
-										)}
-									</div>
-									<div className="text-center">
-										<p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
-											Start Frame
-										</p>
-										<p className="text-[9px] text-slate-500 mt-1">
-											{isUploading
-												? "Uploading..."
-												: workspacePackage
-													? "Product cached image loads by default"
-													: "Click to upload"}
-										</p>
-									</div>
-								</>
-							)}
-							{!isUploading && (
-								<input
-									type="file"
-									accept="image/*"
-									title="Upload start frame"
-									className="absolute inset-0 opacity-0 cursor-pointer"
-									onChange={(e) => handleFileChange("start", e)}
-								/>
-							)}
-						</div>
-
-						{/* End Frame */}
-						<div className="group relative aspect-video rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/20 flex flex-col items-center justify-center gap-3 hover:border-purple-500/50 transition-all cursor-pointer overflow-hidden">
-							{endAsset ? (
-								<img
-									src={endAsset.previewUrl}
-									className="w-full h-full object-cover animate-in fade-in duration-500"
-									alt="End Frame"
-								/>
-							) : (
-								<>
-									<div className="p-4 rounded-full bg-slate-800 text-slate-400 group-hover:bg-purple-500/10 group-hover:text-purple-400 transition-colors">
-										<Upload size={24} />
-									</div>
-									<div className="text-center">
-										<p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
-											End Frame (Optional)
-										</p>
-										<p className="text-[9px] text-slate-500 mt-1">
-											Click to upload
-										</p>
-									</div>
-								</>
-							)}
-							{!isUploading && (
-								<input
-									type="file"
-									accept="image/*"
-									title="Upload end frame"
-									className="absolute inset-0 opacity-0 cursor-pointer"
-									onChange={(e) => handleFileChange("end", e)}
-								/>
-							)}
-						</div>
+						<WorkspaceImageAssetSlot
+							key={
+								startAsset?.assetFingerprint ??
+								startAsset?.previewUrl ??
+								"start-empty"
+							}
+							title="Start Frame"
+							description={
+								workspacePackage
+									? "Resolved product image loads by default"
+									: "Click upload to attach a Start Frame"
+							}
+							asset={startAsset}
+							isUploading={isUploading}
+							accentClassName="group-hover:bg-blue-500/10 group-hover:text-blue-400"
+							uploadTitle="Upload start frame"
+							onFileChange={(e) => handleFileChange("start", e)}
+							onPreviewStateChange={setStartPreviewFailed}
+						/>
+						<WorkspaceImageAssetSlot
+							key={
+								endAsset?.assetFingerprint ??
+								endAsset?.previewUrl ??
+								"end-empty"
+							}
+							title="End Frame (Optional)"
+							description="Click upload to attach an ending frame"
+							asset={endAsset}
+							isUploading={isUploading}
+							accentClassName="group-hover:bg-purple-500/10 group-hover:text-purple-400"
+							uploadTitle="Upload end frame"
+							onFileChange={(e) => handleFileChange("end", e)}
+						/>
 					</div>
 				</section>
 
@@ -226,6 +193,12 @@ export default function F2VModule({
 								{isManualOverride
 									? "Manual override active. Start Frame can still fall back to the cached product image."
 									: "Approved package loaded. Start Frame defaults to the cached product image; End Frame stays optional."}
+							</div>
+						) : null}
+						{startPreviewFailed ? (
+							<div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-100">
+								Image preview failed. Upload a manual Start Frame replacement
+								before sending this F2V job.
 							</div>
 						) : null}
 						<textarea
@@ -249,7 +222,11 @@ export default function F2VModule({
 						type="button"
 						onClick={handleExecute}
 						disabled={
-							isExecuting || isUploading || !manualPrompt || !startAsset
+							isExecuting ||
+							isUploading ||
+							!manualPrompt ||
+							!startAsset ||
+							startPreviewFailed
 						}
 						className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
 					>
