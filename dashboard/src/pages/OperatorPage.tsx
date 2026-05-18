@@ -280,6 +280,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	}, []);
 
 	useEffect(() => {
+		if (!isPortalMode) {
+			setModeRequests([]);
+			return;
+		}
+
 		const loadModeRequests = () => {
 			fetchAPI<TelemetryRequest[]>("/api/telemetry/requests?limit=120")
 				.then((items) => {
@@ -295,7 +300,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		loadModeRequests();
 		const timer = window.setInterval(loadModeRequests, 4000);
 		return () => window.clearInterval(timer);
-	}, [mode]);
+	}, [isPortalMode, mode]);
 
 	const handleExecute = async (data: WorkspaceExecutePayload) => {
 		setIsExecuting(true);
@@ -953,19 +958,17 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				</div>
 			</div>
 
-			<div
-				className={`${isPortalMode ? "flex-1 min-h-0" : "grid flex-1 min-h-0 gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)]"}`}
-			>
+			<div className="flex flex-1 min-h-0 flex-col gap-6">
 				{(!isPortalMode || compactPane === "workspace") && (
 					<div className="min-h-0">{renderModule()}</div>
 				)}
 
-				{(!isPortalMode || compactPane === "jobs") && (
+				{isPortalMode && compactPane === "jobs" && (
 					<div className="min-h-0">
 						<RequestReportPanel
 							requests={modeRequests}
-							title={`${mode === "F2V" ? "Frames" : mode === "T2V" ? "Text to Video" : mode === "I2V" ? "Ingredients" : "Image"} Workspace Jobs`}
-							description="This is the work list for the current operator page. Use it to confirm whether a run is waiting, processing, completed, or failed, and read the remark before troubleshooting."
+							title="Workspace Jobs"
+							description="Portal mode can still inspect current workspace requests here without reopening the unified jobs page."
 							emptyMessage="No jobs recorded for this workspace yet. New submissions from this page will appear here automatically."
 							maxItems={18}
 						/>

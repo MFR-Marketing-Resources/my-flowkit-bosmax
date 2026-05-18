@@ -43,6 +43,7 @@ import ProjectsPage from "./pages/ProjectsPage";
 import PromptPreviewPage from "./pages/PromptPreviewPage";
 import SettingsPage from "./pages/SettingsPage";
 import TroubleshootPage from "./pages/TroubleshootPage";
+import WorkspaceJobsPage from "./pages/WorkspaceJobsPage";
 import type { TelemetrySummary } from "./types";
 
 const NAV_GROUPS = [
@@ -53,6 +54,7 @@ const NAV_GROUPS = [
 			{ to: "/operator/f2v", icon: Sparkles, label: "Frames (F2V)" },
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
+			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
 			{
 				to: "/approved-packages",
 				icon: PackageSearch,
@@ -180,6 +182,7 @@ function Layout() {
 		{ to: "/operator/f2v", label: "F2V" },
 		{ to: "/operator/i2v", label: "I2V" },
 		{ to: "/operator/img", label: "IMG" },
+		{ to: "/workspace/jobs", label: "Jobs" },
 		{ to: "/troubleshoot", label: "Issues" },
 	];
 
@@ -347,6 +350,7 @@ function Layout() {
 						<Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
 						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
 						<Route path="/operator/img" element={<OperatorPage mode="IMG" />} />
+						<Route path="/workspace/jobs" element={<WorkspaceJobsPage />} />
 						<Route
 							path="/approved-packages"
 							element={<ApprovedPackagesPage />}
