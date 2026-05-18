@@ -36,6 +36,9 @@ export default function SearchableProductSelect({
 		return () => document.removeEventListener("mousedown", handleClickOutside);
 	}, []);
 
+	const sourceLaneLabel = (product: Product) =>
+		product.source_label || product.source_lane || product.source;
+
 	return (
 		<div className="relative min-w-0" ref={containerRef}>
 			<button
@@ -49,10 +52,25 @@ export default function SearchableProductSelect({
 							<span className="bosmax-wrap-safe block text-sm font-bold text-slate-200">
 								{selectedProduct.raw_product_title}
 							</span>
-							<span className="mt-2 inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-200">
-								{readinessByProductId[selectedProduct.id]?.readiness_status ??
-									"READY"}
-							</span>
+							<div className="mt-2 flex flex-wrap items-center gap-2">
+								<span className="inline-flex rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-blue-200">
+									{sourceLaneLabel(selectedProduct)}
+								</span>
+								{selectedProduct.reference_only ? (
+									<span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-amber-100">
+										Reference only
+									</span>
+								) : null}
+								<span className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-200">
+									{readinessByProductId[selectedProduct.id]?.readiness_status ??
+										"READY"}
+								</span>
+							</div>
+							{readinessByProductId[selectedProduct.id]?.detail ? (
+								<div className="bosmax-wrap-safe mt-2 text-[10px] text-slate-400">
+									{readinessByProductId[selectedProduct.id]?.detail}
+								</div>
+							) : null}
 						</>
 					) : (
 						<span className="bosmax-wrap-safe block text-sm text-slate-500">
@@ -103,11 +121,26 @@ export default function SearchableProductSelect({
 											<span className="bosmax-wrap-safe block">
 												{product.raw_product_title}
 											</span>
-											<span
-												className={`mt-2 inline-flex rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${readinessTone}`}
-											>
-												{readiness?.readiness_status ?? "READY"}
-											</span>
+											<div className="mt-2 flex flex-wrap items-center gap-2">
+												<span className="inline-flex rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-blue-200">
+													{sourceLaneLabel(product)}
+												</span>
+												{product.reference_only ? (
+													<span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-amber-100">
+														Reference only
+													</span>
+												) : null}
+												<span
+													className={`inline-flex rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${readinessTone}`}
+												>
+													{readiness?.readiness_status ?? "READY"}
+												</span>
+											</div>
+											{readiness?.detail ? (
+												<div className="bosmax-wrap-safe mt-2 text-[10px] text-slate-500">
+													{readiness.detail}
+												</div>
+											) : null}
 										</div>
 										{selectedProduct?.id === product.id ? (
 											<Check size={14} />
