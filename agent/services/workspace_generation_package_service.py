@@ -22,9 +22,24 @@ from agent.services.approved_product_package_service import (
     get_approved_product_package,
     normalize_mode,
 )
+from agent.services.fastmoss_product_reference_service import (
+    FASTMOSS_REFERENCE_BLOCKER,
+    is_fastmoss_reference_product_id,
+)
 from agent.services.ugc_video_prompt_compiler_service import compile_ugc_video_prompt
 from agent.services.i2v_semantic_slot_resolver_service import resolve_i2v_semantic_slots
 from agent.models.i2v_semantic_slot_resolver import I2VSemanticSlotResolverRequest
+
+
+def _assert_not_reference_only(product_id: str, product_row: dict[str, Any] | None) -> None:
+    """Raise ValueError(REFERENCE_ONLY_PRODUCT) if product is a FastMoss
+    reference row that cannot be used for generation package creation.
+    Belt-and-suspenders guard — get_approved_product_package also blocks these,
+    but explicit early rejection gives a cleaner error path."""
+    if is_fastmoss_reference_product_id(product_id):
+        raise ValueError(FASTMOSS_REFERENCE_BLOCKER)
+    if product_row and product_row.get("reference_only"):
+        raise ValueError(FASTMOSS_REFERENCE_BLOCKER)
 
 
 # ─── Helpers ────────────────────────────────────────────────
@@ -163,6 +178,8 @@ async def create_f2v_generation_package(
 ) -> dict:
     """Create a durable F2V workspace generation package."""
     mode = "F2V"
+    product_row = await crud.get_product(product_id)
+    _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
 
     product_name_snapshot = approved.get("product_name", "")
@@ -332,6 +349,8 @@ async def create_i2v_generation_package(
 ) -> dict:
     """Create a durable I2V workspace generation package."""
     mode = "I2V"
+    product_row = await crud.get_product(product_id)
+    _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
 
     product_name_snapshot = approved.get("product_name", "")

@@ -7,6 +7,31 @@ interface SearchableProductSelectProps {
 	selectedProduct: Product | null;
 	onSelect: (product: Product | null) => void;
 	readinessByProductId?: Record<string, WorkspacePackageReadinessItem>;
+	isLoadingReadiness?: boolean;
+}
+
+/** Return the canonical readiness status for a product, respecting
+ *  reference-only state so the badge never falsely shows READY while
+ *  the API is still loading or when the product is reference-only. */
+function resolveReadinessStatus(
+	product: Product,
+	readiness: WorkspacePackageReadinessItem | undefined,
+	isLoading: boolean,
+): string {
+	if (product.reference_only) return "REFERENCE_ONLY_PRODUCT";
+	if (readiness?.readiness_status) return readiness.readiness_status;
+	if (isLoading) return "CHECKING…";
+	return "UNKNOWN";
+}
+
+function readinessToneClass(status: string): string {
+	if (status === "READY")
+		return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+	if (status === "REFERENCE_ONLY_PRODUCT")
+		return "border-amber-500/30 bg-amber-500/10 text-amber-100";
+	if (status.startsWith("CHECKING"))
+		return "border-slate-600/40 bg-slate-800/60 text-slate-400";
+	return "border-rose-500/30 bg-rose-500/10 text-rose-200";
 }
 
 export default function SearchableProductSelect({
@@ -14,6 +39,7 @@ export default function SearchableProductSelect({
 	selectedProduct,
 	onSelect,
 	readinessByProductId = {},
+	isLoadingReadiness = false,
 }: SearchableProductSelectProps) {
 	const [isOpen, setIsOpen] = useState(false);
 	const [search, setSearch] = useState("");
@@ -61,12 +87,28 @@ export default function SearchableProductSelect({
 										Reference only
 									</span>
 								) : null}
-								<span className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-200">
-									{readinessByProductId[selectedProduct.id]?.readiness_status ??
-										"READY"}
-								</span>
+								{(() => {
+									const status = resolveReadinessStatus(
+										selectedProduct,
+										readinessByProductId[selectedProduct.id],
+										isLoadingReadiness,
+									);
+									return (
+										<span
+											className={`inline-flex rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${readinessToneClass(status)}`}
+										>
+											{status}
+										</span>
+									);
+								})()}
 							</div>
-							{readinessByProductId[selectedProduct.id]?.detail ? (
+							{/* Reference-only: show reason + Smart Registration guidance */}
+							{selectedProduct.reference_only ? (
+								<div className="bosmax-wrap-safe mt-2 text-[10px] text-amber-200/80">
+									{selectedProduct.catalog_visibility_reason ||
+										"Visible for review only. Convert via Smart Registration before package load/generation."}
+								</div>
+							) : readinessByProductId[selectedProduct.id]?.detail ? (
 								<div className="bosmax-wrap-safe mt-2 text-[10px] text-slate-400">
 									{readinessByProductId[selectedProduct.id]?.detail}
 								</div>
@@ -102,10 +144,12 @@ export default function SearchableProductSelect({
 						{filtered.length > 0 ? (
 							filtered.map((product) => {
 								const readiness = readinessByProductId[product.id];
-								const readinessTone =
-									readiness?.readiness_status === "READY"
-										? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-										: "border-rose-500/30 bg-rose-500/10 text-rose-200";
+								const status = resolveReadinessStatus(
+									product,
+									readiness,
+									isLoadingReadiness,
+								);
+								const toneClass = readinessToneClass(status);
 								return (
 									<button
 										type="button"
@@ -115,7 +159,7 @@ export default function SearchableProductSelect({
 											setIsOpen(false);
 											setSearch("");
 										}}
-										className={`flex items-start justify-between gap-3 px-4 py-3 text-[11px] transition-colors cursor-pointer ${selectedProduct?.id === product.id ? "bg-blue-600/20 text-blue-400" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
+										className={`flex items-start justify-between gap-3 px-4 py-3 text-[11px] transition-colors cursor-pointer w-full text-left ${selectedProduct?.id === product.id ? "bg-blue-600/20 text-blue-400" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
 									>
 										<div className="min-w-0 flex-1 pr-2">
 											<span className="bosmax-wrap-safe block">
@@ -131,12 +175,18 @@ export default function SearchableProductSelect({
 													</span>
 												) : null}
 												<span
-													className={`inline-flex rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${readinessTone}`}
+													className={`inline-flex rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${toneClass}`}
 												>
-													{readiness?.readiness_status ?? "READY"}
+													{status}
 												</span>
 											</div>
-											{readiness?.detail ? (
+											{/* Reference-only: explicit REFERENCE_ONLY_PRODUCT reason */}
+											{product.reference_only ? (
+												<div className="bosmax-wrap-safe mt-1 text-[9px] text-amber-300/70">
+													REFERENCE_ONLY_PRODUCT — Convert/Register this product
+													before package load or generation.
+												</div>
+											) : readiness?.detail ? (
 												<div className="bosmax-wrap-safe mt-2 text-[10px] text-slate-500">
 													{readiness.detail}
 												</div>
