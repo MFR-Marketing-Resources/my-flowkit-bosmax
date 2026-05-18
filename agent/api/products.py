@@ -975,6 +975,8 @@ async def get_product_image(product_id: str):
         detail={
             "status": enriched.get("image_readiness_status") or "IMAGE_NOT_AVAILABLE",
             "reason": enriched.get("image_readiness_detail") or "No cached product image found.",
+            "local_cache_present": bool(enriched.get("local_image_path")),
+            "remote_image_url_present": bool(enriched.get("image_url")),
         },
     )
 

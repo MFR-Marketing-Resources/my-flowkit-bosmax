@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
 import { fetchProductCatalog } from "../api/products";
-import { createWorkspaceExecutionPackage } from "../api/workspacePackages";
+import {
+	createWorkspaceExecutionPackage,
+	fetchPromptCompilerRuntimeConfig,
+	fetchWorkspacePackageReadiness,
+} from "../api/workspacePackages";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import F2VModule from "../components/workspace/F2VModule";
 import I2VModule from "../components/workspace/I2VModule";
@@ -11,9 +15,16 @@ import SearchableProductSelect from "../components/workspace/SearchableProductSe
 import T2VModule from "../components/workspace/T2VModule";
 import type {
 	Product,
+	PromptCameraStyle,
+	PromptCharacterPresence,
+	PromptCompilerRuntimeConfig,
+	PromptGenerationMode,
+	PromptTargetLanguage,
 	TelemetryRequest,
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
+	WorkspaceMode,
+	WorkspacePackageReadinessItem,
 } from "../types";
 
 type OperatorNoticeTone = "idle" | "info" | "success" | "error";
@@ -69,12 +80,47 @@ function getLatestStageLabel(payload: OperatorTelemetryResponse | null) {
 	);
 }
 
+function humanizeWorkspaceMode(mode: WorkspaceMode) {
+	if (mode === "F2V") return "Frames";
+	if (mode === "I2V") return "Ingredients";
+	if (mode === "IMG") return "Image";
+	return "Text to Video";
+}
+
+function parseWorkspaceBlocker(error: unknown): string | null {
+	const message = error instanceof Error ? error.message : String(error || "");
+	const match = message.match(
+		/CLAIM_SAFE_PACKAGE_NOT_READY|PRODUCTION_APPROVAL_REQUIRED|START_FRAME_REQUIRED|SUBJECT_REQUIRED|PRODUCT_ARCHIVED|UNSUPPORTED_MODE/,
+	);
+	return match?.[0] ?? null;
+}
+
+function blockerMessage(blocker: string | null, mode: WorkspaceMode) {
+	switch (blocker) {
+		case "CLAIM_SAFE_PACKAGE_NOT_READY":
+			return "This product has no approved claim-safe package yet. Complete claim-safe review before loading a generation package.";
+		case "PRODUCTION_APPROVAL_REQUIRED":
+			return "This product is not production-approved for this mode yet.";
+		case "START_FRAME_REQUIRED":
+			return "F2V requires a product image as Start Frame.";
+		case "SUBJECT_REQUIRED":
+			return "This mode requires a product image or subject reference.";
+		case "PRODUCT_ARCHIVED":
+			return "Archived products cannot be loaded for generation.";
+		case "UNSUPPORTED_MODE":
+			return `${mode} is not supported by the approved package bridge.`;
+		default:
+			return "Failed to load approved package.";
+	}
+}
+
 interface OperatorPageProps {
 	mode?: "T2V" | "F2V" | "I2V" | "IMG";
 }
 
 export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const location = useLocation();
+	const navigate = useNavigate();
 	const statePackage = (
 		location.state as {
 			workspaceExecutionPackage?: WorkspaceExecutionPackage;
@@ -89,9 +135,26 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	);
 	const [products, setProducts] = useState<Product[]>([]);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+	const [packageReadiness, setPackageReadiness] = useState<
+		Record<string, WorkspacePackageReadinessItem>
+	>({});
 	const [workspacePackage, setWorkspacePackage] =
 		useState<WorkspaceExecutionPackage | null>(statePackage ?? null);
 	const [isLoadingPackage, setIsLoadingPackage] = useState(false);
+	const [isLoadingReadiness, setIsLoadingReadiness] = useState(false);
+	const [promptConfig, setPromptConfig] =
+		useState<PromptCompilerRuntimeConfig | null>(null);
+	const [generationMode, setGenerationMode] =
+		useState<PromptGenerationMode>("SINGLE");
+	const [targetLanguage, setTargetLanguage] =
+		useState<PromptTargetLanguage>("BM_MS");
+	const [cameraStyle, setCameraStyle] =
+		useState<PromptCameraStyle>("UGC_IPHONE_RAW");
+	const [characterPresence, setCharacterPresence] =
+		useState<PromptCharacterPresence>("VISIBLE_CREATOR");
+	const [creatorPersona, setCreatorPersona] = useState("DEFAULT_CREATOR");
+	const [block1Duration, setBlock1Duration] = useState(8);
+	const [block2Duration, setBlock2Duration] = useState(8);
 	const [notice, setNotice] = useState<OperatorNotice>({
 		tone: "idle",
 		title: "Idle",
@@ -109,12 +172,52 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		pathMode === "IMG"
 			? pathMode
 			: "F2V");
+	const selectedReadiness = selectedProduct
+		? (packageReadiness[selectedProduct.id] ?? null)
+		: null;
 
 	useEffect(() => {
 		void fetchProductCatalog(500)
 			.then((response) => setProducts(response.items))
 			.catch(() => {});
 	}, []);
+
+	useEffect(() => {
+		void fetchPromptCompilerRuntimeConfig()
+			.then((config) => {
+				setPromptConfig(config);
+				setGenerationMode(config.defaults.generation_mode);
+				setTargetLanguage(config.defaults.target_language);
+				setCameraStyle(config.defaults.camera_style);
+				setCharacterPresence(config.defaults.character_presence);
+				setCreatorPersona(config.defaults.creator_persona);
+				setBlock1Duration(config.defaults.block_duration_seconds);
+				setBlock2Duration(config.defaults.block_2_duration_seconds);
+			})
+			.catch(() => {});
+	}, []);
+
+	useEffect(() => {
+		if (products.length === 0) {
+			setPackageReadiness({});
+			return;
+		}
+		setIsLoadingReadiness(true);
+		void fetchWorkspacePackageReadiness({
+			mode: mode as WorkspaceMode,
+			product_ids: products.map((item) => item.id),
+		})
+			.then((response) => {
+				const mapped = Object.fromEntries(
+					response.items.map((item) => [item.product_id, item]),
+				);
+				setPackageReadiness(mapped);
+			})
+			.catch(() => {
+				setPackageReadiness({});
+			})
+			.finally(() => setIsLoadingReadiness(false));
+	}, [mode, products]);
 
 	useEffect(() => {
 		if (!statePackage || statePackage.mode !== mode) return;
@@ -128,6 +231,41 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		);
 		if (matched) setSelectedProduct(matched);
 	}, [products, workspacePackage]);
+
+	useEffect(() => {
+		if (!workspacePackage) return;
+		if (workspacePackage.generation_mode) {
+			setGenerationMode(workspacePackage.generation_mode);
+		}
+		if (workspacePackage.target_language) {
+			setTargetLanguage(workspacePackage.target_language);
+		}
+		if (workspacePackage.camera_style) {
+			setCameraStyle(workspacePackage.camera_style);
+		}
+		if (workspacePackage.character_presence) {
+			setCharacterPresence(workspacePackage.character_presence);
+		}
+		if (workspacePackage.creator_persona) {
+			setCreatorPersona(workspacePackage.creator_persona);
+		}
+		if (workspacePackage.prompt_blocks?.[0]?.duration_seconds) {
+			setBlock1Duration(workspacePackage.prompt_blocks[0].duration_seconds);
+		}
+		if (workspacePackage.prompt_blocks?.[1]?.duration_seconds) {
+			setBlock2Duration(workspacePackage.prompt_blocks[1].duration_seconds);
+		}
+	}, [workspacePackage]);
+
+	useEffect(() => {
+		if (selectedProduct || workspacePackage || products.length === 0) return;
+		const readyProduct = products.find(
+			(item) => packageReadiness[item.id]?.readiness_status === "READY",
+		);
+		if (readyProduct) {
+			setSelectedProduct(readyProduct);
+		}
+	}, [packageReadiness, products, selectedProduct, workspacePackage]);
 
 	useEffect(() => {
 		setCompactPane("workspace");
@@ -304,23 +442,55 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	};
 
 	const handleLoadPackage = async () => {
-		if (!selectedProduct) return;
+		if (!selectedProduct || selectedReadiness?.readiness_status !== "READY") {
+			const blocker =
+				selectedReadiness?.blocker ??
+				selectedReadiness?.readiness_status ??
+				null;
+			setNotice({
+				tone: "error",
+				title: "Package not ready",
+				detail: blockerMessage(blocker, mode as WorkspaceMode),
+				requestId: null,
+			});
+			return;
+		}
 		setIsLoadingPackage(true);
 		try {
 			const pkg = await createWorkspaceExecutionPackage({
 				product_id: selectedProduct.id,
 				mode,
+				duration_seconds: block1Duration,
+				generation_mode: generationMode,
+				target_language: targetLanguage,
+				camera_style: cameraStyle,
+				character_presence: characterPresence,
+				creator_persona: creatorPersona,
+				blocks:
+					generationMode === "EXTEND"
+						? [
+								{ block_index: 1, duration_seconds: block1Duration },
+								{ block_index: 2, duration_seconds: block2Duration },
+							]
+						: [],
 			});
 			setWorkspacePackage(pkg);
 			setNotice({
 				tone: "success",
-				title: "Approved package loaded",
-				detail: `Workspace now uses locked ${mode} payload from product truth.`,
+				title: workspacePackage
+					? "Final prompt regenerated"
+					: "Approved package loaded",
+				detail:
+					mode === "F2V"
+						? `Workspace now uses compiled ${generationMode} ${mode} prompt from product truth.`
+						: `Workspace now uses locked ${mode} payload from product truth.`,
 				requestId: pkg.workspace_execution_package_id,
 			});
 		} catch (error: unknown) {
-			const message =
-				error instanceof Error
+			const blocker = parseWorkspaceBlocker(error);
+			const message = blocker
+				? blockerMessage(blocker, mode as WorkspaceMode)
+				: error instanceof Error
 					? error.message
 					: "Failed to load approved package.";
 			setNotice({
@@ -333,6 +503,27 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			setIsLoadingPackage(false);
 		}
 	};
+
+	const allowedDurations = promptConfig?.allowed_block_durations_seconds ?? [
+		6, 8, 10, 12, 15, 20, 25,
+	];
+	const languageOptions = Object.keys(
+		promptConfig?.language_wps_policy ?? {
+			BM_MS: {},
+			EN_US: {},
+		},
+	) as PromptTargetLanguage[];
+	const shotPolicy1 =
+		promptConfig?.shot_count_policy[String(block1Duration)] ?? null;
+	const shotPolicy2 =
+		promptConfig?.shot_count_policy[String(block2Duration)] ?? null;
+	const compilerControlsVisible = mode === "F2V";
+	const compilerButtonLabel =
+		workspacePackage && compilerControlsVisible
+			? "Regenerate Final Prompt"
+			: compilerControlsVisible
+				? "Load F2V Package + Generate Final Prompt"
+				: `Load ${mode} Package`;
 
 	const renderModule = () => {
 		switch (mode) {
@@ -425,21 +616,297 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				<div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
 					Approved Package Bridge
 				</div>
+				<div className="mb-4 text-[11px] text-slate-400">
+					Workspace selector is hardened by mode readiness. Only READY products
+					can load {humanizeWorkspaceMode(mode as WorkspaceMode)} packages.
+				</div>
 				<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto]">
 					<SearchableProductSelect
 						products={products}
 						selectedProduct={selectedProduct}
 						onSelect={setSelectedProduct}
+						readinessByProductId={packageReadiness}
 					/>
 					<button
 						type="button"
 						onClick={() => void handleLoadPackage()}
-						disabled={!selectedProduct || isLoadingPackage}
+						disabled={
+							!selectedProduct ||
+							isLoadingPackage ||
+							isLoadingReadiness ||
+							selectedReadiness?.readiness_status !== "READY"
+						}
 						className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm font-semibold text-blue-100 disabled:opacity-50"
 					>
-						{isLoadingPackage ? "Loading package..." : `Load ${mode} Package`}
+						{isLoadingPackage ? "Loading package..." : compilerButtonLabel}
 					</button>
 				</div>
+				{compilerControlsVisible ? (
+					<div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+						<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">
+							UGC Prompt Compiler Controls
+						</div>
+						<div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+							<div className="space-y-2">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Generation Mode
+								</div>
+								<select
+									title="Generation mode"
+									value={generationMode}
+									onChange={(e) =>
+										setGenerationMode(e.target.value as PromptGenerationMode)
+									}
+									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+								>
+									<option value="SINGLE">Single</option>
+									<option value="EXTEND">Extend</option>
+								</select>
+							</div>
+							<div className="space-y-2">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Language
+								</div>
+								<select
+									title="Target language"
+									value={targetLanguage}
+									onChange={(e) =>
+										setTargetLanguage(e.target.value as PromptTargetLanguage)
+									}
+									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+								>
+									{languageOptions.map((language) => (
+										<option key={language} value={language}>
+											{language}
+										</option>
+									))}
+								</select>
+							</div>
+							<div className="space-y-2">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Block 1 Duration
+								</div>
+								<select
+									title="Block 1 duration"
+									value={String(block1Duration)}
+									onChange={(e) => setBlock1Duration(Number(e.target.value))}
+									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+								>
+									{allowedDurations.map((duration) => (
+										<option key={duration} value={duration}>
+											{duration}s
+										</option>
+									))}
+								</select>
+								<div className="text-[11px] text-slate-400">
+									Recommended Shots: {shotPolicy1?.recommended ?? "-"}
+								</div>
+							</div>
+							<div className="space-y-2">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Block 2 Duration
+								</div>
+								<select
+									title="Block 2 duration"
+									value={String(block2Duration)}
+									onChange={(e) => setBlock2Duration(Number(e.target.value))}
+									disabled={generationMode !== "EXTEND"}
+									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 disabled:opacity-50"
+								>
+									{allowedDurations.map((duration) => (
+										<option key={duration} value={duration}>
+											{duration}s
+										</option>
+									))}
+								</select>
+								<div className="text-[11px] text-slate-400">
+									Recommended Shots:{" "}
+									{generationMode === "EXTEND"
+										? (shotPolicy2?.recommended ?? "-")
+										: "Single mode only"}
+								</div>
+							</div>
+							<div className="space-y-2">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Camera Style
+								</div>
+								<select
+									title="Camera style"
+									value={cameraStyle}
+									onChange={(e) =>
+										setCameraStyle(e.target.value as PromptCameraStyle)
+									}
+									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+								>
+									<option value="UGC_IPHONE_RAW">UGC iPhone Raw</option>
+									<option value="CINEMATIC_PRO">Cinematic Pro</option>
+								</select>
+							</div>
+							<div className="space-y-2">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Character Presence
+								</div>
+								<select
+									title="Character presence"
+									value={characterPresence}
+									onChange={(e) =>
+										setCharacterPresence(
+											e.target.value as PromptCharacterPresence,
+										)
+									}
+									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+								>
+									<option value="VISIBLE_CREATOR">Visible Creator</option>
+									<option value="FACELESS">Faceless</option>
+								</select>
+								{characterPresence === "FACELESS" ? (
+									<div className="text-[11px] text-amber-200">
+										Faceless is explicit-only and disables the visible creator
+										default.
+									</div>
+								) : null}
+							</div>
+							<div className="space-y-2">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Creator Persona
+								</div>
+								<select
+									title="Creator persona"
+									value={creatorPersona}
+									onChange={(e) => setCreatorPersona(e.target.value)}
+									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+								>
+									{(promptConfig?.persona_registry ?? []).map((persona) => (
+										<option key={persona.id} value={persona.id}>
+											{persona.label}
+										</option>
+									))}
+								</select>
+							</div>
+						</div>
+						<div className="mt-4 grid gap-3 md:grid-cols-2">
+							<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Shot Plan
+								</div>
+								<div className="mt-2">
+									Block 1: {shotPolicy1?.recommended ?? "-"} recommended shot(s)
+								</div>
+								{generationMode === "EXTEND" ? (
+									<div className="mt-1">
+										Block 2: {shotPolicy2?.recommended ?? "-"} recommended
+										shot(s)
+									</div>
+								) : null}
+							</div>
+							<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Language Policy
+								</div>
+								<div className="mt-2">
+									{targetLanguage} body WPS:{" "}
+									{promptConfig?.language_wps_policy[targetLanguage]
+										?.body_wps ?? "-"}
+								</div>
+								<div className="mt-1">
+									Absolute ceiling:{" "}
+									{promptConfig?.language_wps_policy[targetLanguage]
+										?.absolute_ceiling_wps ?? "-"}
+								</div>
+							</div>
+						</div>
+					</div>
+				) : null}
+				{selectedReadiness ? (
+					<div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+						<div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+							<div>
+								<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">
+									Package Eligibility
+								</div>
+								<div className="mt-2 flex flex-wrap items-center gap-2">
+									<span
+										className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ${
+											selectedReadiness.readiness_status === "READY"
+												? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+												: selectedReadiness.readiness_status ===
+														"PRODUCT_ARCHIVED"
+													? "border-slate-500/30 bg-slate-500/10 text-slate-300"
+													: "border-amber-500/30 bg-amber-500/10 text-amber-100"
+										}`}
+									>
+										{selectedReadiness.readiness_status}
+									</span>
+									<span className="text-xs text-slate-300">
+										{selectedReadiness.detail}
+									</span>
+								</div>
+							</div>
+							<div className="flex flex-wrap gap-2">
+								<button
+									type="button"
+									onClick={() =>
+										navigate(
+											selectedReadiness.quick_actions.smart_registration_path,
+										)
+									}
+									className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-[11px] font-semibold text-indigo-100"
+								>
+									Open Smart Registration / Complete Evidence
+								</button>
+								<button
+									type="button"
+									onClick={() =>
+										navigate(
+											selectedReadiness.quick_actions.approved_packages_path,
+										)
+									}
+									className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-semibold text-slate-200"
+								>
+									Open Approved Packages
+								</button>
+							</div>
+						</div>
+						<div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+							{selectedReadiness.checklist.map((entry) => (
+								<div
+									key={entry.key}
+									className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3"
+								>
+									<div className="flex items-center justify-between gap-3">
+										<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+											{entry.label}
+										</div>
+										<span
+											className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.16em] ${
+												entry.ready
+													? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+													: "border-amber-500/30 bg-amber-500/10 text-amber-100"
+											}`}
+										>
+											{entry.ready ? "READY" : "BLOCKED"}
+										</span>
+									</div>
+									<div className="mt-2 text-[11px] leading-relaxed text-slate-300">
+										{entry.detail}
+									</div>
+								</div>
+							))}
+						</div>
+						{selectedReadiness.readiness_status !== "READY" ? (
+							<div className="mt-3 text-[11px] text-amber-200">
+								No {humanizeWorkspaceMode(mode as WorkspaceMode)}-ready product
+								will load until this checklist is satisfied.
+							</div>
+						) : null}
+					</div>
+				) : !isLoadingReadiness ? (
+					<div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-xs text-slate-400">
+						No {humanizeWorkspaceMode(mode as WorkspaceMode)}-ready products are
+						auto-selected. Choose a product and review its readiness checklist
+						first.
+					</div>
+				) : null}
 				{workspacePackage ? (
 					<div className="mt-4 grid gap-3 md:grid-cols-3">
 						<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">

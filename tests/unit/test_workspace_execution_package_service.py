@@ -48,6 +48,40 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
             "manual_fallback": {"copy_prompt_available": True, "execution_checklist": ["Copy prompt"]},
             "blockers": [],
             "source_of_truth_notes": ["Product truth remains on the product row."],
+            "claim_safe_rewrite": "Safe rewrite",
+        }
+
+    async def fake_compile(**kwargs):
+        return {
+            "final_compiled_prompt_text": "Block 1 (ANCHOR)\nUse one visible creator persona.",
+            "prompt_blocks": [
+                {
+                    "block_id": "block_1",
+                    "block_index": 1,
+                    "block_role": "ANCHOR",
+                    "duration_seconds": 8,
+                    "shot_count": 2,
+                    "dialogue_word_budget": 13,
+                    "continuation_from_block_id": None,
+                    "compiled_prompt_text": "Block 1",
+                    "shot_plan": ["Shot 1", "Shot 2"],
+                }
+            ],
+            "compiler_version": "ugc_video_prompt_compiler_v1",
+            "generation_mode": "SINGLE",
+            "total_duration_seconds": 8,
+            "camera_style": "UGC_IPHONE_RAW",
+            "character_presence": "VISIBLE_CREATOR",
+            "creator_persona": "DEFAULT_CREATOR",
+            "target_language": "BM_MS",
+            "shot_plan": [{"block_index": 1, "shot_count": 2, "shots": ["Shot 1", "Shot 2"]}],
+            "dialogue_word_budget_per_block": [13],
+            "prompt_fingerprint": "compiled_fp_001",
+            "warnings": [],
+            "blockers": [],
+            "source_of_truth_notes": ["Compiler note"],
+            "continuation_lineage": [],
+            "runtime_config_snapshot": {"defaults": {"block_duration_seconds": 8}},
         }
 
     async def fake_store(**kwargs):
@@ -55,14 +89,19 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
         return kwargs
 
     monkeypatch.setattr("agent.services.workspace_execution_package_service.get_approved_product_package", fake_package)
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.compile_workspace_prompt_preview", fake_compile)
     monkeypatch.setattr("agent.services.workspace_execution_package_service.crud.create_or_replace_workspace_execution_package", fake_store)
 
     result = await create_workspace_execution_package("prod-001", "F2V", 8, "9:16", "Veo 3.1 - Lite", False)
 
     assert result["readiness"] == "READY"
     assert result["resolved_assets"][0]["asset_source"] == "PRODUCT_IMAGE_CACHE"
+    assert result["prompt_text"].startswith("Block 1")
+    assert result["generation_mode"] == "SINGLE"
+    assert result["camera_style"] == "UGC_IPHONE_RAW"
     assert result["request_lineage_payload"]["prompt_package_snapshot_id"] == "pkg_123"
     assert captured["workspace_execution_package_id"].startswith("wep_")
+    assert captured["duration_seconds"] == 8
 
 
 @pytest.mark.asyncio
@@ -97,3 +136,105 @@ async def test_workspace_execution_package_history_parses_snapshot_rows(monkeypa
     assert items[0]["workspace_execution_package_id"] == "wep_123"
     assert items[0]["resolved_assets"][0]["asset_source"] == "PRODUCT_IMAGE_CACHE"
     assert items[0]["prompt_preview"] == "Prompt preview"
+
+
+@pytest.mark.asyncio
+async def test_workspace_execution_package_preserves_extend_lineage(monkeypatch):
+    captured = {}
+
+    async def fake_package(product_id: str, mode: str):
+        return {
+            "prompt_package_snapshot_id": "pkg_extend",
+            "product_id": product_id,
+            "product_name": "Glad2Glow Body Serum",
+            "mode": mode,
+            "production_generation_allowed": False,
+            "prompt_text": "Legacy package prompt",
+            "prompt_fingerprint": "legacy_fp",
+            "asset_slots": [],
+            "manual_fallback": {"copy_prompt_available": True},
+            "blockers": [],
+            "source_of_truth_notes": ["Package note"],
+            "claim_safe_rewrite": "Safe rewrite",
+        }
+
+    async def fake_compile(**kwargs):
+        return {
+            "final_compiled_prompt_text": "Block 1 (ANCHOR)\n...\n\nBlock 2 (CONTINUATION)\n...",
+            "prompt_blocks": [
+                {
+                    "block_id": "block_1",
+                    "block_index": 1,
+                    "block_role": "ANCHOR",
+                    "duration_seconds": 10,
+                    "shot_count": 3,
+                    "dialogue_word_budget": 17,
+                    "continuation_from_block_id": None,
+                    "compiled_prompt_text": "Block 1",
+                    "shot_plan": ["Shot 1", "Shot 2", "Shot 3"],
+                },
+                {
+                    "block_id": "block_2",
+                    "block_index": 2,
+                    "block_role": "CONTINUATION",
+                    "duration_seconds": 6,
+                    "shot_count": 1,
+                    "dialogue_word_budget": 10,
+                    "continuation_from_block_id": "block_1",
+                    "compiled_prompt_text": "Block 2",
+                    "shot_plan": ["Shot 1"],
+                },
+            ],
+            "compiler_version": "ugc_video_prompt_compiler_v1",
+            "generation_mode": "EXTEND",
+            "total_duration_seconds": 16,
+            "camera_style": "UGC_IPHONE_RAW",
+            "character_presence": "VISIBLE_CREATOR",
+            "creator_persona": "DEFAULT_CREATOR",
+            "target_language": "BM_MS",
+            "shot_plan": [
+                {"block_index": 1, "shot_count": 3, "shots": ["Shot 1", "Shot 2", "Shot 3"]},
+                {"block_index": 2, "shot_count": 1, "shots": ["Shot 1"]},
+            ],
+            "dialogue_word_budget_per_block": [17, 10],
+            "prompt_fingerprint": "extend_fp_001",
+            "warnings": [],
+            "blockers": [],
+            "source_of_truth_notes": ["Compiler note"],
+            "continuation_lineage": [
+                {
+                    "block_index": 2,
+                    "continuation_from_block_id": "block_1",
+                    "continuation_strategy": "SAME_CREATOR_PRODUCT_SCENE_CAMERA_COPY_ROUTE",
+                }
+            ],
+            "runtime_config_snapshot": {"defaults": {"block_duration_seconds": 8}},
+        }
+
+    async def fake_store(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.get_approved_product_package", fake_package)
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.compile_workspace_prompt_preview", fake_compile)
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.crud.create_or_replace_workspace_execution_package", fake_store)
+
+    result = await create_workspace_execution_package(
+        "prod-extend",
+        "F2V",
+        8,
+        "9:16",
+        "Veo 3.1 - Lite",
+        False,
+        generation_mode="EXTEND",
+        blocks=[
+            {"block_index": 1, "duration_seconds": 10},
+            {"block_index": 2, "duration_seconds": 6},
+        ],
+    )
+
+    assert result["generation_mode"] == "EXTEND"
+    assert result["total_duration_seconds"] == 16
+    assert result["prompt_blocks"][1]["continuation_from_block_id"] == "block_1"
+    assert result["continuation_lineage"][0]["continuation_from_block_id"] == "block_1"
+    assert captured["duration_seconds"] == 16

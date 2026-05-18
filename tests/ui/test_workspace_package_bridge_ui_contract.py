@@ -12,6 +12,7 @@ def test_workspace_package_bridge_surfaces_approved_package_history_and_manual_f
     app_source = _read("dashboard/src/App.tsx")
     page_source = _read("dashboard/src/pages/ApprovedPackagesPage.tsx")
     operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
+    select_source = _read("dashboard/src/components/workspace/SearchableProductSelect.tsx")
 
     assert "/approved-packages" in app_source
     for token in [
@@ -27,8 +28,21 @@ def test_workspace_package_bridge_surfaces_approved_package_history_and_manual_f
         "Approved Package Bridge",
         "prompt_package_snapshot_id",
         "workspace_execution_package_id",
+        "Package Eligibility",
+        "Open Smart Registration / Complete Evidence",
+        "Open Approved Packages",
+        "Only READY products",
     ]:
         assert token in operator_source
+
+    for token in [
+        "Search and select product",
+        "visible",
+    ]:
+        assert token in select_source
+
+    assert "CLAIM_SAFE_PACKAGE_NOT_READY" in operator_source
+    assert "UGC Prompt Compiler Controls" in operator_source
 
 
 def test_workspace_modules_prefill_from_approved_package_payload():
@@ -38,6 +52,6 @@ def test_workspace_modules_prefill_from_approved_package_payload():
     img_source = _read("dashboard/src/components/workspace/IMGModule.tsx")
 
     assert "Approved product package loaded" in t2v_source
-    assert "Start Frame defaults to the cached product image" in f2v_source
-    assert "Subject uses the cached product image" in i2v_source
-    assert "Subject/reference defaults to the cached product image" in img_source
+    assert "Resolved product image loads by default" in f2v_source
+    assert "Resolved product image is the default subject" in i2v_source
+    assert "Resolved product image is the default subject" in img_source
