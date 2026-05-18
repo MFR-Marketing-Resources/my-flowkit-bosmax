@@ -59,12 +59,9 @@ export default function T2VModule({
 
 	return (
 		<div
-			className={`flex h-full gap-6 ${compact ? "flex-col" : "max-[1280px]:flex-col"}`}
+			className={`space-y-6 ${compact ? "" : "xl:grid xl:grid-cols-[minmax(0,1fr)_18rem] xl:items-start xl:gap-6 xl:space-y-0"}`}
 		>
-			{/* Main Workspace */}
-			<div
-				className={`flex-1 space-y-6 overflow-y-auto pb-12 ${compact ? "pr-0" : "pr-2"}`}
-			>
+			<div className="space-y-6 pb-12">
 				{/* 1. Prompt Injection - Mirroring Google Flow */}
 				<section className="space-y-4">
 					<div className="flex items-center justify-between">
@@ -74,14 +71,45 @@ export default function T2VModule({
 					</div>
 					<div className="p-4 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-4">
 						{workspacePackage ? (
-							<div
-								className={`rounded-xl border px-3 py-2 text-[11px] ${isManualOverride ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"}`}
-							>
-								{isManualOverride
-									? "Manual override active. Approved package remains the source-of-truth baseline."
-									: "Approved product package loaded. This prompt is locked by default until you override it."}
+							<div className="grid gap-3">
+								<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-[11px] text-emerald-100">
+									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/80">
+										Auto Package Baseline
+									</div>
+									<div className="mt-1">
+										Approved product package loaded. This prompt is locked by
+										default until you override it.
+									</div>
+								</div>
+								<div
+									className={`rounded-xl border px-3 py-3 text-[11px] ${isManualOverride ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-slate-800 bg-slate-950/40 text-slate-300"}`}
+								>
+									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+										Manual Override
+									</div>
+									<div className="mt-1">
+										Editing the prompt below overrides the approved package for
+										this run only.
+									</div>
+									{isManualOverride ? (
+										<div className="mt-2 text-amber-100">
+											Manual override active. Approved package remains the
+											source-of-truth baseline.
+										</div>
+									) : null}
+								</div>
 							</div>
-						) : null}
+						) : (
+							<div className="rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-3 text-[11px] text-slate-300">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+									Manual Prompt Injection
+								</div>
+								<div className="mt-1">
+									No approved package is loaded. The prompt below is 100%
+									manual.
+								</div>
+							</div>
+						)}
 						<textarea
 							className="w-full h-80 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
 							placeholder="Describe what you want to generate in video..."
@@ -118,9 +146,8 @@ export default function T2VModule({
 				</div>
 			</div>
 
-			{/* Google Flow Mirror Panel */}
 			<div
-				className={`${compact ? "w-full" : "w-72 max-[1280px]:w-full"} flex-shrink-0 flex flex-col gap-6 overflow-y-auto pb-12`}
+				className={`${compact ? "space-y-6" : "space-y-6 xl:sticky xl:top-4"}`}
 			>
 				<section className="space-y-4">
 					<h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">

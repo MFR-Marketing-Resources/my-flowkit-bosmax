@@ -62,3 +62,23 @@ def test_operator_authoring_pages_keep_workspace_controls_and_modules():
     assert "Approved product package loaded" in t2v_source
     assert "Resolved product image is the default subject" in i2v_source
     assert "Resolved product image is the default subject" in img_source
+
+
+def test_workspace_modules_use_page_scroll_and_clear_auto_vs_manual_sections():
+    t2v_source = _read("dashboard/src/components/workspace/T2VModule.tsx")
+    f2v_source = _read("dashboard/src/components/workspace/F2VModule.tsx")
+    i2v_source = _read("dashboard/src/components/workspace/I2VModule.tsx")
+    img_source = _read("dashboard/src/components/workspace/IMGModule.tsx")
+
+    for source in [t2v_source, f2v_source, i2v_source, img_source]:
+        assert "overflow-y-auto" not in source
+        assert "Auto Package Baseline" in source or "Manual Prompt Injection" in source
+        assert "Manual Override" in source or "Manual Prompt Injection" in source
+        assert "xl:sticky xl:top-4" in source
+
+    assert "Auto Asset Baseline" in f2v_source
+    assert "Auto Asset Baseline" in i2v_source
+    assert "Auto Asset Baseline" in img_source
+    assert "Manual Asset Upload" in f2v_source
+    assert "Manual Asset Upload" in i2v_source
+    assert "Manual Asset Upload" in img_source

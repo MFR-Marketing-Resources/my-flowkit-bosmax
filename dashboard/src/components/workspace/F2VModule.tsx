@@ -135,15 +135,36 @@ export default function F2VModule({
 
 	return (
 		<div
-			className={`flex h-full gap-6 ${compact ? "flex-col" : "max-[1280px]:flex-col"}`}
+			className={`space-y-6 ${compact ? "" : "xl:grid xl:grid-cols-[minmax(0,1fr)_18rem] xl:items-start xl:gap-6 xl:space-y-0"}`}
 		>
-			<div
-				className={`flex-1 space-y-6 overflow-y-auto pb-12 ${compact ? "pr-0" : "pr-2"}`}
-			>
+			<div className="space-y-6 pb-12">
 				<section className="space-y-4">
 					<h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">
 						1. Visual Assets (F2V Slots)
 					</h3>
+					<div className="grid gap-3">
+						{workspacePackage ? (
+							<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-[11px] text-emerald-100">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/80">
+									Auto Asset Baseline
+								</div>
+								<div className="mt-1">
+									Resolved product image loads by default as the Start Frame.
+									End Frame remains optional and manual.
+								</div>
+							</div>
+						) : (
+							<div className="rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-3 text-[11px] text-slate-300">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+									Manual Asset Upload
+								</div>
+								<div className="mt-1">
+									No approved package is loaded. Start Frame and End Frame are
+									fully manual.
+								</div>
+							</div>
+						)}
+					</div>
 					<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 						<WorkspaceImageAssetSlot
 							key={
@@ -187,14 +208,45 @@ export default function F2VModule({
 					</h3>
 					<div className="p-4 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-4">
 						{workspacePackage ? (
-							<div
-								className={`rounded-xl border px-3 py-2 text-[11px] ${isManualOverride ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"}`}
-							>
-								{isManualOverride
-									? "Manual override active. Start Frame can still fall back to the cached product image."
-									: "Approved package loaded. Start Frame defaults to the cached product image; End Frame stays optional."}
+							<div className="grid gap-3">
+								<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-[11px] text-emerald-100">
+									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/80">
+										Auto Package Baseline
+									</div>
+									<div className="mt-1">
+										Approved package loaded. Start Frame defaults to the cached
+										product image; End Frame stays optional.
+									</div>
+								</div>
+								<div
+									className={`rounded-xl border px-3 py-3 text-[11px] ${isManualOverride ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-slate-800 bg-slate-950/40 text-slate-300"}`}
+								>
+									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+										Manual Override
+									</div>
+									<div className="mt-1">
+										Editing the prompt below overrides the auto-compiled package
+										prompt for this run only.
+									</div>
+									{isManualOverride ? (
+										<div className="mt-2 text-amber-100">
+											Manual override active. Start Frame can still fall back to
+											the cached product image.
+										</div>
+									) : null}
+								</div>
 							</div>
-						) : null}
+						) : (
+							<div className="rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-3 text-[11px] text-slate-300">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+									Manual Prompt Injection
+								</div>
+								<div className="mt-1">
+									No approved package is loaded. The prompt below is 100%
+									manual.
+								</div>
+							</div>
+						)}
 						{startPreviewFailed ? (
 							<div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-100">
 								Image preview failed. Upload a manual Start Frame replacement
@@ -241,7 +293,7 @@ export default function F2VModule({
 			</div>
 
 			<div
-				className={`${compact ? "w-full" : "w-72 max-[1280px]:w-full"} flex-shrink-0 flex flex-col gap-6 overflow-y-auto pb-12`}
+				className={`${compact ? "space-y-6" : "space-y-6 xl:sticky xl:top-4"}`}
 			>
 				<section className="space-y-4">
 					<h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">
