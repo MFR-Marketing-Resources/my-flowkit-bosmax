@@ -177,6 +177,51 @@
       background: rgba(56, 189, 248, 0.16);
     }
 
+    .runtime-btn.danger {
+      background: rgba(248, 113, 113, 0.08);
+      border-color: rgba(248, 113, 113, 0.2);
+    }
+
+    .runtime-btn.danger:hover {
+      border-color: rgba(248, 113, 113, 0.45);
+      background: rgba(248, 113, 113, 0.16);
+    }
+
+    .diagnostic-banner {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: rgba(15, 23, 42, 0.72);
+    }
+
+    .banner-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .banner-copy {
+      margin-top: 6px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text);
+    }
+
+    .diagnostic-banner[data-banner-state="warning"] .banner-title {
+      color: #facc15;
+    }
+
+    .diagnostic-banner[data-banner-state="error"] .banner-title {
+      color: var(--danger);
+    }
+
+    .diagnostic-banner[data-banner-state="success"] .banner-title {
+      color: #4ade80;
+    }
+
     .frame-shell {
       position: relative;
       min-height: 0;
@@ -188,6 +233,11 @@
       border: 0;
       background: #020617;
       display: block;
+      visibility: hidden;
+    }
+
+    body.ready #dashboard-frame {
+      visibility: visible;
     }
 
     .veil {
@@ -280,6 +330,18 @@
       display: block;
     }
 
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
     .frame-url {
       margin-top: 12px;
       display: block;
@@ -299,7 +361,16 @@
   </style>
 </head>
 <body>
-  <div class="shell">
+  <div
+    class="shell"
+    id="flowkit-side-panel-root"
+    data-testid="flowkit-side-panel-root"
+    data-runtime-state="loading"
+  >
+    <div class="sr-only" aria-hidden="true">
+      <span id="flowkit-side-panel-ready-marker" data-testid="flowkit-side-panel-ready" hidden>ready</span>
+      <span id="flowkit-side-panel-error-marker" data-testid="flowkit-side-panel-error" hidden>error</span>
+    </div>
     <div class="launcher-bar">
       <div class="launcher-title">BOSMAX Dashboard Launchers</div>
       <div class="launcher-copy">Prompt tools open in BOSMAX Dashboard.</div>
@@ -324,29 +395,58 @@
             <div class="runtime-value" id="runtime-status-label">Dashboard status: unknown</div>
           </div>
           <div class="runtime-item">
+            <div class="runtime-label">Local Agent</div>
+            <div class="runtime-value" id="runtime-agent-health">Pending health check</div>
+          </div>
+          <div class="runtime-item">
             <div class="runtime-label">Current Route Key</div>
             <div class="runtime-value" id="current-route-key">operator</div>
+          </div>
+          <div class="runtime-item">
+            <div class="runtime-label">Extension Bridge</div>
+            <div class="runtime-value" id="runtime-extension-state">Pending runtime check</div>
           </div>
           <div class="runtime-item">
             <div class="runtime-label">Last Click</div>
             <div class="runtime-value" id="last-click-at">No click recorded</div>
           </div>
           <div class="runtime-item">
+            <div class="runtime-label">Dashboard Serving Mode</div>
+            <div class="runtime-value" id="runtime-serving-mode">Pending runtime check</div>
+          </div>
+          <div class="runtime-item">
             <div class="runtime-label">Last Action</div>
             <div class="runtime-value" id="last-action-copy">Boot pending</div>
+          </div>
+          <div class="runtime-item">
+            <div class="runtime-label">Offline Reason</div>
+            <div class="runtime-value" id="runtime-offline-reason">None</div>
           </div>
           <div class="runtime-item">
             <div class="runtime-label">Iframe Src</div>
             <div class="runtime-value" id="iframe-src-copy">not-set</div>
           </div>
+          <div class="runtime-item">
+            <div class="runtime-label">API Base</div>
+            <div class="runtime-value" id="runtime-api-base">http://127.0.0.1:8100</div>
+          </div>
           <div class="runtime-item" style="grid-column: 1 / -1;">
             <div class="runtime-label">Selected Route URL</div>
             <div class="runtime-value" id="selected-route-url">http://127.0.0.1:8100/operator?portal=side</div>
           </div>
+          <div class="runtime-item" style="grid-column: 1 / -1;">
+            <div class="runtime-label">Repair Command</div>
+            <div class="runtime-value" id="runtime-repair-command">.\scripts\install-local-agent.ps1</div>
+          </div>
         </div>
         <div class="runtime-actions">
           <button type="button" class="runtime-btn" id="btn-open-selected-route">Open selected route in browser tab</button>
+          <button type="button" class="runtime-btn danger" id="btn-retry-runtime">Retry runtime check</button>
         </div>
+      </div>
+      <div class="diagnostic-banner" id="diagnostic-banner" data-banner-state="info">
+        <div class="banner-title" id="diagnostic-banner-title">Local agent check pending</div>
+        <div class="banner-copy" id="diagnostic-banner-copy">Waiting for Flow Kit side panel runtime diagnostics.</div>
       </div>
     </div>
 
