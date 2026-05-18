@@ -51,7 +51,10 @@ domains:
       - dashboard/src/components/workspace/I2VModule.tsx
       - dashboard/src/components/workspace/IMGModule.tsx
       - dashboard/src/components/workspace/WorkspaceImageAssetSlot.tsx
+      - extension/side_panel.html
+      - extension/side_panel.js
       - dashboard/src/types/index.ts
+      - scripts/test-side-panel-route-wiring.js
       - tests/unit/test_approved_product_package_service.py
       - tests/unit/test_prompt_compiler_runtime_config_service.py
       - tests/unit/test_prompt_compiler_single_extend_policy.py
@@ -87,3 +90,4 @@ domains:
       - tests/api/test_registration_draft_evidence_editor_api.py
       - tests/api/test_registration_draft_image_attach_api.py
       - tests/ui/test_registration_draft_evidence_editor_ui_contract.py
+      - tests/ui/test_extension_side_panel_ui_contract.py
