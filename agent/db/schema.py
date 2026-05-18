@@ -164,6 +164,7 @@ CREATE TABLE IF NOT EXISTS request_telemetry (
     mode          TEXT,
     prompt_package_snapshot_id TEXT,
     workspace_execution_package_id TEXT,
+    workspace_generation_package_id TEXT,
     prompt_fingerprint TEXT,
     asset_fingerprints TEXT,
     request_lineage_payload TEXT,
@@ -214,6 +215,30 @@ CREATE TABLE IF NOT EXISTS workspace_execution_package (
     blockers      TEXT NOT NULL DEFAULT '[]',
     request_lineage_payload TEXT NOT NULL,
     source_of_truth_notes TEXT NOT NULL DEFAULT '[]',
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS workspace_generation_package (
+    workspace_generation_package_id TEXT PRIMARY KEY,
+    mode          TEXT NOT NULL,
+    product_id    TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    product_name_snapshot TEXT NOT NULL DEFAULT '',
+    source_lane   TEXT NOT NULL DEFAULT 'F2V',
+    prompt_package_snapshot_id TEXT NOT NULL DEFAULT '',
+    workspace_execution_package_id TEXT REFERENCES workspace_execution_package(workspace_execution_package_id) ON DELETE SET NULL,
+    generation_mode TEXT NOT NULL DEFAULT 'SINGLE',
+    final_prompt_text TEXT NOT NULL DEFAULT '',
+    prompt_blocks_json TEXT NOT NULL DEFAULT '[]',
+    selected_assets_json TEXT NOT NULL DEFAULT '{}',
+    resolved_engine_slots_json TEXT NOT NULL DEFAULT '{}',
+    resolver_output_json TEXT NOT NULL DEFAULT '{}',
+    image_assets_json TEXT NOT NULL DEFAULT '{}',
+    manual_handoff_json TEXT NOT NULL DEFAULT '{}',
+    dom_handoff_payload_json TEXT NOT NULL DEFAULT '{}',
+    blockers_json TEXT NOT NULL DEFAULT '[]',
+    warnings_json TEXT NOT NULL DEFAULT '[]',
+    status        TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','READY_MANUAL','READY_DOM_STAGED','BLOCKED')),
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
