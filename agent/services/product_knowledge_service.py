@@ -347,6 +347,103 @@ def _build_declared_input_fields(request: ProductKnowledgeCompleteRequest) -> di
     }
 
 
+def _contains_any_normalized(haystack: str, keywords: list[str]) -> bool:
+    return any(normalize_mapping_text(keyword) in haystack for keyword in keywords)
+
+
+def _size_evidence_is_soft_for_context(
+    request: ProductKnowledgeCompleteRequest,
+    intelligence: dict[str, Any],
+) -> bool:
+    # Size/volume is still required for measurable consumables.
+    # The carve-outs below are intentionally narrow for decorative cosmetics
+    # and durable accessory-like items where title truth does not depend on ml/g.
+    size_exempt_families = {
+        "fashion_apparel",
+        "fashion_modestwear",
+        "fashion_sportswear",
+        "APPAREL_SLEEPWEAR",
+        "ACCESSORY_SMALL_ITEM",
+        "stationery_paper",
+        "HOME_TEXTILE",
+        "HOUSEHOLD_STORAGE_ORGANIZER",
+        "electronics_wearable",
+    }
+    size_exempt_category_substrings = {
+        "fashion",
+        "muslim fashion",
+        "womenswear",
+        "menswear",
+        "apparel",
+        "clothing",
+        "books",
+        "stationery",
+        "home decor",
+        "accessories",
+        "phones",
+        "electronics",
+    }
+    family = str(intelligence.get("bosmax_product_family") or "")
+    category_lower = normalize_mapping_text(request.category or "")
+    if family in size_exempt_families:
+        return True
+    if any(sub in category_lower for sub in size_exempt_category_substrings):
+        return True
+
+    context = normalize_mapping_text(
+        " ".join(
+            filter(
+                None,
+                [
+                    request.product_name,
+                    request.product_knowledge_text,
+                    request.paste_anything_about_product,
+                    request.benefits_text,
+                    request.ingredients_text,
+                    request.package_notes,
+                    request.packaging_description,
+                ],
+            )
+        )
+    )
+    decorative_makeup_keywords = [
+        "brow gel",
+        "eyebrow",
+        "eyeshadow",
+        "mascara",
+        "maskara",
+        "lipstick",
+        "lipstik",
+        "lip tint",
+        "lip gloss",
+        "foundation",
+        "concealer",
+        "blusher",
+        "powder blusher",
+    ]
+    if family == "BEAUTY_PERSONAL_CARE" and _contains_any_normalized(
+        context, decorative_makeup_keywords
+    ):
+        return True
+
+    durable_accessory_keywords = [
+        "car phone holder",
+        "phone holder",
+        "phone mount",
+        "dashboard mount",
+        "windshield mount",
+        "suction cup",
+    ]
+    if family in {
+        "AUTO_TOOL_GENERAL",
+        "UNKNOWN_REVIEW_REQUIRED",
+        "ACCESSORY_SMALL_ITEM",
+        "electronics_wearable",
+    } and _contains_any_normalized(context, durable_accessory_keywords):
+        return True
+    return False
+
+
 def _resolve_taxonomy_candidate(
     request: ProductKnowledgeCompleteRequest,
     extracted_facts: dict[str, Any],
@@ -467,26 +564,7 @@ def _evaluate_completion_status(
         missing.append("PRODUCT_NAME")
     if not request.product_knowledge_text and not request.paste_anything_about_product:
         missing.append("PRODUCT_DESCRIPTION_OR_KNOWLEDGE")
-    # SIZE_OR_VOLUME_EVIDENCE is hard-required for consumable/measurable categories
-    # but exempt for apparel, fashion, books, accessories, and home decor where
-    # size is either free-form or irrelevant to product truth.
-    _SIZE_EXEMPT_FAMILIES = {
-        "fashion_apparel", "fashion_modestwear", "fashion_sportswear",
-        "APPAREL_SLEEPWEAR", "ACCESSORY_SMALL_ITEM", "stationery_paper",
-        "HOME_TEXTILE", "HOUSEHOLD_STORAGE_ORGANIZER", "electronics_wearable",
-    }
-    _SIZE_EXEMPT_CATEGORY_SUBSTRINGS = {
-        "fashion", "muslim fashion", "womenswear", "menswear", "apparel",
-        "clothing", "books", "stationery", "home decor", "accessories",
-        "phones", "electronics",
-    }
-    _req_category_lower = (request.category or "").lower()
-    _family = intelligence.get("bosmax_product_family", "")
-    _size_exempt = (
-        _family in _SIZE_EXEMPT_FAMILIES
-        or any(sub in _req_category_lower for sub in _SIZE_EXEMPT_CATEGORY_SUBSTRINGS)
-    )
-    if not _size_exempt and not facts.get("size_or_volume") and not request.size_or_volume:
+    if not _size_evidence_is_soft_for_context(request, intelligence) and not facts.get("size_or_volume") and not request.size_or_volume:
         missing.append("SIZE_OR_VOLUME_EVIDENCE")
     if request.price is None:
         missing.append("PRICE_EVIDENCE")

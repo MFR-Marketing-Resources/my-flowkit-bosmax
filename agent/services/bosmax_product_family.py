@@ -185,6 +185,12 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
     elif _contains_any(
         haystack,
         [
+            "car phone holder",
+            "phone holder",
+            "phone mount",
+            "dashboard mount",
+            "windshield mount",
+            "suction cup",
             "accessory",
             "earring",
             "brooch",
