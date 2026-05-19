@@ -227,6 +227,48 @@ def test_bulk_approve_drafts_empty_list_rejected(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# POST /fastmoss-bulk/queue/recompute-selected
+# ---------------------------------------------------------------------------
+
+
+def test_recompute_selected_success(client, monkeypatch):
+    result = {
+        "recomputed": 1,
+        "ready_for_approval": 1,
+        "missing_required_field": 0,
+        "claim_risk": 0,
+        "duplicate_suspected": 0,
+        "image_missing": 0,
+        "failed": 0,
+        "skipped": 0,
+        "results": [
+            {
+                "reference_id": "ref-1",
+                "previous_status": "MISSING_REQUIRED_FIELD",
+                "new_status": "READY_FOR_APPROVAL",
+                "previous_error_message": "MISSING:SIZE",
+                "new_error_message": None,
+                "draft_id": "draft-1",
+                "outcome": "OK",
+                "error": None,
+            }
+        ],
+    }
+    mock = AsyncMock(return_value=result)
+    monkeypatch.setattr(f"{_SVC}.recompute_selected", mock)
+    r = client.post("/fastmoss-bulk/queue/recompute-selected", json={"reference_ids": ["ref-1"]})
+    assert r.status_code == 200
+    assert r.json()["recomputed"] == 1
+    mock.assert_awaited_once_with(["ref-1"])
+
+
+def test_recompute_selected_empty_list_rejected(client, monkeypatch):
+    monkeypatch.setattr(f"{_SVC}.recompute_selected", AsyncMock(return_value={}))
+    r = client.post("/fastmoss-bulk/queue/recompute-selected", json={"reference_ids": []})
+    assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # PATCH /fastmoss-bulk/queue/{reference_id}/status
 # ---------------------------------------------------------------------------
 

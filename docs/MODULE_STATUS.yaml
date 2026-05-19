@@ -11,6 +11,7 @@ domains:
       - agent/api/products.py
       - agent/api/workspace_packages.py
       - agent/api/product_registration.py
+      - agent/api/fastmoss_bulk.py
       - agent/db/crud.py
       - agent/db/schema.py
       - agent/main.py
@@ -18,6 +19,7 @@ domains:
       - agent/models/i2v_semantic_slot_resolver.py
       - agent/services/approved_product_package_service.py
       - agent/services/creative_asset_service.py
+      - agent/services/fastmoss_bulk_promotion_service.py
       - agent/services/fastmoss_product_reference_service.py
       - agent/services/i2v_slot_recipe_config.py
       - agent/services/i2v_semantic_slot_resolver_service.py
@@ -47,6 +49,7 @@ domains:
       - dashboard/src/pages/ProductRegistrationPage.tsx
       - dashboard/src/components/product-registration/ProductKnowledgeIntakeForm.tsx
       - dashboard/src/components/product-registration/RegistrationReviewDraftPanel.tsx
+      - dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx
       - dashboard/src/components/workspace/SearchableProductSelect.tsx
       - dashboard/src/components/workspace/T2VModule.tsx
       - dashboard/src/components/workspace/F2VModule.tsx
@@ -70,6 +73,7 @@ domains:
       - tests/api/test_approved_product_package_api.py
       - tests/api/test_creative_asset_api.py
       - tests/api/test_fastmoss_product_visibility_api.py
+      - tests/api/test_fastmoss_bulk_api.py
       - tests/api/test_i2v_semantic_slot_resolver_api.py
       - tests/api/test_product_image_preview_api.py
       - tests/api/test_ugc_video_prompt_compiler_api.py
@@ -86,6 +90,7 @@ domains:
       - tests/ui/test_product_registration_ui_contract.py
       - tests/ui/test_products_sales_analyzer_ui_contract.py
       - tests/unit/test_product_registration_commit_service.py
+      - tests/unit/test_fastmoss_bulk_promotion_service.py
       - tests/unit/test_product_knowledge_completion_service.py
       - tests/unit/test_product_registration_review_service.py
       - tests/unit/test_registration_draft_evidence_editor_service.py

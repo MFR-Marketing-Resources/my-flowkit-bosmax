@@ -502,6 +502,167 @@ async def bulk_approve_drafts(
     }
 
 
+_RECOMPUTE_ELIGIBLE_STATUSES = {"MISSING_REQUIRED_FIELD", "PENDING_DRAFT"}
+_RECOMPUTE_SKIP_REASONS = {
+    "CLAIM_RISK": "CLAIM_RISK_RECOMPUTE_BLOCKED",
+    "DUPLICATE_SUSPECTED": "DUPLICATE_REVIEW_REQUIRED",
+    "APPROVED": "APPROVED_ROWS_CANNOT_RECOMPUTE",
+    "REJECTED": "REJECTED_ROWS_CANNOT_RECOMPUTE",
+}
+
+
+async def recompute_selected(reference_ids: list[str]) -> dict[str, Any]:
+    """
+    Re-run smart mapping + draft classification for operator-selected rows.
+
+    Eligible:
+    - MISSING_REQUIRED_FIELD
+    - PENDING_DRAFT
+
+    Skipped explicitly:
+    - CLAIM_RISK
+    - DUPLICATE_SUSPECTED
+    - APPROVED
+    - REJECTED
+
+    Governance:
+    - never creates Product Truth
+    - never approves rows
+    - preserves FastMoss reference lineage via create_draft_from_reference
+    """
+    results: list[dict[str, Any]] = []
+    recomputed = 0
+    ready_for_approval = 0
+    missing_required_field = 0
+    claim_risk = 0
+    duplicate_suspected = 0
+    image_missing = 0
+    failed = 0
+    skipped = 0
+
+    for ref_id in reference_ids:
+        row = await crud.get_bulk_queue_row(ref_id)
+        now = _now()
+        if not row:
+            skipped += 1
+            results.append({
+                "reference_id": ref_id,
+                "previous_status": None,
+                "new_status": None,
+                "previous_error_message": None,
+                "new_error_message": None,
+                "draft_id": None,
+                "outcome": "SKIPPED",
+                "error": "NOT_IN_QUEUE",
+            })
+            continue
+
+        previous_status = row.get("promotion_status", "")
+        previous_error_message = row.get("error_message") or None
+
+        if previous_status not in _RECOMPUTE_ELIGIBLE_STATUSES:
+            skipped += 1
+            results.append({
+                "reference_id": ref_id,
+                "previous_status": previous_status,
+                "new_status": previous_status,
+                "previous_error_message": previous_error_message,
+                "new_error_message": previous_error_message,
+                "draft_id": row.get("draft_id"),
+                "outcome": "SKIPPED",
+                "error": _RECOMPUTE_SKIP_REASONS.get(
+                    previous_status,
+                    f"STATUS_NOT_ELIGIBLE_FOR_RECOMPUTE:{previous_status}",
+                ),
+            })
+            continue
+
+        try:
+            result = await create_draft_from_reference(ref_id)
+        except Exception as e:
+            failed += 1
+            await crud.update_bulk_queue_row(
+                ref_id,
+                recomputed_at=now,
+                recompute_previous_status=previous_status,
+                recompute_previous_error=previous_error_message,
+                updated_at=now,
+            )
+            results.append({
+                "reference_id": ref_id,
+                "previous_status": previous_status,
+                "new_status": previous_status,
+                "previous_error_message": previous_error_message,
+                "new_error_message": previous_error_message,
+                "draft_id": row.get("draft_id"),
+                "outcome": "ERROR",
+                "error": str(e),
+            })
+            continue
+
+        updated_row = await crud.get_bulk_queue_row(ref_id) or row
+        new_status = updated_row.get("promotion_status", previous_status)
+        new_error_message = updated_row.get("error_message") or None
+        draft_id = updated_row.get("draft_id")
+
+        await crud.update_bulk_queue_row(
+            ref_id,
+            recomputed_at=now,
+            recompute_previous_status=previous_status,
+            recompute_previous_error=previous_error_message,
+            updated_at=now,
+        )
+
+        if "error" in result:
+            failed += 1
+            results.append({
+                "reference_id": ref_id,
+                "previous_status": previous_status,
+                "new_status": new_status,
+                "previous_error_message": previous_error_message,
+                "new_error_message": new_error_message,
+                "draft_id": draft_id,
+                "outcome": "ERROR",
+                "error": result.get("error"),
+            })
+            continue
+
+        recomputed += 1
+        if new_status == "READY_FOR_APPROVAL":
+            ready_for_approval += 1
+        elif new_status == "MISSING_REQUIRED_FIELD":
+            missing_required_field += 1
+        elif new_status == "CLAIM_RISK":
+            claim_risk += 1
+        elif new_status == "DUPLICATE_SUSPECTED":
+            duplicate_suspected += 1
+        elif new_status == "IMAGE_MISSING":
+            image_missing += 1
+
+        results.append({
+            "reference_id": ref_id,
+            "previous_status": previous_status,
+            "new_status": new_status,
+            "previous_error_message": previous_error_message,
+            "new_error_message": new_error_message,
+            "draft_id": draft_id,
+            "outcome": "OK",
+            "error": None,
+        })
+
+    return {
+        "recomputed": recomputed,
+        "ready_for_approval": ready_for_approval,
+        "missing_required_field": missing_required_field,
+        "claim_risk": claim_risk,
+        "duplicate_suspected": duplicate_suspected,
+        "image_missing": image_missing,
+        "failed": failed,
+        "skipped": skipped,
+        "results": results,
+    }
+
+
 async def update_queue_row_status(reference_id: str, promotion_status: str) -> dict[str, Any]:
     """Manual status override — used for operator REJECT or PENDING_DRAFT reset."""
     _allowed = {

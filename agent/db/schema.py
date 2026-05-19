@@ -1320,6 +1320,24 @@ CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(cla
             await db.commit()
             logger.info("Migrated: added fastmoss_reference_id column to product table")
 
+        # Migration: add recompute audit columns to fastmoss_bulk_draft_status
+        cursor = await db.execute("PRAGMA table_info(fastmoss_bulk_draft_status)")
+        bulk_cols = {row[1] for row in await cursor.fetchall()}
+        _bulk_audit_cols = {
+            "recomputed_at": "TEXT",
+            "recompute_previous_status": "TEXT",
+            "recompute_previous_error": "TEXT",
+        }
+        for _col_name, _col_type in _bulk_audit_cols.items():
+            if _col_name not in bulk_cols:
+                await db.execute(
+                    f"ALTER TABLE fastmoss_bulk_draft_status ADD COLUMN {_col_name} {_col_type}"
+                )
+                logger.info(
+                    "Migrated: added %s column to fastmoss_bulk_draft_status", _col_name
+                )
+        await db.commit()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 

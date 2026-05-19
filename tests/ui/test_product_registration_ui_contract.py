@@ -157,10 +157,47 @@ def test_bulk_fastmoss_convert_tab_component_exists_with_operator_actions():
     content = (root / "dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx").read_text(encoding="utf-8")
     assert "Sync Queue" in content, "Sync Queue action missing"
     assert "Generate Drafts" in content, "Generate Drafts action missing"
+    assert "Recompute Selected" in content, "Recompute Selected action missing"
     assert "Approve Ready" in content, "Approve Ready action missing"
     assert "Reject" in content, "Reject action missing"
     assert "PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH" in content, "Confirmation phrase gate missing"
     assert "Select FastMoss rows to enable bulk actions" in content, "Bulk action disabled helper text missing"
+
+
+def test_bulk_fastmoss_recompute_modal_contract_and_summary_labels():
+    """Recompute modal must stay no-approval only and expose summary counters."""
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx").read_text(encoding="utf-8")
+    assert "Recompute Selected Rows" in content, "Recompute modal title missing"
+    assert "It will not approve products." in content, "Recompute modal must explicitly deny approval"
+    assert "RECOMPUTE_ONLY_NO_APPROVAL" in content, "Recompute confirmation phrase missing"
+    assert "recomputed" in content, "Recompute summary label missing"
+    assert "ready_for_approval" in content, "ready_for_approval summary label missing"
+    assert "missing_required_field" in content, "missing_required_field summary label missing"
+    assert "claim_risk" in content, "claim_risk summary label missing"
+    assert "duplicate_suspected" in content, "duplicate_suspected summary label missing"
+    assert "image_missing" in content, "image_missing summary label missing"
+    assert "failed" in content, "failed summary label missing"
+    assert "skipped" in content, "skipped summary label missing"
+
+
+def test_bulk_fastmoss_recompute_button_enablement_contract():
+    """Recompute button must depend on selected eligible statuses only."""
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx").read_text(encoding="utf-8")
+    assert "RECOMPUTE_ELIGIBLE_STATUSES" in content, "Eligible recompute status list missing"
+    assert "MISSING_REQUIRED_FIELD" in content, "MISSING_REQUIRED_FIELD must remain recomputable"
+    assert "PENDING_DRAFT" in content, "PENDING_DRAFT must remain recomputable"
+    assert "recomputeEligibleSelectedCount === 0" in content, "Eligible-count disable gate missing"
+    assert "selected.size === 0" in content, "Selection-size disable gate missing"
+
+
+def test_bulk_fastmoss_approve_phrase_remains_unchanged():
+    """Approval phrase must remain separate from recompute phrase."""
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx").read_text(encoding="utf-8")
+    assert "PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH" in content, "Approval phrase must not change"
+    assert "RECOMPUTE_ONLY_NO_APPROVAL" in content, "Recompute phrase must coexist with approval phrase"
 
 
 def test_product_registration_page_has_open_bulk_fastmoss_header_cta():

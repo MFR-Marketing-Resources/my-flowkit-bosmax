@@ -6,7 +6,7 @@ Issue: #92
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from agent.services.fastmoss_bulk_promotion_service import (
     sync_bulk_queue,
@@ -17,6 +17,7 @@ from agent.services.fastmoss_bulk_promotion_service import (
     _ref_to_completion_request,
     _detect_queue_duplicate,
     bulk_approve_drafts,
+    recompute_selected,
     update_queue_row_status,
 )
 from agent.models.product_registration import RegistrationReviewDraft
@@ -254,6 +255,326 @@ async def test_bulk_approve_not_in_queue_is_skipped(monkeypatch):
     result = await bulk_approve_drafts(["ghost-ref"], "PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH")
     assert result["skipped"] == 1
     assert result["results"][0]["reason"] == "NOT_IN_QUEUE"
+
+
+# ---------------------------------------------------------------------------
+# recompute_selected — eligible only, no approval, lineage preserved
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recompute_selected_improved_missing_row_becomes_ready_and_preserves_lineage(
+    monkeypatch, tmp_path
+):
+    from agent.db import crud
+    from agent.services.registration_draft_storage_service import RegistrationDraftStorageService
+
+    monkeypatch.setattr(
+        "agent.services.registration_draft_storage_service.PRODUCT_REGISTRATION_DRAFTS_DIR",
+        tmp_path,
+    )
+
+    reference_id = "ref-recompute-ready-001"
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title="Serum Vitamin C 30ml",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="MISSING_REQUIRED_FIELD",
+        error_message="MISSING:SIZE_OR_VOLUME_EVIDENCE",
+    )
+
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.list_fastmoss_reference_products", AsyncMock(return_value=[{
+        "id": reference_id,
+        "raw_product_title": "Serum Vitamin C 30ml",
+        "image_url": "https://example.com/img.jpg",
+        "source_url": "https://example.com/src",
+        "tiktok_product_url": None,
+        "claim_risk_level": "LOW",
+        "category": "Beauty",
+        "commission_rate": "12%",
+        "fastmoss_source_file": "batch-001.xlsx",
+    }]))
+
+    fake_draft = RegistrationReviewDraft(
+        review_draft_id="draft-recompute-ready-001",
+        review_status="REVIEW_READY",
+        source_lane="FASTMOSS_PROMOTED",
+        declared_evidence_fields={
+            "product_name": "Serum Vitamin C 30ml",
+            "image_url": "https://example.com/img.jpg",
+            "source_url": "https://example.com/src",
+            "category": "Beauty",
+        },
+        claim_gate="CLAIM_SAFE",
+        claim_tokens=[],
+        claim_risk_level="LOW",
+        missing_required_evidence=[],
+        approval_checklist={},
+        provenance=[],
+    )
+
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.complete_product_knowledge", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.create_registration_review_draft", MagicMock(return_value=fake_draft))
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.derive_draft_image_asset_state", MagicMock(return_value=("IMAGE_READY", "ok")))
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service._detect_queue_duplicate", AsyncMock(return_value=False))
+
+    products_before = len(await crud.list_products(limit=5000))
+
+    result = await recompute_selected([reference_id])
+
+    assert result["recomputed"] == 1
+    assert result["ready_for_approval"] == 1
+    assert result["failed"] == 0
+    assert result["skipped"] == 0
+    row_result = result["results"][0]
+    assert row_result["previous_status"] == "MISSING_REQUIRED_FIELD"
+    assert row_result["new_status"] == "READY_FOR_APPROVAL"
+    assert row_result["previous_error_message"] == "MISSING:SIZE_OR_VOLUME_EVIDENCE"
+    assert row_result["new_error_message"] is None
+    assert row_result["outcome"] == "OK"
+
+    row = await crud.get_bulk_queue_row(reference_id)
+    assert row is not None
+    assert row["promotion_status"] == "READY_FOR_APPROVAL"
+    assert row["draft_id"] == "draft-recompute-ready-001"
+    assert row["recompute_previous_status"] == "MISSING_REQUIRED_FIELD"
+    assert row["recompute_previous_error"] == "MISSING:SIZE_OR_VOLUME_EVIDENCE"
+    assert row["error_message"] is None
+
+    saved_draft = RegistrationDraftStorageService.get_draft("draft-recompute-ready-001")
+    assert saved_draft is not None
+    assert saved_draft.fastmoss_reference_id == reference_id
+    assert saved_draft.source_lane == "FASTMOSS_PROMOTED"
+    assert any(
+        f"fastmoss_bulk_promotion:reference_id={reference_id}" in p
+        for p in saved_draft.provenance
+    )
+
+    products_after = len(await crud.list_products(limit=5000))
+    assert products_after == products_before, "recompute_selected must not create Product Truth rows"
+
+
+@pytest.mark.asyncio
+async def test_recompute_selected_missing_row_stays_missing_with_error_message(monkeypatch):
+    from agent.db import crud
+
+    reference_id = "ref-recompute-missing-001"
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title="Missing Size Serum",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="MISSING_REQUIRED_FIELD",
+        error_message="MISSING:OLD_FIELD",
+    )
+
+    async def _fake_recompute(ref_id: str):
+        await crud.update_bulk_queue_row(
+            ref_id,
+            promotion_status="MISSING_REQUIRED_FIELD",
+            draft_id="draft-recompute-missing-001",
+            error_message="MISSING:SIZE_OR_VOLUME_EVIDENCE",
+        )
+        return {
+            "reference_id": ref_id,
+            "draft_id": "draft-recompute-missing-001",
+            "promotion_status": "MISSING_REQUIRED_FIELD",
+        }
+
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.create_draft_from_reference", _fake_recompute)
+
+    result = await recompute_selected([reference_id])
+
+    assert result["recomputed"] == 1
+    assert result["missing_required_field"] == 1
+    assert result["failed"] == 0
+    assert result["results"][0]["new_status"] == "MISSING_REQUIRED_FIELD"
+    assert result["results"][0]["new_error_message"] == "MISSING:SIZE_OR_VOLUME_EVIDENCE"
+
+    row = await crud.get_bulk_queue_row(reference_id)
+    assert row is not None
+    assert row["promotion_status"] == "MISSING_REQUIRED_FIELD"
+    assert row["error_message"] == "MISSING:SIZE_OR_VOLUME_EVIDENCE"
+
+
+@pytest.mark.asyncio
+async def test_recompute_selected_skips_claim_risk(monkeypatch):
+    from agent.db import crud
+
+    reference_id = "ref-recompute-claim-001"
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title="Risky Row",
+        claim_risk_level="HIGH",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="CLAIM_RISK",
+        error_message="CLAIM_RISK:CLAIM_REVIEW_REQUIRED",
+    )
+    mock = AsyncMock()
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.create_draft_from_reference", mock)
+
+    result = await recompute_selected([reference_id])
+
+    assert result["recomputed"] == 0
+    assert result["skipped"] == 1
+    assert result["results"][0]["outcome"] == "SKIPPED"
+    assert result["results"][0]["error"] == "CLAIM_RISK_RECOMPUTE_BLOCKED"
+    mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recompute_selected_skips_duplicate_suspected(monkeypatch):
+    from agent.db import crud
+
+    reference_id = "ref-recompute-dup-001"
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title="Duplicate Row",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+        error_message="DUPLICATE_MATCH",
+    )
+    mock = AsyncMock()
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.create_draft_from_reference", mock)
+
+    result = await recompute_selected([reference_id])
+
+    assert result["recomputed"] == 0
+    assert result["skipped"] == 1
+    assert result["results"][0]["error"] == "DUPLICATE_REVIEW_REQUIRED"
+    mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recompute_selected_skips_approved(monkeypatch):
+    from agent.db import crud
+
+    reference_id = "ref-recompute-approved-001"
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title="Approved Row",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="APPROVED",
+        draft_id="draft-approved-001",
+    )
+    mock = AsyncMock()
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.create_draft_from_reference", mock)
+
+    result = await recompute_selected([reference_id])
+
+    assert result["recomputed"] == 0
+    assert result["skipped"] == 1
+    assert result["results"][0]["error"] == "APPROVED_ROWS_CANNOT_RECOMPUTE"
+    mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recompute_selected_skips_rejected(monkeypatch):
+    from agent.db import crud
+
+    reference_id = "ref-recompute-rejected-001"
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title="Rejected Row",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="REJECTED",
+        error_message="MANUAL_REJECT",
+    )
+    mock = AsyncMock()
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.create_draft_from_reference", mock)
+
+    result = await recompute_selected([reference_id])
+
+    assert result["recomputed"] == 0
+    assert result["skipped"] == 1
+    assert result["results"][0]["error"] == "REJECTED_ROWS_CANNOT_RECOMPUTE"
+    mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recompute_selected_summary_counts_are_correct(monkeypatch):
+    from agent.db import crud
+
+    await crud.create_bulk_queue_row(
+        reference_id="ref-recompute-summary-ready",
+        raw_product_title="Ready Candidate",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="MISSING_REQUIRED_FIELD",
+        error_message="MISSING:OLD",
+    )
+    await crud.create_bulk_queue_row(
+        reference_id="ref-recompute-summary-image",
+        raw_product_title="Image Candidate",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="PENDING_DRAFT",
+    )
+    await crud.create_bulk_queue_row(
+        reference_id="ref-recompute-summary-claim",
+        raw_product_title="Claim Candidate",
+        claim_risk_level="HIGH",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="CLAIM_RISK",
+        error_message="CLAIM_RISK:CLAIM_REVIEW_REQUIRED",
+    )
+    await crud.create_bulk_queue_row(
+        reference_id="ref-recompute-summary-dup",
+        raw_product_title="Duplicate Candidate",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+        error_message="DUPLICATE_MATCH",
+    )
+    await crud.create_bulk_queue_row(
+        reference_id="ref-recompute-summary-approved",
+        raw_product_title="Approved Candidate",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="APPROVED",
+    )
+
+    async def _fake_recompute(ref_id: str):
+        if ref_id == "ref-recompute-summary-ready":
+            await crud.update_bulk_queue_row(
+                ref_id,
+                promotion_status="READY_FOR_APPROVAL",
+                draft_id="draft-summary-ready",
+                error_message=None,
+            )
+            return {"reference_id": ref_id, "draft_id": "draft-summary-ready", "promotion_status": "READY_FOR_APPROVAL"}
+        if ref_id == "ref-recompute-summary-image":
+            await crud.update_bulk_queue_row(
+                ref_id,
+                promotion_status="IMAGE_MISSING",
+                draft_id="draft-summary-image",
+                error_message=None,
+            )
+            return {"reference_id": ref_id, "draft_id": "draft-summary-image", "promotion_status": "IMAGE_MISSING"}
+        raise AssertionError(f"Unexpected recompute call for {ref_id}")
+
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.create_draft_from_reference", _fake_recompute)
+
+    result = await recompute_selected([
+        "ref-recompute-summary-ready",
+        "ref-recompute-summary-image",
+        "ref-recompute-summary-claim",
+        "ref-recompute-summary-dup",
+        "ref-recompute-summary-approved",
+    ])
+
+    assert result["recomputed"] == 2
+    assert result["ready_for_approval"] == 1
+    assert result["image_missing"] == 1
+    assert result["missing_required_field"] == 0
+    assert result["claim_risk"] == 0
+    assert result["duplicate_suspected"] == 0
+    assert result["failed"] == 0
+    assert result["skipped"] == 3
 
 
 # ---------------------------------------------------------------------------
