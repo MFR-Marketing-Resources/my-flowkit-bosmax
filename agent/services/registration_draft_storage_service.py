@@ -26,7 +26,7 @@ class RegistrationDraftStorageService:
         draft.updated_at = now
         
         path = RegistrationDraftStorageService._get_draft_path(draft.review_draft_id)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(draft.model_dump_json(indent=2))
         return draft
 
@@ -35,7 +35,7 @@ class RegistrationDraftStorageService:
         path = RegistrationDraftStorageService._get_draft_path(draft_id)
         if not path.exists():
             return None
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
             return RegistrationReviewDraft.model_validate(data)
 
@@ -46,7 +46,7 @@ class RegistrationDraftStorageService:
         drafts = []
         for path in PRODUCT_REGISTRATION_DRAFTS_DIR.glob("*.json"):
             try:
-                with open(path, "r") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     drafts.append(RegistrationReviewDraft.model_validate(data))
             except Exception:

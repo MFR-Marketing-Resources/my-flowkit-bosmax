@@ -118,13 +118,31 @@ async def _detect_queue_duplicate(reference_id: str, raw_product_title: str,
 
 
 def _ref_to_completion_request(ref: dict[str, Any]) -> ProductKnowledgeCompleteRequest:
+    raw_title = _clean(ref.get("raw_product_title"))
+    category = _clean(ref.get("category")) or None
+    commission_rate = _clean(ref.get("commission_rate")) or None
+    sold_count = ref.get("sold_count")
+
+    # Populate paste_anything_about_product from available ref metadata so
+    # PRODUCT_DESCRIPTION_OR_KNOWLEDGE is not falsely flagged as missing.
+    # Only real ref fields are used — no fabrication.
+    knowledge_parts = [f"Product: {raw_title}"] if raw_title else []
+    if category:
+        knowledge_parts.append(f"Category: {category}")
+    if sold_count:
+        knowledge_parts.append(f"Sold count: {sold_count}")
+    if commission_rate:
+        knowledge_parts.append(f"Commission: {commission_rate}")
+    paste_knowledge = " | ".join(knowledge_parts) or None
+
     return ProductKnowledgeCompleteRequest(
-        product_name=_clean(ref.get("raw_product_title")),
+        product_name=raw_title,
         source_lane="FASTMOSS_PROMOTED",
+        paste_anything_about_product=paste_knowledge,
         image_url=_clean(ref.get("image_url")) or None,
         source_url=_clean(ref.get("source_url")) or None,
         tiktok_product_url=_clean(ref.get("tiktok_product_url")) or None,
-        commission_rate=str(ref.get("commission_rate") or ""),
+        commission_rate=commission_rate,
         price=ref.get("price"),
         currency=ref.get("currency") or "MYR",
     )
@@ -340,13 +358,21 @@ async def create_draft_from_reference(reference_id: str) -> dict[str, Any]:
     )
     promo_status = _classify_promotion_status(claim_risk, image_readiness, missing, is_dup)
 
+    # Persist blocking reason for operator visibility
+    err_msg: str | None = None
+    if promo_status == "MISSING_REQUIRED_FIELD" and missing:
+        err_msg = "MISSING:" + ",".join(missing[:10])
+    elif promo_status == "CLAIM_RISK":
+        claim_tokens_str = ",".join(draft.claim_tokens[:5]) if draft.claim_tokens else ""
+        err_msg = f"CLAIM_RISK:{draft.claim_gate}" + (f":{claim_tokens_str}" if claim_tokens_str else "")
+
     await crud.update_bulk_queue_row(
         reference_id,
         promotion_status=promo_status,
         draft_id=saved_draft.review_draft_id,
         claim_risk_level=claim_risk,
         image_readiness=image_readiness,
-        error_message=None,
+        error_message=err_msg,
         updated_at=_now(),
     )
 
