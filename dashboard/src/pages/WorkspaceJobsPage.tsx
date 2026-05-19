@@ -125,6 +125,7 @@ function resolveProductMeta(
 export default function WorkspaceJobsPage() {
 	const [requests, setRequests] = useState<TelemetryRequest[]>([]);
 	const [products, setProducts] = useState<Record<string, Product>>({});
+	const [productsError, setProductsError] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
 	const [modeFilter, setModeFilter] = useState<ModeFilter>("ALL");
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
@@ -156,12 +157,15 @@ export default function WorkspaceJobsPage() {
 			.then((response) => {
 				setProducts(
 					Object.fromEntries(
-						response.items.map((product) => [product.id, product]),
+						(response.items ?? []).map((product) => [product.id, product]),
 					),
 				);
 			})
-			.catch(() => {
+			.catch((err: unknown) => {
 				setProducts({});
+				setProductsError(
+					err instanceof Error ? err.message : "Failed to load product catalog",
+				);
 			});
 	}, []);
 
@@ -275,6 +279,11 @@ export default function WorkspaceJobsPage() {
 
 	return (
 		<div className="min-h-full space-y-6 bg-slate-950 px-4 py-4 md:px-8 md:py-8">
+			{productsError && (
+				<div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-[11px] text-rose-300">
+					Product list failed to load: {productsError}
+				</div>
+			)}
 			<div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
 				<div>
 					<h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">
