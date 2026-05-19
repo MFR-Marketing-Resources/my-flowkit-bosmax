@@ -248,3 +248,124 @@ async def test_fastmoss_promoted_commit_preserves_source_lane_lineage(mock_stora
     assert call_kwargs["mapping_review_status"] == "REVIEWED_FASTMOSS_PROMOTED_COMMIT"
     assert call_kwargs["mapping_status"] == "APPROVED"
     assert call_kwargs["fastmoss_reference_id"] == "ref-001"
+
+
+# ---------------------------------------------------------------------------
+# PR #102 governance tests — commit-time duplicate policy for FASTMOSS_PROMOTED
+# Raw source=FASTMOSS reference catalog rows must NOT block; canonical rows must.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_fastmoss_promoted_commit_ignores_raw_fastmoss_reference_duplicate(mock_storage, mock_crud):
+    """Raw source=FASTMOSS row with matching title and no promotion markers must NOT block commit."""
+    raw_fastmoss_row = {
+        "id": "a7421ac4-7423-4262-86d4-d5be6e687c25",
+        "source": "FASTMOSS",
+        "mapping_source": None,
+        "mapping_review_status": None,
+        "fastmoss_reference_id": None,
+        "raw_product_title": "Test Serum",
+        "product_display_name": "Test Serum",
+        "product_short_name": "Test Serum",
+        "tiktok_product_url": None,
+    }
+    mock_crud.list_products.return_value = [raw_fastmoss_row]
+    mock_storage.get_draft.return_value = _make_fastmoss_promoted_draft()
+    req = RegistrationCommitRequest(
+        draft_id="dfp-001",
+        write_back_confirmed=True,
+        user_confirmation_phrase="PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH",
+    )
+    result = await RegistrationCommitService.commit_fastmoss_promoted_draft(req)
+    assert result["commit_status"] == "COMMITTED", (
+        f"Raw FASTMOSS reference row must not block commit; got: {result}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fastmoss_promoted_commit_blocks_manual_duplicate(mock_storage, mock_crud):
+    """MANUAL-source row with matching title must block commit with DUPLICATE_PRODUCT_CANDIDATE."""
+    manual_row = {
+        "id": "manual-123",
+        "source": "MANUAL",
+        "mapping_source": None,
+        "mapping_review_status": None,
+        "fastmoss_reference_id": None,
+        "raw_product_title": "Test Serum",
+        "product_display_name": "Test Serum",
+        "product_short_name": "",
+        "tiktok_product_url": None,
+    }
+    mock_crud.list_products.return_value = [manual_row]
+    mock_storage.get_draft.return_value = _make_fastmoss_promoted_draft()
+    req = RegistrationCommitRequest(
+        draft_id="dfp-001",
+        write_back_confirmed=True,
+        user_confirmation_phrase="PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH",
+    )
+    result = await RegistrationCommitService.commit_fastmoss_promoted_draft(req)
+    assert result["commit_status"] == "BLOCKED"
+    assert any("DUPLICATE_PRODUCT_CANDIDATE" in r for r in result["blocked_reasons"]), (
+        f"Expected DUPLICATE_PRODUCT_CANDIDATE block for MANUAL duplicate; got: {result['blocked_reasons']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fastmoss_promoted_commit_blocks_already_promoted_duplicate(mock_storage, mock_crud):
+    """Already-committed FASTMOSS_PROMOTED row must block commit."""
+    already_promoted_row = {
+        "id": "promoted-456",
+        "source": "FASTMOSS",
+        "mapping_source": "FASTMOSS_PROMOTED",
+        "mapping_review_status": "REVIEWED_FASTMOSS_PROMOTED_COMMIT",
+        "fastmoss_reference_id": "ref-already-committed",
+        "raw_product_title": "Test Serum",
+        "product_display_name": "Test Serum",
+        "product_short_name": "",
+        "tiktok_product_url": None,
+    }
+    mock_crud.list_products.return_value = [already_promoted_row]
+    mock_storage.get_draft.return_value = _make_fastmoss_promoted_draft()
+    req = RegistrationCommitRequest(
+        draft_id="dfp-001",
+        write_back_confirmed=True,
+        user_confirmation_phrase="PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH",
+    )
+    result = await RegistrationCommitService.commit_fastmoss_promoted_draft(req)
+    assert result["commit_status"] == "BLOCKED"
+    assert any("DUPLICATE_PRODUCT_CANDIDATE" in r for r in result["blocked_reasons"]), (
+        f"Expected DUPLICATE_PRODUCT_CANDIDATE block for already-promoted duplicate; got: {result['blocked_reasons']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fastmoss_promoted_commit_ignores_raw_fastmoss_tiktok_url_match(mock_storage, mock_crud):
+    """Raw source=FASTMOSS row matching only on TikTok URL and no promotion markers must NOT block."""
+    raw_fastmoss_url_row = {
+        "id": "b1111111-0000-0000-0000-000000000001",
+        "source": "FASTMOSS",
+        "mapping_source": None,
+        "mapping_review_status": None,
+        "fastmoss_reference_id": None,
+        "raw_product_title": "Different Title",
+        "product_display_name": "Different Title",
+        "product_short_name": "",
+        "tiktok_product_url": "https://tiktok.com/product/test-serum-99",
+    }
+    mock_crud.list_products.return_value = [raw_fastmoss_url_row]
+    mock_storage.get_draft.return_value = _make_fastmoss_promoted_draft(
+        declared_evidence_fields={
+            "product_name": "Test Serum",
+            "image_url": "https://img.com/s.jpg",
+            "tiktok_product_url": "https://tiktok.com/product/test-serum-99",
+        }
+    )
+    req = RegistrationCommitRequest(
+        draft_id="dfp-001",
+        write_back_confirmed=True,
+        user_confirmation_phrase="PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH",
+    )
+    result = await RegistrationCommitService.commit_fastmoss_promoted_draft(req)
+    assert result["commit_status"] == "COMMITTED", (
+        f"Raw FASTMOSS row matched only by TikTok URL must not block commit; got: {result}"
+    )
