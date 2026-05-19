@@ -448,6 +448,31 @@ CREATE INDEX IF NOT EXISTS idx_creative_asset_product ON creative_asset(product_
 CREATE INDEX IF NOT EXISTS idx_batch_product ON batch(product_id);
 CREATE INDEX IF NOT EXISTS idx_batch_variant_batch ON batch_variant(batch_id);
 CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_status);
+
+CREATE TABLE IF NOT EXISTS fastmoss_bulk_draft_status (
+    reference_id        TEXT PRIMARY KEY,
+    raw_product_title   TEXT NOT NULL,
+    source_url          TEXT,
+    tiktok_product_url  TEXT,
+    image_url           TEXT,
+    category            TEXT,
+    claim_risk_level    TEXT NOT NULL DEFAULT 'HIGH',
+    mapping_confidence  REAL,
+    image_readiness     TEXT NOT NULL DEFAULT 'IMAGE_MISSING',
+    copy_route          TEXT,
+    sold_count          INTEGER,
+    commission_rate     TEXT,
+    promotion_status    TEXT NOT NULL DEFAULT 'PENDING_DRAFT',
+    draft_id            TEXT,
+    committed_product_id TEXT,
+    error_message       TEXT,
+    batch_provenance    TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bulk_draft_status ON fastmoss_bulk_draft_status(promotion_status);
+CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(claim_risk_level);
 """
 
 

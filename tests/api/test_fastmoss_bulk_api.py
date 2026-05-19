@@ -99,6 +99,24 @@ def test_sync_queue_no_body(client, monkeypatch):
     mock.assert_awaited_once_with(batch_id=None)
 
 
+def test_sync_queue_empty_catalog_200_shape(client, monkeypatch):
+    """POST /queue/sync returns 200 with zero counts when catalog is empty."""
+    mock = AsyncMock(return_value={
+        "synced": 0,
+        "skipped": 0,
+        "errors": 0,
+        "total_refs_loaded": 0,
+        "synced_at": "2026-05-19T00:00:00Z",
+    })
+    monkeypatch.setattr(f"{_SVC}.sync_bulk_queue", mock)
+    r = client.post("/fastmoss-bulk/queue/sync")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["synced"] == 0
+    assert body["total_refs_loaded"] == 0
+    assert "synced_at" in body
+
+
 def test_sync_queue_with_batch_id(client, monkeypatch):
     mock = AsyncMock(return_value={"synced": 5, "skipped": 2, "errors": []})
     monkeypatch.setattr(f"{_SVC}.sync_bulk_queue", mock)

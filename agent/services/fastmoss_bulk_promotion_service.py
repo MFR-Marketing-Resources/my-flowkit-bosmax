@@ -17,9 +17,12 @@ Governance invariants enforced here:
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from agent.db import crud
 from agent.models.product_knowledge import ProductKnowledgeCompleteRequest
@@ -157,7 +160,12 @@ async def sync_bulk_queue(batch_id: str | None = None) -> dict[str, Any]:
             errors += 1
             continue
 
-        existing = await crud.get_bulk_queue_row(reference_id)
+        try:
+            existing = await crud.get_bulk_queue_row(reference_id)
+        except Exception as _db_err:
+            logger.error("sync_bulk_queue: DB error querying row %s: %s", reference_id, _db_err)
+            errors += 1
+            continue
         if existing:
             skipped += 1
             continue
