@@ -145,6 +145,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		"workspace",
 	);
 	const [products, setProducts] = useState<Product[]>([]);
+	const [productsError, setProductsError] = useState<string | null>(null);
+	const [isLoadingProducts, setIsLoadingProducts] = useState(false);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [packageReadiness, setPackageReadiness] = useState<
 		Record<string, WorkspacePackageReadinessItem>
@@ -188,9 +190,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		: null;
 
 	useEffect(() => {
+		setIsLoadingProducts(true);
+		setProductsError(null);
 		void fetchProductCatalog(500)
-			.then((response) => setProducts(response.items))
-			.catch(() => {});
+			.then((response) => setProducts(response.items ?? []))
+			.catch((err: unknown) =>
+				setProductsError(
+					err instanceof Error ? err.message : "Failed to load product catalog",
+				),
+			)
+			.finally(() => setIsLoadingProducts(false));
 	}, []);
 
 	useEffect(() => {
@@ -705,6 +714,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					Workspace selector is hardened by mode readiness. Only READY products
 					can load {humanizeWorkspaceMode(mode as WorkspaceMode)} packages.
 				</div>
+				{isLoadingProducts && (
+					<div className="mb-3 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] text-slate-400">
+						Loading products...
+					</div>
+				)}
+				{productsError && !isLoadingProducts && (
+					<div className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-[11px] text-rose-300">
+						Product list failed to load: {productsError}
+					</div>
+				)}
 				<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto]">
 					<SearchableProductSelect
 						products={products}

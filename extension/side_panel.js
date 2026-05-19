@@ -2,7 +2,7 @@ const LOCAL_AGENT_BASE_URL = "http://127.0.0.1:8100";
 const LOCAL_AGENT_HEALTH_URL = `${LOCAL_AGENT_BASE_URL}/health`;
 const LOCAL_AGENT_STATUS_URL = `${LOCAL_AGENT_BASE_URL}/api/local-agent/status`;
 const DASHBOARD_STATIC_READY = "BACKEND_SERVED_STATIC";
-const HEALTH_REQUEST_TIMEOUT_MS = 4500;
+const HEALTH_REQUEST_TIMEOUT_MS = 1500;
 const IFRAME_LOAD_TIMEOUT_MS = 12000;
 
 const DASHBOARD_ROUTES = {
@@ -277,14 +277,44 @@ function renderUnavailableState(route, snapshot) {
 		setBanner(
 			"error",
 			"Local agent offline",
-			`Local agent offline. Retry after confirming ${LOCAL_AGENT_BASE_URL} is reachable.`,
+			`Both /health and /api/local-agent/status are unreachable. Retry after confirming ${LOCAL_AGENT_BASE_URL} is running.`,
 		);
 		setPortalState(
 			"error",
 			`Local agent offline. Retry after confirming ${LOCAL_AGENT_BASE_URL} is reachable.`,
 			"Local agent offline",
 		);
-		setLastAction("Runtime check failed: local agent offline.");
+		setLastAction("Runtime check failed: both endpoints offline.");
+		return;
+	}
+
+	if (snapshot.errorCode === "PARTIAL_AGENT_DIAGNOSTIC_FAILURE") {
+		setBanner(
+			"warning",
+			"Partial agent diagnostic failure",
+			`Health reachable; /api/local-agent/status endpoint failed. Dashboard may still load if serving mode is available.`,
+		);
+		setPortalState(
+			"error",
+			"Health reachable; status endpoint failed. Retry to recheck.",
+			"Partial diagnostic failure",
+		);
+		setLastAction("Runtime check: health ok, status endpoint failed.");
+		return;
+	}
+
+	if (snapshot.errorCode === "HEALTH_ENDPOINT_FAILED") {
+		setBanner(
+			"warning",
+			"Health endpoint failed",
+			`/health is unreachable but /api/local-agent/status responded. Check agent health route configuration.`,
+		);
+		setPortalState(
+			"error",
+			"Health endpoint failed; status endpoint ok. Check agent health route.",
+			"Health endpoint failed",
+		);
+		setLastAction("Runtime check: status ok, health endpoint failed.");
 		return;
 	}
 
@@ -394,15 +424,22 @@ async function fetchRuntimeSnapshot() {
 		fetchJsonWithTimeout(LOCAL_AGENT_HEALTH_URL, HEALTH_REQUEST_TIMEOUT_MS),
 	]);
 
-	if (statusResult.status === "fulfilled") {
-		snapshot.status = statusResult.value;
-	}
-	if (healthResult.status === "fulfilled") {
-		snapshot.health = healthResult.value;
-	}
+	const statusOk = statusResult.status === "fulfilled";
+	const healthOk = healthResult.status === "fulfilled";
 
-	if (!snapshot.status || !snapshot.health) {
+	if (statusOk) snapshot.status = statusResult.value;
+	if (healthOk) snapshot.health = healthResult.value;
+
+	if (!statusOk && !healthOk) {
 		snapshot.errorCode = "LOCAL_AGENT_OFFLINE";
+		return snapshot;
+	}
+	if (healthOk && !statusOk) {
+		snapshot.errorCode = "PARTIAL_AGENT_DIAGNOSTIC_FAILURE";
+		return snapshot;
+	}
+	if (!healthOk && statusOk) {
+		snapshot.errorCode = "HEALTH_ENDPOINT_FAILED";
 		return snapshot;
 	}
 
