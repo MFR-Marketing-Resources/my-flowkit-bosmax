@@ -135,6 +135,14 @@ def test_products_page_fastmoss_warning_has_bulk_cta():
     assert "product-registration?tab=bulk" in content, "CTA must link to /product-registration?tab=bulk"
 
 
+def test_products_page_has_persistent_bulk_convert_cta():
+    """ProductsSalesAnalyzerPage must have a persistent top-level Bulk Convert FastMoss button."""
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/pages/ProductsSalesAnalyzerPage.tsx").read_text(encoding="utf-8")
+    assert "Bulk Convert FastMoss" in content, "Persistent 'Bulk Convert FastMoss' button missing from Products page"
+    assert "product-registration?tab=bulk" in content, "Persistent CTA must link to /product-registration?tab=bulk"
+
+
 def test_workspace_product_select_fastmoss_warning_has_bulk_cta():
     """Reference-only banner in SearchableProductSelect must include a CTA."""
     root = Path(__file__).parent.parent.parent
@@ -152,3 +160,23 @@ def test_bulk_fastmoss_convert_tab_component_exists_with_operator_actions():
     assert "Approve Ready" in content, "Approve Ready action missing"
     assert "Reject" in content, "Reject action missing"
     assert "PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH" in content, "Confirmation phrase gate missing"
+    assert "Select FastMoss rows to enable bulk actions" in content, "Bulk action disabled helper text missing"
+
+
+def test_product_registration_page_has_open_bulk_fastmoss_header_cta():
+    """ProductRegistrationPage must have a prominent 'Open Bulk FastMoss Convert' button in header."""
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/pages/ProductRegistrationPage.tsx").read_text(encoding="utf-8")
+    assert "Open Bulk FastMoss Convert" in content, "'Open Bulk FastMoss Convert' header CTA missing"
+    assert "Bulk FastMoss Convert" in content, "Tab label missing"
+    assert "Sync Queue" not in content, "Sync Queue is on child component, not this page"
+
+
+def test_smart_registration_single_product_flow_still_intact():
+    """Single Product intake flow must not be removed by bulk hotfix."""
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/pages/ProductRegistrationPage.tsx").read_text(encoding="utf-8")
+    assert "AIFormPack" in content
+    assert "ProductKnowledgeIntakeForm" in content
+    assert "RegistrationReviewDraftPanel" in content
+    assert "'single'" in content
