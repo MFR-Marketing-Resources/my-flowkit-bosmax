@@ -1141,6 +1141,31 @@ CREATE TABLE IF NOT EXISTS batch_queue_event (
 CREATE INDEX IF NOT EXISTS idx_batch_product ON batch(product_id);
 CREATE INDEX IF NOT EXISTS idx_batch_variant_batch ON batch_variant(batch_id);
 CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_status);
+
+CREATE TABLE IF NOT EXISTS fastmoss_bulk_draft_status (
+    reference_id        TEXT PRIMARY KEY,
+    raw_product_title   TEXT NOT NULL,
+    source_url          TEXT,
+    tiktok_product_url  TEXT,
+    image_url           TEXT,
+    category            TEXT,
+    claim_risk_level    TEXT NOT NULL DEFAULT 'HIGH',
+    mapping_confidence  REAL,
+    image_readiness     TEXT NOT NULL DEFAULT 'IMAGE_MISSING',
+    copy_route          TEXT,
+    sold_count          INTEGER,
+    commission_rate     TEXT,
+    promotion_status    TEXT NOT NULL DEFAULT 'PENDING_DRAFT',
+    draft_id            TEXT,
+    committed_product_id TEXT,
+    error_message       TEXT,
+    batch_provenance    TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bulk_draft_status ON fastmoss_bulk_draft_status(promotion_status);
+CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(claim_risk_level);
 """)
             logger.info("Migrated: created batch production tables")
         await db.commit()
@@ -1261,6 +1286,14 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
                     logger.info("Migrated: batch_queue_event FK reference repaired")
                 finally:
                     _sync.close()
+
+    # Migration: add fastmoss_reference_id column to product table
+        cursor = await db.execute("PRAGMA table_info(product)")
+        product_cols = {row[1] for row in await cursor.fetchall()}
+        if "fastmoss_reference_id" not in product_cols:
+            await db.execute("ALTER TABLE product ADD COLUMN fastmoss_reference_id TEXT")
+            await db.commit()
+            logger.info("Migrated: added fastmoss_reference_id column to product table")
 
     logger.info("Database initialized at %s", DB_PATH)
 

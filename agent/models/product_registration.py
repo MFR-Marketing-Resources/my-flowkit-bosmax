@@ -104,6 +104,7 @@ class RegistrationReviewDraft(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     rejection_checklist: dict[str, bool] = Field(default_factory=dict)
+    fastmoss_reference_id: str | None = None
 
 
 class RegistrationReviewDraftFieldDecisions(BaseModel):

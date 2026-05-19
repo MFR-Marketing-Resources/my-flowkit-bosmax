@@ -31,11 +31,12 @@ _COLUMNS = {
               "vertical_end_scene_media_id", "horizontal_end_scene_media_id",
               "trim_start", "trim_end", "duration", "display_order", "source", "transition_prompt", "narrator_text", "updated_at"},
     "request": {"status", "request_id", "media_id", "output_url", "error_message", "retry_count", "next_retry_at", "source_media_id", "updated_at", "automation_report"},
-    "product": {"source", "source_url", "brand", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price", "currency", "commission_amount", "commission_rate", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "image_asset_status", "image_failure_detail", "product_type", "product_type_id", "silo", "trigger_id", "formula", "copywriting_angle", "claim_risk_level", "mode_recommendations", "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint", "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields", "prompt_readiness_status", "prompt_missing_fields", "claim_safe_copy_status", "claim_safe_copy_payload", "claim_safe_copy_updated_at", "production_prompt_approval_status", "production_prompt_approved_modes", "production_prompt_approved_at", "production_prompt_approval_note", "production_prompt_approval_provenance", "lifecycle_status", "archived_at", "archived_reason", "archived_by", "unarchived_at", "unarchived_reason", "lifecycle_provenance", "asset_status", "media_id", "local_image_path", "updated_at"},
+    "product": {"source", "source_url", "brand", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price", "currency", "commission_amount", "commission_rate", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "image_asset_status", "image_failure_detail", "product_type", "product_type_id", "silo", "trigger_id", "formula", "copywriting_angle", "claim_risk_level", "mode_recommendations", "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint", "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields", "prompt_readiness_status", "prompt_missing_fields", "claim_safe_copy_status", "claim_safe_copy_payload", "claim_safe_copy_updated_at", "production_prompt_approval_status", "production_prompt_approved_modes", "production_prompt_approved_at", "production_prompt_approval_note", "production_prompt_approval_provenance", "lifecycle_status", "archived_at", "archived_reason", "archived_by", "unarchived_at", "unarchived_reason", "lifecycle_provenance", "asset_status", "media_id", "local_image_path", "updated_at", "fastmoss_reference_id"},
     "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "workspace_generation_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message"},
     "request_stage_event": {"request_id", "timestamp", "stage", "status", "message", "source"},
     "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
     "creative_asset": {"semantic_role", "display_name", "description", "source_type", "storage_kind", "preview_url", "download_url", "media_id", "local_file_path", "remote_source_url", "product_id", "category", "silo", "product_type", "allowed_modes", "engine_slot_eligibility", "mode_a_metadata_handoff", "visual_dna_summary", "character_dna", "scene_context_dna", "style_mood_dna", "source_prompt_fingerprint", "source_workspace_execution_package_id", "source_prompt_package_snapshot_id", "status", "updated_at"},
+    "fastmoss_bulk_draft_status": {"raw_product_title", "source_url", "tiktok_product_url", "image_url", "category", "claim_risk_level", "mapping_confidence", "image_readiness", "copy_route", "sold_count", "commission_rate", "promotion_status", "draft_id", "committed_product_id", "error_message", "batch_provenance", "updated_at"},
     "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "updated_at"},
 }
 
@@ -829,3 +830,113 @@ async def list_workspace_generation_packages(
     params.append(limit)
     cur = await db.execute(q, params)
     return [dict(r) for r in await cur.fetchall()]
+
+
+# ─── FastMoss Bulk Queue ─────────────────────────────────────
+
+async def create_bulk_queue_row(reference_id: str, raw_product_title: str, **kw) -> dict:
+    db = await get_db()
+    now = _now()
+    cols = ["reference_id", "raw_product_title", "created_at", "updated_at"]
+    vals = [reference_id, raw_product_title, now, now]
+    allowed = _COLUMNS["fastmoss_bulk_draft_status"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        await db.execute(
+            f"INSERT OR IGNORE INTO fastmoss_bulk_draft_status ({col_str}) VALUES ({placeholders})",
+            vals,
+        )
+        await db.commit()
+    cur = await db.execute(
+        "SELECT * FROM fastmoss_bulk_draft_status WHERE reference_id=?", [reference_id]
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else {}
+
+
+async def get_bulk_queue_row(reference_id: str) -> Optional[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM fastmoss_bulk_draft_status WHERE reference_id=?", [reference_id]
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def update_bulk_queue_row(reference_id: str, **kw) -> Optional[dict]:
+    return await _update("fastmoss_bulk_draft_status", "reference_id", reference_id, **kw)
+
+
+async def list_bulk_queue(
+    promotion_status: str | None = None,
+    claim_risk_level: str | None = None,
+    image_readiness: str | None = None,
+    category: str | None = None,
+    q: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> list[dict]:
+    db = await get_db()
+    query, params = "SELECT * FROM fastmoss_bulk_draft_status WHERE 1=1", []
+    if promotion_status:
+        query += " AND promotion_status=?"; params.append(promotion_status)
+    if claim_risk_level:
+        query += " AND claim_risk_level=?"; params.append(claim_risk_level)
+    if image_readiness:
+        query += " AND image_readiness=?"; params.append(image_readiness)
+    if category:
+        query += " AND category=?"; params.append(category)
+    if q:
+        query += " AND raw_product_title LIKE ?"; params.append(f"%{q}%")
+    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params.extend([page_size, (page - 1) * page_size])
+    cur = await db.execute(query, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def count_bulk_queue(
+    promotion_status: str | None = None,
+    claim_risk_level: str | None = None,
+    image_readiness: str | None = None,
+    category: str | None = None,
+    q: str | None = None,
+) -> int:
+    db = await get_db()
+    query, params = "SELECT COUNT(*) FROM fastmoss_bulk_draft_status WHERE 1=1", []
+    if promotion_status:
+        query += " AND promotion_status=?"; params.append(promotion_status)
+    if claim_risk_level:
+        query += " AND claim_risk_level=?"; params.append(claim_risk_level)
+    if image_readiness:
+        query += " AND image_readiness=?"; params.append(image_readiness)
+    if category:
+        query += " AND category=?"; params.append(category)
+    if q:
+        query += " AND raw_product_title LIKE ?"; params.append(f"%{q}%")
+    cur = await db.execute(query, params)
+    row = await cur.fetchone()
+    return row[0] if row else 0
+
+
+async def get_bulk_queue_stats() -> dict:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT promotion_status, COUNT(*) as cnt FROM fastmoss_bulk_draft_status GROUP BY promotion_status"
+    )
+    status_rows = await cur.fetchall()
+    cur = await db.execute(
+        "SELECT claim_risk_level, COUNT(*) as cnt FROM fastmoss_bulk_draft_status GROUP BY claim_risk_level"
+    )
+    risk_rows = await cur.fetchall()
+    cur = await db.execute("SELECT COUNT(*) FROM fastmoss_bulk_draft_status")
+    total = (await cur.fetchone())[0]
+    return {
+        "total": total,
+        "by_status": {row[0]: row[1] for row in status_rows},
+        "by_risk": {row[0]: row[1] for row in risk_rows},
+    }
