@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 from agent.services.fastmoss_bulk_promotion_service import (
     sync_bulk_queue,
+    bulk_create_drafts,
     _classify_promotion_status,
     _derive_image_readiness,
     _apply_lineage_to_draft,
@@ -370,3 +371,120 @@ async def test_db_migration_creates_fastmoss_bulk_draft_status():
     )
     row = await cursor.fetchone()
     assert row is not None, "fastmoss_bulk_draft_status table must exist after init_db()"
+
+
+# ---------------------------------------------------------------------------
+# CRUD whitelist — fastmoss_bulk_draft_status must be in _VALID_TABLES
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_bulk_queue_row_does_not_raise_invalid_table():
+    """crud.update_bulk_queue_row must not raise ValueError 'Invalid table name'."""
+    from agent.db import crud
+    await crud.create_bulk_queue_row(
+        reference_id="ref-whitelist-001",
+        raw_product_title="Whitelist Patch Test",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="PENDING_DRAFT",
+    )
+    updated = await crud.update_bulk_queue_row(
+        "ref-whitelist-001",
+        promotion_status="NEEDS_REVIEW",
+        draft_id="draft-test-999",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        updated_at="2026-05-19T00:00:00Z",
+    )
+    assert updated is not None, "update_bulk_queue_row returned None — table may still be missing from _VALID_TABLES"
+    assert updated["promotion_status"] == "NEEDS_REVIEW"
+    assert updated["draft_id"] == "draft-test-999"
+
+
+@pytest.mark.asyncio
+async def test_create_draft_from_reference_updates_queue_row(monkeypatch):
+    """create_draft_from_reference must update the queue row without crashing on _validate_table."""
+    from agent.db import crud
+    from agent.services.fastmoss_bulk_promotion_service import create_draft_from_reference
+    from unittest.mock import MagicMock
+
+    # Seed a queue row so the function finds it
+    await crud.create_bulk_queue_row(
+        reference_id="ref-draft-test-001",
+        raw_product_title="Draft Test Serum",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="PENDING_DRAFT",
+    )
+
+    _SVC = "agent.services.fastmoss_bulk_promotion_service"
+
+    # Stub out the chain of dependencies after the queue row lookup
+    monkeypatch.setattr(f"{_SVC}.list_fastmoss_reference_products", AsyncMock(return_value=[{
+        "id": "ref-draft-test-001",
+        "raw_product_title": "Draft Test Serum",
+        "image_url": "https://example.com/img.jpg",
+        "source_url": "https://example.com",
+        "tiktok_product_url": None,
+        "claim_risk_level": "LOW",
+        "commission_rate": "10%",
+        "fastmoss_source_file": "batch.xlsx",
+    }]))
+
+    fake_draft = MagicMock()
+    fake_draft.review_draft_id = "draft-generated-001"
+    fake_draft.claim_risk_level = "LOW"
+    fake_draft.missing_required_evidence = []
+    fake_draft.declared_evidence_fields = {
+        "product_name": "Draft Test Serum",
+        "image_url": "https://example.com/img.jpg",
+        "source_url": "https://example.com",
+        "tiktok_product_url": None,
+    }
+    fake_draft.provenance = []
+    fake_draft.approval_checklist = {}
+    fake_draft.model_dump = MagicMock(return_value={"review_draft_id": "draft-generated-001"})
+
+    monkeypatch.setattr(f"{_SVC}.complete_product_knowledge", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(f"{_SVC}.create_registration_review_draft", MagicMock(return_value=fake_draft))
+    monkeypatch.setattr(f"{_SVC}.derive_draft_image_asset_state", MagicMock(return_value=("IMAGE_READY", "ok")))
+    monkeypatch.setattr(f"{_SVC}._detect_queue_duplicate", AsyncMock(return_value=False))
+
+    saved = MagicMock()
+    saved.review_draft_id = "draft-generated-001"
+    saved.model_dump = MagicMock(return_value={"review_draft_id": "draft-generated-001"})
+    from agent.services.registration_draft_storage_service import RegistrationDraftStorageService
+    monkeypatch.setattr(RegistrationDraftStorageService, "save_draft", MagicMock(return_value=saved))
+
+    result = await create_draft_from_reference("ref-draft-test-001")
+    assert "error" not in result, f"create_draft_from_reference failed: {result}"
+    assert result["draft_id"] == "draft-generated-001"
+    # Verify queue row was updated (update_bulk_queue_row must not raise)
+    row = await crud.get_bulk_queue_row("ref-draft-test-001")
+    assert row is not None
+    assert row["draft_id"] == "draft-generated-001"
+    assert row["promotion_status"] != "PENDING_DRAFT"
+
+
+@pytest.mark.asyncio
+async def test_bulk_create_drafts_returns_success_not_all_error(monkeypatch):
+    """bulk_create_drafts must return success > 0, not all ERROR."""
+    _SVC = "agent.services.fastmoss_bulk_promotion_service"
+    success_payload = {
+        "reference_id": "ref-bc-001",
+        "draft_id": "draft-bc-001",
+        "promotion_status": "READY_FOR_APPROVAL",
+        "claim_risk_level": "LOW",
+        "image_readiness": "IMAGE_PRESENT",
+        "draft": {"review_draft_id": "draft-bc-001"},
+    }
+    monkeypatch.setattr(
+        f"{_SVC}.create_draft_from_reference",
+        AsyncMock(return_value=success_payload),
+    )
+    result = await bulk_create_drafts(["ref-bc-001", "ref-bc-002"])
+    assert result["success"] == 2, f"Expected 2 successes, got: {result}"
+    assert result["failed"] == 0
+    for r in result["results"]:
+        assert r["status"] == "OK", f"Expected OK, got: {r}"
