@@ -78,22 +78,42 @@ def _classify_promotion_status(
 
 async def _detect_queue_duplicate(reference_id: str, raw_product_title: str,
                                    tiktok_product_url: str | None) -> bool:
-    """Check if a matching product already exists in owned canonical rows."""
+    """Check if a matching product already exists in owned canonical rows.
+
+    Canonical sources that block promotion:
+      - source=MANUAL (user-owned product truth)
+      - any product with mapping_source=FASTMOSS_PROMOTED (already committed via this pipeline)
+
+    Raw source=FASTMOSS reference-catalog rows must NOT block promotion — they
+    are the reference inputs being promoted, not owned canonical product truth.
+    Querying them as blockers caused every reference row to self-match and become
+    DUPLICATE_SUSPECTED on first Generate Drafts run.
+    """
     title_clean = raw_product_title.strip().lower()
     if not title_clean:
         return False
-    for source in ("MANUAL", "FASTMOSS"):
-        matches = await crud.list_products(source=source, query=raw_product_title, limit=30)
-        for row in matches:
-            row_names = {
-                _clean(row.get("raw_product_title")).lower(),
-                _clean(row.get("product_display_name")).lower(),
-                _clean(row.get("product_short_name")).lower(),
-            }
-            if title_clean in row_names:
-                return True
-            if tiktok_product_url and tiktok_product_url == _clean(row.get("tiktok_product_url")):
-                return True
+
+    def _row_matches(row: dict) -> bool:
+        row_names = {
+            _clean(row.get("raw_product_title")).lower(),
+            _clean(row.get("product_display_name")).lower(),
+            _clean(row.get("product_short_name")).lower(),
+        }
+        if title_clean in row_names:
+            return True
+        return bool(tiktok_product_url and tiktok_product_url == _clean(row.get("tiktok_product_url")))
+
+    candidates = await crud.list_products(query=raw_product_title, limit=50)
+    for row in candidates:
+        src = row.get("source", "")
+        mapping_src = row.get("mapping_source", "")
+        # Raw FASTMOSS reference rows are inputs to this promotion pipeline.
+        # Only block on them once they have been committed (mapping_source=FASTMOSS_PROMOTED).
+        if src == "FASTMOSS" and mapping_src != "FASTMOSS_PROMOTED":
+            continue
+        if _row_matches(row):
+            return True
+
     return False
 
 
