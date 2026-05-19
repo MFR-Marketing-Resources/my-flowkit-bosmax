@@ -139,6 +139,7 @@ def _ref_to_completion_request(ref: dict[str, Any]) -> ProductKnowledgeCompleteR
         product_name=raw_title,
         source_lane="FASTMOSS_PROMOTED",
         paste_anything_about_product=paste_knowledge,
+        category=category,
         image_url=_clean(ref.get("image_url")) or None,
         source_url=_clean(ref.get("source_url")) or None,
         tiktok_product_url=_clean(ref.get("tiktok_product_url")) or None,

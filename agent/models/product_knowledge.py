@@ -32,6 +32,7 @@ class ProductKnowledgeCompleteRequest(BaseModel):
     image_base64: str | None = None
     image_filename: str | None = None
     paste_anything_about_product: str | None = None
+    category: str | None = None
 
 
 class ModeReadiness(BaseModel):
