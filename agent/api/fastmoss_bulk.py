@@ -30,6 +30,10 @@ class BulkApproveDraftsRequest(BaseModel):
     confirmation_phrase: str
 
 
+class RecomputeSelectedRequest(BaseModel):
+    reference_ids: list[str]
+
+
 class UpdateQueueRowStatusRequest(BaseModel):
     promotion_status: str
 
@@ -89,6 +93,13 @@ async def bulk_approve_drafts(body: BulkApproveDraftsRequest) -> dict[str, Any]:
     if result.get("commit_status") == "BLOCKED" and result.get("error") == "INVALID_CONFIRMATION_PHRASE":
         raise HTTPException(status_code=403, detail="INVALID_CONFIRMATION_PHRASE")
     return result
+
+
+@router.post("/queue/recompute-selected")
+async def recompute_selected(body: RecomputeSelectedRequest) -> dict[str, Any]:
+    if not body.reference_ids:
+        raise HTTPException(status_code=422, detail="reference_ids must not be empty")
+    return await _svc.recompute_selected(body.reference_ids)
 
 
 @router.patch("/queue/{reference_id}/status")

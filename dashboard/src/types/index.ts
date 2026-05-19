@@ -1856,76 +1856,97 @@ export interface I2VGenerationPackageRequest {
 }
 
 export type BulkPromotionStatus =
-	| 'PENDING_DRAFT'
-	| 'DRAFT_GENERATED'
-	| 'READY_FOR_APPROVAL'
-	| 'NEEDS_REVIEW'
-	| 'MISSING_REQUIRED_FIELD'
-	| 'CLAIM_RISK'
-	| 'IMAGE_MISSING'
-	| 'DUPLICATE_SUSPECTED'
-	| 'APPROVED'
-	| 'REJECTED'
+	| "PENDING_DRAFT"
+	| "DRAFT_GENERATED"
+	| "READY_FOR_APPROVAL"
+	| "NEEDS_REVIEW"
+	| "MISSING_REQUIRED_FIELD"
+	| "CLAIM_RISK"
+	| "IMAGE_MISSING"
+	| "DUPLICATE_SUSPECTED"
+	| "APPROVED"
+	| "REJECTED";
 
-export type BulkClaimRisk = 'LOW' | 'MEDIUM' | 'HIGH' | 'UNKNOWN'
-export type BulkImageReadiness = 'IMAGE_PRESENT' | 'IMAGE_MISSING'
+export type BulkClaimRisk = "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN";
+export type BulkImageReadiness = "IMAGE_PRESENT" | "IMAGE_MISSING";
 
 export interface FastmossBulkQueueRow {
-	reference_id: string
-	raw_product_title: string
-	source_url?: string | null
-	tiktok_product_url?: string | null
-	image_url?: string | null
-	category?: string | null
-	claim_risk_level: BulkClaimRisk
-	mapping_confidence?: number | null
-	image_readiness: BulkImageReadiness
-	copy_route?: string | null
-	sold_count?: number | null
-	commission_rate?: string | null
-	promotion_status: BulkPromotionStatus
-	draft_id?: string | null
-	committed_product_id?: string | null
-	error_message?: string | null
-	batch_provenance?: string | null
-	created_at: string
-	updated_at: string
+	reference_id: string;
+	raw_product_title: string;
+	source_url?: string | null;
+	tiktok_product_url?: string | null;
+	image_url?: string | null;
+	category?: string | null;
+	claim_risk_level: BulkClaimRisk;
+	mapping_confidence?: number | null;
+	image_readiness: BulkImageReadiness;
+	copy_route?: string | null;
+	sold_count?: number | null;
+	commission_rate?: string | null;
+	promotion_status: BulkPromotionStatus;
+	draft_id?: string | null;
+	committed_product_id?: string | null;
+	error_message?: string | null;
+	batch_provenance?: string | null;
+	created_at: string;
+	updated_at: string;
 }
 
 export interface BulkQueuePage {
-	items: FastmossBulkQueueRow[]
-	total: number
-	page: number
-	page_size: number
+	items: FastmossBulkQueueRow[];
+	total: number;
+	page: number;
+	page_size: number;
 }
 
 export interface BulkQueueStats {
-	total: number
-	by_status: Record<string, number>
-	by_risk: Record<string, number>
+	total: number;
+	by_status: Record<string, number>;
+	by_risk: Record<string, number>;
 }
 
 export interface BulkCreateDraftsResult {
-	success: number
-	failed: number
+	success: number;
+	failed: number;
 	results: Array<{
-		reference_id: string
-		status: 'OK' | 'ERROR'
-		draft_id?: string | null
-		promotion_status?: string | null
-		error?: string | null
-	}>
+		reference_id: string;
+		status: "OK" | "ERROR";
+		draft_id?: string | null;
+		promotion_status?: string | null;
+		error?: string | null;
+	}>;
 }
 
 export interface BulkApproveResult {
-	approved: number
-	skipped: number
-	failed: number
+	approved: number;
+	skipped: number;
+	failed: number;
 	results: Array<{
-		reference_id: string
-		outcome: 'APPROVED' | 'SKIPPED' | 'FAILED'
-		reason?: string | null
-		committed_product_id?: string | null
-		commit_status?: string | null
-	}>
+		reference_id: string;
+		outcome: "APPROVED" | "SKIPPED" | "FAILED";
+		reason?: string | null;
+		committed_product_id?: string | null;
+		commit_status?: string | null;
+	}>;
+}
+
+export interface BulkRecomputeSelectedResult {
+	recomputed: number;
+	ready_for_approval: number;
+	missing_required_field: number;
+	claim_risk: number;
+	duplicate_suspected: number;
+	image_missing: number;
+	failed: number;
+	skipped: number;
+	results: Array<{
+		reference_id: string;
+		previous_status?: string | null;
+		new_status?: string | null;
+		previous_error_message?: string | null;
+		new_error_message?: string | null;
+		draft_id?: string | null;
+		outcome: "OK" | "SKIPPED" | "ERROR";
+		error?: string | null;
+	}>;
 }
