@@ -63,3 +63,53 @@ def test_update_field_decisions(temp_draft_dir):
     updated = RegistrationDraftStorageService.update_field_decisions("d3", decisions)
     assert updated.approval_checklist["category"] is True
     assert "category" not in updated.human_review_fields
+
+
+# ---------------------------------------------------------------------------
+# Unicode / charmap safety — all open() calls must use encoding="utf-8"
+# These tests fail on Windows (cp1252 default) without the utf-8 fix.
+# ---------------------------------------------------------------------------
+
+def test_save_draft_unicode_replacement_char(temp_draft_dir):
+    """￼ (U+FFFC) in a product title must not raise charmap UnicodeEncodeError."""
+    draft = RegistrationReviewDraft(
+        review_draft_id="unicode-draft-001",
+        review_status="REVIEW_READY",
+        source_lane="FASTMOSS_PROMOTED",
+        declared_evidence_fields={"product_name": "Product ￼ Special"},
+    )
+    saved = RegistrationDraftStorageService.save_draft(draft)
+    assert saved.review_draft_id == "unicode-draft-001"
+    loaded = RegistrationDraftStorageService.get_draft("unicode-draft-001")
+    assert loaded is not None
+    assert "￼" in loaded.declared_evidence_fields["product_name"]
+
+
+def test_save_draft_malay_unicode_title(temp_draft_dir):
+    """Malay product titles with non-ASCII chars must round-trip without charmap error."""
+    title = "Sabun Mandi Sejuk — Bersih & Wangi ✨"
+    draft = RegistrationReviewDraft(
+        review_draft_id="unicode-draft-002",
+        review_status="REVIEW_READY",
+        source_lane="FASTMOSS_PROMOTED",
+        declared_evidence_fields={"product_name": title},
+    )
+    RegistrationDraftStorageService.save_draft(draft)
+    loaded = RegistrationDraftStorageService.get_draft("unicode-draft-002")
+    assert loaded is not None
+    assert loaded.declared_evidence_fields["product_name"] == title
+
+
+def test_save_draft_long_unicode_title(temp_draft_dir):
+    """Long product title with mixed Unicode must save and reload correctly."""
+    title = "Krim Pemutih Kulit Bersama élément Actif 150ml — Formula Baru 2026 ￼"
+    draft = RegistrationReviewDraft(
+        review_draft_id="unicode-draft-003",
+        review_status="REVIEW_READY",
+        source_lane="FASTMOSS_PROMOTED",
+        declared_evidence_fields={"product_name": title, "category": "Beauty"},
+    )
+    RegistrationDraftStorageService.save_draft(draft)
+    loaded = RegistrationDraftStorageService.get_draft("unicode-draft-003")
+    assert loaded is not None
+    assert loaded.declared_evidence_fields["product_name"] == title

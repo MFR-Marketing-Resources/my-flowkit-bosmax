@@ -560,3 +560,230 @@ async def test_detect_dup_no_matching_rows_returns_false(monkeypatch):
     monkeypatch.setattr(f"{_CRUD_SVC}.list_products", AsyncMock(return_value=[]))
     result = await _detect_queue_duplicate("ref-001", "Test Serum", None)
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# _ref_to_completion_request — evidence mapping from FastMoss ref
+# ---------------------------------------------------------------------------
+
+from agent.services.fastmoss_bulk_promotion_service import _ref_to_completion_request
+
+
+def test_ref_to_completion_maps_paste_knowledge():
+    """_ref_to_completion_request must populate paste_anything_about_product from ref metadata."""
+    ref = {
+        "raw_product_title": "Serum Vitamin C 30ml",
+        "category": "Beauty",
+        "sold_count": 1500,
+        "commission_rate": "12%",
+        "image_url": "https://example.com/img.jpg",
+        "source_url": "https://example.com/src",
+        "tiktok_product_url": None,
+        "price": 29.9,
+        "currency": "MYR",
+    }
+    req = _ref_to_completion_request(ref)
+    assert req.paste_anything_about_product is not None
+    assert "Serum Vitamin C 30ml" in req.paste_anything_about_product
+    assert "Beauty" in req.paste_anything_about_product
+    assert req.product_name == "Serum Vitamin C 30ml"
+    assert req.source_lane == "FASTMOSS_PROMOTED"
+    assert req.commission_rate == "12%"
+
+
+def test_ref_to_completion_minimal_ref_no_crash():
+    """_ref_to_completion_request must not crash on a ref with only id and title."""
+    ref = {"raw_product_title": "Basic Lotion", "id": "ref-min-001"}
+    req = _ref_to_completion_request(ref)
+    assert req.product_name == "Basic Lotion"
+    assert req.paste_anything_about_product is not None
+    assert "Basic Lotion" in req.paste_anything_about_product
+
+
+# ---------------------------------------------------------------------------
+# create_draft_from_reference — error_message and READY_FOR_APPROVAL path
+# ---------------------------------------------------------------------------
+
+_SVC_PATH = "agent.services.fastmoss_bulk_promotion_service"
+
+
+@pytest.mark.asyncio
+async def test_create_draft_missing_field_stores_error_message(monkeypatch):
+    """Queue row error_message must contain MISSING: fields when status is MISSING_REQUIRED_FIELD."""
+    from agent.db import crud
+    from agent.services.fastmoss_bulk_promotion_service import create_draft_from_reference
+    from unittest.mock import MagicMock
+
+    await crud.create_bulk_queue_row(
+        reference_id="ref-missing-msg-001",
+        raw_product_title="Test Serum",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="PENDING_DRAFT",
+    )
+
+    monkeypatch.setattr(f"{_SVC_PATH}.list_fastmoss_reference_products", AsyncMock(return_value=[{
+        "id": "ref-missing-msg-001",
+        "raw_product_title": "Test Serum",
+        "image_url": "https://example.com/img.jpg",
+        "source_url": "https://example.com",
+        "tiktok_product_url": None,
+        "claim_risk_level": "LOW",
+        "commission_rate": None,
+        "fastmoss_source_file": None,
+    }]))
+
+    fake_draft = MagicMock()
+    fake_draft.review_draft_id = "draft-mm-001"
+    fake_draft.claim_risk_level = "LOW"
+    fake_draft.claim_gate = "CLAIM_SAFE"
+    fake_draft.claim_tokens = []
+    fake_draft.missing_required_evidence = ["SIZE_OR_VOLUME_EVIDENCE", "COMMISSION_RATE_EVIDENCE"]
+    fake_draft.declared_evidence_fields = {
+        "product_name": "Test Serum",
+        "image_url": "https://example.com/img.jpg",
+    }
+    fake_draft.provenance = []
+    fake_draft.approval_checklist = {}
+    fake_draft.model_dump = MagicMock(return_value={"review_draft_id": "draft-mm-001"})
+
+    monkeypatch.setattr(f"{_SVC_PATH}.complete_product_knowledge", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(f"{_SVC_PATH}.create_registration_review_draft", MagicMock(return_value=fake_draft))
+    monkeypatch.setattr(f"{_SVC_PATH}.derive_draft_image_asset_state", MagicMock(return_value=("IMAGE_READY", "ok")))
+    monkeypatch.setattr(f"{_SVC_PATH}._detect_queue_duplicate", AsyncMock(return_value=False))
+
+    saved = MagicMock()
+    saved.review_draft_id = "draft-mm-001"
+    saved.model_dump = MagicMock(return_value={"review_draft_id": "draft-mm-001"})
+    from agent.services.registration_draft_storage_service import RegistrationDraftStorageService
+    monkeypatch.setattr(RegistrationDraftStorageService, "save_draft", MagicMock(return_value=saved))
+
+    result = await create_draft_from_reference("ref-missing-msg-001")
+    assert result.get("promotion_status") == "MISSING_REQUIRED_FIELD"
+
+    row = await crud.get_bulk_queue_row("ref-missing-msg-001")
+    assert row is not None
+    assert row.get("error_message") is not None
+    assert "MISSING:" in row["error_message"]
+    assert "SIZE_OR_VOLUME_EVIDENCE" in row["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_create_draft_claim_risk_stores_error_message(monkeypatch):
+    """Queue row error_message must contain CLAIM_RISK info when claim gate blocks."""
+    from agent.db import crud
+    from agent.services.fastmoss_bulk_promotion_service import create_draft_from_reference
+    from unittest.mock import MagicMock
+
+    await crud.create_bulk_queue_row(
+        reference_id="ref-claim-risk-001",
+        raw_product_title="Ubat Kuat Lelaki Super",
+        claim_risk_level="HIGH",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="PENDING_DRAFT",
+    )
+
+    monkeypatch.setattr(f"{_SVC_PATH}.list_fastmoss_reference_products", AsyncMock(return_value=[{
+        "id": "ref-claim-risk-001",
+        "raw_product_title": "Ubat Kuat Lelaki Super",
+        "image_url": "https://example.com/img.jpg",
+        "source_url": None,
+        "tiktok_product_url": None,
+        "claim_risk_level": "HIGH",
+        "commission_rate": "10%",
+        "fastmoss_source_file": None,
+    }]))
+
+    fake_draft = MagicMock()
+    fake_draft.review_draft_id = "draft-cr-001"
+    fake_draft.claim_risk_level = "HIGH"
+    fake_draft.claim_gate = "CLAIM_REVIEW_REQUIRED"
+    fake_draft.claim_tokens = ["kuat", "stamina"]
+    fake_draft.missing_required_evidence = []
+    fake_draft.declared_evidence_fields = {"product_name": "Ubat Kuat Lelaki Super", "image_url": "https://example.com/img.jpg"}
+    fake_draft.provenance = []
+    fake_draft.approval_checklist = {}
+    fake_draft.model_dump = MagicMock(return_value={"review_draft_id": "draft-cr-001"})
+
+    monkeypatch.setattr(f"{_SVC_PATH}.complete_product_knowledge", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(f"{_SVC_PATH}.create_registration_review_draft", MagicMock(return_value=fake_draft))
+    monkeypatch.setattr(f"{_SVC_PATH}.derive_draft_image_asset_state", MagicMock(return_value=("IMAGE_READY", "ok")))
+    monkeypatch.setattr(f"{_SVC_PATH}._detect_queue_duplicate", AsyncMock(return_value=False))
+
+    saved = MagicMock()
+    saved.review_draft_id = "draft-cr-001"
+    saved.model_dump = MagicMock(return_value={"review_draft_id": "draft-cr-001"})
+    from agent.services.registration_draft_storage_service import RegistrationDraftStorageService
+    monkeypatch.setattr(RegistrationDraftStorageService, "save_draft", MagicMock(return_value=saved))
+
+    result = await create_draft_from_reference("ref-claim-risk-001")
+    assert result.get("promotion_status") == "CLAIM_RISK"
+
+    row = await crud.get_bulk_queue_row("ref-claim-risk-001")
+    assert row is not None
+    assert row.get("error_message") is not None
+    assert "CLAIM_RISK" in row["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_create_draft_low_risk_complete_becomes_ready(monkeypatch):
+    """A LOW-risk FastMoss row with full evidence and no duplicate must become READY_FOR_APPROVAL."""
+    from agent.db import crud
+    from agent.services.fastmoss_bulk_promotion_service import create_draft_from_reference
+    from unittest.mock import MagicMock
+
+    await crud.create_bulk_queue_row(
+        reference_id="ref-ready-001",
+        raw_product_title="Serum Vitamin C 30ml",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="PENDING_DRAFT",
+    )
+
+    monkeypatch.setattr(f"{_SVC_PATH}.list_fastmoss_reference_products", AsyncMock(return_value=[{
+        "id": "ref-ready-001",
+        "raw_product_title": "Serum Vitamin C 30ml",
+        "image_url": "https://example.com/img.jpg",
+        "source_url": "https://example.com/src",
+        "tiktok_product_url": None,
+        "claim_risk_level": "LOW",
+        "category": "Beauty",
+        "commission_rate": "12%",
+        "fastmoss_source_file": "batch-001.xlsx",
+    }]))
+
+    fake_draft = MagicMock()
+    fake_draft.review_draft_id = "draft-ready-001"
+    fake_draft.claim_risk_level = "LOW"
+    fake_draft.claim_gate = "CLAIM_SAFE"
+    fake_draft.claim_tokens = []
+    fake_draft.missing_required_evidence = []  # no missing fields
+    fake_draft.declared_evidence_fields = {
+        "product_name": "Serum Vitamin C 30ml",
+        "image_url": "https://example.com/img.jpg",
+        "source_url": "https://example.com/src",
+        "category": "Beauty",
+    }
+    fake_draft.provenance = []
+    fake_draft.approval_checklist = {}
+    fake_draft.model_dump = MagicMock(return_value={"review_draft_id": "draft-ready-001"})
+
+    monkeypatch.setattr(f"{_SVC_PATH}.complete_product_knowledge", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(f"{_SVC_PATH}.create_registration_review_draft", MagicMock(return_value=fake_draft))
+    monkeypatch.setattr(f"{_SVC_PATH}.derive_draft_image_asset_state", MagicMock(return_value=("IMAGE_READY", "ok")))
+    monkeypatch.setattr(f"{_SVC_PATH}._detect_queue_duplicate", AsyncMock(return_value=False))
+
+    saved = MagicMock()
+    saved.review_draft_id = "draft-ready-001"
+    saved.model_dump = MagicMock(return_value={"review_draft_id": "draft-ready-001"})
+    from agent.services.registration_draft_storage_service import RegistrationDraftStorageService
+    monkeypatch.setattr(RegistrationDraftStorageService, "save_draft", MagicMock(return_value=saved))
+
+    result = await create_draft_from_reference("ref-ready-001")
+    assert result.get("promotion_status") == "READY_FOR_APPROVAL", (
+        f"Expected READY_FOR_APPROVAL, got {result.get('promotion_status')}. "
+        f"LOW-risk + IMAGE_PRESENT + no duplicates + no missing fields must be READY."
+    )
+    row = await crud.get_bulk_queue_row("ref-ready-001")
+    assert row["promotion_status"] == "READY_FOR_APPROVAL"
+    assert row["error_message"] is None
