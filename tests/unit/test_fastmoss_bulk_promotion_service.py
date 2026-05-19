@@ -15,6 +15,7 @@ from agent.services.fastmoss_bulk_promotion_service import (
     _derive_image_readiness,
     _apply_lineage_to_draft,
     _ref_to_completion_request,
+    _detect_queue_duplicate,
     bulk_approve_drafts,
     update_queue_row_status,
 )
@@ -488,3 +489,74 @@ async def test_bulk_create_drafts_returns_success_not_all_error(monkeypatch):
     assert result["failed"] == 0
     for r in result["results"]:
         assert r["status"] == "OK", f"Expected OK, got: {r}"
+
+
+# ---------------------------------------------------------------------------
+# _detect_queue_duplicate — governance policy
+# Raw FASTMOSS reference rows must NOT block; MANUAL and FASTMOSS_PROMOTED must block.
+# ---------------------------------------------------------------------------
+
+_CRUD_SVC = "agent.services.fastmoss_bulk_promotion_service.crud"
+
+
+@pytest.mark.asyncio
+async def test_detect_dup_raw_fastmoss_not_a_blocker(monkeypatch):
+    """Raw source=FASTMOSS catalog rows must NOT block promotion (self-match bug)."""
+    raw_rows = [{"source": "FASTMOSS", "mapping_source": None,
+                 "raw_product_title": "Test Serum", "product_display_name": "Test Serum",
+                 "product_short_name": "Test Serum", "tiktok_product_url": None}]
+    monkeypatch.setattr(f"{_CRUD_SVC}.list_products", AsyncMock(return_value=raw_rows))
+    result = await _detect_queue_duplicate("ref-001", "Test Serum", None)
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_detect_dup_manual_row_blocks(monkeypatch):
+    """source=MANUAL row with matching title must block promotion."""
+    manual_rows = [{"source": "MANUAL", "mapping_source": None,
+                    "raw_product_title": "Test Serum", "product_display_name": "Test Serum",
+                    "product_short_name": "Test Serum", "tiktok_product_url": None}]
+    monkeypatch.setattr(f"{_CRUD_SVC}.list_products", AsyncMock(return_value=manual_rows))
+    result = await _detect_queue_duplicate("ref-001", "Test Serum", None)
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_detect_dup_fastmoss_promoted_committed_blocks(monkeypatch):
+    """FASTMOSS row with mapping_source=FASTMOSS_PROMOTED must block (already committed)."""
+    promoted_rows = [{"source": "FASTMOSS", "mapping_source": "FASTMOSS_PROMOTED",
+                      "mapping_review_status": "REVIEWED_FASTMOSS_PROMOTED_COMMIT",
+                      "raw_product_title": "Test Serum", "product_display_name": "Test Serum",
+                      "product_short_name": "Test Serum", "tiktok_product_url": None}]
+    monkeypatch.setattr(f"{_CRUD_SVC}.list_products", AsyncMock(return_value=promoted_rows))
+    result = await _detect_queue_duplicate("ref-001", "Test Serum", None)
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_detect_dup_url_match_on_manual_blocks(monkeypatch):
+    """TikTok product URL match on a MANUAL row must block even when titles differ."""
+    manual_rows = [{"source": "MANUAL", "mapping_source": None,
+                    "raw_product_title": "Different Title", "product_display_name": "Different",
+                    "product_short_name": "Diff", "tiktok_product_url": "https://tiktok.com/prod/123"}]
+    monkeypatch.setattr(f"{_CRUD_SVC}.list_products", AsyncMock(return_value=manual_rows))
+    result = await _detect_queue_duplicate("ref-001", "Test Serum", "https://tiktok.com/prod/123")
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_detect_dup_empty_title_returns_false_no_query(monkeypatch):
+    """Empty/whitespace raw_product_title must short-circuit to False without querying."""
+    mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(f"{_CRUD_SVC}.list_products", mock)
+    result = await _detect_queue_duplicate("ref-001", "   ", None)
+    assert result is False
+    mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_detect_dup_no_matching_rows_returns_false(monkeypatch):
+    """No rows returned from catalog → not a duplicate."""
+    monkeypatch.setattr(f"{_CRUD_SVC}.list_products", AsyncMock(return_value=[]))
+    result = await _detect_queue_duplicate("ref-001", "Test Serum", None)
+    assert result is False
