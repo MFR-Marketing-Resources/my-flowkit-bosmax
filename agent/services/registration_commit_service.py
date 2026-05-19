@@ -52,7 +52,129 @@ async def _find_manual_duplicate(draft: RegistrationReviewDraft) -> dict[str, An
                     return row
     return None
 
+
+async def _find_fastmoss_promoted_duplicate(draft) -> dict | None:
+    candidate_names = [
+        str(draft.canonical_candidate_fields.get("normalized_name") or "").strip(),
+        str(draft.declared_evidence_fields.get("product_name") or "").strip(),
+        _build_owned_raw_title(draft),
+    ]
+    checked_names = [n for n in candidate_names if n]
+    tiktok_url = str(draft.declared_evidence_fields.get("tiktok_product_url") or "").strip()
+    for source in ("MANUAL", "FASTMOSS"):
+        for name in checked_names:
+            matches = await crud.list_products(source=source, query=name, limit=50)
+            lowered = name.lower()
+            for row in matches:
+                row_names = {
+                    str(row.get("raw_product_title") or "").lower(),
+                    str(row.get("product_display_name") or "").lower(),
+                    str(row.get("product_short_name") or "").lower(),
+                }
+                if lowered in row_names:
+                    return row
+                if tiktok_url and tiktok_url == str(row.get("tiktok_product_url") or "").strip():
+                    return row
+    return None
+
 class RegistrationCommitService:
+    @staticmethod
+    async def commit_fastmoss_promoted_draft(request) -> dict:
+        """Commit path for FASTMOSS_PROMOTED lane. Uses PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH phrase."""
+        draft = RegistrationDraftStorageService.get_draft(request.draft_id)
+        if not draft:
+            return {"commit_status": "BLOCKED", "write_back_performed": False, "errors": ["DRAFT_NOT_FOUND"]}
+
+        blocked_reasons = []
+        if request.user_confirmation_phrase != "PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH":
+            blocked_reasons.append("INVALID_CONFIRMATION_PHRASE_FOR_FASTMOSS_PROMOTED")
+        if not request.write_back_confirmed:
+            blocked_reasons.append("WRITE_BACK_NOT_CONFIRMED")
+        if draft.source_lane != "FASTMOSS_PROMOTED":
+            blocked_reasons.append("SOURCE_LANE_MUST_BE_FASTMOSS_PROMOTED")
+        if draft.claim_gate == "CLAIM_BLOCKED":
+            blocked_reasons.append("CLAIM_BLOCKED")
+        if draft.claim_risk_level in {"MEDIUM", "HIGH"}:
+            blocked_reasons.append(f"CLAIM_RISK_NOT_ELIGIBLE_FOR_BULK_APPROVE:{draft.claim_risk_level}")
+        if draft.image_asset_status == "IMAGE_REFERENCE_MISSING":
+            blocked_reasons.append("IMAGE_MISSING_BLOCKS_FASTMOSS_PROMOTED_COMMIT")
+        if not draft.declared_evidence_fields.get("product_name"):
+            blocked_reasons.append("PRODUCT_NAME_REQUIRED")
+        if draft.missing_required_evidence:
+            blocked_reasons.append(f"MISSING_REQUIRED_EVIDENCE:{','.join(draft.missing_required_evidence)}")
+        if blocked_reasons:
+            return {
+                "commit_status": "BLOCKED",
+                "write_back_performed": False,
+                "blocked_reasons": blocked_reasons,
+                "errors": ["COMMIT_GATE_VIOLATION"],
+            }
+
+        dup = await _find_fastmoss_promoted_duplicate(draft)
+        if dup:
+            return {
+                "commit_status": "BLOCKED",
+                "write_back_performed": False,
+                "blocked_reasons": [f"DUPLICATE_PRODUCT_CANDIDATE:{dup['id']}"],
+                "errors": ["COMMIT_GATE_VIOLATION"],
+            }
+
+        raw_title = _build_owned_raw_title(draft)
+        display = draft.canonical_candidate_fields.get("normalized_name") or raw_title
+        payload = {
+            "source": "MANUAL",
+            "raw_product_title": raw_title,
+            "product_display_name": display,
+            "product_short_name": (display or "Unnamed")[:80],
+            "source_url": (
+                draft.declared_evidence_fields.get("source_url")
+                or draft.declared_evidence_fields.get("tiktok_product_url")
+            ),
+            "tiktok_product_url": draft.declared_evidence_fields.get("tiktok_product_url"),
+            "image_url": draft.declared_evidence_fields.get("image_url"),
+            "category": draft.canonical_candidate_fields.get("category"),
+            "subcategory": draft.canonical_candidate_fields.get("subcategory"),
+            "type": draft.canonical_candidate_fields.get("type"),
+            "silo": draft.canonical_candidate_fields.get("silo"),
+            "claim_risk_level": draft.claim_risk_level,
+            "price": draft.declared_evidence_fields.get("price"),
+            "currency": draft.declared_evidence_fields.get("currency"),
+            "commission_amount": draft.declared_evidence_fields.get("commission_amount"),
+            "commission_rate": draft.declared_evidence_fields.get("commission_rate"),
+            "commission": draft.declared_evidence_fields.get("commission_rate"),
+            "mapping_review_status": "REVIEWED_FASTMOSS_PROMOTED_COMMIT",
+            "mapping_status": "APPROVED",
+            "fastmoss_reference_id": draft.fastmoss_reference_id,
+        }
+        try:
+            product = await crud.create_product(**payload)
+            local_path = str(draft.declared_evidence_fields.get("local_image_path") or "").strip()
+            if local_path:
+                import shutil as _shutil
+                from agent.utils.paths import product_image_path as _pip
+                src = Path(local_path)
+                if src.exists():
+                    ext = src.suffix.lstrip(".").lower() or "jpg"
+                    dest = _pip(product["id"], ext=ext)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    _shutil.copyfile(src, dest)
+                    await crud.update_product(product["id"], local_image_path=str(dest),
+                                              asset_status="DOWNLOADED", image_asset_status="DOWNLOADED")
+            draft.write_back_performed = True
+            draft.write_back_status = "COMMITTED"
+            draft.review_status = "COMMITTED"
+            RegistrationDraftStorageService.save_draft(draft)
+            return {
+                "commit_status": "COMMITTED",
+                "write_back_performed": True,
+                "committed_product_id": product["id"],
+                "committed_fields": list(payload.keys()),
+                "provenance": ["registration_commit_service:fastmoss_promoted:v1"],
+            }
+        except Exception as e:
+            logger.error("FASTMOSS_PROMOTED commit failed: %s", e)
+            return {"commit_status": "FAILED", "write_back_performed": False, "errors": [str(e)]}
+
     @staticmethod
     async def commit_draft(request: RegistrationCommitRequest) -> Dict[str, Any]:
         """

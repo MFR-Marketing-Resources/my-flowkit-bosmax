@@ -3,10 +3,14 @@ import ProductKnowledgeIntakeForm from '../components/product-registration/Produ
 import ProductKnowledgeResultPanel from '../components/product-registration/ProductKnowledgeResultPanel'
 import AIFormPack from '../components/product-registration/AIFormPack'
 import RegistrationReviewDraftPanel from '../components/product-registration/RegistrationReviewDraftPanel'
+import BulkFastMossConvertTab from '../components/product-registration/BulkFastMossConvertTab'
 import type { ProductKnowledgeCompleteResponse, RegistrationReviewDraft } from '../types'
 import { postAPI, getAPI } from '../api/client'
 
+type ActiveTab = 'single' | 'bulk'
+
 export default function ProductRegistrationPage() {
+  const [activeTab, setActiveTab] = useState<ActiveTab>('single')
   const [result, setResult] = useState<ProductKnowledgeCompleteResponse | null>(null)
   const [reviewDraft, setReviewDraft] = useState<RegistrationReviewDraft | null>(null)
   const [savedDrafts, setSavedDrafts] = useState<RegistrationReviewDraft[]>([])
@@ -55,9 +59,19 @@ export default function ProductRegistrationPage() {
     }
   }
 
+  const handleOpenDraftById = async (draftId: string) => {
+    try {
+      const draft = await getAPI<RegistrationReviewDraft>(`/api/product-registration/review-drafts/${draftId}`)
+      handleSelectDraft(draft)
+    } catch (err) {
+      console.error('Failed to load draft:', err)
+    }
+  }
+
   const handleSelectDraft = (draft: RegistrationReviewDraft) => {
     setReviewDraft(draft)
     setResult(null)
+    setActiveTab('single')
     setTimeout(() => {
       document.getElementById('review-draft-section')?.scrollIntoView({ behavior: 'smooth' })
     }, 100)
@@ -77,6 +91,34 @@ export default function ProductRegistrationPage() {
         </div>
       </div>
 
+      <div className="mb-6 flex gap-1 rounded-xl bg-slate-900/60 border border-slate-800 p-1 w-fit">
+        <button
+          onClick={() => setActiveTab('single')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
+            activeTab === 'single'
+              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          Single Product
+        </button>
+        <button
+          onClick={() => setActiveTab('bulk')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
+            activeTab === 'bulk'
+              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          Bulk FastMoss Convert
+        </button>
+      </div>
+
+      {activeTab === 'bulk' && (
+        <BulkFastMossConvertTab onOpenDraft={handleOpenDraftById} />
+      )}
+
+      {activeTab === 'single' && (
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8">
         <div className="space-y-8 pb-20">
           {!reviewDraft && (
@@ -227,6 +269,7 @@ export default function ProductRegistrationPage() {
           </div>
         </aside>
       </div>
+      )}
     </div>
   )
 }
