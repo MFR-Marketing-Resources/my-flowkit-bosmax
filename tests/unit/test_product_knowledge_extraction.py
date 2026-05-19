@@ -202,6 +202,109 @@ class TestSizeEvidenceGate:
         _, _, missing = _evaluate_completion_status(req, facts, intelligence)
         assert "SIZE_OR_VOLUME_EVIDENCE" in missing
 
+    def _eval_real_title(self, title: str, category: str):
+        req = ProductKnowledgeCompleteRequest(
+            product_name=title,
+            paste_anything_about_product=title,
+            price=20.0,
+            currency="MYR",
+            commission_rate="5%",
+            commission_amount=1.0,
+            category=category,
+        )
+        facts = _extract_facts(req)
+        family = derive_bosmax_product_family(
+            {
+                "raw_product_title": title,
+                "product_display_name": title,
+                "category": category,
+            }
+        )["bosmax_product_family"]
+        _, _, missing = _evaluate_completion_status(
+            req,
+            facts,
+            {"bosmax_product_family": family},
+        )
+        return family, facts, missing
+
+    @pytest.mark.parametrize(
+        ("title", "category"),
+        [
+            (
+                "Quinnbella Brow Gel Eyebrow Tint Brow Sculpt Lift Eyebrow Styling Long Lasting Waterproof Eyebrow Soap",
+                "Beauty & Personal Care",
+            ),
+            (
+                "[LESSXCOCO]Waterproof Mascara Long LastingNatural Curling Eye Lash Makeup Maskara EyelashBlack",
+                "Beauty & Personal Care",
+            ),
+            (
+                "KAXIER Eyeshadow Two-tone Cream Eyeshadow Stick Pearlescent Long Lasting Waterproof Easy To Color Eye Makeup",
+                "Beauty & Personal Care",
+            ),
+            (
+                "Hijau Lipstik Blooming Matte lip tint lipstick tahan lama waterprooftidak melekat dicawan",
+                "Beauty & Personal Care",
+            ),
+            (
+                "Yessica's Waterproof Foundation Long Lasting Matte Concealer Full Coverage Invisible Pores Flawless Base",
+                "Beauty & Personal Care",
+            ),
+            (
+                "[NEW 2026] ANAS Powder Blusher DUO #06",
+                "Beauty & Personal Care",
+            ),
+        ],
+    )
+    def test_real_decorative_titles_no_size_not_blocked(self, title: str, category: str):
+        family, _, missing = self._eval_real_title(title, category)
+        assert family == "BEAUTY_PERSONAL_CARE"
+        assert "SIZE_OR_VOLUME_EVIDENCE" not in missing
+
+    def test_real_phone_holder_no_size_not_blocked(self):
+        title = "HOTOP 360 Rotatable Car Phone Holder For Dashboard And Windshield Suction Cup Cell Phone Mount"
+        family, _, missing = self._eval_real_title(title, "Automotive & Motorcycle")
+        assert family == "ACCESSORY_SMALL_ITEM"
+        assert "SIZE_OR_VOLUME_EVIDENCE" not in missing
+
+    def test_real_visible_size_title_clears_size_block(self):
+        title = "Adult Diaper pants 9pcs/1pack comfortable fit overnight protection"
+        family, facts, missing = self._eval_real_title(title, "Baby & Maternity")
+        assert family == "BABY_DIAPER"
+        assert facts.get("size_or_volume") is not None
+        assert "SIZE_OR_VOLUME_EVIDENCE" not in missing
+
+    @pytest.mark.parametrize(
+        ("title", "category", "expected_family"),
+        [
+            (
+                "SUISCO Syampu Keratin Rawatan Rambut Hair Care Set",
+                "Beauty & Personal Care",
+                "BEAUTY_PERSONAL_CARE",
+            ),
+            (
+                "Original Roach Ant Umpan Semut Lipas repellent spray",
+                "Home Supplies",
+                "HOUSEHOLD_CLEANER_GENERAL",
+            ),
+            (
+                "Diamond Coating Ceramic Car Coating Spray Nano Quick Coating",
+                "Automotive & Motorcycle",
+                None,
+            ),
+        ],
+    )
+    def test_real_measurable_titles_without_size_stay_blocked(
+        self,
+        title: str,
+        category: str,
+        expected_family: str | None,
+    ):
+        family, _, missing = self._eval_real_title(title, category)
+        if expected_family is not None:
+            assert family == expected_family
+        assert "SIZE_OR_VOLUME_EVIDENCE" in missing
+
 
 # ---------------------------------------------------------------------------
 # Patch C — expanded bosmax_product_family vocabulary
@@ -236,6 +339,15 @@ class TestBosmaxFamilyExpansion:
 
     def test_lip_gloss_resolves_beauty(self):
         assert self._family("Lip Gloss Viral TikTok") == "BEAUTY_PERSONAL_CARE"
+
+    def test_phone_holder_resolves_accessory_small_item(self):
+        assert (
+            self._family(
+                "HOTOP 360 Rotatable Car Phone Holder Dashboard Windshield Suction Cup Cell Phone Mount",
+                "Automotive & Motorcycle",
+            )
+            == "ACCESSORY_SMALL_ITEM"
+        )
 
     def test_syampu_resolves_beauty(self):
         assert self._family("Syampu Anti Gugur Rambut") == "BEAUTY_PERSONAL_CARE"

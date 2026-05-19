@@ -1234,6 +1234,18 @@ def _resolve_family_from_title(product: dict[str, Any]) -> tuple[str | None, str
         return ("food_packaged", "title_evidence:food_keywords")
     if _contains_any(haystack, ["smartwatch", "wearable", "charger", "adapter", "cable"]):
         return ("electronics_wearable", "title_evidence:electronics_keywords")
+    if _contains_any(
+        haystack,
+        [
+            "car phone holder",
+            "phone holder",
+            "phone mount",
+            "dashboard mount",
+            "windshield mount",
+            "suction cup",
+        ],
+    ):
+        return ("ACCESSORY_SMALL_ITEM", "title_evidence:phone_mount_accessory_keywords")
     if _contains_any(haystack, ["brooch", "earring", "pin", "charm", "pendant", "clip", "accessory"]):
         return ("ACCESSORY_SMALL_ITEM", "title_evidence:accessory_keywords")
     if _contains_any(haystack, ["tool", "hardware", "automotive", "motorcycle", "car care"]):
