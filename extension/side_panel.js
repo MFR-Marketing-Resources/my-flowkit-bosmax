@@ -22,9 +22,17 @@ const DASHBOARD_ROUTES = {
 		label: "Asset Registry",
 		url: `${LOCAL_AGENT_BASE_URL}/asset-registry`,
 	},
+	creative: {
+		label: "Creative Library",
+		url: `${LOCAL_AGENT_BASE_URL}/assets/creative-library?portal=side`,
+	},
+	bank: {
+		label: "Prompt Handoff Bank",
+		url: `${LOCAL_AGENT_BASE_URL}/workspace/generation-packages?portal=side`,
+	},
 };
 
-const LAUNCHER_BUILD_LABEL = "issue81-side-panel-runtime-guard";
+const LAUNCHER_BUILD_LABEL = "issue88-extension-launcher-routes";
 
 let navigationToken = 0;
 let selectedRouteKey = "operator";

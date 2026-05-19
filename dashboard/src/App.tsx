@@ -44,8 +44,8 @@ import ProjectsPage from "./pages/ProjectsPage";
 import PromptPreviewPage from "./pages/PromptPreviewPage";
 import SettingsPage from "./pages/SettingsPage";
 import TroubleshootPage from "./pages/TroubleshootPage";
-import WorkspaceJobsPage from "./pages/WorkspaceJobsPage";
 import WorkspaceGenerationPackagesPage from "./pages/WorkspaceGenerationPackagesPage";
+import WorkspaceJobsPage from "./pages/WorkspaceJobsPage";
 import type { TelemetrySummary } from "./types";
 
 const NAV_GROUPS = [
@@ -57,7 +57,11 @@ const NAV_GROUPS = [
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
 			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
-			{ to: "/workspace/generation-packages", icon: PackageSearch, label: "Prompt Handoff Bank" },
+			{
+				to: "/workspace/generation-packages",
+				icon: PackageSearch,
+				label: "Prompt Handoff Bank",
+			},
 			{
 				to: "/approved-packages",
 				icon: PackageSearch,
@@ -190,6 +194,8 @@ function Layout() {
 		{ to: "/operator/f2v", label: "F2V" },
 		{ to: "/operator/i2v", label: "I2V" },
 		{ to: "/operator/img", label: "IMG" },
+		{ to: "/assets/creative-library", label: "Creative" },
+		{ to: "/workspace/generation-packages", label: "Bank" },
 		{ to: "/workspace/jobs", label: "Jobs" },
 		{ to: "/troubleshoot", label: "Issues" },
 	];
@@ -359,7 +365,10 @@ function Layout() {
 						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
 						<Route path="/operator/img" element={<OperatorPage mode="IMG" />} />
 						<Route path="/workspace/jobs" element={<WorkspaceJobsPage />} />
-						<Route path="/workspace/generation-packages" element={<WorkspaceGenerationPackagesPage />} />
+						<Route
+							path="/workspace/generation-packages"
+							element={<WorkspaceGenerationPackagesPage />}
+						/>
 						<Route
 							path="/approved-packages"
 							element={<ApprovedPackagesPage />}

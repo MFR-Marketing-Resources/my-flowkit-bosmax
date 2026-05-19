@@ -21,6 +21,8 @@ const DASHBOARD_ROUTES = {
 	prompt: "http://127.0.0.1:8100/prompt-preview",
 	registry: "http://127.0.0.1:8100/asset-registry",
 	operator: "http://127.0.0.1:8100/operator?portal=side",
+	creative: "http://127.0.0.1:8100/assets/creative-library?portal=side",
+	bank: "http://127.0.0.1:8100/workspace/generation-packages?portal=side",
 };
 
 function formatType(type) {

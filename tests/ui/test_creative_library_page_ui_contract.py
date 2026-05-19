@@ -10,6 +10,8 @@ def _read(relative_path: str) -> str:
 
 def test_creative_library_route_nav_and_page_contract_exist():
     app_source = _read("dashboard/src/App.tsx")
+    registry_source = _read("dashboard/src/pages/AssetRegistryPage.tsx")
+    generator_source = _read("dashboard/src/pages/ProductAssetGeneratorPage.tsx")
     page_source = _read("dashboard/src/pages/CreativeLibraryPage.tsx")
     api_source = _read("dashboard/src/api/creativeAssets.ts")
 
@@ -17,11 +19,19 @@ def test_creative_library_route_nav_and_page_contract_exist():
         "/assets/creative-library",
         "Creative Library",
         "Asset Registry",
+        '/assets/creative-library", label: "Creative"',
+        '/workspace/generation-packages", label: "Bank"',
     ]:
         assert token in app_source
 
     for token in [
-        "Persisted reusable creative assets",
+        "Upload and store reusable creative images for workspace use:",
+        "Character",
+        "/ Creator",
+        "Scene Context / Environment",
+        "Style / Mood",
+        "Composite",
+        "Frame references",
         "Upload New Asset",
         "Detail Panel",
         "Archive Asset",
@@ -39,6 +49,22 @@ def test_creative_library_route_nav_and_page_contract_exist():
         "/unarchive",
     ]:
         assert token in api_source
+
+    for token in [
+        "Asset Registry is read-only.",
+        "open Creative",
+        "/assets/creative-library",
+        "Open Creative Library",
+    ]:
+        assert token in registry_source
+
+    for token in [
+        "This page is preview-only.",
+        "reusable generated/external",
+        "/assets/creative-library",
+        "Open Creative Library",
+    ]:
+        assert token in generator_source
 
 
 def test_creative_library_form_covers_required_semantic_categories():

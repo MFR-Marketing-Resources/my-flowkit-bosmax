@@ -135,6 +135,8 @@ function createHarness(fetchQueue) {
 		new FakeButton(null, "product"),
 		new FakeButton(null, "prompt"),
 		new FakeButton(null, "registry"),
+		new FakeButton(null, "creative"),
+		new FakeButton(null, "bank"),
 	];
 
 	const domContentLoaded = {};
@@ -371,7 +373,11 @@ async function runReadyScenario() {
 		}),
 	);
 
-	harness.buttons.at(-1).click();
+	harness.buttons
+		.find(
+			(button) => button.getAttribute("data-dashboard-route") === "registry",
+		)
+		.click();
 	await harness.flushAsync();
 	harness.frame.onload();
 	harness.flushTimers(250);
@@ -384,9 +390,74 @@ async function runReadyScenario() {
 		"route click should retarget the iframe after runtime checks pass",
 	);
 
+	harness.fetchQueue.push(
+		makeJsonResponse({
+			extension_connected: true,
+			extension_state: "IDLE",
+			dashboard_serving_mode: "BACKEND_SERVED_STATIC",
+			repair_command: ".\\scripts\\install-local-agent.ps1",
+			offline_reason: null,
+		}),
+		makeJsonResponse({
+			status: "ok",
+			extension_connected: true,
+			extension_state: "idle",
+		}),
+	);
+
+	harness.buttons
+		.find(
+			(button) => button.getAttribute("data-dashboard-route") === "creative",
+		)
+		.click();
+	await harness.flushAsync();
+	harness.frame.onload();
+	harness.flushTimers(250);
+	assert(
+		harness.currentRouteKey.textContent === "creative",
+		"creative route click should update current route key",
+	);
+	assert(
+		harness.frame.src ===
+			"http://127.0.0.1:8100/assets/creative-library?portal=side",
+		"creative route should target the creative library portal route",
+	);
+
+	harness.fetchQueue.push(
+		makeJsonResponse({
+			extension_connected: true,
+			extension_state: "IDLE",
+			dashboard_serving_mode: "BACKEND_SERVED_STATIC",
+			repair_command: ".\\scripts\\install-local-agent.ps1",
+			offline_reason: null,
+		}),
+		makeJsonResponse({
+			status: "ok",
+			extension_connected: true,
+			extension_state: "idle",
+		}),
+	);
+
+	harness.buttons
+		.find((button) => button.getAttribute("data-dashboard-route") === "bank")
+		.click();
+	await harness.flushAsync();
+	harness.frame.onload();
+	harness.flushTimers(250);
+	assert(
+		harness.currentRouteKey.textContent === "bank",
+		"bank route click should update current route key",
+	);
+	assert(
+		harness.frame.src ===
+			"http://127.0.0.1:8100/workspace/generation-packages?portal=side",
+		"bank route should target the prompt handoff bank portal route",
+	);
+
 	harness.openSelectedRouteButton.click();
 	assert(
-		harness.tabCreates.at(-1) === "http://127.0.0.1:8100/asset-registry",
+		harness.tabCreates.at(-1) ===
+			"http://127.0.0.1:8100/workspace/generation-packages?portal=side",
 		"open selected route should use the active route",
 	);
 	assert(
