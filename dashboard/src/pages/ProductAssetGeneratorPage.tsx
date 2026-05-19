@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { runProductAssetGeneratorPreview } from "../api/productAssetGenerator";
 import ProductAssetGeneratorForm, {
 	buildProductAssetGeneratorRequest,
@@ -36,6 +37,7 @@ function createInitialDraft(): ProductAssetGeneratorDraft {
 }
 
 export default function ProductAssetGeneratorPage() {
+	const location = useLocation();
 	const [draft, setDraft] =
 		useState<ProductAssetGeneratorDraft>(createInitialDraft);
 	const [result, setResult] = useState<ProductAssetGeneratorResponse | null>(
@@ -46,6 +48,10 @@ export default function ProductAssetGeneratorPage() {
 	);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const creativeLibraryRoute =
+		new URLSearchParams(location.search).get("portal") === "side"
+			? "/assets/creative-library?portal=side"
+			: "/assets/creative-library";
 
 	async function handleSubmit() {
 		setLoading(true);
@@ -91,6 +97,18 @@ export default function ProductAssetGeneratorPage() {
 							{item}
 						</div>
 					))}
+				</div>
+				<div className="mt-3 flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-300 md:flex-row md:items-center md:justify-between">
+					<div className="bosmax-wrap-safe">
+						This page is preview-only. To persist reusable generated/external
+						images, upload or save them in Creative Library.
+					</div>
+					<Link
+						to={creativeLibraryRoute}
+						className="inline-flex items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200"
+					>
+						Open Creative Library
+					</Link>
 				</div>
 			</section>
 

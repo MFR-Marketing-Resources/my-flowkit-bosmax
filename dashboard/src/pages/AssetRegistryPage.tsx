@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
 	checkAssetCompatibility,
 	fetchAssetCatalog,
@@ -32,6 +33,7 @@ async function loadAllListings(entries: AssetCatalogEntry[]) {
 }
 
 export default function AssetRegistryPage() {
+	const location = useLocation();
 	const [catalog, setCatalog] = useState<AssetCatalogResponse | null>(null);
 	const [selectedAssetType, setSelectedAssetType] = useState("CHARACTER");
 	const [listingsByType, setListingsByType] = useState<
@@ -94,6 +96,10 @@ export default function AssetRegistryPage() {
 		() => catalog?.catalog.map((entry) => entry.asset_type).join(", ") || "",
 		[catalog],
 	);
+	const creativeLibraryRoute =
+		new URLSearchParams(location.search).get("portal") === "side"
+			? "/assets/creative-library?portal=side"
+			: "/assets/creative-library";
 
 	function handleSelectionChange(assetType: string, assetId: string) {
 		setSelections((current) => ({ ...current, [assetType]: assetId }));
@@ -151,6 +157,19 @@ export default function AssetRegistryPage() {
 				</div>
 				<div className="bosmax-pre-wrap-safe mt-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-400">
 					Supported asset types: {supportedTypes || "Loading..."}
+				</div>
+				<div className="mt-3 flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-300 md:flex-row md:items-center md:justify-between">
+					<div className="bosmax-wrap-safe">
+						Asset Registry is read-only. To upload reusable Character, Scene
+						Context, Style/Mood, or Composite Frame images, open Creative
+						Library.
+					</div>
+					<Link
+						to={creativeLibraryRoute}
+						className="inline-flex items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200"
+					>
+						Open Creative Library
+					</Link>
 				</div>
 				{error ? (
 					<div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">

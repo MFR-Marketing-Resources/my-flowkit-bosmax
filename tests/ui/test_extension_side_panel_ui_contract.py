@@ -19,6 +19,8 @@ def test_manifest_points_to_existing_side_panel_entrypoint():
 def test_side_panel_shell_exposes_runtime_markers_and_retry_controls():
 	html = _read("extension/side_panel.html")
 	js = _read("extension/side_panel.js")
+	popup_html = _read("extension/popup.html")
+	popup_js = _read("extension/popup.js")
 
 	for token in [
 		'data-testid="flowkit-side-panel-root"',
@@ -29,6 +31,10 @@ def test_side_panel_shell_exposes_runtime_markers_and_retry_controls():
 		'id="runtime-extension-state"',
 		'id="runtime-serving-mode"',
 		'id="runtime-offline-reason"',
+		'data-dashboard-route="creative"',
+		'data-dashboard-route="bank"',
+		"Creative",
+		"Bank",
 	]:
 		assert token in html
 
@@ -38,5 +44,23 @@ def test_side_panel_shell_exposes_runtime_markers_and_retry_controls():
 		"Local agent offline",
 		"Extension background disconnected",
 		"Dashboard build required",
+		"Creative Library",
+		"/assets/creative-library?portal=side",
+		"Prompt Handoff Bank",
+		"/workspace/generation-packages?portal=side",
 	]:
 		assert token in js
+
+	for token in [
+		'data-dashboard-route="creative"',
+		'data-dashboard-route="bank"',
+		"Creative",
+		"Bank",
+	]:
+		assert token in popup_html
+
+	for token in [
+		'creative: "http://127.0.0.1:8100/assets/creative-library?portal=side"',
+		'bank: "http://127.0.0.1:8100/workspace/generation-packages?portal=side"',
+	]:
+		assert token in popup_js

@@ -269,10 +269,10 @@ export default function CreativeLibraryPage() {
 					Creative Library
 				</div>
 				<div className="mt-2 max-w-4xl text-sm text-slate-300">
-					Persisted reusable creative assets for product references, character
-					creators, scene context, style mood, and future composite frames.
-					Asset Registry remains read-only provenance. This page is the
-					operator-facing write surface.
+					Upload and store reusable creative images for workspace use: Character
+					/ Creator, Scene Context / Environment, Style / Mood, and Composite
+					Frame references. Asset Registry remains read-only provenance. This
+					page is the operator-facing write surface.
 				</div>
 				{error ? (
 					<div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">

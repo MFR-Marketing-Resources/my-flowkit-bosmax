@@ -38,8 +38,10 @@ domains:
       - dashboard/src/api/products.ts
       - dashboard/src/api/workspacePackages.ts
       - dashboard/src/pages/ApprovedPackagesPage.tsx
+      - dashboard/src/pages/AssetRegistryPage.tsx
       - dashboard/src/pages/CreativeLibraryPage.tsx
       - dashboard/src/pages/OperatorPage.tsx
+      - dashboard/src/pages/ProductAssetGeneratorPage.tsx
       - dashboard/src/pages/ProductsSalesAnalyzerPage.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
       - dashboard/src/pages/ProductRegistrationPage.tsx
@@ -53,6 +55,8 @@ domains:
       - dashboard/src/components/workspace/WorkspaceImageAssetSlot.tsx
       - extension/side_panel.html
       - extension/side_panel.js
+      - extension/popup.html
+      - extension/popup.js
       - dashboard/src/types/index.ts
       - scripts/test-side-panel-route-wiring.js
       - tests/unit/test_approved_product_package_service.py
