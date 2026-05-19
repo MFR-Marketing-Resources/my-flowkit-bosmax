@@ -53,13 +53,13 @@ def test_list_queue_with_filters(client, monkeypatch):
     monkeypatch.setattr(f"{_SVC}.list_bulk_queue", mock)
     r = client.get(
         "/fastmoss-bulk/queue?promotion_status=READY_FOR_APPROVAL&claim_risk_level=LOW"
-        "&image_readiness=IMAGE_URL_PRESENT&category=Beauty&q=serum&page=2&page_size=10"
+        "&image_readiness=IMAGE_PRESENT&category=Beauty&q=serum&page=2&page_size=10"
     )
     assert r.status_code == 200
     mock.assert_awaited_once_with(
         promotion_status="READY_FOR_APPROVAL",
         claim_risk_level="LOW",
-        image_readiness="IMAGE_URL_PRESENT",
+        image_readiness="IMAGE_PRESENT",
         category="Beauty",
         q="serum",
         page=2,

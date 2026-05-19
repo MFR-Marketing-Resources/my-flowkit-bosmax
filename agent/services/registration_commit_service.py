@@ -94,8 +94,10 @@ class RegistrationCommitService:
             blocked_reasons.append("SOURCE_LANE_MUST_BE_FASTMOSS_PROMOTED")
         if draft.claim_gate == "CLAIM_BLOCKED":
             blocked_reasons.append("CLAIM_BLOCKED")
-        if draft.claim_risk_level in {"MEDIUM", "HIGH"}:
-            blocked_reasons.append(f"CLAIM_RISK_NOT_ELIGIBLE_FOR_BULK_APPROVE:{draft.claim_risk_level}")
+        if draft.claim_risk_level != "LOW":
+            blocked_reasons.append(
+                f"CLAIM_RISK_NOT_ELIGIBLE_FOR_FASTMOSS_PROMOTED_COMMIT:{draft.claim_risk_level or 'UNKNOWN'}"
+            )
         if draft.image_asset_status == "IMAGE_REFERENCE_MISSING":
             blocked_reasons.append("IMAGE_MISSING_BLOCKS_FASTMOSS_PROMOTED_COMMIT")
         if not draft.declared_evidence_fields.get("product_name"):
@@ -142,6 +144,7 @@ class RegistrationCommitService:
             "commission_amount": draft.declared_evidence_fields.get("commission_amount"),
             "commission_rate": draft.declared_evidence_fields.get("commission_rate"),
             "commission": draft.declared_evidence_fields.get("commission_rate"),
+            "mapping_source": "FASTMOSS_PROMOTED",
             "mapping_review_status": "REVIEWED_FASTMOSS_PROMOTED_COMMIT",
             "mapping_status": "APPROVED",
             "fastmoss_reference_id": draft.fastmoss_reference_id,

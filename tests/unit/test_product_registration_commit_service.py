@@ -175,3 +175,76 @@ async def test_commit_blocked_when_draft_recompute_required(mock_storage):
     result = await RegistrationCommitService.commit_draft(req)
     assert result["commit_status"] == "BLOCKED"
     assert "DRAFT_RECOMPUTE_REQUIRED" in result["blocked_reasons"]
+
+
+# ---------------------------------------------------------------------------
+# Hotfix #92 governance seal — non-LOW claim risk at final commit authority
+# ---------------------------------------------------------------------------
+
+def _make_fastmoss_promoted_draft(**overrides) -> RegistrationReviewDraft:
+    defaults = dict(
+        review_draft_id="dfp-001",
+        review_status="REVIEW_READY",
+        source_lane="FASTMOSS_PROMOTED",
+        claim_risk_level="LOW",
+        image_asset_status="IMAGE_URL_PRESENT",
+        declared_evidence_fields={"product_name": "Test Serum", "image_url": "https://img.com/s.jpg"},
+        canonical_candidate_fields={"normalized_name": "Test Serum"},
+        fastmoss_reference_id="ref-001",
+        missing_required_evidence=[],
+    )
+    defaults.update(overrides)
+    return RegistrationReviewDraft(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_commit_fastmoss_promoted_blocks_unknown_claim_risk(mock_storage, mock_crud):
+    mock_storage.get_draft.return_value = _make_fastmoss_promoted_draft(claim_risk_level="UNKNOWN")
+    req = RegistrationCommitRequest(
+        draft_id="dfp-001",
+        write_back_confirmed=True,
+        user_confirmation_phrase="PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH",
+    )
+    result = await RegistrationCommitService.commit_fastmoss_promoted_draft(req)
+    assert result["commit_status"] == "BLOCKED"
+    assert any(
+        "CLAIM_RISK_NOT_ELIGIBLE_FOR_FASTMOSS_PROMOTED_COMMIT:UNKNOWN" in r
+        for r in result["blocked_reasons"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_commit_fastmoss_promoted_blocks_empty_claim_risk(mock_storage, mock_crud):
+    # claim_risk_level is typed str (non-optional); empty string represents the "not set" case
+    mock_storage.get_draft.return_value = _make_fastmoss_promoted_draft(claim_risk_level="")
+    req = RegistrationCommitRequest(
+        draft_id="dfp-001",
+        write_back_confirmed=True,
+        user_confirmation_phrase="PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH",
+    )
+    result = await RegistrationCommitService.commit_fastmoss_promoted_draft(req)
+    assert result["commit_status"] == "BLOCKED"
+    # empty string coerces to "UNKNOWN" via `level or 'UNKNOWN'` in the blocked reason
+    assert any(
+        "CLAIM_RISK_NOT_ELIGIBLE_FOR_FASTMOSS_PROMOTED_COMMIT:UNKNOWN" in r
+        for r in result["blocked_reasons"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_fastmoss_promoted_commit_preserves_source_lane_lineage(mock_storage, mock_crud):
+    mock_storage.get_draft.return_value = _make_fastmoss_promoted_draft()
+    req = RegistrationCommitRequest(
+        draft_id="dfp-001",
+        write_back_confirmed=True,
+        user_confirmation_phrase="PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH",
+    )
+    result = await RegistrationCommitService.commit_fastmoss_promoted_draft(req)
+    assert result["commit_status"] == "COMMITTED"
+
+    call_kwargs = mock_crud.create_product.await_args.kwargs
+    assert call_kwargs["source"] == "MANUAL"
+    assert call_kwargs["mapping_source"] == "FASTMOSS_PROMOTED"
+    assert call_kwargs["mapping_review_status"] == "REVIEWED_FASTMOSS_PROMOTED_COMMIT"
+    assert call_kwargs["mapping_status"] == "APPROVED"
+    assert call_kwargs["fastmoss_reference_id"] == "ref-001"
