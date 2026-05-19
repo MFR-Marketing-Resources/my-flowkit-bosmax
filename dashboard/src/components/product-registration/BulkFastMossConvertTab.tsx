@@ -215,19 +215,19 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 
   return (
     <div className="space-y-5">
-      {/* Stats Bar */}
-      {stats && (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Queue Stats</span>
-            <button
-              onClick={handleSync}
-              disabled={syncing}
-              className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 text-white text-[10px] font-bold uppercase tracking-widest transition-all"
-            >
-              {syncing ? 'Syncing…' : 'Sync Queue'}
-            </button>
-          </div>
+      {/* Stats Bar — Sync Queue is always visible; stats badges appear once loaded */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Queue Stats</span>
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 text-white text-[10px] font-bold uppercase tracking-widest transition-all"
+          >
+            {syncing ? 'Syncing…' : 'Sync Queue'}
+          </button>
+        </div>
+        {stats ? (
           <div className="flex flex-wrap gap-2">
             {Object.entries(stats.by_status).map(([status, count]) => (
               <button
@@ -242,8 +242,10 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
               Total: {stats.total}
             </span>
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-[10px] text-slate-600 italic">Click Sync Queue to load FastMoss reference rows into the conversion queue.</p>
+        )}
+      </div>
 
       {/* Action / Error Messages */}
       {actionMessage && (
@@ -328,39 +330,43 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
         </div>
       </div>
 
-      {/* Bulk Action Bar */}
-      {selected.size > 0 && (
-        <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 flex items-center gap-3 flex-wrap">
+      {/* Bulk Action Bar — always visible; buttons disabled until rows are selected */}
+      <div className={`rounded-xl border px-4 py-3 flex items-center gap-3 flex-wrap ${selected.size > 0 ? 'border-indigo-500/30 bg-indigo-500/10' : 'border-slate-700/40 bg-slate-800/30'}`}>
+        {selected.size > 0 ? (
           <span className="text-xs font-bold text-indigo-300">{selected.size} selected</span>
-          <button
-            onClick={handleGenerateSelected}
-            disabled={loading}
-            className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 text-white text-[10px] font-bold uppercase tracking-widest transition-all"
-          >
-            Generate Drafts
-          </button>
-          <button
-            onClick={() => { setApprovePhrase(''); setShowApproveModal(true) }}
-            disabled={loading}
-            className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white text-[10px] font-bold uppercase tracking-widest transition-all"
-          >
-            Approve Ready
-          </button>
-          <button
-            onClick={handleRejectSelected}
-            disabled={loading}
-            className="px-3 py-1 rounded-lg bg-red-700/60 hover:bg-red-600/60 disabled:bg-slate-800 text-red-200 text-[10px] font-bold uppercase tracking-widest transition-all"
-          >
-            Reject Selected
-          </button>
+        ) : (
+          <span className="text-[10px] text-slate-500 italic">Select FastMoss rows to enable bulk actions.</span>
+        )}
+        <button
+          onClick={handleGenerateSelected}
+          disabled={loading || selected.size === 0}
+          className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed text-white text-[10px] font-bold uppercase tracking-widest transition-all"
+        >
+          Generate Drafts
+        </button>
+        <button
+          onClick={() => { setApprovePhrase(''); setShowApproveModal(true) }}
+          disabled={loading || selected.size === 0}
+          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed text-white text-[10px] font-bold uppercase tracking-widest transition-all"
+        >
+          Approve Ready
+        </button>
+        <button
+          onClick={handleRejectSelected}
+          disabled={loading || selected.size === 0}
+          className="px-3 py-1 rounded-lg bg-red-700/60 hover:bg-red-600/60 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed text-red-200 text-[10px] font-bold uppercase tracking-widest transition-all"
+        >
+          Reject
+        </button>
+        {selected.size > 0 && (
           <button
             onClick={() => setSelected(new Set())}
             className="ml-auto text-[9px] text-slate-500 hover:text-white uppercase tracking-widest"
           >
             Clear selection
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Table */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden">
