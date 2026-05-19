@@ -225,7 +225,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
               disabled={syncing}
               className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 text-white text-[10px] font-bold uppercase tracking-widest transition-all"
             >
-              {syncing ? 'Syncing…' : 'Sync from FastMoss'}
+              {syncing ? 'Syncing…' : 'Sync Queue'}
             </button>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -369,7 +369,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
         ) : !queue || queue.items.length === 0 ? (
           <div className="p-8 text-center text-slate-500 text-xs">
             No queue rows found.{' '}
-            {!stats?.total ? 'Click "Sync from FastMoss" to load reference rows.' : 'Try adjusting filters.'}
+            {!stats?.total ? 'Click "Sync Queue" to load reference rows.' : 'Try adjusting filters.'}
           </div>
         ) : (
           <div className="overflow-x-auto">

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import ProductKnowledgeIntakeForm from '../components/product-registration/ProductKnowledgeIntakeForm'
 import ProductKnowledgeResultPanel from '../components/product-registration/ProductKnowledgeResultPanel'
 import AIFormPack from '../components/product-registration/AIFormPack'
@@ -10,7 +11,10 @@ import { postAPI, getAPI } from '../api/client'
 type ActiveTab = 'single' | 'bulk'
 
 export default function ProductRegistrationPage() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('single')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [activeTab, setActiveTab] = useState<ActiveTab>(
+    searchParams.get('tab') === 'bulk' ? 'bulk' : 'single'
+  )
   const [result, setResult] = useState<ProductKnowledgeCompleteResponse | null>(null)
   const [reviewDraft, setReviewDraft] = useState<RegistrationReviewDraft | null>(null)
   const [savedDrafts, setSavedDrafts] = useState<RegistrationReviewDraft[]>([])
@@ -72,6 +76,7 @@ export default function ProductRegistrationPage() {
     setReviewDraft(draft)
     setResult(null)
     setActiveTab('single')
+    setSearchParams({})
     setTimeout(() => {
       document.getElementById('review-draft-section')?.scrollIntoView({ behavior: 'smooth' })
     }, 100)
@@ -93,7 +98,7 @@ export default function ProductRegistrationPage() {
 
       <div className="mb-6 flex gap-1 rounded-xl bg-slate-900/60 border border-slate-800 p-1 w-fit">
         <button
-          onClick={() => setActiveTab('single')}
+          onClick={() => { setActiveTab('single'); setSearchParams({}) }}
           className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
             activeTab === 'single'
               ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
@@ -103,7 +108,7 @@ export default function ProductRegistrationPage() {
           Single Product
         </button>
         <button
-          onClick={() => setActiveTab('bulk')}
+          onClick={() => { setActiveTab('bulk'); setSearchParams('tab=bulk') }}
           className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
             activeTab === 'bulk'
               ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'

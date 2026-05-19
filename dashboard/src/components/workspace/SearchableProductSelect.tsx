@@ -102,11 +102,19 @@ export default function SearchableProductSelect({
 									);
 								})()}
 							</div>
-							{/* Reference-only: show reason + Smart Registration guidance */}
+							{/* Reference-only: show reason + Bulk FastMoss Convert CTA */}
 							{selectedProduct.reference_only ? (
-								<div className="bosmax-wrap-safe mt-2 text-[10px] text-amber-200/80">
-									{selectedProduct.catalog_visibility_reason ||
-										"Visible for review only. Convert via Smart Registration before package load/generation."}
+								<div className="bosmax-wrap-safe mt-2 text-[10px] text-amber-200/80 flex items-start justify-between gap-2">
+									<span>
+										{selectedProduct.catalog_visibility_reason ||
+											"FastMoss reference is review-only. Convert eligible references through Bulk FastMoss Convert before workspace generation."}
+									</span>
+									<a
+										href="/product-registration?tab=bulk"
+										className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-300 hover:bg-amber-500/20 transition-colors whitespace-nowrap"
+									>
+										Open Bulk FastMoss Convert
+									</a>
 								</div>
 							) : readinessByProductId[selectedProduct.id]?.detail ? (
 								<div className="bosmax-wrap-safe mt-2 text-[10px] text-slate-400">
