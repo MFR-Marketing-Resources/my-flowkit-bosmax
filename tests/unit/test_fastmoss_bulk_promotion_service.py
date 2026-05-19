@@ -6,8 +6,10 @@ Issue: #92
 from __future__ import annotations
 
 import pytest
+from unittest.mock import AsyncMock
 
 from agent.services.fastmoss_bulk_promotion_service import (
+    sync_bulk_queue,
     _classify_promotion_status,
     _derive_image_readiness,
     _apply_lineage_to_draft,
@@ -269,3 +271,102 @@ def test_classify_does_not_accept_unknown_risk_as_ready():
 
 async def _async_return(value):
     return value
+
+
+# ---------------------------------------------------------------------------
+# sync_bulk_queue — empty catalog / malformed rows / valid refs / idempotency
+# ---------------------------------------------------------------------------
+
+_REF_SVC = "agent.services.fastmoss_bulk_promotion_service.list_fastmoss_reference_products"
+
+
+@pytest.mark.asyncio
+async def test_sync_queue_empty_catalog_returns_zero_counts(monkeypatch):
+    """Sync with empty reference catalog must return 200-shape with zero counts."""
+    monkeypatch.setattr(_REF_SVC, AsyncMock(return_value=[]))
+    result = await sync_bulk_queue()
+    assert result["synced"] == 0
+    assert result["skipped"] == 0
+    assert result["errors"] == 0
+    assert result["total_refs_loaded"] == 0
+    assert "synced_at" in result
+
+
+@pytest.mark.asyncio
+async def test_sync_queue_skips_malformed_refs_no_crash(monkeypatch):
+    """Refs missing id or raw_product_title increment errors and do not crash sync."""
+    bad_refs = [
+        {"id": "", "raw_product_title": "something"},
+        {"id": "ref-x", "raw_product_title": ""},
+        {"id": None, "raw_product_title": "test"},
+    ]
+    monkeypatch.setattr(_REF_SVC, AsyncMock(return_value=bad_refs))
+    result = await sync_bulk_queue()
+    assert result["errors"] == 3
+    assert result["synced"] == 0
+    assert result["total_refs_loaded"] == 3
+
+
+@pytest.mark.asyncio
+async def test_sync_queue_creates_rows_for_valid_refs(monkeypatch):
+    """Valid FastMoss refs get inserted into fastmoss_bulk_draft_status."""
+    valid_refs = [
+        {
+            "id": "ref-valid-001",
+            "raw_product_title": "Test Serum",
+            "image_url": "https://example.com/img.jpg",
+            "source_url": "https://example.com/src",
+            "tiktok_product_url": None,
+            "claim_risk_level": "LOW",
+            "category": "Beauty",
+            "mapping_confidence": 0.9,
+            "sold_count": 1000,
+            "commission_rate": "10%",
+            "fastmoss_source_file": "batch-001.xlsx",
+        }
+    ]
+    monkeypatch.setattr(_REF_SVC, AsyncMock(return_value=valid_refs))
+    result = await sync_bulk_queue()
+    assert result["synced"] == 1
+    assert result["skipped"] == 0
+    assert result["errors"] == 0
+    assert result["total_refs_loaded"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_queue_idempotent(monkeypatch):
+    """Running sync twice on the same refs skips already-queued rows."""
+    valid_refs = [
+        {
+            "id": "ref-idem-001",
+            "raw_product_title": "Idempotent Cream",
+            "image_url": "https://example.com/img.jpg",
+            "source_url": None,
+            "tiktok_product_url": None,
+            "claim_risk_level": "LOW",
+        }
+    ]
+    mock = AsyncMock(return_value=valid_refs)
+    monkeypatch.setattr(_REF_SVC, mock)
+    first = await sync_bulk_queue()
+    second = await sync_bulk_queue()
+    assert first["synced"] == 1
+    assert second["synced"] == 0
+    assert second["skipped"] == 1
+
+
+# ---------------------------------------------------------------------------
+# DB migration — fastmoss_bulk_draft_status must exist after init_db()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_db_migration_creates_fastmoss_bulk_draft_status():
+    """init_db() must create fastmoss_bulk_draft_status regardless of prior batch table state."""
+    from agent.db.schema import get_db
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='fastmoss_bulk_draft_status'"
+    )
+    row = await cursor.fetchone()
+    assert row is not None, "fastmoss_bulk_draft_status table must exist after init_db()"
