@@ -243,10 +243,37 @@ def _extract_facts(request: ProductKnowledgeCompleteRequest) -> dict[str, Any]:
     elif request.price:
         facts["price"] = request.price
         
-    # Simple regex for size/volume
-    size_match = re.search(r"(\d+(?:\.\d+)?\s*(?:ml|g|kg|cm|mm|oz|liter|litre))", combined_text, re.I)
-    if size_match:
-        facts["size_or_volume"] = size_match.group(1)
+    # Multi-pattern size/volume extractor — supports liquid, weight, dimension, count,
+    # apparel, fabric-width, and electronics specs common in Malaysian TikTok listings.
+    # Dimension patterns run first so "30x60cm" is captured whole before "60cm" alone.
+    _SIZE_PATTERNS = [
+        # Dimension patterns (e.g. 30x60cm, 30×60) — must run before single-unit patterns
+        r"\d+\s*[x×]\s*\d+(?:\s*cm)?",
+        # Bidang (fabric width) — must run before generic numeric patterns
+        r'bidang\s*\d+(?:["\']|-\d+(?:\s*dan\s*\d+(?:-\d+)?)?)?',
+        # Range with units (e.g. 4ft-12ft, 100g/200g)
+        r"\d+\s*(?:ft|cm|g|ml)\s*[-/]\s*\d+\s*(?:ft|cm|g|ml)",
+        # Multiple weights in one string (e.g. 5 LITER / 5 KG)
+        r"\d+\s*(?:liter|litre|kg)\s*/\s*\d+\s*(?:liter|litre|kg)",
+        # Liquid / weight / length with units (e.g. 400ml, 1.5kg, 30cm, 240W)
+        r"\d+(?:\.\d+)?\s*(?:ml|l(?:iter|itre)?|g|kg|cm|mm|m(?:eter|etre)?|ft|inch|oz|w(?:att)?)",
+        # Count/pack patterns (e.g. 50pcs, 100 tablets, 3 sachet)
+        r"\d+\s*(?:pcs|pieces|pc|tablets?|sachets?|kapsul|pack|pasang|biji|keping|helai)",
+        # Apparel size ranges with dash/slash separator (e.g. S-5XL, M-L-XL)
+        r"(?:XS|S|M|L|XL|XXL|XXXL|\dXL)(?:\s*[-/]\s*(?:XS|S|M|L|XL|XXL|XXXL|\dXL))+",
+        # Apparel size ranges with space separator needing ≥2 tokens (e.g. XS S M L)
+        r"\b(?:XS|S|M|L|XL|XXL|XXXL|\dXL)(?:\s+(?:XS|S|M|L|XL|XXL|XXXL|\dXL)){2,}\b",
+        # Standard apparel size tokens (e.g. SML, FREE SIZE)
+        r"\b(?:SML|free\s*size|freesize|saiz\s*bebas|one\s*size)\b",
+    ]
+    _size_found = None
+    for _pat in _SIZE_PATTERNS:
+        _m = re.search(_pat, combined_text, re.I)
+        if _m:
+            _size_found = _m.group(0).strip()
+            break
+    if _size_found:
+        facts["size_or_volume"] = _size_found
     elif request.size_or_volume:
         facts["size_or_volume"] = request.size_or_volume
         
@@ -271,7 +298,7 @@ def _build_temp_product(
         "raw_product_title": name,
         "product_display_name": name,
         "source": _normalize_source_lane(request.source_lane) or "MANUAL",
-        "category": taxonomy_candidate.get("category"),
+        "category": taxonomy_candidate.get("category") or request.category,
         "subcategory": taxonomy_candidate.get("subcategory"),
         "type": taxonomy_candidate.get("type"),
         "price": extracted_facts.get("price") or request.price,
@@ -440,7 +467,26 @@ def _evaluate_completion_status(
         missing.append("PRODUCT_NAME")
     if not request.product_knowledge_text and not request.paste_anything_about_product:
         missing.append("PRODUCT_DESCRIPTION_OR_KNOWLEDGE")
-    if not facts.get("size_or_volume") and not request.size_or_volume:
+    # SIZE_OR_VOLUME_EVIDENCE is hard-required for consumable/measurable categories
+    # but exempt for apparel, fashion, books, accessories, and home decor where
+    # size is either free-form or irrelevant to product truth.
+    _SIZE_EXEMPT_FAMILIES = {
+        "fashion_apparel", "fashion_modestwear", "fashion_sportswear",
+        "APPAREL_SLEEPWEAR", "ACCESSORY_SMALL_ITEM", "stationery_paper",
+        "HOME_TEXTILE", "HOUSEHOLD_STORAGE_ORGANIZER", "electronics_wearable",
+    }
+    _SIZE_EXEMPT_CATEGORY_SUBSTRINGS = {
+        "fashion", "muslim fashion", "womenswear", "menswear", "apparel",
+        "clothing", "books", "stationery", "home decor", "accessories",
+        "phones", "electronics",
+    }
+    _req_category_lower = (request.category or "").lower()
+    _family = intelligence.get("bosmax_product_family", "")
+    _size_exempt = (
+        _family in _SIZE_EXEMPT_FAMILIES
+        or any(sub in _req_category_lower for sub in _SIZE_EXEMPT_CATEGORY_SUBSTRINGS)
+    )
+    if not _size_exempt and not facts.get("size_or_volume") and not request.size_or_volume:
         missing.append("SIZE_OR_VOLUME_EVIDENCE")
     if request.price is None:
         missing.append("PRICE_EVIDENCE")

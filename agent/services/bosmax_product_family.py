@@ -90,6 +90,9 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
             "carpet",
             "karpet",
             "rug",
+            "sarung bantal",
+            "bolster case",
+            "sarung bolster",
         ],
     ):
         # Guardrail: HOME_TEXTILE must not hijack beauty powder/matte products.
@@ -209,6 +212,65 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
     elif _contains_any(haystack, ["smartwatch", "wearable", "jam tangan"]):
         family = "electronics_wearable"
         reason = "Wearable-device keywords matched."
+    elif _contains_any(haystack, ["stokin", "stoking", " socks", "sock "]):
+        family = "fashion_apparel"
+        reason = "Socks/stokin keywords matched."
+    elif _contains_any(haystack, [
+        "scarf", "shawl", "tudung bawal", "bawal", "tudung instant",
+        "telekung", "mukena", "sejadah",
+    ]):
+        family = "fashion_modestwear"
+        reason = "Modest fashion / scarf / telekung keywords matched."
+    elif _contains_any(haystack, [
+        "mascara", "maskara", "eyeliner", "eyeshadow", "brow gel", "eyebrow",
+        "lipstick", "lipstik", "lip tint", "lip gloss", "lip liner",
+    ]):
+        family = "BEAUTY_PERSONAL_CARE"
+        reason = "Eye/lip makeup keywords matched."
+    elif _contains_any(haystack, [
+        "syampu", "shampoo", "rawatan rambut", "hair care", "hair treatment",
+        "keratin", "perwarna rambut", "hair colour", "hair color", "hair mask",
+        "conditioner", "hair serum",
+    ]):
+        family = "BEAUTY_PERSONAL_CARE"
+        reason = "Hair care keywords matched."
+    elif _contains_any(haystack, [
+        "wireless bra", "baju dalam wanita", "baju dalam",
+    ]):
+        family = "fashion_apparel"
+        reason = "Bra / underwear keywords matched."
+    elif _contains_any(haystack, [
+        "kabel", " cable", "usb ", "charger", "pengecas", "power bank",
+        "earphone", "headphone", "earbuds",
+    ]):
+        family = "electronics_wearable"
+        reason = "Cable / USB / charger / audio accessories keywords matched."
+    elif _contains_any(haystack, [
+        "buku ", " book", "kitab", "panduan", "wirid", "zikir", "doa ",
+        "novel", "ebook", "rujukan", "modul",
+    ]):
+        family = "stationery_paper"
+        reason = "Book / kitab / panduan keywords matched."
+    elif _contains_any(haystack, [
+        "wall sticker", "wallpaper", "tile sticker", "dinding", "wall decor",
+        "hiasan dinding",
+    ]):
+        family = "HOME_TEXTILE"
+        reason = "Wall decor / sticker keywords matched."
+    elif _contains_any(haystack, [
+        "tissue", "tisu", "paper towel", "tisu muka", "tisu basah kering",
+    ]):
+        family = "BABY_WIPES"
+        reason = "Tissue / tisu keywords matched."
+    elif _contains_any(haystack, ["tracksuit", "track suit", "track bottom", "track pants"]):
+        family = "fashion_sportswear"
+        reason = "Tracksuit keywords matched."
+    elif _contains_any(haystack, [
+        "blender", "mixer", "chopper", "pengisar", "vacuum sealer",
+        "air fryer", "slow cooker", "rice cooker",
+    ]):
+        family = "HOUSEHOLD_STORAGE_ORGANIZER"
+        reason = "Household appliance keywords matched."
     elif _contains_any(haystack, ["male health", "suami isteri", "batin", "tahan lama", "kuat lelaki"]):
         # Strict Isolation: MALE_HEALTH_SENSITIVE requires specific sensitive health tokens.
         # Simple 'lelaki' or 'men' or 'pants' are handled by fashion logic below.
