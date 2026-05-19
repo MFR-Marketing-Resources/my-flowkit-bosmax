@@ -53,6 +53,26 @@ async def _find_manual_duplicate(draft: RegistrationReviewDraft) -> dict[str, An
     return None
 
 
+def _is_canonical_duplicate_blocker(row: dict) -> bool:
+    """Return True if this product row represents owned canonical truth that blocks promotion.
+
+    Raw source=FASTMOSS reference-catalog rows are the inputs being promoted — they must
+    NOT block the commit. Only block on rows that are confirmed canonical product truth:
+      - source=MANUAL (user-owned)
+      - source=IMPORTED (canonical import)
+      - source=FASTMOSS with mapping_source=FASTMOSS_PROMOTED (already committed via this pipeline)
+      - any row with fastmoss_reference_id set (already promoted and committed)
+
+    Mirrors the policy applied in fastmoss_bulk_promotion_service._detect_queue_duplicate().
+    """
+    src = str(row.get("source") or "")
+    mapping_src = str(row.get("mapping_source") or "")
+    fastmoss_ref = str(row.get("fastmoss_reference_id") or "")
+    if src == "FASTMOSS" and not mapping_src and not fastmoss_ref:
+        return False
+    return True
+
+
 async def _find_fastmoss_promoted_duplicate(draft) -> dict | None:
     candidate_names = [
         str(draft.canonical_candidate_fields.get("normalized_name") or "").strip(),
@@ -61,20 +81,21 @@ async def _find_fastmoss_promoted_duplicate(draft) -> dict | None:
     ]
     checked_names = [n for n in candidate_names if n]
     tiktok_url = str(draft.declared_evidence_fields.get("tiktok_product_url") or "").strip()
-    for source in ("MANUAL", "FASTMOSS"):
-        for name in checked_names:
-            matches = await crud.list_products(source=source, query=name, limit=50)
-            lowered = name.lower()
-            for row in matches:
-                row_names = {
-                    str(row.get("raw_product_title") or "").lower(),
-                    str(row.get("product_display_name") or "").lower(),
-                    str(row.get("product_short_name") or "").lower(),
-                }
-                if lowered in row_names:
-                    return row
-                if tiktok_url and tiktok_url == str(row.get("tiktok_product_url") or "").strip():
-                    return row
+    for name in checked_names:
+        matches = await crud.list_products(query=name, limit=50)
+        lowered = name.lower()
+        for row in matches:
+            if not _is_canonical_duplicate_blocker(row):
+                continue
+            row_names = {
+                str(row.get("raw_product_title") or "").lower(),
+                str(row.get("product_display_name") or "").lower(),
+                str(row.get("product_short_name") or "").lower(),
+            }
+            if lowered in row_names:
+                return row
+            if tiktok_url and tiktok_url == str(row.get("tiktok_product_url") or "").strip():
+                return row
     return None
 
 class RegistrationCommitService:
