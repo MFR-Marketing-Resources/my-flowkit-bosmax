@@ -1465,9 +1465,17 @@ export default function ProductsSalesAnalyzerPage() {
 														) : null}
 													</div>
 													{isReferenceOnlyProduct(selectedProduct) ? (
-														<div className="mt-2 rounded border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
-															{selectedProduct.catalog_visibility_reason ||
-																"Reference-only FastMoss lane. Use Smart Registration to create a governed product row before package load."}
+														<div className="mt-2 rounded border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200 flex items-start justify-between gap-3">
+															<span>
+																{selectedProduct.catalog_visibility_reason ||
+																	"FastMoss reference is review-only. Convert eligible references through Bulk FastMoss Convert before workspace generation."}
+															</span>
+															<a
+																href="/product-registration?tab=bulk"
+																className="shrink-0 rounded bg-amber-500/20 border border-amber-500/30 px-2 py-1 text-[10px] font-bold text-amber-300 hover:bg-amber-500/30 transition-colors whitespace-nowrap"
+															>
+																Open Bulk FastMoss Convert
+															</a>
 														</div>
 													) : null}
 													<div className="mt-3 flex flex-wrap gap-2">
