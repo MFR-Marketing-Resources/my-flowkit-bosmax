@@ -200,6 +200,31 @@ def test_bulk_fastmoss_approve_phrase_remains_unchanged():
     assert "RECOMPUTE_ONLY_NO_APPROVAL" in content, "Recompute phrase must coexist with approval phrase"
 
 
+def test_bulk_fastmoss_duplicate_review_lane_contract():
+    """Duplicate review lane must expose modal actions, phrase gate, and linked badge."""
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx").read_text(encoding="utf-8")
+    assert "Review Duplicate" in content, "Duplicate review action missing"
+    assert "FastMoss Row" in content, "Duplicate modal left-side comparison missing"
+    assert "Existing Product Candidate" in content, "Duplicate modal right-side comparison missing"
+    assert "LINK_TO_EXISTING_PRODUCT" in content, "Link action missing"
+    assert "MARK_FALSE_DUPLICATE" in content, "False duplicate action missing"
+    assert "KEEP_BLOCKED" in content, "Keep blocked action missing"
+    assert "REJECT_REFERENCE" in content, "Reject reference action missing"
+    assert "CLEAR_DUPLICATE_FOR_REVIEW" in content, "False duplicate confirmation phrase missing"
+    assert "LINKED TO PRODUCT TRUTH" in content, "Linked badge missing"
+    assert "Use linked Product Truth for content generation" in content, "Linked content-generation policy hint missing"
+
+
+def test_bulk_fastmoss_duplicate_review_link_requires_product_contract():
+    """Duplicate review modal must enforce linked product id before link confirmation."""
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx").read_text(encoding="utf-8")
+    assert "bulk-fastmoss-linked-product-id" in content, "Linked product id field missing"
+    assert 'duplicateAction === "LINK_TO_EXISTING_PRODUCT"' in content, "Link action gate missing"
+    assert "duplicateLinkProductId.trim().length === 0" in content, "Linked product id required disable gate missing"
+
+
 def test_product_registration_page_has_open_bulk_fastmoss_header_cta():
     """ProductRegistrationPage must have a prominent 'Open Bulk FastMoss Convert' button in header."""
     root = Path(__file__).parent.parent.parent

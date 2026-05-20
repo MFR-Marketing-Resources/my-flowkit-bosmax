@@ -18,6 +18,8 @@ from agent.services.fastmoss_bulk_promotion_service import (
     _detect_queue_duplicate,
     bulk_approve_drafts,
     recompute_selected,
+    can_generate_content_for_fastmoss_reference,
+    resolve_duplicate_queue_row,
     update_queue_row_status,
 )
 from agent.models.product_registration import RegistrationReviewDraft
@@ -575,6 +577,288 @@ async def test_recompute_selected_summary_counts_are_correct(monkeypatch):
     assert result["duplicate_suspected"] == 0
     assert result["failed"] == 0
     assert result["skipped"] == 3
+
+
+# ---------------------------------------------------------------------------
+# duplicate review lane — governance and content authority
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unresolved_duplicate_suspected_cannot_generate_content():
+    from agent.db import crud
+
+    reference_id = "ref-dup-policy-unresolved-001"
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title="Duplicate Policy Unresolved",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+        suspected_existing_product_id="prod-suspect-001",
+        suspected_existing_product_title="Canonical Existing Product",
+    )
+
+    result = await can_generate_content_for_fastmoss_reference(reference_id)
+
+    assert result["content_generation_allowed"] is False
+    assert result["resolved_product_id"] is None
+    assert result["reason"] == "STATUS_BLOCKS_CONTENT_GENERATION:DUPLICATE_SUSPECTED"
+
+
+@pytest.mark.asyncio
+async def test_link_to_existing_product_allows_content_generation_without_creating_new_product():
+    from agent.db import crud
+
+    product_count_before = len(await crud.list_products(limit=5000))
+    existing_product = await crud.create_product(
+        raw_product_title="Canonical Linked Serum",
+        source="MANUAL",
+        product_display_name="Canonical Linked Serum",
+        mapping_source="MANUAL_REVIEW",
+    )
+    await crud.create_bulk_queue_row(
+        reference_id="ref-dup-link-001",
+        raw_product_title="Canonical Linked Serum",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+        suspected_existing_product_id=existing_product["id"],
+        suspected_existing_product_title=existing_product["product_display_name"],
+        suspected_existing_product_source=existing_product["source"],
+        suspected_existing_product_mapping_source=existing_product.get("mapping_source"),
+        duplicate_match_reason="TITLE_MATCH_EXISTING_PRODUCT",
+    )
+
+    result = await resolve_duplicate_queue_row(
+        "ref-dup-link-001",
+        action="LINK_TO_EXISTING_PRODUCT",
+        linked_product_id=existing_product["id"],
+        note="Operator linked duplicate to canonical product truth.",
+    )
+
+    assert result["new_status"] == "DUPLICATE_LINKED"
+    assert result["linked_product_id"] == existing_product["id"]
+    assert result["duplicate_resolution"] == "LINKED_TO_EXISTING_PRODUCT"
+    assert result["content_generation_allowed"] is True
+    assert result["message"] == "LINKED_EXISTING_PRODUCT_TRUTH"
+
+    row = await crud.get_bulk_queue_row("ref-dup-link-001")
+    assert row is not None
+    assert row["promotion_status"] == "DUPLICATE_LINKED"
+    assert row["linked_product_id"] == existing_product["id"]
+
+    policy = await can_generate_content_for_fastmoss_reference("ref-dup-link-001")
+    assert policy["content_generation_allowed"] is True
+    assert policy["resolved_product_id"] == existing_product["id"]
+
+    product_count_after = len(await crud.list_products(limit=5000))
+    assert product_count_after == product_count_before + 1
+
+
+@pytest.mark.asyncio
+async def test_link_to_existing_product_requires_linked_product_id():
+    from agent.db import crud
+
+    await crud.create_bulk_queue_row(
+        reference_id="ref-dup-link-missing-001",
+        raw_product_title="Missing Linked Product Id",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+    )
+
+    result = await resolve_duplicate_queue_row(
+        "ref-dup-link-missing-001",
+        action="LINK_TO_EXISTING_PRODUCT",
+        linked_product_id=None,
+    )
+
+    assert result["error"] == "LINKED_PRODUCT_ID_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_link_to_existing_product_requires_existing_product():
+    from agent.db import crud
+
+    await crud.create_bulk_queue_row(
+        reference_id="ref-dup-link-notfound-001",
+        raw_product_title="Missing Linked Product",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+    )
+
+    result = await resolve_duplicate_queue_row(
+        "ref-dup-link-notfound-001",
+        action="LINK_TO_EXISTING_PRODUCT",
+        linked_product_id="prod-does-not-exist",
+    )
+
+    assert result["error"] == "LINKED_PRODUCT_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_claim_risk_duplicate_cannot_bypass_claim_gate():
+    from agent.db import crud
+
+    existing_product = await crud.create_product(
+        raw_product_title="Claim Risk Canonical Product",
+        source="MANUAL",
+        product_display_name="Claim Risk Canonical Product",
+        mapping_source="MANUAL_REVIEW",
+    )
+    await crud.create_bulk_queue_row(
+        reference_id="ref-dup-claim-risk-001",
+        raw_product_title="Claim Risk Duplicate",
+        claim_risk_level="HIGH",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+        suspected_existing_product_id=existing_product["id"],
+    )
+
+    result = await resolve_duplicate_queue_row(
+        "ref-dup-claim-risk-001",
+        action="LINK_TO_EXISTING_PRODUCT",
+        linked_product_id=existing_product["id"],
+    )
+
+    assert result["error"] == "CLAIM_RISK_DUPLICATE_CANNOT_LINK"
+
+    policy = await can_generate_content_for_fastmoss_reference(
+        "ref-dup-claim-risk-001"
+    )
+    assert policy["content_generation_allowed"] is False
+    assert policy["reason"] == "CLAIM_RISK_BLOCKS_CONTENT_GENERATION"
+
+
+@pytest.mark.asyncio
+async def test_mark_false_duplicate_requires_exact_confirmation_phrase():
+    from agent.db import crud
+
+    await crud.create_bulk_queue_row(
+        reference_id="ref-dup-clear-phrase-001",
+        raw_product_title="False Duplicate Phrase Gate",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+        suspected_existing_product_id="prod-suspect-gate-001",
+    )
+
+    result = await resolve_duplicate_queue_row(
+        "ref-dup-clear-phrase-001",
+        action="MARK_FALSE_DUPLICATE",
+        confirmation_phrase="WRONG_PHRASE",
+    )
+
+    assert result["error"] == "INVALID_FALSE_DUPLICATE_CONFIRMATION_PHRASE"
+
+
+@pytest.mark.asyncio
+async def test_mark_false_duplicate_recomputes_without_auto_approval(monkeypatch):
+    from agent.db import crud
+
+    reference_id = "ref-dup-clear-001"
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title="False Duplicate Recompute",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+        suspected_existing_product_id="prod-suspect-clear-001",
+        error_message="DUPLICATE_CANDIDATE:prod-suspect-clear-001:TITLE_MATCH_EXISTING_PRODUCT",
+    )
+
+    async def _fake_recompute(ref_id: str):
+        await crud.update_bulk_queue_row(
+            ref_id,
+            promotion_status="READY_FOR_APPROVAL",
+            draft_id="draft-false-dup-001",
+            committed_product_id=None,
+            error_message=None,
+            suspected_existing_product_id=None,
+            suspected_existing_product_title=None,
+            suspected_existing_product_source=None,
+            suspected_existing_product_mapping_source=None,
+            duplicate_match_reason=None,
+        )
+        return {
+            "reference_id": ref_id,
+            "promotion_status": "READY_FOR_APPROVAL",
+            "draft_id": "draft-false-dup-001",
+        }
+
+    monkeypatch.setattr(
+        "agent.services.fastmoss_bulk_promotion_service.create_draft_from_reference",
+        _fake_recompute,
+    )
+
+    result = await resolve_duplicate_queue_row(
+        reference_id,
+        action="MARK_FALSE_DUPLICATE",
+        confirmation_phrase="CLEAR_DUPLICATE_FOR_REVIEW",
+        note="Operator cleared duplicate blocker for recompute.",
+    )
+
+    assert result["new_status"] == "READY_FOR_APPROVAL"
+    assert result["duplicate_resolution"] == "FALSE_DUPLICATE_CLEARED"
+    assert result["content_generation_allowed"] is False
+    assert result["message"] == "READY_FOR_APPROVAL_PREVIEW_ONLY"
+
+    row = await crud.get_bulk_queue_row(reference_id)
+    assert row is not None
+    assert row["promotion_status"] == "READY_FOR_APPROVAL"
+    assert row["committed_product_id"] is None
+    assert row["duplicate_resolution"] == "FALSE_DUPLICATE_CLEARED"
+    assert row["duplicate_ignore_product_id"] == "prod-suspect-clear-001"
+
+
+@pytest.mark.asyncio
+async def test_keep_blocked_preserves_duplicate_blocker():
+    from agent.db import crud
+
+    reference_id = "ref-dup-keep-001"
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title="Keep Duplicate Blocked",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+    )
+
+    result = await resolve_duplicate_queue_row(
+        reference_id,
+        action="KEEP_BLOCKED",
+        note="Operator needs later review.",
+    )
+
+    assert result["new_status"] == "DUPLICATE_SUSPECTED"
+    assert result["duplicate_resolution"] == "KEEP_BLOCKED"
+    assert result["content_generation_allowed"] is False
+
+
+@pytest.mark.asyncio
+async def test_reject_reference_sets_rejected():
+    from agent.db import crud
+
+    reference_id = "ref-dup-reject-001"
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title="Reject Duplicate Reference",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+    )
+
+    result = await resolve_duplicate_queue_row(
+        reference_id,
+        action="REJECT_REFERENCE",
+        note="Operator rejected duplicate reference.",
+    )
+
+    assert result["new_status"] == "REJECTED"
+    assert result["duplicate_resolution"] == "REJECT_REFERENCE"
+    assert result["content_generation_allowed"] is False
 
 
 # ---------------------------------------------------------------------------

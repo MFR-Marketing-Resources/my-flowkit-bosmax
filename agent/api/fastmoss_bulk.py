@@ -38,6 +38,14 @@ class UpdateQueueRowStatusRequest(BaseModel):
     promotion_status: str
 
 
+class ResolveDuplicateQueueRowRequest(BaseModel):
+    reference_id: str
+    action: str
+    linked_product_id: str | None = None
+    confirmation_phrase: str | None = None
+    note: str | None = None
+
+
 @router.get("/queue")
 async def list_queue(
     promotion_status: str | None = Query(None),
@@ -62,6 +70,25 @@ async def list_queue(
 @router.get("/queue/stats")
 async def get_queue_stats() -> dict[str, Any]:
     return await _svc.get_queue_stats()
+
+
+@router.get("/queue/duplicates")
+async def list_duplicate_queue(
+    claim_risk_level: str | None = Query(None),
+    image_readiness: str | None = Query(None),
+    category: str | None = Query(None),
+    q: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+) -> dict[str, Any]:
+    return await _svc.list_duplicate_queue(
+        claim_risk_level=claim_risk_level,
+        image_readiness=image_readiness,
+        category=category,
+        q=q,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("/queue/sync")
@@ -100,6 +127,25 @@ async def recompute_selected(body: RecomputeSelectedRequest) -> dict[str, Any]:
     if not body.reference_ids:
         raise HTTPException(status_code=422, detail="reference_ids must not be empty")
     return await _svc.recompute_selected(body.reference_ids)
+
+
+@router.post("/queue/duplicates/resolve")
+async def resolve_duplicate_queue_row(body: ResolveDuplicateQueueRowRequest) -> dict[str, Any]:
+    result = await _svc.resolve_duplicate_queue_row(
+        body.reference_id,
+        action=body.action,
+        linked_product_id=body.linked_product_id,
+        confirmation_phrase=body.confirmation_phrase,
+        note=body.note,
+    )
+    if "error" in result:
+        error = str(result["error"])
+        if error == "NOT_IN_QUEUE":
+            raise HTTPException(status_code=404, detail=error)
+        if error == "INVALID_FALSE_DUPLICATE_CONFIRMATION_PHRASE":
+            raise HTTPException(status_code=403, detail=error)
+        raise HTTPException(status_code=422, detail=error)
+    return result
 
 
 @router.patch("/queue/{reference_id}/status")

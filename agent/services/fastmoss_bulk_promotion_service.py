@@ -35,10 +35,18 @@ from agent.services.registration_draft_recompute_service import derive_draft_ima
 from agent.services.registration_draft_storage_service import RegistrationDraftStorageService
 
 _BULK_APPROVE_PHRASE = "PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH"
+_CLEAR_DUPLICATE_PHRASE = "CLEAR_DUPLICATE_FOR_REVIEW"
 
 _READY_STATUSES = {"READY_FOR_APPROVAL"}
 _BLOCKED_BULK_STATUSES = {"NEEDS_REVIEW", "CLAIM_RISK", "IMAGE_MISSING",
                           "DUPLICATE_SUSPECTED", "MISSING_REQUIRED_FIELD", "APPROVED", "REJECTED"}
+
+_DUPLICATE_REVIEW_ACTIONS = {
+    "LINK_TO_EXISTING_PRODUCT",
+    "MARK_FALSE_DUPLICATE",
+    "KEEP_BLOCKED",
+    "REJECT_REFERENCE",
+}
 
 
 def _now() -> str:
@@ -78,6 +86,18 @@ def _classify_promotion_status(
 
 async def _detect_queue_duplicate(reference_id: str, raw_product_title: str,
                                    tiktok_product_url: str | None) -> bool:
+    return (
+        await _detect_queue_duplicate_candidate(reference_id, raw_product_title, tiktok_product_url)
+    ) is not None
+
+
+async def _detect_queue_duplicate_candidate(
+    reference_id: str,
+    raw_product_title: str,
+    tiktok_product_url: str | None,
+    *,
+    ignore_product_id: str | None = None,
+) -> dict[str, Any] | None:
     """Check if a matching product already exists in owned canonical rows.
 
     Canonical sources that block promotion:
@@ -91,29 +111,132 @@ async def _detect_queue_duplicate(reference_id: str, raw_product_title: str,
     """
     title_clean = raw_product_title.strip().lower()
     if not title_clean:
-        return False
+        return None
 
-    def _row_matches(row: dict) -> bool:
+    def _row_matches(row: dict) -> str | None:
         row_names = {
             _clean(row.get("raw_product_title")).lower(),
             _clean(row.get("product_display_name")).lower(),
             _clean(row.get("product_short_name")).lower(),
         }
         if title_clean in row_names:
-            return True
-        return bool(tiktok_product_url and tiktok_product_url == _clean(row.get("tiktok_product_url")))
+            return "TITLE_MATCH_EXISTING_PRODUCT"
+        if tiktok_product_url and tiktok_product_url == _clean(row.get("tiktok_product_url")):
+            return "TIKTOK_URL_MATCH_EXISTING_PRODUCT"
+        return None
 
     candidates = await crud.list_products(query=raw_product_title, limit=50)
     for row in candidates:
+        if ignore_product_id and str(row.get("id") or "") == ignore_product_id:
+            continue
         src = row.get("source", "")
         mapping_src = row.get("mapping_source", "")
         # Raw FASTMOSS reference rows are inputs to this promotion pipeline.
         # Only block on them once they have been committed (mapping_source=FASTMOSS_PROMOTED).
         if src == "FASTMOSS" and mapping_src != "FASTMOSS_PROMOTED":
             continue
-        if _row_matches(row):
-            return True
+        match_reason = _row_matches(row)
+        if match_reason:
+            return {
+                "id": row.get("id"),
+                "title": row.get("product_display_name")
+                or row.get("product_short_name")
+                or row.get("raw_product_title"),
+                "source": row.get("source"),
+                "mapping_source": row.get("mapping_source"),
+                "match_reason": match_reason,
+            }
 
+    return None
+
+
+def _queue_content_policy_from_row(row: dict[str, Any] | None) -> dict[str, Any]:
+    if not row:
+        return {
+            "content_generation_allowed": False,
+            "resolved_product_id": None,
+            "reason": "REFERENCE_NOT_IN_QUEUE",
+        }
+
+    status = str(row.get("promotion_status") or "")
+    committed_product_id = _clean(row.get("committed_product_id")) or None
+    linked_product_id = _clean(row.get("linked_product_id")) or None
+    claim_risk_level = str(row.get("claim_risk_level") or "")
+
+    if claim_risk_level == "HIGH" or status == "CLAIM_RISK":
+        return {
+            "content_generation_allowed": False,
+            "resolved_product_id": None,
+            "reason": "CLAIM_RISK_BLOCKS_CONTENT_GENERATION",
+        }
+
+    if status == "APPROVED" and committed_product_id:
+        return {
+            "content_generation_allowed": True,
+            "resolved_product_id": committed_product_id,
+            "reason": "APPROVED_PRODUCT_TRUTH",
+        }
+    if status == "DUPLICATE_LINKED" and linked_product_id:
+        return {
+            "content_generation_allowed": True,
+            "resolved_product_id": linked_product_id,
+            "reason": "LINKED_EXISTING_PRODUCT_TRUTH",
+        }
+    if status == "READY_FOR_APPROVAL":
+        return {
+            "content_generation_allowed": False,
+            "resolved_product_id": None,
+            "reason": "READY_FOR_APPROVAL_PREVIEW_ONLY",
+        }
+    return {
+        "content_generation_allowed": False,
+        "resolved_product_id": None,
+        "reason": f"STATUS_BLOCKS_CONTENT_GENERATION:{status or 'UNKNOWN'}",
+    }
+
+
+async def can_generate_content_for_fastmoss_reference(reference_id: str) -> dict[str, Any]:
+    row = await crud.get_bulk_queue_row(reference_id)
+    policy = _queue_content_policy_from_row(row)
+    resolved_product_id = policy.get("resolved_product_id")
+    if resolved_product_id and not await crud.get_product(resolved_product_id):
+        return {
+            "content_generation_allowed": False,
+            "resolved_product_id": None,
+            "reason": "LINKED_OR_COMMITTED_PRODUCT_NOT_FOUND",
+        }
+    return policy
+
+
+def _attach_duplicate_metadata_to_row(row: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(row)
+    payload["duplicate_candidate"] = None
+    suspected_existing_product_id = _clean(payload.get("suspected_existing_product_id")) or None
+    if suspected_existing_product_id:
+        payload["duplicate_candidate"] = {
+            "product_id": suspected_existing_product_id,
+            "title": payload.get("suspected_existing_product_title"),
+            "source": payload.get("suspected_existing_product_source"),
+            "mapping_source": payload.get("suspected_existing_product_mapping_source"),
+            "match_reason": payload.get("duplicate_match_reason"),
+        }
+    policy = _queue_content_policy_from_row(payload)
+    payload["content_generation_allowed"] = policy["content_generation_allowed"]
+    payload["resolved_product_id"] = policy["resolved_product_id"]
+    payload["content_generation_reason"] = policy["reason"]
+    return payload
+
+
+def _product_row_is_canonical_truth(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    src = str(row.get("source") or "")
+    mapping_source = str(row.get("mapping_source") or "")
+    fastmoss_reference_id = str(row.get("fastmoss_reference_id") or "")
+    if src in {"MANUAL", "IMPORTED"}:
+        return True
+    if src == "FASTMOSS" and (mapping_source == "FASTMOSS_PROMOTED" or fastmoss_reference_id):
+        return True
     return False
 
 
@@ -285,7 +408,32 @@ async def list_bulk_queue(
         category=category,
         q=q,
     )
-    return {"items": rows, "total": total, "page": page, "page_size": page_size}
+    return {
+        "items": [_attach_duplicate_metadata_to_row(row) for row in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+async def list_duplicate_queue(
+    *,
+    claim_risk_level: str | None = None,
+    image_readiness: str | None = None,
+    category: str | None = None,
+    q: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, Any]:
+    return await list_bulk_queue(
+        promotion_status="DUPLICATE_SUSPECTED",
+        claim_risk_level=claim_risk_level,
+        image_readiness=image_readiness,
+        category=category,
+        q=q,
+        page=page,
+        page_size=page_size,
+    )
 
 
 async def get_queue_stats() -> dict[str, Any]:
@@ -352,17 +500,27 @@ async def create_draft_from_reference(reference_id: str) -> dict[str, Any]:
     image_readiness = _derive_image_readiness(draft.declared_evidence_fields.get("image_url"))
     claim_risk = draft.claim_risk_level or "HIGH"
     missing = list(draft.missing_required_evidence or [])
-    is_dup = await _detect_queue_duplicate(
+    duplicate_candidate = await _detect_queue_duplicate_candidate(
         reference_id,
         draft.declared_evidence_fields.get("product_name") or row["raw_product_title"],
         draft.declared_evidence_fields.get("tiktok_product_url"),
+        ignore_product_id=_clean(row.get("duplicate_ignore_product_id")) or None,
     )
-    promo_status = _classify_promotion_status(claim_risk, image_readiness, missing, is_dup)
+    promo_status = _classify_promotion_status(
+        claim_risk,
+        image_readiness,
+        missing,
+        duplicate_candidate is not None,
+    )
 
     # Persist blocking reason for operator visibility
     err_msg: str | None = None
     if promo_status == "MISSING_REQUIRED_FIELD" and missing:
         err_msg = "MISSING:" + ",".join(missing[:10])
+    elif promo_status == "DUPLICATE_SUSPECTED" and duplicate_candidate:
+        err_msg = (
+            f"DUPLICATE_CANDIDATE:{duplicate_candidate.get('id')}:{duplicate_candidate.get('match_reason')}"
+        )
     elif promo_status == "CLAIM_RISK":
         claim_tokens_str = ",".join(draft.claim_tokens[:5]) if draft.claim_tokens else ""
         err_msg = f"CLAIM_RISK:{draft.claim_gate}" + (f":{claim_tokens_str}" if claim_tokens_str else "")
@@ -373,6 +531,11 @@ async def create_draft_from_reference(reference_id: str) -> dict[str, Any]:
         draft_id=saved_draft.review_draft_id,
         claim_risk_level=claim_risk,
         image_readiness=image_readiness,
+        suspected_existing_product_id=duplicate_candidate.get("id") if duplicate_candidate else None,
+        suspected_existing_product_title=duplicate_candidate.get("title") if duplicate_candidate else None,
+        suspected_existing_product_source=duplicate_candidate.get("source") if duplicate_candidate else None,
+        suspected_existing_product_mapping_source=duplicate_candidate.get("mapping_source") if duplicate_candidate else None,
+        duplicate_match_reason=duplicate_candidate.get("match_reason") if duplicate_candidate else None,
         error_message=err_msg,
         updated_at=_now(),
     )
@@ -383,6 +546,7 @@ async def create_draft_from_reference(reference_id: str) -> dict[str, Any]:
         "promotion_status": promo_status,
         "claim_risk_level": claim_risk,
         "image_readiness": image_readiness,
+        "duplicate_candidate": duplicate_candidate,
         "draft": saved_draft.model_dump(),
     }
 
@@ -660,6 +824,144 @@ async def recompute_selected(reference_ids: list[str]) -> dict[str, Any]:
         "failed": failed,
         "skipped": skipped,
         "results": results,
+    }
+
+
+async def resolve_duplicate_queue_row(
+    reference_id: str,
+    *,
+    action: str,
+    linked_product_id: str | None = None,
+    confirmation_phrase: str | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    if action not in _DUPLICATE_REVIEW_ACTIONS:
+        return {
+            "error": f"INVALID_DUPLICATE_ACTION:{action}",
+            "reference_id": reference_id,
+        }
+
+    row = await crud.get_bulk_queue_row(reference_id)
+    if not row:
+        return {"error": "NOT_IN_QUEUE", "reference_id": reference_id}
+
+    previous_status = str(row.get("promotion_status") or "")
+    claim_risk_level = str(row.get("claim_risk_level") or "")
+    now = _now()
+
+    if action == "LINK_TO_EXISTING_PRODUCT":
+        if previous_status != "DUPLICATE_SUSPECTED":
+            return {
+                "error": f"DUPLICATE_REVIEW_NOT_ALLOWED_FOR_STATUS:{previous_status or 'UNKNOWN'}",
+                "reference_id": reference_id,
+            }
+        if claim_risk_level == "HIGH":
+            return {
+                "error": "CLAIM_RISK_DUPLICATE_CANNOT_LINK",
+                "reference_id": reference_id,
+            }
+        linked_product_id = _clean(linked_product_id)
+        if not linked_product_id:
+            return {"error": "LINKED_PRODUCT_ID_REQUIRED", "reference_id": reference_id}
+        linked_product = await crud.get_product(linked_product_id)
+        if not linked_product:
+            return {"error": "LINKED_PRODUCT_NOT_FOUND", "reference_id": reference_id}
+        if not _product_row_is_canonical_truth(linked_product):
+            return {"error": "LINKED_PRODUCT_MUST_BE_CANONICAL_PRODUCT_TRUTH", "reference_id": reference_id}
+        await crud.update_bulk_queue_row(
+            reference_id,
+            promotion_status="DUPLICATE_LINKED",
+            linked_product_id=linked_product_id,
+            linked_product_title=linked_product.get("product_display_name")
+            or linked_product.get("product_short_name")
+            or linked_product.get("raw_product_title"),
+            duplicate_resolution="LINKED_TO_EXISTING_PRODUCT",
+            duplicate_resolved_at=now,
+            duplicate_resolution_note=note,
+            updated_at=now,
+        )
+    elif action == "MARK_FALSE_DUPLICATE":
+        if previous_status != "DUPLICATE_SUSPECTED":
+            return {
+                "error": f"DUPLICATE_REVIEW_NOT_ALLOWED_FOR_STATUS:{previous_status or 'UNKNOWN'}",
+                "reference_id": reference_id,
+            }
+        if confirmation_phrase != _CLEAR_DUPLICATE_PHRASE:
+            return {"error": "INVALID_FALSE_DUPLICATE_CONFIRMATION_PHRASE", "reference_id": reference_id}
+        await crud.update_bulk_queue_row(
+            reference_id,
+            duplicate_ignore_product_id=_clean(row.get("suspected_existing_product_id")) or None,
+            duplicate_resolution="FALSE_DUPLICATE_UNDER_REVIEW",
+            duplicate_resolved_at=now,
+            duplicate_resolution_note=note,
+            linked_product_id=None,
+            linked_product_title=None,
+            updated_at=now,
+        )
+        recompute_result = await create_draft_from_reference(reference_id)
+        if "error" in recompute_result:
+            return {
+                "reference_id": reference_id,
+                "action": action,
+                "previous_status": previous_status,
+                "new_status": (await crud.get_bulk_queue_row(reference_id) or row).get("promotion_status"),
+                "linked_product_id": None,
+                "duplicate_resolution": "FALSE_DUPLICATE_RECOMPUTE_FAILED",
+                "content_generation_allowed": False,
+                "message": recompute_result["error"],
+            }
+        post_row = await crud.get_bulk_queue_row(reference_id) or row
+        await crud.update_bulk_queue_row(
+            reference_id,
+            duplicate_resolution=(
+                "FALSE_DUPLICATE_CLEARED"
+                if post_row.get("promotion_status") != "DUPLICATE_SUSPECTED"
+                else "FALSE_DUPLICATE_STILL_BLOCKED"
+            ),
+            duplicate_resolved_at=now,
+            duplicate_resolution_note=note,
+            updated_at=now,
+        )
+    elif action == "KEEP_BLOCKED":
+        if previous_status != "DUPLICATE_SUSPECTED":
+            return {
+                "error": f"DUPLICATE_REVIEW_NOT_ALLOWED_FOR_STATUS:{previous_status or 'UNKNOWN'}",
+                "reference_id": reference_id,
+            }
+        await crud.update_bulk_queue_row(
+            reference_id,
+            promotion_status="DUPLICATE_SUSPECTED",
+            duplicate_resolution="KEEP_BLOCKED",
+            duplicate_resolved_at=now,
+            duplicate_resolution_note=note,
+            updated_at=now,
+        )
+    elif action == "REJECT_REFERENCE":
+        if previous_status != "DUPLICATE_SUSPECTED":
+            return {
+                "error": f"DUPLICATE_REVIEW_NOT_ALLOWED_FOR_STATUS:{previous_status or 'UNKNOWN'}",
+                "reference_id": reference_id,
+            }
+        await crud.update_bulk_queue_row(
+            reference_id,
+            promotion_status="REJECTED",
+            duplicate_resolution="REJECT_REFERENCE",
+            duplicate_resolved_at=now,
+            duplicate_resolution_note=note,
+            updated_at=now,
+        )
+
+    updated_row = await crud.get_bulk_queue_row(reference_id) or row
+    policy = await can_generate_content_for_fastmoss_reference(reference_id)
+    return {
+        "reference_id": reference_id,
+        "action": action,
+        "previous_status": previous_status,
+        "new_status": updated_row.get("promotion_status"),
+        "linked_product_id": updated_row.get("linked_product_id"),
+        "duplicate_resolution": updated_row.get("duplicate_resolution"),
+        "content_generation_allowed": policy["content_generation_allowed"],
+        "message": policy["reason"],
     }
 
 

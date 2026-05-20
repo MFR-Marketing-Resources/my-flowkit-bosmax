@@ -4,11 +4,14 @@ import type {
 	BulkApproveResult,
 	BulkClaimRisk,
 	BulkCreateDraftsResult,
+	BulkDuplicateResolveResult,
 	BulkImageReadiness,
 	BulkPromotionStatus,
 	BulkQueuePage,
 	BulkQueueStats,
 	BulkRecomputeSelectedResult,
+	DuplicateReviewAction,
+	FastmossBulkQueueRow,
 } from "../../types";
 
 const RISK_BADGE: Record<string, string> = {
@@ -27,6 +30,7 @@ const STATUS_BADGE: Record<string, string> = {
 	CLAIM_RISK: "bg-red-500/20 text-red-400",
 	IMAGE_MISSING: "bg-yellow-500/20 text-yellow-400",
 	DUPLICATE_SUSPECTED: "bg-purple-500/20 text-purple-400",
+	DUPLICATE_LINKED: "bg-cyan-500/20 text-cyan-300",
 	APPROVED: "bg-teal-500/20 text-teal-400",
 	REJECTED: "bg-slate-700/40 text-slate-500",
 };
@@ -40,6 +44,7 @@ const ALL_STATUSES: BulkPromotionStatus[] = [
 	"CLAIM_RISK",
 	"IMAGE_MISSING",
 	"DUPLICATE_SUSPECTED",
+	"DUPLICATE_LINKED",
 	"APPROVED",
 	"REJECTED",
 ];
@@ -74,6 +79,8 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 	const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
 	const [recomputeSummary, setRecomputeSummary] =
 		useState<BulkRecomputeSelectedResult | null>(null);
+	const [duplicateReviewResult, setDuplicateReviewResult] =
+		useState<BulkDuplicateResolveResult | null>(null);
 
 	// Filters
 	const [filterStatus, setFilterStatus] = useState<string>("");
@@ -89,6 +96,14 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 	const [approvePhrase, setApprovePhrase] = useState("");
 	const [showRecomputeModal, setShowRecomputeModal] = useState(false);
 	const [recomputePhrase, setRecomputePhrase] = useState("");
+	const [reviewingDuplicate, setReviewingDuplicate] =
+		useState<FastmossBulkQueueRow | null>(null);
+	const [duplicateAction, setDuplicateAction] = useState<DuplicateReviewAction>(
+		"LINK_TO_EXISTING_PRODUCT",
+	);
+	const [duplicateLinkProductId, setDuplicateLinkProductId] = useState("");
+	const [duplicatePhrase, setDuplicatePhrase] = useState("");
+	const [duplicateNote, setDuplicateNote] = useState("");
 
 	const fetchStats = useCallback(async () => {
 		try {
@@ -365,6 +380,56 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 	const recomputeEligibleSelectedCount = Array.from(selected).filter((id) =>
 		RECOMPUTE_ELIGIBLE_STATUSES.includes(selectedStatuses[id]),
 	).length;
+	const duplicateConfirmDisabled =
+		(duplicateAction === "LINK_TO_EXISTING_PRODUCT" &&
+			duplicateLinkProductId.trim().length === 0) ||
+		(duplicateAction === "MARK_FALSE_DUPLICATE" &&
+			duplicatePhrase !== "CLEAR_DUPLICATE_FOR_REVIEW");
+
+	const openDuplicateReview = (row: FastmossBulkQueueRow) => {
+		setReviewingDuplicate(row);
+		setDuplicateAction("LINK_TO_EXISTING_PRODUCT");
+		setDuplicateLinkProductId(
+			row.suspected_existing_product_id || row.linked_product_id || "",
+		);
+		setDuplicatePhrase("");
+		setDuplicateNote(row.duplicate_resolution_note || "");
+		setDuplicateReviewResult(null);
+	};
+
+	const handleDuplicateResolve = async () => {
+		if (!reviewingDuplicate) return;
+		setActionMessage(null);
+		setActionError(null);
+		setLoading(true);
+		try {
+			const result = await postAPI<BulkDuplicateResolveResult>(
+				"/api/fastmoss-bulk/queue/duplicates/resolve",
+				{
+					reference_id: reviewingDuplicate.reference_id,
+					action: duplicateAction,
+					linked_product_id:
+						duplicateAction === "LINK_TO_EXISTING_PRODUCT"
+							? duplicateLinkProductId.trim()
+							: null,
+					confirmation_phrase:
+						duplicateAction === "MARK_FALSE_DUPLICATE" ? duplicatePhrase : null,
+					note: duplicateNote.trim() || null,
+				},
+			);
+			setDuplicateReviewResult(result);
+			setActionMessage(
+				`Duplicate review updated — ${result.reference_id} -> ${result.new_status}`,
+			);
+			setReviewingDuplicate(null);
+			await fetchStats();
+			await fetchQueue();
+		} catch (e: unknown) {
+			setActionError(getErrorMessage(e, "Duplicate review failed"));
+		} finally {
+			setLoading(false);
+		}
+	};
 
 	return (
 		<div className="space-y-5">
@@ -496,6 +561,51 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 							<span className="text-white">{recomputeSummary.skipped}</span>
 						</div>
 					</div>
+				</div>
+			)}
+			{duplicateReviewResult && (
+				<div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-4 space-y-2">
+					<div className="flex items-center justify-between gap-3">
+						<div>
+							<h3 className="text-sm font-bold text-cyan-200">
+								Duplicate Review Result
+							</h3>
+							<p className="text-[11px] text-slate-300">
+								{duplicateReviewResult.reference_id} →{" "}
+								{duplicateReviewResult.new_status}
+							</p>
+						</div>
+						<button
+							type="button"
+							onClick={() => setDuplicateReviewResult(null)}
+							className="text-slate-500 hover:text-white text-xs"
+						>
+							✕
+						</button>
+					</div>
+					<div className="grid gap-2 md:grid-cols-3 text-[10px] uppercase tracking-widest">
+						<div className="rounded-lg border border-slate-700/60 bg-slate-900/50 px-3 py-2 text-slate-300">
+							action:{" "}
+							<span className="text-white">{duplicateReviewResult.action}</span>
+						</div>
+						<div className="rounded-lg border border-slate-700/60 bg-slate-900/50 px-3 py-2 text-slate-300">
+							linked_product_id:{" "}
+							<span className="text-white">
+								{duplicateReviewResult.linked_product_id || "—"}
+							</span>
+						</div>
+						<div className="rounded-lg border border-slate-700/60 bg-slate-900/50 px-3 py-2 text-slate-300">
+							content_generation_allowed:{" "}
+							<span className="text-white">
+								{duplicateReviewResult.content_generation_allowed
+									? "true"
+									: "false"}
+							</span>
+						</div>
+					</div>
+					<p className="text-[11px] text-slate-300">
+						{duplicateReviewResult.message}
+					</p>
 				</div>
 			)}
 
@@ -740,6 +850,9 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
 										Draft
 									</th>
+									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
+										Actions
+									</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -777,6 +890,21 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 													{row.error_message}
 												</div>
 											)}
+											{row.promotion_status === "DUPLICATE_LINKED" &&
+												row.linked_product_id && (
+													<div className="mt-1 flex flex-col gap-0.5">
+														<span className="inline-flex w-fit px-1.5 py-0.5 rounded text-[9px] font-bold bg-cyan-500/20 text-cyan-300">
+															LINKED TO PRODUCT TRUTH
+														</span>
+														<span className="text-[9px] text-cyan-200 truncate max-w-[240px]">
+															{row.linked_product_id} —{" "}
+															{row.linked_product_title || "Existing Product"}
+														</span>
+														<span className="text-[9px] text-slate-400">
+															Use linked Product Truth for content generation
+														</span>
+													</div>
+												)}
 										</td>
 										<td className="px-3 py-2 text-slate-400 truncate max-w-[100px]">
 											{row.category || "—"}
@@ -847,6 +975,23 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 												<span className="text-[9px] text-slate-600">—</span>
 											)}
 										</td>
+										<td className="px-3 py-2">
+											{row.promotion_status === "DUPLICATE_SUSPECTED" ? (
+												<button
+													type="button"
+													onClick={() => openDuplicateReview(row)}
+													className="px-2 py-1 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-200 text-[9px] font-bold uppercase tracking-widest transition-all"
+												>
+													Review Duplicate
+												</button>
+											) : row.promotion_status === "DUPLICATE_LINKED" ? (
+												<span className="text-[9px] text-cyan-300 font-bold uppercase tracking-widest">
+													Linked
+												</span>
+											) : (
+												<span className="text-[9px] text-slate-600">—</span>
+											)}
+										</td>
 									</tr>
 								))}
 							</tbody>
@@ -878,6 +1023,192 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 						>
 							Next ›
 						</button>
+					</div>
+				</div>
+			)}
+
+			{/* Duplicate Review Modal */}
+			{reviewingDuplicate && (
+				<div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+					<div className="rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl w-full max-w-5xl space-y-5">
+						<div className="flex items-start justify-between gap-4">
+							<div>
+								<h3 className="text-lg font-bold text-white">
+									Review Duplicate
+								</h3>
+								<p className="text-xs text-slate-400 mt-1">
+									DUPLICATE_SUSPECTED rows cannot create new Product Truth
+									automatically. Resolve the blocker or link to existing
+									canonical truth.
+								</p>
+							</div>
+							<button
+								type="button"
+								onClick={() => setReviewingDuplicate(null)}
+								className="text-slate-500 hover:text-white text-xs"
+							>
+								✕
+							</button>
+						</div>
+
+						<div className="grid gap-4 lg:grid-cols-2">
+							<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2">
+								<h4 className="text-sm font-bold text-white">FastMoss Row</h4>
+								<div className="text-xs text-slate-300 break-words">
+									<strong className="text-white">Reference:</strong>{" "}
+									{reviewingDuplicate.reference_id}
+								</div>
+								<div className="text-xs text-slate-300 break-words">
+									<strong className="text-white">Title:</strong>{" "}
+									{reviewingDuplicate.raw_product_title}
+								</div>
+								<div className="text-xs text-slate-300">
+									<strong className="text-white">Category:</strong>{" "}
+									{reviewingDuplicate.category || "—"}
+								</div>
+								<div className="text-xs text-slate-300 break-all">
+									<strong className="text-white">Source URL:</strong>{" "}
+									{reviewingDuplicate.source_url || "—"}
+								</div>
+								<div className="text-xs text-slate-300 break-all">
+									<strong className="text-white">TikTok URL:</strong>{" "}
+									{reviewingDuplicate.tiktok_product_url || "—"}
+								</div>
+								<div className="text-xs text-slate-300 break-all">
+									<strong className="text-white">Image URL:</strong>{" "}
+									{reviewingDuplicate.image_url || "—"}
+								</div>
+							</div>
+
+							<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2">
+								<h4 className="text-sm font-bold text-white">
+									Existing Product Candidate
+								</h4>
+								<div className="text-xs text-slate-300 break-words">
+									<strong className="text-white">Product ID:</strong>{" "}
+									{reviewingDuplicate.suspected_existing_product_id || "—"}
+								</div>
+								<div className="text-xs text-slate-300 break-words">
+									<strong className="text-white">Title:</strong>{" "}
+									{reviewingDuplicate.suspected_existing_product_title || "—"}
+								</div>
+								<div className="text-xs text-slate-300">
+									<strong className="text-white">Source:</strong>{" "}
+									{reviewingDuplicate.suspected_existing_product_source || "—"}
+								</div>
+								<div className="text-xs text-slate-300">
+									<strong className="text-white">Mapping Source:</strong>{" "}
+									{reviewingDuplicate.suspected_existing_product_mapping_source ||
+										"—"}
+								</div>
+								<div className="text-xs text-slate-300">
+									<strong className="text-white">Match Reason:</strong>{" "}
+									{reviewingDuplicate.duplicate_match_reason || "—"}
+								</div>
+							</div>
+						</div>
+
+						<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-4">
+							<div className="flex flex-wrap gap-2">
+								{(
+									[
+										"LINK_TO_EXISTING_PRODUCT",
+										"MARK_FALSE_DUPLICATE",
+										"KEEP_BLOCKED",
+										"REJECT_REFERENCE",
+									] as DuplicateReviewAction[]
+								).map((action) => (
+									<button
+										key={action}
+										type="button"
+										onClick={() => setDuplicateAction(action)}
+										className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
+											duplicateAction === action
+												? "bg-indigo-600 text-white"
+												: "bg-slate-800 text-slate-400 hover:text-white"
+										}`}
+									>
+										{action}
+									</button>
+								))}
+							</div>
+
+							{duplicateAction === "LINK_TO_EXISTING_PRODUCT" && (
+								<div className="space-y-2">
+									<label
+										htmlFor="bulk-fastmoss-linked-product-id"
+										className="text-[10px] text-slate-400 uppercase tracking-widest block"
+									>
+										Linked Product ID
+									</label>
+									<input
+										id="bulk-fastmoss-linked-product-id"
+										type="text"
+										value={duplicateLinkProductId}
+										onChange={(e) => setDuplicateLinkProductId(e.target.value)}
+										placeholder="existing product id…"
+										className="w-full bg-slate-800 border border-slate-700 focus:border-indigo-500 rounded-lg text-xs text-white px-3 py-2 outline-none"
+									/>
+								</div>
+							)}
+
+							{duplicateAction === "MARK_FALSE_DUPLICATE" && (
+								<div className="space-y-2">
+									<label
+										htmlFor="bulk-fastmoss-clear-duplicate-phrase"
+										className="text-[10px] text-slate-400 uppercase tracking-widest block"
+									>
+										Type the confirmation phrase exactly
+									</label>
+									<div className="text-[10px] font-mono text-indigo-300 bg-slate-800 rounded px-2 py-1">
+										CLEAR_DUPLICATE_FOR_REVIEW
+									</div>
+									<input
+										id="bulk-fastmoss-clear-duplicate-phrase"
+										type="text"
+										value={duplicatePhrase}
+										onChange={(e) => setDuplicatePhrase(e.target.value)}
+										placeholder="Type phrase here…"
+										className="w-full bg-slate-800 border border-slate-700 focus:border-indigo-500 rounded-lg text-xs text-white px-3 py-2 outline-none"
+									/>
+								</div>
+							)}
+
+							<div className="space-y-2">
+								<label
+									htmlFor="bulk-fastmoss-duplicate-note"
+									className="text-[10px] text-slate-400 uppercase tracking-widest block"
+								>
+									Review Note
+								</label>
+								<textarea
+									id="bulk-fastmoss-duplicate-note"
+									value={duplicateNote}
+									onChange={(e) => setDuplicateNote(e.target.value)}
+									rows={3}
+									placeholder="optional operator note…"
+									className="w-full bg-slate-800 border border-slate-700 focus:border-indigo-500 rounded-lg text-xs text-white px-3 py-2 outline-none"
+								/>
+							</div>
+						</div>
+
+						<div className="flex gap-3 justify-end">
+							<button
+								type="button"
+								onClick={() => setReviewingDuplicate(null)}
+								className="px-4 py-2 rounded-xl bg-slate-800 text-slate-400 hover:text-white text-xs font-bold uppercase tracking-widest transition-all"
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={handleDuplicateResolve}
+								disabled={duplicateConfirmDisabled}
+								className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-xs font-bold uppercase tracking-widest transition-all"
+							>
+								Confirm Duplicate Resolution
+							</button>
+						</div>
 					</div>
 				</div>
 			)}
