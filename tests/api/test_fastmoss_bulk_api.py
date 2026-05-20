@@ -87,6 +87,26 @@ def test_get_queue_stats(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# GET /fastmoss-bulk/queue/duplicates
+# ---------------------------------------------------------------------------
+
+
+def test_list_duplicate_queue_default_params(client, monkeypatch):
+    mock = AsyncMock(return_value={"items": [], "total": 0, "page": 1, "page_size": 50})
+    monkeypatch.setattr(f"{_SVC}.list_duplicate_queue", mock)
+    r = client.get("/fastmoss-bulk/queue/duplicates")
+    assert r.status_code == 200
+    mock.assert_awaited_once_with(
+        claim_risk_level=None,
+        image_readiness=None,
+        category=None,
+        q=None,
+        page=1,
+        page_size=50,
+    )
+
+
+# ---------------------------------------------------------------------------
 # POST /fastmoss-bulk/queue/sync
 # ---------------------------------------------------------------------------
 
@@ -266,6 +286,87 @@ def test_recompute_selected_empty_list_rejected(client, monkeypatch):
     monkeypatch.setattr(f"{_SVC}.recompute_selected", AsyncMock(return_value={}))
     r = client.post("/fastmoss-bulk/queue/recompute-selected", json={"reference_ids": []})
     assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# POST /fastmoss-bulk/queue/duplicates/resolve
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_duplicate_link_success(client, monkeypatch):
+    result = {
+        "reference_id": "ref-dup-1",
+        "action": "LINK_TO_EXISTING_PRODUCT",
+        "previous_status": "DUPLICATE_SUSPECTED",
+        "new_status": "DUPLICATE_LINKED",
+        "linked_product_id": "prod-1",
+        "duplicate_resolution": "LINKED_TO_EXISTING_PRODUCT",
+        "content_generation_allowed": True,
+        "message": "LINKED_EXISTING_PRODUCT_TRUTH",
+    }
+    mock = AsyncMock(return_value=result)
+    monkeypatch.setattr(f"{_SVC}.resolve_duplicate_queue_row", mock)
+    r = client.post(
+        "/fastmoss-bulk/queue/duplicates/resolve",
+        json={
+            "reference_id": "ref-dup-1",
+            "action": "LINK_TO_EXISTING_PRODUCT",
+            "linked_product_id": "prod-1",
+            "note": "operator linked duplicate",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["new_status"] == "DUPLICATE_LINKED"
+    mock.assert_awaited_once_with(
+        "ref-dup-1",
+        action="LINK_TO_EXISTING_PRODUCT",
+        linked_product_id="prod-1",
+        confirmation_phrase=None,
+        note="operator linked duplicate",
+    )
+
+
+def test_resolve_duplicate_false_duplicate_wrong_phrase_returns_403(client, monkeypatch):
+    monkeypatch.setattr(
+        f"{_SVC}.resolve_duplicate_queue_row",
+        AsyncMock(
+            return_value={
+                "error": "INVALID_FALSE_DUPLICATE_CONFIRMATION_PHRASE",
+                "reference_id": "ref-dup-2",
+            }
+        ),
+    )
+    r = client.post(
+        "/fastmoss-bulk/queue/duplicates/resolve",
+        json={
+            "reference_id": "ref-dup-2",
+            "action": "MARK_FALSE_DUPLICATE",
+            "confirmation_phrase": "WRONG",
+        },
+    )
+    assert r.status_code == 403
+    assert "INVALID_FALSE_DUPLICATE_CONFIRMATION_PHRASE" in r.json()["detail"]
+
+
+def test_resolve_duplicate_missing_linked_product_returns_422(client, monkeypatch):
+    monkeypatch.setattr(
+        f"{_SVC}.resolve_duplicate_queue_row",
+        AsyncMock(
+            return_value={
+                "error": "LINKED_PRODUCT_ID_REQUIRED",
+                "reference_id": "ref-dup-3",
+            }
+        ),
+    )
+    r = client.post(
+        "/fastmoss-bulk/queue/duplicates/resolve",
+        json={
+            "reference_id": "ref-dup-3",
+            "action": "LINK_TO_EXISTING_PRODUCT",
+        },
+    )
+    assert r.status_code == 422
+    assert "LINKED_PRODUCT_ID_REQUIRED" in r.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

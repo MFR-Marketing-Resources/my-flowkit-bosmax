@@ -1864,6 +1864,7 @@ export type BulkPromotionStatus =
 	| "CLAIM_RISK"
 	| "IMAGE_MISSING"
 	| "DUPLICATE_SUSPECTED"
+	| "DUPLICATE_LINKED"
 	| "APPROVED"
 	| "REJECTED";
 
@@ -1886,8 +1887,29 @@ export interface FastmossBulkQueueRow {
 	promotion_status: BulkPromotionStatus;
 	draft_id?: string | null;
 	committed_product_id?: string | null;
+	suspected_existing_product_id?: string | null;
+	suspected_existing_product_title?: string | null;
+	suspected_existing_product_source?: string | null;
+	suspected_existing_product_mapping_source?: string | null;
+	duplicate_match_reason?: string | null;
+	linked_product_id?: string | null;
+	linked_product_title?: string | null;
+	duplicate_resolution?: string | null;
+	duplicate_resolved_at?: string | null;
+	duplicate_resolution_note?: string | null;
+	duplicate_ignore_product_id?: string | null;
 	error_message?: string | null;
 	batch_provenance?: string | null;
+	duplicate_candidate?: {
+		product_id: string;
+		title?: string | null;
+		source?: string | null;
+		mapping_source?: string | null;
+		match_reason?: string | null;
+	} | null;
+	content_generation_allowed?: boolean;
+	resolved_product_id?: string | null;
+	content_generation_reason?: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -1949,4 +1971,21 @@ export interface BulkRecomputeSelectedResult {
 		outcome: "OK" | "SKIPPED" | "ERROR";
 		error?: string | null;
 	}>;
+}
+
+export type DuplicateReviewAction =
+	| "LINK_TO_EXISTING_PRODUCT"
+	| "MARK_FALSE_DUPLICATE"
+	| "KEEP_BLOCKED"
+	| "REJECT_REFERENCE";
+
+export interface BulkDuplicateResolveResult {
+	reference_id: string;
+	action: DuplicateReviewAction;
+	previous_status: string;
+	new_status: string;
+	linked_product_id?: string | null;
+	duplicate_resolution?: string | null;
+	content_generation_allowed: boolean;
+	message: string;
 }
