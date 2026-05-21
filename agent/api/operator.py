@@ -511,6 +511,8 @@ def _classify_flow_primary_blocker(
         return "FLOW_PROJECT_LIST_NOT_EDITOR"
     if composer.get("flow_tab_found") and not composer.get("content_script_loaded", False):
         return "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED"
+    if "FLOW_MODE_MISMATCH" in detail or "ABORT_FLOW_MODE_MISMATCH" in detail:
+        return "FLOW_MODE_MISMATCH"
     if not composer.get("signed_in_likely", True):
         return "FLOW_EDITOR_NOT_AUTHENTICATED"
 
@@ -600,8 +602,13 @@ async def open_target_flow_project(body: OpenTargetFlowProjectRequest):
 @router.post("/open-flow-new-project")
 async def open_flow_new_project(body: OpenFlowNewProjectRequest):
     result = await get_flow_client().open_flow_new_project(body.mode)
+    detail = str(result.get("detail") or result.get("error") or result.get("raw_error") or "")
     primary_blocker = None
-    if not result.get("open_flow_root"):
+    if "Extension disconnected" in detail:
+        primary_blocker = "EXTENSION_RUNTIME_STALE_NEEDS_RELOAD"
+    elif "FLOW_MODE_MISMATCH" in detail or "ABORT_FLOW_MODE_MISMATCH" in detail:
+        primary_blocker = "FLOW_MODE_MISMATCH"
+    elif not result.get("open_flow_root"):
         primary_blocker = "FLOW_ROOT_OPEN_FAILED"
     elif not result.get("project_list_or_landing_detected"):
         primary_blocker = result.get("error") or "FLOW_PROJECT_LIST_OR_LANDING_NOT_DETECTED"

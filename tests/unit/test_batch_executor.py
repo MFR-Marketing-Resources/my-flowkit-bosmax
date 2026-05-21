@@ -401,3 +401,22 @@ def test_flow_primary_blocker_classifies_content_script_timeout():
     )
 
     assert blocker == "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED"
+
+
+def test_flow_primary_blocker_prefers_mode_mismatch_over_auth_failure():
+    blocker = _classify_flow_primary_blocker(
+        True,
+        {
+            "flow_tab_found": True,
+            "content_script_loaded": True,
+            "flow_url": "https://labs.google/fx/tools/flow/project/123",
+            "signed_in_likely": False,
+            "composer_found": False,
+            "composer_editable": False,
+            "generate_button_found": False,
+            "detail": "ABORT_FLOW_MODE_MISMATCH: Expected topMode='Video', got 'Image'",
+        },
+        None,
+    )
+
+    assert blocker == "FLOW_MODE_MISMATCH"
