@@ -99,3 +99,118 @@ def test_complete_product_knowledge_tiktok_draft_fails_closed_without_fake_scrap
     assert response.extraction_status == "NOT_IMPLEMENTED"
     assert "TIKTOKSHOP_MANUAL_COMPLETION_REQUIRED" in response.missing_required_evidence
     assert "TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED" in response.warnings
+
+
+def test_complete_product_knowledge_high_confidence_image_ocr_can_fill_size_evidence(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.resolve_product_intelligence_profile",
+        lambda payload: {
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+            "package_form": "bottle",
+            "physical_state": "liquid",
+            "product_scale_class": "handheld_small",
+            "handling_profile": "controlled_grip",
+            "copy_route": "REVIEW_REQUIRED",
+            "copy_formula": "REVIEW_REQUIRED",
+            "warnings": [],
+            "errors": [],
+            "image_analysis": {
+                "status": "ANALYZED",
+                "image_url": payload.get("image_url"),
+                "local_image_path": payload.get("local_image_path"),
+                "detected_package": "bottle",
+                "detected_text": ["Hydrating Face Mist", "100ml"],
+                "detected_brand": None,
+                "detected_size_text": "100ml",
+                "detected_form_factor": "bottle",
+                "visual_confidence": "HIGH",
+                "evidence": ["provider:mock"],
+                "warnings": [],
+                "provider": "mock_provider",
+                "metadata": {},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.resolve_product_physics",
+        lambda product: {
+            "physics_class": "LIQUID_BOTTLE",
+            "recommended_grip": "center_hold",
+            "section_5_product_physics_prompt": "Physics DNA: LIQUID_BOTTLE",
+        },
+    )
+
+    request = ProductKnowledgeCompleteRequest(
+        product_name="Hydrating Face Mist",
+        paste_anything_about_product="Product: Hydrating Face Mist | Category: Beauty & Personal Care",
+        source_lane="MANUAL",
+        category="Beauty & Personal Care",
+        price=19.9,
+        currency="MYR",
+        commission_rate="10%",
+        image_url="https://example.com/face-mist.jpg",
+    )
+
+    response = complete_product_knowledge(request)
+
+    assert response.suggested_size_or_volume == "100ml"
+    assert response.extracted_product_facts["size_or_volume"] == "100ml"
+    assert "SIZE_OR_VOLUME_EVIDENCE" not in response.missing_required_evidence
+    assert "SIZE_OR_VOLUME_FROM_IMAGE_OCR_HIGH_CONFIDENCE" in response.warnings
+
+
+def test_complete_product_knowledge_low_confidence_image_ocr_does_not_clear_size_block(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.resolve_product_intelligence_profile",
+        lambda payload: {
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+            "package_form": "bottle",
+            "physical_state": "liquid",
+            "product_scale_class": "handheld_small",
+            "handling_profile": "controlled_grip",
+            "copy_route": "REVIEW_REQUIRED",
+            "copy_formula": "REVIEW_REQUIRED",
+            "warnings": [],
+            "errors": [],
+            "image_analysis": {
+                "status": "ANALYZED",
+                "image_url": payload.get("image_url"),
+                "local_image_path": payload.get("local_image_path"),
+                "detected_package": "bottle",
+                "detected_text": ["Hydrating Face Mist", "100ml"],
+                "detected_brand": None,
+                "detected_size_text": "100ml",
+                "detected_form_factor": "bottle",
+                "visual_confidence": "LOW",
+                "evidence": ["provider:mock"],
+                "warnings": [],
+                "provider": "mock_provider",
+                "metadata": {},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.resolve_product_physics",
+        lambda product: {
+            "physics_class": "LIQUID_BOTTLE",
+            "recommended_grip": "center_hold",
+            "section_5_product_physics_prompt": "Physics DNA: LIQUID_BOTTLE",
+        },
+    )
+
+    request = ProductKnowledgeCompleteRequest(
+        product_name="Hydrating Face Mist",
+        paste_anything_about_product="Product: Hydrating Face Mist | Category: Beauty & Personal Care",
+        source_lane="MANUAL",
+        category="Beauty & Personal Care",
+        price=19.9,
+        currency="MYR",
+        commission_rate="10%",
+        image_url="https://example.com/face-mist.jpg",
+    )
+
+    response = complete_product_knowledge(request)
+
+    assert response.suggested_size_or_volume is None
+    assert "SIZE_OR_VOLUME_EVIDENCE" in response.missing_required_evidence
+    assert "SIZE_OR_VOLUME_FROM_IMAGE_OCR_HIGH_CONFIDENCE" not in response.warnings
