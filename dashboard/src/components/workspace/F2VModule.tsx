@@ -16,6 +16,12 @@ interface F2VModuleProps {
 	workspacePackage?: WorkspaceExecutionPackage | null;
 }
 
+const F2V_LOCKED_MODEL = "Veo 3.1 - Lite";
+
+function normalizeF2VModel(_value: string | null | undefined): string {
+	return F2V_LOCKED_MODEL;
+}
+
 function toUploadedAsset(
 	asset:
 		| WorkspaceExecutionPackage["resolved_assets"][number]
@@ -50,7 +56,7 @@ export default function F2VModule({
 	const [manualPrompt, setManualPrompt] = useState("");
 	const [isManualOverride, setIsManualOverride] = useState(false);
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
-	const [model, setModel] = useState("Veo 3.1 - Lite");
+	const [model, setModel] = useState(F2V_LOCKED_MODEL);
 	const [count, setCount] = useState(1);
 	const [isUploading, setIsUploading] = useState(false);
 	const [startPreviewFailed, setStartPreviewFailed] = useState(false);
@@ -62,7 +68,7 @@ export default function F2VModule({
 	useEffect(() => {
 		if (!workspacePackage || workspacePackage.mode !== "F2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
-		setModel(workspacePackage.model || "Veo 3.1 - Lite");
+		setModel(normalizeF2VModel(workspacePackage.model));
 		setOrientation(
 			workspacePackage.aspect_ratio === "16:9" ? "HORIZONTAL" : "VERTICAL",
 		);
@@ -322,13 +328,15 @@ export default function F2VModule({
 							<select
 								title="Select generation model"
 								value={model}
-								onChange={(e) => setModel(e.target.value)}
+								onChange={(e) => setModel(normalizeF2VModel(e.target.value))}
 								className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] font-bold text-slate-300 outline-none"
 							>
-								<option>Veo 3.1 - Lite</option>
-								<option>Veo 3.1 - Pro</option>
-								<option>Nano Banana 2</option>
+								<option>{F2V_LOCKED_MODEL}</option>
 							</select>
+							<p className="text-[10px] text-slate-500">
+								F2V stays locked to Veo 3.1 - Lite to match the verified
+								Video/Frames execution lane.
+							</p>
 						</div>
 						<div className="space-y-3">
 							<p className="text-xs font-bold text-slate-400">Count</p>

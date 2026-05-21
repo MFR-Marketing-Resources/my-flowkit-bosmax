@@ -64,3 +64,13 @@ def test_side_panel_shell_exposes_runtime_markers_and_retry_controls():
 		'bank: "http://127.0.0.1:8100/workspace/generation-packages?portal=side"',
 	]:
 		assert token in popup_js
+
+
+def test_flow_dom_f2v_lane_stays_fail_closed_and_locked_to_lite():
+	dom_source = _read("extension/content-flow-dom.js")
+
+	assert "return surfaced || true;" not in dom_source
+	assert "return surfaced;" in dom_source
+	assert "expectations.modelLabel =" in dom_source
+	assert "resolveRequestedModel(job) || FLOW_MODE_CONFIG.F2V.defaultModel;" in dom_source
+	assert "Expected model='${expectations.modelLabel}', got '${observed.model}'" in dom_source
