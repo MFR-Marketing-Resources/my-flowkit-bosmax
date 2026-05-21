@@ -1,3 +1,4 @@
+// biome-ignore-all format: frozen Flow DOM state machine stays line-stable for narrow gate patches
 /**
  * Flow Kit — Google Flow DOM Executor with Mode Verification Gate
  * 
@@ -11,7 +12,7 @@
  * - Use Video/Frames for IMG
  */
 
-(function() {
+(() => {
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
   const FLOW_KIT_TEST_MODE = Boolean(window.__FLOWKIT_TEST_MODE__);
@@ -49,7 +50,7 @@
   }
 
   // Safe wrapper for sending messages without blocking on response
-  function sendStageEvent(request_id, stage, status) {
+  function _sendStageEvent(request_id, stage, status) {
     sendRuntimeMessageNoThrow({
       type: 'FLOW_STAGE_EVENT',
       request_id: request_id,
@@ -136,6 +137,34 @@
 
   function normalizeText(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function canonicalizeFlowModelLabel(value) {
+    const normalized = normalizeText(value).toLowerCase();
+    if (!normalized) return '';
+    if (normalized.includes('veo 3.1 - lite') || normalized.includes('veo 3.1 lite')) return 'veo 3.1 - lite';
+    if (normalized.includes('veo 3.1 - pro') || normalized.includes('veo 3.1 pro')) return 'veo 3.1 - pro';
+    if (normalized.includes('veo 3.1 - fast') || normalized.includes('veo 3.1 fast')) return 'veo 3.1 - fast';
+    if (normalized.includes('veo 3.1 - quality') || normalized.includes('veo 3.1 quality')) return 'veo 3.1 - quality';
+    if (normalized.includes('nano banana 2')) return 'nano banana 2';
+    if (normalized.includes('nano banana pro') || normalized.includes('nano banana - pro')) return 'nano banana pro';
+    if (normalized.includes('veo 3.1')) return 'veo 3.1';
+    if (normalized.includes('nano banana')) return 'nano banana';
+    return normalized;
+  }
+
+  function extractObservedModelLabel(text) {
+    const value = normalizeText(text);
+    if (!value) return null;
+    const exactVeoMatch = value.match(/Veo(?:[-\s]?3(?:\.1)?(?:\s*-\s*(?:Lite|Pro|Fast|Quality)))/i);
+    if (exactVeoMatch) return normalizeText(exactVeoMatch[0]);
+    const genericVeoMatch = value.match(/Veo(?:[-\s]?3(?:\.1)?)/i);
+    if (genericVeoMatch) return normalizeText(genericVeoMatch[0]);
+    const exactNanoBananaMatch = value.match(/Nano Banana(?:\s*2|\s*Pro|\s*-\s*Pro)/i);
+    if (exactNanoBananaMatch) return normalizeText(exactNanoBananaMatch[0]);
+    const genericNanoBananaMatch = value.match(/Nano Banana/i);
+    if (genericNanoBananaMatch) return normalizeText(genericNanoBananaMatch[0]);
+    return null;
   }
 
   function uniqueNonEmpty(values, limit = 50) {
@@ -388,7 +417,7 @@
     if (!surfaced) {
       await sleep(800);
     }
-    return surfaced || true;
+    return surfaced;
   }
 
   function findOpenF2VConfigMenu() {
@@ -524,9 +553,9 @@
       };
     }
 
-    let roleMenuTextSnippetsBeforeClose = [];
+    let _roleMenuTextSnippetsBeforeClose = [];
     if (roleMenuCountBeforeOrig > 0) {
-      roleMenuTextSnippetsBeforeClose = Array.from(document.querySelectorAll('[role="menu"]')).map((el) => (
+      _roleMenuTextSnippetsBeforeClose = Array.from(document.querySelectorAll('[role="menu"]')).map((el) => (
         normalizeText(el.innerText || el.textContent || '').slice(0, 120)
       ));
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
@@ -1758,7 +1787,7 @@
   }) {
     const startTime = Date.now();
     const deadline = startTime + timeoutMs;
-    const modalWasVisible = Boolean(modal && modal.isConnected && isVisible(modal));
+    const modalWasVisible = Boolean(modal?.isConnected && isVisible(modal));
     let weakRejectLogged = false;
     const originalSlotContainer = slotContainer?.isConnected ? slotContainer : null;
 
@@ -1879,7 +1908,7 @@
 
   function insertTextLikeUser(el, text) {
     el.focus();
-    const ok = document.execCommand && document.execCommand('insertText', false, text);
+    const ok = document.execCommand?.('insertText', false, text);
     if (!ok) {
       el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: text }));
       if ('value' in el) {
@@ -2080,7 +2109,7 @@
         if (modalTargets.dropzoneTarget && modalTargets.dropzoneTarget !== modalTargets.fileInput) {
           dispatchDragSequence(modalTargets.dropzoneTarget, dataTransfer);
         }
-      } else if (target.matches && target.matches('input[type="file"]')) {
+      } else if (target.matches?.('input[type="file"]')) {
         assignFilesToInput(target, dataTransfer.files);
         target.dispatchEvent(new Event('input', { bubbles: true }));
         target.dispatchEvent(new Event('change', { bubbles: true }));
@@ -2241,15 +2270,9 @@
     const modelElements = document.querySelectorAll('button, span, div, p');
     for (const el of modelElements) {
       if (!isVisible(el)) continue;
-      const text = normalizeText(el.textContent);
-      const veoMatch = text.match(/Veo(?:[-\s]?3(?:\.1)?(?:\s*-\s*(?:Lite|Pro))?)/i);
-      if (veoMatch) {
-        observed.model = normalizeText(veoMatch[0]);
-        break;
-      }
-      const nanoBananaMatch = text.match(/Nano Banana(?:\s*2)?(?:\s*-\s*Pro|\s+Pro)?/i);
-      if (nanoBananaMatch) {
-        observed.model = normalizeText(nanoBananaMatch[0]);
+      const detectedModel = extractObservedModelLabel(el.textContent);
+      if (detectedModel) {
+        observed.model = detectedModel;
         break;
       }
     }
@@ -2767,6 +2790,8 @@
       expectations.topMode = 'Video';
       expectations.subMode = 'Frames';
       expectations.modelContains = 'Veo';
+      expectations.modelLabel =
+        resolveRequestedModel(job) || FLOW_MODE_CONFIG.F2V.defaultModel;
       expectations.startSlotVisible = true;
       expectations.noImageMode = true;
       expectations.noNanoBanana = true;
@@ -2790,10 +2815,20 @@
         result.observed = observed;
         return result;
       }
-      if (!observed.model.includes('Veo')) {
+      const observedModel = canonicalizeFlowModelLabel(observed.model);
+      const expectedModel = canonicalizeFlowModelLabel(expectations.modelLabel);
+      if (!observedModel.includes('veo')) {
         result.ok = false;
         result.error = 'FLOW_MODE_MISMATCH';
         result.reason = `Expected model to contain 'Veo', got '${observed.model}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (expectedModel && observedModel && observedModel !== expectedModel) {
+        result.ok = false;
+        result.error = 'FLOW_MODE_MISMATCH';
+        result.reason = `Expected model='${expectations.modelLabel}', got '${observed.model}'`;
         result.expected = expectations;
         result.observed = observed;
         return result;
@@ -3009,7 +3044,7 @@
    * @param {object} job   - The job object (used for context, not modified)
    * @param {Function} logStage - logStage(stage, status, message) from executeFlowJob
    */
-  async function ensureF2VFramesWorkspaceReady(job, logStage) {
+  async function ensureF2VFramesWorkspaceReady(_job, logStage) {
     // ── Step 1: Root / landing check ─────────────────────────────────────────
     // We don't navigate away (can't cross page boundary), but record whether
     // we're at root or already inside a project editor.
@@ -3031,7 +3066,7 @@
       const snapObs = observeFlowState();
       const snapComposer = findComposerElement();
       const snapMsg = `workspace_not_f2v_ready topMode=${snapObs.topMode} subMode=${snapObs.subMode} model=${snapObs.model} slots=[${snapObs.visibleUploadSlots.join(',')}] composer_found=${!!snapComposer}`;
-      console.log('[FlowAgent] ' + snapMsg);
+      console.log(`[FlowAgent] ${snapMsg}`);
 
       await closeBlockingModalIfPresent();
 
@@ -3107,7 +3142,7 @@
     const modeControls = await ensureModeControlsVisible('F2V');
     if (!modeControls.ok) {
       logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL',
-        `${modeControls.error || 'ensureModeControlsVisible(F2V) returned !ok'}${modeControls.detail ? ' — ' + modeControls.detail : ''}`);
+        `${modeControls.error || 'ensureModeControlsVisible(F2V) returned !ok'}${modeControls.detail ? ` — ${modeControls.detail}` : ''}`);
       throw new Error('ERR_WRONG_MODE_IMAGE_SELECTED');
     }
 
@@ -3565,7 +3600,7 @@
       await humanTypePrompt(composer, job.prompt);
 
       const actual = getComposerText(composer);
-      if (!actual || !actual.includes(job.prompt.slice(0, 10))) {
+      if (!actual?.includes(job.prompt.slice(0, 10))) {
         logStage(STAGES.PROMPT_VISIBLE, 'NO');
         throw new Error('PROMPT_INSERT_FAILED');
       }
@@ -3635,7 +3670,7 @@
     return report;
   }
 
-  const flowDomMessageListener = (msg, sender, sendResponse) => {
+  const flowDomMessageListener = (msg, _sender, sendResponse) => {
     if (msg.type === 'FLOWKIT_DIAGNOSTIC_PING') {
       sendResponse(buildDiagnosticPingResponse());
       return false;
@@ -3745,6 +3780,8 @@
       waitForUploadAcceptance,
       resolveAssetPickerTargets,
       simulateFileUpload,
+      openFlowConfigPanel,
+      verifyFlowMode,
     };
   }
 
