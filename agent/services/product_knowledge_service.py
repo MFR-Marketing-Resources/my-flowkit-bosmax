@@ -137,6 +137,10 @@ def complete_product_knowledge(
 
     # 4. Resolve Intelligence and Physics
     intelligence = resolve_product_intelligence_profile(temp_product)
+    image_size_warning = _backfill_size_from_high_confidence_image_analysis(
+        extracted_facts,
+        dict(intelligence.get("image_analysis") or {}),
+    )
     physics_seed = dict(temp_product)
     physics_seed["bosmax_product_family"] = intelligence.get("bosmax_product_family")
     physics = resolve_product_physics(product=physics_seed)
@@ -168,6 +172,8 @@ def complete_product_knowledge(
 
     image_analysis = dict(intelligence.get("image_analysis") or {})
     warnings = list(intelligence.get("warnings", []))
+    if image_size_warning:
+        warnings.append(image_size_warning)
     extraction_status = _resolve_extraction_status(request)
     if extraction_status == "NOT_IMPLEMENTED":
         warnings.append("TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED")
@@ -243,35 +249,7 @@ def _extract_facts(request: ProductKnowledgeCompleteRequest) -> dict[str, Any]:
     elif request.price:
         facts["price"] = request.price
         
-    # Multi-pattern size/volume extractor — supports liquid, weight, dimension, count,
-    # apparel, fabric-width, and electronics specs common in Malaysian TikTok listings.
-    # Dimension patterns run first so "30x60cm" is captured whole before "60cm" alone.
-    _SIZE_PATTERNS = [
-        # Dimension patterns (e.g. 30x60cm, 30×60) — must run before single-unit patterns
-        r"\d+\s*[x×]\s*\d+(?:\s*cm)?",
-        # Bidang (fabric width) — must run before generic numeric patterns
-        r'bidang\s*\d+(?:["\']|-\d+(?:\s*dan\s*\d+(?:-\d+)?)?)?',
-        # Range with units (e.g. 4ft-12ft, 100g/200g)
-        r"\d+\s*(?:ft|cm|g|ml)\s*[-/]\s*\d+\s*(?:ft|cm|g|ml)",
-        # Multiple weights in one string (e.g. 5 LITER / 5 KG)
-        r"\d+\s*(?:liter|litre|kg)\s*/\s*\d+\s*(?:liter|litre|kg)",
-        # Liquid / weight / length with units (e.g. 400ml, 1.5kg, 30cm, 240W)
-        r"\d+(?:\.\d+)?\s*(?:ml|l(?:iter|itre)?|g|kg|cm|mm|m(?:eter|etre)?|ft|inch|oz|w(?:att)?)",
-        # Count/pack patterns (e.g. 50pcs, 100 tablets, 3 sachet)
-        r"\d+\s*(?:pcs|pieces|pc|tablets?|sachets?|kapsul|pack|pasang|biji|keping|helai)",
-        # Apparel size ranges with dash/slash separator (e.g. S-5XL, M-L-XL)
-        r"(?:XS|S|M|L|XL|XXL|XXXL|\dXL)(?:\s*[-/]\s*(?:XS|S|M|L|XL|XXL|XXXL|\dXL))+",
-        # Apparel size ranges with space separator needing ≥2 tokens (e.g. XS S M L)
-        r"\b(?:XS|S|M|L|XL|XXL|XXXL|\dXL)(?:\s+(?:XS|S|M|L|XL|XXL|XXXL|\dXL)){2,}\b",
-        # Standard apparel size tokens (e.g. SML, FREE SIZE)
-        r"\b(?:SML|free\s*size|freesize|saiz\s*bebas|one\s*size)\b",
-    ]
-    _size_found = None
-    for _pat in _SIZE_PATTERNS:
-        _m = re.search(_pat, combined_text, re.I)
-        if _m:
-            _size_found = _m.group(0).strip()
-            break
+    _size_found = _extract_size_or_volume_from_text(combined_text)
     if _size_found:
         facts["size_or_volume"] = _size_found
     elif request.size_or_volume:
@@ -285,6 +263,60 @@ def _extract_facts(request: ProductKnowledgeCompleteRequest) -> dict[str, Any]:
         
     facts["usp_list"] = usp_list
     return facts
+
+
+_SIZE_PATTERNS = [
+    r"\d+\s*[x×]\s*\d+(?:\s*cm)?",
+    r'bidang\s*\d+(?:["\']|-\d+(?:\s*dan\s*\d+(?:-\d+)?)?)?',
+    r"\d+\s*(?:ft|cm|g|ml)\s*[-/]\s*\d+\s*(?:ft|cm|g|ml)",
+    r"\d+\s*(?:liter|litre|kg)\s*/\s*\d+\s*(?:liter|litre|kg)",
+    r"\d+(?:\.\d+)?\s*(?:ml|l(?:iter|itre)?|g|kg|cm|mm|m(?:eter|etre)?|ft|inch|oz|w(?:att)?)",
+    r"\d+\s*(?:pcs|pieces|pc|tablets?|sachets?|kapsul|capsules?|pack|packs|pasang|biji|keping|helai|bottles?|cookies?|sheets?|kluster|cluster(?:s)?)",
+    r"(?:XS|S|M|L|XL|XXL|XXXL|\dXL)(?:\s*[-/]\s*(?:XS|S|M|L|XL|XXL|XXXL|\dXL))+",
+    r"\b(?:XS|S|M|L|XL|XXL|XXXL|\dXL)(?:\s+(?:XS|S|M|L|XL|XXL|XXXL|\dXL)){2,}\b",
+    r"\b(?:SML|free\s*size|freesize|saiz\s*bebas|one\s*size)\b",
+]
+
+
+def _extract_size_or_volume_from_text(text: str | None) -> str | None:
+    haystack = str(text or "").strip()
+    if not haystack:
+        return None
+    for pattern in _SIZE_PATTERNS:
+        match = re.search(pattern, haystack, re.I)
+        if match:
+            return match.group(0).strip()
+    return None
+
+
+def _backfill_size_from_high_confidence_image_analysis(
+    extracted_facts: dict[str, Any],
+    image_analysis: dict[str, Any],
+) -> str | None:
+    if extracted_facts.get("size_or_volume"):
+        return None
+    if str(image_analysis.get("status") or "") != "ANALYZED":
+        return None
+    if str(image_analysis.get("visual_confidence") or "") != "HIGH":
+        return None
+
+    explicit_size = _extract_size_or_volume_from_text(
+        image_analysis.get("detected_size_text"),
+    )
+    if explicit_size:
+        extracted_facts["size_or_volume"] = explicit_size
+        return "SIZE_OR_VOLUME_FROM_IMAGE_OCR_HIGH_CONFIDENCE"
+
+    detected_text = " ".join(
+        str(item).strip()
+        for item in list(image_analysis.get("detected_text") or [])
+        if str(item).strip()
+    )
+    inferred_size = _extract_size_or_volume_from_text(detected_text)
+    if inferred_size:
+        extracted_facts["size_or_volume"] = inferred_size
+        return "SIZE_OR_VOLUME_FROM_IMAGE_OCR_HIGH_CONFIDENCE"
+    return None
 
 
 def _build_temp_product(
