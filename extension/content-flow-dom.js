@@ -286,6 +286,14 @@
     return job;
   }
 
+  function hasFlowAspectToken(text) {
+    return /(crop_9_16|9:16|16:9|4:3|1:1|3:4)/i.test(String(text || ''));
+  }
+
+  function hasFlowCountToken(text) {
+    return /(^|\s)[1-4]x(\s|$)|x[1-4]/i.test(String(text || ''));
+  }
+
   function findFlowConfigLauncher() {
     const selectors = 'button, [role="button"], [role="tab"], [aria-haspopup], span, div';
     const candidates = Array.from(document.querySelectorAll(selectors));
@@ -298,7 +306,7 @@
       if (!text) continue;
       const lower = text.toLowerCase();
       const looksLikeModelChip = lower.includes('nano banana') || lower.includes('veo');
-      const looksLikeConfigChip = /(^|\s)([1-4]x)(\s|$)/i.test(text) && /(9:16|16:9|4:3|1:1|3:4)/.test(text);
+      const looksLikeConfigChip = hasFlowCountToken(text) && hasFlowAspectToken(text);
       const target = el.closest('button, [role="button"], [role="tab"], [aria-haspopup]') || el;
       if (!isVisible(target)) continue;
       const targetText = normalizeText(target.textContent || target.getAttribute('aria-label') || '');
@@ -436,8 +444,8 @@
       if (!isVisible(el)) return false;
       const text = normalizeText(el.innerText || el.textContent || '');
       return text.includes('Video')
-        && text.includes('1x')
-        && (text.includes('crop_9_16') || text.includes('9:16'));
+        && hasFlowCountToken(text)
+        && hasFlowAspectToken(text);
     }) || null;
   }
 
@@ -577,8 +585,8 @@
     // 2. Verify launcher state
     const isLauncherValid = launcherFound && launcherVisible
       && launcherText.includes('Video')
-      && launcherText.includes('1x')
-      && (launcherText.includes('crop_9_16') || launcherText.includes('9:16'));
+      && hasFlowCountToken(launcherText)
+      && hasFlowAspectToken(launcherText);
 
     const launcherAriaExpandedBefore = launcher?.getAttribute('aria-expanded') || '';
     const launcherDataStateBefore = launcher?.getAttribute('data-state') || '';

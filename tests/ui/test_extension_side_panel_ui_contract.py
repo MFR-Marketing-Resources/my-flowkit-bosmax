@@ -8,6 +8,12 @@ def _read(relative_path: str) -> str:
 	return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
+def _section(src: str, start: str, end: str) -> str:
+	_, tail = src.split(start, 1)
+	head, _ = tail.split(end, 1)
+	return head
+
+
 def test_manifest_points_to_existing_side_panel_entrypoint():
 	manifest = _read("extension/manifest.json")
 	side_panel_html = ROOT / "extension" / "side_panel.html"
@@ -74,3 +80,37 @@ def test_flow_dom_f2v_lane_stays_fail_closed_and_locked_to_lite():
 	assert "expectations.modelLabel =" in dom_source
 	assert "resolveRequestedModel(job) || FLOW_MODE_CONFIG.F2V.defaultModel;" in dom_source
 	assert "Expected model='${expectations.modelLabel}', got '${observed.model}'" in dom_source
+
+
+def test_flow_dom_f2v_config_launcher_accepts_preselection_counts_before_panel_open():
+	dom_source = _read("extension/content-flow-dom.js")
+	launcher_section = _section(
+		dom_source,
+		"function findCollapsedF2VConfigLauncher() {",
+		"async function ensureF2VComposerReadyBeforeConfig() {",
+	)
+	generic_launcher_section = _section(
+		dom_source,
+		"function findFlowConfigLauncher() {",
+		"function findOpenFlowConfigSurface() {",
+	)
+
+	assert "function hasFlowCountToken(text)" in dom_source
+	assert "function hasFlowAspectToken(text)" in dom_source
+	assert "hasFlowCountToken(text)" in launcher_section
+	assert "hasFlowAspectToken(text)" in launcher_section
+	assert "text.includes('1x')" not in launcher_section
+	assert "hasFlowCountToken(text) && hasFlowAspectToken(text)" in generic_launcher_section
+
+
+def test_background_flow_blocker_classifier_prefers_mode_mismatch_over_auth_failure():
+	background_source = _read("extension/background.js")
+	classifier_section = _section(
+		background_source,
+		"function classifyFlowPrimaryBlocker(result) {",
+		"function finalizeFlowReadiness(result) {",
+	)
+
+	assert 'rawError.includes("FLOW_MODE_MISMATCH")' in classifier_section
+	assert 'rawError.includes("ABORT_FLOW_MODE_MISMATCH")' in classifier_section
+	assert classifier_section.index("FLOW_MODE_MISMATCH") < classifier_section.index("FLOW_EDITOR_NOT_AUTHENTICATED")

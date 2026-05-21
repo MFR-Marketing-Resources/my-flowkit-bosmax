@@ -12,6 +12,7 @@ domains:
       - agent/api/workspace_packages.py
       - agent/api/product_registration.py
       - agent/api/fastmoss_bulk.py
+      - agent/api/operator.py
       - agent/db/crud.py
       - agent/db/schema.py
       - agent/main.py
@@ -96,6 +97,7 @@ domains:
       - tests/unit/test_product_registration_commit_service.py
       - tests/unit/test_product_knowledge_extraction.py
       - tests/unit/test_fastmoss_bulk_promotion_service.py
+      - tests/unit/test_batch_executor.py
       - tests/unit/test_product_knowledge_completion_service.py
       - tests/unit/test_product_registration_review_service.py
       - tests/unit/test_registration_draft_evidence_editor_service.py
