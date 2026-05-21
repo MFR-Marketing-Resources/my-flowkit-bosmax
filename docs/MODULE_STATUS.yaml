@@ -58,6 +58,8 @@ domains:
       - dashboard/src/components/workspace/I2VModule.tsx
       - dashboard/src/components/workspace/IMGModule.tsx
       - dashboard/src/components/workspace/WorkspaceImageAssetSlot.tsx
+      - extension/background.js
+      - extension/content-flow-dom.js
       - extension/side_panel.html
       - extension/side_panel.js
       - extension/popup.html
