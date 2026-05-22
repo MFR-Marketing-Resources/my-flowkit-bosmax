@@ -776,6 +776,7 @@ async def create_workspace_generation_package(
     blockers_json: str,
     warnings_json: str,
     status: str,
+    batch_run_id: str | None = None,
 ) -> dict:
     db = await get_db()
     now = _now()
@@ -788,8 +789,8 @@ async def create_workspace_generation_package(
                 generation_mode, final_prompt_text, prompt_blocks_json, selected_assets_json,
                 resolved_engine_slots_json, resolver_output_json, image_assets_json,
                 manual_handoff_json, dom_handoff_payload_json, blockers_json, warnings_json,
-                status, created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                status, batch_run_id, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 workspace_generation_package_id, mode, product_id, product_name_snapshot,
@@ -797,7 +798,7 @@ async def create_workspace_generation_package(
                 generation_mode, final_prompt_text, prompt_blocks_json, selected_assets_json,
                 resolved_engine_slots_json, resolver_output_json, image_assets_json,
                 manual_handoff_json, dom_handoff_payload_json, blockers_json, warnings_json,
-                status, now, now,
+                status, batch_run_id, now, now,
             ),
         )
         await db.commit()
@@ -816,6 +817,7 @@ async def list_workspace_generation_packages(
     mode: str | None = None,
     status: str | None = None,
     product_id: str | None = None,
+    batch_run_id: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
     db = await get_db()
@@ -826,10 +828,75 @@ async def list_workspace_generation_packages(
         q += " AND status=?"; params.append(status)
     if product_id:
         q += " AND product_id=?"; params.append(product_id)
+    if batch_run_id:
+        q += " AND batch_run_id=?"; params.append(batch_run_id)
     q += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     cur = await db.execute(q, params)
     return [dict(r) for r in await cur.fetchall()]
+
+
+async def create_batch_generation_run(
+    batch_run_id: str,
+    *,
+    product_id: str,
+    modes_json: str,
+    quantity_per_mode: int,
+    interval_seconds: int,
+    generation_mode: str,
+    total_expected: int,
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO batch_generation_run
+               (batch_run_id, status, product_id, modes_json, quantity_per_mode,
+                interval_seconds, generation_mode, total_expected, total_completed,
+                total_failed, error_log_json, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,0,0,'[]',?,?)""",
+            (batch_run_id, "PENDING", product_id, modes_json, quantity_per_mode,
+             interval_seconds, generation_mode, total_expected, now, now),
+        )
+        await db.commit()
+    cur = await db.execute("SELECT * FROM batch_generation_run WHERE batch_run_id=?", (batch_run_id,))
+    row = await cur.fetchone()
+    return dict(row) if row else {}
+
+
+async def update_batch_generation_run(
+    batch_run_id: str,
+    *,
+    status: str | None = None,
+    total_completed: int | None = None,
+    total_failed: int | None = None,
+    error_log_json: str | None = None,
+) -> None:
+    db = await get_db()
+    now = _now()
+    parts, params = [], []
+    if status is not None:
+        parts.append("status=?"); params.append(status)
+    if total_completed is not None:
+        parts.append("total_completed=?"); params.append(total_completed)
+    if total_failed is not None:
+        parts.append("total_failed=?"); params.append(total_failed)
+    if error_log_json is not None:
+        parts.append("error_log_json=?"); params.append(error_log_json)
+    if not parts:
+        return
+    parts.append("updated_at=?"); params.append(now)
+    params.append(batch_run_id)
+    async with _db_lock:
+        await db.execute(f"UPDATE batch_generation_run SET {', '.join(parts)} WHERE batch_run_id=?", params)
+        await db.commit()
+
+
+async def get_batch_generation_run(batch_run_id: str) -> dict | None:
+    db = await get_db()
+    cur = await db.execute("SELECT * FROM batch_generation_run WHERE batch_run_id=?", (batch_run_id,))
+    row = await cur.fetchone()
+    return dict(row) if row else None
 
 
 # ─── FastMoss Bulk Queue ─────────────────────────────────────

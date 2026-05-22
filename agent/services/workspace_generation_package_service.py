@@ -537,10 +537,11 @@ async def list_workspace_generation_packages(
     mode: str | None = None,
     status: str | None = None,
     product_id: str | None = None,
+    batch_run_id: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
     rows = await crud.list_workspace_generation_packages(
-        mode=mode, status=status, product_id=product_id, limit=limit
+        mode=mode, status=status, product_id=product_id, batch_run_id=batch_run_id, limit=limit
     )
     return [_enrich_row(r) for r in rows]
 
@@ -575,3 +576,438 @@ def _enrich_row(row: dict) -> dict:
     if isinstance(dom, dict) and "readiness" in dom:
         dom["readiness"]["dom_handoff_ready"] = False
     return out
+
+
+# ─── T2V ─────────────────────────────────────────────────────
+
+
+async def create_t2v_generation_package(
+    *,
+    product_id: str,
+    workspace_execution_package_id: str | None = None,
+    generation_mode: str = "SINGLE",
+    duration_seconds: int = 8,
+    target_language: str = "BM_MS",
+    camera_style: str = "UGC_IPHONE_RAW",
+    character_presence: str = "VISIBLE_CREATOR",
+    creator_persona: str = "DEFAULT_CREATOR",
+    overlay_enabled: bool = True,
+    dialogue_enabled: bool = True,
+    blocks: list[dict] | None = None,
+    operator_notes: str | None = None,
+    batch_run_id: str | None = None,
+) -> dict:
+    """Create a durable T2V workspace generation package (text-only, no frame uploads)."""
+    mode = "T2V"
+    product_row = await crud.get_product(product_id)
+    _assert_not_reference_only(product_id, product_row)
+    approved = await get_approved_product_package(product_id, normalize_mode(mode))
+
+    product_name_snapshot = approved.get("product_name", "")
+    prompt_package_snapshot_id = approved.get("prompt_package_snapshot_id", "")
+
+    compiler_result = await compile_ugc_video_prompt(
+        product_id=product_id,
+        mode=mode,
+        duration_seconds=duration_seconds,
+        generation_mode=generation_mode,
+        target_language=target_language,
+        camera_style=camera_style,
+        character_presence=character_presence,
+        creator_persona=creator_persona,
+        overlay_enabled=overlay_enabled,
+        dialogue_enabled=dialogue_enabled,
+        blocks=blocks or [],
+    )
+
+    final_prompt_text: str = compiler_result.get("final_compiled_prompt_text", "")
+    prompt_blocks: list = compiler_result.get("prompt_blocks", [])
+    prompt_fingerprint: str = compiler_result.get("prompt_fingerprint", _fingerprint(final_prompt_text))
+
+    blockers: list = []
+    warnings: list = []
+    if not final_prompt_text:
+        blockers.append("final_prompt_text is empty")
+
+    status = "BLOCKED" if blockers else "READY_MANUAL"
+
+    # T2V has no image assets
+    asset_map: dict = {
+        "start_frame": None, "end_frame": None,
+        "subject": None, "scene": None, "style": None, "product_reference": None,
+    }
+    upload_order: list[str] = []
+    image_assets: dict = {}
+    asset_fingerprints: list = []
+
+    settings = {
+        "duration_seconds": duration_seconds,
+        "generation_mode": generation_mode,
+        "target_language": target_language,
+        "camera_style": camera_style,
+        "character_presence": character_presence,
+        "creator_persona": creator_persona,
+        "overlay_enabled": overlay_enabled,
+        "dialogue_enabled": dialogue_enabled,
+    }
+
+    wgp_id = _wgp_id(product_id, mode, "T2V", prompt_fingerprint)
+
+    manual_handoff = _build_manual_handoff(
+        mode=mode,
+        final_prompt_text=final_prompt_text,
+        image_assets=image_assets,
+        upload_order=upload_order,
+        blockers=blockers,
+        warnings=warnings,
+    )
+
+    dom_scaffold = _build_dom_scaffold(
+        mode=mode,
+        product_id=product_id,
+        prompt_package_snapshot_id=prompt_package_snapshot_id,
+        workspace_execution_package_id=workspace_execution_package_id,
+        workspace_generation_package_id=wgp_id,
+        final_prompt_text=final_prompt_text,
+        prompt_blocks=prompt_blocks,
+        generation_mode=generation_mode,
+        asset_map=asset_map,
+        settings=settings,
+        semantic_resolution={},
+        upload_order=upload_order,
+        blockers=blockers,
+        warnings=warnings,
+        prompt_fingerprint=prompt_fingerprint,
+        asset_fingerprints=asset_fingerprints,
+    )
+
+    row = await crud.create_workspace_generation_package(
+        wgp_id,
+        mode=mode,
+        product_id=product_id,
+        product_name_snapshot=product_name_snapshot,
+        source_lane="T2V",
+        prompt_package_snapshot_id=prompt_package_snapshot_id,
+        workspace_execution_package_id=workspace_execution_package_id,
+        generation_mode=generation_mode,
+        final_prompt_text=final_prompt_text,
+        prompt_blocks_json=_json(prompt_blocks),
+        selected_assets_json=_json({}),
+        resolved_engine_slots_json=_json({}),
+        resolver_output_json=_json({}),
+        image_assets_json=_json(image_assets),
+        manual_handoff_json=_json(manual_handoff),
+        dom_handoff_payload_json=_json(dom_scaffold),
+        blockers_json=_json(blockers),
+        warnings_json=_json(warnings),
+        status=status,
+        batch_run_id=batch_run_id,
+    )
+
+    return _enrich_row(row)
+
+
+# ─── IMG ─────────────────────────────────────────────────────
+
+
+async def create_img_generation_package(
+    *,
+    product_id: str,
+    workspace_execution_package_id: str | None = None,
+    generation_mode: str = "SINGLE",
+    target_language: str = "BM_MS",
+    camera_style: str = "UGC_IPHONE_RAW",
+    character_presence: str = "VISIBLE_CREATOR",
+    creator_persona: str = "DEFAULT_CREATOR",
+    overlay_enabled: bool = True,
+    dialogue_enabled: bool = True,
+    subject_asset_id: str | None = None,
+    subject_preview_url: str | None = None,
+    subject_download_url: str | None = None,
+    scene_context_asset_id: str | None = None,
+    scene_context_preview_url: str | None = None,
+    scene_context_download_url: str | None = None,
+    style_asset_id: str | None = None,
+    style_preview_url: str | None = None,
+    style_download_url: str | None = None,
+    operator_notes: str | None = None,
+    batch_run_id: str | None = None,
+) -> dict:
+    """Create a durable IMG workspace generation package (image generation mode)."""
+    mode = "IMG"
+    product_row = await crud.get_product(product_id)
+    _assert_not_reference_only(product_id, product_row)
+    approved = await get_approved_product_package(product_id, normalize_mode(mode))
+
+    product_name_snapshot = approved.get("product_name", "")
+    prompt_package_snapshot_id = approved.get("prompt_package_snapshot_id", "")
+
+    compiler_result = await compile_ugc_video_prompt(
+        product_id=product_id,
+        mode=mode,
+        duration_seconds=8,
+        generation_mode=generation_mode,
+        target_language=target_language,
+        camera_style=camera_style,
+        character_presence=character_presence,
+        creator_persona=creator_persona,
+        overlay_enabled=overlay_enabled,
+        dialogue_enabled=dialogue_enabled,
+        blocks=[],
+    )
+
+    final_prompt_text: str = compiler_result.get("final_compiled_prompt_text", "")
+    prompt_blocks: list = compiler_result.get("prompt_blocks", [])
+    prompt_fingerprint: str = compiler_result.get("prompt_fingerprint", _fingerprint(final_prompt_text))
+
+    # Subject auto-seeds from product image
+    product_image_url = f"/api/products/{product_id}/image"
+    subject_slot = {
+        "slot_key": "subject",
+        "label": "Subject",
+        "asset_id": subject_asset_id or f"product-image:{product_id}:subject",
+        "preview_url": subject_preview_url or product_image_url,
+        "download_url": subject_download_url or product_image_url,
+        "source": "OPERATOR_SELECTED" if subject_asset_id else "PRODUCT_IMAGE_AUTO_SEED",
+    }
+
+    scene_slot: dict | None = None
+    if scene_context_asset_id or scene_context_preview_url:
+        scene_slot = {
+            "slot_key": "scene",
+            "label": "Scene Context",
+            "asset_id": scene_context_asset_id,
+            "preview_url": scene_context_preview_url,
+            "download_url": scene_context_download_url,
+            "source": "OPERATOR_SELECTED",
+        }
+
+    style_slot: dict | None = None
+    if style_asset_id or style_preview_url:
+        style_slot = {
+            "slot_key": "style",
+            "label": "Style Reference",
+            "asset_id": style_asset_id,
+            "preview_url": style_preview_url,
+            "download_url": style_download_url,
+            "source": "OPERATOR_SELECTED",
+        }
+
+    blockers: list = []
+    warnings: list = []
+    if not final_prompt_text:
+        blockers.append("final_prompt_text is empty")
+    if not subject_slot.get("asset_id"):
+        blockers.append("subject image is required for IMG mode")
+
+    status = "BLOCKED" if blockers else "READY_MANUAL"
+
+    asset_map = {
+        "start_frame": None, "end_frame": None,
+        "subject": subject_slot,
+        "scene": scene_slot,
+        "style": style_slot,
+        "product_reference": None,
+    }
+    image_assets = {k: v for k, v in asset_map.items() if v and k in ("subject", "scene", "style")}
+    upload_order = [k for k in ("subject", "scene", "style") if asset_map.get(k)]
+    asset_fingerprints = [_fingerprint(a.get("asset_id", "")) for a in image_assets.values() if a]
+
+    settings = {
+        "generation_mode": generation_mode,
+        "target_language": target_language,
+        "camera_style": camera_style,
+        "character_presence": character_presence,
+        "creator_persona": creator_persona,
+        "overlay_enabled": overlay_enabled,
+        "dialogue_enabled": dialogue_enabled,
+    }
+
+    wgp_id = _wgp_id(product_id, mode, "IMG", prompt_fingerprint)
+
+    manual_handoff = _build_manual_handoff(
+        mode=mode,
+        final_prompt_text=final_prompt_text,
+        image_assets=image_assets,
+        upload_order=upload_order,
+        blockers=blockers,
+        warnings=warnings,
+    )
+
+    dom_scaffold = _build_dom_scaffold(
+        mode=mode,
+        product_id=product_id,
+        prompt_package_snapshot_id=prompt_package_snapshot_id,
+        workspace_execution_package_id=workspace_execution_package_id,
+        workspace_generation_package_id=wgp_id,
+        final_prompt_text=final_prompt_text,
+        prompt_blocks=prompt_blocks,
+        generation_mode=generation_mode,
+        asset_map=asset_map,
+        settings=settings,
+        semantic_resolution={},
+        upload_order=upload_order,
+        blockers=blockers,
+        warnings=warnings,
+        prompt_fingerprint=prompt_fingerprint,
+        asset_fingerprints=asset_fingerprints,
+    )
+
+    row = await crud.create_workspace_generation_package(
+        wgp_id,
+        mode=mode,
+        product_id=product_id,
+        product_name_snapshot=product_name_snapshot,
+        source_lane="IMG",
+        prompt_package_snapshot_id=prompt_package_snapshot_id,
+        workspace_execution_package_id=workspace_execution_package_id,
+        generation_mode=generation_mode,
+        final_prompt_text=final_prompt_text,
+        prompt_blocks_json=_json(prompt_blocks),
+        selected_assets_json=_json({"subject": subject_slot, "scene": scene_slot, "style": style_slot}),
+        resolved_engine_slots_json=_json({
+            "subject": subject_slot.get("asset_id") if subject_slot else None,
+            "scene": scene_slot.get("asset_id") if scene_slot else None,
+            "style": style_slot.get("asset_id") if style_slot else None,
+        }),
+        resolver_output_json=_json({}),
+        image_assets_json=_json(image_assets),
+        manual_handoff_json=_json(manual_handoff),
+        dom_handoff_payload_json=_json(dom_scaffold),
+        blockers_json=_json(blockers),
+        warnings_json=_json(warnings),
+        status=status,
+        batch_run_id=batch_run_id,
+    )
+
+    return _enrich_row(row)
+
+
+# ─── Batch Generation Runner ─────────────────────────────────
+
+
+import asyncio as _asyncio
+import logging as _logging
+
+_batch_logger = _logging.getLogger(__name__)
+
+_MODE_CREATORS = {
+    "F2V": create_f2v_generation_package,
+    "I2V": create_i2v_generation_package,
+    "T2V": create_t2v_generation_package,
+    "IMG": create_img_generation_package,
+}
+
+
+async def _run_batch_generation_task(
+    batch_run_id: str,
+    product_id: str,
+    modes: list[str],
+    quantity_per_mode: int,
+    interval_seconds: int,
+    generation_mode: str,
+) -> None:
+    """Background coroutine: generates packages sequentially with interval sleep."""
+    completed = 0
+    failed = 0
+    errors: list[str] = []
+
+    await crud.update_batch_generation_run(batch_run_id, status="RUNNING")
+
+    for mode in modes:
+        creator = _MODE_CREATORS.get(mode)
+        if not creator:
+            errors.append(f"Unsupported mode: {mode}")
+            _batch_logger.warning("Batch %s: unsupported mode %s, skipping", batch_run_id, mode)
+            continue
+
+        for idx in range(quantity_per_mode):
+            try:
+                await creator(
+                    product_id=product_id,
+                    generation_mode=generation_mode,
+                    batch_run_id=batch_run_id,
+                )
+                completed += 1
+                _batch_logger.info("Batch %s: %s #%d completed (%d total)", batch_run_id, mode, idx + 1, completed)
+            except Exception as exc:
+                failed += 1
+                errors.append(f"{mode}#{idx+1}: {exc}")
+                _batch_logger.error("Batch %s: %s #%d failed: %s", batch_run_id, mode, idx + 1, exc)
+
+            await crud.update_batch_generation_run(
+                batch_run_id,
+                total_completed=completed,
+                total_failed=failed,
+                error_log_json=_json(errors[-50:]),
+            )
+
+            # Only sleep if more items remain
+            remaining = (len(modes) * quantity_per_mode) - (completed + failed)
+            if remaining > 0 and interval_seconds > 0:
+                await _asyncio.sleep(interval_seconds)
+
+    final_status = "COMPLETED" if failed == 0 else ("FAILED" if completed == 0 else "COMPLETED")
+    await crud.update_batch_generation_run(
+        batch_run_id,
+        status=final_status,
+        total_completed=completed,
+        total_failed=failed,
+        error_log_json=_json(errors[-50:]),
+    )
+    _batch_logger.info("Batch %s finished: %d completed, %d failed", batch_run_id, completed, failed)
+
+
+async def start_batch_generation(
+    *,
+    product_id: str,
+    modes: list[str],
+    quantity_per_mode: int = 10,
+    interval_seconds: int = 5,
+    generation_mode: str = "SINGLE",
+) -> dict:
+    """Create a batch run record and fire the background task. Returns the run record."""
+    import json as _json_mod
+    batch_run_id = f"bgr_{_fingerprint(product_id, str(modes), str(quantity_per_mode), str(uuid.uuid4()))[:16]}"
+    total_expected = len(modes) * quantity_per_mode
+
+    run = await crud.create_batch_generation_run(
+        batch_run_id,
+        product_id=product_id,
+        modes_json=_json_mod.dumps(modes),
+        quantity_per_mode=quantity_per_mode,
+        interval_seconds=interval_seconds,
+        generation_mode=generation_mode,
+        total_expected=total_expected,
+    )
+
+    # Fire-and-forget background task
+    _asyncio.ensure_future(
+        _run_batch_generation_task(
+            batch_run_id=batch_run_id,
+            product_id=product_id,
+            modes=modes,
+            quantity_per_mode=quantity_per_mode,
+            interval_seconds=interval_seconds,
+            generation_mode=generation_mode,
+        )
+    )
+
+    return run
+
+
+async def get_batch_generation_run_status(batch_run_id: str) -> dict | None:
+    run = await crud.get_batch_generation_run(batch_run_id)
+    if not run:
+        return None
+    try:
+        import json as _json_mod
+        run["modes"] = _json_mod.loads(run.get("modes_json", "[]"))
+        run["error_log"] = _json_mod.loads(run.get("error_log_json", "[]"))
+    except Exception:
+        pass
+    # Attach packages generated so far
+    packages = await crud.list_workspace_generation_packages(batch_run_id=batch_run_id, limit=200)
+    run["packages_count"] = len(packages)
+    run["packages"] = [p.get("workspace_generation_package_id") for p in packages]
+    return run

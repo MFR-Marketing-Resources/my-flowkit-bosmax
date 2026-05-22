@@ -31,14 +31,66 @@ from agent.models.workspace_generation_package import (
     I2VGenerationPackageRequest,
     WorkspaceGenerationPackagePatchRequest,
 )
+from pydantic import BaseModel as _BaseModel
+from typing import List as _List
+
 from agent.services.workspace_generation_package_service import (
     create_f2v_generation_package,
     create_i2v_generation_package,
+    create_t2v_generation_package,
+    create_img_generation_package,
     get_workspace_generation_package,
     list_workspace_generation_packages,
+    start_batch_generation,
+    get_batch_generation_run_status,
 )
 
 router = APIRouter(prefix="/workspace/generation-packages", tags=["workspace-generation-packages"])
+
+
+class T2VGenerationPackageRequest(_BaseModel):
+    product_id: str
+    workspace_execution_package_id: str | None = None
+    generation_mode: str = "SINGLE"
+    duration_seconds: int = 8
+    target_language: str = "BM_MS"
+    camera_style: str = "UGC_IPHONE_RAW"
+    character_presence: str = "VISIBLE_CREATOR"
+    creator_persona: str = "DEFAULT_CREATOR"
+    overlay_enabled: bool = True
+    dialogue_enabled: bool = True
+    blocks: list = []
+    operator_notes: str | None = None
+
+
+class IMGGenerationPackageRequest(_BaseModel):
+    product_id: str
+    workspace_execution_package_id: str | None = None
+    generation_mode: str = "SINGLE"
+    target_language: str = "BM_MS"
+    camera_style: str = "UGC_IPHONE_RAW"
+    character_presence: str = "VISIBLE_CREATOR"
+    creator_persona: str = "DEFAULT_CREATOR"
+    overlay_enabled: bool = True
+    dialogue_enabled: bool = True
+    subject_asset_id: str | None = None
+    subject_preview_url: str | None = None
+    subject_download_url: str | None = None
+    scene_context_asset_id: str | None = None
+    scene_context_preview_url: str | None = None
+    scene_context_download_url: str | None = None
+    style_asset_id: str | None = None
+    style_preview_url: str | None = None
+    style_download_url: str | None = None
+    operator_notes: str | None = None
+
+
+class BatchGenerationRequest(_BaseModel):
+    product_id: str
+    modes: _List[str] = ["F2V"]
+    quantity_per_mode: int = 10
+    interval_seconds: int = 5
+    generation_mode: str = "SINGLE"
 
 
 @router.get("")
@@ -46,12 +98,13 @@ async def list_packages(
     mode: str | None = Query(None),
     status: str | None = Query(None),
     product_id: str | None = Query(None),
+    batch_run_id: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
 ):
     """List saved workspace generation packages with optional filters."""
     try:
         packages = await list_workspace_generation_packages(
-            mode=mode, status=status, product_id=product_id, limit=limit
+            mode=mode, status=status, product_id=product_id, batch_run_id=batch_run_id, limit=limit
         )
         return {"packages": packages, "count": len(packages)}
     except Exception as exc:
@@ -190,6 +243,16 @@ async def create_from_execution_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
             )
+        elif wep_mode == "T2V":
+            package = await create_t2v_generation_package(
+                product_id=product_id,
+                workspace_execution_package_id=workspace_execution_package_id,
+            )
+        elif wep_mode == "IMG":
+            package = await create_img_generation_package(
+                product_id=product_id,
+                workspace_execution_package_id=workspace_execution_package_id,
+            )
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported mode {wep_mode!r} for from-execution-package")
 
@@ -198,3 +261,96 @@ async def create_from_execution_package(
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/t2v")
+async def create_t2v_package(request: T2VGenerationPackageRequest):
+    """Create a durable T2V generation package (Prompt Handoff Bank entry)."""
+    try:
+        package = await create_t2v_generation_package(
+            product_id=request.product_id,
+            workspace_execution_package_id=request.workspace_execution_package_id,
+            generation_mode=request.generation_mode,
+            duration_seconds=request.duration_seconds,
+            target_language=request.target_language,
+            camera_style=request.camera_style,
+            character_presence=request.character_presence,
+            creator_persona=request.creator_persona,
+            overlay_enabled=request.overlay_enabled,
+            dialogue_enabled=request.dialogue_enabled,
+            blocks=request.blocks,
+            operator_notes=request.operator_notes,
+        )
+        return package
+    except Exception as exc:
+        raise _http_exc_for(exc) from exc
+
+
+@router.post("/img")
+async def create_img_package(request: IMGGenerationPackageRequest):
+    """Create a durable IMG generation package (Prompt Handoff Bank entry)."""
+    try:
+        package = await create_img_generation_package(
+            product_id=request.product_id,
+            workspace_execution_package_id=request.workspace_execution_package_id,
+            generation_mode=request.generation_mode,
+            target_language=request.target_language,
+            camera_style=request.camera_style,
+            character_presence=request.character_presence,
+            creator_persona=request.creator_persona,
+            overlay_enabled=request.overlay_enabled,
+            dialogue_enabled=request.dialogue_enabled,
+            subject_asset_id=request.subject_asset_id,
+            subject_preview_url=request.subject_preview_url,
+            subject_download_url=request.subject_download_url,
+            scene_context_asset_id=request.scene_context_asset_id,
+            scene_context_preview_url=request.scene_context_preview_url,
+            scene_context_download_url=request.scene_context_download_url,
+            style_asset_id=request.style_asset_id,
+            style_preview_url=request.style_preview_url,
+            style_download_url=request.style_download_url,
+            operator_notes=request.operator_notes,
+        )
+        return package
+    except Exception as exc:
+        raise _http_exc_for(exc) from exc
+
+
+@router.post("/batch")
+async def start_batch(request: BatchGenerationRequest):
+    """Start a batch generation run. Returns immediately with batch_run_id for polling."""
+    valid_modes = {"F2V", "I2V", "T2V", "IMG"}
+    bad = [m for m in request.modes if m not in valid_modes]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"Invalid modes: {bad}. Must be one of {sorted(valid_modes)}")
+    if request.quantity_per_mode < 1 or request.quantity_per_mode > 100:
+        raise HTTPException(status_code=400, detail="quantity_per_mode must be 1–100")
+    if request.interval_seconds < 0 or request.interval_seconds > 60:
+        raise HTTPException(status_code=400, detail="interval_seconds must be 0–60")
+
+    try:
+        run = await start_batch_generation(
+            product_id=request.product_id,
+            modes=request.modes,
+            quantity_per_mode=request.quantity_per_mode,
+            interval_seconds=request.interval_seconds,
+            generation_mode=request.generation_mode,
+        )
+        return {
+            "ok": True,
+            "batch_run_id": run.get("batch_run_id"),
+            "total_expected": run.get("total_expected"),
+            "estimated_seconds": len(request.modes) * request.quantity_per_mode * request.interval_seconds,
+            "status": run.get("status"),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/batch/{batch_run_id}")
+async def get_batch_run(batch_run_id: str):
+    """Poll batch generation run status and progress."""
+    run = await get_batch_generation_run_status(batch_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Batch run {batch_run_id!r} not found")
+    return run

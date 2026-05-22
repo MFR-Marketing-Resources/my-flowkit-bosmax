@@ -484,6 +484,22 @@ CREATE TABLE IF NOT EXISTS fastmoss_bulk_draft_status (
 
 CREATE INDEX IF NOT EXISTS idx_bulk_draft_status ON fastmoss_bulk_draft_status(promotion_status);
 CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(claim_risk_level);
+
+CREATE TABLE IF NOT EXISTS batch_generation_run (
+    batch_run_id      TEXT PRIMARY KEY,
+    status            TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','RUNNING','COMPLETED','FAILED','CANCELLED')),
+    product_id        TEXT NOT NULL,
+    modes_json        TEXT NOT NULL DEFAULT '[]',
+    quantity_per_mode INTEGER NOT NULL DEFAULT 10,
+    interval_seconds  INTEGER NOT NULL DEFAULT 5,
+    generation_mode   TEXT NOT NULL DEFAULT 'SINGLE',
+    total_expected    INTEGER NOT NULL DEFAULT 0,
+    total_completed   INTEGER NOT NULL DEFAULT 0,
+    total_failed      INTEGER NOT NULL DEFAULT 0,
+    error_log_json    TEXT NOT NULL DEFAULT '[]',
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
 """
 
 
@@ -1387,6 +1403,14 @@ CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(cla
             if _col not in ca_cols:
                 await db.execute(f"ALTER TABLE creative_asset ADD COLUMN {_col} {_type}")
                 logger.info("Migrated: added %s column to creative_asset table", _col)
+        await db.commit()
+
+        # Migration: add batch_run_id to workspace_generation_package
+        cursor = await db.execute("PRAGMA table_info(workspace_generation_package)")
+        wgp_cols = {row[1] for row in await cursor.fetchall()}
+        if "batch_run_id" not in wgp_cols:
+            await db.execute("ALTER TABLE workspace_generation_package ADD COLUMN batch_run_id TEXT")
+            logger.info("Migrated: added batch_run_id column to workspace_generation_package table")
         await db.commit()
 
     logger.info("Database initialized at %s", DB_PATH)
