@@ -1,4 +1,8 @@
+import pytest
+
 from agent.services.ugc_video_prompt_compiler_service import (
+    _compact_overlay,
+    _clean_name_for_dialog,
     compile_ugc_video_prompt,
 )
 
@@ -41,8 +45,8 @@ def test_compiler_generates_single_block_final_prompt():
     assert len(result["prompt_blocks"]) == 1
     assert result["prompt_blocks"][0]["shot_count"] == 2
     assert "visible creator" in result["final_compiled_prompt_text"].lower()
-    # Engine prompt uses the clean visual style line (not the internal directive form)
-    assert "Vertical 9:16 handheld iPhone-style video" in result["final_compiled_prompt_text"]
+    # Engine prompt uses concrete camera directives (not vague iPhone-style prose)
+    assert "Vertical 9:16 handheld" in result["final_compiled_prompt_text"]
     # Engine prompt has CHARACTER section, ANCHOR, and shot breakdown
     assert "ANCHOR:" in result["final_compiled_prompt_text"]
     assert "Shot 1:" in result["final_compiled_prompt_text"]
@@ -83,5 +87,213 @@ def test_compiler_generates_extend_continuation_lineage():
     assert result["continuation_lineage"][0]["continuation_from_block_id"] == "block_1"
     # Engine prompt uses CONTINUATION section (not internal directive form)
     assert "CONTINUATION:" in result["final_compiled_prompt_text"]
-    # Engine prompt uses the clean cinematic style line
-    assert "Vertical cinematic commercial style" in result["final_compiled_prompt_text"]
+    # Engine prompt uses concrete cinematic directives
+    assert "Vertical 9:16 cinematic" in result["final_compiled_prompt_text"]
+
+
+# ── Fix regression: internal process leakage ──────────────────────────────────
+
+def test_engine_prompt_has_no_internal_process_leakage():
+    """Internal generation rules must never appear in the engine prompt."""
+    result = compile_ugc_video_prompt(
+        product=_product(),
+        approved_package=_approved_package(),
+        mode="F2V",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        safe_hook_angles=["Open naturally with the creator showing the serum."],
+        safe_cta_angles=["Try this body serum for your daily skincare routine today."],
+    )
+    final = result["final_compiled_prompt_text"]
+    assert "Total spoken budget" not in final
+    assert "Deliver lines in natural colloquial Malay" not in final
+    assert "Use everyday vocabulary" not in final
+    assert "Sound like personal sharing" not in final
+    assert "NOT a sales pitch" not in final
+    assert "bahasa perbualan harian" not in final
+
+
+# ── Fix regression: dialog duplication ────────────────────────────────────────
+
+def test_engine_prompt_no_dialog_duplication():
+    """Dialog lines must appear once only — in DIALOG SCRIPT, not also as | Audio:."""
+    result = compile_ugc_video_prompt(
+        product=_product(),
+        approved_package=_approved_package(),
+        mode="F2V",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        safe_hook_angles=["Mulakan dengan creator tunjuk produk secara natural."],
+        safe_cta_angles=["Cuba serum badan ni untuk rutin harian anda sekarang ya."],
+    )
+    final = result["final_compiled_prompt_text"]
+    assert "| Audio:" not in final
+
+
+# ── Fix regression: overlay verbatim copy ─────────────────────────────────────
+
+def test_overlay_is_compact_not_verbatim_cta():
+    """Overlay must not be the verbatim spoken CTA sentence."""
+    long_cta = (
+        "Kalau korang tengah cari serum badan yang boleh bagi kulit lembut dan wangi "
+        "seharian, memang boleh cuba yang ni dulu sebab memang berbaloi."
+    )
+    result = compile_ugc_video_prompt(
+        product=_product(),
+        approved_package=_approved_package(),
+        mode="F2V",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        overlay_enabled=True,
+        safe_cta_angles=[long_cta],
+    )
+    final = result["final_compiled_prompt_text"]
+    assert "OVERLAY TEXT:" in final, "Expected overlay to be emitted for a long CTA"
+    for line in final.splitlines():
+        if line.startswith("OVERLAY TEXT:"):
+            overlay_value = line[len("OVERLAY TEXT:"):].strip()
+            assert overlay_value != long_cta, "Overlay must not be verbatim CTA"
+            assert len(overlay_value.split()) <= 6, "Overlay must be compact (≤6 words)"
+
+
+def test_overlay_omitted_when_cta_too_short_to_truncate():
+    """Overlay must be omitted when the CTA is already ≤5 words (fail-closed)."""
+    short_cta = "Cuba ni sekarang."  # 3 words — fail-closed
+    result = compile_ugc_video_prompt(
+        product=_product(),
+        approved_package=_approved_package(),
+        mode="F2V",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        overlay_enabled=True,
+        safe_cta_angles=[short_cta],
+    )
+    assert "OVERLAY TEXT:" not in result["final_compiled_prompt_text"]
+
+
+def test_overlay_omitted_when_overlay_disabled():
+    """No overlay section must appear when overlay_enabled=False."""
+    result = compile_ugc_video_prompt(
+        product=_product(),
+        approved_package=_approved_package(),
+        mode="F2V",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        overlay_enabled=False,
+        safe_cta_angles=["Dapatkan kulit cerah dan lembut dengan serum badan terbaik ini."],
+    )
+    assert "OVERLAY TEXT:" not in result["final_compiled_prompt_text"]
+
+
+# ── Fix regression: compact overlay anchor extraction ─────────────────────────
+
+@pytest.mark.parametrize("cta,expected", [
+    (
+        "Kalau korang nak dapatkan sekarang, boleh terus order melalui link in bio.",
+        "Link in bio",
+    ),
+    (
+        "Jangan lupa beli sekarang sebelum stok habis ya.",
+        "Beli sekarang",
+    ),
+    (
+        "Kalau korang nak cuba sekarang, terus je order dari sini.",
+        "Cuba sekarang",
+    ),
+])
+def test_compact_overlay_extracts_anchor(cta: str, expected: str):
+    assert _compact_overlay(cta) == expected
+
+
+def test_compact_overlay_truncates_long_cta_without_anchor():
+    cta = "Serum badan ni memang sesuai untuk rutin malam dan pagi anda setiap hari."
+    result = _compact_overlay(cta)
+    assert result is not None
+    assert result != cta
+    assert len(result.split()) <= 5
+
+
+def test_compact_overlay_returns_none_for_short_cta():
+    assert _compact_overlay("Cuba ni.") is None
+    assert _compact_overlay("Try this.") is None
+    assert _compact_overlay("") is None
+
+
+# ── Fix regression: camera directives concrete ────────────────────────────────
+
+def test_camera_directives_ugc_are_specific():
+    """UGC camera setup must include concrete framing, movement, and lighting terms."""
+    result = compile_ugc_video_prompt(
+        product=_product(),
+        approved_package=_approved_package(),
+        mode="T2V",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        camera_style="UGC_IPHONE_RAW",
+    )
+    final = result["final_compiled_prompt_text"]
+    assert "Vertical 9:16 handheld" in final
+    assert "MCU" in final
+    assert "micro-jitter" in final
+    assert "24–26mm" in final
+    assert any(term in final for term in ("ambient", "window light"))
+
+
+def test_camera_directives_cinematic_are_specific():
+    """Cinematic camera setup must include concrete stabilisation and lighting terms."""
+    result = compile_ugc_video_prompt(
+        product=_product(),
+        approved_package=_approved_package(),
+        mode="T2V",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        camera_style="CINEMATIC_PRO",
+    )
+    final = result["final_compiled_prompt_text"]
+    assert "Vertical 9:16 cinematic" in final
+    assert any(term in final for term in ("Minimal camera drift", "stable"))
+    assert "studio lighting" in final
+
+
+# ── Fix regression: parenthesis variant tags stripped from product name ───────
+
+@pytest.mark.parametrize("raw,expected", [
+    (
+        "LAVVA LA LUNA+ Campuran Beri (Mix Berry) - Kesan Cerah Kulit",
+        "LAVVA LA LUNA+ Campuran Beri - Kesan Cerah Kulit",
+    ),
+    (
+        "Product Name (Variant A) - Description",
+        "Product Name - Description",
+    ),
+    (
+        "Clean Name Without Parens",
+        "Clean Name Without Parens",
+    ),
+    (
+        "[NEW] Product (Scent) - Title",
+        "Product - Title",
+    ),
+])
+def test_clean_name_strips_parenthesis_variants(raw: str, expected: str):
+    assert _clean_name_for_dialog(raw) == expected
+
+
+def test_engine_prompt_no_parenthesis_in_product_name():
+    """Parenthesis variant tags must not appear in the compiled engine prompt."""
+    product = {
+        "id": "test-id",
+        "raw_product_title": "Test Serum (Mix Berry) - Glowing Skin",
+        "product_display_name": "Test Serum (Mix Berry) - Glowing Skin",
+    }
+    result = compile_ugc_video_prompt(
+        product=product,
+        approved_package=_approved_package(),
+        mode="F2V",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        safe_hook_angles=["Cuba serum ni untuk kulit cantik."],
+        safe_cta_angles=["Dapatkan kulit cerah dengan serum ni sekarang."],
+    )
+    final = result["final_compiled_prompt_text"]
+    assert "(Mix Berry)" not in final

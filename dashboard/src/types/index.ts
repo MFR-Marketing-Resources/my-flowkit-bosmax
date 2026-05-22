@@ -526,6 +526,7 @@ export interface WorkspaceExecutionPackage {
 		dialogue_word_budget: number;
 		continuation_from_block_id?: string | null;
 		compiled_prompt_text: string;
+		engine_prompt_text: string;
 		shot_plan?: string[];
 	}>;
 	warnings?: string[];
@@ -536,6 +537,27 @@ export interface WorkspaceExecutionPackage {
 		continuation_strategy: string;
 	}>;
 	runtime_config_snapshot?: PromptCompilerRuntimeConfig;
+}
+
+export interface WorkspacePromptPreviewResult {
+	product_id: string;
+	mode: string;
+	compiler_version: string;
+	generation_mode: PromptGenerationMode;
+	total_duration_seconds: number;
+	camera_style: PromptCameraStyle;
+	character_presence: PromptCharacterPresence;
+	creator_persona: string;
+	target_language: PromptTargetLanguage;
+	dialogue_word_budget_per_block: number[];
+	prompt_blocks: WorkspaceExecutionPackage["prompt_blocks"];
+	shot_plan: WorkspaceExecutionPackage["shot_plan"];
+	final_compiled_prompt_text: string;
+	prompt_fingerprint: string;
+	continuation_lineage: WorkspaceExecutionPackage["continuation_lineage"];
+	warnings: string[];
+	blockers: string[];
+	source_of_truth_notes: string[];
 }
 
 export interface PromptCompilerRuntimeConfig {

@@ -7,6 +7,7 @@ import {
 	createI2VGenerationPackage,
 } from "../api/workspaceGenerationPackages";
 import {
+	compileWorkspacePromptPreview,
 	createWorkspaceExecutionPackage,
 	fetchPromptCompilerRuntimeConfig,
 	fetchWorkspacePackageReadiness,
@@ -30,6 +31,7 @@ import type {
 	WorkspaceGenerationPackage,
 	WorkspaceMode,
 	WorkspacePackageReadinessItem,
+	WorkspacePromptPreviewResult,
 } from "../types";
 
 type OperatorNoticeTone = "idle" | "info" | "success" | "error";
@@ -153,6 +155,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	>({});
 	const [workspacePackage, setWorkspacePackage] =
 		useState<WorkspaceExecutionPackage | null>(statePackage ?? null);
+	const [previewPackage, setPreviewPackage] =
+		useState<WorkspacePromptPreviewResult | null>(null);
+	const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 	const [isLoadingPackage, setIsLoadingPackage] = useState(false);
 	const [isLoadingReadiness, setIsLoadingReadiness] = useState(false);
 	const [promptConfig, setPromptConfig] =
@@ -533,7 +538,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		block2Duration,
 	]);
 
-	const handleLoadPackage = async () => {
+	// Step 3 — Load Package Preview (compile only, no DB save)
+	const handleLoadPreview = async () => {
 		if (!selectedProduct || selectedReadiness?.readiness_status !== "READY") {
 			const blocker =
 				selectedReadiness?.blocker ??
@@ -547,6 +553,55 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			});
 			return;
 		}
+		setIsLoadingPreview(true);
+		setPreviewPackage(null);
+		setWorkspacePackage(null);
+		try {
+			const preview = await compileWorkspacePromptPreview({
+				product_id: selectedProduct.id,
+				mode,
+				duration_seconds: block1Duration,
+				generation_mode: generationMode,
+				target_language: targetLanguage,
+				camera_style: cameraStyle,
+				character_presence: characterPresence,
+				creator_persona: creatorPersona,
+				blocks:
+					generationMode === "EXTEND"
+						? [
+								{ block_index: 1, duration_seconds: block1Duration },
+								{ block_index: 2, duration_seconds: block2Duration },
+							]
+						: [],
+			});
+			setPreviewPackage(preview);
+			setNotice({
+				tone: "success",
+				title: `${mode} Package Loaded`,
+				detail: `Approved package compiled for ${selectedProduct.product_display_name}. Review the prompt preview then press Generate.`,
+				requestId: null,
+			});
+		} catch (error: unknown) {
+			const blocker = parseWorkspaceBlocker(error);
+			const message = blocker
+				? blockerMessage(blocker, mode as WorkspaceMode)
+				: error instanceof Error
+					? error.message
+					: "Failed to load package.";
+			setNotice({
+				tone: "error",
+				title: "Package load failed",
+				detail: message,
+				requestId: null,
+			});
+		} finally {
+			setIsLoadingPreview(false);
+		}
+	};
+
+	// Step 4 — Generate Final Prompt (compile + save to DB)
+	const handleGeneratePackage = async () => {
+		if (!selectedProduct || !previewPackage) return;
 		setIsLoadingPackage(true);
 		try {
 			const pkg = await createWorkspaceExecutionPackage({
@@ -567,11 +622,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						: [],
 			});
 			setWorkspacePackage(pkg);
+			setPreviewPackage(null);
 			setNotice({
 				tone: "success",
-				title: workspacePackage
-					? "Final prompt regenerated"
-					: "Approved package loaded",
+				title: "Final Prompt Generated",
 				detail:
 					mode === "F2V"
 						? `Workspace now uses compiled ${generationMode} ${mode} prompt from product truth.`
@@ -584,10 +638,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				? blockerMessage(blocker, mode as WorkspaceMode)
 				: error instanceof Error
 					? error.message
-					: "Failed to load approved package.";
+					: "Failed to generate final prompt.";
 			setNotice({
 				tone: "error",
-				title: "Package load failed",
+				title: "Generation failed",
 				detail: message,
 				requestId: null,
 			});
@@ -610,13 +664,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const shotPolicy2 =
 		promptConfig?.shot_count_policy[String(block2Duration)] ?? null;
 	const isExtendMode = generationMode === "EXTEND";
-	const compilerControlsVisible = mode === "F2V";
-	const compilerButtonLabel =
-		workspacePackage && compilerControlsVisible
-			? "Regenerate Final Prompt"
-			: compilerControlsVisible
-				? "Load F2V Package + Generate Final Prompt"
-				: `Load ${mode} Package`;
+	const loadPackageLabel = previewPackage
+		? `Reload ${mode} Package`
+		: `Load ${mode} Package`;
+	const generatePromptLabel = workspacePackage
+		? "Regenerate Final Prompt"
+		: "Generate Final Prompt";
 
 	const renderModule = () => {
 		switch (mode) {
@@ -655,6 +708,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						isExecuting={isExecuting}
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
+						previewPackage={previewPackage}
+						selectedProduct={selectedProduct}
 					/>
 				);
 			default:
@@ -706,13 +761,199 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				</div>
 			)}
 
-			<div className="mb-6 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
-				<div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-					Approved Package Bridge
+			{/* ── STEP 1: UGC Prompt Compiler Controls ─────────────────── */}
+			<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+					Step 1 — UGC Prompt Compiler Controls
 				</div>
 				<div className="mb-4 text-[11px] text-slate-400">
-					Workspace selector is hardened by mode readiness. Only READY products
-					can load {humanizeWorkspaceMode(mode as WorkspaceMode)} packages.
+					Configure all generation parameters first. These settings are compiled
+					into the final prompt when you press Generate.
+				</div>
+				<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+					<div className="space-y-2">
+						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+							Generation Mode
+						</div>
+						<select
+							title="Generation mode"
+							value={generationMode}
+							onChange={(e) =>
+								setGenerationMode(e.target.value as PromptGenerationMode)
+							}
+							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+						>
+							<option value="SINGLE">Single</option>
+							<option value="EXTEND">Extend</option>
+						</select>
+					</div>
+					<div className="space-y-2">
+						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+							Language
+						</div>
+						<select
+							title="Target language"
+							value={targetLanguage}
+							onChange={(e) =>
+								setTargetLanguage(e.target.value as PromptTargetLanguage)
+							}
+							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+						>
+							{languageOptions.map((language) => (
+								<option key={language} value={language}>
+									{language}
+								</option>
+							))}
+						</select>
+					</div>
+					<div className="space-y-2">
+						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+							Block 1 Duration
+						</div>
+						<select
+							title="Block 1 duration"
+							value={String(block1Duration)}
+							onChange={(e) => setBlock1Duration(Number(e.target.value))}
+							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+						>
+							{allowedDurations.map((duration) => (
+								<option key={duration} value={duration}>
+									{duration}s
+								</option>
+							))}
+						</select>
+						<div className="text-[11px] text-slate-400">
+							Recommended Shots: {shotPolicy1?.recommended ?? "-"}
+						</div>
+					</div>
+					{isExtendMode ? (
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								Block 2 Duration
+							</div>
+							<select
+								title="Block 2 duration"
+								value={String(block2Duration)}
+								onChange={(e) => setBlock2Duration(Number(e.target.value))}
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+							>
+								{allowedDurations.map((duration) => (
+									<option key={duration} value={duration}>
+										{duration}s
+									</option>
+								))}
+							</select>
+							<div className="text-[11px] text-slate-400">
+								Recommended Shots: {shotPolicy2?.recommended ?? "-"}
+							</div>
+						</div>
+					) : (
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								Block Structure
+							</div>
+							<div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-400">
+								Single mode compiles one anchor block. Switch Generation Mode to
+								Extend to unlock Block 2 duration.
+							</div>
+						</div>
+					)}
+					<div className="space-y-2">
+						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+							Camera Style
+						</div>
+						<select
+							title="Camera style"
+							value={cameraStyle}
+							onChange={(e) =>
+								setCameraStyle(e.target.value as PromptCameraStyle)
+							}
+							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+						>
+							<option value="UGC_IPHONE_RAW">UGC iPhone Raw</option>
+							<option value="CINEMATIC_PRO">Cinematic Pro</option>
+						</select>
+					</div>
+					<div className="space-y-2">
+						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+							Character Presence
+						</div>
+						<select
+							title="Character presence"
+							value={characterPresence}
+							onChange={(e) =>
+								setCharacterPresence(e.target.value as PromptCharacterPresence)
+							}
+							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+						>
+							<option value="VISIBLE_CREATOR">Visible Creator</option>
+							<option value="FACELESS">Faceless</option>
+						</select>
+						{characterPresence === "FACELESS" ? (
+							<div className="text-[11px] text-amber-200">
+								Faceless is explicit-only and disables the visible creator
+								default.
+							</div>
+						) : null}
+					</div>
+					<div className="space-y-2">
+						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+							Creator Persona
+						</div>
+						<select
+							title="Creator persona"
+							value={creatorPersona}
+							onChange={(e) => setCreatorPersona(e.target.value)}
+							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+						>
+							{(promptConfig?.persona_registry ?? []).map((persona) => (
+								<option key={persona.id} value={persona.id}>
+									{persona.label}
+								</option>
+							))}
+						</select>
+					</div>
+				</div>
+				<div className="mt-4 grid gap-3 md:grid-cols-2">
+					<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
+						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+							Shot Plan
+						</div>
+						<div className="mt-2">
+							Block 1: {shotPolicy1?.recommended ?? "-"} recommended shot(s)
+						</div>
+						{generationMode === "EXTEND" ? (
+							<div className="mt-1">
+								Block 2: {shotPolicy2?.recommended ?? "-"} recommended shot(s)
+							</div>
+						) : null}
+					</div>
+					<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
+						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+							Language Policy
+						</div>
+						<div className="mt-2">
+							{targetLanguage} body WPS:{" "}
+							{promptConfig?.language_wps_policy[targetLanguage]?.body_wps ??
+								"-"}
+						</div>
+						<div className="mt-1">
+							Absolute ceiling:{" "}
+							{promptConfig?.language_wps_policy[targetLanguage]
+								?.absolute_ceiling_wps ?? "-"}
+						</div>
+					</div>
+				</div>
+			</div>
+
+			{/* ── STEP 2: Select Product ────────────────────────────────── */}
+			<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+					Step 2 — Select Product
+				</div>
+				<div className="mb-4 text-[11px] text-slate-400">
+					Only READY products can generate a{" "}
+					{humanizeWorkspaceMode(mode as WorkspaceMode)} package.
 				</div>
 				{isLoadingProducts && (
 					<div className="mb-3 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] text-slate-400">
@@ -724,213 +965,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						Product list failed to load: {productsError}
 					</div>
 				)}
-				<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto]">
-					<SearchableProductSelect
-						products={products}
-						selectedProduct={selectedProduct}
-						onSelect={setSelectedProduct}
-						readinessByProductId={packageReadiness}
-						isLoadingReadiness={isLoadingReadiness}
-					/>
-					<button
-						type="button"
-						onClick={() => void handleLoadPackage()}
-						disabled={
-							!selectedProduct ||
-							isLoadingPackage ||
-							isLoadingReadiness ||
-							selectedReadiness?.readiness_status !== "READY"
-						}
-						className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm font-semibold text-blue-100 disabled:opacity-50"
-					>
-						{isLoadingPackage ? "Loading package..." : compilerButtonLabel}
-					</button>
-				</div>
-				{compilerControlsVisible ? (
-					<div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-						<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">
-							UGC Prompt Compiler Controls
-						</div>
-						<div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-							<div className="space-y-2">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-									Generation Mode
-								</div>
-								<select
-									title="Generation mode"
-									value={generationMode}
-									onChange={(e) =>
-										setGenerationMode(e.target.value as PromptGenerationMode)
-									}
-									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-								>
-									<option value="SINGLE">Single</option>
-									<option value="EXTEND">Extend</option>
-								</select>
-							</div>
-							<div className="space-y-2">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-									Language
-								</div>
-								<select
-									title="Target language"
-									value={targetLanguage}
-									onChange={(e) =>
-										setTargetLanguage(e.target.value as PromptTargetLanguage)
-									}
-									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-								>
-									{languageOptions.map((language) => (
-										<option key={language} value={language}>
-											{language}
-										</option>
-									))}
-								</select>
-							</div>
-							<div className="space-y-2">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-									Block 1 Duration
-								</div>
-								<select
-									title="Block 1 duration"
-									value={String(block1Duration)}
-									onChange={(e) => setBlock1Duration(Number(e.target.value))}
-									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-								>
-									{allowedDurations.map((duration) => (
-										<option key={duration} value={duration}>
-											{duration}s
-										</option>
-									))}
-								</select>
-								<div className="text-[11px] text-slate-400">
-									Recommended Shots: {shotPolicy1?.recommended ?? "-"}
-								</div>
-							</div>
-							{isExtendMode ? (
-								<div className="space-y-2">
-									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-										Block 2 Duration
-									</div>
-									<select
-										title="Block 2 duration"
-										value={String(block2Duration)}
-										onChange={(e) => setBlock2Duration(Number(e.target.value))}
-										className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-									>
-										{allowedDurations.map((duration) => (
-											<option key={duration} value={duration}>
-												{duration}s
-											</option>
-										))}
-									</select>
-									<div className="text-[11px] text-slate-400">
-										Recommended Shots: {shotPolicy2?.recommended ?? "-"}
-									</div>
-								</div>
-							) : (
-								<div className="space-y-2">
-									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-										Block Structure
-									</div>
-									<div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-400">
-										Single mode compiles one anchor block. Switch Generation
-										Mode to Extend to unlock Block 2 duration.
-									</div>
-								</div>
-							)}
-							<div className="space-y-2">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-									Camera Style
-								</div>
-								<select
-									title="Camera style"
-									value={cameraStyle}
-									onChange={(e) =>
-										setCameraStyle(e.target.value as PromptCameraStyle)
-									}
-									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-								>
-									<option value="UGC_IPHONE_RAW">UGC iPhone Raw</option>
-									<option value="CINEMATIC_PRO">Cinematic Pro</option>
-								</select>
-							</div>
-							<div className="space-y-2">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-									Character Presence
-								</div>
-								<select
-									title="Character presence"
-									value={characterPresence}
-									onChange={(e) =>
-										setCharacterPresence(
-											e.target.value as PromptCharacterPresence,
-										)
-									}
-									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-								>
-									<option value="VISIBLE_CREATOR">Visible Creator</option>
-									<option value="FACELESS">Faceless</option>
-								</select>
-								{characterPresence === "FACELESS" ? (
-									<div className="text-[11px] text-amber-200">
-										Faceless is explicit-only and disables the visible creator
-										default.
-									</div>
-								) : null}
-							</div>
-							<div className="space-y-2">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-									Creator Persona
-								</div>
-								<select
-									title="Creator persona"
-									value={creatorPersona}
-									onChange={(e) => setCreatorPersona(e.target.value)}
-									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-								>
-									{(promptConfig?.persona_registry ?? []).map((persona) => (
-										<option key={persona.id} value={persona.id}>
-											{persona.label}
-										</option>
-									))}
-								</select>
-							</div>
-						</div>
-						<div className="mt-4 grid gap-3 md:grid-cols-2">
-							<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-									Shot Plan
-								</div>
-								<div className="mt-2">
-									Block 1: {shotPolicy1?.recommended ?? "-"} recommended shot(s)
-								</div>
-								{generationMode === "EXTEND" ? (
-									<div className="mt-1">
-										Block 2: {shotPolicy2?.recommended ?? "-"} recommended
-										shot(s)
-									</div>
-								) : null}
-							</div>
-							<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-									Language Policy
-								</div>
-								<div className="mt-2">
-									{targetLanguage} body WPS:{" "}
-									{promptConfig?.language_wps_policy[targetLanguage]
-										?.body_wps ?? "-"}
-								</div>
-								<div className="mt-1">
-									Absolute ceiling:{" "}
-									{promptConfig?.language_wps_policy[targetLanguage]
-										?.absolute_ceiling_wps ?? "-"}
-								</div>
-							</div>
-						</div>
-					</div>
-				) : null}
-				{/* Reference-only product — always show blocker regardless of readiness load state */}
+				<SearchableProductSelect
+					products={products}
+					selectedProduct={selectedProduct}
+					onSelect={setSelectedProduct}
+					readinessByProductId={packageReadiness}
+					isLoadingReadiness={isLoadingReadiness}
+				/>
+				{/* Reference-only product blocker */}
 				{selectedProduct?.reference_only && !selectedReadiness ? (
 					<div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
 						<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-400 mb-2">
@@ -1044,6 +1086,91 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						first.
 					</div>
 				) : null}
+			</div>
+
+			{/* ── STEP 3: Load Package ─────────────────────────────────── */}
+			<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+					Step 3 — Load {mode} Package
+				</div>
+				<div className="mb-4 text-[11px] text-slate-400">
+					Fetch and compile the approved package for the selected product using
+					your configured settings above. Review the prompt preview before
+					generating.
+				</div>
+				<button
+					type="button"
+					onClick={() => void handleLoadPreview()}
+					disabled={
+						!selectedProduct ||
+						isLoadingPreview ||
+						isLoadingReadiness ||
+						selectedReadiness?.readiness_status !== "READY"
+					}
+					className="w-full rounded-xl border border-slate-600/40 bg-slate-700/30 px-4 py-3 text-sm font-bold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50 disabled:grayscale transition-all"
+				>
+					{isLoadingPreview ? `Loading ${mode} Package…` : loadPackageLabel}
+				</button>
+				{/* Preview result */}
+				{previewPackage ? (
+					<div className="mt-4 space-y-3">
+						<div className="grid gap-3 md:grid-cols-3">
+							<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+								<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+									Mode / Duration
+								</div>
+								<div className="mt-1 text-xs font-semibold text-white">
+									{previewPackage.generation_mode} ·{" "}
+									{previewPackage.total_duration_seconds}s
+								</div>
+							</div>
+							<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+								<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+									Prompt Fingerprint
+								</div>
+								<div className="mt-1 text-xs font-semibold text-white">
+									{previewPackage.prompt_fingerprint}
+								</div>
+							</div>
+							<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+								<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+									Blocks
+								</div>
+								<div className="mt-1 text-xs font-semibold text-white">
+									{previewPackage.prompt_blocks?.length ?? 0} block(s) compiled
+								</div>
+							</div>
+						</div>
+						{previewPackage.warnings?.length ? (
+							<div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+								{previewPackage.warnings.join(" · ")}
+							</div>
+						) : null}
+						<div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
+							Package loaded. Review above then press Generate Final Prompt to
+							save.
+						</div>
+					</div>
+				) : null}
+			</div>
+
+			{/* ── STEP 4: Generate Final Prompt ────────────────────────── */}
+			<div className="mb-6 rounded-2xl border border-blue-500/20 bg-slate-900/40 p-4">
+				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+					Step 4 — Generate Final Prompt
+				</div>
+				<div className="mb-4 text-[11px] text-slate-400">
+					After loading the package above, press this button to compile and save
+					the final execution prompt to the workspace.
+				</div>
+				<button
+					type="button"
+					onClick={() => void handleGeneratePackage()}
+					disabled={!previewPackage || isLoadingPackage}
+					className="w-full rounded-xl border border-blue-500/40 bg-blue-500/15 px-4 py-3 text-sm font-bold text-blue-100 hover:bg-blue-500/25 disabled:opacity-50 disabled:grayscale transition-all"
+				>
+					{isLoadingPackage ? "Generating…" : generatePromptLabel}
+				</button>
 				{workspacePackage ? (
 					<div className="mt-4 grid gap-3 md:grid-cols-3">
 						<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
@@ -1074,7 +1201,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</div>
 					</div>
 				) : null}
-
 				{/* Generate / Save Package — F2V and I2V */}
 				{workspacePackage &&
 				(mode === "F2V" || mode === "I2V") &&
