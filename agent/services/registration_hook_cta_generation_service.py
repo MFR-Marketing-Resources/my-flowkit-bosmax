@@ -40,6 +40,40 @@ BEAUTY_CONTEXT_TOKENS = {
     "brightening",
 }
 
+# Fashion / apparel and baby/childcare products have female primary buyers.
+# Matching any of these tokens promotes the product to SAYA_AKAK address tier.
+FASHION_FEMALE_CONTEXT_TOKENS = {
+    # Malay traditional & modern fashion
+    "kurung",
+    "kebaya",
+    "hijab",
+    "tudung",
+    "selendang",
+    "baju kurung",
+    "baju kebaya",
+    "blouse",
+    "skirt",
+    "dress",
+    "fesyen wanita",
+    "baju wanita",
+    "ladies fashion",
+    "ladies wear",
+    "ladieswear",
+    # Baby & childcare (primary buyer = mother / ibu)
+    "bayi",
+    "baby",
+    "diapers",
+    "diaper",
+    "lampin",
+    "kanak-kanak",
+    "susu bayi",
+    "susu ibu",
+    "breastfeed",
+    "penyusuan",
+    "stroller",
+    "baby carrier",
+}
+
 ADDRESS_AKU_KORANG = "AKU_KORANG"
 ADDRESS_SAYA_ABANG = "SAYA_ABANG"
 ADDRESS_SAYA_AKAK = "SAYA_AKAK"
@@ -89,16 +123,29 @@ def _is_beauty(payload: dict[str, Any]) -> bool:
     return any(token in combined for token in BEAUTY_CONTEXT_TOKENS)
 
 
+def _is_fashion_female(payload: dict[str, Any]) -> bool:
+    """Return True if the product is clearly female-primary fashion or baby/childcare."""
+    combined = _combined_payload_text(payload)
+    return any(token in combined for token in FASHION_FEMALE_CONTEXT_TOKENS)
+
+
 FEMALE_SENSITIVE_TOKENS = {"vagina", "faraj", "miss v", "keputihan", "tightening"}
 
 
 def _detect_address_style(payload: dict[str, Any], *, sensitive: bool, beauty: bool) -> str:
     if sensitive:
         combined = _combined_payload_text(payload)
+        # Female-specific sensitive products or fashion/baby sensitive products → akak
         if any(token in combined for token in FEMALE_SENSITIVE_TOKENS):
             return ADDRESS_SAYA_AKAK
-        return ADDRESS_SAYA_ABANG
-    if beauty:
+        if _is_fashion_female(payload):
+            return ADDRESS_SAYA_AKAK
+        # Explicit male signals in sensitive products → abang
+        if any(token in combined for token in ("lelaki", "men ", "men's", "testosterone", "prostate")):
+            return ADDRESS_SAYA_ABANG
+        # Unknown sensitive product — safer to use neutral AKU_KORANG than assume male
+        return ADDRESS_AKU_KORANG
+    if beauty or _is_fashion_female(payload):
         return ADDRESS_SAYA_AKAK
     target_customer = _clean_text(payload.get("target_customer_text")).casefold()
     if any(token in target_customer for token in ("lelaki", "men", "man", "abang")):
@@ -118,7 +165,13 @@ def generate_registration_hook_cta(payload: dict[str, Any]) -> dict[str, list[st
     address_style = _detect_address_style(payload, sensitive=sensitive, beauty=beauty)
 
     if sensitive:
-        audience = "akak" if address_style == ADDRESS_SAYA_AKAK else "abang"
+        if address_style == ADDRESS_SAYA_AKAK:
+            audience = "akak"
+        elif address_style == ADDRESS_SAYA_ABANG:
+            audience = "abang"
+        else:
+            # AKU_KORANG — gender-neutral sensitive product, use neutral second-person "korang"
+            audience = "korang"
         hooks = [
             f"{audience.capitalize()}, saya guna {product_name} ni untuk rutin luaran je - senang nak masuk dalam rutin harian.",
             f"Kalau cerita pasal {product_name} ni, saya lagi selesa kekalkan pada penggunaan luaran yang ringkas dan tenang.",

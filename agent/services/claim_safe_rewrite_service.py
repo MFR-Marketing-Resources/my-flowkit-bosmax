@@ -89,7 +89,7 @@ BENEFIT_HINTS = {
 ADDRESS_AKU_KORANG = "AKU_KORANG"
 ADDRESS_SAYA_ABANG = "SAYA_ABANG"
 ADDRESS_SAYA_AKAK = "SAYA_AKAK"
-SAFE_PACKAGE_GENERATOR_VERSION = "claim_safe_rewrite_service:v2"
+SAFE_PACKAGE_GENERATOR_VERSION = "claim_safe_rewrite_service:v3"
 LEGACY_CLAIM_SAFE_PHRASES = (
     "diposisikan sebagai",
     "dipersembahkan sebagai",
@@ -171,11 +171,15 @@ def _detect_address_style(title: str, text_blocks: list[str]) -> str:
         "untuk lelaki",
     )
     female_signals = (
+        # Explicit gender / address markers
         "wanita",
         "perempuan",
         "akak",
         "ladies",
         "women",
+        "untuk wanita",
+        "untuk perempuan",
+        # Beauty & skincare
         "serum wajah",
         "serum bibir",
         "skincare",
@@ -188,8 +192,36 @@ def _detect_address_style(title: str, text_blocks: list[str]) -> str:
         "eyeliner",
         "mascara",
         "blusher",
-        "untuk wanita",
-        "untuk perempuan",
+        # Fashion / apparel — Malay traditional & modern
+        "kurung",
+        "kebaya",
+        "hijab",
+        "tudung",
+        "selendang",
+        "baju kurung",
+        "baju kebaya",
+        "blouse",
+        " skirt",
+        " dress ",
+        "dresses",
+        "fesyen wanita",
+        "baju wanita",
+        "ladies fashion",
+        "ladies wear",
+        "ladieswear",
+        # Baby & childcare (primary buyer = mother)
+        "bayi",
+        "baby ",
+        "diapers",
+        "diaper",
+        "lampin",
+        "kanak-kanak",
+        "susu bayi",
+        "susu ibu",
+        "breastfeed",
+        "penyusuan",
+        "stroller",
+        "baby carrier",
     )
     if any(signal in combined for signal in male_signals):
         return ADDRESS_SAYA_ABANG

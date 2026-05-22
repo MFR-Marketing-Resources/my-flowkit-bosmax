@@ -5,6 +5,7 @@ import pytest
 from agent.services.claim_safe_rewrite_service import (
     APPROVAL_PHRASE,
     STATUS_REVIEW_READY,
+    _detect_address_style,
     approve_claim_safe_rewrite,
     get_stored_claim_safe_package,
     preview_claim_safe_rewrite,
@@ -176,7 +177,7 @@ async def test_get_stored_claim_safe_package_refreshes_legacy_payload(monkeypatc
     assert "diposisikan sebagai" not in payload["safe_claim_rewrite"].casefold()
     assert "tonjolkan" not in " ".join(payload["safe_hook_angles"]).casefold()
     assert "lihat bagaimana" not in " ".join(payload["safe_cta_angles"]).casefold()
-    assert "claim_safe_rewrite_service:v2" in payload["provenance"]
+    assert "claim_safe_rewrite_service:v3" in payload["provenance"]
     assert "claim_safe_copy:refreshed_from_legacy_payload" in payload["provenance"]
     assert payload["approval_required"] is False
     assert stored_updates["claim_safe_copy_status"] == "CLAIM_SAFE_COPY_APPROVED"
@@ -201,7 +202,7 @@ async def test_get_stored_claim_safe_package_returns_current_payload_without_ref
         "address_style": "SAYA_AKAK",
         "claim_safe_copy_status": "CLAIM_SAFE_COPY_REVIEW_READY",
         "provenance": [
-            "claim_safe_rewrite_service:v2",
+            "claim_safe_rewrite_service:v3",
             "product_id:prod-current",
         ],
     }
@@ -228,3 +229,86 @@ async def test_get_stored_claim_safe_package_returns_current_payload_without_ref
     assert payload["address_style"] == "SAYA_AKAK"
     assert payload["claim_safe_copy_updated_at"] == "2026-05-22T10:00:00Z"
     assert updates_called is False
+
+
+# ---------------------------------------------------------------------------
+# _detect_address_style — gender mapping unit tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "title,text_blocks,expected",
+    [
+        # Women's Malay traditional fashion
+        (
+            "Bidasari Kurung Cotton Embroidery Cutwork",
+            ["Baju kurung moden untuk wanita"],
+            "SAYA_AKAK",
+        ),
+        # Women's fashion — kebaya
+        (
+            "Kebaya Labuh Chiffon Premium",
+            [],
+            "SAYA_AKAK",
+        ),
+        # Women's fashion — hijab / tudung
+        (
+            "Hijab Instant Bawal Cotton XL",
+            ["Tudung bawal premium untuk akak"],
+            "SAYA_AKAK",
+        ),
+        # Women's fashion — blouse / dress
+        (
+            "Floral Blouse Muslimah",
+            ["blouse labuh untuk ibu"],
+            "SAYA_AKAK",
+        ),
+        # Baby product — diapers (primary buyer = mother)
+        (
+            "MamyPoko Baby Diapers M50",
+            ["lampin pakai buang untuk bayi"],
+            "SAYA_AKAK",
+        ),
+        # Baby product — susu ibu / breastfeed
+        (
+            "Lansinoh HPA Lanolin Nipple Cream",
+            ["Untuk ibu yang menyusukan bayi, breastfeed friendly"],
+            "SAYA_AKAK",
+        ),
+        # Baby product — kanak-kanak apparel
+        (
+            "Baju Kanak-Kanak Cotton 3pcs Set",
+            [],
+            "SAYA_AKAK",
+        ),
+        # Men's supplement — SAYA_ABANG
+        (
+            "TestoPower Supplement Lelaki",
+            ["vitamin untuk lelaki aktif, testosterone booster"],
+            "SAYA_ABANG",
+        ),
+        # Men's product explicit signal
+        (
+            "ProShave Foam Men 200ml",
+            ["untuk lelaki, stamina lelaki"],
+            "SAYA_ABANG",
+        ),
+        # Generic product — no gender signal → AKU_KORANG
+        (
+            "Vitamin C 1000mg Tablet",
+            ["supplement harian untuk semua"],
+            "AKU_KORANG",
+        ),
+        # Skincare / beauty still maps to SAYA_AKAK
+        (
+            "Glow Lab Brightening Serum",
+            ["skincare untuk rutin harian"],
+            "SAYA_AKAK",
+        ),
+    ],
+)
+def test_detect_address_style_gender_signals(title: str, text_blocks: list, expected: str):
+    result = _detect_address_style(title, text_blocks)
+    assert result == expected, (
+        f"Product '{title}' → expected {expected} but got {result}"
+    )
