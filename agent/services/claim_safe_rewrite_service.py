@@ -89,7 +89,7 @@ BENEFIT_HINTS = {
 ADDRESS_AKU_KORANG = "AKU_KORANG"
 ADDRESS_SAYA_ABANG = "SAYA_ABANG"
 ADDRESS_SAYA_AKAK = "SAYA_AKAK"
-SAFE_PACKAGE_GENERATOR_VERSION = "claim_safe_rewrite_service:v2"
+SAFE_PACKAGE_GENERATOR_VERSION = "claim_safe_rewrite_service:v3"
 LEGACY_CLAIM_SAFE_PHRASES = (
     "diposisikan sebagai",
     "dipersembahkan sebagai",
@@ -158,9 +158,9 @@ def _detect_address_style(title: str, text_blocks: list[str]) -> str:
     combined = " ".join([title, *text_blocks]).casefold()
     male_signals = (
         "lelaki",
-        "men ",
+        "men",
         "men's",
-        "man ",
+        "man",
         "testosterone",
         "kelelakian",
         "prostate",
@@ -171,6 +171,8 @@ def _detect_address_style(title: str, text_blocks: list[str]) -> str:
         "untuk lelaki",
     )
     female_signals = (
+        "beauty supplement",
+        "skin supplement",
         "wanita",
         "perempuan",
         "akak",
@@ -191,9 +193,9 @@ def _detect_address_style(title: str, text_blocks: list[str]) -> str:
         "untuk wanita",
         "untuk perempuan",
     )
-    if any(signal in combined for signal in male_signals):
+    if any(_contains_context_signal(combined, signal) for signal in male_signals):
         return ADDRESS_SAYA_ABANG
-    if any(signal in combined for signal in female_signals):
+    if any(_contains_context_signal(combined, signal) for signal in female_signals):
         return ADDRESS_SAYA_AKAK
     return ADDRESS_AKU_KORANG
 
@@ -390,7 +392,15 @@ def _extract_source_text(product: dict[str, Any], draft: dict[str, Any] | None) 
             value = _normalize(evidence.get(key))
             if value:
                 text_blocks.append(value)
-    for key in ("section_6_copy_hint", "copywriting_angle", "raw_product_title", "product_display_name"):
+    for key in (
+        "section_6_copy_hint",
+        "copywriting_angle",
+        "raw_product_title",
+        "product_display_name",
+        "category",
+        "subcategory",
+        "type",
+    ):
         value = _normalize(product.get(key))
         if value:
             text_blocks.append(value)
@@ -424,6 +434,16 @@ def _detect_unsafe_claims(text_blocks: list[str], claim_tokens: list[str]) -> tu
         phrase for phrase in FORBIDDEN_PHRASES if phrase.casefold() in lowered or phrase in risky_tokens
     ]
     return unsafe_claims, risky_tokens, forbidden_removed
+
+
+def _contains_context_signal(text: str, signal: str) -> bool:
+    normalized_signal = signal.casefold().strip()
+    if not normalized_signal:
+        return False
+    if re.fullmatch(r"[a-z0-9]+(?: [a-z0-9]+)*", normalized_signal):
+        pattern = r"\b" + r"\s+".join(re.escape(part) for part in normalized_signal.split()) + r"\b"
+        return re.search(pattern, text) is not None
+    return normalized_signal in text
 
 
 def _build_safe_package(product: dict[str, Any], draft: dict[str, Any] | None) -> dict[str, Any]:
@@ -520,6 +540,15 @@ def _is_stale_claim_safe_payload(payload: dict[str, Any]) -> bool:
     return False
 
 
+def _address_style_mismatch_requires_refresh(product: dict[str, Any], payload: dict[str, Any]) -> bool:
+    stored_style = _normalize(payload.get("address_style"))
+    if not stored_style:
+        return True
+    title = _normalize(product.get("product_display_name") or product.get("raw_product_title"))
+    inferred_style = _detect_address_style(title, _extract_source_text(product, None))
+    return inferred_style != stored_style
+
+
 def _merge_preserved_claim_safe_metadata(
     refreshed: dict[str, Any],
     stored: dict[str, Any],
@@ -570,7 +599,7 @@ async def refresh_claim_safe_package_if_stale(product_id: str) -> dict[str, Any]
     stored = _parse_payload(product)
     if not stored:
         return None
-    if not _is_stale_claim_safe_payload(stored):
+    if not _is_stale_claim_safe_payload(stored) and not _address_style_mismatch_requires_refresh(product, stored):
         return _hydrate_payload_status(product, stored)
     draft = _match_bosmax_draft(product) if _should_scan_registration_draft(product) else None
     refreshed = _merge_preserved_claim_safe_metadata(
@@ -639,6 +668,6 @@ async def get_stored_claim_safe_package(product_id: str) -> dict[str, Any] | Non
     payload = _parse_payload(product)
     if not payload:
         return None
-    if _is_stale_claim_safe_payload(payload):
+    if _is_stale_claim_safe_payload(payload) or _address_style_mismatch_requires_refresh(product, payload):
         return await refresh_claim_safe_package_if_stale(product_id)
     return _hydrate_payload_status(product, payload)

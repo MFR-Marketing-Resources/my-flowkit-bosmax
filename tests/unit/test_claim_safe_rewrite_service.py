@@ -4,6 +4,7 @@ import pytest
 
 from agent.services.claim_safe_rewrite_service import (
     APPROVAL_PHRASE,
+    SAFE_PACKAGE_GENERATOR_VERSION,
     STATUS_REVIEW_READY,
     approve_claim_safe_rewrite,
     get_stored_claim_safe_package,
@@ -176,7 +177,7 @@ async def test_get_stored_claim_safe_package_refreshes_legacy_payload(monkeypatc
     assert "diposisikan sebagai" not in payload["safe_claim_rewrite"].casefold()
     assert "tonjolkan" not in " ".join(payload["safe_hook_angles"]).casefold()
     assert "lihat bagaimana" not in " ".join(payload["safe_cta_angles"]).casefold()
-    assert "claim_safe_rewrite_service:v2" in payload["provenance"]
+    assert SAFE_PACKAGE_GENERATOR_VERSION in payload["provenance"]
     assert "claim_safe_copy:refreshed_from_legacy_payload" in payload["provenance"]
     assert payload["approval_required"] is False
     assert stored_updates["claim_safe_copy_status"] == "CLAIM_SAFE_COPY_APPROVED"
@@ -201,7 +202,7 @@ async def test_get_stored_claim_safe_package_returns_current_payload_without_ref
         "address_style": "SAYA_AKAK",
         "claim_safe_copy_status": "CLAIM_SAFE_COPY_REVIEW_READY",
         "provenance": [
-            "claim_safe_rewrite_service:v2",
+            SAFE_PACKAGE_GENERATOR_VERSION,
             "product_id:prod-current",
         ],
     }
@@ -209,6 +210,9 @@ async def test_get_stored_claim_safe_package_returns_current_payload_without_ref
     async def fake_get_product(product_id: str):
         return {
             "id": product_id,
+            "raw_product_title": "Glad2Glow Brightening Lip Serum 7g",
+            "product_display_name": "Glad2Glow Brightening Lip Serum 7g",
+            "type": "Beauty",
             "claim_safe_copy_status": "CLAIM_SAFE_COPY_REVIEW_READY",
             "claim_safe_copy_updated_at": "2026-05-22T10:00:00Z",
             "claim_safe_copy_payload": json.dumps(current_payload, ensure_ascii=False),
@@ -228,3 +232,74 @@ async def test_get_stored_claim_safe_package_returns_current_payload_without_ref
     assert payload["address_style"] == "SAYA_AKAK"
     assert payload["claim_safe_copy_updated_at"] == "2026-05-22T10:00:00Z"
     assert updates_called is False
+
+
+@pytest.mark.asyncio
+async def test_get_stored_claim_safe_package_refreshes_beauty_supplement_address_style(monkeypatch):
+    stored_updates = {}
+
+    async def fake_get_product(product_id: str):
+        base = {
+            "id": product_id,
+            "raw_product_title": "7LUME White Tomato Skin Supplement",
+            "product_display_name": "7LUME White Tomato Skin Supplement",
+            "category": "Health",
+            "subcategory": "Food Supplements",
+            "type": "Beauty Supplement",
+            "section_6_copy_hint": "Use grounded product-benefit language with no unverifiable promises.",
+            "claim_gate": "CLAIM_SAFE",
+            "claim_tokens": [],
+            "claim_safe_copy_status": "CLAIM_SAFE_COPY_APPROVED",
+            "claim_safe_copy_updated_at": "2026-05-22T09:00:00Z",
+            "claim_safe_copy_payload": json.dumps(
+                {
+                    "product_id": product_id,
+                    "product_name": "7LUME White Tomato Skin Supplement",
+                    "safe_claim_rewrite": "Pada saya, 7LUME White Tomato Skin Supplement.",
+                    "safe_hook_angles": [
+                        "Abang, kalau tengah cari untuk supplement harian - saya dah cuba 7LUME White Tomato Skin Supplement ni dan memang okay."
+                    ],
+                    "safe_usp_list": [
+                        "Yang saya suka pasal 7LUME White Tomato Skin Supplement - nampak sesuai untuk rutin supplement harian abang."
+                    ],
+                    "safe_cta_angles": [
+                        "Kalau abang tengah cari untuk supplement harian, boleh la try 7LUME White Tomato Skin Supplement ni dulu."
+                    ],
+                    "address_style": "SAYA_ABANG",
+                    "claim_safe_copy_status": "CLAIM_SAFE_COPY_APPROVED",
+                    "approval_required": False,
+                    "approved_at": "2026-05-22T09:00:00Z",
+                    "approval_note": "Auto-approved sanitized claim-safe package for workspace generation.",
+                    "production_generation_allowed": False,
+                    "provenance": [
+                        "claim_safe_rewrite_service:v2",
+                        f"product_id:{product_id}",
+                        "claim_safe_copy:auto_approved_low_risk",
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        }
+        base.update(stored_updates)
+        return base
+
+    async def fake_update_product(product_id: str, **kwargs):
+        stored_updates.update(kwargs)
+        return {"id": product_id, **stored_updates}
+
+    monkeypatch.setattr("agent.services.claim_safe_rewrite_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr("agent.services.claim_safe_rewrite_service.crud.update_product", fake_update_product)
+    monkeypatch.setattr(
+        "agent.services.claim_safe_rewrite_service.RegistrationDraftStorageService.list_drafts",
+        lambda: [],
+    )
+
+    payload = await get_stored_claim_safe_package("prod-beauty")
+
+    assert payload is not None
+    assert payload["address_style"] == "SAYA_AKAK"
+    combined = " ".join(payload["safe_hook_angles"] + payload["safe_cta_angles"]).casefold()
+    assert "akak" in combined
+    assert "abang" not in combined
+    assert SAFE_PACKAGE_GENERATOR_VERSION in payload["provenance"]
+    assert stored_updates["claim_safe_copy_status"] == "CLAIM_SAFE_COPY_APPROVED"

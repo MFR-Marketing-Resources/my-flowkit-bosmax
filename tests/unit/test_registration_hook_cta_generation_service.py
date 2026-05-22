@@ -41,3 +41,25 @@ def test_general_product_hook_cta_is_non_empty():
 
     assert len(result["hook_angles"]) == 3
     assert len(result["cta_angles"]) == 3
+
+
+def test_beauty_supplement_hook_cta_routes_to_akak():
+    result = generate_registration_hook_cta(
+        {
+            "product_name": "7LUME White Tomato Skin Supplement",
+            "benefits_text": "Campuran berry untuk rutin harian yang lebih simple.",
+            "target_customer_text": "Dewasa aktif",
+            "usage_text": "Minum sekali sehari.",
+            "claim_gate": "CLAIM_SAFE",
+            "claim_tokens": [],
+            "copy_route": "DIRECT",
+            "silo": "beauty_wellness_01",
+            "type": "Beauty Supplement",
+            "category": "Health",
+            "subcategory": "Food Supplements",
+        }
+    )
+
+    combined = " ".join(result["hook_angles"] + result["cta_angles"]).casefold()
+    assert "akak" in combined
+    assert "abang" not in combined

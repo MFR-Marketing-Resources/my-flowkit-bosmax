@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -49,6 +50,16 @@ def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _contains_context_signal(text: str, signal: str) -> bool:
+    normalized_signal = signal.casefold().strip()
+    if not normalized_signal:
+        return False
+    if re.fullmatch(r"[a-z0-9]+(?: [a-z0-9]+)*", normalized_signal):
+        pattern = r"\b" + r"\s+".join(re.escape(part) for part in normalized_signal.split()) + r"\b"
+        return re.search(pattern, text) is not None
+    return normalized_signal in text
+
+
 def _pick_benefit_phrase(benefits: str) -> str:
     benefit = _clean_text(benefits)
     if not benefit:
@@ -86,7 +97,7 @@ def _is_sensitive(payload: dict[str, Any]) -> bool:
 
 def _is_beauty(payload: dict[str, Any]) -> bool:
     combined = _combined_payload_text(payload)
-    return any(token in combined for token in BEAUTY_CONTEXT_TOKENS)
+    return any(_contains_context_signal(combined, token) for token in BEAUTY_CONTEXT_TOKENS)
 
 
 FEMALE_SENSITIVE_TOKENS = {"vagina", "faraj", "miss v", "keputihan", "tightening"}
@@ -95,15 +106,18 @@ FEMALE_SENSITIVE_TOKENS = {"vagina", "faraj", "miss v", "keputihan", "tightening
 def _detect_address_style(payload: dict[str, Any], *, sensitive: bool, beauty: bool) -> str:
     if sensitive:
         combined = _combined_payload_text(payload)
-        if any(token in combined for token in FEMALE_SENSITIVE_TOKENS):
+        if any(_contains_context_signal(combined, token) for token in FEMALE_SENSITIVE_TOKENS):
             return ADDRESS_SAYA_AKAK
         return ADDRESS_SAYA_ABANG
     if beauty:
         return ADDRESS_SAYA_AKAK
     target_customer = _clean_text(payload.get("target_customer_text")).casefold()
-    if any(token in target_customer for token in ("lelaki", "men", "man", "abang")):
+    if any(_contains_context_signal(target_customer, token) for token in ("lelaki", "men", "man", "abang")):
         return ADDRESS_SAYA_ABANG
-    if any(token in target_customer for token in ("wanita", "perempuan", "ladies", "women", "akak")):
+    if any(
+        _contains_context_signal(target_customer, token)
+        for token in ("wanita", "perempuan", "ladies", "women", "akak")
+    ):
         return ADDRESS_SAYA_AKAK
     return ADDRESS_AKU_KORANG
 
