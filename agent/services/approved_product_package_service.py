@@ -490,13 +490,20 @@ async def get_product_package_readiness(product_id: str, mode: str) -> dict[str,
     }
 
 
-async def _approved_prompt_payload(product_id: str, mode: str) -> tuple[str, str, list[str]]:
+async def _approved_prompt_payload(product_id: str, mode: str) -> tuple[str, str, list[str], dict[str, Any]]:
     if mode in {"T2V", "IMG"}:
         dryrun = await generate_prompt_dryrun(product_id, mode)
         if dryrun.get("status") != "PRODUCTION_READY":
             raise ValueError("PRODUCTION_APPROVAL_REQUIRED")
         prompt_text = _clean(dryrun.get("prompt_preview"))
-        return prompt_text, "PRODUCTION_PROMPT_APPROVED", list(dryrun.get("warnings") or [])
+        extras = {
+            "image_prompt": dryrun.get("image_prompt"),
+            "metadata_handoff": dryrun.get("metadata_handoff"),
+            "overlay_spec": dryrun.get("overlay_spec"),
+            "export_spec": dryrun.get("export_spec"),
+            "image_route": dryrun.get("route"),
+        }
+        return prompt_text, "PRODUCTION_PROMPT_APPROVED", list(dryrun.get("warnings") or []), extras
     raise ValueError("DERIVED_MODE")
 
 
@@ -530,8 +537,9 @@ async def get_approved_product_package(product_id: str, mode: str) -> dict[str, 
         raise ValueError("PRODUCTION_APPROVAL_REQUIRED")
 
     warnings: list[str] = []
+    prompt_contract: dict[str, Any] = {}
     if normalized_mode in {"T2V", "IMG"}:
-        prompt_text, approval_status, dryrun_warnings = await _approved_prompt_payload(product_id, normalized_mode)
+        prompt_text, approval_status, dryrun_warnings, prompt_contract = await _approved_prompt_payload(product_id, normalized_mode)
         warnings.extend(dryrun_warnings)
         production_generation_allowed = True
     else:
@@ -590,6 +598,11 @@ async def get_approved_product_package(product_id: str, mode: str) -> dict[str, 
         "prompt_text": prompt_text,
         "prompt_fingerprint": prompt_fingerprint,
         "claim_safe_rewrite": claim_safe_rewrite,
+        "image_prompt": prompt_contract.get("image_prompt"),
+        "metadata_handoff": prompt_contract.get("metadata_handoff"),
+        "overlay_spec": prompt_contract.get("overlay_spec"),
+        "export_spec": prompt_contract.get("export_spec"),
+        "image_route": prompt_contract.get("image_route"),
         "image_reference_status": image_reference_status,
         "asset_requirements": asset_requirements,
         "asset_slots": asset_slots,

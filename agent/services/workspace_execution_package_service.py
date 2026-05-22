@@ -105,6 +105,73 @@ def _default_model_for_mode(mode: str) -> str:
     return "Veo 3.1 - Lite"
 
 
+def _compile_img_workspace_prompt_preview(
+    *,
+    product_id: str,
+    mode: str,
+    duration_seconds: int,
+    generation_mode: str,
+    target_language: str,
+    camera_style: str,
+    character_presence: str,
+    creator_persona: str,
+    approved_package: dict[str, Any],
+) -> dict[str, Any]:
+    image_prompt = str(
+        approved_package.get("image_prompt")
+        or approved_package.get("prompt_text")
+        or ""
+    )
+    metadata_handoff = copy.deepcopy(approved_package.get("metadata_handoff") or {})
+    overlay_spec = copy.deepcopy(approved_package.get("overlay_spec") or {})
+    export_spec = copy.deepcopy(approved_package.get("export_spec") or {})
+    return {
+        "final_compiled_prompt_text": image_prompt,
+        "prompt_blocks": [
+            {
+                "block_id": "block_1",
+                "block_index": 1,
+                "block_role": "IMAGE_SINGLE",
+                "duration_seconds": duration_seconds,
+                "shot_count": 1,
+                "dialogue_word_budget": 0,
+                "continuation_from_block_id": None,
+                "compiled_prompt_text": image_prompt,
+                "shot_plan": ["Frame 1: Single-image render only."],
+            }
+        ],
+        "compiler_version": "img_prompt_compiler_v1",
+        "generation_mode": generation_mode,
+        "total_duration_seconds": duration_seconds,
+        "camera_style": camera_style,
+        "character_presence": character_presence,
+        "creator_persona": creator_persona,
+        "target_language": target_language,
+        "shot_plan": [
+            {
+                "block_index": 1,
+                "shot_count": 1,
+                "shots": ["Frame 1: Single-image render only."],
+            }
+        ],
+        "dialogue_word_budget_per_block": [],
+        "prompt_fingerprint": _fingerprint(image_prompt),
+        "warnings": list(approved_package.get("warnings") or []),
+        "blockers": [],
+        "source_of_truth_notes": [
+            "IMG compiler separates image prompt from metadata handoff, overlay policy, and export spec.",
+        ],
+        "continuation_lineage": [],
+        "runtime_config_snapshot": get_runtime_config(),
+        "product_id": product_id,
+        "mode": mode,
+        "metadata_handoff": metadata_handoff,
+        "overlay_spec": overlay_spec,
+        "export_spec": export_spec,
+        "image_route": approved_package.get("image_route"),
+    }
+
+
 async def create_workspace_execution_package(
     product_id: str,
     mode: str,
@@ -206,6 +273,9 @@ async def create_workspace_execution_package(
             "warnings": compiler_result["warnings"],
         },
     }
+    for key in ("metadata_handoff", "overlay_spec", "export_spec", "image_route"):
+        if compiler_result.get(key) is not None:
+            request_lineage_payload["compiler"][key] = compiler_result.get(key)
     if semantic_slot_resolver:
         request_lineage_payload.update(
             {
@@ -307,6 +377,10 @@ async def create_workspace_execution_package(
         "compiler_blockers": compiler_result["blockers"],
         "continuation_lineage": compiler_result["continuation_lineage"],
         "runtime_config_snapshot": compiler_result["runtime_config_snapshot"],
+        "metadata_handoff": compiler_result.get("metadata_handoff"),
+        "overlay_spec": compiler_result.get("overlay_spec"),
+        "export_spec": compiler_result.get("export_spec"),
+        "image_route": compiler_result.get("image_route"),
     }
 
 
@@ -325,30 +399,44 @@ async def compile_workspace_prompt_preview(
     blocks: list[dict[str, Any]] | None = None,
     approved_package: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    normalized_mode = normalize_mode(mode)
     product = await crud.get_product(product_id)
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
     enriched_product = await enrich_product(product, persist=False)
-    package = approved_package or await get_approved_product_package(product_id, mode)
-    safe_package = await get_stored_claim_safe_package(product_id) or {}
-    compiler_result = compile_ugc_video_prompt(
-        product=enriched_product,
-        approved_package=package,
-        mode=mode,
-        camera_style=camera_style,
-        character_presence=character_presence,
-        creator_persona=creator_persona,
-        target_language=target_language,
-        generation_mode=generation_mode,
-        duration_seconds=duration_seconds,
-        blocks=blocks or [],
-        engine_target=mode,
-        overlay_enabled=overlay_enabled,
-        dialogue_enabled=dialogue_enabled,
-        claim_safe_rewrite=package.get("claim_safe_rewrite"),
-        safe_hook_angles=list(safe_package.get("safe_hook_angles") or []),
-        safe_cta_angles=list(safe_package.get("safe_cta_angles") or []),
-    )
+    package = approved_package or await get_approved_product_package(product_id, normalized_mode)
+    if normalized_mode == "IMG":
+        compiler_result = _compile_img_workspace_prompt_preview(
+            product_id=product_id,
+            mode=normalized_mode,
+            duration_seconds=duration_seconds,
+            generation_mode=generation_mode,
+            target_language=target_language,
+            camera_style=camera_style,
+            character_presence=character_presence,
+            creator_persona=creator_persona,
+            approved_package=package,
+        )
+    else:
+        safe_package = await get_stored_claim_safe_package(product_id) or {}
+        compiler_result = compile_ugc_video_prompt(
+            product=enriched_product,
+            approved_package=package,
+            mode=normalized_mode,
+            camera_style=camera_style,
+            character_presence=character_presence,
+            creator_persona=creator_persona,
+            target_language=target_language,
+            generation_mode=generation_mode,
+            duration_seconds=duration_seconds,
+            blocks=blocks or [],
+            engine_target=normalized_mode,
+            overlay_enabled=overlay_enabled,
+            dialogue_enabled=dialogue_enabled,
+            claim_safe_rewrite=package.get("claim_safe_rewrite"),
+            safe_hook_angles=list(safe_package.get("safe_hook_angles") or []),
+            safe_cta_angles=list(safe_package.get("safe_cta_angles") or []),
+        )
     prompt_scan = scan_prompt_text(
         compiler_result["final_compiled_prompt_text"],
         product_id=product_id,
@@ -357,7 +445,7 @@ async def compile_workspace_prompt_preview(
         raise ValueError("PACKAGE_SCAN_FAILED")
     compiler_result["runtime_config_snapshot"] = get_runtime_config()
     compiler_result["product_id"] = product_id
-    compiler_result["mode"] = normalize_mode(mode)
+    compiler_result["mode"] = normalized_mode
     return compiler_result
 
 
@@ -390,6 +478,7 @@ async def list_workspace_execution_packages(
                 "source_of_truth_notes": json.loads(row.get("source_of_truth_notes") or "[]"),
                 "prompt_preview": str(row.get("prompt_text") or "")[:240],
                 "prompt_text": row.get("prompt_text") or "",
+                "prompt_blocks": json.loads(row.get("prompt_blocks_json") or "[]"),
             }
         )
     return items

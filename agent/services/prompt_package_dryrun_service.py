@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from agent.db import crud
@@ -13,10 +14,81 @@ from agent.services.product_intelligence import enrich_product
 
 
 VALID_MODES = {"T2V", "IMG"}
+REAL_ESTATE_KEYWORDS = (
+    "condo",
+    "kondo",
+    "apartment",
+    "rumah",
+    "property",
+    "interior",
+    "exterior",
+    "real estate",
+    "office",
+    "villa",
+    "residence",
+)
+APPAREL_KEYWORDS = (
+    "kurung",
+    "kebaya",
+    "hijab",
+    "tudung",
+    "blouse",
+    "dress",
+    "shirt",
+    "apparel",
+    "fashion",
+)
+PRODUCT_KEYWORDS = (
+    "serum",
+    "bottle",
+    "packaging",
+    "skincare",
+    "supplement",
+    "cream",
+    "oil",
+    "jar",
+)
 
 
 def _clean(value: str | None) -> str:
     return str(value or "").strip()
+
+
+def _clean_name(value: str | None) -> str:
+    cleaned = re.sub(r"\s*\[[^\]]*\]\s*", " ", _clean(value))
+    cleaned = re.sub(r"\s*\([^)]*\)\s*", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
+    return cleaned or _clean(value)
+
+
+def _contains_any(haystack: str, needles: tuple[str, ...]) -> bool:
+    return any(token in haystack for token in needles)
+
+
+def _infer_image_route(product: dict[str, Any]) -> str:
+    text = " ".join(
+        filter(
+            None,
+            [
+                _clean(product.get("product_display_name")).casefold(),
+                _clean(product.get("raw_product_title")).casefold(),
+                _clean(product.get("source")).casefold(),
+                _clean(product.get("source_lane")).casefold(),
+            ],
+        )
+    )
+    if _contains_any(text, REAL_ESTATE_KEYWORDS):
+        return "REAL_ESTATE_LISTING"
+    if _contains_any(text, APPAREL_KEYWORDS):
+        return "ECOMMERCE_FASHION_HERO"
+    if _contains_any(text, PRODUCT_KEYWORDS) or _clean(product.get("source")):
+        return "ECOMMERCE_PRODUCT_HERO"
+    return "STATIC_PRODUCT"
+
+
+def _is_micro_product(name: str) -> bool:
+    lowered = name.casefold()
+    return bool(re.search(r"\b(5|10)\s*ml\b", lowered))
 
 
 def _image_reference_line(product: dict[str, Any]) -> str:
@@ -48,14 +120,152 @@ def _t2v_prompt(product: dict[str, Any], package: dict[str, Any]) -> str:
 
 
 def _img_prompt(product: dict[str, Any], package: dict[str, Any]) -> str:
-    name = _clean(product.get("product_display_name") or product.get("raw_product_title"))
-    safe_rewrite = package.get("safe_claim_rewrite", "")
-    return (
-        f"Premium product hero image of {name}, a small 5ML traditional herbal oil bottle. "
-        f"{_image_reference_line(product)} Use clean studio styling, realistic bottle proportions, "
-        "matte-to-satin packaging finish, label-safe framing, and discreet masculine wellness direction. "
-        f"Copy intent: {safe_rewrite} No explicit adult cues, no medical claims, no invented label text."
+    return _compile_img_contract(product, package)["image_prompt"]
+
+
+def _camera_profile(route: str, *, micro_product: bool) -> dict[str, str]:
+    if route == "REAL_ESTATE_LISTING":
+        return {
+            "focal_length": "24mm lens",
+            "depth_of_field": "deep depth of field",
+            "movement": "stable tripod perspective",
+            "angle": "eye-level architectural angle with vertical line correction",
+        }
+    if route == "ECOMMERCE_FASHION_HERO":
+        return {
+            "focal_length": "50mm lens",
+            "depth_of_field": "moderate depth of field",
+            "movement": "static commercial framing",
+            "angle": "front-facing product angle with full silhouette readability",
+        }
+    if micro_product:
+        return {
+            "focal_length": "100mm macro lens",
+            "depth_of_field": "shallow depth of field",
+            "movement": "static product framing",
+            "angle": "tight eye-level product angle with fingertip-scale realism",
+        }
+    return {
+        "focal_length": "50mm lens",
+        "depth_of_field": "shallow depth of field",
+        "movement": "static product framing",
+        "angle": "clean eye-level product angle",
+    }
+
+
+def _route_guidance(route: str) -> dict[str, str]:
+    if route == "REAL_ESTATE_LISTING":
+        return {
+            "subject": "Photorealistic Malaysian/SEA property hero image with structure-dominant framing and realistic scale.",
+            "context": "Premium real-estate marketing visual with uncluttered foreground and architecture kept dominant.",
+            "lighting": "Balanced daylight or blue-hour lighting with one coherent shadow direction, no clipped windows, and no overexposed sky.",
+            "composition": "Straight verticals, clean horizon control, deep spatial readability, and no text covering key architecture.",
+            "technical": "sRGB output, realistic materials, preserved edge sharpness, and no perspective warping.",
+            "negative": "no vertical line bending, no sky clipping, no warped reflections, no missing shadows, no fake signage",
+            "export_ratio": "4:5 or 16:9 depending platform target",
+        }
+    if route == "ECOMMERCE_FASHION_HERO":
+        return {
+            "subject": "Photorealistic apparel hero image preserving exact garment cut, embroidery, fabric drape, and color truth.",
+            "context": "Mobile-first SEA e-commerce hero visual with the garment as the single dominant subject.",
+            "lighting": "Clean studio or daylight-balanced lighting with one light direction, visible textile texture, and no mixed color temperatures.",
+            "composition": "Centered or near-centered garment framing, full silhouette visibility, readable hems and seams, and uncluttered negative space.",
+            "technical": "sRGB output, realistic fabric geometry, crisp stitch detail, and no warped garment proportions.",
+            "negative": "no mannequin distortion, no folded-edge cutoff, no unreadable embroidery, no cluttered props, no garbled text",
+            "export_ratio": "1:1 preferred for marketplace hero",
+        }
+    return {
+        "subject": "Photorealistic e-commerce product hero image preserving exact packaging, label, color, and scale truth.",
+        "context": "Mobile-first SEA commercial product visual with one dominant subject and no background clutter.",
+        "lighting": "Clean studio lighting with one consistent shadow direction, controlled reflections, and label-safe clarity.",
+        "composition": "Centered or near-centered hero framing with the product fully visible, uncluttered edges, and resilient negative space for mobile crops.",
+        "technical": "sRGB output, realistic geometry, readable label fidelity, and no invented packaging text.",
+        "negative": "no warped geometry, no logo distortion, no unreadable labels, no extra objects, no fake promotional text",
+        "export_ratio": "1:1 preferred for ecommerce hero",
+    }
+
+
+def _overlay_spec(route: str) -> dict[str, Any]:
+    if route in {"ECOMMERCE_PRODUCT_HERO", "ECOMMERCE_FASHION_HERO", "STATIC_PRODUCT"}:
+        return {
+            "render_text_inside_image": False,
+            "recommended_text": None,
+            "placement": "metadata_only",
+            "reason": "Hero image defaults to no rendered overlay; CTA text belongs to secondary assets or Layer B metadata.",
+        }
+    return {
+        "render_text_inside_image": False,
+        "recommended_text": None,
+        "placement": "metadata_only",
+        "reason": "Text overlay is not emitted by default; keep the image prompt visually clean and route copy to metadata.",
+    }
+
+
+def _export_spec(route: str) -> dict[str, Any]:
+    if route == "REAL_ESTATE_LISTING":
+        return {
+            "platform_target": "UNSPECIFIED",
+            "recommended_aspect_ratio": "4:5",
+            "allowed_aspect_ratios": ["4:5", "16:9"],
+            "recommended_resolution": "1080x1350px",
+            "color_profile": "sRGB",
+        }
+    return {
+        "platform_target": "UNSPECIFIED",
+        "recommended_aspect_ratio": "1:1",
+        "allowed_aspect_ratios": ["1:1", "4:5", "9:16"],
+        "recommended_resolution": "2000x2000px",
+        "color_profile": "sRGB",
+    }
+
+
+def _compile_img_contract(product: dict[str, Any], package: dict[str, Any]) -> dict[str, Any]:
+    name = _clean_name(product.get("product_display_name") or product.get("raw_product_title") or "the product")
+    route = _infer_image_route(product)
+    micro_product = _is_micro_product(name)
+    camera = _camera_profile(route, micro_product=micro_product)
+    guidance = _route_guidance(route)
+    reference_line = _image_reference_line(product)
+    safe_rewrite = _clean(package.get("safe_claim_rewrite"))
+    image_prompt = "\n".join(
+        [
+            f"Subject: {guidance['subject']} Use {name} as the exact reference subject.",
+            f"Context: {guidance['context']} {reference_line}",
+            f"Environment & Lighting: {guidance['lighting']}",
+            (
+                "Camera Specifications: "
+                f"{camera['focal_length']}, {camera['depth_of_field']}, {camera['movement']}, "
+                f"{camera['angle']}."
+            ),
+            f"Composition Rules: {guidance['composition']}",
+            (
+                "Technical Constraints: "
+                f"{guidance['technical']} Keep the composition suitable for {guidance['export_ratio']} and do not render interface guides."
+            ),
+            (
+                "Negative Prompting: "
+                f"{guidance['negative']}, no metadata labels, no safe-zone guides, no invented claims. "
+                f"No explicit adult cues, no medical claims. Copy intent remains off-image: {safe_rewrite}"
+            ),
+        ]
     )
+    metadata_handoff = {
+        "route": route,
+        "image_prompt_metadata_isolated": True,
+        "platform_target": "UNSPECIFIED",
+        "safe_zone_strategy": "Translate platform layout rules to natural composition language only in Layer B.",
+        "camera_profile": camera,
+        "copy_intent": safe_rewrite or None,
+    }
+    overlay = _overlay_spec(route)
+    export = _export_spec(route)
+    return {
+        "image_prompt": image_prompt,
+        "metadata_handoff": metadata_handoff,
+        "overlay_spec": overlay,
+        "export_spec": export,
+        "route": route,
+    }
 
 
 async def generate_prompt_dryrun(product_id: str, mode: str) -> dict[str, Any]:
@@ -78,12 +288,13 @@ async def generate_prompt_dryrun(product_id: str, mode: str) -> dict[str, Any]:
             "errors": ["CLAIM_SAFE_COPY_REWRITE_REQUIRED"],
             "product_id": product_id,
         }
-    prompt_preview = _t2v_prompt(enriched, package) if normalized_mode == "T2V" else _img_prompt(enriched, package)
+    img_contract = _compile_img_contract(enriched, package) if normalized_mode == "IMG" else None
+    prompt_preview = _t2v_prompt(enriched, package) if normalized_mode == "T2V" else img_contract["image_prompt"]
     production_mode_approved = is_mode_production_approved(product, normalized_mode)
     warnings = []
     if not production_mode_approved and package.get("claim_safe_copy_status") == STATUS_REVIEW_READY:
         warnings.append("PRODUCTION_CLAIM_REVIEW_STILL_REQUIRED")
-    return {
+    result = {
         "status": "PRODUCTION_READY" if production_mode_approved else "DRY_RUN_READY",
         "product_id": product_id,
         "mode": normalized_mode,
@@ -99,3 +310,6 @@ async def generate_prompt_dryrun(product_id: str, mode: str) -> dict[str, Any]:
             f"image_reference_status:{enriched.get('image_readiness_status')}",
         ],
     }
+    if img_contract:
+        result.update(img_contract)
+    return result
