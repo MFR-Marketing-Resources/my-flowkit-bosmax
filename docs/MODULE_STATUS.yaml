@@ -22,6 +22,7 @@ domains:
       - agent/services/fastmoss_bulk_promotion_service.py
       - agent/services/fastmoss_product_reference_service.py
       - agent/services/bosmax_product_family.py
+      - agent/services/claim_safe_rewrite_service.py
       - agent/services/i2v_slot_recipe_config.py
       - agent/services/i2v_semantic_slot_resolver_service.py
       - agent/services/prompt_compiler_runtime_config_service.py
@@ -81,6 +82,7 @@ domains:
       - tests/api/test_ugc_video_prompt_compiler_api.py
       - tests/api/test_workspace_execution_package_api.py
       - tests/api/test_flow_request_lineage_payload_api.py
+      - tests/api/test_claim_safe_rewrite_api.py
       - tests/ui/test_creative_library_page_ui_contract.py
       - tests/ui/test_f2v_ugc_prompt_compiler_ui_contract.py
       - tests/ui/test_fastmoss_product_visibility_ui_contract.py
@@ -94,6 +96,7 @@ domains:
       - tests/unit/test_product_registration_commit_service.py
       - tests/unit/test_product_knowledge_extraction.py
       - tests/unit/test_fastmoss_bulk_promotion_service.py
+      - tests/unit/test_claim_safe_rewrite_service.py
       - tests/unit/test_product_knowledge_completion_service.py
       - tests/unit/test_product_registration_review_service.py
       - tests/unit/test_registration_draft_evidence_editor_service.py

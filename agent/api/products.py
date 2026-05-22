@@ -41,6 +41,7 @@ from agent.services.prompt_pipeline_readiness_service import PromptPipelineReadi
 from agent.services.claim_safe_rewrite_service import (
     APPROVAL_PHRASE as CLAIM_SAFE_APPROVAL_PHRASE,
     approve_claim_safe_rewrite,
+    refresh_claim_safe_package_if_stale,
     preview_claim_safe_rewrite,
 )
 from agent.services.production_prompt_approval_service import (
@@ -270,6 +271,17 @@ async def _save_manual_image(product_id: str, image_base64: str | None, image_fi
 async def _enrich_product(product: dict[str, Any], *, persist: bool = False) -> dict[str, Any]:
     return await enrich_product(product, persist=persist)
 
+
+async def _refresh_claim_safe_product_row_if_needed(product: dict[str, Any]) -> dict[str, Any]:
+    product_id = str(product.get("id") or "").strip()
+    if not product_id or not product.get("claim_safe_copy_payload"):
+        return product
+    refreshed = await refresh_claim_safe_package_if_stale(product_id)
+    if refreshed is None:
+        return product
+    latest = await crud.get_product(product_id)
+    return latest or product
+
 async def _resolve_mapping_for_product(
     product: dict[str, Any] | None,
     *,
@@ -471,7 +483,13 @@ async def _list_products_response(
         lifecycle_status=requested_lifecycle,
     )
     total = len(filtered_all)
-    enriched = filtered_all[offset:offset + limit]
+    enriched = []
+    for product in filtered_all[offset:offset + limit]:
+        refreshed_product = await _refresh_claim_safe_product_row_if_needed(product)
+        if refreshed_product is product:
+            enriched.append(product)
+            continue
+        enriched.append(await _enrich_product(refreshed_product))
 
     return {
         "total_count": total,
@@ -1012,6 +1030,7 @@ async def get_product(product_id: str):
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
+    product = await _refresh_claim_safe_product_row_if_needed(product)
     return await _enrich_product(product, persist=True)
 
 

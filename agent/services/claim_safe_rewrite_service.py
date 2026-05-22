@@ -89,6 +89,19 @@ BENEFIT_HINTS = {
 ADDRESS_AKU_KORANG = "AKU_KORANG"
 ADDRESS_SAYA_ABANG = "SAYA_ABANG"
 ADDRESS_SAYA_AKAK = "SAYA_AKAK"
+SAFE_PACKAGE_GENERATOR_VERSION = "claim_safe_rewrite_service:v2"
+LEGACY_CLAIM_SAFE_PHRASES = (
+    "diposisikan sebagai",
+    "dipersembahkan sebagai",
+    "dibingkaikan sebagai",
+    "tonjolkan ",
+    "lihat bagaimana",
+    "terokai ",
+    "semak presentation",
+    "fokus pada presentation",
+    "bina visual",
+    "product-first",
+)
 
 
 def _now() -> str:
@@ -353,6 +366,14 @@ def _match_bosmax_draft(product: dict[str, Any]) -> dict[str, Any] | None:
     return matches[0] if matches else None
 
 
+def _should_scan_registration_draft(product: dict[str, Any]) -> bool:
+    source = _normalize(product.get("source")).upper()
+    if source in {"MANUAL", "OWNED"}:
+        return True
+    title = _normalize(product.get("raw_product_title") or product.get("product_display_name")).casefold()
+    return "bosmax" in title
+
+
 def _extract_source_text(product: dict[str, Any], draft: dict[str, Any] | None) -> list[str]:
     text_blocks: list[str] = []
     if draft:
@@ -427,7 +448,7 @@ def _build_safe_package(product: dict[str, Any], draft: dict[str, Any] | None) -
         "Dry-run preview can proceed after review-ready approval, but production claim gate stays human-reviewed.",
     ]
     provenance = [
-        "claim_safe_rewrite_service:v1",
+        SAFE_PACKAGE_GENERATOR_VERSION,
         f"product_id:{product.get('id') or product.get('product_id')}",
         f"draft_source:{(draft or {}).get('review_draft_id') or 'NOT_FOUND'}",
     ]
@@ -459,6 +480,113 @@ def _parse_payload(product: dict[str, Any]) -> dict[str, Any] | None:
         return json.loads(raw)
     except json.JSONDecodeError:
         return None
+
+
+def _hydrate_payload_status(product: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    payload["claim_safe_copy_status"] = product.get("claim_safe_copy_status") or payload.get("claim_safe_copy_status")
+    payload["claim_safe_copy_updated_at"] = product.get("claim_safe_copy_updated_at")
+    return payload
+
+
+def _payload_text_lines(payload: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for key in ("safe_claim_rewrite",):
+        value = _normalize(payload.get(key))
+        if value:
+            lines.append(value)
+    for key in ("safe_hook_angles", "safe_usp_list", "safe_cta_angles"):
+        raw_values = payload.get(key) or []
+        if isinstance(raw_values, list):
+            lines.extend(_normalize(str(item)) for item in raw_values if _normalize(str(item)))
+    return lines
+
+
+def _is_stale_claim_safe_payload(payload: dict[str, Any]) -> bool:
+    provenance = payload.get("provenance") or []
+    if SAFE_PACKAGE_GENERATOR_VERSION in provenance:
+        return False
+    if not _normalize(payload.get("address_style")):
+        return True
+    if not isinstance(payload.get("safe_usp_list"), list):
+        return True
+    for line in _payload_text_lines(payload):
+        lowered = line.casefold()
+        if any(phrase in lowered for phrase in LEGACY_CLAIM_SAFE_PHRASES):
+            return True
+        if _contains_bracket_tags(line):
+            return True
+        if _starts_with_direction_prefix(line):
+            return True
+    return False
+
+
+def _merge_preserved_claim_safe_metadata(
+    refreshed: dict[str, Any],
+    stored: dict[str, Any],
+    product: dict[str, Any],
+) -> dict[str, Any]:
+    row_status = (
+        product.get("claim_safe_copy_status")
+        or stored.get("claim_safe_copy_status")
+        or refreshed.get("claim_safe_copy_status")
+    )
+    refreshed["claim_safe_copy_status"] = row_status
+    refreshed["approval_required"] = (
+        bool(stored.get("approval_required"))
+        if "approval_required" in stored
+        else row_status != STATUS_APPROVED
+    )
+    for key in (
+        "approval_note",
+        "approved_at",
+        "production_generation_allowed",
+        "auto_approval_eligible",
+    ):
+        if key in stored:
+            refreshed[key] = stored[key]
+    refreshed["audit_notes"] = [
+        *list(refreshed.get("audit_notes") or []),
+        "Stored claim-safe payload refreshed from legacy template output.",
+    ]
+    refreshed["provenance"] = [
+        *list(refreshed.get("provenance") or []),
+        "claim_safe_copy:refreshed_from_legacy_payload",
+    ]
+    legacy_markers = [
+        item
+        for item in list(stored.get("provenance") or [])
+        if isinstance(item, str) and item.startswith("claim_safe_copy:")
+    ]
+    for marker in legacy_markers:
+        if marker not in refreshed["provenance"]:
+            refreshed["provenance"].append(marker)
+    return refreshed
+
+
+async def refresh_claim_safe_package_if_stale(product_id: str) -> dict[str, Any] | None:
+    product = await crud.get_product(product_id)
+    if not product:
+        return None
+    stored = _parse_payload(product)
+    if not stored:
+        return None
+    if not _is_stale_claim_safe_payload(stored):
+        return _hydrate_payload_status(product, stored)
+    draft = _match_bosmax_draft(product) if _should_scan_registration_draft(product) else None
+    refreshed = _merge_preserved_claim_safe_metadata(
+        _build_safe_package(product, draft),
+        stored,
+        product,
+    )
+    refreshed_at = _now()
+    await crud.update_product(
+        product_id,
+        claim_safe_copy_status=refreshed.get("claim_safe_copy_status"),
+        claim_safe_copy_payload=json.dumps(refreshed, ensure_ascii=False),
+        claim_safe_copy_updated_at=refreshed_at,
+    )
+    product["claim_safe_copy_updated_at"] = refreshed_at
+    return _hydrate_payload_status(product, refreshed)
 
 
 async def preview_claim_safe_rewrite(product_id: str) -> dict[str, Any]:
@@ -511,6 +639,6 @@ async def get_stored_claim_safe_package(product_id: str) -> dict[str, Any] | Non
     payload = _parse_payload(product)
     if not payload:
         return None
-    payload["claim_safe_copy_status"] = product.get("claim_safe_copy_status") or payload.get("claim_safe_copy_status")
-    payload["claim_safe_copy_updated_at"] = product.get("claim_safe_copy_updated_at")
-    return payload
+    if _is_stale_claim_safe_payload(payload):
+        return await refresh_claim_safe_package_if_stale(product_id)
+    return _hydrate_payload_status(product, payload)
