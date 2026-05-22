@@ -78,6 +78,9 @@ def test_workspace_modules_use_page_scroll_and_clear_auto_vs_manual_sections():
         assert "xl:sticky xl:top-4" in source
 
     assert "Auto Asset Baseline" in f2v_source
+    assert "F2V stays locked to Veo 3.1 - Lite" in f2v_source
+    assert "<option>Veo 3.1 - Pro</option>" not in f2v_source
+    assert "<option>Nano Banana 2</option>" not in f2v_source
     assert "Product Reference" in i2v_source
     assert "Auto Asset Baseline" in img_source
     assert "Manual Asset Upload" in f2v_source

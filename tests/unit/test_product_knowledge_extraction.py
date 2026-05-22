@@ -46,6 +46,28 @@ class TestSizeExtraction:
         assert result is not None
         assert "50" in result
 
+    def test_count_bottles(self):
+        result = self._facts("Body Care Set (5 Bottles)")["size_or_volume"]
+        assert result is not None
+        assert "5" in result
+        assert "bottle" in result.lower()
+
+    def test_count_cookies(self):
+        result = self._facts("Soft Cookies Ala Carte 12 cookies")["size_or_volume"]
+        assert result is not None
+        assert "12" in result
+        assert "cookie" in result.lower()
+
+    def test_count_kluster(self):
+        result = self._facts("Bulu Mata 100 Kluster setiap Kotak")["size_or_volume"]
+        assert result is not None
+        assert "100" in result
+
+    def test_count_sheets(self):
+        result = self._facts("Mini Cleansing Tissue 10 Sheets")["size_or_volume"]
+        assert result is not None
+        assert "10" in result
+
     def test_apparel_range_s_to_5xl(self):
         result = self._facts("Blouse Muslimah Saiz S-5XL Corak Bunga")["size_or_volume"]
         assert result is not None
@@ -271,6 +293,20 @@ class TestSizeEvidenceGate:
         title = "Adult Diaper pants 9pcs/1pack comfortable fit overnight protection"
         family, facts, missing = self._eval_real_title(title, "Baby & Maternity")
         assert family == "BABY_DIAPER"
+        assert facts.get("size_or_volume") is not None
+        assert "SIZE_OR_VOLUME_EVIDENCE" not in missing
+
+    def test_real_bottle_count_title_clears_size_block(self):
+        title = "MAVERIX FOR SKIN LIMITED PREMIUM Set (5 Bottles) Body Care"
+        family, facts, missing = self._eval_real_title(title, "Beauty & Personal Care")
+        assert family == "BEAUTY_PERSONAL_CARE"
+        assert facts.get("size_or_volume") is not None
+        assert "SIZE_OR_VOLUME_EVIDENCE" not in missing
+
+    def test_real_cookie_count_title_clears_size_block(self):
+        title = "Amora Soft Cookies Ala Carte 12 cookies"
+        family, facts, missing = self._eval_real_title(title, "Food & Beverages")
+        assert family == "food_packaged"
         assert facts.get("size_or_volume") is not None
         assert "SIZE_OR_VOLUME_EVIDENCE" not in missing
 

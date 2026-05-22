@@ -12,6 +12,7 @@ domains:
       - agent/api/workspace_packages.py
       - agent/api/product_registration.py
       - agent/api/fastmoss_bulk.py
+      - agent/api/operator.py
       - agent/db/crud.py
       - agent/db/schema.py
       - agent/main.py
@@ -59,6 +60,8 @@ domains:
       - dashboard/src/components/workspace/I2VModule.tsx
       - dashboard/src/components/workspace/IMGModule.tsx
       - dashboard/src/components/workspace/WorkspaceImageAssetSlot.tsx
+      - extension/background.js
+      - extension/content-flow-dom.js
       - extension/side_panel.html
       - extension/side_panel.js
       - extension/popup.html
@@ -97,6 +100,7 @@ domains:
       - tests/unit/test_product_knowledge_extraction.py
       - tests/unit/test_fastmoss_bulk_promotion_service.py
       - tests/unit/test_claim_safe_rewrite_service.py
+      - tests/unit/test_batch_executor.py
       - tests/unit/test_product_knowledge_completion_service.py
       - tests/unit/test_product_registration_review_service.py
       - tests/unit/test_registration_draft_evidence_editor_service.py
