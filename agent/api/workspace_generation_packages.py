@@ -166,45 +166,6 @@ async def create_i2v_package(request: I2VGenerationPackageRequest):
         raise _http_exc_for(exc) from exc
 
 
-@router.get("/{package_id}")
-async def get_package(package_id: str):
-    """Get a workspace generation package by ID."""
-    try:
-        package = await get_workspace_generation_package(package_id)
-        if not package:
-            raise HTTPException(status_code=404, detail=f"Package {package_id!r} not found")
-        return package
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-@router.patch("/{package_id}")
-async def patch_package(package_id: str, request: WorkspaceGenerationPackagePatchRequest):
-    """Patch a workspace generation package (status only — no DOM execution)."""
-    from agent.db import crud
-
-    try:
-        existing = await get_workspace_generation_package(package_id)
-        if not existing:
-            raise HTTPException(status_code=404, detail=f"Package {package_id!r} not found")
-        kw: dict = {}
-        if request.status is not None:
-            allowed = {"DRAFT", "READY_MANUAL", "READY_DOM_STAGED", "BLOCKED"}
-            if request.status not in allowed:
-                raise HTTPException(status_code=400, detail=f"Invalid status {request.status!r}")
-            kw["status"] = request.status
-        if kw:
-            updated = await crud.update_workspace_generation_package(package_id, **kw)
-            return updated
-        return existing
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
 @router.post("/from-execution-package")
 async def create_from_execution_package(
     workspace_execution_package_id: str = Query(...),
@@ -354,3 +315,44 @@ async def get_batch_run(batch_run_id: str):
     if not run:
         raise HTTPException(status_code=404, detail=f"Batch run {batch_run_id!r} not found")
     return run
+
+
+# ── Dynamic routes MUST come last — static paths above take priority ──────────
+
+@router.get("/{package_id}")
+async def get_package(package_id: str):
+    """Get a workspace generation package by ID."""
+    try:
+        package = await get_workspace_generation_package(package_id)
+        if not package:
+            raise HTTPException(status_code=404, detail=f"Package {package_id!r} not found")
+        return package
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.patch("/{package_id}")
+async def patch_package(package_id: str, request: WorkspaceGenerationPackagePatchRequest):
+    """Patch a workspace generation package (status only — no DOM execution)."""
+    from agent.db import crud
+
+    try:
+        existing = await get_workspace_generation_package(package_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Package {package_id!r} not found")
+        kw: dict = {}
+        if request.status is not None:
+            allowed = {"DRAFT", "READY_MANUAL", "READY_DOM_STAGED", "BLOCKED"}
+            if request.status not in allowed:
+                raise HTTPException(status_code=400, detail=f"Invalid status {request.status!r}")
+            kw["status"] = request.status
+        if kw:
+            updated = await crud.update_workspace_generation_package(package_id, **kw)
+            return updated
+        return existing
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
