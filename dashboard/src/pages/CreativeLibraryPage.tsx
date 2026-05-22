@@ -39,10 +39,6 @@ interface CreateFormState {
 	display_name: string;
 	semantic_role: CreativeAssetSemanticRole;
 	description: string;
-	product_id: string;
-	category: string;
-	silo: string;
-	product_type: string;
 	allowed_modes: WorkspaceMode[];
 	engine_slot_eligibility: CreativeAssetEngineSlot[];
 	visual_dna_summary: string;
@@ -57,12 +53,8 @@ const INITIAL_FORM: CreateFormState = {
 	display_name: "",
 	semantic_role: "CHARACTER_REFERENCE",
 	description: "",
-	product_id: "",
-	category: "",
-	silo: "",
-	product_type: "",
 	allowed_modes: ["I2V"],
-	engine_slot_eligibility: ["scene"],
+	engine_slot_eligibility: ["subject"],
 	visual_dna_summary: "",
 	character_dna: "",
 	scene_context_dna: "",
@@ -145,10 +137,6 @@ export default function CreativeLibraryPage() {
 			display_name: selectedAsset.display_name,
 			semantic_role: selectedAsset.semantic_role,
 			description: selectedAsset.description ?? "",
-			product_id: selectedAsset.product_id ?? "",
-			category: selectedAsset.category ?? "",
-			silo: selectedAsset.silo ?? "",
-			product_type: selectedAsset.product_type ?? "",
 			allowed_modes: selectedAsset.allowed_modes,
 			engine_slot_eligibility: selectedAsset.engine_slot_eligibility,
 			visual_dna_summary: selectedAsset.visual_dna_summary ?? "",
@@ -171,7 +159,17 @@ export default function CreativeLibraryPage() {
 		setError(null);
 		try {
 			const created = await createCreativeAsset({
-				...form,
+				display_name: form.display_name,
+				semantic_role: form.semantic_role,
+				description: form.description,
+				allowed_modes: form.allowed_modes,
+				engine_slot_eligibility: form.engine_slot_eligibility,
+				visual_dna_summary: form.visual_dna_summary,
+				character_dna: form.character_dna,
+				scene_context_dna: form.scene_context_dna,
+				style_mood_dna: form.style_mood_dna,
+				mode_a_metadata_handoff: form.mode_a_metadata_handoff,
+				remote_source_url: form.remote_source_url,
 				file: selectedFile,
 				source_type: selectedFile ? "UPLOAD" : "REMOTE_URL",
 				storage_kind: selectedFile ? "LOCAL_FILE" : "REMOTE_URL",
@@ -204,10 +202,6 @@ export default function CreativeLibraryPage() {
 			await updateCreativeAsset(selectedAsset.asset_id, {
 				display_name: form.display_name,
 				description: form.description,
-				product_id: form.product_id || null,
-				category: form.category || null,
-				silo: form.silo || null,
-				product_type: form.product_type || null,
 				allowed_modes: form.allowed_modes,
 				engine_slot_eligibility: form.engine_slot_eligibility,
 				visual_dna_summary: form.visual_dna_summary || null,
@@ -344,52 +338,6 @@ export default function CreativeLibraryPage() {
 						/>
 					</div>
 					<div className="space-y-3">
-						<div className="grid gap-3 md:grid-cols-2">
-							<input
-								value={form.product_id}
-								onChange={(e) =>
-									setForm((current) => ({
-										...current,
-										product_id: e.target.value,
-									}))
-								}
-								placeholder="Product ID (optional)"
-								className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-							/>
-							<input
-								value={form.category}
-								onChange={(e) =>
-									setForm((current) => ({
-										...current,
-										category: e.target.value,
-									}))
-								}
-								placeholder="Category"
-								className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-							/>
-							<input
-								value={form.silo}
-								onChange={(e) =>
-									setForm((current) => ({
-										...current,
-										silo: e.target.value,
-									}))
-								}
-								placeholder="Silo"
-								className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-							/>
-							<input
-								value={form.product_type}
-								onChange={(e) =>
-									setForm((current) => ({
-										...current,
-										product_type: e.target.value,
-									}))
-								}
-								placeholder="Product Type"
-								className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
-							/>
-						</div>
 						<div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-3">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
 								Allowed Modes

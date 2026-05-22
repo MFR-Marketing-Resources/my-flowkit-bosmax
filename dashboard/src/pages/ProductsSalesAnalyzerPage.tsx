@@ -64,6 +64,34 @@ const FASTMOSS_IMPORT_FIELDS: Array<{
 	{ key: "video_product_list", label: "Video Product List" },
 ];
 
+const PHYSICS_ENGINE_KEYWORD: Record<string, string> = {
+	BEAUTY_BOTTLE_OR_TUBE: "EXACTLY beauty bottle or tube size. Fits naturally in one hand — hold upright with label facing camera.",
+	SKINCARE_JAR_OR_TUBE: "EXACTLY skincare jar or tube size. Compact — hold in one hand with lid or label visible.",
+	A: "EXACTLY perfume/fragrance bottle size. Small, elegant — display upright with nozzle and label visible.",
+	SUPPLEMENT_BOTTLE: "EXACTLY supplement bottle size. Cylindrical, label-forward — hold upright in one hand.",
+	MEDICAL_TEST_KIT: "EXACTLY medical test kit size. Compact box or pouch — hold flat in one hand, label facing camera.",
+	FOOD_PACK_OR_JAR: "EXACTLY food pack or jar size. Sealed — hold upright in one hand with label clearly visible.",
+	B: "EXACTLY food jar or bottle size. Hold upright in one hand, label facing camera.",
+	HOUSEHOLD_PACKAGED_GOODS: "EXACTLY household packaged goods size. Boxy or bottle-shaped — hold upright with branding facing camera.",
+	LAUNDRY_LIQUID_REFILL: "EXACTLY laundry liquid refill pack size. Soft flexible pouch — hold upright with spout pointing up.",
+	FABRIC_SOFTENER_LIQUID: "EXACTLY fabric softener bottle size. Hold upright in one hand, label facing camera.",
+	RIGID_CONTAINER: "EXACTLY rigid container size. Firm, boxy or cylindrical — hold upright with label facing camera.",
+	KITCHEN_TOOL: "EXACTLY kitchen tool size. Handle-forward — demonstrate grip naturally in one hand.",
+	ELECTRONICS_SMALL_DEVICE: "EXACTLY small electronics device size. Compact — hold in one hand with screen or brand facing camera.",
+	STATIONERY_PACK: "EXACTLY stationery pack size. Flat or slim — hold in one hand with label visible.",
+	PAPER_GOODS: "EXACTLY paper goods pack size. Flat, rectangular — hold naturally with branding facing camera.",
+	TOY_BOX_OR_PACK: "EXACTLY toy box or pack size. Boxy — hold upright with front panel facing camera.",
+	SMALL_RIGID_DECOR: "EXACTLY small decorative item size. Display upright or flat in one hand with design visible.",
+	FASHION_ACCESSORY_SMALL_OBJECT: "EXACTLY small fashion accessory size. Compact — hold or wear naturally, item clearly visible.",
+	WIPES_SOFT_PACK: "EXACTLY wipes soft pack size. Flat, flexible pouch — hold in one hand with label facing camera.",
+	SOFT_PACKAGED_GOODS: "EXACTLY soft-packaged goods size. Flexible pouch or sachet — hold upright in one hand.",
+};
+
+function getEngineKeywordPreview(physicsClass: string | null | undefined): string {
+	if (!physicsClass) return "No physics class set — cannot preview engine keyword.";
+	return PHYSICS_ENGINE_KEYWORD[physicsClass] ?? `No mapping defined for physics class: ${physicsClass}`;
+}
+
 function emptyManualForm(): ManualFormState {
 	return {
 		raw_product_title: "",
@@ -1838,6 +1866,14 @@ export default function ProductsSalesAnalyzerPage() {
 												<div className="mt-3 p-3 bg-slate-900/50 rounded border border-slate-800 text-xs font-mono text-purple-300 leading-relaxed">
 													{selectedProduct.section_5_product_physics_prompt ||
 														"No Section 5 prompt generated."}
+												</div>
+												<div className="mt-3">
+													<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-400 mb-1">
+														Engine Keyword Preview (compiled)
+													</div>
+													<div className="p-3 bg-emerald-950/30 rounded border border-emerald-500/20 text-xs font-mono text-emerald-300 leading-relaxed">
+														{getEngineKeywordPreview(selectedProduct.physics_class)}
+													</div>
 												</div>
 											</div>
 										</Panel>

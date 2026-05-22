@@ -10,6 +10,7 @@ import type {
 	WorkspaceExecutionPackage,
 	WorkspaceMode,
 	WorkspacePackageReadinessResponse,
+	WorkspacePromptPreviewResult,
 } from "../types";
 import { fetchAPI, postAPI } from "./client";
 
@@ -97,6 +98,39 @@ export async function fetchWorkspacePackageReadiness(input: {
 export async function fetchPromptCompilerRuntimeConfig(): Promise<PromptCompilerRuntimeConfig> {
 	return fetchAPI<PromptCompilerRuntimeConfig>(
 		"/api/workspace/prompt-compiler-config",
+	);
+}
+
+export async function compileWorkspacePromptPreview(input: {
+	product_id: string;
+	mode: WorkspaceMode;
+	duration_seconds?: number;
+	generation_mode?: PromptGenerationMode;
+	target_language?: PromptTargetLanguage;
+	camera_style?: PromptCameraStyle;
+	character_presence?: PromptCharacterPresence;
+	creator_persona?: string;
+	overlay_enabled?: boolean;
+	dialogue_enabled?: boolean;
+	blocks?: Array<{
+		block_index: number;
+		duration_seconds: number;
+	}>;
+}): Promise<WorkspacePromptPreviewResult> {
+	return postAPI<WorkspacePromptPreviewResult>(
+		"/api/workspace/ugc-video-prompt-compile",
+		{
+			duration_seconds: 8,
+			generation_mode: "SINGLE",
+			target_language: "BM_MS",
+			camera_style: "UGC_IPHONE_RAW",
+			character_presence: "VISIBLE_CREATOR",
+			creator_persona: "DEFAULT_CREATOR",
+			overlay_enabled: true,
+			dialogue_enabled: true,
+			blocks: [],
+			...input,
+		},
 	);
 }
 

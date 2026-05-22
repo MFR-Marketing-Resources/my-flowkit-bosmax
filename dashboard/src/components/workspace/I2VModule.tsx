@@ -628,19 +628,45 @@ export default function I2VModule({
 								</div>
 							</div>
 						)}
-						<textarea
-							className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
-							placeholder="Describe how to combine these ingredients..."
-							value={manualPrompt}
-							onChange={(e) => {
-								const next = e.target.value;
-								setManualPrompt(next);
-								setIsManualOverride(
-									Boolean(workspacePackage?.prompt_text) &&
-										next !== workspacePackage?.prompt_text,
-								);
-							}}
-						/>
+						{workspacePackage?.prompt_blocks && workspacePackage.prompt_blocks.length > 1 ? (
+							<div className="space-y-4">
+								{workspacePackage.prompt_blocks.map((block) => (
+									<div key={block.block_index} className="space-y-1">
+										<div className="flex items-center gap-2">
+											<span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+												Block {block.block_index} — {block.block_role}
+											</span>
+											<span className="text-[10px] text-slate-500">
+												{block.duration_seconds}s · {block.shot_count} shot(s)
+											</span>
+										</div>
+										<textarea
+											className="w-full h-48 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-300 font-mono outline-none transition-all resize-none"
+											readOnly
+											value={block.engine_prompt_text}
+											onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+										/>
+									</div>
+								))}
+								<div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+									EXTEND mode — copy each block separately into the video engine. Do NOT paste both blocks into one generation.
+								</div>
+							</div>
+						) : (
+							<textarea
+								className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
+								placeholder="Describe how to combine these ingredients..."
+								value={manualPrompt}
+								onChange={(e) => {
+									const next = e.target.value;
+									setManualPrompt(next);
+									setIsManualOverride(
+										Boolean(workspacePackage?.prompt_text) &&
+											next !== workspacePackage?.prompt_text,
+									);
+								}}
+							/>
+						)}
 					</div>
 				</section>
 

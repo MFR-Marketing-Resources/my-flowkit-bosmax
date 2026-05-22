@@ -34,63 +34,176 @@ import type {
 
 function StatusBadge({ status }: { status: string }) {
 	const map: Record<string, string> = {
-		READY_MANUAL: "bg-green-100 text-green-800",
-		READY_DOM_STAGED: "bg-blue-100 text-blue-800",
-		BLOCKED: "bg-red-100 text-red-800",
-		DRAFT: "bg-gray-100 text-gray-800",
+		READY_MANUAL: "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
+		READY_DOM_STAGED: "border-blue-500/40 bg-blue-500/15 text-blue-300",
+		BLOCKED: "border-red-500/40 bg-red-500/15 text-red-300",
+		DRAFT: "border-slate-700 bg-slate-800 text-slate-400",
 	};
 	return (
 		<span
-			className={`px-2 py-0.5 rounded text-xs font-semibold ${map[status] ?? "bg-gray-100 text-gray-600"}`}
+			className={`px-2 py-0.5 rounded border text-[10px] font-bold uppercase tracking-widest ${map[status] ?? "border-slate-700 bg-slate-800 text-slate-400"}`}
 		>
 			{status}
 		</span>
 	);
 }
 
-// ─── Image slot row ───────────────────────────────────────────
+// ─── Mode step guide config ───────────────────────────────────
 
-function ImageSlotRow({
+const MODE_LABELS: Record<string, string> = {
+	T2V: "Text to Video",
+	F2V: "Frames to Video",
+	I2V: "Image to Video (Ingredients)",
+	IMG: "Image Generation",
+};
+
+const MODE_COLORS: Record<string, string> = {
+	T2V: "border-blue-500/40 bg-blue-500/5",
+	F2V: "border-purple-500/40 bg-purple-500/5",
+	I2V: "border-amber-500/40 bg-amber-500/5",
+	IMG: "border-emerald-500/40 bg-emerald-500/5",
+};
+
+const MODE_TAB_HINT: Record<string, string> = {
+	T2V: "Google Flow → Tab: Text to Video",
+	F2V: "Google Flow → Tab: Video / Frames",
+	I2V: "Google Flow → Tab: Ingredients (Image to Video)",
+	IMG: "Google Flow → Tab: Image Generation (Nano Banana 2)",
+};
+
+interface PromptBlock {
+	block_index: number;
+	block_role: string;
+	duration_seconds: number;
+	shot_count: number;
+	engine_prompt_text: string;
+}
+
+// ─── Asset thumbnail card ─────────────────────────────────────
+
+function AssetCard({
 	asset,
-	index,
+	stepNumber,
+	optional,
 }: {
 	asset: WorkspaceGenerationPackageAsset;
-	index: number;
+	stepNumber: number;
+	optional?: boolean;
 }) {
 	return (
-		<div className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
-			<span className="text-xs font-mono text-gray-500 w-6">{index + 1}.</span>
-			<span className="flex-1 text-sm font-medium text-gray-800">
-				{asset.label || asset.slot_key}
-			</span>
-			<span className="text-xs text-gray-400 font-mono truncate max-w-[160px]">
-				{asset.slot_key}
-			</span>
+		<div className="rounded-xl border border-slate-700 bg-slate-900/60 overflow-hidden">
+			<div className="flex items-center gap-2 px-3 py-2 border-b border-slate-700/50">
+				<span className="w-5 h-5 rounded-full bg-slate-700 text-slate-300 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+					{stepNumber}
+				</span>
+				<span className="text-xs font-bold text-slate-200 flex-1">
+					{asset.label || asset.slot_key}
+					{optional && (
+						<span className="ml-1 text-[10px] font-normal text-slate-500">(optional)</span>
+					)}
+				</span>
+			</div>
 			{asset.preview_url ? (
-				<a
-					href={asset.preview_url}
-					target="_blank"
-					rel="noopener noreferrer"
-					className="flex items-center gap-1 text-xs text-blue-600 hover:underline"
-				>
-					<ExternalLink size={12} />
-					Open
-				</a>
+				<div className="relative">
+					<img
+						src={asset.preview_url}
+						alt={asset.label || asset.slot_key}
+						className="w-full max-h-48 object-contain bg-slate-950"
+						onError={(e) => {
+							(e.target as HTMLImageElement).style.display = "none";
+						}}
+					/>
+				</div>
 			) : (
-				<span className="text-xs text-gray-400">No preview</span>
+				<div className="h-24 bg-slate-950 flex items-center justify-center text-xs text-slate-500 italic">
+					No preview available
+				</div>
 			)}
-			{asset.download_url ? (
-				<a
-					href={asset.download_url}
-					download
-					className="flex items-center gap-1 text-xs text-indigo-600 hover:underline"
+			<div className="flex gap-2 p-2">
+				{asset.preview_url && (
+					<a
+						href={asset.preview_url}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="flex-1 flex items-center justify-center gap-1 text-[11px] font-semibold text-blue-400 border border-blue-500/30 bg-blue-500/10 rounded-lg py-1.5 hover:bg-blue-500/20 transition-colors"
+					>
+						<ExternalLink size={11} />
+						Open
+					</a>
+				)}
+				{asset.download_url && (
+					<a
+						href={asset.download_url}
+						download
+						className="flex-1 flex items-center justify-center gap-1 text-[11px] font-semibold text-indigo-400 border border-indigo-500/30 bg-indigo-500/10 rounded-lg py-1.5 hover:bg-indigo-500/20 transition-colors"
+					>
+						<Download size={11} />
+						Download
+					</a>
+				)}
+			</div>
+			<div className="px-3 pb-2 text-[10px] text-slate-500 font-mono">
+				After downloading → upload this image to Google Flow
+			</div>
+		</div>
+	);
+}
+
+// ─── Prompt copy box ──────────────────────────────────────────
+
+function PromptCopyBox({
+	text,
+	label,
+	stepNumber,
+}: {
+	text: string;
+	label?: string;
+	stepNumber: number;
+}) {
+	const [copied, setCopied] = useState(false);
+	const handleCopy = useCallback(() => {
+		navigator.clipboard.writeText(text || "").then(() => {
+			setCopied(true);
+			setTimeout(() => setCopied(false), 2200);
+		});
+	}, [text]);
+
+	return (
+		<div className="rounded-xl border border-slate-700 bg-slate-900/60 overflow-hidden">
+			<div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-700/50">
+				<div className="flex items-center gap-2">
+					<span className="w-5 h-5 rounded-full bg-slate-700 text-slate-300 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+						{stepNumber}
+					</span>
+					<span className="text-xs font-bold text-slate-200">
+						{label ?? "Paste This Prompt into Google Flow"}
+					</span>
+				</div>
+				<button
+					type="button"
+					onClick={handleCopy}
+					className={`flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${copied ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300" : "border-indigo-500/40 bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25"}`}
 				>
-					<Download size={12} />
-					Download
-				</a>
-			) : (
-				<span className="text-xs text-gray-400">No download</span>
-			)}
+					<ClipboardCopy size={11} />
+					{copied ? "Copied!" : "Copy Prompt"}
+				</button>
+			</div>
+			<pre className="p-3 text-xs text-slate-300 font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto bg-slate-950/80">
+				{text || "(no prompt text)"}
+			</pre>
+		</div>
+	);
+}
+
+// ─── Step label row ───────────────────────────────────────────
+
+function StepLabel({ n, text }: { n: number; text: string }) {
+	return (
+		<div className="flex items-center gap-2 py-1">
+			<span className="w-5 h-5 rounded-full bg-slate-700 text-slate-300 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+				{n}
+			</span>
+			<span className="text-xs text-slate-300">{text}</span>
 		</div>
 	);
 }
@@ -98,14 +211,7 @@ function ImageSlotRow({
 // ─── Detail panel ─────────────────────────────────────────────
 
 function PackageDetailPanel({ pkg }: { pkg: WorkspaceGenerationPackage }) {
-	const [copied, setCopied] = useState(false);
-
-	const handleCopyPrompt = useCallback(() => {
-		navigator.clipboard.writeText(pkg.final_prompt_text || "").then(() => {
-			setCopied(true);
-			setTimeout(() => setCopied(false), 2000);
-		});
-	}, [pkg.final_prompt_text]);
+	const [showDebug, setShowDebug] = useState(false);
 
 	const handoff = pkg.manual_handoff_json;
 	const domScaffold = pkg.dom_handoff_payload_json;
@@ -127,50 +233,38 @@ function PackageDetailPanel({ pkg }: { pkg: WorkspaceGenerationPackage }) {
 
 	const allDisplayAssets = [...orderedAssets, ...extraAssets];
 
-	return (
-		<div className="space-y-5">
-			{/* Lineage */}
-			<div className="bg-gray-50 rounded-lg p-3 space-y-1 text-xs font-mono text-gray-600">
-				<div>
-					<span className="text-gray-400">package_id:</span>{" "}
-					{pkg.workspace_generation_package_id}
-				</div>
-				<div>
-					<span className="text-gray-400">product_id:</span> {pkg.product_id}
-				</div>
-				<div>
-					<span className="text-gray-400">mode:</span> {pkg.mode} /{" "}
-					{pkg.source_lane}
-				</div>
-				<div>
-					<span className="text-gray-400">prompt_package_snapshot_id:</span>{" "}
-					{pkg.prompt_package_snapshot_id || "—"}
-				</div>
-				<div>
-					<span className="text-gray-400">workspace_execution_package_id:</span>{" "}
-					{pkg.workspace_execution_package_id || "—"}
-				</div>
-				<div>
-					<span className="text-gray-400">generation_mode:</span>{" "}
-					{pkg.generation_mode}
-				</div>
-				<div>
-					<span className="text-gray-400">created_at:</span> {pkg.created_at}
-				</div>
-			</div>
+	const mode = pkg.mode ?? "F2V";
+	const isExtend = pkg.generation_mode === "EXTEND";
+	const blocks = (pkg.prompt_blocks_json ?? []) as PromptBlock[];
 
+	// Build mode-specific step list
+	const imageStepStart = 2; // step 1 = open Flow tab
+	const promptStep = imageStepStart + allDisplayAssets.length;
+	const generateStep = promptStep + (isExtend ? blocks.length : 1);
+
+	const modeModelHint: Record<string, string> = {
+		T2V: "Veo 3.1 - Pro (or match your Workspace setting)",
+		F2V: "Veo 3.1 - Lite (locked for F2V lane)",
+		I2V: "Veo 3.1 - Pro (or match your Workspace setting)",
+		IMG: "Nano Banana 2 (Image Generation)",
+	};
+
+	// Orientation info from dom scaffold settings
+	const scaffoldSettings = (domScaffold?.settings ?? {}) as Record<string, unknown>;
+	const durationSec = scaffoldSettings.duration_seconds as number | undefined;
+
+	return (
+		<div className="space-y-4">
 			{/* Blockers */}
 			{blockers.length > 0 && (
-				<div className="bg-red-50 border border-red-200 rounded-lg p-3">
+				<div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3">
 					<div className="flex items-center gap-2 mb-2">
-						<XCircle size={14} className="text-red-600" />
-						<span className="text-sm font-semibold text-red-700">Blockers</span>
+						<XCircle size={14} className="text-red-400" />
+						<span className="text-xs font-bold text-red-300 uppercase tracking-widest">Blockers — Fix Before Using</span>
 					</div>
 					<ul className="space-y-1">
 						{blockers.map((b) => (
-							<li key={b} className="text-xs text-red-600">
-								• {b}
-							</li>
+							<li key={b} className="text-xs text-red-300">• {b}</li>
 						))}
 					</ul>
 				</div>
@@ -178,109 +272,132 @@ function PackageDetailPanel({ pkg }: { pkg: WorkspaceGenerationPackage }) {
 
 			{/* Warnings */}
 			{warnings.length > 0 && (
-				<div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-					<div className="flex items-center gap-2 mb-2">
-						<AlertTriangle size={14} className="text-yellow-600" />
-						<span className="text-sm font-semibold text-yellow-700">
-							Warnings
-						</span>
+				<div className="rounded-xl border border-amber-500/30 bg-amber-500/8 p-3">
+					<div className="flex items-center gap-2 mb-1">
+						<AlertTriangle size={13} className="text-amber-400" />
+						<span className="text-xs font-bold text-amber-300 uppercase tracking-widest">Warnings</span>
 					</div>
 					<ul className="space-y-1">
 						{warnings.map((w) => (
-							<li key={w} className="text-xs text-yellow-700">
-								• {w}
-							</li>
+							<li key={w} className="text-xs text-amber-200">• {w}</li>
 						))}
 					</ul>
 				</div>
 			)}
 
-			{/* Final Prompt */}
-			<div>
-				<div className="flex items-center justify-between mb-2">
-					<span className="text-sm font-semibold text-gray-700">
-						Final Prompt
-					</span>
-					<button
-						type="button"
-						onClick={handleCopyPrompt}
-						className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded"
-					>
-						<ClipboardCopy size={12} />
-						{copied ? "Copied!" : "Copy Final Prompt"}
-					</button>
-				</div>
-				<pre className="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 whitespace-pre-wrap overflow-auto max-h-64">
-					{pkg.final_prompt_text || "(no prompt text)"}
-				</pre>
-			</div>
-
-			{/* Image Slots / Upload Order */}
-			<div>
-				<div className="flex items-center gap-2 mb-2">
-					<span className="text-sm font-semibold text-gray-700">
-						Image Slots
-					</span>
-					{uploadOrder.length > 0 && (
-						<span className="text-xs text-gray-500">
-							Upload order: {uploadOrder.join(" → ")}
-						</span>
+			{/* ── Google Flow Setup Guide ── */}
+			<div className={`rounded-2xl border p-4 space-y-4 ${MODE_COLORS[mode] ?? "border-slate-700 bg-slate-900/40"}`}>
+				<div>
+					<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-1">Google Flow Setup Guide</div>
+					<div className="text-base font-bold text-slate-100">{MODE_LABELS[mode] ?? mode}</div>
+					{durationSec && (
+						<div className="text-xs text-slate-400 mt-0.5">Duration: {durationSec}s · Mode: {pkg.generation_mode}</div>
 					)}
 				</div>
-				{allDisplayAssets.length > 0 ? (
-					<div className="border border-gray-200 rounded-lg px-3">
-						{allDisplayAssets.map((asset, i) => (
-							<ImageSlotRow key={asset.slot_key} asset={asset} index={i} />
-						))}
+
+				<div className="space-y-1">
+					{/* Step 1 — Open Flow */}
+					<div className="rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2">
+						<StepLabel n={1} text={MODE_TAB_HINT[mode] ?? "Open Google Flow"} />
 					</div>
-				) : (
-					<p className="text-xs text-gray-400 italic">
-						No image assets stored in this package.
-					</p>
-				)}
+
+					{/* Steps 2..N — Image slots */}
+					{allDisplayAssets.length > 0 && (
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+							{allDisplayAssets.map((asset, i) => {
+								const isOptional = asset.slot_key === "end_frame" || asset.slot_key === "scene" || asset.slot_key === "style";
+								return (
+									<AssetCard
+										key={asset.slot_key}
+										asset={asset}
+										stepNumber={imageStepStart + i}
+										optional={isOptional}
+									/>
+								);
+							})}
+						</div>
+					)}
+
+					{/* Orientation + Model reminder */}
+					<div className="rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2 space-y-1">
+						<StepLabel n={imageStepStart + allDisplayAssets.length} text={`Set orientation — match your Workspace setting (9:16 Vertical or 16:9 Horizontal)`} />
+						<StepLabel n={imageStepStart + allDisplayAssets.length + 1} text={`Select model: ${modeModelHint[mode] ?? "match your Workspace setting"}`} />
+					</div>
+
+					{/* Prompt step(s) */}
+					{isExtend && blocks.length > 0 ? (
+						<div className="space-y-3">
+							<div className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs text-amber-200">
+								EXTEND mode — {blocks.length} blocks. Copy and generate Block 1 first, then continue with Block 2. Do NOT paste both into one generation.
+							</div>
+							{blocks.map((block, i) => (
+								<PromptCopyBox
+									key={block.block_index}
+									text={block.engine_prompt_text}
+									label={`Block ${block.block_index} — ${block.block_role} (${block.duration_seconds}s · ${block.shot_count} shot)`}
+									stepNumber={promptStep + i}
+								/>
+							))}
+						</div>
+					) : (
+						<PromptCopyBox
+							text={pkg.final_prompt_text}
+							stepNumber={promptStep}
+						/>
+					)}
+
+					{/* Final step — Generate */}
+					<div className="rounded-lg border border-emerald-500/30 bg-emerald-500/8 px-3 py-2">
+						<StepLabel n={generateStep} text="Click Generate in Google Flow" />
+					</div>
+				</div>
 			</div>
 
-			{/* DOM Scaffold Readiness */}
-			<div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-				<div className="flex items-center gap-2 mb-1">
-					<Layers size={14} className="text-gray-500" />
-					<span className="text-sm font-semibold text-gray-700">
-						DOM Handoff Scaffold
-					</span>
-				</div>
-				<div className="flex items-center gap-2 mt-2">
-					<CheckCircle size={12} className="text-green-500" />
-					<span className="text-xs text-gray-600">
-						manual_handoff_ready:{" "}
-						{String(
-							domScaffold?.readiness?.manual_handoff_ready ??
-								blockers.length === 0,
-						)}
-					</span>
-				</div>
-				<div className="flex items-center gap-2 mt-1">
-					<XCircle size={12} className="text-red-400" />
-					<span className="text-xs text-gray-600">
-						dom_handoff_ready: {String(domReady)} (locked — not enabled in this
-						wave)
-					</span>
-				</div>
-
-				{/* Send to Google Flow — disabled */}
+			{/* ── Technical Debug (collapsed by default) ── */}
+			<div>
 				<button
 					type="button"
-					disabled
-					className="mt-3 w-full flex items-center justify-center gap-2 text-xs bg-gray-200 text-gray-400 px-3 py-2 rounded cursor-not-allowed"
-					title="DOM handoff not enabled in this wave."
+					onClick={() => setShowDebug((v) => !v)}
+					className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-300 transition-colors"
 				>
-					Send to Google Flow
-					<span className="text-[10px] italic">
-						(DOM handoff not enabled in this wave.)
-					</span>
+					{showDebug ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+					Debug / Lineage
 				</button>
+				{showDebug && (
+					<div className="mt-3 space-y-3">
+						<div className="bg-slate-950 rounded-lg p-3 space-y-1 text-[10px] font-mono text-slate-500">
+							<div><span className="text-slate-600">package_id:</span> {pkg.workspace_generation_package_id}</div>
+							<div><span className="text-slate-600">product_id:</span> {pkg.product_id}</div>
+							<div><span className="text-slate-600">mode:</span> {pkg.mode} / {pkg.source_lane}</div>
+							<div><span className="text-slate-600">generation_mode:</span> {pkg.generation_mode}</div>
+							<div><span className="text-slate-600">snapshot_id:</span> {pkg.prompt_package_snapshot_id || "—"}</div>
+							<div><span className="text-slate-600">execution_pkg_id:</span> {pkg.workspace_execution_package_id || "—"}</div>
+							<div><span className="text-slate-600">created_at:</span> {pkg.created_at}</div>
+						</div>
+						<div className="bg-slate-950 rounded-lg p-3">
+							<div className="flex items-center gap-2 mb-2">
+								<Layers size={12} className="text-slate-500" />
+								<span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">DOM Handoff Scaffold</span>
+							</div>
+							<div className="flex items-center gap-2">
+								<CheckCircle size={11} className="text-emerald-500" />
+								<span className="text-[10px] text-slate-500">manual_handoff_ready: {String(domScaffold?.readiness?.manual_handoff_ready ?? blockers.length === 0)}</span>
+							</div>
+							<div className="flex items-center gap-2 mt-1">
+								<XCircle size={11} className="text-red-500/50" />
+								<span className="text-[10px] text-slate-500">dom_handoff_ready: {String(domReady)} (locked — not enabled in this wave)</span>
+							</div>
+							<button type="button" disabled className="mt-2 w-full text-[10px] bg-slate-800 text-slate-600 px-3 py-2 rounded cursor-not-allowed">
+								Send to Google Flow (DOM handoff not enabled in this wave)
+							</button>
+						</div>
+					</div>
+				)}
 			</div>
 		</div>
 	);
+
+	// legacy allDisplayAssets variable kept above — unused after refactor but kept for reference
 }
 
 // ─── Package row ──────────────────────────────────────────────
@@ -296,29 +413,29 @@ function PackageRow({
 }) {
 	return (
 		<tr
-			className={`cursor-pointer border-b border-gray-100 hover:bg-indigo-50 transition-colors ${isSelected ? "bg-indigo-50" : ""}`}
+			className={`cursor-pointer border-b border-slate-800 transition-colors ${isSelected ? "bg-blue-500/8" : "hover:bg-slate-800/50"}`}
 			onClick={onSelect}
 		>
 			<td className="py-2 px-3">
 				{isSelected ? (
-					<ChevronDown size={14} className="text-indigo-600" />
+					<ChevronDown size={14} className="text-blue-400" />
 				) : (
-					<ChevronRight size={14} className="text-gray-400" />
+					<ChevronRight size={14} className="text-slate-500" />
 				)}
 			</td>
-			<td className="py-2 px-3 font-mono text-xs text-gray-700 max-w-[200px] truncate">
+			<td className="py-2 px-3 font-mono text-xs text-slate-400 max-w-[200px] truncate">
 				{pkg.workspace_generation_package_id}
 			</td>
-			<td className="py-2 px-3 text-xs font-semibold text-gray-800">
+			<td className="py-2 px-3 text-xs font-bold text-slate-200">
 				{pkg.mode}
 			</td>
-			<td className="py-2 px-3 text-xs text-gray-600 max-w-[160px] truncate">
+			<td className="py-2 px-3 text-xs text-slate-300 max-w-[160px] truncate">
 				{pkg.product_name_snapshot || pkg.product_id}
 			</td>
 			<td className="py-2 px-3">
 				<StatusBadge status={pkg.status} />
 			</td>
-			<td className="py-2 px-3 text-xs text-gray-400">
+			<td className="py-2 px-3 text-xs text-slate-500">
 				{pkg.created_at?.slice(0, 16).replace("T", " ")}
 			</td>
 		</tr>
@@ -401,99 +518,110 @@ export default function WorkspaceGenerationPackagesPage() {
 	});
 
 	return (
-		<div className="p-6 max-w-7xl mx-auto">
+		<div className="p-6 max-w-7xl mx-auto space-y-6">
 			{/* Header */}
-			<div className="mb-6">
-				<h1 className="text-2xl font-bold text-gray-900">
+			<div>
+				<h1 className="text-2xl font-bold text-slate-100">
 					Prompt Handoff Bank
 				</h1>
-				<p className="text-sm text-gray-500 mt-1">
-					Durable final operator handoff packages for F2V and I2V. Manual
-					fallback actions available. DOM handoff scaffold stored —
-					dom_handoff_ready remains false.
+				<p className="text-sm text-slate-500 mt-1">
+					Google Flow setup guide for each generated package. Click a package to see step-by-step instructions, images, and prompt copy.
 				</p>
 			</div>
 
 			{/* Filters */}
-			<div className="flex flex-wrap gap-3 mb-5 items-center">
-				<div className="flex items-center gap-1.5">
-					<Filter size={14} className="text-gray-400" />
-					<span className="text-xs text-gray-500">Filters:</span>
+			<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+				<div className="flex flex-wrap items-center justify-between gap-2">
+					<div className="flex items-center gap-1.5">
+						<Filter size={13} className="text-slate-500" />
+						<span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Mode</span>
+					</div>
+					<div className="flex flex-wrap gap-1.5">
+						{["ALL", "F2V", "I2V", "T2V", "IMG"].map((m) => {
+							const active = (modeFilter || "ALL") === m;
+							return (
+								<button
+									key={m}
+									type="button"
+									onClick={() => setModeFilter(m === "ALL" ? "" : m)}
+									className={`px-3 py-1.5 rounded-full border text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${active ? "border-blue-400/60 bg-blue-500/10 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
+								>
+									{m}
+								</button>
+							);
+						})}
+					</div>
 				</div>
-				<select
-					value={modeFilter}
-					onChange={(e) => setModeFilter(e.target.value)}
-					className="text-sm border border-gray-200 rounded px-2 py-1 bg-white"
-				>
-					<option value="">All Modes</option>
-					<option value="F2V">F2V</option>
-					<option value="I2V">I2V</option>
-					<option value="T2V">T2V</option>
-					<option value="IMG">IMG</option>
-				</select>
-				<select
-					value={statusFilter}
-					onChange={(e) => setStatusFilter(e.target.value)}
-					className="text-sm border border-gray-200 rounded px-2 py-1 bg-white"
-				>
-					<option value="">All Statuses</option>
-					<option value="READY_MANUAL">READY_MANUAL</option>
-					<option value="BLOCKED">BLOCKED</option>
-					<option value="DRAFT">DRAFT</option>
-					<option value="READY_DOM_STAGED">READY_DOM_STAGED</option>
-				</select>
-				<div className="relative flex-1 min-w-[200px] max-w-sm">
-					<Search
-						size={13}
-						className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"
-					/>
-					<input
-						type="text"
-						value={search}
-						onChange={(e) => setSearch(e.target.value)}
-						placeholder="Search packages..."
-						className="w-full text-sm border border-gray-200 rounded pl-7 pr-3 py-1 bg-white"
-					/>
+				<div className="flex flex-wrap items-center justify-between gap-2">
+					<div className="flex items-center gap-1.5">
+						<span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Status</span>
+					</div>
+					<div className="flex flex-wrap gap-1.5">
+						{["ALL", "READY_MANUAL", "BLOCKED", "DRAFT"].map((s) => {
+							const active = (statusFilter || "ALL") === s;
+							return (
+								<button
+									key={s}
+									type="button"
+									onClick={() => setStatusFilter(s === "ALL" ? "" : s)}
+									className={`px-3 py-1.5 rounded-full border text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${active ? "border-blue-400/60 bg-blue-500/10 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
+								>
+									{s}
+								</button>
+							);
+						})}
+					</div>
 				</div>
-				<button
-					type="button"
-					onClick={() => void loadPackages()}
-					className="flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-700 px-2 py-1"
-				>
-					<RefreshCw size={13} />
-					Refresh
-				</button>
+				<div className="flex gap-2">
+					<div className="relative flex-1">
+						<Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+						<input
+							type="text"
+							value={search}
+							onChange={(e) => setSearch(e.target.value)}
+							placeholder="Search by product name or package ID..."
+							className="w-full rounded-full border border-slate-700 bg-slate-950 pl-8 pr-4 py-2 text-xs text-slate-200 placeholder:text-slate-500 outline-none focus:border-blue-400/50"
+						/>
+					</div>
+					<button
+						type="button"
+						onClick={() => void loadPackages()}
+						className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300 hover:border-blue-400/50 hover:text-blue-200 transition-colors"
+					>
+						<RefreshCw size={13} />
+						Refresh
+					</button>
+				</div>
 			</div>
 
 			{error && (
-				<div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 text-sm text-red-700">
+				<div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
 					{error}
 				</div>
 			)}
 
-			<div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+			<div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
 				{/* Package list */}
-				<div>
+				<div className="space-y-2">
 					{loading ? (
-						<div className="text-sm text-gray-400 py-8 text-center">
+						<div className="rounded-2xl border border-slate-800 bg-slate-900/40 py-12 text-center text-sm text-slate-500">
 							Loading packages…
 						</div>
 					) : filtered.length === 0 ? (
-						<div className="text-sm text-gray-400 py-8 text-center">
-							No packages found. Create a package from the F2V or I2V operator
-							page.
+						<div className="rounded-2xl border border-slate-800 bg-slate-900/40 py-12 text-center text-sm text-slate-500">
+							No packages found. Generate a package from the Workspace (F2V, I2V, T2V or IMG tab).
 						</div>
 					) : (
-						<div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-							<table className="w-full text-sm">
-								<thead className="bg-gray-50 text-xs text-gray-500 uppercase">
-									<tr>
-										<th className="py-2 px-3 w-8"></th>
-										<th className="py-2 px-3 text-left">Package ID</th>
-										<th className="py-2 px-3 text-left">Mode</th>
-										<th className="py-2 px-3 text-left">Product</th>
-										<th className="py-2 px-3 text-left">Status</th>
-										<th className="py-2 px-3 text-left">Created</th>
+						<div className="rounded-2xl border border-slate-800 bg-slate-950/80 overflow-hidden">
+							<table className="w-full">
+								<thead className="border-b border-slate-800">
+									<tr className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+										<th className="py-3 px-3 w-8"></th>
+										<th className="py-3 px-3 text-left">Package ID</th>
+										<th className="py-3 px-3 text-left">Mode</th>
+										<th className="py-3 px-3 text-left">Product</th>
+										<th className="py-3 px-3 text-left">Status</th>
+										<th className="py-3 px-3 text-left">Created</th>
 									</tr>
 								</thead>
 								<tbody>
@@ -511,27 +639,33 @@ export default function WorkspaceGenerationPackagesPage() {
 							</table>
 						</div>
 					)}
-					<p className="text-xs text-gray-400 mt-2">
+					<p className="text-[11px] text-slate-600 pl-1">
 						{filtered.length} package(s) shown
 					</p>
 				</div>
 
 				{/* Detail panel */}
-				{detailPkg && (
-					<div className="bg-white border border-gray-200 rounded-lg p-5">
+				{detailPkg ? (
+					<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 xl:sticky xl:top-4">
 						<div className="flex items-center justify-between mb-4">
-							<span className="font-semibold text-gray-800">
-								Package Detail
-							</span>
+							<div>
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500 mb-1">Selected Package</div>
+								<div className="text-sm font-bold text-slate-100">{detailPkg.product_name_snapshot || detailPkg.product_id}</div>
+								<div className="text-[11px] text-slate-500 mt-0.5 font-mono">{detailPkg.mode} · {detailPkg.generation_mode}</div>
+							</div>
 							<StatusBadge status={detailPkg.status} />
 						</div>
 						{detailLoading ? (
-							<div className="text-sm text-gray-400 py-8 text-center">
+							<div className="py-8 text-center text-sm text-slate-500">
 								Loading detail…
 							</div>
 						) : (
 							<PackageDetailPanel pkg={detailPkg} />
 						)}
+					</div>
+				) : (
+					<div className="rounded-2xl border border-slate-800 bg-slate-900/40 py-12 text-center text-sm text-slate-500 xl:sticky xl:top-4">
+						Click a package to see the Google Flow setup guide.
 					</div>
 				)}
 			</div>

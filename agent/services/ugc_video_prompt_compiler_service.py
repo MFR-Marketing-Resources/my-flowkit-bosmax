@@ -52,7 +52,7 @@ def _first_nonempty(values: list[str], fallback: str) -> str:
 def _handling_line(product: dict[str, Any], mode: str) -> str:
     handling = _clean(product.get("section_5_product_physics_prompt"))
     if handling:
-        return handling
+        return _rewrite_physics_for_engine(handling)
     grip = _clean(product.get("recommended_grip"))
     if grip:
         return f"Product handling must remain believable with {grip} and clear label visibility."
@@ -108,6 +108,58 @@ def _overlay_instruction(cta: str, *, overlay_enabled: bool) -> str:
     return f"Use claim-safe on-screen overlay or CTA wording only where natural: {cta}"
 
 
+_OVERLAY_MAX_WORDS = 5
+_COMPACT_OVERLAY_ANCHORS: tuple[tuple[str, str], ...] = (
+    ("link in bio", "Link in bio"),
+    ("order now", "Order now"),
+    ("shop now", "Shop now"),
+    ("beli sekarang", "Beli sekarang"),
+    ("dapatkan sekarang", "Dapatkan sekarang"),
+    ("boleh dapatkan", "Dapatkan sekarang"),
+    ("dapatkan di", "Dapatkan sekarang"),
+    ("cuba sekarang", "Cuba sekarang"),
+    ("boleh la try", "Cuba ni"),
+    ("boleh try", "Cuba ni"),
+    ("boleh cuba", "Cuba ni"),
+    ("try la", "Cuba ni"),
+    ("cuba ni", "Cuba ni"),
+    ("try now", "Try now"),
+    ("tengok sendiri", "Tengok sendiri"),
+)
+
+
+def _compact_overlay(cta: str) -> str | None:
+    """Derive a short visual overlay phrase from spoken CTA copy.
+
+    Overlay is never a verbatim copy of the full spoken sentence.
+    Returns None (fail-closed) when no safe compact form can be produced —
+    specifically when the CTA is already short enough that any truncation
+    would be identical to the source or meaninglessly short.
+
+    Rules:
+    - CTA must have more than _OVERLAY_MAX_WORDS words — otherwise fail-closed.
+    - First checks for known compact action-anchor phrases.
+    - Falls back to first _OVERLAY_MAX_WORDS words of the CTA.
+    """
+    if not cta or _is_direction_text(cta):
+        return None
+    clean = _clean_name_for_dialog(cta)
+    if not clean or clean.startswith("["):
+        return None
+    words = clean.split()
+    # Fail-closed: short CTA cannot be made shorter without being identical or
+    # meaninglessly truncated — omit overlay entirely.
+    if len(words) <= _OVERLAY_MAX_WORDS:
+        return None
+    # Prefer embedded compact action anchors
+    lowered = clean.lower()
+    for needle, result in _COMPACT_OVERLAY_ANCHORS:
+        if needle in lowered:
+            return result
+    # Fallback: first _OVERLAY_MAX_WORDS words (always shorter than full CTA)
+    return " ".join(words[:_OVERLAY_MAX_WORDS])
+
+
 # ── Engine-prompt helpers ──────────────────────────────────────────────────────
 
 def _persona_visual_description(creator_persona: str) -> str:
@@ -153,19 +205,155 @@ def _is_direction_text(text: str) -> bool:
     return any(lowered.startswith(p) for p in en_prefixes + ms_prefixes)
 
 
-def _clean_name_for_dialog(product_name: str) -> str:
-    """Strip bracket-enclosed store/listing tags from product name.
+# ── Physics DNA → engine keyword mapping ──────────────────────────────────────
 
-    Two-pass approach:
-    - Pass 1: remove properly closed [tag] patterns
-    - Pass 2: remove any trailing unclosed bracket tag (truncated marketplace listing)
-    Returns the original string if nothing remains after cleaning, so callers
-    can detect the failure and try another field.
+_SCALE_SIZE_MAP: dict[str, str] = {
+    "SMALL_OBJECT": "product is small — fits naturally in one hand, fingers wrap fully around it.",
+    "MICRO_OBJECT": "product is tiny — barely larger than a fingertip, handle with index and thumb only.",
+    "MEDIUM_OBJECT": "product is medium palm-sized — two-hand or relaxed full-hand grip.",
+    "LARGE_OBJECT": "product is full-size large — two-handed handling for honest visual scale.",
+    "OVERSIZED": "product is oversized — keep both hands in frame for credible scale.",
+    "SMALL_CONTAINER": "product is a small container — side hold with label facing camera.",
+    "SMALL_TO_MEDIUM_OBJECT": "product fits in one or two hands — front label or face always readable.",
+    "SMALL_FLAT_OBJECT": "product is flat and card-sized — light edge pinch, face fully readable.",
+    "SOFT_PACK": "product is a soft pack — two-hand flat hold, front panel and seal readable.",
+    "MEDIUM_PACK": "product is a medium soft pack — two-hand front-facing presentation.",
+    "LIQUID_BOTTLE_OR_REFILL_PACK": "product is a liquid bottle or refill pouch — firm two-hand support, label and cap visible.",
+    "PAIR_OBJECT": "product is a footwear pair — heel hold or sole support, profile and upper clearly shown.",
+    "GARMENT": "product is a garment — two-hand spread or hang, silhouette and fabric fall readable.",
+    "LARGE_SOFT_GOOD": "product is a large soft textile — two-hand spread or drape, thickness and weave visible.",
+}
+
+_PHYSICS_TYPE_SIZE_HINT: dict[str, str] = {
+    # ── Beauty & skincare (most common) ────────────────────────────────────
+    "BEAUTY_BOTTLE_OR_TUBE": "EXACTLY beauty bottle or tube size. Fits naturally in one hand — hold upright with label facing camera.",
+    "SKINCARE_JAR_OR_TUBE": "EXACTLY skincare jar or tube size. Palm-cupped or two-finger side pinch, keep seal and label readable.",
+    # ── Body spray / fragrance (legacy class A) ─────────────────────────
+    "A": "EXACTLY perfume or body spray bottle size. Elegant pinch or side hold, label and nozzle clearly visible.",
+    # ── Health & supplements ────────────────────────────────────────────
+    "SUPPLEMENT_BOTTLE": "EXACTLY supplement bottle size. Upright single-hand hold with cap and label facing camera.",
+    "MEDICAL_TEST_KIT": "EXACTLY slim test kit size. Mid-body pinch, test window and branding unobstructed.",
+    # ── Food & beverage ─────────────────────────────────────────────────
+    "FOOD_PACK_OR_JAR": "EXACTLY food jar or pack size. Side hold with label forward, sealed and food-safe appearance.",
+    "B": "EXACTLY food jar or sachet size. Side hold with label facing camera, sealed appearance maintained.",
+    # ── Household & cleaning ────────────────────────────────────────────
+    "HOUSEHOLD_PACKAGED_GOODS": "EXACTLY household product pack size. Two-hand carry grip or one-hand side hold with label forward.",
+    "LAUNDRY_LIQUID_REFILL": "EXACTLY liquid detergent bottle or refill pouch size. Firm two-hand support, label and pour edge visible.",
+    "FABRIC_SOFTENER_LIQUID": "EXACTLY fabric softener bottle or refill pouch size. Firm two-hand support, cap and label visible.",
+    "RIGID_CONTAINER": "EXACTLY storage container size. Side grip or lid-edge hold, lid open-close action clearly visible.",
+    # ── Kitchen ─────────────────────────────────────────────────────────
+    "KITCHEN_TOOL": "EXACTLY kitchen utensil or tool size. Handle grip, working surface and functional details facing camera.",
+    # ── Electronics ─────────────────────────────────────────────────────
+    "ELECTRONICS_SMALL_DEVICE": "EXACTLY small consumer device size. Balanced side grip, controls, screen, and ports clearly visible.",
+    # ── Stationery & paper ──────────────────────────────────────────────
+    "STATIONERY_PACK": "EXACTLY stationery pack size. Edge pinch with printed face fully readable and unobstructed.",
+    "PAPER_GOODS": "EXACTLY paper goods size. Light corner or edge pinch, printed face clearly visible.",
+    # ── Toys ────────────────────────────────────────────────────────────
+    "TOY_BOX_OR_PACK": "EXACTLY toy or craft pack size. Light two-hand hold with front panel facing camera.",
+    # ── Decor & accessories ─────────────────────────────────────────────
+    "SMALL_RIGID_DECOR": "EXACTLY small decorative object size. Front face forward, slow controlled turns.",
+    "FASHION_ACCESSORY_SMALL_OBJECT": "EXACTLY small fashion accessory size. Light edge pinch with decorative face and clasp detail fully visible.",
+    # ── Soft goods & wipes ──────────────────────────────────────────────
+    "WIPES_SOFT_PACK": "EXACTLY soft wipes pack size. Two-hand flat hold, front panel and seal clearly readable.",
+    "SOFT_PACKAGED_GOODS": "EXACTLY soft goods pack size. Two-hand front-facing hold with label forward.",
+    # ── Garments / textiles ─ no size-keyword needed, camera notes cover it
+}
+
+
+def _rewrite_physics_for_engine(raw: str) -> str:
+    """Convert raw Physics DNA text into a clean, engine-ready product handling directive.
+
+    Strips all internal metadata labels (Physics DNA, Scale, Material behavior, etc.).
+    Maps Scale/Type to concise size keywords. Preserves camera handling notes and avoid-list.
     """
-    # Pass 1: strip properly closed [tag] patterns
-    cleaned = re.sub(r'\s*\[[^\]]*\]\s*', ' ', product_name).strip()
-    # Pass 2: strip a trailing unclosed bracket tag (e.g. "[Buy 3 Free 1" at end of string)
+    if not raw or "Physics DNA:" not in raw:
+        return raw
+
+    physics_type = ""
+    m = re.search(r"Physics DNA:\s*([A-Z_]+)", raw)
+    if m:
+        physics_type = m.group(1).strip()
+
+    scale = ""
+    m = re.search(r"Scale:\s*([A-Z_]+)", raw)
+    if m:
+        scale = m.group(1).strip()
+
+    camera_notes = ""
+    m = re.search(r"Camera handling notes:\s*(.+?)(?=\.\s*(?:Avoid:|$))", raw, re.DOTALL)
+    if m:
+        camera_notes = re.sub(r"\.\.+", ".", m.group(1).strip().rstrip("."))
+    if not camera_notes:
+        m = re.search(r"Camera handling notes:\s*(.+?)$", raw, re.DOTALL)
+        if m:
+            camera_notes = re.sub(r"\.\.+", ".", m.group(1).strip().rstrip("."))
+
+    avoid_notes = ""
+    m = re.search(r"Avoid:\s*(.+?)$", raw, re.DOTALL)
+    if m:
+        avoid_notes = m.group(1).strip().rstrip(".")
+
+    parts: list[str] = []
+    if physics_type in _PHYSICS_TYPE_SIZE_HINT:
+        parts.append(_PHYSICS_TYPE_SIZE_HINT[physics_type])
+    elif scale in _SCALE_SIZE_MAP:
+        parts.append(f"Product size: {_SCALE_SIZE_MAP[scale]}")
+
+    if camera_notes:
+        parts.append(camera_notes + ".")
+
+    if avoid_notes:
+        parts.append(f"Avoid: {avoid_notes}.")
+
+    return " ".join(parts) if parts else raw
+
+
+def _clean_dialog_line(text: str) -> str:
+    """Strip TTS-hostile symbols from a dialog line.
+
+    Removes (parenthesis) variant tags and replaces dash sentence-separators with comma.
+    """
+    cleaned = _clean_name_for_dialog(text)
+    cleaned = re.sub(r"\s+-\s+", ", ", cleaned)
+    cleaned = re.sub(r",\s*,", ",", cleaned)
+    return cleaned.strip()
+
+
+def _trim_to_word_budget(text: str, max_words: int) -> str:
+    """Trim dialog copy to fit within max_words, cutting at a natural boundary."""
+    if not text:
+        return text
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    trimmed = " ".join(words[:max_words])
+    last_punct = max(trimmed.rfind("."), trimmed.rfind("!"), trimmed.rfind(","), trimmed.rfind("?"))
+    if last_punct > len(trimmed) // 2:
+        return trimmed[:last_punct + 1]
+    return trimmed
+
+
+def _clean_name_for_dialog(product_name: str) -> str:
+    """Strip bracket/parenthesis-enclosed store/listing tags from product name.
+
+    Passes:
+    - Strip properly closed [tag] patterns (marketplace listing tags)
+    - Strip properly closed (tag) patterns (variant descriptors like "(Mix Berry)")
+    - Strip any trailing unclosed bracket/paren tag (truncated marketplace listing)
+    - Collapse multiple spaces and clean up orphaned hyphens/dashes
+    Returns the original string if nothing remains after cleaning.
+    """
+    cleaned = product_name
+    # Strip [square bracket] tags
+    cleaned = re.sub(r'\s*\[[^\]]*\]\s*', ' ', cleaned).strip()
     cleaned = re.sub(r'\s*\[[^\]]*$', '', cleaned).strip()
+    # Strip (parenthesis) tags — variant flavours/colours like "(Mix Berry)"
+    cleaned = re.sub(r'\s*\([^)]*\)\s*', ' ', cleaned).strip()
+    cleaned = re.sub(r'\s*\([^)]*$', '', cleaned).strip()
+    # Clean up orphaned leading/trailing hyphens and extra spaces left after stripping
+    cleaned = re.sub(r'(\s*-\s*)+$', '', cleaned).strip()
+    cleaned = re.sub(r'^(\s*-\s*)+', '', cleaned).strip()
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
     return cleaned if cleaned else product_name
 
 
@@ -195,23 +383,25 @@ def _split_dialog_segments(
     shot_count: int,
     *,
     dialogue_enabled: bool,
+    word_budget: int = 0,
 ) -> list[str]:
     """Distribute available copy across shots as scripted spoken dialog lines.
 
     Returns a list of length ``shot_count``. Empty strings mean no scripted
     line for that shot (visual beat only).
+    Lines are cleaned of TTS-hostile symbols and trimmed to word budget per shot.
     """
     if not dialogue_enabled or shot_count == 0:
         return [""] * shot_count
 
-    hook_line = _clean(safe_hook) if (safe_hook and not _is_direction_text(safe_hook)) else ""
-    cta_line = _clean(safe_cta) if (safe_cta and not _is_direction_text(safe_cta)) else ""
+    hook_line = _clean_dialog_line(_clean(safe_hook)) if (safe_hook and not _is_direction_text(safe_hook)) else ""
+    cta_line = _clean_dialog_line(_clean(safe_cta)) if (safe_cta and not _is_direction_text(safe_cta)) else ""
 
     # Split the rewrite into individual sentences for middle shots.
     # Each sentence is also filtered through _is_direction_text — directions
     # and bracket-tagged strings must never become spoken lines.
     raw_sentences = [
-        s.strip()
+        _clean_dialog_line(s.strip())
         for s in _clean(claim_safe_rewrite).replace("!", ".").replace("?", ".").split(".")
         if s.strip() and not _is_direction_text(s.strip())
     ]
@@ -228,6 +418,12 @@ def _split_dialog_segments(
                 segments.append(raw_sentences[mid_index] + ".")
             else:
                 segments.append("")
+
+    # Enforce WPS word budget: trim each line to its per-shot allocation
+    if word_budget > 0 and shot_count > 0:
+        budget_per_shot = max(6, word_budget // shot_count)
+        segments = [_trim_to_word_budget(s, budget_per_shot) if s else s for s in segments]
+
     return segments
 
 
@@ -246,8 +442,8 @@ def _build_engine_prompt_text(
     claim_safe_rewrite: str,
     safe_cta: str,
     shots: list[str],
-    word_budget: int,
     continuation_from_block_id: str | None,
+    word_budget: int = 0,
 ) -> str:
     """Build a clean, engine-ready prompt text.
 
@@ -256,34 +452,36 @@ def _build_engine_prompt_text(
     No internal directives, metadata, or bracket-tagged product names are emitted.
 
     Sections:
-      1.  Visual style (English)
+      1.  Visual style — concrete framing, movement, and lighting directives (English)
       2.  CHARACTER or SUBJECT — full persona description + mode annotation (English)
       3.  Mode anchor (English, F2V / I2V only) — uses bracket-stripped product ref
       4.  Continuation note (English, CONTINUATION blocks only)
       5.  Product handling (English)
-      6.  AUDIO section — DIALOG SCRIPT with per-shot scripted lines (target_language)
+      6.  AUDIO section — DIALOG SCRIPT once only, no internal policy notes
               • Lines that are workflow directions are filtered out.
-              • When NO valid scripted copy exists a BM_MS fallback is used so the
-                operator does not see a WARNING for unconfigured products.
+              • When NO valid scripted copy exists a BM_MS fallback is used.
               • When dialogue_enabled=False: AUDIO: SILENT note only.
-      7.  Shot breakdown with inline dialog annotations (English shot desc + target_language line)
-      8.  OVERLAY — clean CTA copy only (target_language), COMPLETELY ABSENT when overlay_enabled=False
+      7.  Shot breakdown — visual descriptions only (no repeated dialog lines)
+      8.  OVERLAY — compact derived phrase (≤5 words), ABSENT when overlay_enabled=False
+              or when no safe compact form can be produced from the CTA.
     """
     # Use the best available bracket-free product name (tries multiple fields,
     # handles both closed [tag] and truncated unclosed [tag patterns)
     dialog_product_ref = _best_product_dialog_name(product)
     parts: list[str] = []
 
-    # ── 1. VISUAL STYLE (English) ──────────────────────────────────────────
+    # ── 1. VISUAL STYLE — concrete camera directives (English) ────────────
     if camera_style == "CINEMATIC_PRO":
         parts.append(
-            "Vertical cinematic commercial style. Controlled studio lighting, "
-            "premium product handling, stabilised camera movement."
+            "Vertical 9:16 cinematic. MCU to CU framing with clean stable composition. "
+            "Minimal camera drift — no intentional shake. Shallow depth of field where appropriate. "
+            "Controlled soft studio lighting with consistent exposure across shots."
         )
     else:
         parts.append(
-            "Vertical 9:16 handheld iPhone-style video. Natural indoor lighting, "
-            "authentic UGC feel with organic pacing."
+            "Vertical 9:16 handheld. MCU to CU framing, eye-level angle with natural low-angle product reveals. "
+            "24–26mm wide-equivalent; intentional micro-jitter and organic human sway. "
+            "Soft ambient or window light — no flash, no hard fill. Consistent room lighting across all shots."
         )
 
     # ── 2. CHARACTER / SUBJECT (English description) ──────────────────────
@@ -340,7 +538,7 @@ def _build_engine_prompt_text(
     # ── 6. AUDIO / DIALOG SCRIPT (target_language) ───────────────────────
     dialog_segments = _split_dialog_segments(
         safe_hook, claim_safe_rewrite, safe_cta,
-        len(shots), dialogue_enabled=dialogue_enabled,
+        len(shots), dialogue_enabled=dialogue_enabled, word_budget=word_budget,
     )
 
     if not dialogue_enabled:
@@ -354,14 +552,6 @@ def _build_engine_prompt_text(
                     script_lines.append(f'  Shot {i}: "{line}"')
                 else:
                     script_lines.append(f"  Shot {i}: (visual beat — no spoken line)")
-            script_lines.append(
-                f"  Total spoken budget: ~{word_budget} words. "
-                "Deliver lines in natural colloquial Malay (bahasa perbualan harian) — "
-                "casual first-person experience sharing, as if a friend is talking about something "
-                "they personally use. NOT a sales pitch. NOT formal Bahasa Malaysia. "
-                "Use everyday vocabulary: 'aku', 'ni', 'tu', 'tak', 'dah', 'lah', 'kan', 'je'. "
-                "Sound like personal sharing, not an advertisement."
-            )
             if character_presence == "AVATAR_AI":
                 script_lines.append(
                     "  LIP-SYNC REQUIREMENT: AI avatar mouth must match every word precisely. "
@@ -385,31 +575,18 @@ def _build_engine_prompt_text(
             script_lines = [f"DIALOG SCRIPT ({target_language}):"]
             for i, line in enumerate(fallback_segments, start=1):
                 script_lines.append(f'  Shot {i}: "{line}"')
-            script_lines.append(
-                f"  Total spoken budget: ~{word_budget} words. "
-                "Deliver lines in natural colloquial Malay (bahasa perbualan harian). "
-                "Use everyday vocabulary: 'aku', 'ni', 'tu', 'tak', 'dah', 'lah', 'kan', 'je'. "
-                "Sound like personal sharing, not an advertisement."
-            )
             parts.append("\n".join(script_lines))
             dialog_segments = fallback_segments  # use for shot breakdown below
 
-    # ── 7. SHOT BREAKDOWN with inline dialog (English shots, target_language lines) ──
-    for shot, line in zip(shots, dialog_segments):
-        if line:
-            parts.append(f'{shot} | Audio: "{line}"')
-        else:
-            parts.append(shot)
+    # ── 7. SHOT BREAKDOWN — visual descriptions only, no repeated dialog lines ──
+    for shot in shots:
+        parts.append(shot)
 
-    # ── 8. OVERLAY — only when overlay_enabled=True AND copy is valid (not a direction) ──
-    #    Completely absent when overlay_enabled=False — no placeholder, no comment.
+    # ── 8. OVERLAY — compact derived phrase only, COMPLETELY ABSENT when overlay_enabled=False ──
     if overlay_enabled:
-        cta_copy = _clean(safe_cta)
-        if cta_copy and not _is_direction_text(cta_copy):
-            # Strip bracket tags from CTA copy before emitting (two-pass, handles unclosed)
-            clean_cta = _clean_name_for_dialog(cta_copy)
-            if clean_cta and not clean_cta.startswith("["):
-                parts.append(f"OVERLAY TEXT: {clean_cta}")
+        overlay_text = _compact_overlay(_clean(safe_cta))
+        if overlay_text:
+            parts.append(f"OVERLAY TEXT: {overlay_text}")
 
     return "\n".join(p for p in parts if p)
 
@@ -519,8 +696,8 @@ def _compile_block(
         claim_safe_rewrite=claim_safe_rewrite,
         safe_cta=safe_cta,
         shots=shots,
-        word_budget=word_budget,
         continuation_from_block_id=continuation_from_block_id,
+        word_budget=word_budget,
     )
 
     return {

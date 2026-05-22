@@ -1371,6 +1371,24 @@ CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(cla
                 )
         await db.commit()
 
+        # Migration: add missing columns to creative_asset table
+        cursor = await db.execute("PRAGMA table_info(creative_asset)")
+        ca_cols = {row[1] for row in await cursor.fetchall()}
+        _ca_new_cols = {
+            "visual_dna_summary": "TEXT",
+            "character_dna": "TEXT",
+            "scene_context_dna": "TEXT",
+            "style_mood_dna": "TEXT",
+            "source_prompt_fingerprint": "TEXT",
+            "source_workspace_execution_package_id": "TEXT",
+            "source_prompt_package_snapshot_id": "TEXT",
+        }
+        for _col, _type in _ca_new_cols.items():
+            if _col not in ca_cols:
+                await db.execute(f"ALTER TABLE creative_asset ADD COLUMN {_col} {_type}")
+                logger.info("Migrated: added %s column to creative_asset table", _col)
+        await db.commit()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 

@@ -2,9 +2,11 @@ import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { handleAssetUpload } from "../../api/assets";
 import type {
+	Product,
 	UploadedAsset,
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
+	WorkspacePromptPreviewResult,
 } from "../../types";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
@@ -13,6 +15,8 @@ interface IMGModuleProps {
 	isExecuting: boolean;
 	compact?: boolean;
 	workspacePackage?: WorkspaceExecutionPackage | null;
+	previewPackage?: WorkspacePromptPreviewResult | null;
+	selectedProduct?: Product | null;
 }
 
 function toUploadedAsset(
@@ -39,11 +43,40 @@ function toUploadedAsset(
 	};
 }
 
+function toProductSubjectAsset(
+	product: Product | null | undefined,
+): UploadedAsset | null {
+	if (!product) return null;
+	const previewUrl =
+		product.image_url ||
+		product.rendered_img_src ||
+		product.image_analysis?.image_url ||
+		null;
+	if (!previewUrl) return null;
+	return {
+		mediaId: product.media_id ?? null,
+		fileName: product.product_display_name || product.raw_product_title,
+		label: "Product remote image URL",
+		previewUrl,
+		downloadUrl: previewUrl,
+		assetId: undefined,
+		assetFingerprint: `product:${product.id}:${previewUrl}`,
+		assetSource: "PRODUCT_IMAGE_URL",
+		isDefaultPackageAsset: true,
+		previewRenderableStatus: "READY",
+		previewErrorDetail: null,
+		localImagePathPresent: Boolean(product.local_image_path),
+		remoteImageUrlPresent: true,
+	};
+}
+
 export default function IMGModule({
 	onExecute,
 	isExecuting,
 	compact = false,
 	workspacePackage = null,
+	previewPackage = null,
+	selectedProduct = null,
 }: IMGModuleProps) {
 	// --- States ---
 	const [manualPrompt, setManualPrompt] = useState("");
@@ -52,6 +85,13 @@ export default function IMGModule({
 	const [model] = useState("Nano Banana 2");
 	const [count, setCount] = useState(1);
 	const [isUploading, setIsUploading] = useState(false);
+	const packagePromptText =
+		workspacePackage?.prompt_text ||
+		previewPackage?.final_compiled_prompt_text ||
+		"";
+	const packagePromptBlocks =
+		workspacePackage?.prompt_blocks || previewPackage?.prompt_blocks || [];
+	const hasApprovedPackage = Boolean(workspacePackage || previewPackage);
 
 	// Image Assets
 	const [subjectAsset, setSubjectAsset] = useState<UploadedAsset | null>(null);
@@ -86,6 +126,16 @@ export default function IMGModule({
 		setIsManualOverride(false);
 	}, [workspacePackage]);
 
+	useEffect(() => {
+		if (workspacePackage || !previewPackage || previewPackage.mode !== "IMG")
+			return;
+		setManualPrompt(previewPackage.final_compiled_prompt_text);
+		setSubjectAsset(toProductSubjectAsset(selectedProduct));
+		setSceneAsset(null);
+		setStyleAsset(null);
+		setIsManualOverride(false);
+	}, [previewPackage, selectedProduct, workspacePackage]);
+
 	// --- Handlers ---
 	const handleFileChange = async (
 		type: "subject" | "scene" | "style",
@@ -100,7 +150,7 @@ export default function IMGModule({
 			if (type === "subject") setSubjectAsset(asset);
 			else if (type === "scene") setSceneAsset(asset);
 			else setStyleAsset(asset);
-			setIsManualOverride(Boolean(workspacePackage));
+			setIsManualOverride(hasApprovedPackage);
 		} catch (error) {
 			console.error("Upload failed:", error);
 			alert("Upload failed. Check if local agent is running.");
@@ -120,11 +170,13 @@ export default function IMGModule({
 				sceneAsset: sceneAsset,
 				styleAsset: styleAsset,
 			},
-			product_id: workspacePackage?.product_id,
+			product_id: workspacePackage?.product_id ?? selectedProduct?.id,
 			prompt_package_snapshot_id: workspacePackage?.prompt_package_snapshot_id,
 			workspace_execution_package_id:
 				workspacePackage?.workspace_execution_package_id,
-			prompt_fingerprint: workspacePackage?.prompt_fingerprint,
+			prompt_fingerprint:
+				workspacePackage?.prompt_fingerprint ??
+				previewPackage?.prompt_fingerprint,
 			asset_fingerprints:
 				workspacePackage?.request_lineage_payload.asset_fingerprints ?? [],
 			request_lineage_payload: workspacePackage?.request_lineage_payload,
@@ -142,7 +194,7 @@ export default function IMGModule({
 						1. Visual Assets (Subject / Scene / Style)
 					</h3>
 					<div className="grid gap-3">
-						{workspacePackage ? (
+						{hasApprovedPackage ? (
 							<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-[11px] text-emerald-100">
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/80">
 									Auto Asset Baseline
@@ -215,7 +267,7 @@ export default function IMGModule({
 						2. Prompt Injection
 					</h3>
 					<div className="p-4 rounded-2xl border border-slate-800 bg-slate-900/40 space-y-4">
-						{workspacePackage ? (
+						{hasApprovedPackage ? (
 							<div className="grid gap-3">
 								<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-[11px] text-emerald-100">
 									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/80">
@@ -255,19 +307,47 @@ export default function IMGModule({
 								</div>
 							</div>
 						)}
-						<textarea
-							className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
-							placeholder="What do you want to create?"
-							value={manualPrompt}
-							onChange={(e) => {
-								const next = e.target.value;
-								setManualPrompt(next);
-								setIsManualOverride(
-									Boolean(workspacePackage?.prompt_text) &&
-										next !== workspacePackage?.prompt_text,
-								);
-							}}
-						/>
+						{packagePromptBlocks && packagePromptBlocks.length > 1 ? (
+							<div className="space-y-4">
+								{packagePromptBlocks.map((block) => (
+									<div key={block.block_index} className="space-y-1">
+										<div className="flex items-center gap-2">
+											<span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+												Block {block.block_index} — {block.block_role}
+											</span>
+											<span className="text-[10px] text-slate-500">
+												{block.duration_seconds}s · {block.shot_count} shot(s)
+											</span>
+										</div>
+										<textarea
+											className="w-full h-48 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-300 font-mono outline-none transition-all resize-none"
+											readOnly
+											value={block.engine_prompt_text}
+											onClick={(e) =>
+												(e.target as HTMLTextAreaElement).select()
+											}
+										/>
+									</div>
+								))}
+								<div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+									EXTEND mode — copy each block separately into the video
+									engine. Do NOT paste both blocks into one generation.
+								</div>
+							</div>
+						) : (
+							<textarea
+								className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
+								placeholder="What do you want to create?"
+								value={manualPrompt}
+								onChange={(e) => {
+									const next = e.target.value;
+									setManualPrompt(next);
+									setIsManualOverride(
+										Boolean(packagePromptText) && next !== packagePromptText,
+									);
+								}}
+							/>
+						)}
 					</div>
 				</section>
 

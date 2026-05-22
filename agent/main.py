@@ -9,7 +9,7 @@ from pathlib import Path
 import websockets
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from agent.config import API_HOST, API_PORT, BASE_DIR, WS_HOST, WS_PORT
 from agent.db.schema import init_db, close_db
@@ -354,9 +354,23 @@ async def dashboard_app(full_path: str = ""):
 
     asset = _resolve_dashboard_asset(full_path)
     if asset:
+        # Hashed assets (e.g. index-abc123.js) — safe to cache forever
+        if "assets" in asset.parts:
+            return FileResponse(asset, headers={"Cache-Control": "public, max-age=31536000, immutable"})
         return FileResponse(asset)
 
-    return FileResponse(_DASHBOARD_INDEX_FILE)
+    # index.html — served as raw HTML with hard no-cache headers so every reload
+    # fetches the latest file, preventing stale bundle-hash references in browser cache.
+    html_content = _DASHBOARD_INDEX_FILE.read_text(encoding="utf-8")
+    return Response(
+        content=html_content,
+        media_type="text/html",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 if __name__ == "__main__":
