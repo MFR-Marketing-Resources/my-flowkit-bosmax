@@ -43,6 +43,53 @@ FORBIDDEN_PHRASES = [
     "guaranteed stamina",
 ]
 
+DIRECTION_PREFIXES = (
+    "tonjolkan",
+    "tunjukkan",
+    "pastikan",
+    "gunakan",
+    "elakkan",
+    "lihat bagaimana",
+    "lihat cara",
+    "sertakan",
+    "tambahkan",
+    "open with",
+    "close with",
+    "use ",
+    "keep ",
+    "generate ",
+    "highlight ",
+    "showcase ",
+    "present ",
+    "show how",
+    "demonstrate ",
+    "frame ",
+    "capture ",
+)
+
+BENEFIT_HINTS = {
+    "tenaga": "rutin tenaga harian",
+    "vitamin": "rutin vitamin harian",
+    "nutrien": "rutin nutrien harian",
+    "kesihatan": "rutin kesihatan harian",
+    "harian": "rutin harian",
+    "aktif": "rutin harian",
+    "fokus": "rutin fokus harian",
+    "penjagaan": "rutin penjagaan harian",
+    "kecantikan": "rutin beauty harian",
+    "kulit": "rutin kulit harian",
+    "rambut": "rutin rambut harian",
+    "badan": "rutin badan harian",
+    "serum": "rutin serum harian",
+    "tablet": "rutin harian",
+    "supplement": "rutin supplement harian",
+    "multivitamin": "rutin multivitamin harian",
+}
+
+ADDRESS_AKU_KORANG = "AKU_KORANG"
+ADDRESS_SAYA_ABANG = "SAYA_ABANG"
+ADDRESS_SAYA_AKAK = "SAYA_AKAK"
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -50,6 +97,241 @@ def _now() -> str:
 
 def _normalize(text: str | None) -> str:
     return str(text or "").strip()
+
+
+def _clean_title_for_dialog(title: str) -> str:
+    cleaned = re.sub(r"\s*\[.*?\]\s*", " ", title).strip()
+    return re.sub(r"\s{2,}", " ", cleaned) or title
+
+
+def _contains_bracket_tags(text: str) -> bool:
+    return bool(re.search(r"\[.+?\]", text))
+
+
+def _starts_with_direction_prefix(text: str) -> bool:
+    lowered = _normalize(text).casefold()
+    return any(lowered.startswith(prefix) for prefix in DIRECTION_PREFIXES)
+
+
+def _contains_unsafe_language(text: str) -> bool:
+    lowered = _normalize(text).casefold()
+    return any(pattern.casefold() in lowered for pattern in [*RISKY_PATTERNS, *FORBIDDEN_PHRASES])
+
+
+def _word_count(text: str) -> int:
+    return len(re.findall(r"\b[\w'-]+\b", text, flags=re.UNICODE))
+
+
+def _normalize_sentence(text: str) -> str:
+    return re.sub(r"\s+", " ", _normalize(text)).strip(" .,!?:;")
+
+
+def _sanitize_generated_line(line: str, fallback: str) -> str:
+    normalized = _normalize_sentence(line) or _normalize_sentence(fallback)
+    if (
+        not normalized
+        or _contains_bracket_tags(normalized)
+        or _starts_with_direction_prefix(normalized)
+        or _contains_unsafe_language(normalized)
+    ):
+        normalized = _normalize_sentence(fallback)
+    unsafe_claims, risky_claim_tokens, forbidden_removed = _detect_unsafe_claims([normalized], [])
+    if unsafe_claims or risky_claim_tokens or forbidden_removed:
+        normalized = _normalize_sentence(fallback)
+    return normalized + "."
+
+
+def _detect_address_style(title: str, text_blocks: list[str]) -> str:
+    combined = " ".join([title, *text_blocks]).casefold()
+    male_signals = (
+        "lelaki",
+        "men ",
+        "men's",
+        "man ",
+        "testosterone",
+        "kelelakian",
+        "prostate",
+        "libido",
+        "stamina lelaki",
+        "vitamin lelaki",
+        "supplement lelaki",
+        "untuk lelaki",
+    )
+    female_signals = (
+        "wanita",
+        "perempuan",
+        "akak",
+        "ladies",
+        "women",
+        "serum wajah",
+        "serum bibir",
+        "skincare",
+        "lip care",
+        "brightening",
+        "moisturis",
+        "foundation",
+        "lipstick",
+        "blush",
+        "eyeliner",
+        "mascara",
+        "blusher",
+        "untuk wanita",
+        "untuk perempuan",
+    )
+    if any(signal in combined for signal in male_signals):
+        return ADDRESS_SAYA_ABANG
+    if any(signal in combined for signal in female_signals):
+        return ADDRESS_SAYA_AKAK
+    return ADDRESS_AKU_KORANG
+
+
+def _extract_usable_benefit_sentences(text_blocks: list[str]) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for block in text_blocks:
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", block):
+            normalized = _normalize_sentence(sentence)
+            lowered = normalized.casefold()
+            if not normalized or lowered in seen:
+                continue
+            if _word_count(normalized) < 5 or _word_count(normalized) > 25:
+                continue
+            if _contains_bracket_tags(normalized) or _starts_with_direction_prefix(normalized):
+                continue
+            if _contains_unsafe_language(normalized):
+                continue
+            seen.add(lowered)
+            candidates.append(normalized)
+    return candidates
+
+
+def _pick_benefit_focus(clean_title: str, text_blocks: list[str]) -> str:
+    lowered = " ".join([clean_title, *text_blocks]).casefold()
+    for keyword, phrase in BENEFIT_HINTS.items():
+        if keyword in lowered:
+            return phrase
+    return "rutin harian"
+
+
+def _trim_routine_prefix(text: str) -> str:
+    lowered = text.casefold()
+    if lowered.startswith("rutin "):
+        return text[6:]
+    return text
+
+
+def _personalize_benefit_sentence(
+    sentence: str,
+    index: int,
+    address_style: str = ADDRESS_AKU_KORANG,
+) -> str:
+    normalized = _normalize_sentence(sentence)
+    if not normalized:
+        return normalized
+    lowered = normalized.casefold()
+    personal_prefixes = (
+        "aku ",
+        "pada aku",
+        "bagi aku",
+        "saya ",
+        "pada saya",
+        "bagi saya",
+        "jujur",
+        "serius",
+    )
+    if lowered.startswith(personal_prefixes):
+        return normalized
+    lead = normalized[0].lower() + normalized[1:] if len(normalized) > 1 else normalized.lower()
+    if address_style == ADDRESS_AKU_KORANG:
+        prefixes = ("Pada aku, ", "Aku suka sebab ", "Bagi aku, ")
+    else:
+        prefixes = ("Pada saya, ", "Saya suka sebab ", "Bagi saya, ")
+    return prefixes[min(index, len(prefixes) - 1)] + lead
+
+
+def _build_dialog_copy(
+    title: str,
+    text_blocks: list[str],
+    unsafe_claims: list[str],
+    address_style: str | None = None,
+) -> tuple[str, list[str], list[str], list[str]]:
+    if address_style is None:
+        address_style = _detect_address_style(title, text_blocks)
+    clean_title = _clean_title_for_dialog(title)
+    usable_sentences = _extract_usable_benefit_sentences(text_blocks)
+    unsafe_lowered = {_normalize_sentence(sentence).casefold() for sentence in unsafe_claims}
+    rewrite_sentences = [
+        sentence for sentence in usable_sentences if _normalize_sentence(sentence).casefold() not in unsafe_lowered
+    ]
+    benefit_focus = _pick_benefit_focus(clean_title, text_blocks)
+    benefit_focus_short = _trim_routine_prefix(benefit_focus)
+
+    if address_style == ADDRESS_SAYA_ABANG:
+        fallback_rewrite = f"{clean_title} ni saya sendiri guna - memang jadi rutin harian saya"
+        hook_fallback = f"Saya rasa {clean_title} ni okay je untuk rutin harian abang"
+        cta_fallback = f"{clean_title} ni saya suggest abang cuba kalau sesuai dengan rutin abang"
+        hooks = [
+            f"Abang, kalau tengah cari untuk {benefit_focus_short} - saya dah cuba {clean_title} ni dan memang okay",
+            f"Saya rasa {clean_title} ni sesuai je untuk abang yang nak jaga {benefit_focus_short} setiap hari",
+            f"Jujur cakap, saya sendiri guna {clean_title} ni untuk {benefit_focus_short} - abang boleh try tengok",
+        ]
+        ctas = [
+            f"Kalau abang tengah cari untuk {benefit_focus_short}, boleh la try {clean_title} ni dulu",
+            f"Saya suggest abang cuba {clean_title} ni - ikut je rutin {benefit_focus_short} biasa",
+            f"Abang boleh try {clean_title} ni dalam masa seminggu, tengok sendiri macam mana",
+        ]
+        usps = [
+            f"Yang saya suka pasal {clean_title} - nampak sesuai untuk rutin {benefit_focus_short} abang",
+            f"Saya rasa {clean_title} ni okay je untuk abang masukkan dalam rutin {benefit_focus_short}",
+            f"Dari pengalaman saya, {clean_title} ni boleh fit dalam rutin {benefit_focus_short} abang",
+        ]
+    elif address_style == ADDRESS_SAYA_AKAK:
+        fallback_rewrite = f"{clean_title} ni saya sendiri guna - memang jadi rutin harian saya"
+        hook_fallback = f"Saya rasa {clean_title} ni okay je untuk rutin harian akak"
+        cta_fallback = f"{clean_title} ni saya suggest akak cuba kalau sesuai dengan rutin akak"
+        hooks = [
+            f"Akak, kalau tengah cari untuk {benefit_focus_short} - saya dah cuba {clean_title} ni dan memang okay",
+            f"Saya rasa {clean_title} ni sesuai je untuk akak yang nak jaga {benefit_focus_short} setiap hari",
+            f"Jujur cakap, saya sendiri guna {clean_title} ni untuk {benefit_focus_short} - akak boleh try tengok",
+        ]
+        ctas = [
+            f"Kalau akak tengah cari untuk {benefit_focus_short}, boleh la try {clean_title} ni dulu",
+            f"Saya suggest akak cuba {clean_title} ni - ikut je rutin {benefit_focus_short} biasa",
+            f"Akak boleh try {clean_title} ni dalam masa seminggu, tengok sendiri macam mana",
+        ]
+        usps = [
+            f"Yang saya suka pasal {clean_title} - nampak sesuai untuk rutin {benefit_focus_short} akak",
+            f"Saya rasa {clean_title} ni okay je untuk akak masukkan dalam rutin {benefit_focus_short}",
+            f"Dari pengalaman saya, {clean_title} ni boleh fit dalam rutin {benefit_focus_short} akak",
+        ]
+    else:
+        fallback_rewrite = f"{clean_title} ni memang jadi pilihan aku untuk hari-hari"
+        hook_fallback = f"{clean_title} ni memang okay je untuk rutin harian aku"
+        cta_fallback = f"{clean_title} ni aku rasa okay je kalau nak masuk dalam rutin harian"
+        hooks = [
+            f"Weh korang, aku dah try {clean_title} ni untuk {benefit_focus} - memang okay lah",
+            f"Jujur cakap, aku tak sangka {clean_title} ni jadi pilihan aku untuk {benefit_focus}",
+            f"Serius, aku dah guna {clean_title} ni untuk {benefit_focus} aku - best je",
+        ]
+        ctas = [
+            f"Kalau korang tengah cari untuk {benefit_focus}, boleh la try {clean_title} ni",
+            f"Aku rasa okay je kalau korang nak cuba {clean_title} ni untuk {benefit_focus}",
+            f"{clean_title} ni aku pun dah buat rutin - kalau korang nak try pun boleh je",
+        ]
+        usps = [
+            f"Yang aku suka pasal {clean_title} - nampak praktikal untuk {benefit_focus} aku",
+            f"Aku rasa {clean_title} ni sesuai je masuk dalam rutin {benefit_focus_short}",
+            f"Dari pengalaman aku, {clean_title} ni okay untuk {benefit_focus} hari-hari",
+        ]
+
+    safe_claim_rewrite = " ".join(
+        _sanitize_generated_line(_personalize_benefit_sentence(sentence, index, address_style), fallback_rewrite)
+        for index, sentence in enumerate(rewrite_sentences[:3])
+    ) or _sanitize_generated_line(fallback_rewrite, fallback_rewrite)
+    safe_hook_angles = [_sanitize_generated_line(line, hook_fallback) for line in hooks]
+    safe_cta_angles = [_sanitize_generated_line(line, cta_fallback) for line in ctas]
+    safe_usp_list = [_sanitize_generated_line(line, hook_fallback) for line in usps]
+    return safe_claim_rewrite, safe_hook_angles, safe_cta_angles, safe_usp_list
 
 
 def _match_bosmax_draft(product: dict[str, Any]) -> dict[str, Any] | None:
@@ -131,26 +413,13 @@ def _build_safe_package(product: dict[str, Any], draft: dict[str, Any] | None) -
         claim_tokens,
     )
     title = _normalize(product.get("product_display_name") or product.get("raw_product_title"))
-    safe_claim_rewrite = (
-        f"{title} diposisikan sebagai minyak herba luaran untuk rutin penjagaan diri lelaki "
-        "yang lebih kemas, yakin, dan discreet. Fokus komunikasi kekal pada pengalaman urutan "
-        "luaran, rasa premium, dan rutin self-care harian tanpa janji perubatan atau hasil tertentu."
+    address_style = _detect_address_style(title, text_blocks)
+    safe_claim_rewrite, safe_hook_angles, safe_cta_angles, safe_usp_list = _build_dialog_copy(
+        title,
+        text_blocks,
+        unsafe_claims_detected,
+        address_style=address_style,
     )
-    safe_hook_angles = [
-        "Rutin penjagaan diri lelaki yang premium, discreet, dan kemas untuk kegunaan luaran.",
-        "Minyak herba tradisional untuk self-care lelaki dengan visual produk yang yakin dan non-explicit.",
-        "Hero product premium untuk rutin urutan luaran tanpa janji hasil perubatan atau prestasi tertentu.",
-    ]
-    safe_usp_list = [
-        "Minyak herba luaran dalam botol kecil 5ML yang mudah dibawa dan mudah digunakan.",
-        "Sesuai diposisikan sebagai rutin penjagaan diri lelaki yang discreet dan premium.",
-        "Komunikasi selamat berfokus pada self-care, keyakinan, dan presentation produk yang kemas.",
-    ]
-    safe_cta_angles = [
-        "Lihat rutin penjagaan diri lelaki yang lebih premium dan discreet.",
-        "Terokai self-care luaran yang lebih kemas untuk rutin harian.",
-        "Semak visual produk Bosmax Herbs 5 ML dalam gaya hero yang clean dan yakin.",
-    ]
     approval_phrase = APPROVAL_PHRASE
     audit_notes = [
         "Unsafe source claims preserved for audit only.",
@@ -171,6 +440,7 @@ def _build_safe_package(product: dict[str, Any], draft: dict[str, Any] | None) -
         "safe_hook_angles": safe_hook_angles,
         "safe_usp_list": safe_usp_list,
         "safe_cta_angles": safe_cta_angles,
+        "address_style": address_style,
         "forbidden_phrases_removed": forbidden_removed,
         "claim_safe_copy_status": STATUS_PREVIEW_ONLY,
         "approval_required": True,

@@ -41,11 +41,16 @@ def test_compiler_generates_single_block_final_prompt():
     assert len(result["prompt_blocks"]) == 1
     assert result["prompt_blocks"][0]["shot_count"] == 2
     assert "visible creator" in result["final_compiled_prompt_text"].lower()
-    assert "vertical 9:16 handheld iPhone raw style" in result["final_compiled_prompt_text"]
-    assert "Claim-safe copy anchor" in result["final_compiled_prompt_text"]
+    # Engine prompt uses the clean visual style line (not the internal directive form)
+    assert "Vertical 9:16 handheld iPhone-style video" in result["final_compiled_prompt_text"]
+    # Engine prompt has CHARACTER section, ANCHOR, and shot breakdown
+    assert "ANCHOR:" in result["final_compiled_prompt_text"]
     assert "Shot 1:" in result["final_compiled_prompt_text"]
     assert "Shot 2:" in result["final_compiled_prompt_text"]
     assert "Create a premium frames-to-video sequence" not in result["final_compiled_prompt_text"]
+    # Internal directive keys must NOT leak into the engine-ready prompt
+    assert "Claim-safe copy anchor" not in result["final_compiled_prompt_text"]
+    assert "Block 1 (ANCHOR)" not in result["final_compiled_prompt_text"]
 
 
 def test_compiler_generates_extend_continuation_lineage():
@@ -76,5 +81,7 @@ def test_compiler_generates_extend_continuation_lineage():
     assert result["prompt_blocks"][1]["shot_count"] == 1
     assert result["prompt_blocks"][1]["continuation_from_block_id"] == "block_1"
     assert result["continuation_lineage"][0]["continuation_from_block_id"] == "block_1"
-    assert "Continuation requirement: continue from block_1" in result["final_compiled_prompt_text"]
-    assert "vertical cinematic commercial look" in result["final_compiled_prompt_text"]
+    # Engine prompt uses CONTINUATION section (not internal directive form)
+    assert "CONTINUATION:" in result["final_compiled_prompt_text"]
+    # Engine prompt uses the clean cinematic style line
+    assert "Vertical cinematic commercial style" in result["final_compiled_prompt_text"]
