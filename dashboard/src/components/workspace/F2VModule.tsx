@@ -53,7 +53,7 @@ export default function F2VModule({
 	workspacePackage = null,
 }: F2VModuleProps) {
 	// --- States ---
-	const [manualPrompt, setManualPrompt] = useState("");
+	const [blockPrompts, setBlockPrompts] = useState<string[]>([""]);
 	const [isManualOverride, setIsManualOverride] = useState(false);
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
 	const [model, setModel] = useState(F2V_LOCKED_MODEL);
@@ -67,7 +67,11 @@ export default function F2VModule({
 
 	useEffect(() => {
 		if (!workspacePackage || workspacePackage.mode !== "F2V") return;
-		setManualPrompt(workspacePackage.prompt_text);
+		if (workspacePackage.prompt_blocks && workspacePackage.prompt_blocks.length > 0) {
+			setBlockPrompts(workspacePackage.prompt_blocks.map((b) => b.compiled_prompt_text));
+		} else {
+			setBlockPrompts([workspacePackage.prompt_text]);
+		}
 		setModel(normalizeF2VModel(workspacePackage.model));
 		setOrientation(
 			workspacePackage.aspect_ratio === "16:9" ? "HORIZONTAL" : "VERTICAL",
@@ -119,8 +123,10 @@ export default function F2VModule({
 	};
 
 	const handleExecute = () => {
+		const mergedPrompt = blockPrompts.join("\n\n");
 		onExecute({
-			prompt: manualPrompt,
+			prompt: mergedPrompt,
+			block_prompts: blockPrompts.length > 1 ? blockPrompts : undefined,
 			orientation,
 			model,
 			count,
@@ -259,19 +265,32 @@ export default function F2VModule({
 								before sending this F2V job.
 							</div>
 						) : null}
-						<textarea
-							className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
-							placeholder="Describe the golden transition..."
-							value={manualPrompt}
-							onChange={(e) => {
-								const next = e.target.value;
-								setManualPrompt(next);
-								setIsManualOverride(
-									Boolean(workspacePackage?.prompt_text) &&
-										next !== workspacePackage?.prompt_text,
-								);
-							}}
-						/>
+						{blockPrompts.map((prompt, idx) => (
+							<div key={idx} className="space-y-2">
+								{blockPrompts.length > 1 && (
+									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+										Block {idx + 1} — {idx === 0 ? "Anchor" : "Continuation"}
+									</div>
+								)}
+								<textarea
+									className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
+									placeholder={idx === 0 ? "Describe the golden transition..." : "Describe the continuation scene..."}
+									value={prompt}
+									onChange={(e) => {
+										const next = e.target.value;
+										const updated = [...blockPrompts];
+										updated[idx] = next;
+										setBlockPrompts(updated);
+										const origBlocks = workspacePackage?.prompt_blocks;
+										const origText = origBlocks?.[idx]?.compiled_prompt_text ?? workspacePackage?.prompt_text;
+										setIsManualOverride(Boolean(origText) && updated.some((p, i) => {
+											const orig = workspacePackage?.prompt_blocks?.[i]?.compiled_prompt_text ?? workspacePackage?.prompt_text;
+											return p !== orig;
+										}));
+									}}
+								/>
+							</div>
+						))}
 					</div>
 				</section>
 
@@ -282,7 +301,7 @@ export default function F2VModule({
 						disabled={
 							isExecuting ||
 							isUploading ||
-							!manualPrompt ||
+							!blockPrompts.every((p) => p.trim()) ||
 							!startAsset ||
 							startPreviewFailed
 						}

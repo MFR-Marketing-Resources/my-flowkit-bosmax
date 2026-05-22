@@ -115,7 +115,7 @@ export default function I2VModule({
 	workspacePackage = null,
 	onWorkspacePackageUpdated,
 }: I2VModuleProps) {
-	const [manualPrompt, setManualPrompt] = useState("");
+	const [blockPrompts, setBlockPrompts] = useState<string[]>([""]);
 	const [isManualOverride, setIsManualOverride] = useState(false);
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
 	const [model] = useState("Veo 3.1 - Pro");
@@ -181,7 +181,11 @@ export default function I2VModule({
 
 	useEffect(() => {
 		if (!workspacePackage || workspacePackage.mode !== "I2V") return;
-		setManualPrompt(workspacePackage.prompt_text);
+		if (workspacePackage.prompt_blocks && workspacePackage.prompt_blocks.length > 0) {
+			setBlockPrompts(workspacePackage.prompt_blocks.map((b) => b.compiled_prompt_text));
+		} else {
+			setBlockPrompts([workspacePackage.prompt_text]);
+		}
 		setSubjectAsset(
 			toUploadedAsset(
 				workspacePackage.resolved_assets.find(
@@ -348,8 +352,10 @@ export default function I2VModule({
 			setIsRefreshingPackage(false);
 		}
 
+		const mergedPrompt = blockPrompts.join("\n\n");
 		onExecute({
-			prompt: manualPrompt,
+			prompt: mergedPrompt,
+			block_prompts: blockPrompts.length > 1 ? blockPrompts : undefined,
 			orientation,
 			model,
 			count,
@@ -628,19 +634,30 @@ export default function I2VModule({
 								</div>
 							</div>
 						)}
-						<textarea
-							className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
-							placeholder="Describe how to combine these ingredients..."
-							value={manualPrompt}
-							onChange={(e) => {
-								const next = e.target.value;
-								setManualPrompt(next);
-								setIsManualOverride(
-									Boolean(workspacePackage?.prompt_text) &&
-										next !== workspacePackage?.prompt_text,
-								);
-							}}
-						/>
+						{blockPrompts.map((prompt, idx) => (
+							<div key={idx} className="space-y-2">
+								{blockPrompts.length > 1 && (
+									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+										Block {idx + 1} — {idx === 0 ? "Anchor" : "Continuation"}
+									</div>
+								)}
+								<textarea
+									className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
+									placeholder={idx === 0 ? "Describe how to combine these ingredients..." : "Describe the continuation scene..."}
+									value={prompt}
+									onChange={(e) => {
+										const next = e.target.value;
+										const updated = [...blockPrompts];
+										updated[idx] = next;
+										setBlockPrompts(updated);
+										setIsManualOverride(Boolean(workspacePackage?.prompt_text) && updated.some((p, i) => {
+											const orig = workspacePackage?.prompt_blocks?.[i]?.compiled_prompt_text ?? workspacePackage?.prompt_text;
+											return p !== orig;
+										}));
+									}}
+								/>
+							</div>
+						))}
 					</div>
 				</section>
 
@@ -652,7 +669,7 @@ export default function I2VModule({
 							isExecuting ||
 							isUploading ||
 							isRefreshingPackage ||
-							!manualPrompt ||
+							!blockPrompts.every((p) => p.trim()) ||
 							!subjectAsset ||
 							executionBlocked
 						}

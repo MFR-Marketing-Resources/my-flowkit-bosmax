@@ -3327,8 +3327,14 @@
       logStage(STAGES.FLOW_TAB_FOUND, 'YES', `background_conn=true build=${testConn?.buildId || 'legacy'}`);
 
       // 0. Log job received
-      if (job.prompt) {
-        logStage(STAGES.JOB_PROMPT_RECEIVED, `${job.prompt.length} chars`);
+      // Resolve effective block prompts: prefer explicit block_prompts[] over merged prompt string
+      const effectiveBlockPrompts = (Array.isArray(job.block_prompts) && job.block_prompts.length > 0)
+        ? job.block_prompts
+        : [job.prompt];
+      const isMultiBlock = effectiveBlockPrompts.length > 1;
+
+      if (effectiveBlockPrompts[0]) {
+        logStage(STAGES.JOB_PROMPT_RECEIVED, `blocks=${effectiveBlockPrompts.length} block1=${effectiveBlockPrompts[0].length}chars`);
       } else {
         logStage(STAGES.JOB_PROMPT_RECEIVED, 'MISSING');
         throw new Error('JOB_PROMPT_EMPTY');
@@ -3591,28 +3597,54 @@
       logStage(STAGES.ASSETS_VERIFIED, assetVerification.status);
 
       // 7. Composer Setup (ONLY after assets)
-      const composer = document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
+      // For multi-block (Extend) mode, Google Flow renders one composer per block.
+      const allComposers = Array.from(document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]'));
+      const composer = allComposers[0];
       if (!composer) {
         logStage(STAGES.PROMPT_FIELD_FOUND, 'NO');
         throw new Error('PROMPT_FIELD_NOT_FOUND');
       }
-      logStage(STAGES.PROMPT_FIELD_FOUND);
+      logStage(STAGES.PROMPT_FIELD_FOUND, isMultiBlock ? `multi_block composers_found=${allComposers.length}` : 'YES');
 
-      // 8. Validate and Insert Prompt (ONLY after mode + asset verification)
-      if (!job.prompt || job.prompt.trim().length === 0) {
+      // 8. Validate and Insert Prompt(s) (ONLY after mode + asset verification)
+      if (!effectiveBlockPrompts[0] || effectiveBlockPrompts[0].trim().length === 0) {
         logStage(STAGES.PROMPT_INSERT_METHOD, 'VALIDATION_FAILED');
         throw new Error('JOB_PROMPT_EMPTY');
       }
-      logStage(STAGES.PROMPT_INSERT_METHOD, 'HUMAN_TYPING');
+      logStage(STAGES.PROMPT_INSERT_METHOD, isMultiBlock ? `MULTI_BLOCK_HUMAN_TYPING_x${effectiveBlockPrompts.length}` : 'HUMAN_TYPING');
 
-      await humanTypePrompt(composer, job.prompt);
+      // Block 1 — always type into first composer
+      await humanTypePrompt(composer, effectiveBlockPrompts[0]);
 
       const actual = getComposerText(composer);
-      if (!actual?.includes(job.prompt.slice(0, 10))) {
+      if (!actual?.includes(effectiveBlockPrompts[0].slice(0, 10))) {
         logStage(STAGES.PROMPT_VISIBLE, 'NO');
         throw new Error('PROMPT_INSERT_FAILED');
       }
-      logStage(STAGES.PROMPT_VISIBLE);
+      logStage(STAGES.PROMPT_VISIBLE, isMultiBlock ? 'BLOCK_1_OK' : 'YES');
+
+      // Block 2+ — type into subsequent composers (Extend / multi-block mode)
+      if (isMultiBlock) {
+        for (let blockIdx = 1; blockIdx < effectiveBlockPrompts.length; blockIdx++) {
+          const blockComposer = allComposers[blockIdx];
+          if (!blockComposer) {
+            logStage(STAGES.PROMPT_FIELD_FOUND, `BLOCK_${blockIdx + 1}_NOT_FOUND composers_available=${allComposers.length}`);
+            throw new Error(`BLOCK_${blockIdx + 1}_PROMPT_FIELD_NOT_FOUND`);
+          }
+          const blockText = effectiveBlockPrompts[blockIdx];
+          if (!blockText || blockText.trim().length === 0) {
+            logStage(STAGES.PROMPT_INSERT_METHOD, `BLOCK_${blockIdx + 1}_EMPTY`);
+            throw new Error(`BLOCK_${blockIdx + 1}_PROMPT_EMPTY`);
+          }
+          await humanTypePrompt(blockComposer, blockText);
+          const actualBlock = getComposerText(blockComposer);
+          if (!actualBlock?.includes(blockText.slice(0, 10))) {
+            logStage(STAGES.PROMPT_VISIBLE, `BLOCK_${blockIdx + 1}_INSERT_FAILED`);
+            throw new Error(`BLOCK_${blockIdx + 1}_PROMPT_INSERT_FAILED`);
+          }
+          logStage(STAGES.PROMPT_VISIBLE, `BLOCK_${blockIdx + 1}_OK`);
+        }
+      }
 
       if (!isComposerEditable(composer)) {
         logStage(STAGES.PROMPT_EDITABLE_AFTER_INSERT, 'NO');

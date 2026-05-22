@@ -311,6 +311,7 @@ type DisplayFieldValue =
 
 export interface WorkspaceExecutePayload {
 	prompt: string;
+	block_prompts?: string[];
 	orientation?: Orientation;
 	aspectRatio?: string;
 	model?: string;
