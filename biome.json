@@ -1,0 +1,27 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+	"files": {
+		"ignoreUnknown": true,
+		"includes": [
+			"dashboard/src/App.tsx",
+			"dashboard/src/api/products.ts",
+			"dashboard/src/api/workspacePackages.ts",
+			"dashboard/src/components/workspace/T2VModule.tsx",
+			"dashboard/src/components/workspace/F2VModule.tsx",
+			"dashboard/src/components/workspace/I2VModule.tsx",
+			"dashboard/src/components/workspace/IMGModule.tsx",
+			"dashboard/src/components/workspace/WorkspaceImageAssetSlot.tsx",
+			"dashboard/src/pages/ApprovedPackagesPage.tsx",
+			"dashboard/src/pages/AssetRegistryPage.tsx",
+			"dashboard/src/pages/CreativeLibraryPage.tsx",
+			"dashboard/src/pages/OperatorPage.tsx",
+			"dashboard/src/pages/ProductAssetGeneratorPage.tsx",
+			"dashboard/src/pages/ProductRegistrationPage.tsx",
+			"dashboard/src/pages/ProductsSalesAnalyzerPage.tsx",
+			"dashboard/src/pages/WorkspaceJobsPage.tsx",
+			"extension/background.js",
+			"extension/popup.js",
+			"extension/side_panel.js"
+		]
+	}
+}

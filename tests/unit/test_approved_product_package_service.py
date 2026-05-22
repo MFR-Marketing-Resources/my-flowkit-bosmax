@@ -66,6 +66,64 @@ async def test_approved_product_package_returns_t2v_package(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_approved_product_package_returns_img_contract(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {
+            "id": product_id,
+            "raw_product_title": "Bidasari Kurung Cotton Embroidery Cutwork",
+            "product_display_name": "Bidasari Kurung Cotton Embroidery Cutwork",
+            "production_prompt_approval_status": "PRODUCTION_PROMPT_APPROVED",
+            "production_prompt_approved_modes": '["T2V","IMG"]',
+            "local_image_path": r"C:\tmp\bidasari.jpg",
+        }
+
+    async def fake_enrich(product, persist=False):
+        return {
+            **product,
+            "lifecycle_status": "ACTIVE",
+            "image_readiness_status": "IMAGE_CACHE_READY",
+        }
+
+    async def fake_claim_safe(product_id: str):
+        return {
+            "claim_safe_copy_status": "CLAIM_SAFE_COPY_APPROVED",
+            "safe_claim_rewrite": "Clean fashion hero direction for Malaysian ecommerce.",
+            "safe_hook_angles": ["Fashion hook"],
+            "safe_cta_angles": ["Cuba sekarang"],
+        }
+
+    async def fake_dryrun(product_id: str, mode: str):
+        return {
+            "status": "PRODUCTION_READY",
+            "prompt_preview": "Subject: Photorealistic apparel hero image.",
+            "warnings": [],
+            "image_prompt": "Subject: Photorealistic apparel hero image.",
+            "metadata_handoff": {"image_prompt_metadata_isolated": True, "route": "ECOMMERCE_FASHION_HERO"},
+            "overlay_spec": {"render_text_inside_image": False, "recommended_text": None},
+            "export_spec": {"recommended_aspect_ratio": "1:1", "color_profile": "sRGB"},
+            "route": "ECOMMERCE_FASHION_HERO",
+        }
+
+    monkeypatch.setattr("agent.services.approved_product_package_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr("agent.services.approved_product_package_service.enrich_product", fake_enrich)
+    monkeypatch.setattr("agent.services.approved_product_package_service.get_stored_claim_safe_package", fake_claim_safe)
+    monkeypatch.setattr("agent.services.approved_product_package_service.generate_prompt_dryrun", fake_dryrun)
+    monkeypatch.setattr("agent.services.approved_product_package_service.is_production_prompt_approved", lambda product: True)
+    monkeypatch.setattr("agent.services.approved_product_package_service.get_production_approved_modes", lambda product: ["T2V", "IMG"])
+    monkeypatch.setattr("agent.services.approved_product_package_service.scan_prompt_text", _scan_clean)
+
+    result = await get_approved_product_package("prod-img", "IMG")
+
+    assert result["mode"] == "IMG"
+    assert result["production_generation_allowed"] is True
+    assert result["image_prompt"] == result["prompt_text"]
+    assert result["metadata_handoff"]["image_prompt_metadata_isolated"] is True
+    assert result["overlay_spec"]["render_text_inside_image"] is False
+    assert result["export_spec"]["color_profile"] == "sRGB"
+    assert result["image_route"] == "ECOMMERCE_FASHION_HERO"
+
+
+@pytest.mark.asyncio
 async def test_approved_product_package_returns_f2v_with_cached_start_frame(monkeypatch):
     async def fake_get_product(product_id: str):
         return {

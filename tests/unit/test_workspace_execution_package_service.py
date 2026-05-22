@@ -1,6 +1,7 @@
 import pytest
 
 from agent.services.workspace_execution_package_service import (
+    compile_workspace_prompt_preview,
     create_workspace_execution_package,
     list_workspace_execution_packages,
 )
@@ -238,3 +239,59 @@ async def test_workspace_execution_package_preserves_extend_lineage(monkeypatch)
     assert result["prompt_blocks"][1]["continuation_from_block_id"] == "block_1"
     assert result["continuation_lineage"][0]["continuation_from_block_id"] == "block_1"
     assert captured["duration_seconds"] == 16
+
+
+@pytest.mark.asyncio
+async def test_workspace_execution_package_img_preview_uses_img_contract(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {
+            "id": product_id,
+            "product_display_name": "Bidasari Kurung Cotton Embroidery Cutwork",
+            "raw_product_title": "Bidasari Kurung Cotton Embroidery Cutwork",
+        }
+
+    async def fake_enrich(product, persist=False):
+        return {
+            **product,
+            "image_readiness_status": "IMAGE_CACHE_READY",
+        }
+
+    async def fake_package(product_id: str, mode: str):
+        return {
+            "prompt_package_snapshot_id": "pkg_img_001",
+            "product_id": product_id,
+            "product_name": "Bidasari Kurung Cotton Embroidery Cutwork",
+            "mode": mode,
+            "production_generation_allowed": True,
+            "prompt_text": "Subject: Photorealistic apparel hero image.",
+            "image_prompt": "Subject: Photorealistic apparel hero image.",
+            "prompt_fingerprint": "img_fp_001",
+            "asset_slots": [],
+            "manual_fallback": {"copy_prompt_available": True},
+            "blockers": [],
+            "warnings": [],
+            "source_of_truth_notes": ["IMG authority note"],
+            "metadata_handoff": {"image_prompt_metadata_isolated": True, "route": "ECOMMERCE_FASHION_HERO"},
+            "overlay_spec": {"render_text_inside_image": False, "recommended_text": None},
+            "export_spec": {"recommended_aspect_ratio": "1:1", "color_profile": "sRGB"},
+            "image_route": "ECOMMERCE_FASHION_HERO",
+        }
+
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.enrich_product", fake_enrich)
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.get_approved_product_package", fake_package)
+
+    result = await compile_workspace_prompt_preview(
+        product_id="prod-img",
+        mode="IMG",
+        duration_seconds=8,
+        camera_style="UGC_IPHONE_RAW",
+        character_presence="VISIBLE_CREATOR",
+        creator_persona="DEFAULT_CREATOR",
+    )
+
+    assert result["compiler_version"] == "img_prompt_compiler_v1"
+    assert result["final_compiled_prompt_text"] == "Subject: Photorealistic apparel hero image."
+    assert result["metadata_handoff"]["route"] == "ECOMMERCE_FASHION_HERO"
+    assert result["overlay_spec"]["render_text_inside_image"] is False
+    assert result["export_spec"]["color_profile"] == "sRGB"

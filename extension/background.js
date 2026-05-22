@@ -7,14 +7,14 @@
 
 const AGENT_WS_URL = "ws://127.0.0.1:8101";
 // NOTE: This is a browser-restricted public API key — safe to ship in extension bundles.
-const API_KEY = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY";
+const _API_KEY = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY";
 const EXTENSION_PROTOCOL_VERSION = "FLOWKIT_EXTENSION_V1";
 const FLOW_DOM_PROTOCOL_VERSION = "FLOWKIT_DOM_V1";
 const FLOW_PROJECT_URL_STORAGE_KEY = "flow_project_url";
 
 let ws = null;
 let flowKey = null;
-let callbackSecret = null; // Auth secret for HTTP callback, received from server on WS connect
+let _callbackSecret = null; // Auth secret for HTTP callback, received from server on WS connect
 let state = "off"; // off | idle | running
 let manualDisconnect = false;
 const metrics = {
@@ -100,7 +100,7 @@ function sendTabMessageSafe(tabId, payload, timeoutMs = 4000) {
 	});
 }
 
-function sendRuntimeMessageSafe(payload) {
+function _sendRuntimeMessageSafe(payload) {
 	return new Promise((resolve) => {
 		chrome.runtime.sendMessage(payload, (response) => {
 			const lastError = chrome.runtime.lastError;
@@ -879,7 +879,7 @@ async function init() {
 	]);
 	if (data.flowKey) flowKey = data.flowKey;
 	if (data.metrics) Object.assign(metrics, data.metrics);
-	if (data.callbackSecret) callbackSecret = data.callbackSecret;
+	if (data.callbackSecret) _callbackSecret = data.callbackSecret;
 	try {
 		await chrome.sidePanel.setOptions({
 			path: "side_panel.html",
@@ -1059,7 +1059,7 @@ function connectToAgent() {
 				}));
 				replyToAgent(msg, result);
 			} else if (msg.type === "callback_secret") {
-				callbackSecret = msg.secret;
+				_callbackSecret = msg.secret;
 				chrome.storage.local.set({ callbackSecret: msg.secret });
 				console.log("[FlowAgent] Received callback secret");
 			} else if (msg.method === "CHECK_FLOW_COMPOSER_READY") {
@@ -1286,7 +1286,7 @@ async function handleTrpcRequest(msg) {
 	const { id, params } = msg;
 	const { url, method = "POST", headers = {}, body } = params;
 
-	if (!url || !url.startsWith("https://labs.google/")) {
+	if (!url?.startsWith("https://labs.google/")) {
 		sendToAgent({ id, error: "INVALID_TRPC_URL" });
 		return;
 	}
@@ -1295,12 +1295,12 @@ async function handleTrpcRequest(msg) {
 	// TRPC calls don't consume captcha — don't count in metrics
 
 	const logId = id;
-	const logType = url.includes("createProject") ? "CREATE_PROJECT" : "TRPC";
+	const _logType = url.includes("createProject") ? "CREATE_PROJECT" : "TRPC";
 	// TRPC calls are silent — don't show in request log
 
 	const fetchHeaders = { "Content-Type": "application/json", ...headers };
 	if (flowKey) {
-		fetchHeaders["authorization"] = `Bearer ${flowKey}`;
+		fetchHeaders.authorization = `Bearer ${flowKey}`;
 	}
 
 	try {
@@ -1419,7 +1419,7 @@ async function handleApiRequest(msg) {
 		}
 
 		const fetchHeaders = { ...(headers || {}) };
-		fetchHeaders["authorization"] = `Bearer ${activeFlowKey}`;
+		fetchHeaders.authorization = `Bearer ${activeFlowKey}`;
 
 		// Step 4: Make the API call from browser context
 		const response = await fetch(url, {
@@ -1503,7 +1503,7 @@ function broadcastStatus() {
 
 const BUILD_ID = "f2v_proxy_v3";
 
-async function handleMessage(msg, sender) {
+async function handleMessage(msg, _sender) {
 	if (msg.type === "STATUS") {
 		return {
 			connected: ws?.readyState === WebSocket.OPEN,
@@ -1984,7 +1984,7 @@ async function handleFlowPageStateDiagnostic(mode) {
 
 // ─── TRPC Media URL Extractor ──────────────────────────────
 
-function handleTrpcMediaUrls(trpcUrl, bodyText) {
+function handleTrpcMediaUrls(_trpcUrl, bodyText) {
 	try {
 		// Extract all fresh GCS signed URLs
 		const urlRegex =
