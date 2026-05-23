@@ -44,7 +44,15 @@ export async function postMultipartAPI<T>(path: string, body: FormData): Promise
   return res.json()
 }
 
-export async function uploadImageBase64(base64: string, fileName: string): Promise<{ media_id: string }> {
+export async function uploadImageBase64(
+	base64: string,
+	fileName: string,
+): Promise<{
+	media_id: string;
+	file_name: string;
+	mime_type: string;
+	local_file_path: string;
+}> {
   return postAPI('/api/flow/upload-image-base64', {
     image_base64: base64,
     file_name: fileName,

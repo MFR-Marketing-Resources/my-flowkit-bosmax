@@ -176,6 +176,7 @@ async def resolve_i2v_semantic_slots(
                 preview_url=role_asset.get("preview_url"),
                 download_url=role_asset.get("download_url"),
                 media_id=role_asset.get("media_id"),
+                local_file_path=role_asset.get("local_file_path"),
                 local_image_path_present=role_asset.get("local_image_path_present"),
                 remote_image_url_present=role_asset.get("remote_image_url_present"),
             )

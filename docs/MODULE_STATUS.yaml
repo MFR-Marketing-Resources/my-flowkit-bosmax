@@ -44,6 +44,8 @@ domains:
       - agent/services/registration_draft_recompute_service.py
       - agent/services/registration_hook_cta_generation_service.py
       - dashboard/src/App.tsx
+      - dashboard/src/api/assets.ts
+      - dashboard/src/api/client.ts
       - dashboard/src/api/creativeAssets.ts
       - dashboard/src/api/products.ts
       - dashboard/src/api/workspacePackages.ts

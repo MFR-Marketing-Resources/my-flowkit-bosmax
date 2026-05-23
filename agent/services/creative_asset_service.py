@@ -345,6 +345,7 @@ def build_resolved_workspace_asset(
         "preview_url": asset.preview_url,
         "download_url": asset.download_url,
         "media_id": asset.media_id,
+        "local_file_path": asset.local_file_path,
         "preview_renderable_status": "RENDERABLE" if asset.preview_url else "NOT_AVAILABLE",
         "preview_error_detail": None if asset.preview_url else "Preview URL is not available.",
         "local_image_path_present": bool(asset.local_file_path),

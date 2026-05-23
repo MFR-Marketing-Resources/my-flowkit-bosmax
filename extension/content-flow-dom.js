@@ -223,6 +223,8 @@
         lastCheckpoint: result?.lastCheckpoint || null,
         acceptanceReason: result?.acceptanceReason || null,
         modalFound: Boolean(result?.modalFound),
+        uploadStrategy: result?.uploadStrategy || null,
+        cdpMethod: result?.cdpMethod || null,
       };
     }
 
@@ -1119,9 +1121,25 @@
       || assetSource.product_id
       || assetSource.mediaId
       || assetSource.media_id
+      || assetSource.assetId
+      || assetSource.asset_id
       || assetSource.id
       || assetSource.characterId
       || null;
+  }
+
+  function describeAssetSourceType(assetSource) {
+    if (!assetSource) return 'missing';
+    if (resolveAssetLocalFilePath(assetSource)) return 'cdp_local_file';
+    if (typeof assetSource === 'string') {
+      if (assetSource.startsWith('data:')) return 'data_url';
+      if (assetSource.startsWith('http')) return 'url';
+      return 'path/id';
+    }
+    if (typeof assetSource === 'object' && assetSource.previewUrl) {
+      return 'legacy_preview_url';
+    }
+    return 'object';
   }
 
   function getRefAssets(job) {
@@ -2269,7 +2287,91 @@
     await sleep(300);
   }
 
-  async function simulateFileUpload(slotLabel, assetSource, stateObj = null) {
+  function looksLikeLocalFilePath(value) {
+    if (typeof value !== 'string') return false;
+    return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/');
+  }
+
+  function resolveAssetLocalFilePath(assetSource) {
+    if (!assetSource) return null;
+    if (typeof assetSource === 'string') {
+      return looksLikeLocalFilePath(assetSource) ? assetSource : null;
+    }
+    if (typeof assetSource !== 'object') return null;
+    return assetSource.localFilePath
+      || assetSource.local_file_path
+      || null;
+  }
+
+  function resolveAssetPreferredFileName(assetSource, slotLabel) {
+    if (!assetSource || typeof assetSource !== 'object') {
+      return `${slotLabel}.png`;
+    }
+    return assetSource.fileName
+      || assetSource.file_name
+      || assetSource.label
+      || `${slotLabel}.png`;
+  }
+
+  function buildUploadTargetResolution(slotBtn, slotContainer, modalInfo, modalTargets) {
+    const fileInput = slotContainer?.querySelector?.('input[type="file"]') || null;
+    const dropzone = slotContainer?.querySelector?.('[role="presentation"], .dropzone, [aria-label*="upload" i], [aria-label*="browse" i]') || null;
+    const internalClickable = slotContainer?.querySelector?.('button, [role="button"], label, div[onclick]') || null;
+    const directTarget = fileInput || dropzone || internalClickable || slotBtn || null;
+    const cdpTriggerTarget = modalInfo?.modal
+      ? (modalTargets?.buttonTarget
+        || modalTargets?.labelTarget
+        || modalTargets?.dropzoneTarget
+        || modalTargets?.dispatchTarget
+        || modalTargets?.fileInput
+        || null)
+      : directTarget;
+    const legacyDispatchTarget = modalInfo?.modal ? (modalTargets?.dispatchTarget || null) : directTarget;
+
+    return {
+      fileInput,
+      dropzone,
+      internalClickable,
+      directTarget,
+      cdpTriggerTarget,
+      legacyDispatchTarget,
+    };
+  }
+
+  function buildMissingUploadTargetFailure(slotLabel, slotContainer, slotBtn, modalInfo, modalTargets, lastCheckpoint) {
+    const diag = {
+      start_container_outerHTML: slotContainer?.outerHTML?.slice(0, 500) || '',
+      file_input_found: Boolean(modalTargets?.fileInput || slotContainer?.querySelector?.('input[type="file"]')),
+      clickable_target_found: Boolean(slotContainer?.querySelector?.('button, [role="button"], label, div[onclick]') || slotBtn),
+      clickable_target_outerHTML: (slotContainer?.querySelector?.('button, [role="button"], label, div[onclick]') || slotBtn)?.outerHTML?.slice(0, 500),
+    };
+
+    if (modalInfo?.modal) {
+      const modalDiag = buildAssetPickerFailureDetail({
+        slotLabel,
+        modalInfo,
+        modalTargets,
+        target: null,
+        lastCheckpoint,
+        slotContainer,
+      });
+      return {
+        ok: false,
+        error: buildSlotErrorCode(slotLabel, 'ASSET_PICKER_UPLOAD_FAILED'),
+        detail: `ERR_START_ASSET_PICKER_UPLOAD_FAILED — ${JSON.stringify(modalDiag)}`,
+        lastCheckpoint,
+      };
+    }
+
+    return {
+      ok: false,
+      error: buildSlotErrorCode(slotLabel, 'UPLOAD_TARGET_NOT_FOUND'),
+      detail: `ERR_START_UPLOAD_TARGET_NOT_FOUND — ${JSON.stringify(diag)}`,
+      lastCheckpoint,
+    };
+  }
+
+  async function simulateLegacyDomFileUpload(slotLabel, assetSource, stateObj = null) {
     let lastCheckpoint = 'NONE';
     const setCheckpoint = (cp) => {
       lastCheckpoint = cp;
@@ -2381,11 +2483,8 @@
       setCheckpoint('UPLOAD_ASSET_RESOLVED');
 
       // 3. Find the dropzone/input
-      const fileInput = slotContainer.querySelector('input[type="file"]');
-      const dropzone = slotContainer.querySelector('[role="presentation"], .dropzone, [aria-label*="upload" i], [aria-label*="browse" i]');
-      const internalClickable = slotContainer.querySelector('button, [role="button"], label, div[onclick]');
-      const directTarget = fileInput || dropzone || internalClickable || slotBtn;
-      const target = modalInfo?.modal ? (modalTargets?.dispatchTarget || null) : directTarget;
+      const targetResolution = buildUploadTargetResolution(slotBtn, slotContainer, modalInfo, modalTargets);
+      const target = targetResolution.legacyDispatchTarget;
 
       if (modalInfo?.modal) {
         if (modalTargets?.fileInput) {
@@ -2397,36 +2496,14 @@
       }
 
       if (!target || (!modalInfo?.modal && !slotContainer.contains(target))) {
-        const diag = {
-          start_container_outerHTML: slotContainer.outerHTML.slice(0, 500),
-          file_input_found: Boolean(fileInput),
-          clickable_target_found: Boolean(internalClickable || slotBtn),
-          clickable_target_outerHTML: (internalClickable || slotBtn)?.outerHTML?.slice(0, 500),
-        };
-
-        if (modalInfo?.modal) {
-          const modalDiag = buildAssetPickerFailureDetail({
-            slotLabel,
-            modalInfo,
-            modalTargets,
-            target,
-            lastCheckpoint,
-            slotContainer,
-          });
-          return {
-            ok: false,
-            error: buildSlotErrorCode(slotLabel, 'ASSET_PICKER_UPLOAD_FAILED'),
-            detail: `ERR_START_ASSET_PICKER_UPLOAD_FAILED — ${JSON.stringify(modalDiag)}`,
-            lastCheckpoint,
-          };
-        }
-
-        return {
-          ok: false,
-          error: buildSlotErrorCode(slotLabel, 'UPLOAD_TARGET_NOT_FOUND'),
-          detail: `ERR_START_UPLOAD_TARGET_NOT_FOUND — ${JSON.stringify(diag)}`,
+        return buildMissingUploadTargetFailure(
+          slotLabel,
+          slotContainer,
+          slotBtn,
+          modalInfo,
+          modalTargets,
           lastCheckpoint,
-        };
+        );
       }
       setCheckpoint('UPLOAD_TARGET_RESOLVED');
 
@@ -2512,6 +2589,7 @@
         beforeSnapshot,
         acceptanceReason: acceptance.reason,
         modalFound: Boolean(modalInfo?.modal),
+        uploadStrategy: 'legacy_dom_test_only',
         lastCheckpoint,
       };
     } catch (error) {
@@ -2523,6 +2601,225 @@
         lastCheckpoint 
       };
     }
+  }
+
+  async function simulateCdpFileUpload(slotLabel, assetSource, stateObj = null) {
+    let lastCheckpoint = 'NONE';
+    const setCheckpoint = (cp) => {
+      lastCheckpoint = cp;
+      if (stateObj) stateObj.lastCheckpoint = cp;
+      console.log(`[FlowAgent] Upload Checkpoint (${slotLabel}): ${cp}`);
+    };
+
+    try {
+      const localFilePath = resolveAssetLocalFilePath(assetSource);
+      if (!localFilePath) {
+        return {
+          ok: false,
+          error: buildSlotErrorCode(slotLabel, 'CDP_LOCAL_FILE_PATH_REQUIRED'),
+          detail: `ERR_${String(slotLabel || 'slot').toUpperCase()}_CDP_LOCAL_FILE_PATH_REQUIRED`,
+          lastCheckpoint,
+        };
+      }
+
+      const expectedFileName = resolveAssetPreferredFileName(assetSource, slotLabel);
+
+      setCheckpoint('UPLOAD_SLOT_RESOLUTION_STARTED');
+      console.log(`[FlowAgent] Attempting CDP upload for slot: ${slotLabel}`);
+
+      const slotInfo = findUploadSlotByLabel(slotLabel);
+      const slotContainer = slotInfo?.container || resolveSlotContainer(slotLabel);
+      const slotBtn = slotInfo?.labelNode?.closest('button, [role="button"]')
+        || slotInfo?.labelNode
+        || slotContainer?.querySelector('button, [role="button"]')
+        || slotContainer;
+
+      if (!slotContainer || !slotBtn) {
+        const observed = observeFlowState();
+        return {
+          ok: false,
+          error: buildSlotErrorCode(slotLabel, 'SLOT_NOT_FOUND'),
+          detail: `ERR_${String(slotLabel || 'slot').toUpperCase()}_SLOT_NOT_FOUND — ${JSON.stringify({
+            visible_upload_slots: observed.visibleUploadSlots,
+            body_text_snippet: normalizeText(document.body?.innerText || '').slice(0, 150),
+          })}`,
+          lastCheckpoint,
+        };
+      }
+
+      const beginResult = await beginCdpFileChooserProof({
+        filePath: localFilePath,
+        expectedFileName,
+        slotLabel,
+      });
+      if (!beginResult?.ok || !beginResult?.armed) {
+        return {
+          ok: false,
+          error: buildSlotErrorCode(slotLabel, 'CDP_ARM_FAILED'),
+          detail: `ERR_${String(slotLabel || 'slot').toUpperCase()}_CDP_ARM_FAILED — ${beginResult?.error || 'UNKNOWN_CDP_ARM_ERROR'}`,
+          lastCheckpoint,
+        };
+      }
+
+      setCheckpoint('UPLOAD_SLOT_RESOLVED');
+      const beforeSnapshot = snapshotSlot(slotContainer);
+      setCheckpoint('UPLOAD_CDP_ARMED');
+      setCheckpoint('UPLOAD_SLOT_CLICKED');
+      slotBtn.click?.();
+
+      const modalInfo = await waitForAssetPickerModal(1800, setCheckpoint);
+      const modalTargets = modalInfo?.targets || null;
+      const targetResolution = buildUploadTargetResolution(slotBtn, slotContainer, modalInfo, modalTargets);
+      let target = slotBtn;
+
+      if (modalInfo?.modal) {
+        setCheckpoint('UPLOAD_ASSET_PICKER_MODAL_DETECTED');
+        target = targetResolution.cdpTriggerTarget;
+
+        if (modalTargets?.fileInput) {
+          setCheckpoint('UPLOAD_MODAL_INPUT_FOUND');
+        }
+        if (modalTargets?.dropzoneTarget || modalTargets?.buttonTarget || modalTargets?.labelTarget) {
+          setCheckpoint('UPLOAD_MODAL_DROPZONE_FOUND');
+        }
+        if (!target) {
+          return buildMissingUploadTargetFailure(
+            slotLabel,
+            slotContainer,
+            slotBtn,
+            modalInfo,
+            modalTargets,
+            lastCheckpoint,
+          );
+        }
+        setCheckpoint('UPLOAD_TARGET_RESOLVED');
+        setCheckpoint('UPLOAD_MODAL_DISPATCH_STARTED');
+        target.click?.();
+        setCheckpoint('UPLOAD_CDP_CHOOSER_TRIGGERED');
+      } else {
+        setCheckpoint('UPLOAD_TARGET_RESOLVED');
+        setCheckpoint('UPLOAD_DISPATCH_STARTED');
+        setCheckpoint('UPLOAD_CDP_CHOOSER_TRIGGERED');
+      }
+
+      const cdpResult = await waitForCdpFileChooserProofResult();
+      if (!cdpResult?.ok) {
+        return {
+          ok: false,
+          error: buildSlotErrorCode(slotLabel, 'CDP_INTERCEPT_FAILED'),
+          detail: `ERR_${String(slotLabel || 'slot').toUpperCase()}_CDP_INTERCEPT_FAILED — ${cdpResult?.error || 'UNKNOWN_CDP_INTERCEPT_ERROR'}`,
+          lastCheckpoint,
+        };
+      }
+
+      setCheckpoint('UPLOAD_CDP_FILE_SET');
+      const cdpFileInput = modalTargets?.fileInput
+        || (targetResolution.fileInput?.matches?.('input[type="file"]') ? targetResolution.fileInput : null)
+        || (target?.matches?.('input[type="file"]') ? target : null);
+      if (cdpFileInput) {
+        cdpFileInput.dispatchEvent(new Event('input', { bubbles: true }));
+        cdpFileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      setCheckpoint(modalInfo?.modal ? 'UPLOAD_MODAL_DISPATCH_COMPLETED' : 'UPLOAD_DISPATCH_COMPLETED');
+
+      const acceptance = await waitForUploadAcceptance({
+        slotLabel,
+        slotElement: slotBtn,
+        slotContainer,
+        beforeSnapshot,
+        modal: modalInfo?.modal || null,
+        fileName: expectedFileName,
+        timeoutMs: modalInfo?.modal ? 9000 : 10000,
+        setCheckpoint,
+      });
+
+      const likelyAssetPickerPath = Boolean(
+        modalInfo?.modal
+        || (modalInfo?.diagnostics?.markerSnippetCount || 0) > 0
+        || (modalInfo?.diagnostics?.openShadowRootCount || 0) > 0
+      );
+
+      if (likelyAssetPickerPath && !acceptance.ok) {
+        const modalDiag = buildAssetPickerFailureDetail({
+          slotLabel,
+          modalInfo,
+          modalTargets,
+          target,
+          lastCheckpoint,
+          slotContainer,
+        });
+        return {
+          ok: false,
+          error: buildSlotErrorCode(slotLabel, 'ASSET_PICKER_ACCEPTANCE_NOT_VERIFIED'),
+          detail: `ERR_START_ASSET_PICKER_ACCEPTANCE_NOT_VERIFIED — ${JSON.stringify({
+            ...modalDiag,
+            upload_strategy: 'cdp_file_chooser',
+            cdp_method: cdpResult?.method || null,
+            backend_node_id: cdpResult?.backendNodeId || null,
+          })}`,
+          lastCheckpoint,
+        };
+      }
+
+      if (!modalInfo?.modal && !acceptance.ok) {
+        return {
+          ok: false,
+          error: buildSlotErrorCode(slotLabel, 'PREVIEW_TIMEOUT'),
+          detail: `ERR_${String(slotLabel || 'slot').toUpperCase()}_PREVIEW_TIMEOUT — ${JSON.stringify({
+            last_checkpoint: lastCheckpoint,
+            visible_upload_slots: observeFlowState().visibleUploadSlots,
+            start_slot_outerHTML: resolveSlotContainer(slotLabel, slotBtn)?.outerHTML?.slice(0, 500) || '',
+            upload_strategy: 'cdp_file_chooser',
+          })}`,
+          lastCheckpoint,
+        };
+      }
+
+      if (modalInfo?.modal) {
+        setCheckpoint('UPLOAD_MODAL_ACCEPTED');
+        if (acceptance.modalClosed || acceptance.reason === 'start-slot-preview' || acceptance.reason === 'modal-closed-start-preview') {
+          setCheckpoint('UPLOAD_MODAL_CLOSED_OR_PREVIEW_VISIBLE');
+        }
+      }
+
+      return {
+        ok: true,
+        slotElement: slotBtn,
+        slotContainer: acceptance.slotContainer || slotContainer,
+        beforeSnapshot,
+        acceptanceReason: acceptance.reason,
+        modalFound: Boolean(modalInfo?.modal),
+        uploadStrategy: 'cdp_file_chooser',
+        cdpMethod: cdpResult?.method || null,
+        lastCheckpoint,
+      };
+    } catch (error) {
+      console.error(`[FlowAgent] CDP upload dispatch failed for ${slotLabel}: ${error.message}`);
+      return {
+        ok: false,
+        error: buildSlotErrorCode(slotLabel, 'UPLOAD_DISPATCH_FAILED'),
+        detail: `CATCH_ERROR: ${error.message} — stack: ${error.stack?.slice(0, 200)}`,
+        lastCheckpoint,
+      };
+    }
+  }
+
+  async function simulateFileUpload(slotLabel, assetSource, stateObj = null) {
+    const localFilePath = resolveAssetLocalFilePath(assetSource);
+    if (localFilePath) {
+      return simulateCdpFileUpload(slotLabel, assetSource, stateObj);
+    }
+
+    if (FLOW_KIT_ENABLE_TEST_HOOKS) {
+      return simulateLegacyDomFileUpload(slotLabel, assetSource, stateObj);
+    }
+
+    return {
+      ok: false,
+      error: buildSlotErrorCode(slotLabel, 'CDP_LOCAL_FILE_PATH_REQUIRED'),
+      detail: `ERR_${String(slotLabel || 'slot').toUpperCase()}_CDP_LOCAL_FILE_PATH_REQUIRED`,
+      lastCheckpoint: 'NONE',
+    };
   }
 
   /**
@@ -3780,8 +4077,8 @@
       if (job.mode === 'F2V') {
         // Step 6a: Upload Start Frame
         const startAssetSource = job.startAsset || job.productId || job.startImageMediaId;
-        const assetSourceType = !startAssetSource ? 'missing' : typeof startAssetSource === 'string' ? (startAssetSource.startsWith('data:') ? 'data_url' : (startAssetSource.startsWith('http') ? 'url' : 'path/id')) : 'object';
-        const assetFilename = (typeof startAssetSource === 'object' && startAssetSource) ? startAssetSource.fileName : 'unknown';
+        const assetSourceType = describeAssetSourceType(startAssetSource);
+        const assetFilename = resolveAssetPreferredFileName(startAssetSource, 'Start');
 
         logStage(STAGES.START_FRAME_UPLOAD_ATTEMPTED, 'PASS', 
           `slot=Start asset_source_type=${assetSourceType} asset_filename=${assetFilename} visible_upload_slots=${observeFlowState().visibleUploadSlots.join(',')}`,

@@ -150,6 +150,7 @@ def _product_image_asset(product: dict[str, Any], slot_key: str, label: str) -> 
         "preview_url": f"/api/products/{product_id}/image" if uses_local_cache else remote_image_url,
         "download_url": f"/api/products/{product_id}/image" if uses_local_cache else remote_image_url,
         "media_id": product.get("media_id"),
+        "local_file_path": local_image_path,
         "preview_renderable_status": preview_renderable_status,
         "preview_error_detail": preview_error_detail,
         "local_image_path_present": uses_local_cache,
