@@ -1,7 +1,11 @@
-import { ArrowRight, Check, Copy } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowRight, Check, Copy, X, ZoomIn } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { fetchCreativeAssets } from "../../api/creativeAssets";
 import { handleAssetUpload } from "../../api/assets";
+import {
+	PRODUCT_ASSET_GENERATOR_PRESETS,
+	getProductAssetGeneratorPreset,
+} from "../product-asset-generator/presets";
 import type {
 	CreativeAsset,
 	Product,
@@ -105,6 +109,7 @@ function CLAssetPicker({
 	selectedId,
 	onSelect,
 	badge,
+	onImageClick,
 }: {
 	label: string;
 	description: string;
@@ -112,6 +117,7 @@ function CLAssetPicker({
 	selectedId: string;
 	onSelect: (id: string) => void;
 	badge?: string;
+	onImageClick?: (url: string) => void;
 }) {
 	const selected = assets.find((a) => a.asset_id === selectedId) ?? null;
 	return (
@@ -132,7 +138,8 @@ function CLAssetPicker({
 						<img
 							src={selected.preview_url}
 							alt={selected.display_name}
-							className="h-8 w-8 flex-shrink-0 rounded-md border border-slate-700 object-cover"
+							className={`h-8 w-8 flex-shrink-0 rounded-md border border-slate-700 object-cover ${onImageClick ? "cursor-zoom-in" : ""}`}
+							onClick={() => selected.preview_url && onImageClick?.(selected.preview_url)}
 						/>
 					) : null}
 					<div className="min-w-0 flex-1">
@@ -204,11 +211,19 @@ export default function IMGModule({
 	const [sceneAsset, setSceneAsset] = useState<UploadedAsset | null>(null);
 	const [styleAsset, setStyleAsset] = useState<UploadedAsset | null>(null);
 
-	// ── Prompt ───────────────────────────────────────────────────
+	// ── Prompt & preset ─────────────────────────────────────────
 	const [manualPrompt, setManualPrompt] = useState("");
 	const [isManualOverride, setIsManualOverride] = useState(false);
 	const [isUploading, setIsUploading] = useState(false);
 	const [copied, setCopied] = useState(false);
+	const [selectedPresetId, setSelectedPresetId] = useState("");
+	const activePreset = useMemo(
+		() => getProductAssetGeneratorPreset(selectedPresetId || null),
+		[selectedPresetId],
+	);
+
+	// ── Lightbox ─────────────────────────────────────────────────
+	const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
 	const packagePromptText =
 		workspacePackage?.prompt_text ||
@@ -460,6 +475,7 @@ export default function IMGModule({
 								selectedId={selectedSubjectId}
 								onSelect={setSelectedSubjectId}
 								badge="CHARACTER_REFERENCE"
+								onImageClick={setLightboxUrl}
 							/>
 							<CLAssetPicker
 								label="Scene"
@@ -468,6 +484,7 @@ export default function IMGModule({
 								selectedId={selectedSceneId}
 								onSelect={setSelectedSceneId}
 								badge="SCENE_CONTEXT_REFERENCE"
+								onImageClick={setLightboxUrl}
 							/>
 							<CLAssetPicker
 								label="Style"
@@ -476,6 +493,7 @@ export default function IMGModule({
 								selectedId={selectedStyleId}
 								onSelect={setSelectedStyleId}
 								badge="STYLE_REFERENCE"
+								onImageClick={setLightboxUrl}
 							/>
 						</div>
 						{/* Preview of resolved slots */}
@@ -490,11 +508,17 @@ export default function IMGModule({
 										<div key={title} className="space-y-1">
 											<div className="text-[9px] uppercase tracking-[0.14em] text-slate-500">{title}</div>
 											{asset.previewUrl ? (
-												<img
-													src={asset.previewUrl}
-													alt={title}
-													className="h-20 w-full rounded-xl border border-slate-700 object-cover"
-												/>
+												<div className="group relative">
+													<img
+														src={asset.previewUrl}
+														alt={title}
+														className="h-20 w-full cursor-zoom-in rounded-xl border border-slate-700 object-cover transition-opacity group-hover:opacity-80"
+														onClick={() => setLightboxUrl(asset.previewUrl!)}
+													/>
+													<div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
+														<ZoomIn size={20} className="text-white drop-shadow" />
+													</div>
+												</div>
 											) : (
 												<div className="flex h-20 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-[10px] text-slate-500">
 													{asset.fileName}
@@ -526,6 +550,7 @@ export default function IMGModule({
 								accentClassName="group-hover:bg-blue-500/10 group-hover:text-blue-400"
 								uploadTitle="Upload subject reference"
 								onFileChange={(e) => handleFileChange("subject", e)}
+								onImageClick={setLightboxUrl}
 							/>
 							<WorkspaceImageAssetSlot
 								key={sceneAsset?.assetFingerprint ?? sceneAsset?.previewUrl ?? "scene-empty"}
@@ -536,6 +561,7 @@ export default function IMGModule({
 								accentClassName="group-hover:bg-purple-500/10 group-hover:text-purple-400"
 								uploadTitle="Upload scene reference"
 								onFileChange={(e) => handleFileChange("scene", e)}
+								onImageClick={setLightboxUrl}
 							/>
 							<WorkspaceImageAssetSlot
 								key={styleAsset?.assetFingerprint ?? styleAsset?.previewUrl ?? "style-empty"}
@@ -546,6 +572,7 @@ export default function IMGModule({
 								accentClassName="group-hover:bg-pink-500/10 group-hover:text-pink-400"
 								uploadTitle="Upload style reference"
 								onFileChange={(e) => handleFileChange("style", e)}
+								onImageClick={setLightboxUrl}
 							/>
 						</div>
 					</div>
@@ -556,7 +583,7 @@ export default function IMGModule({
 			<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
 				<div className="mb-4 flex items-center justify-between gap-3">
 					<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
-						2. Prompt
+						2. Prompt &amp; Preset
 					</div>
 					{/* Copy to Prompt Bank button */}
 					{manualPrompt ? (
@@ -572,6 +599,50 @@ export default function IMGModule({
 							{copied ? <Check size={11} /> : <Copy size={11} />}
 							{copied ? "Copied!" : "Copy to Prompt Bank"}
 						</button>
+					) : null}
+				</div>
+
+				{/* Preset selector */}
+				<div className="mb-4">
+					<div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+						Preset Setting
+					</div>
+					<select
+						value={selectedPresetId}
+						onChange={(e) => setSelectedPresetId(e.target.value)}
+						className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-[11px] text-slate-200 focus:border-blue-500 focus:outline-none"
+					>
+						<option value="">— No preset · tulis prompt manual —</option>
+						{(["PRODUCT_ONLY", "HUMAN_PLUS_PRODUCT", "PRODUCT_PLUS_SCENE", "CONSISTENT_CHARACTER"] as const).map((family) => {
+							const items = PRODUCT_ASSET_GENERATOR_PRESETS.filter((p) => p.family === family);
+							if (!items.length) return null;
+							const familyLabel: Record<string, string> = {
+								PRODUCT_ONLY: "Product Only",
+								HUMAN_PLUS_PRODUCT: "Human + Product",
+								PRODUCT_PLUS_SCENE: "Product + Scene",
+								CONSISTENT_CHARACTER: "Consistent Character",
+							};
+							return (
+								<optgroup key={family} label={familyLabel[family]}>
+									{items.map((p) => (
+										<option key={p.id} value={p.id}>
+											{p.label}
+										</option>
+									))}
+								</optgroup>
+							);
+						})}
+					</select>
+					{activePreset ? (
+						<div className="mt-2 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2 text-[10px] text-blue-200">
+							<span className="font-semibold">{activePreset.label}</span>
+							{" — "}{activePreset.description}
+							{activePreset.requiredInputs.length > 0 ? (
+								<div className="mt-1 text-slate-400">
+									Required: {activePreset.requiredInputs.join(", ")}
+								</div>
+							) : null}
+						</div>
 					) : null}
 				</div>
 
@@ -664,6 +735,32 @@ export default function IMGModule({
 					</div>
 				) : null}
 			</div>
+
+			{/* ── LIGHTBOX ───────────────────────────────────────── */}
+			{lightboxUrl ? (
+				<div
+					className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm"
+					onClick={() => setLightboxUrl(null)}
+					onKeyDown={(e) => e.key === "Escape" && setLightboxUrl(null)}
+					role="dialog"
+					aria-modal="true"
+					tabIndex={-1}
+				>
+					<img
+						src={lightboxUrl}
+						alt="Preview"
+						className="max-h-[90vh] max-w-[90vw] rounded-2xl border border-slate-700 object-contain shadow-2xl"
+						onClick={(e) => e.stopPropagation()}
+					/>
+					<button
+						type="button"
+						className="absolute right-4 top-4 rounded-full border border-slate-600 bg-slate-900 p-2 text-slate-300 transition-colors hover:bg-slate-800 hover:text-white"
+						onClick={() => setLightboxUrl(null)}
+					>
+						<X size={16} />
+					</button>
+				</div>
+			) : null}
 		</div>
 	);
 }
