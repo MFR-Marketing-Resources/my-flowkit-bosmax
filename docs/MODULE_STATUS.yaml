@@ -49,6 +49,8 @@ domains:
       - dashboard/src/pages/CreativeLibraryPage.tsx
       - dashboard/src/pages/OperatorPage.tsx
       - dashboard/src/pages/ProductAssetGeneratorPage.tsx
+      - dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx
+      - dashboard/src/components/product-asset-generator/presets.ts
       - dashboard/src/pages/ProductsSalesAnalyzerPage.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
       - dashboard/src/pages/ProductRegistrationPage.tsx
@@ -89,6 +91,7 @@ domains:
       - tests/api/test_flow_request_lineage_payload_api.py
       - tests/api/test_claim_safe_rewrite_api.py
       - tests/ui/test_creative_library_page_ui_contract.py
+      - tests/ui/test_product_asset_generator_ui_contract.py
       - tests/ui/test_f2v_ugc_prompt_compiler_ui_contract.py
       - tests/ui/test_fastmoss_product_visibility_ui_contract.py
       - tests/ui/test_i2v_creative_asset_resolver_ui_contract.py

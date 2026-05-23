@@ -1,20 +1,30 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { runProductAssetGeneratorPreview } from "../api/productAssetGenerator";
 import ProductAssetGeneratorForm, {
 	buildProductAssetGeneratorRequest,
 } from "../components/product-asset-generator/ProductAssetGeneratorForm";
 import ProductAssetGeneratorResultPanel from "../components/product-asset-generator/ProductAssetGeneratorResultPanel";
+import {
+	getProductAssetGeneratorPreset,
+	PRODUCT_ASSET_GENERATOR_PRESETS,
+} from "../components/product-asset-generator/presets";
 import type {
 	ProductAssetGeneratorRequest,
 	ProductAssetGeneratorResponse,
 } from "../types";
 
+export type { ProductAssetGeneratorPresetDefinition } from "../components/product-asset-generator/presets";
+// Re-export preset registry so existing imports from this page continue to work
+export { getProductAssetGeneratorPreset, PRODUCT_ASSET_GENERATOR_PRESETS };
+
 type ProductAssetGeneratorDraft = ProductAssetGeneratorRequest & {
 	product_payload_text: string;
 };
 
-function createInitialDraft(): ProductAssetGeneratorDraft {
+function createInitialDraft(
+	preset: { draftPatch?: Partial<ProductAssetGeneratorDraft> } | null = null,
+): ProductAssetGeneratorDraft {
 	return {
 		product_id: "",
 		product_payload_text: "",
@@ -33,13 +43,28 @@ function createInitialDraft(): ProductAssetGeneratorDraft {
 		target_destination_mode: "IMAGE",
 		strict_validation: false,
 		dry_run_only: true,
+		...(preset?.draftPatch || {}),
 	};
 }
 
 export default function ProductAssetGeneratorPage() {
 	const location = useLocation();
-	const [draft, setDraft] =
-		useState<ProductAssetGeneratorDraft>(createInitialDraft);
+	const searchParams = useMemo(
+		() => new URLSearchParams(location.search),
+		[location.search],
+	);
+	// ?preset= hydration: initial preset comes from query param on first load
+	const initialPresetId = searchParams.get("preset");
+	const [selectedPresetId, setSelectedPresetId] = useState<string>(
+		initialPresetId || "",
+	);
+	const activePreset = useMemo(
+		() => getProductAssetGeneratorPreset(selectedPresetId || null),
+		[selectedPresetId],
+	);
+	const [draft, setDraft] = useState<ProductAssetGeneratorDraft>(() =>
+		createInitialDraft(activePreset),
+	);
 	const [result, setResult] = useState<ProductAssetGeneratorResponse | null>(
 		null,
 	);
@@ -49,9 +74,21 @@ export default function ProductAssetGeneratorPage() {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const creativeLibraryRoute =
-		new URLSearchParams(location.search).get("portal") === "side"
+		searchParams.get("portal") === "side"
 			? "/assets/creative-library?portal=side"
 			: "/assets/creative-library";
+
+	// When preset changes, patch the draft with preset defaults while preserving product selection
+	useEffect(() => {
+		setDraft((current) => ({
+			...createInitialDraft(activePreset),
+			product_id: current.product_id,
+			product_payload_text: current.product_payload_text,
+		}));
+		setResult(null);
+		setAnalysisSignature(null);
+		setError(null);
+	}, [activePreset]);
 
 	async function handleSubmit() {
 		setLoading(true);
@@ -71,6 +108,10 @@ export default function ProductAssetGeneratorPage() {
 			setLoading(false);
 		}
 	}
+
+	// Block submit when the active preset requires a database product but none is selected
+	const presetRequiresProductButMissing =
+		Boolean(activePreset?.requiresDatabaseProduct) && !draft.product_id;
 
 	return (
 		<div className="flex flex-col gap-6 p-4 md:p-6">
@@ -110,9 +151,24 @@ export default function ProductAssetGeneratorPage() {
 						Open Creative Library
 					</Link>
 				</div>
+				<div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/60 px-3 py-3 text-[11px] text-slate-400">
+					<span className="font-semibold text-slate-300">
+						Preset Guided Workflow:
+					</span>{" "}
+					Database product truth remains the primary source for scale truth,
+					product physics, handling cues, and label-safe framing. The Generation
+					Preset dropdown in the form below configures the preview lane without
+					replacing product row authority.
+					{activePreset ? (
+						<span className="ml-2 inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
+							ACTIVE PRESET: {activePreset.label}
+						</span>
+					) : null}
+				</div>
 			</section>
 
 			<div className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,1fr)]">
+				{/* LEFT: inputs (Step 1) → preset dropdown (Step 2) → submit (Step 3) */}
 				<ProductAssetGeneratorForm
 					draft={draft}
 					onChange={(patch) =>
@@ -127,7 +183,12 @@ export default function ProductAssetGeneratorPage() {
 					error={error}
 					result={result}
 					analysisSignature={analysisSignature}
+					activePreset={activePreset}
+					selectedPresetId={selectedPresetId}
+					onPresetChange={(presetId) => setSelectedPresetId(presetId)}
+					presetRequiresProductButMissing={presetRequiresProductButMissing}
 				/>
+				{/* Step 4: Result panel */}
 				<ProductAssetGeneratorResultPanel result={result} />
 			</div>
 		</div>

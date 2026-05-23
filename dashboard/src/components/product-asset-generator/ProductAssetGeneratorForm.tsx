@@ -7,6 +7,7 @@ import type {
 	ProductAssetGeneratorResponse,
 } from "../../types";
 import { usePromptToolHydration } from "../prompt-tool/usePromptToolHydration";
+import { PRODUCT_ASSET_GENERATOR_PRESETS } from "./presets";
 
 type ProductAssetGeneratorDraft = ProductAssetGeneratorRequest & {
 	product_payload_text: string;
@@ -1173,6 +1174,10 @@ export default function ProductAssetGeneratorForm({
 	error,
 	result,
 	analysisSignature,
+	activePreset,
+	selectedPresetId,
+	onPresetChange,
+	presetRequiresProductButMissing,
 }: {
 	draft: ProductAssetGeneratorDraft;
 	onChange: (patch: Partial<ProductAssetGeneratorDraft>) => void;
@@ -1181,6 +1186,10 @@ export default function ProductAssetGeneratorForm({
 	error: string | null;
 	result: ProductAssetGeneratorResponse | null;
 	analysisSignature: string | null;
+	activePreset: { id: string; label: string; description: string; requiresDatabaseProduct: boolean; guidance: string } | null;
+	selectedPresetId: string;
+	onPresetChange: (presetId: string) => void;
+	presetRequiresProductButMissing: boolean;
 }) {
 	const hydration = usePromptToolHydration();
 	const navigate = useNavigate();
@@ -1355,10 +1364,12 @@ export default function ProductAssetGeneratorForm({
 						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
 							Primary Workflow
 						</div>
-							<FieldShell
-								label="Product Selector"
-								helper="Selecting a product uses product_id preview authority. Inline payload JSON is cleared so Analyze Product resolves fresh intelligence and physics from the backend."
-							>
+
+						{/* Step 1: Product / Input source */}
+						<FieldShell
+							label="Product Selector"
+							helper="Selecting a product uses product_id preview authority. Inline payload JSON is cleared so Analyze Product resolves fresh intelligence and physics from the backend."
+						>
 							<SelectField
 								value={draft.product_id || ""}
 								onChange={(value) => onChange({ product_id: value })}
@@ -1366,6 +1377,53 @@ export default function ProductAssetGeneratorForm({
 								placeholder="Select a product to analyze"
 							/>
 						</FieldShell>
+
+						{/* Step 2: Generation Preset */}
+						<FieldShell
+							label="Generation Preset"
+							helper="Select a governed preset to configure the preview lane. If the preset carries a product in hand, pick a database product first. Preset selection does not replace database product truth — the product row above remains sovereign for scale, packaging, and physics."
+						>
+							<select
+								value={selectedPresetId}
+								onChange={(e) => onPresetChange(e.target.value)}
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+							>
+								<option value="">(none / manual)</option>
+								{PRODUCT_ASSET_GENERATOR_PRESETS.map((preset) => (
+									<option key={preset.id} value={preset.id}>
+										{preset.label} — {preset.description}
+									</option>
+								))}
+							</select>
+						</FieldShell>
+
+						{/* Active preset summary */}
+						{activePreset ? (
+							<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+								<div className="flex flex-wrap items-center gap-2">
+									<span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
+										ACTIVE PRESET: {activePreset.label}
+									</span>
+									{activePreset.requiresDatabaseProduct ? (
+										<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-100">
+											DATABASE PRODUCT REQUIRED
+										</span>
+									) : null}
+								</div>
+								<div className="mt-2 text-[11px] text-amber-100">
+									{activePreset.guidance}
+								</div>
+							</div>
+						) : null}
+
+						{/* Warning: preset requires product but none selected */}
+						{presetRequiresProductButMissing ? (
+							<div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
+								This preset requires a database product. Please select a product above.
+							</div>
+						) : null}
+
+						{/* Step 3: Submit */}
 						<div className="flex flex-wrap gap-3">
 							<button
 								type="button"
@@ -1374,7 +1432,8 @@ export default function ProductAssetGeneratorForm({
 									loading ||
 									!previewRequest ||
 									(!previewRequest.product_id &&
-										!previewRequest.product_payload)
+										!previewRequest.product_payload) ||
+									presetRequiresProductButMissing
 								}
 								className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-xs font-semibold text-blue-200 disabled:opacity-50"
 							>
