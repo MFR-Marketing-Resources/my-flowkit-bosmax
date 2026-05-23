@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { fetchCreativeAssets } from "../../api/creativeAssets";
 import type {
 	BosmaxFieldProvenance,
+	CreativeAsset,
 	Product,
 	ProductAssetGeneratorRequest,
 	ProductAssetGeneratorResponse,
@@ -1186,7 +1188,7 @@ export default function ProductAssetGeneratorForm({
 	error: string | null;
 	result: ProductAssetGeneratorResponse | null;
 	analysisSignature: string | null;
-	activePreset: { id: string; label: string; description: string; requiresDatabaseProduct: boolean; guidance: string } | null;
+	activePreset: { id: string; label: string; description: string; requiresDatabaseProduct: boolean; requiresCharacterReference: boolean; requiresSceneContextReference: boolean; guidance: string } | null;
 	selectedPresetId: string;
 	onPresetChange: (presetId: string) => void;
 	presetRequiresProductButMissing: boolean;
@@ -1194,6 +1196,25 @@ export default function ProductAssetGeneratorForm({
 	const hydration = usePromptToolHydration();
 	const navigate = useNavigate();
 	const [advancedOpen, setAdvancedOpen] = useState(false);
+	const [sceneContextOpen, setSceneContextOpen] = useState(false);
+
+	// Creative Library assets for image reference pickers
+	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
+	const [sceneAssets, setSceneAssets] = useState<CreativeAsset[]>([]);
+	useEffect(() => {
+		fetchCreativeAssets({ semantic_role: "CHARACTER_REFERENCE", status: "ACTIVE", limit: 100 })
+			.then((r) => setCharacterAssets(r.items))
+			.catch(() => {});
+		fetchCreativeAssets({ semantic_role: "SCENE_CONTEXT_REFERENCE", status: "ACTIVE", limit: 100 })
+			.then((r) => setSceneAssets(r.items))
+			.catch(() => {});
+	}, []);
+	const selectedCharacterAsset = characterAssets.find(
+		(a) => a.asset_id === draft.character_reference_asset_id,
+	) ?? null;
+	const selectedSceneAsset = sceneAssets.find(
+		(a) => a.asset_id === draft.scene_context_reference_asset_id,
+	) ?? null;
 	const lastHydratedProductId = useRef<string | null>(null);
 	const previewRequest = useMemo(() => {
 		try {
@@ -1360,29 +1381,177 @@ export default function ProductAssetGeneratorForm({
 
 			<div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
 				<div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-					<div className="space-y-3">
-						<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-							Primary Workflow
+					<div className="space-y-5">
+
+						{/* ── STEP 1: IMAGE INPUTS ──────────────────────────── */}
+						<div>
+							<div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
+								Step 1 — Image Inputs
+							</div>
+
+							{/* 1A: Avatar / Character Reference */}
+							<div className="rounded-2xl border border-slate-700 bg-slate-950 p-3">
+								<div className="flex items-center gap-2">
+									<span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
+										Avatar / Character
+									</span>
+									<span className="rounded-full border border-slate-600 bg-slate-900 px-2 py-0.5 text-[9px] text-slate-400">
+										Required for avatar presets
+									</span>
+								</div>
+								{selectedCharacterAsset ? (
+									<div className="mt-2 flex items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+										{selectedCharacterAsset.preview_url ? (
+											<img
+												src={selectedCharacterAsset.preview_url}
+												alt={selectedCharacterAsset.display_name}
+												className="h-10 w-10 flex-shrink-0 rounded-lg border border-slate-700 object-cover"
+											/>
+										) : null}
+										<div className="min-w-0 flex-1">
+											<div className="truncate text-xs font-semibold text-slate-100">
+												{selectedCharacterAsset.display_name}
+											</div>
+											<div className="text-[10px] text-slate-400">CHARACTER_REFERENCE</div>
+										</div>
+										<button
+											type="button"
+											onClick={() => onChange({ character_reference_asset_id: null })}
+											className="text-[10px] text-slate-400 hover:text-red-300"
+										>
+											✕ Remove
+										</button>
+									</div>
+								) : null}
+								<select
+									value={draft.character_reference_asset_id ?? ""}
+									onChange={(e) =>
+										onChange({ character_reference_asset_id: e.target.value || null })
+									}
+									className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+								>
+									<option value="">— Pick avatar from Creative Library —</option>
+									{characterAssets.map((a) => (
+										<option key={a.asset_id} value={a.asset_id}>
+											{a.display_name}
+										</option>
+									))}
+								</select>
+								{characterAssets.length === 0 ? (
+									<div className="mt-1 text-[10px] text-slate-500">
+										No avatar images yet. Upload first in Creative Library → CHARACTER_REFERENCE.
+									</div>
+								) : null}
+							</div>
+
+							{/* 1B: Product */}
+							<div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-3">
+								<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
+									Product
+								</div>
+								<FieldShell
+									label="Database Product"
+									helper="Selecting a product uses product_id authority — scale truth, product physics, and label-safe framing all come from the product row."
+								>
+									<SelectField
+										value={draft.product_id || ""}
+										onChange={(value) => onChange({ product_id: value })}
+										options={productOptions}
+										placeholder="Select a product"
+									/>
+								</FieldShell>
+							</div>
+
+							{/* 1C: Scene Context (Optional — character consistency) */}
+							<div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-3">
+								<button
+									type="button"
+									onClick={() => setSceneContextOpen((v) => !v)}
+									className="flex w-full items-center justify-between text-left"
+								>
+									<div className="flex items-center gap-2">
+										<span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
+											Scene Context
+										</span>
+										<span className="rounded-full border border-slate-600 bg-slate-900 px-2 py-0.5 text-[9px] text-slate-400">
+											Optional
+										</span>
+										{selectedSceneAsset ? (
+											<span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[9px] font-semibold text-blue-200">
+												{selectedSceneAsset.display_name}
+											</span>
+										) : null}
+									</div>
+									<span className="text-[10px] text-slate-500">
+										{sceneContextOpen ? "▲ hide" : "▼ show"}
+									</span>
+								</button>
+								{!sceneContextOpen ? (
+									<div className="mt-1 text-[10px] text-slate-500">
+										Use for character consistency — anchor the same character in a new outfit or environment.
+									</div>
+								) : null}
+								{sceneContextOpen ? (
+									<div className="mt-3 space-y-2">
+										<div className="text-[10px] text-slate-400">
+											Tujuan: Kekalkan konsistensi karakter (contoh: tukar outfit atau latar belakang
+											untuk Vivvian, tapi muka dan badan kekal sama).
+										</div>
+										{selectedSceneAsset ? (
+											<div className="flex items-center gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 px-3 py-2">
+												{selectedSceneAsset.preview_url ? (
+													<img
+														src={selectedSceneAsset.preview_url}
+														alt={selectedSceneAsset.display_name}
+														className="h-10 w-10 flex-shrink-0 rounded-lg border border-slate-700 object-cover"
+													/>
+												) : null}
+												<div className="min-w-0 flex-1">
+													<div className="truncate text-xs font-semibold text-slate-100">
+														{selectedSceneAsset.display_name}
+													</div>
+													<div className="text-[10px] text-slate-400">SCENE_CONTEXT_REFERENCE</div>
+												</div>
+												<button
+													type="button"
+													onClick={() => onChange({ scene_context_reference_asset_id: null })}
+													className="text-[10px] text-slate-400 hover:text-red-300"
+												>
+													✕ Remove
+												</button>
+											</div>
+										) : null}
+										<select
+											value={draft.scene_context_reference_asset_id ?? ""}
+											onChange={(e) =>
+												onChange({
+													scene_context_reference_asset_id: e.target.value || null,
+												})
+											}
+											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+										>
+											<option value="">— Pick scene from Creative Library —</option>
+											{sceneAssets.map((a) => (
+												<option key={a.asset_id} value={a.asset_id}>
+													{a.display_name}
+												</option>
+											))}
+										</select>
+										{sceneAssets.length === 0 ? (
+											<div className="text-[10px] text-slate-500">
+												No scene images yet. Upload in Creative Library → SCENE_CONTEXT_REFERENCE.
+											</div>
+										) : null}
+									</div>
+								) : null}
+							</div>
 						</div>
 
-						{/* Step 1: Product / Input source */}
-						<FieldShell
-							label="Product Selector"
-							helper="Selecting a product uses product_id preview authority. Inline payload JSON is cleared so Analyze Product resolves fresh intelligence and physics from the backend."
-						>
-							<SelectField
-								value={draft.product_id || ""}
-								onChange={(value) => onChange({ product_id: value })}
-								options={productOptions}
-								placeholder="Select a product to analyze"
-							/>
-						</FieldShell>
-
-						{/* Step 2: Generation Preset */}
-						<FieldShell
-							label="Generation Preset"
-							helper="Select a governed preset to configure the preview lane. If the preset carries a product in hand, pick a database product first. Preset selection does not replace database product truth — the product row above remains sovereign for scale, packaging, and physics."
-						>
+						{/* ── STEP 2: GENERATION PRESET ──────────────────────── */}
+						<div>
+							<div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
+								Step 2 — Generation Preset
+							</div>
 							<select
 								value={selectedPresetId}
 								onChange={(e) => onPresetChange(e.target.value)}
@@ -1395,73 +1564,88 @@ export default function ProductAssetGeneratorForm({
 									</option>
 								))}
 							</select>
-						</FieldShell>
 
-						{/* Active preset summary */}
-						{activePreset ? (
-							<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
-								<div className="flex flex-wrap items-center gap-2">
-									<span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
-										ACTIVE PRESET: {activePreset.label}
-									</span>
-									{activePreset.requiresDatabaseProduct ? (
-										<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-100">
-											DATABASE PRODUCT REQUIRED
+							{/* Active preset card */}
+							{activePreset ? (
+								<div className="mt-2 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+									<div className="flex flex-wrap gap-2">
+										<span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
+											{activePreset.label}
 										</span>
-									) : null}
+										{activePreset.requiresDatabaseProduct ? (
+											<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-100">
+												Needs DB product
+											</span>
+										) : null}
+										{activePreset.requiresCharacterReference ? (
+											<span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-blue-200">
+												Needs avatar image
+											</span>
+										) : null}
+									</div>
+									<div className="mt-2 text-[11px] text-slate-300">
+										{activePreset.guidance}
+									</div>
 								</div>
-								<div className="mt-2 text-[11px] text-amber-100">
-									{activePreset.guidance}
+							) : null}
+
+							{/* Blocker warnings */}
+							{presetRequiresProductButMissing ? (
+								<div className="mt-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
+									⚠ Preset ini memerlukan database product. Sila pilih produk di Step 1.
 								</div>
-							</div>
-						) : null}
-
-						{/* Warning: preset requires product but none selected */}
-						{presetRequiresProductButMissing ? (
-							<div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
-								This preset requires a database product. Please select a product above.
-							</div>
-						) : null}
-
-						{/* Step 3: Submit */}
-						<div className="flex flex-wrap gap-3">
-							<button
-								type="button"
-								onClick={onSubmit}
-								disabled={
-									loading ||
-									!previewRequest ||
-									(!previewRequest.product_id &&
-										!previewRequest.product_payload) ||
-									presetRequiresProductButMissing
-								}
-								className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-xs font-semibold text-blue-200 disabled:opacity-50"
-							>
-								{loading ? "Analyzing Product..." : "Analyze Product"}
-							</button>
-							<button
-								type="button"
-								onClick={() =>
-									navigate("/prompt-preview", {
-										state: buildPromptPreviewHandoff({
-											draft,
-											selectedProduct,
-											recommendedMode: recommended_first_mode,
-											inlinePayload,
-											result,
-										}),
-									})
-								}
-								disabled={!profileVisible}
-								className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-200 disabled:opacity-50"
-							>
-								Use this profile in Prompt Preview
-							</button>
+							) : null}
+							{activePreset?.requiresCharacterReference &&
+							!draft.character_reference_asset_id ? (
+								<div className="mt-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+									⚠ Preset ini memerlukan avatar image. Sila pilih karakter di Step 1.
+								</div>
+							) : null}
 						</div>
-						<div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-300">
-							Dashboard tools are preview-only. No Google Flow execution, no
-							Chrome extension execution, no batch execution, and no generated
-							asset write happen from this cockpit.
+
+						{/* ── STEP 3: SUBMIT ─────────────────────────────────── */}
+						<div>
+							<div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
+								Step 3 — Analyze
+							</div>
+							<div className="flex flex-wrap gap-3">
+								<button
+									type="button"
+									onClick={onSubmit}
+									disabled={
+										loading ||
+										!previewRequest ||
+										(!previewRequest.product_id &&
+											!previewRequest.product_payload) ||
+										presetRequiresProductButMissing ||
+										Boolean(
+											activePreset?.requiresCharacterReference &&
+												!draft.character_reference_asset_id,
+										)
+									}
+									className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-5 py-2.5 text-xs font-semibold text-blue-200 disabled:opacity-40"
+								>
+									{loading ? "Analyzing..." : "Analyze Product"}
+								</button>
+								<button
+									type="button"
+									onClick={() =>
+										navigate("/prompt-preview", {
+											state: buildPromptPreviewHandoff({
+												draft,
+												selectedProduct,
+												recommendedMode: recommended_first_mode,
+												inlinePayload,
+												result,
+											}),
+										})
+									}
+									disabled={!profileVisible}
+									className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-semibold text-emerald-200 disabled:opacity-40"
+								>
+									Use in Prompt Preview
+								</button>
+							</div>
 						</div>
 					</div>
 

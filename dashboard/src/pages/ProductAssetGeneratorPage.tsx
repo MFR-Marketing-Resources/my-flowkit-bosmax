@@ -116,54 +116,26 @@ export default function ProductAssetGeneratorPage() {
 	return (
 		<div className="flex flex-col gap-6 p-4 md:p-6">
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
-				<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
-					Product Asset Generator Preview
-				</div>
-				<div className="mt-2 max-w-4xl text-sm text-slate-300">
-					Product row or payload becomes preview-only asset suggestions and
-					prompt suggestions. No real image generation, no upload, no Google
-					Flow execution, and no Chrome extension execution happen here.
-				</div>
-				<div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-					{[
-						"Preview is offline-only",
-						"No real image generation",
-						"No Google Flow execution",
-						"No Chrome extension execution",
-					].map((item) => (
-						<div
-							key={item}
-							className="rounded-2xl border border-slate-800 bg-slate-900/60 px-3 py-3 text-[11px] text-slate-300"
-						>
-							{item}
+				<div className="flex flex-wrap items-center justify-between gap-3">
+					<div>
+						<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
+							Product Asset Generator
 						</div>
-					))}
-				</div>
-				<div className="mt-3 flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-300 md:flex-row md:items-center md:justify-between">
-					<div className="bosmax-wrap-safe">
-						This page is preview-only. To persist reusable generated/external
-						images, upload or save them in Creative Library.
+						<div className="mt-1 text-[11px] text-slate-400">
+							Preview-only · No image generation · No Flow execution
+							{activePreset ? (
+								<span className="ml-2 inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-emerald-200">
+									{activePreset.label}
+								</span>
+							) : null}
+						</div>
 					</div>
 					<Link
 						to={creativeLibraryRoute}
-						className="inline-flex items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200"
+						className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 hover:border-blue-500/40 hover:text-blue-200"
 					>
-						Open Creative Library
+						Creative Library →
 					</Link>
-				</div>
-				<div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/60 px-3 py-3 text-[11px] text-slate-400">
-					<span className="font-semibold text-slate-300">
-						Preset Guided Workflow:
-					</span>{" "}
-					Database product truth remains the primary source for scale truth,
-					product physics, handling cues, and label-safe framing. The Generation
-					Preset dropdown in the form below configures the preview lane without
-					replacing product row authority.
-					{activePreset ? (
-						<span className="ml-2 inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
-							ACTIVE PRESET: {activePreset.label}
-						</span>
-					) : null}
 				</div>
 			</section>
 

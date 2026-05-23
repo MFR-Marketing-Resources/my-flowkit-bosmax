@@ -525,8 +525,14 @@ export default function CreativeLibraryPage() {
 								<>
 									{selectedAsset.preview_url ? (
 										<div
+											role="button"
+											tabIndex={0}
 											className="group relative cursor-zoom-in overflow-hidden rounded-2xl border border-slate-800"
 											onClick={() => setLightboxUrl(selectedAsset.preview_url)}
+											onKeyDown={(e) => {
+												if (e.key === "Enter" || e.key === " ")
+													setLightboxUrl(selectedAsset.preview_url);
+											}}
 										>
 											<img
 												src={selectedAsset.preview_url}

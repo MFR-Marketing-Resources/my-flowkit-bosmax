@@ -1516,6 +1516,13 @@ export interface ProductAssetGeneratorRequest {
 	target_destination_mode?: string | null;
 	strict_validation?: boolean;
 	dry_run_only: boolean;
+	// Image reference slots — Creative Library assets
+	character_reference_asset_id?: string | null;
+	scene_context_reference_asset_id?: string | null;
+	style_reference_asset_id?: string | null;
+	// Character consistency mode: when true + scene_context_reference provided,
+	// the character image anchors identity and scene becomes the new environment.
+	character_anchor_mode?: boolean;
 }
 
 export interface ProductAssetGeneratorResponse {
