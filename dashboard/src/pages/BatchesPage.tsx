@@ -629,7 +629,7 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
   return (
     <div className="flex flex-col lg:flex-row gap-6 min-h-0 h-full">
       {/* Left: Config panel */}
-      <div className="lg:w-[420px] shrink-0 flex flex-col gap-5">
+      <div className="lg:w-[420px] shrink-0 flex flex-col gap-5 min-h-0 overflow-y-auto custom-scrollbar pb-4">
         {/* Product */}
         <section className="p-5 rounded-xl border border-white/5 bg-surface shadow-xl flex flex-col gap-4">
           <h2 className="text-sm font-bold flex items-center gap-2 text-white/90">
