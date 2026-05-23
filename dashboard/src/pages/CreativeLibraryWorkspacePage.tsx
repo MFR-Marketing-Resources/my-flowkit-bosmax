@@ -94,7 +94,7 @@ export default function CreativeLibraryWorkspacePage() {
 		}
 		setIsLoadingAsset(true);
 		setError(null);
-		void fetchCreativeAssets({ limit: 1000 })
+		void fetchCreativeAssets({ limit: 500 })
 			.then((response) => {
 				const found = response.items.find((item) => item.asset_id === editId);
 				if (found) {
