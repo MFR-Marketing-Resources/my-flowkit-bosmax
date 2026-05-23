@@ -294,9 +294,59 @@
     return /(^|\s)[1-4]x(\s|$)|x[1-4]/i.test(String(text || ''));
   }
 
+  function collectComposerContextRoots(composer = null, maxDepth = 4) {
+    const roots = [];
+    const seen = new Set();
+    let current = composer || findComposerElement();
+    let depth = 0;
+
+    while (current && depth <= maxDepth) {
+      if (!seen.has(current)) {
+        roots.push(current);
+        seen.add(current);
+      }
+      current = current.parentElement;
+      depth += 1;
+    }
+
+    return roots;
+  }
+
+  function looksLikeGenerateButton(target) {
+    if (!target || !isVisible(target)) return false;
+    const text = normalizeText(target.textContent || '');
+    if (text.includes('Create') || text.includes('Generate') || text.includes('arrow_forwardCreate')) return true;
+    const aria = normalizeText(target.getAttribute('aria-label') || '');
+    return aria.includes('Create') || aria.includes('Generate');
+  }
+
+  function looksLikeExcludedCreateButton(target) {
+    if (!target) return false;
+    const text = normalizeText(target.textContent || target.getAttribute('aria-label') || '').toLowerCase();
+    if (!text) return false;
+    return text.includes('create tool')
+      || text.includes('create with flow')
+      || text.includes('create new project')
+      || text === 'create new'
+      || text.includes('create project');
+  }
+
+  function isNearComposerDock(target, composer) {
+    if (!target || !composer || !isVisible(target) || !isVisible(composer)) return false;
+    const targetRect = target.getBoundingClientRect();
+    const composerRect = composer.getBoundingClientRect();
+    const verticalDistance = Math.abs((targetRect.top + targetRect.height / 2) - (composerRect.top + composerRect.height / 2));
+    const horizontalMatch = targetRect.left >= composerRect.left - 80 && targetRect.right <= composerRect.right + 240;
+    return verticalDistance <= Math.max(composerRect.height, targetRect.height) * 1.5 && horizontalMatch;
+  }
+
   function findFlowConfigLauncher() {
     const selectors = 'button, [role="button"], [role="tab"], [aria-haspopup], span, div';
-    const candidates = Array.from(document.querySelectorAll(selectors));
+    const composer = findComposerElement();
+    const scopedCandidates = collectComposerContextRoots(composer)
+      .flatMap((root) => Array.from(root.querySelectorAll(selectors)));
+    const globalCandidates = Array.from(document.querySelectorAll(selectors));
+    const candidates = Array.from(new Set([...scopedCandidates, ...globalCandidates]));
     const preferred = [];
     const fallback = [];
 
@@ -312,7 +362,7 @@
       const targetText = normalizeText(target.textContent || target.getAttribute('aria-label') || '');
       const rect = target.getBoundingClientRect();
       const targetTooLarge = rect.width > 520 || rect.height > 120 || targetText.length > 120;
-      const targetLooksLikePageShell = /(what do you want to create|double check it|go back|search|sort & filter|add media)/i.test(targetText);
+      const targetLooksLikePageShell = /(what do you want to create|double check it|go back|search|sort & filter|add media|all media|characters|scenes|tools|trash|collapse)/i.test(targetText);
       if (!targetText || targetTooLarge || targetLooksLikePageShell) continue;
       if (looksLikeModelChip || looksLikeConfigChip) {
         preferred.push({ target, targetText, rect });
@@ -797,16 +847,40 @@
       return { ok: true, config, topBtn: null, subBtn: null, observed };
     }
 
-    let topBtn = findElementByText('button, [role="tab"], [role="button"], span', config.topMode);
-    let subBtn = config.subMode
-      ? findElementByText('button, [role="tab"], [role="button"], span', config.subMode)
-      : null;
+    const modeSelector = 'button, [role="tab"], [role="button"], [role="option"], span, div';
+    let topBtn = null;
+    let subBtn = null;
+    let source = 'global';
+
+    const assignVisibleControls = (root = null, nextSource = 'global') => {
+      const scopedTop = root
+        ? findElementByTextInRoot(root, modeSelector, config.topMode)
+        : findElementByText(modeSelector, config.topMode);
+      const scopedSub = config.subMode
+        ? (root
+          ? findElementByTextInRoot(root, modeSelector, config.subMode)
+          : findElementByText(modeSelector, config.subMode))
+        : null;
+
+      topBtn = scopedTop;
+      subBtn = scopedSub;
+      source = nextSource;
+    };
+
+    assignVisibleControls(null, 'global');
+
+    const needsSurface = !topBtn || !isVisible(topBtn) || (config.subMode && (!subBtn || !isVisible(subBtn)));
+    if (needsSurface) {
+      if (await openFlowConfigPanel()) {
+        const surface = findOpenFlowConfigSurface();
+        if (surface) {
+          assignVisibleControls(surface, 'config_surface');
+        }
+      }
+    }
 
     if ((!topBtn || !isVisible(topBtn) || (config.subMode && (!subBtn || !isVisible(subBtn)))) && await openCreateTypeChooser()) {
-      topBtn = findElementByText('button, [role="tab"], [role="button"], span', config.topMode);
-      subBtn = config.subMode
-        ? findElementByText('button, [role="tab"], [role="button"], span', config.subMode)
-        : null;
+      assignVisibleControls(null, 'create_type_chooser');
     }
 
     if (!topBtn || !isVisible(topBtn)) {
@@ -817,7 +891,7 @@
       return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: `${config.subMode} control not visible after opening type selector` };
     }
 
-    return { ok: true, config, topBtn, subBtn };
+    return { ok: true, config, topBtn, subBtn, source };
   }
 
   function resolveRequestedCount(job) {
@@ -1208,16 +1282,19 @@
   }
 
   function findGenerateButtonNearComposer() {
+    const composer = findComposerElement();
+    const composerRoots = collectComposerContextRoots(composer);
+    const scopedButtons = composerRoots
+      .flatMap((root) => Array.from(root.querySelectorAll('button, [role="button"]')));
+    const scopedMatch = scopedButtons.find((btn) => looksLikeGenerateButton(btn));
+    if (scopedMatch) return scopedMatch;
+
     // 1. Target by specific text found in diagnostic
     const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
-    const createBtn = buttons.find(btn => {
-      if (!isVisible(btn)) return false;
-      const text = normalizeText(btn.textContent);
-      // arrow_forward Create or just Create
-      if (text.includes('Create') || text.includes('Generate')) return true;
-      const aria = btn.getAttribute('aria-label') || '';
-      if (aria.includes('Create') || aria.includes('Generate')) return true;
-      return false;
+    const createBtn = buttons.find((btn) => {
+      if (!looksLikeGenerateButton(btn) || looksLikeExcludedCreateButton(btn)) return false;
+      if (!composer) return true;
+      return composerRoots.some((root) => root.contains(btn)) || isNearComposerDock(btn, composer);
     });
     if (createBtn) return createBtn;
 
@@ -1233,7 +1310,6 @@
     }
 
     // 3. Fallback to proximity to composer
-    const composer = findComposerElement();
     if (composer) {
       let current = composer.parentElement;
       for (let i = 0; i < 3 && current; i++) {
@@ -3591,7 +3667,7 @@
       logStage(STAGES.ASSETS_VERIFIED, assetVerification.status);
 
       // 7. Composer Setup (ONLY after assets)
-      const composer = document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
+      const composer = findComposerElement();
       if (!composer) {
         logStage(STAGES.PROMPT_FIELD_FOUND, 'NO');
         throw new Error('PROMPT_FIELD_NOT_FOUND');
@@ -3784,6 +3860,7 @@
   if (FLOW_KIT_ENABLE_TEST_HOOKS) {
     window.__FLOWKIT_TEST_HOOKS__ = {
       findVisibleAssetPickerModal,
+      findGenerateButtonNearComposer,
       waitForAssetPickerModal,
       waitForUploadAcceptance,
       resolveAssetPickerTargets,

@@ -68,6 +68,7 @@ domains:
       - extension/popup.html
       - extension/popup.js
       - dashboard/src/types/index.ts
+      - scripts/test-f2v-asset-picker-modal.js
       - scripts/test-side-panel-route-wiring.js
       - tests/unit/test_approved_product_package_service.py
       - tests/unit/test_prompt_package_dryrun_service.py

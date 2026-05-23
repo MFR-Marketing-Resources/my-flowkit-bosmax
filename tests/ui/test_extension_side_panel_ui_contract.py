@@ -101,6 +101,32 @@ def test_flow_dom_f2v_config_launcher_accepts_preselection_counts_before_panel_o
 	assert "hasFlowAspectToken(text)" in launcher_section
 	assert "text.includes('1x')" not in launcher_section
 	assert "hasFlowCountToken(text) && hasFlowAspectToken(text)" in generic_launcher_section
+	assert "collectComposerContextRoots(composer)" in generic_launcher_section
+
+
+def test_flow_dom_authenticated_editor_prefers_composer_scoped_selectors_before_global_fallbacks():
+	dom_source = _read("extension/content-flow-dom.js")
+	generate_section = _section(
+		dom_source,
+		"function findGenerateButtonNearComposer() {",
+		"function findComposerElement() {",
+	)
+	mode_section = _section(
+		dom_source,
+		"async function ensureModeControlsVisible(mode) {",
+		"function resolveRequestedCount(job) {",
+	)
+
+	assert "function collectComposerContextRoots(composer = null, maxDepth = 4) {" in dom_source
+	assert "function looksLikeGenerateButton(target) {" in dom_source
+	assert "function looksLikeExcludedCreateButton(target) {" in dom_source
+	assert "function isNearComposerDock(target, composer) {" in dom_source
+	assert "collectComposerContextRoots(composer)" in generate_section
+	assert "looksLikeExcludedCreateButton(btn)" in generate_section
+	assert "isNearComposerDock(btn, composer)" in generate_section
+	assert "await openFlowConfigPanel()" in mode_section
+	assert "assignVisibleControls(surface, 'config_surface')" in mode_section
+	assert "let source = 'global';" in mode_section
 
 
 def test_background_flow_blocker_classifier_prefers_mode_mismatch_over_auth_failure():
