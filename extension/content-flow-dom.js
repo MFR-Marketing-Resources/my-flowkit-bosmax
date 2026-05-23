@@ -320,6 +320,26 @@
     return aria.includes('Create') || aria.includes('Generate');
   }
 
+  function looksLikeExcludedCreateButton(target) {
+    if (!target) return false;
+    const text = normalizeText(target.textContent || target.getAttribute('aria-label') || '').toLowerCase();
+    if (!text) return false;
+    return text.includes('create tool')
+      || text.includes('create with flow')
+      || text.includes('create new project')
+      || text === 'create new'
+      || text.includes('create project');
+  }
+
+  function isNearComposerDock(target, composer) {
+    if (!target || !composer || !isVisible(target) || !isVisible(composer)) return false;
+    const targetRect = target.getBoundingClientRect();
+    const composerRect = composer.getBoundingClientRect();
+    const verticalDistance = Math.abs((targetRect.top + targetRect.height / 2) - (composerRect.top + composerRect.height / 2));
+    const horizontalMatch = targetRect.left >= composerRect.left - 80 && targetRect.right <= composerRect.right + 240;
+    return verticalDistance <= Math.max(composerRect.height, targetRect.height) * 1.5 && horizontalMatch;
+  }
+
   function findFlowConfigLauncher() {
     const selectors = 'button, [role="button"], [role="tab"], [aria-haspopup], span, div';
     const composer = findComposerElement();
@@ -1263,14 +1283,19 @@
 
   function findGenerateButtonNearComposer() {
     const composer = findComposerElement();
-    const scopedButtons = collectComposerContextRoots(composer)
+    const composerRoots = collectComposerContextRoots(composer);
+    const scopedButtons = composerRoots
       .flatMap((root) => Array.from(root.querySelectorAll('button, [role="button"]')));
     const scopedMatch = scopedButtons.find((btn) => looksLikeGenerateButton(btn));
     if (scopedMatch) return scopedMatch;
 
     // 1. Target by specific text found in diagnostic
     const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
-    const createBtn = buttons.find((btn) => looksLikeGenerateButton(btn));
+    const createBtn = buttons.find((btn) => {
+      if (!looksLikeGenerateButton(btn) || looksLikeExcludedCreateButton(btn)) return false;
+      if (!composer) return true;
+      return composerRoots.some((root) => root.contains(btn)) || isNearComposerDock(btn, composer);
+    });
     if (createBtn) return createBtn;
 
     // 2. Fallback to icon path detection
@@ -3835,6 +3860,7 @@
   if (FLOW_KIT_ENABLE_TEST_HOOKS) {
     window.__FLOWKIT_TEST_HOOKS__ = {
       findVisibleAssetPickerModal,
+      findGenerateButtonNearComposer,
       waitForAssetPickerModal,
       waitForUploadAcceptance,
       resolveAssetPickerTargets,

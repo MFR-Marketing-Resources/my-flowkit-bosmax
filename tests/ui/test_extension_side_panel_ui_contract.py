@@ -119,7 +119,11 @@ def test_flow_dom_authenticated_editor_prefers_composer_scoped_selectors_before_
 
 	assert "function collectComposerContextRoots(composer = null, maxDepth = 4) {" in dom_source
 	assert "function looksLikeGenerateButton(target) {" in dom_source
+	assert "function looksLikeExcludedCreateButton(target) {" in dom_source
+	assert "function isNearComposerDock(target, composer) {" in dom_source
 	assert "collectComposerContextRoots(composer)" in generate_section
+	assert "looksLikeExcludedCreateButton(btn)" in generate_section
+	assert "isNearComposerDock(btn, composer)" in generate_section
 	assert "await openFlowConfigPanel()" in mode_section
 	assert "assignVisibleControls(surface, 'config_surface')" in mode_section
 	assert "let source = 'global';" in mode_section
