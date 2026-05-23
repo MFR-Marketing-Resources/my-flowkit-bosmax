@@ -128,6 +128,183 @@ function sendRuntimeMessageNoThrow(payload) {
 }
 
 const flowContentScriptHealth = new Map();
+const CDP_DEBUGGER_PROTOCOL_VERSION = "1.3";
+const CDP_FILE_CHOOSER_TIMEOUT_MS = 10000;
+const cdpFileChooserProofRuns = new Map();
+
+function getCdpDebuggee(tabId) {
+	return { tabId };
+}
+
+async function detachDebuggerSafe(debuggee) {
+	try {
+		await chrome.debugger.detach(debuggee);
+	} catch (_) {}
+}
+
+async function cleanupCdpFileChooserProofRun(_tabId, run) {
+	if (!run || run.cleanedUp) return;
+	run.cleanedUp = true;
+	clearTimeout(run.timeoutId);
+	chrome.debugger.onEvent.removeListener(run.handleEvent);
+	chrome.debugger.onDetach.removeListener(run.handleDetach);
+	try {
+		await chrome.debugger.sendCommand(
+			run.debuggee,
+			"Page.setInterceptFileChooserDialog",
+			{
+				enabled: false,
+			},
+		);
+	} catch (_) {}
+	await detachDebuggerSafe(run.debuggee);
+}
+
+function settleCdpFileChooserProofRun(tabId, payload) {
+	const run = cdpFileChooserProofRuns.get(tabId);
+	if (!run || run.settled) return;
+	run.settled = true;
+	run.result = payload;
+	void cleanupCdpFileChooserProofRun(tabId, run).finally(() => {
+		run.resolve(payload);
+	});
+}
+
+async function beginCdpFileChooserProof(
+	tabId,
+	filePath,
+	expectedFileName,
+	slotLabel,
+) {
+	if (!tabId) {
+		return { ok: false, error: "ERR_CDP_DEBUGGER_TAB_ID_MISSING" };
+	}
+	if (!filePath || typeof filePath !== "string") {
+		return { ok: false, error: "ERR_CDP_FILE_PATH_REQUIRED" };
+	}
+
+	const existingRun = cdpFileChooserProofRuns.get(tabId);
+	if (existingRun && !existingRun.settled) {
+		return { ok: false, error: "ERR_CDP_FILE_CHOOSER_ALREADY_ARMED" };
+	}
+
+	const debuggee = getCdpDebuggee(tabId);
+	await chrome.debugger.attach(debuggee, CDP_DEBUGGER_PROTOCOL_VERSION);
+
+	try {
+		await chrome.debugger.sendCommand(debuggee, "Page.enable");
+		await chrome.debugger.sendCommand(debuggee, "DOM.enable");
+		await chrome.debugger.sendCommand(
+			debuggee,
+			"Page.setInterceptFileChooserDialog",
+			{ enabled: true },
+		);
+	} catch (error) {
+		await detachDebuggerSafe(debuggee);
+		throw error;
+	}
+
+	let resolveRun;
+	const completionPromise = new Promise((resolve) => {
+		resolveRun = resolve;
+	});
+	const run = {
+		debuggee,
+		expectedFileName: expectedFileName || null,
+		filePath,
+		slotLabel: slotLabel || "Start",
+		resolve: resolveRun,
+		result: null,
+		settled: false,
+		cleanedUp: false,
+		timeoutId: null,
+		handleEvent: null,
+		handleDetach: null,
+		completionPromise,
+	};
+
+	run.handleEvent = async (source, method, params) => {
+		if (source?.tabId !== tabId || method !== "Page.fileChooserOpened") {
+			return;
+		}
+
+		try {
+			if (!params?.backendNodeId) {
+				throw new Error("ERR_CDP_FILE_CHOOSER_BACKEND_NODE_MISSING");
+			}
+
+			await chrome.debugger.sendCommand(debuggee, "DOM.setFileInputFiles", {
+				files: [filePath],
+				backendNodeId: params.backendNodeId,
+			});
+
+			settleCdpFileChooserProofRun(tabId, {
+				ok: true,
+				method,
+				mode: params.mode || null,
+				backendNodeId: params.backendNodeId,
+				filePath,
+				expectedFileName: expectedFileName || null,
+				slotLabel: slotLabel || "Start",
+			});
+		} catch (error) {
+			settleCdpFileChooserProofRun(tabId, {
+				ok: false,
+				error: String(error?.message || error),
+				method,
+				backendNodeId: params?.backendNodeId || null,
+				filePath,
+				expectedFileName: expectedFileName || null,
+				slotLabel: slotLabel || "Start",
+			});
+		}
+	};
+
+	run.handleDetach = (source, reason) => {
+		if (source?.tabId !== tabId) return;
+		settleCdpFileChooserProofRun(tabId, {
+			ok: false,
+			error: `ERR_CDP_DEBUGGER_DETACHED:${reason || "unknown"}`,
+			detach_reason: reason || "unknown",
+			filePath,
+			expectedFileName: expectedFileName || null,
+			slotLabel: slotLabel || "Start",
+		});
+	};
+
+	run.timeoutId = setTimeout(() => {
+		settleCdpFileChooserProofRun(tabId, {
+			ok: false,
+			error: "ERR_CDP_FILE_CHOOSER_TIMEOUT",
+			filePath,
+			expectedFileName: expectedFileName || null,
+			slotLabel: slotLabel || "Start",
+		});
+	}, CDP_FILE_CHOOSER_TIMEOUT_MS);
+
+	chrome.debugger.onEvent.addListener(run.handleEvent);
+	chrome.debugger.onDetach.addListener(run.handleDetach);
+	cdpFileChooserProofRuns.set(tabId, run);
+
+	return {
+		ok: true,
+		armed: true,
+		slotLabel: run.slotLabel,
+		expectedFileName: run.expectedFileName,
+		timeout_ms: CDP_FILE_CHOOSER_TIMEOUT_MS,
+	};
+}
+
+async function waitForCdpFileChooserProof(tabId) {
+	const run = cdpFileChooserProofRuns.get(tabId);
+	if (!run) {
+		return { ok: false, error: "ERR_CDP_FILE_CHOOSER_NOT_ARMED" };
+	}
+
+	const result = run.result || (await run.completionPromise);
+	cdpFileChooserProofRuns.delete(tabId);
+	return result;
+}
 
 const WS_METHOD_TIMEOUT_MS = {
 	get_status: 5000,
@@ -1696,6 +1873,19 @@ async function handleMessage(msg, sender) {
 			contentHealth,
 		);
 		return { ok: true };
+	}
+
+	if (msg.type === "FLOWKIT_CDP_BEGIN_FILE_CHOOSER_POC") {
+		return await beginCdpFileChooserProof(
+			sender?.tab?.id || null,
+			msg.filePath,
+			msg.expectedFileName,
+			msg.slotLabel,
+		);
+	}
+
+	if (msg.type === "FLOWKIT_CDP_WAIT_FILE_CHOOSER_POC") {
+		return await waitForCdpFileChooserProof(sender?.tab?.id || null);
 	}
 
 	if (msg.type === "RESOLVE_LOCAL_ASSET") {
