@@ -15,15 +15,25 @@ _BLOCKER_409 = frozenset({
     "SUBJECT_REQUIRED",
 })
 
+# Known error codes that map to 404 Not Found.
+_ERROR_404 = frozenset({
+    "PRODUCT_NOT_FOUND",
+    "EXECUTION_PACKAGE_NOT_FOUND",
+    "GENERATION_PACKAGE_NOT_FOUND",
+})
+
 
 def _http_exc_for(exc: Exception) -> HTTPException:
-    """Convert a ValueError blocker into a structured 409 or fall back to 500."""
+    """Convert a ValueError blocker into a structured 409/404 or fall back to 500."""
     message = str(exc)
-    if isinstance(exc, ValueError) and message in _BLOCKER_409:
-        return HTTPException(
-            status_code=409,
-            detail={"blocker": message, "error": message},
-        )
+    if isinstance(exc, ValueError):
+        if message in _BLOCKER_409:
+            return HTTPException(
+                status_code=409,
+                detail={"blocker": message, "error": message},
+            )
+        if message in _ERROR_404:
+            return HTTPException(status_code=404, detail=message)
     return HTTPException(status_code=500, detail=message)
 
 from agent.models.workspace_generation_package import (
