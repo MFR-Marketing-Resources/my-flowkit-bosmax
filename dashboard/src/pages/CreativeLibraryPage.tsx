@@ -106,6 +106,16 @@ export default function CreativeLibraryPage() {
 	const location = useLocation();
 	const [items, setItems] = useState<CreativeAsset[]>([]);
 	const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+	const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+
+	// Close lightbox on ESC key
+	useEffect(() => {
+		if (!lightboxUrl) return;
+		const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setLightboxUrl(null); };
+		window.addEventListener("keydown", handler);
+		return () => window.removeEventListener("keydown", handler);
+	}, [lightboxUrl]);
+
 	const [roleFilter, setRoleFilter] = useState<
 		CreativeAssetSemanticRole | "ALL"
 	>("ALL");
@@ -266,6 +276,7 @@ export default function CreativeLibraryPage() {
 	}
 
 	return (
+		<>
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
 				<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
@@ -591,11 +602,21 @@ export default function CreativeLibraryPage() {
 						{selectedAsset ? (
 							<>
 								{selectedAsset.preview_url ? (
-									<img
-										src={selectedAsset.preview_url}
-										alt={selectedAsset.display_name}
-										className="h-48 w-full rounded-2xl border border-slate-800 object-cover"
-									/>
+									<div
+										className="group relative cursor-zoom-in overflow-hidden rounded-2xl border border-slate-800"
+										onClick={() => setLightboxUrl(selectedAsset.preview_url)}
+									>
+										<img
+											src={selectedAsset.preview_url}
+											alt={selectedAsset.display_name}
+											className="h-48 w-full object-cover transition duration-200 group-hover:brightness-75"
+										/>
+										<div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 transition duration-200 group-hover:opacity-100">
+											<div className="rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-sm">
+												🔍 Click to expand
+											</div>
+										</div>
+									</div>
 								) : (
 									<div className="flex h-48 items-center justify-center rounded-2xl border border-dashed border-slate-700 bg-slate-950 text-xs text-slate-500">
 										Preview unavailable
@@ -661,5 +682,30 @@ export default function CreativeLibraryPage() {
 				</div>
 			</section>
 		</div>
+			{/* ── Lightbox modal ── */}
+			{lightboxUrl && (
+				<div
+					className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+					onClick={() => setLightboxUrl(null)}
+				>
+					<div
+						className="relative max-h-[90vh] max-w-[90vw]"
+						onClick={(e) => e.stopPropagation()}
+					>
+						<img
+							src={lightboxUrl}
+							alt="Preview"
+							className="max-h-[88vh] max-w-[88vw] rounded-2xl object-contain shadow-2xl"
+						/>
+						<button
+							onClick={() => setLightboxUrl(null)}
+							className="absolute -right-3 -top-3 flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-slate-200 shadow-lg hover:bg-slate-700"
+						>
+							✕
+						</button>
+					</div>
+				</div>
+			)}
+		</>
 	);
 }
