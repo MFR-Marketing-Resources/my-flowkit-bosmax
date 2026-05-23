@@ -13,19 +13,30 @@ graph TD
     ClickProject & ClickNewProject --> LoadWorkspace[Load Editor Workspace Canvas]
     
     LoadWorkspace --> ComposerDock[Observe Bottom Composer Panel]
-    ComposerDock --> PromptCheck{Verify Prompt Input}
-    ComposerDock --> ModelCheck{Verify Model Selector}
     ComposerDock --> AgentCheck{Verify Flow Agent Toggle}
     
-    PromptCheck -- Empty --/ Textarea -> EnterPrompt[Click contenteditable DIV & type prompt]
-    ModelCheck -- Defaults to Nano Banana 2 --> ClickModelTrigger[Click model dropdown trigger]
-    ClickModelTrigger --> SelectModel[Choose target model from popup menu]
-    AgentCheck -- Default OFF --> ToggleAgent{Toggle Flow Agent?}
+    AgentCheck -- Default OFF --> ModelChipCheck[Observe Model selector chip]
+    ModelChipCheck --> ClickModelTrigger[Click model selector trigger e.g. Banana]
+    ClickModelTrigger --> PopoverOpen[Open Settings Popover]
     
-    ToggleAgent -- Yes --> ClickAgentBtn[Click "Agent" button to activate AI helper]
-    ToggleAgent -- No --> KeepAgentOff[Proceed with Flow Agent disabled]
+    PopoverOpen --> ModeSelect{Choose Generation Mode}
+    ModeSelect -- Image Mode --> ClickImageTab[Click "Image" tab button]
+    ModeSelect -- Video Mode --> ClickVideoTab[Click "Video" tab button]
     
-    EnterPrompt & SelectModel & ClickAgentBtn & KeepAgentOff --> UploadAsset{Upload Image/Video?}
+    ClickImageTab & ClickVideoTab --> SetAspect[Select Aspect Ratio chip: 16:9, 4:3, 1:1, 3:4, 9:16]
+    SetAspect --> SetCount[Select Quantity chip: 1x, x2, x3, x4]
+    SetCount --> ChooseModel[Select base model from dropdown list]
+    
+    ChooseModel --> ClosePopover[Press Escape or click outside to apply]
+    ClosePopover --> EnterPrompt[Click contenteditable DIV & type prompt]
+    
+    AgentCheck -- Toggle ON --> ClickAgentBtn[Click "Agent" button to activate AI helper]
+    ClickAgentBtn --> HideModelChip[Model selector chip disappears from UI]
+    HideModelChip --> ShowAgentTools[Creative Brief and Parameter Slider buttons appear]
+    ShowAgentTools --> ConfigAgent[Configure Creative Brief template and parameter settings]
+    ConfigAgent --> EnterPrompt
+    
+    EnterPrompt --> UploadAsset{Upload Image/Video?}
     UploadAsset -- Yes --> ClickAddMedia[Click "addAdd Media" button]
     ClickAddMedia --> FilePicker[Select local file from OS file picker]
     FilePicker --> AssetVerify[Confirm thumbnail appears in composer preview]

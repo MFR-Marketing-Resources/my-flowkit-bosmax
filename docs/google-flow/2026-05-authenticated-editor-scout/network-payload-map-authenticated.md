@@ -124,5 +124,7 @@ The active FastAPI backend telemetry schema was verified live by querying the di
 
 ---
 
-## 4. Gating and Paywall Observations (NOT VERIFIED)
-No paywall, pricing blocks, or billing quota limitations were triggered during the DOM scanning session.
+## 4. Gating and Paywall Observations (VERIFIED_LIVE)
+During our live menu analysis, we confirmed the model popover presents credit status information dynamically:
+* Labeled message: `Generating will use 0 credits`
+* This indicates that generations with free-tier base models (such as `Nano Banana 2`) are currently zero-rated for billing purposes, while restricted models (like Veo Quality) will trigger a credit reservation check.

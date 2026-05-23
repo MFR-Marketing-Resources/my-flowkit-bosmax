@@ -14,14 +14,23 @@ graph TD
     ReadySignal --> QueueListen[Listen for WebSocket execution jobs]
     
     QueueListen --> JobCheck{Job Received?}
-    JobCheck -- Yes --> ParseConfig[Parse target prompt, model, and assets]
+    JobCheck -- Yes --> ParseConfig[Parse target prompt, model, mode, and assets]
     
-    ParseConfig --> ModelSetup{Check Active Model}
-    ModelSetup -- Different --> ClickDropdown[Click model menu trigger button]
-    ClickDropdown --> MenuPopup[Wait for Radix menu popup options to load]
-    MenuPopup --> SelectModelItem[Click matching model menu item]
+    ParseConfig --> ModelSetup{Check Active Model/Mode}
+    ModelSetup -- Different --> ClickDropdown[Click model menu trigger button e.g. Banana]
+    ClickDropdown --> PopoverWait[Wait for settings popover to render]
+    
+    PopoverWait --> ModeSelect{Verify Active Tab}
+    ModeSelect -- Video Mode Requested --> ClickVideoTab[Click Video tab in popover]
+    ModeSelect -- Image Mode Requested --> ClickImageTab[Click Image tab in popover]
+    
+    ClickVideoTab & ClickImageTab --> SetAspect[Click target Aspect Ratio chip: 16:9, 4:3, 1:1, 3:4, 9:16]
+    SetAspect --> SetCount[Click target Quantity Count chip: 1x, x2, x3, x4]
+    SetCount --> ChooseModel[Click active model dropdown and choose base model]
+    ChooseModel --> ClosePopover[Press Escape to close settings popover]
+    
     ModelSetup -- Correct --> UploadCheck{Requires Upload?}
-    SelectModelItem --> UploadCheck
+    ClosePopover --> UploadCheck
     
     UploadCheck -- Yes --> CDPStart[Enable background CDP debugger listener]
     CDPStart --> InterceptFileChooser[Page.setInterceptFileChooserDialog enabled]
