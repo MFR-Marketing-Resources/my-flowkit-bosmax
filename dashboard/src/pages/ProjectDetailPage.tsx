@@ -3,11 +3,16 @@ import { fetchAPI, patchAPI } from '../api/client'
 import type { Project, Character, Video, Scene, ChainType, StatusType } from '../types'
 import EditableText from '../components/projects/EditableText'
 
+async function deleteAPI(path: string) {
+  return fetchAPI(path, { method: 'DELETE' })
+}
+
 type Tab = 'Overview' | 'Characters' | 'Videos' | 'Scenes'
 
 interface Props {
   projectId: string
   onBack: () => void
+  onRefreshList?: () => void
 }
 
 function formatDate(iso: string) {
@@ -294,12 +299,13 @@ function ScenesTab({ videos }: { videos: Video[] }) {
 }
 
 // ---- Main ProjectDetailPage ----
-export default function ProjectDetailPage({ projectId, onBack }: Props) {
+export default function ProjectDetailPage({ projectId, onBack, onRefreshList }: Props) {
   const [project, setProject] = useState<Project | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
   const [videos, setVideos] = useState<Video[]>([])
   const [tab, setTab] = useState<Tab>('Overview')
   const [loading, setLoading] = useState(true)
+  const [actionLoading, setActionLoading] = useState(false)
 
   function fetchAll() {
     setLoading(true)
@@ -319,24 +325,71 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
 
   useEffect(() => { fetchAll() }, [projectId])
 
+  async function handleArchiveToggle() {
+    if (!project) return
+    const nextStatus = project.status === 'ARCHIVED' ? 'ACTIVE' : 'ARCHIVED'
+    setActionLoading(true)
+    try {
+      await patchAPI(`/api/projects/${projectId}`, { status: nextStatus })
+      onRefreshList?.()
+      fetchAll()
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!project) return
+    if (!window.confirm(`Delete project "${project.name}"?\n\nThis is permanent and cannot be undone.`)) return
+    setActionLoading(true)
+    try {
+      await deleteAPI(`/api/projects/${projectId}`)
+      onRefreshList?.()
+      onBack()
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   if (loading || !project) {
     return <div className="text-xs" style={{ color: 'var(--muted)' }}>Loading project...</div>
   }
 
   const tabs: Tab[] = ['Overview', 'Characters', 'Videos', 'Scenes']
+  const isArchived = project.status === 'ARCHIVED'
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Back + title */}
-      <div className="flex items-center gap-3">
+      {/* Back + title + actions */}
+      <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={onBack}
           className="text-xs px-3 py-1.5 rounded"
           style={{ background: 'var(--card)', color: 'var(--muted)', border: '1px solid var(--border)' }}
         >
-          Back
+          ← Back
         </button>
-        <h1 className="font-bold text-sm" style={{ color: 'var(--text)' }}>{project.name}</h1>
+        <h1 className="font-bold text-sm flex-1 min-w-0 truncate" style={{ color: 'var(--text)' }}>{project.name}</h1>
+        <div className="flex gap-2 ml-auto">
+          <button
+            type="button"
+            disabled={actionLoading}
+            onClick={handleArchiveToggle}
+            className="text-xs px-3 py-1.5 rounded disabled:opacity-50"
+            style={{ background: 'var(--card)', color: isArchived ? 'var(--green)' : 'var(--yellow)', border: '1px solid var(--border)' }}
+          >
+            {actionLoading ? '...' : isArchived ? 'Unarchive' : 'Archive'}
+          </button>
+          <button
+            type="button"
+            disabled={actionLoading}
+            onClick={handleDelete}
+            className="text-xs px-3 py-1.5 rounded disabled:opacity-50"
+            style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--red)', border: '1px solid rgba(239,68,68,0.3)' }}
+          >
+            Delete
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
