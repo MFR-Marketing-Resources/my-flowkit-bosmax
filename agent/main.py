@@ -132,7 +132,9 @@ async def lifespan(app: FastAPI):
     # Start background tasks
     ws_task = asyncio.create_task(run_ws_server())
     worker_task = asyncio.create_task(controller.start())
-    logger.info("WS server + worker started")
+    from agent.services.workspace_generation_package_service import _scheduler_loop
+    scheduler_task = asyncio.create_task(_scheduler_loop())
+    logger.info("WS server + worker + batch scheduler started")
 
     yield
 
@@ -140,6 +142,7 @@ async def lifespan(app: FastAPI):
     await controller.drain()
     ws_task.cancel()
     worker_task.cancel()
+    scheduler_task.cancel()
     await close_db()
     logger.info("Flow Kit stopped")
 

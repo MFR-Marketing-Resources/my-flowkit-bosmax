@@ -1178,6 +1178,118 @@ async def start_batch_generation(
     return run
 
 
+# ─── Scheduled Batch Runs ────────────────────────────────────
+
+
+async def create_scheduled_batch_run(
+    *,
+    product_ids: list[str],
+    modes: list[str],
+    quantity_per_mode: int = 10,
+    interval_seconds: int = 5,
+    generation_mode: str = "SINGLE",
+    character_asset_ids: list[str] | None = None,
+    scene_asset_ids: list[str] | None = None,
+    style_asset_ids: list[str] | None = None,
+    img_prompt_template: str | None = None,
+    scheduled_at: str,
+    label: str | None = None,
+) -> dict:
+    """Persist a scheduled batch run. The scheduler loop fires it when scheduled_at is reached."""
+    import json as _json_mod
+
+    scheduled_run_id = f"sbr_{_fingerprint(product_ids[0] if product_ids else '', str(modes), scheduled_at, str(uuid.uuid4()))[:16]}"
+    return await crud.create_scheduled_batch_run(
+        scheduled_run_id,
+        product_ids_json=_json_mod.dumps(product_ids),
+        modes_json=_json_mod.dumps(modes),
+        quantity_per_mode=quantity_per_mode,
+        interval_seconds=interval_seconds,
+        generation_mode=generation_mode,
+        character_asset_ids_json=_json_mod.dumps(character_asset_ids or []),
+        scene_asset_ids_json=_json_mod.dumps(scene_asset_ids or []),
+        style_asset_ids_json=_json_mod.dumps(style_asset_ids or []),
+        img_prompt_template=img_prompt_template,
+        scheduled_at=scheduled_at,
+        label=label,
+    )
+
+
+async def list_scheduled_batch_runs_service(
+    status: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    import json as _json_mod
+    rows = await crud.list_scheduled_batch_runs(status=status, limit=limit)
+    for row in rows:
+        try:
+            row["product_ids"] = _json_mod.loads(row.get("product_ids_json", "[]"))
+            row["modes"] = _json_mod.loads(row.get("modes_json", "[]"))
+        except Exception:
+            row["product_ids"] = []
+            row["modes"] = []
+    return rows
+
+
+async def cancel_scheduled_batch_run(scheduled_run_id: str) -> dict | None:
+    rows = await crud.list_scheduled_batch_runs(limit=1000)
+    run = next((r for r in rows if r["scheduled_run_id"] == scheduled_run_id), None)
+    if not run:
+        return None
+    if run.get("status") == "SCHEDULED":
+        await crud.update_scheduled_batch_run(scheduled_run_id, status="CANCELLED")
+        run["status"] = "CANCELLED"
+    return run
+
+
+async def _scheduler_loop() -> None:
+    """Background loop: fires scheduled batch runs when their scheduled_at time is reached."""
+    import datetime as _dt
+    import json as _json_mod
+
+    _batch_logger.info("Scheduled batch runner started")
+    while True:
+        try:
+            now_iso = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            due = await crud.get_due_scheduled_batch_runs(now_iso)
+            for row in due:
+                srun_id = row["scheduled_run_id"]
+                _batch_logger.info("Firing scheduled batch run %s", srun_id)
+                try:
+                    await crud.update_scheduled_batch_run(srun_id, status="RUNNING")
+                    product_ids = _json_mod.loads(row.get("product_ids_json", "[]"))
+                    modes = _json_mod.loads(row.get("modes_json", "[]"))
+                    char_ids = _json_mod.loads(row.get("character_asset_ids_json", "[]"))
+                    scene_ids = _json_mod.loads(row.get("scene_asset_ids_json", "[]"))
+                    style_ids = _json_mod.loads(row.get("style_asset_ids_json", "[]"))
+
+                    run = await start_batch_generation(
+                        product_id=product_ids[0] if product_ids else "",
+                        product_ids=product_ids,
+                        modes=modes,
+                        quantity_per_mode=row.get("quantity_per_mode", 10),
+                        interval_seconds=row.get("interval_seconds", 5),
+                        generation_mode=row.get("generation_mode", "SINGLE"),
+                        character_asset_ids=char_ids or None,
+                        scene_asset_ids=scene_ids or None,
+                        style_asset_ids=style_ids or None,
+                        img_prompt_template=row.get("img_prompt_template"),
+                    )
+                    await crud.update_scheduled_batch_run(
+                        srun_id,
+                        status="COMPLETED",
+                        batch_run_id=run.get("batch_run_id"),
+                    )
+                    _batch_logger.info("Scheduled run %s fired → batch %s", srun_id, run.get("batch_run_id"))
+                except Exception as exc:
+                    _batch_logger.error("Scheduled run %s failed to fire: %s", srun_id, exc)
+                    await crud.update_scheduled_batch_run(srun_id, status="FAILED")
+        except Exception as exc:
+            _batch_logger.error("Scheduler loop error: %s", exc)
+
+        await _asyncio.sleep(60)
+
+
 async def list_batch_generation_runs(
     product_id: str | None = None,
     limit: int = 50,

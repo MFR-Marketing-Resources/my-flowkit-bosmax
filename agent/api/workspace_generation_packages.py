@@ -56,6 +56,9 @@ from agent.services.workspace_generation_package_service import (
     list_batch_generation_runs,
     cancel_batch_generation_run,
     retry_batch_generation_run,
+    create_scheduled_batch_run,
+    list_scheduled_batch_runs_service,
+    cancel_scheduled_batch_run,
 )
 
 router = APIRouter(prefix="/workspace/generation-packages", tags=["workspace-generation-packages"])
@@ -376,6 +379,71 @@ async def retry_batch_run(batch_run_id: str):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Scheduled batch runs ─────────────────────────────────────────────────────
+
+
+class ScheduledBatchRequest(_BaseModel):
+    product_ids: _List[str]
+    modes: _List[str] = ["F2V"]
+    quantity_per_mode: int = 10
+    interval_seconds: int = 5
+    generation_mode: str = "SINGLE"
+    character_asset_ids: _List[str] = []
+    scene_asset_ids: _List[str] = []
+    style_asset_ids: _List[str] = []
+    img_prompt_template: str | None = None
+    scheduled_at: str  # ISO 8601 UTC, e.g. "2026-05-25T02:00:00Z"
+    label: str | None = None
+
+
+@router.get("/scheduled")
+async def list_scheduled_runs(
+    status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """List scheduled batch runs (upcoming + recent)."""
+    try:
+        runs = await list_scheduled_batch_runs_service(status=status, limit=limit)
+        return {"runs": runs, "count": len(runs)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/scheduled")
+async def create_scheduled_run(request: ScheduledBatchRequest):
+    """Create a scheduled batch run to fire at a specific UTC datetime."""
+    if not request.product_ids:
+        raise HTTPException(status_code=400, detail="product_ids must not be empty")
+    if not request.modes:
+        raise HTTPException(status_code=400, detail="modes must not be empty")
+    try:
+        run = await create_scheduled_batch_run(
+            product_ids=request.product_ids,
+            modes=request.modes,
+            quantity_per_mode=request.quantity_per_mode,
+            interval_seconds=request.interval_seconds,
+            generation_mode=request.generation_mode,
+            character_asset_ids=request.character_asset_ids or None,
+            scene_asset_ids=request.scene_asset_ids or None,
+            style_asset_ids=request.style_asset_ids or None,
+            img_prompt_template=request.img_prompt_template,
+            scheduled_at=request.scheduled_at,
+            label=request.label,
+        )
+        return run
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.delete("/scheduled/{scheduled_run_id}", status_code=200)
+async def cancel_scheduled_run(scheduled_run_id: str):
+    """Cancel a pending scheduled batch run."""
+    run = await cancel_scheduled_batch_run(scheduled_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Scheduled run {scheduled_run_id!r} not found")
+    return run
 
 
 # ── Dynamic routes MUST come last — static paths above take priority ──────────

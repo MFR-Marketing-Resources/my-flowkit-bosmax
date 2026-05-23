@@ -902,6 +902,96 @@ async def get_batch_generation_run(batch_run_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+# ─── Scheduled Batch Runs ─────────────────────────────────────
+
+async def create_scheduled_batch_run(
+    scheduled_run_id: str,
+    *,
+    product_ids_json: str,
+    modes_json: str,
+    quantity_per_mode: int,
+    interval_seconds: int,
+    generation_mode: str,
+    character_asset_ids_json: str,
+    scene_asset_ids_json: str,
+    style_asset_ids_json: str,
+    img_prompt_template: str | None,
+    scheduled_at: str,
+    label: str | None,
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO scheduled_batch_run
+               (scheduled_run_id, status, product_ids_json, modes_json,
+                quantity_per_mode, interval_seconds, generation_mode,
+                character_asset_ids_json, scene_asset_ids_json, style_asset_ids_json,
+                img_prompt_template, scheduled_at, label, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (scheduled_run_id, "SCHEDULED", product_ids_json, modes_json,
+             quantity_per_mode, interval_seconds, generation_mode,
+             character_asset_ids_json, scene_asset_ids_json, style_asset_ids_json,
+             img_prompt_template, scheduled_at, label, now, now),
+        )
+        await db.commit()
+    cur = await db.execute(
+        "SELECT * FROM scheduled_batch_run WHERE scheduled_run_id=?", (scheduled_run_id,)
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else {}
+
+
+async def list_scheduled_batch_runs(
+    status: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM scheduled_batch_run"
+    params: list = []
+    if status:
+        q += " WHERE status=?"
+        params.append(status)
+    q += " ORDER BY scheduled_at ASC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def update_scheduled_batch_run(
+    scheduled_run_id: str,
+    *,
+    status: str | None = None,
+    batch_run_id: str | None = None,
+) -> None:
+    db = await get_db()
+    now = _now()
+    parts, params = [], []
+    if status is not None:
+        parts.append("status=?"); params.append(status)
+    if batch_run_id is not None:
+        parts.append("batch_run_id=?"); params.append(batch_run_id)
+    if not parts:
+        return
+    parts.append("updated_at=?"); params.append(now)
+    params.append(scheduled_run_id)
+    async with _db_lock:
+        await db.execute(
+            f"UPDATE scheduled_batch_run SET {', '.join(parts)} WHERE scheduled_run_id=?",
+            params,
+        )
+        await db.commit()
+
+
+async def get_due_scheduled_batch_runs(now_iso: str) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM scheduled_batch_run WHERE status='SCHEDULED' AND scheduled_at <= ?",
+        (now_iso,),
+    )
+    return [dict(r) for r in await cur.fetchall()]
+
+
 async def list_batch_generation_runs(
     product_id: str | None = None,
     limit: int = 50,

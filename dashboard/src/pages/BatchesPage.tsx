@@ -58,6 +58,19 @@ interface BatchRun {
   updated_at: string
 }
 
+interface ScheduledRun {
+  scheduled_run_id: string
+  status: string
+  product_ids: string[]
+  modes: string[]
+  quantity_per_mode: number
+  generation_mode: string
+  scheduled_at: string
+  label: string | null
+  batch_run_id: string | null
+  created_at: string
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MODES = ['F2V', 'I2V', 'T2V', 'IMG'] as const
@@ -307,6 +320,12 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
   // P2A: IMG custom prompt template
   const [imgPromptTemplate, setImgPromptTemplate] = useState('')
 
+  // P4: Scheduled batches
+  const [scheduleMode, setScheduleMode] = useState<'now' | 'later'>('now')
+  const [scheduledAt, setScheduledAt] = useState('')
+  const [scheduleLabel, setScheduleLabel] = useState('')
+  const [scheduledRuns, setScheduledRuns] = useState<ScheduledRun[]>([])
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -328,12 +347,21 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
     const loadRuns = async () => {
       try {
         const res = await fetchAPI('/api/workspace/generation-packages/batch?limit=20') as { runs: BatchRun[] }
-        if (res?.runs?.length) {
-          setRecentRuns(res.runs)
-        }
+        if (res?.runs?.length) setRecentRuns(res.runs)
       } catch { /* non-fatal */ }
     }
     void loadRuns()
+  }, [])
+
+  // P4: Load scheduled runs on mount
+  useEffect(() => {
+    const loadScheduled = async () => {
+      try {
+        const res = await fetchAPI('/api/workspace/generation-packages/scheduled?limit=50') as { runs: ScheduledRun[] }
+        if (res?.runs?.length) setScheduledRuns(res.runs)
+      } catch { /* non-fatal */ }
+    }
+    void loadScheduled()
   }, [])
 
   const toggleId = (setter: React.Dispatch<React.SetStateAction<string[]>>) => (id: string) =>
@@ -437,6 +465,42 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
       setIsRunning(true)
     } catch (err: any) {
       alert(`Retry failed: ${err.message}`)
+    }
+  }
+
+  const handleScheduleBatch = async () => {
+    if (selectedProductIds.length === 0 || selectedModes.length === 0 || !scheduledAt) return
+    try {
+      const scheduledAtUTC = new Date(scheduledAt).toISOString()
+      const newRun = await postAPI('/api/workspace/generation-packages/scheduled', {
+        product_ids: selectedProductIds,
+        modes: selectedModes,
+        quantity_per_mode: quantityPerMode,
+        interval_seconds: intervalSeconds,
+        generation_mode: generationMode,
+        character_asset_ids: selectedCharIds,
+        scene_asset_ids: selectedSceneIds,
+        style_asset_ids: selectedStyleIds,
+        img_prompt_template: selectedModes.includes('IMG') && imgPromptTemplate.trim() ? imgPromptTemplate.trim() : null,
+        scheduled_at: scheduledAtUTC,
+        label: scheduleLabel.trim() || null,
+      }) as ScheduledRun
+      setScheduledRuns(prev => [newRun, ...prev])
+      setScheduledAt('')
+      setScheduleLabel('')
+    } catch (err: any) {
+      alert(`Schedule failed: ${err.message}`)
+    }
+  }
+
+  const handleCancelScheduled = async (scheduledRunId: string) => {
+    try {
+      await fetchAPI(`/api/workspace/generation-packages/scheduled/${scheduledRunId}`, { method: 'DELETE' })
+      setScheduledRuns(prev => prev.map(r =>
+        r.scheduled_run_id === scheduledRunId ? { ...r, status: 'CANCELLED' } : r
+      ))
+    } catch (err: any) {
+      alert(`Cancel failed: ${err.message}`)
     }
   }
 
@@ -658,17 +722,61 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={handleStartBatch}
-            disabled={isRunning || selectedProductIds.length === 0 || selectedModes.length === 0 || hasUnreadyProduct}
-            className="py-3 rounded-xl text-sm font-black bg-gradient-to-r from-accent to-purple-600 text-white hover:opacity-90 disabled:opacity-20 disabled:cursor-not-allowed transition-all shadow-xl shadow-accent/20 flex items-center justify-center gap-2"
-          >
-            {isRunning
-              ? <><RefreshCw size={15} className="animate-spin" /> Generating...</>
-              : <><Rocket size={15} /> Generate {totalExpected} Prompts</>
-            }
-          </button>
+          {/* P4: Run Now vs Schedule toggle */}
+          <div className="flex gap-1 rounded-xl border border-white/5 bg-black/20 p-1">
+            <button
+              type="button"
+              onClick={() => setScheduleMode('now')}
+              className={`flex-1 py-2 rounded-lg text-[11px] font-black transition-all ${scheduleMode === 'now' ? 'bg-accent text-white' : 'text-white/30 hover:text-white/60'}`}
+            >
+              Run Now
+            </button>
+            <button
+              type="button"
+              onClick={() => setScheduleMode('later')}
+              className={`flex-1 py-2 rounded-lg text-[11px] font-black transition-all ${scheduleMode === 'later' ? 'bg-accent text-white' : 'text-white/30 hover:text-white/60'}`}
+            >
+              Schedule
+            </button>
+          </div>
+
+          {scheduleMode === 'later' ? (
+            <div className="flex flex-col gap-3">
+              <input
+                type="datetime-local"
+                value={scheduledAt}
+                onChange={e => setScheduledAt(e.target.value)}
+                min={new Date().toISOString().slice(0, 16)}
+                className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white/80 outline-none focus:border-accent/50 [color-scheme:dark]"
+              />
+              <input
+                value={scheduleLabel}
+                onChange={e => setScheduleLabel(e.target.value)}
+                placeholder="Label (optional, e.g. Nightly run)"
+                className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/70 placeholder:text-white/20 outline-none focus:border-accent/50"
+              />
+              <button
+                type="button"
+                onClick={handleScheduleBatch}
+                disabled={selectedProductIds.length === 0 || selectedModes.length === 0 || hasUnreadyProduct || !scheduledAt}
+                className="py-3 rounded-xl text-sm font-black bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:opacity-90 disabled:opacity-20 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+              >
+                <History size={15} /> Schedule {totalExpected} Prompts
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleStartBatch}
+              disabled={isRunning || selectedProductIds.length === 0 || selectedModes.length === 0 || hasUnreadyProduct}
+              className="py-3 rounded-xl text-sm font-black bg-gradient-to-r from-accent to-purple-600 text-white hover:opacity-90 disabled:opacity-20 disabled:cursor-not-allowed transition-all shadow-xl shadow-accent/20 flex items-center justify-center gap-2"
+            >
+              {isRunning
+                ? <><RefreshCw size={15} className="animate-spin" /> Generating...</>
+                : <><Rocket size={15} /> Generate {totalExpected} Prompts</>
+              }
+            </button>
+          )}
         </section>
       </div>
 
@@ -777,6 +885,51 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
               <span className="text-xs font-medium opacity-60">Configure batch on the left and press Generate.</span>
             </div>
           </div>
+        )}
+
+        {/* Upcoming scheduled runs */}
+        {scheduledRuns.filter(r => r.status === 'SCHEDULED').length > 0 && (
+          <section className="flex flex-col gap-3">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] opacity-30 flex items-center gap-2 px-1">
+              <History size={13} /> Upcoming Scheduled Runs
+            </h3>
+            {scheduledRuns.filter(r => r.status === 'SCHEDULED').map(run => (
+              <div
+                key={run.scheduled_run_id}
+                className="p-4 rounded-xl border border-blue-500/15 bg-blue-500/5 flex items-center gap-4"
+              >
+                <div className="flex-1 flex flex-col gap-1">
+                  {run.label && (
+                    <span className="text-[11px] font-bold text-white/80">{run.label}</span>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] font-black tracking-widest px-2 py-0.5 rounded-full border bg-blue-500/10 text-blue-400 border-blue-500/20">
+                      SCHEDULED
+                    </span>
+                    <span className="text-[10px] font-mono opacity-20">#{run.scheduled_run_id.slice(-8)}</span>
+                  </div>
+                  <div className="flex gap-1 flex-wrap mt-0.5">
+                    {run.modes?.map(m => (
+                      <span key={m} className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${MODE_COLORS[m as Mode] || ''}`}>{m}</span>
+                    ))}
+                  </div>
+                  <span className="text-[10px] text-white/40 mt-0.5">
+                    Fires: {new Date(run.scheduled_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                  </span>
+                </div>
+                <div className="text-right flex flex-col gap-1">
+                  <span className="text-[10px] font-bold text-white/50">{run.quantity_per_mode} × {run.modes?.length} modes</span>
+                  <button
+                    type="button"
+                    onClick={() => void handleCancelScheduled(run.scheduled_run_id)}
+                    className="text-[9px] font-black px-2 py-1 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ))}
+          </section>
         )}
 
         {/* Recent runs */}

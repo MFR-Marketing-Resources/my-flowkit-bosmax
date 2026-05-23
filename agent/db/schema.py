@@ -1471,6 +1471,30 @@ INSERT INTO workspace_generation_package
             await db.commit()
             logger.info("Migrated: added operator_notes column to workspace_generation_package")
 
+        # P4: Create scheduled_batch_run table if missing
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS scheduled_batch_run (
+    scheduled_run_id    TEXT PRIMARY KEY,
+    status              TEXT NOT NULL DEFAULT 'SCHEDULED'
+                        CHECK(status IN ('SCHEDULED','RUNNING','COMPLETED','FAILED','CANCELLED')),
+    product_ids_json    TEXT NOT NULL DEFAULT '[]',
+    modes_json          TEXT NOT NULL DEFAULT '[]',
+    quantity_per_mode   INTEGER NOT NULL DEFAULT 10,
+    interval_seconds    INTEGER NOT NULL DEFAULT 5,
+    generation_mode     TEXT NOT NULL DEFAULT 'SINGLE',
+    character_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+    scene_asset_ids_json     TEXT NOT NULL DEFAULT '[]',
+    style_asset_ids_json     TEXT NOT NULL DEFAULT '[]',
+    img_prompt_template TEXT,
+    scheduled_at        TEXT NOT NULL,
+    label               TEXT,
+    batch_run_id        TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+""")
+        await db.commit()
+
         # Migration: add product_ids_json + config_json to batch_generation_run (P3)
         cursor = await db.execute("PRAGMA table_info(batch_generation_run)")
         bgr_cols = {row[1] for row in await cursor.fetchall()}
