@@ -439,6 +439,9 @@ export function buildProductAssetGeneratorRequest(
 		target_destination_mode: draft.target_destination_mode || undefined,
 		strict_validation: Boolean(draft.strict_validation),
 		dry_run_only: true,
+		character_reference_asset_id: draft.character_reference_asset_id || undefined,
+		scene_context_reference_asset_id: draft.scene_context_reference_asset_id || undefined,
+		character_anchor_mode: draft.character_anchor_mode || undefined,
 	};
 }
 
@@ -1062,18 +1065,44 @@ function buildProfileTruthSummary({
 	};
 }
 
+function buildCharacterAnchorFragment(
+	draft: ProductAssetGeneratorDraft,
+	selectedCharacterAsset: CreativeAsset | null,
+): string | null {
+	if (!draft.character_anchor_mode || !draft.character_reference_asset_id) return null;
+	const lines: string[] = [
+		"CONSISTENT CHARACTER ANCHOR: The character identity shown in the reference image must remain exactly the same throughout the output.",
+		"— Maintain exact facial features: face shape, eye shape and colour, nose, lip shape, jawline.",
+		"— Skin tone and complexion must match the reference exactly.",
+		"— Hair colour, texture, length, and style must match.",
+		"— Body proportions, height impression, and build must remain consistent.",
+		"— Do NOT alter, reinterpret, or generalise the character's physical identity.",
+		"— Only the context (outfit / scene / product / pose) may change. The person is the same person.",
+	];
+	const charDesc = selectedCharacterAsset?.description;
+	if (charDesc) {
+		lines.push(`Character reference description: ${charDesc.trim()}`);
+	}
+	if (selectedCharacterAsset?.display_name) {
+		lines.push(`Character reference name: ${selectedCharacterAsset.display_name}`);
+	}
+	return lines.join(" ");
+}
+
 function buildPromptPreviewHandoff({
 	draft,
 	selectedProduct,
 	recommendedMode,
 	inlinePayload,
 	result,
+	selectedCharacterAsset,
 }: {
 	draft: ProductAssetGeneratorDraft;
 	selectedProduct: Product | null;
 	recommendedMode: RecommendedMode;
 	inlinePayload: Record<string, unknown> | null;
 	result: ProductAssetGeneratorResponse | null;
+	selectedCharacterAsset: CreativeAsset | null;
 }) {
 	const productPayload =
 		inlinePayload ||
@@ -1138,6 +1167,11 @@ function buildPromptPreviewHandoff({
 				}
 			: undefined);
 
+	const characterAnchorFragment = buildCharacterAnchorFragment(
+		draft,
+		selectedCharacterAsset,
+	);
+
 	return {
 		productReadinessProfile: {
 			source_route: "PRODUCT_DRIVEN_AUTO",
@@ -1164,7 +1198,12 @@ function buildPromptPreviewHandoff({
 				draft.scene_context || selectedProduct?.scene_context || "",
 			include_temporal_plan: recommendedMode === "TEXT_TO_VIDEO",
 			dry_run_only: true,
+			character_anchor_mode: draft.character_anchor_mode || false,
+			character_reference_asset_id: draft.character_reference_asset_id || null,
+			scene_context_reference_asset_id: draft.scene_context_reference_asset_id || null,
+			character_anchor_fragment: characterAnchorFragment,
 		},
+		characterAnchorFragment,
 	};
 }
 
@@ -1197,6 +1236,29 @@ export default function ProductAssetGeneratorForm({
 	const navigate = useNavigate();
 	const [advancedOpen, setAdvancedOpen] = useState(false);
 	const [sceneContextOpen, setSceneContextOpen] = useState(false);
+
+	// Generator mode: AUTO = pick from Creative Library / DB; MANUAL = upload files + write prompt
+	const [generatorMode, setGeneratorMode] = useState<"AUTO" | "MANUAL">("AUTO");
+
+	// Manual mode file state
+	const [manualAvatarFile, setManualAvatarFile] = useState<File | null>(null);
+	const [manualAvatarPreviewUrl, setManualAvatarPreviewUrl] = useState<string | null>(null);
+	const [manualProductFile, setManualProductFile] = useState<File | null>(null);
+	const [manualProductPreviewUrl, setManualProductPreviewUrl] = useState<string | null>(null);
+	const [manualSceneFile, setManualSceneFile] = useState<File | null>(null);
+	const [manualScenePreviewUrl, setManualScenePreviewUrl] = useState<string | null>(null);
+	const [manualCustomPrompt, setManualCustomPrompt] = useState("");
+
+	// Cleanup object URLs on unmount
+	useEffect(() => {
+		return () => {
+			if (manualAvatarPreviewUrl) URL.revokeObjectURL(manualAvatarPreviewUrl);
+			if (manualProductPreviewUrl) URL.revokeObjectURL(manualProductPreviewUrl);
+			if (manualScenePreviewUrl) URL.revokeObjectURL(manualScenePreviewUrl);
+		};
+	// Only run on unmount
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 
 	// Creative Library assets for image reference pickers
 	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
@@ -1385,136 +1447,74 @@ export default function ProductAssetGeneratorForm({
 
 						{/* ── STEP 1: IMAGE INPUTS ──────────────────────────── */}
 						<div>
-							<div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
-								Step 1 — Image Inputs
-							</div>
-
-							{/* 1A: Avatar / Character Reference */}
-							<div className="rounded-2xl border border-slate-700 bg-slate-950 p-3">
-								<div className="flex items-center gap-2">
-									<span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
-										Avatar / Character
-									</span>
-									<span className="rounded-full border border-slate-600 bg-slate-900 px-2 py-0.5 text-[9px] text-slate-400">
-										Required for avatar presets
-									</span>
+							<div className="mb-3 flex items-center gap-3">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
+									Step 1 — Image Inputs
 								</div>
-								{selectedCharacterAsset ? (
-									<div className="mt-2 flex items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
-										{selectedCharacterAsset.preview_url ? (
-											<img
-												src={selectedCharacterAsset.preview_url}
-												alt={selectedCharacterAsset.display_name}
-												className="h-10 w-10 flex-shrink-0 rounded-lg border border-slate-700 object-cover"
-											/>
-										) : null}
-										<div className="min-w-0 flex-1">
-											<div className="truncate text-xs font-semibold text-slate-100">
-												{selectedCharacterAsset.display_name}
-											</div>
-											<div className="text-[10px] text-slate-400">CHARACTER_REFERENCE</div>
-										</div>
-										<button
-											type="button"
-											onClick={() => onChange({ character_reference_asset_id: null })}
-											className="text-[10px] text-slate-400 hover:text-red-300"
-										>
-											✕ Remove
-										</button>
-									</div>
-								) : null}
-								<select
-									value={draft.character_reference_asset_id ?? ""}
-									onChange={(e) =>
-										onChange({ character_reference_asset_id: e.target.value || null })
-									}
-									className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
-								>
-									<option value="">— Pick avatar from Creative Library —</option>
-									{characterAssets.map((a) => (
-										<option key={a.asset_id} value={a.asset_id}>
-											{a.display_name}
-										</option>
-									))}
-								</select>
-								{characterAssets.length === 0 ? (
-									<div className="mt-1 text-[10px] text-slate-500">
-										No avatar images yet. Upload first in Creative Library → CHARACTER_REFERENCE.
-									</div>
-								) : null}
-							</div>
-
-							{/* 1B: Product */}
-							<div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-3">
-								<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
-									Product
+								{/* Mode toggle */}
+								<div className="ml-auto flex rounded-lg border border-slate-700 bg-slate-950 p-0.5">
+									<button
+										type="button"
+										onClick={() => setGeneratorMode("AUTO")}
+										className={`rounded-md px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] transition-colors ${
+											generatorMode === "AUTO"
+												? "bg-blue-600 text-white"
+												: "text-slate-400 hover:text-slate-200"
+										}`}
+									>
+										Auto
+									</button>
+									<button
+										type="button"
+										onClick={() => setGeneratorMode("MANUAL")}
+										className={`rounded-md px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] transition-colors ${
+											generatorMode === "MANUAL"
+												? "bg-blue-600 text-white"
+												: "text-slate-400 hover:text-slate-200"
+										}`}
+									>
+										Manual
+									</button>
 								</div>
-								<FieldShell
-									label="Database Product"
-									helper="Selecting a product uses product_id authority — scale truth, product physics, and label-safe framing all come from the product row."
-								>
-									<SelectField
-										value={draft.product_id || ""}
-										onChange={(value) => onChange({ product_id: value })}
-										options={productOptions}
-										placeholder="Select a product"
-									/>
-								</FieldShell>
 							</div>
 
-							{/* 1C: Scene Context (Optional — character consistency) */}
-							<div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-3">
-								<button
-									type="button"
-									onClick={() => setSceneContextOpen((v) => !v)}
-									className="flex w-full items-center justify-between text-left"
-								>
-									<div className="flex items-center gap-2">
-										<span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
-											Scene Context
-										</span>
-										<span className="rounded-full border border-slate-600 bg-slate-900 px-2 py-0.5 text-[9px] text-slate-400">
-											Optional
-										</span>
-										{selectedSceneAsset ? (
-											<span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[9px] font-semibold text-blue-200">
-												{selectedSceneAsset.display_name}
+							{generatorMode === "AUTO" ? (
+								<>
+									{/* AUTO: pick from Creative Library / DB */}
+
+									{/* 1A: Avatar / Character Reference */}
+									<div className="rounded-2xl border border-slate-700 bg-slate-950 p-3">
+										<div className="flex items-center gap-2">
+											<span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
+												Avatar / Character
 											</span>
-										) : null}
-									</div>
-									<span className="text-[10px] text-slate-500">
-										{sceneContextOpen ? "▲ hide" : "▼ show"}
-									</span>
-								</button>
-								{!sceneContextOpen ? (
-									<div className="mt-1 text-[10px] text-slate-500">
-										Use for character consistency — anchor the same character in a new outfit or environment.
-									</div>
-								) : null}
-								{sceneContextOpen ? (
-									<div className="mt-3 space-y-2">
-										<div className="text-[10px] text-slate-400">
-											Tujuan: Kekalkan konsistensi karakter (contoh: tukar outfit atau latar belakang
-											untuk Vivvian, tapi muka dan badan kekal sama).
+											<span className="rounded-full border border-slate-600 bg-slate-900 px-2 py-0.5 text-[9px] text-slate-400">
+												Required for avatar presets
+											</span>
 										</div>
-										{selectedSceneAsset ? (
-											<div className="flex items-center gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 px-3 py-2">
-												{selectedSceneAsset.preview_url ? (
+										{selectedCharacterAsset ? (
+											<div className="mt-2 flex items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+												{selectedCharacterAsset.preview_url ? (
 													<img
-														src={selectedSceneAsset.preview_url}
-														alt={selectedSceneAsset.display_name}
+														src={selectedCharacterAsset.preview_url}
+														alt={selectedCharacterAsset.display_name}
 														className="h-10 w-10 flex-shrink-0 rounded-lg border border-slate-700 object-cover"
 													/>
 												) : null}
 												<div className="min-w-0 flex-1">
 													<div className="truncate text-xs font-semibold text-slate-100">
-														{selectedSceneAsset.display_name}
+														{selectedCharacterAsset.display_name}
 													</div>
-													<div className="text-[10px] text-slate-400">SCENE_CONTEXT_REFERENCE</div>
+													{selectedCharacterAsset.description ? (
+														<div className="mt-0.5 line-clamp-2 text-[10px] text-slate-400">
+															{selectedCharacterAsset.description}
+														</div>
+													) : null}
+													<div className="text-[10px] text-slate-500">CHARACTER_REFERENCE · Creative Library</div>
 												</div>
 												<button
 													type="button"
-													onClick={() => onChange({ scene_context_reference_asset_id: null })}
+													onClick={() => onChange({ character_reference_asset_id: null })}
 													className="text-[10px] text-slate-400 hover:text-red-300"
 												>
 													✕ Remove
@@ -1522,29 +1522,308 @@ export default function ProductAssetGeneratorForm({
 											</div>
 										) : null}
 										<select
-											value={draft.scene_context_reference_asset_id ?? ""}
+											value={draft.character_reference_asset_id ?? ""}
 											onChange={(e) =>
-												onChange({
-													scene_context_reference_asset_id: e.target.value || null,
-												})
+												onChange({ character_reference_asset_id: e.target.value || null })
 											}
-											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+											className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
 										>
-											<option value="">— Pick scene from Creative Library —</option>
-											{sceneAssets.map((a) => (
+											<option value="">— Pick avatar from Creative Library —</option>
+											{characterAssets.map((a) => (
 												<option key={a.asset_id} value={a.asset_id}>
 													{a.display_name}
 												</option>
 											))}
 										</select>
-										{sceneAssets.length === 0 ? (
-											<div className="text-[10px] text-slate-500">
-												No scene images yet. Upload in Creative Library → SCENE_CONTEXT_REFERENCE.
+										{characterAssets.length === 0 ? (
+											<div className="mt-1 text-[10px] text-slate-500">
+												No avatar images yet. Upload first in Creative Library → CHARACTER_REFERENCE.
 											</div>
 										) : null}
 									</div>
-								) : null}
-							</div>
+
+									{/* 1B: Product */}
+									<div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-3">
+										<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
+											Product
+										</div>
+										<FieldShell
+											label="Database Product"
+											helper="Selecting a product uses product_id authority — scale truth, product physics, and label-safe framing all come from the product row."
+										>
+											<SelectField
+												value={draft.product_id || ""}
+												onChange={(value) => onChange({ product_id: value })}
+												options={productOptions}
+												placeholder="Select a product"
+											/>
+										</FieldShell>
+									</div>
+
+									{/* 1C: Scene Context (Optional — character consistency) */}
+									<div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-3">
+										<button
+											type="button"
+											onClick={() => setSceneContextOpen((v) => !v)}
+											className="flex w-full items-center justify-between text-left"
+										>
+											<div className="flex items-center gap-2">
+												<span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
+													Scene / Style Context
+												</span>
+												<span className="rounded-full border border-slate-600 bg-slate-900 px-2 py-0.5 text-[9px] text-slate-400">
+													Optional
+												</span>
+												{selectedSceneAsset ? (
+													<span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[9px] font-semibold text-blue-200">
+														{selectedSceneAsset.display_name}
+													</span>
+												) : null}
+											</div>
+											<span className="text-[10px] text-slate-500">
+												{sceneContextOpen ? "▲ hide" : "▼ show"}
+											</span>
+										</button>
+										{!sceneContextOpen ? (
+											<div className="mt-1 text-[10px] text-slate-500">
+												Use for character consistency — anchor the same avatar in a new outfit or environment.
+											</div>
+										) : null}
+										{sceneContextOpen ? (
+											<div className="mt-3 space-y-2">
+												<div className="text-[10px] text-slate-400">
+													Tujuan: Kekalkan konsistensi karakter — contoh tukar outfit atau latar belakang untuk avatar Vivvian, tapi muka dan badan kekal sama.
+												</div>
+												{selectedSceneAsset ? (
+													<div className="flex items-center gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 px-3 py-2">
+														{selectedSceneAsset.preview_url ? (
+															<img
+																src={selectedSceneAsset.preview_url}
+																alt={selectedSceneAsset.display_name}
+																className="h-10 w-10 flex-shrink-0 rounded-lg border border-slate-700 object-cover"
+															/>
+														) : null}
+														<div className="min-w-0 flex-1">
+															<div className="truncate text-xs font-semibold text-slate-100">
+																{selectedSceneAsset.display_name}
+															</div>
+															<div className="text-[10px] text-slate-400">SCENE_CONTEXT_REFERENCE · Creative Library</div>
+														</div>
+														<button
+															type="button"
+															onClick={() => onChange({ scene_context_reference_asset_id: null })}
+															className="text-[10px] text-slate-400 hover:text-red-300"
+														>
+															✕ Remove
+														</button>
+													</div>
+												) : null}
+												<select
+													value={draft.scene_context_reference_asset_id ?? ""}
+													onChange={(e) =>
+														onChange({
+															scene_context_reference_asset_id: e.target.value || null,
+														})
+													}
+													className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+												>
+													<option value="">— Pick scene / style from Creative Library —</option>
+													{sceneAssets.map((a) => (
+														<option key={a.asset_id} value={a.asset_id}>
+															{a.display_name}
+														</option>
+													))}
+												</select>
+												{sceneAssets.length === 0 ? (
+													<div className="text-[10px] text-slate-500">
+														No scene images yet. Upload in Creative Library → SCENE_CONTEXT_REFERENCE.
+													</div>
+												) : null}
+											</div>
+										) : null}
+									</div>
+								</>
+							) : (
+								<>
+									{/* MANUAL: upload files + write prompt */}
+									<div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-200">
+										Manual mode: Upload your own images and describe the scene. System generates a prompt from your inputs.
+									</div>
+
+									{/* Manual Avatar Upload */}
+									<div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-3">
+										<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
+											Avatar / Subject Image
+										</div>
+										{manualAvatarPreviewUrl ? (
+											<div className="mb-2 flex items-center gap-3">
+												<img
+													src={manualAvatarPreviewUrl}
+													alt="Avatar preview"
+													className="h-14 w-14 flex-shrink-0 rounded-lg border border-slate-700 object-cover"
+												/>
+												<div className="min-w-0 flex-1 text-[11px] text-slate-300">
+													{manualAvatarFile?.name}
+												</div>
+												<button
+													type="button"
+													onClick={() => {
+														if (manualAvatarPreviewUrl) URL.revokeObjectURL(manualAvatarPreviewUrl);
+														setManualAvatarFile(null);
+														setManualAvatarPreviewUrl(null);
+													}}
+													className="text-[10px] text-slate-400 hover:text-red-300"
+												>
+													✕
+												</button>
+											</div>
+										) : null}
+										<label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-600 bg-slate-900/50 px-3 py-3 text-[11px] text-slate-400 hover:border-slate-500 hover:text-slate-300">
+											<span>📁 Upload avatar / subject image</span>
+											<input
+												type="file"
+												accept="image/*"
+												className="sr-only"
+												onChange={(e) => {
+													const file = e.target.files?.[0];
+													if (!file) return;
+													if (manualAvatarPreviewUrl) URL.revokeObjectURL(manualAvatarPreviewUrl);
+													setManualAvatarFile(file);
+													setManualAvatarPreviewUrl(URL.createObjectURL(file));
+												}}
+											/>
+										</label>
+										<div className="mt-1 text-[9px] text-slate-500">
+											JPG, PNG, WebP accepted. This is used as visual reference — not sent to backend.
+										</div>
+									</div>
+
+									{/* Manual Product Upload */}
+									<div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-3">
+										<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
+											Product Image <span className="text-slate-500 normal-case font-normal">(or pick from DB below)</span>
+										</div>
+										{manualProductPreviewUrl ? (
+											<div className="mb-2 flex items-center gap-3">
+												<img
+													src={manualProductPreviewUrl}
+													alt="Product preview"
+													className="h-14 w-14 flex-shrink-0 rounded-lg border border-slate-700 object-cover"
+												/>
+												<div className="min-w-0 flex-1 text-[11px] text-slate-300">
+													{manualProductFile?.name}
+												</div>
+												<button
+													type="button"
+													onClick={() => {
+														if (manualProductPreviewUrl) URL.revokeObjectURL(manualProductPreviewUrl);
+														setManualProductFile(null);
+														setManualProductPreviewUrl(null);
+													}}
+													className="text-[10px] text-slate-400 hover:text-red-300"
+												>
+													✕
+												</button>
+											</div>
+										) : null}
+										<label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-600 bg-slate-900/50 px-3 py-3 text-[11px] text-slate-400 hover:border-slate-500 hover:text-slate-300">
+											<span>📁 Upload product image</span>
+											<input
+												type="file"
+												accept="image/*"
+												className="sr-only"
+												onChange={(e) => {
+													const file = e.target.files?.[0];
+													if (!file) return;
+													if (manualProductPreviewUrl) URL.revokeObjectURL(manualProductPreviewUrl);
+													setManualProductFile(file);
+													setManualProductPreviewUrl(URL.createObjectURL(file));
+												}}
+											/>
+										</label>
+										<div className="mt-3">
+											<FieldShell
+												label="Or: Database Product"
+												helper="For scale truth, product physics, and label-safe framing."
+											>
+												<SelectField
+													value={draft.product_id || ""}
+													onChange={(value) => onChange({ product_id: value })}
+													options={productOptions}
+													placeholder="Select from database"
+												/>
+											</FieldShell>
+										</div>
+									</div>
+
+									{/* Manual Scene / Style Upload */}
+									<div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-3">
+										<div className="mb-2 flex items-center gap-2">
+											<span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
+												Scene / Style Image
+											</span>
+											<span className="rounded-full border border-slate-600 bg-slate-900 px-2 py-0.5 text-[9px] text-slate-400">
+												Optional
+											</span>
+										</div>
+										{manualScenePreviewUrl ? (
+											<div className="mb-2 flex items-center gap-3">
+												<img
+													src={manualScenePreviewUrl}
+													alt="Scene preview"
+													className="h-14 w-14 flex-shrink-0 rounded-lg border border-slate-700 object-cover"
+												/>
+												<div className="min-w-0 flex-1 text-[11px] text-slate-300">
+													{manualSceneFile?.name}
+												</div>
+												<button
+													type="button"
+													onClick={() => {
+														if (manualScenePreviewUrl) URL.revokeObjectURL(manualScenePreviewUrl);
+														setManualSceneFile(null);
+														setManualScenePreviewUrl(null);
+													}}
+													className="text-[10px] text-slate-400 hover:text-red-300"
+												>
+													✕
+												</button>
+											</div>
+										) : null}
+										<label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-600 bg-slate-900/50 px-3 py-3 text-[11px] text-slate-400 hover:border-slate-500 hover:text-slate-300">
+											<span>📁 Upload scene or style reference</span>
+											<input
+												type="file"
+												accept="image/*"
+												className="sr-only"
+												onChange={(e) => {
+													const file = e.target.files?.[0];
+													if (!file) return;
+													if (manualScenePreviewUrl) URL.revokeObjectURL(manualScenePreviewUrl);
+													setManualSceneFile(file);
+													setManualScenePreviewUrl(URL.createObjectURL(file));
+												}}
+											/>
+										</label>
+									</div>
+
+									{/* Manual Custom Prompt */}
+									<div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-3">
+										<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-200">
+											Custom Prompt / Description
+										</div>
+										<textarea
+											value={manualCustomPrompt}
+											onChange={(e) => setManualCustomPrompt(e.target.value)}
+											rows={4}
+											placeholder="Describe the scene, mood, subject, product context… System will blend this with preset to generate the output prompt."
+											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600"
+										/>
+										<div className="mt-1 text-[9px] text-slate-500">
+											Contoh: "A young woman in a bright kitchen, holding the product naturally, warm afternoon light."
+										</div>
+									</div>
+								</>
+							)}
 						</div>
 
 						{/* ── STEP 2: GENERATION PRESET ──────────────────────── */}
@@ -1637,6 +1916,7 @@ export default function ProductAssetGeneratorForm({
 												recommendedMode: recommended_first_mode,
 												inlinePayload,
 												result,
+												selectedCharacterAsset,
 											}),
 										})
 									}
