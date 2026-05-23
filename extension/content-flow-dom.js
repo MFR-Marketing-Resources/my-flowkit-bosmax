@@ -46,6 +46,29 @@
     return document.documentElement?.getAttribute('data-flowkit-harness') === 'playwright';
   }
 
+  function getSelectorRegistryHelpers() {
+    return window.__FLOWKIT_SELECTOR_REGISTRY_HELPERS__ || null;
+  }
+
+  function getSelectorRegistryEntry(id) {
+    return getSelectorRegistryHelpers()?.getEntry(id) || null;
+  }
+
+  function getSelectorRegistryQuery(id, fallbackQuery) {
+    return getSelectorRegistryHelpers()?.getSelectorQuery(id) || fallbackQuery;
+  }
+
+  function getSelectorEvidencePointer(id) {
+    return getSelectorRegistryHelpers()?.buildEvidencePointer(id) || null;
+  }
+
+  function buildSelectorEvidenceMeta(id) {
+    return {
+      selector_used: id,
+      evidence_pointer: getSelectorEvidencePointer(id),
+    };
+  }
+
   function sendRuntimeMessageNoThrow(payload) {
     try {
       chrome.runtime.sendMessage(payload, () => {
@@ -452,7 +475,10 @@
   }
 
   function findFlowConfigLauncher() {
-    const selectors = 'button, [role="button"], [role="tab"], [aria-haspopup], span, div';
+    const selectors = getSelectorRegistryQuery(
+      'flow_config_launcher_compact',
+      'button, [role="button"], [role="tab"], [aria-haspopup], span, div',
+    );
     const composer = findComposerElement();
     const scopedCandidates = collectComposerContextRoots(composer)
       .flatMap((root) => Array.from(root.querySelectorAll(selectors)));
@@ -498,14 +524,17 @@
   }
 
   function findOpenFlowConfigSurface() {
-    const selectors = [
-      '[role="listbox"]',
-      '[role="dialog"]',
-      '[role="menu"]',
-      '[data-floating-ui-portal] > *',
-      '[data-radix-popper-content-wrapper] > *',
-      '[data-radix-portal] > *',
-    ].join(', ');
+    const selectors = getSelectorRegistryQuery(
+      'flow_config_surface_portal',
+      [
+        '[role="listbox"]',
+        '[role="dialog"]',
+        '[role="menu"]',
+        '[data-floating-ui-portal] > *',
+        '[data-radix-popper-content-wrapper] > *',
+        '[data-radix-portal] > *',
+      ].join(', '),
+    );
 
     const surfaces = Array.from(document.querySelectorAll(selectors))
       .filter((el) => isVisible(el));
@@ -601,7 +630,9 @@
   }
 
   function findCollapsedF2VConfigLauncher() {
-    return Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).find((el) => {
+    return Array.from(document.querySelectorAll(
+      getSelectorRegistryQuery('f2v_collapsed_config_launcher', 'button[aria-haspopup="menu"]'),
+    )).find((el) => {
       if (!isVisible(el)) return false;
       const text = normalizeText(el.innerText || el.textContent || '');
       return text.includes('Video')
@@ -1139,9 +1170,13 @@
   function findUploadSlotByLabel(slotLabel) {
     const isStart = String(slotLabel).toLowerCase() === 'start';
     const isEnd = String(slotLabel).toLowerCase() === 'end';
+    const uploadSlotQuery = getSelectorRegistryQuery(
+      'upload_slot_label_scan',
+      'label, span, div, p, button, [role="button"]',
+    );
 
     // 1. Find all candidate label elements using inclusive detection logic
-    const candidates = Array.from(document.querySelectorAll('label, span, div, p, button, [role="button"]'))
+    const candidates = Array.from(document.querySelectorAll(uploadSlotQuery))
       .filter((el) => {
         if (!isVisible(el)) return false;
         const text = normalizeText(el.textContent || '');
@@ -1394,14 +1429,18 @@
 
   function findGenerateButtonNearComposer() {
     const composer = findComposerElement();
+    const generateButtonQuery = getSelectorRegistryQuery(
+      'generate_button_composer_scoped',
+      'button, [role="button"]',
+    );
     const composerRoots = collectComposerContextRoots(composer);
     const scopedButtons = composerRoots
-      .flatMap((root) => Array.from(root.querySelectorAll('button, [role="button"]')));
+      .flatMap((root) => Array.from(root.querySelectorAll(generateButtonQuery)));
     const scopedMatch = scopedButtons.find((btn) => looksLikeGenerateButton(btn));
     if (scopedMatch) return scopedMatch;
 
     // 1. Target by specific text found in diagnostic
-    const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+    const buttons = Array.from(document.querySelectorAll(generateButtonQuery));
     const createBtn = buttons.find((btn) => {
       if (!looksLikeGenerateButton(btn) || looksLikeExcludedCreateButton(btn)) return false;
       if (!composer) return true;
@@ -1410,7 +1449,9 @@
     if (createBtn) return createBtn;
 
     // 2. Fallback to icon path detection
-    const paths = document.querySelectorAll('path');
+    const paths = document.querySelectorAll(
+      getSelectorRegistryQuery('generate_button_icon_path_fallback', 'path'),
+    );
     for (const path of paths) {
       const d = path.getAttribute('d') || '';
       if (d.includes('M10 20l-1.41-1.41L15.17 12 8.59 5.41 10 4l8 8-8 8z') ||
@@ -1586,9 +1627,13 @@
   function collectFixedOverlayCandidates(roots) {
     const overlays = [];
     const seen = new Set();
+    const overlayQuery = getSelectorRegistryQuery(
+      'upload_fixed_overlay_scan',
+      'div, section, aside, article, dialog',
+    );
 
     for (const root of roots) {
-      for (const el of collectMatchesInRoot(root, 'div, section, aside, article, dialog')) {
+      for (const el of collectMatchesInRoot(root, overlayQuery)) {
         if (!isVisible(el) || seen.has(el)) continue;
         const rect = el.getBoundingClientRect();
         const style = window.getComputedStyle(el);
@@ -1605,14 +1650,17 @@
   function getModalLikeSurfaces(deepState = null, roots = null) {
     const activeDeepState = deepState || collectDeepSearchState();
     const activeRoots = roots || collectQueryRoots([], activeDeepState);
-    const selectors = [
-      '[role="dialog"]',
-      '[aria-modal="true"]',
-      'dialog',
-      '[data-floating-ui-portal] > *',
-      '[data-radix-portal] > *',
-      '[data-radix-popper-content-wrapper] > *',
-    ].join(', ');
+    const selectors = getSelectorRegistryQuery(
+      'asset_picker_modal_surface',
+      [
+        '[role="dialog"]',
+        '[aria-modal="true"]',
+        'dialog',
+        '[data-floating-ui-portal] > *',
+        '[data-radix-portal] > *',
+        '[data-radix-popper-content-wrapper] > *',
+      ].join(', '),
+    );
 
     const surfaces = [];
     const seen = new Set();
@@ -1940,7 +1988,12 @@
   function rootHasVisualPreview(root) {
     if (!root?.querySelectorAll) return false;
     return Boolean(
-      Array.from(root.querySelectorAll('img, canvas, video, picture, [role="img"], [style*="background-image"]'))
+      Array.from(root.querySelectorAll(
+        getSelectorRegistryQuery(
+          'upload_acceptance_preview_evidence',
+          'img, canvas, video, picture, [role="img"], [style*="background-image"]',
+        ),
+      ))
         .find((node) => describePreviewNode(node))
     );
   }
@@ -2067,6 +2120,21 @@
       shadow_host_outerHTML: modalInfo?.rootContext?.hostOuterHTML || modalInfo?.diagnostics?.shadowHostOuterHTML || '',
       candidate_fixed_overlays_count: modalInfo?.diagnostics?.candidateFixedOverlaysCount || 0,
       active_element_outerHTML: modalInfo?.diagnostics?.activeElementOuterHTML || '',
+      selector_registry_ids: {
+        upload_slot: 'upload_slot_label_scan',
+        asset_picker_modal: 'asset_picker_modal_surface',
+        upload_acceptance: 'upload_acceptance_preview_evidence',
+      },
+      evidence_pointers: {
+        upload_slot: getSelectorEvidencePointer('upload_slot_label_scan'),
+        asset_picker_modal: getSelectorEvidencePointer('asset_picker_modal_surface'),
+        upload_acceptance: getSelectorEvidencePointer('upload_acceptance_preview_evidence'),
+      },
+      fallback_policies: {
+        upload_slot: getSelectorRegistryEntry('upload_slot_label_scan')?.fallback_policy || null,
+        asset_picker_modal: getSelectorRegistryEntry('asset_picker_modal_surface')?.fallback_policy || null,
+        upload_acceptance: getSelectorRegistryEntry('upload_acceptance_preview_evidence')?.fallback_policy || null,
+      },
     };
   }
 
@@ -3474,11 +3542,13 @@
     const obsForSlot = observeFlowState();
     if (!obsForSlot.visibleUploadSlots.includes('Start')) {
       logStage(STAGES.START_SLOT_VISIBLE, 'FAIL',
-        `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`);
+        `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`,
+        buildSelectorEvidenceMeta('upload_slot_label_scan'));
       throw new Error('ERR_START_SLOT_NOT_VISIBLE');
     }
     logStage(STAGES.START_SLOT_VISIBLE, 'PASS',
-      `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`);
+      `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`,
+      buildSelectorEvidenceMeta('upload_slot_label_scan'));
 
     // ── Step 9: Prompt field must be present ─────────────────────────────────
     const composerEl = findComposerElement();
@@ -3504,8 +3574,8 @@
     const report = { ok: false, stages: [] };
     const request_id = job.request_id || `flow_${Date.now()}`;
     let firstFailStage = null;
-    const logStage = (stage, status = 'YES', message = null) => {
-      report.stages.push({ stage, status, message });
+    const logStage = (stage, status = 'YES', message = null, extra = {}) => {
+      report.stages.push({ stage, status, message, ...extra });
       console.log(`[FlowAgent] Stage: ${stage} - ${status}${message ? ` - ${message}` : ''}`);
       if (status === 'FAIL' && !firstFailStage) {
         firstFailStage = stage;
@@ -3514,6 +3584,7 @@
         message,
         fail_code: status === 'FAIL' ? (message || stage) : null,
         first_fail_stage: firstFailStage,
+        ...extra,
       }));
     };
 
@@ -3557,9 +3628,9 @@
         // ensureF2VFramesWorkspaceReady already emits FLOW_TYPE_VIDEO_SELECTED,
         // FLOW_SUBMODE_FRAMES_SELECTED, FLOW_ASPECT_9_16_SELECTED, etc.
         // Log the legacy compatibility stages so downstream consumers see them too.
-        logStage(STAGES.FLOW_MODE_SELECTED, 'Video');
-        logStage(STAGES.FLOW_SUBMODE_SELECTED, 'Frames');
-        logStage(STAGES.FLOW_MODE_VERIFIED);
+        logStage(STAGES.FLOW_MODE_SELECTED, 'Video', null, buildSelectorEvidenceMeta('f2v_collapsed_config_launcher'));
+        logStage(STAGES.FLOW_SUBMODE_SELECTED, 'Frames', null, buildSelectorEvidenceMeta('f2v_collapsed_config_launcher'));
+        logStage(STAGES.FLOW_MODE_VERIFIED, 'YES', null, buildSelectorEvidenceMeta('f2v_collapsed_config_launcher'));
       } else {
         // 1. Select Top Mode (STRICT - must be correct mode)
         const modeControls = await ensureModeControlsVisible(job.mode);
@@ -3568,7 +3639,12 @@
         if (!modeBtn) throw new Error(`Mode button ${job.mode} not found`);
         modeBtn.click();
         await sleep(1000);
-        logStage(STAGES.FLOW_MODE_SELECTED, resolveFlowModeConfig(job.mode)?.topMode || job.mode);
+        logStage(
+          STAGES.FLOW_MODE_SELECTED,
+          resolveFlowModeConfig(job.mode)?.topMode || job.mode,
+          null,
+          buildSelectorEvidenceMeta('flow_config_launcher_compact'),
+        );
 
         // 2. Select Submode (STRICT)
         if (job.mode === 'I2V') {
@@ -3578,10 +3654,20 @@
           if (!submodeBtn) throw new Error(`Submode button ${submodeText} not found`);
           submodeBtn.click();
           await sleep(1000);
-          logStage(STAGES.FLOW_SUBMODE_SELECTED, submodeText);
+          logStage(
+            STAGES.FLOW_SUBMODE_SELECTED,
+            submodeText,
+            null,
+            buildSelectorEvidenceMeta('flow_config_launcher_compact'),
+          );
         } else if (job.mode === 'T2V') {
           const clearedSubmodes = await clearVideoSubmodeSelection();
-          logStage(STAGES.FLOW_SUBMODE_SELECTED, clearedSubmodes.length > 0 ? `CLEARED:${clearedSubmodes.join(',')}` : 'NONE');
+          logStage(
+            STAGES.FLOW_SUBMODE_SELECTED,
+            clearedSubmodes.length > 0 ? `CLEARED:${clearedSubmodes.join(',')}` : 'NONE',
+            null,
+            buildSelectorEvidenceMeta('flow_config_launcher_compact'),
+          );
         }
 
         // 3. Set Aspect Ratio
@@ -3593,17 +3679,17 @@
         }
 
         if (requestedAspectRatio && await selectFlowConfigOption(requestedAspectRatio)) {
-          logStage(STAGES.ASPECT_SELECTED, requestedAspectRatio);
+          logStage(STAGES.ASPECT_SELECTED, requestedAspectRatio, null, buildSelectorEvidenceMeta('flow_config_surface_portal'));
         }
 
         // 4. Set Count
         if (requestedCount && await selectFlowConfigOption(requestedCount)) {
-          logStage(STAGES.COUNT_SELECTED, requestedCount);
+          logStage(STAGES.COUNT_SELECTED, requestedCount, null, buildSelectorEvidenceMeta('flow_config_surface_portal'));
         }
 
         // 5. Set Model
         if (requestedModel && await selectFlowConfigOption(requestedModel)) {
-          logStage(STAGES.MODEL_SELECTED, requestedModel);
+          logStage(STAGES.MODEL_SELECTED, requestedModel, null, buildSelectorEvidenceMeta('flow_config_surface_portal'));
         }
 
         // CRITICAL: MODE VERIFICATION GATE
@@ -3617,7 +3703,7 @@
           throw new Error(`FLOW_MODE_MISMATCH: ${verifyResult.reason}`);
         }
 
-        logStage(STAGES.FLOW_MODE_VERIFIED);
+        logStage(STAGES.FLOW_MODE_VERIFIED, 'YES', null, buildSelectorEvidenceMeta('flow_config_surface_portal'));
       }
 
       // 6. Attach Assets (STRICT: Asset First, Prompt Second)
@@ -3629,7 +3715,8 @@
         const assetFilename = (typeof startAssetSource === 'object' && startAssetSource) ? startAssetSource.fileName : 'unknown';
 
         logStage(STAGES.START_FRAME_UPLOAD_ATTEMPTED, 'PASS', 
-          `slot=Start asset_source_type=${assetSourceType} asset_filename=${assetFilename} visible_upload_slots=${observeFlowState().visibleUploadSlots.join(',')}`);
+          `slot=Start asset_source_type=${assetSourceType} asset_filename=${assetFilename} visible_upload_slots=${observeFlowState().visibleUploadSlots.join(',')}`,
+          buildSelectorEvidenceMeta('upload_slot_label_scan'));
 
         const uploadTimeoutPromise = new Promise((_, reject) => 
           setTimeout(() => reject(new Error('ERR_START_UPLOAD_TIMEOUT')), 20000)
@@ -3864,7 +3951,7 @@
       logStage(STAGES.GENERATE_ARROW_ENABLED);
 
       generateBtn.click();
-      logStage(STAGES.GENERATE_CLICKED);
+      logStage(STAGES.GENERATE_CLICKED, 'YES', null, buildSelectorEvidenceMeta('generate_button_composer_scoped'));
 
       // 10. Detect Generation Start
       await sleep(1500);
