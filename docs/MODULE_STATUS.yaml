@@ -49,6 +49,8 @@ domains:
       - dashboard/src/pages/CreativeLibraryPage.tsx
       - dashboard/src/pages/OperatorPage.tsx
       - dashboard/src/pages/ProductAssetGeneratorPage.tsx
+      - dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx
+      - dashboard/src/components/product-asset-generator/presets.ts
       - dashboard/src/pages/ProductsSalesAnalyzerPage.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
       - dashboard/src/pages/ProductRegistrationPage.tsx

@@ -26,10 +26,6 @@ def test_creative_library_route_nav_and_page_contract_exist():
 
     for token in [
         "Upload and store reusable creative images for workspace use:",
-        "Preset Library",
-        "Launch Preset",
-        "DATABASE PRODUCT REQUIRED",
-        "Product-holding presets force database product truth",
         "Character",
         "/ Creator",
         "Scene Context / Environment",
@@ -45,6 +41,15 @@ def test_creative_library_route_nav_and_page_contract_exist():
         "Mode A metadata handoff",
     ]:
         assert token in page_source
+
+    # Preset card launchers must NOT appear on Creative Library (input-first UX refactor)
+    for token in [
+        "Preset Library",
+        "Launch Preset",
+        "DATABASE PRODUCT REQUIRED",
+        "Product-holding presets force database product truth",
+    ]:
+        assert token not in page_source
 
     for token in [
         "/api/creative-assets?",
@@ -62,12 +67,15 @@ def test_creative_library_route_nav_and_page_contract_exist():
     ]:
         assert token in registry_source
 
+    presets_source = _read(
+        "dashboard/src/components/product-asset-generator/presets.ts"
+    )
     for token in [
         "ecommerce_hero_clean_studio",
         "avatar_holding_product_halfbody",
         "product_scene_style_blend",
     ]:
-        assert token in generator_source
+        assert token in presets_source
 
     for token in [
         "This page is preview-only.",
