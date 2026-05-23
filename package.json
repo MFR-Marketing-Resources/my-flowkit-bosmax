@@ -2,9 +2,12 @@
   "name": "flowkit-local-harness",
   "private": true,
   "scripts": {
-    "test:f2v-asset-picker-modal": "node scripts/test-f2v-asset-picker-modal.js"
+    "test:phase1b:first": "node scripts/test-f2v-playwright-persistent-context.js",
+    "test:f2v-asset-picker-modal": "node scripts/test-f2v-asset-picker-modal.js",
+    "test:f2v-playwright-persistent-context": "node scripts/test-f2v-playwright-persistent-context.js"
   },
   "devDependencies": {
-    "jsdom": "^26.1.0"
+    "jsdom": "^26.1.0",
+    "playwright": "^1.60.0"
   }
 }
