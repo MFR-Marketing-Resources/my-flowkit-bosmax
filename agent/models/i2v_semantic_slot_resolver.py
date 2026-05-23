@@ -32,6 +32,7 @@ class I2VResolvedAsset(BaseModel):
     preview_url: str | None = None
     download_url: str | None = None
     media_id: str | None = None
+    local_file_path: str | None = None
     local_image_path_present: bool | None = None
     remote_image_url_present: bool | None = None
 

@@ -256,6 +256,7 @@ export interface UploadedAsset {
 	fileName: string;
 	previewUrl?: string;
 	downloadUrl?: string;
+	localFilePath?: string;
 	assetId?: string;
 	assetFingerprint?: string;
 	assetSource?: string;
@@ -396,6 +397,7 @@ export interface I2VSemanticResolvedAsset {
 	preview_url?: string | null;
 	download_url?: string | null;
 	media_id?: string | null;
+	local_file_path?: string | null;
 	local_image_path_present?: boolean | null;
 	remote_image_url_present?: boolean | null;
 }
@@ -422,6 +424,7 @@ export interface ApprovedPackageResolvedAsset {
 	preview_url: string;
 	download_url: string;
 	media_id: string | null;
+	local_file_path?: string | null;
 	preview_renderable_status?: string;
 	preview_error_detail?: string | null;
 	local_image_path_present?: boolean;

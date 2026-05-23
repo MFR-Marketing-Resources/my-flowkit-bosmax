@@ -1,5 +1,9 @@
 """Direct Flow API endpoints — for manual operations outside the queue."""
+import base64
 import json
+import tempfile
+from pathlib import Path
+from uuid import uuid4
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -246,6 +250,15 @@ async def upload_image_base64(body: UploadImageBase64Request):
     if "," in image_base64 and image_base64.startswith("data:"):
         image_base64 = image_base64.split(",", 1)[1]
 
+    ext = "png"
+    file_name = Path(body.file_name or "image.png").name
+    if "." in file_name:
+        ext = file_name.rsplit(".", 1)[-1].lower() or "png"
+    temp_dir = Path(tempfile.gettempdir()) / "flowkit-upload-staging"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_file_path = temp_dir / f"{uuid4().hex}.{ext}"
+    temp_file_path.write_bytes(base64.b64decode(image_base64))
+
     result = await client.upload_image(
         image_base64,
         mime_type=body.mime_type,
@@ -255,7 +268,13 @@ async def upload_image_base64(body: UploadImageBase64Request):
     if result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
     media_id = result.get("_mediaId")
-    return {"media_id": media_id, "raw": result.get("data", result)}
+    return {
+        "media_id": media_id,
+        "file_name": file_name,
+        "mime_type": body.mime_type,
+        "local_file_path": str(temp_file_path),
+        "raw": result.get("data", result),
+    }
 @router.post("/execute-flow-job")
 async def execute_flow_job(body: dict):
     """Trigger manual DOM automation in the extension for a generation job."""

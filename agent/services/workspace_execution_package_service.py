@@ -81,6 +81,7 @@ def _merge_i2v_resolved_assets(
             "preview_url": item.get("preview_url"),
             "download_url": item.get("download_url"),
             "media_id": item.get("media_id"),
+            "local_file_path": item.get("local_file_path"),
             "preview_renderable_status": "RENDERABLE" if item.get("preview_url") else "NOT_AVAILABLE",
             "preview_error_detail": None if item.get("preview_url") else "Preview URL is not available.",
             "local_image_path_present": item.get("local_image_path_present"),

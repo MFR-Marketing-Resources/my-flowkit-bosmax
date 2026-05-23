@@ -43,6 +43,10 @@ def test_flow_dom_bridge_exposes_cdp_file_chooser_actions():
     for token in [
         'beginCdpFileChooserProof',
         'waitForCdpFileChooserProofResult',
+        'simulateCdpFileUpload',
+        'simulateLegacyDomFileUpload',
+        'CDP_LOCAL_FILE_PATH_REQUIRED',
+        "uploadStrategy: 'cdp_file_chooser'",
         "FLOWKIT_CDP_BEGIN_FILE_CHOOSER_POC",
         "FLOWKIT_CDP_WAIT_FILE_CHOOSER_POC",
         "ERR_RUNTIME_MESSAGE_TIMEOUT",
@@ -63,3 +67,31 @@ def test_phase_2_harness_uses_playwright_click_and_bridge_wait():
         "PASS CDP file chooser proof of concept",
     ]:
         assert token in harness_script
+
+
+def test_dashboard_upload_lane_preserves_local_file_path_for_cdp_runtime():
+    assets_api = _read("dashboard/src/api/assets.ts")
+    client_api = _read("dashboard/src/api/client.ts")
+    f2v_module = _read("dashboard/src/components/workspace/F2VModule.tsx")
+    i2v_module = _read("dashboard/src/components/workspace/I2VModule.tsx")
+    img_module = _read("dashboard/src/components/workspace/IMGModule.tsx")
+    shared_types = _read("dashboard/src/types/index.ts")
+
+    for token in [
+        "local_file_path",
+        "localFilePath",
+    ]:
+        assert token in "\n".join(
+            [assets_api, client_api, f2v_module, i2v_module, img_module, shared_types]
+        )
+
+
+def test_flow_upload_endpoint_persists_local_staging_path_for_phase_3():
+    flow_api = _read("agent/api/flow.py")
+
+    for token in [
+        'tempfile.gettempdir()',
+        '"flowkit-upload-staging"',
+        '"local_file_path": str(temp_file_path)',
+    ]:
+        assert token in flow_api

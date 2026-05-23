@@ -19,7 +19,9 @@ export async function handleAssetUpload(file: File): Promise<UploadedAsset> {
         resolve({
           mediaId: res.media_id,
           fileName: file.name,
-          previewUrl: base64
+          previewUrl: base64,
+          downloadUrl: undefined,
+          localFilePath: res.local_file_path,
         })
       } catch (error) {
         console.error('[AssetUpload] API Error:', error)
