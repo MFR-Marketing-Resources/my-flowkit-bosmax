@@ -547,6 +547,21 @@ async function runComposerGenerateTargetingTest() {
   }
 }
 
+async function runDiagnosticPingHeaderTest() {
+  const harness = createHarness();
+  const { hooks } = harness;
+
+  try {
+    const payload = hooks.buildDiagnosticPingResponse();
+    expect(payload?.ok === true, 'Expected diagnostic ping payload to report ok=true', payload);
+    expect(payload?.runtime_ready === true, 'Expected diagnostic ping payload to report runtime_ready=true', payload);
+    expect(typeof payload?.content_build_id === 'string' && payload.content_build_id.length > 0, 'Expected non-empty content_build_id', payload);
+    expect(payload?.git_sha === payload?.content_build_id, 'Expected git_sha to align with content_build_id build stamp', payload);
+  } finally {
+    harness.close();
+  }
+}
+
 async function main() {
   const tests = [
     ['Direct slot fallback', runDirectSlotFallbackTest],
@@ -556,6 +571,7 @@ async function main() {
     ['Weak acceptance rejection', runWeakAcceptanceRejectionTest],
     ['Timeout path', runTimeoutPathTest],
     ['Composer generate targeting', runComposerGenerateTargetingTest],
+    ['Diagnostic ping header', runDiagnosticPingHeaderTest],
   ];
 
   let failures = 0;
