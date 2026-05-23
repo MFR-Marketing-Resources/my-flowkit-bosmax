@@ -71,6 +71,15 @@ interface ScheduledRun {
   created_at: string
 }
 
+interface PhbPackage {
+  workspace_generation_package_id: string
+  mode: string
+  status: string
+  product_name_snapshot: string | null
+  product_id: string
+  created_at: string
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MODES = ['F2V', 'I2V', 'T2V', 'IMG'] as const
@@ -297,6 +306,86 @@ function MultiProductPicker({
   )
 }
 
+// ─── Run Packages Panel (P5A) ─────────────────────────────────────────────────
+
+const PKG_STATUS_COLORS: Record<string, string> = {
+  READY_MANUAL: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+  READY_DOM_STAGED: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+  BLOCKED: 'bg-red-500/15 text-red-300 border-red-500/30',
+  DRAFT: 'bg-slate-700/60 text-slate-400 border-slate-600/30',
+  ARCHIVED: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
+}
+
+function RunPackagesPanel({
+  batchRunId,
+  packages,
+  loading,
+}: {
+  batchRunId: string
+  packages: PhbPackage[] | undefined
+  loading: boolean
+}) {
+  if (loading) return <div className="py-3 text-[10px] text-white/30 text-center">Loading packages…</div>
+  if (!packages) return null
+  if (packages.length === 0) return <div className="py-3 text-[10px] text-white/30 text-center">No packages found for this run.</div>
+
+  const grouped = packages.reduce<Record<string, PhbPackage[]>>((acc, p) => {
+    acc[p.status] = [...(acc[p.status] ?? []), p]
+    return acc
+  }, {})
+
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[9px] font-black uppercase tracking-widest text-white/30">PHB Packages ({packages.length})</span>
+        <a
+          href={`/workspace/generation-packages`}
+          className="flex items-center gap-1 text-[9px] font-black text-accent/60 hover:text-accent transition-colors"
+        >
+          Open PHB <LinkOut size={9} />
+        </a>
+      </div>
+      <div className="flex gap-2 flex-wrap">
+        {Object.entries(grouped).map(([status, pkgs]) => (
+          <span key={status} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${PKG_STATUS_COLORS[status] ?? 'bg-white/5 text-white/30 border-white/10'}`}>
+            {status} × {pkgs.length}
+          </span>
+        ))}
+      </div>
+      <div className="rounded-xl border border-white/5 overflow-hidden">
+        <table className="w-full text-[10px]">
+          <thead>
+            <tr className="border-b border-white/5 text-white/20 font-black uppercase tracking-widest">
+              <th className="px-3 py-2 text-left">Mode</th>
+              <th className="px-3 py-2 text-left">Product</th>
+              <th className="px-3 py-2 text-left">Status</th>
+              <th className="px-3 py-2 text-left">ID</th>
+            </tr>
+          </thead>
+          <tbody>
+            {packages.map(pkg => (
+              <tr key={pkg.workspace_generation_package_id} className="border-b border-white/3 hover:bg-white/3 transition-colors">
+                <td className="px-3 py-1.5">
+                  <span className={`font-bold px-1.5 py-0.5 rounded border text-[9px] ${MODE_COLORS[pkg.mode as Mode] || 'bg-white/5 border-white/10 text-white/40'}`}>
+                    {pkg.mode}
+                  </span>
+                </td>
+                <td className="px-3 py-1.5 text-white/50 truncate max-w-[120px]">{pkg.product_name_snapshot || pkg.product_id.slice(-8)}</td>
+                <td className="px-3 py-1.5">
+                  <span className={`font-bold px-1.5 py-0.5 rounded border text-[9px] ${PKG_STATUS_COLORS[pkg.status] ?? 'bg-white/5 border-white/10 text-white/40'}`}>
+                    {pkg.status}
+                  </span>
+                </td>
+                <td className="px-3 py-1.5 font-mono text-white/20 text-[9px]">{pkg.workspace_generation_package_id.slice(-10)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ─── Workspace Batch Tab ──────────────────────────────────────────────────────
 
 function WorkspaceBatchTab({ products }: { products: Product[] }) {
@@ -325,6 +414,11 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
   const [scheduledAt, setScheduledAt] = useState('')
   const [scheduleLabel, setScheduleLabel] = useState('')
   const [scheduledRuns, setScheduledRuns] = useState<ScheduledRun[]>([])
+
+  // P5A: Per-run package detail
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null)
+  const [runPackages, setRunPackages] = useState<Record<string, PhbPackage[]>>({})
+  const [runPkgLoading, setRunPkgLoading] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     const load = async () => {
@@ -501,6 +595,23 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
       ))
     } catch (err: any) {
       alert(`Cancel failed: ${err.message}`)
+    }
+  }
+
+  const toggleRunPackages = async (batchRunId: string) => {
+    if (expandedRunId === batchRunId) {
+      setExpandedRunId(null)
+      return
+    }
+    setExpandedRunId(batchRunId)
+    if (runPackages[batchRunId]) return
+    setRunPkgLoading(prev => ({ ...prev, [batchRunId]: true }))
+    try {
+      const res = await fetchAPI(`/api/workspace/generation-packages?batch_run_id=${encodeURIComponent(batchRunId)}&limit=200`) as { packages: PhbPackage[] }
+      setRunPackages(prev => ({ ...prev, [batchRunId]: res.packages ?? [] }))
+    } catch { /* non-fatal */ }
+    finally {
+      setRunPkgLoading(prev => ({ ...prev, [batchRunId]: false }))
     }
   }
 
@@ -873,6 +984,28 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
                 ))}
               </div>
             )}
+
+            {/* P5A: Package detail toggle */}
+            {currentRun.total_completed > 0 && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => void toggleRunPackages(currentRun.batch_run_id)}
+                  className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-accent/70 hover:text-accent transition-colors"
+                >
+                  <Package size={11} />
+                  {expandedRunId === currentRun.batch_run_id ? 'Hide' : 'View'} {currentRun.total_completed} PHB packages
+                  <ChevronRight size={11} className={`transition-transform ${expandedRunId === currentRun.batch_run_id ? 'rotate-90' : ''}`} />
+                </button>
+                {expandedRunId === currentRun.batch_run_id && (
+                  <RunPackagesPanel
+                    batchRunId={currentRun.batch_run_id}
+                    packages={runPackages[currentRun.batch_run_id]}
+                    loading={runPkgLoading[currentRun.batch_run_id] ?? false}
+                  />
+                )}
+              </div>
+            )}
           </section>
         )}
 
@@ -939,41 +1072,62 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
               <History size={13} /> Recent Batch Runs
             </h3>
             {recentRuns.map(run => (
-              <div
-                key={run.batch_run_id}
-                className="p-4 rounded-xl border border-white/5 bg-card/40 flex items-center gap-4 cursor-pointer hover:bg-card/70 transition-all"
-                onClick={() => setCurrentRun(run)}
-              >
-                <div className="flex-1 flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`text-[9px] font-black tracking-widest px-2 py-0.5 rounded-full border ${
-                      run.status === 'COMPLETED' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
-                      run.status === 'RUNNING' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                      run.status === 'FAILED' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                      'bg-white/5 text-white/30 border-white/10'
-                    }`}>{run.status}</span>
-                    <span className="text-[10px] font-mono opacity-20">#{run.batch_run_id.slice(-8)}</span>
+              <div key={run.batch_run_id} className="rounded-xl border border-white/5 bg-card/40 overflow-hidden">
+                <div
+                  className="p-4 flex items-center gap-4 cursor-pointer hover:bg-card/70 transition-all"
+                  onClick={() => setCurrentRun(run)}
+                >
+                  <div className="flex-1 flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[9px] font-black tracking-widest px-2 py-0.5 rounded-full border ${
+                        run.status === 'COMPLETED' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                        run.status === 'RUNNING' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                        run.status === 'FAILED' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                        'bg-white/5 text-white/30 border-white/10'
+                      }`}>{run.status}</span>
+                      <span className="text-[10px] font-mono opacity-20">#{run.batch_run_id.slice(-8)}</span>
+                    </div>
+                    <div className="flex gap-1 flex-wrap mt-0.5">
+                      {run.modes?.map(m => (
+                        <span key={m} className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${MODE_COLORS[m as Mode] || ''}`}>{m}</span>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex gap-1 flex-wrap mt-0.5">
-                    {run.modes?.map(m => (
-                      <span key={m} className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${MODE_COLORS[m as Mode] || ''}`}>{m}</span>
-                    ))}
+                  <div className="text-right flex flex-col gap-0.5">
+                    <span className="text-sm font-black text-white/70">{run.total_completed}<span className="text-[10px] opacity-40">/{run.total_expected}</span></span>
+                    <span className="text-[9px] opacity-30">{new Date(run.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
+                  {(run.status === 'FAILED' || run.status === 'CANCELLED' || run.total_failed > 0) && (
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); void handleRetryRun(run.batch_run_id) }}
+                      className="text-[9px] font-black px-2 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 shrink-0"
+                    >
+                      Retry
+                    </button>
+                  )}
+                  {run.total_completed > 0 && (
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); void toggleRunPackages(run.batch_run_id) }}
+                      className="flex items-center gap-1 text-[9px] font-black px-2 py-1 rounded-lg border border-accent/20 bg-accent/5 text-accent/60 hover:text-accent hover:bg-accent/10 shrink-0 transition-all"
+                      title="View PHB packages from this run"
+                    >
+                      <Package size={10} />
+                      {run.total_completed}
+                    </button>
+                  )}
+                  <ChevronRight size={14} className="opacity-20 shrink-0" />
                 </div>
-                <div className="text-right flex flex-col gap-0.5">
-                  <span className="text-sm font-black text-white/70">{run.total_completed}<span className="text-[10px] opacity-40">/{run.total_expected}</span></span>
-                  <span className="text-[9px] opacity-30">{new Date(run.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                </div>
-                {(run.status === 'FAILED' || run.status === 'CANCELLED' || run.total_failed > 0) && (
-                  <button
-                    type="button"
-                    onClick={e => { e.stopPropagation(); void handleRetryRun(run.batch_run_id) }}
-                    className="text-[9px] font-black px-2 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 shrink-0"
-                  >
-                    Retry
-                  </button>
+                {expandedRunId === run.batch_run_id && (
+                  <div className="border-t border-white/5 px-4 pb-3">
+                    <RunPackagesPanel
+                      batchRunId={run.batch_run_id}
+                      packages={runPackages[run.batch_run_id]}
+                      loading={runPkgLoading[run.batch_run_id] ?? false}
+                    />
+                  </div>
                 )}
-                <ChevronRight size={14} className="opacity-20 shrink-0" />
               </div>
             ))}
           </section>

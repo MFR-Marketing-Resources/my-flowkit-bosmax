@@ -2,15 +2,18 @@ import {
 	AlertTriangle,
 	Archive,
 	CheckCircle,
+	CheckSquare,
 	ChevronDown,
 	ChevronRight,
 	ClipboardCopy,
 	Download,
 	ExternalLink,
+	FileDown,
 	Filter,
 	Layers,
 	RefreshCw,
 	Search,
+	Square,
 	Trash2,
 	XCircle,
 } from "lucide-react";
@@ -463,13 +466,17 @@ function PackageDetailPanel({
 function PackageRow({
 	pkg,
 	isSelected,
+	isChecked,
 	onSelect,
+	onCheck,
 	onArchiveToggle,
 	onDelete,
 }: {
 	pkg: WorkspaceGenerationPackage;
 	isSelected: boolean;
+	isChecked: boolean;
 	onSelect: () => void;
+	onCheck: (checked: boolean) => void;
 	onArchiveToggle: () => void;
 	onDelete: () => void;
 }) {
@@ -483,7 +490,14 @@ function PackageRow({
 			onMouseEnter={() => setShowActions(true)}
 			onMouseLeave={() => setShowActions(false)}
 		>
-			<td className="py-2 px-3">
+			<td className="py-2 px-2 w-8" onClick={(e) => { e.stopPropagation(); onCheck(!isChecked); }}>
+				{isChecked ? (
+					<CheckSquare size={14} className="text-blue-400" />
+				) : (
+					<Square size={14} className="text-slate-600 group-hover:text-slate-400 transition-colors" />
+				)}
+			</td>
+			<td className="py-2 px-2 w-6">
 				{isSelected ? (
 					<ChevronDown size={14} className="text-blue-400" />
 				) : (
@@ -544,6 +558,10 @@ export default function WorkspaceGenerationPackagesPage() {
 	const [detailPkg, setDetailPkg] = useState<WorkspaceGenerationPackage | null>(null);
 	const [detailLoading, setDetailLoading] = useState(false);
 	const [currentPage, setCurrentPage] = useState(1);
+
+	// P5B: Bulk selection
+	const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+	const [bulkLoading, setBulkLoading] = useState(false);
 
 	const [modeFilter, setModeFilter] = useState("");
 	const [statusFilter, setStatusFilter] = useState("");
@@ -637,6 +655,15 @@ export default function WorkspaceGenerationPackagesPage() {
 		);
 	}, []);
 
+	// P5B: Checkbox toggle (no dependency on filtered — safe before filtered)
+	const toggleCheck = useCallback((id: string, checked: boolean) => {
+		setCheckedIds((prev) => {
+			const next = new Set(prev);
+			checked ? next.add(id) : next.delete(id);
+			return next;
+		});
+	}, []);
+
 	const filtered = packages.filter((p) => {
 		if (!search) return true;
 		const q = search.toLowerCase();
@@ -652,6 +679,73 @@ export default function WorkspaceGenerationPackagesPage() {
 	const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
 	const activeMode = detailPkg?.mode ?? "";
+
+	// P5B: Bulk handlers (defined after filtered so toggleSelectAll can reference it)
+	const toggleSelectAll = () => {
+		setCheckedIds((prev) =>
+			prev.size === filtered.length && filtered.length > 0
+				? new Set()
+				: new Set(filtered.map((p) => p.workspace_generation_package_id)),
+		);
+	};
+
+	const handleBulkArchive = async () => {
+		if (!checkedIds.size) return;
+		setBulkLoading(true);
+		setError(null);
+		try {
+			await Promise.all(
+				[...checkedIds].map((id) =>
+					patchWorkspaceGenerationPackage(id, { status: "ARCHIVED" }),
+				),
+			);
+			setPackages((prev) =>
+				prev.map((p) =>
+					checkedIds.has(p.workspace_generation_package_id) ? { ...p, status: "ARCHIVED" } : p,
+				),
+			);
+			setCheckedIds(new Set());
+		} catch (e) {
+			setError(String(e));
+		} finally {
+			setBulkLoading(false);
+		}
+	};
+
+	const handleBulkDelete = async () => {
+		if (!checkedIds.size) return;
+		if (!window.confirm(`Delete ${checkedIds.size} package(s)? This cannot be undone.`)) return;
+		setBulkLoading(true);
+		setError(null);
+		try {
+			await Promise.all(
+				[...checkedIds].map((id) => deleteWorkspaceGenerationPackage(id)),
+			);
+			setPackages((prev) =>
+				prev.filter((p) => !checkedIds.has(p.workspace_generation_package_id)),
+			);
+			if (selectedId && checkedIds.has(selectedId)) {
+				setSelectedId(null);
+				setDetailPkg(null);
+			}
+			setCheckedIds(new Set());
+		} catch (e) {
+			setError(String(e));
+		} finally {
+			setBulkLoading(false);
+		}
+	};
+
+	const handleExportJSON = () => {
+		const selected = packages.filter((p) => checkedIds.has(p.workspace_generation_package_id));
+		const blob = new Blob([JSON.stringify(selected, null, 2)], { type: "application/json" });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `phb-packages-${Date.now()}.json`;
+		a.click();
+		URL.revokeObjectURL(url);
+	};
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
@@ -779,10 +873,62 @@ export default function WorkspaceGenerationPackagesPage() {
 						</div>
 					) : (
 						<div className="rounded-2xl border border-slate-800 bg-slate-950/80 overflow-hidden">
+							{/* P5B: Bulk action toolbar */}
+							{checkedIds.size > 0 && (
+								<div className="flex items-center gap-2 px-3 py-2.5 bg-blue-500/8 border-b border-blue-500/20">
+									<span className="text-[11px] font-bold text-blue-300 flex-1">
+										{checkedIds.size} selected
+									</span>
+									<button
+										type="button"
+										disabled={bulkLoading}
+										onClick={() => void handleBulkArchive()}
+										className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[11px] font-semibold hover:bg-amber-500/20 transition-colors disabled:opacity-40"
+									>
+										<Archive size={12} />
+										Archive ({checkedIds.size})
+									</button>
+									<button
+										type="button"
+										disabled={bulkLoading}
+										onClick={() => void handleBulkDelete()}
+										className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-[11px] font-semibold hover:bg-red-500/20 transition-colors disabled:opacity-40"
+									>
+										<Trash2 size={12} />
+										Delete ({checkedIds.size})
+									</button>
+									<button
+										type="button"
+										onClick={handleExportJSON}
+										className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-600 bg-slate-800 text-slate-300 text-[11px] font-semibold hover:bg-slate-700 transition-colors"
+									>
+										<FileDown size={12} />
+										Export JSON
+									</button>
+									<button
+										type="button"
+										onClick={() => setCheckedIds(new Set())}
+										className="text-[11px] text-slate-500 hover:text-slate-300 transition-colors px-1"
+									>
+										Clear
+									</button>
+								</div>
+							)}
 							<table className="w-full">
 								<thead className="border-b border-slate-800">
 									<tr className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-										<th className="py-3 px-3 w-8"></th>
+										<th
+											className="py-3 px-2 w-8 cursor-pointer"
+											onClick={toggleSelectAll}
+											title={checkedIds.size === filtered.length && filtered.length > 0 ? "Deselect all" : "Select all"}
+										>
+											{checkedIds.size === filtered.length && filtered.length > 0 ? (
+												<CheckSquare size={14} className="text-blue-400" />
+											) : (
+												<Square size={14} className="text-slate-600" />
+											)}
+										</th>
+										<th className="py-3 px-2 w-6"></th>
 										<th className="py-3 px-3 text-left">Package ID</th>
 										<th className="py-3 px-3 text-left">Mode</th>
 										<th className="py-3 px-3 text-left">Product</th>
@@ -797,7 +943,9 @@ export default function WorkspaceGenerationPackagesPage() {
 											key={pkg.workspace_generation_package_id}
 											pkg={pkg}
 											isSelected={selectedId === pkg.workspace_generation_package_id}
+											isChecked={checkedIds.has(pkg.workspace_generation_package_id)}
 											onSelect={() => void handleSelect(pkg)}
+											onCheck={(checked) => toggleCheck(pkg.workspace_generation_package_id, checked)}
 											onArchiveToggle={() => void handleArchiveToggle(pkg)}
 											onDelete={() => void handleDelete(pkg)}
 										/>
