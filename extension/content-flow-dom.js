@@ -16,8 +16,13 @@
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
   const FLOW_KIT_DOM_BUILD_ID = 'flowkit-google-flow-phase1a-2026-05-23';
+  const FLOW_KIT_PLAYWRIGHT_HARNESS = hasPlaywrightHarnessMarker();
   const FLOW_KIT_TEST_MODE = Boolean(window.__FLOWKIT_TEST_MODE__);
-  const FLOW_KIT_ENABLE_TEST_HOOKS = FLOW_KIT_TEST_MODE || Boolean(window.__FLOWKIT_ENABLE_TEST_HOOKS__);
+  const FLOW_KIT_ENABLE_TEST_HOOKS =
+    FLOW_KIT_TEST_MODE
+    || Boolean(window.__FLOWKIT_ENABLE_TEST_HOOKS__)
+    || FLOW_KIT_PLAYWRIGHT_HARNESS;
+  const FLOW_KIT_TEST_BRIDGE_SOURCE = 'FLOWKIT_PLAYWRIGHT_TEST_BRIDGE';
   const IMAGE_ASPECT_RATIOS = ['16:9', '4:3', '1:1', '3:4', '9:16'];
   const FLOW_MODE_CONFIG = {
     F2V: { topMode: 'Video', subMode: 'Frames', defaultModel: 'Veo 3.1 - Lite', defaultOrientation: 'VERTICAL', defaultCount: 1 },
@@ -36,6 +41,10 @@
 
   window._flowKitDomInjectedVersion = FLOW_KIT_DOM_VERSION;
   console.log('[FlowAgent] Flow DOM Executor injected');
+
+  function hasPlaywrightHarnessMarker() {
+    return document.documentElement?.getAttribute('data-flowkit-harness') === 'playwright';
+  }
 
   function sendRuntimeMessageNoThrow(payload) {
     try {
@@ -148,6 +157,93 @@
       location_href: window.location.href,
       timestamp: new Date().toISOString(),
     };
+  }
+
+  function sanitizeTestHookResult(action, result) {
+    if (action === 'simulateFileUpload') {
+      return {
+        ok: Boolean(result?.ok),
+        error: result?.error || null,
+        detail: result?.detail || null,
+        lastCheckpoint: result?.lastCheckpoint || null,
+        acceptanceReason: result?.acceptanceReason || null,
+        modalFound: Boolean(result?.modalFound),
+      };
+    }
+
+    if (action === 'findVisibleAssetPickerModal') {
+      return {
+        modalFound: Boolean(result?.modal),
+        foundInShadowRoot: Boolean(result?.foundInShadowRoot),
+        markerSnippetCount: result?.diagnostics?.markerSnippetCount || 0,
+        openShadowRootCount: result?.diagnostics?.openShadowRootCount || 0,
+      };
+    }
+
+    return result;
+  }
+
+  async function invokePlaywrightTestAction(action, args = []) {
+    if (action === 'buildDiagnosticPingResponse') {
+      return buildDiagnosticPingResponse(...args);
+    }
+
+    if (action === 'findVisibleAssetPickerModal') {
+      return findVisibleAssetPickerModal(...args);
+    }
+
+    if (action === 'simulateFileUpload') {
+      return simulateFileUpload(...args);
+    }
+
+    throw new Error(`ERR_UNKNOWN_TEST_ACTION:${action}`);
+  }
+
+  function postPlaywrightTestBridgeResponse(requestId, payload) {
+    window.postMessage({
+      source: FLOW_KIT_TEST_BRIDGE_SOURCE,
+      direction: 'response',
+      requestId,
+      ...payload,
+    }, '*');
+  }
+
+  function installPlaywrightTestBridge() {
+    if (!FLOW_KIT_PLAYWRIGHT_HARNESS || window._flowKitPlaywrightBridgeInstalled) {
+      return;
+    }
+
+    window._flowKitPlaywrightBridgeInstalled = true;
+    window.addEventListener('message', (event) => {
+      if (event.source !== window) return;
+
+      const data = event.data || {};
+      if (
+        data.source !== FLOW_KIT_TEST_BRIDGE_SOURCE
+        || data.direction !== 'request'
+      ) {
+        return;
+      }
+
+      const requestId = data.requestId || `flowkit_test_${Date.now()}`;
+      Promise.resolve()
+        .then(async () => {
+          const action = String(data.action || '');
+          const args = Array.isArray(data.args) ? data.args : [];
+          const result = await invokePlaywrightTestAction(action, args);
+          postPlaywrightTestBridgeResponse(requestId, {
+            ok: true,
+            action,
+            result: sanitizeTestHookResult(action, result),
+          });
+        })
+        .catch((error) => {
+          postPlaywrightTestBridgeResponse(requestId, {
+            ok: false,
+            error: String(error?.message || error),
+          });
+        });
+    });
   }
 
   function normalizeText(value) {
@@ -3914,6 +4010,7 @@
       openFlowConfigPanel,
       verifyFlowMode,
     };
+    installPlaywrightTestBridge();
   }
 
   if (!FLOW_KIT_TEST_MODE) {

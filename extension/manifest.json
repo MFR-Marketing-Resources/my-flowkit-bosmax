@@ -9,6 +9,8 @@
     "https://aisandbox-pa.googleapis.com/*",
     "http://127.0.0.1:8100/*",
     "http://localhost:8100/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*",
     "http://127.0.0.1:5173/*",
     "http://localhost:5173/*"
   ],
@@ -22,7 +24,9 @@
     {
       "matches": [
         "https://labs.google/fx/tools/flow*",
-        "https://labs.google/fx/*/tools/flow*"
+        "https://labs.google/fx/*/tools/flow*",
+        "http://127.0.0.1/*",
+        "http://localhost/*"
       ],
       "js": ["content.js", "content-flow-dom.js"],
       "run_at": "document_start"
