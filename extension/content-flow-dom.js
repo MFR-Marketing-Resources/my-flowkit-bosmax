@@ -82,6 +82,38 @@
     }
   }
 
+  function sendRuntimeMessageWithResponse(payload, timeoutMs = 15000) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve({ ok: false, error: 'ERR_RUNTIME_MESSAGE_TIMEOUT' });
+      }, timeoutMs);
+
+      try {
+        chrome.runtime.sendMessage(payload, (response) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+
+          const lastError = chrome.runtime.lastError;
+          if (lastError) {
+            resolve({ ok: false, error: lastError.message || 'ERR_RUNTIME_LASTERROR' });
+            return;
+          }
+
+          resolve(response || { ok: false, error: 'ERR_EMPTY_RUNTIME_RESPONSE' });
+        });
+      } catch (error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ ok: false, error: String(error?.message || error) });
+      }
+    });
+  }
+
   function buildStageTelemetryPayload(request_id, stage, status, extra = {}) {
     return {
       type: 'FLOW_STAGE_EVENT',
@@ -203,7 +235,36 @@
       };
     }
 
+    if (action === 'beginCdpFileChooserProof' || action === 'waitForCdpFileChooserProofResult') {
+      return {
+        ok: Boolean(result?.ok),
+        armed: Boolean(result?.armed),
+        error: result?.error || null,
+        method: result?.method || null,
+        mode: result?.mode || null,
+        backendNodeId: result?.backendNodeId || null,
+        slotLabel: result?.slotLabel || null,
+        expectedFileName: result?.expectedFileName || null,
+        timeout_ms: result?.timeout_ms || null,
+      };
+    }
+
     return result;
+  }
+
+  async function beginCdpFileChooserProof(config = {}) {
+    return await sendRuntimeMessageWithResponse({
+      type: 'FLOWKIT_CDP_BEGIN_FILE_CHOOSER_POC',
+      filePath: config?.filePath || null,
+      expectedFileName: config?.expectedFileName || null,
+      slotLabel: config?.slotLabel || 'Start',
+    }, 12000);
+  }
+
+  async function waitForCdpFileChooserProofResult() {
+    return await sendRuntimeMessageWithResponse({
+      type: 'FLOWKIT_CDP_WAIT_FILE_CHOOSER_POC',
+    }, 15000);
   }
 
   async function invokePlaywrightTestAction(action, args = []) {
@@ -217,6 +278,14 @@
 
     if (action === 'simulateFileUpload') {
       return simulateFileUpload(...args);
+    }
+
+    if (action === 'beginCdpFileChooserProof') {
+      return beginCdpFileChooserProof(...args);
+    }
+
+    if (action === 'waitForCdpFileChooserProofResult') {
+      return waitForCdpFileChooserProofResult(...args);
     }
 
     throw new Error(`ERR_UNKNOWN_TEST_ACTION:${action}`);
@@ -4094,6 +4163,8 @@
       waitForUploadAcceptance,
       resolveAssetPickerTargets,
       simulateFileUpload,
+      beginCdpFileChooserProof,
+      waitForCdpFileChooserProofResult,
       openFlowConfigPanel,
       verifyFlowMode,
     };

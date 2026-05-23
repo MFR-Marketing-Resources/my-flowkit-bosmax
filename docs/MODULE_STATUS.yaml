@@ -74,6 +74,7 @@ domains:
       - extension/popup.js
       - dashboard/src/types/index.ts
       - scripts/test-f2v-asset-picker-modal.js
+      - scripts/test-f2v-cdp-file-chooser-poc.js
       - scripts/test-f2v-playwright-persistent-context.js
       - scripts/test-flow-selector-registry.js
       - scripts/test-side-panel-route-wiring.js
@@ -121,5 +122,6 @@ domains:
       - tests/api/test_registration_draft_image_attach_api.py
       - tests/ui/test_registration_draft_evidence_editor_ui_contract.py
       - tests/ui/test_extension_side_panel_ui_contract.py
+      - tests/ui/test_cdp_file_chooser_poc_contract.py
       - tests/ui/test_flow_selector_registry_ui_contract.py
       - tests/ui/test_playwright_persistent_context_harness_contract.py
