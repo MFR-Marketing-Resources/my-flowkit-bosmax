@@ -18,6 +18,8 @@ import {
 
 type QueueFilter = 'FAILED_OR_ERROR' | 'RUNNING' | 'WAITING' | 'ALL'
 
+const PAGE_SIZE_QUEUE = 20
+
 function getTroubleshootPriority(trace: TelemetryRequest) {
   const tone = getTelemetryStatusTone(trace.status)
 
@@ -90,6 +92,7 @@ export default function TroubleshootPage() {
   const [copied, setCopied] = useState(false)
   const [queueFilter, setQueueFilter] = useState<QueueFilter>('FAILED_OR_ERROR')
   const [modeFilter, setModeFilter] = useState('ALL')
+  const [currentPageQueue, setCurrentPageQueue] = useState(1)
 
   useEffect(() => {
     const load = () => {
@@ -156,6 +159,12 @@ export default function TroubleshootPage() {
       disposed = true
     }
   }, [selectedRequestId])
+
+  useEffect(() => { setCurrentPageQueue(1) }, [queueFilter, modeFilter])
+
+  const totalPagesQueue = Math.ceil(queueItems.length / PAGE_SIZE_QUEUE)
+  const safePageQueue = Math.min(Math.max(1, currentPageQueue), totalPagesQueue || 1)
+  const paginatedQueueItems = queueItems.slice((safePageQueue - 1) * PAGE_SIZE_QUEUE, safePageQueue * PAGE_SIZE_QUEUE)
 
   const selectedTrace = queueItems.find(trace => trace.request_id === selectedRequestId) || null
   const incidentBrief = useMemo(() => buildIncidentBrief(selectedTrace, detail), [detail, selectedTrace])
@@ -312,7 +321,7 @@ export default function TroubleshootPage() {
           <div className="divide-y divide-slate-800">
             {queueItems.length === 0 ? (
               <div className="px-5 py-6 text-sm text-slate-400">No troubleshoot items matched the current filters.</div>
-            ) : queueItems.map(trace => {
+            ) : paginatedQueueItems.map(trace => {
               const priority = getTroubleshootPriority(trace)
 
               return (
@@ -347,6 +356,36 @@ export default function TroubleshootPage() {
               </button>
             )})}
           </div>
+          {totalPagesQueue > 1 && (
+            <div className="flex items-center justify-center gap-1 border-t border-slate-800 px-5 py-3">
+              <button
+                type="button"
+                onClick={() => setCurrentPageQueue(p => Math.max(1, p - 1))}
+                disabled={safePageQueue === 1}
+                className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 hover:text-blue-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Prev
+              </button>
+              {Array.from({ length: totalPagesQueue }, (_, i) => i + 1).map(pg => (
+                <button
+                  key={pg}
+                  type="button"
+                  onClick={() => setCurrentPageQueue(pg)}
+                  className={`w-7 h-7 rounded-full border text-[10px] font-semibold ${safePageQueue === pg ? 'border-blue-400/60 bg-blue-500/10 text-blue-200' : 'border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200'}`}
+                >
+                  {pg}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setCurrentPageQueue(p => Math.min(totalPagesQueue, p + 1))}
+                disabled={safePageQueue === totalPagesQueue}
+                className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 hover:text-blue-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/80">

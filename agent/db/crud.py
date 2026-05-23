@@ -37,7 +37,7 @@ _COLUMNS = {
     "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
     "creative_asset": {"semantic_role", "display_name", "description", "source_type", "storage_kind", "preview_url", "download_url", "media_id", "local_file_path", "remote_source_url", "product_id", "category", "silo", "product_type", "allowed_modes", "engine_slot_eligibility", "mode_a_metadata_handoff", "visual_dna_summary", "character_dna", "scene_context_dna", "style_mood_dna", "source_prompt_fingerprint", "source_workspace_execution_package_id", "source_prompt_package_snapshot_id", "status", "updated_at"},
     "fastmoss_bulk_draft_status": {"raw_product_title", "source_url", "tiktok_product_url", "image_url", "category", "claim_risk_level", "mapping_confidence", "image_readiness", "copy_route", "sold_count", "commission_rate", "promotion_status", "draft_id", "committed_product_id", "suspected_existing_product_id", "suspected_existing_product_title", "suspected_existing_product_source", "suspected_existing_product_mapping_source", "duplicate_match_reason", "linked_product_id", "linked_product_title", "duplicate_resolution", "duplicate_resolved_at", "duplicate_resolution_note", "duplicate_ignore_product_id", "error_message", "batch_provenance", "recomputed_at", "recompute_previous_status", "recompute_previous_error", "updated_at"},
-    "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "updated_at"},
+    "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "operator_notes", "updated_at"},
 }
 
 
@@ -845,6 +845,8 @@ async def create_batch_generation_run(
     interval_seconds: int,
     generation_mode: str,
     total_expected: int,
+    product_ids_json: str = "[]",
+    config_json: str = "{}",
 ) -> dict:
     db = await get_db()
     now = _now()
@@ -853,10 +855,11 @@ async def create_batch_generation_run(
             """INSERT INTO batch_generation_run
                (batch_run_id, status, product_id, modes_json, quantity_per_mode,
                 interval_seconds, generation_mode, total_expected, total_completed,
-                total_failed, error_log_json, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,0,0,'[]',?,?)""",
+                total_failed, error_log_json, product_ids_json, config_json, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,0,0,'[]',?,?,?,?)""",
             (batch_run_id, "PENDING", product_id, modes_json, quantity_per_mode,
-             interval_seconds, generation_mode, total_expected, now, now),
+             interval_seconds, generation_mode, total_expected,
+             product_ids_json, config_json, now, now),
         )
         await db.commit()
     cur = await db.execute("SELECT * FROM batch_generation_run WHERE batch_run_id=?", (batch_run_id,))
@@ -897,6 +900,22 @@ async def get_batch_generation_run(batch_run_id: str) -> dict | None:
     cur = await db.execute("SELECT * FROM batch_generation_run WHERE batch_run_id=?", (batch_run_id,))
     row = await cur.fetchone()
     return dict(row) if row else None
+
+
+async def list_batch_generation_runs(
+    product_id: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM batch_generation_run"
+    params: list = []
+    if product_id:
+        q += " WHERE product_id=?"
+        params.append(product_id)
+    q += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
 
 
 # ─── FastMoss Bulk Queue ─────────────────────────────────────

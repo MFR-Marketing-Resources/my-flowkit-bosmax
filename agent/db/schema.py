@@ -1413,6 +1413,75 @@ CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(cla
             logger.info("Migrated: added batch_run_id column to workspace_generation_package table")
         await db.commit()
 
+        # Migration: add operator_notes + ARCHIVED status to workspace_generation_package
+        cursor = await db.execute("SELECT sql FROM sqlite_master WHERE name='workspace_generation_package' AND type='table'")
+        row = await cursor.fetchone()
+        wgp_sql = row[0] if row else ""
+        cursor = await db.execute("PRAGMA table_info(workspace_generation_package)")
+        wgp_cols2 = {row[1] for row in await cursor.fetchall()}
+        if "ARCHIVED" not in wgp_sql:
+            import sqlite3 as _sqlite3_wgp
+            _db_path_wgp = str(DB_PATH)
+            with _sqlite3_wgp.connect(_db_path_wgp) as _sync_wgp:
+                _sync_wgp.execute("PRAGMA foreign_keys=OFF")
+                _sync_wgp.execute("ALTER TABLE workspace_generation_package RENAME TO _wgp_old")
+                _sync_wgp.executescript("""
+CREATE TABLE IF NOT EXISTS workspace_generation_package (
+    workspace_generation_package_id TEXT PRIMARY KEY,
+    mode          TEXT NOT NULL,
+    product_id    TEXT NOT NULL,
+    product_name_snapshot TEXT NOT NULL DEFAULT '',
+    source_lane   TEXT NOT NULL DEFAULT 'F2V',
+    prompt_package_snapshot_id TEXT NOT NULL DEFAULT '',
+    workspace_execution_package_id TEXT,
+    generation_mode TEXT NOT NULL DEFAULT 'SINGLE',
+    final_prompt_text TEXT NOT NULL DEFAULT '',
+    prompt_blocks_json TEXT NOT NULL DEFAULT '[]',
+    selected_assets_json TEXT NOT NULL DEFAULT '{}',
+    resolved_engine_slots_json TEXT NOT NULL DEFAULT '{}',
+    resolver_output_json TEXT NOT NULL DEFAULT '{}',
+    image_assets_json TEXT NOT NULL DEFAULT '{}',
+    manual_handoff_json TEXT NOT NULL DEFAULT '{}',
+    dom_handoff_payload_json TEXT NOT NULL DEFAULT '{}',
+    blockers_json TEXT NOT NULL DEFAULT '[]',
+    warnings_json TEXT NOT NULL DEFAULT '[]',
+    status        TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','READY_MANUAL','READY_DOM_STAGED','BLOCKED','ARCHIVED')),
+    operator_notes TEXT,
+    batch_run_id  TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+""")
+                _sync_wgp.execute("""
+INSERT INTO workspace_generation_package
+    SELECT workspace_generation_package_id, mode, product_id, product_name_snapshot,
+           source_lane, prompt_package_snapshot_id, workspace_execution_package_id,
+           generation_mode, final_prompt_text, prompt_blocks_json, selected_assets_json,
+           resolved_engine_slots_json, resolver_output_json, image_assets_json,
+           manual_handoff_json, dom_handoff_payload_json, blockers_json, warnings_json,
+           status, NULL, batch_run_id, created_at, updated_at
+    FROM _wgp_old
+""")
+                _sync_wgp.execute("DROP TABLE _wgp_old")
+                _sync_wgp.execute("PRAGMA foreign_keys=ON")
+                _sync_wgp.commit()
+            logger.info("Migrated: workspace_generation_package — added ARCHIVED status + operator_notes column")
+        elif "operator_notes" not in wgp_cols2:
+            await db.execute("ALTER TABLE workspace_generation_package ADD COLUMN operator_notes TEXT")
+            await db.commit()
+            logger.info("Migrated: added operator_notes column to workspace_generation_package")
+
+        # Migration: add product_ids_json + config_json to batch_generation_run (P3)
+        cursor = await db.execute("PRAGMA table_info(batch_generation_run)")
+        bgr_cols = {row[1] for row in await cursor.fetchall()}
+        if "product_ids_json" not in bgr_cols:
+            await db.execute("ALTER TABLE batch_generation_run ADD COLUMN product_ids_json TEXT DEFAULT '[]'")
+            logger.info("Migrated: added product_ids_json column to batch_generation_run")
+        if "config_json" not in bgr_cols:
+            await db.execute("ALTER TABLE batch_generation_run ADD COLUMN config_json TEXT DEFAULT '{}'")
+            logger.info("Migrated: added config_json column to batch_generation_run")
+        await db.commit()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 

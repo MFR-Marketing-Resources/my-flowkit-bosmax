@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchCreativeAssets } from "../api/creativeAssets";
+import { archiveCreativeAsset, fetchCreativeAssets } from "../api/creativeAssets";
 import type {
 	CreativeAsset,
 	CreativeAssetSemanticRole,
 	CreativeAssetStatus,
 	WorkspaceMode,
 } from "../types";
+
+const PAGE_SIZE_ASSETS = 20;
 
 const ROLE_OPTIONS: CreativeAssetSemanticRole[] = [
 	"PRODUCT_REFERENCE",
@@ -35,6 +37,8 @@ export default function CreativeLibraryPage() {
 	const [search, setSearch] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
+	const [currentPage, setCurrentPage] = useState(1);
+	const [archiving, setArchiving] = useState<string | null>(null);
 
 	useEffect(() => {
 		setError(null);
@@ -54,10 +58,28 @@ export default function CreativeLibraryPage() {
 			.finally(() => setIsLoading(false));
 	}, [roleFilter, statusFilter, search]);
 
+	useEffect(() => { setCurrentPage(1); }, [roleFilter, statusFilter, modeFilter, search]);
+
+	const handleArchive = async (assetId: string) => {
+		setArchiving(assetId);
+		try {
+			await archiveCreativeAsset(assetId);
+			setItems(prev => prev.map(i => i.asset_id === assetId ? { ...i, status: "ARCHIVED" as const } : i));
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to archive asset.");
+		} finally {
+			setArchiving(null);
+		}
+	};
+
 	const displayedItems =
 		modeFilter === "ALL"
 			? items
 			: items.filter((item) => item.allowed_modes.includes(modeFilter));
+
+	const totalPages = Math.ceil(displayedItems.length / PAGE_SIZE_ASSETS);
+	const safePage = Math.min(Math.max(1, currentPage), totalPages || 1);
+	const paginatedItems = displayedItems.slice((safePage - 1) * PAGE_SIZE_ASSETS, safePage * PAGE_SIZE_ASSETS);
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
@@ -163,21 +185,22 @@ export default function CreativeLibraryPage() {
 								<th className="px-4 py-3 text-left">Semantic Role</th>
 								<th className="px-4 py-3 text-left">Status</th>
 								<th className="px-4 py-3 text-left">Modes</th>
-								<th className="px-4 py-3 text-left">Action</th>
+								<th className="px-4 py-3 text-left">Edit</th>
+								<th className="px-4 py-3 text-left">Archive</th>
 							</tr>
 						</thead>
 						<tbody className="divide-y divide-slate-800 bg-slate-950/40 text-slate-200">
 							{displayedItems.length === 0 ? (
 								<tr>
 									<td
-										colSpan={5}
+										colSpan={6}
 										className="px-4 py-8 text-center text-xs text-slate-500"
 									>
 										{isLoading ? "Loading assets..." : "No assets found."}
 									</td>
 								</tr>
 							) : (
-								displayedItems.map((item) => (
+								paginatedItems.map((item) => (
 									<tr key={item.asset_id} className="hover:bg-slate-900/50">
 										<td className="px-4 py-3">
 											<div className="font-semibold">{item.display_name}</div>
@@ -213,12 +236,54 @@ export default function CreativeLibraryPage() {
 												Edit
 											</button>
 										</td>
+										<td className="px-4 py-3">
+											{item.status === "ACTIVE" && (
+												<button
+													type="button"
+													onClick={() => handleArchive(item.asset_id)}
+													disabled={archiving === item.asset_id}
+													className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
+												>
+													{archiving === item.asset_id ? "..." : "Archive"}
+												</button>
+											)}
+										</td>
 									</tr>
 								))
 							)}
 						</tbody>
 					</table>
 				</div>
+				{totalPages > 1 && (
+					<div className="mt-4 flex items-center justify-center gap-1">
+						<button
+							type="button"
+							onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+							disabled={safePage === 1}
+							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+						>
+							Prev
+						</button>
+						{Array.from({ length: totalPages }, (_, i) => i + 1).map(pg => (
+							<button
+								key={pg}
+								type="button"
+								onClick={() => setCurrentPage(pg)}
+								className={`w-8 h-8 rounded-lg border text-xs font-semibold ${safePage === pg ? "border-blue-500/50 bg-blue-500/20 text-blue-200" : "border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800"}`}
+							>
+								{pg}
+							</button>
+						))}
+						<button
+							type="button"
+							onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+							disabled={safePage === totalPages}
+							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+						>
+							Next
+						</button>
+					</div>
+				)}
 			</section>
 		</div>
 	);

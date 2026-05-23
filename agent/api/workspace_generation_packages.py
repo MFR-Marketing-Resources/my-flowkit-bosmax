@@ -53,6 +53,9 @@ from agent.services.workspace_generation_package_service import (
     list_workspace_generation_packages,
     start_batch_generation,
     get_batch_generation_run_status,
+    list_batch_generation_runs,
+    cancel_batch_generation_run,
+    retry_batch_generation_run,
 )
 
 router = APIRouter(prefix="/workspace/generation-packages", tags=["workspace-generation-packages"])
@@ -97,10 +100,17 @@ class IMGGenerationPackageRequest(_BaseModel):
 
 class BatchGenerationRequest(_BaseModel):
     product_id: str
+    product_ids: _List[str] = []  # P3A: multi-product; overrides product_id when non-empty
     modes: _List[str] = ["F2V"]
     quantity_per_mode: int = 10
     interval_seconds: int = 5
     generation_mode: str = "SINGLE"
+    # P1: Creative Library asset slots for combination matrix
+    character_asset_ids: _List[str] = []
+    scene_asset_ids: _List[str] = []
+    style_asset_ids: _List[str] = []
+    # P2A: IMG custom photorealistic prompt template (use {character_dna}, {scene_context_dna}, {style_mood_dna})
+    img_prompt_template: str | None = None
 
 
 @router.get("")
@@ -302,18 +312,36 @@ async def start_batch(request: BatchGenerationRequest):
     try:
         run = await start_batch_generation(
             product_id=request.product_id,
+            product_ids=request.product_ids or None,
             modes=request.modes,
             quantity_per_mode=request.quantity_per_mode,
             interval_seconds=request.interval_seconds,
             generation_mode=request.generation_mode,
+            character_asset_ids=request.character_asset_ids or [],
+            scene_asset_ids=request.scene_asset_ids or [],
+            style_asset_ids=request.style_asset_ids or [],
+            img_prompt_template=request.img_prompt_template,
         )
         return {
             "ok": True,
             "batch_run_id": run.get("batch_run_id"),
             "total_expected": run.get("total_expected"),
-            "estimated_seconds": len(request.modes) * request.quantity_per_mode * request.interval_seconds,
+            "estimated_seconds": run.get("total_expected", 0) * request.interval_seconds,
             "status": run.get("status"),
         }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/batch")
+async def list_batch_runs(
+    product_id: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """List recent batch generation runs."""
+    try:
+        runs = await list_batch_generation_runs(product_id=product_id, limit=limit)
+        return {"runs": runs, "count": len(runs)}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -325,6 +353,29 @@ async def get_batch_run(batch_run_id: str):
     if not run:
         raise HTTPException(status_code=404, detail=f"Batch run {batch_run_id!r} not found")
     return run
+
+
+@router.post("/batch/{batch_run_id}/cancel")
+async def cancel_batch_run(batch_run_id: str):
+    """Signal a running batch to stop after the current item."""
+    run = await cancel_batch_generation_run(batch_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Batch run {batch_run_id!r} not found")
+    return run
+
+
+@router.post("/batch/{batch_run_id}/retry")
+async def retry_batch_run(batch_run_id: str):
+    """Create a new batch run retrying failed items from the given run."""
+    try:
+        new_run = await retry_batch_generation_run(batch_run_id)
+        if not new_run:
+            raise HTTPException(status_code=404, detail=f"Batch run {batch_run_id!r} not found or has no stored config")
+        return new_run
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ── Dynamic routes MUST come last — static paths above take priority ──────────
@@ -345,7 +396,7 @@ async def get_package(package_id: str):
 
 @router.patch("/{package_id}")
 async def patch_package(package_id: str, request: WorkspaceGenerationPackagePatchRequest):
-    """Patch a workspace generation package (status only — no DOM execution)."""
+    """Patch a workspace generation package (status / operator_notes)."""
     from agent.db import crud
 
     try:
@@ -354,14 +405,41 @@ async def patch_package(package_id: str, request: WorkspaceGenerationPackagePatc
             raise HTTPException(status_code=404, detail=f"Package {package_id!r} not found")
         kw: dict = {}
         if request.status is not None:
-            allowed = {"DRAFT", "READY_MANUAL", "READY_DOM_STAGED", "BLOCKED"}
+            allowed = {"DRAFT", "READY_MANUAL", "READY_DOM_STAGED", "BLOCKED", "ARCHIVED"}
             if request.status not in allowed:
                 raise HTTPException(status_code=400, detail=f"Invalid status {request.status!r}")
             kw["status"] = request.status
+        if request.operator_notes is not None:
+            kw["operator_notes"] = request.operator_notes
         if kw:
+            kw["updated_at"] = __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
             updated = await crud.update_workspace_generation_package(package_id, **kw)
             return updated
         return existing
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.delete("/{package_id}", status_code=204)
+async def delete_package(package_id: str):
+    """Delete a workspace generation package permanently."""
+    from agent.db import crud
+    from agent.db.schema import get_db
+
+    try:
+        existing = await get_workspace_generation_package(package_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Package {package_id!r} not found")
+        db = await get_db()
+        from agent.db.schema import _db_lock
+        async with _db_lock:
+            await db.execute(
+                "DELETE FROM workspace_generation_package WHERE workspace_generation_package_id=?",
+                (package_id,),
+            )
+            await db.commit()
     except HTTPException:
         raise
     except Exception as exc:

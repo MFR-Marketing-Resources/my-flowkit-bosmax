@@ -13,6 +13,8 @@ import type {
 
 type ActiveTab = "single" | "bulk";
 
+const PAGE_SIZE_DRAFTS = 10;
+
 export default function ProductRegistrationPage() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [activeTab, setActiveTab] = useState<ActiveTab>(
@@ -24,6 +26,7 @@ export default function ProductRegistrationPage() {
 	const [reviewDraft, setReviewDraft] =
 		useState<RegistrationReviewDraft | null>(null);
 	const [savedDrafts, setSavedDrafts] = useState<RegistrationReviewDraft[]>([]);
+	const [currentPageDrafts, setCurrentPageDrafts] = useState(1);
 	const [isProcessing, setIsProcessing] = useState(false);
 	const [isLoadingDrafts, setIsLoadingDrafts] = useState(false);
 
@@ -90,6 +93,17 @@ export default function ProductRegistrationPage() {
 		}
 	};
 
+	const handleDeleteDraft = async (draftId: string) => {
+		if (!window.confirm("Delete this draft permanently?")) return;
+		try {
+			await fetch(`/api/product-registration/review-drafts/${draftId}`, { method: "DELETE" });
+			if (reviewDraft?.review_draft_id === draftId) setReviewDraft(null);
+			fetchDrafts();
+		} catch (err) {
+			console.error("Failed to delete draft:", err);
+		}
+	};
+
 	const handleSelectDraft = (draft: RegistrationReviewDraft) => {
 		setReviewDraft(draft);
 		setResult(null);
@@ -101,6 +115,10 @@ export default function ProductRegistrationPage() {
 				?.scrollIntoView({ behavior: "smooth" });
 		}, 100);
 	};
+
+	const totalPagesDrafts = Math.ceil(savedDrafts.length / PAGE_SIZE_DRAFTS);
+	const safePageDrafts = Math.min(Math.max(1, currentPageDrafts), totalPagesDrafts || 1);
+	const paginatedDrafts = savedDrafts.slice((safePageDrafts - 1) * PAGE_SIZE_DRAFTS, safePageDrafts * PAGE_SIZE_DRAFTS);
 
 	return (
 		<div className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-8 overflow-y-auto">
@@ -323,46 +341,87 @@ export default function ProductRegistrationPage() {
 										No active review drafts.
 									</p>
 								) : (
-									savedDrafts.map((d) => (
-										<button
-											type="button"
-											key={d.review_draft_id}
-											onClick={() => handleSelectDraft(d)}
-											className={`w-full p-3 rounded-xl border text-left transition-all group ${
-												reviewDraft?.review_draft_id === d.review_draft_id
-													? "bg-indigo-500/10 border-indigo-500/40 ring-1 ring-indigo-500/20"
-													: "bg-slate-800/30 border-slate-700/50 hover:border-slate-600"
-											}`}
-										>
-											<div className="flex items-center justify-between mb-1">
-												<span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-200 truncate pr-2">
-													{d.review_draft_id}
-												</span>
-												<span
-													className={`text-[8px] font-bold px-1 rounded ${
-														d.review_status === "COMMITTED"
-															? "bg-blue-500/20 text-blue-400"
-															: d.review_status === "BLOCKED"
-																? "bg-red-500/20 text-red-400"
-																: "bg-amber-500/20 text-amber-400"
-													}`}
-												>
-													{d.review_status}
-												</span>
-											</div>
-											<div className="text-xs text-white font-medium truncate">
-												{d.declared_evidence_fields.product_name ||
-													"Unnamed Product"}
-											</div>
-											<div className="text-[8px] text-slate-500 mt-1 uppercase tracking-widest">
-												{d.updated_at
-													? new Date(d.updated_at).toLocaleDateString()
-													: "Unknown date"}
-											</div>
-										</button>
+									paginatedDrafts.map((d) => (
+										<div key={d.review_draft_id} className="relative group/card">
+											<button
+												type="button"
+												onClick={() => handleSelectDraft(d)}
+												className={`w-full p-3 rounded-xl border text-left transition-all group ${
+													reviewDraft?.review_draft_id === d.review_draft_id
+														? "bg-indigo-500/10 border-indigo-500/40 ring-1 ring-indigo-500/20"
+														: "bg-slate-800/30 border-slate-700/50 hover:border-slate-600"
+												}`}
+											>
+												<div className="flex items-center justify-between mb-1">
+													<span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-200 truncate pr-2">
+														{d.review_draft_id}
+													</span>
+													<span
+														className={`text-[8px] font-bold px-1 rounded ${
+															d.review_status === "COMMITTED"
+																? "bg-blue-500/20 text-blue-400"
+																: d.review_status === "BLOCKED"
+																	? "bg-red-500/20 text-red-400"
+																	: "bg-amber-500/20 text-amber-400"
+														}`}
+													>
+														{d.review_status}
+													</span>
+												</div>
+												<div className="text-xs text-white font-medium truncate">
+													{d.declared_evidence_fields.product_name ||
+														"Unnamed Product"}
+												</div>
+												<div className="text-[8px] text-slate-500 mt-1 uppercase tracking-widest">
+													{d.updated_at
+														? new Date(d.updated_at).toLocaleDateString()
+														: "Unknown date"}
+												</div>
+											</button>
+											<button
+												type="button"
+												onClick={() => handleDeleteDraft(d.review_draft_id)}
+												className="absolute top-2 right-2 opacity-0 group-hover/card:opacity-100 transition-opacity p-1 rounded bg-red-500/10 hover:bg-red-500/30 text-red-400 hover:text-red-300"
+												title="Delete draft"
+											>
+												<svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+													<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+												</svg>
+											</button>
+										</div>
 									))
 								)}
 							</div>
+							{totalPagesDrafts > 1 && (
+								<div className="flex items-center justify-center gap-1 mt-3">
+									<button
+										type="button"
+										onClick={() => setCurrentPageDrafts(p => Math.max(1, p - 1))}
+										disabled={safePageDrafts === 1}
+										className="px-2 py-1 rounded text-[10px] bg-slate-800 border border-slate-700 text-slate-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+									>
+										Prev
+									</button>
+									{Array.from({ length: totalPagesDrafts }, (_, i) => i + 1).map(pg => (
+										<button
+											key={pg}
+											type="button"
+											onClick={() => setCurrentPageDrafts(pg)}
+											className={`w-6 h-6 rounded text-[10px] border ${safePageDrafts === pg ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"}`}
+										>
+											{pg}
+										</button>
+									))}
+									<button
+										type="button"
+										onClick={() => setCurrentPageDrafts(p => Math.min(totalPagesDrafts, p + 1))}
+										disabled={safePageDrafts === totalPagesDrafts}
+										className="px-2 py-1 rounded text-[10px] bg-slate-800 border border-slate-700 text-slate-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+									>
+										Next
+									</button>
+								</div>
+							)}
 						</section>
 
 						<div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">

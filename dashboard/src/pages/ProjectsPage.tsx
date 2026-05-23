@@ -278,6 +278,8 @@ function NewProjectForm({
 	);
 }
 
+const PAGE_SIZE = 12;
+
 export default function ProjectsPage() {
 	const { id } = useParams<{ id?: string }>();
 	const navigate = useNavigate();
@@ -286,6 +288,7 @@ export default function ProjectsPage() {
 	const [projects, setProjects] = useState<Project[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [search, setSearch] = useState("");
+	const [currentPage, setCurrentPage] = useState(1);
 	const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
@@ -360,6 +363,10 @@ export default function ProjectsPage() {
 		ALL: projects.filter((p) => p.status !== "DELETED").length,
 	};
 
+	const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+	const safePage = Math.min(currentPage, totalPages);
+	const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
 			{/* Header */}
@@ -423,7 +430,7 @@ export default function ProjectsPage() {
 								<button
 									key={t}
 									type="button"
-									onClick={() => setFilterTab(t)}
+									onClick={() => { setFilterTab(t); setCurrentPage(1); }}
 									className={`rounded-lg border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] transition-colors ${filterTab === t ? "border-blue-500/40 bg-blue-500/15 text-blue-300" : "border-slate-700 bg-slate-900 text-slate-500 hover:text-slate-300"}`}
 								>
 									{t} ({counts[t]})
@@ -434,7 +441,7 @@ export default function ProjectsPage() {
 						<input
 							type="text"
 							value={search}
-							onChange={(e) => setSearch(e.target.value)}
+							onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
 							placeholder="Search projects..."
 							className="ml-auto w-52 rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:border-blue-500 focus:outline-none"
 						/>
@@ -447,18 +454,55 @@ export default function ProjectsPage() {
 							{search ? `No projects match "${search}"` : `No ${filterTab.toLowerCase()} projects.`}
 						</div>
 					) : (
-						<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-							{filtered.map((p) => (
-								<ProjectCard
-									key={p.id}
-									project={p}
-									onClick={() => navigate(`/projects/${p.id}`)}
-									onArchive={() => handleArchiveToggle(p)}
-									onDelete={() => handleDelete(p)}
-									actionLoading={actionLoadingId === p.id}
-								/>
-							))}
-						</div>
+						<>
+							<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+								{paginated.map((p) => (
+									<ProjectCard
+										key={p.id}
+										project={p}
+										onClick={() => navigate(`/projects/${p.id}`)}
+										onArchive={() => handleArchiveToggle(p)}
+										onDelete={() => handleDelete(p)}
+										actionLoading={actionLoadingId === p.id}
+									/>
+								))}
+							</div>
+							{totalPages > 1 && (
+								<div className="mt-5 flex items-center justify-between border-t border-slate-800 pt-4">
+									<span className="text-[11px] text-slate-500">
+										{(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length} projects
+									</span>
+									<div className="flex items-center gap-1">
+										<button
+											type="button"
+											disabled={safePage <= 1}
+											onClick={() => setCurrentPage((p) => p - 1)}
+											className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+										>
+											← Prev
+										</button>
+										{Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+											<button
+												key={n}
+												type="button"
+												onClick={() => setCurrentPage(n)}
+												className={`min-w-[32px] rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition-colors ${n === safePage ? "border-blue-500/40 bg-blue-500/15 text-blue-200" : "border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800"}`}
+											>
+												{n}
+											</button>
+										))}
+										<button
+											type="button"
+											disabled={safePage >= totalPages}
+											onClick={() => setCurrentPage((p) => p + 1)}
+											className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+										>
+											Next →
+										</button>
+									</div>
+								</div>
+							)}
+						</>
 					)}
 				</section>
 			)}

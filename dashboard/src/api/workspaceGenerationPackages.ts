@@ -6,6 +6,14 @@ import type {
 } from "../types";
 import { fetchAPI, patchAPI, postAPI } from "./client";
 
+export async function deleteWorkspaceGenerationPackage(
+	packageId: string,
+): Promise<void> {
+	await fetchAPI<void>(`/api/workspace/generation-packages/${encodeURIComponent(packageId)}`, {
+		method: "DELETE",
+	});
+}
+
 const BASE = "/api/workspace/generation-packages";
 
 export async function listWorkspaceGenerationPackages(params?: {
@@ -59,7 +67,7 @@ export async function createFromExecutionPackage(
 
 export async function patchWorkspaceGenerationPackage(
 	packageId: string,
-	patch: { status?: string },
+	patch: { status?: string; operator_notes?: string | null },
 ): Promise<WorkspaceGenerationPackage> {
 	return patchAPI<WorkspaceGenerationPackage>(
 		`${BASE}/${encodeURIComponent(packageId)}`,

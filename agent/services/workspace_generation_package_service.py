@@ -732,6 +732,7 @@ async def create_img_generation_package(
     style_download_url: str | None = None,
     operator_notes: str | None = None,
     batch_run_id: str | None = None,
+    prompt_override: str | None = None,
 ) -> dict:
     """Create a durable IMG workspace generation package (image generation mode)."""
     mode = "IMG"
@@ -757,6 +758,8 @@ async def create_img_generation_package(
     )
 
     final_prompt_text: str = compiler_result.get("final_compiled_prompt_text", "")
+    if prompt_override:
+        final_prompt_text = prompt_override
     prompt_blocks: list = compiler_result.get("prompt_blocks", [])
     prompt_fingerprint: str = compiler_result.get("prompt_fingerprint", _fingerprint(final_prompt_text))
 
@@ -898,54 +901,203 @@ _MODE_CREATORS = {
     "IMG": create_img_generation_package,
 }
 
+# P3B: cancel flags — set True to signal the batch loop to stop
+_batch_cancel_flags: dict[str, bool] = {}
+
+
+def _build_asset_kwargs(
+    mode: str,
+    char_id: str | None,
+    scene_id: str | None,
+    style_id: str | None,
+    asset_cache: dict,
+) -> dict:
+    """Map asset IDs to the correct keyword arguments for each mode creator."""
+    def _urls(asset_id: str | None) -> dict:
+        if not asset_id:
+            return {}
+        row = asset_cache.get(asset_id, {})
+        return {"preview_url": row.get("preview_url"), "download_url": row.get("download_url")}
+
+    if mode == "F2V":
+        kwargs = {}
+        if char_id:
+            kwargs["start_frame_asset_id"] = char_id
+            u = _urls(char_id)
+            if u.get("preview_url"):
+                kwargs["start_frame_preview_url"] = u["preview_url"]
+            if u.get("download_url"):
+                kwargs["start_frame_download_url"] = u["download_url"]
+        return kwargs
+
+    if mode == "I2V":
+        kwargs = {}
+        if char_id:
+            kwargs["character_reference_asset_id"] = char_id
+        if scene_id:
+            kwargs["scene_context_reference_asset_id"] = scene_id
+        if style_id:
+            kwargs["style_reference_asset_id"] = style_id
+        return kwargs
+
+    if mode == "IMG":
+        kwargs = {}
+        if char_id:
+            kwargs["subject_asset_id"] = char_id
+            u = _urls(char_id)
+            if u.get("preview_url"):
+                kwargs["subject_preview_url"] = u["preview_url"]
+            if u.get("download_url"):
+                kwargs["subject_download_url"] = u["download_url"]
+        if scene_id:
+            kwargs["scene_context_asset_id"] = scene_id
+            u = _urls(scene_id)
+            if u.get("preview_url"):
+                kwargs["scene_context_preview_url"] = u["preview_url"]
+            if u.get("download_url"):
+                kwargs["scene_context_download_url"] = u["download_url"]
+        if style_id:
+            kwargs["style_asset_id"] = style_id
+            u = _urls(style_id)
+            if u.get("preview_url"):
+                kwargs["style_preview_url"] = u["preview_url"]
+            if u.get("download_url"):
+                kwargs["style_download_url"] = u["download_url"]
+        return kwargs
+
+    # T2V — no direct asset params
+    return {}
+
 
 async def _run_batch_generation_task(
     batch_run_id: str,
-    product_id: str,
+    product_ids: list[str],
     modes: list[str],
     quantity_per_mode: int,
     interval_seconds: int,
     generation_mode: str,
+    character_asset_ids: list[str] | None = None,
+    scene_asset_ids: list[str] | None = None,
+    style_asset_ids: list[str] | None = None,
+    img_prompt_template: str | None = None,
 ) -> None:
-    """Background coroutine: generates packages sequentially with interval sleep."""
+    """Background coroutine: generates packages sequentially with interval sleep.
+
+    Supports a combination matrix: each (character × scene × style) slot tuple
+    is run quantity_per_mode times per mode, across all product_ids.
+    """
+    from itertools import product as _iter_product
+
+    char_slots: list[str | None] = character_asset_ids if character_asset_ids else [None]
+    scene_slots: list[str | None] = scene_asset_ids if scene_asset_ids else [None]
+    style_slots: list[str | None] = style_asset_ids if style_asset_ids else [None]
+    combinations = list(_iter_product(char_slots, scene_slots, style_slots))
+
+    # Pre-fetch all unique asset rows needed for URL resolution
+    all_asset_ids = {a for a in (character_asset_ids or []) + (scene_asset_ids or []) + (style_asset_ids or []) if a}
+    asset_cache: dict = {}
+    for asset_id in all_asset_ids:
+        try:
+            row = await crud.get_creative_asset(asset_id)
+            if row:
+                asset_cache[asset_id] = row
+        except Exception:
+            pass
+
     completed = 0
     failed = 0
     errors: list[str] = []
+    total_expected = len(product_ids) * len(modes) * len(combinations) * quantity_per_mode
+    cancelled = False
 
     await crud.update_batch_generation_run(batch_run_id, status="RUNNING")
 
-    for mode in modes:
-        creator = _MODE_CREATORS.get(mode)
-        if not creator:
-            errors.append(f"Unsupported mode: {mode}")
-            _batch_logger.warning("Batch %s: unsupported mode %s, skipping", batch_run_id, mode)
-            continue
+    outer_break = False
+    for product_id in product_ids:
+        if outer_break:
+            break
+        for mode in modes:
+            if _batch_cancel_flags.get(batch_run_id):
+                cancelled = True
+                outer_break = True
+                break
+            creator = _MODE_CREATORS.get(mode)
+            if not creator:
+                errors.append(f"Unsupported mode: {mode}")
+                _batch_logger.warning("Batch %s: unsupported mode %s, skipping", batch_run_id, mode)
+                continue
 
-        for idx in range(quantity_per_mode):
-            try:
-                await creator(
-                    product_id=product_id,
-                    generation_mode=generation_mode,
-                    batch_run_id=batch_run_id,
-                )
-                completed += 1
-                _batch_logger.info("Batch %s: %s #%d completed (%d total)", batch_run_id, mode, idx + 1, completed)
-            except Exception as exc:
-                failed += 1
-                errors.append(f"{mode}#{idx+1}: {exc}")
-                _batch_logger.error("Batch %s: %s #%d failed: %s", batch_run_id, mode, idx + 1, exc)
+            for combo_idx, (char_id, scene_id, style_id) in enumerate(combinations):
+                if _batch_cancel_flags.get(batch_run_id):
+                    cancelled = True
+                    outer_break = True
+                    break
+                asset_kwargs = _build_asset_kwargs(mode, char_id, scene_id, style_id, asset_cache)
+                combo_label = f"pid={product_id} char={char_id or '-'} scene={scene_id or '-'} style={style_id or '-'}"
 
-            await crud.update_batch_generation_run(
-                batch_run_id,
-                total_completed=completed,
-                total_failed=failed,
-                error_log_json=_json(errors[-50:]),
-            )
+                for idx in range(quantity_per_mode):
+                    if _batch_cancel_flags.get(batch_run_id):
+                        cancelled = True
+                        outer_break = True
+                        break
+                    try:
+                        extra: dict = {}
+                        if mode == "IMG" and img_prompt_template:
+                            char_row = asset_cache.get(char_id or "", {})
+                            scene_row = asset_cache.get(scene_id or "", {})
+                            style_row = asset_cache.get(style_id or "", {})
+                            try:
+                                rendered = img_prompt_template.format(
+                                    character_dna=char_row.get("character_dna", ""),
+                                    scene_context_dna=scene_row.get("scene_context_dna", ""),
+                                    style_mood_dna=style_row.get("style_mood_dna", ""),
+                                    mode_a_metadata_handoff=char_row.get("mode_a_metadata_handoff", ""),
+                                )
+                                extra["prompt_override"] = rendered
+                            except (KeyError, IndexError):
+                                extra["prompt_override"] = img_prompt_template
+                        await creator(
+                            product_id=product_id,
+                            generation_mode=generation_mode,
+                            batch_run_id=batch_run_id,
+                            **asset_kwargs,
+                            **extra,
+                        )
+                        completed += 1
+                        _batch_logger.info(
+                            "Batch %s: %s combo[%d] #%d completed (%d total) [%s]",
+                            batch_run_id, mode, combo_idx, idx + 1, completed, combo_label,
+                        )
+                    except Exception as exc:
+                        failed += 1
+                        errors.append(f"{mode}[{combo_label}]#{idx+1}: {exc}")
+                        _batch_logger.error(
+                            "Batch %s: %s combo[%d] #%d failed: %s",
+                            batch_run_id, mode, combo_idx, idx + 1, exc,
+                        )
 
-            # Only sleep if more items remain
-            remaining = (len(modes) * quantity_per_mode) - (completed + failed)
-            if remaining > 0 and interval_seconds > 0:
-                await _asyncio.sleep(interval_seconds)
+                    await crud.update_batch_generation_run(
+                        batch_run_id,
+                        total_completed=completed,
+                        total_failed=failed,
+                        error_log_json=_json(errors[-50:]),
+                    )
+
+                    remaining = total_expected - (completed + failed)
+                    if remaining > 0 and interval_seconds > 0:
+                        await _asyncio.sleep(interval_seconds)
+
+    if cancelled:
+        _batch_cancel_flags.pop(batch_run_id, None)
+        await crud.update_batch_generation_run(
+            batch_run_id,
+            status="CANCELLED",
+            total_completed=completed,
+            total_failed=failed,
+            error_log_json=_json(errors[-50:]),
+        )
+        _batch_logger.info("Batch %s cancelled: %d completed, %d failed", batch_run_id, completed, failed)
+        return
 
     final_status = "COMPLETED" if failed == 0 else ("FAILED" if completed == 0 else "COMPLETED")
     await crud.update_batch_generation_run(
@@ -961,39 +1113,144 @@ async def _run_batch_generation_task(
 async def start_batch_generation(
     *,
     product_id: str,
+    product_ids: list[str] | None = None,
     modes: list[str],
     quantity_per_mode: int = 10,
     interval_seconds: int = 5,
     generation_mode: str = "SINGLE",
+    character_asset_ids: list[str] | None = None,
+    scene_asset_ids: list[str] | None = None,
+    style_asset_ids: list[str] | None = None,
+    img_prompt_template: str | None = None,
 ) -> dict:
     """Create a batch run record and fire the background task. Returns the run record."""
     import json as _json_mod
-    batch_run_id = f"bgr_{_fingerprint(product_id, str(modes), str(quantity_per_mode), str(uuid.uuid4()))[:16]}"
-    total_expected = len(modes) * quantity_per_mode
+
+    all_product_ids = product_ids if product_ids else [product_id]
+    char_slots = character_asset_ids or [None]
+    scene_slots = scene_asset_ids or [None]
+    style_slots = style_asset_ids or [None]
+    combinations = len(char_slots) * len(scene_slots) * len(style_slots)
+
+    batch_run_id = f"bgr_{_fingerprint(all_product_ids[0], str(modes), str(quantity_per_mode), str(uuid.uuid4()))[:16]}"
+    total_expected = len(all_product_ids) * len(modes) * combinations * quantity_per_mode
+
+    config = {
+        "product_ids": all_product_ids,
+        "modes": modes,
+        "quantity_per_mode": quantity_per_mode,
+        "interval_seconds": interval_seconds,
+        "generation_mode": generation_mode,
+        "character_asset_ids": character_asset_ids or [],
+        "scene_asset_ids": scene_asset_ids or [],
+        "style_asset_ids": style_asset_ids or [],
+        "img_prompt_template": img_prompt_template,
+    }
 
     run = await crud.create_batch_generation_run(
         batch_run_id,
-        product_id=product_id,
+        product_id=all_product_ids[0],
         modes_json=_json_mod.dumps(modes),
         quantity_per_mode=quantity_per_mode,
         interval_seconds=interval_seconds,
         generation_mode=generation_mode,
         total_expected=total_expected,
+        product_ids_json=_json_mod.dumps(all_product_ids),
+        config_json=_json_mod.dumps(config),
     )
 
     # Fire-and-forget background task
     _asyncio.ensure_future(
         _run_batch_generation_task(
             batch_run_id=batch_run_id,
-            product_id=product_id,
+            product_ids=all_product_ids,
             modes=modes,
             quantity_per_mode=quantity_per_mode,
             interval_seconds=interval_seconds,
             generation_mode=generation_mode,
+            character_asset_ids=character_asset_ids or [],
+            scene_asset_ids=scene_asset_ids or [],
+            style_asset_ids=style_asset_ids or [],
+            img_prompt_template=img_prompt_template,
         )
     )
 
     return run
+
+
+async def list_batch_generation_runs(
+    product_id: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    import json as _json_mod
+    rows = await crud.list_batch_generation_runs(product_id=product_id, limit=limit)
+    for run in rows:
+        try:
+            run["modes"] = _json_mod.loads(run.get("modes_json", "[]"))
+        except Exception:
+            run["modes"] = []
+    return rows
+
+
+async def cancel_batch_generation_run(batch_run_id: str) -> dict | None:
+    """Signal a running batch to stop after the current item. Returns updated run."""
+    _batch_cancel_flags[batch_run_id] = True
+    run = await crud.get_batch_generation_run(batch_run_id)
+    if not run:
+        return None
+    if run.get("status") in ("PENDING", "RUNNING"):
+        await crud.update_batch_generation_run(batch_run_id, status="CANCELLED")
+        run["status"] = "CANCELLED"
+    return run
+
+
+async def retry_batch_generation_run(batch_run_id: str) -> dict | None:
+    """Create a new batch run from the stored config of a failed/cancelled run.
+
+    quantity_per_mode is set to the total_failed count divided by
+    (products × modes × combinations), rounded up — so every failed slot
+    gets one retry attempt.
+    """
+    import json as _json_mod
+    import math
+
+    run = await crud.get_batch_generation_run(batch_run_id)
+    if not run:
+        return None
+
+    try:
+        config: dict = _json_mod.loads(run.get("config_json") or "{}")
+    except Exception:
+        config = {}
+
+    if not config:
+        return None
+
+    total_failed = run.get("total_failed", 0) or 1
+    product_ids: list[str] = config.get("product_ids") or [run.get("product_id", "")]
+    modes: list[str] = config.get("modes") or []
+    char_ids: list[str] = config.get("character_asset_ids") or []
+    scene_ids: list[str] = config.get("scene_asset_ids") or []
+    style_ids: list[str] = config.get("style_asset_ids") or []
+
+    char_slots = max(1, len(char_ids))
+    scene_slots = max(1, len(scene_ids))
+    style_slots = max(1, len(style_ids))
+    denominator = len(product_ids) * max(1, len(modes)) * char_slots * scene_slots * style_slots
+    retry_qty = max(1, math.ceil(total_failed / denominator))
+
+    return await start_batch_generation(
+        product_id=product_ids[0],
+        product_ids=product_ids,
+        modes=modes,
+        quantity_per_mode=retry_qty,
+        interval_seconds=config.get("interval_seconds", 5),
+        generation_mode=config.get("generation_mode", "SINGLE"),
+        character_asset_ids=char_ids or None,
+        scene_asset_ids=scene_ids or None,
+        style_asset_ids=style_ids or None,
+        img_prompt_template=config.get("img_prompt_template"),
+    )
 
 
 async def get_batch_generation_run_status(batch_run_id: str) -> dict | None:

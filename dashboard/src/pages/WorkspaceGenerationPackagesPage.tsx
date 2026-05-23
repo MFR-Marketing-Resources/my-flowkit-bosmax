@@ -1,13 +1,6 @@
-/**
- * WorkspaceGenerationPackagesPage — Prompt Handoff Bank
- *
- * Central page listing all saved workspace generation packages (F2V and I2V).
- * Manual handoff actions: Copy Prompt, Open Image, Download Image, Upload Order.
- * DOM handoff: stored scaffold only — dom_handoff_ready remains FALSE.
- * "Send to Google Flow" button is visible but disabled with an explanation.
- */
 import {
 	AlertTriangle,
+	Archive,
 	CheckCircle,
 	ChevronDown,
 	ChevronRight,
@@ -18,12 +11,16 @@ import {
 	Layers,
 	RefreshCw,
 	Search,
+	Trash2,
 	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
+	deleteWorkspaceGenerationPackage,
 	getWorkspaceGenerationPackage,
 	listWorkspaceGenerationPackages,
+	patchWorkspaceGenerationPackage,
 } from "../api/workspaceGenerationPackages";
 import type {
 	WorkspaceGenerationPackage,
@@ -38,6 +35,7 @@ function StatusBadge({ status }: { status: string }) {
 		READY_DOM_STAGED: "border-blue-500/40 bg-blue-500/15 text-blue-300",
 		BLOCKED: "border-red-500/40 bg-red-500/15 text-red-300",
 		DRAFT: "border-slate-700 bg-slate-800 text-slate-400",
+		ARCHIVED: "border-amber-500/40 bg-amber-500/10 text-amber-300",
 	};
 	return (
 		<span
@@ -48,7 +46,7 @@ function StatusBadge({ status }: { status: string }) {
 	);
 }
 
-// ─── Mode step guide config ───────────────────────────────────
+// ─── Mode config ──────────────────────────────────────────────
 
 const MODE_LABELS: Record<string, string> = {
 	T2V: "Text to Video",
@@ -71,6 +69,13 @@ const MODE_TAB_HINT: Record<string, string> = {
 	IMG: "Google Flow → Tab: Image Generation (Nano Banana 2)",
 };
 
+const MODE_OPERATOR_ROUTE: Record<string, string> = {
+	T2V: "/operator/t2v",
+	F2V: "/operator/f2v",
+	I2V: "/operator/i2v",
+	IMG: "/operator/img",
+};
+
 interface PromptBlock {
 	block_index: number;
 	block_role: string;
@@ -79,7 +84,7 @@ interface PromptBlock {
 	engine_prompt_text: string;
 }
 
-// ─── Asset thumbnail card ─────────────────────────────────────
+// ─── Asset card ───────────────────────────────────────────────
 
 function AssetCard({
 	asset,
@@ -104,16 +109,14 @@ function AssetCard({
 				</span>
 			</div>
 			{asset.preview_url ? (
-				<div className="relative">
-					<img
-						src={asset.preview_url}
-						alt={asset.label || asset.slot_key}
-						className="w-full max-h-48 object-contain bg-slate-950"
-						onError={(e) => {
-							(e.target as HTMLImageElement).style.display = "none";
-						}}
-					/>
-				</div>
+				<img
+					src={asset.preview_url}
+					alt={asset.label || asset.slot_key}
+					className="w-full max-h-48 object-contain bg-slate-950"
+					onError={(e) => {
+						(e.target as HTMLImageElement).style.display = "none";
+					}}
+				/>
 			) : (
 				<div className="h-24 bg-slate-950 flex items-center justify-center text-xs text-slate-500 italic">
 					No preview available
@@ -195,8 +198,6 @@ function PromptCopyBox({
 	);
 }
 
-// ─── Step label row ───────────────────────────────────────────
-
 function StepLabel({ n, text }: { n: number; text: string }) {
 	return (
 		<div className="flex items-center gap-2 py-1">
@@ -210,8 +211,17 @@ function StepLabel({ n, text }: { n: number; text: string }) {
 
 // ─── Detail panel ─────────────────────────────────────────────
 
-function PackageDetailPanel({ pkg }: { pkg: WorkspaceGenerationPackage }) {
+function PackageDetailPanel({
+	pkg,
+	onUpdate,
+}: {
+	pkg: WorkspaceGenerationPackage;
+	onUpdate: (updated: WorkspaceGenerationPackage) => void;
+}) {
 	const [showDebug, setShowDebug] = useState(false);
+	const [notes, setNotes] = useState(pkg.operator_notes ?? "");
+	const [notesSaving, setNotesSaving] = useState(false);
+	const [notesSaved, setNotesSaved] = useState(false);
 
 	const handoff = pkg.manual_handoff_json;
 	const domScaffold = pkg.dom_handoff_payload_json;
@@ -221,37 +231,43 @@ function PackageDetailPanel({ pkg }: { pkg: WorkspaceGenerationPackage }) {
 	const imageAssets = pkg.image_assets_json ?? {};
 	const domReady: boolean = domScaffold?.readiness?.dom_handoff_ready ?? false;
 
-	// Build ordered asset list from upload order
 	const orderedAssets: WorkspaceGenerationPackageAsset[] = uploadOrder
 		.map((slot) => imageAssets[slot])
 		.filter(Boolean) as WorkspaceGenerationPackageAsset[];
-
-	// Also include any assets not in upload order
 	const extraAssets = Object.entries(imageAssets)
 		.filter(([k, v]) => v && !uploadOrder.includes(k))
 		.map(([, v]) => v as WorkspaceGenerationPackageAsset);
-
 	const allDisplayAssets = [...orderedAssets, ...extraAssets];
 
 	const mode = pkg.mode ?? "F2V";
 	const isExtend = pkg.generation_mode === "EXTEND";
 	const blocks = (pkg.prompt_blocks_json ?? []) as PromptBlock[];
-
-	// Build mode-specific step list
-	const imageStepStart = 2; // step 1 = open Flow tab
+	const imageStepStart = 2;
 	const promptStep = imageStepStart + allDisplayAssets.length;
 	const generateStep = promptStep + (isExtend ? blocks.length : 1);
-
 	const modeModelHint: Record<string, string> = {
 		T2V: "Veo 3.1 - Pro (or match your Workspace setting)",
 		F2V: "Veo 3.1 - Lite (locked for F2V lane)",
 		I2V: "Veo 3.1 - Pro (or match your Workspace setting)",
 		IMG: "Nano Banana 2 (Image Generation)",
 	};
-
-	// Orientation info from dom scaffold settings
 	const scaffoldSettings = (domScaffold?.settings ?? {}) as Record<string, unknown>;
 	const durationSec = scaffoldSettings.duration_seconds as number | undefined;
+
+	const saveNotes = async () => {
+		setNotesSaving(true);
+		try {
+			const updated = await patchWorkspaceGenerationPackage(
+				pkg.workspace_generation_package_id,
+				{ operator_notes: notes },
+			);
+			onUpdate(updated);
+			setNotesSaved(true);
+			setTimeout(() => setNotesSaved(false), 2000);
+		} finally {
+			setNotesSaving(false);
+		}
+	};
 
 	return (
 		<div className="space-y-4">
@@ -285,7 +301,27 @@ function PackageDetailPanel({ pkg }: { pkg: WorkspaceGenerationPackage }) {
 				</div>
 			)}
 
-			{/* ── Google Flow Setup Guide ── */}
+			{/* Operator Notes */}
+			<div className="rounded-xl border border-slate-700 bg-slate-900/50 p-3">
+				<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500 mb-2">Operator Notes</div>
+				<textarea
+					value={notes}
+					onChange={(e) => setNotes(e.target.value)}
+					rows={3}
+					placeholder="Add notes for this package…"
+					className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 resize-none outline-none focus:border-slate-500"
+				/>
+				<button
+					type="button"
+					onClick={() => void saveNotes()}
+					disabled={notesSaving}
+					className={`mt-2 px-3 py-1.5 rounded-lg border text-[11px] font-semibold transition-all ${notesSaved ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300" : "border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+				>
+					{notesSaving ? "Saving…" : notesSaved ? "Saved!" : "Save Notes"}
+				</button>
+			</div>
+
+			{/* Google Flow Setup Guide */}
 			<div className={`rounded-2xl border p-4 space-y-4 ${MODE_COLORS[mode] ?? "border-slate-700 bg-slate-900/40"}`}>
 				<div>
 					<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-1">Google Flow Setup Guide</div>
@@ -296,12 +332,10 @@ function PackageDetailPanel({ pkg }: { pkg: WorkspaceGenerationPackage }) {
 				</div>
 
 				<div className="space-y-1">
-					{/* Step 1 — Open Flow */}
 					<div className="rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2">
 						<StepLabel n={1} text={MODE_TAB_HINT[mode] ?? "Open Google Flow"} />
 					</div>
 
-					{/* Steps 2..N — Image slots */}
 					{allDisplayAssets.length > 0 && (
 						<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
 							{allDisplayAssets.map((asset, i) => {
@@ -318,17 +352,15 @@ function PackageDetailPanel({ pkg }: { pkg: WorkspaceGenerationPackage }) {
 						</div>
 					)}
 
-					{/* Orientation + Model reminder */}
 					<div className="rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2 space-y-1">
-						<StepLabel n={imageStepStart + allDisplayAssets.length} text={`Set orientation — match your Workspace setting (9:16 Vertical or 16:9 Horizontal)`} />
+						<StepLabel n={imageStepStart + allDisplayAssets.length} text="Set orientation — match your Workspace setting (9:16 Vertical or 16:9 Horizontal)" />
 						<StepLabel n={imageStepStart + allDisplayAssets.length + 1} text={`Select model: ${modeModelHint[mode] ?? "match your Workspace setting"}`} />
 					</div>
 
-					{/* Prompt step(s) */}
 					{isExtend && blocks.length > 0 ? (
 						<div className="space-y-3">
 							<div className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs text-amber-200">
-								EXTEND mode — {blocks.length} blocks. Copy and generate Block 1 first, then continue with Block 2. Do NOT paste both into one generation.
+								EXTEND mode — {blocks.length} blocks. Copy and generate Block 1 first, then continue with Block 2.
 							</div>
 							{blocks.map((block, i) => (
 								<PromptCopyBox
@@ -340,20 +372,16 @@ function PackageDetailPanel({ pkg }: { pkg: WorkspaceGenerationPackage }) {
 							))}
 						</div>
 					) : (
-						<PromptCopyBox
-							text={pkg.final_prompt_text}
-							stepNumber={promptStep}
-						/>
+						<PromptCopyBox text={pkg.final_prompt_text} stepNumber={promptStep} />
 					)}
 
-					{/* Final step — Generate */}
 					<div className="rounded-lg border border-emerald-500/30 bg-emerald-500/8 px-3 py-2">
 						<StepLabel n={generateStep} text="Click Generate in Google Flow" />
 					</div>
 				</div>
 			</div>
 
-			{/* ── Technical Debug (collapsed by default) ── */}
+			{/* Debug */}
 			<div>
 				<button
 					type="button"
@@ -396,8 +424,6 @@ function PackageDetailPanel({ pkg }: { pkg: WorkspaceGenerationPackage }) {
 			</div>
 		</div>
 	);
-
-	// legacy allDisplayAssets variable kept above — unused after refactor but kept for reference
 }
 
 // ─── Package row ──────────────────────────────────────────────
@@ -406,15 +432,24 @@ function PackageRow({
 	pkg,
 	isSelected,
 	onSelect,
+	onArchiveToggle,
+	onDelete,
 }: {
 	pkg: WorkspaceGenerationPackage;
 	isSelected: boolean;
 	onSelect: () => void;
+	onArchiveToggle: () => void;
+	onDelete: () => void;
 }) {
+	const [showActions, setShowActions] = useState(false);
+	const isArchived = pkg.status === "ARCHIVED";
+
 	return (
 		<tr
-			className={`cursor-pointer border-b border-slate-800 transition-colors ${isSelected ? "bg-blue-500/8" : "hover:bg-slate-800/50"}`}
+			className={`cursor-pointer border-b border-slate-800 transition-colors group ${isSelected ? "bg-blue-500/8" : "hover:bg-slate-800/50"}`}
 			onClick={onSelect}
+			onMouseEnter={() => setShowActions(true)}
+			onMouseLeave={() => setShowActions(false)}
 		>
 			<td className="py-2 px-3">
 				{isSelected ? (
@@ -423,13 +458,13 @@ function PackageRow({
 					<ChevronRight size={14} className="text-slate-500" />
 				)}
 			</td>
-			<td className="py-2 px-3 font-mono text-xs text-slate-400 max-w-[200px] truncate">
+			<td className="py-2 px-3 font-mono text-xs text-slate-400 max-w-[180px] truncate">
 				{pkg.workspace_generation_package_id}
 			</td>
 			<td className="py-2 px-3 text-xs font-bold text-slate-200">
 				{pkg.mode}
 			</td>
-			<td className="py-2 px-3 text-xs text-slate-300 max-w-[160px] truncate">
+			<td className="py-2 px-3 text-xs text-slate-300 max-w-[150px] truncate">
 				{pkg.product_name_snapshot || pkg.product_id}
 			</td>
 			<td className="py-2 px-3">
@@ -438,26 +473,48 @@ function PackageRow({
 			<td className="py-2 px-3 text-xs text-slate-500">
 				{pkg.created_at?.slice(0, 16).replace("T", " ")}
 			</td>
+			<td className="py-2 px-3 w-20">
+				{showActions && (
+					<div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+						<button
+							type="button"
+							title={isArchived ? "Unarchive" : "Archive"}
+							onClick={onArchiveToggle}
+							className={`p-1.5 rounded-lg border transition-colors ${isArchived ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20" : "border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"}`}
+						>
+							<Archive size={12} />
+						</button>
+						<button
+							type="button"
+							title="Delete"
+							onClick={onDelete}
+							className="p-1.5 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+						>
+							<Trash2 size={12} />
+						</button>
+					</div>
+				)}
+			</td>
 		</tr>
 	);
 }
 
+const PAGE_SIZE = 20;
+
 // ─── Main page ────────────────────────────────────────────────
 
 export default function WorkspaceGenerationPackagesPage() {
+	const navigate = useNavigate();
 	const [packages, setPackages] = useState<WorkspaceGenerationPackage[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
-	const [detailPkg, setDetailPkg] = useState<WorkspaceGenerationPackage | null>(
-		null,
-	);
+	const [detailPkg, setDetailPkg] = useState<WorkspaceGenerationPackage | null>(null);
 	const [detailLoading, setDetailLoading] = useState(false);
+	const [currentPage, setCurrentPage] = useState(1);
 
-	// Filters
 	const [modeFilter, setModeFilter] = useState("");
 	const [statusFilter, setStatusFilter] = useState("");
-	const [productFilter] = useState("");
 	const [search, setSearch] = useState("");
 
 	const loadPackages = useCallback(async () => {
@@ -467,7 +524,6 @@ export default function WorkspaceGenerationPackagesPage() {
 			const resp = await listWorkspaceGenerationPackages({
 				mode: modeFilter || undefined,
 				status: statusFilter || undefined,
-				product_id: productFilter || undefined,
 				limit: 100,
 			});
 			setPackages(resp.packages ?? []);
@@ -476,7 +532,7 @@ export default function WorkspaceGenerationPackagesPage() {
 		} finally {
 			setLoading(false);
 		}
-	}, [modeFilter, statusFilter, productFilter]);
+	}, [modeFilter, statusFilter]);
 
 	useEffect(() => {
 		void loadPackages();
@@ -493,9 +549,7 @@ export default function WorkspaceGenerationPackagesPage() {
 			setDetailPkg(pkg);
 			setDetailLoading(true);
 			try {
-				const full = await getWorkspaceGenerationPackage(
-					pkg.workspace_generation_package_id,
-				);
+				const full = await getWorkspaceGenerationPackage(pkg.workspace_generation_package_id);
 				setDetailPkg(full);
 			} catch {
 				// keep inline data
@@ -506,7 +560,51 @@ export default function WorkspaceGenerationPackagesPage() {
 		[selectedId],
 	);
 
-	// Client-side search filter
+	const handleArchiveToggle = useCallback(
+		async (pkg: WorkspaceGenerationPackage) => {
+			const nextStatus = pkg.status === "ARCHIVED" ? "DRAFT" : "ARCHIVED";
+			try {
+				const updated = await patchWorkspaceGenerationPackage(
+					pkg.workspace_generation_package_id,
+					{ status: nextStatus },
+				);
+				setPackages((prev) =>
+					prev.map((p) => (p.workspace_generation_package_id === updated.workspace_generation_package_id ? updated : p)),
+				);
+				if (detailPkg?.workspace_generation_package_id === pkg.workspace_generation_package_id) {
+					setDetailPkg(updated);
+				}
+			} catch (e) {
+				setError(String(e));
+			}
+		},
+		[detailPkg],
+	);
+
+	const handleDelete = useCallback(
+		async (pkg: WorkspaceGenerationPackage) => {
+			if (!window.confirm(`Delete package "${pkg.workspace_generation_package_id}"?\n\nThis cannot be undone.`)) return;
+			try {
+				await deleteWorkspaceGenerationPackage(pkg.workspace_generation_package_id);
+				setPackages((prev) => prev.filter((p) => p.workspace_generation_package_id !== pkg.workspace_generation_package_id));
+				if (selectedId === pkg.workspace_generation_package_id) {
+					setSelectedId(null);
+					setDetailPkg(null);
+				}
+			} catch (e) {
+				setError(String(e));
+			}
+		},
+		[selectedId],
+	);
+
+	const handleDetailUpdate = useCallback((updated: WorkspaceGenerationPackage) => {
+		setDetailPkg(updated);
+		setPackages((prev) =>
+			prev.map((p) => (p.workspace_generation_package_id === updated.workspace_generation_package_id ? updated : p)),
+		);
+	}, []);
+
 	const filtered = packages.filter((p) => {
 		if (!search) return true;
 		const q = search.toLowerCase();
@@ -517,20 +615,62 @@ export default function WorkspaceGenerationPackagesPage() {
 		);
 	});
 
+	const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+	const safePage = Math.min(currentPage, totalPages);
+	const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+	const activeMode = detailPkg?.mode ?? "";
+
 	return (
-		<div className="p-6 max-w-7xl mx-auto space-y-6">
-			{/* Header */}
-			<div>
-				<h1 className="text-2xl font-bold text-slate-100">
-					Prompt Handoff Bank
-				</h1>
-				<p className="text-sm text-slate-500 mt-1">
-					Google Flow setup guide for each generated package. Click a package to see step-by-step instructions, images, and prompt copy.
-				</p>
-			</div>
+		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
+			{/* Header with sub-tab switcher */}
+			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+				<div className="mb-4 flex items-center justify-between gap-3">
+					<div>
+						<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
+							Prompt Handoff Bank
+						</div>
+						<div className="mt-1 text-xs text-slate-400">
+							{loading ? "Loading…" : `${filtered.length} package${filtered.length !== 1 ? "s" : ""}`}
+						</div>
+					</div>
+					{activeMode && MODE_OPERATOR_ROUTE[activeMode] && (
+						<button
+							type="button"
+							onClick={() => navigate(MODE_OPERATOR_ROUTE[activeMode])}
+							className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 text-sm font-semibold text-blue-100 hover:bg-blue-500/20"
+						>
+							→ Open {activeMode} Workspace
+						</button>
+					)}
+				</div>
+				<div className="flex gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
+					<button
+						type="button"
+						className="flex-1 rounded-lg bg-slate-800 py-2 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-100 shadow-sm"
+					>
+						Prompt Handoff Bank
+					</button>
+					{(["T2V", "F2V", "I2V", "IMG"] as const).map((m) => (
+						<button
+							key={m}
+							type="button"
+							onClick={() => navigate(MODE_OPERATOR_ROUTE[m])}
+							className="flex-1 rounded-lg py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 hover:bg-slate-800/60 hover:text-slate-200 transition-colors"
+						>
+							{m}
+						</button>
+					))}
+				</div>
+				{error && (
+					<div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
+						{error}
+					</div>
+				)}
+			</section>
 
 			{/* Filters */}
-			<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5 space-y-3">
 				<div className="flex flex-wrap items-center justify-between gap-2">
 					<div className="flex items-center gap-1.5">
 						<Filter size={13} className="text-slate-500" />
@@ -543,7 +683,7 @@ export default function WorkspaceGenerationPackagesPage() {
 								<button
 									key={m}
 									type="button"
-									onClick={() => setModeFilter(m === "ALL" ? "" : m)}
+									onClick={() => { setModeFilter(m === "ALL" ? "" : m); setCurrentPage(1); }}
 									className={`px-3 py-1.5 rounded-full border text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${active ? "border-blue-400/60 bg-blue-500/10 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
 								>
 									{m}
@@ -557,13 +697,13 @@ export default function WorkspaceGenerationPackagesPage() {
 						<span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Status</span>
 					</div>
 					<div className="flex flex-wrap gap-1.5">
-						{["ALL", "READY_MANUAL", "BLOCKED", "DRAFT"].map((s) => {
+						{["ALL", "READY_MANUAL", "BLOCKED", "DRAFT", "ARCHIVED"].map((s) => {
 							const active = (statusFilter || "ALL") === s;
 							return (
 								<button
 									key={s}
 									type="button"
-									onClick={() => setStatusFilter(s === "ALL" ? "" : s)}
+									onClick={() => { setStatusFilter(s === "ALL" ? "" : s); setCurrentPage(1); }}
 									className={`px-3 py-1.5 rounded-full border text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${active ? "border-blue-400/60 bg-blue-500/10 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
 								>
 									{s}
@@ -578,8 +718,8 @@ export default function WorkspaceGenerationPackagesPage() {
 						<input
 							type="text"
 							value={search}
-							onChange={(e) => setSearch(e.target.value)}
-							placeholder="Search by product name or package ID..."
+							onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
+							placeholder="Search by product name or package ID…"
 							className="w-full rounded-full border border-slate-700 bg-slate-950 pl-8 pr-4 py-2 text-xs text-slate-200 placeholder:text-slate-500 outline-none focus:border-blue-400/50"
 						/>
 					</div>
@@ -592,13 +732,7 @@ export default function WorkspaceGenerationPackagesPage() {
 						Refresh
 					</button>
 				</div>
-			</div>
-
-			{error && (
-				<div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
-					{error}
-				</div>
-			)}
+			</section>
 
 			<div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
 				{/* Package list */}
@@ -622,21 +756,57 @@ export default function WorkspaceGenerationPackagesPage() {
 										<th className="py-3 px-3 text-left">Product</th>
 										<th className="py-3 px-3 text-left">Status</th>
 										<th className="py-3 px-3 text-left">Created</th>
+										<th className="py-3 px-3 w-20"></th>
 									</tr>
 								</thead>
 								<tbody>
-									{filtered.map((pkg) => (
+									{paginated.map((pkg) => (
 										<PackageRow
 											key={pkg.workspace_generation_package_id}
 											pkg={pkg}
-											isSelected={
-												selectedId === pkg.workspace_generation_package_id
-											}
+											isSelected={selectedId === pkg.workspace_generation_package_id}
 											onSelect={() => void handleSelect(pkg)}
+											onArchiveToggle={() => void handleArchiveToggle(pkg)}
+											onDelete={() => void handleDelete(pkg)}
 										/>
 									))}
 								</tbody>
 							</table>
+						</div>
+					)}
+					{totalPages > 1 && (
+						<div className="mt-3 flex items-center justify-between">
+							<span className="text-[11px] text-slate-500">
+								{(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length} packages
+							</span>
+							<div className="flex items-center gap-1">
+								<button
+									type="button"
+									disabled={safePage <= 1}
+									onClick={() => setCurrentPage((p) => p - 1)}
+									className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+								>
+									← Prev
+								</button>
+								{Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+									<button
+										key={n}
+										type="button"
+										onClick={() => setCurrentPage(n)}
+										className={`min-w-[32px] rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition-colors ${n === safePage ? "border-blue-500/40 bg-blue-500/15 text-blue-200" : "border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800"}`}
+									>
+										{n}
+									</button>
+								))}
+								<button
+									type="button"
+									disabled={safePage >= totalPages}
+									onClick={() => setCurrentPage((p) => p + 1)}
+									className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+								>
+									Next →
+								</button>
+							</div>
 						</div>
 					)}
 					<p className="text-[11px] text-slate-600 pl-1">
@@ -653,14 +823,32 @@ export default function WorkspaceGenerationPackagesPage() {
 								<div className="text-sm font-bold text-slate-100">{detailPkg.product_name_snapshot || detailPkg.product_id}</div>
 								<div className="text-[11px] text-slate-500 mt-0.5 font-mono">{detailPkg.mode} · {detailPkg.generation_mode}</div>
 							</div>
-							<StatusBadge status={detailPkg.status} />
+							<div className="flex items-center gap-2">
+								<StatusBadge status={detailPkg.status} />
+								<button
+									type="button"
+									title={detailPkg.status === "ARCHIVED" ? "Unarchive" : "Archive"}
+									onClick={() => void handleArchiveToggle(detailPkg)}
+									className={`p-1.5 rounded-lg border transition-colors ${detailPkg.status === "ARCHIVED" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20" : "border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"}`}
+								>
+									<Archive size={13} />
+								</button>
+								<button
+									type="button"
+									title="Delete"
+									onClick={() => void handleDelete(detailPkg)}
+									className="p-1.5 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+								>
+									<Trash2 size={13} />
+								</button>
+							</div>
 						</div>
 						{detailLoading ? (
 							<div className="py-8 text-center text-sm text-slate-500">
 								Loading detail…
 							</div>
 						) : (
-							<PackageDetailPanel pkg={detailPkg} />
+							<PackageDetailPanel pkg={detailPkg} onUpdate={handleDetailUpdate} />
 						)}
 					</div>
 				) : (

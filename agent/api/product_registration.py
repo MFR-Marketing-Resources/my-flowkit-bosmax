@@ -98,6 +98,13 @@ async def get_review_draft_image(draft_id: str):
     return FileResponse(image_path)
 
 
+@router.delete("/review-drafts/{draft_id}", status_code=204)
+async def delete_review_draft(draft_id: str) -> None:
+    deleted = RegistrationDraftStorageService.delete_draft(draft_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+
 @router.post("/review-drafts/{draft_id}/commit")
 async def commit_review_draft(draft_id: str, request: RegistrationCommitRequest):
     if draft_id != request.draft_id:

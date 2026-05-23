@@ -16,6 +16,7 @@ LIFECYCLE_DELETED_TEST_ONLY = "DELETED_TEST_ONLY"
 ARCHIVE_CONFIRMATION = "ARCHIVE_PRODUCT"
 UNARCHIVE_CONFIRMATION = "UNARCHIVE_PRODUCT"
 DELETE_TEST_ROW_CONFIRMATION = "DELETE_TEST_ROW_ONLY"
+DELETE_PRODUCT_CONFIRMATION = "DELETE_PRODUCT_PERMANENT"
 
 ARCHIVEABLE_SOURCES = {"FASTMOSS", "MANUAL", "TIKTOKSHOP", "IMPORTED"}
 
@@ -231,4 +232,32 @@ async def delete_test_row(
                 to_status=LIFECYCLE_DELETED_TEST_ONLY,
             )
         ),
+    }
+
+
+async def delete_product_permanent(
+    product_id: str,
+    *,
+    reason: str,
+    confirmation_phrase: str,
+    actor: str = "SYSTEM_API",
+) -> dict[str, Any]:
+    if confirmation_phrase != DELETE_PRODUCT_CONFIRMATION:
+        raise HTTPException(status_code=400, detail="DELETE_PRODUCT_CONFIRMATION_REQUIRED")
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    deleted = await crud.delete_product(product_id)
+    if not deleted:
+        raise HTTPException(status_code=500, detail="PRODUCT_DELETE_FAILED")
+
+    return {
+        "product_id": product_id,
+        "deleted": True,
+        "lifecycle_status": "DELETED",
+        "reason": reason,
+        "source": product.get("source"),
+        "deleted_by": actor,
+        "deleted_at": _utcnow(),
     }

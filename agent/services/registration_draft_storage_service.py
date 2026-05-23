@@ -56,6 +56,14 @@ class RegistrationDraftStorageService:
         return drafts
 
     @staticmethod
+    def delete_draft(draft_id: str) -> bool:
+        path = RegistrationDraftStorageService._get_draft_path(draft_id)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
+    @staticmethod
     def update_field_decisions(draft_id: str, decisions: RegistrationReviewDraftFieldDecisions) -> RegistrationReviewDraft | None:
         draft = RegistrationDraftStorageService.get_draft(draft_id)
         if not draft:

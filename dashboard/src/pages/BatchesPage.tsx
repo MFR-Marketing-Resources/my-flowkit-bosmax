@@ -5,9 +5,10 @@ import {
   Lock, Zap, History, Layers, Rocket, BarChart2,
   ChevronRight, RefreshCw, ExternalLink as LinkOut
 } from 'lucide-react'
-import { fetchAPI, postAPI } from '../api/client'
+import { fetchAPI, patchAPI, postAPI } from '../api/client'
+import { fetchCreativeAssets } from '../api/creativeAssets'
 import { ProductPicker } from '../components/batches/ProductPicker'
-import type { Product, LocalAgentStatus } from '../types'
+import type { CreativeAsset, Product, LocalAgentStatus } from '../types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -78,8 +79,215 @@ const MODE_LABELS: Record<Mode, string> = {
 
 // ─── Workspace Batch Tab ──────────────────────────────────────────────────────
 
+// ─── Asset Slot Picker ────────────────────────────────────────────────────────
+
+function AssetSlotPicker({
+  label,
+  color,
+  assets,
+  selectedIds,
+  onToggle,
+  disabled,
+}: {
+  label: string
+  color: string
+  assets: CreativeAsset[]
+  selectedIds: string[]
+  onToggle: (id: string) => void
+  disabled: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const filtered = assets.filter(a =>
+    a.display_name.toLowerCase().includes(search.toLowerCase())
+  )
+  const selectedCount = selectedIds.length
+
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        disabled={disabled}
+        className={`flex items-center justify-between px-3 py-2.5 rounded-xl border text-left transition-all ${
+          selectedCount > 0
+            ? `${color} ring-1 ring-current/20`
+            : 'border-white/10 bg-white/3 text-white/40 hover:bg-white/5'
+        } disabled:opacity-40`}
+      >
+        <span className="text-[11px] font-black tracking-wide">{label}</span>
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${selectedCount > 0 ? 'bg-black/30' : 'bg-white/5 text-white/30'}`}>
+          {selectedCount > 0 ? `${selectedCount} selected` : 'none'}
+        </span>
+      </button>
+
+      {open && (
+        <div className="rounded-xl border border-white/10 bg-black/40 p-3 flex flex-col gap-2">
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search assets..."
+            className="w-full rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-xs text-white/70 placeholder:text-white/20 outline-none"
+          />
+          <div className="max-h-44 overflow-y-auto flex flex-col gap-1 custom-scrollbar">
+            {filtered.length === 0 && (
+              <div className="py-4 text-center text-[10px] text-white/20">No assets found</div>
+            )}
+            {filtered.map(asset => {
+              const selected = selectedIds.includes(asset.asset_id)
+              return (
+                <button
+                  key={asset.asset_id}
+                  type="button"
+                  onClick={() => onToggle(asset.asset_id)}
+                  className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-all ${
+                    selected ? 'bg-white/10 text-white/90' : 'text-white/40 hover:bg-white/5 hover:text-white/70'
+                  }`}
+                >
+                  <div className={`w-3.5 h-3.5 shrink-0 rounded border flex items-center justify-center ${
+                    selected ? 'bg-accent border-accent' : 'border-white/20'
+                  }`}>
+                    {selected && <div className="w-1.5 h-1.5 bg-white rounded-sm" />}
+                  </div>
+                  {asset.preview_url && (
+                    <img
+                      src={asset.preview_url}
+                      alt=""
+                      className="w-7 h-7 rounded object-cover shrink-0 border border-white/10"
+                    />
+                  )}
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[11px] font-semibold truncate">{asset.display_name}</span>
+                    <span className="text-[9px] opacity-30 truncate">{asset.asset_id.slice(-8)}</span>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+          {selectedCount > 0 && (
+            <button
+              type="button"
+              onClick={() => selectedIds.forEach(id => onToggle(id))}
+              className="text-[9px] text-white/20 hover:text-white/50 text-right"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Multi-Product Picker ──────────────────────────────────────────────────────
+
+function MultiProductPicker({
+  products,
+  selectedIds,
+  onToggle,
+  disabled,
+}: {
+  products: Product[]
+  selectedIds: string[]
+  onToggle: (id: string) => void
+  disabled: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+
+  const filtered = products.filter(p => {
+    const q = search.toLowerCase()
+    return (
+      p.product_short_name?.toLowerCase().includes(q) ||
+      p.product_display_name?.toLowerCase().includes(q) ||
+      p.id.toLowerCase().includes(q)
+    )
+  })
+
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        disabled={disabled}
+        className={`flex items-center justify-between px-3 py-2.5 rounded-xl border text-left transition-all ${
+          selectedIds.length > 0
+            ? 'border-accent/40 bg-accent/10 text-accent/90 ring-1 ring-accent/20'
+            : 'border-white/10 bg-white/3 text-white/40 hover:bg-white/5'
+        } disabled:opacity-40`}
+      >
+        <span className="text-[11px] font-black tracking-wide">
+          {selectedIds.length > 0
+            ? `${selectedIds.length} product${selectedIds.length > 1 ? 's' : ''} selected`
+            : 'Select products…'}
+        </span>
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${selectedIds.length > 0 ? 'bg-black/30' : 'bg-white/5 text-white/30'}`}>
+          {open ? '▲' : '▼'}
+        </span>
+      </button>
+
+      {open && (
+        <div className="rounded-xl border border-white/10 bg-black/40 p-3 flex flex-col gap-2">
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search products…"
+            className="w-full rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-xs text-white/70 placeholder:text-white/20 outline-none"
+          />
+          <div className="max-h-52 overflow-y-auto flex flex-col gap-1 custom-scrollbar">
+            {filtered.length === 0 && (
+              <div className="py-4 text-center text-[10px] text-white/20">No products found</div>
+            )}
+            {filtered.map(p => {
+              const selected = selectedIds.includes(p.id)
+              const ready = p.prompt_readiness_status === 'READY'
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => onToggle(p.id)}
+                  className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-all ${
+                    selected ? 'bg-white/10 text-white/90' : 'text-white/40 hover:bg-white/5 hover:text-white/70'
+                  }`}
+                >
+                  <div className={`w-3.5 h-3.5 shrink-0 rounded border flex items-center justify-center ${
+                    selected ? 'bg-accent border-accent' : 'border-white/20'
+                  }`}>
+                    {selected && <div className="w-1.5 h-1.5 bg-white rounded-sm" />}
+                  </div>
+                  <div className="flex flex-col min-w-0 flex-1">
+                    <span className="text-[11px] font-semibold truncate">{p.product_short_name || p.product_display_name}</span>
+                    <span className="text-[9px] opacity-30 font-mono truncate">{p.id.slice(0, 12)}</span>
+                  </div>
+                  {!ready && (
+                    <span className="text-[8px] font-black px-1.5 py-0.5 rounded border border-orange-500/30 bg-orange-500/10 text-orange-400 shrink-0">NOT READY</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+          {selectedIds.length > 0 && (
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] text-white/20">{selectedIds.length} selected</span>
+              <button
+                type="button"
+                onClick={() => selectedIds.forEach(id => onToggle(id))}
+                className="text-[9px] text-white/20 hover:text-white/50"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Workspace Batch Tab ──────────────────────────────────────────────────────
+
 function WorkspaceBatchTab({ products }: { products: Product[] }) {
-  const [selectedProductId, setSelectedProductId] = useState('')
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([])
   const [selectedModes, setSelectedModes] = useState<Mode[]>(['F2V'])
   const [quantityPerMode, setQuantityPerMode] = useState(10)
   const [intervalSeconds, setIntervalSeconds] = useState(5)
@@ -89,8 +297,60 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
   const [recentRuns, setRecentRuns] = useState<BatchRun[]>([])
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const selectedProduct = products.find(p => p.id === selectedProductId)
-  const totalExpected = selectedModes.length * quantityPerMode
+  // P1: Creative Library asset slots
+  const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([])
+  const [sceneAssets, setSceneAssets] = useState<CreativeAsset[]>([])
+  const [styleAssets, setStyleAssets] = useState<CreativeAsset[]>([])
+  const [selectedCharIds, setSelectedCharIds] = useState<string[]>([])
+  const [selectedSceneIds, setSelectedSceneIds] = useState<string[]>([])
+  const [selectedStyleIds, setSelectedStyleIds] = useState<string[]>([])
+  // P2A: IMG custom prompt template
+  const [imgPromptTemplate, setImgPromptTemplate] = useState('')
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [chars, scenes, styles] = await Promise.all([
+          fetchCreativeAssets({ semantic_role: 'CHARACTER_REFERENCE', status: 'ACTIVE', limit: 200 }),
+          fetchCreativeAssets({ semantic_role: 'SCENE_CONTEXT_REFERENCE', status: 'ACTIVE', limit: 200 }),
+          fetchCreativeAssets({ semantic_role: 'STYLE_REFERENCE', status: 'ACTIVE', limit: 200 }),
+        ])
+        setCharacterAssets(chars.items)
+        setSceneAssets(scenes.items)
+        setStyleAssets(styles.items)
+      } catch { /* non-fatal */ }
+    }
+    void load()
+  }, [])
+
+  // P2B: Load recent runs from backend on mount
+  useEffect(() => {
+    const loadRuns = async () => {
+      try {
+        const res = await fetchAPI('/api/workspace/generation-packages/batch?limit=20') as { runs: BatchRun[] }
+        if (res?.runs?.length) {
+          setRecentRuns(res.runs)
+        }
+      } catch { /* non-fatal */ }
+    }
+    void loadRuns()
+  }, [])
+
+  const toggleId = (setter: React.Dispatch<React.SetStateAction<string[]>>) => (id: string) =>
+    setter(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+
+  const toggleProductId = (id: string) =>
+    setSelectedProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+
+  const selectedProducts = products.filter(p => selectedProductIds.includes(p.id))
+  const hasUnreadyProduct = selectedProducts.some(p => p.prompt_readiness_status !== 'READY')
+
+  // Combination matrix count
+  const charSlots = Math.max(1, selectedCharIds.length)
+  const sceneSlots = Math.max(1, selectedSceneIds.length)
+  const styleSlots = Math.max(1, selectedStyleIds.length)
+  const combinations = charSlots * sceneSlots * styleSlots
+  const totalExpected = Math.max(1, selectedProductIds.length) * selectedModes.length * combinations * quantityPerMode
   const estimatedSeconds = totalExpected * intervalSeconds
 
   // Poll active run
@@ -110,7 +370,7 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
         }
       }, 2000)
     }
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [currentRun?.batch_run_id, currentRun?.status])
 
   const toggleMode = (m: Mode) => {
@@ -120,20 +380,30 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
   }
 
   const handleStartBatch = async () => {
-    if (!selectedProductId || selectedModes.length === 0) return
+    if (selectedProductIds.length === 0 || selectedModes.length === 0) return
     setIsRunning(true)
     try {
       const res = await postAPI('/api/workspace/generation-packages/batch', {
-        product_id: selectedProductId,
+        product_id: selectedProductIds[0],
+        product_ids: selectedProductIds,
         modes: selectedModes,
         quantity_per_mode: quantityPerMode,
         interval_seconds: intervalSeconds,
         generation_mode: generationMode,
+        character_asset_ids: selectedCharIds,
+        scene_asset_ids: selectedSceneIds,
+        style_asset_ids: selectedStyleIds,
+        ...(selectedModes.includes('IMG') && imgPromptTemplate.trim()
+          ? { img_prompt_template: imgPromptTemplate.trim() }
+          : {}),
       }) as any
       if (res.ok) {
         const run = await fetchAPI(`/api/workspace/generation-packages/batch/${res.batch_run_id}`) as BatchRun
         setCurrentRun(run)
-        setRecentRuns(prev => [run, ...prev.slice(0, 9)])
+        setRecentRuns(prev => {
+          const exists = prev.some(r => r.batch_run_id === run.batch_run_id)
+          return exists ? prev : [run, ...prev.slice(0, 19)]
+        })
       } else {
         alert(`Error: ${res.detail || 'Unknown error'}`)
         setIsRunning(false)
@@ -141,6 +411,32 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
     } catch (err: any) {
       alert(`Failed: ${err.message}`)
       setIsRunning(false)
+    }
+  }
+
+  const handleCancelRun = async () => {
+    if (!currentRun) return
+    try {
+      await postAPI(`/api/workspace/generation-packages/batch/${currentRun.batch_run_id}/cancel`, {})
+      setCurrentRun(prev => prev ? { ...prev, status: 'CANCELLED' } : null)
+      if (pollRef.current) clearInterval(pollRef.current)
+      setIsRunning(false)
+    } catch (err: any) {
+      alert(`Cancel failed: ${err.message}`)
+    }
+  }
+
+  const handleRetryRun = async (batchRunId: string) => {
+    try {
+      const newRun = await postAPI(`/api/workspace/generation-packages/batch/${batchRunId}/retry`, {}) as BatchRun
+      setCurrentRun(newRun)
+      setRecentRuns(prev => {
+        const exists = prev.some(r => r.batch_run_id === newRun.batch_run_id)
+        return exists ? prev : [newRun, ...prev.slice(0, 19)]
+      })
+      setIsRunning(true)
+    } catch (err: any) {
+      alert(`Retry failed: ${err.message}`)
     }
   }
 
@@ -168,17 +464,17 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
             Generates prompts directly to Prompt Handoff Bank for all selected modes.
           </p>
 
-          <ProductPicker
+          <MultiProductPicker
             products={products}
-            selectedProductId={selectedProductId}
-            onSelect={setSelectedProductId}
-            loading={isRunning}
+            selectedIds={selectedProductIds}
+            onToggle={toggleProductId}
+            disabled={isRunning}
           />
 
-          {selectedProduct && selectedProduct.prompt_readiness_status !== 'READY' && (
+          {hasUnreadyProduct && (
             <div className="p-2.5 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-start gap-2">
               <AlertCircle size={13} className="text-orange-400 shrink-0 mt-0.5" />
-              <span className="text-[10px] text-orange-200/70 font-medium">Product not ready for generation. Complete product setup first.</span>
+              <span className="text-[10px] text-orange-200/70 font-medium">One or more selected products are not ready for generation.</span>
             </div>
           )}
         </section>
@@ -207,6 +503,78 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
             <span className="text-[10px] text-red-400/70">Select at least one mode</span>
           )}
         </section>
+
+        {/* Creative Library Asset Slots */}
+        <section className="p-5 rounded-xl border border-white/5 bg-surface shadow-xl flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] uppercase font-black tracking-[0.18em] opacity-40">Creative Library Slots</label>
+            {combinations > 1 && (
+              <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
+                {combinations} combinations
+              </span>
+            )}
+          </div>
+          <p className="text-[10px] text-white/25 -mt-2 leading-relaxed">
+            Select assets per slot. Each combination generates {quantityPerMode} prompt{quantityPerMode > 1 ? 's' : ''} per mode.
+          </p>
+          <AssetSlotPicker
+            label="Avatar / Character"
+            color="bg-purple-500/15 text-purple-300 border-purple-500/30"
+            assets={characterAssets}
+            selectedIds={selectedCharIds}
+            onToggle={toggleId(setSelectedCharIds)}
+            disabled={isRunning}
+          />
+          <AssetSlotPicker
+            label="Scene Context / Background"
+            color="bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+            assets={sceneAssets}
+            selectedIds={selectedSceneIds}
+            onToggle={toggleId(setSelectedSceneIds)}
+            disabled={isRunning}
+          />
+          <AssetSlotPicker
+            label="Style / Outfit Reference"
+            color="bg-amber-500/15 text-amber-300 border-amber-500/30"
+            assets={styleAssets}
+            selectedIds={selectedStyleIds}
+            onToggle={toggleId(setSelectedStyleIds)}
+            disabled={isRunning}
+          />
+        </section>
+
+        {/* P2A: IMG Prompt Template — shown only when IMG mode selected */}
+        {selectedModes.includes('IMG') && (
+          <section className="p-5 rounded-xl border border-amber-500/20 bg-amber-500/5 shadow-xl flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] uppercase font-black tracking-[0.18em] text-amber-400/70">IMG Prompt Template</label>
+              <span className="text-[9px] text-amber-400/40 font-mono">optional</span>
+            </div>
+            <p className="text-[10px] text-amber-200/30 leading-relaxed -mt-1">
+              Custom photorealistic prompt. Use <code className="text-amber-300/50 bg-black/30 px-1 rounded">{'{character_dna}'}</code>, <code className="text-amber-300/50 bg-black/30 px-1 rounded">{'{scene_context_dna}'}</code>, <code className="text-amber-300/50 bg-black/30 px-1 rounded">{'{style_mood_dna}'}</code> as placeholders — they will be filled from selected assets.
+            </p>
+            <textarea
+              value={imgPromptTemplate}
+              onChange={e => setImgPromptTemplate(e.target.value)}
+              disabled={isRunning}
+              rows={5}
+              placeholder={`Photorealistic portrait, {character_dna}, {scene_context_dna}, {style_mood_dna}, shot on Sony A7R V, 85mm f/1.4, golden hour lighting, ultra-detailed...`}
+              className="w-full rounded-xl border border-amber-500/20 bg-black/30 px-3 py-2.5 text-xs text-amber-100/70 placeholder:text-white/15 outline-none resize-none focus:border-amber-500/40 font-mono leading-relaxed disabled:opacity-40"
+            />
+            {imgPromptTemplate.trim() && (
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] text-amber-400/50">Template will override compiled prompt for IMG packages</span>
+                <button
+                  type="button"
+                  onClick={() => setImgPromptTemplate('')}
+                  className="text-[9px] text-amber-400/40 hover:text-amber-400/70"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Quantity + Interval */}
         <section className="p-5 rounded-xl border border-white/5 bg-surface shadow-xl flex flex-col gap-4">
@@ -271,12 +639,16 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
           </div>
 
           {/* Summary */}
-          <div className="p-3 rounded-xl bg-black/30 border border-white/5 grid grid-cols-3 gap-3">
+          <div className="p-3 rounded-xl bg-black/30 border border-white/5 grid grid-cols-4 gap-3">
             <div className="flex flex-col gap-0.5 items-center">
               <span className="text-[9px] opacity-30 uppercase font-black tracking-tight">Total Prompts</span>
               <span className="text-lg font-black text-accent">{totalExpected}</span>
             </div>
             <div className="flex flex-col gap-0.5 items-center border-x border-white/5">
+              <span className="text-[9px] opacity-30 uppercase font-black tracking-tight">Combos</span>
+              <span className={`text-lg font-black ${combinations > 1 ? 'text-accent' : 'text-white/40'}`}>{combinations}</span>
+            </div>
+            <div className="flex flex-col gap-0.5 items-center border-r border-white/5">
               <span className="text-[9px] opacity-30 uppercase font-black tracking-tight">Est. Time</span>
               <span className="text-lg font-black text-white/70">{formatDuration(estimatedSeconds)}</span>
             </div>
@@ -289,7 +661,7 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
           <button
             type="button"
             onClick={handleStartBatch}
-            disabled={isRunning || !selectedProductId || selectedModes.length === 0 || selectedProduct?.prompt_readiness_status !== 'READY'}
+            disabled={isRunning || selectedProductIds.length === 0 || selectedModes.length === 0 || hasUnreadyProduct}
             className="py-3 rounded-xl text-sm font-black bg-gradient-to-r from-accent to-purple-600 text-white hover:opacity-90 disabled:opacity-20 disabled:cursor-not-allowed transition-all shadow-xl shadow-accent/20 flex items-center justify-center gap-2"
           >
             {isRunning
@@ -305,18 +677,39 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
         {/* Active run */}
         {currentRun && (
           <section className="p-5 rounded-xl border border-accent/20 bg-accent/5 flex flex-col gap-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-black text-accent flex items-center gap-2">
                 <BarChart2 size={15} /> Active Run
               </h3>
-              <span className={`text-[10px] font-black tracking-widest px-2 py-0.5 rounded-full border ${
-                currentRun.status === 'RUNNING' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20 animate-pulse' :
-                currentRun.status === 'COMPLETED' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
-                currentRun.status === 'FAILED' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                'bg-white/5 text-white/30 border-white/10'
-              }`}>
-                {currentRun.status}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] font-black tracking-widest px-2 py-0.5 rounded-full border ${
+                  currentRun.status === 'RUNNING' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20 animate-pulse' :
+                  currentRun.status === 'COMPLETED' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                  currentRun.status === 'FAILED' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                  currentRun.status === 'CANCELLED' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                  'bg-white/5 text-white/30 border-white/10'
+                }`}>
+                  {currentRun.status}
+                </span>
+                {['PENDING', 'RUNNING'].includes(currentRun.status) && (
+                  <button
+                    type="button"
+                    onClick={handleCancelRun}
+                    className="text-[10px] font-black px-2.5 py-1 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all"
+                  >
+                    Cancel
+                  </button>
+                )}
+                {(currentRun.status === 'FAILED' || currentRun.status === 'CANCELLED' || currentRun.total_failed > 0) && (
+                  <button
+                    type="button"
+                    onClick={() => handleRetryRun(currentRun.batch_run_id)}
+                    className="text-[10px] font-black px-2.5 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-all"
+                  >
+                    Retry Failed
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Progress bar */}
@@ -418,6 +811,15 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
                   <span className="text-sm font-black text-white/70">{run.total_completed}<span className="text-[10px] opacity-40">/{run.total_expected}</span></span>
                   <span className="text-[9px] opacity-30">{new Date(run.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                 </div>
+                {(run.status === 'FAILED' || run.status === 'CANCELLED' || run.total_failed > 0) && (
+                  <button
+                    type="button"
+                    onClick={e => { e.stopPropagation(); void handleRetryRun(run.batch_run_id) }}
+                    className="text-[9px] font-black px-2 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 shrink-0"
+                  >
+                    Retry
+                  </button>
+                )}
                 <ChevronRight size={14} className="opacity-20 shrink-0" />
               </div>
             ))}
@@ -430,6 +832,8 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+const PAGE_SIZE_BATCHES = 15;
+
 export default function BatchesPage() {
   const [activeTab, setActiveTab] = useState<'workspace' | 'legacy'>('workspace')
   const [batches, setBatches] = useState<Batch[]>([])
@@ -440,6 +844,11 @@ export default function BatchesPage() {
   const [health, setHealth] = useState<LocalAgentStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [showPrompt, setShowPrompt] = useState<string | null>(null)
+  const [currentPageBatches, setCurrentPageBatches] = useState(1)
+  const [editDraftForm, setEditDraftForm] = useState<Record<string,string>>({})
+  const [editDraftSaving, setEditDraftSaving] = useState(false)
+  const [editDraftSuccess, setEditDraftSuccess] = useState<string|null>(null)
+  const [editDraftError, setEditDraftError] = useState<string|null>(null)
 
   const selectedProductPreview = products.find(p => p.id === selectedProductId)
 
@@ -517,6 +926,15 @@ export default function BatchesPage() {
     try {
       const data = await fetchAPI(`/api/batches/${id}`) as Batch
       setSelectedBatch(data)
+      setEditDraftSuccess(null)
+      setEditDraftError(null)
+      setEditDraftForm({
+        quantity: String(data.quantity ?? ''),
+        engine: (data as any).engine ?? '',
+        duration: String((data as any).duration ?? ''),
+        mode: data.mode ?? '',
+        variation_level: (data as any).variation_level ?? '',
+      })
     } catch (err) {
       console.error('Failed to fetch batch detail', err)
     }
@@ -542,6 +960,33 @@ export default function BatchesPage() {
     }
   }
 
+
+  const handleDeleteBatch = async (id: string) => {
+    if (!window.confirm('Delete this batch permanently?')) return
+    try {
+      await fetch(`/api/batches/${id}`, { method: 'DELETE' })
+      setSelectedBatch(null)
+      fetchBatches()
+    } catch (err) { console.error(err) }
+  }
+
+  const handlePatchDraft = async (id: string) => {
+    setEditDraftSaving(true); setEditDraftError(null); setEditDraftSuccess(null)
+    try {
+      const payload: Record<string,string|number> = {}
+      if (editDraftForm.quantity) payload.quantity = parseInt(editDraftForm.quantity) || 1
+      if (editDraftForm.engine) payload.engine = editDraftForm.engine
+      if (editDraftForm.duration) payload.duration = parseInt(editDraftForm.duration) || 8
+      if (editDraftForm.mode) payload.mode = editDraftForm.mode
+      if (editDraftForm.variation_level) payload.variation_level = editDraftForm.variation_level
+      await patchAPI(`/api/batches/${id}`, payload)
+      await handleViewBatch(id); await fetchBatches()
+      setEditDraftSuccess('Draft updated.')
+    } catch (err) {
+      setEditDraftError(err instanceof Error ? err.message : 'Failed to save')
+    } finally { setEditDraftSaving(false) }
+  }
+
   const handleExecuteNext = async (id: string, dryRun: boolean = true) => {
     setLoading(true)
     try {
@@ -556,6 +1001,10 @@ export default function BatchesPage() {
       setLoading(false)
     }
   }
+
+  const totalPagesBatches = Math.ceil(batches.length / PAGE_SIZE_BATCHES)
+  const safePageBatches = Math.min(Math.max(1, currentPageBatches), totalPagesBatches || 1)
+  const paginatedBatches = batches.slice((safePageBatches - 1) * PAGE_SIZE_BATCHES, safePageBatches * PAGE_SIZE_BATCHES)
 
   return (
     <div className="flex flex-col h-[calc(100vh-64px)] max-w-[1600px] mx-auto gap-4 overflow-hidden px-4">
@@ -690,7 +1139,7 @@ export default function BatchesPage() {
                 </h2>
                 <div className="flex-1 overflow-y-auto px-4 pb-4 custom-scrollbar">
                   <div className="flex flex-col gap-3">
-                    {batches.map(b => {
+                    {paginatedBatches.map(b => {
                       const product = products.find(p => p.id === b.product_id)
                       return (
                         <div
@@ -738,6 +1187,19 @@ export default function BatchesPage() {
                         <span className="text-xs font-bold uppercase tracking-widest leading-loose">No production history found.<br/>Create a draft to begin.</span>
                       </div>
                     )}
+
+                  {totalPagesBatches > 1 && (
+                    <div className="flex items-center justify-between border-t border-white/5 px-4 py-3">
+                      <span className="text-[10px] opacity-30">{(safePageBatches-1)*PAGE_SIZE_BATCHES+1}-{Math.min(safePageBatches*PAGE_SIZE_BATCHES,batches.length)} of {batches.length}</span>
+                      <div className="flex items-center gap-1">
+                        <button type="button" disabled={safePageBatches<=1} onClick={()=>setCurrentPageBatches(p=>p-1)} className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-bold text-white/50 disabled:opacity-30">Prev</button>
+                        {Array.from({length:totalPagesBatches},(_,i)=>i+1).map(n=>(
+                          <button key={n} type="button" onClick={()=>setCurrentPageBatches(n)} className={`rounded border px-2 py-1 text-[10px] font-bold ${safePageBatches===n?'border-accent/50 bg-accent/10 text-accent':'border-white/10 bg-white/5 text-white/40'}`}>{n}</button>
+                        ))}
+                        <button type="button" disabled={safePageBatches>=totalPagesBatches} onClick={()=>setCurrentPageBatches(p=>p+1)} className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-bold text-white/50 disabled:opacity-30">Next</button>
+                      </div>
+                    </div>
+                  )}
                   </div>
                 </div>
               </section>
@@ -748,7 +1210,25 @@ export default function BatchesPage() {
               {selectedBatch ? (
                 <div className="flex-1 overflow-y-auto custom-scrollbar">
                   <div className="p-6 flex flex-col gap-8 max-w-5xl mx-auto">
-                    <section className="p-6 rounded-2xl border border-white/10 bg-card/40 shadow-2xl relative overflow-hidden">
+                    {['DRAFT', 'DRAFT_BLOCKED'].includes(selectedBatch.status) && (
+                  <section className="p-5 rounded-2xl border border-white/10 bg-card/30">
+                    <h3 className="text-[11px] font-black uppercase tracking-widest opacity-40 mb-4">Edit Draft</h3>
+                    {editDraftSuccess && <div className="mb-3 rounded border border-green-500/30 bg-green-500/10 px-3 py-2 text-[11px] text-green-300">{editDraftSuccess}</div>}
+                    {editDraftError && <div className="mb-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">{editDraftError}</div>}
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      {[{key:'quantity',label:'Quantity'},{key:'engine',label:'Engine'},{key:'duration',label:'Duration (s)'},{key:'mode',label:'Mode'},{key:'variation_level',label:'Variation Level'}].map(({key,label}) => (
+                        <div key={key}>
+                          <label className="mb-0.5 block text-[9px] font-bold uppercase tracking-widest opacity-30">{label}</label>
+                          <input value={editDraftForm[key]??''} onChange={e=>setEditDraftForm(f=>({...f,[key]:e.target.value}))} className="w-full rounded border border-white/10 bg-black/30 px-2 py-1.5 text-xs text-white/80" />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-end">
+                      <button type="button" onClick={()=>handlePatchDraft(selectedBatch.id)} disabled={editDraftSaving} className="rounded border border-accent/30 bg-accent/10 px-4 py-2 text-[11px] font-black text-accent disabled:opacity-50">{editDraftSaving?'Saving...':'Save Changes'}</button>
+                    </div>
+                  </section>
+                )}
+                <section className="p-6 rounded-2xl border border-white/10 bg-card/40 shadow-2xl relative overflow-hidden">
                       <div className="absolute top-0 left-0 w-1.5 h-full bg-accent opacity-80" />
                       <div className="flex justify-between items-start mb-8">
                         <div className="flex flex-col gap-1.5">
@@ -799,7 +1279,7 @@ export default function BatchesPage() {
                               </button>
                             </>
                           )}
-                          {['QUEUED', 'PROCESSING', 'DRAFT'].includes(selectedBatch.status) && (
+                          {['QUEUED', 'PROCESSING', 'DRAFT', 'DRAFT_BLOCKED'].includes(selectedBatch.status) && (
                             <button
                               onClick={() => handleCancelBatch(selectedBatch.id)}
                               className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold border border-red-500/20 text-red-500/70 hover:bg-red-500/10 transition-all active:scale-95"
@@ -807,6 +1287,12 @@ export default function BatchesPage() {
                               <X size={16} /> CANCEL
                             </button>
                           )}
+                          <button
+                            onClick={() => handleDeleteBatch(selectedBatch.id)}
+                            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold border border-red-700/30 text-red-600/70 hover:bg-red-700/10 transition-all active:scale-95"
+                          >
+                            <X size={14} /> DELETE
+                          </button>
                         </div>
                       </div>
 
