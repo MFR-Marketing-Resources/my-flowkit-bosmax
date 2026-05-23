@@ -37,7 +37,7 @@ _COLUMNS = {
     "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
     "creative_asset": {"semantic_role", "display_name", "description", "source_type", "storage_kind", "preview_url", "download_url", "media_id", "local_file_path", "remote_source_url", "product_id", "category", "silo", "product_type", "allowed_modes", "engine_slot_eligibility", "mode_a_metadata_handoff", "visual_dna_summary", "character_dna", "scene_context_dna", "style_mood_dna", "source_prompt_fingerprint", "source_workspace_execution_package_id", "source_prompt_package_snapshot_id", "status", "updated_at"},
     "fastmoss_bulk_draft_status": {"raw_product_title", "source_url", "tiktok_product_url", "image_url", "category", "claim_risk_level", "mapping_confidence", "image_readiness", "copy_route", "sold_count", "commission_rate", "promotion_status", "draft_id", "committed_product_id", "suspected_existing_product_id", "suspected_existing_product_title", "suspected_existing_product_source", "suspected_existing_product_mapping_source", "duplicate_match_reason", "linked_product_id", "linked_product_title", "duplicate_resolution", "duplicate_resolved_at", "duplicate_resolution_note", "duplicate_ignore_product_id", "error_message", "batch_provenance", "recomputed_at", "recompute_previous_status", "recompute_previous_error", "updated_at"},
-    "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "updated_at"},
+    "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "operator_notes", "updated_at"},
 }
 
 
@@ -799,6 +799,7 @@ async def create_workspace_generation_package(
     blockers_json: str,
     warnings_json: str,
     status: str,
+    batch_run_id: str | None = None,
 ) -> dict:
     db = await get_db()
     now = _now()
@@ -811,8 +812,8 @@ async def create_workspace_generation_package(
                 generation_mode, final_prompt_text, prompt_blocks_json, selected_assets_json,
                 resolved_engine_slots_json, resolver_output_json, image_assets_json,
                 manual_handoff_json, dom_handoff_payload_json, blockers_json, warnings_json,
-                status, created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                status, batch_run_id, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 workspace_generation_package_id, mode, product_id, product_name_snapshot,
@@ -820,7 +821,7 @@ async def create_workspace_generation_package(
                 generation_mode, final_prompt_text, prompt_blocks_json, selected_assets_json,
                 resolved_engine_slots_json, resolver_output_json, image_assets_json,
                 manual_handoff_json, dom_handoff_payload_json, blockers_json, warnings_json,
-                status, now, now,
+                status, batch_run_id, now, now,
             ),
         )
         await db.commit()
@@ -839,6 +840,7 @@ async def list_workspace_generation_packages(
     mode: str | None = None,
     status: str | None = None,
     product_id: str | None = None,
+    batch_run_id: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
     db = await get_db()
@@ -849,6 +851,180 @@ async def list_workspace_generation_packages(
         q += " AND status=?"; params.append(status)
     if product_id:
         q += " AND product_id=?"; params.append(product_id)
+    if batch_run_id:
+        q += " AND batch_run_id=?"; params.append(batch_run_id)
+    q += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def create_batch_generation_run(
+    batch_run_id: str,
+    *,
+    product_id: str,
+    modes_json: str,
+    quantity_per_mode: int,
+    interval_seconds: int,
+    generation_mode: str,
+    total_expected: int,
+    product_ids_json: str = "[]",
+    config_json: str = "{}",
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO batch_generation_run
+               (batch_run_id, status, product_id, modes_json, quantity_per_mode,
+                interval_seconds, generation_mode, total_expected, total_completed,
+                total_failed, error_log_json, product_ids_json, config_json, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,0,0,'[]',?,?,?,?)""",
+            (batch_run_id, "PENDING", product_id, modes_json, quantity_per_mode,
+             interval_seconds, generation_mode, total_expected,
+             product_ids_json, config_json, now, now),
+        )
+        await db.commit()
+    cur = await db.execute("SELECT * FROM batch_generation_run WHERE batch_run_id=?", (batch_run_id,))
+    row = await cur.fetchone()
+    return dict(row) if row else {}
+
+
+async def update_batch_generation_run(
+    batch_run_id: str,
+    *,
+    status: str | None = None,
+    total_completed: int | None = None,
+    total_failed: int | None = None,
+    error_log_json: str | None = None,
+) -> None:
+    db = await get_db()
+    now = _now()
+    parts, params = [], []
+    if status is not None:
+        parts.append("status=?"); params.append(status)
+    if total_completed is not None:
+        parts.append("total_completed=?"); params.append(total_completed)
+    if total_failed is not None:
+        parts.append("total_failed=?"); params.append(total_failed)
+    if error_log_json is not None:
+        parts.append("error_log_json=?"); params.append(error_log_json)
+    if not parts:
+        return
+    parts.append("updated_at=?"); params.append(now)
+    params.append(batch_run_id)
+    async with _db_lock:
+        await db.execute(f"UPDATE batch_generation_run SET {', '.join(parts)} WHERE batch_run_id=?", params)
+        await db.commit()
+
+
+async def get_batch_generation_run(batch_run_id: str) -> dict | None:
+    db = await get_db()
+    cur = await db.execute("SELECT * FROM batch_generation_run WHERE batch_run_id=?", (batch_run_id,))
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+# ─── Scheduled Batch Runs ─────────────────────────────────────
+
+async def create_scheduled_batch_run(
+    scheduled_run_id: str,
+    *,
+    product_ids_json: str,
+    modes_json: str,
+    quantity_per_mode: int,
+    interval_seconds: int,
+    generation_mode: str,
+    character_asset_ids_json: str,
+    scene_asset_ids_json: str,
+    style_asset_ids_json: str,
+    img_prompt_template: str | None,
+    scheduled_at: str,
+    label: str | None,
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO scheduled_batch_run
+               (scheduled_run_id, status, product_ids_json, modes_json,
+                quantity_per_mode, interval_seconds, generation_mode,
+                character_asset_ids_json, scene_asset_ids_json, style_asset_ids_json,
+                img_prompt_template, scheduled_at, label, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (scheduled_run_id, "SCHEDULED", product_ids_json, modes_json,
+             quantity_per_mode, interval_seconds, generation_mode,
+             character_asset_ids_json, scene_asset_ids_json, style_asset_ids_json,
+             img_prompt_template, scheduled_at, label, now, now),
+        )
+        await db.commit()
+    cur = await db.execute(
+        "SELECT * FROM scheduled_batch_run WHERE scheduled_run_id=?", (scheduled_run_id,)
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else {}
+
+
+async def list_scheduled_batch_runs(
+    status: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM scheduled_batch_run"
+    params: list = []
+    if status:
+        q += " WHERE status=?"
+        params.append(status)
+    q += " ORDER BY scheduled_at ASC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def update_scheduled_batch_run(
+    scheduled_run_id: str,
+    *,
+    status: str | None = None,
+    batch_run_id: str | None = None,
+) -> None:
+    db = await get_db()
+    now = _now()
+    parts, params = [], []
+    if status is not None:
+        parts.append("status=?"); params.append(status)
+    if batch_run_id is not None:
+        parts.append("batch_run_id=?"); params.append(batch_run_id)
+    if not parts:
+        return
+    parts.append("updated_at=?"); params.append(now)
+    params.append(scheduled_run_id)
+    async with _db_lock:
+        await db.execute(
+            f"UPDATE scheduled_batch_run SET {', '.join(parts)} WHERE scheduled_run_id=?",
+            params,
+        )
+        await db.commit()
+
+
+async def get_due_scheduled_batch_runs(now_iso: str) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM scheduled_batch_run WHERE status='SCHEDULED' AND scheduled_at <= ?",
+        (now_iso,),
+    )
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def list_batch_generation_runs(
+    product_id: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM batch_generation_run"
+    params: list = []
+    if product_id:
+        q += " WHERE product_id=?"
+        params.append(product_id)
     q += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     cur = await db.execute(q, params)

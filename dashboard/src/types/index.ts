@@ -1516,6 +1516,13 @@ export interface ProductAssetGeneratorRequest {
 	target_destination_mode?: string | null;
 	strict_validation?: boolean;
 	dry_run_only: boolean;
+	// Image reference slots — Creative Library assets
+	character_reference_asset_id?: string | null;
+	scene_context_reference_asset_id?: string | null;
+	style_reference_asset_id?: string | null;
+	// Character consistency mode: when true + scene_context_reference provided,
+	// the character image anchors identity and scene becomes the new environment.
+	character_anchor_mode?: boolean;
 }
 
 export interface ProductAssetGeneratorResponse {
@@ -1753,7 +1760,8 @@ export type WorkspaceGenerationPackageStatus =
 	| "DRAFT"
 	| "READY_MANUAL"
 	| "READY_DOM_STAGED"
-	| "BLOCKED";
+	| "BLOCKED"
+	| "ARCHIVED";
 
 export interface WorkspaceGenerationPackageAsset {
 	slot_key: string;
@@ -1829,6 +1837,8 @@ export interface WorkspaceGenerationPackage {
 	blockers_json: string[];
 	warnings_json: string[];
 	status: WorkspaceGenerationPackageStatus;
+	operator_notes: string | null;
+	batch_run_id: string | null;
 	created_at: string;
 	updated_at: string;
 }

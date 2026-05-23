@@ -24,6 +24,14 @@ export async function postAPI<T>(path: string, body: any): Promise<T> {
   return fetchAPI<T>(path, { method: 'POST', body: JSON.stringify(body) })
 }
 
+export async function deleteAPI(path: string): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.statusText)
+    throw new Error(`API ${res.status}: ${err}`)
+  }
+}
+
 export async function postMultipartAPI<T>(path: string, body: FormData): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',

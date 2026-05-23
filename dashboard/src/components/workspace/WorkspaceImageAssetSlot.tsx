@@ -11,6 +11,7 @@ interface WorkspaceImageAssetSlotProps {
 	uploadTitle: string;
 	onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
 	onPreviewStateChange?: (failed: boolean) => void;
+	onImageClick?: (url: string) => void;
 }
 
 function previewSourceLabel(asset: UploadedAsset | null) {
@@ -33,6 +34,7 @@ export default function WorkspaceImageAssetSlot({
 	uploadTitle,
 	onFileChange,
 	onPreviewStateChange,
+	onImageClick,
 }: WorkspaceImageAssetSlotProps) {
 	const inputId = useId();
 	const [previewFailed, setPreviewFailed] = useState(false);
@@ -47,8 +49,9 @@ export default function WorkspaceImageAssetSlot({
 					<>
 						<img
 							src={asset?.previewUrl}
-							className="h-full w-full object-cover animate-in fade-in duration-500"
+							className={`h-full w-full object-cover animate-in fade-in duration-500 ${onImageClick ? "cursor-zoom-in" : ""}`}
 							alt={title}
+							onClick={() => asset?.previewUrl && onImageClick?.(asset.previewUrl)}
 							onError={() => {
 								setPreviewFailed(true);
 								onPreviewStateChange?.(true);

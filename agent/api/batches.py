@@ -27,6 +27,17 @@ class BatchDraftRequest(BaseModel):
     daily_credit_limit: int = 0
     approval_required: bool = True
 
+
+class BatchPatchRequest(BaseModel):
+    quantity: int | None = None
+    engine: str | None = None
+    duration: int | None = None
+    mode: str | None = None
+    variation_level: str | None = None
+    platform: str | None = None
+    objective: str | None = None
+    language: str | None = None
+
 @router.post("/draft")
 async def post_batch_draft(request: BatchDraftRequest):
     result = await create_batch_draft(request.model_dump())
@@ -65,3 +76,62 @@ async def get_batch_events(batch_id: str):
     if "error" in detail:
         raise HTTPException(status_code=404, detail=detail["error"])
     return detail.get("events", [])
+
+
+@router.patch("/{batch_id}")
+async def patch_batch(batch_id: str, request: BatchPatchRequest):
+    from agent.db import crud
+    from agent.db.schema import get_db, _db_lock
+    import datetime
+
+    detail = await get_batch_detail(batch_id)
+    if "error" in detail:
+        raise HTTPException(status_code=404, detail=detail["error"])
+    if detail.get("status") not in ("DRAFT", "DRAFT_BLOCKED"):
+        raise HTTPException(status_code=409, detail="BATCH_NOT_DRAFT")
+
+    fields: dict = {}
+    if request.quantity is not None:
+        fields["quantity"] = request.quantity
+    if request.engine is not None:
+        fields["engine"] = request.engine
+    if request.duration is not None:
+        fields["duration"] = request.duration
+    if request.mode is not None:
+        fields["mode"] = request.mode
+    if request.variation_level is not None:
+        fields["variation_level"] = request.variation_level
+    if request.platform is not None:
+        fields["platform"] = request.platform
+    if request.objective is not None:
+        fields["objective"] = request.objective
+    if request.language is not None:
+        fields["language"] = request.language
+
+    if not fields:
+        return detail
+
+    fields["updated_at"] = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    values = list(fields.values()) + [batch_id]
+
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(f"UPDATE batch SET {set_clause} WHERE id = ?", values)
+        await db.commit()
+
+    return await get_batch_detail(batch_id)
+
+
+@router.delete("/{batch_id}", status_code=204)
+async def delete_batch(batch_id: str):
+    from agent.db.schema import get_db, _db_lock
+
+    detail = await get_batch_detail(batch_id)
+    if "error" in detail:
+        raise HTTPException(status_code=404, detail=detail["error"])
+
+    db = await get_db()
+    async with _db_lock:
+        await db.execute("DELETE FROM batch WHERE id = ?", (batch_id,))
+        await db.commit()

@@ -761,8 +761,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				</div>
 			)}
 
-			{/* ── STEP 1: UGC Prompt Compiler Controls ─────────────────── */}
-			<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+			{/* ── STEP 1: UGC Prompt Compiler Controls (video modes only) ── */}
+			{mode !== "IMG" && <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
 				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
 					Step 1 — UGC Prompt Compiler Controls
 				</div>
@@ -946,6 +946,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				</div>
 			</div>
 
+			}
+
 			{/* ── STEP 2: Select Product ────────────────────────────────── */}
 			<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
 				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
@@ -1088,8 +1090,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				) : null}
 			</div>
 
-			{/* ── STEP 3: Load Package ─────────────────────────────────── */}
-			<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+			{/* ── STEP 3: Load Package (video modes only) ──────────────── */}
+			{mode !== "IMG" && <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
 				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
 					Step 3 — Load {mode} Package
 				</div>
@@ -1154,8 +1156,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				) : null}
 			</div>
 
-			{/* ── STEP 4: Generate Final Prompt ────────────────────────── */}
-			<div className="mb-6 rounded-2xl border border-blue-500/20 bg-slate-900/40 p-4">
+			}
+
+			{/* ── STEP 4: Generate Final Prompt (video modes only) ─────── */}
+			{mode !== "IMG" && <div className="mb-6 rounded-2xl border border-blue-500/20 bg-slate-900/40 p-4">
 				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
 					Step 4 — Generate Final Prompt
 				</div>
@@ -1245,7 +1249,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</p>
 					</div>
 				) : null}
-			</div>
+			</div>}
 
 			<div
 				className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${notice.tone === "error" ? "border-red-500/40 bg-red-500/10 text-red-200" : notice.tone === "success" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : notice.tone === "info" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : "border-slate-800 bg-slate-900/40 text-slate-300"}`}

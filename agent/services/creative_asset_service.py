@@ -91,6 +91,46 @@ def _fingerprint(asset_id: str, slot_key: str, source_value: str) -> str:
     return f"creative_{digest[:16]}"
 
 
+def _auto_generate_metadata_handoff(
+    *,
+    asset_id: str,
+    display_name: str,
+    semantic_role: str,
+    description: str | None,
+    allowed_modes: list[str],
+    engine_slot_eligibility: list[str],
+) -> str:
+    """Auto-derive mode_a_metadata_handoff from asset fields so the user never has to fill it manually."""
+    payload: dict[str, Any] = {
+        "asset_id": asset_id,
+        "display_name": display_name,
+        "semantic_role": semantic_role,
+        "allowed_modes": allowed_modes,
+        "engine_slot_eligibility": engine_slot_eligibility,
+        "auto_generated": True,
+    }
+    if description:
+        payload["description"] = description.strip()
+        # Derive role-specific hint keys from the description text for prompt injection
+        desc_lower = description.lower()
+        if semantic_role == "CHARACTER_REFERENCE":
+            payload["role_hint"] = "avatar_character"
+            payload["inject_as"] = "character_reference_description"
+        elif semantic_role == "SCENE_CONTEXT_REFERENCE":
+            payload["role_hint"] = "scene_background"
+            payload["inject_as"] = "scene_context_description"
+        elif semantic_role == "STYLE_REFERENCE":
+            payload["role_hint"] = "visual_style"
+            payload["inject_as"] = "style_reference_description"
+        elif semantic_role == "PRODUCT_REFERENCE":
+            payload["role_hint"] = "product_subject"
+            payload["inject_as"] = "product_reference_description"
+        elif semantic_role == "COMPOSITE_FRAME_REFERENCE":
+            payload["role_hint"] = "composite_frame"
+            payload["inject_as"] = "frame_reference_description"
+    return _json_text(payload)
+
+
 async def create_creative_asset(request: CreativeAssetCreateRequest) -> CreativeAssetRecord:
     asset_id = f"ca_{uuid.uuid4().hex[:16]}"
     preview_url = _normalize_optional_text(request.preview_url)
@@ -124,6 +164,23 @@ async def create_creative_asset(request: CreativeAssetCreateRequest) -> Creative
         if not local_file_path:
             raise ValueError("LOCAL_FILE_REQUIRED")
 
+    # Auto-generate mode_a_metadata_handoff from asset fields if caller did not supply one
+    if request.mode_a_metadata_handoff is None:
+        _handoff_value = _auto_generate_metadata_handoff(
+            asset_id=asset_id,
+            display_name=request.display_name,
+            semantic_role=request.semantic_role,
+            description=request.description,
+            allowed_modes=request.allowed_modes,
+            engine_slot_eligibility=request.engine_slot_eligibility,
+        )
+    else:
+        _handoff_value = (
+            _json_text(request.mode_a_metadata_handoff)
+            if isinstance(request.mode_a_metadata_handoff, dict)
+            else request.mode_a_metadata_handoff
+        )
+
     row = await crud.create_creative_asset(
         asset_id=asset_id,
         semantic_role=request.semantic_role,
@@ -142,11 +199,7 @@ async def create_creative_asset(request: CreativeAssetCreateRequest) -> Creative
         product_type=request.product_type,
         allowed_modes=_json_text(request.allowed_modes),
         engine_slot_eligibility=_json_text(request.engine_slot_eligibility),
-        mode_a_metadata_handoff=(
-            _json_text(request.mode_a_metadata_handoff)
-            if isinstance(request.mode_a_metadata_handoff, dict)
-            else request.mode_a_metadata_handoff
-        ),
+        mode_a_metadata_handoff=_handoff_value,
         visual_dna_summary=request.visual_dna_summary,
         character_dna=request.character_dna,
         scene_context_dna=request.scene_context_dna,

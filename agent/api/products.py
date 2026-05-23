@@ -29,6 +29,7 @@ from agent.services.product_catalog_audit import build_mapping_summary
 from agent.services.product_lifecycle_service import (
     archive_product as archive_product_row,
     delete_test_row as delete_test_product_row,
+    delete_product_permanent as delete_product_permanent_row,
     get_product_lifecycle,
     is_archived as is_product_archived,
     lifecycle_status as resolve_lifecycle_status,
@@ -1060,6 +1061,15 @@ async def unarchive_product_lifecycle(product_id: str, data: ProductLifecycleAct
 @router.post("/{product_id}/delete-test-row")
 async def delete_test_row(product_id: str, data: ProductLifecycleActionRequest):
     return await delete_test_product_row(
+        product_id,
+        reason=data.reason,
+        confirmation_phrase=data.confirmation_phrase,
+    )
+
+
+@router.post("/{product_id}/delete")
+async def delete_product(product_id: str, data: ProductLifecycleActionRequest):
+    return await delete_product_permanent_row(
         product_id,
         reason=data.reason,
         confirmation_phrase=data.confirmation_phrase,

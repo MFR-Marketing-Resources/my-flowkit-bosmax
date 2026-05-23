@@ -35,7 +35,7 @@ type ProductSortMode =
 	| "SHOP_TOTAL_SOLD_DESC"
 	| "PRODUCT_NAME_ASC";
 type LifecycleFilterMode = "ACTIVE_ONLY" | "INCLUDE_ARCHIVED" | "ARCHIVED_ONLY";
-type LifecycleActionType = "ARCHIVE" | "UNARCHIVE" | "DELETE_TEST_ROW";
+type LifecycleActionType = "ARCHIVE" | "UNARCHIVE" | "DELETE_TEST_ROW" | "DELETE_PRODUCT";
 type FastMossImportFieldKey =
 	| "creator_search"
 	| "export_ad_list"
@@ -395,6 +395,8 @@ function ImageFallback({
 	);
 }
 
+const PAGE_SIZE_PRODUCTS = 20;
+
 export default function ProductsSalesAnalyzerPage() {
 	const [products, setProducts] = useState<Product[]>([]);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -429,8 +431,12 @@ export default function ProductsSalesAnalyzerPage() {
 		raw_product_title: "",
 	});
 	const [activeTab, setActiveTab] = useState<
-		"DETAILS" | "BRIEF" | "VARIATIONS" | "PREVIEW"
+		"DETAILS" | "BRIEF" | "VARIATIONS" | "PREVIEW" | "EDIT"
 	>("DETAILS");
+	const [editForm, setEditForm] = useState<Record<string, string>>({});
+	const [editSaving, setEditSaving] = useState(false);
+	const [editSuccess, setEditSuccess] = useState<string | null>(null);
+	const [editError, setEditError] = useState<string | null>(null);
 	const [brief, setBrief] = useState<ProductCreativeBrief | null>(null);
 	const [variations, setVariations] = useState<VariationPlan[]>([]);
 	const [promptPreview, setPromptPreview] = useState<string | null>(null);
@@ -442,6 +448,7 @@ export default function ProductsSalesAnalyzerPage() {
 		confirmationPhrase: string;
 		errorMessage?: string;
 	} | null>(null);
+	const [currentPageProducts, setCurrentPageProducts] = useState(1);
 
 	const filterOptions = useMemo(() => {
 		const values = {
@@ -602,6 +609,26 @@ export default function ProductsSalesAnalyzerPage() {
 		setBrief(null);
 		setVariations([]);
 		setPromptPreview(null);
+		setEditSuccess(null);
+		setEditError(null);
+		if (selectedProduct) {
+			setEditForm({
+				product_short_name: selectedProduct.product_short_name || "",
+				brand: selectedProduct.brand || "",
+				price: selectedProduct.price != null ? String(selectedProduct.price) : "",
+				commission_rate: selectedProduct.commission_rate || "",
+				commission_amount: selectedProduct.commission_amount != null ? String(selectedProduct.commission_amount) : "",
+				physics_class: selectedProduct.physics_class || "",
+				copywriting_angle: selectedProduct.copywriting_angle || "",
+				silo: selectedProduct.silo || "",
+				trigger_id: selectedProduct.trigger_id || "",
+				formula: selectedProduct.formula || "",
+				claim_risk_level: selectedProduct.claim_risk_level || "",
+				category: selectedProduct.category || "",
+				subcategory: selectedProduct.subcategory || "",
+				type: selectedProduct.type || "",
+			});
+		}
 	}, [selectedProduct]);
 
 	useEffect(() => {
@@ -985,6 +1012,34 @@ export default function ProductsSalesAnalyzerPage() {
 		}
 	}
 
+	async function handleEditFormSubmit(e: FormEvent) {
+		e.preventDefault();
+		if (!selectedProduct) return;
+		setEditSaving(true);
+		setEditError(null);
+		setEditSuccess(null);
+		try {
+			const payload: Record<string, string | number | null> = {};
+			for (const [key, val] of Object.entries(editForm)) {
+				if (val === "") {
+					payload[key] = null;
+				} else if (key === "price" || key === "commission_amount") {
+					const n = parseFloat(val);
+					payload[key] = isNaN(n) ? null : n;
+				} else {
+					payload[key] = val;
+				}
+			}
+			await patchAPI(`/api/products/${selectedProduct.id}`, payload);
+			await loadProducts();
+			setEditSuccess("Product updated successfully.");
+		} catch (err) {
+			setEditError(err instanceof Error ? err.message : "Failed to save changes");
+		} finally {
+			setEditSaving(false);
+		}
+	}
+
 	function openLifecycleModal(action: LifecycleActionType, product: Product) {
 		setLifecycleModal({
 			action,
@@ -1023,7 +1078,9 @@ export default function ProductsSalesAnalyzerPage() {
 					? `/api/products/${lifecycleModal.product.id}/archive`
 					: lifecycleModal.action === "UNARCHIVE"
 						? `/api/products/${lifecycleModal.product.id}/unarchive`
-						: `/api/products/${lifecycleModal.product.id}/delete-test-row`;
+						: lifecycleModal.action === "DELETE_PRODUCT"
+							? `/api/products/${lifecycleModal.product.id}/delete`
+							: `/api/products/${lifecycleModal.product.id}/delete-test-row`;
 			const response = await postAPI<{
 				deleted?: boolean;
 				lifecycle_status?: string;
@@ -1032,11 +1089,15 @@ export default function ProductsSalesAnalyzerPage() {
 				confirmation_phrase: lifecycleModal.confirmationPhrase.trim(),
 			});
 			await loadProducts();
-			if (lifecycleModal.action === "DELETE_TEST_ROW") {
+			if (lifecycleModal.action === "DELETE_TEST_ROW" || lifecycleModal.action === "DELETE_PRODUCT") {
 				setSelectedId((current) =>
 					current === lifecycleModal.product.id ? null : current,
 				);
-				setSaveSuccess(`Deleted test row: ${lifecycleModal.product.id}`);
+				setSaveSuccess(
+					lifecycleModal.action === "DELETE_PRODUCT"
+						? `Permanently deleted: ${lifecycleModal.product.id}`
+						: `Deleted test row: ${lifecycleModal.product.id}`,
+				);
 			} else {
 				setSelectedId((current) =>
 					current === lifecycleModal.product.id &&
@@ -1073,6 +1134,7 @@ export default function ProductsSalesAnalyzerPage() {
 	function lifecycleExpectedPhrase(action: LifecycleActionType) {
 		if (action === "ARCHIVE") return "ARCHIVE_PRODUCT";
 		if (action === "UNARCHIVE") return "UNARCHIVE_PRODUCT";
+		if (action === "DELETE_PRODUCT") return "DELETE_PRODUCT_PERMANENT";
 		return "DELETE_TEST_ROW_ONLY";
 	}
 
@@ -1081,6 +1143,10 @@ export default function ProductsSalesAnalyzerPage() {
 			lifecycleModal.confirmationPhrase.trim() ===
 				lifecycleExpectedPhrase(lifecycleModal.action)
 		: false;
+
+	const totalPagesProducts = Math.ceil(filteredProducts.length / PAGE_SIZE_PRODUCTS);
+	const safePageProducts = Math.min(Math.max(1, currentPageProducts), totalPagesProducts || 1);
+	const paginatedProducts = filteredProducts.slice((safePageProducts - 1) * PAGE_SIZE_PRODUCTS, safePageProducts * PAGE_SIZE_PRODUCTS);
 
 	return (
 		<div className="grid min-h-full min-w-0 gap-4 p-4 md:p-6 lg:min-h-0 lg:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)] lg:overflow-hidden">
@@ -1113,7 +1179,7 @@ export default function ProductsSalesAnalyzerPage() {
 						<input
 							type="text"
 							value={search}
-							onChange={(e) => setSearch(e.target.value)}
+							onChange={(e) => { setSearch(e.target.value); setCurrentPageProducts(1); }}
 							placeholder="Search products..."
 							className="w-full bg-slate-900 border text-xs px-3 py-2 rounded"
 							style={{ borderColor: "var(--border)", color: "var(--text)" }}
@@ -1122,7 +1188,7 @@ export default function ProductsSalesAnalyzerPage() {
 						<div className="flex flex-col gap-2 sm:flex-row">
 							<select
 								value={sourceFilter}
-								onChange={(e) => setSourceFilter(e.target.value)}
+								onChange={(e) => { setSourceFilter(e.target.value); setCurrentPageProducts(1); }}
 								aria-label="Filter products by source"
 								className="min-w-0 flex-1 bg-slate-900 border text-xs px-2 py-1.5 rounded"
 								style={{ borderColor: "var(--border)", color: "var(--text)" }}
@@ -1166,7 +1232,7 @@ export default function ProductsSalesAnalyzerPage() {
 						<div className="grid grid-cols-1 gap-2 md:grid-cols-2">
 							<select
 								value={groupFilter}
-								onChange={(e) => setGroupFilter(e.target.value)}
+								onChange={(e) => { setGroupFilter(e.target.value); setCurrentPageProducts(1); }}
 								aria-label="Filter products by group"
 								className="bg-slate-900 border text-xs px-2 py-1.5 rounded"
 								style={{ borderColor: "var(--border)", color: "var(--text)" }}
@@ -1286,7 +1352,7 @@ export default function ProductsSalesAnalyzerPage() {
 					)}
 
 					<div className="space-y-1">
-						{filteredProducts.map((product) => (
+						{paginatedProducts.map((product) => (
 							<button
 								type="button"
 								key={product.id}
@@ -1402,6 +1468,21 @@ export default function ProductsSalesAnalyzerPage() {
 							</button>
 						))}
 					</div>
+
+					{totalPagesProducts > 1 && (
+						<div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-3">
+							<span className="text-[10px] text-slate-500">
+								{(safePageProducts - 1) * PAGE_SIZE_PRODUCTS + 1}–{Math.min(safePageProducts * PAGE_SIZE_PRODUCTS, filteredProducts.length)} of {filteredProducts.length}
+							</span>
+							<div className="flex items-center gap-1">
+								<button type="button" disabled={safePageProducts <= 1} onClick={() => setCurrentPageProducts(p => p - 1)} className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] font-bold text-slate-300 disabled:opacity-40">← Prev</button>
+								{Array.from({length: totalPagesProducts}, (_, i) => i + 1).map(n => (
+									<button key={n} type="button" onClick={() => setCurrentPageProducts(n)} className={`rounded border px-2 py-1 text-[10px] font-bold ${safePageProducts === n ? "border-blue-500/50 bg-blue-500/20 text-blue-300" : "border-slate-700 bg-slate-800 text-slate-400"}`}>{n}</button>
+								))}
+								<button type="button" disabled={safePageProducts >= totalPagesProducts} onClick={() => setCurrentPageProducts(p => p + 1)} className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] font-bold text-slate-300 disabled:opacity-40">Next →</button>
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 
@@ -1429,7 +1510,7 @@ export default function ProductsSalesAnalyzerPage() {
 						{selectedProduct && (
 							<div className="space-y-6">
 								<div className="flex flex-wrap gap-1 border-b border-slate-800 pb-px">
-									{(["DETAILS", "BRIEF", "VARIATIONS", "PREVIEW"] as const).map(
+									{(["DETAILS", "BRIEF", "VARIATIONS", "PREVIEW", "EDIT"] as const).map(
 										(tab) => (
 											<button
 												type="button"
@@ -1511,6 +1592,20 @@ export default function ProductsSalesAnalyzerPage() {
 														)}
 														{selectedProduct.is_test_product ? (
 															<StatBadge label="TEST" tone="risk" />
+														) : null}
+														{!isReferenceOnlyProduct(selectedProduct) ? (
+															<button
+																type="button"
+																onClick={() =>
+																	openLifecycleModal(
+																		"DELETE_PRODUCT",
+																		selectedProduct,
+																	)
+																}
+																className="rounded border border-red-700/40 bg-red-900/20 px-3 py-1.5 text-[10px] font-bold text-red-400"
+															>
+																Delete Product
+															</button>
 														) : null}
 													</div>
 													{isReferenceOnlyProduct(selectedProduct) ? (
@@ -2251,6 +2346,55 @@ export default function ProductsSalesAnalyzerPage() {
 										)}
 									</Panel>
 								)}
+
+								{activeTab === "EDIT" && selectedProduct && (
+									<form onSubmit={handleEditFormSubmit} className="space-y-4">
+										<div className="text-xs font-semibold uppercase tracking-wide" style={{color:"var(--muted)"}}>Edit Product Fields</div>
+										{editSuccess && <div className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-300">{editSuccess}</div>}
+										{editError && <div className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">{editError}</div>}
+										<div className="grid grid-cols-2 gap-3">
+											{[
+												{key:"product_short_name",label:"Short Name"},
+												{key:"brand",label:"Brand"},
+												{key:"price",label:"Price"},
+												{key:"commission_rate",label:"Commission Rate"},
+												{key:"commission_amount",label:"Commission Amount"},
+												{key:"physics_class",label:"Physics Class"},
+												{key:"silo",label:"Silo"},
+												{key:"trigger_id",label:"Trigger ID"},
+												{key:"formula",label:"Formula"},
+												{key:"claim_risk_level",label:"Claim Risk Level"},
+												{key:"category",label:"Category"},
+												{key:"subcategory",label:"Subcategory"},
+												{key:"type",label:"Type"},
+											].map(({key,label}) => (
+												<div key={key}>
+													<label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide" style={{color:"var(--muted)"}}>{label}</label>
+													<input
+														value={editForm[key] ?? ""}
+														onChange={e => setEditForm(f => ({...f, [key]: e.target.value}))}
+														className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+													/>
+												</div>
+											))}
+										</div>
+										<div>
+											<label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide" style={{color:"var(--muted)"}}>Copywriting Angle</label>
+											<textarea
+												value={editForm["copywriting_angle"] ?? ""}
+												onChange={e => setEditForm(f => ({...f, copywriting_angle: e.target.value}))}
+												rows={3}
+												className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+											/>
+										</div>
+										<div className="flex justify-end">
+											<button type="submit" disabled={editSaving} className="rounded border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-[11px] font-bold text-blue-300 disabled:opacity-50">
+												{editSaving ? "Saving..." : "Save Changes"}
+											</button>
+										</div>
+									</form>
+								)}
+
 							</div>
 						)}
 						{!selectedProduct && !loading && (
@@ -2820,7 +2964,9 @@ export default function ProductsSalesAnalyzerPage() {
 								? "Archive Product"
 								: lifecycleModal.action === "UNARCHIVE"
 									? "Unarchive Product"
-									: "Delete Test Row"}
+									: lifecycleModal.action === "DELETE_PRODUCT"
+										? "Delete Product Permanently"
+										: "Delete Test Row"}
 						</div>
 						<div className="bosmax-wrap-safe mt-2 text-xs text-slate-400">
 							Product:{" "}

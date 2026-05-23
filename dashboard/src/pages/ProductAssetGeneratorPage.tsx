@@ -1,20 +1,30 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { runProductAssetGeneratorPreview } from "../api/productAssetGenerator";
 import ProductAssetGeneratorForm, {
 	buildProductAssetGeneratorRequest,
 } from "../components/product-asset-generator/ProductAssetGeneratorForm";
 import ProductAssetGeneratorResultPanel from "../components/product-asset-generator/ProductAssetGeneratorResultPanel";
+import {
+	getProductAssetGeneratorPreset,
+	PRODUCT_ASSET_GENERATOR_PRESETS,
+} from "../components/product-asset-generator/presets";
 import type {
 	ProductAssetGeneratorRequest,
 	ProductAssetGeneratorResponse,
 } from "../types";
 
+export type { ProductAssetGeneratorPresetDefinition } from "../components/product-asset-generator/presets";
+// Re-export preset registry so existing imports from this page continue to work
+export { getProductAssetGeneratorPreset, PRODUCT_ASSET_GENERATOR_PRESETS };
+
 type ProductAssetGeneratorDraft = ProductAssetGeneratorRequest & {
 	product_payload_text: string;
 };
 
-function createInitialDraft(): ProductAssetGeneratorDraft {
+function createInitialDraft(
+	preset: { draftPatch?: Partial<ProductAssetGeneratorDraft> } | null = null,
+): ProductAssetGeneratorDraft {
 	return {
 		product_id: "",
 		product_payload_text: "",
@@ -33,13 +43,28 @@ function createInitialDraft(): ProductAssetGeneratorDraft {
 		target_destination_mode: "IMAGE",
 		strict_validation: false,
 		dry_run_only: true,
+		...(preset?.draftPatch || {}),
 	};
 }
 
 export default function ProductAssetGeneratorPage() {
 	const location = useLocation();
-	const [draft, setDraft] =
-		useState<ProductAssetGeneratorDraft>(createInitialDraft);
+	const searchParams = useMemo(
+		() => new URLSearchParams(location.search),
+		[location.search],
+	);
+	// ?preset= hydration: initial preset comes from query param on first load
+	const initialPresetId = searchParams.get("preset");
+	const [selectedPresetId, setSelectedPresetId] = useState<string>(
+		initialPresetId || "",
+	);
+	const activePreset = useMemo(
+		() => getProductAssetGeneratorPreset(selectedPresetId || null),
+		[selectedPresetId],
+	);
+	const [draft, setDraft] = useState<ProductAssetGeneratorDraft>(() =>
+		createInitialDraft(activePreset),
+	);
 	const [result, setResult] = useState<ProductAssetGeneratorResponse | null>(
 		null,
 	);
@@ -49,9 +74,21 @@ export default function ProductAssetGeneratorPage() {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const creativeLibraryRoute =
-		new URLSearchParams(location.search).get("portal") === "side"
+		searchParams.get("portal") === "side"
 			? "/assets/creative-library?portal=side"
 			: "/assets/creative-library";
+
+	// When preset changes, patch the draft with preset defaults while preserving product selection
+	useEffect(() => {
+		setDraft((current) => ({
+			...createInitialDraft(activePreset),
+			product_id: current.product_id,
+			product_payload_text: current.product_payload_text,
+		}));
+		setResult(null);
+		setAnalysisSignature(null);
+		setError(null);
+	}, [activePreset]);
 
 	async function handleSubmit() {
 		setLoading(true);
@@ -72,47 +109,38 @@ export default function ProductAssetGeneratorPage() {
 		}
 	}
 
+	// Block submit when the active preset requires a database product but none is selected
+	const presetRequiresProductButMissing =
+		Boolean(activePreset?.requiresDatabaseProduct) && !draft.product_id;
+
 	return (
 		<div className="flex flex-col gap-6 p-4 md:p-6">
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
-				<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
-					Product Asset Generator Preview
-				</div>
-				<div className="mt-2 max-w-4xl text-sm text-slate-300">
-					Product row or payload becomes preview-only asset suggestions and
-					prompt suggestions. No real image generation, no upload, no Google
-					Flow execution, and no Chrome extension execution happen here.
-				</div>
-				<div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-					{[
-						"Preview is offline-only",
-						"No real image generation",
-						"No Google Flow execution",
-						"No Chrome extension execution",
-					].map((item) => (
-						<div
-							key={item}
-							className="rounded-2xl border border-slate-800 bg-slate-900/60 px-3 py-3 text-[11px] text-slate-300"
-						>
-							{item}
+				<div className="flex flex-wrap items-center justify-between gap-3">
+					<div>
+						<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
+							Product Asset Generator
 						</div>
-					))}
-				</div>
-				<div className="mt-3 flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-300 md:flex-row md:items-center md:justify-between">
-					<div className="bosmax-wrap-safe">
-						This page is preview-only. To persist reusable generated/external
-						images, upload or save them in Creative Library.
+						<div className="mt-1 text-[11px] text-slate-400">
+							Preview-only · No image generation · No Flow execution
+							{activePreset ? (
+								<span className="ml-2 inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-emerald-200">
+									{activePreset.label}
+								</span>
+							) : null}
+						</div>
 					</div>
 					<Link
 						to={creativeLibraryRoute}
-						className="inline-flex items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200"
+						className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 hover:border-blue-500/40 hover:text-blue-200"
 					>
-						Open Creative Library
+						Creative Library →
 					</Link>
 				</div>
 			</section>
 
 			<div className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,1fr)]">
+				{/* LEFT: inputs (Step 1) → preset dropdown (Step 2) → submit (Step 3) */}
 				<ProductAssetGeneratorForm
 					draft={draft}
 					onChange={(patch) =>
@@ -127,7 +155,12 @@ export default function ProductAssetGeneratorPage() {
 					error={error}
 					result={result}
 					analysisSignature={analysisSignature}
+					activePreset={activePreset}
+					selectedPresetId={selectedPresetId}
+					onPresetChange={(presetId) => setSelectedPresetId(presetId)}
+					presetRequiresProductButMissing={presetRequiresProductButMissing}
 				/>
+				{/* Step 4: Result panel */}
 				<ProductAssetGeneratorResultPanel result={result} />
 			</div>
 		</div>
