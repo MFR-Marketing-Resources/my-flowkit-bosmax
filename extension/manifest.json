@@ -28,7 +28,7 @@
         "http://127.0.0.1/*",
         "http://localhost/*"
       ],
-      "js": ["content.js", "content-flow-dom.js"],
+      "js": ["content.js", "selector-registry.js", "content-flow-dom.js"],
       "run_at": "document_start"
     }
   ],
