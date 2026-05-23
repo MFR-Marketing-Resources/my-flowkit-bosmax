@@ -15,6 +15,7 @@
 (() => {
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
+  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-google-flow-phase1a-2026-05-23';
   const FLOW_KIT_TEST_MODE = Boolean(window.__FLOWKIT_TEST_MODE__);
   const FLOW_KIT_ENABLE_TEST_HOOKS = FLOW_KIT_TEST_MODE || Boolean(window.__FLOWKIT_ENABLE_TEST_HOOKS__);
   const IMAGE_ASPECT_RATIOS = ['16:9', '4:3', '1:1', '3:4', '9:16'];
@@ -49,19 +50,30 @@
     }
   }
 
-  // Safe wrapper for sending messages without blocking on response
-  function _sendStageEvent(request_id, stage, status) {
-    sendRuntimeMessageNoThrow({
+  function buildStageTelemetryPayload(request_id, stage, status, extra = {}) {
+    return {
       type: 'FLOW_STAGE_EVENT',
-      request_id: request_id,
-      stage: stage,
-      status: status,
-      source: 'google_flow'
-    });
+      request_id,
+      timestamp: new Date().toISOString(),
+      git_sha: FLOW_KIT_DOM_BUILD_ID,
+      content_build_id: FLOW_KIT_DOM_BUILD_ID,
+      stage,
+      checkpoint: extra.checkpoint || stage,
+      status,
+      source: 'google_flow',
+      runtime_ready: true,
+      ...extra,
+    };
+  }
+
+  // Safe wrapper for sending messages without blocking on response
+  function _sendStageEvent(request_id, stage, status, extra = {}) {
+    sendRuntimeMessageNoThrow(buildStageTelemetryPayload(request_id, stage, status, extra));
   }
 
   const STAGES = {
     FLOW_TAB_FOUND: 'FLOW_TAB_FOUND',
+    RUNTIME_HANDSHAKE_VERIFIED: 'RUNTIME_HANDSHAKE_VERIFIED',
     PRE_EXECUTION_STATE_CLEARED: 'PRE_EXECUTION_STATE_CLEARED',
     FLOW_MODE_SELECTED: 'FLOW_MODE_SELECTED',
     FLOW_SUBMODE_SELECTED: 'FLOW_SUBMODE_SELECTED',
@@ -128,8 +140,11 @@
   function buildDiagnosticPingResponse() {
     return {
       ok: true,
+      runtime_ready: true,
       content_script_loaded: true,
       content_script_protocol_version: FLOW_KIT_DOM_PROTOCOL_VERSION,
+      content_build_id: FLOW_KIT_DOM_BUILD_ID,
+      git_sha: FLOW_KIT_DOM_BUILD_ID,
       location_href: window.location.href,
       timestamp: new Date().toISOString(),
     };
@@ -2509,6 +2524,9 @@
       current_mode_visible: readiness.current_mode_visible,
       blocking_modal_detected: readiness.blocking_modal_detected,
       observed: readiness.observed,
+      runtime_ready: true,
+      content_build_id: FLOW_KIT_DOM_BUILD_ID,
+      git_sha: FLOW_KIT_DOM_BUILD_ID,
       content_script_loaded: true,
       content_script_protocol_version: FLOW_KIT_DOM_PROTOCOL_VERSION,
       timestamp: new Date().toISOString(),
@@ -2535,6 +2553,9 @@
       current_mode_visible: currentModeVisible,
       blocking_modal_detected: !!blockingModal,
       observed,
+      runtime_ready: true,
+      content_build_id: FLOW_KIT_DOM_BUILD_ID,
+      git_sha: FLOW_KIT_DOM_BUILD_ID,
     };
 
     if (mode) {
@@ -3386,21 +3407,39 @@
 
     const report = { ok: false, stages: [] };
     const request_id = job.request_id || `flow_${Date.now()}`;
+    let firstFailStage = null;
     const logStage = (stage, status = 'YES', message = null) => {
       report.stages.push({ stage, status, message });
       console.log(`[FlowAgent] Stage: ${stage} - ${status}${message ? ` - ${message}` : ''}`);
-      sendRuntimeMessageNoThrow({
-        type: 'FLOW_STAGE_EVENT',
-        request_id: job.request_id,
-        stage,
-        status,
+      if (status === 'FAIL' && !firstFailStage) {
+        firstFailStage = stage;
+      }
+      sendRuntimeMessageNoThrow(buildStageTelemetryPayload(request_id, stage, status, {
         message,
-        source: 'google_flow',
-      });
+        fail_code: status === 'FAIL' ? (message || stage) : null,
+        first_fail_stage: firstFailStage,
+      }));
     };
 
     try {
-      logStage(STAGES.FLOW_TAB_FOUND, 'YES', `background_conn=true build=${testConn?.buildId || 'legacy'}`);
+      logStage(STAGES.FLOW_TAB_FOUND, 'PASS', 'flow_dom_listener_ready');
+      if (!testConn?.buildId) {
+        logStage(STAGES.RUNTIME_HANDSHAKE_VERIFIED, 'FAIL', `background_status_missing build=${testConn?.buildId || 'legacy'}`);
+        throw new Error('ERR_BACKGROUND_STATUS_UNAVAILABLE');
+      }
+      if (testConn.buildId !== FLOW_KIT_DOM_BUILD_ID) {
+        logStage(
+          STAGES.RUNTIME_HANDSHAKE_VERIFIED,
+          'FAIL',
+          `background_build_id=${testConn.buildId} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
+        );
+        throw new Error('ERR_BUILD_ID_MISMATCH');
+      }
+      logStage(
+        STAGES.RUNTIME_HANDSHAKE_VERIFIED,
+        'PASS',
+        `background_build_id=${testConn.buildId} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
+      );
 
       // 0. Log job received
       if (job.prompt) {
@@ -3749,6 +3788,12 @@
       report.error = e.message;
       report.ok = false;
       report.stages.push({ stage: 'ERROR', status: e.message });
+      sendRuntimeMessageNoThrow(buildStageTelemetryPayload(request_id, 'ERROR', 'FAIL', {
+        checkpoint: firstFailStage || 'ERROR',
+        message: e.message,
+        fail_code: e.message,
+        first_fail_stage: firstFailStage || 'ERROR',
+      }));
     }
 
     return report;
@@ -3859,6 +3904,7 @@
 
   if (FLOW_KIT_ENABLE_TEST_HOOKS) {
     window.__FLOWKIT_TEST_HOOKS__ = {
+      buildDiagnosticPingResponse,
       findVisibleAssetPickerModal,
       findGenerateButtonNearComposer,
       waitForAssetPickerModal,

@@ -402,10 +402,16 @@ async function ensureFlowDomScript(tabId) {
 function getKnownContentScriptHealth(tabId) {
 	const last = flowContentScriptHealth.get(tabId);
 	return {
+		content_build_id: last?.content_build_id || null,
 		content_script_protocol_version:
 			last?.content_script_protocol_version || null,
 		content_script_loaded: Boolean(last?.content_script_loaded),
 		content_script_alive: Boolean(last?.content_script_alive),
+		runtime_ready: Boolean(last?.runtime_ready),
+		build_match:
+			last?.content_build_id != null
+				? last.content_build_id === BUILD_ID
+				: false,
 		last_content_script_seen_at: last?.last_content_script_seen_at || null,
 	};
 }
@@ -413,12 +419,14 @@ function getKnownContentScriptHealth(tabId) {
 function rememberContentScriptHealth(tabId, payload) {
 	const timestamp = payload?.timestamp || new Date().toISOString();
 	flowContentScriptHealth.set(tabId, {
+		content_build_id: payload?.content_build_id || null,
 		content_script_protocol_version:
 			payload?.content_script_protocol_version || null,
 		content_script_loaded: Boolean(payload?.content_script_loaded),
 		content_script_alive: Boolean(
 			payload?.ok && payload?.content_script_loaded,
 		),
+		runtime_ready: Boolean(payload?.runtime_ready),
 		last_content_script_seen_at: timestamp,
 	});
 	return getKnownContentScriptHealth(tabId);
@@ -430,10 +438,14 @@ function buildFlowReadinessBase(flowTab) {
 		flow_tab_found: Boolean(flowTab),
 		flow_tab_id: flowTab?.id ?? null,
 		flow_url: flowTab?.url ?? null,
+		background_build_id: BUILD_ID,
+		content_build_id: null,
 		extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
 		content_script_protocol_version: null,
 		content_script_loaded: false,
 		content_script_alive: false,
+		runtime_ready: false,
+		build_match: false,
 		last_content_script_seen_at: null,
 		signed_in_likely: false,
 		composer_found: false,
@@ -473,6 +485,9 @@ function classifyFlowPrimaryBlocker(result) {
 	) {
 		return "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED";
 	}
+	if (!result?.runtime_ready || !result?.build_match) {
+		return "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED";
+	}
 	if (
 		rawError.includes("FLOW_MODE_MISMATCH") ||
 		rawError.includes("ABORT_FLOW_MODE_MISMATCH")
@@ -506,6 +521,15 @@ function finalizeFlowReadiness(result) {
 		...result,
 		last_checked_at: new Date().toISOString(),
 	};
+	if (!finalized.content_build_id && finalized.flow_tab_id != null) {
+		const health = getKnownContentScriptHealth(finalized.flow_tab_id);
+		finalized.content_build_id = health.content_build_id;
+		finalized.runtime_ready = finalized.runtime_ready || health.runtime_ready;
+	}
+	if (finalized.content_build_id) {
+		finalized.build_match =
+			finalized.content_build_id === finalized.background_build_id;
+	}
 	finalized.primary_blocker = classifyFlowPrimaryBlocker(finalized);
 	return finalized;
 }
@@ -1501,9 +1525,50 @@ function broadcastStatus() {
 	sendRuntimeMessageNoThrow({ type: "STATUS_PUSH" });
 }
 
-const BUILD_ID = "f2v_proxy_v3";
+const BUILD_ID = "flowkit-google-flow-phase1a-2026-05-23";
 
-async function handleMessage(msg, _sender) {
+function buildStageTelemetryPayload(message = {}, contentHealth = null) {
+	return {
+		request_id: message.request_id,
+		timestamp: message.timestamp || new Date().toISOString(),
+		git_sha: message.git_sha || BUILD_ID,
+		background_build_id: BUILD_ID,
+		content_build_id:
+			message.content_build_id || contentHealth?.content_build_id || BUILD_ID,
+		stage: message.stage,
+		checkpoint: message.checkpoint || message.stage,
+		status: message.status,
+		message: message.message || null,
+		source: message.source || "extension",
+		runtime_ready:
+			typeof message.runtime_ready === "boolean"
+				? message.runtime_ready
+				: Boolean(contentHealth?.runtime_ready),
+		build_match:
+			typeof message.build_match === "boolean"
+				? message.build_match
+				: (message.content_build_id ||
+						contentHealth?.content_build_id ||
+						BUILD_ID) === BUILD_ID,
+		selector_used: message.selector_used || null,
+		evidence_pointer: message.evidence_pointer || null,
+		fail_code: message.fail_code || null,
+		first_fail_stage: message.first_fail_stage || null,
+	};
+}
+
+function postStageTelemetry(message = {}, contentHealth = null) {
+	if (!message?.request_id || !message?.stage || !message?.status) {
+		return;
+	}
+	fetch("http://127.0.0.1:8100/api/telemetry/stage", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(buildStageTelemetryPayload(message, contentHealth)),
+	}).catch(() => {});
+}
+
+async function handleMessage(msg, sender) {
 	if (msg.type === "STATUS") {
 		return {
 			connected: ws?.readyState === WebSocket.OPEN,
@@ -1521,6 +1586,8 @@ async function handleMessage(msg, _sender) {
 			},
 			state,
 			buildId: BUILD_ID,
+			gitSha: BUILD_ID,
+			runtimeReady: true,
 		};
 	}
 
@@ -1621,19 +1688,13 @@ async function handleMessage(msg, _sender) {
 	}
 
 	if (msg.type === "FLOW_STAGE_EVENT") {
-		if (msg.request_id) {
-			fetch("http://127.0.0.1:8100/api/telemetry/stage", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					request_id: msg.request_id,
-					stage: msg.stage,
-					status: msg.status,
-					message: msg.message || null,
-					source: "extension",
-				}),
-			}).catch(() => {});
-		}
+		const contentHealth = sender?.tab?.id
+			? getKnownContentScriptHealth(sender.tab.id)
+			: null;
+		postStageTelemetry(
+			{ ...msg, source: msg.source || "extension" },
+			contentHealth,
+		);
 		return { ok: true };
 	}
 
@@ -1645,17 +1706,14 @@ async function handleMessage(msg, _sender) {
 		);
 
 		if (request_id) {
-			fetch("http://127.0.0.1:8100/api/telemetry/stage", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					request_id,
-					stage: "BACKGROUND_ASSET_PROXY_RECEIVED",
-					status: "PASS",
-					message: `assetId=${assetId}`,
-					source: "extension",
-				}),
-			}).catch(() => {});
+			postStageTelemetry({
+				request_id,
+				stage: "BACKGROUND_ASSET_PROXY_RECEIVED",
+				checkpoint: "BACKGROUND_ASSET_PROXY_RECEIVED",
+				status: "PASS",
+				message: `assetId=${assetId}`,
+				source: "extension",
+			});
 		}
 
 		const controller = new AbortController();

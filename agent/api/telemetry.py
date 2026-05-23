@@ -21,10 +21,21 @@ class TelemetrySummary(BaseModel):
 
 class StageEventCreate(BaseModel):
     request_id: str
+    timestamp: str
+    git_sha: str
+    background_build_id: str
+    content_build_id: str
     stage: str
+    checkpoint: str
     status: str
     message: Optional[str] = None
     source: str
+    runtime_ready: bool = False
+    build_match: bool = False
+    selector_used: Optional[str] = None
+    evidence_pointer: Optional[str] = None
+    fail_code: Optional[str] = None
+    first_fail_stage: Optional[str] = None
 
 @router.get("/summary", response_model=TelemetrySummary)
 async def get_summary():
@@ -52,6 +63,11 @@ async def get_request_detail(request_id: str):
 
 @router.post("/stage")
 async def add_stage(event: StageEventCreate):
+    if event.request_id.strip().upper() == "N/A":
+        raise HTTPException(status_code=422, detail="REQUEST_ID_NA_REJECTED")
+    if event.background_build_id.strip().lower() == "legacy" or event.content_build_id.strip().lower() == "legacy":
+        raise HTTPException(status_code=422, detail="LEGACY_BUILD_REJECTED")
+
     # Update telemetry status based on stage if needed
     status_map = {
         "FLOW_MODE_SELECTED": "FLOW_RUNNING",
@@ -60,7 +76,16 @@ async def add_stage(event: StageEventCreate):
         "FAILED": "FAILED"
     }
     
-    kw = {"google_flow_stage": event.stage, "extension_stage": event.stage}
+    kw = {
+        "git_sha": event.git_sha,
+        "background_build_id": event.background_build_id,
+        "content_build_id": event.content_build_id,
+        "last_checkpoint": event.checkpoint,
+        "runtime_ready": 1 if event.runtime_ready else 0,
+        "build_match": 1 if event.build_match else 0,
+        "google_flow_stage": event.stage,
+        "extension_stage": event.stage,
+    }
     if event.stage in status_map:
         kw["status"] = status_map[event.stage]
     
@@ -78,7 +103,17 @@ async def add_stage(event: StageEventCreate):
         event.stage, 
         event.status, 
         event.message, 
-        event.source
+        event.source,
+        checkpoint=event.checkpoint,
+        git_sha=event.git_sha,
+        background_build_id=event.background_build_id,
+        content_build_id=event.content_build_id,
+        runtime_ready=1 if event.runtime_ready else 0,
+        build_match=1 if event.build_match else 0,
+        selector_used=event.selector_used,
+        evidence_pointer=event.evidence_pointer,
+        fail_code=event.fail_code,
+        first_fail_stage=event.first_fail_stage,
     )
 
 @router.post("/self-test")

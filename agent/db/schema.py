@@ -168,6 +168,12 @@ CREATE TABLE IF NOT EXISTS request_telemetry (
     prompt_fingerprint TEXT,
     asset_fingerprints TEXT,
     request_lineage_payload TEXT,
+    git_sha       TEXT,
+    background_build_id TEXT,
+    content_build_id TEXT,
+    last_checkpoint TEXT,
+    runtime_ready INTEGER DEFAULT 0,
+    build_match   INTEGER DEFAULT 0,
     status        TEXT NOT NULL DEFAULT 'QUEUED',
     google_flow_stage TEXT,
     extension_stage   TEXT,
@@ -189,9 +195,19 @@ CREATE TABLE IF NOT EXISTS request_stage_event (
     id            TEXT PRIMARY KEY,
     request_id    TEXT NOT NULL REFERENCES request(id) ON DELETE CASCADE,
     timestamp     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    checkpoint    TEXT,
     stage         TEXT NOT NULL,
     status        TEXT NOT NULL,
     message       TEXT,
+    git_sha       TEXT,
+    background_build_id TEXT,
+    content_build_id TEXT,
+    runtime_ready INTEGER DEFAULT 0,
+    build_match   INTEGER DEFAULT 0,
+    selector_used TEXT,
+    evidence_pointer TEXT,
+    fail_code     TEXT,
+    first_fail_stage TEXT,
     source        TEXT NOT NULL CHECK(source IN ('dashboard','backend','worker','extension','google_flow'))
 );
 
@@ -1023,6 +1039,12 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
                             product_id    TEXT REFERENCES product(id) ON DELETE SET NULL,
                             request_type  TEXT NOT NULL,
                             mode          TEXT,
+                            git_sha       TEXT,
+                            background_build_id TEXT,
+                            content_build_id TEXT,
+                            last_checkpoint TEXT,
+                            runtime_ready INTEGER DEFAULT 0,
+                            build_match   INTEGER DEFAULT 0,
                             status        TEXT NOT NULL DEFAULT 'QUEUED',
                             google_flow_stage TEXT,
                             extension_stage   TEXT,
@@ -1043,12 +1065,14 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
                     _sync.execute("""
                         INSERT INTO request_telemetry_new (
                             request_id, project_id, video_id, scene_id, product_id, request_type, mode, status,
+                            git_sha, background_build_id, content_build_id, last_checkpoint, runtime_ready, build_match,
                             google_flow_stage, extension_stage, worker_stage, created_at, queued_at, started_at,
                             last_heartbeat_at, completed_at, failed_at, duration_seconds, idle_seconds,
                             processing_seconds, error_code, error_message
                         )
                         SELECT
                             request_id, project_id, video_id, scene_id, product_id, request_type, mode, status,
+                            NULL, NULL, NULL, NULL, 0, 0,
                             google_flow_stage, extension_stage, worker_stage, created_at, queued_at, started_at,
                             last_heartbeat_at, completed_at, failed_at, duration_seconds, idle_seconds,
                             processing_seconds, error_code, error_message
@@ -1070,6 +1094,12 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
             "prompt_fingerprint": "TEXT",
             "asset_fingerprints": "TEXT",
             "request_lineage_payload": "TEXT",
+            "git_sha": "TEXT",
+            "background_build_id": "TEXT",
+            "content_build_id": "TEXT",
+            "last_checkpoint": "TEXT",
+            "runtime_ready": "INTEGER DEFAULT 0",
+            "build_match": "INTEGER DEFAULT 0",
         }
         for column_name, column_type in telemetry_column_defs.items():
             if column_name not in telemetry_columns:
@@ -1093,18 +1123,31 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
                             id            TEXT PRIMARY KEY,
                             request_id    TEXT NOT NULL REFERENCES request(id) ON DELETE CASCADE,
                             timestamp     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                            checkpoint    TEXT,
                             stage         TEXT NOT NULL,
                             status        TEXT NOT NULL,
                             message       TEXT,
+                            git_sha       TEXT,
+                            background_build_id TEXT,
+                            content_build_id TEXT,
+                            runtime_ready INTEGER DEFAULT 0,
+                            build_match   INTEGER DEFAULT 0,
+                            selector_used TEXT,
+                            evidence_pointer TEXT,
+                            fail_code     TEXT,
+                            first_fail_stage TEXT,
                             source        TEXT NOT NULL CHECK(source IN ('dashboard','backend','worker','extension','google_flow'))
                         )
                     """)
                     _sync.execute("""
                         INSERT INTO request_stage_event_new (
-                            id, request_id, timestamp, stage, status, message, source
+                            id, request_id, timestamp, checkpoint, stage, status, message, git_sha,
+                            background_build_id, content_build_id, runtime_ready, build_match,
+                            selector_used, evidence_pointer, fail_code, first_fail_stage, source
                         )
                         SELECT
-                            id, request_id, timestamp, stage, status, message, source
+                            id, request_id, timestamp, NULL, stage, status, message, NULL,
+                            NULL, NULL, 0, 0, NULL, NULL, NULL, NULL, source
                         FROM request_stage_event
                     """)
                     _sync.execute("DROP TABLE request_stage_event")
@@ -1114,6 +1157,25 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
                     logger.info("Migrated: request_stage_event FK reference repaired")
                 finally:
                     _sync.close()
+
+        cursor = await db.execute("PRAGMA table_info(request_stage_event)")
+        stage_event_columns = {row[1] for row in await cursor.fetchall()}
+        stage_event_column_defs = {
+            "checkpoint": "TEXT",
+            "git_sha": "TEXT",
+            "background_build_id": "TEXT",
+            "content_build_id": "TEXT",
+            "runtime_ready": "INTEGER DEFAULT 0",
+            "build_match": "INTEGER DEFAULT 0",
+            "selector_used": "TEXT",
+            "evidence_pointer": "TEXT",
+            "fail_code": "TEXT",
+            "first_fail_stage": "TEXT",
+        }
+        for column_name, column_type in stage_event_column_defs.items():
+            if column_name not in stage_event_columns:
+                await db.execute(f"ALTER TABLE request_stage_event ADD COLUMN {column_name} {column_type}")
+                logger.info("Migrated: added %s column to request_stage_event", column_name)
 
         # Migration: create batch tables if missing
         cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='batch'")
