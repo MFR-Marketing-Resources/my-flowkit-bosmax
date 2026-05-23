@@ -1,12 +1,13 @@
 # Google Flow - Authenticated Editor Network Payload Map
 
-This document describes the network payload communication patterns, endpoints, and schema structures. Because the live scouting run focused on UI DOM inspection and screenshot capture, the network details here are structured based on codebase definitions and classified accordingly.
+> [!WARNING]
+> **Authority & Scope Disclaimer**: The network payload details, schemas, and endpoint inventories detailed below in Sections 1 and 2 are **INFERRED_FROM_CODE** (derived from background scripts and codebase configuration files). They have **NOT** been verified via live network packet capture or active proxy auditing during this scouting mission. Live submissions and uploads were bypassed to prevent billing credit consumption. Only Section 3 (Telemetry Schema) and Section 4 (Gating) represent live verified observations.
 
 ---
 
 ## 1. Request Structure and Metadata (INFERRED_FROM_CODE)
 
-All requests submitted by the extension-agent bridge to Google Flow APIs require a standardized client context containing session telemetry and safety parameters.
+All requests submitted by the extension-agent bridge to Google Flow APIs require a standardized client context containing session telemetry and safety parameters (as defined in the codebase).
 
 ### Client Context Schema
 ```json

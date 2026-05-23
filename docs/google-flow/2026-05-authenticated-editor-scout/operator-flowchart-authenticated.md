@@ -2,6 +2,12 @@
 
 This flowchart outlines the updated operator user journey within the authenticated Google Flow project workspace.
 
+> [!NOTE]
+> **Truth Partitioning Legend**:
+> - Steps 1-38 (Workspace entry, Composer dock analysis, Agent ON/OFF layout shifts, Model settings tab and chip selection) are **VERIFIED_LIVE**.
+> - Steps 39-44 (File uploading triggers and local file selection) are **VERIFIED_LIVE** as elements but their end-to-end execution flow is **INFERRED_FROM_CODE**.
+> - Steps 45-49 (Submission of generation, progress loading, and asset verification in gallery) are **NOT VERIFIED** live due to credit preservation.
+
 ```mermaid
 graph TD
     Start([1. Dashboard Entry]) --> ViewProjects[Scan project workspace list]

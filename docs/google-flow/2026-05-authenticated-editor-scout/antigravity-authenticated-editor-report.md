@@ -45,13 +45,16 @@
 ### 3. Discover Tools Sidebar
 The left-hand Tools tab (`apps_spark_2Tools`) opens a sidebar catalog containing custom tools. The catalog's visual state changes based on scroll positions and DOM availability.
 
-* **Visually Confirmed on Default Tools Panel (see [screenshot_11_tools_panel.png](file:///c:/Users/USER/Desktop/_ref_flowkit/docs/google-flow/2026-05-authenticated-editor-scout/screenshots/screenshot_11_tools_panel.png)):**
-  - **Simple Sketch** (by Google): "Turn any drawing into a stylized image"
-  - **Scene Explorer** (by Google): "Explore visuals for scenes based on an initial location"
-  - **Mockup** (by Google): "Comp your image into different environments"
-  - **Image Editor** (by Google - partial): "Transform objects, add text..."
+* **Visually Represented on Default Tools Panel (see [screenshot_11_tools_panel.png](file:///c:/Users/USER/Desktop/_ref_flowkit/docs/google-flow/2026-05-authenticated-editor-scout/screenshots/screenshot_11_tools_panel.png)):**
+  > [!NOTE]
+  > In the default tools sidebar, items under the "Image" header are represented only by graphical card previews. No text titles or descriptions are shown visually on the screen. The names below are mapped to the cards via DOM tree association:
+  - **Simple Sketch** (by Google): Card showing a yellow cute outline creature next to its 3D rendered version.
+  - **Scene Explorer** (by Google): Card showing a split-screen image layout of a modern house.
+  - **Mockup** (by Google): Card showing an iPhone mockup template.
+  - **Image Editor** (by Google): Card showing a pink balloon with an active "DRIFT" text bounding box.
 
 * **Visually Confirmed on Scrolled Tools Panel (see [screenshot_14_tools_panel_scrolled.png](file:///c:/Users/USER/Desktop/_ref_flowkit/docs/google-flow/2026-05-authenticated-editor-scout/screenshots/screenshot_14_tools_panel_scrolled.png)):**
+  The scrolled tools sidebar visually displays cards with both titles, author sub-labels, and descriptions:
   - **Datamosh** (by Kaloyan Kolev, Google): "Add datamoshing effects to your videos"
   - **3D Model Visualizer** (by Filip Havlena, Google): "Use a 3D model to guide your image generation"
   - **Scout360** (by PJ Ace): "Capture a 360 degree environment from an image"
@@ -60,9 +63,16 @@ The left-hand Tools tab (`apps_spark_2Tools`) opens a sidebar catalog containing
   - **Pose Text** (by Alan Yam, Google): "Add text labels that track a character in your video"
   - **3D Face Swap** (by Google): "Swap your face with virtual characters"
 
-* **Present in DOM but Off-Screen / Viewport Gated (confirmed via DOM scan):**
+* **Partially Visible / Scrolled Out at Top of Scrolled Tools Panel (see [screenshot_14_tools_panel_scrolled.png](file:///c:/Users/USER/Desktop/_ref_flowkit/docs/google-flow/2026-05-authenticated-editor-scout/screenshots/screenshot_14_tools_panel_scrolled.png)):**
+  Four tools are partially cut off at the top of the scrolled view. Their titles are off-screen, but their author credits and descriptions are visible:
+  - **[Title Scrolled Out]** (by Shashwath Santosh and Alan Yam, Google): "Deconstruct videos and gifs to create 3D sculptures"
+  - **[Title Scrolled Out]** (by Arden Schager, Google): "Generate futuristic tracking effects" *(Note: See discrepancy below regarding Mask Magic)*
+  - **[Title Scrolled Out]** (by Sam Lawton, Google): "See your video in a new dimension"
+  - **[Title Scrolled Out]** (by Google): "Drop yourself into footage"
+
+* **Present in DOM / Inferred but Off-Screen (confirmed via DOM scan or codebase context, NOT visible in screenshots):**
   - **Shot Explorer** (by Google): "See your scene from new angles"
-  - **Mask Magic** (by Arden Schager, Google): "Perform selective image edits using segmentation"
+  - **Mask Magic** (by Arden Schager, Google): "Perform selective image edits using segmentation" *(Note: The visible card by Arden Schager displays a different description 'Generate futuristic tracking effects' in screenshot 14, indicating a possible description shift or a separate tool configuration)*
   - **Converge** (by Chris Maestas): "Render your sketches"
   - **Grid Architect** (by Henry Daubrez): "Create image grids and extract individual images from them"
   - **Shader Effects** (by Google): "Apply customizable filters to your media"

@@ -2,6 +2,12 @@
 
 This flowchart maps the automated extension execution logic inside the new Google Flow workspace interface.
 
+> [!NOTE]
+> **Truth Partitioning Legend**:
+> - Page Initialization, script injection, and runtime state transmission are **VERIFIED_LIVE** via diagnostics.
+> - Selector targeting, popover interaction, and tab toggling logic are **VERIFIED_LIVE** based on static workspace DOM structure.
+> - CDP debugger file interception, programmatic click execution, and generation progress observers are **INFERRED_FROM_CODE** and **NOT VERIFIED** live.
+
 ```mermaid
 graph TD
     Boot([Page Initialization]) --> CSStart[content-flow-dom.js injected]

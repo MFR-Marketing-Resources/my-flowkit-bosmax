@@ -51,7 +51,7 @@ The following selectors are visible and active inside the popover spawned by cli
 
 ## 2. Inferred Selectors (INFERRED_FROM_CODE)
 
-These selectors are mapped from the extension's execution code (`content-flow-dom.js`) and historical UAT fixtures.
+These selectors are mapped from the extension's execution code (`content-flow-dom.js`) and historical UAT fixtures. They could not be visually confirmed or clicked in the live workspace (e.g. because they target advanced models/modes that require active generation credits or specific backend triggers):
 
 | Element Name | Purpose | CSS Selector Candidate | XPath / Sibling | Status |
 | --- | --- | --- | --- | --- |
