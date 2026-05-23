@@ -1,8 +1,12 @@
 # Google Flow - Authenticated Editor Scouting Report
 
 ## STATUS
-- **PARTIAL**  
-  *Note: The authenticated workspace editor canvas, navigation sidebar, model selectors, prompt box, and hidden file inputs were successfully scouted live and documented. Live image upload and generation submissions were not executed to avoid billing credit consumption and adhere to safety restrictions.*
+- **PARTIAL / CORRECTED**  
+  *Note: The authenticated workspace editor UI structure, settings menus, and tool catalogs have been scouted and matched against visual screenshots. Live generation runs and file uploads were not executed to preserve credits. This report acts as a selector refactor reference, not a full runtime UAT execution proof.*
+
+## SCOPE & AUTHORITY DISCLAIMER
+> [!IMPORTANT]
+> This evidence pack constitutes **authenticated-editor scouting evidence** compiled specifically to guide selector refactoring and DOM navigation planning. It does **not** serve as end-to-end execution proof for the upload, generate, or runtime telemetry workflows.
 
 ---
 
@@ -38,21 +42,32 @@
   - **Creative Brief Button:** Symbolized by a document icon, used to set target generation brief structures.
   - **Parameter Settings Button:** Symbolized by slider controls, used to adjust visual generation weights.
 
-### 3. Discover Tools sidebar
-The left-hand Tools tab (`apps_spark_2Tools`) opens a sidebar catalog containing categorized custom sub-tools:
-* **Image Tools:**
-  - *Simple Sketch:* "Turn any drawing into a stylized image"
-  - *Scene Explorer:* "Explore visuals for scenes based on an initial location"
-  - *Mockup:* "Comp your image into different environments"
-  - *Image Editor:* "Transform objects, add text and adjust image sizing"
-  - *Shot Explorer:* "See your scene from new angles"
-  - *Mask Magic:* "Perform selective image edits using segmentation"
-  - *Converge:* "Render your sketches"
-  - *Grid Architect:* "Create image grids and extract individual images from them"
-* **Video Tools:**
-  - *Shader Effects:* "Apply customizable filters to your media"
-  - *Type Overlays:* "Add animated text to your videos"
-  - *pixelBento:* "Apply post-processing effects like lo-fi and glitch"
+### 3. Discover Tools Sidebar
+The left-hand Tools tab (`apps_spark_2Tools`) opens a sidebar catalog containing custom tools. The catalog's visual state changes based on scroll positions and DOM availability.
+
+* **Visually Confirmed on Default Tools Panel (see [screenshot_11_tools_panel.png](file:///c:/Users/USER/Desktop/_ref_flowkit/docs/google-flow/2026-05-authenticated-editor-scout/screenshots/screenshot_11_tools_panel.png)):**
+  - **Simple Sketch** (by Google): "Turn any drawing into a stylized image"
+  - **Scene Explorer** (by Google): "Explore visuals for scenes based on an initial location"
+  - **Mockup** (by Google): "Comp your image into different environments"
+  - **Image Editor** (by Google - partial): "Transform objects, add text..."
+
+* **Visually Confirmed on Scrolled Tools Panel (see [screenshot_14_tools_panel_scrolled.png](file:///c:/Users/USER/Desktop/_ref_flowkit/docs/google-flow/2026-05-authenticated-editor-scout/screenshots/screenshot_14_tools_panel_scrolled.png)):**
+  - **Datamosh** (by Kaloyan Kolev, Google): "Add datamoshing effects to your videos"
+  - **3D Model Visualizer** (by Filip Havlena, Google): "Use a 3D model to guide your image generation"
+  - **Scout360** (by PJ Ace): "Capture a 360 degree environment from an image"
+  - **Ribbit** (by Kat Zhang): "Perform videos live as the beat drives playback"
+  - **Whisk** (by Google): "Use images as prompts to visualize your ideas"
+  - **Pose Text** (by Alan Yam, Google): "Add text labels that track a character in your video"
+  - **3D Face Swap** (by Google): "Swap your face with virtual characters"
+
+* **Present in DOM but Off-Screen / Viewport Gated (confirmed via DOM scan):**
+  - **Shot Explorer** (by Google): "See your scene from new angles"
+  - **Mask Magic** (by Arden Schager, Google): "Perform selective image edits using segmentation"
+  - **Converge** (by Chris Maestas): "Render your sketches"
+  - **Grid Architect** (by Henry Daubrez): "Create image grids and extract individual images from them"
+  - **Shader Effects** (by Google): "Apply customizable filters to your media"
+  - **Type Overlays** (by Google): "Add animated text to your videos"
+  - **pixelBento** (by László Gaal): "Apply post-processing effects like lo-fi and glitch"
 
 ---
 
@@ -102,7 +117,10 @@ The left-hand Tools tab (`apps_spark_2Tools`) opens a sidebar catalog containing
 
 ---
 
-## SCREENSHOT INDEX
+## SCREENSHOT INDEX & QUALITY STATUS
+> [!NOTE]
+> All screenshots in this index are **raw, non-annotated visual captures** of the browser window. They do not contain custom graphical overlays, highlight circles, or callout labels.
+
 All screenshots are saved in `docs/google-flow/2026-05-authenticated-editor-scout/screenshots/`:
 1. `screenshot_1_workspace_landing.png`: Editor workspace load screen.
 2. `screenshot_2_editor_default.png`: Editor default state with the bottom composer panel.
