@@ -144,7 +144,9 @@ All screenshots are saved in `docs/google-flow/2026-05-authenticated-editor-scou
 
 ## GITHUB DELIVERY
 - **Branch:** `codex/google-flow-authenticated-scout`
-- **Commit SHA:** `8bcd6230b3b4b17901158d5e7267fdcb1394223e`
+- **Core Evidence Commit SHA:** `60d7936cb532b5d901757e209ae8824310c63b9b`
+- **Metadata-only Follow-up Commits:** `bf1d4e9b3beddd08f4523d3aff8b2127514f953b`, `8bcd6230b3b4b17901158d5e7267fdcb1394223e`, `6c95c0ef1e1e1eb06ffdc9184356a3cd7cd267c3`
+- **Branch-head Rule:** Do not treat this report file as the source of current branch-head truth. Metadata-only commits mutate `HEAD` after the file is edited. Use live Git commands to resolve the current pushed branch head.
 - **Push Target:** `https://github.com/farisdatosheikh/my-flowkit-bosmax`
 - **Push Result:** `Successfully pushed to remote origin branch codex/google-flow-authenticated-scout`
 - **Uploaded Paths:** `docs/google-flow/2026-05-authenticated-editor-scout/`

@@ -4,6 +4,7 @@ domains:
     status: IN_PROGRESS
     owned_paths:
       - docs/MODULE_STATUS.yaml
+      - docs/google-flow/2026-05-authenticated-editor-scout/antigravity-authenticated-editor-report.md
       - biome.json
       - .dependency-cruiser.cjs
       - scripts/mandor-check.ts
