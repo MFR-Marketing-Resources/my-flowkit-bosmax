@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
 	archiveCreativeAsset,
 	createCreativeAsset,
@@ -13,6 +14,7 @@ import type {
 	CreativeAssetStatus,
 	WorkspaceMode,
 } from "../types";
+import { PRODUCT_ASSET_GENERATOR_PRESETS } from "./ProductAssetGeneratorPage";
 
 const ROLE_OPTIONS: CreativeAssetSemanticRole[] = [
 	"PRODUCT_REFERENCE",
@@ -101,6 +103,7 @@ async function loadCreativeLibraryAssets(
 }
 
 export default function CreativeLibraryPage() {
+	const location = useLocation();
 	const [items, setItems] = useState<CreativeAsset[]>([]);
 	const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
 	const [roleFilter, setRoleFilter] = useState<
@@ -119,6 +122,12 @@ export default function CreativeLibraryPage() {
 		() => items.find((item) => item.asset_id === selectedAssetId) ?? null,
 		[items, selectedAssetId],
 	);
+	const productAssetGeneratorRouteBase =
+		new URLSearchParams(location.search).get("portal") === "side"
+			? "/product-asset-generator?portal=side"
+			: "/product-asset-generator";
+	const productAssetGeneratorPresetSeparator =
+		productAssetGeneratorRouteBase.includes("?") ? "&" : "?";
 
 	useEffect(() => {
 		void loadCreativeLibraryAssets(
@@ -273,6 +282,80 @@ export default function CreativeLibraryPage() {
 						{error}
 					</div>
 				) : null}
+			</section>
+
+			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+				<div className="flex flex-wrap items-start justify-between gap-3">
+					<div>
+						<div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+							Preset Library
+						</div>
+						<div className="mt-2 max-w-4xl text-sm text-slate-300">
+							Use governed image presets instead of starting from a blank manual
+							prompt. Product-holding presets force database product truth first
+							so scale, packaging, and handling do not drift.
+						</div>
+					</div>
+					<div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-3 text-[11px] text-amber-100">
+						Database product truth is the primary source for scale truth,
+						product physics, and label-safe handling.
+					</div>
+				</div>
+				<div className="mt-4 grid gap-4 xl:grid-cols-2">
+					{PRODUCT_ASSET_GENERATOR_PRESETS.map((preset) => (
+						<article
+							key={preset.id}
+							className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4"
+						>
+							<div className="flex flex-wrap items-start justify-between gap-3">
+								<div>
+									<div className="text-sm font-semibold text-slate-100">
+										{preset.label}
+									</div>
+									<div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+										{preset.id}
+									</div>
+								</div>
+								<span
+									className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${preset.requiresDatabaseProduct ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"}`}
+								>
+									{preset.requiresDatabaseProduct
+										? "DATABASE PRODUCT REQUIRED"
+										: "CUSTOM PRODUCT ALLOWED"}
+								</span>
+							</div>
+							<div className="mt-3 text-sm text-slate-300">
+								{preset.description}
+							</div>
+							<div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+								<div>
+									<div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+										Required Inputs
+									</div>
+									<div className="mt-2 flex flex-wrap gap-2">
+										{preset.requiredInputs.map((item) => (
+											<span
+												key={`${preset.id}:${item}`}
+												className="rounded-full border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300"
+											>
+												{item}
+											</span>
+										))}
+									</div>
+								</div>
+								<Link
+									to={`${productAssetGeneratorRouteBase}${productAssetGeneratorPresetSeparator}preset=${preset.id}`}
+									className="inline-flex items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200"
+								>
+									Launch Preset
+								</Link>
+							</div>
+							<div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3 text-[11px] text-slate-300">
+								{preset.guidance}
+							</div>
+						</article>
+					))}
+				</div>
 			</section>
 
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">

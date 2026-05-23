@@ -10,9 +10,11 @@ def _read(relative_path: str) -> str:
 
 def test_product_asset_generator_route_and_nav_exist():
     source = _read("dashboard/src/App.tsx")
+    page_source = _read("dashboard/src/pages/ProductAssetGeneratorPage.tsx")
 
     assert "/product-asset-generator" in source
     assert "Product Asset Generator" in source
+    assert "?preset=" in page_source
 
 
 def test_product_asset_generator_ui_calls_only_the_preview_endpoint():
@@ -61,6 +63,14 @@ def test_product_asset_generator_form_locks_dry_run_only_true_and_shows_truth_co
     assert "No real image generation" in page_source
     assert "No Google Flow execution" in page_source
     assert "No Chrome extension execution" in page_source
+    assert "Preset Guided Workflow" in page_source
+    assert "ACTIVE PRESET:" in page_source
+    assert "product truth remains the primary source for scale truth" in page_source
+    assert "PRODUCT_ASSET_GENERATOR_PRESETS" in page_source
+    assert "ecommerce_hero_clean_studio" in page_source
+    assert "avatar_holding_product_closeup" in page_source
+    assert "product_scene_style_blend" in page_source
+    assert "If the preset carries a product in hand, pick a database" in page_source
 
 
 def test_product_asset_generator_result_panel_displays_warnings_provenance_and_false_execution_flags():
