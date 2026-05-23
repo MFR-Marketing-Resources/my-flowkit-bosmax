@@ -319,6 +319,36 @@ function PackageDetailPanel({
 				>
 					{notesSaving ? "Saving…" : notesSaved ? "Saved!" : "Save Notes"}
 				</button>
+				{showDebug && (
+					<div className="mt-3 space-y-3">
+						<div className="bg-slate-950 rounded-lg p-3 space-y-1 text-[10px] font-mono text-slate-500">
+							<div><span className="text-slate-600">package_id:</span> {pkg.workspace_generation_package_id}</div>
+							<div><span className="text-slate-600">product_id:</span> {pkg.product_id}</div>
+							<div><span className="text-slate-600">mode:</span> {pkg.mode} / {pkg.source_lane}</div>
+							<div><span className="text-slate-600">generation_mode:</span> {pkg.generation_mode}</div>
+							<div><span className="text-slate-600">snapshot_id:</span> {pkg.prompt_package_snapshot_id || "—"}</div>
+							<div><span className="text-slate-600">execution_pkg_id:</span> {pkg.workspace_execution_package_id || "—"}</div>
+							<div><span className="text-slate-600">created_at:</span> {pkg.created_at}</div>
+						</div>
+						<div className="bg-slate-950 rounded-lg p-3">
+							<div className="flex items-center gap-2 mb-2">
+								<Layers size={12} className="text-slate-500" />
+								<span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">DOM Handoff Scaffold</span>
+							</div>
+							<div className="flex items-center gap-2">
+								<CheckCircle size={11} className="text-emerald-500" />
+								<span className="text-[10px] text-slate-500">manual_handoff_ready: {String(domScaffold?.readiness?.manual_handoff_ready ?? blockers.length === 0)}</span>
+							</div>
+							<div className="flex items-center gap-2 mt-1">
+								<XCircle size={11} className="text-red-500/50" />
+								<span className="text-[10px] text-slate-500">dom_handoff_ready: {String(domReady)} (locked — not enabled in this wave)</span>
+							</div>
+							<button type="button" disabled className="mt-2 w-full text-[10px] bg-slate-800 text-slate-600 px-3 py-2 rounded cursor-not-allowed">
+								Send to Google Flow (DOM handoff not enabled in this wave)
+							</button>
+						</div>
+					</div>
+				)}
 			</div>
 
 			{/* Google Flow Setup Guide */}
@@ -424,6 +454,8 @@ function PackageDetailPanel({
 			</div>
 		</div>
 	);
+
+	// legacy allDisplayAssets variable kept above — unused after refactor but kept for reference
 }
 
 // ─── Package row ──────────────────────────────────────────────

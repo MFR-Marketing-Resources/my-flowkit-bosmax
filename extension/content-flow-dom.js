@@ -15,8 +15,14 @@
 (() => {
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
+  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-google-flow-phase1a-2026-05-23';
+  const FLOW_KIT_PLAYWRIGHT_HARNESS = hasPlaywrightHarnessMarker();
   const FLOW_KIT_TEST_MODE = Boolean(window.__FLOWKIT_TEST_MODE__);
-  const FLOW_KIT_ENABLE_TEST_HOOKS = FLOW_KIT_TEST_MODE || Boolean(window.__FLOWKIT_ENABLE_TEST_HOOKS__);
+  const FLOW_KIT_ENABLE_TEST_HOOKS =
+    FLOW_KIT_TEST_MODE
+    || Boolean(window.__FLOWKIT_ENABLE_TEST_HOOKS__)
+    || FLOW_KIT_PLAYWRIGHT_HARNESS;
+  const FLOW_KIT_TEST_BRIDGE_SOURCE = 'FLOWKIT_PLAYWRIGHT_TEST_BRIDGE';
   const IMAGE_ASPECT_RATIOS = ['16:9', '4:3', '1:1', '3:4', '9:16'];
   const FLOW_MODE_CONFIG = {
     F2V: { topMode: 'Video', subMode: 'Frames', defaultModel: 'Veo 3.1 - Lite', defaultOrientation: 'VERTICAL', defaultCount: 1 },
@@ -36,6 +42,33 @@
   window._flowKitDomInjectedVersion = FLOW_KIT_DOM_VERSION;
   console.log('[FlowAgent] Flow DOM Executor injected');
 
+  function hasPlaywrightHarnessMarker() {
+    return document.documentElement?.getAttribute('data-flowkit-harness') === 'playwright';
+  }
+
+  function getSelectorRegistryHelpers() {
+    return window.__FLOWKIT_SELECTOR_REGISTRY_HELPERS__ || null;
+  }
+
+  function getSelectorRegistryEntry(id) {
+    return getSelectorRegistryHelpers()?.getEntry(id) || null;
+  }
+
+  function getSelectorRegistryQuery(id, fallbackQuery) {
+    return getSelectorRegistryHelpers()?.getSelectorQuery(id) || fallbackQuery;
+  }
+
+  function getSelectorEvidencePointer(id) {
+    return getSelectorRegistryHelpers()?.buildEvidencePointer(id) || null;
+  }
+
+  function buildSelectorEvidenceMeta(id) {
+    return {
+      selector_used: id,
+      evidence_pointer: getSelectorEvidencePointer(id),
+    };
+  }
+
   function sendRuntimeMessageNoThrow(payload) {
     try {
       chrome.runtime.sendMessage(payload, () => {
@@ -49,19 +82,62 @@
     }
   }
 
-  // Safe wrapper for sending messages without blocking on response
-  function _sendStageEvent(request_id, stage, status) {
-    sendRuntimeMessageNoThrow({
-      type: 'FLOW_STAGE_EVENT',
-      request_id: request_id,
-      stage: stage,
-      status: status,
-      source: 'google_flow'
+  function sendRuntimeMessageWithResponse(payload, timeoutMs = 15000) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve({ ok: false, error: 'ERR_RUNTIME_MESSAGE_TIMEOUT' });
+      }, timeoutMs);
+
+      try {
+        chrome.runtime.sendMessage(payload, (response) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+
+          const lastError = chrome.runtime.lastError;
+          if (lastError) {
+            resolve({ ok: false, error: lastError.message || 'ERR_RUNTIME_LASTERROR' });
+            return;
+          }
+
+          resolve(response || { ok: false, error: 'ERR_EMPTY_RUNTIME_RESPONSE' });
+        });
+      } catch (error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ ok: false, error: String(error?.message || error) });
+      }
     });
+  }
+
+  function buildStageTelemetryPayload(request_id, stage, status, extra = {}) {
+    return {
+      type: 'FLOW_STAGE_EVENT',
+      request_id,
+      timestamp: new Date().toISOString(),
+      git_sha: FLOW_KIT_DOM_BUILD_ID,
+      content_build_id: FLOW_KIT_DOM_BUILD_ID,
+      stage,
+      checkpoint: extra.checkpoint || stage,
+      status,
+      source: 'google_flow',
+      runtime_ready: true,
+      ...extra,
+    };
+  }
+
+  // Safe wrapper for sending messages without blocking on response
+  function _sendStageEvent(request_id, stage, status, extra = {}) {
+    sendRuntimeMessageNoThrow(buildStageTelemetryPayload(request_id, stage, status, extra));
   }
 
   const STAGES = {
     FLOW_TAB_FOUND: 'FLOW_TAB_FOUND',
+    RUNTIME_HANDSHAKE_VERIFIED: 'RUNTIME_HANDSHAKE_VERIFIED',
     PRE_EXECUTION_STATE_CLEARED: 'PRE_EXECUTION_STATE_CLEARED',
     FLOW_MODE_SELECTED: 'FLOW_MODE_SELECTED',
     FLOW_SUBMODE_SELECTED: 'FLOW_SUBMODE_SELECTED',
@@ -128,11 +204,138 @@
   function buildDiagnosticPingResponse() {
     return {
       ok: true,
+      runtime_ready: true,
       content_script_loaded: true,
       content_script_protocol_version: FLOW_KIT_DOM_PROTOCOL_VERSION,
+      content_build_id: FLOW_KIT_DOM_BUILD_ID,
+      git_sha: FLOW_KIT_DOM_BUILD_ID,
       location_href: window.location.href,
       timestamp: new Date().toISOString(),
     };
+  }
+
+  function sanitizeTestHookResult(action, result) {
+    if (action === 'simulateFileUpload') {
+      return {
+        ok: Boolean(result?.ok),
+        error: result?.error || null,
+        detail: result?.detail || null,
+        lastCheckpoint: result?.lastCheckpoint || null,
+        acceptanceReason: result?.acceptanceReason || null,
+        modalFound: Boolean(result?.modalFound),
+      };
+    }
+
+    if (action === 'findVisibleAssetPickerModal') {
+      return {
+        modalFound: Boolean(result?.modal),
+        foundInShadowRoot: Boolean(result?.foundInShadowRoot),
+        markerSnippetCount: result?.diagnostics?.markerSnippetCount || 0,
+        openShadowRootCount: result?.diagnostics?.openShadowRootCount || 0,
+      };
+    }
+
+    if (action === 'beginCdpFileChooserProof' || action === 'waitForCdpFileChooserProofResult') {
+      return {
+        ok: Boolean(result?.ok),
+        armed: Boolean(result?.armed),
+        error: result?.error || null,
+        method: result?.method || null,
+        mode: result?.mode || null,
+        backendNodeId: result?.backendNodeId || null,
+        slotLabel: result?.slotLabel || null,
+        expectedFileName: result?.expectedFileName || null,
+        timeout_ms: result?.timeout_ms || null,
+      };
+    }
+
+    return result;
+  }
+
+  async function beginCdpFileChooserProof(config = {}) {
+    return await sendRuntimeMessageWithResponse({
+      type: 'FLOWKIT_CDP_BEGIN_FILE_CHOOSER_POC',
+      filePath: config?.filePath || null,
+      expectedFileName: config?.expectedFileName || null,
+      slotLabel: config?.slotLabel || 'Start',
+    }, 12000);
+  }
+
+  async function waitForCdpFileChooserProofResult() {
+    return await sendRuntimeMessageWithResponse({
+      type: 'FLOWKIT_CDP_WAIT_FILE_CHOOSER_POC',
+    }, 15000);
+  }
+
+  async function invokePlaywrightTestAction(action, args = []) {
+    if (action === 'buildDiagnosticPingResponse') {
+      return buildDiagnosticPingResponse(...args);
+    }
+
+    if (action === 'findVisibleAssetPickerModal') {
+      return findVisibleAssetPickerModal(...args);
+    }
+
+    if (action === 'simulateFileUpload') {
+      return simulateFileUpload(...args);
+    }
+
+    if (action === 'beginCdpFileChooserProof') {
+      return beginCdpFileChooserProof(...args);
+    }
+
+    if (action === 'waitForCdpFileChooserProofResult') {
+      return waitForCdpFileChooserProofResult(...args);
+    }
+
+    throw new Error(`ERR_UNKNOWN_TEST_ACTION:${action}`);
+  }
+
+  function postPlaywrightTestBridgeResponse(requestId, payload) {
+    window.postMessage({
+      source: FLOW_KIT_TEST_BRIDGE_SOURCE,
+      direction: 'response',
+      requestId,
+      ...payload,
+    }, '*');
+  }
+
+  function installPlaywrightTestBridge() {
+    if (!FLOW_KIT_PLAYWRIGHT_HARNESS || window._flowKitPlaywrightBridgeInstalled) {
+      return;
+    }
+
+    window._flowKitPlaywrightBridgeInstalled = true;
+    window.addEventListener('message', (event) => {
+      if (event.source !== window) return;
+
+      const data = event.data || {};
+      if (
+        data.source !== FLOW_KIT_TEST_BRIDGE_SOURCE
+        || data.direction !== 'request'
+      ) {
+        return;
+      }
+
+      const requestId = data.requestId || `flowkit_test_${Date.now()}`;
+      Promise.resolve()
+        .then(async () => {
+          const action = String(data.action || '');
+          const args = Array.isArray(data.args) ? data.args : [];
+          const result = await invokePlaywrightTestAction(action, args);
+          postPlaywrightTestBridgeResponse(requestId, {
+            ok: true,
+            action,
+            result: sanitizeTestHookResult(action, result),
+          });
+        })
+        .catch((error) => {
+          postPlaywrightTestBridgeResponse(requestId, {
+            ok: false,
+            error: String(error?.message || error),
+          });
+        });
+    });
   }
 
   function normalizeText(value) {
@@ -320,8 +523,31 @@
     return aria.includes('Create') || aria.includes('Generate');
   }
 
+  function looksLikeExcludedCreateButton(target) {
+    if (!target) return false;
+    const text = normalizeText(target.textContent || target.getAttribute('aria-label') || '').toLowerCase();
+    if (!text) return false;
+    return text.includes('create tool')
+      || text.includes('create with flow')
+      || text.includes('create new project')
+      || text === 'create new'
+      || text.includes('create project');
+  }
+
+  function isNearComposerDock(target, composer) {
+    if (!target || !composer || !isVisible(target) || !isVisible(composer)) return false;
+    const targetRect = target.getBoundingClientRect();
+    const composerRect = composer.getBoundingClientRect();
+    const verticalDistance = Math.abs((targetRect.top + targetRect.height / 2) - (composerRect.top + composerRect.height / 2));
+    const horizontalMatch = targetRect.left >= composerRect.left - 80 && targetRect.right <= composerRect.right + 240;
+    return verticalDistance <= Math.max(composerRect.height, targetRect.height) * 1.5 && horizontalMatch;
+  }
+
   function findFlowConfigLauncher() {
-    const selectors = 'button, [role="button"], [role="tab"], [aria-haspopup], span, div';
+    const selectors = getSelectorRegistryQuery(
+      'flow_config_launcher_compact',
+      'button, [role="button"], [role="tab"], [aria-haspopup], span, div',
+    );
     const composer = findComposerElement();
     const scopedCandidates = collectComposerContextRoots(composer)
       .flatMap((root) => Array.from(root.querySelectorAll(selectors)));
@@ -367,14 +593,17 @@
   }
 
   function findOpenFlowConfigSurface() {
-    const selectors = [
-      '[role="listbox"]',
-      '[role="dialog"]',
-      '[role="menu"]',
-      '[data-floating-ui-portal] > *',
-      '[data-radix-popper-content-wrapper] > *',
-      '[data-radix-portal] > *',
-    ].join(', ');
+    const selectors = getSelectorRegistryQuery(
+      'flow_config_surface_portal',
+      [
+        '[role="listbox"]',
+        '[role="dialog"]',
+        '[role="menu"]',
+        '[data-floating-ui-portal] > *',
+        '[data-radix-popper-content-wrapper] > *',
+        '[data-radix-portal] > *',
+      ].join(', '),
+    );
 
     const surfaces = Array.from(document.querySelectorAll(selectors))
       .filter((el) => isVisible(el));
@@ -470,7 +699,9 @@
   }
 
   function findCollapsedF2VConfigLauncher() {
-    return Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).find((el) => {
+    return Array.from(document.querySelectorAll(
+      getSelectorRegistryQuery('f2v_collapsed_config_launcher', 'button[aria-haspopup="menu"]'),
+    )).find((el) => {
       if (!isVisible(el)) return false;
       const text = normalizeText(el.innerText || el.textContent || '');
       return text.includes('Video')
@@ -1008,9 +1239,13 @@
   function findUploadSlotByLabel(slotLabel) {
     const isStart = String(slotLabel).toLowerCase() === 'start';
     const isEnd = String(slotLabel).toLowerCase() === 'end';
+    const uploadSlotQuery = getSelectorRegistryQuery(
+      'upload_slot_label_scan',
+      'label, span, div, p, button, [role="button"]',
+    );
 
     // 1. Find all candidate label elements using inclusive detection logic
-    const candidates = Array.from(document.querySelectorAll('label, span, div, p, button, [role="button"]'))
+    const candidates = Array.from(document.querySelectorAll(uploadSlotQuery))
       .filter((el) => {
         if (!isVisible(el)) return false;
         const text = normalizeText(el.textContent || '');
@@ -1263,18 +1498,29 @@
 
   function findGenerateButtonNearComposer() {
     const composer = findComposerElement();
-    const scopedButtons = collectComposerContextRoots(composer)
-      .flatMap((root) => Array.from(root.querySelectorAll('button, [role="button"]')));
+    const generateButtonQuery = getSelectorRegistryQuery(
+      'generate_button_composer_scoped',
+      'button, [role="button"]',
+    );
+    const composerRoots = collectComposerContextRoots(composer);
+    const scopedButtons = composerRoots
+      .flatMap((root) => Array.from(root.querySelectorAll(generateButtonQuery)));
     const scopedMatch = scopedButtons.find((btn) => looksLikeGenerateButton(btn));
     if (scopedMatch) return scopedMatch;
 
     // 1. Target by specific text found in diagnostic
-    const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
-    const createBtn = buttons.find((btn) => looksLikeGenerateButton(btn));
+    const buttons = Array.from(document.querySelectorAll(generateButtonQuery));
+    const createBtn = buttons.find((btn) => {
+      if (!looksLikeGenerateButton(btn) || looksLikeExcludedCreateButton(btn)) return false;
+      if (!composer) return true;
+      return composerRoots.some((root) => root.contains(btn)) || isNearComposerDock(btn, composer);
+    });
     if (createBtn) return createBtn;
 
     // 2. Fallback to icon path detection
-    const paths = document.querySelectorAll('path');
+    const paths = document.querySelectorAll(
+      getSelectorRegistryQuery('generate_button_icon_path_fallback', 'path'),
+    );
     for (const path of paths) {
       const d = path.getAttribute('d') || '';
       if (d.includes('M10 20l-1.41-1.41L15.17 12 8.59 5.41 10 4l8 8-8 8z') ||
@@ -1450,9 +1696,13 @@
   function collectFixedOverlayCandidates(roots) {
     const overlays = [];
     const seen = new Set();
+    const overlayQuery = getSelectorRegistryQuery(
+      'upload_fixed_overlay_scan',
+      'div, section, aside, article, dialog',
+    );
 
     for (const root of roots) {
-      for (const el of collectMatchesInRoot(root, 'div, section, aside, article, dialog')) {
+      for (const el of collectMatchesInRoot(root, overlayQuery)) {
         if (!isVisible(el) || seen.has(el)) continue;
         const rect = el.getBoundingClientRect();
         const style = window.getComputedStyle(el);
@@ -1469,14 +1719,17 @@
   function getModalLikeSurfaces(deepState = null, roots = null) {
     const activeDeepState = deepState || collectDeepSearchState();
     const activeRoots = roots || collectQueryRoots([], activeDeepState);
-    const selectors = [
-      '[role="dialog"]',
-      '[aria-modal="true"]',
-      'dialog',
-      '[data-floating-ui-portal] > *',
-      '[data-radix-portal] > *',
-      '[data-radix-popper-content-wrapper] > *',
-    ].join(', ');
+    const selectors = getSelectorRegistryQuery(
+      'asset_picker_modal_surface',
+      [
+        '[role="dialog"]',
+        '[aria-modal="true"]',
+        'dialog',
+        '[data-floating-ui-portal] > *',
+        '[data-radix-portal] > *',
+        '[data-radix-popper-content-wrapper] > *',
+      ].join(', '),
+    );
 
     const surfaces = [];
     const seen = new Set();
@@ -1804,7 +2057,12 @@
   function rootHasVisualPreview(root) {
     if (!root?.querySelectorAll) return false;
     return Boolean(
-      Array.from(root.querySelectorAll('img, canvas, video, picture, [role="img"], [style*="background-image"]'))
+      Array.from(root.querySelectorAll(
+        getSelectorRegistryQuery(
+          'upload_acceptance_preview_evidence',
+          'img, canvas, video, picture, [role="img"], [style*="background-image"]',
+        ),
+      ))
         .find((node) => describePreviewNode(node))
     );
   }
@@ -1931,6 +2189,21 @@
       shadow_host_outerHTML: modalInfo?.rootContext?.hostOuterHTML || modalInfo?.diagnostics?.shadowHostOuterHTML || '',
       candidate_fixed_overlays_count: modalInfo?.diagnostics?.candidateFixedOverlaysCount || 0,
       active_element_outerHTML: modalInfo?.diagnostics?.activeElementOuterHTML || '',
+      selector_registry_ids: {
+        upload_slot: 'upload_slot_label_scan',
+        asset_picker_modal: 'asset_picker_modal_surface',
+        upload_acceptance: 'upload_acceptance_preview_evidence',
+      },
+      evidence_pointers: {
+        upload_slot: getSelectorEvidencePointer('upload_slot_label_scan'),
+        asset_picker_modal: getSelectorEvidencePointer('asset_picker_modal_surface'),
+        upload_acceptance: getSelectorEvidencePointer('upload_acceptance_preview_evidence'),
+      },
+      fallback_policies: {
+        upload_slot: getSelectorRegistryEntry('upload_slot_label_scan')?.fallback_policy || null,
+        asset_picker_modal: getSelectorRegistryEntry('asset_picker_modal_surface')?.fallback_policy || null,
+        upload_acceptance: getSelectorRegistryEntry('upload_acceptance_preview_evidence')?.fallback_policy || null,
+      },
     };
   }
 
@@ -2484,6 +2757,9 @@
       current_mode_visible: readiness.current_mode_visible,
       blocking_modal_detected: readiness.blocking_modal_detected,
       observed: readiness.observed,
+      runtime_ready: true,
+      content_build_id: FLOW_KIT_DOM_BUILD_ID,
+      git_sha: FLOW_KIT_DOM_BUILD_ID,
       content_script_loaded: true,
       content_script_protocol_version: FLOW_KIT_DOM_PROTOCOL_VERSION,
       timestamp: new Date().toISOString(),
@@ -2510,6 +2786,9 @@
       current_mode_visible: currentModeVisible,
       blocking_modal_detected: !!blockingModal,
       observed,
+      runtime_ready: true,
+      content_build_id: FLOW_KIT_DOM_BUILD_ID,
+      git_sha: FLOW_KIT_DOM_BUILD_ID,
     };
 
     if (mode) {
@@ -3332,11 +3611,13 @@
     const obsForSlot = observeFlowState();
     if (!obsForSlot.visibleUploadSlots.includes('Start')) {
       logStage(STAGES.START_SLOT_VISIBLE, 'FAIL',
-        `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`);
+        `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`,
+        buildSelectorEvidenceMeta('upload_slot_label_scan'));
       throw new Error('ERR_START_SLOT_NOT_VISIBLE');
     }
     logStage(STAGES.START_SLOT_VISIBLE, 'PASS',
-      `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`);
+      `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`,
+      buildSelectorEvidenceMeta('upload_slot_label_scan'));
 
     // ── Step 9: Prompt field must be present ─────────────────────────────────
     const composerEl = findComposerElement();
@@ -3361,21 +3642,40 @@
 
     const report = { ok: false, stages: [] };
     const request_id = job.request_id || `flow_${Date.now()}`;
-    const logStage = (stage, status = 'YES', message = null) => {
-      report.stages.push({ stage, status, message });
+    let firstFailStage = null;
+    const logStage = (stage, status = 'YES', message = null, extra = {}) => {
+      report.stages.push({ stage, status, message, ...extra });
       console.log(`[FlowAgent] Stage: ${stage} - ${status}${message ? ` - ${message}` : ''}`);
-      sendRuntimeMessageNoThrow({
-        type: 'FLOW_STAGE_EVENT',
-        request_id: job.request_id,
-        stage,
-        status,
+      if (status === 'FAIL' && !firstFailStage) {
+        firstFailStage = stage;
+      }
+      sendRuntimeMessageNoThrow(buildStageTelemetryPayload(request_id, stage, status, {
         message,
-        source: 'google_flow',
-      });
+        fail_code: status === 'FAIL' ? (message || stage) : null,
+        first_fail_stage: firstFailStage,
+        ...extra,
+      }));
     };
 
     try {
-      logStage(STAGES.FLOW_TAB_FOUND, 'YES', `background_conn=true build=${testConn?.buildId || 'legacy'}`);
+      logStage(STAGES.FLOW_TAB_FOUND, 'PASS', 'flow_dom_listener_ready');
+      if (!testConn?.buildId) {
+        logStage(STAGES.RUNTIME_HANDSHAKE_VERIFIED, 'FAIL', `background_status_missing build=${testConn?.buildId || 'legacy'}`);
+        throw new Error('ERR_BACKGROUND_STATUS_UNAVAILABLE');
+      }
+      if (testConn.buildId !== FLOW_KIT_DOM_BUILD_ID) {
+        logStage(
+          STAGES.RUNTIME_HANDSHAKE_VERIFIED,
+          'FAIL',
+          `background_build_id=${testConn.buildId} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
+        );
+        throw new Error('ERR_BUILD_ID_MISMATCH');
+      }
+      logStage(
+        STAGES.RUNTIME_HANDSHAKE_VERIFIED,
+        'PASS',
+        `background_build_id=${testConn.buildId} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
+      );
 
       // 0. Log job received
       if (job.prompt) {
@@ -3397,9 +3697,9 @@
         // ensureF2VFramesWorkspaceReady already emits FLOW_TYPE_VIDEO_SELECTED,
         // FLOW_SUBMODE_FRAMES_SELECTED, FLOW_ASPECT_9_16_SELECTED, etc.
         // Log the legacy compatibility stages so downstream consumers see them too.
-        logStage(STAGES.FLOW_MODE_SELECTED, 'Video');
-        logStage(STAGES.FLOW_SUBMODE_SELECTED, 'Frames');
-        logStage(STAGES.FLOW_MODE_VERIFIED);
+        logStage(STAGES.FLOW_MODE_SELECTED, 'Video', null, buildSelectorEvidenceMeta('f2v_collapsed_config_launcher'));
+        logStage(STAGES.FLOW_SUBMODE_SELECTED, 'Frames', null, buildSelectorEvidenceMeta('f2v_collapsed_config_launcher'));
+        logStage(STAGES.FLOW_MODE_VERIFIED, 'YES', null, buildSelectorEvidenceMeta('f2v_collapsed_config_launcher'));
       } else {
         // 1. Select Top Mode (STRICT - must be correct mode)
         const modeControls = await ensureModeControlsVisible(job.mode);
@@ -3408,7 +3708,12 @@
         if (!modeBtn) throw new Error(`Mode button ${job.mode} not found`);
         modeBtn.click();
         await sleep(1000);
-        logStage(STAGES.FLOW_MODE_SELECTED, resolveFlowModeConfig(job.mode)?.topMode || job.mode);
+        logStage(
+          STAGES.FLOW_MODE_SELECTED,
+          resolveFlowModeConfig(job.mode)?.topMode || job.mode,
+          null,
+          buildSelectorEvidenceMeta('flow_config_launcher_compact'),
+        );
 
         // 2. Select Submode (STRICT)
         if (job.mode === 'I2V') {
@@ -3418,10 +3723,20 @@
           if (!submodeBtn) throw new Error(`Submode button ${submodeText} not found`);
           submodeBtn.click();
           await sleep(1000);
-          logStage(STAGES.FLOW_SUBMODE_SELECTED, submodeText);
+          logStage(
+            STAGES.FLOW_SUBMODE_SELECTED,
+            submodeText,
+            null,
+            buildSelectorEvidenceMeta('flow_config_launcher_compact'),
+          );
         } else if (job.mode === 'T2V') {
           const clearedSubmodes = await clearVideoSubmodeSelection();
-          logStage(STAGES.FLOW_SUBMODE_SELECTED, clearedSubmodes.length > 0 ? `CLEARED:${clearedSubmodes.join(',')}` : 'NONE');
+          logStage(
+            STAGES.FLOW_SUBMODE_SELECTED,
+            clearedSubmodes.length > 0 ? `CLEARED:${clearedSubmodes.join(',')}` : 'NONE',
+            null,
+            buildSelectorEvidenceMeta('flow_config_launcher_compact'),
+          );
         }
 
         // 3. Set Aspect Ratio
@@ -3433,17 +3748,17 @@
         }
 
         if (requestedAspectRatio && await selectFlowConfigOption(requestedAspectRatio)) {
-          logStage(STAGES.ASPECT_SELECTED, requestedAspectRatio);
+          logStage(STAGES.ASPECT_SELECTED, requestedAspectRatio, null, buildSelectorEvidenceMeta('flow_config_surface_portal'));
         }
 
         // 4. Set Count
         if (requestedCount && await selectFlowConfigOption(requestedCount)) {
-          logStage(STAGES.COUNT_SELECTED, requestedCount);
+          logStage(STAGES.COUNT_SELECTED, requestedCount, null, buildSelectorEvidenceMeta('flow_config_surface_portal'));
         }
 
         // 5. Set Model
         if (requestedModel && await selectFlowConfigOption(requestedModel)) {
-          logStage(STAGES.MODEL_SELECTED, requestedModel);
+          logStage(STAGES.MODEL_SELECTED, requestedModel, null, buildSelectorEvidenceMeta('flow_config_surface_portal'));
         }
 
         // CRITICAL: MODE VERIFICATION GATE
@@ -3457,7 +3772,7 @@
           throw new Error(`FLOW_MODE_MISMATCH: ${verifyResult.reason}`);
         }
 
-        logStage(STAGES.FLOW_MODE_VERIFIED);
+        logStage(STAGES.FLOW_MODE_VERIFIED, 'YES', null, buildSelectorEvidenceMeta('flow_config_surface_portal'));
       }
 
       // 6. Attach Assets (STRICT: Asset First, Prompt Second)
@@ -3469,7 +3784,8 @@
         const assetFilename = (typeof startAssetSource === 'object' && startAssetSource) ? startAssetSource.fileName : 'unknown';
 
         logStage(STAGES.START_FRAME_UPLOAD_ATTEMPTED, 'PASS', 
-          `slot=Start asset_source_type=${assetSourceType} asset_filename=${assetFilename} visible_upload_slots=${observeFlowState().visibleUploadSlots.join(',')}`);
+          `slot=Start asset_source_type=${assetSourceType} asset_filename=${assetFilename} visible_upload_slots=${observeFlowState().visibleUploadSlots.join(',')}`,
+          buildSelectorEvidenceMeta('upload_slot_label_scan'));
 
         const uploadTimeoutPromise = new Promise((_, reject) => 
           setTimeout(() => reject(new Error('ERR_START_UPLOAD_TIMEOUT')), 20000)
@@ -3704,7 +4020,7 @@
       logStage(STAGES.GENERATE_ARROW_ENABLED);
 
       generateBtn.click();
-      logStage(STAGES.GENERATE_CLICKED);
+      logStage(STAGES.GENERATE_CLICKED, 'YES', null, buildSelectorEvidenceMeta('generate_button_composer_scoped'));
 
       // 10. Detect Generation Start
       await sleep(1500);
@@ -3724,6 +4040,12 @@
       report.error = e.message;
       report.ok = false;
       report.stages.push({ stage: 'ERROR', status: e.message });
+      sendRuntimeMessageNoThrow(buildStageTelemetryPayload(request_id, 'ERROR', 'FAIL', {
+        checkpoint: firstFailStage || 'ERROR',
+        message: e.message,
+        fail_code: e.message,
+        first_fail_stage: firstFailStage || 'ERROR',
+      }));
     }
 
     return report;
@@ -3834,14 +4156,19 @@
 
   if (FLOW_KIT_ENABLE_TEST_HOOKS) {
     window.__FLOWKIT_TEST_HOOKS__ = {
+      buildDiagnosticPingResponse,
       findVisibleAssetPickerModal,
+      findGenerateButtonNearComposer,
       waitForAssetPickerModal,
       waitForUploadAcceptance,
       resolveAssetPickerTargets,
       simulateFileUpload,
+      beginCdpFileChooserProof,
+      waitForCdpFileChooserProofResult,
       openFlowConfigPanel,
       verifyFlowMode,
     };
+    installPlaywrightTestBridge();
   }
 
   if (!FLOW_KIT_TEST_MODE) {

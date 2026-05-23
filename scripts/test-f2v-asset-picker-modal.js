@@ -224,6 +224,36 @@ function createStartSlot(window, options = {}) {
   return slotButton;
 }
 
+function createComposerWithDistractor(window) {
+  const sidebarButton = window.document.createElement('button');
+  sidebarButton.type = 'button';
+  sidebarButton.textContent = 'Create Tool';
+  makeVisible(sidebarButton, 220, 56);
+  window.document.body.appendChild(sidebarButton);
+
+  const dock = window.document.createElement('div');
+  makeVisible(dock, 720, 120);
+  dock.style.position = 'absolute';
+  dock.style.left = '520px';
+  dock.style.top = '540px';
+
+  const composer = window.document.createElement('div');
+  composer.setAttribute('contenteditable', 'true');
+  composer.setAttribute('aria-label', 'Editable text');
+  composer.textContent = 'What do you want to create?';
+  makeVisible(composer, 420, 72);
+  dock.appendChild(composer);
+
+  const createButton = window.document.createElement('button');
+  createButton.type = 'button';
+  createButton.textContent = 'arrow_forwardCreate';
+  makeVisible(createButton, 120, 56);
+  dock.appendChild(createButton);
+
+  window.document.body.appendChild(dock);
+  return { sidebarButton, dock, composer, createButton };
+}
+
 function createModal(window, { useInput = false, useDropzone = false, inShadowRoot = false } = {}) {
   const buildSurface = (root) => {
     const modal = root.createElement('div');
@@ -497,6 +527,41 @@ async function runTimeoutPathTest() {
   }
 }
 
+async function runComposerGenerateTargetingTest() {
+  const harness = createHarness();
+  const { window, hooks } = harness;
+
+  try {
+    const { sidebarButton, createButton } = createComposerWithDistractor(window);
+    const resolved = hooks.findGenerateButtonNearComposer();
+    expect(Boolean(resolved), 'Expected generate button to resolve near composer', {
+      resolved_text: resolved?.textContent || null,
+    });
+    expect(resolved === createButton, 'Expected composer create button to win over Create Tool distractor', {
+      resolved_text: resolved?.textContent || null,
+      distractor_text: sidebarButton.textContent,
+      expected_text: createButton.textContent,
+    });
+  } finally {
+    harness.close();
+  }
+}
+
+async function runDiagnosticPingHeaderTest() {
+  const harness = createHarness();
+  const { hooks } = harness;
+
+  try {
+    const payload = hooks.buildDiagnosticPingResponse();
+    expect(payload?.ok === true, 'Expected diagnostic ping payload to report ok=true', payload);
+    expect(payload?.runtime_ready === true, 'Expected diagnostic ping payload to report runtime_ready=true', payload);
+    expect(typeof payload?.content_build_id === 'string' && payload.content_build_id.length > 0, 'Expected non-empty content_build_id', payload);
+    expect(payload?.git_sha === payload?.content_build_id, 'Expected git_sha to align with content_build_id build stamp', payload);
+  } finally {
+    harness.close();
+  }
+}
+
 async function main() {
   const tests = [
     ['Direct slot fallback', runDirectSlotFallbackTest],
@@ -505,6 +570,8 @@ async function main() {
     ['Open shadow root modal', runShadowRootModalTest],
     ['Weak acceptance rejection', runWeakAcceptanceRejectionTest],
     ['Timeout path', runTimeoutPathTest],
+    ['Composer generate targeting', runComposerGenerateTargetingTest],
+    ['Diagnostic ping header', runDiagnosticPingHeaderTest],
   ];
 
   let failures = 0;

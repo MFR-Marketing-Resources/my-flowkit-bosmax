@@ -3,12 +3,14 @@
   "name": "Flow Kit",
   "version": "0.2.0",
   "description": "Local agent bridge for Google Flow API — captures tokens, solves reCAPTCHA, proxies API calls",
-  "permissions": ["storage", "alarms", "tabs", "webRequest", "scripting", "declarativeNetRequest", "sidePanel"],
+  "permissions": ["storage", "alarms", "tabs", "webRequest", "scripting", "declarativeNetRequest", "sidePanel", "debugger"],
   "host_permissions": [
     "https://labs.google/*",
     "https://aisandbox-pa.googleapis.com/*",
     "http://127.0.0.1:8100/*",
     "http://localhost:8100/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*",
     "http://127.0.0.1:5173/*",
     "http://localhost:5173/*"
   ],
@@ -22,9 +24,11 @@
     {
       "matches": [
         "https://labs.google/fx/tools/flow*",
-        "https://labs.google/fx/*/tools/flow*"
+        "https://labs.google/fx/*/tools/flow*",
+        "http://127.0.0.1/*",
+        "http://localhost/*"
       ],
-      "js": ["content.js", "content-flow-dom.js"],
+      "js": ["content.js", "selector-registry.js", "content-flow-dom.js"],
       "run_at": "document_start"
     }
   ],

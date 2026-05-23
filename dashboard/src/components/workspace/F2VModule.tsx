@@ -260,8 +260,7 @@ export default function F2VModule({
 							</div>
 						) : null}
 						{/* Multi-block (EXTEND): show each block in its own separate box */}
-						{workspacePackage?.prompt_blocks &&
-						workspacePackage.prompt_blocks.length > 1 ? (
+						{workspacePackage?.prompt_blocks && workspacePackage.prompt_blocks.length > 1 ? (
 							<div className="space-y-4">
 								{workspacePackage.prompt_blocks.map((block) => (
 									<div key={block.block_index} className="space-y-1">
@@ -277,15 +276,12 @@ export default function F2VModule({
 											className="w-full h-48 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-300 font-mono outline-none transition-all resize-none"
 											readOnly
 											value={block.engine_prompt_text}
-											onClick={(e) =>
-												(e.target as HTMLTextAreaElement).select()
-											}
+											onClick={(e) => (e.target as HTMLTextAreaElement).select()}
 										/>
 									</div>
 								))}
 								<div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
-									EXTEND mode — copy each block separately into the video
-									engine. Do NOT paste both blocks into one generation.
+									EXTEND mode — copy each block separately into the video engine. Do NOT paste both blocks into one generation.
 								</div>
 							</div>
 						) : (

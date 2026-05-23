@@ -119,10 +119,14 @@ def test_flow_dom_authenticated_editor_prefers_composer_scoped_selectors_before_
 
 	assert "function collectComposerContextRoots(composer = null, maxDepth = 4) {" in dom_source
 	assert "function looksLikeGenerateButton(target) {" in dom_source
+	assert "function looksLikeExcludedCreateButton(target) {" in dom_source
+	assert "function isNearComposerDock(target, composer) {" in dom_source
 	assert "collectComposerContextRoots(composer)" in generate_section
+	assert "looksLikeExcludedCreateButton(btn)" in generate_section
+	assert "isNearComposerDock(btn, composer)" in generate_section
 	assert "await openFlowConfigPanel()" in mode_section
-	assert "findElementByTextInRoot(surface, modeSelector, config.topMode)" in mode_section
-	assert "source = 'config_surface'" in mode_section
+	assert "assignVisibleControls(surface, 'config_surface')" in mode_section
+	assert "let source = 'global';" in mode_section
 
 
 def test_background_flow_blocker_classifier_prefers_mode_mismatch_over_auth_failure():
@@ -136,3 +140,38 @@ def test_background_flow_blocker_classifier_prefers_mode_mismatch_over_auth_fail
 	assert 'rawError.includes("FLOW_MODE_MISMATCH")' in classifier_section
 	assert 'rawError.includes("ABORT_FLOW_MODE_MISMATCH")' in classifier_section
 	assert classifier_section.index("FLOW_MODE_MISMATCH") < classifier_section.index("FLOW_EDITOR_NOT_AUTHENTICATED")
+
+
+def test_flow_dom_and_background_publish_runtime_build_handshake_markers():
+	dom_source = _read("extension/content-flow-dom.js")
+	background_source = _read("extension/background.js")
+	diagnostic_section = _section(
+		dom_source,
+		"function buildDiagnosticPingResponse() {",
+		"function normalizeText(value) {",
+	)
+	telemetry_section = _section(
+		background_source,
+		"function buildStageTelemetryPayload(message = {}, contentHealth = null) {",
+		"function postStageTelemetry(message = {}, contentHealth = null) {",
+	)
+
+	assert "const FLOW_KIT_DOM_BUILD_ID =" in dom_source
+	assert "runtime_ready: true" in diagnostic_section
+	assert "content_build_id: FLOW_KIT_DOM_BUILD_ID" in diagnostic_section
+	assert "git_sha: FLOW_KIT_DOM_BUILD_ID" in diagnostic_section
+	assert "background_build_id: BUILD_ID" in telemetry_section
+	assert "content_build_id:" in telemetry_section
+	assert "checkpoint: message.checkpoint || message.stage" in telemetry_section
+	assert "build_match:" in telemetry_section
+
+
+def test_background_flow_blocker_classifier_fail_closes_on_runtime_or_build_mismatch():
+	background_source = _read("extension/background.js")
+	classifier_section = _section(
+		background_source,
+		"function classifyFlowPrimaryBlocker(result) {",
+		"function finalizeFlowReadiness(result) {",
+	)
+
+	assert "!result?.runtime_ready || !result?.build_match" in classifier_section

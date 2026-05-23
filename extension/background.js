@@ -128,6 +128,183 @@ function sendRuntimeMessageNoThrow(payload) {
 }
 
 const flowContentScriptHealth = new Map();
+const CDP_DEBUGGER_PROTOCOL_VERSION = "1.3";
+const CDP_FILE_CHOOSER_TIMEOUT_MS = 10000;
+const cdpFileChooserProofRuns = new Map();
+
+function getCdpDebuggee(tabId) {
+	return { tabId };
+}
+
+async function detachDebuggerSafe(debuggee) {
+	try {
+		await chrome.debugger.detach(debuggee);
+	} catch (_) {}
+}
+
+async function cleanupCdpFileChooserProofRun(_tabId, run) {
+	if (!run || run.cleanedUp) return;
+	run.cleanedUp = true;
+	clearTimeout(run.timeoutId);
+	chrome.debugger.onEvent.removeListener(run.handleEvent);
+	chrome.debugger.onDetach.removeListener(run.handleDetach);
+	try {
+		await chrome.debugger.sendCommand(
+			run.debuggee,
+			"Page.setInterceptFileChooserDialog",
+			{
+				enabled: false,
+			},
+		);
+	} catch (_) {}
+	await detachDebuggerSafe(run.debuggee);
+}
+
+function settleCdpFileChooserProofRun(tabId, payload) {
+	const run = cdpFileChooserProofRuns.get(tabId);
+	if (!run || run.settled) return;
+	run.settled = true;
+	run.result = payload;
+	void cleanupCdpFileChooserProofRun(tabId, run).finally(() => {
+		run.resolve(payload);
+	});
+}
+
+async function beginCdpFileChooserProof(
+	tabId,
+	filePath,
+	expectedFileName,
+	slotLabel,
+) {
+	if (!tabId) {
+		return { ok: false, error: "ERR_CDP_DEBUGGER_TAB_ID_MISSING" };
+	}
+	if (!filePath || typeof filePath !== "string") {
+		return { ok: false, error: "ERR_CDP_FILE_PATH_REQUIRED" };
+	}
+
+	const existingRun = cdpFileChooserProofRuns.get(tabId);
+	if (existingRun && !existingRun.settled) {
+		return { ok: false, error: "ERR_CDP_FILE_CHOOSER_ALREADY_ARMED" };
+	}
+
+	const debuggee = getCdpDebuggee(tabId);
+	await chrome.debugger.attach(debuggee, CDP_DEBUGGER_PROTOCOL_VERSION);
+
+	try {
+		await chrome.debugger.sendCommand(debuggee, "Page.enable");
+		await chrome.debugger.sendCommand(debuggee, "DOM.enable");
+		await chrome.debugger.sendCommand(
+			debuggee,
+			"Page.setInterceptFileChooserDialog",
+			{ enabled: true },
+		);
+	} catch (error) {
+		await detachDebuggerSafe(debuggee);
+		throw error;
+	}
+
+	let resolveRun;
+	const completionPromise = new Promise((resolve) => {
+		resolveRun = resolve;
+	});
+	const run = {
+		debuggee,
+		expectedFileName: expectedFileName || null,
+		filePath,
+		slotLabel: slotLabel || "Start",
+		resolve: resolveRun,
+		result: null,
+		settled: false,
+		cleanedUp: false,
+		timeoutId: null,
+		handleEvent: null,
+		handleDetach: null,
+		completionPromise,
+	};
+
+	run.handleEvent = async (source, method, params) => {
+		if (source?.tabId !== tabId || method !== "Page.fileChooserOpened") {
+			return;
+		}
+
+		try {
+			if (!params?.backendNodeId) {
+				throw new Error("ERR_CDP_FILE_CHOOSER_BACKEND_NODE_MISSING");
+			}
+
+			await chrome.debugger.sendCommand(debuggee, "DOM.setFileInputFiles", {
+				files: [filePath],
+				backendNodeId: params.backendNodeId,
+			});
+
+			settleCdpFileChooserProofRun(tabId, {
+				ok: true,
+				method,
+				mode: params.mode || null,
+				backendNodeId: params.backendNodeId,
+				filePath,
+				expectedFileName: expectedFileName || null,
+				slotLabel: slotLabel || "Start",
+			});
+		} catch (error) {
+			settleCdpFileChooserProofRun(tabId, {
+				ok: false,
+				error: String(error?.message || error),
+				method,
+				backendNodeId: params?.backendNodeId || null,
+				filePath,
+				expectedFileName: expectedFileName || null,
+				slotLabel: slotLabel || "Start",
+			});
+		}
+	};
+
+	run.handleDetach = (source, reason) => {
+		if (source?.tabId !== tabId) return;
+		settleCdpFileChooserProofRun(tabId, {
+			ok: false,
+			error: `ERR_CDP_DEBUGGER_DETACHED:${reason || "unknown"}`,
+			detach_reason: reason || "unknown",
+			filePath,
+			expectedFileName: expectedFileName || null,
+			slotLabel: slotLabel || "Start",
+		});
+	};
+
+	run.timeoutId = setTimeout(() => {
+		settleCdpFileChooserProofRun(tabId, {
+			ok: false,
+			error: "ERR_CDP_FILE_CHOOSER_TIMEOUT",
+			filePath,
+			expectedFileName: expectedFileName || null,
+			slotLabel: slotLabel || "Start",
+		});
+	}, CDP_FILE_CHOOSER_TIMEOUT_MS);
+
+	chrome.debugger.onEvent.addListener(run.handleEvent);
+	chrome.debugger.onDetach.addListener(run.handleDetach);
+	cdpFileChooserProofRuns.set(tabId, run);
+
+	return {
+		ok: true,
+		armed: true,
+		slotLabel: run.slotLabel,
+		expectedFileName: run.expectedFileName,
+		timeout_ms: CDP_FILE_CHOOSER_TIMEOUT_MS,
+	};
+}
+
+async function waitForCdpFileChooserProof(tabId) {
+	const run = cdpFileChooserProofRuns.get(tabId);
+	if (!run) {
+		return { ok: false, error: "ERR_CDP_FILE_CHOOSER_NOT_ARMED" };
+	}
+
+	const result = run.result || (await run.completionPromise);
+	cdpFileChooserProofRuns.delete(tabId);
+	return result;
+}
 
 const WS_METHOD_TIMEOUT_MS = {
 	get_status: 5000,
@@ -402,10 +579,16 @@ async function ensureFlowDomScript(tabId) {
 function getKnownContentScriptHealth(tabId) {
 	const last = flowContentScriptHealth.get(tabId);
 	return {
+		content_build_id: last?.content_build_id || null,
 		content_script_protocol_version:
 			last?.content_script_protocol_version || null,
 		content_script_loaded: Boolean(last?.content_script_loaded),
 		content_script_alive: Boolean(last?.content_script_alive),
+		runtime_ready: Boolean(last?.runtime_ready),
+		build_match:
+			last?.content_build_id != null
+				? last.content_build_id === BUILD_ID
+				: false,
 		last_content_script_seen_at: last?.last_content_script_seen_at || null,
 	};
 }
@@ -413,12 +596,14 @@ function getKnownContentScriptHealth(tabId) {
 function rememberContentScriptHealth(tabId, payload) {
 	const timestamp = payload?.timestamp || new Date().toISOString();
 	flowContentScriptHealth.set(tabId, {
+		content_build_id: payload?.content_build_id || null,
 		content_script_protocol_version:
 			payload?.content_script_protocol_version || null,
 		content_script_loaded: Boolean(payload?.content_script_loaded),
 		content_script_alive: Boolean(
 			payload?.ok && payload?.content_script_loaded,
 		),
+		runtime_ready: Boolean(payload?.runtime_ready),
 		last_content_script_seen_at: timestamp,
 	});
 	return getKnownContentScriptHealth(tabId);
@@ -430,10 +615,14 @@ function buildFlowReadinessBase(flowTab) {
 		flow_tab_found: Boolean(flowTab),
 		flow_tab_id: flowTab?.id ?? null,
 		flow_url: flowTab?.url ?? null,
+		background_build_id: BUILD_ID,
+		content_build_id: null,
 		extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
 		content_script_protocol_version: null,
 		content_script_loaded: false,
 		content_script_alive: false,
+		runtime_ready: false,
+		build_match: false,
 		last_content_script_seen_at: null,
 		signed_in_likely: false,
 		composer_found: false,
@@ -473,6 +662,9 @@ function classifyFlowPrimaryBlocker(result) {
 	) {
 		return "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED";
 	}
+	if (!result?.runtime_ready || !result?.build_match) {
+		return "CONTENT_SCRIPT_STALE_OR_NOT_INJECTED";
+	}
 	if (
 		rawError.includes("FLOW_MODE_MISMATCH") ||
 		rawError.includes("ABORT_FLOW_MODE_MISMATCH")
@@ -506,6 +698,15 @@ function finalizeFlowReadiness(result) {
 		...result,
 		last_checked_at: new Date().toISOString(),
 	};
+	if (!finalized.content_build_id && finalized.flow_tab_id != null) {
+		const health = getKnownContentScriptHealth(finalized.flow_tab_id);
+		finalized.content_build_id = health.content_build_id;
+		finalized.runtime_ready = finalized.runtime_ready || health.runtime_ready;
+	}
+	if (finalized.content_build_id) {
+		finalized.build_match =
+			finalized.content_build_id === finalized.background_build_id;
+	}
 	finalized.primary_blocker = classifyFlowPrimaryBlocker(finalized);
 	return finalized;
 }
@@ -1501,9 +1702,50 @@ function broadcastStatus() {
 	sendRuntimeMessageNoThrow({ type: "STATUS_PUSH" });
 }
 
-const BUILD_ID = "f2v_proxy_v3";
+const BUILD_ID = "flowkit-google-flow-phase1a-2026-05-23";
 
-async function handleMessage(msg, _sender) {
+function buildStageTelemetryPayload(message = {}, contentHealth = null) {
+	return {
+		request_id: message.request_id,
+		timestamp: message.timestamp || new Date().toISOString(),
+		git_sha: message.git_sha || BUILD_ID,
+		background_build_id: BUILD_ID,
+		content_build_id:
+			message.content_build_id || contentHealth?.content_build_id || BUILD_ID,
+		stage: message.stage,
+		checkpoint: message.checkpoint || message.stage,
+		status: message.status,
+		message: message.message || null,
+		source: message.source || "extension",
+		runtime_ready:
+			typeof message.runtime_ready === "boolean"
+				? message.runtime_ready
+				: Boolean(contentHealth?.runtime_ready),
+		build_match:
+			typeof message.build_match === "boolean"
+				? message.build_match
+				: (message.content_build_id ||
+						contentHealth?.content_build_id ||
+						BUILD_ID) === BUILD_ID,
+		selector_used: message.selector_used || null,
+		evidence_pointer: message.evidence_pointer || null,
+		fail_code: message.fail_code || null,
+		first_fail_stage: message.first_fail_stage || null,
+	};
+}
+
+function postStageTelemetry(message = {}, contentHealth = null) {
+	if (!message?.request_id || !message?.stage || !message?.status) {
+		return;
+	}
+	fetch("http://127.0.0.1:8100/api/telemetry/stage", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(buildStageTelemetryPayload(message, contentHealth)),
+	}).catch(() => {});
+}
+
+async function handleMessage(msg, sender) {
 	if (msg.type === "STATUS") {
 		return {
 			connected: ws?.readyState === WebSocket.OPEN,
@@ -1521,6 +1763,8 @@ async function handleMessage(msg, _sender) {
 			},
 			state,
 			buildId: BUILD_ID,
+			gitSha: BUILD_ID,
+			runtimeReady: true,
 		};
 	}
 
@@ -1621,20 +1865,27 @@ async function handleMessage(msg, _sender) {
 	}
 
 	if (msg.type === "FLOW_STAGE_EVENT") {
-		if (msg.request_id) {
-			fetch("http://127.0.0.1:8100/api/telemetry/stage", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					request_id: msg.request_id,
-					stage: msg.stage,
-					status: msg.status,
-					message: msg.message || null,
-					source: "extension",
-				}),
-			}).catch(() => {});
-		}
+		const contentHealth = sender?.tab?.id
+			? getKnownContentScriptHealth(sender.tab.id)
+			: null;
+		postStageTelemetry(
+			{ ...msg, source: msg.source || "extension" },
+			contentHealth,
+		);
 		return { ok: true };
+	}
+
+	if (msg.type === "FLOWKIT_CDP_BEGIN_FILE_CHOOSER_POC") {
+		return await beginCdpFileChooserProof(
+			sender?.tab?.id || null,
+			msg.filePath,
+			msg.expectedFileName,
+			msg.slotLabel,
+		);
+	}
+
+	if (msg.type === "FLOWKIT_CDP_WAIT_FILE_CHOOSER_POC") {
+		return await waitForCdpFileChooserProof(sender?.tab?.id || null);
 	}
 
 	if (msg.type === "RESOLVE_LOCAL_ASSET") {
@@ -1645,17 +1896,14 @@ async function handleMessage(msg, _sender) {
 		);
 
 		if (request_id) {
-			fetch("http://127.0.0.1:8100/api/telemetry/stage", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					request_id,
-					stage: "BACKGROUND_ASSET_PROXY_RECEIVED",
-					status: "PASS",
-					message: `assetId=${assetId}`,
-					source: "extension",
-				}),
-			}).catch(() => {});
+			postStageTelemetry({
+				request_id,
+				stage: "BACKGROUND_ASSET_PROXY_RECEIVED",
+				checkpoint: "BACKGROUND_ASSET_PROXY_RECEIVED",
+				status: "PASS",
+				message: `assetId=${assetId}`,
+				source: "extension",
+			});
 		}
 
 		const controller = new AbortController();

@@ -32,8 +32,8 @@ _COLUMNS = {
               "trim_start", "trim_end", "duration", "display_order", "source", "transition_prompt", "narrator_text", "updated_at"},
     "request": {"status", "request_id", "media_id", "output_url", "error_message", "retry_count", "next_retry_at", "source_media_id", "updated_at", "automation_report"},
     "product": {"source", "source_url", "brand", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price", "currency", "commission_amount", "commission_rate", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "image_asset_status", "image_failure_detail", "product_type", "product_type_id", "silo", "trigger_id", "formula", "copywriting_angle", "claim_risk_level", "mode_recommendations", "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint", "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields", "prompt_readiness_status", "prompt_missing_fields", "claim_safe_copy_status", "claim_safe_copy_payload", "claim_safe_copy_updated_at", "production_prompt_approval_status", "production_prompt_approved_modes", "production_prompt_approved_at", "production_prompt_approval_note", "production_prompt_approval_provenance", "lifecycle_status", "archived_at", "archived_reason", "archived_by", "unarchived_at", "unarchived_reason", "lifecycle_provenance", "asset_status", "media_id", "local_image_path", "updated_at", "fastmoss_reference_id"},
-    "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "workspace_generation_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message"},
-    "request_stage_event": {"request_id", "timestamp", "stage", "status", "message", "source"},
+    "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "workspace_generation_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "git_sha", "background_build_id", "content_build_id", "last_checkpoint", "runtime_ready", "build_match", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message"},
+    "request_stage_event": {"request_id", "timestamp", "checkpoint", "stage", "status", "message", "git_sha", "background_build_id", "content_build_id", "runtime_ready", "build_match", "selector_used", "evidence_pointer", "fail_code", "first_fail_stage", "source"},
     "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
     "creative_asset": {"semantic_role", "display_name", "description", "source_type", "storage_kind", "preview_url", "download_url", "media_id", "local_file_path", "remote_source_url", "product_id", "category", "silo", "product_type", "allowed_modes", "engine_slot_eligibility", "mode_a_metadata_handoff", "visual_dna_summary", "character_dna", "scene_context_dna", "style_mood_dna", "source_prompt_fingerprint", "source_workspace_execution_package_id", "source_prompt_package_snapshot_id", "status", "updated_at"},
     "fastmoss_bulk_draft_status": {"raw_product_title", "source_url", "tiktok_product_url", "image_url", "category", "claim_risk_level", "mapping_confidence", "image_readiness", "copy_route", "sold_count", "commission_rate", "promotion_status", "draft_id", "committed_product_id", "suspected_existing_product_id", "suspected_existing_product_title", "suspected_existing_product_source", "suspected_existing_product_mapping_source", "duplicate_match_reason", "linked_product_id", "linked_product_title", "duplicate_resolution", "duplicate_resolved_at", "duplicate_resolution_note", "duplicate_ignore_product_id", "error_message", "batch_provenance", "recomputed_at", "recompute_previous_status", "recompute_previous_error", "updated_at"},
@@ -454,13 +454,36 @@ async def upsert_request_telemetry(request_id: str, **kw) -> dict:
     return await _get_with_db(db, "request_telemetry", "request_id", request_id)
 
 
-async def add_stage_event(request_id: str, stage: str, status: str, message: str = None, source: str = "backend") -> dict:
+async def add_stage_event(request_id: str, stage: str, status: str, message: str = None, source: str = "backend", **extra) -> dict:
     db = await get_db()
     eid, now = _uuid(), _now()
+    payload = {
+        "id": eid,
+        "request_id": request_id,
+        "timestamp": now,
+        "checkpoint": extra.get("checkpoint"),
+        "stage": stage,
+        "status": status,
+        "message": message,
+        "git_sha": extra.get("git_sha"),
+        "background_build_id": extra.get("background_build_id"),
+        "content_build_id": extra.get("content_build_id"),
+        "runtime_ready": extra.get("runtime_ready"),
+        "build_match": extra.get("build_match"),
+        "selector_used": extra.get("selector_used"),
+        "evidence_pointer": extra.get("evidence_pointer"),
+        "fail_code": extra.get("fail_code"),
+        "first_fail_stage": extra.get("first_fail_stage"),
+        "source": source,
+    }
+    columns = [key for key, value in payload.items() if value is not None]
+    values = [payload[key] for key in columns]
+    placeholders = ",".join(["?"] * len(columns))
     async with _db_lock:
         await db.execute(
-            "INSERT INTO request_stage_event (id, request_id, timestamp, stage, status, message, source) VALUES (?,?,?,?,?,?,?)",
-            (eid, request_id, now, stage, status, message, source))
+            f"INSERT INTO request_stage_event ({','.join(columns)}) VALUES ({placeholders})",
+            values,
+        )
         await db.commit()
     return await _get_with_db(db, "request_stage_event", "id", eid)
 
