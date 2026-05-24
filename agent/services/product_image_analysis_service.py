@@ -1,25 +1,62 @@
 from __future__ import annotations
 
+import base64
+import json
+import logging
 import mimetypes
 import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from agent.config import BASE_DIR
+from agent.config import BASE_DIR, REVIEW_MODEL
 from agent.db import crud
 from agent.models.product_intelligence import (
     ProductImageAnalysisResolveRequest,
     ProductIntelligenceImageAnalysis,
 )
 from agent.services.ai_provider_settings_service import (
-    get_active_provider_id,
     get_provider_api_key,
 )
 
 
 SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 SEMANTIC_IMAGE_WARNING = "SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE"
+PRODUCT_IMAGE_ANALYSIS_MODEL = os.environ.get(
+    "PRODUCT_IMAGE_ANALYSIS_MODEL",
+    REVIEW_MODEL,
+)
+ALLOWED_PACKAGE_CLASSES = {
+    "bottle",
+    "refill_pouch",
+    "tube",
+    "box",
+    "packet",
+    "garment",
+    "jar",
+    "roll_on_bottle",
+}
+ALLOWED_CONFIDENCE = {"HIGH", "MEDIUM", "LOW"}
+_ANTHROPIC_IMAGE_ANALYSIS_PROMPT = """Return JSON only.
+{
+  "detected_package": "bottle|refill_pouch|tube|box|packet|garment|jar|roll_on_bottle|null",
+  "detected_text": ["exact visible pack text"],
+  "detected_brand": "string or null",
+  "detected_size_text": "string or null",
+  "detected_form_factor": "short string or null",
+  "visual_confidence": "HIGH|MEDIUM|LOW",
+  "warnings": ["short machine-readable warnings"]
+}
+
+Rules:
+- Detect only what is visible in the product image.
+- Do not infer medical claims or hidden product facts.
+- If unsure, use null and lower confidence.
+- Keep detected_text short, exact, and limited to what is visibly readable.
+- detected_package must be one of the allowed package classes or null.
+"""
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_text(value: Any) -> str | None:
@@ -48,13 +85,167 @@ def _is_supported_image_url(image_url: str) -> bool:
     return suffix in SUPPORTED_IMAGE_SUFFIXES if suffix else True
 
 
-def _configured_provider_name() -> str | None:
-    provider = os.environ.get("PRODUCT_IMAGE_VISION_PROVIDER", "").strip().lower()
-    if not provider:
-        provider = str(get_active_provider_id() or "").strip().lower()
-    if not provider:
+def _mime_type_for_path(path: Path) -> str:
+    guessed = mimetypes.guess_type(path.name)[0]
+    if guessed and guessed.startswith("image/"):
+        return guessed
+    return "image/jpeg"
+
+
+def _parse_json_response(raw: str) -> dict[str, Any]:
+    payload = str(raw or "").strip()
+    if payload.startswith("```"):
+        payload = payload.split("```")[1]
+        if payload.startswith("json"):
+            payload = payload[4:]
+    payload = payload.strip()
+    if not payload.startswith("{"):
+        start = payload.find("{")
+        if start >= 0:
+            payload = payload[start:]
+    return json.loads(payload)
+
+
+def _build_anthropic_content(
+    payload: dict[str, Any],
+    *,
+    local_path: Path | None,
+    image_url: str | None,
+) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = []
+    title = str(payload.get("raw_product_title") or "").strip()
+    if title:
+        content.append(
+            {
+                "type": "text",
+                "text": f"Product title context: {title}",
+            }
+        )
+    content.append(
+        {
+            "type": "text",
+            "text": _ANTHROPIC_IMAGE_ANALYSIS_PROMPT,
+        }
+    )
+
+    if local_path and local_path.exists():
+        content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": _mime_type_for_path(local_path),
+                    "data": base64.b64encode(local_path.read_bytes()).decode("utf-8"),
+                },
+            }
+        )
+        return content
+
+    if image_url:
+        content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": image_url,
+                },
+            }
+        )
+        return content
+
+    raise ValueError("IMAGE_SOURCE_UNAVAILABLE_FOR_PROVIDER")
+
+
+def _normalize_text_list(value: Any, *, limit: int = 12) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        text = _normalize_text(item)
+        if not text or text in normalized:
+            continue
+        normalized.append(text)
+        if len(normalized) >= limit:
+            break
+    return normalized
+
+
+def _normalize_provider_result(
+    provider: str,
+    parsed: dict[str, Any],
+) -> ProductIntelligenceImageAnalysis:
+    detected_package = _normalize_text(parsed.get("detected_package"))
+    if detected_package not in ALLOWED_PACKAGE_CLASSES:
+        detected_package = None
+
+    visual_confidence = str(parsed.get("visual_confidence") or "").strip().upper()
+    if visual_confidence not in ALLOWED_CONFIDENCE:
+        visual_confidence = "LOW"
+
+    warnings = _normalize_text_list(parsed.get("warnings"), limit=8)
+    detected_form_factor = _normalize_text(parsed.get("detected_form_factor"))
+    if not detected_form_factor and detected_package:
+        detected_form_factor = detected_package
+
+    return ProductIntelligenceImageAnalysis(
+        status="ANALYZED",
+        detected_package=detected_package,
+        detected_text=_normalize_text_list(parsed.get("detected_text")),
+        detected_brand=_normalize_text(parsed.get("detected_brand")),
+        detected_size_text=_normalize_text(parsed.get("detected_size_text")),
+        detected_form_factor=detected_form_factor,
+        visual_confidence=visual_confidence,
+        evidence=[
+            f"provider:{provider}",
+            f"provider:model:{PRODUCT_IMAGE_ANALYSIS_MODEL}",
+        ],
+        warnings=warnings,
+        provider=provider,
+        metadata={},
+    )
+
+
+def _extract_response_text(response: Any) -> str:
+    parts: list[str] = []
+    for block in list(getattr(response, "content", []) or []):
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(str(text))
+    return "\n".join(parts).strip()
+
+
+def _analyze_with_anthropic(
+    payload: dict[str, Any],
+    metadata: dict[str, Any],
+) -> ProductIntelligenceImageAnalysis | None:
+    try:
+        import anthropic
+
+        local_path = _coerce_local_path(_normalize_text(payload.get("local_image_path")))
+        image_url = _normalize_text(payload.get("image_url"))
+        client = anthropic.Anthropic(api_key=get_provider_api_key("anthropic"))
+        content = _build_anthropic_content(
+            payload,
+            local_path=local_path,
+            image_url=image_url,
+        )
+        response = client.messages.create(
+            model=PRODUCT_IMAGE_ANALYSIS_MODEL,
+            max_tokens=400,
+            messages=[{"role": "user", "content": content}],
+        )
+        parsed = _parse_json_response(_extract_response_text(response))
+        return _normalize_provider_result("anthropic", parsed)
+    except Exception as exc:  # fail closed; outer layer maps to ANALYSIS_FAILED
+        logger.warning("Anthropic product image analysis failed: %s", exc)
         return None
-    if provider == "anthropic" and get_provider_api_key("anthropic"):
+
+
+def _configured_provider_name() -> str | None:
+    configured_provider = os.environ.get("PRODUCT_IMAGE_VISION_PROVIDER", "").strip().lower()
+    if configured_provider != "anthropic":
+        return None
+    if get_provider_api_key("anthropic"):
         return "anthropic"
     return None
 
@@ -73,9 +264,10 @@ def _analyze_with_provider(
     payload: dict[str, Any],
     metadata: dict[str, Any],
 ) -> ProductIntelligenceImageAnalysis | None:
-    # No semantic provider is wired for product intelligence in this checkout.
-    # Tests may monkeypatch this function to simulate a configured provider.
-    _ = (provider, payload, metadata)
+    if provider == "anthropic":
+        return _analyze_with_anthropic(payload, metadata)
+    # Tests may monkeypatch this function to simulate future providers.
+    _ = (payload, metadata)
     return None
 
 
