@@ -23,6 +23,8 @@ from agent.db.crud import list_scenes, get_project_characters
 from agent.models.review import DimensionScores, SceneReview, SegmentScore, VideoError, VideoReview
 from agent.services.ai_provider_settings_service import (
     get_active_provider_id,
+    get_lane_api_key,
+    get_lane_provider,
     get_provider_api_key,
 )
 
@@ -335,9 +337,9 @@ async def _analyze_sdk(
 ) -> dict:
     """Send individual frames to Claude Vision via Anthropic SDK."""
     import anthropic
-    api_key = get_provider_api_key("anthropic")
+    api_key = get_lane_api_key("vision")
     if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY_NOT_ACTIVE")
+        raise RuntimeError("VISION_LANE_KEY_NOT_CONFIGURED")
     client = anthropic.AsyncAnthropic(api_key=api_key)
     character_names = _parse_character_names(scene)
     prompt_text = _build_prompt(len(frames), fps, scene)
@@ -400,7 +402,7 @@ async def review_scene_video(
                         scene["id"], type(e).__name__, media_id[:12])
             await _download_via_get_media(media_id, video_path)
 
-        if get_active_provider_id() == "anthropic" and get_provider_api_key("anthropic"):
+        if get_lane_provider("vision") == "anthropic" and get_lane_api_key("vision"):
             # SDK path: individual frames
             logger.info("Extracting frames at %sfps (SDK mode)", fps)
             frames = await asyncio.get_event_loop().run_in_executor(

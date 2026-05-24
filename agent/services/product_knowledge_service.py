@@ -30,7 +30,7 @@ from agent.config import BASE_DIR
 from agent.services.registration_hook_cta_generation_service import (
     generate_registration_hook_cta,
 )
-from agent.services.ai_provider_settings_service import get_provider_api_key
+from agent.services.ai_provider_settings_service import get_lane_api_key, get_provider_api_key
 
 
 LOGGER = logging.getLogger(__name__)
@@ -386,7 +386,7 @@ def _extract_qwen_usp_suggestions(
     if not source_text:
         return []
 
-    api_key = get_provider_api_key("qwen")
+    api_key = get_lane_api_key("text_assist")
     if not api_key:
         return []
 

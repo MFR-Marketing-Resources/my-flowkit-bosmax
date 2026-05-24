@@ -16,6 +16,8 @@ from agent.models.product_intelligence import (
     ProductIntelligenceImageAnalysis,
 )
 from agent.services.ai_provider_settings_service import (
+    get_lane_api_key,
+    get_lane_provider,
     get_provider_api_key,
 )
 
@@ -223,7 +225,7 @@ def _analyze_with_anthropic(
 
         local_path = _coerce_local_path(_normalize_text(payload.get("local_image_path")))
         image_url = _normalize_text(payload.get("image_url"))
-        client = anthropic.Anthropic(api_key=get_provider_api_key("anthropic"))
+        client = anthropic.Anthropic(api_key=get_lane_api_key("vision"))
         content = _build_anthropic_content(
             payload,
             local_path=local_path,
@@ -242,11 +244,11 @@ def _analyze_with_anthropic(
 
 
 def _configured_provider_name() -> str | None:
-    configured_provider = os.environ.get("PRODUCT_IMAGE_VISION_PROVIDER", "").strip().lower()
-    if configured_provider != "anthropic":
+    provider = get_lane_provider("vision")
+    if not provider:
         return None
-    if get_provider_api_key("anthropic"):
-        return "anthropic"
+    if get_lane_api_key("vision"):
+        return provider
     return None
 
 
