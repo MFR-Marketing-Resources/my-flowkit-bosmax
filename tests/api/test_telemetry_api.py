@@ -81,3 +81,27 @@ def test_telemetry_stage_persists_build_and_checkpoint_metadata(monkeypatch):
     assert captured["stage_event"]["extra"]["checkpoint"] == "RUNTIME_HANDSHAKE_VERIFIED"
     assert captured["stage_event"]["extra"]["selector_used"] == "composer_dock_probe"
     assert captured["stage_event"]["extra"]["evidence_pointer"] == "dom://flow-editor/composer"
+
+
+def test_telemetry_requests_passes_request_type_and_mode_filters(monkeypatch):
+    captured = {}
+
+    async def fake_list(project_id=None, video_id=None, limit=50, **kwargs):
+        captured["project_id"] = project_id
+        captured["video_id"] = video_id
+        captured["limit"] = limit
+        captured["kwargs"] = kwargs
+        return []
+
+    monkeypatch.setattr("agent.api.telemetry.crud.list_request_telemetry", fake_list)
+
+    client = TestClient(_build_app())
+    response = client.get(
+        "/api/telemetry/requests",
+        params={"limit": 60, "request_type": "MANUAL_FLOW_JOB", "mode": "F2V"},
+    )
+
+    assert response.status_code == 200
+    assert captured["limit"] == 60
+    assert captured["kwargs"]["request_type"] == "MANUAL_FLOW_JOB"
+    assert captured["kwargs"]["mode"] == "F2V"

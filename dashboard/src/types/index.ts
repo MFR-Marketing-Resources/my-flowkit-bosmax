@@ -1080,6 +1080,8 @@ export interface LocalAgentStatus {
 	extension_state: string;
 	offline_reason: string | null;
 	auto_start_enabled: boolean;
+	auto_start_mode: string;
+	auto_start_warning: string | null;
 	last_health_check: string | null;
 	license_status: string;
 	approval_status: string;

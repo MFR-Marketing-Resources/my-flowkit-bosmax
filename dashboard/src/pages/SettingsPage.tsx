@@ -11,38 +11,61 @@ import type {
 
 function DeploymentStatusCard({
 	agentStatus,
-	extensionConnected,
 }: {
 	agentStatus: LocalAgentStatus | null;
-	extensionConnected: boolean;
 }) {
 	if (!agentStatus) return null;
-	const isOnline =
-		agentStatus.extension_connected && agentStatus.extension_state === "IDLE";
+	const deploymentTone = agentStatus.extension_connected
+		? {
+				label: "ONLINE",
+				badgeClass: "bg-green-600/20 text-green-400",
+				dotClass: "bg-green-500 animate-pulse",
+			}
+		: {
+				label: "DEGRADED",
+				badgeClass: "bg-amber-500/20 text-amber-300",
+				dotClass: "bg-amber-400",
+			};
+	const ownershipLabel = agentStatus.auto_start_enabled
+		? agentStatus.auto_start_mode.replaceAll("_", " ")
+		: "MANUAL ONLY";
 	return (
 		<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-6 shadow-xl backdrop-blur-md">
 			<div className="mb-6 flex items-center justify-between">
 				<h3 className="flex items-center gap-2 text-sm font-bold text-white">
 					<span
-						className={`h-2 w-2 rounded-full ${isOnline ? "bg-green-500 animate-pulse" : "bg-red-500"}`}
+						className={`h-2 w-2 rounded-full ${deploymentTone.dotClass}`}
 					/>
 					Deployment Status
 				</h3>
 				<div
-					className={`rounded px-2 py-0.5 text-[10px] font-bold ${isOnline ? "bg-green-600/20 text-green-400" : "bg-red-600/20 text-red-400"}`}
+					className={`rounded px-2 py-0.5 text-[10px] font-bold ${deploymentTone.badgeClass}`}
 				>
-					{isOnline ? "ONLINE" : "OFFLINE"}
+					{deploymentTone.label}
 				</div>
 			</div>
-			<div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+			<div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+				<div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+					<div className="mb-1 text-[10px] font-bold uppercase text-slate-500">
+						Runtime Owner
+					</div>
+					<div className="text-sm font-bold text-slate-200">
+						{ownershipLabel}
+					</div>
+					<div className="mt-1 text-[11px] text-slate-500">
+						{agentStatus.task_name}
+					</div>
+				</div>
 				<div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
 					<div className="mb-1 text-[10px] font-bold uppercase text-slate-500">
 						Extension Bridge
 					</div>
 					<div
-						className={`text-sm font-bold ${extensionConnected ? "text-blue-400" : "text-red-400"}`}
+						className={`text-sm font-bold ${agentStatus.extension_connected ? "text-blue-400" : "text-amber-300"}`}
 					>
-						{extensionConnected ? "Connected" : "Disconnected"}
+						{agentStatus.extension_connected
+							? `Connected / ${agentStatus.extension_state}`
+							: `Disconnected / ${agentStatus.offline_reason || agentStatus.extension_state}`}
 					</div>
 				</div>
 				<div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
@@ -64,6 +87,11 @@ function DeploymentStatusCard({
 					</div>
 				</div>
 			</div>
+			{agentStatus.auto_start_warning ? (
+				<div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+					Autostart warning: {agentStatus.auto_start_warning}
+				</div>
+			) : null}
 		</div>
 	);
 }
@@ -116,7 +144,7 @@ export default function SettingsPage() {
 	);
 	const [bannerMessage, setBannerMessage] = useState<string | null>(null);
 	const [bannerError, setBannerError] = useState<string | null>(null);
-	const { isConnected, extensionConnected } = useWebSocketContext();
+	const { isConnected } = useWebSocketContext();
 
 	const applyRegistry = (registry: AIProviderRegistry) => {
 		startTransition(() => {
@@ -264,7 +292,6 @@ export default function SettingsPage() {
 
 			<DeploymentStatusCard
 				agentStatus={agentStatus}
-				extensionConnected={extensionConnected}
 			/>
 
 			{bannerMessage ? (

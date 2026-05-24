@@ -150,9 +150,29 @@ export default function WorkspaceJobsPage() {
 	}, []);
 
 	useEffect(() => {
-		loadTelemetry();
-		const timer = window.setInterval(loadTelemetry, 4000);
-		return () => window.clearInterval(timer);
+		let inFlight = false;
+		const runLoadTelemetry = () => {
+			if (document.hidden || inFlight) {
+				return;
+			}
+			inFlight = true;
+			void Promise.resolve(loadTelemetry()).finally(() => {
+				inFlight = false;
+			});
+		};
+		const handleVisibilityChange = () => {
+			if (!document.hidden) {
+				runLoadTelemetry();
+			}
+		};
+
+		runLoadTelemetry();
+		document.addEventListener("visibilitychange", handleVisibilityChange);
+		const timer = window.setInterval(runLoadTelemetry, 10000);
+		return () => {
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
+			window.clearInterval(timer);
+		};
 	}, [loadTelemetry]);
 
 	useEffect(() => {

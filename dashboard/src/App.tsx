@@ -214,15 +214,32 @@ function Layout() {
 			return;
 		}
 
+		let inFlight = false;
 		const loadSummary = () => {
-			fetchAPI<TelemetrySummary>("/api/telemetry/summary")
+			if (document.hidden || inFlight) {
+				return;
+			}
+			inFlight = true;
+			void fetchAPI<TelemetrySummary>("/api/telemetry/summary")
 				.then(setPortalSummary)
-				.catch(() => {});
+				.catch(() => {})
+				.finally(() => {
+					inFlight = false;
+				});
+		};
+		const handleVisibilityChange = () => {
+			if (!document.hidden) {
+				loadSummary();
+			}
 		};
 
 		loadSummary();
-		const timer = window.setInterval(loadSummary, 4000);
-		return () => window.clearInterval(timer);
+		document.addEventListener("visibilitychange", handleVisibilityChange);
+		const timer = window.setInterval(loadSummary, 15000);
+		return () => {
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
+			window.clearInterval(timer);
+		};
 	}, [isPortalMode]);
 
 	const portalQuickLinks = [

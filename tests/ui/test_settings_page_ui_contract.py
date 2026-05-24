@@ -12,6 +12,9 @@ def test_settings_page_exposes_ai_provider_registry_controls():
     src = _read("dashboard/src/pages/SettingsPage.tsx")
 
     for token in [
+        "Runtime Owner",
+        "DEGRADED",
+        "auto_start_warning",
         "AI Provider Registry",
         "/api/ai-providers",
         "Activate",

@@ -33,6 +33,10 @@ import type {
 	WorkspacePackageReadinessItem,
 	WorkspacePromptPreviewResult,
 } from "../types";
+import {
+	getTelemetryPollIntervalMs,
+	useAdaptivePolling,
+} from "../utils/polling";
 
 type OperatorNoticeTone = "idle" | "info" | "success" | "error";
 
@@ -310,21 +314,34 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			return;
 		}
 
+		let inFlight = false;
 		const loadModeRequests = () => {
-			fetchAPI<TelemetryRequest[]>("/api/telemetry/requests?limit=120")
-				.then((items) => {
-					const filtered = items.filter(
-						(trace) =>
-							trace.request_type === "MANUAL_FLOW_JOB" && trace.mode === mode,
-					);
-					setModeRequests(filtered);
-				})
-				.catch(() => {});
+			if (document.hidden || inFlight) {
+				return;
+			}
+			inFlight = true;
+			void fetchAPI<TelemetryRequest[]>(
+				`/api/telemetry/requests?limit=60&request_type=MANUAL_FLOW_JOB&mode=${encodeURIComponent(mode)}`,
+			)
+				.then(setModeRequests)
+				.catch(() => {})
+				.finally(() => {
+					inFlight = false;
+				});
+		};
+		const handleVisibilityChange = () => {
+			if (!document.hidden) {
+				loadModeRequests();
+			}
 		};
 
 		loadModeRequests();
-		const timer = window.setInterval(loadModeRequests, 4000);
-		return () => window.clearInterval(timer);
+		document.addEventListener("visibilitychange", handleVisibilityChange);
+		const timer = window.setInterval(loadModeRequests, 15000);
+		return () => {
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
+			window.clearInterval(timer);
+		};
 	}, [isPortalMode, mode]);
 
 	const handleExecute = async (data: WorkspaceExecutePayload) => {

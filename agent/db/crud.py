@@ -492,13 +492,24 @@ async def get_request_telemetry(request_id: str):
     return await _get("request_telemetry", "request_id", request_id)
 
 
-async def list_request_telemetry(project_id: str = None, video_id: str = None, limit: int = 50) -> list[dict]:
+async def list_request_telemetry(
+    project_id: str = None,
+    video_id: str = None,
+    limit: int = 50,
+    *,
+    request_type: str = None,
+    mode: str = None,
+) -> list[dict]:
     db = await get_db()
     q, params = "SELECT * FROM request_telemetry WHERE 1=1", []
     if project_id:
         q += " AND project_id=?"; params.append(project_id)
     if video_id:
         q += " AND video_id=?"; params.append(video_id)
+    if request_type:
+        q += " AND request_type=?"; params.append(request_type)
+    if mode:
+        q += " AND mode=?"; params.append(mode)
     q += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     cur = await db.execute(q, params)
