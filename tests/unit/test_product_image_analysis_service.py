@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from agent.models.product_intelligence import ProductIntelligenceImageAnalysis
 from agent.services.product_image_analysis_service import (
+    PROVIDER_EXECUTION_DISABLED_WARNING,
     SEMANTIC_IMAGE_WARNING,
     analyze_product_image_payload,
 )
@@ -134,3 +135,62 @@ def test_configured_provider_failure_falls_closed_to_analysis_failed(monkeypatch
     assert result["detected_package"] is None
     assert result["detected_text"] == []
     assert result["warnings"] == ["SEMANTIC_IMAGE_ANALYSIS_FAILED"]
+
+
+def test_provider_execution_can_be_disabled_for_non_explicit_read_paths(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service._configured_provider_name",
+        lambda: "anthropic",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service._analyze_with_provider",
+        lambda provider, payload, metadata: (_ for _ in ()).throw(
+            AssertionError("provider should not execute when disabled")
+        ),
+    )
+
+    result = analyze_product_image_payload(
+        {
+            "id": "prod-006",
+            "raw_product_title": "Sabun Dobi Liquid",
+            "image_url": "https://example.com/detergent.jpg",
+        },
+        allow_provider_execution=False,
+    )
+
+    assert result["status"] == "ANALYSIS_SKIPPED"
+    assert result["provider"] == "execution_disabled"
+    assert result["detected_package"] is None
+    assert PROVIDER_EXECUTION_DISABLED_WARNING in result["warnings"]
+    assert "provider_execution:disabled" in result["evidence"]
+    assert result["metadata"]["configured_provider"] == "anthropic"
+
+
+def test_vision_lane_toggle_can_disable_provider_execution_even_for_explicit_analysis(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service._configured_provider_name",
+        lambda: "anthropic",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.is_lane_execution_enabled",
+        lambda lane: False,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service._analyze_with_provider",
+        lambda provider, payload, metadata: (_ for _ in ()).throw(
+            AssertionError("provider should not execute when vision lane is disabled")
+        ),
+    )
+
+    result = analyze_product_image_payload(
+        {
+            "id": "prod-007",
+            "raw_product_title": "Hydrating Face Mist",
+            "image_url": "https://example.com/product.jpg",
+        }
+    )
+
+    assert result["status"] == "ANALYSIS_SKIPPED"
+    assert result["provider"] == "execution_disabled"
+    assert "VISION_PROVIDER_EXECUTION_DISABLED" in result["warnings"]
+    assert "provider_execution:vision_lane_disabled" in result["evidence"]

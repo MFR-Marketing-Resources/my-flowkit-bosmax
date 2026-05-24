@@ -1003,7 +1003,10 @@ def _resolve_sales_metrics(product: dict[str, Any]) -> tuple[ProductIntelligence
 
 
 def _resolve_image_analysis(product: dict[str, Any]) -> dict[str, Any]:
-    return analyze_product_image_payload(product)
+    return analyze_product_image_payload(
+        product,
+        allow_provider_execution=product.get("allow_live_image_analysis") is True,
+    )
 
 
 IMAGE_PACKAGE_FORM_MAP = {
@@ -1478,6 +1481,8 @@ def resolve_product_intelligence_profile(product: dict[str, Any]) -> dict[str, A
     
     if image_analysis.get("status") == "VISION_PROVIDER_NOT_CONFIGURED":
         provenance.append("image_analysis:provider_not_configured")
+    elif image_analysis.get("status") == "ANALYSIS_SKIPPED":
+        provenance.append("image_analysis:provider_execution_disabled")
     elif image_analysis.get("status") == "IMAGE_MISSING":
         warnings.append("IMAGE_NOT_AVAILABLE")
         warnings.append("IMAGE_REFERENCE_REQUIRED")

@@ -92,6 +92,17 @@ function Test-IsBosmaxAgentCommandLine {
 }
 
 function Get-BosmaxBackendProcess {
+    $processes = @(Get-BosmaxBackendProcesses)
+    if ($processes.Count -gt 0) {
+        return $processes[0]
+    }
+
+    return $null
+}
+
+function Get-BosmaxBackendProcesses {
+    $candidates = @()
+
     if (Test-Path $script:LocalAgentPidFile) {
         $pidText = (Get-Content $script:LocalAgentPidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
         $pidValue = 0
@@ -100,7 +111,7 @@ function Get-BosmaxBackendProcess {
             if ($process) {
                 $commandLine = Get-ProcessCommandLine -ProcessId $pidValue
                 if (Test-IsBosmaxAgentCommandLine -CommandLine $commandLine) {
-                    return $process
+                    $candidates += $process
                 }
             }
         }
@@ -110,11 +121,17 @@ function Get-BosmaxBackendProcess {
     if ($portOwner) {
         $commandLine = Get-ProcessCommandLine -ProcessId $portOwner.OwningProcess
         if (Test-IsBosmaxAgentCommandLine -CommandLine $commandLine) {
-            return Get-Process -Id $portOwner.OwningProcess -ErrorAction SilentlyContinue
+            $process = Get-Process -Id $portOwner.OwningProcess -ErrorAction SilentlyContinue
+            if ($process) {
+                $candidates += $process
+            }
         }
     }
 
-    return $null
+    return @(
+        $candidates |
+            Sort-Object -Property Id -Unique
+    )
 }
 
 function Write-LocalAgentPid {
@@ -130,9 +147,17 @@ function Clear-LocalAgentPid {
 }
 
 function Stop-BosmaxBackendProcess {
-    $process = Get-BosmaxBackendProcess
-    if ($process) {
-        Stop-Process -Id $process.Id -Force -ErrorAction Stop
+    $processes = @(Get-BosmaxBackendProcesses)
+    if ($processes.Count -gt 0) {
+        foreach ($process in $processes) {
+            try {
+                Stop-Process -Id $process.Id -Force -ErrorAction Stop
+            } catch {
+                if (Get-Process -Id $process.Id -ErrorAction SilentlyContinue) {
+                    throw
+                }
+            }
+        }
         Clear-LocalAgentPid
         return $true
     }

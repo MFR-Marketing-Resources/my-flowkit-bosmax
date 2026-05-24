@@ -128,6 +128,37 @@ function PageTitle() {
 	return <span>{label}</span>;
 }
 
+function EmbeddedRouteReporter() {
+	const location = useLocation();
+	const isPortalMode =
+		new URLSearchParams(location.search).get("portal") === "side";
+
+	useEffect(() => {
+		if (!isPortalMode || typeof window === "undefined") {
+			return;
+		}
+		if (
+			window.parent === window ||
+			typeof window.parent?.postMessage !== "function"
+		) {
+			return;
+		}
+
+		window.parent.postMessage(
+			{
+				type: "FLOWKIT_DASHBOARD_ROUTE_SYNC",
+				label: document.title || "Flow Kit",
+				url: `${window.location.origin}${location.pathname}${location.search}`,
+				pathname: location.pathname,
+				search: location.search,
+			},
+			window.location.origin,
+		);
+	}, [isPortalMode, location.pathname, location.search]);
+
+	return null;
+}
+
 function Layout() {
 	const location = useLocation();
 	const { isConnected } = useWebSocketContext();
@@ -212,6 +243,7 @@ function Layout() {
 
 	return (
 		<div className="relative flex h-screen overflow-hidden bg-slate-950 text-slate-200">
+			<EmbeddedRouteReporter />
 			{isCompactNav && navOpen && (
 				<button
 					type="button"
