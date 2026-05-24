@@ -55,6 +55,15 @@ AI_PROVIDER_SETTINGS_FILE = AI_PROVIDER_STATE_DIR / "ai-provider-settings.json"
 AI_PROVIDER_STATE_VERSION = 1
 ACTIVE_PROVIDER_ENV_VAR = "BOSMAX_ACTIVE_AI_PROVIDER"
 VISION_PROVIDER_ENV_VAR = "PRODUCT_IMAGE_VISION_PROVIDER"
+TEXT_ASSIST_PROVIDER_ENV_VAR = "PRODUCT_TEXT_ASSIST_PROVIDER"
+
+# Lane-level defaults: each lane has its own provider assignment, independent of
+# which provider the user has set as "active". This allows vision (Anthropic) and
+# text-assist (Qwen) to coexist without competing for a single global active slot.
+PROVIDER_LANE_DEFAULTS: dict[str, str] = {
+    "vision": "anthropic",
+    "text_assist": "qwen",
+}
 
 
 def _iso_now() -> str:
@@ -150,6 +159,24 @@ def get_provider_api_key(provider_id: str) -> str:
     return str(os.environ.get(PROVIDER_ENV_VARS[normalized], "")).strip()
 
 
+def get_lane_provider(lane: str) -> str | None:
+    """Return the provider ID assigned to a given lane, or None if lane is unknown."""
+    return PROVIDER_LANE_DEFAULTS.get(lane)
+
+
+def get_lane_api_key(lane: str) -> str | None:
+    """Return the stored API key for the provider assigned to a given lane.
+    Fail-closed: returns None if lane unknown, provider unknown, or key not stored."""
+    provider_id = get_lane_provider(lane)
+    if not provider_id:
+        return None
+    try:
+        key = get_provider_api_key(provider_id)
+        return key or None
+    except (ValueError, Exception):
+        return None
+
+
 def get_active_provider_id() -> ProviderId | None:
     payload = _load_payload()
     active_provider = payload.get("active_provider")
@@ -178,10 +205,19 @@ def apply_runtime_provider_environment(payload: dict | None = None) -> None:
     else:
         os.environ.pop(ACTIVE_PROVIDER_ENV_VAR, None)
 
-    if active_provider == "anthropic" and get_provider_api_key("anthropic"):
-        os.environ[VISION_PROVIDER_ENV_VAR] = "anthropic"
+    # Vision lane — always anthropic by default; independent of active_provider
+    vision_key = get_lane_api_key("vision")
+    if vision_key:
+        os.environ[VISION_PROVIDER_ENV_VAR] = PROVIDER_LANE_DEFAULTS["vision"]
     else:
         os.environ.pop(VISION_PROVIDER_ENV_VAR, None)
+
+    # Text-assist lane — always qwen by default; independent of active_provider
+    text_key = get_lane_api_key("text_assist")
+    if text_key:
+        os.environ[TEXT_ASSIST_PROVIDER_ENV_VAR] = PROVIDER_LANE_DEFAULTS["text_assist"]
+    else:
+        os.environ.pop(TEXT_ASSIST_PROVIDER_ENV_VAR, None)
 
 
 def summarize_provider_settings() -> dict:

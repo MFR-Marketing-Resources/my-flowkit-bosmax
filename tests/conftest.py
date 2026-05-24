@@ -4,15 +4,25 @@ import pytest
 from agent.config import DB_PATH
 from agent.db.schema import init_db, close_db
 
+def _unlink_db_safe() -> None:
+    """Remove the test DB file, tolerating WinError 32 (file still held by OS)."""
+    if DB_PATH == ":memory:":
+        return
+    if not (getattr(DB_PATH, "exists", None) and DB_PATH.exists()):
+        return
+    try:
+        DB_PATH.unlink()
+    except PermissionError:
+        pass
+
+
 @pytest.fixture(autouse=True)
 async def db_setup():
-    if DB_PATH != ":memory:" and getattr(DB_PATH, "exists", None) and DB_PATH.exists():
-        DB_PATH.unlink()
+    _unlink_db_safe()
     await init_db()
     yield
     await close_db()
-    if DB_PATH != ":memory:" and getattr(DB_PATH, "exists", None) and DB_PATH.exists():
-        DB_PATH.unlink()
+    _unlink_db_safe()
 
 
 @pytest.fixture

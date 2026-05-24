@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 
 from agent.models.product_intelligence import ProductIntelligenceImageAnalysis
 from agent.services.product_image_analysis_service import (
@@ -6,8 +7,14 @@ from agent.services.product_image_analysis_service import (
     analyze_product_image_payload,
 )
 
+_no_vision_key = patch(
+    "agent.services.product_image_analysis_service.get_lane_api_key",
+    return_value=None,
+)
 
-def test_image_url_without_provider_returns_provider_not_configured_and_no_fake_detections():
+
+@_no_vision_key
+def test_image_url_without_provider_returns_provider_not_configured_and_no_fake_detections(_mock):
     result = analyze_product_image_payload(
         {
             "id": "prod-001",
@@ -38,7 +45,8 @@ def test_product_with_no_image_returns_image_missing():
     assert result["detected_text"] == []
 
 
-def test_metadata_only_mode_does_not_invent_package_or_text(tmp_path: Path):
+@_no_vision_key
+def test_metadata_only_mode_does_not_invent_package_or_text(_mock, tmp_path: Path):
     image_path = tmp_path / "product.jpg"
     image_path.write_bytes(b"fake-binary-jpg")
 

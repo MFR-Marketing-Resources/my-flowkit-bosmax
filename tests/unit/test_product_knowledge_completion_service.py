@@ -4,10 +4,21 @@ from agent.services.product_knowledge_service import complete_product_knowledge
 
 
 @pytest.fixture(autouse=True)
-def _disable_live_qwen_provider(monkeypatch):
+def _disable_live_providers(monkeypatch):
+    """Isolate all unit tests from live API keys stored on the machine.
+    Patches both the old get_provider_api_key (legacy callers) and the new
+    lane-based get_lane_api_key in both consuming services."""
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.get_provider_api_key",
         lambda provider_id: "",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_lane_api_key",
+        lambda lane: None,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_api_key",
+        lambda lane: None,
     )
 
 def test_complete_product_knowledge_basic():
@@ -241,8 +252,8 @@ def test_complete_product_knowledge_qwen_enriches_usp_list_for_manual_lane(monke
             }
 
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_provider_api_key",
-        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+        "agent.services.product_knowledge_service.get_lane_api_key",
+        lambda lane: "sk-qwen" if lane == "text_assist" else None,
     )
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.httpx.post",
@@ -311,8 +322,8 @@ def test_complete_product_knowledge_qwen_falls_back_to_next_region(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_provider_api_key",
-        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+        "agent.services.product_knowledge_service.get_lane_api_key",
+        lambda lane: "sk-qwen" if lane == "text_assist" else None,
     )
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.httpx.post",
@@ -358,8 +369,8 @@ def test_complete_product_knowledge_qwen_retries_next_region_after_request_error
         return _MockResponse()
 
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_provider_api_key",
-        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+        "agent.services.product_knowledge_service.get_lane_api_key",
+        lambda lane: "sk-qwen" if lane == "text_assist" else None,
     )
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.httpx.post",
