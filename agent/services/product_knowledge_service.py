@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+import os
 import uuid
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from agent.models.product_knowledge import (
     ModeReadiness,
@@ -26,6 +30,18 @@ from agent.config import BASE_DIR
 from agent.services.registration_hook_cta_generation_service import (
     generate_registration_hook_cta,
 )
+from agent.services.ai_provider_settings_service import get_provider_api_key
+
+
+LOGGER = logging.getLogger(__name__)
+QWEN_TEXT_BASE_URL = str(os.environ.get("DASHSCOPE_COMPAT_BASE_URL") or "").strip().rstrip("/")
+QWEN_TEXT_MODEL = str(os.environ.get("QWEN_TEXT_MODEL") or "qwen-plus").strip() or "qwen-plus"
+QWEN_TEXT_TIMEOUT_SECONDS = 20.0
+QWEN_FALLBACK_BASE_URLS = [
+    "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+]
 
 
 AI_FORM_ACCEPTED_FORMATS = [
@@ -127,9 +143,15 @@ def complete_product_knowledge(
 
     # 1. Fact Extraction from messy text
     extracted_facts = _extract_facts(request)
+    qwen_usp_applied = False
 
     # 2. Claim Analysis first so manual-owned sensitive lanes can influence taxonomy safely.
     claim_gate, claim_tokens, claim_risk, copy_safety = _analyze_claims(request, extracted_facts)
+    if claim_gate == "CLAIM_SAFE":
+        qwen_usp_list = _extract_qwen_usp_suggestions(request, extracted_facts)
+        if qwen_usp_list:
+            extracted_facts["usp_list"] = qwen_usp_list
+            qwen_usp_applied = True
     taxonomy_candidate = _resolve_taxonomy_candidate(request, extracted_facts, claim_tokens)
 
     # 3. Build temporary product dictionary for inference
@@ -180,6 +202,13 @@ def complete_product_knowledge(
         if "TIKTOKSHOP_MANUAL_COMPLETION_REQUIRED" not in missing_evidence:
             missing_evidence.append("TIKTOKSHOP_MANUAL_COMPLETION_REQUIRED")
 
+    provenance = ["product_knowledge_completion_service:v1"]
+    if qwen_usp_applied:
+        provenance.append("qwen_usp_suggest_only:v1")
+
+    if qwen_usp_applied:
+        warnings.append("QWEN_USP_SUGGESTION_APPLIED")
+
     return ProductKnowledgeCompleteResponse(
         completion_status=completion_status,
         input_quality_status=input_quality,
@@ -226,7 +255,7 @@ def complete_product_knowledge(
         missing_required_evidence=missing_evidence,
         human_review_fields=_identify_review_fields(intelligence, physics, claim_gate),
         readiness_by_mode=readiness,
-        provenance=["product_knowledge_completion_service:v1"],
+        provenance=provenance,
         warnings=warnings + (["AFFILIATE_LANE_CONTAMINATION_RISK"] if _normalize_source_lane(request.source_lane) in ["FASTMOSS", "TIKTOKSHOP"] else []),
         errors=intelligence.get("errors", [])
     )
@@ -263,6 +292,178 @@ def _extract_facts(request: ProductKnowledgeCompleteRequest) -> dict[str, Any]:
         
     facts["usp_list"] = usp_list
     return facts
+
+
+def _build_qwen_usp_source_text(request: ProductKnowledgeCompleteRequest) -> str:
+    parts = [
+        request.product_name,
+        request.paste_anything_about_product,
+        request.ingredients_text,
+        request.usage_text,
+        request.target_customer_text,
+    ]
+    return "\n".join(str(part).strip() for part in parts if str(part or "").strip())
+
+
+def _extract_json_object_from_text(payload: str) -> dict[str, Any] | None:
+    text = str(payload or "").strip()
+    if not text:
+        return None
+
+    fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S | re.I)
+    if fenced_match:
+        try:
+            return json.loads(fenced_match.group(1))
+        except json.JSONDecodeError:
+            return None
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _extract_qwen_message_text(response_json: dict[str, Any]) -> str:
+    choices = list(response_json.get("choices") or [])
+    if not choices:
+        return ""
+    message = dict(choices[0].get("message") or {})
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and str(item.get("type") or "") == "text":
+                text = str(item.get("text") or "").strip()
+                if text:
+                    chunks.append(text)
+        return "\n".join(chunks)
+    return ""
+
+
+def _normalize_qwen_usp_list(payload: dict[str, Any] | None) -> list[str]:
+    if not payload:
+        return []
+    raw_items = payload.get("usp_list")
+    if not isinstance(raw_items, list):
+        return []
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        value = " ".join(str(item or "").split()).strip(" -•*")
+        if not value:
+            continue
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(value[:160])
+        if len(normalized) >= 5:
+            break
+    return normalized
+
+
+def _extract_qwen_usp_suggestions(
+    request: ProductKnowledgeCompleteRequest,
+    facts: dict[str, Any],
+) -> list[str]:
+    if facts.get("usp_list"):
+        return []
+    if request.benefits_text:
+        return []
+    if _normalize_source_lane(request.source_lane) not in {"OWNED", "MANUAL"}:
+        return []
+    if not str(request.paste_anything_about_product or "").strip():
+        return []
+
+    source_text = _build_qwen_usp_source_text(request)
+    if not source_text:
+        return []
+
+    api_key = get_provider_api_key("qwen")
+    if not api_key:
+        return []
+
+    payload = {
+        "model": QWEN_TEXT_MODEL,
+        "temperature": 0.1,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You extract only explicit product USP candidates from messy seller text. "
+                    "Return strict JSON with one key: usp_list. "
+                    "Rules: max 5 items, no invented facts, no medical or exaggerated claims unless the exact wording is already present, "
+                    "no category or taxonomy output, no markdown."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Extract explicit USP candidates from this product text.\n"
+                    "Return JSON only in the form {\"usp_list\": [\"...\"]}.\n\n"
+                    f"{source_text}"
+                ),
+            },
+        ],
+    }
+
+    last_error: Exception | None = None
+    for base_url in _iter_qwen_base_urls():
+        try:
+            response = httpx.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=QWEN_TEXT_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            response_json = response.json()
+            message_text = _extract_qwen_message_text(response_json)
+            return _normalize_qwen_usp_list(_extract_json_object_from_text(message_text))
+        except httpx.HTTPStatusError as exc:
+            last_error = exc
+            if exc.response.status_code in {401, 403, 404}:
+                continue
+            LOGGER.warning("Qwen USP extraction failed closed via %s: %s", base_url, exc)
+            return []
+        except httpx.RequestError as exc:
+            last_error = exc
+            continue
+        except Exception as exc:
+            last_error = exc
+            LOGGER.warning("Qwen USP extraction failed closed via %s: %s", base_url, exc)
+            return []
+
+    if last_error is not None:
+        LOGGER.warning("Qwen USP extraction failed closed after regional fallback: %s", last_error)
+    return []
+
+
+def _iter_qwen_base_urls() -> list[str]:
+    ordered: list[str] = []
+    if QWEN_TEXT_BASE_URL:
+        ordered.append(QWEN_TEXT_BASE_URL)
+    ordered.extend(QWEN_FALLBACK_BASE_URLS)
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in ordered:
+        normalized = str(item or "").strip().rstrip("/")
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
 
 
 _SIZE_PATTERNS = [
