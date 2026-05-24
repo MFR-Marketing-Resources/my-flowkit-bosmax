@@ -35,7 +35,7 @@ import {
 type StatusFilter = "ALL" | "WAITING" | "RUNNING" | "COMPLETED" | "FAILED";
 type ModeFilter = "ALL" | WorkspaceMode;
 
-const PAGE_SIZE_JOBS = 20
+const PAGE_SIZE_JOBS = 20;
 
 const MODE_FILTERS: Array<{ id: ModeFilter; label: string }> = [
 	{ id: "ALL", label: "All" },
@@ -199,6 +199,8 @@ export default function WorkspaceJobsPage() {
 		});
 	}, [modeFilter, products, requests, search, statusFilter]);
 
+	const paginationResetKey = `${modeFilter}|${statusFilter}|${search}`;
+
 	useEffect(() => {
 		if (!selectedRequestId && filteredRequests.length > 0) {
 			setSelectedRequestId(filteredRequests[0].request_id);
@@ -245,11 +247,21 @@ export default function WorkspaceJobsPage() {
 		};
 	}, [selectedRequestId]);
 
-	useEffect(() => { setCurrentPageJobs(1) }, [modeFilter, statusFilter, search])
+	useEffect(() => {
+		if (paginationResetKey) {
+			setCurrentPageJobs(1);
+		}
+	}, [paginationResetKey]);
 
-	const totalPagesJobs = Math.ceil(filteredRequests.length / PAGE_SIZE_JOBS)
-	const safePageJobs = Math.min(Math.max(1, currentPageJobs), totalPagesJobs || 1)
-	const paginatedRequests = filteredRequests.slice((safePageJobs - 1) * PAGE_SIZE_JOBS, safePageJobs * PAGE_SIZE_JOBS)
+	const totalPagesJobs = Math.ceil(filteredRequests.length / PAGE_SIZE_JOBS);
+	const safePageJobs = Math.min(
+		Math.max(1, currentPageJobs),
+		totalPagesJobs || 1,
+	);
+	const paginatedRequests = filteredRequests.slice(
+		(safePageJobs - 1) * PAGE_SIZE_JOBS,
+		safePageJobs * PAGE_SIZE_JOBS,
+	);
 
 	const selectedTrace =
 		filteredRequests.find((trace) => trace.request_id === selectedRequestId) ||
@@ -404,7 +416,10 @@ export default function WorkspaceJobsPage() {
 					</div>
 				</div>
 				<div className="mt-3 text-[11px] text-slate-400">
-					Showing {filteredRequests.length} request(s), newest first.{totalPagesJobs > 1 ? ` — Page ${safePageJobs} of ${totalPagesJobs}` : ""}
+					Showing {filteredRequests.length} request(s), newest first.
+					{totalPagesJobs > 1
+						? ` — Page ${safePageJobs} of ${totalPagesJobs}`
+						: ""}
 				</div>
 			</div>
 
@@ -508,25 +523,29 @@ export default function WorkspaceJobsPage() {
 						<div className="flex items-center justify-center gap-1 border-t border-slate-800 px-4 py-3">
 							<button
 								type="button"
-								onClick={() => setCurrentPageJobs(p => Math.max(1, p - 1))}
+								onClick={() => setCurrentPageJobs((p) => Math.max(1, p - 1))}
 								disabled={safePageJobs === 1}
 								className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 hover:text-blue-200 disabled:opacity-40 disabled:cursor-not-allowed"
 							>
 								Prev
 							</button>
-							{Array.from({ length: totalPagesJobs }, (_, i) => i + 1).map(pg => (
-								<button
-									key={pg}
-									type="button"
-									onClick={() => setCurrentPageJobs(pg)}
-									className={`w-7 h-7 rounded-full border text-[10px] font-semibold ${safePageJobs === pg ? "border-blue-400/60 bg-blue-500/10 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
-								>
-									{pg}
-								</button>
-							))}
+							{Array.from({ length: totalPagesJobs }, (_, i) => i + 1).map(
+								(pg) => (
+									<button
+										key={pg}
+										type="button"
+										onClick={() => setCurrentPageJobs(pg)}
+										className={`w-7 h-7 rounded-full border text-[10px] font-semibold ${safePageJobs === pg ? "border-blue-400/60 bg-blue-500/10 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
+									>
+										{pg}
+									</button>
+								),
+							)}
 							<button
 								type="button"
-								onClick={() => setCurrentPageJobs(p => Math.min(totalPagesJobs, p + 1))}
+								onClick={() =>
+									setCurrentPageJobs((p) => Math.min(totalPagesJobs, p + 1))
+								}
 								disabled={safePageJobs === totalPagesJobs}
 								className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 hover:text-blue-200 disabled:opacity-40 disabled:cursor-not-allowed"
 							>

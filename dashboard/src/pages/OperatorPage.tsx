@@ -762,79 +762,59 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			)}
 
 			{/* ── STEP 1: UGC Prompt Compiler Controls (video modes only) ── */}
-			{mode !== "IMG" && <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
-				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-					Step 1 — UGC Prompt Compiler Controls
-				</div>
-				<div className="mb-4 text-[11px] text-slate-400">
-					Configure all generation parameters first. These settings are compiled
-					into the final prompt when you press Generate.
-				</div>
-				<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-					<div className="space-y-2">
-						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-							Generation Mode
-						</div>
-						<select
-							title="Generation mode"
-							value={generationMode}
-							onChange={(e) =>
-								setGenerationMode(e.target.value as PromptGenerationMode)
-							}
-							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-						>
-							<option value="SINGLE">Single</option>
-							<option value="EXTEND">Extend</option>
-						</select>
+			{mode !== "IMG" && (
+				<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+						Step 1 — UGC Prompt Compiler Controls
 					</div>
-					<div className="space-y-2">
-						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-							Language
-						</div>
-						<select
-							title="Target language"
-							value={targetLanguage}
-							onChange={(e) =>
-								setTargetLanguage(e.target.value as PromptTargetLanguage)
-							}
-							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-						>
-							{languageOptions.map((language) => (
-								<option key={language} value={language}>
-									{language}
-								</option>
-							))}
-						</select>
+					<div className="mb-4 text-[11px] text-slate-400">
+						Configure all generation parameters first. These settings are
+						compiled into the final prompt when you press Generate.
 					</div>
-					<div className="space-y-2">
-						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-							Block 1 Duration
-						</div>
-						<select
-							title="Block 1 duration"
-							value={String(block1Duration)}
-							onChange={(e) => setBlock1Duration(Number(e.target.value))}
-							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-						>
-							{allowedDurations.map((duration) => (
-								<option key={duration} value={duration}>
-									{duration}s
-								</option>
-							))}
-						</select>
-						<div className="text-[11px] text-slate-400">
-							Recommended Shots: {shotPolicy1?.recommended ?? "-"}
-						</div>
-					</div>
-					{isExtendMode ? (
+					<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
 						<div className="space-y-2">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-								Block 2 Duration
+								Generation Mode
 							</div>
 							<select
-								title="Block 2 duration"
-								value={String(block2Duration)}
-								onChange={(e) => setBlock2Duration(Number(e.target.value))}
+								title="Generation mode"
+								value={generationMode}
+								onChange={(e) =>
+									setGenerationMode(e.target.value as PromptGenerationMode)
+								}
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+							>
+								<option value="SINGLE">Single</option>
+								<option value="EXTEND">Extend</option>
+							</select>
+						</div>
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								Language
+							</div>
+							<select
+								title="Target language"
+								value={targetLanguage}
+								onChange={(e) =>
+									setTargetLanguage(e.target.value as PromptTargetLanguage)
+								}
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+							>
+								{languageOptions.map((language) => (
+									<option key={language} value={language}>
+										{language}
+									</option>
+								))}
+							</select>
+						</div>
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								Block 1 Duration
+							</div>
+							<select
+								title="Block 1 duration"
+								value={String(block1Duration)}
+								onChange={(e) => setBlock1Duration(Number(e.target.value))}
 								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
 							>
 								{allowedDurations.map((duration) => (
@@ -844,109 +824,131 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								))}
 							</select>
 							<div className="text-[11px] text-slate-400">
-								Recommended Shots: {shotPolicy2?.recommended ?? "-"}
+								Recommended Shots: {shotPolicy1?.recommended ?? "-"}
 							</div>
 						</div>
-					) : (
+						{isExtendMode ? (
+							<div className="space-y-2">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Block 2 Duration
+								</div>
+								<select
+									title="Block 2 duration"
+									value={String(block2Duration)}
+									onChange={(e) => setBlock2Duration(Number(e.target.value))}
+									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+								>
+									{allowedDurations.map((duration) => (
+										<option key={duration} value={duration}>
+											{duration}s
+										</option>
+									))}
+								</select>
+								<div className="text-[11px] text-slate-400">
+									Recommended Shots: {shotPolicy2?.recommended ?? "-"}
+								</div>
+							</div>
+						) : (
+							<div className="space-y-2">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Block Structure
+								</div>
+								<div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-400">
+									Single mode compiles one anchor block. Switch Generation Mode
+									to Extend to unlock Block 2 duration.
+								</div>
+							</div>
+						)}
 						<div className="space-y-2">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-								Block Structure
+								Camera Style
 							</div>
-							<div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-400">
-								Single mode compiles one anchor block. Switch Generation Mode to
-								Extend to unlock Block 2 duration.
+							<select
+								title="Camera style"
+								value={cameraStyle}
+								onChange={(e) =>
+									setCameraStyle(e.target.value as PromptCameraStyle)
+								}
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+							>
+								<option value="UGC_IPHONE_RAW">UGC iPhone Raw</option>
+								<option value="CINEMATIC_PRO">Cinematic Pro</option>
+							</select>
+						</div>
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								Character Presence
 							</div>
+							<select
+								title="Character presence"
+								value={characterPresence}
+								onChange={(e) =>
+									setCharacterPresence(
+										e.target.value as PromptCharacterPresence,
+									)
+								}
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+							>
+								<option value="VISIBLE_CREATOR">Visible Creator</option>
+								<option value="FACELESS">Faceless</option>
+							</select>
+							{characterPresence === "FACELESS" ? (
+								<div className="text-[11px] text-amber-200">
+									Faceless is explicit-only and disables the visible creator
+									default.
+								</div>
+							) : null}
 						</div>
-					)}
-					<div className="space-y-2">
-						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-							Camera Style
-						</div>
-						<select
-							title="Camera style"
-							value={cameraStyle}
-							onChange={(e) =>
-								setCameraStyle(e.target.value as PromptCameraStyle)
-							}
-							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-						>
-							<option value="UGC_IPHONE_RAW">UGC iPhone Raw</option>
-							<option value="CINEMATIC_PRO">Cinematic Pro</option>
-						</select>
-					</div>
-					<div className="space-y-2">
-						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-							Character Presence
-						</div>
-						<select
-							title="Character presence"
-							value={characterPresence}
-							onChange={(e) =>
-								setCharacterPresence(e.target.value as PromptCharacterPresence)
-							}
-							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-						>
-							<option value="VISIBLE_CREATOR">Visible Creator</option>
-							<option value="FACELESS">Faceless</option>
-						</select>
-						{characterPresence === "FACELESS" ? (
-							<div className="text-[11px] text-amber-200">
-								Faceless is explicit-only and disables the visible creator
-								default.
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								Creator Persona
 							</div>
-						) : null}
+							<select
+								title="Creator persona"
+								value={creatorPersona}
+								onChange={(e) => setCreatorPersona(e.target.value)}
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+							>
+								{(promptConfig?.persona_registry ?? []).map((persona) => (
+									<option key={persona.id} value={persona.id}>
+										{persona.label}
+									</option>
+								))}
+							</select>
+						</div>
 					</div>
-					<div className="space-y-2">
-						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-							Creator Persona
+					<div className="mt-4 grid gap-3 md:grid-cols-2">
+						<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								Shot Plan
+							</div>
+							<div className="mt-2">
+								Block 1: {shotPolicy1?.recommended ?? "-"} recommended shot(s)
+							</div>
+							{generationMode === "EXTEND" ? (
+								<div className="mt-1">
+									Block 2: {shotPolicy2?.recommended ?? "-"} recommended shot(s)
+								</div>
+							) : null}
 						</div>
-						<select
-							title="Creator persona"
-							value={creatorPersona}
-							onChange={(e) => setCreatorPersona(e.target.value)}
-							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-						>
-							{(promptConfig?.persona_registry ?? []).map((persona) => (
-								<option key={persona.id} value={persona.id}>
-									{persona.label}
-								</option>
-							))}
-						</select>
-					</div>
-				</div>
-				<div className="mt-4 grid gap-3 md:grid-cols-2">
-					<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
-						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-							Shot Plan
-						</div>
-						<div className="mt-2">
-							Block 1: {shotPolicy1?.recommended ?? "-"} recommended shot(s)
-						</div>
-						{generationMode === "EXTEND" ? (
+						<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								Language Policy
+							</div>
+							<div className="mt-2">
+								{targetLanguage} body WPS:{" "}
+								{promptConfig?.language_wps_policy[targetLanguage]?.body_wps ??
+									"-"}
+							</div>
 							<div className="mt-1">
-								Block 2: {shotPolicy2?.recommended ?? "-"} recommended shot(s)
+								Absolute ceiling:{" "}
+								{promptConfig?.language_wps_policy[targetLanguage]
+									?.absolute_ceiling_wps ?? "-"}
 							</div>
-						) : null}
-					</div>
-					<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
-						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-							Language Policy
-						</div>
-						<div className="mt-2">
-							{targetLanguage} body WPS:{" "}
-							{promptConfig?.language_wps_policy[targetLanguage]?.body_wps ??
-								"-"}
-						</div>
-						<div className="mt-1">
-							Absolute ceiling:{" "}
-							{promptConfig?.language_wps_policy[targetLanguage]
-								?.absolute_ceiling_wps ?? "-"}
 						</div>
 					</div>
 				</div>
-			</div>
-
-			}
+			)}
 
 			{/* ── STEP 2: Select Product ────────────────────────────────── */}
 			<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
@@ -1091,165 +1093,170 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			</div>
 
 			{/* ── STEP 3: Load Package (video modes only) ──────────────── */}
-			{mode !== "IMG" && <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
-				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-					Step 3 — Load {mode} Package
+			{mode !== "IMG" && (
+				<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+						Step 3 — Load {mode} Package
+					</div>
+					<div className="mb-4 text-[11px] text-slate-400">
+						Fetch and compile the approved package for the selected product
+						using your configured settings above. Review the prompt preview
+						before generating.
+					</div>
+					<button
+						type="button"
+						onClick={() => void handleLoadPreview()}
+						disabled={
+							!selectedProduct ||
+							isLoadingPreview ||
+							isLoadingReadiness ||
+							selectedReadiness?.readiness_status !== "READY"
+						}
+						className="w-full rounded-xl border border-slate-600/40 bg-slate-700/30 px-4 py-3 text-sm font-bold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50 disabled:grayscale transition-all"
+					>
+						{isLoadingPreview ? `Loading ${mode} Package…` : loadPackageLabel}
+					</button>
+					{/* Preview result */}
+					{previewPackage ? (
+						<div className="mt-4 space-y-3">
+							<div className="grid gap-3 md:grid-cols-3">
+								<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+									<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+										Mode / Duration
+									</div>
+									<div className="mt-1 text-xs font-semibold text-white">
+										{previewPackage.generation_mode} ·{" "}
+										{previewPackage.total_duration_seconds}s
+									</div>
+								</div>
+								<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+									<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+										Prompt Fingerprint
+									</div>
+									<div className="mt-1 text-xs font-semibold text-white">
+										{previewPackage.prompt_fingerprint}
+									</div>
+								</div>
+								<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+									<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+										Blocks
+									</div>
+									<div className="mt-1 text-xs font-semibold text-white">
+										{previewPackage.prompt_blocks?.length ?? 0} block(s)
+										compiled
+									</div>
+								</div>
+							</div>
+							{previewPackage.warnings?.length ? (
+								<div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+									{previewPackage.warnings.join(" · ")}
+								</div>
+							) : null}
+							<div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
+								Package loaded. Review above then press Generate Final Prompt to
+								save.
+							</div>
+						</div>
+					) : null}
 				</div>
-				<div className="mb-4 text-[11px] text-slate-400">
-					Fetch and compile the approved package for the selected product using
-					your configured settings above. Review the prompt preview before
-					generating.
-				</div>
-				<button
-					type="button"
-					onClick={() => void handleLoadPreview()}
-					disabled={
-						!selectedProduct ||
-						isLoadingPreview ||
-						isLoadingReadiness ||
-						selectedReadiness?.readiness_status !== "READY"
-					}
-					className="w-full rounded-xl border border-slate-600/40 bg-slate-700/30 px-4 py-3 text-sm font-bold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50 disabled:grayscale transition-all"
-				>
-					{isLoadingPreview ? `Loading ${mode} Package…` : loadPackageLabel}
-				</button>
-				{/* Preview result */}
-				{previewPackage ? (
-					<div className="mt-4 space-y-3">
-						<div className="grid gap-3 md:grid-cols-3">
+			)}
+
+			{/* ── STEP 4: Generate Final Prompt (video modes only) ─────── */}
+			{mode !== "IMG" && (
+				<div className="mb-6 rounded-2xl border border-blue-500/20 bg-slate-900/40 p-4">
+					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+						Step 4 — Generate Final Prompt
+					</div>
+					<div className="mb-4 text-[11px] text-slate-400">
+						After loading the package above, press this button to compile and
+						save the final execution prompt to the workspace.
+					</div>
+					<button
+						type="button"
+						onClick={() => void handleGeneratePackage()}
+						disabled={!previewPackage || isLoadingPackage}
+						className="w-full rounded-xl border border-blue-500/40 bg-blue-500/15 px-4 py-3 text-sm font-bold text-blue-100 hover:bg-blue-500/25 disabled:opacity-50 disabled:grayscale transition-all"
+					>
+						{isLoadingPackage ? "Generating…" : generatePromptLabel}
+					</button>
+					{workspacePackage ? (
+						<div className="mt-4 grid gap-3 md:grid-cols-3">
 							<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
 								<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-									Mode / Duration
+									Execution Package
 								</div>
-								<div className="mt-1 text-xs font-semibold text-white">
-									{previewPackage.generation_mode} ·{" "}
-									{previewPackage.total_duration_seconds}s
+								<div className="mt-1 text-sm font-semibold text-white">
+									{workspacePackage.workspace_execution_package_id}
 								</div>
 							</div>
 							<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
 								<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
 									Prompt Fingerprint
 								</div>
-								<div className="mt-1 text-xs font-semibold text-white">
-									{previewPackage.prompt_fingerprint}
+								<div className="mt-1 text-sm font-semibold text-white">
+									{workspacePackage.prompt_fingerprint}
 								</div>
 							</div>
 							<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
 								<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-									Blocks
+									Manual Fallback
 								</div>
-								<div className="mt-1 text-xs font-semibold text-white">
-									{previewPackage.prompt_blocks?.length ?? 0} block(s) compiled
+								<div className="mt-1 text-sm font-semibold text-white">
+									{workspacePackage.manual_fallback.copy_prompt_available
+										? "Copy prompt + image ready"
+										: "Unavailable"}
 								</div>
 							</div>
 						</div>
-						{previewPackage.warnings?.length ? (
-							<div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
-								{previewPackage.warnings.join(" · ")}
+					) : null}
+					{/* Generate / Save Package — F2V and I2V */}
+					{workspacePackage &&
+					(mode === "F2V" || mode === "I2V") &&
+					!selectedProduct?.reference_only ? (
+						<div className="mt-4 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4">
+							<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-indigo-400 mb-3">
+								Prompt Handoff Bank
 							</div>
-						) : null}
-						<div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
-							Package loaded. Review above then press Generate Final Prompt to
-							save.
-						</div>
-					</div>
-				) : null}
-			</div>
-
-			}
-
-			{/* ── STEP 4: Generate Final Prompt (video modes only) ─────── */}
-			{mode !== "IMG" && <div className="mb-6 rounded-2xl border border-blue-500/20 bg-slate-900/40 p-4">
-				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-					Step 4 — Generate Final Prompt
-				</div>
-				<div className="mb-4 text-[11px] text-slate-400">
-					After loading the package above, press this button to compile and save
-					the final execution prompt to the workspace.
-				</div>
-				<button
-					type="button"
-					onClick={() => void handleGeneratePackage()}
-					disabled={!previewPackage || isLoadingPackage}
-					className="w-full rounded-xl border border-blue-500/40 bg-blue-500/15 px-4 py-3 text-sm font-bold text-blue-100 hover:bg-blue-500/25 disabled:opacity-50 disabled:grayscale transition-all"
-				>
-					{isLoadingPackage ? "Generating…" : generatePromptLabel}
-				</button>
-				{workspacePackage ? (
-					<div className="mt-4 grid gap-3 md:grid-cols-3">
-						<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
-							<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-								Execution Package
-							</div>
-							<div className="mt-1 text-sm font-semibold text-white">
-								{workspacePackage.workspace_execution_package_id}
-							</div>
-						</div>
-						<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
-							<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-								Prompt Fingerprint
-							</div>
-							<div className="mt-1 text-sm font-semibold text-white">
-								{workspacePackage.prompt_fingerprint}
-							</div>
-						</div>
-						<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
-							<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-								Manual Fallback
-							</div>
-							<div className="mt-1 text-sm font-semibold text-white">
-								{workspacePackage.manual_fallback.copy_prompt_available
-									? "Copy prompt + image ready"
-									: "Unavailable"}
-							</div>
-						</div>
-					</div>
-				) : null}
-				{/* Generate / Save Package — F2V and I2V */}
-				{workspacePackage &&
-				(mode === "F2V" || mode === "I2V") &&
-				!selectedProduct?.reference_only ? (
-					<div className="mt-4 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4">
-						<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-indigo-400 mb-3">
-							Prompt Handoff Bank
-						</div>
-						<div className="flex flex-wrap items-center gap-3">
-							<button
-								type="button"
-								onClick={() => void handleSaveGenerationPackage()}
-								disabled={isSavingPackage}
-								className="rounded-xl border border-indigo-500/40 bg-indigo-500/15 px-4 py-2.5 text-sm font-semibold text-indigo-100 hover:bg-indigo-500/25 disabled:opacity-50 transition-colors"
-							>
-								{isSavingPackage
-									? "Saving Package…"
-									: "Generate / Save Package"}
-							</button>
-							{savedGenPackage && (
-								<>
-									<span className="text-xs text-emerald-300 font-mono">
-										✓ Saved: {savedGenPackage.workspace_generation_package_id}
+							<div className="flex flex-wrap items-center gap-3">
+								<button
+									type="button"
+									onClick={() => void handleSaveGenerationPackage()}
+									disabled={isSavingPackage}
+									className="rounded-xl border border-indigo-500/40 bg-indigo-500/15 px-4 py-2.5 text-sm font-semibold text-indigo-100 hover:bg-indigo-500/25 disabled:opacity-50 transition-colors"
+								>
+									{isSavingPackage
+										? "Saving Package…"
+										: "Generate / Save Package"}
+								</button>
+								{savedGenPackage && (
+									<>
+										<span className="text-xs text-emerald-300 font-mono">
+											✓ Saved: {savedGenPackage.workspace_generation_package_id}
+										</span>
+										<button
+											type="button"
+											onClick={() => navigate(`/workspace/generation-packages`)}
+											className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-semibold text-slate-200 hover:bg-slate-800 transition-colors"
+										>
+											Open Prompt Handoff Bank
+										</button>
+									</>
+								)}
+								{savePackageError && (
+									<span className="text-xs text-red-400">
+										{savePackageError}
 									</span>
-									<button
-										type="button"
-										onClick={() => navigate(`/workspace/generation-packages`)}
-										className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-semibold text-slate-200 hover:bg-slate-800 transition-colors"
-									>
-										Open Prompt Handoff Bank
-									</button>
-								</>
-							)}
-							{savePackageError && (
-								<span className="text-xs text-red-400">{savePackageError}</span>
-							)}
+								)}
+							</div>
+							<p className="mt-2 text-[11px] text-indigo-300/60">
+								Saves a durable package with final prompt, selected assets,
+								upload order, and DOM scaffold. DOM execution is not triggered.
+								package_id is stored in Prompt Handoff Bank.
+							</p>
 						</div>
-						<p className="mt-2 text-[11px] text-indigo-300/60">
-							Saves a durable package with final prompt, selected assets, upload
-							order, and DOM scaffold. DOM execution is not triggered.
-							package_id is stored in Prompt Handoff Bank.
-						</p>
-					</div>
-				) : null}
-			</div>}
+					) : null}
+				</div>
+			)}
 
 			<div
 				className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${notice.tone === "error" ? "border-red-500/40 bg-red-500/10 text-red-200" : notice.tone === "success" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : notice.tone === "info" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : "border-slate-800 bg-slate-900/40 text-slate-300"}`}

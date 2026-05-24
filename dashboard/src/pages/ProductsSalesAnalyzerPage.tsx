@@ -35,7 +35,11 @@ type ProductSortMode =
 	| "SHOP_TOTAL_SOLD_DESC"
 	| "PRODUCT_NAME_ASC";
 type LifecycleFilterMode = "ACTIVE_ONLY" | "INCLUDE_ARCHIVED" | "ARCHIVED_ONLY";
-type LifecycleActionType = "ARCHIVE" | "UNARCHIVE" | "DELETE_TEST_ROW" | "DELETE_PRODUCT";
+type LifecycleActionType =
+	| "ARCHIVE"
+	| "UNARCHIVE"
+	| "DELETE_TEST_ROW"
+	| "DELETE_PRODUCT";
 type FastMossImportFieldKey =
 	| "creator_search"
 	| "export_ad_list"
@@ -65,31 +69,55 @@ const FASTMOSS_IMPORT_FIELDS: Array<{
 ];
 
 const PHYSICS_ENGINE_KEYWORD: Record<string, string> = {
-	BEAUTY_BOTTLE_OR_TUBE: "EXACTLY beauty bottle or tube size. Fits naturally in one hand — hold upright with label facing camera.",
-	SKINCARE_JAR_OR_TUBE: "EXACTLY skincare jar or tube size. Compact — hold in one hand with lid or label visible.",
+	BEAUTY_BOTTLE_OR_TUBE:
+		"EXACTLY beauty bottle or tube size. Fits naturally in one hand — hold upright with label facing camera.",
+	SKINCARE_JAR_OR_TUBE:
+		"EXACTLY skincare jar or tube size. Compact — hold in one hand with lid or label visible.",
 	A: "EXACTLY perfume/fragrance bottle size. Small, elegant — display upright with nozzle and label visible.",
-	SUPPLEMENT_BOTTLE: "EXACTLY supplement bottle size. Cylindrical, label-forward — hold upright in one hand.",
-	MEDICAL_TEST_KIT: "EXACTLY medical test kit size. Compact box or pouch — hold flat in one hand, label facing camera.",
-	FOOD_PACK_OR_JAR: "EXACTLY food pack or jar size. Sealed — hold upright in one hand with label clearly visible.",
+	SUPPLEMENT_BOTTLE:
+		"EXACTLY supplement bottle size. Cylindrical, label-forward — hold upright in one hand.",
+	MEDICAL_TEST_KIT:
+		"EXACTLY medical test kit size. Compact box or pouch — hold flat in one hand, label facing camera.",
+	FOOD_PACK_OR_JAR:
+		"EXACTLY food pack or jar size. Sealed — hold upright in one hand with label clearly visible.",
 	B: "EXACTLY food jar or bottle size. Hold upright in one hand, label facing camera.",
-	HOUSEHOLD_PACKAGED_GOODS: "EXACTLY household packaged goods size. Boxy or bottle-shaped — hold upright with branding facing camera.",
-	LAUNDRY_LIQUID_REFILL: "EXACTLY laundry liquid refill pack size. Soft flexible pouch — hold upright with spout pointing up.",
-	FABRIC_SOFTENER_LIQUID: "EXACTLY fabric softener bottle size. Hold upright in one hand, label facing camera.",
-	RIGID_CONTAINER: "EXACTLY rigid container size. Firm, boxy or cylindrical — hold upright with label facing camera.",
-	KITCHEN_TOOL: "EXACTLY kitchen tool size. Handle-forward — demonstrate grip naturally in one hand.",
-	ELECTRONICS_SMALL_DEVICE: "EXACTLY small electronics device size. Compact — hold in one hand with screen or brand facing camera.",
-	STATIONERY_PACK: "EXACTLY stationery pack size. Flat or slim — hold in one hand with label visible.",
-	PAPER_GOODS: "EXACTLY paper goods pack size. Flat, rectangular — hold naturally with branding facing camera.",
-	TOY_BOX_OR_PACK: "EXACTLY toy box or pack size. Boxy — hold upright with front panel facing camera.",
-	SMALL_RIGID_DECOR: "EXACTLY small decorative item size. Display upright or flat in one hand with design visible.",
-	FASHION_ACCESSORY_SMALL_OBJECT: "EXACTLY small fashion accessory size. Compact — hold or wear naturally, item clearly visible.",
-	WIPES_SOFT_PACK: "EXACTLY wipes soft pack size. Flat, flexible pouch — hold in one hand with label facing camera.",
-	SOFT_PACKAGED_GOODS: "EXACTLY soft-packaged goods size. Flexible pouch or sachet — hold upright in one hand.",
+	HOUSEHOLD_PACKAGED_GOODS:
+		"EXACTLY household packaged goods size. Boxy or bottle-shaped — hold upright with branding facing camera.",
+	LAUNDRY_LIQUID_REFILL:
+		"EXACTLY laundry liquid refill pack size. Soft flexible pouch — hold upright with spout pointing up.",
+	FABRIC_SOFTENER_LIQUID:
+		"EXACTLY fabric softener bottle size. Hold upright in one hand, label facing camera.",
+	RIGID_CONTAINER:
+		"EXACTLY rigid container size. Firm, boxy or cylindrical — hold upright with label facing camera.",
+	KITCHEN_TOOL:
+		"EXACTLY kitchen tool size. Handle-forward — demonstrate grip naturally in one hand.",
+	ELECTRONICS_SMALL_DEVICE:
+		"EXACTLY small electronics device size. Compact — hold in one hand with screen or brand facing camera.",
+	STATIONERY_PACK:
+		"EXACTLY stationery pack size. Flat or slim — hold in one hand with label visible.",
+	PAPER_GOODS:
+		"EXACTLY paper goods pack size. Flat, rectangular — hold naturally with branding facing camera.",
+	TOY_BOX_OR_PACK:
+		"EXACTLY toy box or pack size. Boxy — hold upright with front panel facing camera.",
+	SMALL_RIGID_DECOR:
+		"EXACTLY small decorative item size. Display upright or flat in one hand with design visible.",
+	FASHION_ACCESSORY_SMALL_OBJECT:
+		"EXACTLY small fashion accessory size. Compact — hold or wear naturally, item clearly visible.",
+	WIPES_SOFT_PACK:
+		"EXACTLY wipes soft pack size. Flat, flexible pouch — hold in one hand with label facing camera.",
+	SOFT_PACKAGED_GOODS:
+		"EXACTLY soft-packaged goods size. Flexible pouch or sachet — hold upright in one hand.",
 };
 
-function getEngineKeywordPreview(physicsClass: string | null | undefined): string {
-	if (!physicsClass) return "No physics class set — cannot preview engine keyword.";
-	return PHYSICS_ENGINE_KEYWORD[physicsClass] ?? `No mapping defined for physics class: ${physicsClass}`;
+function getEngineKeywordPreview(
+	physicsClass: string | null | undefined,
+): string {
+	if (!physicsClass)
+		return "No physics class set — cannot preview engine keyword.";
+	return (
+		PHYSICS_ENGINE_KEYWORD[physicsClass] ??
+		`No mapping defined for physics class: ${physicsClass}`
+	);
 }
 
 function emptyManualForm(): ManualFormState {
@@ -615,9 +643,13 @@ export default function ProductsSalesAnalyzerPage() {
 			setEditForm({
 				product_short_name: selectedProduct.product_short_name || "",
 				brand: selectedProduct.brand || "",
-				price: selectedProduct.price != null ? String(selectedProduct.price) : "",
+				price:
+					selectedProduct.price != null ? String(selectedProduct.price) : "",
 				commission_rate: selectedProduct.commission_rate || "",
-				commission_amount: selectedProduct.commission_amount != null ? String(selectedProduct.commission_amount) : "",
+				commission_amount:
+					selectedProduct.commission_amount != null
+						? String(selectedProduct.commission_amount)
+						: "",
 				physics_class: selectedProduct.physics_class || "",
 				copywriting_angle: selectedProduct.copywriting_angle || "",
 				silo: selectedProduct.silo || "",
@@ -1025,7 +1057,7 @@ export default function ProductsSalesAnalyzerPage() {
 					payload[key] = null;
 				} else if (key === "price" || key === "commission_amount") {
 					const n = parseFloat(val);
-					payload[key] = isNaN(n) ? null : n;
+					payload[key] = Number.isNaN(n) ? null : n;
 				} else {
 					payload[key] = val;
 				}
@@ -1034,7 +1066,9 @@ export default function ProductsSalesAnalyzerPage() {
 			await loadProducts();
 			setEditSuccess("Product updated successfully.");
 		} catch (err) {
-			setEditError(err instanceof Error ? err.message : "Failed to save changes");
+			setEditError(
+				err instanceof Error ? err.message : "Failed to save changes",
+			);
 		} finally {
 			setEditSaving(false);
 		}
@@ -1089,7 +1123,10 @@ export default function ProductsSalesAnalyzerPage() {
 				confirmation_phrase: lifecycleModal.confirmationPhrase.trim(),
 			});
 			await loadProducts();
-			if (lifecycleModal.action === "DELETE_TEST_ROW" || lifecycleModal.action === "DELETE_PRODUCT") {
+			if (
+				lifecycleModal.action === "DELETE_TEST_ROW" ||
+				lifecycleModal.action === "DELETE_PRODUCT"
+			) {
 				setSelectedId((current) =>
 					current === lifecycleModal.product.id ? null : current,
 				);
@@ -1144,9 +1181,17 @@ export default function ProductsSalesAnalyzerPage() {
 				lifecycleExpectedPhrase(lifecycleModal.action)
 		: false;
 
-	const totalPagesProducts = Math.ceil(filteredProducts.length / PAGE_SIZE_PRODUCTS);
-	const safePageProducts = Math.min(Math.max(1, currentPageProducts), totalPagesProducts || 1);
-	const paginatedProducts = filteredProducts.slice((safePageProducts - 1) * PAGE_SIZE_PRODUCTS, safePageProducts * PAGE_SIZE_PRODUCTS);
+	const totalPagesProducts = Math.ceil(
+		filteredProducts.length / PAGE_SIZE_PRODUCTS,
+	);
+	const safePageProducts = Math.min(
+		Math.max(1, currentPageProducts),
+		totalPagesProducts || 1,
+	);
+	const paginatedProducts = filteredProducts.slice(
+		(safePageProducts - 1) * PAGE_SIZE_PRODUCTS,
+		safePageProducts * PAGE_SIZE_PRODUCTS,
+	);
 
 	return (
 		<div className="grid min-h-full min-w-0 gap-4 p-4 md:p-6 lg:min-h-0 lg:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)] lg:overflow-hidden">
@@ -1179,7 +1224,10 @@ export default function ProductsSalesAnalyzerPage() {
 						<input
 							type="text"
 							value={search}
-							onChange={(e) => { setSearch(e.target.value); setCurrentPageProducts(1); }}
+							onChange={(e) => {
+								setSearch(e.target.value);
+								setCurrentPageProducts(1);
+							}}
 							placeholder="Search products..."
 							className="w-full bg-slate-900 border text-xs px-3 py-2 rounded"
 							style={{ borderColor: "var(--border)", color: "var(--text)" }}
@@ -1188,7 +1236,10 @@ export default function ProductsSalesAnalyzerPage() {
 						<div className="flex flex-col gap-2 sm:flex-row">
 							<select
 								value={sourceFilter}
-								onChange={(e) => { setSourceFilter(e.target.value); setCurrentPageProducts(1); }}
+								onChange={(e) => {
+									setSourceFilter(e.target.value);
+									setCurrentPageProducts(1);
+								}}
 								aria-label="Filter products by source"
 								className="min-w-0 flex-1 bg-slate-900 border text-xs px-2 py-1.5 rounded"
 								style={{ borderColor: "var(--border)", color: "var(--text)" }}
@@ -1232,7 +1283,10 @@ export default function ProductsSalesAnalyzerPage() {
 						<div className="grid grid-cols-1 gap-2 md:grid-cols-2">
 							<select
 								value={groupFilter}
-								onChange={(e) => { setGroupFilter(e.target.value); setCurrentPageProducts(1); }}
+								onChange={(e) => {
+									setGroupFilter(e.target.value);
+									setCurrentPageProducts(1);
+								}}
 								aria-label="Filter products by group"
 								className="bg-slate-900 border text-xs px-2 py-1.5 rounded"
 								style={{ borderColor: "var(--border)", color: "var(--text)" }}
@@ -1472,14 +1526,43 @@ export default function ProductsSalesAnalyzerPage() {
 					{totalPagesProducts > 1 && (
 						<div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-3">
 							<span className="text-[10px] text-slate-500">
-								{(safePageProducts - 1) * PAGE_SIZE_PRODUCTS + 1}–{Math.min(safePageProducts * PAGE_SIZE_PRODUCTS, filteredProducts.length)} of {filteredProducts.length}
+								{(safePageProducts - 1) * PAGE_SIZE_PRODUCTS + 1}–
+								{Math.min(
+									safePageProducts * PAGE_SIZE_PRODUCTS,
+									filteredProducts.length,
+								)}{" "}
+								of {filteredProducts.length}
 							</span>
 							<div className="flex items-center gap-1">
-								<button type="button" disabled={safePageProducts <= 1} onClick={() => setCurrentPageProducts(p => p - 1)} className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] font-bold text-slate-300 disabled:opacity-40">← Prev</button>
-								{Array.from({length: totalPagesProducts}, (_, i) => i + 1).map(n => (
-									<button key={n} type="button" onClick={() => setCurrentPageProducts(n)} className={`rounded border px-2 py-1 text-[10px] font-bold ${safePageProducts === n ? "border-blue-500/50 bg-blue-500/20 text-blue-300" : "border-slate-700 bg-slate-800 text-slate-400"}`}>{n}</button>
+								<button
+									type="button"
+									disabled={safePageProducts <= 1}
+									onClick={() => setCurrentPageProducts((p) => p - 1)}
+									className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] font-bold text-slate-300 disabled:opacity-40"
+								>
+									← Prev
+								</button>
+								{Array.from(
+									{ length: totalPagesProducts },
+									(_, i) => i + 1,
+								).map((n) => (
+									<button
+										key={n}
+										type="button"
+										onClick={() => setCurrentPageProducts(n)}
+										className={`rounded border px-2 py-1 text-[10px] font-bold ${safePageProducts === n ? "border-blue-500/50 bg-blue-500/20 text-blue-300" : "border-slate-700 bg-slate-800 text-slate-400"}`}
+									>
+										{n}
+									</button>
 								))}
-								<button type="button" disabled={safePageProducts >= totalPagesProducts} onClick={() => setCurrentPageProducts(p => p + 1)} className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] font-bold text-slate-300 disabled:opacity-40">Next →</button>
+								<button
+									type="button"
+									disabled={safePageProducts >= totalPagesProducts}
+									onClick={() => setCurrentPageProducts((p) => p + 1)}
+									className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] font-bold text-slate-300 disabled:opacity-40"
+								>
+									Next →
+								</button>
 							</div>
 						</div>
 					)}
@@ -1510,18 +1593,24 @@ export default function ProductsSalesAnalyzerPage() {
 						{selectedProduct && (
 							<div className="space-y-6">
 								<div className="flex flex-wrap gap-1 border-b border-slate-800 pb-px">
-									{(["DETAILS", "BRIEF", "VARIATIONS", "PREVIEW", "EDIT"] as const).map(
-										(tab) => (
-											<button
-												type="button"
-												key={tab}
-												onClick={() => setActiveTab(tab)}
-												className={`px-4 py-2 text-[11px] font-bold transition-all border-b-2 ${activeTab === tab ? "border-blue-500 text-blue-400 bg-blue-500/5" : "border-transparent text-slate-500 hover:text-slate-300"}`}
-											>
-												{tab}
-											</button>
-										),
-									)}
+									{(
+										[
+											"DETAILS",
+											"BRIEF",
+											"VARIATIONS",
+											"PREVIEW",
+											"EDIT",
+										] as const
+									).map((tab) => (
+										<button
+											type="button"
+											key={tab}
+											onClick={() => setActiveTab(tab)}
+											className={`px-4 py-2 text-[11px] font-bold transition-all border-b-2 ${activeTab === tab ? "border-blue-500 text-blue-400 bg-blue-500/5" : "border-transparent text-slate-500 hover:text-slate-300"}`}
+										>
+											{tab}
+										</button>
+									))}
 								</div>
 
 								{activeTab === "DETAILS" && (
@@ -1967,7 +2056,9 @@ export default function ProductsSalesAnalyzerPage() {
 														Engine Keyword Preview (compiled)
 													</div>
 													<div className="p-3 bg-emerald-950/30 rounded border border-emerald-500/20 text-xs font-mono text-emerald-300 leading-relaxed">
-														{getEngineKeywordPreview(selectedProduct.physics_class)}
+														{getEngineKeywordPreview(
+															selectedProduct.physics_class,
+														)}
 													</div>
 												</div>
 											</div>
@@ -2349,52 +2440,98 @@ export default function ProductsSalesAnalyzerPage() {
 
 								{activeTab === "EDIT" && selectedProduct && (
 									<form onSubmit={handleEditFormSubmit} className="space-y-4">
-										<div className="text-xs font-semibold uppercase tracking-wide" style={{color:"var(--muted)"}}>Edit Product Fields</div>
-										{editSuccess && <div className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-300">{editSuccess}</div>}
-										{editError && <div className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">{editError}</div>}
+										<div
+											className="text-xs font-semibold uppercase tracking-wide"
+											style={{ color: "var(--muted)" }}
+										>
+											Edit Product Fields
+										</div>
+										{editSuccess && (
+											<div className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-300">
+												{editSuccess}
+											</div>
+										)}
+										{editError && (
+											<div className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
+												{editError}
+											</div>
+										)}
 										<div className="grid grid-cols-2 gap-3">
 											{[
-												{key:"product_short_name",label:"Short Name"},
-												{key:"brand",label:"Brand"},
-												{key:"price",label:"Price"},
-												{key:"commission_rate",label:"Commission Rate"},
-												{key:"commission_amount",label:"Commission Amount"},
-												{key:"physics_class",label:"Physics Class"},
-												{key:"silo",label:"Silo"},
-												{key:"trigger_id",label:"Trigger ID"},
-												{key:"formula",label:"Formula"},
-												{key:"claim_risk_level",label:"Claim Risk Level"},
-												{key:"category",label:"Category"},
-												{key:"subcategory",label:"Subcategory"},
-												{key:"type",label:"Type"},
-											].map(({key,label}) => (
-												<div key={key}>
-													<label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide" style={{color:"var(--muted)"}}>{label}</label>
-													<input
-														value={editForm[key] ?? ""}
-														onChange={e => setEditForm(f => ({...f, [key]: e.target.value}))}
-														className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
-													/>
-												</div>
-											))}
+												{ key: "product_short_name", label: "Short Name" },
+												{ key: "brand", label: "Brand" },
+												{ key: "price", label: "Price" },
+												{ key: "commission_rate", label: "Commission Rate" },
+												{
+													key: "commission_amount",
+													label: "Commission Amount",
+												},
+												{ key: "physics_class", label: "Physics Class" },
+												{ key: "silo", label: "Silo" },
+												{ key: "trigger_id", label: "Trigger ID" },
+												{ key: "formula", label: "Formula" },
+												{ key: "claim_risk_level", label: "Claim Risk Level" },
+												{ key: "category", label: "Category" },
+												{ key: "subcategory", label: "Subcategory" },
+												{ key: "type", label: "Type" },
+											].map(({ key, label }) => {
+												const inputId = `edit-form-${key}`;
+												return (
+													<div key={key}>
+														<label
+															htmlFor={inputId}
+															className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide"
+															style={{ color: "var(--muted)" }}
+														>
+															{label}
+														</label>
+														<input
+															id={inputId}
+															value={editForm[key] ?? ""}
+															onChange={(e) =>
+																setEditForm((f) => ({
+																	...f,
+																	[key]: e.target.value,
+																}))
+															}
+															className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+														/>
+													</div>
+												);
+											})}
 										</div>
 										<div>
-											<label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide" style={{color:"var(--muted)"}}>Copywriting Angle</label>
+											<label
+												htmlFor="edit-form-copywriting-angle"
+												className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide"
+												style={{ color: "var(--muted)" }}
+											>
+												Copywriting Angle
+											</label>
 											<textarea
-												value={editForm["copywriting_angle"] ?? ""}
-												onChange={e => setEditForm(f => ({...f, copywriting_angle: e.target.value}))}
+												id="edit-form-copywriting-angle"
+												value={editForm.copywriting_angle ?? ""}
+												onChange={(e) =>
+													setEditForm((f) => ({
+														...f,
+														copywriting_angle: e.target.value,
+													}))
+												}
 												rows={3}
 												className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
 											/>
 										</div>
 										<div className="flex justify-end">
-											<button type="submit" disabled={editSaving} className="rounded border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-[11px] font-bold text-blue-300 disabled:opacity-50">
+											<button
+												type="submit"
+												disabled={editSaving}
+												className="rounded border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-[11px] font-bold text-blue-300 disabled:opacity-50"
+											>
 												{editSaving ? "Saving..." : "Save Changes"}
 											</button>
 										</div>
 									</form>
 								)}
-
 							</div>
 						)}
 						{!selectedProduct && !loading && (

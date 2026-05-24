@@ -1086,6 +1086,32 @@ export interface LocalAgentStatus {
 	registration: LocalAgentRegistration;
 }
 
+export type AIProviderId =
+	| "qwen"
+	| "anthropic"
+	| "openai"
+	| "gemini"
+	| "deepseek";
+
+export interface AIProviderSummary {
+	provider_id: AIProviderId;
+	label: string;
+	env_var: string;
+	has_key: boolean;
+	masked_key: string | null;
+	status: string;
+	is_active: boolean;
+	updated_at: string | null;
+	activated_at: string | null;
+	activation_scope: string;
+	current_capabilities: string[];
+}
+
+export interface AIProviderRegistry {
+	active_provider: AIProviderId | null;
+	providers: AIProviderSummary[];
+}
+
 export interface TelemetrySummary {
 	total_today: number;
 	queued: number;

@@ -329,11 +329,9 @@ const PKG_STATUS_COLORS: Record<string, string> = {
 }
 
 function RunPackagesPanel({
-  batchRunId,
   packages,
   loading,
 }: {
-  batchRunId: string
   packages: PhbPackage[] | undefined
   loading: boolean
 }) {
@@ -1065,7 +1063,6 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
                 </button>
                 {expandedRunId === currentRun.batch_run_id && (
                   <RunPackagesPanel
-                    batchRunId={currentRun.batch_run_id}
                     packages={runPackages[currentRun.batch_run_id]}
                     loading={runPkgLoading[currentRun.batch_run_id] ?? false}
                   />
@@ -1188,7 +1185,6 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
                 {expandedRunId === run.batch_run_id && (
                   <div className="border-t border-white/5 px-4 pb-3">
                     <RunPackagesPanel
-                      batchRunId={run.batch_run_id}
                       packages={runPackages[run.batch_run_id]}
                       loading={runPkgLoading[run.batch_run_id] ?? false}
                     />

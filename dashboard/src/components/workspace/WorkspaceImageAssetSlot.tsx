@@ -41,6 +41,11 @@ export default function WorkspaceImageAssetSlot({
 
 	const hasPreview = Boolean(asset?.previewUrl) && !previewFailed;
 	const showFallback = Boolean(asset) && (!asset?.previewUrl || previewFailed);
+	const handlePreviewOpen = () => {
+		if (asset?.previewUrl) {
+			onImageClick?.(asset.previewUrl);
+		}
+	};
 
 	return (
 		<div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
@@ -51,11 +56,20 @@ export default function WorkspaceImageAssetSlot({
 							src={asset?.previewUrl}
 							className={`h-full w-full object-cover animate-in fade-in duration-500 ${onImageClick ? "cursor-zoom-in" : ""}`}
 							alt={title}
-							onClick={() => asset?.previewUrl && onImageClick?.(asset.previewUrl)}
+							onClick={handlePreviewOpen}
+							onKeyDown={(event) => {
+								if (!onImageClick) return;
+								if (event.key === "Enter" || event.key === " ") {
+									event.preventDefault();
+									handlePreviewOpen();
+								}
+							}}
 							onError={() => {
 								setPreviewFailed(true);
 								onPreviewStateChange?.(true);
 							}}
+							role={onImageClick ? "button" : undefined}
+							tabIndex={onImageClick ? 0 : undefined}
 						/>
 						<div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/90 to-transparent p-3">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white">
