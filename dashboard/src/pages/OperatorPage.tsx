@@ -33,10 +33,6 @@ import type {
 	WorkspacePackageReadinessItem,
 	WorkspacePromptPreviewResult,
 } from "../types";
-import {
-	getTelemetryPollIntervalMs,
-	useAdaptivePolling,
-} from "../utils/polling";
 
 type OperatorNoticeTone = "idle" | "info" | "success" | "error";
 
@@ -681,6 +677,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const shotPolicy2 =
 		promptConfig?.shot_count_policy[String(block2Duration)] ?? null;
 	const isExtendMode = generationMode === "EXTEND";
+	const packageBridgeFlowLabelByMode: Record<WorkspaceMode, string> = {
+		T2V: "Load T2V Package + Generate Final Prompt",
+		F2V: "Load F2V Package + Generate Final Prompt",
+		I2V: "Load I2V Package + Generate Final Prompt",
+		IMG: "Load IMG Package + Generate Final Prompt",
+	};
 	const loadPackageLabel = previewPackage
 		? `Reload ${mode} Package`
 		: `Load ${mode} Package`;
@@ -870,10 +872,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
 									Block Structure
 								</div>
-								<div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-400">
-									Single mode compiles one anchor block. Switch Generation Mode
-									to Extend to unlock Block 2 duration.
-								</div>
+								<div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-400">Single mode compiles one anchor block. Switch Generation Mode to Extend to unlock Block 2 duration.</div>
 							</div>
 						)}
 						<div className="space-y-2">
@@ -969,6 +968,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 			{/* ── STEP 2: Select Product ────────────────────────────────── */}
 			<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+				<div className="mb-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-3 py-3 text-[11px] text-indigo-100">
+					<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-300">
+						Approved Package Bridge
+					</div>
+					<div className="mt-1 text-indigo-100/80">
+						{packageBridgeFlowLabelByMode[mode as WorkspaceMode]} stays a
+						two-step bridge here so package preview and saved execution payload
+						never get conflated.
+					</div>
+				</div>
 				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
 					Step 2 — Select Product
 				</div>
@@ -1007,10 +1016,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						<div className="flex flex-wrap gap-2">
 							<button
 								type="button"
-								onClick={() => navigate("/product-registration")}
+								onClick={() => navigate("/product-registration?tab=bulk")}
+								title="Convert / Register Product"
 								className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-[11px] font-semibold text-indigo-100"
 							>
-								Convert / Register Product
+								Open Bulk FastMoss Convert
 							</button>
 						</div>
 					</div>
