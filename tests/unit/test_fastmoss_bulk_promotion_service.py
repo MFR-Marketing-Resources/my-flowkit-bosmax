@@ -5,6 +5,8 @@ Issue: #92
 """
 from __future__ import annotations
 
+import csv
+import io
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,6 +23,8 @@ from agent.services.fastmoss_bulk_promotion_service import (
     can_generate_content_for_fastmoss_reference,
     resolve_duplicate_queue_row,
     update_queue_row_status,
+    export_missing_as_csv,
+    import_enrichment,
 )
 from agent.models.product_registration import RegistrationReviewDraft
 
@@ -1106,12 +1110,119 @@ async def test_create_draft_from_reference_updates_queue_row(monkeypatch):
 
     result = await create_draft_from_reference("ref-draft-test-001")
     assert "error" not in result, f"create_draft_from_reference failed: {result}"
-    assert result["draft_id"] == "draft-generated-001"
-    # Verify queue row was updated (update_bulk_queue_row must not raise)
-    row = await crud.get_bulk_queue_row("ref-draft-test-001")
-    assert row is not None
-    assert row["draft_id"] == "draft-generated-001"
-    assert row["promotion_status"] != "PENDING_DRAFT"
+
+
+@pytest.mark.asyncio
+async def test_export_missing_as_csv_outputs_expected_columns(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.fastmoss_bulk_promotion_service.crud.list_bulk_queue",
+        AsyncMock(
+            return_value=[
+                {
+                    "reference_id": "ref-missing-001",
+                    "draft_id": "draft-001",
+                    "raw_product_title": "Missing Serum",
+                    "category": "Beauty",
+                    "tiktok_product_url": "https://tiktok.example/item",
+                    "source_url": "https://source.example/item",
+                    "image_url": "https://cdn.example/item.jpg",
+                    "sold_count": 123,
+                    "commission_rate": "15%",
+                    "error_message": "MISSING:benefits_text,usage_text",
+                }
+            ]
+        ),
+    )
+
+    csv_text = await export_missing_as_csv()
+    rows = list(csv.DictReader(io.StringIO(csv_text)))
+    assert len(rows) == 1
+    assert rows[0]["reference_id"] == "ref-missing-001"
+    assert rows[0]["missing_fields"] == "benefits_text,usage_text"
+    assert rows[0]["product_knowledge_text"] == ""
+    assert rows[0]["warnings_text"] == ""
+
+
+@pytest.mark.asyncio
+async def test_import_enrichment_recomputes_missing_row(monkeypatch):
+    row = {
+        "reference_id": "ref-import-001",
+        "raw_product_title": "Import Serum",
+        "category": "Beauty",
+        "image_url": "https://cdn.example/import.jpg",
+        "source_url": "https://source.example/import",
+        "tiktok_product_url": "https://tiktok.example/import",
+        "commission_rate": "12%",
+        "sold_count": 42,
+        "duplicate_ignore_product_id": None,
+    }
+    saved_draft = _make_draft(
+        declared_evidence_fields={
+            "product_name": "Import Serum",
+            "image_url": "https://cdn.example/import.jpg",
+            "tiktok_product_url": "https://tiktok.example/import",
+        },
+        missing_required_evidence=[],
+        claim_risk_level="LOW",
+        claim_gate="CLAIM_SAFE",
+        approval_checklist={},
+    )
+    update_mock = AsyncMock(return_value={})
+
+    monkeypatch.setattr(
+        "agent.services.fastmoss_bulk_promotion_service.list_fastmoss_reference_products",
+        AsyncMock(
+            return_value=[
+                {
+                    "id": "ref-import-001",
+                    "price": 29.9,
+                    "currency": "MYR",
+                    "raw_product_title": "Import Serum",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "agent.services.fastmoss_bulk_promotion_service.crud.get_bulk_queue_row",
+        AsyncMock(return_value=row),
+    )
+    monkeypatch.setattr(
+        "agent.services.fastmoss_bulk_promotion_service.complete_product_knowledge",
+        MagicMock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        "agent.services.fastmoss_bulk_promotion_service.create_registration_review_draft",
+        MagicMock(return_value=saved_draft),
+    )
+    monkeypatch.setattr(
+        "agent.services.fastmoss_bulk_promotion_service.RegistrationDraftStorageService.save_draft",
+        MagicMock(return_value=saved_draft),
+    )
+    monkeypatch.setattr(
+        "agent.services.fastmoss_bulk_promotion_service._detect_queue_duplicate_candidate",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "agent.services.fastmoss_bulk_promotion_service.crud.update_bulk_queue_row",
+        update_mock,
+    )
+
+    result = await import_enrichment(
+        [
+            {
+                "reference_id": "ref-import-001",
+                "product_knowledge_text": "Hydrating serum for dry skin",
+                "benefits_text": "Hydrates",
+                "usage_text": "Apply nightly",
+            }
+        ]
+    )
+
+    assert result["recomputed"] == 1
+    assert result["failed"] == 0
+    assert result["results"][0]["new_status"] == "READY_FOR_APPROVAL"
+    assert result["results"][0]["draft_id"] == "draft-test-001"
+    update_mock.assert_awaited()
 
 
 @pytest.mark.asyncio

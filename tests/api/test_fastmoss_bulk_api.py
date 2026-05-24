@@ -289,6 +289,48 @@ def test_recompute_selected_empty_list_rejected(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# GET /fastmoss-bulk/queue/export-missing-csv
+# ---------------------------------------------------------------------------
+
+
+def test_export_missing_csv_success(client, monkeypatch):
+    mock = AsyncMock(return_value="reference_id,missing_fields\r\nref-1,benefits_text\r\n")
+    monkeypatch.setattr(f"{_SVC}.export_missing_as_csv", mock)
+    r = client.get("/fastmoss-bulk/queue/export-missing-csv")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    assert "missing_required_field.csv" in r.headers["content-disposition"]
+    assert "reference_id,missing_fields" in r.text
+
+
+# ---------------------------------------------------------------------------
+# POST /fastmoss-bulk/queue/import-enrichment
+# ---------------------------------------------------------------------------
+
+
+def test_import_enrichment_success(client, monkeypatch):
+    mock = AsyncMock(
+        return_value={"total": 1, "recomputed": 1, "skipped": 0, "failed": 0}
+    )
+    monkeypatch.setattr(f"{_SVC}.import_enrichment", mock)
+    r = client.post(
+        "/fastmoss-bulk/queue/import-enrichment",
+        json={"items": [{"reference_id": "ref-1", "benefits_text": "Hydrating"}]},
+    )
+    assert r.status_code == 200
+    assert r.json()["recomputed"] == 1
+    mock.assert_awaited_once_with(
+        [{"reference_id": "ref-1", "benefits_text": "Hydrating"}]
+    )
+
+
+def test_import_enrichment_empty_items_rejected(client, monkeypatch):
+    monkeypatch.setattr(f"{_SVC}.import_enrichment", AsyncMock(return_value={}))
+    r = client.post("/fastmoss-bulk/queue/import-enrichment", json={"items": []})
+    assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # POST /fastmoss-bulk/queue/duplicates/resolve
 # ---------------------------------------------------------------------------
 

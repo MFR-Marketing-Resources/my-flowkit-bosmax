@@ -17,6 +17,9 @@ Governance invariants enforced here:
 """
 from __future__ import annotations
 
+import asyncio
+import csv
+import io
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -828,6 +831,254 @@ async def recompute_selected(reference_ids: list[str]) -> dict[str, Any]:
         "image_missing": image_missing,
         "failed": failed,
         "skipped": skipped,
+        "results": results,
+    }
+
+
+_ENRICHMENT_EXPORT_FIELDS = [
+    "reference_id",
+    "draft_id",
+    "raw_product_title",
+    "category",
+    "tiktok_product_url",
+    "source_url",
+    "image_url",
+    "sold_count",
+    "commission_rate",
+    "missing_fields",
+    "product_knowledge_text",
+    "benefits_text",
+    "usage_text",
+    "target_customer_text",
+    "ingredients_text",
+    "warnings_text",
+]
+
+
+async def export_missing_as_csv() -> str:
+    rows = await crud.list_bulk_queue(
+        promotion_status="MISSING_REQUIRED_FIELD",
+        page_size=2000,
+    )
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=_ENRICHMENT_EXPORT_FIELDS,
+        extrasaction="ignore",
+    )
+    writer.writeheader()
+    for row in rows:
+        error_message = row.get("error_message") or ""
+        missing_fields = (
+            error_message[8:] if error_message.startswith("MISSING:") else error_message
+        )
+        writer.writerow(
+            {
+                "reference_id": row.get("reference_id", ""),
+                "draft_id": row.get("draft_id") or "",
+                "raw_product_title": row.get("raw_product_title", ""),
+                "category": row.get("category") or "",
+                "tiktok_product_url": row.get("tiktok_product_url") or "",
+                "source_url": row.get("source_url") or "",
+                "image_url": row.get("image_url") or "",
+                "sold_count": row.get("sold_count") or "",
+                "commission_rate": row.get("commission_rate") or "",
+                "missing_fields": missing_fields,
+                "product_knowledge_text": "",
+                "benefits_text": "",
+                "usage_text": "",
+                "target_customer_text": "",
+                "ingredients_text": "",
+                "warnings_text": "",
+            }
+        )
+    return output.getvalue()
+
+
+async def import_enrichment(items: list[dict[str, Any]]) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    recomputed = 0
+    skipped = 0
+    failed = 0
+    now = _now()
+
+    all_refs = await list_fastmoss_reference_products(limit=2000)
+    refs_by_id = {
+        _clean(ref.get("id")): ref for ref in all_refs if _clean(ref.get("id"))
+    }
+
+    for item in items:
+        reference_id = str(item.get("reference_id") or "").strip()
+        if not reference_id:
+            skipped += 1
+            results.append(
+                {
+                    "reference_id": reference_id,
+                    "outcome": "SKIPPED",
+                    "error": "MISSING_REFERENCE_ID",
+                }
+            )
+            continue
+
+        row = await crud.get_bulk_queue_row(reference_id)
+        if not row:
+            skipped += 1
+            results.append(
+                {
+                    "reference_id": reference_id,
+                    "outcome": "SKIPPED",
+                    "error": "NOT_IN_QUEUE",
+                }
+            )
+            continue
+
+        def _s(key: str) -> str | None:
+            value = str(item.get(key) or "").strip()
+            return value or None
+
+        raw_title = _clean(row.get("raw_product_title")) or ""
+        category = _clean(row.get("category")) or None
+        commission_rate = _clean(row.get("commission_rate")) or None
+        sold_count = row.get("sold_count")
+        ref = refs_by_id.get(reference_id) or {
+            "id": reference_id,
+            "raw_product_title": raw_title,
+        }
+
+        knowledge_parts = [f"Product: {raw_title}"] if raw_title else []
+        if category:
+            knowledge_parts.append(f"Category: {category}")
+        if sold_count:
+            knowledge_parts.append(f"Sold count: {sold_count}")
+        if commission_rate:
+            knowledge_parts.append(f"Commission: {commission_rate}")
+        base_knowledge = " | ".join(knowledge_parts) or None
+        extra_knowledge = _s("product_knowledge_text")
+        if base_knowledge and extra_knowledge:
+            paste_knowledge = base_knowledge + "\n\n" + extra_knowledge
+        elif extra_knowledge:
+            paste_knowledge = extra_knowledge
+        else:
+            paste_knowledge = base_knowledge
+
+        item_price_raw = item.get("price")
+        item_price: float | None = None
+        if item_price_raw is not None:
+            try:
+                item_price = float(item_price_raw)
+            except (TypeError, ValueError):
+                item_price = None
+        ref_price = ref.get("price")
+        resolved_price = item_price if item_price is not None else ref_price
+
+        completion_request = ProductKnowledgeCompleteRequest(
+            product_name=raw_title or None,
+            source_lane="FASTMOSS_PROMOTED",
+            paste_anything_about_product=paste_knowledge,
+            category=category,
+            image_url=_clean(row.get("image_url")) or None,
+            source_url=_clean(row.get("source_url")) or None,
+            tiktok_product_url=_clean(row.get("tiktok_product_url")) or None,
+            commission_rate=commission_rate,
+            price=resolved_price,
+            currency=row.get("currency") or ref.get("currency") or "MYR",
+            benefits_text=_s("benefits_text"),
+            usage_text=_s("usage_text"),
+            target_customer_text=_s("target_customer_text"),
+            ingredients_text=_s("ingredients_text"),
+            warnings_text=_s("warnings_text"),
+        )
+
+        try:
+            completion = await asyncio.to_thread(
+                complete_product_knowledge,
+                completion_request,
+            )
+            draft = create_registration_review_draft(completion)
+            draft = _apply_lineage_to_draft(draft, ref, reference_id)
+            draft.last_recomputed_at = now
+            draft.draft_freshness_status = "FRESH"
+
+            image_status, image_detail = derive_draft_image_asset_state(
+                draft.declared_evidence_fields
+            )
+            draft.image_asset_status = image_status
+            draft.image_asset_detail = image_detail
+
+            if draft.declared_evidence_fields.get("product_name"):
+                draft.approval_checklist["normalized_name"] = True
+
+            saved_draft = RegistrationDraftStorageService.save_draft(draft)
+            image_readiness = _derive_image_readiness(
+                draft.declared_evidence_fields.get("image_url")
+            )
+            claim_risk = draft.claim_risk_level or "HIGH"
+            missing = list(draft.missing_required_evidence or [])
+            duplicate_candidate = await _detect_queue_duplicate_candidate(
+                reference_id,
+                draft.declared_evidence_fields.get("product_name") or raw_title,
+                draft.declared_evidence_fields.get("tiktok_product_url"),
+                ignore_product_id=_clean(row.get("duplicate_ignore_product_id")) or None,
+            )
+            promotion_status = _classify_promotion_status(
+                claim_risk,
+                image_readiness,
+                missing,
+                duplicate_candidate is not None,
+            )
+
+            error_message: str | None = None
+            if promotion_status == "MISSING_REQUIRED_FIELD" and missing:
+                error_message = "MISSING:" + ",".join(missing[:10])
+            elif promotion_status == "DUPLICATE_SUSPECTED" and duplicate_candidate:
+                error_message = (
+                    "DUPLICATE_CANDIDATE:"
+                    f"{duplicate_candidate.get('id')}:{duplicate_candidate.get('match_reason')}"
+                )
+            elif promotion_status == "CLAIM_RISK":
+                claim_tokens_str = (
+                    ",".join(draft.claim_tokens[:5]) if draft.claim_tokens else ""
+                )
+                error_message = f"CLAIM_RISK:{draft.claim_gate}"
+                if claim_tokens_str:
+                    error_message += f":{claim_tokens_str}"
+
+            await crud.update_bulk_queue_row(
+                reference_id,
+                promotion_status=promotion_status,
+                draft_id=saved_draft.review_draft_id,
+                claim_risk_level=claim_risk,
+                image_readiness=image_readiness,
+                error_message=error_message,
+                updated_at=now,
+            )
+            recomputed += 1
+            results.append(
+                {
+                    "reference_id": reference_id,
+                    "outcome": "OK",
+                    "new_status": promotion_status,
+                    "draft_id": saved_draft.review_draft_id,
+                    "error": None,
+                }
+            )
+        except Exception as exc:
+            failed += 1
+            logger.exception("import_enrichment failed for %s: %s", reference_id, exc)
+            results.append(
+                {
+                    "reference_id": reference_id,
+                    "outcome": "ERROR",
+                    "new_status": None,
+                    "error": str(exc),
+                }
+            )
+
+    return {
+        "total": len(items),
+        "recomputed": recomputed,
+        "skipped": skipped,
+        "failed": failed,
         "results": results,
     }
 
