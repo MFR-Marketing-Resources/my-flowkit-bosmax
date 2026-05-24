@@ -185,7 +185,7 @@ function PromptCopyBox({
 					className={`flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${copied ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300" : "border-indigo-500/40 bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25"}`}
 				>
 					<ClipboardCopy size={11} />
-					{copied ? "Copied!" : "Copy Prompt"}
+					{copied ? "Copied!" : "Copy Final Prompt"}
 				</button>
 			</div>
 			<pre className="p-3 text-xs text-slate-300 font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto bg-slate-950/80">
@@ -303,18 +303,23 @@ function PackageDetailPanel({ pkg }: { pkg: WorkspaceGenerationPackage }) {
 
 					{/* Steps 2..N — Image slots */}
 					{allDisplayAssets.length > 0 && (
-						<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-							{allDisplayAssets.map((asset, i) => {
-								const isOptional = asset.slot_key === "end_frame" || asset.slot_key === "scene" || asset.slot_key === "style";
-								return (
-									<AssetCard
-										key={asset.slot_key}
-										asset={asset}
-										stepNumber={imageStepStart + i}
-										optional={isOptional}
-									/>
-								);
-							})}
+						<div className="pt-1 space-y-1.5">
+							<div className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">
+								Upload order
+							</div>
+							<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+								{allDisplayAssets.map((asset, i) => {
+									const isOptional = asset.slot_key === "end_frame" || asset.slot_key === "scene" || asset.slot_key === "style";
+									return (
+										<AssetCard
+											key={asset.slot_key}
+											asset={asset}
+											stepNumber={imageStepStart + i}
+											optional={isOptional}
+										/>
+									);
+								})}
+							</div>
 						</div>
 					)}
 

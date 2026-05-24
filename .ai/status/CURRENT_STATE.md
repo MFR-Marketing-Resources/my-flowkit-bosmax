@@ -14,6 +14,8 @@
 - Round 10 Product-to-Asset Generator merge: `2729d9004d4b6bd467102bea46ae75ed0e12ff31`
 - Repo memory/governance commit: `987ef372f08f2079f8bdac5550d6176e7f7d3695`
 - Governance reconciliation PR #23 merge: `779ef57b45cf624752d1c9d3df83921298b061b9`
+- Phase 3 upload decontamination merge: `e193938ef7bc6e878c7355f8dd7c0f1b2944119c` (PR #121)
+- Pre-Phase-4 verified `origin/main` HEAD: `1d4998d495d9b1e4da5a7f6cb801c32d9a14d264` (PR #126)
 
 ## Current Verified State
 - Architecture reset is confirmed.

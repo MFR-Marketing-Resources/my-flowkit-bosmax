@@ -1172,31 +1172,36 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					{isLoadingPackage ? "Generating…" : generatePromptLabel}
 				</button>
 				{workspacePackage ? (
-					<div className="mt-4 grid gap-3 md:grid-cols-3">
-						<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
-							<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-								Execution Package
-							</div>
-							<div className="mt-1 text-sm font-semibold text-white">
-								{workspacePackage.workspace_execution_package_id}
-							</div>
+					<div className="mt-4">
+						<div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+							Approved Package Bridge
 						</div>
-						<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
-							<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-								Prompt Fingerprint
+						<div className="grid gap-3 md:grid-cols-3">
+							<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+								<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+									Execution Package
+								</div>
+								<div className="mt-1 text-sm font-semibold text-white">
+									{workspacePackage.workspace_execution_package_id}
+								</div>
 							</div>
-							<div className="mt-1 text-sm font-semibold text-white">
-								{workspacePackage.prompt_fingerprint}
+							<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+								<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+									Prompt Fingerprint
+								</div>
+								<div className="mt-1 text-sm font-semibold text-white">
+									{workspacePackage.prompt_fingerprint}
+								</div>
 							</div>
-						</div>
-						<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
-							<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-								Manual Fallback
-							</div>
-							<div className="mt-1 text-sm font-semibold text-white">
-								{workspacePackage.manual_fallback.copy_prompt_available
-									? "Copy prompt + image ready"
-									: "Unavailable"}
+							<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+								<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+									Manual Fallback
+								</div>
+								<div className="mt-1 text-sm font-semibold text-white">
+									{workspacePackage.manual_fallback.copy_prompt_available
+										? "Copy prompt + image ready"
+										: "Unavailable"}
+								</div>
 							</div>
 						</div>
 					</div>

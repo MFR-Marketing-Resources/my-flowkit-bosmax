@@ -1705,13 +1705,14 @@ function broadcastStatus() {
 const BUILD_ID = "flowkit-google-flow-phase1a-2026-05-23";
 
 function buildStageTelemetryPayload(message = {}, contentHealth = null) {
+	const resolvedContentBuildId =
+		message.content_build_id || contentHealth?.content_build_id || null;
 	return {
 		request_id: message.request_id,
 		timestamp: message.timestamp || new Date().toISOString(),
 		git_sha: message.git_sha || BUILD_ID,
 		background_build_id: BUILD_ID,
-		content_build_id:
-			message.content_build_id || contentHealth?.content_build_id || BUILD_ID,
+		content_build_id: resolvedContentBuildId || BUILD_ID,
 		stage: message.stage,
 		checkpoint: message.checkpoint || message.stage,
 		status: message.status,
@@ -1724,9 +1725,9 @@ function buildStageTelemetryPayload(message = {}, contentHealth = null) {
 		build_match:
 			typeof message.build_match === "boolean"
 				? message.build_match
-				: (message.content_build_id ||
-						contentHealth?.content_build_id ||
-						BUILD_ID) === BUILD_ID,
+				: resolvedContentBuildId != null
+					? resolvedContentBuildId === BUILD_ID
+					: false,
 		selector_used: message.selector_used || null,
 		evidence_pointer: message.evidence_pointer || null,
 		fail_code: message.fail_code || null,
