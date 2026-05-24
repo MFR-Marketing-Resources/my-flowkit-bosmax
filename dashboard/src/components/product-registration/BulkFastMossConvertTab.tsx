@@ -77,10 +77,16 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 	const [actionMessage, setActionMessage] = useState<string | null>(null);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+	const [rowLoading, setRowLoading] = useState<Record<string, boolean>>({});
 	const [recomputeSummary, setRecomputeSummary] =
 		useState<BulkRecomputeSelectedResult | null>(null);
 	const [duplicateReviewResult, setDuplicateReviewResult] =
 		useState<BulkDuplicateResolveResult | null>(null);
+	const [detailRow, setDetailRow] = useState<FastmossBulkQueueRow | null>(null);
+	const [drawerResult, setDrawerResult] = useState<{
+		type: "ok" | "error";
+		msg: string;
+	} | null>(null);
 
 	// Filters
 	const [filterStatus, setFilterStatus] = useState<string>("");
@@ -153,6 +159,14 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 			return next;
 		});
 	}, [queue, selected]);
+
+	useEffect(() => {
+		if (!detailRow || !queue) return;
+		const fresh = queue.items.find(
+			(row) => row.reference_id === detailRow.reference_id,
+		);
+		if (fresh) setDetailRow(fresh);
+	}, [detailRow, queue]);
 
 	const clearSelection = () => {
 		setSelected(new Set());
@@ -385,6 +399,115 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 			duplicateLinkProductId.trim().length === 0) ||
 		(duplicateAction === "MARK_FALSE_DUPLICATE" &&
 			duplicatePhrase !== "CLEAR_DUPLICATE_FOR_REVIEW");
+
+	const handleRecomputeRow = async (referenceId: string) => {
+		setRowLoading((prev) => ({ ...prev, [referenceId]: true }));
+		setActionMessage(null);
+		setActionError(null);
+		setDrawerResult(null);
+		try {
+			const result = await postAPI<BulkRecomputeSelectedResult>(
+				"/api/fastmoss-bulk/queue/recompute-selected",
+				{ reference_ids: [referenceId] },
+			);
+			const item = result.results?.[0];
+			if (item?.error) {
+				const msg = `Recompute failed: ${item.error}`;
+				setActionError(msg);
+				setDrawerResult({ type: "error", msg });
+			} else {
+				const previousStatus = item?.previous_status ?? "?";
+				const nextStatus = item?.new_status ?? "?";
+				const nextError = item?.new_error_message ?? null;
+				let msg = `Recomputed: ${previousStatus} → ${nextStatus}`;
+				if (nextStatus === previousStatus && nextError) {
+					const missing = nextError.startsWith("MISSING:")
+						? nextError.slice(8).split(",").join(", ")
+						: nextError;
+					msg += `. Still blocked — missing: ${missing}`;
+				}
+				setActionMessage(msg);
+				setDrawerResult({
+					type: nextStatus === previousStatus ? "error" : "ok",
+					msg,
+				});
+			}
+			await fetchStats();
+			await fetchQueue();
+		} catch (error: unknown) {
+			const msg = getErrorMessage(error, "Recompute failed");
+			setActionError(msg);
+			setDrawerResult({ type: "error", msg });
+		} finally {
+			setRowLoading((prev) => ({ ...prev, [referenceId]: false }));
+		}
+	};
+
+	const handleSingleApprove = async (referenceId: string) => {
+		const confirmed = window.confirm(
+			`Approve this row and promote to Product Truth?\n\n${referenceId.slice(0, 12)}…`,
+		);
+		if (!confirmed) return;
+		setRowLoading((prev) => ({ ...prev, [referenceId]: true }));
+		setActionMessage(null);
+		setActionError(null);
+		setDrawerResult(null);
+		try {
+			const result = await postAPI<BulkApproveResult>(
+				"/api/fastmoss-bulk/queue/bulk-approve-drafts",
+				{
+					reference_ids: [referenceId],
+					confirmation_phrase: "PROMOTE_FASTMOSS_TO_PRODUCT_TRUTH",
+				},
+			);
+			const item = result.results?.[0];
+			if (item?.outcome === "APPROVED") {
+				const msg = "Approved → APPROVED";
+				setActionMessage(msg);
+				setDrawerResult({ type: "ok", msg });
+			} else {
+				const msg = `Approve skipped: ${item?.reason ?? "not ready"}`;
+				setActionError(msg);
+				setDrawerResult({ type: "error", msg });
+			}
+			await fetchStats();
+			await fetchQueue();
+		} catch (error: unknown) {
+			const msg = getErrorMessage(error, "Approve failed");
+			setActionError(msg);
+			setDrawerResult({ type: "error", msg });
+		} finally {
+			setRowLoading((prev) => ({ ...prev, [referenceId]: false }));
+		}
+	};
+
+	const handleRejectRow = async (row: FastmossBulkQueueRow) => {
+		const confirmed = window.confirm(
+			`Reject this product?\n\n"${row.raw_product_title.slice(0, 80)}"`,
+		);
+		if (!confirmed) return;
+		setRowLoading((prev) => ({ ...prev, [row.reference_id]: true }));
+		setActionMessage(null);
+		setActionError(null);
+		setDrawerResult(null);
+		try {
+			await patchAPI(`/api/fastmoss-bulk/queue/${row.reference_id}/status`, {
+				promotion_status: "REJECTED",
+			});
+			const msg = `Rejected ${row.reference_id}`;
+			setActionMessage(msg);
+			setDrawerResult({ type: "ok", msg });
+			await fetchStats();
+			await fetchQueue();
+			setDetailRow(null);
+		} catch (error: unknown) {
+			const msg = getErrorMessage(error, "Reject failed");
+			setActionError(msg);
+			setDrawerResult({ type: "error", msg });
+		} finally {
+			setRowLoading((prev) => ({ ...prev, [row.reference_id]: false }));
+		}
+	};
 
 	const openDuplicateReview = (row: FastmossBulkQueueRow) => {
 		setReviewingDuplicate(row);
@@ -874,12 +997,17 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 											/>
 										</td>
 										<td className="px-3 py-2 w-64">
-											<div
-												className="font-medium text-white truncate max-w-[240px]"
-												title={row.raw_product_title}
+											<button
+												type="button"
+												onClick={() => {
+													setDetailRow(row);
+													setDrawerResult(null);
+												}}
+												className="font-medium text-white hover:text-indigo-300 truncate max-w-[240px] text-left underline-offset-2 hover:underline transition-colors block"
+												title="Click to review details"
 											>
 												{row.raw_product_title}
-											</div>
+											</button>
 											{rowErrors[row.reference_id] && (
 												<div className="text-[9px] text-red-400 truncate max-w-[240px] mt-0.5">
 													{rowErrors[row.reference_id]}
@@ -976,13 +1104,41 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 											)}
 										</td>
 										<td className="px-3 py-2">
-											{row.promotion_status === "DUPLICATE_SUSPECTED" ? (
+											{rowLoading[row.reference_id] ? (
+												<span className="text-[9px] text-slate-400 animate-pulse">
+													…
+												</span>
+											) : row.promotion_status === "DUPLICATE_SUSPECTED" ? (
 												<button
 													type="button"
 													onClick={() => openDuplicateReview(row)}
 													className="px-2 py-1 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-200 text-[9px] font-bold uppercase tracking-widest transition-all"
 												>
 													Review Duplicate
+												</button>
+											) : row.promotion_status === "MISSING_REQUIRED_FIELD" ? (
+												<button
+													type="button"
+													onClick={() => handleRecomputeRow(row.reference_id)}
+													className="px-2 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 text-[9px] font-bold uppercase tracking-widest transition-all"
+												>
+													↺ Recompute
+												</button>
+											) : row.promotion_status === "READY_FOR_APPROVAL" ? (
+												<button
+													type="button"
+													onClick={() => handleSingleApprove(row.reference_id)}
+													className="px-2 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 text-[9px] font-bold uppercase tracking-widest transition-all"
+												>
+													Approve ✓
+												</button>
+											) : row.promotion_status === "PENDING_DRAFT" ? (
+												<button
+													type="button"
+													onClick={() => handleRecomputeRow(row.reference_id)}
+													className="px-2 py-1 rounded-lg bg-slate-600/20 hover:bg-slate-600/40 text-slate-300 text-[9px] font-bold uppercase tracking-widest transition-all"
+												>
+													↺ Generate
 												</button>
 											) : row.promotion_status === "DUPLICATE_LINKED" ? (
 												<span className="text-[9px] text-cyan-300 font-bold uppercase tracking-widest">
@@ -1023,6 +1179,318 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 						>
 							Next ›
 						</button>
+					</div>
+				</div>
+			)}
+
+			{detailRow && (
+				<div className="fixed inset-0 z-50 flex justify-end">
+					<div
+						className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+						onClick={() => setDetailRow(null)}
+					/>
+					<div className="relative z-10 w-full max-w-xl h-full bg-[#0f1117] border-l border-slate-700/60 shadow-2xl flex flex-col overflow-hidden">
+						<div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-700/60 bg-slate-900/60">
+							<div className="flex-1 min-w-0">
+								<p className="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-1">
+									Product Detail
+								</p>
+								<h2 className="text-sm font-bold text-white leading-tight line-clamp-2">
+									{detailRow.raw_product_title}
+								</h2>
+								<p className="text-[9px] text-slate-500 mt-1 font-mono break-all">
+									{detailRow.reference_id}
+								</p>
+							</div>
+							<button
+								type="button"
+								onClick={() => setDetailRow(null)}
+								className="flex-shrink-0 text-slate-400 hover:text-white text-lg leading-none mt-0.5"
+							>
+								✕
+							</button>
+						</div>
+
+						<div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+							<div className="flex flex-wrap gap-2">
+								<span
+									className={`px-2 py-1 rounded text-[10px] font-bold ${STATUS_BADGE[detailRow.promotion_status] || "bg-slate-600/20 text-slate-400"}`}
+								>
+									{detailRow.promotion_status.replace(/_/g, " ")}
+								</span>
+								<span
+									className={`px-2 py-1 rounded text-[10px] font-bold ${RISK_BADGE[detailRow.claim_risk_level] || "bg-slate-600/20 text-slate-400"}`}
+								>
+									RISK: {detailRow.claim_risk_level}
+								</span>
+								{detailRow.image_readiness === "IMAGE_MISSING" && (
+									<span className="px-2 py-1 rounded text-[10px] font-bold bg-yellow-500/20 text-yellow-400">
+										IMAGE MISSING
+									</span>
+								)}
+							</div>
+
+							{detailRow.image_url && (
+								<div>
+									<p className="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-2">
+										Image
+									</p>
+									<img
+										src={detailRow.image_url}
+										alt=""
+										className="w-24 h-24 rounded-lg object-cover border border-slate-700"
+									/>
+								</div>
+							)}
+
+							<div>
+								<p className="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-2">
+									Product Info
+								</p>
+								<div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+									<div>
+										<span className="text-slate-500">Category</span>
+										<p className="text-white font-medium mt-0.5">
+											{detailRow.category || "—"}
+										</p>
+									</div>
+									<div>
+										<span className="text-slate-500">Sold</span>
+										<p className="text-white font-medium mt-0.5">
+											{detailRow.sold_count?.toLocaleString() ?? "—"}
+										</p>
+									</div>
+									<div>
+										<span className="text-slate-500">Commission</span>
+										<p className="text-white font-medium mt-0.5">
+											{detailRow.commission_rate ?? "—"}
+										</p>
+									</div>
+									<div>
+										<span className="text-slate-500">Mapping Confidence</span>
+										<p className="text-white font-medium mt-0.5">
+											{detailRow.mapping_confidence != null
+												? `${Math.round(detailRow.mapping_confidence * 100)}%`
+												: "—"}
+										</p>
+									</div>
+									<div>
+										<span className="text-slate-500">Copy Route</span>
+										<p className="text-white font-medium mt-0.5">
+											{detailRow.copy_route || "—"}
+										</p>
+									</div>
+									<div>
+										<span className="text-slate-500">Draft ID</span>
+										<p className="text-slate-400 font-mono text-[9px] mt-0.5 break-all">
+											{detailRow.draft_id || "—"}
+										</p>
+									</div>
+								</div>
+							</div>
+
+							{(detailRow.source_url || detailRow.tiktok_product_url) && (
+								<div>
+									<p className="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-2">
+										Source Links
+									</p>
+									<div className="space-y-1">
+										{detailRow.source_url && (
+											<a
+												href={detailRow.source_url}
+												target="_blank"
+												rel="noreferrer"
+												className="block text-[10px] text-indigo-400 hover:text-indigo-300 truncate underline-offset-2 hover:underline"
+											>
+												{detailRow.source_url}
+											</a>
+										)}
+										{detailRow.tiktok_product_url && (
+											<a
+												href={detailRow.tiktok_product_url}
+												target="_blank"
+												rel="noreferrer"
+												className="block text-[10px] text-pink-400 hover:text-pink-300 truncate underline-offset-2 hover:underline"
+											>
+												TikTok: {detailRow.tiktok_product_url}
+											</a>
+										)}
+									</div>
+								</div>
+							)}
+
+							{detailRow.claim_risk_level !== "LOW" &&
+								detailRow.error_message && (
+									<div>
+										<p className="text-[9px] font-bold uppercase tracking-widest text-orange-500 mb-2">
+											Claim Risk Detail
+										</p>
+										<div className="bg-orange-950/30 border border-orange-700/30 rounded-lg px-3 py-2">
+											<p className="text-[10px] text-orange-300 break-words whitespace-pre-wrap">
+												{detailRow.error_message}
+											</p>
+										</div>
+									</div>
+								)}
+
+							{detailRow.error_message && detailRow.claim_risk_level === "LOW" && (
+								<div>
+									<p className="text-[9px] font-bold uppercase tracking-widest text-red-500 mb-2">
+										Error / Missing Fields
+									</p>
+									<div className="bg-red-950/30 border border-red-700/30 rounded-lg px-3 py-2">
+										<p className="text-[10px] text-red-300 break-words whitespace-pre-wrap">
+											{detailRow.error_message}
+										</p>
+									</div>
+								</div>
+							)}
+
+							{(detailRow.promotion_status === "DUPLICATE_SUSPECTED" ||
+								detailRow.promotion_status === "DUPLICATE_LINKED") && (
+								<div>
+									<p className="text-[9px] font-bold uppercase tracking-widest text-purple-400 mb-2">
+										Duplicate Match
+									</p>
+									<div className="bg-purple-950/30 border border-purple-700/30 rounded-lg px-3 py-2 space-y-1">
+										{detailRow.suspected_existing_product_title && (
+											<p className="text-[10px] text-purple-200">
+												<span className="text-slate-500">Matches: </span>
+												{detailRow.suspected_existing_product_title}
+											</p>
+										)}
+										{detailRow.duplicate_match_reason && (
+											<p className="text-[10px] text-purple-300 break-words">
+												{detailRow.duplicate_match_reason}
+											</p>
+										)}
+										{detailRow.linked_product_id && (
+											<p className="text-[9px] text-cyan-300 font-mono break-all">
+												Linked → {detailRow.linked_product_id}
+											</p>
+										)}
+									</div>
+								</div>
+							)}
+
+							{detailRow.committed_product_id && (
+								<div>
+									<p className="text-[9px] font-bold uppercase tracking-widest text-emerald-500 mb-2">
+										Committed to Product Truth
+									</p>
+									<p className="text-[10px] text-emerald-300 font-mono break-all">
+										{detailRow.committed_product_id}
+									</p>
+								</div>
+							)}
+
+							<div>
+								<p className="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-2">
+									Timestamps
+								</p>
+								<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px]">
+									<div>
+										<span className="text-slate-500">Created</span>
+										<p className="text-slate-300 mt-0.5">
+											{new Date(detailRow.created_at).toLocaleString()}
+										</p>
+									</div>
+									<div>
+										<span className="text-slate-500">Updated</span>
+										<p className="text-slate-300 mt-0.5">
+											{new Date(detailRow.updated_at).toLocaleString()}
+										</p>
+									</div>
+								</div>
+							</div>
+						</div>
+
+						<div className="flex-shrink-0 border-t border-slate-700/60 px-5 py-4 bg-slate-900/60 space-y-3">
+							{drawerResult && (
+								<div
+									className={`rounded-lg px-3 py-2 text-[10px] font-medium leading-relaxed ${drawerResult.type === "ok" ? "bg-emerald-900/40 border border-emerald-700/40 text-emerald-300" : "bg-red-900/40 border border-red-700/40 text-red-300"}`}
+								>
+									{drawerResult.msg}
+								</div>
+							)}
+							{rowErrors[detailRow.reference_id] && (
+								<p className="text-[10px] text-red-400">
+									{rowErrors[detailRow.reference_id]}
+								</p>
+							)}
+
+							{detailRow.draft_id && onOpenDraft && (
+								<button
+									type="button"
+									onClick={() => {
+										onOpenDraft(detailRow.draft_id!);
+										setDetailRow(null);
+									}}
+									className="w-full px-3 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 text-indigo-300 text-[10px] font-bold uppercase tracking-widest transition-all"
+								>
+									Open Draft Editor
+								</button>
+							)}
+
+							<div className="flex flex-wrap gap-2">
+								{detailRow.promotion_status === "MISSING_REQUIRED_FIELD" && (
+									<button
+										type="button"
+										disabled={rowLoading[detailRow.reference_id]}
+										onClick={() => handleRecomputeRow(detailRow.reference_id)}
+										className="flex-1 px-3 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 text-indigo-300 text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 transition-all"
+									>
+										{rowLoading[detailRow.reference_id] ? "…" : "Recompute"}
+									</button>
+								)}
+								{detailRow.promotion_status === "PENDING_DRAFT" && (
+									<button
+										type="button"
+										disabled={rowLoading[detailRow.reference_id]}
+										onClick={() => handleRecomputeRow(detailRow.reference_id)}
+										className="flex-1 px-3 py-2 rounded-xl bg-slate-600/20 hover:bg-slate-600/40 border border-slate-500/30 text-slate-300 text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 transition-all"
+									>
+										{rowLoading[detailRow.reference_id]
+											? "…"
+											: "Generate Draft"}
+									</button>
+								)}
+								{detailRow.promotion_status === "READY_FOR_APPROVAL" && (
+									<button
+										type="button"
+										disabled={rowLoading[detailRow.reference_id]}
+										onClick={() => handleSingleApprove(detailRow.reference_id)}
+										className="flex-1 px-3 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/40 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 transition-all"
+									>
+										{rowLoading[detailRow.reference_id] ? "…" : "Approve"}
+									</button>
+								)}
+								{detailRow.promotion_status === "DUPLICATE_SUSPECTED" && (
+									<button
+										type="button"
+										onClick={() => {
+											openDuplicateReview(detailRow);
+											setDetailRow(null);
+										}}
+										className="flex-1 px-3 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/30 text-purple-300 text-[10px] font-bold uppercase tracking-widest transition-all"
+									>
+										Review Duplicate
+									</button>
+								)}
+								{!["APPROVED", "REJECTED", "DUPLICATE_LINKED"].includes(
+									detailRow.promotion_status,
+								) && (
+									<button
+										type="button"
+										disabled={rowLoading[detailRow.reference_id]}
+										onClick={() => handleRejectRow(detailRow)}
+										className="px-3 py-2 rounded-xl bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 text-red-400 text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 transition-all"
+									>
+										Reject
+									</button>
+								)}
+							</div>
+						</div>
 					</div>
 				</div>
 			)}
