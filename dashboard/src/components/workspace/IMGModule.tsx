@@ -196,14 +196,20 @@ export default function IMGModule({
 						1. Visual Assets (Subject / Scene / Style)
 					</h3>
 					<div className="grid gap-3">
+						<div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-3 text-[11px] text-amber-200/70 space-y-1">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300/80">
+								IMG — Uploaded Images Are Reference Images
+							</div>
+							<p>Every image uploaded here is a <strong className="text-amber-200">reference image</strong>. The model sees it — your prompt describes <strong className="text-amber-200">what to create or transform</strong>, not what the image looks like.</p>
+							<p className="text-amber-300/45 text-[9px]">E.g. "Using this avatar as reference, show them wearing a baju kurung kedah in a garden setting."</p>
+						</div>
 						{hasApprovedPackage ? (
 							<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-[11px] text-emerald-100">
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/80">
 									Auto Asset Baseline
 								</div>
 								<div className="mt-1">
-									Resolved product image is the default subject. Scene and Style
-									remain optional manual references.
+									Resolved product image is the default subject reference. Scene and Style are additional optional references.
 								</div>
 							</div>
 						) : (
@@ -212,8 +218,7 @@ export default function IMGModule({
 									Manual Asset Upload
 								</div>
 								<div className="mt-1">
-									No approved package is loaded. Subject, Scene, and Style are
-									manual references.
+									Upload your reference image(s). Subject is the main reference — Scene and Style add further visual context.
 								</div>
 							</div>
 						)}
@@ -225,8 +230,8 @@ export default function IMGModule({
 								subjectAsset?.previewUrl ??
 								"subject-empty"
 							}
-							title="Subject"
-							description="Resolved product image is the default subject"
+							title="Subject (Reference Image)"
+							description="Main reference image — avatar, product, or any subject to base generation on"
 							asset={subjectAsset}
 							isUploading={isUploading}
 							accentClassName="group-hover:bg-blue-500/10 group-hover:text-blue-400"
@@ -239,8 +244,8 @@ export default function IMGModule({
 								sceneAsset?.previewUrl ??
 								"scene-empty"
 							}
-							title="Scene"
-							description="Upload an optional scene reference"
+							title="Scene (Reference Image)"
+							description="Optional — upload a scene/environment reference image"
 							asset={sceneAsset}
 							isUploading={isUploading}
 							accentClassName="group-hover:bg-purple-500/10 group-hover:text-purple-400"
@@ -253,8 +258,8 @@ export default function IMGModule({
 								styleAsset?.previewUrl ??
 								"style-empty"
 							}
-							title="Style"
-							description="Upload an optional style reference"
+							title="Style (Reference Image)"
+							description="Optional — upload a style/mood reference image"
 							asset={styleAsset}
 							isUploading={isUploading}
 							accentClassName="group-hover:bg-pink-500/10 group-hover:text-pink-400"
@@ -339,7 +344,7 @@ export default function IMGModule({
 						) : (
 							<textarea
 								className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
-								placeholder="What do you want to create?"
+								placeholder="Using the uploaded image(s) as reference — describe what to CREATE or TRANSFORM. E.g. 'Using this avatar as reference, show them wearing a baju kurung kedah in an outdoor garden setting, photorealistic lighting.' The model sees the image — describe the desired outcome, not the image itself."
 								value={manualPrompt}
 								onChange={(e) => {
 									const next = e.target.value;
@@ -410,6 +415,18 @@ export default function IMGModule({
 								))}
 							</div>
 						</div>
+					</div>
+				</section>
+
+				<section className="p-6 rounded-2xl border border-amber-500/10 bg-amber-500/5 space-y-3">
+					<h4 className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">
+						IMG — Prompt Guide
+					</h4>
+					<div className="text-[10px] text-amber-300/55 leading-relaxed space-y-2">
+						<p><strong className="text-amber-300/80">Image uploaded = reference.</strong> Model sees it. Describe what you want to <em>create or change</em>, not what the image shows.</p>
+						<p><strong className="text-amber-300/80">Transformation prompt:</strong> "Using this avatar as reference, show them wearing [outfit] in [setting]."</p>
+						<p><strong className="text-amber-300/80">Product image:</strong> "Using this product as reference, show it being held by a hand in a clean flat-lay setup, white background."</p>
+						<p><strong className="text-amber-300/80">No image uploaded</strong> → describe the subject fully (appearance, clothing, environment).</p>
 					</div>
 				</section>
 			</div>

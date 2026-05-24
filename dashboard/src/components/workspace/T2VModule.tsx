@@ -141,7 +141,7 @@ export default function T2VModule({
 						) : (
 							<textarea
 								className="w-full h-80 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
-								placeholder="Describe what you want to generate in video..."
+								placeholder="No reference images — describe EVERYTHING: character appearance, skin tone, body type, wardrobe, posture · product name + size/scale (e.g. 'lip balm, fits in palm, finger-sized') · action (character holding product, demonstrating it) · camera angle/shot type · audio/dialogue script..."
 								value={manualPrompt}
 								onChange={(e) => {
 									const next = e.target.value;
@@ -238,14 +238,24 @@ export default function T2VModule({
 					</div>
 				</section>
 
-				<section className="p-6 rounded-2xl border border-blue-500/10 bg-blue-500/5">
-					<h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-2">
-						T2V Context
+				<section className="p-6 rounded-2xl border border-blue-500/20 bg-blue-500/5 space-y-3">
+					<h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">
+						T2V — No Reference Images
 					</h4>
-					<div className="text-[10px] text-blue-300/60 leading-relaxed italic">
-						Pure Mirror Mode: Google Flow will generate visual based on the text
-						prompt injected.
-					</div>
+					<p className="text-[10px] text-blue-300/70 leading-relaxed">
+						No images are uploaded. Google Flow has <strong className="text-blue-300">nothing to look at</strong> — every visual detail must come from the prompt text.
+					</p>
+					<p className="text-[10px] font-bold text-blue-300/80 uppercase tracking-[0.12em]">Prompt must include:</p>
+					<ul className="text-[10px] text-blue-300/55 leading-relaxed space-y-1 list-disc list-inside">
+						<li>Character — appearance, skin tone, body type, posture, wardrobe (detailed)</li>
+						<li>Product — name, size &amp; scale description (e.g. "lip balm, palm-sized, fits between two fingers")</li>
+						<li>Action — what character does with the product</li>
+						<li>Camera — shot type, angle, movement</li>
+						<li>Audio — dialogue or voiceover script</li>
+					</ul>
+					<p className="text-[10px] text-blue-300/30 italic">
+						Google Flow cannot infer what it cannot see. Specificity = quality.
+					</p>
 				</section>
 			</div>
 		</div>
