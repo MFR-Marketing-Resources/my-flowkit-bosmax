@@ -230,9 +230,14 @@ def _attach_duplicate_metadata_to_row(row: dict[str, Any]) -> dict[str, Any]:
 def _product_row_is_canonical_truth(row: dict[str, Any] | None) -> bool:
     if not row:
         return False
-    src = str(row.get("source") or "")
-    mapping_source = str(row.get("mapping_source") or "")
+    if row.get("reference_only"):
+        return False
+    src = str(row.get("source") or "").upper()
+    mapping_source = str(row.get("mapping_source") or "").upper()
+    mapping_status = str(row.get("mapping_status") or "").upper()
     fastmoss_reference_id = str(row.get("fastmoss_reference_id") or "")
+    if mapping_status != "APPROVED":
+        return False
     if src in {"MANUAL", "IMPORTED"}:
         return True
     if src == "FASTMOSS" and (mapping_source == "FASTMOSS_PROMOTED" or fastmoss_reference_id):
