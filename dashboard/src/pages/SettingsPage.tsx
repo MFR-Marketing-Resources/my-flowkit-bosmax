@@ -92,6 +92,13 @@ function getProviderCardTone(provider: AIProviderSummary) {
 	return "border-slate-800 bg-slate-900/30";
 }
 
+function getProviderInputPlaceholder(provider: AIProviderSummary) {
+	if (provider.has_key) {
+		return `Stored securely. Paste new ${provider.label} API key to replace.`;
+	}
+	return `Paste ${provider.label} API key`;
+}
+
 export default function SettingsPage() {
 	const [agentStatus, setAgentStatus] = useState<LocalAgentStatus | null>(null);
 	const [telemetry, setTelemetry] = useState<TelemetrySummary | null>(null);
@@ -345,10 +352,10 @@ export default function SettingsPage() {
 							return (
 								<div
 									key={provider.provider_id}
-									className={`rounded-2xl border p-5 shadow-lg ${getProviderCardTone(provider)}`}
+									className={`min-w-0 rounded-2xl border p-5 shadow-lg ${getProviderCardTone(provider)}`}
 								>
 									<div className="mb-4 flex items-start justify-between gap-4">
-										<div>
+										<div className="min-w-0">
 											<div className="flex items-center gap-2">
 												<h4 className="text-base font-bold text-white">
 													{provider.label}
@@ -359,11 +366,11 @@ export default function SettingsPage() {
 													{provider.status}
 												</span>
 											</div>
-											<div className="mt-1 text-[11px] uppercase tracking-wide text-slate-500">
+											<div className="mt-1 break-all text-[11px] uppercase tracking-wide text-slate-500">
 												Env var: {provider.env_var}
 											</div>
 										</div>
-										<div className="text-right text-[11px] text-slate-400">
+										<div className="min-w-0 text-right text-[11px] text-slate-400">
 											<div>{provider.activation_scope}</div>
 											<div>
 												{provider.is_active
@@ -393,13 +400,16 @@ export default function SettingsPage() {
 												onChange={(event) =>
 													setDraftValue(provider.provider_id, event.target.value)
 												}
-												placeholder={
-													provider.masked_key
-														? `Stored: ${provider.masked_key}`
-														: `Paste ${provider.label} API key`
-												}
-												className="w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none transition focus:border-blue-400/60"
+												placeholder={getProviderInputPlaceholder(provider)}
+												className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none transition placeholder:text-slate-500 focus:border-blue-400/60"
 											/>
+											<div className="min-h-[1rem] text-[11px] text-slate-500">
+												{provider.masked_key ? (
+													<span className="block break-all">
+														Stored key: {provider.masked_key}
+													</span>
+												) : null}
+											</div>
 										</div>
 
 										<div className="grid grid-cols-3 gap-2">
@@ -431,18 +441,20 @@ export default function SettingsPage() {
 											</button>
 										</div>
 
-										<div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-[11px] text-slate-400">
-											<div>
+										<div className="grid grid-cols-1 gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-[11px] text-slate-400 sm:grid-cols-2">
+											<div className="min-w-0">
 												<div className="mb-1 uppercase tracking-wide text-slate-500">
 													Stored Key
 												</div>
-												<div>{provider.masked_key || "Not stored"}</div>
+												<div className="break-all">
+													{provider.masked_key || "Not stored"}
+												</div>
 											</div>
-											<div>
+											<div className="min-w-0">
 												<div className="mb-1 uppercase tracking-wide text-slate-500">
 													Last Updated
 												</div>
-												<div>
+												<div className="break-words">
 													{provider.updated_at
 														? new Date(provider.updated_at).toLocaleString()
 														: "Never"}

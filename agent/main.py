@@ -60,6 +60,7 @@ from agent.api.fastmoss_bulk import router as fastmoss_bulk_router
 from agent.api.product_knowledge import router as product_knowledge_router
 from agent.api.ai_provider_settings import router as ai_provider_settings_router
 from agent.sdk import init_sdk
+from agent.services.ai_provider_settings_service import apply_runtime_provider_environment
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -104,6 +105,8 @@ async def run_ws_server():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    apply_runtime_provider_environment()
+    logger.info("AI provider runtime environment hydrated from registry state")
 
     # Load custom materials from DB into in-memory registry
     from agent.db.crud import list_materials as db_list_materials

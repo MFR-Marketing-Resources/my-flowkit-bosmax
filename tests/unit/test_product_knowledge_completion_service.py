@@ -2,6 +2,14 @@ import pytest
 from agent.models.product_knowledge import ProductKnowledgeCompleteRequest
 from agent.services.product_knowledge_service import complete_product_knowledge
 
+
+@pytest.fixture(autouse=True)
+def _disable_live_qwen_provider(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_provider_api_key",
+        lambda provider_id: "",
+    )
+
 def test_complete_product_knowledge_basic():
     request = ProductKnowledgeCompleteRequest(
         product_name="Bosmax Liquid Detergent",
@@ -214,3 +222,240 @@ def test_complete_product_knowledge_low_confidence_image_ocr_does_not_clear_size
     assert response.suggested_size_or_volume is None
     assert "SIZE_OR_VOLUME_EVIDENCE" in response.missing_required_evidence
     assert "SIZE_OR_VOLUME_FROM_IMAGE_OCR_HIGH_CONFIDENCE" not in response.warnings
+
+
+def test_complete_product_knowledge_qwen_enriches_usp_list_for_manual_lane(monkeypatch):
+    class _MockResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"usp_list":["Haruman segar tahan lama","Lembut pada fabrik"]}',
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_provider_api_key",
+        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.httpx.post",
+        lambda *args, **kwargs: _MockResponse(),
+    )
+
+    request = ProductKnowledgeCompleteRequest(
+        product_name="Bosmax Liquid Detergent",
+        product_knowledge_text="Sabun dobi cuci bersih dengan haruman segar tahan lama dan formula lembut pada fabrik.",
+        paste_anything_about_product="Sabun dobi cuci bersih dengan haruman segar tahan lama dan formula lembut pada fabrik.",
+        source_lane="MANUAL",
+    )
+
+    response = complete_product_knowledge(request)
+
+    assert response.extracted_product_facts["usp_list"] == [
+        "Haruman segar tahan lama",
+        "Lembut pada fabrik",
+    ]
+    assert response.suggested_usp_list == [
+        "Haruman segar tahan lama",
+        "Lembut pada fabrik",
+    ]
+    assert "QWEN_USP_SUGGESTION_APPLIED" in response.warnings
+    assert "qwen_usp_suggest_only:v1" in response.provenance
+
+
+def test_complete_product_knowledge_qwen_falls_back_to_next_region(monkeypatch):
+    class _MockResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+            self.request = None
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                import httpx
+
+                raise httpx.HTTPStatusError(
+                    "status error",
+                    request=httpx.Request("POST", "https://example.com"),
+                    response=httpx.Response(self.status_code, request=httpx.Request("POST", "https://example.com")),
+                )
+            return None
+
+        def json(self):
+            return self._payload
+
+    calls = []
+
+    def _mock_post(url, *args, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            return _MockResponse(401, {})
+        return _MockResponse(
+            200,
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"usp_list":["Haruman segar tahan lama"]}',
+                        }
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_provider_api_key",
+        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.httpx.post",
+        _mock_post,
+    )
+
+    request = ProductKnowledgeCompleteRequest(
+        product_name="Bosmax Liquid Detergent",
+        paste_anything_about_product="Sabun dobi dengan haruman segar tahan lama.",
+        source_lane="MANUAL",
+    )
+
+    response = complete_product_knowledge(request)
+
+    assert response.suggested_usp_list == ["Haruman segar tahan lama"]
+    assert len(calls) == 2
+
+
+def test_complete_product_knowledge_qwen_retries_next_region_after_request_error(monkeypatch):
+    import httpx
+
+    class _MockResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"usp_list":["Lembut pada fabrik"]}',
+                        }
+                    }
+                ]
+            }
+
+    calls = []
+
+    def _mock_post(url, *args, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            raise httpx.RequestError("dns failed", request=httpx.Request("POST", url))
+        return _MockResponse()
+
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_provider_api_key",
+        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.httpx.post",
+        _mock_post,
+    )
+
+    response = complete_product_knowledge(
+        ProductKnowledgeCompleteRequest(
+            product_name="Bosmax Liquid Detergent",
+            paste_anything_about_product="Formula lembut pada fabrik.",
+            source_lane="MANUAL",
+        )
+    )
+
+    assert response.suggested_usp_list == ["Lembut pada fabrik"]
+    assert len(calls) == 2
+
+
+def test_complete_product_knowledge_qwen_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_provider_api_key",
+        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+    )
+
+    def _raise_http_error(*args, **kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.httpx.post",
+        _raise_http_error,
+    )
+
+    request = ProductKnowledgeCompleteRequest(
+        product_name="Bosmax Liquid Detergent",
+        product_knowledge_text="Sabun dobi cuci bersih dengan haruman segar tahan lama.",
+        paste_anything_about_product="Sabun dobi cuci bersih dengan haruman segar tahan lama.",
+        source_lane="MANUAL",
+    )
+
+    response = complete_product_knowledge(request)
+
+    assert response.extracted_product_facts["usp_list"] == []
+    assert response.suggested_usp_list == []
+    assert "QWEN_USP_SUGGESTION_APPLIED" not in response.warnings
+
+
+def test_complete_product_knowledge_qwen_skips_affiliate_lane(monkeypatch):
+    def _unexpected_http_call(*args, **kwargs):
+        raise AssertionError("Qwen should not be called for FASTMOSS lane")
+
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_provider_api_key",
+        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.httpx.post",
+        _unexpected_http_call,
+    )
+
+    request = ProductKnowledgeCompleteRequest(
+        product_name="FastMoss Product",
+        product_knowledge_text="Produk affiliate dengan title panjang dan positioning tak stabil.",
+        paste_anything_about_product="Produk affiliate dengan title panjang dan positioning tak stabil.",
+        source_lane="FASTMOSS",
+    )
+
+    response = complete_product_knowledge(request)
+
+    assert response.extracted_product_facts["usp_list"] == []
+    assert "QWEN_USP_SUGGESTION_APPLIED" not in response.warnings
+    assert "AFFILIATE_LANE_CONTAMINATION_RISK" in response.warnings
+
+
+def test_complete_product_knowledge_qwen_does_not_override_declared_benefits(monkeypatch):
+    def _unexpected_http_call(*args, **kwargs):
+        raise AssertionError("Qwen should not be called when benefits_text already exists")
+
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_provider_api_key",
+        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.httpx.post",
+        _unexpected_http_call,
+    )
+
+    request = ProductKnowledgeCompleteRequest(
+        product_name="Bosmax Liquid Detergent",
+        product_knowledge_text="Sabun dobi harian.",
+        paste_anything_about_product="Sabun dobi harian.",
+        benefits_text="- Cuci bersih\n- Haruman segar",
+        source_lane="MANUAL",
+    )
+
+    response = complete_product_knowledge(request)
+
+    assert response.extracted_product_facts["usp_list"] == []
+    assert response.suggested_usp_list == ["Cuci bersih", "Haruman segar"]
+    assert "QWEN_USP_SUGGESTION_APPLIED" not in response.warnings
