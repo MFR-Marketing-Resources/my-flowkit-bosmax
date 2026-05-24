@@ -99,6 +99,18 @@ const MODE_LABELS: Record<Mode, string> = {
   IMG: 'Image Gen',
 }
 
+const MODE_ASSET_INFO: Record<Mode, string> = {
+  F2V: 'Character · Scene · Style',
+  I2V: 'Scene · Style only',
+  T2V: 'Text only — no assets',
+  IMG: 'Character · Style · Template',
+}
+
+// Which modes use which slots
+const MODE_USES_CHAR = new Set<Mode>(['F2V', 'IMG'])
+const MODE_USES_SCENE = new Set<Mode>(['F2V', 'I2V'])
+const MODE_USES_STYLE = new Set<Mode>(['F2V', 'I2V', 'IMG'])
+
 // ─── Workspace Batch Tab ──────────────────────────────────────────────────────
 
 // ─── Asset Slot Picker ────────────────────────────────────────────────────────
@@ -475,6 +487,13 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
   const totalExpected = Math.max(1, selectedProductIds.length) * selectedModes.length * combinations * quantityPerMode
   const estimatedSeconds = totalExpected * intervalSeconds
 
+  // Mode-aware slot visibility
+  const showCharSlot = selectedModes.some(m => MODE_USES_CHAR.has(m))
+  const showSceneSlot = selectedModes.some(m => MODE_USES_SCENE.has(m))
+  const showStyleSlot = selectedModes.some(m => MODE_USES_STYLE.has(m))
+  const t2vOnly = selectedModes.length > 0 && selectedModes.every(m => m === 'T2V')
+  const anyVisualSlot = showCharSlot || showSceneSlot || showStyleSlot
+
   // Poll active run
   useEffect(() => {
     if (currentRun && ['PENDING', 'RUNNING'].includes(currentRun.status)) {
@@ -671,6 +690,7 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
               >
                 <span className="text-[11px] font-black tracking-wide">{m}</span>
                 <span className="text-[9px] opacity-60">{MODE_LABELS[m]}</span>
+                <span className="text-[8px] opacity-35 leading-tight mt-0.5">{MODE_ASSET_INFO[m]}</span>
               </button>
             ))}
           </div>
@@ -679,43 +699,89 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
           )}
         </section>
 
-        {/* Creative Library Asset Slots */}
+        {/* Creative Library Asset Slots — mode-aware */}
         <section className="p-5 rounded-xl border border-white/5 bg-surface shadow-xl flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <label className="text-[10px] uppercase font-black tracking-[0.18em] opacity-40">Creative Library Slots</label>
-            {combinations > 1 && (
+            {combinations > 1 && anyVisualSlot && (
               <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
                 {combinations} combinations
               </span>
             )}
           </div>
-          <p className="text-[10px] text-white/25 -mt-2 leading-relaxed">
-            Select assets per slot. Each combination generates {quantityPerMode} prompt{quantityPerMode > 1 ? 's' : ''} per mode.
-          </p>
-          <AssetSlotPicker
-            label="Avatar / Character"
-            color="bg-purple-500/15 text-purple-300 border-purple-500/30"
-            assets={characterAssets}
-            selectedIds={selectedCharIds}
-            onToggle={toggleId(setSelectedCharIds)}
-            disabled={isRunning}
-          />
-          <AssetSlotPicker
-            label="Scene Context / Background"
-            color="bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
-            assets={sceneAssets}
-            selectedIds={selectedSceneIds}
-            onToggle={toggleId(setSelectedSceneIds)}
-            disabled={isRunning}
-          />
-          <AssetSlotPicker
-            label="Style / Outfit Reference"
-            color="bg-amber-500/15 text-amber-300 border-amber-500/30"
-            assets={styleAssets}
-            selectedIds={selectedStyleIds}
-            onToggle={toggleId(setSelectedStyleIds)}
-            disabled={isRunning}
-          />
+
+          {selectedModes.length === 0 && (
+            <p className="text-[10px] text-white/20 leading-relaxed">Select a mode above to see required asset slots.</p>
+          )}
+
+          {t2vOnly && (
+            <div className="p-3 rounded-xl bg-emerald-500/8 border border-emerald-500/20 flex items-center gap-2">
+              <span className="text-emerald-400/70 text-lg">✍️</span>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[11px] font-black text-emerald-300/80">Text → Video — no visual assets needed</span>
+                <span className="text-[10px] text-white/25">Prompts are generated from product text only.</span>
+              </div>
+            </div>
+          )}
+
+          {anyVisualSlot && (
+            <>
+              <p className="text-[10px] text-white/25 -mt-2 leading-relaxed">
+                Only slots relevant to your selected modes are shown. Each combination generates {quantityPerMode} prompt{quantityPerMode > 1 ? 's' : ''} per mode.
+              </p>
+
+              {showCharSlot && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[9px] font-bold text-purple-400/50 uppercase tracking-widest">
+                    Avatar / Character
+                    <span className="ml-1.5 text-white/20 normal-case tracking-normal">used by: {MODES.filter(m => MODE_USES_CHAR.has(m) && selectedModes.includes(m)).join(', ')}</span>
+                  </span>
+                  <AssetSlotPicker
+                    label="Avatar / Character"
+                    color="bg-purple-500/15 text-purple-300 border-purple-500/30"
+                    assets={characterAssets}
+                    selectedIds={selectedCharIds}
+                    onToggle={toggleId(setSelectedCharIds)}
+                    disabled={isRunning}
+                  />
+                </div>
+              )}
+
+              {showSceneSlot && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[9px] font-bold text-emerald-400/50 uppercase tracking-widest">
+                    Scene / Background
+                    <span className="ml-1.5 text-white/20 normal-case tracking-normal">used by: {MODES.filter(m => MODE_USES_SCENE.has(m) && selectedModes.includes(m)).join(', ')}</span>
+                  </span>
+                  <AssetSlotPicker
+                    label="Scene Context / Background"
+                    color="bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                    assets={sceneAssets}
+                    selectedIds={selectedSceneIds}
+                    onToggle={toggleId(setSelectedSceneIds)}
+                    disabled={isRunning}
+                  />
+                </div>
+              )}
+
+              {showStyleSlot && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[9px] font-bold text-amber-400/50 uppercase tracking-widest">
+                    Style / Outfit Reference
+                    <span className="ml-1.5 text-white/20 normal-case tracking-normal">used by: {MODES.filter(m => MODE_USES_STYLE.has(m) && selectedModes.includes(m)).join(', ')}</span>
+                  </span>
+                  <AssetSlotPicker
+                    label="Style / Outfit Reference"
+                    color="bg-amber-500/15 text-amber-300 border-amber-500/30"
+                    assets={styleAssets}
+                    selectedIds={selectedStyleIds}
+                    onToggle={toggleId(setSelectedStyleIds)}
+                    disabled={isRunning}
+                  />
+                </div>
+              )}
+            </>
+          )}
         </section>
 
         {/* P2A: IMG Prompt Template — shown only when IMG mode selected */}
@@ -1147,6 +1213,8 @@ export default function BatchesPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [selectedProductId, setSelectedProductId] = useState('')
   const [quantity, setQuantity] = useState(5)
+  const [batchMode, setBatchMode] = useState<'Frames' | 'Ingredients' | 'Text' | 'Image'>('Frames')
+  const [batchEngine, setBatchEngine] = useState('VEO_3_1')
   const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null)
   const [health, setHealth] = useState<LocalAgentStatus | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1213,7 +1281,8 @@ export default function BatchesPage() {
         product_id: selectedProductId,
         quantity: quantity,
         platform: 'TikTok',
-        mode: 'Frames',
+        mode: batchMode,
+        engine: batchEngine,
         approval_required: true
       }) as any
       if (data.error) {
@@ -1416,6 +1485,43 @@ export default function BatchesPage() {
                       )}
                     </div>
                   )}
+
+                  {/* Mode selector */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] uppercase font-bold opacity-40 tracking-wider">Mode</label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {(['Frames', 'Ingredients', 'Text', 'Image'] as const).map(m => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setBatchMode(m)}
+                          className={`py-2 rounded-lg text-[11px] font-black border transition-all ${
+                            batchMode === m
+                              ? 'bg-accent/15 text-accent border-accent/30'
+                              : 'border-white/10 text-white/30 hover:border-white/20 hover:text-white/60'
+                          }`}
+                        >
+                          {m === 'Frames' ? 'Frames (F2V)' :
+                           m === 'Ingredients' ? 'Ingredients (I2V)' :
+                           m === 'Text' ? 'Text → Video' : 'Image Gen'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Engine selector */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] uppercase font-bold opacity-40 tracking-wider">Engine</label>
+                    <select
+                      value={batchEngine}
+                      onChange={e => setBatchEngine(e.target.value)}
+                      className="bg-black/20 border border-white/5 rounded-lg px-3 py-2.5 text-sm text-white/80 w-full focus:border-accent outline-none transition-all [color-scheme:dark]"
+                    >
+                      <option value="VEO_3_1">Veo 3.1 Lite</option>
+                      <option value="VEO_3">Veo 3.0</option>
+                      <option value="VEO_2">Veo 2.0</option>
+                    </select>
+                  </div>
 
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] uppercase font-bold opacity-40 tracking-wider">Quantity (Max 20)</label>
