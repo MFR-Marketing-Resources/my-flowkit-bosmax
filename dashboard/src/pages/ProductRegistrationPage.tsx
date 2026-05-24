@@ -416,7 +416,7 @@ export default function ProductRegistrationPage() {
 								)}
 							</div>
 							{totalPagesDrafts > 1 && (
-								<div className="flex items-center justify-center gap-1 mt-3">
+								<div className="flex items-center justify-center gap-1 mt-3 flex-wrap">
 									<button
 										type="button"
 										onClick={() =>
@@ -427,19 +427,42 @@ export default function ProductRegistrationPage() {
 									>
 										Prev
 									</button>
-									{Array.from(
-										{ length: totalPagesDrafts },
-										(_, i) => i + 1,
-									).map((pg) => (
-										<button
-											key={pg}
-											type="button"
-											onClick={() => setCurrentPageDrafts(pg)}
-											className={`w-6 h-6 rounded text-[10px] border ${safePageDrafts === pg ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"}`}
-										>
-											{pg}
-										</button>
-									))}
+									{(() => {
+										const pages: (number | string)[] = [];
+										const delta = 1;
+										let last = 0;
+										for (let pg = 1; pg <= totalPagesDrafts; pg++) {
+											if (
+												pg === 1 ||
+												pg === totalPagesDrafts ||
+												(pg >= safePageDrafts - delta &&
+													pg <= safePageDrafts + delta)
+											) {
+												if (last && pg - last > 1) pages.push(`e${pg}`);
+												pages.push(pg);
+												last = pg;
+											}
+										}
+										return pages.map((pg) =>
+											typeof pg === "string" ? (
+												<span
+													key={pg}
+													className="px-1 text-[10px] text-slate-600"
+												>
+													…
+												</span>
+											) : (
+												<button
+													key={pg}
+													type="button"
+													onClick={() => setCurrentPageDrafts(pg)}
+													className={`w-6 h-6 rounded text-[10px] border ${safePageDrafts === pg ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"}`}
+												>
+													{pg}
+												</button>
+											),
+										);
+									})()}
 									<button
 										type="button"
 										onClick={() =>

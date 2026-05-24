@@ -245,6 +245,23 @@ def test_bulk_fastmoss_duplicate_review_link_requires_product_contract():
     assert "duplicateLinkProductId.trim().length === 0" in content, "Linked product id required disable gate missing"
 
 
+def test_bulk_fastmoss_detail_drawer_and_row_actions_contract():
+    """BulkFastMoss rows must support detail review and safe row-level actions."""
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx").read_text(encoding="utf-8")
+    assert "Product Detail" in content, "Row detail drawer heading missing"
+    assert "Click to review details" in content, "Row detail affordance missing"
+    assert "Source Links" in content, "Drawer source links section missing"
+    assert "Open Draft Editor" in content, "Drawer draft editor shortcut missing"
+    assert "handleRecomputeRow" in content, "Single-row recompute helper missing"
+    assert "handleSingleApprove" in content, "Single-row approve helper missing"
+    assert "Review Duplicate" in content, "Duplicate drawer action missing"
+    assert "Reject" in content, "Drawer reject action missing"
+    assert "force-approve-claim-risk" not in content, "Claim-risk override route must not be introduced in safe salvage lane"
+    assert "Import Enriched" not in content, "Unsafe import lane must not be introduced without proof"
+    assert "Export Missing" not in content, "Unsafe export lane must not be introduced without proof"
+
+
 def test_product_registration_page_has_open_bulk_fastmoss_header_cta():
     """ProductRegistrationPage must have a prominent 'Open Bulk FastMoss Convert' button in header."""
     root = Path(__file__).parent.parent.parent
@@ -252,6 +269,16 @@ def test_product_registration_page_has_open_bulk_fastmoss_header_cta():
     assert "Open Bulk FastMoss Convert" in content, "'Open Bulk FastMoss Convert' header CTA missing"
     assert "Bulk FastMoss Convert" in content, "Tab label missing"
     assert "Sync Queue" not in content, "Sync Queue is on child component, not this page"
+
+
+def test_product_registration_page_draft_pagination_compacts_long_page_ranges():
+    """Draft review pagination must use a compact ellipsis strategy."""
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/pages/ProductRegistrationPage.tsx").read_text(encoding="utf-8")
+    assert "flex-wrap" in content, "Draft pagination container should wrap on narrow layouts"
+    assert 'pages: (number | string)[] = []' in content, "Compact pagination pages buffer missing"
+    assert 'pages.push(`e${pg}`)' in content, "Ellipsis sentinel generation missing"
+    assert 'typeof pg === "string"' in content, "Ellipsis render branch missing"
 
 
 def test_smart_registration_single_product_flow_still_intact():
