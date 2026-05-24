@@ -31,6 +31,8 @@ from agent.services.ai_provider_settings_service import (
 
 logger = logging.getLogger(__name__)
 
+VISION_PROVIDER_EXECUTION_DISABLED_ERROR = "VISION_PROVIDER_EXECUTION_DISABLED"
+
 
 # ─── Scoring helpers ─────────────────────────────────────────
 
@@ -386,6 +388,8 @@ async def review_scene_video(
 
     if not video_url:
         raise ValueError(f"No video URL found for scene {scene['id']} ({orientation})")
+    if get_lane_provider("vision") == "anthropic" and not is_lane_execution_enabled("vision"):
+        raise RuntimeError(VISION_PROVIDER_EXECUTION_DISABLED_ERROR)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -423,8 +427,6 @@ async def review_scene_video(
             result = await _analyze_sdk(frames, fps, scene, characters)
         else:
             # CLI path: contact sheet (no API key needed)
-            if get_lane_provider("vision") == "anthropic" and not is_lane_execution_enabled("vision"):
-                logger.info("Vision lane execution disabled; falling back to claude CLI review path")
             logger.info("Creating contact sheet at %sfps (CLI mode)", fps)
             contact_sheet, n_frames = await asyncio.get_event_loop().run_in_executor(
                 None, _create_contact_sheet, str(video_path), fps, tmp

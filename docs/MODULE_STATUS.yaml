@@ -99,8 +99,10 @@ domains:
       - tests/unit/test_prompt_compiler_runtime_config_service.py
       - tests/unit/test_prompt_compiler_single_extend_policy.py
       - tests/unit/test_product_image_analysis_service.py
+      - tests/unit/test_ai_provider_settings_service.py
       - tests/unit/test_product_catalog.py
       - tests/unit/test_product_intelligence_service.py
+      - tests/unit/test_video_reviewer.py
       - tests/unit/test_ugc_video_prompt_compiler_service.py
       - tests/unit/test_workspace_image_preview_contract_service.py
       - tests/unit/test_workspace_execution_package_service.py
