@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agent.services import fastmoss_bulk_promotion_service as _svc
@@ -36,6 +37,10 @@ class RecomputeSelectedRequest(BaseModel):
 
 class UpdateQueueRowStatusRequest(BaseModel):
     promotion_status: str
+
+
+class ImportEnrichmentRequest(BaseModel):
+    items: list[dict[str, Any]]
 
 
 class ResolveDuplicateQueueRowRequest(BaseModel):
@@ -127,6 +132,25 @@ async def recompute_selected(body: RecomputeSelectedRequest) -> dict[str, Any]:
     if not body.reference_ids:
         raise HTTPException(status_code=422, detail="reference_ids must not be empty")
     return await _svc.recompute_selected(body.reference_ids)
+
+
+@router.get("/queue/export-missing-csv")
+async def export_missing_csv() -> StreamingResponse:
+    csv_content = await _svc.export_missing_as_csv()
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": 'attachment; filename="missing_required_field.csv"'
+        },
+    )
+
+
+@router.post("/queue/import-enrichment")
+async def import_enrichment(body: ImportEnrichmentRequest) -> dict[str, Any]:
+    if not body.items:
+        raise HTTPException(status_code=422, detail="items must not be empty")
+    return await _svc.import_enrichment(body.items)
 
 
 @router.post("/queue/duplicates/resolve")

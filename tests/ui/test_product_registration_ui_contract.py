@@ -258,8 +258,18 @@ def test_bulk_fastmoss_detail_drawer_and_row_actions_contract():
     assert "Review Duplicate" in content, "Duplicate drawer action missing"
     assert "Reject" in content, "Drawer reject action missing"
     assert "force-approve-claim-risk" not in content, "Claim-risk override route must not be introduced in safe salvage lane"
-    assert "Import Enriched" not in content, "Unsafe import lane must not be introduced without proof"
-    assert "Export Missing" not in content, "Unsafe export lane must not be introduced without proof"
+
+
+def test_bulk_fastmoss_missing_field_enrichment_contract():
+    """BulkFastMoss must support offline enrichment without claim-risk override."""
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx").read_text(encoding="utf-8")
+    assert "Export Missing" in content, "Missing-field CSV export action missing"
+    assert "Import Enriched" in content, "Enriched CSV import action missing"
+    assert "/api/fastmoss-bulk/queue/export-missing-csv" in content, "Export route missing"
+    assert "/api/fastmoss-bulk/queue/import-enrichment" in content, "Import route missing"
+    assert "Import done:" in content, "Import summary banner missing"
+    assert "force-approve-claim-risk" not in content, "Claim-risk override route must remain absent"
 
 
 def test_product_registration_page_has_open_bulk_fastmoss_header_cta():

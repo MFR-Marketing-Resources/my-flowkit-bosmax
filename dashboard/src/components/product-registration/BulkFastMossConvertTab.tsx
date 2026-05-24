@@ -78,6 +78,14 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
 	const [rowLoading, setRowLoading] = useState<Record<string, boolean>>({});
+	const [exporting, setExporting] = useState(false);
+	const [importing, setImporting] = useState(false);
+	const [importResult, setImportResult] = useState<{
+		total: number;
+		recomputed: number;
+		skipped: number;
+		failed: number;
+	} | null>(null);
 	const [recomputeSummary, setRecomputeSummary] =
 		useState<BulkRecomputeSelectedResult | null>(null);
 	const [duplicateReviewResult, setDuplicateReviewResult] =
@@ -193,6 +201,79 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 			setActionError(getErrorMessage(e, "Sync failed"));
 		} finally {
 			setSyncing(false);
+		}
+	};
+
+	const handleExportMissing = async () => {
+		setExporting(true);
+		try {
+			const response = await fetch("/api/fastmoss-bulk/queue/export-missing-csv");
+			if (!response.ok) throw new Error(`Export failed: ${response.status}`);
+			const blob = await response.blob();
+			const url = URL.createObjectURL(blob);
+			const link = document.createElement("a");
+			link.href = url;
+			link.download = "missing_required_field.csv";
+			link.click();
+			URL.revokeObjectURL(url);
+		} catch (error: unknown) {
+			setActionError(getErrorMessage(error, "Export failed"));
+		} finally {
+			setExporting(false);
+		}
+	};
+
+	const handleImportCsv = async (file: File) => {
+		setImporting(true);
+		setImportResult(null);
+		setActionMessage(null);
+		setActionError(null);
+		try {
+			const text = await file.text();
+			const lines = text.split(/\r?\n/).filter(Boolean);
+			if (lines.length < 2) throw new Error("CSV has no data rows");
+			const headers = lines[0]
+				.split(",")
+				.map((header) => header.trim().replace(/^"|"$/g, ""));
+			const items = lines.slice(1).map((line) => {
+				const values: string[] = [];
+				let current = "";
+				let inQuotes = false;
+				for (let i = 0; i < line.length; i += 1) {
+					const char = line[i];
+					if (char === '"') {
+						inQuotes = !inQuotes;
+					} else if (char === "," && !inQuotes) {
+						values.push(current);
+						current = "";
+					} else {
+						current += char;
+					}
+				}
+				values.push(current);
+				return Object.fromEntries(
+					headers.map((header, index) => [
+						header,
+						(values[index] ?? "").trim(),
+					]),
+				);
+			});
+			const result = await postAPI<{
+				total: number;
+				recomputed: number;
+				skipped: number;
+				failed: number;
+			}>("/api/fastmoss-bulk/queue/import-enrichment", { items });
+			setImportResult(result);
+			setActionMessage(
+				`Import complete — recomputed: ${result.recomputed}, skipped: ${result.skipped}, failed: ${result.failed}`,
+			);
+			await fetchStats();
+			await fetchQueue();
+		} catch (error: unknown) {
+			setActionError(getErrorMessage(error, "Import failed"));
+		} finally {
+			setImporting(false);
 		}
 	};
 
@@ -562,14 +643,44 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 					<span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
 						Queue Stats
 					</span>
-					<button
-						type="button"
-						onClick={handleSync}
-						disabled={syncing}
-						className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 text-white text-[10px] font-bold uppercase tracking-widest transition-all"
-					>
-						{syncing ? "Syncing…" : "Sync Queue"}
-					</button>
+					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							onClick={handleExportMissing}
+							disabled={exporting}
+							title="Download CSV of all MISSING_REQUIRED_FIELD rows to enrich offline"
+							className="px-3 py-1 rounded-lg bg-amber-600/20 hover:bg-amber-600/40 border border-amber-600/30 disabled:opacity-40 text-amber-300 text-[10px] font-bold uppercase tracking-widest transition-all"
+						>
+							{exporting ? "Exporting…" : "Export Missing"}
+						</button>
+						<label
+							title="Upload an enriched CSV to recompute missing rows"
+							className={`px-3 py-1 rounded-lg border cursor-pointer text-[10px] font-bold uppercase tracking-widest transition-all ${importing ? "bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed" : "bg-emerald-600/20 hover:bg-emerald-600/40 border-emerald-600/30 text-emerald-300"}`}
+						>
+							{importing ? "Importing…" : "Import Enriched"}
+							<input
+								type="file"
+								accept=".csv"
+								className="hidden"
+								disabled={importing}
+								onChange={(event) => {
+									const file = event.target.files?.[0];
+									if (file) {
+										void handleImportCsv(file);
+										event.target.value = "";
+									}
+								}}
+							/>
+						</label>
+						<button
+							type="button"
+							onClick={handleSync}
+							disabled={syncing}
+							className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 text-white text-[10px] font-bold uppercase tracking-widest transition-all"
+						>
+							{syncing ? "Syncing…" : "Sync Queue"}
+						</button>
+					</div>
 				</div>
 				{stats ? (
 					<div className="flex flex-wrap gap-2">
@@ -729,6 +840,27 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 					<p className="text-[11px] text-slate-300">
 						{duplicateReviewResult.message}
 					</p>
+				</div>
+			)}
+			{importResult && (
+				<div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-xs text-emerald-300 flex gap-4 flex-wrap">
+					<span>Import done:</span>
+					<span>
+						Recomputed <strong>{importResult.recomputed}</strong>
+					</span>
+					<span>
+						Skipped <strong>{importResult.skipped}</strong>
+					</span>
+					<span>
+						Failed <strong>{importResult.failed}</strong>
+					</span>
+					<button
+						type="button"
+						onClick={() => setImportResult(null)}
+						className="ml-auto text-slate-500 hover:text-white"
+					>
+						✕
+					</button>
 				</div>
 			)}
 
