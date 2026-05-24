@@ -1,8 +1,8 @@
 import json
 import os
-from datetime import datetime
-from typing import Any, List
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, List
 
 from agent.config import PRODUCT_REGISTRATION_DRAFTS_DIR
 from agent.models.product_registration import (
@@ -20,7 +20,7 @@ class RegistrationDraftStorageService:
         if not PRODUCT_REGISTRATION_DRAFTS_DIR.exists():
             PRODUCT_REGISTRATION_DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
             
-        now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         if not draft.created_at:
             draft.created_at = now
         draft.updated_at = now
