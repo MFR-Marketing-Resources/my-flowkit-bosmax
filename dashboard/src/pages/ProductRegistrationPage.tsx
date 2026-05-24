@@ -96,7 +96,9 @@ export default function ProductRegistrationPage() {
 	const handleDeleteDraft = async (draftId: string) => {
 		if (!window.confirm("Delete this draft permanently?")) return;
 		try {
-			await fetch(`/api/product-registration/review-drafts/${draftId}`, { method: "DELETE" });
+			await fetch(`/api/product-registration/review-drafts/${draftId}`, {
+				method: "DELETE",
+			});
 			if (reviewDraft?.review_draft_id === draftId) setReviewDraft(null);
 			fetchDrafts();
 		} catch (err) {
@@ -117,8 +119,14 @@ export default function ProductRegistrationPage() {
 	};
 
 	const totalPagesDrafts = Math.ceil(savedDrafts.length / PAGE_SIZE_DRAFTS);
-	const safePageDrafts = Math.min(Math.max(1, currentPageDrafts), totalPagesDrafts || 1);
-	const paginatedDrafts = savedDrafts.slice((safePageDrafts - 1) * PAGE_SIZE_DRAFTS, safePageDrafts * PAGE_SIZE_DRAFTS);
+	const safePageDrafts = Math.min(
+		Math.max(1, currentPageDrafts),
+		totalPagesDrafts || 1,
+	);
+	const paginatedDrafts = savedDrafts.slice(
+		(safePageDrafts - 1) * PAGE_SIZE_DRAFTS,
+		safePageDrafts * PAGE_SIZE_DRAFTS,
+	);
 
 	return (
 		<div className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-8 overflow-y-auto">
@@ -342,7 +350,10 @@ export default function ProductRegistrationPage() {
 									</p>
 								) : (
 									paginatedDrafts.map((d) => (
-										<div key={d.review_draft_id} className="relative group/card">
+										<div
+											key={d.review_draft_id}
+											className="relative group/card"
+										>
 											<button
 												type="button"
 												onClick={() => handleSelectDraft(d)}
@@ -384,8 +395,20 @@ export default function ProductRegistrationPage() {
 												className="absolute top-2 right-2 opacity-0 group-hover/card:opacity-100 transition-opacity p-1 rounded bg-red-500/10 hover:bg-red-500/30 text-red-400 hover:text-red-300"
 												title="Delete draft"
 											>
-												<svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-													<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+												<svg
+													xmlns="http://www.w3.org/2000/svg"
+													className="h-3 w-3"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+												>
+													<title>Delete draft</title>
+													<path
+														strokeLinecap="round"
+														strokeLinejoin="round"
+														strokeWidth={2}
+														d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+													/>
 												</svg>
 											</button>
 										</div>
@@ -396,13 +419,18 @@ export default function ProductRegistrationPage() {
 								<div className="flex items-center justify-center gap-1 mt-3">
 									<button
 										type="button"
-										onClick={() => setCurrentPageDrafts(p => Math.max(1, p - 1))}
+										onClick={() =>
+											setCurrentPageDrafts((p) => Math.max(1, p - 1))
+										}
 										disabled={safePageDrafts === 1}
 										className="px-2 py-1 rounded text-[10px] bg-slate-800 border border-slate-700 text-slate-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
 									>
 										Prev
 									</button>
-									{Array.from({ length: totalPagesDrafts }, (_, i) => i + 1).map(pg => (
+									{Array.from(
+										{ length: totalPagesDrafts },
+										(_, i) => i + 1,
+									).map((pg) => (
 										<button
 											key={pg}
 											type="button"
@@ -414,7 +442,11 @@ export default function ProductRegistrationPage() {
 									))}
 									<button
 										type="button"
-										onClick={() => setCurrentPageDrafts(p => Math.min(totalPagesDrafts, p + 1))}
+										onClick={() =>
+											setCurrentPageDrafts((p) =>
+												Math.min(totalPagesDrafts, p + 1),
+											)
+										}
 										disabled={safePageDrafts === totalPagesDrafts}
 										className="px-2 py-1 rounded text-[10px] bg-slate-800 border border-slate-700 text-slate-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
 									>

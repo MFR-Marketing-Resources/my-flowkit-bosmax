@@ -58,6 +58,7 @@ from agent.api.product_registration import router as product_registration_router
 from agent.api.fastmoss_import import router as fastmoss_import_router
 from agent.api.fastmoss_bulk import router as fastmoss_bulk_router
 from agent.api.product_knowledge import router as product_knowledge_router
+from agent.api.ai_provider_settings import router as ai_provider_settings_router
 from agent.sdk import init_sdk
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -192,6 +193,7 @@ app.include_router(product_registration_router, prefix="/api")
 app.include_router(fastmoss_import_router, prefix="/api")
 app.include_router(fastmoss_bulk_router, prefix="/api")
 app.include_router(product_knowledge_router, prefix="/api")
+app.include_router(ai_provider_settings_router)
 
 
 

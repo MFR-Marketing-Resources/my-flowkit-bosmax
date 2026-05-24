@@ -10,6 +10,7 @@
     "test:selector-registry": "node scripts/test-flow-selector-registry.js"
   },
   "devDependencies": {
+    "dependency-cruiser": "^17.4.2",
     "jsdom": "^26.1.0",
     "playwright": "^1.60.0"
   }

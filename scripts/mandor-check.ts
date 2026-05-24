@@ -106,6 +106,7 @@ function getChangedPaths(): string[] {
 		.filter((line) => !line.startsWith("data/product_registration/"))
 		.filter((line) => !line.startsWith("data/fastmoss/imports/"))
 		.filter((line) => !line.startsWith(".gemini/"))
+		.filter((line) => !line.startsWith(".claude/"))
 		.filter((line) => !line.startsWith("scratch/"))
 		.filter((line) => !line.endsWith(".db"))
 		.filter((line) => !line.endsWith(".sqlite"))

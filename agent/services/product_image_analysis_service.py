@@ -6,11 +6,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from agent.config import ANTHROPIC_API_KEY, BASE_DIR
+from agent.config import BASE_DIR
 from agent.db import crud
 from agent.models.product_intelligence import (
     ProductImageAnalysisResolveRequest,
     ProductIntelligenceImageAnalysis,
+)
+from agent.services.ai_provider_settings_service import (
+    get_active_provider_id,
+    get_provider_api_key,
 )
 
 
@@ -47,8 +51,10 @@ def _is_supported_image_url(image_url: str) -> bool:
 def _configured_provider_name() -> str | None:
     provider = os.environ.get("PRODUCT_IMAGE_VISION_PROVIDER", "").strip().lower()
     if not provider:
+        provider = str(get_active_provider_id() or "").strip().lower()
+    if not provider:
         return None
-    if provider == "anthropic" and ANTHROPIC_API_KEY:
+    if provider == "anthropic" and get_provider_api_key("anthropic"):
         return "anthropic"
     return None
 

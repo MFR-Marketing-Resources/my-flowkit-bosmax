@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { archiveCreativeAsset, fetchCreativeAssets } from "../api/creativeAssets";
+import {
+	archiveCreativeAsset,
+	fetchCreativeAssets,
+} from "../api/creativeAssets";
 import type {
 	CreativeAsset,
 	CreativeAssetSemanticRole,
@@ -52,19 +55,31 @@ export default function CreativeLibraryPage() {
 			.then((response) => setItems(response.items))
 			.catch((err: unknown) =>
 				setError(
-					err instanceof Error ? err.message : "Failed to load Creative Library.",
+					err instanceof Error
+						? err.message
+						: "Failed to load Creative Library.",
 				),
 			)
 			.finally(() => setIsLoading(false));
 	}, [roleFilter, statusFilter, search]);
 
-	useEffect(() => { setCurrentPage(1); }, [roleFilter, statusFilter, modeFilter, search]);
+	const paginationResetKey = `${roleFilter}|${statusFilter}|${modeFilter}|${search}`;
+
+	useEffect(() => {
+		if (paginationResetKey) {
+			setCurrentPage(1);
+		}
+	}, [paginationResetKey]);
 
 	const handleArchive = async (assetId: string) => {
 		setArchiving(assetId);
 		try {
 			await archiveCreativeAsset(assetId);
-			setItems(prev => prev.map(i => i.asset_id === assetId ? { ...i, status: "ARCHIVED" as const } : i));
+			setItems((prev) =>
+				prev.map((i) =>
+					i.asset_id === assetId ? { ...i, status: "ARCHIVED" as const } : i,
+				),
+			);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to archive asset.");
 		} finally {
@@ -79,7 +94,10 @@ export default function CreativeLibraryPage() {
 
 	const totalPages = Math.ceil(displayedItems.length / PAGE_SIZE_ASSETS);
 	const safePage = Math.min(Math.max(1, currentPage), totalPages || 1);
-	const paginatedItems = displayedItems.slice((safePage - 1) * PAGE_SIZE_ASSETS, safePage * PAGE_SIZE_ASSETS);
+	const paginatedItems = displayedItems.slice(
+		(safePage - 1) * PAGE_SIZE_ASSETS,
+		safePage * PAGE_SIZE_ASSETS,
+	);
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
@@ -258,13 +276,13 @@ export default function CreativeLibraryPage() {
 					<div className="mt-4 flex items-center justify-center gap-1">
 						<button
 							type="button"
-							onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+							onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
 							disabled={safePage === 1}
 							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
 						>
 							Prev
 						</button>
-						{Array.from({ length: totalPages }, (_, i) => i + 1).map(pg => (
+						{Array.from({ length: totalPages }, (_, i) => i + 1).map((pg) => (
 							<button
 								key={pg}
 								type="button"
@@ -276,7 +294,7 @@ export default function CreativeLibraryPage() {
 						))}
 						<button
 							type="button"
-							onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+							onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
 							disabled={safePage === totalPages}
 							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
 						>

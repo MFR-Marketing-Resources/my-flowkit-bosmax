@@ -71,6 +71,15 @@ interface ScheduledRun {
   created_at: string
 }
 
+interface PhbPackage {
+  workspace_generation_package_id: string
+  mode: string
+  status: string
+  product_name_snapshot: string | null
+  product_id: string
+  created_at: string
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MODES = ['F2V', 'I2V', 'T2V', 'IMG'] as const
@@ -89,6 +98,19 @@ const MODE_LABELS: Record<Mode, string> = {
   T2V: 'Text → Video',
   IMG: 'Image Gen',
 }
+
+const MODE_ASSET_INFO: Record<Mode, string> = {
+  F2V: 'Subject · Scene · Style (ref images)',
+  I2V: 'Subject · Product · Scene ctx (ref images)',
+  T2V: 'Text only — full prompt, no ref images',
+  IMG: 'Subject · Style · Template (ref images)',
+}
+
+// Which modes use which slots
+// I2V: Subject=char ref, Scene=product ref, Style=scene ctx ref — all 3 are reference images
+const MODE_USES_CHAR = new Set<Mode>(['F2V', 'I2V', 'IMG'])
+const MODE_USES_SCENE = new Set<Mode>(['F2V', 'I2V'])
+const MODE_USES_STYLE = new Set<Mode>(['F2V', 'I2V', 'IMG'])
 
 // ─── Workspace Batch Tab ──────────────────────────────────────────────────────
 
@@ -297,6 +319,84 @@ function MultiProductPicker({
   )
 }
 
+// ─── Run Packages Panel (P5A) ─────────────────────────────────────────────────
+
+const PKG_STATUS_COLORS: Record<string, string> = {
+  READY_MANUAL: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+  READY_DOM_STAGED: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+  BLOCKED: 'bg-red-500/15 text-red-300 border-red-500/30',
+  DRAFT: 'bg-slate-700/60 text-slate-400 border-slate-600/30',
+  ARCHIVED: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
+}
+
+function RunPackagesPanel({
+  packages,
+  loading,
+}: {
+  packages: PhbPackage[] | undefined
+  loading: boolean
+}) {
+  if (loading) return <div className="py-3 text-[10px] text-white/30 text-center">Loading packages…</div>
+  if (!packages) return null
+  if (packages.length === 0) return <div className="py-3 text-[10px] text-white/30 text-center">No packages found for this run.</div>
+
+  const grouped = packages.reduce<Record<string, PhbPackage[]>>((acc, p) => {
+    acc[p.status] = [...(acc[p.status] ?? []), p]
+    return acc
+  }, {})
+
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[9px] font-black uppercase tracking-widest text-white/30">PHB Packages ({packages.length})</span>
+        <a
+          href={`/workspace/generation-packages`}
+          className="flex items-center gap-1 text-[9px] font-black text-accent/60 hover:text-accent transition-colors"
+        >
+          Open PHB <LinkOut size={9} />
+        </a>
+      </div>
+      <div className="flex gap-2 flex-wrap">
+        {Object.entries(grouped).map(([status, pkgs]) => (
+          <span key={status} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${PKG_STATUS_COLORS[status] ?? 'bg-white/5 text-white/30 border-white/10'}`}>
+            {status} × {pkgs.length}
+          </span>
+        ))}
+      </div>
+      <div className="rounded-xl border border-white/5 overflow-hidden">
+        <table className="w-full text-[10px]">
+          <thead>
+            <tr className="border-b border-white/5 text-white/20 font-black uppercase tracking-widest">
+              <th className="px-3 py-2 text-left">Mode</th>
+              <th className="px-3 py-2 text-left">Product</th>
+              <th className="px-3 py-2 text-left">Status</th>
+              <th className="px-3 py-2 text-left">ID</th>
+            </tr>
+          </thead>
+          <tbody>
+            {packages.map(pkg => (
+              <tr key={pkg.workspace_generation_package_id} className="border-b border-white/3 hover:bg-white/3 transition-colors">
+                <td className="px-3 py-1.5">
+                  <span className={`font-bold px-1.5 py-0.5 rounded border text-[9px] ${MODE_COLORS[pkg.mode as Mode] || 'bg-white/5 border-white/10 text-white/40'}`}>
+                    {pkg.mode}
+                  </span>
+                </td>
+                <td className="px-3 py-1.5 text-white/50 truncate max-w-[120px]">{pkg.product_name_snapshot || pkg.product_id.slice(-8)}</td>
+                <td className="px-3 py-1.5">
+                  <span className={`font-bold px-1.5 py-0.5 rounded border text-[9px] ${PKG_STATUS_COLORS[pkg.status] ?? 'bg-white/5 border-white/10 text-white/40'}`}>
+                    {pkg.status}
+                  </span>
+                </td>
+                <td className="px-3 py-1.5 font-mono text-white/20 text-[9px]">{pkg.workspace_generation_package_id.slice(-10)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ─── Workspace Batch Tab ──────────────────────────────────────────────────────
 
 function WorkspaceBatchTab({ products }: { products: Product[] }) {
@@ -325,6 +425,11 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
   const [scheduledAt, setScheduledAt] = useState('')
   const [scheduleLabel, setScheduleLabel] = useState('')
   const [scheduledRuns, setScheduledRuns] = useState<ScheduledRun[]>([])
+
+  // P5A: Per-run package detail
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null)
+  const [runPackages, setRunPackages] = useState<Record<string, PhbPackage[]>>({})
+  const [runPkgLoading, setRunPkgLoading] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     const load = async () => {
@@ -380,6 +485,13 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
   const combinations = charSlots * sceneSlots * styleSlots
   const totalExpected = Math.max(1, selectedProductIds.length) * selectedModes.length * combinations * quantityPerMode
   const estimatedSeconds = totalExpected * intervalSeconds
+
+  // Mode-aware slot visibility
+  const showCharSlot = selectedModes.some(m => MODE_USES_CHAR.has(m))
+  const showSceneSlot = selectedModes.some(m => MODE_USES_SCENE.has(m))
+  const showStyleSlot = selectedModes.some(m => MODE_USES_STYLE.has(m))
+  const t2vOnly = selectedModes.length > 0 && selectedModes.every(m => m === 'T2V')
+  const anyVisualSlot = showCharSlot || showSceneSlot || showStyleSlot
 
   // Poll active run
   useEffect(() => {
@@ -504,6 +616,23 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
     }
   }
 
+  const toggleRunPackages = async (batchRunId: string) => {
+    if (expandedRunId === batchRunId) {
+      setExpandedRunId(null)
+      return
+    }
+    setExpandedRunId(batchRunId)
+    if (runPackages[batchRunId]) return
+    setRunPkgLoading(prev => ({ ...prev, [batchRunId]: true }))
+    try {
+      const res = await fetchAPI(`/api/workspace/generation-packages?batch_run_id=${encodeURIComponent(batchRunId)}&limit=200`) as { packages: PhbPackage[] }
+      setRunPackages(prev => ({ ...prev, [batchRunId]: res.packages ?? [] }))
+    } catch { /* non-fatal */ }
+    finally {
+      setRunPkgLoading(prev => ({ ...prev, [batchRunId]: false }))
+    }
+  }
+
   const progress = currentRun
     ? currentRun.total_expected > 0
       ? Math.round(((currentRun.total_completed + currentRun.total_failed) / currentRun.total_expected) * 100)
@@ -518,7 +647,7 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
   return (
     <div className="flex flex-col lg:flex-row gap-6 min-h-0 h-full">
       {/* Left: Config panel */}
-      <div className="lg:w-[420px] shrink-0 flex flex-col gap-5">
+      <div className="lg:w-[420px] shrink-0 flex flex-col gap-5 min-h-0 overflow-y-auto custom-scrollbar pb-4">
         {/* Product */}
         <section className="p-5 rounded-xl border border-white/5 bg-surface shadow-xl flex flex-col gap-4">
           <h2 className="text-sm font-bold flex items-center gap-2 text-white/90">
@@ -560,6 +689,7 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
               >
                 <span className="text-[11px] font-black tracking-wide">{m}</span>
                 <span className="text-[9px] opacity-60">{MODE_LABELS[m]}</span>
+                <span className="text-[8px] opacity-35 leading-tight mt-0.5">{MODE_ASSET_INFO[m]}</span>
               </button>
             ))}
           </div>
@@ -568,43 +698,89 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
           )}
         </section>
 
-        {/* Creative Library Asset Slots */}
+        {/* Creative Library Asset Slots — mode-aware */}
         <section className="p-5 rounded-xl border border-white/5 bg-surface shadow-xl flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <label className="text-[10px] uppercase font-black tracking-[0.18em] opacity-40">Creative Library Slots</label>
-            {combinations > 1 && (
+            {combinations > 1 && anyVisualSlot && (
               <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
                 {combinations} combinations
               </span>
             )}
           </div>
-          <p className="text-[10px] text-white/25 -mt-2 leading-relaxed">
-            Select assets per slot. Each combination generates {quantityPerMode} prompt{quantityPerMode > 1 ? 's' : ''} per mode.
-          </p>
-          <AssetSlotPicker
-            label="Avatar / Character"
-            color="bg-purple-500/15 text-purple-300 border-purple-500/30"
-            assets={characterAssets}
-            selectedIds={selectedCharIds}
-            onToggle={toggleId(setSelectedCharIds)}
-            disabled={isRunning}
-          />
-          <AssetSlotPicker
-            label="Scene Context / Background"
-            color="bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
-            assets={sceneAssets}
-            selectedIds={selectedSceneIds}
-            onToggle={toggleId(setSelectedSceneIds)}
-            disabled={isRunning}
-          />
-          <AssetSlotPicker
-            label="Style / Outfit Reference"
-            color="bg-amber-500/15 text-amber-300 border-amber-500/30"
-            assets={styleAssets}
-            selectedIds={selectedStyleIds}
-            onToggle={toggleId(setSelectedStyleIds)}
-            disabled={isRunning}
-          />
+
+          {selectedModes.length === 0 && (
+            <p className="text-[10px] text-white/20 leading-relaxed">Select a mode above to see required asset slots.</p>
+          )}
+
+          {t2vOnly && (
+            <div className="p-3 rounded-xl bg-emerald-500/8 border border-emerald-500/20 flex items-center gap-2">
+              <span className="text-emerald-400/70 text-lg">✍️</span>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[11px] font-black text-emerald-300/80">Text → Video — no visual assets needed</span>
+                <span className="text-[10px] text-white/25">Prompts are generated from product text only.</span>
+              </div>
+            </div>
+          )}
+
+          {anyVisualSlot && (
+            <>
+              <p className="text-[10px] text-white/25 -mt-2 leading-relaxed">
+                Only slots relevant to your selected modes are shown. Each combination generates {quantityPerMode} prompt{quantityPerMode > 1 ? 's' : ''} per mode.
+              </p>
+
+              {showCharSlot && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[9px] font-bold text-purple-400/50 uppercase tracking-widest">
+                    Avatar / Character
+                    <span className="ml-1.5 text-white/20 normal-case tracking-normal">used by: {MODES.filter(m => MODE_USES_CHAR.has(m) && selectedModes.includes(m)).join(', ')}</span>
+                  </span>
+                  <AssetSlotPicker
+                    label="Avatar / Character"
+                    color="bg-purple-500/15 text-purple-300 border-purple-500/30"
+                    assets={characterAssets}
+                    selectedIds={selectedCharIds}
+                    onToggle={toggleId(setSelectedCharIds)}
+                    disabled={isRunning}
+                  />
+                </div>
+              )}
+
+              {showSceneSlot && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[9px] font-bold text-emerald-400/50 uppercase tracking-widest">
+                    Scene / Background
+                    <span className="ml-1.5 text-white/20 normal-case tracking-normal">used by: {MODES.filter(m => MODE_USES_SCENE.has(m) && selectedModes.includes(m)).join(', ')}</span>
+                  </span>
+                  <AssetSlotPicker
+                    label="Scene Context / Background"
+                    color="bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                    assets={sceneAssets}
+                    selectedIds={selectedSceneIds}
+                    onToggle={toggleId(setSelectedSceneIds)}
+                    disabled={isRunning}
+                  />
+                </div>
+              )}
+
+              {showStyleSlot && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[9px] font-bold text-amber-400/50 uppercase tracking-widest">
+                    Style / Outfit Reference
+                    <span className="ml-1.5 text-white/20 normal-case tracking-normal">used by: {MODES.filter(m => MODE_USES_STYLE.has(m) && selectedModes.includes(m)).join(', ')}</span>
+                  </span>
+                  <AssetSlotPicker
+                    label="Style / Outfit Reference"
+                    color="bg-amber-500/15 text-amber-300 border-amber-500/30"
+                    assets={styleAssets}
+                    selectedIds={selectedStyleIds}
+                    onToggle={toggleId(setSelectedStyleIds)}
+                    disabled={isRunning}
+                  />
+                </div>
+              )}
+            </>
+          )}
         </section>
 
         {/* P2A: IMG Prompt Template — shown only when IMG mode selected */}
@@ -873,6 +1049,27 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
                 ))}
               </div>
             )}
+
+            {/* P5A: Package detail toggle */}
+            {currentRun.total_completed > 0 && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => void toggleRunPackages(currentRun.batch_run_id)}
+                  className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-accent/70 hover:text-accent transition-colors"
+                >
+                  <Package size={11} />
+                  {expandedRunId === currentRun.batch_run_id ? 'Hide' : 'View'} {currentRun.total_completed} PHB packages
+                  <ChevronRight size={11} className={`transition-transform ${expandedRunId === currentRun.batch_run_id ? 'rotate-90' : ''}`} />
+                </button>
+                {expandedRunId === currentRun.batch_run_id && (
+                  <RunPackagesPanel
+                    packages={runPackages[currentRun.batch_run_id]}
+                    loading={runPkgLoading[currentRun.batch_run_id] ?? false}
+                  />
+                )}
+              </div>
+            )}
           </section>
         )}
 
@@ -939,41 +1136,61 @@ function WorkspaceBatchTab({ products }: { products: Product[] }) {
               <History size={13} /> Recent Batch Runs
             </h3>
             {recentRuns.map(run => (
-              <div
-                key={run.batch_run_id}
-                className="p-4 rounded-xl border border-white/5 bg-card/40 flex items-center gap-4 cursor-pointer hover:bg-card/70 transition-all"
-                onClick={() => setCurrentRun(run)}
-              >
-                <div className="flex-1 flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`text-[9px] font-black tracking-widest px-2 py-0.5 rounded-full border ${
-                      run.status === 'COMPLETED' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
-                      run.status === 'RUNNING' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                      run.status === 'FAILED' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                      'bg-white/5 text-white/30 border-white/10'
-                    }`}>{run.status}</span>
-                    <span className="text-[10px] font-mono opacity-20">#{run.batch_run_id.slice(-8)}</span>
+              <div key={run.batch_run_id} className="rounded-xl border border-white/5 bg-card/40 overflow-hidden">
+                <div
+                  className="p-4 flex items-center gap-4 cursor-pointer hover:bg-card/70 transition-all"
+                  onClick={() => setCurrentRun(run)}
+                >
+                  <div className="flex-1 flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[9px] font-black tracking-widest px-2 py-0.5 rounded-full border ${
+                        run.status === 'COMPLETED' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                        run.status === 'RUNNING' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                        run.status === 'FAILED' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                        'bg-white/5 text-white/30 border-white/10'
+                      }`}>{run.status}</span>
+                      <span className="text-[10px] font-mono opacity-20">#{run.batch_run_id.slice(-8)}</span>
+                    </div>
+                    <div className="flex gap-1 flex-wrap mt-0.5">
+                      {run.modes?.map(m => (
+                        <span key={m} className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${MODE_COLORS[m as Mode] || ''}`}>{m}</span>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex gap-1 flex-wrap mt-0.5">
-                    {run.modes?.map(m => (
-                      <span key={m} className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${MODE_COLORS[m as Mode] || ''}`}>{m}</span>
-                    ))}
+                  <div className="text-right flex flex-col gap-0.5">
+                    <span className="text-sm font-black text-white/70">{run.total_completed}<span className="text-[10px] opacity-40">/{run.total_expected}</span></span>
+                    <span className="text-[9px] opacity-30">{new Date(run.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
+                  {(run.status === 'FAILED' || run.status === 'CANCELLED' || run.total_failed > 0) && (
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); void handleRetryRun(run.batch_run_id) }}
+                      className="text-[9px] font-black px-2 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 shrink-0"
+                    >
+                      Retry
+                    </button>
+                  )}
+                  {run.total_completed > 0 && (
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); void toggleRunPackages(run.batch_run_id) }}
+                      className="flex items-center gap-1 text-[9px] font-black px-2 py-1 rounded-lg border border-accent/20 bg-accent/5 text-accent/60 hover:text-accent hover:bg-accent/10 shrink-0 transition-all"
+                      title="View PHB packages from this run"
+                    >
+                      <Package size={10} />
+                      {run.total_completed}
+                    </button>
+                  )}
+                  <ChevronRight size={14} className="opacity-20 shrink-0" />
                 </div>
-                <div className="text-right flex flex-col gap-0.5">
-                  <span className="text-sm font-black text-white/70">{run.total_completed}<span className="text-[10px] opacity-40">/{run.total_expected}</span></span>
-                  <span className="text-[9px] opacity-30">{new Date(run.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                </div>
-                {(run.status === 'FAILED' || run.status === 'CANCELLED' || run.total_failed > 0) && (
-                  <button
-                    type="button"
-                    onClick={e => { e.stopPropagation(); void handleRetryRun(run.batch_run_id) }}
-                    className="text-[9px] font-black px-2 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 shrink-0"
-                  >
-                    Retry
-                  </button>
+                {expandedRunId === run.batch_run_id && (
+                  <div className="border-t border-white/5 px-4 pb-3">
+                    <RunPackagesPanel
+                      packages={runPackages[run.batch_run_id]}
+                      loading={runPkgLoading[run.batch_run_id] ?? false}
+                    />
+                  </div>
                 )}
-                <ChevronRight size={14} className="opacity-20 shrink-0" />
               </div>
             ))}
           </section>
@@ -993,6 +1210,8 @@ export default function BatchesPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [selectedProductId, setSelectedProductId] = useState('')
   const [quantity, setQuantity] = useState(5)
+  const [batchMode, setBatchMode] = useState<'Frames' | 'Ingredients' | 'Text' | 'Image'>('Frames')
+  const [batchEngine, setBatchEngine] = useState('VEO_3_1')
   const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null)
   const [health, setHealth] = useState<LocalAgentStatus | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1059,7 +1278,8 @@ export default function BatchesPage() {
         product_id: selectedProductId,
         quantity: quantity,
         platform: 'TikTok',
-        mode: 'Frames',
+        mode: batchMode,
+        engine: batchEngine,
         approval_required: true
       }) as any
       if (data.error) {
@@ -1262,6 +1482,43 @@ export default function BatchesPage() {
                       )}
                     </div>
                   )}
+
+                  {/* Mode selector */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] uppercase font-bold opacity-40 tracking-wider">Mode</label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {(['Frames', 'Ingredients', 'Text', 'Image'] as const).map(m => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setBatchMode(m)}
+                          className={`py-2 rounded-lg text-[11px] font-black border transition-all ${
+                            batchMode === m
+                              ? 'bg-accent/15 text-accent border-accent/30'
+                              : 'border-white/10 text-white/30 hover:border-white/20 hover:text-white/60'
+                          }`}
+                        >
+                          {m === 'Frames' ? 'Frames (F2V)' :
+                           m === 'Ingredients' ? 'Ingredients (I2V)' :
+                           m === 'Text' ? 'Text → Video' : 'Image Gen'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Engine selector */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] uppercase font-bold opacity-40 tracking-wider">Engine</label>
+                    <select
+                      value={batchEngine}
+                      onChange={e => setBatchEngine(e.target.value)}
+                      className="bg-black/20 border border-white/5 rounded-lg px-3 py-2.5 text-sm text-white/80 w-full focus:border-accent outline-none transition-all [color-scheme:dark]"
+                    >
+                      <option value="VEO_3_1">Veo 3.1 Lite</option>
+                      <option value="VEO_3">Veo 3.0</option>
+                      <option value="VEO_2">Veo 2.0</option>
+                    </select>
+                  </div>
 
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] uppercase font-bold opacity-40 tracking-wider">Quantity (Max 20)</label>
