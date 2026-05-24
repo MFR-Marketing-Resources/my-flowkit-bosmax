@@ -100,14 +100,15 @@ const MODE_LABELS: Record<Mode, string> = {
 }
 
 const MODE_ASSET_INFO: Record<Mode, string> = {
-  F2V: 'Character · Scene · Style',
-  I2V: 'Scene · Style only',
-  T2V: 'Text only — no assets',
-  IMG: 'Character · Style · Template',
+  F2V: 'Subject · Scene · Style (ref images)',
+  I2V: 'Subject · Product · Scene ctx (ref images)',
+  T2V: 'Text only — full prompt, no ref images',
+  IMG: 'Subject · Style · Template (ref images)',
 }
 
 // Which modes use which slots
-const MODE_USES_CHAR = new Set<Mode>(['F2V', 'IMG'])
+// I2V: Subject=char ref, Scene=product ref, Style=scene ctx ref — all 3 are reference images
+const MODE_USES_CHAR = new Set<Mode>(['F2V', 'I2V', 'IMG'])
 const MODE_USES_SCENE = new Set<Mode>(['F2V', 'I2V'])
 const MODE_USES_STYLE = new Set<Mode>(['F2V', 'I2V', 'IMG'])
 
