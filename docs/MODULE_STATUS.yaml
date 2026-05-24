@@ -9,7 +9,11 @@ domains:
       - biome.json
       - .dependency-cruiser.cjs
       - scripts/mandor-check.ts
+      - scripts/install-local-agent.ps1
+      - scripts/local-agent-common.ps1
+      - scripts/start-local-agent.ps1
       - agent/api/ai_provider_settings.py
+      - agent/api/local_agent.py
       - agent/api/flow.py
       - agent/api/creative_assets.py
       - agent/api/products.py
@@ -39,6 +43,8 @@ domains:
       - agent/services/batch_planner.py
       - agent/models/product_registration.py
       - agent/services/product_knowledge_service.py
+      - agent/services/product_intelligence.py
+      - agent/services/product_intelligence_service.py
       - agent/services/product_registration_service.py
       - agent/services/registration_commit_service.py
       - agent/services/registration_draft_storage_service.py
@@ -93,6 +99,8 @@ domains:
       - tests/unit/test_prompt_compiler_runtime_config_service.py
       - tests/unit/test_prompt_compiler_single_extend_policy.py
       - tests/unit/test_product_image_analysis_service.py
+      - tests/unit/test_product_catalog.py
+      - tests/unit/test_product_intelligence_service.py
       - tests/unit/test_ugc_video_prompt_compiler_service.py
       - tests/unit/test_workspace_image_preview_contract_service.py
       - tests/unit/test_workspace_execution_package_service.py
@@ -109,6 +117,7 @@ domains:
       - tests/api/test_flow_request_lineage_payload_api.py
       - tests/api/test_claim_safe_rewrite_api.py
       - tests/api/test_ai_provider_settings_api.py
+      - tests/api/test_local_agent_status_api.py
       - tests/api/test_telemetry_api.py
       - tests/ui/test_creative_library_page_ui_contract.py
       - tests/ui/test_settings_page_ui_contract.py

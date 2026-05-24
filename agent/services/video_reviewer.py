@@ -26,6 +26,7 @@ from agent.services.ai_provider_settings_service import (
     get_lane_api_key,
     get_lane_provider,
     get_provider_api_key,
+    is_lane_execution_enabled,
 )
 
 logger = logging.getLogger(__name__)
@@ -402,7 +403,11 @@ async def review_scene_video(
                         scene["id"], type(e).__name__, media_id[:12])
             await _download_via_get_media(media_id, video_path)
 
-        if get_lane_provider("vision") == "anthropic" and get_lane_api_key("vision"):
+        if (
+            get_lane_provider("vision") == "anthropic"
+            and get_lane_api_key("vision")
+            and is_lane_execution_enabled("vision")
+        ):
             # SDK path: individual frames
             logger.info("Extracting frames at %sfps (SDK mode)", fps)
             frames = await asyncio.get_event_loop().run_in_executor(
@@ -418,6 +423,8 @@ async def review_scene_video(
             result = await _analyze_sdk(frames, fps, scene, characters)
         else:
             # CLI path: contact sheet (no API key needed)
+            if get_lane_provider("vision") == "anthropic" and not is_lane_execution_enabled("vision"):
+                logger.info("Vision lane execution disabled; falling back to claude CLI review path")
             logger.info("Creating contact sheet at %sfps (CLI mode)", fps)
             contact_sheet, n_frames = await asyncio.get_event_loop().run_in_executor(
                 None, _create_contact_sheet, str(video_path), fps, tmp

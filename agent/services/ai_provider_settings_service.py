@@ -56,6 +56,14 @@ AI_PROVIDER_STATE_VERSION = 1
 ACTIVE_PROVIDER_ENV_VAR = "BOSMAX_ACTIVE_AI_PROVIDER"
 VISION_PROVIDER_ENV_VAR = "PRODUCT_IMAGE_VISION_PROVIDER"
 TEXT_ASSIST_PROVIDER_ENV_VAR = "PRODUCT_TEXT_ASSIST_PROVIDER"
+LANE_EXECUTION_ENV_VARS: dict[str, str] = {
+    "vision": "BOSMAX_VISION_PROVIDER_EXECUTION_ENABLED",
+    "text_assist": "BOSMAX_TEXT_ASSIST_EXECUTION_ENABLED",
+}
+LANE_EXECUTION_DEFAULTS: dict[str, bool] = {
+    "vision": True,
+    "text_assist": True,
+}
 
 # Lane-level defaults: each lane has its own provider assignment, independent of
 # which provider the user has set as "active". This allows vision (Anthropic) and
@@ -68,6 +76,17 @@ PROVIDER_LANE_DEFAULTS: dict[str, str] = {
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = str(os.environ.get(name, "")).strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _default_payload() -> dict:
@@ -175,6 +194,13 @@ def get_lane_api_key(lane: str) -> str | None:
         return key or None
     except (ValueError, Exception):
         return None
+
+
+def is_lane_execution_enabled(lane: str) -> bool:
+    env_var = LANE_EXECUTION_ENV_VARS.get(lane)
+    if not env_var:
+        return False
+    return _env_bool(env_var, LANE_EXECUTION_DEFAULTS.get(lane, False))
 
 
 def get_active_provider_id() -> ProviderId | None:
@@ -304,4 +330,3 @@ def deactivate_provider() -> dict:
     _save_payload(payload)
     apply_runtime_provider_environment(payload)
     return summarize_provider_settings()
-

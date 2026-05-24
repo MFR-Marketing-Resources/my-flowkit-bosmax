@@ -18,6 +18,7 @@ const TYPE_LABELS = {
 
 const DASHBOARD_ROUTES = {
 	product: "http://127.0.0.1:8100/product-asset-generator",
+	registration: "http://127.0.0.1:8100/product-registration?portal=side",
 	prompt: "http://127.0.0.1:8100/prompt-preview",
 	registry: "http://127.0.0.1:8100/asset-registry",
 	operator: "http://127.0.0.1:8100/operator?portal=side",

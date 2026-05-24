@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +22,8 @@ LOCAL_AGENT_REPAIR_COMMAND = r".\scripts\install-local-agent.ps1"
 LOCAL_AGENT_DASHBOARD_URL = "http://127.0.0.1:8100/operator"
 LOCAL_AGENT_HEALTH_URL = "http://127.0.0.1:8100/health"
 LOCAL_AGENT_CONTENT_PACK_URL = "http://127.0.0.1:8100/api/operator/content-pack"
+LOCAL_AGENT_START_SCRIPT = str((BASE_DIR / "scripts" / "start-local-agent.ps1").resolve())
+LOCAL_AGENT_STARTUP_SHORTCUT = Path.home() / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/BOSMAX Flow Kit Local Agent.lnk"
 
 
 class LocalAgentRegistration(BaseModel):
@@ -42,6 +46,8 @@ class LocalAgentStatus(BaseModel):
     extension_state: str
     offline_reason: str | None = None
     auto_start_enabled: bool = False
+    auto_start_mode: str = "DISABLED"
+    auto_start_warning: str | None = None
     last_health_check: str | None = None
     license_status: str
     approval_status: str
@@ -73,6 +79,102 @@ def get_dashboard_paths() -> tuple[Path, Path]:
 def get_dashboard_serving_mode() -> str:
     _, index_file = get_dashboard_paths()
     return "BACKEND_SERVED_STATIC" if index_file.exists() else "BACKEND_BUILD_REQUIRED"
+
+
+def _ps_single_quote(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def _autostart_metadata_defaults() -> dict[str, str | bool | None]:
+    return {
+        "enabled": False,
+        "mode": "DISABLED",
+        "warning": None,
+        "scheduled_task_name": None,
+        "startup_shortcut_exists": False,
+        "startup_shortcut_matches": False,
+    }
+
+
+def _inspect_autostart_metadata() -> dict[str, str | bool | None]:
+    if os.name != "nt":
+        return _autostart_metadata_defaults()
+
+    script_path = _ps_single_quote(LOCAL_AGENT_START_SCRIPT)
+    shortcut_path = _ps_single_quote(str(LOCAL_AGENT_STARTUP_SHORTCUT))
+    command = f"""
+$repoStart = '{script_path}'
+$shortcutPath = '{shortcut_path}'
+$result = @{{
+  enabled = $false
+  mode = 'DISABLED'
+  warning = $null
+  scheduled_task_name = $null
+  startup_shortcut_exists = Test-Path $shortcutPath
+  startup_shortcut_matches = $false
+}}
+$tasks = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {{
+  $_.TaskName -like '*Flow Kit*' -or $_.TaskName -like '*BOSMAX*'
+}}
+foreach ($task in @($tasks)) {{
+  foreach ($action in @($task.Actions)) {{
+    $execute = if ($null -ne $action.Execute) {{ [string]$action.Execute }} else {{ '' }}
+    $arguments = if ($null -ne $action.Arguments) {{ [string]$action.Arguments }} else {{ '' }}
+    $combined = $execute + ' ' + $arguments
+    if ($combined -like \"*$repoStart*\") {{
+      $result.enabled = $true
+      $result.mode = 'SCHEDULED_TASK'
+      $result.scheduled_task_name = $task.TaskName
+      break
+    }}
+  }}
+  if ($result.enabled) {{ break }}
+}}
+if ($result.startup_shortcut_exists) {{
+  $shell = New-Object -ComObject WScript.Shell
+  $shortcut = $shell.CreateShortcut($shortcutPath)
+  $targetPath = if ($null -ne $shortcut.TargetPath) {{ [string]$shortcut.TargetPath }} else {{ '' }}
+  $shortcutArguments = if ($null -ne $shortcut.Arguments) {{ [string]$shortcut.Arguments }} else {{ '' }}
+  $workingDirectory = if ($null -ne $shortcut.WorkingDirectory) {{ [string]$shortcut.WorkingDirectory }} else {{ '' }}
+  $combinedShortcut = $targetPath + ' ' + $shortcutArguments + ' ' + $workingDirectory
+  if ($combinedShortcut -like \"*$repoStart*\") {{
+    $result.startup_shortcut_matches = $true
+    if (-not $result.enabled) {{
+      $result.enabled = $true
+      $result.mode = 'STARTUP_SHORTCUT'
+    }}
+  }} elseif (-not $result.enabled) {{
+    $result.mode = 'DISABLED'
+    $result.warning = 'STARTUP_SHORTCUT_TARGET_MISMATCH'
+  }} else {{
+    $result.warning = 'STALE_STARTUP_SHORTCUT_PRESENT'
+  }}
+}}
+$result | ConvertTo-Json -Compress
+""".strip()
+
+    try:
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:
+        return _autostart_metadata_defaults()
+
+    if completed.returncode != 0:
+        return _autostart_metadata_defaults()
+
+    try:
+        payload = json.loads(completed.stdout.strip() or "{}")
+    except json.JSONDecodeError:
+        return _autostart_metadata_defaults()
+
+    defaults = _autostart_metadata_defaults()
+    defaults.update(payload)
+    return defaults
 
 
 def load_registration() -> LocalAgentRegistration:
@@ -108,22 +210,17 @@ def load_registration() -> LocalAgentRegistration:
 @router.get("/status", response_model=LocalAgentStatus)
 async def get_local_agent_status():
     from agent.services.flow_client import get_flow_client
-    import pathlib
-
     client = get_flow_client()
     registration = load_registration()
     extension_status = await client.get_status()
+    autostart = _inspect_autostart_metadata()
 
     offline_reason = None
     if not client.connected:
         offline_reason = "EXTENSION_DISCONNECTED"
 
-    # Check if auto-start is enabled (startup shortcut exists)
-    startup_dir = pathlib.Path.home() / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup"
-    auto_start_enabled = (startup_dir / "BOSMAX Flow Kit Local Agent.lnk").exists()
-
     return LocalAgentStatus(
-        task_name=LOCAL_AGENT_TASK_NAME,
+        task_name=str(autostart.get("scheduled_task_name") or LOCAL_AGENT_TASK_NAME),
         health_url=LOCAL_AGENT_HEALTH_URL,
         dashboard_url=LOCAL_AGENT_DASHBOARD_URL,
         content_pack_url=LOCAL_AGENT_CONTENT_PACK_URL,
@@ -132,7 +229,9 @@ async def get_local_agent_status():
         extension_connected=client.connected,
         extension_state=(extension_status.get("state") or ("idle" if client.connected else "off")).upper(),
         offline_reason=offline_reason,
-        auto_start_enabled=auto_start_enabled,
+        auto_start_enabled=bool(autostart.get("enabled")),
+        auto_start_mode=str(autostart.get("mode") or "DISABLED"),
+        auto_start_warning=str(autostart.get("warning")) if autostart.get("warning") else None,
         last_health_check=_iso_now(),
         license_status=registration.license_status,
         approval_status=registration.approval_status,

@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 from agent.services.product_intelligence import enrich_product
@@ -215,7 +217,7 @@ def test_unknown_product_returns_low_confidence_and_needs_review():
     assert result["intelligence_status"] == "NEEDS_REVIEW"
 
 
-def test_semantic_image_warning_appears_when_provider_unavailable():
+def test_default_profile_resolution_skips_provider_execution_even_when_provider_is_configured():
     result = resolve_product_intelligence_profile(
         _product(
             raw_product_title="Atlas Lip Balm Original",
@@ -224,14 +226,14 @@ def test_semantic_image_warning_appears_when_provider_unavailable():
         )
     )
 
-    assert result["image_analysis"]["status"] == "VISION_PROVIDER_NOT_CONFIGURED"
-    assert "SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE" in result["warnings"]
+    assert result["image_analysis"]["status"] == "ANALYSIS_SKIPPED"
+    assert "image_analysis:provider_execution_disabled" in result["provenance"]
 
 
 def test_high_confidence_provider_result_can_influence_package_form(monkeypatch):
     monkeypatch.setattr(
         "agent.services.product_intelligence_service.analyze_product_image_payload",
-        lambda product: {
+        lambda product, **kwargs: {
             "status": "ANALYZED",
             "image_url": product.get("image_url"),
             "local_image_path": product.get("local_image_path"),
@@ -264,7 +266,7 @@ def test_high_confidence_provider_result_can_influence_package_form(monkeypatch)
 def test_low_confidence_provider_result_does_not_override_package_form(monkeypatch):
     monkeypatch.setattr(
         "agent.services.product_intelligence_service.analyze_product_image_payload",
-        lambda product: {
+        lambda product, **kwargs: {
             "status": "ANALYZED",
             "image_url": product.get("image_url"),
             "local_image_path": product.get("local_image_path"),
@@ -297,7 +299,7 @@ def test_low_confidence_provider_result_does_not_override_package_form(monkeypat
 def test_title_vs_image_conflict_triggers_review_warning(monkeypatch):
     monkeypatch.setattr(
         "agent.services.product_intelligence_service.analyze_product_image_payload",
-        lambda product: {
+        lambda product, **kwargs: {
             "status": "ANALYZED",
             "image_url": product.get("image_url"),
             "local_image_path": product.get("local_image_path"),
@@ -325,6 +327,44 @@ def test_title_vs_image_conflict_triggers_review_warning(monkeypatch):
     )
 
     assert "IMAGE_TITLE_CONFLICT_REVIEW_REQUIRED" in result["warnings"]
+
+
+def test_default_profile_resolution_disables_live_provider_execution(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_analyze(product, **kwargs):
+        captured["allow_provider_execution"] = kwargs.get("allow_provider_execution")
+        return {
+            "status": "ANALYSIS_SKIPPED",
+            "image_url": product.get("image_url"),
+            "local_image_path": product.get("local_image_path"),
+            "detected_package": None,
+            "detected_text": [],
+            "detected_brand": None,
+            "detected_size_text": None,
+            "detected_form_factor": None,
+            "visual_confidence": "NOT_VERIFIED",
+            "evidence": ["provider_execution:disabled"],
+            "warnings": ["PROVIDER_EXECUTION_DISABLED"],
+            "provider": "execution_disabled",
+            "metadata": {"configured_provider": "anthropic"},
+        }
+
+    monkeypatch.setattr(
+        "agent.services.product_intelligence_service.analyze_product_image_payload",
+        fake_analyze,
+    )
+
+    result = resolve_product_intelligence_profile(
+        _product(
+            raw_product_title="Atlas Lip Balm Original",
+            image_url="https://example.com/product.jpg",
+        )
+    )
+
+    assert captured["allow_provider_execution"] is False
+    assert result["image_analysis"]["status"] == "ANALYSIS_SKIPPED"
+    assert "image_analysis:provider_execution_disabled" in result["provenance"]
 
 
 @pytest.mark.asyncio

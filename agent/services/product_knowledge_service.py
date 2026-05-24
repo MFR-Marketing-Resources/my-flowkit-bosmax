@@ -30,7 +30,7 @@ from agent.config import BASE_DIR
 from agent.services.registration_hook_cta_generation_service import (
     generate_registration_hook_cta,
 )
-from agent.services.ai_provider_settings_service import get_lane_api_key, get_provider_api_key
+from agent.services.ai_provider_settings_service import get_lane_api_key, get_provider_api_key, is_lane_execution_enabled
 
 
 LOGGER = logging.getLogger(__name__)
@@ -388,6 +388,9 @@ def _extract_qwen_usp_suggestions(
 
     api_key = get_lane_api_key("text_assist")
     if not api_key:
+        return []
+    if not is_lane_execution_enabled("text_assist"):
+        LOGGER.info("Qwen USP extraction skipped: text_assist lane execution disabled")
         return []
 
     payload = {

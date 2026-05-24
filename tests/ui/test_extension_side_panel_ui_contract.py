@@ -37,8 +37,10 @@ def test_side_panel_shell_exposes_runtime_markers_and_retry_controls():
 		'id="runtime-extension-state"',
 		'id="runtime-serving-mode"',
 		'id="runtime-offline-reason"',
+		'data-dashboard-route="registration"',
 		'data-dashboard-route="creative"',
 		'data-dashboard-route="bank"',
+		"Smart Registration",
 		"Creative",
 		"Bank",
 	]:
@@ -47,9 +49,12 @@ def test_side_panel_shell_exposes_runtime_markers_and_retry_controls():
 	for token in [
 		"/api/local-agent/status",
 		"/health",
+		"FLOWKIT_DASHBOARD_ROUTE_SYNC",
 		"Local agent offline",
 		"Extension background disconnected",
 		"Dashboard build required",
+		"Smart Registration",
+		"/product-registration?portal=side",
 		"Creative Library",
 		"/assets/creative-library?portal=side",
 		"Prompt Handoff Bank",
@@ -58,18 +63,42 @@ def test_side_panel_shell_exposes_runtime_markers_and_retry_controls():
 		assert token in js
 
 	for token in [
+		"currentEmbeddedRoute",
+		"window.addEventListener(\"message\", handleEmbeddedRouteSync)",
+		"Embedded route sync received:",
+	]:
+		assert token in js
+
+	for token in [
+		'data-dashboard-route="registration"',
 		'data-dashboard-route="creative"',
 		'data-dashboard-route="bank"',
+		"Smart Registration",
 		"Creative",
 		"Bank",
 	]:
 		assert token in popup_html
 
 	for token in [
+		'registration: "http://127.0.0.1:8100/product-registration?portal=side"',
 		'creative: "http://127.0.0.1:8100/assets/creative-library?portal=side"',
 		'bank: "http://127.0.0.1:8100/workspace/generation-packages?portal=side"',
 	]:
 		assert token in popup_js
+
+
+def test_dashboard_portal_reports_current_embedded_route_to_side_panel_parent():
+	app_source = _read("dashboard/src/App.tsx")
+
+	for token in [
+		"function EmbeddedRouteReporter() {",
+		'new URLSearchParams(location.search).get("portal") === "side"',
+		'type: "FLOWKIT_DASHBOARD_ROUTE_SYNC"',
+		"window.parent.postMessage(",
+		"window.location.origin",
+		"<EmbeddedRouteReporter />",
+	]:
+		assert token in app_source
 
 
 def test_flow_dom_f2v_lane_stays_fail_closed_and_locked_to_lite():

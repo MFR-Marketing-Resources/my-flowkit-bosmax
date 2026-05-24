@@ -19,11 +19,14 @@ from agent.services.ai_provider_settings_service import (
     get_lane_api_key,
     get_lane_provider,
     get_provider_api_key,
+    is_lane_execution_enabled,
 )
 
 
 SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 SEMANTIC_IMAGE_WARNING = "SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE"
+PROVIDER_EXECUTION_DISABLED_WARNING = "PROVIDER_EXECUTION_DISABLED"
+VISION_PROVIDER_EXECUTION_DISABLED_WARNING = "VISION_PROVIDER_EXECUTION_DISABLED"
 PRODUCT_IMAGE_ANALYSIS_MODEL = os.environ.get(
     "PRODUCT_IMAGE_ANALYSIS_MODEL",
     REVIEW_MODEL,
@@ -273,7 +276,11 @@ def _analyze_with_provider(
     return None
 
 
-def analyze_product_image_payload(source: dict[str, Any]) -> dict[str, Any]:
+def analyze_product_image_payload(
+    source: dict[str, Any],
+    *,
+    allow_provider_execution: bool = True,
+) -> dict[str, Any]:
     payload = _build_reference_payload(source)
     image_url = payload["image_url"]
     local_image_path = payload["local_image_path"]
@@ -385,6 +392,53 @@ def analyze_product_image_payload(source: dict[str, Any]) -> dict[str, Any]:
             evidence=evidence,
             warnings=warnings,
             provider="not_configured",
+            metadata=metadata,
+        ).model_dump()
+
+    if not allow_provider_execution:
+        warnings.append(PROVIDER_EXECUTION_DISABLED_WARNING)
+        evidence.append("provider_execution:disabled")
+        metadata["configured_provider"] = provider
+        return ProductIntelligenceImageAnalysis(
+            status="ANALYSIS_SKIPPED",
+            image_url=image_url,
+            local_image_path=local_image_path,
+            detected_package=None,
+            detected_text=[],
+            detected_brand=None,
+            detected_size_text=None,
+            detected_form_factor=None,
+            visual_confidence="NOT_VERIFIED",
+            evidence=evidence,
+            warnings=warnings,
+            provider="execution_disabled",
+            metadata=metadata,
+        ).model_dump()
+
+    if not is_lane_execution_enabled("vision"):
+        warnings.extend(
+            warning
+            for warning in [
+                PROVIDER_EXECUTION_DISABLED_WARNING,
+                VISION_PROVIDER_EXECUTION_DISABLED_WARNING,
+            ]
+            if warning not in warnings
+        )
+        evidence.append("provider_execution:vision_lane_disabled")
+        metadata["configured_provider"] = provider
+        return ProductIntelligenceImageAnalysis(
+            status="ANALYSIS_SKIPPED",
+            image_url=image_url,
+            local_image_path=local_image_path,
+            detected_package=None,
+            detected_text=[],
+            detected_brand=None,
+            detected_size_text=None,
+            detected_form_factor=None,
+            visual_confidence="NOT_VERIFIED",
+            evidence=evidence,
+            warnings=warnings,
+            provider="execution_disabled",
             metadata=metadata,
         ).model_dump()
 

@@ -14,6 +14,10 @@ const DASHBOARD_ROUTES = {
 		label: "Product Asset Generator",
 		url: `${LOCAL_AGENT_BASE_URL}/product-asset-generator`,
 	},
+	registration: {
+		label: "Smart Registration",
+		url: `${LOCAL_AGENT_BASE_URL}/product-registration?portal=side`,
+	},
 	prompt: {
 		label: "Prompt Preview",
 		url: `${LOCAL_AGENT_BASE_URL}/prompt-preview`,
@@ -33,9 +37,11 @@ const DASHBOARD_ROUTES = {
 };
 
 const LAUNCHER_BUILD_LABEL = "issue88-extension-launcher-routes";
+const ROUTE_SYNC_MESSAGE_TYPE = "FLOWKIT_DASHBOARD_ROUTE_SYNC";
 
 let navigationToken = 0;
 let selectedRouteKey = "operator";
+let currentEmbeddedRoute = DASHBOARD_ROUTES.operator;
 
 function getElement(id) {
 	return document.getElementById(id);
@@ -133,6 +139,17 @@ function setCurrentRoute(routeKey, routeUrl) {
 	setRuntimeCopy("selected-route-url", routeUrl);
 }
 
+function setCurrentEmbeddedRoute(route) {
+	if (!route?.url) {
+		return;
+	}
+	currentEmbeddedRoute = {
+		label: route.label || currentEmbeddedRoute?.label || "Embedded Dashboard",
+		url: route.url,
+	};
+	setRuntimeCopy("selected-route-url", currentEmbeddedRoute.url);
+}
+
 function setIframeSrcCopy(value) {
 	setRuntimeCopy("iframe-src-copy", value || "not-set");
 }
@@ -196,6 +213,31 @@ function openRouteInBrowserTab(route) {
 	}
 
 	setLastAction("Open selected route failed: no browser tab API available.");
+}
+
+function handleEmbeddedRouteSync(event) {
+	if (event.origin !== LOCAL_AGENT_BASE_URL) {
+		return;
+	}
+
+	const data = event.data;
+	if (!data || data.type !== ROUTE_SYNC_MESSAGE_TYPE) {
+		return;
+	}
+
+	const routeUrl = typeof data.url === "string" ? data.url.trim() : "";
+	if (!routeUrl.startsWith(LOCAL_AGENT_BASE_URL)) {
+		return;
+	}
+
+	setCurrentEmbeddedRoute({
+		label:
+			typeof data.label === "string" && data.label.trim()
+				? data.label.trim()
+				: "Embedded Dashboard",
+		url: routeUrl,
+	});
+	setLastAction(`Embedded route sync received: ${routeUrl}`);
 }
 
 function setActiveButton(routeKey) {
@@ -266,7 +308,7 @@ function syncRuntimeDiagnostics(snapshot, route) {
 	setRuntimeCopy("runtime-offline-reason", offlineReason);
 	setRuntimeCopy("runtime-api-base", LOCAL_AGENT_BASE_URL);
 	setRuntimeCopy("runtime-repair-command", repairCommand);
-	setRuntimeCopy("selected-route-url", route.url);
+	setRuntimeCopy("selected-route-url", currentEmbeddedRoute?.url || route.url);
 }
 
 function renderUnavailableState(route, snapshot) {
@@ -465,6 +507,7 @@ async function navigateToRoute(routeKey, options = {}) {
 
 	setActiveButton(routeKey);
 	setCurrentRoute(routeKey, route.url);
+	setCurrentEmbeddedRoute(route);
 	recordClick(route.label, route.url);
 	setRuntimeCopy("route-label", route.label);
 	setRuntimeCopy("portal-url", route.url);
@@ -574,7 +617,9 @@ function bootSidePortal() {
 
 	openSelectedRouteButton.addEventListener("click", () => {
 		openRouteInBrowserTab(
-			DASHBOARD_ROUTES[selectedRouteKey] || DASHBOARD_ROUTES.operator,
+			currentEmbeddedRoute ||
+				DASHBOARD_ROUTES[selectedRouteKey] ||
+				DASHBOARD_ROUTES.operator,
 		);
 	});
 
@@ -593,6 +638,7 @@ function bootSidePortal() {
 
 	setLastAction(`Launcher bindings attached: ${buttons.length} buttons ready.`);
 	setPanelState("loading");
+	window.addEventListener("message", handleEmbeddedRouteSync);
 	navigateToRoute("operator", { forceReload: true });
 }
 

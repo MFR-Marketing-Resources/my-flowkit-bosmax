@@ -88,6 +88,14 @@ try {
     $autoStartMode = 'STARTUP_SHORTCUT'
 }
 
+if ($autoStartMode -eq 'SCHEDULED_TASK' -and (Test-Path $script:StartupShortcutPath)) {
+    try {
+        Remove-Item -LiteralPath $script:StartupShortcutPath -Force -ErrorAction Stop
+    } catch {
+        Write-Host "Warning: stale startup shortcut could not be removed at $script:StartupShortcutPath" -ForegroundColor Yellow
+    }
+}
+
 Stop-BosmaxBackendProcess | Out-Null
 & "$PSScriptRoot\start-local-agent.ps1" -ForceRestart
 
