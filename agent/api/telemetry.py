@@ -45,9 +45,17 @@ async def get_summary():
 async def get_requests(
     project_id: Optional[str] = None,
     video_id: Optional[str] = None,
+    request_type: Optional[str] = None,
+    mode: Optional[str] = None,
     limit: int = 50
 ):
-    return await crud.list_request_telemetry(project_id, video_id, limit)
+    return await crud.list_request_telemetry(
+        project_id,
+        video_id,
+        limit,
+        request_type=request_type,
+        mode=mode,
+    )
 
 @router.get("/requests/{request_id}")
 async def get_request_detail(request_id: str):

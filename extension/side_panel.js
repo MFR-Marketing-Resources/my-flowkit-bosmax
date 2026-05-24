@@ -291,6 +291,10 @@ function syncRuntimeDiagnostics(snapshot, route) {
 		snapshot?.status?.offline_reason || snapshot?.errorCode || "NONE";
 	const repairCommand =
 		snapshot?.status?.repair_command || ".\\scripts\\install-local-agent.ps1";
+	const runtimeOwner = snapshot?.status?.auto_start_enabled
+		? `${String(snapshot.status.auto_start_mode || "SCHEDULED_TASK").replaceAll("_", " ")} / ${snapshot.status.task_name || "BOSMAX Flow Kit Local Agent"}`
+		: "MANUAL ONLY / No autostart owner detected";
+	const autostartWarning = snapshot?.status?.auto_start_warning || "None";
 
 	setRuntimeCopy(
 		"runtime-agent-health",
@@ -306,6 +310,8 @@ function syncRuntimeDiagnostics(snapshot, route) {
 	);
 	setRuntimeCopy("runtime-serving-mode", servingMode);
 	setRuntimeCopy("runtime-offline-reason", offlineReason);
+	setRuntimeCopy("runtime-owner", runtimeOwner);
+	setRuntimeCopy("runtime-autostart-warning", autostartWarning);
 	setRuntimeCopy("runtime-api-base", LOCAL_AGENT_BASE_URL);
 	setRuntimeCopy("runtime-repair-command", repairCommand);
 	setRuntimeCopy("selected-route-url", currentEmbeddedRoute?.url || route.url);

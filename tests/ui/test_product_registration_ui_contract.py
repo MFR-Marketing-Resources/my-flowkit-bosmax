@@ -33,8 +33,10 @@ def test_product_knowledge_intake_form_contract():
     assert "product_knowledge_text" in content
     assert "Image URL" in content
     assert "Upload Product Image" in content
-    assert "Product URL / Source URL" in content
-    assert "TikTok Shop Product / Shop URL" in content
+    assert "Product URL" in content
+    assert "Source URL" in content
+    assert "TikTok Product URL" in content
+    assert "TikTok Shop URL" in content
     assert "Commission Amount" in content
     assert "Commission Rate" in content
     assert "Currency" in content
@@ -43,6 +45,24 @@ def test_product_knowledge_intake_form_contract():
     assert "FASTMOSS_REFERENCE" in content
     assert "TIKTOKSHOP_DRAFT" in content
     assert "Run Smart Completion" in content
+
+
+def test_product_knowledge_intake_form_keeps_evidence_fields_separate():
+    root = Path(__file__).parent.parent.parent
+    content = (root / "dashboard/src/components/product-registration/ProductKnowledgeIntakeForm.tsx").read_text(encoding="utf-8")
+
+    assert "value={formData.product_url || ''}" in content
+    assert "onChange={e => setFormData({ ...formData, product_url: e.target.value })}" in content
+    assert "value={formData.source_url || ''}" in content
+    assert "onChange={e => setFormData({ ...formData, source_url: e.target.value })}" in content
+    assert "value={formData.tiktok_product_url || ''}" in content
+    assert "onChange={e => setFormData({ ...formData, tiktok_product_url: e.target.value })}" in content
+    assert "value={formData.tiktok_shop_url || ''}" in content
+    assert "onChange={e => setFormData({ ...formData, tiktok_shop_url: e.target.value })}" in content
+    assert "value={formData.product_url || formData.source_url || ''}" not in content
+    assert "value={formData.tiktok_product_url || formData.tiktok_shop_url || ''}" not in content
+    assert "product_url: e.target.value, source_url: e.target.value" not in content
+    assert "tiktok_product_url: e.target.value, tiktok_shop_url: e.target.value" not in content
 
 def test_product_knowledge_result_panel_contract():
     root = Path(__file__).parent.parent.parent
@@ -119,7 +139,7 @@ def test_product_registration_page_single_product_default():
     root = Path(__file__).parent.parent.parent
     content = (root / "dashboard/src/pages/ProductRegistrationPage.tsx").read_text(encoding="utf-8")
     # The initialiser must fall back to 'single' when param is absent
-    assert "'single'" in content, "Default 'single' tab missing"
+    assert '"single"' in content, 'Default "single" tab missing'
     # Single Product UI components must still be present
     assert "AIFormPack" in content
     assert "ProductKnowledgeIntakeForm" in content
@@ -241,4 +261,4 @@ def test_smart_registration_single_product_flow_still_intact():
     assert "AIFormPack" in content
     assert "ProductKnowledgeIntakeForm" in content
     assert "RegistrationReviewDraftPanel" in content
-    assert "'single'" in content
+    assert '"single"' in content

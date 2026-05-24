@@ -36,6 +36,8 @@ def test_side_panel_shell_exposes_runtime_markers_and_retry_controls():
 		'id="runtime-agent-health"',
 		'id="runtime-extension-state"',
 		'id="runtime-serving-mode"',
+		'id="runtime-owner"',
+		'id="runtime-autostart-warning"',
 		'id="runtime-offline-reason"',
 		'data-dashboard-route="registration"',
 		'data-dashboard-route="creative"',
@@ -50,6 +52,8 @@ def test_side_panel_shell_exposes_runtime_markers_and_retry_controls():
 		"/api/local-agent/status",
 		"/health",
 		"FLOWKIT_DASHBOARD_ROUTE_SYNC",
+		"runtime-owner",
+		"runtime-autostart-warning",
 		"Local agent offline",
 		"Extension background disconnected",
 		"Dashboard build required",
@@ -96,9 +100,21 @@ def test_dashboard_portal_reports_current_embedded_route_to_side_panel_parent():
 		'type: "FLOWKIT_DASHBOARD_ROUTE_SYNC"',
 		"window.parent.postMessage(",
 		"window.location.origin",
+		"document.hidden || inFlight",
+		"window.setInterval(loadSummary, 15000)",
 		"<EmbeddedRouteReporter />",
 	]:
 		assert token in app_source
+
+	operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
+
+	for token in [
+		"request_type=MANUAL_FLOW_JOB",
+		"mode=${encodeURIComponent(mode)}",
+		"document.hidden || inFlight",
+		"window.setInterval(loadModeRequests, 15000)",
+	]:
+		assert token in operator_source
 
 
 def test_flow_dom_f2v_lane_stays_fail_closed_and_locked_to_lite():

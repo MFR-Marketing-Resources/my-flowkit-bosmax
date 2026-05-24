@@ -616,6 +616,7 @@ async def test_link_to_existing_product_allows_content_generation_without_creati
         source="MANUAL",
         product_display_name="Canonical Linked Serum",
         mapping_source="MANUAL_REVIEW",
+        mapping_status="APPROVED",
     )
     await crud.create_bulk_queue_row(
         reference_id="ref-dup-link-001",
@@ -654,6 +655,46 @@ async def test_link_to_existing_product_allows_content_generation_without_creati
 
     product_count_after = len(await crud.list_products(limit=5000))
     assert product_count_after == product_count_before + 1
+
+
+@pytest.mark.asyncio
+async def test_link_to_existing_product_blocks_unapproved_manual_row():
+    from agent.db import crud
+
+    existing_product = await crud.create_product(
+        raw_product_title="Unapproved Manual Serum",
+        source="MANUAL",
+        product_display_name="Unapproved Manual Serum",
+        mapping_source="MANUAL_REVIEW",
+        mapping_status="NEEDS_REVIEW",
+    )
+    await crud.create_bulk_queue_row(
+        reference_id="ref-dup-link-unapproved-001",
+        raw_product_title="Unapproved Manual Serum",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="DUPLICATE_SUSPECTED",
+        suspected_existing_product_id=existing_product["id"],
+        suspected_existing_product_title=existing_product["product_display_name"],
+        suspected_existing_product_source=existing_product["source"],
+        suspected_existing_product_mapping_source=existing_product.get("mapping_source"),
+        duplicate_match_reason="TITLE_MATCH_EXISTING_PRODUCT",
+    )
+
+    result = await resolve_duplicate_queue_row(
+        "ref-dup-link-unapproved-001",
+        action="LINK_TO_EXISTING_PRODUCT",
+        linked_product_id=existing_product["id"],
+    )
+
+    assert result["error"] == "LINKED_PRODUCT_MUST_BE_CANONICAL_PRODUCT_TRUTH"
+
+    policy = await can_generate_content_for_fastmoss_reference(
+        "ref-dup-link-unapproved-001"
+    )
+    assert policy["content_generation_allowed"] is False
+    assert policy["resolved_product_id"] is None
+    assert policy["reason"] == "STATUS_BLOCKS_CONTENT_GENERATION:DUPLICATE_SUSPECTED"
 
 
 @pytest.mark.asyncio
