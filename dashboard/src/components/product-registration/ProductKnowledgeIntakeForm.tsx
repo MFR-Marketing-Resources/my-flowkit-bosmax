@@ -186,23 +186,43 @@ export default function ProductKnowledgeIntakeForm({ onComplete, setIsProcessing
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-2">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Product URL / Source URL</label>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Product URL</label>
             <input
               type="url"
               className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
               placeholder="https://"
-              value={formData.product_url || formData.source_url || ''}
-              onChange={e => setFormData({ ...formData, product_url: e.target.value, source_url: e.target.value })}
+              value={formData.product_url || ''}
+              onChange={e => setFormData({ ...formData, product_url: e.target.value })}
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">TikTok Shop Product / Shop URL</label>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Source URL</label>
+            <input
+              type="url"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+              placeholder="https://"
+              value={formData.source_url || ''}
+              onChange={e => setFormData({ ...formData, source_url: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">TikTok Product URL</label>
             <input
               type="url"
               className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
               placeholder="https://shop.tiktok.com/..."
-              value={formData.tiktok_product_url || formData.tiktok_shop_url || ''}
-              onChange={e => setFormData({ ...formData, tiktok_product_url: e.target.value, tiktok_shop_url: e.target.value })}
+              value={formData.tiktok_product_url || ''}
+              onChange={e => setFormData({ ...formData, tiktok_product_url: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">TikTok Shop URL</label>
+            <input
+              type="url"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+              placeholder="https://shop.tiktok.com/..."
+              value={formData.tiktok_shop_url || ''}
+              onChange={e => setFormData({ ...formData, tiktok_shop_url: e.target.value })}
             />
           </div>
         </div>
