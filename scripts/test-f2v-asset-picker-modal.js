@@ -166,16 +166,40 @@ function installDomPolyfills(window) {
     }
   }
 
+  const runtimeMessageListeners = new Set();
+  let runtimeSendMessageHandler = null;
+
   window.DataTransfer = TestDataTransfer;
   window.DragEvent = TestDragEvent;
+  window.__setRuntimeSendMessageHandler = (handler) => {
+    runtimeSendMessageHandler = handler;
+  };
   window.chrome = {
     runtime: {
       lastError: null,
       onMessage: {
-        addListener() {},
-        removeListener() {},
+        addListener(listener) {
+          runtimeMessageListeners.add(listener);
+        },
+        removeListener(listener) {
+          runtimeMessageListeners.delete(listener);
+        },
       },
-      sendMessage(_payload, callback) {
+      sendMessage(payload, callback) {
+        window.chrome.runtime.lastError = null;
+        if (typeof runtimeSendMessageHandler === 'function') {
+          runtimeSendMessageHandler(payload, callback, {
+            emit(message) {
+              for (const listener of Array.from(runtimeMessageListeners)) {
+                listener(message, {}, () => {});
+              }
+            },
+            setLastError(message) {
+              window.chrome.runtime.lastError = message ? { message } : null;
+            },
+          });
+          return;
+        }
         if (typeof callback === 'function') {
           callback({ ok: true });
         }
@@ -200,6 +224,9 @@ function createHarness() {
     window,
     document: window.document,
     hooks,
+    setRuntimeSendMessageHandler(handler) {
+      window.__setRuntimeSendMessageHandler(handler);
+    },
     close() {
       window.close();
     },
@@ -252,6 +279,37 @@ function createComposerWithDistractor(window) {
 
   window.document.body.appendChild(dock);
   return { sidebarButton, dock, composer, createButton };
+}
+
+function createWrappedVideoTab(window, options = {}) {
+  const { active = false } = options;
+  const wrapper = window.document.createElement('div');
+  wrapper.className = 'sc-ff810a41-13 kiJefd';
+  makeVisible(wrapper, 260, 96);
+
+  const button = window.document.createElement('button');
+  button.type = 'button';
+  button.className = 'sc-ff810a41-20 gkRFpV';
+  button.setAttribute('role', 'tab');
+  button.setAttribute('data-state', active ? 'active' : 'inactive');
+  button.setAttribute('aria-selected', active ? 'true' : 'false');
+  makeVisible(button, 220, 72);
+
+  const inner = window.document.createElement('div');
+  inner.className = 'sc-ff810a41-15 jJqNzM';
+  makeVisible(inner, 200, 56);
+
+  const heading = window.document.createElement('h4');
+  heading.className = 'sc-ff810a41-18 fTNhnS';
+  heading.textContent = 'Video';
+  makeVisible(heading, 160, 32);
+
+  inner.appendChild(heading);
+  button.appendChild(inner);
+  wrapper.appendChild(button);
+  window.document.body.appendChild(wrapper);
+
+  return { wrapper, button, inner, heading };
 }
 
 function createModal(window, { useInput = false, useDropzone = false, inShadowRoot = false } = {}) {
@@ -562,6 +620,353 @@ async function runDiagnosticPingHeaderTest() {
   }
 }
 
+async function runFindElementByTextPrefersNestedInteractiveControlTest() {
+  const harness = createHarness();
+  const { window, hooks } = harness;
+
+  try {
+    const { wrapper, button } = createWrappedVideoTab(window, { active: true });
+    const resolved = hooks.findElementByText('button, [role="tab"], [role="button"], span, div', 'Video');
+    expect(Boolean(resolved), 'Expected Video element to resolve', { resolved: resolved?.outerHTML || null });
+    expect(resolved === button, 'Expected wrapped Video label search to resolve to interactive tab button, not wrapper div', {
+      resolved_outer_html: resolved?.outerHTML || null,
+      wrapper_outer_html: wrapper.outerHTML,
+      button_outer_html: button.outerHTML,
+    });
+  } finally {
+    harness.close();
+  }
+}
+
+async function runIsSelectedControlUsesInteractiveDescendantStateTest() {
+  const harness = createHarness();
+  const { window, hooks } = harness;
+
+  try {
+    const { wrapper } = createWrappedVideoTab(window, { active: true });
+    const selected = hooks.isSelectedControl(wrapper, 'Video');
+    expect(selected === true, 'Expected selected-state detection to climb into interactive Video tab descendant', {
+      wrapper_outer_html: wrapper.outerHTML,
+    });
+  } finally {
+    harness.close();
+  }
+}
+
+async function runVerifyFlowModeAllowsUnknownF2VModelTest() {
+  const harness = createHarness();
+  const { hooks } = harness;
+
+  try {
+    const result = hooks.verifyFlowMode(
+      { mode: 'F2V' },
+      {
+        topMode: 'Video',
+        subMode: 'Frames',
+        model: 'UNKNOWN',
+        aspectRatio: 'UNKNOWN',
+        count: 'UNKNOWN',
+        visibleUploadSlots: ['Start', 'End'],
+        visibleAssetPreviews: [],
+        composerPresent: true,
+        generateButtonState: 'enabled',
+      },
+    );
+    expect(result?.ok === true, 'Expected F2V verifyFlowMode to allow UNKNOWN visible model text when video workspace is otherwise valid', result);
+  } finally {
+    harness.close();
+  }
+}
+
+async function runVerifyFlowModeRejectsNanoBananaOnF2VTest() {
+  const harness = createHarness();
+  const { hooks } = harness;
+
+  try {
+    const result = hooks.verifyFlowMode(
+      { mode: 'F2V' },
+      {
+        topMode: 'Video',
+        subMode: 'Frames',
+        model: 'Nano Banana 2',
+        aspectRatio: 'UNKNOWN',
+        count: 'UNKNOWN',
+        visibleUploadSlots: ['Start', 'End'],
+        visibleAssetPreviews: [],
+        composerPresent: true,
+        generateButtonState: 'enabled',
+      },
+    );
+    expect(result?.ok === false, 'Expected F2V verifyFlowMode to reject explicit Nano Banana image model', result);
+    expect(
+      String(result?.reason || '').includes('image model'),
+      `Expected explicit image-model rejection reason, got ${result?.reason}`,
+      result,
+    );
+  } finally {
+    harness.close();
+  }
+}
+
+async function runGetRequiredAssetSlotsF2VStartOnlyTest() {
+  const harness = createHarness();
+  const { hooks } = harness;
+
+  try {
+    const slots = hooks.getRequiredAssetSlots({ mode: 'F2V', productId: 'product-only-source' });
+    expect(Array.isArray(slots), 'Expected required slots result to be an array', { slots });
+    expect(slots.length === 1 && slots[0] === 'Start', 'Expected F2V product-only job to require Start only', { slots });
+  } finally {
+    harness.close();
+  }
+}
+
+async function runGetRequiredAssetSlotsF2VStartAndEndTest() {
+  const harness = createHarness();
+  const { hooks } = harness;
+
+  try {
+    const slots = hooks.getRequiredAssetSlots({ mode: 'F2V', startImageMediaId: 'start-1', endImageMediaId: 'end-1' });
+    expect(slots.length === 2, 'Expected explicit end-image F2V job to require two slots', { slots });
+    expect(slots[0] === 'Start' && slots[1] === 'End', 'Expected F2V explicit end-image job to require Start and End in order', { slots });
+  } finally {
+    harness.close();
+  }
+}
+
+async function runVerifyFlowModeRejectsWrongRatioOnF2VTest() {
+  const harness = createHarness();
+  const { hooks } = harness;
+
+  try {
+    const result = hooks.verifyFlowMode(
+      { mode: 'F2V', orientation: 'VERTICAL' },
+      {
+        topMode: 'Video',
+        subMode: 'Frames',
+        model: 'Veo 3.1 - Lite',
+        aspectRatio: '16:9',
+        count: '1x',
+        visibleUploadSlots: ['Start', 'End'],
+        visibleAssetPreviews: [],
+        composerPresent: true,
+        generateButtonState: 'enabled',
+      },
+    );
+    expect(result?.ok === false, 'Expected F2V verifyFlowMode to reject wrong visible aspect ratio', result);
+    expect(result?.error === 'ERR_ASPECT_9_16_NOT_SELECTED', `Expected explicit aspect error, got ${result?.error}`, result);
+  } finally {
+    harness.close();
+  }
+}
+
+async function runVerifyFlowModeRejectsWrongCountOnF2VTest() {
+  const harness = createHarness();
+  const { hooks } = harness;
+
+  try {
+    const result = hooks.verifyFlowMode(
+      { mode: 'F2V', count: '1x' },
+      {
+        topMode: 'Video',
+        subMode: 'Frames',
+        model: 'Veo 3.1 - Lite',
+        aspectRatio: '9:16',
+        count: '2x',
+        visibleUploadSlots: ['Start', 'End'],
+        visibleAssetPreviews: [],
+        composerPresent: true,
+        generateButtonState: 'enabled',
+      },
+    );
+    expect(result?.ok === false, 'Expected F2V verifyFlowMode to reject wrong visible count', result);
+    expect(result?.error === 'ERR_COUNT_1X_NOT_SELECTED', `Expected explicit count error, got ${result?.error}`, result);
+  } finally {
+    harness.close();
+  }
+}
+
+async function runVerifyFlowModeRejectsWrongModelOnF2VTest() {
+  const harness = createHarness();
+  const { hooks } = harness;
+
+  try {
+    const result = hooks.verifyFlowMode(
+      { mode: 'F2V', modelLabel: 'Veo 3.1 - Lite' },
+      {
+        topMode: 'Video',
+        subMode: 'Frames',
+        model: 'Veo 3 Fast',
+        aspectRatio: '9:16',
+        count: '1x',
+        visibleUploadSlots: ['Start', 'End'],
+        visibleAssetPreviews: [],
+        composerPresent: true,
+        generateButtonState: 'enabled',
+      },
+    );
+    expect(result?.ok === false, 'Expected F2V verifyFlowMode to reject wrong visible model', result);
+    expect(result?.error === 'ERR_WRONG_MODEL_FOR_F2V', `Expected explicit model error, got ${result?.error}`, result);
+  } finally {
+    harness.close();
+  }
+}
+
+async function runVerifyFlowModeRejectsMissingStartSlotOnF2VTest() {
+  const harness = createHarness();
+  const { hooks } = harness;
+
+  try {
+    const result = hooks.verifyFlowMode(
+      { mode: 'F2V' },
+      {
+        topMode: 'Video',
+        subMode: 'Frames',
+        model: 'Veo 3.1 - Lite',
+        aspectRatio: '9:16',
+        count: '1x',
+        visibleUploadSlots: ['End'],
+        visibleAssetPreviews: [],
+        composerPresent: true,
+        generateButtonState: 'enabled',
+      },
+    );
+    expect(result?.ok === false, 'Expected F2V verifyFlowMode to reject missing Start slot', result);
+    expect(result?.error === 'ERR_START_FRAME_REQUIRED_MISSING', `Expected explicit Start-slot error, got ${result?.error}`, result);
+  } finally {
+    harness.close();
+  }
+}
+
+async function runSendRuntimeMessageNoThrowIsOneWayTest() {
+  const harness = createHarness();
+  const { hooks, setRuntimeSendMessageHandler } = harness;
+
+  try {
+    let observedCallbackType = 'missing';
+    setRuntimeSendMessageHandler((_payload, callback) => {
+      observedCallbackType = typeof callback;
+    });
+    hooks.sendRuntimeMessageNoThrow({ type: 'FLOW_STAGE_EVENT', stage: 'TEST', status: 'PASS' });
+    expect(observedCallbackType === 'undefined', 'Expected fire-and-forget runtime telemetry to omit callback response lane', {
+      observedCallbackType,
+    });
+  } finally {
+    harness.close();
+  }
+}
+
+async function runBackgroundProxyAckAndResultTest() {
+  const harness = createHarness();
+  const { hooks, setRuntimeSendMessageHandler } = harness;
+
+  try {
+    setRuntimeSendMessageHandler((payload, callback, runtime) => {
+      if (payload?.type !== 'RESOLVE_LOCAL_ASSET') {
+        callback?.({ ok: false, error: 'UNEXPECTED_PAYLOAD' });
+        return;
+      }
+      callback?.({
+        ok: true,
+        accepted: true,
+        proxy_request_id: payload.proxy_request_id,
+      });
+      setTimeout(() => {
+        runtime.emit({
+          type: 'RESOLVE_LOCAL_ASSET_RESULT',
+          proxy_request_id: payload.proxy_request_id,
+          ok: true,
+          dataUrl: ONE_PIXEL_PNG,
+          mimeType: 'image/png',
+          filename: payload.filename,
+        });
+      }, 10);
+    });
+
+    const result = await hooks.resolveLocalAssetViaBackgroundProxy(
+      'asset-123',
+      'asset-123.jpg',
+      'request-123',
+      250,
+    );
+    expect(result?.ok === true, 'Expected proxy helper to resolve successful detached result', result);
+    expect(result?.filename === 'asset-123.jpg', 'Expected detached result filename to round-trip', result);
+    expect(result?.dataUrl === ONE_PIXEL_PNG, 'Expected detached result dataUrl to round-trip', result);
+  } finally {
+    harness.close();
+  }
+}
+
+async function runBackgroundProxyAckTimeoutTest() {
+  const harness = createHarness();
+  const { hooks, setRuntimeSendMessageHandler } = harness;
+
+  try {
+    setRuntimeSendMessageHandler((payload, callback) => {
+      if (payload?.type !== 'RESOLVE_LOCAL_ASSET') {
+        callback?.({ ok: false, error: 'UNEXPECTED_PAYLOAD' });
+        return;
+      }
+      callback?.({
+        ok: true,
+        accepted: true,
+        proxy_request_id: payload.proxy_request_id,
+      });
+    });
+
+    const result = await hooks.resolveLocalAssetViaBackgroundProxy(
+      'asset-timeout',
+      'asset-timeout.jpg',
+      'request-timeout',
+      40,
+    );
+    expect(result?.ok === false, 'Expected proxy helper to fail when detached result never arrives', result);
+    expect(result?.error === 'ERR_PROXY_MESSAGE_TIMEOUT', `Expected ERR_PROXY_MESSAGE_TIMEOUT, got ${result?.error}`, result);
+  } finally {
+    harness.close();
+  }
+}
+
+async function runBackgroundProxyAckFailureResultTest() {
+  const harness = createHarness();
+  const { hooks, setRuntimeSendMessageHandler } = harness;
+
+  try {
+    setRuntimeSendMessageHandler((payload, callback, runtime) => {
+      if (payload?.type !== 'RESOLVE_LOCAL_ASSET') {
+        callback?.({ ok: false, error: 'UNEXPECTED_PAYLOAD' });
+        return;
+      }
+      callback?.({
+        ok: true,
+        accepted: true,
+        proxy_request_id: payload.proxy_request_id,
+      });
+      setTimeout(() => {
+        runtime.emit({
+          type: 'RESOLVE_LOCAL_ASSET_RESULT',
+          proxy_request_id: payload.proxy_request_id,
+          ok: false,
+          error: 'ERR_BACKGROUND_ASSET_FETCH_FAILED',
+          detail: 'HTTP_404',
+        });
+      }, 10);
+    });
+
+    const result = await hooks.resolveLocalAssetViaBackgroundProxy(
+      'asset-missing',
+      'asset-missing.jpg',
+      'request-missing',
+      250,
+    );
+    expect(result?.ok === false, 'Expected proxy helper to surface detached failure result', result);
+    expect(result?.error === 'ERR_BACKGROUND_ASSET_FETCH_FAILED', `Expected detached failure error, got ${result?.error}`, result);
+    expect(result?.detail === 'HTTP_404', 'Expected detached failure detail to round-trip', result);
+  } finally {
+    harness.close();
+  }
+}
+
 async function main() {
   const tests = [
     ['Direct slot fallback', runDirectSlotFallbackTest],
@@ -572,6 +977,20 @@ async function main() {
     ['Timeout path', runTimeoutPathTest],
     ['Composer generate targeting', runComposerGenerateTargetingTest],
     ['Diagnostic ping header', runDiagnosticPingHeaderTest],
+    ['Find element resolves nested interactive Video tab', runFindElementByTextPrefersNestedInteractiveControlTest],
+    ['Selected-state uses interactive Video descendant', runIsSelectedControlUsesInteractiveDescendantStateTest],
+    ['Required slots F2V start-only', runGetRequiredAssetSlotsF2VStartOnlyTest],
+    ['Required slots F2V start-and-end', runGetRequiredAssetSlotsF2VStartAndEndTest],
+    ['Verify F2V allows unknown model label', runVerifyFlowModeAllowsUnknownF2VModelTest],
+    ['Verify F2V rejects Nano Banana model', runVerifyFlowModeRejectsNanoBananaOnF2VTest],
+    ['Verify F2V rejects wrong visible ratio', runVerifyFlowModeRejectsWrongRatioOnF2VTest],
+    ['Verify F2V rejects wrong visible count', runVerifyFlowModeRejectsWrongCountOnF2VTest],
+    ['Verify F2V rejects wrong visible model', runVerifyFlowModeRejectsWrongModelOnF2VTest],
+    ['Verify F2V rejects missing Start slot', runVerifyFlowModeRejectsMissingStartSlotOnF2VTest],
+    ['One-way runtime telemetry omits callback lane', runSendRuntimeMessageNoThrowIsOneWayTest],
+    ['Background proxy ACK and result', runBackgroundProxyAckAndResultTest],
+    ['Background proxy ACK timeout', runBackgroundProxyAckTimeoutTest],
+    ['Background proxy ACK failure result', runBackgroundProxyAckFailureResultTest],
   ];
 
   let failures = 0;

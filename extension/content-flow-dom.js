@@ -15,13 +15,14 @@
 (() => {
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
-  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-google-flow-phase1a-2026-05-23';
+  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-google-flow-phase1a-2026-05-26a';
   const FLOW_KIT_PLAYWRIGHT_HARNESS = hasPlaywrightHarnessMarker();
   const FLOW_KIT_TEST_MODE = Boolean(window.__FLOWKIT_TEST_MODE__);
   const FLOW_KIT_ENABLE_TEST_HOOKS =
     FLOW_KIT_TEST_MODE
     || Boolean(window.__FLOWKIT_ENABLE_TEST_HOOKS__)
     || FLOW_KIT_PLAYWRIGHT_HARNESS;
+  const FLOW_KIT_IS_GOOGLE_FLOW = window.location.href.startsWith('https://labs.google/');
   const FLOW_KIT_TEST_BRIDGE_SOURCE = 'FLOWKIT_PLAYWRIGHT_TEST_BRIDGE';
   const IMAGE_ASPECT_RATIOS = ['16:9', '4:3', '1:1', '3:4', '9:16'];
   const FLOW_MODE_CONFIG = {
@@ -37,6 +38,13 @@
     } catch (error) {
       console.warn('[FlowAgent] Failed to remove previous Flow DOM listener:', error);
     }
+  }
+
+  // Guard: only activate on Google Flow tabs or the explicit Playwright harness.
+  // Dashboard/localhost production pages get no listeners, preventing spurious
+  // runtime.lastError noise from content scripts on the wrong origin.
+  if (!FLOW_KIT_TEST_MODE && !FLOW_KIT_PLAYWRIGHT_HARNESS && !FLOW_KIT_IS_GOOGLE_FLOW) {
+    return;
   }
 
   window._flowKitDomInjectedVersion = FLOW_KIT_DOM_VERSION;
@@ -71,12 +79,7 @@
 
   function sendRuntimeMessageNoThrow(payload) {
     try {
-      chrome.runtime.sendMessage(payload, () => {
-        const lastError = chrome.runtime.lastError;
-        if (lastError) {
-          console.warn('[FlowAgent] runtime message ignored:', lastError.message);
-        }
-      });
+      chrome.runtime.sendMessage(payload);
     } catch (error) {
       console.warn('[FlowAgent] runtime message exception:', error);
     }
@@ -110,6 +113,63 @@
         settled = true;
         clearTimeout(timer);
         resolve({ ok: false, error: String(error?.message || error) });
+      }
+    });
+  }
+
+  function resolveLocalAssetViaBackgroundProxy(assetId, filename, requestIdForProxy, timeoutMs = 30000) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const proxyRequestId = `asset_proxy_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const removeListener = () => {
+        try {
+          chrome.runtime.onMessage.removeListener(resultListener);
+        } catch (_error) {}
+      };
+      const finish = (payload) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(proxyTimeout);
+        removeListener();
+        resolve(payload);
+      };
+      const resultListener = (message) => {
+        if (message?.type !== 'RESOLVE_LOCAL_ASSET_RESULT') {
+          return false;
+        }
+        if (message?.proxy_request_id !== proxyRequestId) {
+          return false;
+        }
+        finish(message || { ok: false, error: 'ERR_EMPTY_RUNTIME_RESPONSE' });
+        return false;
+      };
+
+      const proxyTimeout = setTimeout(() => {
+        console.warn(`[FlowAgent] Background proxy result timeout for ${assetId}`);
+        finish({ ok: false, error: 'ERR_PROXY_MESSAGE_TIMEOUT' });
+      }, timeoutMs);
+
+      chrome.runtime.onMessage.addListener(resultListener);
+
+      try {
+        chrome.runtime.sendMessage({
+          type: 'RESOLVE_LOCAL_ASSET',
+          assetId,
+          filename,
+          request_id: requestIdForProxy,
+          proxy_request_id: proxyRequestId,
+        }, (ackResp) => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            finish({ ok: false, error: err?.message || 'UNKNOWN_ERROR' });
+            return;
+          }
+          if (!ackResp?.accepted || ackResp?.proxy_request_id !== proxyRequestId) {
+            finish(ackResp || { ok: false, error: 'ERR_PROXY_ACK_INVALID' });
+          }
+        });
+      } catch (error) {
+        finish({ ok: false, error: String(error?.message || error) });
       }
     });
   }
@@ -417,6 +477,37 @@
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
   }
 
+  function isInteractiveControlElement(el) {
+    return Boolean(el && el.matches && el.matches('button, [role="button"], [role="tab"], [role="option"], li, label'));
+  }
+
+  function findVisibleInteractiveDescendant(el, text = '') {
+    if (!el || !el.querySelectorAll) return null;
+    const needle = normalizeText(text).toLowerCase();
+    const candidates = Array.from(el.querySelectorAll('button, [role="button"], [role="tab"], [role="option"], li, label'))
+      .filter((candidate) => isVisible(candidate));
+    if (!needle) return candidates[0] || null;
+
+    const exactMatch = candidates.find((candidate) => normalizeText(candidate.textContent || '').toLowerCase() === needle);
+    if (exactMatch) return exactMatch;
+
+    const partialMatch = candidates.find((candidate) => normalizeText(candidate.textContent || '').toLowerCase().includes(needle));
+    return partialMatch || candidates[0] || null;
+  }
+
+  function resolveInteractiveControlTarget(el, text = '') {
+    if (!el) return null;
+    if (isInteractiveControlElement(el) && isVisible(el)) return el;
+
+    const ancestor = el.closest?.('button, [role="button"], [role="tab"], [role="option"], li, label');
+    if (ancestor && isVisible(ancestor)) return ancestor;
+
+    const descendant = findVisibleInteractiveDescendant(el, text);
+    if (descendant) return descendant;
+
+    return el;
+  }
+
   function findElementByText(selector, text) {
     const needle = normalizeText(text).toLowerCase();
     if (!needle) return null;
@@ -431,7 +522,7 @@
         || ''
       );
       if (!label) continue;
-      const target = el.closest('button, [role="button"], [role="tab"], [role="option"], li, label') || el;
+      const target = resolveInteractiveControlTarget(el, label);
       if (!isVisible(target)) continue;
       matches.push({ label: label.toLowerCase(), target });
     }
@@ -448,14 +539,16 @@
 
   function isSelectedControl(el, text) {
     if (!el) return false;
-    if (el.getAttribute('data-state') === 'active') return true;
-    if (el.getAttribute('aria-selected') === 'true') return true;
-    if (el.getAttribute('aria-pressed') === 'true') return true;
+    const target = resolveInteractiveControlTarget(el, text);
+    if (!target) return false;
+    if (target.getAttribute('data-state') === 'active') return true;
+    if (target.getAttribute('aria-selected') === 'true') return true;
+    if (target.getAttribute('aria-pressed') === 'true') return true;
 
-    const classes = el.classList.toString().toLowerCase();
+    const classes = target.classList.toString().toLowerCase();
     if (classes.includes('active') || classes.includes('selected') || classes.includes('checked')) return true;
 
-    if (text && normalizeText(el.textContent).toLowerCase().includes(text.toLowerCase())) {
+    if (text && normalizeText(target.textContent).toLowerCase().includes(text.toLowerCase())) {
       if (classes.includes('trigger') && (classes.includes('flow') || classes.includes('tab'))) return true;
     }
 
@@ -565,6 +658,7 @@
       const lower = text.toLowerCase();
       const looksLikeModelChip = lower.includes('nano banana') || lower.includes('veo');
       const looksLikeConfigChip = hasFlowCountToken(text) && hasFlowAspectToken(text);
+      const looksLikeSettingsLauncher = lower.includes('view settings') || lower.includes('settings_2');
       const target = el.closest('button, [role="button"], [role="tab"], [aria-haspopup]') || el;
       if (!isVisible(target)) continue;
       const targetText = normalizeText(target.textContent || target.getAttribute('aria-label') || '');
@@ -572,7 +666,7 @@
       const targetTooLarge = rect.width > 520 || rect.height > 120 || targetText.length > 120;
       const targetLooksLikePageShell = /(what do you want to create|double check it|go back|search|sort & filter|add media|all media|characters|scenes|tools|trash|collapse)/i.test(targetText);
       if (!targetText || targetTooLarge || targetLooksLikePageShell) continue;
-      if (looksLikeModelChip || looksLikeConfigChip) {
+      if (looksLikeModelChip || looksLikeConfigChip || looksLikeSettingsLauncher) {
         preferred.push({ target, targetText, rect });
         continue;
       }
@@ -680,11 +774,18 @@
     if (existingSurface) return true;
 
     const launcher = findFlowConfigLauncher();
-    if (!launcher || !isVisible(launcher)) return false;
-    launcher.click();
-    const surfaced = await waitForCondition(() => Boolean(findOpenFlowConfigSurface()), 2500, 100);
+    if (launcher && isVisible(launcher)) {
+      launcher.click();
+    }
+
+    let surfaced = await waitForCondition(() => Boolean(findOpenFlowConfigSurface()), 2500, 100);
     if (!surfaced) {
       await sleep(800);
+      const observed = observeFlowState();
+      if (observed.topMode === 'Video' && observed.subMode === 'Frames') {
+        const fallback = await ensureOpenF2VConfigMenu();
+        surfaced = fallback.ok || Boolean(findOpenFlowConfigSurface());
+      }
     }
     return surfaced;
   }
@@ -974,11 +1075,27 @@
       return /veo|nano banana|banana/i.test(text);
     });
     const modelText = normalizeText(modelBtn?.innerText || modelBtn?.textContent || '');
-    if (!modelBtn || !isVisible(modelBtn) || /nano.?banana/i.test(modelText) || !modelText.includes('Veo 3.1 - Lite')) {
+    if (/nano.?banana/i.test(modelText)) {
       return {
         ok: false,
         error: 'ERR_WRONG_MODEL_FOR_F2V',
         detail: `MODEL_SWITCHING_NOT_IMPLEMENTED_OPENED_OPTION_DOM_NOT_VERIFIED model=${modelText || 'UNKNOWN'}`,
+      };
+    }
+
+    if (!modelBtn || !isVisible(modelBtn) || !modelText) {
+      return {
+        ok: true,
+        modelText: 'UNKNOWN_VISIBLE_MODEL',
+        modelVerification: 'SOFT_UNKNOWN_PASS',
+      };
+    }
+
+    if (!modelText.includes('Veo 3.1 - Lite')) {
+      return {
+        ok: true,
+        modelText,
+        modelVerification: 'VISIBLE_NON_LITE_MODEL_PASS',
       };
     }
 
@@ -1152,10 +1269,14 @@
     ].filter((item) => !!item.assetSource);
   }
 
+  function resolveExplicitEndFrameAssetSource(job) {
+    return job?.endAsset || job?.endImageMediaId || null;
+  }
+
   function getRequiredAssetSlots(job) {
     if (job?.mode === 'F2V') {
       const slots = ['Start'];
-      if (job?.endAsset || job?.endImageMediaId || job?.productId) slots.push('End');
+      if (resolveExplicitEndFrameAssetSource(job)) slots.push('End');
       return slots;
     }
 
@@ -1170,6 +1291,12 @@
 
   function buildSlotErrorCode(slotLabel, suffix) {
     return `ERR_${String(slotLabel || 'slot').toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_${suffix}`;
+  }
+
+  function buildF2VAssetRequirementError(slotLabel) {
+    if (slotLabel === 'Start') return 'ERR_START_FRAME_REQUIRED_MISSING';
+    if (slotLabel === 'End') return 'ERR_END_FRAME_REQUIRED_MISSING';
+    return buildSlotErrorCode(slotLabel, 'REQUIRED_MISSING');
   }
 
   function describePreviewNode(node) {
@@ -2448,23 +2575,12 @@
         const requestIdForProxy = stateObj?.request_id || null;
         console.log(`[FlowAgent] Resolving local asset via background proxy: ${assetId}`);
         setCheckpoint('UPLOAD_ASSET_PROXY_SEND');
-        const proxyResp = await new Promise((resolve) => {
-          const proxyTimeout = setTimeout(() => {
-            console.warn(`[FlowAgent] Background proxy timeout for ${assetId}`);
-            resolve({ ok: false, error: 'ERR_PROXY_MESSAGE_TIMEOUT' });
-          }, 15000);
-
-          chrome.runtime.sendMessage({
-            type: 'RESOLVE_LOCAL_ASSET',
-            assetId,
-            filename: `${assetId}.jpg`,
-            request_id: requestIdForProxy
-          }, (resp) => {
-            const err = chrome.runtime.lastError;
-            clearTimeout(proxyTimeout);
-            resolve(resp || { ok: false, error: err?.message || 'UNKNOWN_ERROR' });
-          });
-        });
+        const proxyResp = await resolveLocalAssetViaBackgroundProxy(
+          assetId,
+          `${assetId}.jpg`,
+          requestIdForProxy,
+          30000,
+        );
 
         if (!proxyResp?.ok) {
           console.error(`[FlowAgent] Background asset resolution failed: ${proxyResp?.error}`);
@@ -2969,6 +3085,7 @@
 
   function collectFlowPageStateDiagnostic(mode) {
     const readiness = checkFlowComposerReady(mode);
+    const projectCreationState = collectProjectCreationState();
     const bodyText = normalizeText(document.body?.innerText || '').slice(0, 2000);
     const buttonTexts = collectVisibleTexts('button, [role="button"]', (el) => el.textContent || '');
     const textareaPlaceholders = collectVisibleTexts('textarea', (el) => el.getAttribute('placeholder') || el.getAttribute('aria-label') || '');
@@ -3054,6 +3171,9 @@
       current_mode_visible: readiness.current_mode_visible,
       blocking_modal_detected: readiness.blocking_modal_detected,
       observed: readiness.observed,
+      is_root_flow_url: projectCreationState.isRoot,
+      project_list_or_landing_detected: projectCreationState.landingDetected,
+      new_project_control_found: projectCreationState.newProjectControlFound,
       runtime_ready: true,
       content_build_id: FLOW_KIT_DOM_BUILD_ID,
       git_sha: FLOW_KIT_DOM_BUILD_ID,
@@ -3106,7 +3226,9 @@
         const verifyResult = verifyFlowMode(expectedJob, observed);
         if (!verifyResult.ok) {
           result.ok = false;
-          result.error = `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`;
+          result.error = verifyResult.error === 'FLOW_MODE_MISMATCH'
+            ? `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`
+            : `ABORT_${verifyResult.error}: ${verifyResult.reason}`;
           result.verify = verifyResult;
         }
       }
@@ -3211,9 +3333,19 @@
 
     const expectedModel = resolveRequestedModel({ mode: 'F2V' });
     const observed = observeFlowState();
-    const needsConfigPanel = observed.aspectRatio !== '9:16'
-      || observed.count !== '1x'
-      || normalizeText(observed.model).toLowerCase() !== normalizeText(expectedModel).toLowerCase();
+    const observedModel = canonicalizeFlowModelLabel(observed.model);
+    const expectedCanonicalModel = canonicalizeFlowModelLabel(expectedModel);
+    const contradictoryAspectVisible = observed.aspectRatio !== 'UNKNOWN' && observed.aspectRatio !== '9:16';
+    const contradictoryCountVisible = observed.count !== 'UNKNOWN' && observed.count !== '1x';
+    const contradictoryModelVisible = Boolean(
+      observedModel
+      && observedModel !== 'unknown'
+      && !observedModel.includes('veo')
+      && observedModel !== expectedCanonicalModel,
+    );
+    const needsConfigPanel = contradictoryAspectVisible
+      || contradictoryCountVisible
+      || contradictoryModelVisible;
     const configDebug = {
       before: collectFlowConfigDebugSnapshot(),
       needs_config_panel: needsConfigPanel,
@@ -3228,9 +3360,53 @@
       configDebug.after_selection = collectFlowConfigDebugSnapshot();
     }
 
+    const readiness = checkFlowComposerReady();
+    const readinessObserved = readiness.observed || observeFlowState();
+    const readinessModeVisible = readinessObserved.topMode === 'UNKNOWN'
+      ? 'UNKNOWN'
+      : (readinessObserved.subMode !== 'UNKNOWN'
+        ? `${readinessObserved.topMode}/${readinessObserved.subMode}`
+        : readinessObserved.topMode);
+    const readinessModel = canonicalizeFlowModelLabel(readinessObserved.model);
+    const contradictoryImageModel = readinessModel.includes('nano banana');
+    const modeReady = readinessModeVisible.includes('Video/Frames');
+    const slotReady = readinessObserved.visibleUploadSlots.includes('Start');
+    const softUnknownModelPass = !readinessModel || readinessModel === 'unknown';
+    const veoVisiblePass = readinessModel.includes('veo');
+    const workspaceReady = Boolean(
+      readiness.signed_in_likely
+      && readiness.composer_found
+      && readiness.composer_editable
+      && readiness.generate_button_found
+      && !readiness.blocking_modal_detected
+      && modeReady
+      && slotReady
+      && !contradictoryImageModel
+      && (softUnknownModelPass || veoVisiblePass),
+    );
+
     return {
-      ...checkFlowComposerReady('F2V'),
-      config_debug: configDebug,
+      ...readiness,
+      ok: workspaceReady,
+      error: workspaceReady
+        ? null
+        : (contradictoryImageModel
+          ? 'ABORT_FLOW_MODE_MISMATCH: Expected F2V video model, got image model'
+          : (readiness.error || 'ABORT_FLOW_COMPOSER_NOT_READY')),
+      detail: workspaceReady
+        ? (softUnknownModelPass
+          ? 'F2V editor ready with hidden config chips'
+          : 'F2V editor ready')
+        : (readiness.detail || readiness.error || null),
+      current_mode_visible: readinessModeVisible,
+      observed: readinessObserved,
+      config_debug: {
+        ...configDebug,
+        contradictory_aspect_visible: contradictoryAspectVisible,
+        contradictory_count_visible: contradictoryCountVisible,
+        contradictory_model_visible: contradictoryModelVisible,
+        soft_unknown_model_pass: softUnknownModelPass,
+      },
     };
   }
 
@@ -3296,7 +3472,7 @@
   }
 
   async function openFlowNewProjectFlow(mode = 'F2V') {
-    const initialState = collectProjectCreationState();
+    let initialState = collectProjectCreationState();
     if (initialState.hasErrorPage) {
       return {
         ok: false,
@@ -3309,6 +3485,30 @@
         flow_url: window.location.href,
         ...initialState.diagnostic,
       };
+    }
+
+    if (initialState.isRoot && !initialState.landingDetected) {
+      await waitForCondition(() => {
+        const state = collectProjectCreationState();
+        if (state.hasErrorPage) return true;
+        if (state.landingDetected || state.newProjectControlFound) return true;
+        const observed = observeFlowState();
+        return observed.visibleUploadSlots.includes('Start') || observed.composerPresent;
+      }, 15000, 300);
+      initialState = collectProjectCreationState();
+      if (initialState.hasErrorPage) {
+        return {
+          ok: false,
+          open_flow_root: initialState.isRoot,
+          project_list_or_landing_detected: false,
+          new_project_clicked: false,
+          editor_ready: false,
+          error: 'FLOW_PROJECT_URL_INVALID_OR_INACCESSIBLE',
+          detail: initialState.diagnostic.visible_error_markers.join(', ') || 'Flow error page visible',
+          flow_url: window.location.href,
+          ...initialState.diagnostic,
+        };
+      }
     }
 
     let newProjectClicked = false;
@@ -3351,19 +3551,29 @@
     }
 
     projectListDetected = true;
-    createControl.click();
     newProjectClicked = true;
-    await sleep(1200);
 
-    const editor = await waitForNewProjectEditor(mode, 45000);
+    // Defer the actual click until after this message handler can respond.
+    // Page navigation destroys the current content-script instance, so the
+    // background worker must own the post-click wait/reinject sequence.
+    queueMicrotask(() => {
+      try {
+        createControl.click();
+      } catch (error) {
+        console.warn('[FlowAgent] New project control click failed:', error);
+      }
+    });
+
     return {
-      ok: Boolean(editor.ok),
+      ok: true,
       open_flow_root: initialState.isRoot,
       project_list_or_landing_detected: projectListDetected,
       new_project_clicked: newProjectClicked,
-      editor_ready: Boolean(editor.editor_ready),
+      editor_ready: false,
+      awaiting_navigation: true,
+      detail: 'New project click dispatched; background must wait for editor navigation',
       flow_url: window.location.href,
-      ...editor,
+      ...initialState.diagnostic,
     };
   }
 
@@ -3385,7 +3595,9 @@
     const verifyResult = verifyFlowMode(job, readiness.observed);
     if (!verifyResult.ok) {
       result.status = 'FAIL_MODE_MISMATCH';
-      result.error = `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`;
+      result.error = verifyResult.error === 'FLOW_MODE_MISMATCH'
+        ? `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`
+        : `ABORT_${verifyResult.error}: ${verifyResult.reason}`;
       result.verify = verifyResult;
       return result;
     }
@@ -3452,17 +3664,25 @@
       }
       const observedModel = canonicalizeFlowModelLabel(observed.model);
       const expectedModel = canonicalizeFlowModelLabel(expectations.modelLabel);
-      if (!observedModel.includes('veo')) {
+      if (observedModel.includes('nano banana')) {
         result.ok = false;
-        result.error = 'FLOW_MODE_MISMATCH';
+        result.error = 'ERR_WRONG_MODEL_FOR_F2V';
+        result.reason = `Expected F2V video model, got image model '${observed.model}'`;
+        result.expected = expectations;
+        result.observed = observed;
+        return result;
+      }
+      if (observedModel && !observedModel.includes('veo') && observedModel !== 'unknown') {
+        result.ok = false;
+        result.error = 'ERR_WRONG_MODEL_FOR_F2V';
         result.reason = `Expected model to contain 'Veo', got '${observed.model}'`;
         result.expected = expectations;
         result.observed = observed;
         return result;
       }
-      if (expectedModel && observedModel && observedModel !== expectedModel) {
+      if (expectedModel && observedModel && observedModel !== 'unknown' && observedModel !== expectedModel) {
         result.ok = false;
-        result.error = 'FLOW_MODE_MISMATCH';
+        result.error = 'ERR_WRONG_MODEL_FOR_F2V';
         result.reason = `Expected model='${expectations.modelLabel}', got '${observed.model}'`;
         result.expected = expectations;
         result.observed = observed;
@@ -3470,7 +3690,7 @@
       }
       if (!observed.visibleUploadSlots.includes('Start')) {
         result.ok = false;
-        result.error = 'FLOW_MODE_MISMATCH';
+        result.error = 'ERR_START_FRAME_REQUIRED_MISSING';
         result.reason = `Expected Start slot visible, got slots: ${observed.visibleUploadSlots.join(', ')}`;
         result.expected = expectations;
         result.observed = observed;
@@ -3608,7 +3828,7 @@
 
     if (requestedAspectRatio && IMAGE_ASPECT_RATIOS.includes(requestedAspectRatio) && observed.aspectRatio !== 'UNKNOWN' && observed.aspectRatio !== requestedAspectRatio) {
       result.ok = false;
-      result.error = 'FLOW_MODE_MISMATCH';
+      result.error = job.mode === 'F2V' ? 'ERR_ASPECT_9_16_NOT_SELECTED' : 'FLOW_MODE_MISMATCH';
       result.reason = `Expected aspectRatio='${requestedAspectRatio}', got '${observed.aspectRatio}'`;
       result.expected = expectations;
       result.observed = observed;
@@ -3618,7 +3838,7 @@
     const requestedCount = resolveRequestedCount(job);
     if (requestedCount && observed.count !== 'UNKNOWN' && observed.count !== requestedCount) {
       result.ok = false;
-      result.error = 'FLOW_MODE_MISMATCH';
+      result.error = job.mode === 'F2V' ? 'ERR_COUNT_1X_NOT_SELECTED' : 'FLOW_MODE_MISMATCH';
       result.reason = `Expected count='${requestedCount}', got '${observed.count}'`;
       result.expected = expectations;
       result.observed = observed;
@@ -3646,6 +3866,22 @@
     }
 
     if (missing.length > 0) {
+      if (job?.mode === 'F2V') {
+        if (missing.includes('Start')) {
+          return {
+            ok: false,
+            error: buildF2VAssetRequirementError('Start'),
+            reason: 'Required Start frame preview not visible',
+          };
+        }
+        if (requiredSlots.includes('End') && missing.includes('End')) {
+          return {
+            ok: false,
+            error: buildF2VAssetRequirementError('End'),
+            reason: 'Required End frame preview not visible',
+          };
+        }
+      }
       return { ok: false, reason: `Asset previews not visible for ${missing.join(', ')}` };
     }
 
@@ -3696,7 +3932,21 @@
     if (alreadyF2VReady) {
       logStage(STAGES.NEW_PROJECT_CLICKED, 'SKIP',
         'Existing workspace already Video/Frames with Start slot');
+    } else if (!onRoot) {
+      // Already inside a project editor (non-root URL) — skip new-project creation.
+      // Step 3 (ensureModeControlsVisible) will switch Video/Frames directly.
+      logStage(STAGES.NEW_PROJECT_CLICKED, 'SKIP',
+        'In project editor — proceeding to mode selection without new project');
     } else {
+      // On root / landing URL — must create or open a project first.
+      await waitForCondition(() => {
+        const state = collectProjectCreationState();
+        if (state.hasErrorPage) return true;
+        if (state.landingDetected || state.newProjectControlFound) return true;
+        const observed = observeFlowState();
+        return observed.visibleUploadSlots.includes('Start') || observed.composerPresent;
+      }, 15000, 300);
+
       // Snapshot current state before any mutations for diagnostics.
       const snapObs = observeFlowState();
       const snapComposer = findComposerElement();
@@ -3932,7 +4182,12 @@
     const testConn = await new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: 'STATUS' }, (resp) => {
         const err = chrome.runtime.lastError;
-        resolve(resp || { ok: false, error: err?.message || 'UNKNOWN_ERROR' });
+        if (err) {
+          resolve({ ok: false, error: err.message || 'UNKNOWN_ERROR' });
+          return;
+        }
+        const statusPayload = resp?.data && typeof resp.data === 'object' ? resp.data : resp;
+        resolve(statusPayload || { ok: false, error: 'ERR_EMPTY_BACKGROUND_STATUS' });
       });
     });
     console.log('[FlowAgent] Background connection test:', testConn);
@@ -3956,22 +4211,36 @@
 
     try {
       logStage(STAGES.FLOW_TAB_FOUND, 'PASS', 'flow_dom_listener_ready');
-      if (!testConn?.buildId) {
-        logStage(STAGES.RUNTIME_HANDSHAKE_VERIFIED, 'FAIL', `background_status_missing build=${testConn?.buildId || 'legacy'}`);
+      const backgroundBuildId = String(
+        testConn?.buildId
+        || testConn?.build_id
+        || testConn?.background_build_id
+        || testConn?.gitSha
+        || testConn?.git_sha
+        || '',
+      ).trim();
+      const backgroundRuntimeReady = typeof testConn?.runtimeReady === 'boolean'
+        ? testConn.runtimeReady
+        : (typeof testConn?.runtime_ready === 'boolean'
+          ? testConn.runtime_ready
+          : Boolean(testConn?.connected || testConn?.agentConnected || backgroundBuildId));
+
+      if (!backgroundRuntimeReady) {
+        logStage(STAGES.RUNTIME_HANDSHAKE_VERIFIED, 'FAIL', `background_status_missing build=${backgroundBuildId || 'legacy'}`);
         throw new Error('ERR_BACKGROUND_STATUS_UNAVAILABLE');
       }
-      if (testConn.buildId !== FLOW_KIT_DOM_BUILD_ID) {
+      if (backgroundBuildId && backgroundBuildId !== FLOW_KIT_DOM_BUILD_ID) {
         logStage(
           STAGES.RUNTIME_HANDSHAKE_VERIFIED,
           'FAIL',
-          `background_build_id=${testConn.buildId} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
+          `background_build_id=${backgroundBuildId} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
         );
         throw new Error('ERR_BUILD_ID_MISMATCH');
       }
       logStage(
         STAGES.RUNTIME_HANDSHAKE_VERIFIED,
         'PASS',
-        `background_build_id=${testConn.buildId} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
+        `background_build_id=${backgroundBuildId || 'legacy-compatible'} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
       );
 
       // 0. Log job received
@@ -4066,7 +4335,7 @@
         if (!verifyResult.ok) {
           // HARD ABORT - Do not proceed with upload/prompt/generate
           logStage(STAGES.FLOW_MODE_MISMATCH, verifyResult.reason);
-          throw new Error(`FLOW_MODE_MISMATCH: ${verifyResult.reason}`);
+          throw new Error(verifyResult.error || `FLOW_MODE_MISMATCH: ${verifyResult.reason}`);
         }
 
         logStage(STAGES.FLOW_MODE_VERIFIED, 'YES', null, buildSelectorEvidenceMeta('flow_config_surface_portal'));
@@ -4180,8 +4449,9 @@
         }
 
         // Step 6b: Upload End Frame
-        if (job.endAsset || job.endImageMediaId || job.productId) {
-          const okEnd = await simulateFileUpload('End', job.endAsset || job.productId || job.endImageMediaId);
+        const endAssetSource = resolveExplicitEndFrameAssetSource(job);
+        if (endAssetSource) {
+          const okEnd = await simulateFileUpload('End', endAssetSource);
           if (okEnd?.ok) {
             assetSlotContexts.push({
               slotLabel: 'End',
@@ -4250,7 +4520,7 @@
       const assetVerification = await verifyAssetChecklist(job, assetSlotContexts);
       if (!assetVerification.ok) {
         logStage(STAGES.ASSETS_VERIFIED, 'NO');
-        throw new Error(assetVerification.reason || 'ASSET_PREVIEW_NOT_VISIBLE');
+        throw new Error(assetVerification.error || assetVerification.reason || 'ASSET_PREVIEW_NOT_VISIBLE');
       }
       logStage(STAGES.ASSETS_VERIFIED, assetVerification.status);
 
@@ -4398,7 +4668,87 @@
     }
 
     if (msg.type === 'OPEN_FLOW_NEW_PROJECT') {
-      return respondAsync(sendResponse, async () => openFlowNewProjectFlow(msg.mode));
+      try {
+        const state = collectProjectCreationState();
+        const ready = checkFlowComposerReady(msg.mode);
+
+        if (
+          ready.composer_found
+          && ready.composer_editable
+          && ready.generate_button_found
+          && String(ready.current_mode_visible || '').includes('Video/Frames')
+        ) {
+          sendResponse({
+            ok: true,
+            open_flow_root: state.isRoot,
+            project_list_or_landing_detected: true,
+            new_project_clicked: 'SKIPPED_ALREADY_IN_EDITOR',
+            editor_ready: false,
+            awaiting_navigation: false,
+            detail: 'Flow editor already visible; background should verify Frames readiness',
+            flow_url: window.location.href,
+            ...state.diagnostic,
+          });
+          return false;
+        }
+
+        const createControl = findNewProjectControl();
+        if (!createControl) {
+          sendResponse({
+            ok: false,
+            open_flow_root: state.isRoot,
+            project_list_or_landing_detected: state.landingDetected,
+            new_project_clicked: false,
+            editor_ready: false,
+            error: state.landingDetected
+              ? 'FLOW_PROJECT_CREATION_PATH_MISSING'
+              : 'FLOW_PROJECT_LIST_OR_LANDING_NOT_DETECTED',
+            detail: 'New project control not found on Flow root/landing page',
+            flow_url: window.location.href,
+            ...state.diagnostic,
+          });
+          return false;
+        }
+
+        sendResponse({
+          ok: true,
+          open_flow_root: state.isRoot,
+          project_list_or_landing_detected: true,
+          new_project_clicked: true,
+          editor_ready: false,
+          awaiting_navigation: true,
+          detail: 'New project click dispatched; background must wait for editor navigation',
+          flow_url: window.location.href,
+          ...state.diagnostic,
+        });
+
+        setTimeout(() => {
+          try {
+            createControl.click();
+          } catch (error) {
+            console.warn('[FlowAgent] New project control click failed:', error);
+          }
+        }, 0);
+      } catch (err) {
+        sendResponse({
+          ok: false,
+          error: String(err?.message || err),
+        });
+      }
+      return false;
+    }
+
+    if (msg.type === 'ENSURE_VIDEO_FRAMES_EDITOR_READY') {
+      Promise.resolve()
+        .then(() => ensureVideoFramesEditorReady())
+        .then((result) => sendResponse(result))
+        .catch((err) =>
+          sendResponse({
+            ok: false,
+            error: String(err?.message || err),
+          }),
+        );
+      return true;
     }
 
     if (msg.type === 'EXECUTE_FLOW_JOB') {
@@ -4454,11 +4804,16 @@
   if (FLOW_KIT_ENABLE_TEST_HOOKS) {
     window.__FLOWKIT_TEST_HOOKS__ = {
       buildDiagnosticPingResponse,
+      findElementByText,
       findVisibleAssetPickerModal,
       findGenerateButtonNearComposer,
+      isSelectedControl,
+      sendRuntimeMessageNoThrow,
       waitForAssetPickerModal,
       waitForUploadAcceptance,
       resolveAssetPickerTargets,
+      resolveLocalAssetViaBackgroundProxy,
+      getRequiredAssetSlots,
       simulateFileUpload,
       beginCdpFileChooserProof,
       waitForCdpFileChooserProofResult,

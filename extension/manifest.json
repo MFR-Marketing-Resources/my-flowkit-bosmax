@@ -28,6 +28,12 @@
         "http://127.0.0.1/*",
         "http://localhost/*"
       ],
+      "exclude_matches": [
+        "http://127.0.0.1:8100/*",
+        "http://localhost:8100/*",
+        "http://127.0.0.1:5173/*",
+        "http://localhost:5173/*"
+      ],
       "js": ["content.js", "selector-registry.js", "content-flow-dom.js"],
       "run_at": "document_start"
     }
