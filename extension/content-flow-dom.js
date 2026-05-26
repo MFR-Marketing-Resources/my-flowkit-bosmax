@@ -234,7 +234,20 @@
     // Nano Banana / Imagen / etc., Frames affordances never mount. Per
     // manual_fa0d11f4 we now verify Veo immediately after Video selection
     // and attempt a model switch before falling through to Frames.
+    //
+    // (Kept for backward compatibility; ensureVeoModelBeforeFrames is now
+    //  test-only — the live state machine drives configureVisibleF2VComposerSettings
+    //  per manual_da996ef1, which never hard-fails before opening the
+    //  composer settings panel.)
     FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED: 'FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED',
+    // Composer settings panel direct-drive (manual_da996ef1).
+    // Operator-visible composer panel contains Video / Frames / 9:16 / 1x /
+    // Veo 3.1 - Lite all in one menu. The new SOP opens that panel and
+    // clicks every option in order — exposing precise per-option failure
+    // codes so the operator's screen state can be reconciled with what
+    // the extension claims it sees.
+    F2V_SETTINGS_PANEL_OPENED: 'F2V_SETTINGS_PANEL_OPENED',
+    F2V_COMPOSER_SETTINGS_CONFIGURED: 'F2V_COMPOSER_SETTINGS_CONFIGURED',
     FLOW_SUBMODE_FRAMES_SELECTED: 'FLOW_SUBMODE_FRAMES_SELECTED',
     F2V_COMPOSER_READY: 'F2V_COMPOSER_READY',
     FLOW_ASPECT_9_16_SELECTED: 'FLOW_ASPECT_9_16_SELECTED',
@@ -786,29 +799,42 @@
     return preferred || surfaces[0] || null;
   }
 
-  function findElementByTextInRoot(root, selector, text) {
+  function findElementByTextInRoot(root, selector, text, options = {}) {
     if (!root) return null;
 
     const needle = normalizeText(text).toLowerCase();
     if (!needle) return null;
+    const exact = Boolean(options && options.exact);
 
     const matches = [];
     for (const el of root.querySelectorAll(selector)) {
       if (!isVisible(el)) continue;
-      const label = normalizeText(
+      const rawLabel = normalizeText(
         el.textContent
         || el.getAttribute('aria-label')
         || el.getAttribute('data-placeholder')
         || ''
       );
-      if (!label) continue;
+      if (!rawLabel) continue;
       const target = el.closest('button, [role="button"], [role="tab"], [role="option"], li, label') || el;
       if (!isVisible(target)) continue;
-      matches.push({ label: label.toLowerCase(), target });
+      const stripped = _stripFlowIconPrefix(rawLabel);
+      matches.push({
+        label: rawLabel.toLowerCase(),
+        stripped: stripped.toLowerCase(),
+        target,
+      });
     }
 
-    const exactMatch = matches.find((item) => item.label === needle);
+    // Exact match against raw OR icon-stripped label.
+    const exactMatch = matches.find(
+      (item) => item.label === needle || item.stripped === needle,
+    );
     if (exactMatch) return exactMatch.target;
+
+    // Mode-tab / option labels opt into exact-only mode to prevent
+    // false positives against asset-library chips like "videocamVideos".
+    if (exact) return null;
 
     const prefixMatch = matches.find((item) => item.label.startsWith(needle));
     if (prefixMatch) return prefixMatch.target;
@@ -1173,6 +1199,214 @@
     }
 
     return { ok: true, modelText };
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // configureVisibleF2VComposerSettings — direct-drive the composer panel.
+  //
+  // Per manual_da996ef1 the operator's screen visibly contained Video +
+  // Frames + 9:16 + 1x + Veo 3.1 - Lite + Start/End slots + prompt field,
+  // but the extension still failed ERR_WRONG_MODEL_FOR_F2V because it
+  // had read the OUTER Flow page's "Nano Banana 2" model label and made
+  // a terminal decision before ever opening the composer settings panel.
+  //
+  // This function obeys the operator's required SOP:
+  //   1. Open composer settings/menu (closeBlockingModalIfPresent +
+  //      openFlowConfigPanel — reusing the existing entry-point so the
+  //      launcher-finding logic stays in one place).
+  //   2. Select Video        (exact-match, normalized to interactive ancestor)
+  //   3. Select Frames       (same)
+  //   4. Select 9:16         (same)
+  //   5. Select 1x           (same)
+  //   6. Select Veo 3.1 - Lite (same)
+  //   7. Observe + log final state.
+  //
+  // Hard rules baked in:
+  //   - The asset-library "videocamVideos" chip cannot satisfy a
+  //     "Video" match (exact-only via findElementByTextInRoot's new
+  //     { exact: true } option).
+  //   - Every match is normalized to its nearest interactive ancestor
+  //     before clicking.
+  //   - We NEVER emit ERR_WRONG_MODEL_FOR_F2V until the panel has been
+  //     opened AND we have proved Veo 3.1 - Lite cannot be selected —
+  //     at which point we emit ERR_VEO_3_1_LITE_OPTION_NOT_VISIBLE as
+  //     the structured failure (with visible option candidates in
+  //     telemetry).
+  //   - Soft-pass when no settings launcher is found at all (the
+  //     downstream existing state machine handles the fallback path
+  //     used by older test fixtures that build the deferred-control
+  //     sequence).
+  // ────────────────────────────────────────────────────────────────────────
+  const _F2V_COMPOSER_OPTION_SELECTOR =
+    'button, [role="option"], [role="button"], [role="tab"], [role="menuitem"], li, label, span, div';
+
+  function _collectVisibleF2VComposerOptionTexts(surface) {
+    if (!surface) return [];
+    const out = new Set();
+    surface
+      .querySelectorAll('button, [role="option"], [role="button"], [role="tab"], [role="menuitem"], li, span')
+      .forEach((el) => {
+        if (!isVisible(el)) return;
+        const raw = normalizeText(el.textContent || el.getAttribute('aria-label') || '');
+        if (!raw) return;
+        const stripped = _stripFlowIconPrefix(raw);
+        // Bound the snapshot and drop the obviously-wrapper labels.
+        if (stripped.length > 80) return;
+        out.add(stripped);
+      });
+    return Array.from(out).slice(0, 30);
+  }
+
+  /**
+   * Open the composer settings panel and click Video/Frames/9:16/1x/Veo
+   * 3.1 - Lite in order. Returns:
+   *   { ok: true, configured: { ... } }                 on full success
+   *   { ok: true, skipped: true, reason: '…' }          if no launcher
+   *                                                     (caller may
+   *                                                     fall through to
+   *                                                     the older click-
+   *                                                     each-tab path)
+   *   { ok: false, error: <ERR_*>, detail, candidates } structured fail
+   */
+  async function configureVisibleF2VComposerSettings(logStage) {
+    const noopLogStage = (typeof logStage === 'function')
+      ? logStage
+      : () => {};
+
+    // 1. Open composer settings panel if closed. We reuse openFlowConfigPanel
+    //    because it already handles closing blocking modals + finding the
+    //    launcher via the permissive findFlowConfigLauncher (which accepts
+    //    a launcher whose visible text is just "Nano Banana 2" — the
+    //    manual_da996ef1 case). If no launcher exists at all (older test
+    //    fixtures with deferred-control DOM), we soft-pass and let the
+    //    caller fall through to the legacy state-machine path.
+    const launcherBefore = findFlowConfigLauncher();
+    if (!launcherBefore) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: 'no_settings_launcher_found',
+      };
+    }
+
+    const surfaceAlreadyOpen = findOpenFlowConfigSurface();
+    if (!surfaceAlreadyOpen) {
+      const opened = await openFlowConfigPanel();
+      if (!opened) {
+        const detail = `ERR_F2V_SETTINGS_PANEL_NOT_OPEN — openFlowConfigPanel returned false`;
+        noopLogStage(STAGES.F2V_SETTINGS_PANEL_OPENED, 'FAIL', detail);
+        return {
+          ok: false,
+          error: 'ERR_F2V_SETTINGS_PANEL_NOT_OPEN',
+          detail: 'openFlowConfigPanel_returned_false',
+        };
+      }
+    }
+
+    const surface = findOpenFlowConfigSurface();
+    if (!surface) {
+      const detail = `ERR_F2V_SETTINGS_PANEL_NOT_OPEN — surface_not_found_after_open`;
+      noopLogStage(STAGES.F2V_SETTINGS_PANEL_OPENED, 'FAIL', detail);
+      return {
+        ok: false,
+        error: 'ERR_F2V_SETTINGS_PANEL_NOT_OPEN',
+        detail: 'surface_not_found_after_open',
+      };
+    }
+    noopLogStage(STAGES.F2V_SETTINGS_PANEL_OPENED, 'PASS');
+
+    // 2-6. Click each option in order. Exact-match only — the asset-
+    //      library chip "videocamVideos" must NEVER satisfy "Video".
+    const steps = [
+      { label: 'Video', errCode: 'ERR_VIDEO_OPTION_NOT_VISIBLE' },
+      { label: 'Frames', errCode: 'ERR_FRAMES_OPTION_NOT_VISIBLE' },
+      { label: '9:16', errCode: 'ERR_RATIO_9_16_NOT_VISIBLE' },
+      { label: '1x', errCode: 'ERR_VARIATION_1X_NOT_VISIBLE' },
+      { label: 'Veo 3.1 - Lite', errCode: 'ERR_VEO_3_1_LITE_OPTION_NOT_VISIBLE' },
+    ];
+
+    const configured = {};
+
+    for (const { label, errCode } of steps) {
+      // Re-query the surface each iteration — Radix may rerender the
+      // panel after each click. Cached nodes go stale fast.
+      const liveSurface = findOpenFlowConfigSurface() || surface;
+      const launcherNow = findFlowConfigLauncher();
+      let option = findElementByTextInRoot(
+        liveSurface,
+        _F2V_COMPOSER_OPTION_SELECTOR,
+        label,
+        { exact: true },
+      );
+
+      // Defence: drop the launcher itself if findElementByTextInRoot
+      // happened to surface it (some launchers contain the model label
+      // by design).
+      if (option && (option === launcherNow || launcherNow?.contains(option))) {
+        option = null;
+      }
+
+      if (!option) {
+        const candidates = _collectVisibleF2VComposerOptionTexts(liveSurface);
+        const detail =
+          `${errCode} — label=${JSON.stringify(label)} ` +
+          `candidates=${JSON.stringify(candidates)} ` +
+          `url=${window.location.href}`;
+        noopLogStage(STAGES.F2V_COMPOSER_SETTINGS_CONFIGURED, 'FAIL', detail);
+        return {
+          ok: false,
+          error: errCode,
+          detail,
+          label,
+          candidates,
+        };
+      }
+
+      // Normalize to an interactive ancestor before clicking.
+      const target = (
+        option.closest(_FRAMES_INTERACTIVE_ANCESTOR_SELECTOR) || option
+      );
+
+      if (!isSelectedControl(target, label)) {
+        try { target.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
+        try { target.click(); } catch (_) {}
+        // Brief settle window; Radix transitions land within ~250 ms.
+        await sleep(250);
+      }
+
+      configured[label] = {
+        clicked: true,
+        selected_after_click: isSelectedControl(
+          findElementByTextInRoot(
+            findOpenFlowConfigSurface() || liveSurface,
+            _F2V_COMPOSER_OPTION_SELECTOR,
+            label,
+            { exact: true },
+          ),
+          label,
+        ),
+      };
+    }
+
+    // 7. Verify visible final state + log a structured PASS payload that
+    //    includes the observed Flow state for downstream forensics.
+    const observedFinal = observeFlowState();
+    const composerEl = findComposerElement();
+    const promptFieldVisible = Boolean(composerEl && isVisible(composerEl));
+    noopLogStage(
+      STAGES.F2V_COMPOSER_SETTINGS_CONFIGURED,
+      'PASS',
+      `model=${observedFinal.model} topMode=${observedFinal.topMode} ` +
+      `subMode=${observedFinal.subMode} prompt_field=${promptFieldVisible} ` +
+      `configured=${JSON.stringify(configured)}`,
+    );
+
+    return {
+      ok: true,
+      configured,
+      observed: observedFinal,
+      prompt_field_visible: promptFieldVisible,
+    };
   }
 
   async function selectFlowConfigOption(text) {
@@ -4890,20 +5124,27 @@
     }
     logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'PASS', 'topMode=Video');
 
-    // ── Step 3b: Pre-Frames model gate — verify / switch to Veo 3.1 - Lite
+    // ── Step 3b: Direct-drive composer settings panel (manual_da996ef1)
     //
-    // Frames is Veo-only per Google's feature matrix. If we entered a
-    // Nano Banana / Imagen / non-Veo project, the Frames panel never
-    // mounts. Verify the model BEFORE the Frames gate and attempt a
-    // switch via the composer model-selector. Fail closed with visible
-    // model candidates if no selector is available or the switch is
-    // rejected (typical when the project's model is immutable).
+    // The operator's screen visibly contains Video / Frames / 9:16 / 1x /
+    // Veo 3.1 - Lite inside a single composer settings dropdown. Drive
+    // that panel exactly per the documented SOP — open, click each
+    // option in order, verify final state — rather than relying on the
+    // outer Flow page's model label (which can read "Nano Banana 2" even
+    // when the panel exposes Veo 3.1 - Lite).
     //
-    // The existing FLOW_MODEL_VEO_3_1_LITE_SELECTED stage inside the
-    // Frames config menu continues to run as a defence-in-depth check.
-    const preFramesModel = await ensureVeoModelBeforeFrames(_job, logStage);
-    if (!preFramesModel.ok) {
-      throw new Error(preFramesModel.error || 'ERR_WRONG_MODEL_FOR_F2V');
+    // The earlier ensureVeoModelBeforeFrames pre-frames gate is no longer
+    // wired into the state machine because it could hard-fail
+    // ERR_WRONG_MODEL_FOR_F2V before the panel was ever opened. It
+    // remains exported as a test hook for the existing 4-case harness.
+    //
+    // configureVisibleF2VComposerSettings soft-passes when no settings
+    // launcher is found at all — that lets the older deferred-control
+    // test fixtures (which build separate Video/Frames tabs and no
+    // launcher) continue through the legacy path below.
+    const composerConfigured = await configureVisibleF2VComposerSettings(logStage);
+    if (!composerConfigured.ok) {
+      throw new Error(composerConfigured.error || 'ERR_F2V_SETTINGS_PANEL_NOT_OPEN');
     }
 
     // ── Step 4: Select Frames submode ────────────────────────────────────────
@@ -5705,9 +5946,15 @@
       _collectPortalAndBodyFramesCandidates,
       _stripFlowIconPrefix,
       // Pre-Frames model gate helpers — added for manual_fa0d11f4
+      // (kept exported; no longer wired into ensureF2VFramesWorkspaceReady
+      //  per manual_da996ef1 corrective instructions, but the helper +
+      //  its 4-case harness still verify the model-switch primitives.)
       ensureVeoModelBeforeFrames,
       findFlowComposerModelButton,
       _collectVisibleModelCandidates,
+      // Composer settings panel direct-drive (manual_da996ef1)
+      configureVisibleF2VComposerSettings,
+      _collectVisibleF2VComposerOptionTexts,
     };
     installPlaywrightTestBridge();
   }
