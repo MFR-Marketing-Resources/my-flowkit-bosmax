@@ -1137,7 +1137,7 @@
   }
 
   async function openCreateTypeChooser() {
-    const candidates = Array.from(document.querySelectorAll('button, [role="button"], span, div'));
+    const candidates = Array.from(document.querySelectorAll('button, [role="button"]'));
     const trigger = candidates.find((el) => {
       if (!isVisible(el)) return false;
       const text = normalizeText(el.textContent || el.getAttribute('aria-label') || '');
@@ -1146,7 +1146,7 @@
       return lower.includes('create') && lower.includes('add_2') && !lower.includes('arrow_forward');
     });
 
-    const target = trigger?.closest('button, [role="button"]') || trigger;
+    const target = trigger;
     if (!target || !isVisible(target)) return false;
     target.click();
 
@@ -4846,6 +4846,7 @@
       beginCdpFileChooserProof,
       waitForCdpFileChooserProofResult,
       openFlowConfigPanel,
+      openCreateTypeChooser,
       verifyFlowMode,
       beginF2VNewProjectNavigationHandoff,
       normalizeFlowExecutionError,

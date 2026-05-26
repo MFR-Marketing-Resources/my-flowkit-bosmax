@@ -312,6 +312,28 @@ function createWrappedVideoTab(window, options = {}) {
   return { wrapper, button, inner, heading };
 }
 
+function createWrappedCreateTypeTrigger(window) {
+  const wrapper = window.document.createElement('div');
+  wrapper.className = 'create-type-wrapper';
+  makeVisible(wrapper, 180, 60);
+
+  const button = window.document.createElement('button');
+  button.type = 'button';
+  button.textContent = 'add_2 Create';
+  makeVisible(button, 150, 48);
+  button.addEventListener('click', () => {
+    const video = window.document.createElement('button');
+    video.type = 'button';
+    video.textContent = 'Video';
+    makeVisible(video, 120, 44);
+    window.document.body.appendChild(video);
+  });
+
+  wrapper.appendChild(button);
+  window.document.body.appendChild(wrapper);
+  return { wrapper, button };
+}
+
 function createModal(window, { useInput = false, useDropzone = false, inShadowRoot = false } = {}) {
   const buildSurface = (root) => {
     const modal = root.createElement('div');
@@ -967,6 +989,27 @@ async function runBackgroundProxyAckFailureResultTest() {
   }
 }
 
+async function runCreateTypeChooserClicksNestedInteractiveTriggerTest() {
+  const harness = createHarness();
+  const { window, hooks } = harness;
+
+  try {
+    const { button } = createWrappedCreateTypeTrigger(window);
+    let clicked = false;
+    button.addEventListener('click', () => {
+      clicked = true;
+    });
+
+    const opened = await hooks.openCreateTypeChooser();
+    expect(opened === true, 'Expected wrapped Create mode trigger to reveal Video options', { opened });
+    expect(clicked === true, 'Expected click to land on the nested interactive Create button', {
+      button_outer_html: button.outerHTML,
+    });
+  } finally {
+    harness.close();
+  }
+}
+
 async function runNewProjectNavigationHandoffAcksBeforeDeferredClickTest() {
   const harness = createHarness();
   const { window, document, hooks, setRuntimeSendMessageHandler } = harness;
@@ -1098,6 +1141,7 @@ async function main() {
     ['Diagnostic ping header', runDiagnosticPingHeaderTest],
     ['Find element resolves nested interactive Video tab', runFindElementByTextPrefersNestedInteractiveControlTest],
     ['Selected-state uses interactive Video descendant', runIsSelectedControlUsesInteractiveDescendantStateTest],
+    ['Create type chooser clicks nested interactive trigger', runCreateTypeChooserClicksNestedInteractiveTriggerTest],
     ['Required slots F2V start-only', runGetRequiredAssetSlotsF2VStartOnlyTest],
     ['Required slots F2V start-and-end', runGetRequiredAssetSlotsF2VStartAndEndTest],
     ['Verify F2V allows unknown model label', runVerifyFlowModeAllowsUnknownF2VModelTest],
