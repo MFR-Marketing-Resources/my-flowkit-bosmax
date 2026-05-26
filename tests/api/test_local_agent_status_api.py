@@ -3,6 +3,7 @@ import subprocess
 
 import pytest
 
+from agent import main as agent_main
 from agent.api import local_agent
 
 
@@ -79,3 +80,26 @@ async def test_get_local_agent_status_surfaces_autostart_warning(monkeypatch):
     assert status.auto_start_mode == "SCHEDULED_TASK"
     assert status.auto_start_warning == "STALE_STARTUP_SHORTCUT_PRESENT"
     assert status.task_name == "BOSMAX Flow Kit Local Agent Watchdog"
+
+
+def test_superseded_socket_disconnect_preserves_current_extension_bridge():
+    class _FakeClient:
+        def __init__(self, active_socket):
+            self._extension_ws = active_socket
+            self.clear_calls = 0
+
+        def clear_extension(self):
+            self.clear_calls += 1
+            self._extension_ws = None
+
+    stale_socket = object()
+    active_socket = object()
+    client = _FakeClient(active_socket)
+
+    assert agent_main._clear_extension_if_current(client, stale_socket) is False
+    assert client._extension_ws is active_socket
+    assert client.clear_calls == 0
+
+    assert agent_main._clear_extension_if_current(client, active_socket) is True
+    assert client._extension_ws is None
+    assert client.clear_calls == 1

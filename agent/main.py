@@ -68,6 +68,15 @@ logger = logging.getLogger(__name__)
 
 # ─── WebSocket Server for Extension ─────────────────────────
 
+def _clear_extension_if_current(client, websocket) -> bool:
+    """Keep replacement extension sockets live when an older socket closes."""
+    if getattr(client, "_extension_ws", None) is not websocket:
+        logger.info("Superseded extension socket disconnected; preserving active bridge")
+        return False
+    client.clear_extension()
+    return True
+
+
 async def ws_handler(websocket):
     """Handle a Chrome extension WebSocket connection."""
     client = get_flow_client()
@@ -89,8 +98,8 @@ async def ws_handler(websocket):
     except websockets.ConnectionClosed:
         pass
     finally:
-        client.clear_extension()
-        logger.info("Extension disconnected")
+        if _clear_extension_if_current(client, websocket):
+            logger.info("Extension disconnected")
 
 
 async def run_ws_server():
