@@ -510,28 +510,93 @@
     return el;
   }
 
-  function findElementByText(selector, text) {
+  // Material Icon names that Flow embeds before button labels. Google Material
+  // Symbols render as a text node containing the icon name (e.g. "videocam",
+  // "play_circle", "image", "add_2") immediately followed by the visible
+  // label. When we normalize textContent we get fused strings like
+  // "videocamVideos" or "play_circleVideo". To match a clean label like
+  // "Video" against such a node we must strip the icon-prefix token first.
+  //
+  // This token list intentionally captures the icons Flow uses on the
+  // mode/asset/composer surfaces today. Adding entries is cheap and safe.
+  const _FLOW_MATERIAL_ICON_TOKENS = new Set([
+    'add_2', 'add', 'arrow_back', 'arrow_drop_down', 'arrow_forward',
+    'accessibility_new', 'apps_spark_2', 'category', 'check', 'close',
+    'collections', 'dashboard', 'delete', 'drive_folder_upload',
+    'edit', 'expand_more', 'face', 'filter_list', 'help', 'image',
+    'imagesmode', 'left_panel_close', 'movie', 'more_vert',
+    'play_circle', 'search', 'settings', 'settings_2', 'spark',
+    'subdirectory_arrow_right', 'tune', 'upload', 'videocam',
+    'view_module', 'voice_selection',
+  ]);
+
+  function _stripFlowIconPrefix(rawLabel) {
+    const trimmed = String(rawLabel || '').trim();
+    if (!trimmed) return '';
+    // Material Icons are emitted as a snake_case identifier with no spaces
+    // immediately followed by the visible label that starts with a capital
+    // letter or digit. We split off the leading [a-z0-9_]+ token and check
+    // if it is a known icon name. If yes, strip it; otherwise return the
+    // original label untouched.
+    const match = /^([a-z][a-z0-9_]*)([A-Z0-9].*)$/.exec(trimmed);
+    if (!match) return trimmed;
+    const candidateToken = match[1];
+    const rest = match[2];
+    if (_FLOW_MATERIAL_ICON_TOKENS.has(candidateToken)) {
+      return rest.trim();
+    }
+    return trimmed;
+  }
+
+  /**
+   * findElementByText(selector, text, options?)
+   *
+   * options.exact   — when true, accept ONLY an icon-stripped equality
+   *                   match. No prefix or partial fallback. Required for
+   *                   mode-tab labels like "Video" / "Image" / "Frames"
+   *                   so the asset-library filter chip "videocamVideos"
+   *                   (which normalizes to "videocamvideos" and prefix-
+   *                   matches "video") cannot be misidentified as the
+   *                   Video mode tab. Failing closed here is the upstream
+   *                   half of the ERR_FRAMES_PANEL_NOT_READY fix.
+   */
+  function findElementByText(selector, text, options = {}) {
     const needle = normalizeText(text).toLowerCase();
     if (!needle) return null;
+    const exact = Boolean(options && options.exact);
 
     const matches = [];
     for (const el of document.querySelectorAll(selector)) {
       if (!isVisible(el)) continue;
-      const label = normalizeText(
+      const rawLabel = normalizeText(
         el.textContent
         || el.getAttribute('aria-label')
         || el.getAttribute('data-placeholder')
         || ''
       );
-      if (!label) continue;
-      const target = resolveInteractiveControlTarget(el, label);
+      if (!rawLabel) continue;
+      const target = resolveInteractiveControlTarget(el, rawLabel);
       if (!isVisible(target)) continue;
-      matches.push({ label: label.toLowerCase(), target });
+      const stripped = _stripFlowIconPrefix(rawLabel);
+      matches.push({
+        label: rawLabel.toLowerCase(),
+        stripped: stripped.toLowerCase(),
+        target,
+      });
     }
 
-    const exactMatch = matches.find((item) => item.label === needle);
+    // Exact match against raw or icon-stripped label is always tried first.
+    const exactMatch = matches.find(
+      (item) => item.label === needle || item.stripped === needle,
+    );
     if (exactMatch) return exactMatch.target;
 
+    // Caller opted into exact-only matching → stop here. This is what
+    // mode-tab callers ("Video", "Image", "Frames", "Ingredients") use.
+    if (exact) return null;
+
+    // Legacy looser matching preserved for ALL OTHER callers (chip search,
+    // generic UI scraping, etc.) so this change is non-regressing.
     const prefixMatch = matches.find((item) => item.label.startsWith(needle));
     if (prefixMatch) return prefixMatch.target;
 
@@ -2942,36 +3007,206 @@
     };
   }
 
+  // Interactive-ancestor selector used to normalize every text-matched
+  // node to a real control before clicking / asserting selected state.
+  // Per the source-grounded Frames diagnostic brief — text matches must
+  // never be the click target directly.
+  const _FRAMES_INTERACTIVE_ANCESTOR_SELECTOR =
+    'button, [role="tab"], [role="button"], [role="option"], [aria-selected], [aria-pressed], [data-state]';
+
+  function _normalizeToInteractiveAncestor(el) {
+    if (!el) return null;
+    if (typeof el.closest !== 'function') return el;
+    // We must NOT fall back to `el` when closest() finds nothing — that
+    // would let a generic wrapper <div> (e.g. a Radix menu container that
+    // happens to contain the text "Frames" via descendants) become the
+    // returned "ancestor". Return null instead so callers can decide to
+    // skip the candidate. Existing call sites that want the original
+    // behaviour can do `_normalizeToInteractiveAncestor(el) || el`.
+    return el.closest(_FRAMES_INTERACTIVE_ANCESTOR_SELECTOR) || null;
+  }
+
+  function _isInteractiveControlNode(node) {
+    if (!node || typeof node.getAttribute !== 'function') return false;
+    const tag = (node.tagName || '').toLowerCase();
+    if (tag === 'button' || tag === 'a') return true;
+    const role = node.getAttribute('role');
+    if (role && ['tab', 'button', 'option', 'menuitem', 'tabpanel'].includes(role)) {
+      return true;
+    }
+    if (node.hasAttribute('aria-selected')) return true;
+    if (node.hasAttribute('aria-pressed')) return true;
+    if (node.hasAttribute('data-state')) return true;
+    return false;
+  }
+
+  // Strong Frames panel markers per the brief's required list:
+  //   - "Add start frame" / "+ Add start frame" / "add_2 Add start frame"
+  //   - "Add end frame"   / "+ Add end frame"   / "add_2 Add end frame"
+  //   - bare "Start frame" / "End frame" labels next to a dropzone
+  // Generic "Start" / "End" tokens are deliberately NOT accepted here —
+  // "Start creating or drop media" placeholder is a known false positive.
+  const _FRAMES_ADD_SLOT_PATTERN =
+    /^(?:add_2\s*)?(?:\+\s*)?(?:add\s+)?(?:start|end)\s+frame$/i;
+  const _FRAMES_BARE_SLOT_PATTERN =
+    /^(?:start|end)\s+frame$/i;
+
+  /**
+   * Find Frames-option candidates anywhere reachable — including portal /
+   * Radix-Portal escapes (menu, listbox, dialog, tabpanel) under
+   * document.body. Each candidate is normalized to its nearest interactive
+   * ancestor before being returned so callers may click / verify state
+   * against the real control, not a label descendant.
+   */
+  function _collectPortalAndBodyFramesCandidates() {
+    const portalRoots = new Set();
+    portalRoots.add(document.body);
+    document
+      .querySelectorAll('[role="dialog"], [role="menu"], [role="listbox"], [data-radix-portal], [data-portal], [aria-modal="true"]')
+      .forEach((root) => portalRoots.add(root));
+
+    const out = [];
+    for (const root of portalRoots) {
+      if (!root || typeof root.querySelectorAll !== 'function') continue;
+      const candidates = root.querySelectorAll(
+        'button, [role="tab"], [role="button"], [role="option"], [role="menuitem"], [role="tabpanel"], label, span, p, div, a',
+      );
+      for (const el of candidates) {
+        if (!isVisible(el)) continue;
+        const raw = normalizeText(
+          el.textContent || el.getAttribute('aria-label') || '',
+        );
+        if (!raw) continue;
+        const stripped = _stripFlowIconPrefix(raw).toLowerCase();
+        const rawLower = raw.toLowerCase();
+        const isFramesTab = stripped === 'frames' || rawLower === 'frames';
+        const isAddSlot = _FRAMES_ADD_SLOT_PATTERN.test(raw);
+        const isBareSlot = _FRAMES_BARE_SLOT_PATTERN.test(raw);
+        if (!isFramesTab && !isAddSlot && !isBareSlot) continue;
+        // Resolve to a real interactive ancestor; if the matched node is
+        // a generic wrapper <div>/<p>/<span> with no interactive parent
+        // (e.g. a Radix menu container that merely CONTAINS the text via
+        // descendants), reject it. We only accept candidates with a
+        // properly-normalised, click-targetable ancestor.
+        const ancestor = _normalizeToInteractiveAncestor(el);
+        const interactiveSelf = _isInteractiveControlNode(el) ? el : null;
+        const resolved = ancestor || interactiveSelf;
+        if (!resolved) continue;
+        // Guard against the wrapper-container false positive: the resolved
+        // node must itself be a control (a button/role=...) — not the
+        // outer dialog/menu/tabpanel root that hosts the option.
+        if (!_isInteractiveControlNode(resolved)) continue;
+        out.push({
+          element: resolved,
+          text: raw,
+          source_root:
+            root === document.body ? 'document.body' : (root.getAttribute('role') || root.tagName?.toLowerCase() || 'portal'),
+          kind: isFramesTab ? 'frames_tab' : (isAddSlot ? 'add_slot' : 'bare_slot'),
+          aria_selected: resolved.getAttribute?.('aria-selected') || null,
+          aria_pressed: resolved.getAttribute?.('aria-pressed') || null,
+          data_state: resolved.getAttribute?.('data-state') || null,
+        });
+      }
+    }
+    return out;
+  }
+
   function getFramesWorkspaceEvidence() {
+    // (1) Exact-match Frames tab in semantic-active state. We use the new
+    //     exact-only path of findElementByText so "Frames" can't false-match
+    //     on a partial-label control. Then verify ARIA/data-state.
     const activeFramesControl = findElementByText(
       'button, [role="tab"], [role="button"], [role="option"]',
       'Frames',
+      { exact: true },
     );
     if (activeFramesControl && isSelectedControl(activeFramesControl, 'Frames')) {
       return {
         ok: true,
         marker: 'active_frames_control',
-        element: activeFramesControl,
+        element: _normalizeToInteractiveAncestor(activeFramesControl) || activeFramesControl,
       };
     }
 
-    const markerPattern = /^(?:add_2\s*)?(?:\+\s*)?(?:add\s+)?(?:start|end)\s+frame$/i;
-    const panelCandidates = Array.from(document.querySelectorAll(
-      'button, [role="button"], [role="tab"], [role="option"], label, span, p, div',
+    // (2) "Add start frame" / "+ Add start frame" / "Add end frame" — the
+    //     documented Flow Frames affordance. Sorted by text length to
+    //     prefer the most specific match.
+    const addSlotCandidates = Array.from(document.querySelectorAll(
+      'button, [role="button"], [role="tab"], [role="option"], label, span, p, div, a',
     ))
       .filter((el) => isVisible(el))
       .map((el) => ({
         element: el,
         text: normalizeText(el.textContent || el.getAttribute('aria-label') || ''),
       }))
-      .filter((candidate) => markerPattern.test(candidate.text))
+      .filter((candidate) => _FRAMES_ADD_SLOT_PATTERN.test(candidate.text))
       .sort((a, b) => a.text.length - b.text.length);
 
-    if (panelCandidates.length > 0) {
+    if (addSlotCandidates.length > 0) {
+      const pick = addSlotCandidates[0];
       return {
         ok: true,
-        marker: panelCandidates[0].text,
-        element: panelCandidates[0].element,
+        marker: pick.text,
+        element: _normalizeToInteractiveAncestor(pick.element) || pick.element,
+      };
+    }
+
+    // (3) Bare "Start frame" / "End frame" labels — accepted only when the
+    //     label appears next to a recognisable dropzone container (a parent
+    //     element with role tabpanel/region or class hint). This is
+    //     intentionally narrower than the bare "Start" / "End" tokens which
+    //     the brief warns must NOT pass the Frames gate.
+    const bareSlotCandidates = Array.from(document.querySelectorAll(
+      'label, span, p, div',
+    ))
+      .filter((el) => isVisible(el))
+      .map((el) => ({
+        element: el,
+        text: normalizeText(el.textContent || el.getAttribute('aria-label') || ''),
+      }))
+      .filter((candidate) => _FRAMES_BARE_SLOT_PATTERN.test(candidate.text))
+      .filter((candidate) => {
+        // Require the label to live near a dropzone-like container —
+        // either inside an active tabpanel, or inside a region/group
+        // ancestor. This prevents a stray "Start frame" tooltip elsewhere
+        // on the page from falsely passing the gate.
+        const ancestor = candidate.element.closest(
+          '[role="tabpanel"][data-state="active"], [role="tabpanel"][aria-hidden="false"], [role="region"], [role="group"]',
+        );
+        return Boolean(ancestor);
+      })
+      .sort((a, b) => a.text.length - b.text.length);
+
+    if (bareSlotCandidates.length > 0) {
+      const pick = bareSlotCandidates[0];
+      return {
+        ok: true,
+        marker: pick.text,
+        element: _normalizeToInteractiveAncestor(pick.element) || pick.element,
+      };
+    }
+
+    // (4) Portal / Radix-Portal escape — Frames option may be rendered
+    //     under document.body inside a dialog/menu/listbox/tabpanel.
+    //
+    // CRITICAL: a portal-discovered "Frames" TAB only counts as auto-ready
+    // evidence when it is semantically ACTIVE (aria-selected="true" or
+    // data-state="active"). An inactive Frames tab means the gate still
+    // needs to click it — accepting it as auto-ready here would skip the
+    // click and cause the workspace gate to advance prematurely. Add-slot
+    // and bare-slot kinds are workspace evidence regardless of selection
+    // state because they only mount inside the Frames panel.
+    const portalCandidates = _collectPortalAndBodyFramesCandidates();
+    const portalAutoReady = portalCandidates.find((c) => {
+      if (c.kind === 'add_slot' || c.kind === 'bare_slot') return true;
+      // c.kind === 'frames_tab' — require active state.
+      return c.aria_selected === 'true' || c.data_state === 'active';
+    });
+    if (portalAutoReady) {
+      return {
+        ok: true,
+        marker: `portal_${portalAutoReady.kind}:${portalAutoReady.text}`,
+        element: portalAutoReady.element,
       };
     }
 
@@ -2982,15 +3217,111 @@
     };
   }
 
+  // Detect the "Asset Library / Media Picker" view signature. When the
+  // operator's tab is on the library instead of the Flow project editor,
+  // FLOW_TYPE_VIDEO_SELECTED can become a false positive (the asset-type
+  // filter chip "videocamVideos" satisfies prefix-match against "Video").
+  // Returning a structured detection here lets the Frames-readiness FAIL
+  // classify the underlying cause more accurately than
+  // ERR_FRAMES_PANEL_NOT_READY.
+  function _detectAssetLibraryView() {
+    // The library shows ALL of: dashboardAll Media, imageImages,
+    // videocamVideos, voice_selectionVoices, faceAvatar — plus the upload
+    // chips drive_folder_uploadUploads / uploadUpload media. Requiring at
+    // least 4 of these co-occurring keeps the detector strict.
+    const requiredTokens = [
+      'all media',
+      'images',
+      'videos',
+      'voices',
+      'avatar',
+      'uploads',
+      'upload media',
+    ];
+    let hits = 0;
+    const visibleSet = new Set();
+    document.querySelectorAll('button, [role="button"], [role="tab"], [role="option"], a, span, label').forEach((el) => {
+      if (!isVisible(el)) return;
+      const stripped = _stripFlowIconPrefix(
+        normalizeText(el.textContent || el.getAttribute('aria-label') || ''),
+      ).toLowerCase();
+      if (!stripped) return;
+      for (const tok of requiredTokens) {
+        if (stripped === tok || stripped.startsWith(tok)) {
+          if (!visibleSet.has(tok)) {
+            visibleSet.add(tok);
+            hits += 1;
+          }
+        }
+      }
+    });
+    return {
+      detected: hits >= 4,
+      matched_tokens: Array.from(visibleSet),
+      hit_count: hits,
+    };
+  }
+
   function collectFramesReadinessDiagnostic() {
     const observed = observeFlowState();
     const evidence = getFramesWorkspaceEvidence();
+    const libraryView = _detectAssetLibraryView();
+    const portalCandidates = _collectPortalAndBodyFramesCandidates();
+
+    // Per-marker visibility flags from the brief's required list.
+    const hasAddStartFrame = Array.from(
+      document.querySelectorAll('button, [role="button"], [role="tab"], [role="option"], label, span, p, div, a'),
+    ).some((el) => {
+      if (!isVisible(el)) return false;
+      const t = normalizeText(el.textContent || el.getAttribute('aria-label') || '');
+      return /^(?:add_2\s*)?(?:\+\s*)?(?:add\s+)?start\s+frame$/i.test(t);
+    });
+    const hasAddEndFrame = Array.from(
+      document.querySelectorAll('button, [role="button"], [role="tab"], [role="option"], label, span, p, div, a'),
+    ).some((el) => {
+      if (!isVisible(el)) return false;
+      const t = normalizeText(el.textContent || el.getAttribute('aria-label') || '');
+      return /^(?:add_2\s*)?(?:\+\s*)?(?:add\s+)?end\s+frame$/i.test(t);
+    });
+    const promptFieldVisible = (() => {
+      const composer = findComposerElement?.();
+      return Boolean(composer && isVisible(composer));
+    })();
+
+    // aria-selected / data-state inventory across visible interactive
+    // controls — capped to keep the telemetry payload bounded.
+    const ariaSelectedValues = [];
+    const dataStateValues = [];
+    document
+      .querySelectorAll('[aria-selected], [data-state], [aria-pressed]')
+      .forEach((el) => {
+        if (!isVisible(el)) return;
+        const t = normalizeText(el.textContent || el.getAttribute('aria-label') || '').slice(0, 40);
+        if (!t) return;
+        const sel = el.getAttribute('aria-selected');
+        const ds = el.getAttribute('data-state');
+        const pr = el.getAttribute('aria-pressed');
+        if (sel != null && ariaSelectedValues.length < 12) {
+          ariaSelectedValues.push({ text: t, aria_selected: sel, aria_pressed: pr });
+        }
+        if (ds != null && dataStateValues.length < 12) {
+          dataStateValues.push({ text: t, data_state: ds });
+        }
+      });
+
+    const isWrongModelForF2V = /nano.?banana/i.test(String(observed.model || ''));
+
     return {
       frames_marker: evidence.marker,
       top_mode: observed.topMode,
       sub_mode: observed.subMode,
       model: observed.model,
       visible_upload_slots: observed.visibleUploadSlots,
+      start_slot_visible: Array.isArray(observed.visibleUploadSlots) && observed.visibleUploadSlots.includes('Start'),
+      end_slot_visible: Array.isArray(observed.visibleUploadSlots) && observed.visibleUploadSlots.includes('End'),
+      add_start_frame_visible: hasAddStartFrame,
+      add_end_frame_visible: hasAddEndFrame,
+      prompt_field_visible: promptFieldVisible,
       visible_asset_previews: observed.visibleAssetPreviews,
       composer_present: observed.composerPresent,
       active_element_text: normalizeText(document.activeElement?.textContent || '').slice(0, 100),
@@ -2999,7 +3330,43 @@
         (el) => el.textContent || el.getAttribute('aria-label') || '',
         30,
       ),
+      aria_selected_values: ariaSelectedValues,
+      data_state_values: dataStateValues,
+      portal_body_candidates: portalCandidates.map((c) => ({
+        text: c.text,
+        kind: c.kind,
+        source_root: c.source_root,
+        aria_selected: c.aria_selected,
+        aria_pressed: c.aria_pressed,
+        data_state: c.data_state,
+      })),
+      is_asset_library_view: libraryView.detected,
+      asset_library_tokens_matched: libraryView.matched_tokens,
+      is_wrong_model_for_f2v: isWrongModelForF2V,
     };
+  }
+
+  /**
+   * Classify the underlying cause of a Frames-readiness FAIL using the
+   * diagnostic snapshot. Returns an error code that callers should throw
+   * instead of the generic ERR_FRAMES_PANEL_NOT_READY when a more
+   * specific cause is detectable.
+   *
+   * Priority order:
+   *   1. ERR_WRONG_MODEL_FOR_F2V       — model is Nano Banana etc; Frames
+   *                                       not supported on this project.
+   *   2. ERR_FLOW_EDITOR_NOT_FOCUSED   — operator's tab is on the asset
+   *                                       library / media picker, not the
+   *                                       project composer editor.
+   *   3. ERR_FRAMES_PANEL_NOT_READY    — fallthrough; we're in the editor
+   *                                       with a Video model but no
+   *                                       Frames marker is mounted.
+   */
+  function _classifyFramesReadinessFailure(diagnostic) {
+    if (!diagnostic) return 'ERR_FRAMES_PANEL_NOT_READY';
+    if (diagnostic.is_wrong_model_for_f2v) return 'ERR_WRONG_MODEL_FOR_F2V';
+    if (diagnostic.is_asset_library_view) return 'ERR_FLOW_EDITOR_NOT_FOCUSED';
+    return 'ERR_FRAMES_PANEL_NOT_READY';
   }
 
   /**
@@ -4175,12 +4542,13 @@
     }, 5000, 150);
     if (!framesTargetVisible) {
       const diagnostic = collectFramesReadinessDiagnostic();
+      const errorCode = _classifyFramesReadinessFailure(diagnostic);
       logStage(
         STAGES.FLOW_SUBMODE_FRAMES_SELECTED,
         'FAIL',
-        `ERR_FRAMES_PANEL_NOT_READY — frames_marker=${diagnostic.frames_marker} diagnostic=${JSON.stringify(diagnostic)}`,
+        `${errorCode} — frames_marker=${diagnostic.frames_marker} diagnostic=${JSON.stringify(diagnostic)}`,
       );
-      throw new Error('ERR_FRAMES_PANEL_NOT_READY');
+      throw new Error(errorCode);
     }
 
     let framesStrategy = 'auto_ready_panel';
@@ -4195,12 +4563,13 @@
     }, 5000, 150);
     if (!activeFrames) {
       const diagnostic = collectFramesReadinessDiagnostic();
+      const errorCode = _classifyFramesReadinessFailure(diagnostic);
       logStage(
         STAGES.FLOW_SUBMODE_FRAMES_SELECTED,
         'FAIL',
-        `ERR_FRAMES_PANEL_NOT_READY — frames_marker=${diagnostic.frames_marker} diagnostic=${JSON.stringify(diagnostic)}`,
+        `${errorCode} — frames_marker=${diagnostic.frames_marker} diagnostic=${JSON.stringify(diagnostic)}`,
       );
-      throw new Error('ERR_FRAMES_PANEL_NOT_READY');
+      throw new Error(errorCode);
     }
     logStage(
       STAGES.FLOW_SUBMODE_FRAMES_SELECTED,
@@ -4952,6 +5321,14 @@
       beginF2VNewProjectNavigationHandoff,
       normalizeFlowExecutionError,
       collectProjectCreationState,
+      // Frames-readiness gate helpers exposed for the
+      // test-frames-marker-detection harness.
+      getFramesWorkspaceEvidence,
+      collectFramesReadinessDiagnostic,
+      _classifyFramesReadinessFailure,
+      _detectAssetLibraryView,
+      _collectPortalAndBodyFramesCandidates,
+      _stripFlowIconPrefix,
     };
     installPlaywrightTestBridge();
   }
