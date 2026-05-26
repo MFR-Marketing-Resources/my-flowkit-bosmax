@@ -181,18 +181,37 @@
     return new Promise(r => setTimeout(r, ms));
   }
 
-  function respondAsync(sendResponse, task) {
+  // Default timeout for async listener handlers in content-flow-dom.js.
+  // Slightly longer than the 4500ms background respondAsync default so a
+  // tab-side task can still drain a chained background roundtrip cleanly
+  // before its own port is forcibly closed.
+  const DEFAULT_CONTENT_RESPOND_ASYNC_TIMEOUT_MS = 5000;
+
+  function respondAsync(sendResponse, task, timeoutMs = DEFAULT_CONTENT_RESPOND_ASYNC_TIMEOUT_MS) {
     let settled = false;
+    let timer = null;
 
     const done = (payload) => {
       if (settled) return;
       settled = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       try {
         sendResponse(payload || { ok: true });
       } catch (error) {
         console.warn('[FlowAgent] sendResponse failed:', error);
       }
     };
+
+    timer = setTimeout(() => {
+      done({
+        ok: false,
+        error: 'ERR_CONTENT_ASYNC_RESPONSE_TIMEOUT',
+        detail: `content-flow-dom respondAsync exceeded ${timeoutMs}ms`,
+      });
+    }, timeoutMs);
 
     Promise.resolve()
       .then(task)

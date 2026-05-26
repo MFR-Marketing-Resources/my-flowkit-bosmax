@@ -10,18 +10,36 @@ if (!window._flowKitInjected) {
   console.log('[FlowAgent] Content script injected');
   const CAPTCHA_PROTOCOL_VERSION = 'FLOWKIT_CAPTCHA_V1';
 
-  function respondAsync(sendResponse, task) {
+  // Default timeout for async listener handlers in content.js (captcha path).
+  // reCAPTCHA Enterprise can normally resolve well under 5s; if grecaptcha
+  // hangs we surface a structured timeout instead of leaking the port.
+  const DEFAULT_CAPTCHA_RESPOND_ASYNC_TIMEOUT_MS = 8000;
+
+  function respondAsync(sendResponse, task, timeoutMs = DEFAULT_CAPTCHA_RESPOND_ASYNC_TIMEOUT_MS) {
     let settled = false;
+    let timer = null;
 
     const done = (payload) => {
       if (settled) return;
       settled = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       try {
         sendResponse(payload || { ok: true });
       } catch (error) {
         console.warn('[FlowAgent] sendResponse failed:', error);
       }
     };
+
+    timer = setTimeout(() => {
+      done({
+        ok: false,
+        error: 'ERR_CONTENT_ASYNC_RESPONSE_TIMEOUT',
+        detail: `content.js respondAsync exceeded ${timeoutMs}ms`,
+      });
+    }, timeoutMs);
 
     Promise.resolve()
       .then(task)

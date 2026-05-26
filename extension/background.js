@@ -32,14 +32,32 @@ function respondOnce(reply, payload) {
 	} catch (_) {}
 }
 
-function respondAsync(reply, task) {
+// Default timeout for async message handlers. Chosen to be longer than the
+// 4000ms used by sendTabMessageSafe so a downstream tab roundtrip still has
+// room to surface its own normalized error before respondAsync gives up.
+const DEFAULT_RESPOND_ASYNC_TIMEOUT_MS = 4500;
+
+function respondAsync(reply, task, timeoutMs = DEFAULT_RESPOND_ASYNC_TIMEOUT_MS) {
 	let settled = false;
+	let timer = null;
 
 	const done = (payload) => {
 		if (settled) return;
 		settled = true;
-		respondOnce(reply, payload);
+		if (timer) {
+			clearTimeout(timer);
+			timer = null;
+		}
+		respondOnce(reply, payload || { ok: true });
 	};
+
+	timer = setTimeout(() => {
+		done({
+			ok: false,
+			error: "ERR_BACKGROUND_ASYNC_RESPONSE_TIMEOUT",
+			detail: `respondAsync exceeded ${timeoutMs}ms`,
+		});
+	}, timeoutMs);
 
 	Promise.resolve()
 		.then(task)
