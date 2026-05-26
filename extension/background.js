@@ -11,6 +11,7 @@ const _API_KEY = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY";
 const EXTENSION_PROTOCOL_VERSION = "FLOWKIT_EXTENSION_V1";
 const FLOW_DOM_PROTOCOL_VERSION = "FLOWKIT_DOM_V1";
 const FLOW_PROJECT_URL_STORAGE_KEY = "flow_project_url";
+const MAX_FLOW_RESUME_ATTEMPTS_PER_REQUEST = 1;
 
 let ws = null;
 let flowKey = null;
@@ -24,6 +25,7 @@ const metrics = {
 	failedCount: 0,
 	lastError: null,
 };
+const flowResumeAttemptsByRequestId = new Map();
 
 function respondOnce(reply, payload) {
 	if (typeof reply !== "function") return;
@@ -1249,7 +1251,46 @@ async function writeNavigationResumeFailure(job, errorCode, detail) {
 	});
 }
 
+function reserveFlowResumeAttempt(job) {
+	const requestId = String(job?.request_id || "").trim();
+	if (!requestId) {
+		return {
+			ok: false,
+			error: "ERR_FLOW_RESUME_RECURSION_GUARD",
+			detail: "resume dispatch requires request_id for bounded execution",
+		};
+	}
+	if (job?.resume_after_new_project === true) {
+		return {
+			ok: false,
+			error: "ERR_FLOW_RESUME_RECURSION_GUARD",
+			detail: "RESUME_FLOW_JOB cannot schedule another resume",
+		};
+	}
+	const attempts = flowResumeAttemptsByRequestId.get(requestId) || 0;
+	if (attempts >= MAX_FLOW_RESUME_ATTEMPTS_PER_REQUEST) {
+		return {
+			ok: false,
+			error: "ERR_FLOW_RESUME_RECURSION_GUARD",
+			detail: `resume attempt limit exceeded request_id=${requestId} max=${MAX_FLOW_RESUME_ATTEMPTS_PER_REQUEST}`,
+		};
+	}
+	const attempt = attempts + 1;
+	flowResumeAttemptsByRequestId.set(requestId, attempt);
+	return { ok: true, request_id: requestId, attempt };
+}
+
 async function resumeFlowJobAfterNavigation(flowTab, job) {
+	const attemptReservation = reserveFlowResumeAttempt(job);
+	if (!attemptReservation.ok) {
+		await writeNavigationResumeFailure(
+			job,
+			attemptReservation.error,
+			attemptReservation.detail,
+		);
+		return attemptReservation;
+	}
+
 	try {
 		const editorTab = await waitForFlowEditorNavigation(flowTab.id, 60000);
 		await ensureFlowDomScript(editorTab.id);
@@ -1258,9 +1299,14 @@ async function resumeFlowJobAfterNavigation(flowTab, job) {
 			throw new Error("ERR_CONTENT_SCRIPT_STALE_AFTER_NAVIGATION");
 		}
 
+		const resumeJob = {
+			...job,
+			resume_after_new_project: true,
+			resume_attempt: attemptReservation.attempt,
+		};
 		const resumeResult = await sendTabMessageSafe(editorTab.id, {
 			type: "RESUME_FLOW_JOB",
-			job,
+			job: resumeJob,
 		});
 		if (!resumeResult?.accepted || resumeResult?.error) {
 			throw new Error("ERR_CONTENT_SCRIPT_STALE_AFTER_NAVIGATION");

@@ -66,8 +66,8 @@ def test_frames_project_creation_hands_navigation_waitoff_to_background():
         "setTimeout(() => {",
         "background must wait for editor navigation",
         "if (msg.type === 'ENSURE_VIDEO_FRAMES_EDITOR_READY') {",
-        "project_list_or_landing_detected: projectCreationState.landingDetected,",
-        "new_project_control_found: projectCreationState.newProjectControlFound,",
+        "project_list_or_landing_detected: landingMarkers.length > 0 || newProjectControlFound,",
+        "new_project_control_found: newProjectControlFound,",
     ]:
         assert token in dom_source
 
@@ -100,14 +100,41 @@ def test_execute_flow_job_navigation_pending_resumes_only_after_editor_load_or_t
 
     for token in [
         "async function resumeFlowJobAfterNavigation(flowTab, job)",
+        "const MAX_FLOW_RESUME_ATTEMPTS_PER_REQUEST = 1;",
+        "function reserveFlowResumeAttempt(job)",
         "await waitForFlowEditorNavigation(flowTab.id",
         'type: "RESUME_FLOW_JOB"',
+        "resume_after_new_project: true",
+        '"ERR_FLOW_RESUME_RECURSION_GUARD"',
         '"ERR_FLOW_NAVIGATION_RESUME_TIMEOUT"',
         '"ERR_CONTENT_SCRIPT_STALE_AFTER_NAVIGATION"',
         'stage: "FAILED"',
         "if (result?.navigation_pending)",
     ]:
         assert token in background_source
+
+
+def test_resume_context_is_fail_closed_and_never_reenters_new_project_handoff():
+    dom_source = _read("extension/content-flow-dom.js")
+
+    for token in [
+        "job?.resume_after_new_project === true",
+        "if (resumeAfterNewProject) return null;",
+        "ERR_FLOW_RESUME_CONTEXT_MISSING",
+        "ERR_FLOW_RESUME_RECURSION_GUARD",
+        "function normalizeFlowExecutionError(error, job)",
+    ]:
+        assert token in dom_source
+
+
+def test_project_creation_diagnostic_does_not_call_back_into_project_state():
+    dom_source = _read("extension/content-flow-dom.js")
+
+    diagnostic_body = dom_source.split("function collectFlowPageStateDiagnostic(mode) {", 1)[1].split(
+        "function checkFlowComposerReady(mode) {", 1
+    )[0]
+    assert "collectProjectCreationState()" not in diagnostic_body
+    assert "const newProjectControlFound = !!findNewProjectControl();" in diagnostic_body
 
 
 def test_f2v_model_gate_allows_unknown_visible_model_but_rejects_nano_banana():

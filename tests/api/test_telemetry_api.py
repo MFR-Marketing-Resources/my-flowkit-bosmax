@@ -138,3 +138,36 @@ def test_failed_navigation_resume_stage_persists_terminal_error_code(monkeypatch
     assert captured["status"] == "FAILED"
     assert captured["error_code"] == "ERR_FLOW_NAVIGATION_RESUME_TIMEOUT"
     assert captured["error_message"].startswith("ERR_FLOW_NAVIGATION_RESUME_TIMEOUT")
+
+
+def test_resume_recursion_guard_stage_persists_clear_terminal_error(monkeypatch):
+    captured = {}
+
+    async def fake_upsert(request_id: str, **kwargs):
+        captured.update(kwargs)
+        return {"request_id": request_id, **kwargs}
+
+    async def fake_add_stage_event(*args, **kwargs):
+        return {"ok": True}
+
+    monkeypatch.setattr("agent.api.telemetry.crud.upsert_request_telemetry", fake_upsert)
+    monkeypatch.setattr("agent.api.telemetry.crud.add_stage_event", fake_add_stage_event)
+    monkeypatch.setattr("agent.api.telemetry.crud._now", lambda: "2026-05-26T12:00:00Z")
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/telemetry/stage",
+        json=_valid_stage_payload(
+            stage="FAILED",
+            checkpoint="NEW_PROJECT_NAVIGATION_PENDING",
+            status="FAIL",
+            message="ERR_FLOW_RESUME_RECURSION_GUARD - resume attempt limit exceeded",
+            fail_code="ERR_FLOW_RESUME_RECURSION_GUARD",
+            first_fail_stage="NEW_PROJECT_NAVIGATION_PENDING",
+        ),
+    )
+
+    assert response.status_code == 200
+    assert captured["status"] == "FAILED"
+    assert captured["error_code"] == "ERR_FLOW_RESUME_RECURSION_GUARD"
+    assert captured["error_message"].startswith("ERR_FLOW_RESUME_RECURSION_GUARD")

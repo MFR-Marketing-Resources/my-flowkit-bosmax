@@ -226,6 +226,7 @@
     // F2V SOP state machine stages
     FLOW_ROOT_OPENED: 'FLOW_ROOT_OPENED',
     NEW_PROJECT_NAVIGATION_PENDING: 'NEW_PROJECT_NAVIGATION_PENDING',
+    NEW_PROJECT_NAVIGATION_RESUMED: 'NEW_PROJECT_NAVIGATION_RESUMED',
     NEW_PROJECT_CLICKED: 'NEW_PROJECT_CLICKED',
     FLOW_TYPE_VIDEO_SELECTED: 'FLOW_TYPE_VIDEO_SELECTED',
     FLOW_SUBMODE_FRAMES_SELECTED: 'FLOW_SUBMODE_FRAMES_SELECTED',
@@ -3086,7 +3087,6 @@
 
   function collectFlowPageStateDiagnostic(mode) {
     const readiness = checkFlowComposerReady(mode);
-    const projectCreationState = collectProjectCreationState();
     const bodyText = normalizeText(document.body?.innerText || '').slice(0, 2000);
     const buttonTexts = collectVisibleTexts('button, [role="button"]', (el) => el.textContent || '');
     const textareaPlaceholders = collectVisibleTexts('textarea', (el) => el.getAttribute('placeholder') || el.getAttribute('aria-label') || '');
@@ -3105,6 +3105,15 @@
       ...contenteditableTexts,
       ...ariaLabels,
     ];
+    const newProjectControlFound = !!findNewProjectControl();
+    const landingMarkers = collectVisibleMarkers([
+      'Create with Flow',
+      'Projects',
+      'Recent',
+      'New project',
+      'Create new',
+      'Back to projects',
+    ], markerSources);
 
     return {
       ok: true,
@@ -3172,9 +3181,9 @@
       current_mode_visible: readiness.current_mode_visible,
       blocking_modal_detected: readiness.blocking_modal_detected,
       observed: readiness.observed,
-      is_root_flow_url: projectCreationState.isRoot,
-      project_list_or_landing_detected: projectCreationState.landingDetected,
-      new_project_control_found: projectCreationState.newProjectControlFound,
+      is_root_flow_url: isRootFlowUrl(window.location.href),
+      project_list_or_landing_detected: landingMarkers.length > 0 || newProjectControlFound,
+      new_project_control_found: newProjectControlFound,
       runtime_ready: true,
       content_build_id: FLOW_KIT_DOM_BUILD_ID,
       git_sha: FLOW_KIT_DOM_BUILD_ID,
@@ -3906,6 +3915,8 @@
   }
 
   function beginF2VNewProjectNavigationHandoff(job) {
+    const resumeAfterNewProject = job?.resume_after_new_project === true;
+    if (resumeAfterNewProject) return null;
     if (job?.mode !== 'F2V' || !isRootFlowUrl(window.location.href) || isF2VWorkspaceAlreadyReady()) {
       return null;
     }
@@ -3960,8 +3971,19 @@
     // We don't navigate away (can't cross page boundary), but record whether
     // we're at root or already inside a project editor.
     const onRoot = isRootFlowUrl(window.location.href);
+    const resumeAfterNewProject = _job?.resume_after_new_project === true;
+    if (resumeAfterNewProject && onRoot) {
+      logStage(
+        STAGES.NEW_PROJECT_NAVIGATION_RESUMED,
+        'FAIL',
+        'ERR_FLOW_NAVIGATION_RESUME_TIMEOUT - resumed execution is not inside a project editor',
+      );
+      throw new Error('ERR_FLOW_NAVIGATION_RESUME_TIMEOUT');
+    }
     logStage(STAGES.FLOW_ROOT_OPENED, onRoot ? 'PASS' : 'SKIP',
-      onRoot ? null : 'Already in project editor — skipping root navigation');
+      onRoot ? null : (resumeAfterNewProject
+        ? 'Resume context verified in project editor - skipping root navigation'
+        : 'Already in project editor - skipping root navigation'));
 
     // ── Step 2: New Project ───────────────────────────────────────────────────
     // Only skip when the current workspace is ALREADY verified as F2V-ready
@@ -4141,6 +4163,22 @@
 
     logStage(STAGES.F2V_WORKSPACE_READY, 'PASS');
     return { ok: true };
+  }
+
+  function normalizeFlowExecutionError(error, job) {
+    const rawMessage = String(error?.message || error || 'ERR_FLOW_EXECUTION_FAILED');
+    if (/maximum call stack size exceeded|too much recursion/i.test(rawMessage)) {
+      return {
+        error_code: 'ERR_FLOW_RESUME_RECURSION_GUARD',
+        message: `ERR_FLOW_RESUME_RECURSION_GUARD - recursive resume execution exceeded the JavaScript call stack; resume_after_new_project=${job?.resume_after_new_project === true}`,
+        terminalStage: 'FAILED',
+      };
+    }
+    return {
+      error_code: rawMessage,
+      message: rawMessage,
+      terminalStage: 'ERROR',
+    };
   }
 
   async function executeFlowJob(job) {
@@ -4568,14 +4606,15 @@
       }
 
     } catch (e) {
-      console.error('[FlowAgent] Job execution failed:', e);
-      report.error = e.message;
+      const normalizedError = normalizeFlowExecutionError(e, job);
+      console.error('[FlowAgent] Job execution failed:', normalizedError.message);
+      report.error = normalizedError.message;
       report.ok = false;
-      report.stages.push({ stage: 'ERROR', status: e.message });
-      sendRuntimeMessageNoThrow(buildStageTelemetryPayload(request_id, 'ERROR', 'FAIL', {
+      report.stages.push({ stage: normalizedError.terminalStage, status: normalizedError.message });
+      sendRuntimeMessageNoThrow(buildStageTelemetryPayload(request_id, normalizedError.terminalStage, 'FAIL', {
         checkpoint: firstFailStage || 'ERROR',
-        message: e.message,
-        fail_code: e.message,
+        message: normalizedError.message,
+        fail_code: normalizedError.error_code,
         first_fail_stage: firstFailStage || 'ERROR',
       }));
     }
@@ -4734,6 +4773,17 @@
         return false;
       }
 
+      const isResumeMessage = msg.type === 'RESUME_FLOW_JOB';
+      const resumeAfterNewProject = msg.job?.resume_after_new_project === true;
+      if (isResumeMessage && !resumeAfterNewProject) {
+        sendResponse({ ok: false, error: 'ERR_FLOW_RESUME_CONTEXT_MISSING' });
+        return false;
+      }
+      if (!isResumeMessage && resumeAfterNewProject) {
+        sendResponse({ ok: false, error: 'ERR_FLOW_RESUME_RECURSION_GUARD' });
+        return false;
+      }
+
       if (msg.type === 'EXECUTE_FLOW_JOB') {
         const navigationHandoff = beginF2VNewProjectNavigationHandoff(msg.job);
         if (navigationHandoff) {
@@ -4798,6 +4848,8 @@
       openFlowConfigPanel,
       verifyFlowMode,
       beginF2VNewProjectNavigationHandoff,
+      normalizeFlowExecutionError,
+      collectProjectCreationState,
     };
     installPlaywrightTestBridge();
   }

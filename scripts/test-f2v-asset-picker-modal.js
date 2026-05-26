@@ -1008,6 +1008,84 @@ async function runNewProjectNavigationHandoffAcksBeforeDeferredClickTest() {
   }
 }
 
+async function runResumeContextSkipsNewProjectNavigationHandoffTest() {
+  const harness = createHarness();
+  const { window, document, hooks } = harness;
+
+  try {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'New Project';
+    makeVisible(button, 200, 60);
+    document.body.appendChild(button);
+
+    let clicked = false;
+    button.addEventListener('click', () => {
+      clicked = true;
+    });
+
+    const response = hooks.beginF2VNewProjectNavigationHandoff({
+      mode: 'F2V',
+      request_id: 'resume-skip-navigation-test',
+      resume_after_new_project: true,
+    });
+
+    expect(response === null, 'Resume context must not create another navigation handoff', response);
+    await new Promise((resolve) => window.setTimeout(resolve, 170));
+    expect(clicked === false, 'Resume context must not click New Project again', response);
+  } finally {
+    harness.close();
+  }
+}
+
+function runResumeStackOverflowMapsToRecursionGuardTest() {
+  const harness = createHarness();
+  const { hooks } = harness;
+
+  try {
+    const normalized = hooks.normalizeFlowExecutionError(
+      new RangeError('Maximum call stack size exceeded'),
+      { resume_after_new_project: true },
+    );
+    expect(
+      normalized.error_code === 'ERR_FLOW_RESUME_RECURSION_GUARD',
+      `Expected recursion guard error code, got ${normalized.error_code}`,
+      normalized,
+    );
+    expect(
+      normalized.message.includes('ERR_FLOW_RESUME_RECURSION_GUARD'),
+      'Expected clear terminal recursion guard message',
+      normalized,
+    );
+  } finally {
+    harness.close();
+  }
+}
+
+function runProjectCreationDiagnosticDoesNotRecurseTest() {
+  const harness = createHarness();
+  const { document, hooks } = harness;
+
+  try {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'New Project';
+    makeVisible(button, 200, 60);
+    document.body.appendChild(button);
+
+    const state = hooks.collectProjectCreationState();
+    expect(state.isRoot === true, 'Expected root Flow URL state', state);
+    expect(state.newProjectControlFound === true, 'Expected New Project control in diagnostic state', state);
+    expect(
+      state.diagnostic?.new_project_control_found === true,
+      'Expected diagnostic snapshot without recursive overflow',
+      state,
+    );
+  } finally {
+    harness.close();
+  }
+}
+
 async function main() {
   const tests = [
     ['Direct slot fallback', runDirectSlotFallbackTest],
@@ -1033,6 +1111,9 @@ async function main() {
     ['Background proxy ACK timeout', runBackgroundProxyAckTimeoutTest],
     ['Background proxy ACK failure result', runBackgroundProxyAckFailureResultTest],
     ['New Project navigation handoff ACK precedes deferred click', runNewProjectNavigationHandoffAcksBeforeDeferredClickTest],
+    ['Resume context skips New Project navigation handoff', runResumeContextSkipsNewProjectNavigationHandoffTest],
+    ['Resume stack overflow maps to recursion guard', runResumeStackOverflowMapsToRecursionGuardTest],
+    ['Project creation diagnostic has no recursive overflow', runProjectCreationDiagnosticDoesNotRecurseTest],
   ];
 
   let failures = 0;

@@ -344,6 +344,28 @@ async function main() {
 		assert.equal(manifest.name, "Flow Kit");
 		assert.equal(manifest.background.service_worker, "background.js");
 
+		const resumeGuardProof = await serviceWorker.evaluate(() => {
+			const request_id = `resume_guard_fixture_${Date.now()}`;
+			return {
+				first: reserveFlowResumeAttempt({ request_id }),
+				second: reserveFlowResumeAttempt({ request_id }),
+				resumeMessageAttempt: reserveFlowResumeAttempt({
+					request_id: `${request_id}_recursive`,
+					resume_after_new_project: true,
+				}),
+			};
+		});
+		assert.equal(resumeGuardProof.first.ok, true);
+		assert.equal(resumeGuardProof.first.attempt, 1);
+		assert.equal(resumeGuardProof.second.ok, false);
+		assert.equal(resumeGuardProof.second.error, "ERR_FLOW_RESUME_RECURSION_GUARD");
+		assert.equal(resumeGuardProof.resumeMessageAttempt.ok, false);
+		assert.equal(
+			resumeGuardProof.resumeMessageAttempt.error,
+			"ERR_FLOW_RESUME_RECURSION_GUARD",
+		);
+		console.log("PASS Background resume dispatch guard permits one attempt only");
+
 		page = await context.newPage();
 		page.on("console", (message) => {
 			console.log(`[fixture-console] ${message.type()}: ${message.text()}`);
