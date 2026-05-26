@@ -301,6 +301,8 @@ export default function F2VModule({
 											</span>
 										</div>
 										<textarea
+											id={`f2v-prompt-block-${block.block_index}`}
+											name={`f2v_prompt_block_${block.block_index}`}
 											className="w-full h-48 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-300 font-mono outline-none transition-all resize-none"
 											readOnly
 											value={block.engine_prompt_text}
@@ -318,6 +320,8 @@ export default function F2VModule({
 						) : (
 							/* Single block (SINGLE mode): editable prompt */
 							<textarea
+								id="f2v-manual-prompt"
+								name="f2v_manual_prompt"
 								className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
 								placeholder="Describe WHAT HAPPENS to the reference image(s). The model sees the image — don't re-describe it. Instead: action (character holds product, walks into scene), any on-the-fly subject details not in the image (e.g. product size if start frame is avatar), camera movement..."
 								value={manualPrompt}
@@ -385,6 +389,8 @@ export default function F2VModule({
 								Generation Model
 							</p>
 							<select
+								id="f2v-generation-model"
+								name="f2v_generation_model"
 								title="Select generation model"
 								value={model}
 								onChange={(e) => setModel(normalizeF2VModel(e.target.value))}

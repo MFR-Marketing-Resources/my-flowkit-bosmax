@@ -796,6 +796,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								Generation Mode
 							</div>
 							<select
+								id="operator-generation-mode"
+								name="operator_generation_mode"
 								title="Generation mode"
 								value={generationMode}
 								onChange={(e) =>
@@ -812,6 +814,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								Language
 							</div>
 							<select
+								id="operator-target-language"
+								name="operator_target_language"
 								title="Target language"
 								value={targetLanguage}
 								onChange={(e) =>
@@ -831,6 +835,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								Block 1 Duration
 							</div>
 							<select
+								id="operator-block-1-duration"
+								name="operator_block_1_duration"
 								title="Block 1 duration"
 								value={String(block1Duration)}
 								onChange={(e) => setBlock1Duration(Number(e.target.value))}
@@ -852,6 +858,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									Block 2 Duration
 								</div>
 								<select
+									id="operator-block-2-duration"
+									name="operator_block_2_duration"
 									title="Block 2 duration"
 									value={String(block2Duration)}
 									onChange={(e) => setBlock2Duration(Number(e.target.value))}
@@ -872,7 +880,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
 									Block Structure
 								</div>
-								<div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-400">Single mode compiles one anchor block. Switch Generation Mode to Extend to unlock Block 2 duration.</div>
+								<div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-400">
+									Single mode compiles one anchor block. Switch Generation Mode
+									to Extend to unlock Block 2 duration.
+								</div>
 							</div>
 						)}
 						<div className="space-y-2">
@@ -880,6 +891,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								Camera Style
 							</div>
 							<select
+								id="operator-camera-style"
+								name="operator_camera_style"
 								title="Camera style"
 								value={cameraStyle}
 								onChange={(e) =>
@@ -896,6 +909,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								Character Presence
 							</div>
 							<select
+								id="operator-character-presence"
+								name="operator_character_presence"
 								title="Character presence"
 								value={characterPresence}
 								onChange={(e) =>
@@ -920,6 +935,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								Creator Persona
 							</div>
 							<select
+								id="operator-creator-persona"
+								name="operator_creator_persona"
 								title="Creator persona"
 								value={creatorPersona}
 								onChange={(e) => setCreatorPersona(e.target.value)}
