@@ -1164,15 +1164,16 @@
     return surfaced;
   }
 
-  async function ensureModeControlsVisible(mode) {
+  async function ensureModeControlsVisible(mode, options = {}) {
     const config = resolveFlowModeConfig(mode);
     if (!config) {
       return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: `Unsupported mode '${mode}'` };
     }
+    const requireSubModeControl = options.requireSubModeControl !== false;
 
     const observed = observeFlowState();
     const topModeAlreadyVisible = normalizeText(observed.topMode).toLowerCase() === normalizeText(config.topMode).toLowerCase();
-    const subModeAlreadyVisible = !config.subMode
+    const subModeAlreadyVisible = !requireSubModeControl || !config.subMode
       || normalizeText(observed.subMode).toLowerCase() === normalizeText(config.subMode).toLowerCase();
 
     if (topModeAlreadyVisible && subModeAlreadyVisible) {
@@ -1201,7 +1202,8 @@
 
     assignVisibleControls(null, 'global');
 
-    const needsSurface = !topBtn || !isVisible(topBtn) || (config.subMode && (!subBtn || !isVisible(subBtn)));
+    const needsSurface = !topBtn || !isVisible(topBtn)
+      || (requireSubModeControl && config.subMode && (!subBtn || !isVisible(subBtn)));
     if (needsSurface) {
       if (await openFlowConfigPanel()) {
         const surface = findOpenFlowConfigSurface();
@@ -1211,7 +1213,7 @@
       }
     }
 
-    if ((!topBtn || !isVisible(topBtn) || (config.subMode && (!subBtn || !isVisible(subBtn)))) && await openCreateTypeChooser()) {
+    if ((!topBtn || !isVisible(topBtn) || (requireSubModeControl && config.subMode && (!subBtn || !isVisible(subBtn)))) && await openCreateTypeChooser()) {
       assignVisibleControls(null, 'create_type_chooser');
     }
 
@@ -1219,7 +1221,7 @@
       return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: `${config.topMode} control not visible after opening type selector` };
     }
 
-    if (config.subMode && (!subBtn || !isVisible(subBtn))) {
+    if (requireSubModeControl && config.subMode && (!subBtn || !isVisible(subBtn))) {
       return { ok: false, error: 'ERR_MODE_SELECTION_FAILED', detail: `${config.subMode} control not visible after opening type selector` };
     }
 
@@ -4011,14 +4013,14 @@
     }
 
     // ── Step 3: Select Video topMode ─────────────────────────────────────────
-    const modeControls = await ensureModeControlsVisible('F2V');
+    const modeControls = await ensureModeControlsVisible('F2V', { requireSubModeControl: false });
     if (!modeControls.ok) {
       logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL',
         `${modeControls.error || 'ensureModeControlsVisible(F2V) returned !ok'}${modeControls.detail ? ` — ${modeControls.detail}` : ''}`);
       throw new Error('ERR_WRONG_MODE_IMAGE_SELECTED');
     }
 
-    const { topBtn: initialTopBtn, subBtn } = modeControls;
+    const { topBtn: initialTopBtn } = modeControls;
     let clickMethodUsed = 'none';
     let videoTargetFound = false;
     let videoTargetVisible = false;
@@ -4097,13 +4099,27 @@
     logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'PASS', 'topMode=Video');
 
     // ── Step 4: Select Frames submode ────────────────────────────────────────
-    if (subBtn && isVisible(subBtn) && !isSelectedControl(subBtn, 'Frames')) {
-      subBtn.click();
-      await sleep(800);
+    let subBtn = null;
+    const framesControlVisible = await waitForCondition(() => {
+      subBtn = findElementByText('button, [role="tab"], [role="button"], [role="option"], span, div', 'Frames');
+      return Boolean(subBtn && isVisible(subBtn));
+    }, 5000, 150);
+    if (!framesControlVisible) {
+      logStage(
+        STAGES.FLOW_SUBMODE_FRAMES_SELECTED,
+        'FAIL',
+        'ERR_FRAMES_CONTROL_NOT_VISIBLE_AFTER_VIDEO_SELECTED',
+      );
+      throw new Error('ERR_FRAMES_CONTROL_NOT_VISIBLE_AFTER_VIDEO_SELECTED');
     }
 
-    const obsAfterFrames = observeFlowState();
-    if (obsAfterFrames.subMode !== 'Frames') {
+    if (!isSelectedControl(subBtn, 'Frames')) {
+      subBtn.click();
+    }
+
+    const activeFrames = await waitForCondition(() => observeFlowState().subMode === 'Frames', 5000, 150);
+    if (!activeFrames) {
+      const obsAfterFrames = observeFlowState();
       logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'FAIL', `subMode=${obsAfterFrames.subMode}`);
       throw new Error('ERR_FRAMES_MODE_NOT_ACTIVE');
     }
@@ -4848,6 +4864,7 @@
       openFlowConfigPanel,
       openCreateTypeChooser,
       verifyFlowMode,
+      ensureF2VFramesWorkspaceReady,
       beginF2VNewProjectNavigationHandoff,
       normalizeFlowExecutionError,
       collectProjectCreationState,

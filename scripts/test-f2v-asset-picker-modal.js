@@ -119,6 +119,7 @@ function installDomPolyfills(window) {
   window.File = global.File;
   window.Blob = global.Blob;
   window.PointerEvent = window.PointerEvent || window.MouseEvent;
+  window.HTMLElement.prototype.scrollIntoView = window.HTMLElement.prototype.scrollIntoView || (() => {});
 
   if (!window.CSS) {
     window.CSS = {};
@@ -332,6 +333,56 @@ function createWrappedCreateTypeTrigger(window) {
   wrapper.appendChild(button);
   window.document.body.appendChild(wrapper);
   return { wrapper, button };
+}
+
+function createSequentialF2VModeControls(window, actionOrder) {
+  const createButton = window.document.createElement('button');
+  createButton.type = 'button';
+  createButton.textContent = 'add_2 Create';
+  makeVisible(createButton, 150, 48);
+  window.document.body.appendChild(createButton);
+
+  createButton.addEventListener('click', () => {
+    actionOrder.push('create');
+    if (window.document.querySelector('[data-test-control="video"]')) return;
+
+    const videoButton = window.document.createElement('button');
+    videoButton.type = 'button';
+    videoButton.setAttribute('role', 'tab');
+    videoButton.setAttribute('data-test-control', 'video');
+    videoButton.setAttribute('data-state', 'inactive');
+    videoButton.setAttribute('aria-selected', 'false');
+    videoButton.textContent = 'Video';
+    makeVisible(videoButton, 120, 44);
+    window.document.body.appendChild(videoButton);
+
+    videoButton.addEventListener('click', () => {
+      actionOrder.push('video');
+      videoButton.setAttribute('data-state', 'active');
+      videoButton.setAttribute('aria-selected', 'true');
+      if (window.document.querySelector('[data-test-control="frames"]')) return;
+
+      const framesButton = window.document.createElement('button');
+      framesButton.type = 'button';
+      framesButton.setAttribute('role', 'tab');
+      framesButton.setAttribute('data-test-control', 'frames');
+      framesButton.setAttribute('data-state', 'inactive');
+      framesButton.setAttribute('aria-selected', 'false');
+      framesButton.textContent = 'Frames';
+      makeVisible(framesButton, 120, 44);
+      window.document.body.appendChild(framesButton);
+
+      framesButton.addEventListener('click', () => {
+        actionOrder.push('frames');
+        framesButton.setAttribute('data-state', 'active');
+        framesButton.setAttribute('aria-selected', 'true');
+        const startLabel = window.document.createElement('span');
+        startLabel.textContent = 'Start';
+        makeVisible(startLabel, 80, 32);
+        window.document.body.appendChild(startLabel);
+      });
+    });
+  });
 }
 
 function createModal(window, { useInput = false, useDropzone = false, inShadowRoot = false } = {}) {
@@ -1010,6 +1061,48 @@ async function runCreateTypeChooserClicksNestedInteractiveTriggerTest() {
   }
 }
 
+async function runF2VSelectsVideoBeforeDeferredFramesControlTest() {
+  const harness = createHarness();
+  const { window, document, hooks } = harness;
+
+  try {
+    window.history.replaceState({}, '', '/fx/tools/flow/project/test-sequential-f2v');
+    createComposerWithDistractor(window);
+
+    const actionOrder = [];
+    const stages = [];
+    createSequentialF2VModeControls(window, actionOrder);
+
+    let terminalError = null;
+    try {
+      await hooks.ensureF2VFramesWorkspaceReady(
+        { mode: 'F2V', resume_after_new_project: true },
+        (stage, status, message) => stages.push({ stage, status, message }),
+      );
+    } catch (error) {
+      terminalError = String(error?.message || error);
+    }
+
+    expect(
+      actionOrder.join(',') === 'create,video,frames',
+      'Expected F2V mode setup to open Create, select Video, then select deferred Frames',
+      { actionOrder, stages, terminalError },
+    );
+    expect(
+      stages.some((event) => event.stage === 'FLOW_TYPE_VIDEO_SELECTED' && event.status === 'PASS'),
+      'Expected Video selection checkpoint to pass before Frames is resolved',
+      { actionOrder, stages, terminalError },
+    );
+    expect(
+      stages.some((event) => event.stage === 'FLOW_SUBMODE_FRAMES_SELECTED' && event.status === 'PASS'),
+      'Expected Frames selection checkpoint to pass after Video creates its control',
+      { actionOrder, stages, terminalError },
+    );
+  } finally {
+    harness.close();
+  }
+}
+
 async function runNewProjectNavigationHandoffAcksBeforeDeferredClickTest() {
   const harness = createHarness();
   const { window, document, hooks, setRuntimeSendMessageHandler } = harness;
@@ -1142,6 +1235,7 @@ async function main() {
     ['Find element resolves nested interactive Video tab', runFindElementByTextPrefersNestedInteractiveControlTest],
     ['Selected-state uses interactive Video descendant', runIsSelectedControlUsesInteractiveDescendantStateTest],
     ['Create type chooser clicks nested interactive trigger', runCreateTypeChooserClicksNestedInteractiveTriggerTest],
+    ['F2V selects Video before deferred Frames control', runF2VSelectsVideoBeforeDeferredFramesControlTest],
     ['Required slots F2V start-only', runGetRequiredAssetSlotsF2VStartOnlyTest],
     ['Required slots F2V start-and-end', runGetRequiredAssetSlotsF2VStartAndEndTest],
     ['Verify F2V allows unknown model label', runVerifyFlowModeAllowsUnknownF2VModelTest],
