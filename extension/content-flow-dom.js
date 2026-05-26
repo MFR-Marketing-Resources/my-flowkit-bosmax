@@ -2942,6 +2942,66 @@
     };
   }
 
+  function getFramesWorkspaceEvidence() {
+    const activeFramesControl = findElementByText(
+      'button, [role="tab"], [role="button"], [role="option"]',
+      'Frames',
+    );
+    if (activeFramesControl && isSelectedControl(activeFramesControl, 'Frames')) {
+      return {
+        ok: true,
+        marker: 'active_frames_control',
+        element: activeFramesControl,
+      };
+    }
+
+    const markerPattern = /^(?:add_2\s*)?(?:\+\s*)?(?:add\s+)?(?:start|end)\s+frame$/i;
+    const panelCandidates = Array.from(document.querySelectorAll(
+      'button, [role="button"], [role="tab"], [role="option"], label, span, p, div',
+    ))
+      .filter((el) => isVisible(el))
+      .map((el) => ({
+        element: el,
+        text: normalizeText(el.textContent || el.getAttribute('aria-label') || ''),
+      }))
+      .filter((candidate) => markerPattern.test(candidate.text))
+      .sort((a, b) => a.text.length - b.text.length);
+
+    if (panelCandidates.length > 0) {
+      return {
+        ok: true,
+        marker: panelCandidates[0].text,
+        element: panelCandidates[0].element,
+      };
+    }
+
+    return {
+      ok: false,
+      marker: 'none',
+      element: null,
+    };
+  }
+
+  function collectFramesReadinessDiagnostic() {
+    const observed = observeFlowState();
+    const evidence = getFramesWorkspaceEvidence();
+    return {
+      frames_marker: evidence.marker,
+      top_mode: observed.topMode,
+      sub_mode: observed.subMode,
+      model: observed.model,
+      visible_upload_slots: observed.visibleUploadSlots,
+      visible_asset_previews: observed.visibleAssetPreviews,
+      composer_present: observed.composerPresent,
+      active_element_text: normalizeText(document.activeElement?.textContent || '').slice(0, 100),
+      visible_control_texts: collectVisibleTexts(
+        'button, [role="tab"], [role="button"], [role="option"]',
+        (el) => el.textContent || el.getAttribute('aria-label') || '',
+        30,
+      ),
+    };
+  }
+
   /**
    * observeFlowState()
    * 
@@ -2979,13 +3039,14 @@
     const videoModeBtn = findElementByText('button, [role="tab"], [role="button"]', 'Video');
     const imageModeBtn = findElementByText('button, [role="tab"], [role="button"]', 'Image');
     
+    const framesWorkspaceEvidence = getFramesWorkspaceEvidence();
     if (isSelectedControl(videoModeBtn, 'Video')) {
       observed.topMode = 'Video';
     } else if (isSelectedControl(imageModeBtn, 'Image')) {
       observed.topMode = 'Image';
     } else {
       const bodyText = document.body.innerText;
-      if (bodyText.includes('Frames') || bodyText.includes('Start') || bodyText.includes('End')) {
+      if (framesWorkspaceEvidence.ok || bodyText.includes('Frames')) {
         observed.topMode = 'Video';
       } else if (bodyText.includes('Nano Banana')) {
         observed.topMode = 'Image';
@@ -2998,15 +3059,13 @@
       const framesBtn = findElementByText('button, [role="tab"], [role="button"]', 'Frames');
       const ingredientsBtn = findElementByText('button, [role="tab"], [role="button"]', 'Ingredients');
       
-      if (isSelectedControl(framesBtn, 'Frames')) {
+      if (isSelectedControl(framesBtn, 'Frames') || framesWorkspaceEvidence.ok) {
         observed.subMode = 'Frames';
       } else if (isSelectedControl(ingredientsBtn, 'Ingredients')) {
         observed.subMode = 'Ingredients';
       } else {
         const bodyText = document.body.innerText;
-        if (bodyText.includes('Start') || bodyText.includes('End')) {
-          observed.subMode = 'Frames';
-        } else if (bodyText.includes('Ingredients')) {
+        if (bodyText.includes('Ingredients')) {
           observed.subMode = 'Ingredients';
         } else {
           observed.subMode = 'None';
@@ -3072,6 +3131,13 @@
       if (slotHasVisiblePreview(label)) {
         observed.visibleAssetPreviews.push(label);
       }
+    }
+    const normalizedFramesMarker = normalizeText(framesWorkspaceEvidence.marker || '').toLowerCase();
+    if (normalizedFramesMarker.includes('start frame') && !observed.visibleUploadSlots.includes('Start')) {
+      observed.visibleUploadSlots.push('Start');
+    }
+    if (normalizedFramesMarker.includes('end frame') && !observed.visibleUploadSlots.includes('End')) {
+      observed.visibleUploadSlots.push('End');
     }
     console.log(`[FlowAgent] Detected slots: ${observed.visibleUploadSlots.join(', ')}`);
 
@@ -4100,30 +4166,47 @@
 
     // ── Step 4: Select Frames submode ────────────────────────────────────────
     let subBtn = null;
-    const framesControlVisible = await waitForCondition(() => {
+    let framesEvidence = getFramesWorkspaceEvidence();
+    const framesTargetVisible = await waitForCondition(() => {
+      framesEvidence = getFramesWorkspaceEvidence();
+      if (framesEvidence.ok) return true;
       subBtn = findElementByText('button, [role="tab"], [role="button"], [role="option"], span, div', 'Frames');
       return Boolean(subBtn && isVisible(subBtn));
     }, 5000, 150);
-    if (!framesControlVisible) {
+    if (!framesTargetVisible) {
+      const diagnostic = collectFramesReadinessDiagnostic();
       logStage(
         STAGES.FLOW_SUBMODE_FRAMES_SELECTED,
         'FAIL',
-        'ERR_FRAMES_CONTROL_NOT_VISIBLE_AFTER_VIDEO_SELECTED',
+        `ERR_FRAMES_PANEL_NOT_READY — frames_marker=${diagnostic.frames_marker} diagnostic=${JSON.stringify(diagnostic)}`,
       );
-      throw new Error('ERR_FRAMES_CONTROL_NOT_VISIBLE_AFTER_VIDEO_SELECTED');
+      throw new Error('ERR_FRAMES_PANEL_NOT_READY');
     }
 
-    if (!isSelectedControl(subBtn, 'Frames')) {
+    let framesStrategy = 'auto_ready_panel';
+    if (!framesEvidence.ok && subBtn && !isSelectedControl(subBtn, 'Frames')) {
+      framesStrategy = 'explicit_control';
       subBtn.click();
     }
 
-    const activeFrames = await waitForCondition(() => observeFlowState().subMode === 'Frames', 5000, 150);
+    const activeFrames = await waitForCondition(() => {
+      framesEvidence = getFramesWorkspaceEvidence();
+      return framesEvidence.ok;
+    }, 5000, 150);
     if (!activeFrames) {
-      const obsAfterFrames = observeFlowState();
-      logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'FAIL', `subMode=${obsAfterFrames.subMode}`);
-      throw new Error('ERR_FRAMES_MODE_NOT_ACTIVE');
+      const diagnostic = collectFramesReadinessDiagnostic();
+      logStage(
+        STAGES.FLOW_SUBMODE_FRAMES_SELECTED,
+        'FAIL',
+        `ERR_FRAMES_PANEL_NOT_READY — frames_marker=${diagnostic.frames_marker} diagnostic=${JSON.stringify(diagnostic)}`,
+      );
+      throw new Error('ERR_FRAMES_PANEL_NOT_READY');
     }
-    logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'PASS', 'subMode=Frames');
+    logStage(
+      STAGES.FLOW_SUBMODE_FRAMES_SELECTED,
+      'PASS',
+      `subMode=Frames strategy=${framesStrategy} marker=${framesEvidence.marker}`,
+    );
 
     const composerReady = await ensureF2VComposerReadyBeforeConfig();
     if (!composerReady.ok) {
@@ -4863,6 +4946,7 @@
       waitForCdpFileChooserProofResult,
       openFlowConfigPanel,
       openCreateTypeChooser,
+      observeFlowState,
       verifyFlowMode,
       ensureF2VFramesWorkspaceReady,
       beginF2VNewProjectNavigationHandoff,

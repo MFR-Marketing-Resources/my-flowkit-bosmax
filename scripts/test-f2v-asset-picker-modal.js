@@ -385,6 +385,43 @@ function createSequentialF2VModeControls(window, actionOrder) {
   });
 }
 
+function createAutoReadyF2VModeControls(window, actionOrder, panelText) {
+  const createButton = window.document.createElement('button');
+  createButton.type = 'button';
+  createButton.textContent = 'add_2 Create';
+  makeVisible(createButton, 150, 48);
+  window.document.body.appendChild(createButton);
+
+  createButton.addEventListener('click', () => {
+    actionOrder.push('create');
+    if (window.document.querySelector('[data-test-control="auto-video"]')) return;
+
+    const videoButton = window.document.createElement('button');
+    videoButton.type = 'button';
+    videoButton.setAttribute('role', 'tab');
+    videoButton.setAttribute('data-test-control', 'auto-video');
+    videoButton.setAttribute('data-state', 'inactive');
+    videoButton.setAttribute('aria-selected', 'false');
+    videoButton.textContent = 'Video';
+    makeVisible(videoButton, 120, 44);
+    window.document.body.appendChild(videoButton);
+
+    videoButton.addEventListener('click', () => {
+      actionOrder.push('video');
+      videoButton.setAttribute('data-state', 'active');
+      videoButton.setAttribute('aria-selected', 'true');
+      if (window.document.querySelector('[data-test-control="frames-panel-marker"]')) return;
+
+      const panelMarker = window.document.createElement('button');
+      panelMarker.type = 'button';
+      panelMarker.setAttribute('data-test-control', 'frames-panel-marker');
+      panelMarker.textContent = panelText;
+      makeVisible(panelMarker, 180, 44);
+      window.document.body.appendChild(panelMarker);
+    });
+  });
+}
+
 function createModal(window, { useInput = false, useDropzone = false, inShadowRoot = false } = {}) {
   const buildSurface = (root) => {
     const modal = root.createElement('div');
@@ -1103,6 +1140,89 @@ async function runF2VSelectsVideoBeforeDeferredFramesControlTest() {
   }
 }
 
+async function runF2VAcceptsAutoReadyFramesPanelWithoutExplicitControlTest() {
+  const harness = createHarness();
+  const { window, hooks } = harness;
+
+  try {
+    window.history.replaceState({}, '', '/fx/tools/flow/project/test-auto-ready-f2v');
+    createComposerWithDistractor(window);
+
+    const actionOrder = [];
+    const stages = [];
+    createAutoReadyF2VModeControls(window, actionOrder, 'Add start frame');
+
+    let terminalError = null;
+    try {
+      await hooks.ensureF2VFramesWorkspaceReady(
+        { mode: 'F2V', resume_after_new_project: true },
+        (stage, status, message) => stages.push({ stage, status, message }),
+      );
+    } catch (error) {
+      terminalError = String(error?.message || error);
+    }
+
+    expect(
+      actionOrder.join(',') === 'create,video',
+      'Expected F2V auto-ready lane to select Video without clicking a missing Frames control',
+      { actionOrder, stages, terminalError },
+    );
+    expect(
+      stages.some((event) => event.stage === 'FLOW_SUBMODE_FRAMES_SELECTED'
+        && event.status === 'PASS'
+        && String(event.message || '').includes('strategy=auto_ready_panel')),
+      'Expected Add start frame marker to prove Frames-ready without an explicit Frames control',
+      { actionOrder, stages, terminalError },
+    );
+    expect(
+      hooks.observeFlowState().visibleUploadSlots.includes('Start'),
+      'Expected Add start frame panel evidence to expose the required Start upload slot',
+      { observed: hooks.observeFlowState(), actionOrder, stages, terminalError },
+    );
+  } finally {
+    harness.close();
+  }
+}
+
+async function runF2VRejectsGenericStartTextAsFramesPanelEvidenceTest() {
+  const harness = createHarness();
+  const { window, hooks } = harness;
+
+  try {
+    window.history.replaceState({}, '', '/fx/tools/flow/project/test-weak-start-marker');
+    createComposerWithDistractor(window);
+
+    const actionOrder = [];
+    const stages = [];
+    createAutoReadyF2VModeControls(window, actionOrder, 'Start creating or drop media');
+
+    let terminalError = null;
+    try {
+      await hooks.ensureF2VFramesWorkspaceReady(
+        { mode: 'F2V', resume_after_new_project: true },
+        (stage, status, message) => stages.push({ stage, status, message }),
+      );
+    } catch (error) {
+      terminalError = String(error?.message || error);
+    }
+
+    expect(
+      terminalError === 'ERR_FRAMES_PANEL_NOT_READY',
+      'Expected generic Start shell copy to fail the Frames evidence gate',
+      { actionOrder, stages, terminalError },
+    );
+    expect(
+      stages.some((event) => event.stage === 'FLOW_SUBMODE_FRAMES_SELECTED'
+        && event.status === 'FAIL'
+        && String(event.message || '').includes('frames_marker=none')),
+      'Expected Frames failure telemetry to include candidate evidence rather than the obsolete control-only error',
+      { actionOrder, stages, terminalError },
+    );
+  } finally {
+    harness.close();
+  }
+}
+
 async function runNewProjectNavigationHandoffAcksBeforeDeferredClickTest() {
   const harness = createHarness();
   const { window, document, hooks, setRuntimeSendMessageHandler } = harness;
@@ -1236,6 +1356,8 @@ async function main() {
     ['Selected-state uses interactive Video descendant', runIsSelectedControlUsesInteractiveDescendantStateTest],
     ['Create type chooser clicks nested interactive trigger', runCreateTypeChooserClicksNestedInteractiveTriggerTest],
     ['F2V selects Video before deferred Frames control', runF2VSelectsVideoBeforeDeferredFramesControlTest],
+    ['F2V accepts auto-ready Frames panel marker', runF2VAcceptsAutoReadyFramesPanelWithoutExplicitControlTest],
+    ['F2V rejects generic Start shell copy as Frames proof', runF2VRejectsGenericStartTextAsFramesPanelEvidenceTest],
     ['Required slots F2V start-only', runGetRequiredAssetSlotsF2VStartOnlyTest],
     ['Required slots F2V start-and-end', runGetRequiredAssetSlotsF2VStartAndEndTest],
     ['Verify F2V allows unknown model label', runVerifyFlowModeAllowsUnknownF2VModelTest],
