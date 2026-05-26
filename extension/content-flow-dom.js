@@ -229,6 +229,12 @@
     NEW_PROJECT_NAVIGATION_RESUMED: 'NEW_PROJECT_NAVIGATION_RESUMED',
     NEW_PROJECT_CLICKED: 'NEW_PROJECT_CLICKED',
     FLOW_TYPE_VIDEO_SELECTED: 'FLOW_TYPE_VIDEO_SELECTED',
+    // Veo model verification BEFORE Frames readiness. Frames is a Veo-only
+    // sub-workspace per Google's feature matrix — if the project is on
+    // Nano Banana / Imagen / etc., Frames affordances never mount. Per
+    // manual_fa0d11f4 we now verify Veo immediately after Video selection
+    // and attempt a model switch before falling through to Frames.
+    FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED: 'FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED',
     FLOW_SUBMODE_FRAMES_SELECTED: 'FLOW_SUBMODE_FRAMES_SELECTED',
     F2V_COMPOSER_READY: 'F2V_COMPOSER_READY',
     FLOW_ASPECT_9_16_SELECTED: 'FLOW_ASPECT_9_16_SELECTED',
@@ -3369,6 +3375,359 @@
     return 'ERR_FRAMES_PANEL_NOT_READY';
   }
 
+  // ────────────────────────────────────────────────────────────────────────
+  // Pre-Frames model gate helpers — added for manual_fa0d11f4.
+  //
+  // Runtime evidence showed wep_95af7bbd6151efab.model = "Veo 3.1 - Lite"
+  // (correct), but the Flow project itself opened as Nano Banana 2. Frames
+  // is a Veo-only sub-workspace per Google's documented feature matrix —
+  // so the gate must verify the model BEFORE the Frames panel check (the
+  // existing FLOW_MODEL_VEO_3_1_LITE_SELECTED stage runs INSIDE the
+  // Frames config menu, which only mounts AFTER Frames is active —
+  // chicken-and-egg). This pre-frames check attempts a model switch when
+  // a non-Veo model is observed, and fails closed with the visible model
+  // candidates listed in the diagnostic when no selector is available.
+  // ────────────────────────────────────────────────────────────────────────
+
+  const _VEO_MODEL_REGEX = /\bveo\b/i;
+  const _MODEL_LABEL_PATTERNS_REGEX = /(veo|nano\s*banana|imagen|gemini|wan\s*\d|seedance|hailuo|kling|sora)/i;
+
+  /**
+   * Find the Flow composer's model-selector button. Flow renders the
+   * current model as a chip-button near the prompt input. Its visible
+   * label contains the model name (e.g. "🍌 Nano Banana 2crop_16_9x2",
+   * "Veo 3.1 - Lite"); it almost always has aria-haspopup="menu" or
+   * role="combobox" so it opens a model picker on click.
+   *
+   * Returns the closest interactive button ancestor of the matched label,
+   * or null if no such control is visible. Search is global and includes
+   * portal/dialog escapes per the Frames diagnostic brief.
+   */
+  function findFlowComposerModelButton() {
+    const candidates = [];
+    const queryRoots = [document];
+    document
+      .querySelectorAll('[role="dialog"], [data-radix-portal], [data-portal]')
+      .forEach((root) => queryRoots.push(root));
+
+    for (const root of queryRoots) {
+      const buttons = root.querySelectorAll(
+        'button[aria-haspopup], [role="combobox"], [role="button"][aria-haspopup], button',
+      );
+      for (const el of buttons) {
+        if (!isVisible(el)) continue;
+        const raw = normalizeText(
+          el.textContent || el.getAttribute('aria-label') || '',
+        );
+        if (!raw) continue;
+        const stripped = _stripFlowIconPrefix(raw);
+        // Accept anything that LOOKS LIKE a model chip: text mentions a
+        // known model family. We do NOT match the config-menu launcher
+        // (that contains "Video" + count + aspect, not a model name in
+        // the chip text itself before menu open).
+        if (!_MODEL_LABEL_PATTERNS_REGEX.test(stripped)) continue;
+        // Exclude the F2V config-menu launcher which contains "Video" +
+        // count/aspect tokens but no bare model name.
+        if (/\bvideo\b/i.test(stripped) && /\d+x\b|9:16|16:9/.test(stripped)) continue;
+        candidates.push({
+          el,
+          text: raw,
+          stripped,
+          hasPopup: el.hasAttribute('aria-haspopup'),
+          isCombobox: el.getAttribute('role') === 'combobox',
+        });
+      }
+    }
+
+    // Prefer controls that explicitly advertise menu/combobox semantics —
+    // those are the model chips. Fallback to first plain button match.
+    const semanticPick = candidates.find((c) => c.hasPopup || c.isCombobox);
+    const pick = semanticPick || candidates[0] || null;
+    if (!pick) return null;
+    const ancestor = _normalizeToInteractiveAncestor(pick.el);
+    return ancestor || pick.el;
+  }
+
+  /**
+   * Collect human-readable model label candidates currently visible
+   * anywhere in the document — used to populate the FAIL telemetry so the
+   * operator can see what models the page was offering when we gave up.
+   */
+  function _collectVisibleModelCandidates() {
+    const out = new Set();
+    document
+      .querySelectorAll('button, [role="option"], [role="menuitem"], [role="combobox"], span, div')
+      .forEach((el) => {
+        if (!isVisible(el)) return;
+        const raw = normalizeText(
+          el.textContent || el.getAttribute('aria-label') || '',
+        );
+        if (!raw) return;
+        const stripped = _stripFlowIconPrefix(raw);
+        if (!_MODEL_LABEL_PATTERNS_REGEX.test(stripped)) return;
+        // Trim to a reasonable label size so the snapshot stays bounded.
+        if (stripped.length > 80) return;
+        out.add(stripped);
+      });
+    return Array.from(out).slice(0, 16);
+  }
+
+  /**
+   * ensureVeoModelBeforeFrames(job, logStage)
+   *
+   * Pre-Frames model gate. Called AFTER FLOW_TYPE_VIDEO_SELECTED PASS and
+   * BEFORE the Frames readiness gate.
+   *
+   *   1. Observe current model via observeFlowState().
+   *   2. If model already matches Veo → log
+   *      FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED PASS and return ok.
+   *   3. Otherwise try to find the composer model-selector button and
+   *      click it. Wait for a menu to open. Find the Veo 3.1 - Lite
+   *      option via icon-stripped exact match; click; verify state.
+   *   4. If any sub-step fails, log
+   *      FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED FAIL with structured
+   *      diagnostic and return error code ERR_WRONG_MODEL_FOR_F2V. The
+   *      caller must throw new Error('ERR_WRONG_MODEL_FOR_F2V') so the
+   *      stage trail terminates here rather than falling through to the
+   *      Frames check with a broken model.
+   */
+  async function ensureVeoModelBeforeFrames(job, logStage) {
+    const expectedModel = (
+      (job && (job.modelLabel || job.model)) || 'Veo 3.1 - Lite'
+    );
+    const observedInitial = observeFlowState();
+    const initialModel = String(observedInitial.model || '');
+
+    const buildDiagnostic = (extra = {}) => ({
+      stage: 'pre_frames_model_gate',
+      expected_model: expectedModel,
+      observed_model: initialModel || 'UNKNOWN',
+      top_mode: observedInitial.topMode,
+      sub_mode: observedInitial.subMode,
+      visible_model_candidates: _collectVisibleModelCandidates(),
+      url: window.location.href,
+      ...extra,
+    });
+
+    if (_VEO_MODEL_REGEX.test(initialModel)) {
+      logStage(
+        STAGES.FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED,
+        'PASS',
+        `model=${initialModel} strategy=already_veo`,
+      );
+      return { ok: true, model: initialModel, strategy: 'already_veo' };
+    }
+
+    // Soft-pass when the observed model is UNKNOWN or empty. We can only
+    // hard-fail this pre-frames gate when we POSITIVELY know the model is
+    // wrong (e.g. Nano Banana is visible). If the model chip isn't
+    // surfaced anywhere yet (mid-mount, hidden composer header, future
+    // Flow UI revision), let the downstream Frames-readiness gate and the
+    // existing FLOW_MODEL_VEO_3_1_LITE_SELECTED check inside the config
+    // menu catch any actual mismatch. This avoids blocking valid F2V
+    // runs on UI states where the chip simply hasn't rendered yet.
+    const normalizedInitial = initialModel.trim();
+    const initialIsKnownNonVeo = _MODEL_LABEL_PATTERNS_REGEX.test(normalizedInitial)
+      && !_VEO_MODEL_REGEX.test(normalizedInitial);
+    if (!normalizedInitial || normalizedInitial.toUpperCase() === 'UNKNOWN' || !initialIsKnownNonVeo) {
+      logStage(
+        STAGES.FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED,
+        'PASS',
+        `model=${normalizedInitial || 'UNKNOWN'} strategy=soft_pass_unknown_or_unrecognised`,
+      );
+      return {
+        ok: true,
+        model: normalizedInitial,
+        strategy: 'soft_pass_unknown_or_unrecognised',
+      };
+    }
+
+    // We POSITIVELY know the model is a non-Veo family (e.g. Nano Banana,
+    // Imagen) — try to switch. Try to find the composer model-selector
+    // button first.
+    const modelBtn = findFlowComposerModelButton();
+    if (!modelBtn) {
+      const diag = buildDiagnostic({ model_button_found: false });
+      logStage(
+        STAGES.FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED,
+        'FAIL',
+        `ERR_WRONG_MODEL_FOR_F2V — model_selector_unavailable diagnostic=${JSON.stringify(diag)}`,
+      );
+      return {
+        ok: false,
+        error: 'ERR_WRONG_MODEL_FOR_F2V',
+        detail: 'model_selector_unavailable',
+      };
+    }
+
+    // Click the model button. Wait briefly for a menu to mount.
+    try {
+      modelBtn.scrollIntoView({ block: 'center', inline: 'center' });
+    } catch (_) {}
+    await sleep(150);
+    try {
+      modelBtn.click();
+    } catch (clickErr) {
+      const diag = buildDiagnostic({
+        model_button_found: true,
+        click_error: String(clickErr?.message || clickErr || ''),
+      });
+      logStage(
+        STAGES.FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED,
+        'FAIL',
+        `ERR_WRONG_MODEL_FOR_F2V — model_button_click_threw diagnostic=${JSON.stringify(diag)}`,
+      );
+      return {
+        ok: false,
+        error: 'ERR_WRONG_MODEL_FOR_F2V',
+        detail: 'model_button_click_threw',
+      };
+    }
+
+    const menuMounted = await waitForCondition(() => {
+      return Array.from(
+        document.querySelectorAll('[role="menu"], [role="listbox"]'),
+      ).some((el) => isVisible(el));
+    }, 1500, 100);
+
+    if (!menuMounted) {
+      const diag = buildDiagnostic({
+        model_button_found: true,
+        model_menu_opened: false,
+      });
+      logStage(
+        STAGES.FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED,
+        'FAIL',
+        `ERR_WRONG_MODEL_FOR_F2V — model_menu_did_not_open diagnostic=${JSON.stringify(diag)}`,
+      );
+      return {
+        ok: false,
+        error: 'ERR_WRONG_MODEL_FOR_F2V',
+        detail: 'model_menu_did_not_open',
+      };
+    }
+
+    // Find the Veo 3.1 - Lite option in the open menu. Use icon-stripped
+    // exact match so a partial "Veo" entry in an unrelated control can't
+    // be misidentified. Allow the exact expected label OR a label that
+    // canonicalises to the same Veo family.
+    const expectedCanonical = (typeof canonicalizeFlowModelLabel === 'function'
+      ? canonicalizeFlowModelLabel(expectedModel)
+      : expectedModel.toLowerCase());
+
+    const optionContainer = Array.from(
+      document.querySelectorAll('[role="menu"], [role="listbox"]'),
+    ).find((el) => isVisible(el)) || document;
+
+    const optionMatches = Array.from(
+      optionContainer.querySelectorAll(
+        'button, [role="option"], [role="menuitem"], [role="tab"], li',
+      ),
+    )
+      .filter((el) => isVisible(el))
+      .map((el) => {
+        const raw = normalizeText(el.textContent || el.getAttribute('aria-label') || '');
+        return { el, raw, stripped: _stripFlowIconPrefix(raw) };
+      })
+      .filter((m) => {
+        const sLower = m.stripped.toLowerCase();
+        if (typeof canonicalizeFlowModelLabel === 'function') {
+          if (canonicalizeFlowModelLabel(m.stripped) === expectedCanonical) return true;
+        }
+        return sLower === expectedModel.toLowerCase()
+          || m.raw.toLowerCase() === expectedModel.toLowerCase();
+      });
+
+    if (optionMatches.length === 0) {
+      const diag = buildDiagnostic({
+        model_button_found: true,
+        model_menu_opened: true,
+        veo_option_found: false,
+        menu_visible_options: Array.from(
+          optionContainer.querySelectorAll(
+            'button, [role="option"], [role="menuitem"], [role="tab"], li',
+          ),
+        )
+          .filter((el) => isVisible(el))
+          .map((el) => normalizeText(el.textContent || el.getAttribute('aria-label') || ''))
+          .filter(Boolean)
+          .slice(0, 24),
+      });
+      logStage(
+        STAGES.FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED,
+        'FAIL',
+        `ERR_WRONG_MODEL_FOR_F2V — veo_option_not_in_menu diagnostic=${JSON.stringify(diag)}`,
+      );
+      return {
+        ok: false,
+        error: 'ERR_WRONG_MODEL_FOR_F2V',
+        detail: 'veo_option_not_in_menu',
+      };
+    }
+
+    const veoOption = _normalizeToInteractiveAncestor(optionMatches[0].el)
+      || optionMatches[0].el;
+    try {
+      veoOption.click();
+    } catch (clickErr) {
+      const diag = buildDiagnostic({
+        model_button_found: true,
+        model_menu_opened: true,
+        veo_option_found: true,
+        veo_option_click_error: String(clickErr?.message || clickErr || ''),
+      });
+      logStage(
+        STAGES.FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED,
+        'FAIL',
+        `ERR_WRONG_MODEL_FOR_F2V — veo_option_click_threw diagnostic=${JSON.stringify(diag)}`,
+      );
+      return {
+        ok: false,
+        error: 'ERR_WRONG_MODEL_FOR_F2V',
+        detail: 'veo_option_click_threw',
+      };
+    }
+
+    // Wait for the observed model to flip to Veo. If Flow rejects the
+    // switch (e.g. project type immutable), this will time out.
+    const switched = await waitForCondition(() => {
+      const obs = observeFlowState();
+      return _VEO_MODEL_REGEX.test(String(obs.model || ''));
+    }, 3000, 200);
+
+    const finalObserved = observeFlowState();
+    if (!switched) {
+      const diag = buildDiagnostic({
+        model_button_found: true,
+        model_menu_opened: true,
+        veo_option_found: true,
+        veo_option_clicked: true,
+        model_after_click: String(finalObserved.model || 'UNKNOWN'),
+      });
+      logStage(
+        STAGES.FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED,
+        'FAIL',
+        `ERR_WRONG_MODEL_FOR_F2V — model_switch_did_not_take_effect diagnostic=${JSON.stringify(diag)}`,
+      );
+      return {
+        ok: false,
+        error: 'ERR_WRONG_MODEL_FOR_F2V',
+        detail: 'model_switch_did_not_take_effect',
+      };
+    }
+
+    logStage(
+      STAGES.FLOW_MODEL_VEO_PRE_FRAMES_VERIFIED,
+      'PASS',
+      `model=${finalObserved.model} strategy=switched_from_${initialModel || 'unknown'}`,
+    );
+    return {
+      ok: true,
+      model: String(finalObserved.model || ''),
+      strategy: 'switched',
+    };
+  }
+
   /**
    * observeFlowState()
    * 
@@ -4531,6 +4890,22 @@
     }
     logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'PASS', 'topMode=Video');
 
+    // ── Step 3b: Pre-Frames model gate — verify / switch to Veo 3.1 - Lite
+    //
+    // Frames is Veo-only per Google's feature matrix. If we entered a
+    // Nano Banana / Imagen / non-Veo project, the Frames panel never
+    // mounts. Verify the model BEFORE the Frames gate and attempt a
+    // switch via the composer model-selector. Fail closed with visible
+    // model candidates if no selector is available or the switch is
+    // rejected (typical when the project's model is immutable).
+    //
+    // The existing FLOW_MODEL_VEO_3_1_LITE_SELECTED stage inside the
+    // Frames config menu continues to run as a defence-in-depth check.
+    const preFramesModel = await ensureVeoModelBeforeFrames(_job, logStage);
+    if (!preFramesModel.ok) {
+      throw new Error(preFramesModel.error || 'ERR_WRONG_MODEL_FOR_F2V');
+    }
+
     // ── Step 4: Select Frames submode ────────────────────────────────────────
     let subBtn = null;
     let framesEvidence = getFramesWorkspaceEvidence();
@@ -5329,6 +5704,10 @@
       _detectAssetLibraryView,
       _collectPortalAndBodyFramesCandidates,
       _stripFlowIconPrefix,
+      // Pre-Frames model gate helpers — added for manual_fa0d11f4
+      ensureVeoModelBeforeFrames,
+      findFlowComposerModelButton,
+      _collectVisibleModelCandidates,
     };
     installPlaywrightTestBridge();
   }

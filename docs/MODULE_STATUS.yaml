@@ -93,6 +93,7 @@ domains:
       - scripts/test-f2v-cdp-file-chooser-poc.js
       - scripts/test-f2v-frames-marker-detection.js
       - scripts/test-f2v-playwright-persistent-context.js
+      - scripts/test-f2v-pre-frames-model-gate.js
       - scripts/test-flow-selector-registry.js
       - scripts/test-side-panel-route-wiring.js
       - tests/unit/test_approved_product_package_service.py
