@@ -99,6 +99,7 @@ async def add_stage(event: StageEventCreate):
     
     if event.stage == "FAILED":
         kw["failed_at"] = crud._now()
+        kw["error_code"] = event.fail_code or event.checkpoint
         kw["error_message"] = event.message
     elif event.stage == "COMPLETED":
         kw["completed_at"] = crud._now()

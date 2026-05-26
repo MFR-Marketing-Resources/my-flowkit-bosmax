@@ -254,27 +254,117 @@ async def create_request(req_type: str, orientation: str = None,
         await db.commit()
     return await _get_with_db(db, "request", "id", rid)
 
-async def get_request(rid: str): return await _get("request", "id", rid)
+def _apply_request_telemetry_error_fallback(row: dict) -> None:
+    if row.get("status") != "FAILED" or row.get("error_message"):
+        return
+    payload_text = row.get("request_lineage_payload")
+    if payload_text:
+        try:
+            payload = json.loads(payload_text)
+            if isinstance(payload, dict):
+                payload_error = (
+                    payload.get("error")
+                    or payload.get("error_message")
+                    or payload.get("error_code")
+                )
+                if payload_error:
+                    row["error_message"] = str(payload_error)
+                    return
+        except Exception:
+            pass
+    if row.get("google_flow_stage") == "ERROR" or row.get("extension_stage") == "ERROR":
+        row["error_message"] = (
+            "Flow automation failed: "
+            f"google_flow_stage={row.get('google_flow_stage')}, "
+            f"extension_stage={row.get('extension_stage')}. "
+            "No structured error payload was recorded."
+        )
+
+
+_REQUEST_WITH_TELEMETRY_COLUMNS = """
+    r.id, r.project_id, r.video_id, r.scene_id, r.character_id, r.type,
+    r.orientation, r.request_id, r.media_id, r.output_url, r.automation_report,
+    r.retry_count, r.next_retry_at, r.edit_prompt, r.source_media_id,
+    r.created_at, r.updated_at, t.google_flow_stage, t.extension_stage,
+    t.worker_stage, t.mode, t.queued_at, t.started_at, t.completed_at,
+    t.failed_at, t.last_heartbeat_at, t.duration_seconds, t.idle_seconds,
+    t.processing_seconds, t.error_code, t.background_build_id,
+    t.content_build_id, t.prompt_package_snapshot_id,
+    t.workspace_execution_package_id, t.asset_fingerprints,
+    t.request_lineage_payload,
+    CASE
+        WHEN t.failed_at IS NOT NULL THEN 'FAILED'
+        WHEN t.error_code IS NOT NULL OR t.error_message IS NOT NULL THEN 'FAILED'
+        WHEN UPPER(t.google_flow_stage) = 'ERROR'
+          OR UPPER(t.extension_stage) = 'ERROR' THEN 'FAILED'
+        WHEN t.completed_at IS NOT NULL THEN 'COMPLETED'
+        WHEN t.started_at IS NOT NULL THEN 'PROCESSING'
+        WHEN t.queued_at IS NOT NULL THEN 'QUEUED'
+        ELSE COALESCE(t.status, r.status)
+    END AS status,
+    COALESCE(t.error_message, r.error_message) AS error_message
+"""
+
+
+async def get_request(rid: str) -> Optional[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        f"""
+        SELECT {_REQUEST_WITH_TELEMETRY_COLUMNS}
+        FROM request r
+        LEFT JOIN request_telemetry t ON r.id = t.request_id
+        WHERE r.id = ?
+        """,
+        (rid,),
+    )
+    result = await cur.fetchone()
+    if not result:
+        return None
+    row = dict(result)
+    _apply_request_telemetry_error_fallback(row)
+    return row
+
+
 async def update_request(rid: str, **kw): return await _update("request", "id", rid, **kw)
 
 async def list_requests(scene_id: str = None, status: str = None,
                         video_id: str = None, project_id: str = None,
                         limit: int = None) -> list[dict]:
     db = await get_db()
-    q, params = "SELECT * FROM request WHERE 1=1", []
+    q = f"""
+        SELECT {_REQUEST_WITH_TELEMETRY_COLUMNS}
+        FROM request r
+        LEFT JOIN request_telemetry t ON r.id = t.request_id
+        WHERE 1=1
+    """
+    params = []
     if scene_id:
-        q += " AND scene_id=?"; params.append(scene_id)
+        q += " AND r.scene_id=?"; params.append(scene_id)
     if status:
-        q += " AND status=?"; params.append(status)
+        q += """ AND (
+            CASE
+                WHEN t.failed_at IS NOT NULL THEN 'FAILED'
+                WHEN t.error_code IS NOT NULL OR t.error_message IS NOT NULL THEN 'FAILED'
+                WHEN UPPER(t.google_flow_stage) = 'ERROR'
+                  OR UPPER(t.extension_stage) = 'ERROR' THEN 'FAILED'
+                WHEN t.completed_at IS NOT NULL THEN 'COMPLETED'
+                WHEN t.started_at IS NOT NULL THEN 'PROCESSING'
+                WHEN t.queued_at IS NOT NULL THEN 'QUEUED'
+                ELSE COALESCE(t.status, r.status)
+            END
+        )=?"""; params.append(status)
     if video_id:
-        q += " AND video_id=?"; params.append(video_id)
+        q += " AND r.video_id=?"; params.append(video_id)
     if project_id:
-        q += " AND project_id=?"; params.append(project_id)
-    q += " ORDER BY created_at DESC"
+        q += " AND r.project_id=?"; params.append(project_id)
+    q += " ORDER BY r.created_at DESC"
     if limit:
         q += " LIMIT ?"; params.append(limit)
     cur = await db.execute(q, params)
-    return [dict(r) for r in await cur.fetchall()]
+    rows = [dict(item) for item in await cur.fetchall()]
+    for row in rows:
+        _apply_request_telemetry_error_fallback(row)
+    return rows
 
 async def list_pending_requests() -> list[dict]:
     db = await get_db()

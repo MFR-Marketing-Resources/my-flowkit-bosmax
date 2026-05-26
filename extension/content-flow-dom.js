@@ -225,6 +225,7 @@
     FLOW_MODE_MISMATCH: 'FLOW_MODE_MISMATCH',
     // F2V SOP state machine stages
     FLOW_ROOT_OPENED: 'FLOW_ROOT_OPENED',
+    NEW_PROJECT_NAVIGATION_PENDING: 'NEW_PROJECT_NAVIGATION_PENDING',
     NEW_PROJECT_CLICKED: 'NEW_PROJECT_CLICKED',
     FLOW_TYPE_VIDEO_SELECTED: 'FLOW_TYPE_VIDEO_SELECTED',
     FLOW_SUBMODE_FRAMES_SELECTED: 'FLOW_SUBMODE_FRAMES_SELECTED',
@@ -3904,6 +3905,45 @@
     return true;
   }
 
+  function beginF2VNewProjectNavigationHandoff(job) {
+    if (job?.mode !== 'F2V' || !isRootFlowUrl(window.location.href) || isF2VWorkspaceAlreadyReady()) {
+      return null;
+    }
+
+    const request_id = job.request_id || `flow_${Date.now()}`;
+    _sendStageEvent(request_id, STAGES.FLOW_ROOT_OPENED, 'PASS', {
+      message: 'root_flow_url_detected',
+    });
+    _sendStageEvent(request_id, STAGES.NEW_PROJECT_NAVIGATION_PENDING, 'PASS', {
+      message: 'background_resume_required_before_editor_execution',
+    });
+
+    setTimeout(async () => {
+      const controlAvailable = await waitForCondition(() => {
+        const control = findNewProjectControl();
+        return Boolean(control && isVisible(control));
+      }, 15000, 300);
+      const createControl = findNewProjectControl();
+      if (!controlAvailable || !createControl || !isVisible(createControl)) {
+        console.warn('[FlowAgent] New Project navigation handoff could not resolve a visible control');
+        return;
+      }
+      try {
+        createControl.click();
+      } catch (error) {
+        console.warn('[FlowAgent] New Project navigation click failed:', error);
+      }
+    }, 125);
+
+    return {
+      ok: true,
+      navigation_pending: true,
+      stage: STAGES.NEW_PROJECT_NAVIGATION_PENDING,
+      request_id,
+      flow_url: window.location.href,
+    };
+  }
+
   /**
    * F2V SOP state machine — deterministic golden path:
    *   Root/Landing → New Project → Video → Frames → 9:16 → 1x → Veo 3.1 - Lite
@@ -3938,89 +3978,14 @@
       logStage(STAGES.NEW_PROJECT_CLICKED, 'SKIP',
         'In project editor — proceeding to mode selection without new project');
     } else {
-      // On root / landing URL — must create or open a project first.
-      await waitForCondition(() => {
-        const state = collectProjectCreationState();
-        if (state.hasErrorPage) return true;
-        if (state.landingDetected || state.newProjectControlFound) return true;
-        const observed = observeFlowState();
-        return observed.visibleUploadSlots.includes('Start') || observed.composerPresent;
-      }, 15000, 300);
-
-      // Snapshot current state before any mutations for diagnostics.
-      const snapObs = observeFlowState();
-      const snapComposer = findComposerElement();
-      const snapMsg = `workspace_not_f2v_ready topMode=${snapObs.topMode} subMode=${snapObs.subMode} model=${snapObs.model} slots=[${snapObs.visibleUploadSlots.join(',')}] composer_found=${!!snapComposer}`;
-      console.log(`[FlowAgent] ${snapMsg}`);
-
-      await closeBlockingModalIfPresent();
-
-      // Prefer a New Project button; fall back to the create-type-chooser
-      // (already in an editor but wrong workspace type).
-      const newProjectBtn = findNewProjectControl();
-      if (newProjectBtn && isVisible(newProjectBtn)) {
-        newProjectBtn.click();
-        logStage(STAGES.NEW_PROJECT_CLICKED, 'PASS', snapMsg);
-      } else {
-        const chooserOpened = await openCreateTypeChooser();
-        if (!chooserOpened) {
-          logStage(STAGES.NEW_PROJECT_CLICKED, 'FAIL', `ERR_NEW_PROJECT_NOT_FOUND — ${snapMsg}`);
-          throw new Error('ERR_NEW_PROJECT_NOT_FOUND');
-        }
-        logStage(STAGES.NEW_PROJECT_CLICKED, 'PASS', `type_chooser_opened — ${snapMsg}`);
-      }
-
-      // Wait for Video control to become visible after workspace opens.
-      let goBackClicked = false;
-      const appeared = await waitForCondition(
-        () => {
-          const btn = findElementByText('button, [role="tab"], [role="button"], span, div', 'Video');
-          if (btn && isVisible(btn)) return true;
-
-          // Early shell recovery: detect Scenebuilder / Add Media traps
-          const bodyText = document.body.innerText;
-          const isShell = bodyText.includes('Scenebuilder') || bodyText.includes('Add Media');
-          if (isShell && !goBackClicked) {
-            const goBackBtn = findElementByText('button, [role="button"], span, div', 'Go Back');
-            if (goBackBtn && isVisible(goBackBtn)) {
-              console.log('[FlowAgent] Shell detected, clicking Go Back');
-              goBackBtn.click();
-              goBackClicked = true;
-            }
-          }
-          return false;
-        },
-        15000, 500,
+      // Navigation must be owned by the listener handoff so this execution
+      // context never survives across the New Project page transition.
+      logStage(
+        STAGES.NEW_PROJECT_NAVIGATION_PENDING,
+        'FAIL',
+        'ERR_FLOW_NAVIGATION_HANDOFF_REQUIRED',
       );
-
-      if (!appeared) {
-        const obs = observeFlowState();
-        const bodyText = document.body.innerText;
-        const shellMarkers = [];
-        if (bodyText.includes('Scenebuilder')) shellMarkers.push('Scenebuilder');
-        if (bodyText.includes('Add Media')) shellMarkers.push('Add Media');
-        if (bodyText.includes('Go Back')) shellMarkers.push('Go Back');
-
-        const candidateSelector = 'button, [role="tab"], [role="button"], span, div';
-        const candidates = collectVisibleTexts(candidateSelector, el => el.textContent || '').slice(0, 20);
-
-        const roleMenuCount = document.querySelectorAll('[role="menu"]').length;
-        const roleListboxCount = document.querySelectorAll('[role="listbox"]').length;
-
-        const detail = `FLOW_TYPE_VIDEO_SELECTED FAIL — `
-          + `ERR_VIDEO_BUTTON_NOT_FOUND — `
-          + `url=${window.location.href} `
-          + `topMode=${obs.topMode} `
-          + `subMode=${obs.subMode} `
-          + `shellMarkers=[${shellMarkers.join(',')}] `
-          + `roleMenuCount=${roleMenuCount} `
-          + `roleListboxCount=${roleListboxCount} `
-          + `goBackClicked=${goBackClicked} `
-          + `candidates=[${candidates.join(',')}]`;
-
-        logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'FAIL', detail);
-        throw new Error('ERR_WRONG_MODE_IMAGE_SELECTED');
-      }
+      throw new Error('ERR_FLOW_NAVIGATION_HANDOFF_REQUIRED');
     }
 
     // ── Step 3: Select Video topMode ─────────────────────────────────────────
@@ -4751,7 +4716,7 @@
       return true;
     }
 
-    if (msg.type === 'EXECUTE_FLOW_JOB') {
+    if (msg.type === 'EXECUTE_FLOW_JOB' || msg.type === 'RESUME_FLOW_JOB') {
       if (msg.job?.smoke_test) {
         try {
           sendResponse(runExecuteFlowJobSmoke(msg.job));
@@ -4769,8 +4734,21 @@
         return false;
       }
 
+      if (msg.type === 'EXECUTE_FLOW_JOB') {
+        const navigationHandoff = beginF2VNewProjectNavigationHandoff(msg.job);
+        if (navigationHandoff) {
+          sendResponse(navigationHandoff);
+          return false;
+        }
+      }
+
       // IMMEDIATE ACK - Send response right away, don't wait for job completion
-      sendResponse({ ok: true, accepted: true, request_id: msg.job?.request_id });
+      sendResponse({
+        ok: true,
+        accepted: true,
+        resumed: msg.type === 'RESUME_FLOW_JOB',
+        request_id: msg.job?.request_id,
+      });
       
       // Execute job asynchronously AFTER returning from listener
       setTimeout(async () => {
@@ -4819,6 +4797,7 @@
       waitForCdpFileChooserProofResult,
       openFlowConfigPanel,
       verifyFlowMode,
+      beginF2VNewProjectNavigationHandoff,
     };
     installPlaywrightTestBridge();
   }

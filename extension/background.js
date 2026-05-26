@@ -1216,6 +1216,84 @@ async function waitForFramesProjectEditorReady(
 	};
 }
 
+async function waitForFlowEditorNavigation(tabId, timeoutMs = 60000) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const tab = await chrome.tabs.get(tabId).catch(() => null);
+		if (!tab) {
+			throw new Error("ERR_CONTENT_SCRIPT_STALE_AFTER_NAVIGATION");
+		}
+		if (tab.status === "complete" && isProjectEditorUrl(tab.url)) {
+			return tab;
+		}
+		await sleep(250);
+	}
+	throw new Error("ERR_FLOW_NAVIGATION_RESUME_TIMEOUT");
+}
+
+async function writeNavigationResumeFailure(job, errorCode, detail) {
+	if (!job?.request_id) {
+		return;
+	}
+	await postStageTelemetry({
+		request_id: job.request_id,
+		stage: "FAILED",
+		checkpoint: "NEW_PROJECT_NAVIGATION_PENDING",
+		status: "FAIL",
+		message: `${errorCode} - ${detail}`,
+		fail_code: errorCode,
+		first_fail_stage: "NEW_PROJECT_NAVIGATION_PENDING",
+		source: "extension",
+		runtime_ready: true,
+		build_match: true,
+	});
+}
+
+async function resumeFlowJobAfterNavigation(flowTab, job) {
+	try {
+		const editorTab = await waitForFlowEditorNavigation(flowTab.id, 60000);
+		await ensureFlowDomScript(editorTab.id);
+		const diagnostic = await pingFlowDomScript(editorTab);
+		if (diagnostic?.raw_error) {
+			throw new Error("ERR_CONTENT_SCRIPT_STALE_AFTER_NAVIGATION");
+		}
+
+		const resumeResult = await sendTabMessageSafe(editorTab.id, {
+			type: "RESUME_FLOW_JOB",
+			job,
+		});
+		if (!resumeResult?.accepted || resumeResult?.error) {
+			throw new Error("ERR_CONTENT_SCRIPT_STALE_AFTER_NAVIGATION");
+		}
+		await postStageTelemetry({
+			request_id: job?.request_id,
+			stage: "NEW_PROJECT_NAVIGATION_RESUMED",
+			checkpoint: "NEW_PROJECT_NAVIGATION_RESUMED",
+			status: "PASS",
+			message: `flow_url=${editorTab.url || "UNKNOWN"}`,
+			source: "extension",
+			runtime_ready: true,
+			build_match: true,
+		});
+		return resumeResult;
+	} catch (error) {
+		const errorCode =
+			error?.message === "ERR_FLOW_NAVIGATION_RESUME_TIMEOUT"
+				? "ERR_FLOW_NAVIGATION_RESUME_TIMEOUT"
+				: "ERR_CONTENT_SCRIPT_STALE_AFTER_NAVIGATION";
+		const detail =
+			errorCode === "ERR_FLOW_NAVIGATION_RESUME_TIMEOUT"
+				? "editor URL did not load before resume timeout"
+				: "editor loaded without a responsive content script";
+		await writeNavigationResumeFailure(job, errorCode, detail);
+		return {
+			ok: false,
+			error: errorCode,
+			detail,
+		};
+	}
+}
+
 async function handleReloadFlowTab() {
 	const flowTab = await getFlowTab();
 	if (!flowTab) {
@@ -1977,13 +2055,15 @@ function buildStageTelemetryPayload(message = {}, contentHealth = null) {
 
 function postStageTelemetry(message = {}, contentHealth = null) {
 	if (!message?.request_id || !message?.stage || !message?.status) {
-		return;
+		return Promise.resolve(false);
 	}
-	fetch("http://127.0.0.1:8100/api/telemetry/stage", {
+	return fetch("http://127.0.0.1:8100/api/telemetry/stage", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(buildStageTelemetryPayload(message, contentHealth)),
-	}).catch(() => {});
+	})
+		.then((response) => response.ok)
+		.catch(() => false);
 }
 
 function buildBackgroundStatusResponse() {
@@ -2389,6 +2469,10 @@ async function handleExecuteFlowJob(job) {
 		type: "EXECUTE_FLOW_JOB",
 		job,
 	});
+
+	if (result?.navigation_pending) {
+		return await resumeFlowJobAfterNavigation(flowTab, job);
+	}
 
 	if (
 		[

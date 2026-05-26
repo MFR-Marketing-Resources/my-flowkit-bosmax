@@ -967,6 +967,47 @@ async function runBackgroundProxyAckFailureResultTest() {
   }
 }
 
+async function runNewProjectNavigationHandoffAcksBeforeDeferredClickTest() {
+  const harness = createHarness();
+  const { window, document, hooks, setRuntimeSendMessageHandler } = harness;
+
+  try {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'New Project';
+    makeVisible(button, 200, 60);
+    document.body.appendChild(button);
+
+    const stageEvents = [];
+    let clicked = false;
+    button.addEventListener('click', () => {
+      clicked = true;
+    });
+    setRuntimeSendMessageHandler((payload) => {
+      stageEvents.push(payload);
+    });
+
+    const response = hooks.beginF2VNewProjectNavigationHandoff({
+      mode: 'F2V',
+      request_id: 'navigation-handoff-test',
+    });
+
+    expect(response?.navigation_pending === true, 'Expected navigation handoff ACK', response);
+    expect(response?.stage === 'NEW_PROJECT_NAVIGATION_PENDING', 'Expected navigation-pending stage in ACK', response);
+    expect(clicked === false, 'Expected ACK to return before the navigation-triggering click', response);
+    expect(
+      stageEvents.some((event) => event.stage === 'NEW_PROJECT_NAVIGATION_PENDING'),
+      'Expected navigation-pending telemetry before navigation',
+      stageEvents,
+    );
+
+    await new Promise((resolve) => window.setTimeout(resolve, 170));
+    expect(clicked === true, 'Expected deferred New Project click after ACK', response);
+  } finally {
+    harness.close();
+  }
+}
+
 async function main() {
   const tests = [
     ['Direct slot fallback', runDirectSlotFallbackTest],
@@ -991,6 +1032,7 @@ async function main() {
     ['Background proxy ACK and result', runBackgroundProxyAckAndResultTest],
     ['Background proxy ACK timeout', runBackgroundProxyAckTimeoutTest],
     ['Background proxy ACK failure result', runBackgroundProxyAckFailureResultTest],
+    ['New Project navigation handoff ACK precedes deferred click', runNewProjectNavigationHandoffAcksBeforeDeferredClickTest],
   ];
 
   let failures = 0;

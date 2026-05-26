@@ -81,6 +81,35 @@ def test_frames_project_creation_hands_navigation_waitoff_to_background():
         assert token in background_source
 
 
+def test_execute_flow_job_navigation_pending_resumes_only_after_editor_load_or_terminal_failure():
+    dom_source = _read("extension/content-flow-dom.js")
+    background_source = _read("extension/background.js")
+
+    for token in [
+        "NEW_PROJECT_NAVIGATION_PENDING: 'NEW_PROJECT_NAVIGATION_PENDING'",
+        "function beginF2VNewProjectNavigationHandoff(job) {",
+        "navigation_pending: true",
+        "stage: STAGES.NEW_PROJECT_NAVIGATION_PENDING",
+        "setTimeout(async () => {",
+        "}, 125);",
+        "if (msg.type === 'EXECUTE_FLOW_JOB' || msg.type === 'RESUME_FLOW_JOB') {",
+        "const navigationHandoff = beginF2VNewProjectNavigationHandoff(msg.job);",
+        "if (navigationHandoff) {",
+    ]:
+        assert token in dom_source
+
+    for token in [
+        "async function resumeFlowJobAfterNavigation(flowTab, job)",
+        "await waitForFlowEditorNavigation(flowTab.id",
+        'type: "RESUME_FLOW_JOB"',
+        '"ERR_FLOW_NAVIGATION_RESUME_TIMEOUT"',
+        '"ERR_CONTENT_SCRIPT_STALE_AFTER_NAVIGATION"',
+        'stage: "FAILED"',
+        "if (result?.navigation_pending)",
+    ]:
+        assert token in background_source
+
+
 def test_f2v_model_gate_allows_unknown_visible_model_but_rejects_nano_banana():
     dom_source = _read("extension/content-flow-dom.js")
 
@@ -190,15 +219,14 @@ def test_background_reloads_stale_flow_context_before_execute_and_readiness():
         assert token in background_source
 
 
-def test_ensure_f2v_workspace_waits_for_root_landing_before_new_project_scan():
+def test_ensure_f2v_workspace_cannot_trigger_root_navigation_inside_execution_context():
     dom_source = _read("extension/content-flow-dom.js")
 
     for token in [
-        "// On root / landing URL — must create or open a project first.",
-        "await waitForCondition(() => {",
-        "const state = collectProjectCreationState();",
-        "if (state.landingDetected || state.newProjectControlFound) return true;",
-        "const snapObs = observeFlowState();",
+        "// Navigation must be owned by the listener handoff",
+        "STAGES.NEW_PROJECT_NAVIGATION_PENDING,",
+        "'ERR_FLOW_NAVIGATION_HANDOFF_REQUIRED'",
+        "throw new Error('ERR_FLOW_NAVIGATION_HANDOFF_REQUIRED');",
     ]:
         assert token in dom_source
 
