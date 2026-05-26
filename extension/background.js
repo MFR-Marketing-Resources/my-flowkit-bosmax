@@ -116,15 +116,52 @@ function _sendRuntimeMessageSafe(payload) {
 
 function sendRuntimeMessageNoThrow(payload) {
 	try {
-		chrome.runtime.sendMessage(payload, () => {
-			const lastError = chrome.runtime.lastError;
-			if (lastError) {
-				console.warn("[FlowAgent] runtime message ignored:", lastError.message);
-			}
-		});
+		chrome.runtime.sendMessage(payload);
 	} catch (error) {
 		console.warn("[FlowAgent] runtime message exception:", error);
 	}
+}
+
+function sendRuntimeMessageToTabFrameNoThrow(tabId, frameId, payload) {
+	if (tabId == null) {
+		sendRuntimeMessageNoThrow(payload);
+		return;
+	}
+	try {
+		const options =
+			typeof frameId === "number" && Number.isFinite(frameId)
+				? { frameId }
+				: undefined;
+		chrome.tabs.sendMessage(tabId, payload, options, () => {
+			const lastError = chrome.runtime.lastError;
+			if (lastError) {
+				console.warn(
+					"[FlowAgent] tab/frame runtime message ignored:",
+					lastError.message,
+				);
+			}
+		});
+	} catch (error) {
+		console.warn("[FlowAgent] tab/frame runtime message exception:", error);
+	}
+}
+
+function isRecoverableFlowDomBridgeError(error) {
+	const message = String(error || "").trim();
+	if (!message) return false;
+	return (
+		[
+			"ERR_UNKNOWN_MESSAGE_TYPE",
+			"ERR_CONTENT_SCRIPT_STALE",
+			"ERR_NO_RECEIVER",
+			"ERR_MESSAGE_RESPONSE_TIMEOUT",
+			"ERR_TAB_RELOADED",
+		].includes(message) ||
+		/Extension context invalidated/i.test(message) ||
+		/Could not establish connection/i.test(message) ||
+		/Receiving end does not exist/i.test(message) ||
+		/message port closed before a response was received/i.test(message)
+	);
 }
 
 const flowContentScriptHealth = new Map();
@@ -312,7 +349,7 @@ const WS_METHOD_TIMEOUT_MS = {
 	FLOW_PAGE_STATE_DIAGNOSTIC: 12000,
 	RELOAD_FLOW_TAB: 12000,
 	OPEN_TARGET_FLOW_PROJECT: 45000,
-	OPEN_FLOW_NEW_PROJECT: 75000,
+	OPEN_FLOW_NEW_PROJECT: 125000,
 	EXECUTE_FLOW_JOB: 125000,
 	DEBUG_FLOW_DOM_EXECUTION: 65000,
 };
@@ -730,6 +767,89 @@ async function pingFlowDomScript(flowTab) {
 	};
 }
 
+async function reloadAndReinjectFlowDomContext(flowTab, reason = "UNKNOWN") {
+	if (!flowTab?.id) {
+		return {
+			ok: false,
+			error: "ERR_NO_FLOW_TAB",
+			recovery_action: "NONE",
+			recovery_reason: reason,
+		};
+	}
+
+	try {
+		flowContentScriptHealth.delete(flowTab.id);
+		await chrome.tabs.reload(flowTab.id);
+		const reloadedTab = await waitForTabReload(flowTab.id, 15000);
+		await ensureFlowDomScript(flowTab.id);
+		const diagnostic = await pingFlowDomScript(reloadedTab);
+		return {
+			ok: !diagnostic.raw_error,
+			error: diagnostic.raw_error || null,
+			recovery_action: "RELOAD_AND_REINJECT_STALE_CONTEXT",
+			recovery_reason: reason,
+			flow_tab: reloadedTab,
+			diagnostic,
+		};
+	} catch (error) {
+		return {
+			ok: false,
+			error: error?.message || String(error),
+			recovery_action: "RELOAD_AND_REINJECT_STALE_CONTEXT",
+			recovery_reason: reason,
+			flow_tab: flowTab,
+			diagnostic: null,
+		};
+	}
+}
+
+async function ensureFreshFlowDomContext(flowTab, reason = "UNKNOWN") {
+	if (!flowTab?.id) {
+		return {
+			ok: false,
+			error: "ERR_NO_FLOW_TAB",
+			recovery_action: "NONE",
+			recovery_reason: reason,
+			flow_tab: flowTab,
+			diagnostic: null,
+		};
+	}
+
+	await ensureFlowDomScript(flowTab.id);
+	const diagnostic = await pingFlowDomScript(flowTab);
+	if (!diagnostic?.raw_error) {
+		return {
+			ok: true,
+			error: null,
+			recovery_action: "INJECT_ONLY",
+			recovery_reason: reason,
+			flow_tab: flowTab,
+			diagnostic,
+		};
+	}
+
+	console.warn(
+		"[FlowAgent] Flow DOM ping failed before execute, attempting stale-context recovery:",
+		diagnostic.raw_error,
+	);
+	if (!isRecoverableFlowDomBridgeError(diagnostic.raw_error)) {
+		return {
+			ok: false,
+			error: diagnostic.raw_error,
+			recovery_action: "INJECT_ONLY",
+			recovery_reason: reason,
+			flow_tab: flowTab,
+			diagnostic,
+		};
+	}
+
+	const recovered = await reloadAndReinjectFlowDomContext(
+		flowTab,
+		`${reason}:${diagnostic.raw_error}`,
+	);
+	return recovered;
+}
+
 async function waitForTabReload(tabId, timeoutMs = 10000) {
 	const tab = await chrome.tabs.get(tabId);
 	if (tab.status === "complete") {
@@ -918,32 +1038,29 @@ async function handleOpenFlowNewProject(mode) {
 	}
 
 	await ensureFlowDomScript(targetTab.id);
-	let result = await sendTabMessageSafe(
+	await waitForFlowProjectCreationSurface(targetTab.id, mode, 20000);
+	const clickResult = await sendTabMessageSafe(
 		targetTab.id,
-		{
-			type: "OPEN_FLOW_NEW_PROJECT",
-			mode,
-		},
-		70000,
+		{ type: "OPEN_FLOW_NEW_PROJECT", mode },
+		10000,
 	);
 
 	if (
-		[
-			"ERR_MESSAGE_RESPONSE_TIMEOUT",
-			"ERR_NO_RECEIVER",
-			"ERR_CONTENT_SCRIPT_STALE",
-			"ERR_TAB_RELOADED",
-		].includes(result?.error)
+		clickResult?.error &&
+		clickResult.error !== "ERR_MESSAGE_RESPONSE_TIMEOUT"
 	) {
+		// Injection may be stale — reinject and retry once
 		await ensureFlowDomScript(targetTab.id);
-		result = await sendTabMessageSafe(
+		return await sendTabMessageSafe(
 			targetTab.id,
-			{
-				type: "OPEN_FLOW_NEW_PROJECT",
-				mode,
-			},
-			70000,
+			{ type: "OPEN_FLOW_NEW_PROJECT", mode },
+			10000,
 		);
+	}
+
+	let result = clickResult;
+	if (result?.ok && !result?.editor_ready) {
+		result = await waitForFramesProjectEditorReady(targetTab.id, mode, 60000);
 	}
 
 	const refreshedTab = await chrome.tabs
@@ -972,6 +1089,130 @@ async function handleOpenFlowNewProject(mode) {
 		flow_url: resolvedFlowUrl,
 		extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
 		...result,
+	};
+}
+
+async function waitForFlowProjectCreationSurface(
+	tabId,
+	mode = "F2V",
+	timeoutMs = 20000,
+) {
+	const deadline = Date.now() + timeoutMs;
+	let lastProbe = null;
+
+	while (Date.now() < deadline) {
+		const tab = await chrome.tabs.get(tabId).catch(() => null);
+		if (!tab) {
+			throw new Error("ERR_TAB_RELOADED");
+		}
+
+		if (tab.status !== "complete") {
+			await sleep(500);
+			continue;
+		}
+
+		await ensureFlowDomScript(tabId);
+		const diagnostic = await sendTabMessageSafe(
+			tabId,
+			{ type: "FLOW_PAGE_STATE_DIAGNOSTIC", mode },
+			12000,
+		);
+		lastProbe = diagnostic || lastProbe;
+		if (
+			diagnostic?.project_list_or_landing_detected ||
+			diagnostic?.new_project_control_found ||
+			String(diagnostic?.current_mode_visible || "").includes("Video/Frames") ||
+			isProjectEditorUrl(tab.url)
+		) {
+			return diagnostic;
+		}
+
+		await sleep(750);
+	}
+
+	return lastProbe;
+}
+
+async function waitForFramesProjectEditorReady(
+	tabId,
+	mode = "F2V",
+	timeoutMs = 60000,
+) {
+	const deadline = Date.now() + timeoutMs;
+	let lastProbe = null;
+
+	while (Date.now() < deadline) {
+		const tab = await chrome.tabs.get(tabId).catch(() => null);
+		if (!tab) {
+			return {
+				ok: false,
+				error: "ERR_TAB_RELOADED",
+				detail: "Flow tab closed or reloaded while waiting for Frames editor",
+				editor_ready: false,
+				flow_tab_id: tabId,
+				flow_url: lastProbe?.flow_url || null,
+				...lastProbe,
+			};
+		}
+
+		if (tab.status !== "complete") {
+			await sleep(1000);
+			continue;
+		}
+
+		await ensureFlowDomScript(tabId);
+		const diagnostic = await sendTabMessageSafe(
+			tabId,
+			{ type: "FLOW_PAGE_STATE_DIAGNOSTIC", mode },
+			12000,
+		);
+		lastProbe = {
+			...(lastProbe || {}),
+			...(diagnostic || {}),
+			flow_tab_id: tabId,
+			flow_url: diagnostic?.flow_url || tab.url || null,
+		};
+
+		const onEditorUrl = isProjectEditorUrl(tab.url);
+		const videoFramesVisible = String(
+			diagnostic?.current_mode_visible || "",
+		).includes("Video/Frames");
+
+		if (onEditorUrl || videoFramesVisible) {
+			const readiness = await sendTabMessageSafe(
+				tabId,
+				{ type: "ENSURE_VIDEO_FRAMES_EDITOR_READY" },
+				25000,
+			);
+			lastProbe = {
+				...lastProbe,
+				...(readiness || {}),
+				flow_tab_id: tabId,
+				flow_url:
+					readiness?.flow_url || diagnostic?.flow_url || tab.url || null,
+			};
+			if (readiness?.ok) {
+				return {
+					...lastProbe,
+					ok: true,
+					editor_ready: true,
+				};
+			}
+		}
+
+		await sleep(1000);
+	}
+
+	return {
+		...lastProbe,
+		ok: false,
+		error: lastProbe?.error || "ERR_OPEN_PROJECT_TIMEOUT",
+		detail:
+			lastProbe?.detail ||
+			lastProbe?.error ||
+			"Timed out waiting for Frames editor after New project click",
+		editor_ready: false,
+		flow_tab_id: tabId,
 	};
 }
 
@@ -1702,7 +1943,7 @@ function broadcastStatus() {
 	sendRuntimeMessageNoThrow({ type: "STATUS_PUSH" });
 }
 
-const BUILD_ID = "flowkit-google-flow-phase1a-2026-05-23";
+const BUILD_ID = "flowkit-google-flow-phase1a-2026-05-26a";
 
 function buildStageTelemetryPayload(message = {}, contentHealth = null) {
 	return {
@@ -1745,27 +1986,96 @@ function postStageTelemetry(message = {}, contentHealth = null) {
 	}).catch(() => {});
 }
 
+function buildBackgroundStatusResponse() {
+	const buildId = BUILD_ID;
+	const runtimeReady = true;
+	return {
+		connected: ws?.readyState === WebSocket.OPEN,
+		agentConnected: ws?.readyState === WebSocket.OPEN,
+		flowKeyPresent: !!flowKey,
+		manualDisconnect,
+		tokenAge: metrics.tokenCapturedAt
+			? Date.now() - metrics.tokenCapturedAt
+			: null,
+		metrics: {
+			requestCount: metrics.requestCount,
+			successCount: metrics.successCount,
+			failedCount: metrics.failedCount,
+			lastError: metrics.lastError,
+		},
+		state,
+		buildId,
+		build_id: buildId,
+		background_build_id: buildId,
+		gitSha: buildId,
+		git_sha: buildId,
+		runtimeReady,
+		runtime_ready: runtimeReady,
+		build_match: true,
+	};
+}
+
+async function resolveLocalAssetViaBackgroundProxy(msg) {
+	const { assetId, filename, request_id } = msg;
+	const url = `http://127.0.0.1:8100/api/products/${assetId}/image`;
+	console.log(
+		`[FlowAgent] Background proxy resolving asset: ${assetId} from ${url}`,
+	);
+
+	if (request_id) {
+		postStageTelemetry({
+			request_id,
+			stage: "BACKGROUND_ASSET_PROXY_RECEIVED",
+			checkpoint: "BACKGROUND_ASSET_PROXY_RECEIVED",
+			status: "PASS",
+			message: `assetId=${assetId}`,
+			source: "extension",
+		});
+	}
+
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+	try {
+		const resp = await fetch(url, { signal: controller.signal });
+		clearTimeout(timeoutId);
+		console.log(`[FlowAgent] Background fetch status: ${resp.status}`);
+		if (!resp.ok) {
+			return {
+				ok: false,
+				error: "ERR_BACKGROUND_ASSET_FETCH_FAILED",
+				detail: `HTTP_${resp.status}`,
+			};
+		}
+		const blob = await resp.blob();
+		console.log(
+			`[FlowAgent] Background fetch blob: ${blob.size} bytes, type: ${blob.type}`,
+		);
+		const buffer = await blob.arrayBuffer();
+		const bytes = new Uint8Array(buffer);
+		let binary = "";
+		for (let i = 0; i < bytes.byteLength; i++) {
+			binary += String.fromCharCode(bytes[i]);
+		}
+		const dataUrl = `data:${blob.type || "image/jpeg"};base64,${btoa(binary)}`;
+		console.log(
+			`[FlowAgent] Background proxy success: ${dataUrl.length} chars`,
+		);
+		return { ok: true, dataUrl, mimeType: blob.type, filename };
+	} catch (e) {
+		clearTimeout(timeoutId);
+		console.error(`[FlowAgent] Background proxy error: ${e.message}`);
+		return {
+			ok: false,
+			error: "ERR_BACKGROUND_ASSET_FETCH_FAILED",
+			detail: e.message,
+		};
+	}
+}
+
 async function handleMessage(msg, sender) {
 	if (msg.type === "STATUS") {
-		return {
-			connected: ws?.readyState === WebSocket.OPEN,
-			agentConnected: ws?.readyState === WebSocket.OPEN,
-			flowKeyPresent: !!flowKey,
-			manualDisconnect,
-			tokenAge: metrics.tokenCapturedAt
-				? Date.now() - metrics.tokenCapturedAt
-				: null,
-			metrics: {
-				requestCount: metrics.requestCount,
-				successCount: metrics.successCount,
-				failedCount: metrics.failedCount,
-				lastError: metrics.lastError,
-			},
-			state,
-			buildId: BUILD_ID,
-			gitSha: BUILD_ID,
-			runtimeReady: true,
-		};
+		return buildBackgroundStatusResponse();
 	}
 
 	if (msg.type === "DISCONNECT") {
@@ -1889,61 +2199,7 @@ async function handleMessage(msg, sender) {
 	}
 
 	if (msg.type === "RESOLVE_LOCAL_ASSET") {
-		const { assetId, filename, request_id } = msg;
-		const url = `http://127.0.0.1:8100/api/products/${assetId}/image`;
-		console.log(
-			`[FlowAgent] Background proxy resolving asset: ${assetId} from ${url}`,
-		);
-
-		if (request_id) {
-			postStageTelemetry({
-				request_id,
-				stage: "BACKGROUND_ASSET_PROXY_RECEIVED",
-				checkpoint: "BACKGROUND_ASSET_PROXY_RECEIVED",
-				status: "PASS",
-				message: `assetId=${assetId}`,
-				source: "extension",
-			});
-		}
-
-		const controller = new AbortController();
-		const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-		try {
-			const resp = await fetch(url, { signal: controller.signal });
-			clearTimeout(timeoutId);
-			console.log(`[FlowAgent] Background fetch status: ${resp.status}`);
-			if (!resp.ok) {
-				return {
-					ok: false,
-					error: "ERR_BACKGROUND_ASSET_FETCH_FAILED",
-					detail: `HTTP_${resp.status}`,
-				};
-			}
-			const blob = await resp.blob();
-			console.log(
-				`[FlowAgent] Background fetch blob: ${blob.size} bytes, type: ${blob.type}`,
-			);
-			const buffer = await blob.arrayBuffer();
-			const bytes = new Uint8Array(buffer);
-			let binary = "";
-			for (let i = 0; i < bytes.byteLength; i++) {
-				binary += String.fromCharCode(bytes[i]);
-			}
-			const dataUrl = `data:${blob.type || "image/jpeg"};base64,${btoa(binary)}`;
-			console.log(
-				`[FlowAgent] Background proxy success: ${dataUrl.length} chars`,
-			);
-			return { ok: true, dataUrl, mimeType: blob.type, filename };
-		} catch (e) {
-			clearTimeout(timeoutId);
-			console.error(`[FlowAgent] Background proxy error: ${e.message}`);
-			return {
-				ok: false,
-				error: "ERR_BACKGROUND_ASSET_FETCH_FAILED",
-				detail: e.message,
-			};
-		}
+		return await resolveLocalAssetViaBackgroundProxy(msg);
 	}
 
 	return {
@@ -1954,6 +2210,11 @@ async function handleMessage(msg, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+	if (message.type === "STATUS") {
+		sendResponse(buildBackgroundStatusResponse());
+		return false;
+	}
+
 	// LONG-RUNNING JOBS: Use immediate ACK pattern
 	if (message.type === "EXECUTE_FLOW_JOB") {
 		sendResponse({
@@ -2013,6 +2274,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 		});
 	}
 
+	if (message.type === "RESOLVE_LOCAL_ASSET") {
+		const proxyRequestId =
+			String(message.proxy_request_id || "").trim() ||
+			`asset_proxy_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+		sendResponse({
+			ok: true,
+			accepted: true,
+			proxy_request_id: proxyRequestId,
+		});
+
+		setTimeout(async () => {
+			const result = await resolveLocalAssetViaBackgroundProxy(message).catch(
+				(error) => ({
+					ok: false,
+					error: "ERR_BACKGROUND_ASSET_FETCH_FAILED",
+					detail: String(error?.message || error),
+				}),
+			);
+			sendRuntimeMessageToTabFrameNoThrow(
+				sender?.tab?.id ?? null,
+				sender?.frameId,
+				{
+					type: "RESOLVE_LOCAL_ASSET_RESULT",
+					proxy_request_id: proxyRequestId,
+					filename: message.filename || null,
+					...result,
+				},
+			);
+		}, 0);
+
+		return false;
+	}
+
 	return respondAsync(sendResponse, async () => {
 		const data = await handleMessage(message, sender);
 		return data && typeof data === "object" && "ok" in data
@@ -2022,21 +2316,74 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleExecuteFlowJob(job) {
-	const flowTab = await getFlowTab();
+	let flowTab = await getFlowTab();
 	if (!flowTab) {
-		return { ok: false, error: "ERR_NO_FLOW_TAB" };
+		// Auto-open Google Flow and create a new project — no manual tab required
+		console.log("[FlowAgent] No Flow tab found — auto-opening new project...");
+		const openResult = await handleOpenFlowNewProject(job?.mode || "F2V");
+		if (!openResult?.ok) {
+			if (job?.request_id) {
+				sendRuntimeMessageNoThrow({
+					type: "FLOW_STAGE_EVENT",
+					request_id: job.request_id,
+					stage: "FLOW_TAB_FOUND",
+					status: "FAIL",
+					message:
+						"ERR_AUTO_OPEN_FAILED — could not open Google Flow project automatically",
+					source: "extension",
+				});
+			}
+			return {
+				ok: false,
+				error: "ERR_AUTO_OPEN_FAILED",
+				detail: openResult?.error || "auto-open returned not-ok",
+			};
+		}
+		// Re-query after the project is open; fall back to the tab ID returned by openResult
+		flowTab = await getFlowTab();
+		if (!flowTab && openResult?.flow_tab_id) {
+			flowTab = await chrome.tabs.get(openResult.flow_tab_id).catch(() => null);
+		}
+		if (!flowTab) {
+			if (job?.request_id) {
+				sendRuntimeMessageNoThrow({
+					type: "FLOW_STAGE_EVENT",
+					request_id: job.request_id,
+					stage: "FLOW_TAB_FOUND",
+					status: "FAIL",
+					message: "ERR_NO_FLOW_TAB — tab not found after auto-open",
+					source: "extension",
+				});
+			}
+			return { ok: false, error: "ERR_NO_FLOW_TAB" };
+		}
 	}
 
-	await ensureFlowDomScript(flowTab.id);
-
-	const initialHealth = await pingFlowDomScript(flowTab);
-	if (initialHealth?.raw_error) {
-		console.warn(
-			"[FlowAgent] Flow DOM ping failed before execute, retrying injection:",
-			initialHealth.raw_error,
-		);
-		await ensureFlowDomScript(flowTab.id);
+	const freshContext = await ensureFreshFlowDomContext(
+		flowTab,
+		"HANDLE_EXECUTE_FLOW_JOB",
+	);
+	if (!freshContext.ok) {
+		if (job?.request_id) {
+			sendRuntimeMessageNoThrow({
+				type: "FLOW_STAGE_EVENT",
+				request_id: job.request_id,
+				stage: "FLOW_TAB_FOUND",
+				status: "FAIL",
+				message: `ERR_CONTENT_SCRIPT_STALE_OR_INVALIDATED — ${freshContext.error || "UNKNOWN"}`,
+				source: "extension",
+			});
+		}
+		return {
+			ok: false,
+			error: "ERR_CONTENT_SCRIPT_STALE_OR_INVALIDATED",
+			detail:
+				freshContext.error || "failed to establish fresh Flow DOM context",
+			recovery_action: freshContext.recovery_action || "NONE",
+			recovery_reason: freshContext.recovery_reason || null,
+		};
 	}
+	flowTab = freshContext.flow_tab || flowTab;
 
 	let result = await sendTabMessageSafe(flowTab.id, {
 		type: "EXECUTE_FLOW_JOB",
@@ -2049,13 +2396,30 @@ async function handleExecuteFlowJob(job) {
 			"ERR_NO_RECEIVER",
 			"ERR_CONTENT_SCRIPT_STALE",
 			"ERR_TAB_RELOADED",
-		].includes(result?.error)
+		].includes(result?.error) ||
+		/Extension context invalidated/i.test(String(result?.error || ""))
 	) {
 		console.warn(
-			"[FlowAgent] EXECUTE_FLOW_JOB bridge failed, reinjecting and retrying once:",
+			"[FlowAgent] EXECUTE_FLOW_JOB bridge failed, recovering stale context and retrying once:",
 			result.error,
 		);
-		await ensureFlowDomScript(flowTab.id);
+		const recoveredContext = await ensureFreshFlowDomContext(
+			flowTab,
+			`EXECUTE_FLOW_JOB_RETRY:${result.error || "UNKNOWN"}`,
+		);
+		if (!recoveredContext.ok) {
+			return {
+				ok: false,
+				error: "ERR_CONTENT_SCRIPT_STALE_OR_INVALIDATED",
+				detail:
+					recoveredContext.error ||
+					result.error ||
+					"failed to refresh Flow DOM context for retry",
+				recovery_action: recoveredContext.recovery_action || "NONE",
+				recovery_reason: recoveredContext.recovery_reason || null,
+			};
+		}
+		flowTab = recoveredContext.flow_tab || flowTab;
 		result = await sendTabMessageSafe(flowTab.id, {
 			type: "EXECUTE_FLOW_JOB",
 			job,
@@ -2068,10 +2432,24 @@ async function handleExecuteFlowJob(job) {
 async function handleDebugFlowDomExecution(mode, job) {
 	const flowTab = await getFlowTab();
 	if (!flowTab) return { ok: false, error: "ERR_NO_FLOW_TAB" };
-	await ensureFlowDomScript(flowTab.id);
+	const freshContext = await ensureFreshFlowDomContext(
+		flowTab,
+		"HANDLE_DEBUG_FLOW_DOM_EXECUTION",
+	);
+	if (!freshContext.ok) {
+		return {
+			ok: false,
+			error: "ERR_CONTENT_SCRIPT_STALE_OR_INVALIDATED",
+			detail:
+				freshContext.error || "failed to establish fresh Flow DOM context",
+			recovery_action: freshContext.recovery_action || "NONE",
+			recovery_reason: freshContext.recovery_reason || null,
+		};
+	}
+	const activeFlowTab = freshContext.flow_tab || flowTab;
 	// Increase timeout for debug/full execution
 	return await sendTabMessageSafe(
-		flowTab.id,
+		activeFlowTab.id,
 		{
 			type: "DEBUG_FLOW_DOM_EXECUTION",
 			params: { mode, job },
@@ -2092,18 +2470,32 @@ async function handleCheckFlowComposerReady(mode) {
 		});
 	}
 
-	await ensureFlowDomScript(flowTab.id);
-
-	const diagnostic = await pingFlowDomScript(flowTab);
-	if (diagnostic.raw_error) {
+	const freshContext = await ensureFreshFlowDomContext(
+		flowTab,
+		"HANDLE_CHECK_FLOW_COMPOSER_READY",
+	);
+	const activeFlowTab = freshContext.flow_tab || flowTab;
+	const diagnostic =
+		freshContext.diagnostic || getKnownContentScriptHealth(activeFlowTab.id);
+	if (!freshContext.ok) {
 		return finalizeFlowReadiness({
 			...base,
 			...diagnostic,
-			error: diagnostic.raw_error,
+			error:
+				freshContext.error ||
+				diagnostic.raw_error ||
+				"ERR_CONTENT_SCRIPT_STALE_OR_INVALIDATED",
+			raw_error:
+				freshContext.error ||
+				diagnostic.raw_error ||
+				"ERR_CONTENT_SCRIPT_STALE_OR_INVALIDATED",
+			detail:
+				freshContext.recovery_action ||
+				"failed to establish fresh Flow DOM context",
 		});
 	}
 
-	const response = await sendTabMessageSafe(flowTab.id, {
+	const response = await sendTabMessageSafe(activeFlowTab.id, {
 		type: "CHECK_FLOW_COMPOSER_READY",
 		mode,
 	});

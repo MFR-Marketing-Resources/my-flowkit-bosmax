@@ -59,6 +59,10 @@ def test_side_panel_shell_exposes_runtime_markers_and_retry_controls():
 		"/assets/creative-library?portal=side",
 		"Prompt Handoff Bank",
 		"/workspace/generation-packages?portal=side",
+		"AUTO_RUNTIME_RETRY_MS",
+		"silentRetry",
+		'window.addEventListener("focus"',
+		'document.addEventListener("visibilitychange"',
 	]:
 		assert token in js
 

@@ -4,6 +4,7 @@ const LOCAL_AGENT_STATUS_URL = `${LOCAL_AGENT_BASE_URL}/api/local-agent/status`;
 const DASHBOARD_STATIC_READY = "BACKEND_SERVED_STATIC";
 const HEALTH_REQUEST_TIMEOUT_MS = 1500;
 const IFRAME_LOAD_TIMEOUT_MS = 12000;
+const AUTO_RUNTIME_RETRY_MS = 5000;
 
 const DASHBOARD_ROUTES = {
 	operator: {
@@ -42,6 +43,7 @@ const ROUTE_SYNC_MESSAGE_TYPE = "FLOWKIT_DASHBOARD_ROUTE_SYNC";
 let navigationToken = 0;
 let selectedRouteKey = "operator";
 let currentEmbeddedRoute = DASHBOARD_ROUTES.operator;
+let autoRuntimeRetryTimer = null;
 
 function getElement(id) {
 	return document.getElementById(id);
@@ -152,6 +154,32 @@ function setCurrentEmbeddedRoute(route) {
 
 function setIframeSrcCopy(value) {
 	setRuntimeCopy("iframe-src-copy", value || "not-set");
+}
+
+function clearAutoRuntimeRetry() {
+	if (autoRuntimeRetryTimer !== null) {
+		window.clearInterval(autoRuntimeRetryTimer);
+		autoRuntimeRetryTimer = null;
+	}
+}
+
+function ensureAutoRuntimeRetry() {
+	if (autoRuntimeRetryTimer !== null) {
+		return;
+	}
+
+	autoRuntimeRetryTimer = window.setInterval(() => {
+		if (document.hidden || document.body.classList.contains("ready")) {
+			if (document.body.classList.contains("ready")) {
+				clearAutoRuntimeRetry();
+			}
+			return;
+		}
+		navigateToRoute(selectedRouteKey, {
+			forceReload: true,
+			silentRetry: true,
+		});
+	}, AUTO_RUNTIME_RETRY_MS);
 }
 
 function setFrameSource(value) {
@@ -314,6 +342,7 @@ function syncRuntimeDiagnostics(snapshot, route) {
 function renderUnavailableState(route, snapshot) {
 	syncRuntimeDiagnostics(snapshot, route);
 	setFrameSource("");
+	ensureAutoRuntimeRetry();
 
 	if (!snapshot || snapshot.errorCode === "LOCAL_AGENT_OFFLINE") {
 		setBanner(
@@ -383,6 +412,7 @@ function renderUnavailableState(route, snapshot) {
 
 function renderFrameLoadingState(route, snapshot) {
 	syncRuntimeDiagnostics(snapshot, route);
+	ensureAutoRuntimeRetry();
 
 	if (getExtensionConnected(snapshot)) {
 		setBanner(
@@ -407,6 +437,7 @@ function renderFrameLoadingState(route, snapshot) {
 
 function renderReadyState(route, snapshot) {
 	syncRuntimeDiagnostics(snapshot, route);
+	clearAutoRuntimeRetry();
 	if (getExtensionConnected(snapshot)) {
 		setBanner(
 			"success",
@@ -427,6 +458,7 @@ function renderReadyState(route, snapshot) {
 
 function renderFrameErrorState(route, snapshot, message) {
 	syncRuntimeDiagnostics(snapshot, route);
+	ensureAutoRuntimeRetry();
 	setBanner("error", "Embedded dashboard failed to load", message);
 	setPortalState("error", message, "Embedded dashboard failed");
 	setLastAction(`Iframe error: ${message}`);
@@ -508,10 +540,14 @@ async function navigateToRoute(routeKey, options = {}) {
 	setActiveButton(routeKey);
 	setCurrentRoute(routeKey, route.url);
 	setCurrentEmbeddedRoute(route);
-	recordClick(route.label, route.url);
+	if (!options.silentRetry) {
+		recordClick(route.label, route.url);
+	}
 	setRuntimeCopy("route-label", route.label);
 	setRuntimeCopy("portal-url", route.url);
-	setLastAction(`Checking local agent before launching: ${route.label}`);
+	if (!options.silentRetry) {
+		setLastAction(`Checking local agent before launching: ${route.label}`);
+	}
 
 	let snapshot = null;
 	try {
@@ -579,7 +615,9 @@ async function navigateToRoute(routeKey, options = {}) {
 		frame.src = route.url;
 	}
 	setIframeSrcCopy(route.url);
-	setLastAction(`Iframe src updated: ${route.url}`);
+	if (!options.silentRetry) {
+		setLastAction(`Iframe src updated: ${route.url}`);
+	}
 }
 
 function bootSidePortal() {
@@ -624,12 +662,14 @@ function bootSidePortal() {
 	});
 
 	retryButton.addEventListener("click", () => {
+		clearAutoRuntimeRetry();
 		setLastAction("Retry requested from side panel shell.");
 		navigateToRoute(selectedRouteKey, { forceReload: true });
 	});
 
 	buttons.forEach((button) => {
 		button.addEventListener("click", () => {
+			clearAutoRuntimeRetry();
 			const routeKey =
 				button.getAttribute("data-dashboard-route") || "operator";
 			navigateToRoute(routeKey, { forceReload: true });
@@ -639,6 +679,22 @@ function bootSidePortal() {
 	setLastAction(`Launcher bindings attached: ${buttons.length} buttons ready.`);
 	setPanelState("loading");
 	window.addEventListener("message", handleEmbeddedRouteSync);
+	window.addEventListener("focus", () => {
+		if (!document.body.classList.contains("ready")) {
+			navigateToRoute(selectedRouteKey, {
+				forceReload: true,
+				silentRetry: true,
+			});
+		}
+	});
+	document.addEventListener("visibilitychange", () => {
+		if (!document.hidden && !document.body.classList.contains("ready")) {
+			navigateToRoute(selectedRouteKey, {
+				forceReload: true,
+				silentRetry: true,
+			});
+		}
+	});
 	navigateToRoute("operator", { forceReload: true });
 }
 
