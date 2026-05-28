@@ -15,7 +15,7 @@
 (() => {
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
-  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-google-flow-phase1a-2026-05-23';
+  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-f2v-runner-audit-2026-05-28b';
   const FLOW_KIT_PLAYWRIGHT_HARNESS = hasPlaywrightHarnessMarker();
   const FLOW_KIT_TEST_MODE = Boolean(window.__FLOWKIT_TEST_MODE__);
   const FLOW_KIT_ENABLE_TEST_HOOKS =
@@ -221,6 +221,8 @@
   }
 
   function buildDiagnosticPingResponse() {
+    const composer = findComposerElement();
+    const configPill = buildBottomComposerConfigPillSnapshot();
     return {
       ok: true,
       runtime_ready: true,
@@ -229,7 +231,121 @@
       content_build_id: FLOW_KIT_DOM_BUILD_ID,
       git_sha: FLOW_KIT_DOM_BUILD_ID,
       location_href: window.location.href,
+      document_title: document.title,
+      composer_found: Boolean(composer),
+      prompt_field_found: Boolean(composer),
+      bottom_composer_config_pill_visible: configPill.bottom_composer_config_pill_visible,
+      bottom_composer_config_pill_text: configPill.bottom_composer_config_pill_text,
       timestamp: new Date().toISOString(),
+    };
+  }
+
+  function canonicalizeFlowConfigAspectToken(text) {
+    const lower = String(text || '').toLowerCase().replace(/\s+/g, '');
+    if (!lower) return null;
+    if (lower.includes('crop_9_16') || lower.includes('9:16')) return 'crop_9_16';
+    if (lower.includes('crop_16_9') || lower.includes('16:9')) return 'crop_16_9';
+    if (lower.includes('crop_4_3') || lower.includes('4:3')) return 'crop_4_3';
+    if (lower.includes('crop_1_1') || lower.includes('1:1')) return 'crop_1_1';
+    if (lower.includes('crop_3_4') || lower.includes('3:4')) return 'crop_3_4';
+    return null;
+  }
+
+  function canonicalizeFlowConfigCountToken(text) {
+    const lower = String(text || '').toLowerCase().replace(/\s+/g, '');
+    if (!lower) return null;
+    const directMatch = lower.match(/[1-4]x/);
+    if (directMatch) return directMatch[0];
+    const reverseMatch = lower.match(/x([1-4])/);
+    if (reverseMatch) return `${reverseMatch[1]}x`;
+    return null;
+  }
+
+  function normalizeFlowConfigPillText(text) {
+    const normalized = normalizeText(text);
+    if (!normalized) return null;
+    const lower = normalized.toLowerCase().replace(/\s+/g, '');
+    const hasVideo = lower.includes('video');
+    const aspectToken = canonicalizeFlowConfigAspectToken(normalized);
+    const countToken = canonicalizeFlowConfigCountToken(normalized);
+    if (!hasVideo && !aspectToken && !countToken) return null;
+
+    const parts = [];
+    if (hasVideo) parts.push('Video');
+    if (aspectToken) parts.push(aspectToken);
+    if (countToken) parts.push(countToken);
+    return parts.length > 0 ? parts.join(' ') : null;
+  }
+
+  function looksLikeBottomComposerConfigPillText(text) {
+    const normalized = normalizeFlowConfigPillText(text);
+    if (!normalized) return false;
+    const lower = normalized.toLowerCase();
+    const hasAspect = lower.includes('crop_');
+    const hasCount = /[1-4]x/.test(lower);
+    return (lower.includes('video') && hasCount) || (hasAspect && hasCount);
+  }
+
+  function collectBottomComposerConfigPillCandidates() {
+    const composer = findComposerElement();
+    const selectors = getSelectorRegistryQuery(
+      'flow_config_launcher_compact',
+      'button, [role="button"], [role="tab"], [aria-haspopup], span, div',
+    );
+    const scoped = collectComposerContextRoots(composer)
+      .flatMap((root) => Array.from(root.querySelectorAll(selectors)));
+    const global = Array.from(document.querySelectorAll(selectors));
+    const candidates = Array.from(new Set([...scoped, ...global]));
+    const seen = new Set();
+    const out = [];
+
+    for (const candidate of candidates) {
+      if (!isVisible(candidate)) continue;
+      const rawText = normalizeText(
+        candidate.textContent || candidate.getAttribute('aria-label') || '',
+      );
+      const normalizedText = normalizeFlowConfigPillText(rawText);
+      if (!looksLikeBottomComposerConfigPillText(rawText) || !normalizedText) continue;
+      const key = `${normalizedText}::${rawText}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        element: candidate,
+        raw_text: rawText,
+        normalized_text: normalizedText,
+        text_length: rawText.length,
+      });
+    }
+
+    return out.sort((left, right) => {
+      const score = (value) => {
+        const lower = value.normalized_text.toLowerCase();
+        let result = 0;
+        if (lower.includes('video')) result += 4;
+        if (lower.includes('crop_')) result += 2;
+        if (/[1-4]x/.test(lower)) result += 1;
+        return result;
+      };
+      const scoreDelta = score(right) - score(left);
+      if (scoreDelta !== 0) return scoreDelta;
+      return left.text_length - right.text_length;
+    });
+  }
+
+  function buildBottomComposerConfigPillSnapshot() {
+    const launcher = findFlowConfigLauncher();
+    const launcherText = normalizeText(
+      launcher?.innerText || launcher?.textContent || launcher?.getAttribute('aria-label') || '',
+    );
+    const launcherNormalizedText = normalizeFlowConfigPillText(launcherText);
+    const candidates = collectBottomComposerConfigPillCandidates();
+    const selectedCandidate = launcherNormalizedText
+      ? { normalized_text: launcherNormalizedText, raw_text: launcherText }
+      : (candidates[0] || null);
+    return {
+      bottom_composer_config_pill_visible: Boolean(selectedCandidate),
+      bottom_composer_config_pill_text: selectedCandidate?.normalized_text || null,
+      bottom_composer_config_pill_raw_text: selectedCandidate?.raw_text || null,
     };
   }
 
@@ -511,11 +627,11 @@
   }
 
   function hasFlowAspectToken(text) {
-    return /(crop_9_16|9:16|16:9|4:3|1:1|3:4)/i.test(String(text || ''));
+    return Boolean(canonicalizeFlowConfigAspectToken(text));
   }
 
   function hasFlowCountToken(text) {
-    return /(^|\s)[1-4]x(\s|$)|x[1-4]/i.test(String(text || ''));
+    return Boolean(canonicalizeFlowConfigCountToken(text));
   }
 
   function collectComposerContextRoots(composer = null, maxDepth = 4) {
@@ -583,7 +699,8 @@
       if (!text) continue;
       const lower = text.toLowerCase();
       const looksLikeModelChip = lower.includes('nano banana') || lower.includes('veo');
-      const looksLikeConfigChip = hasFlowCountToken(text) && hasFlowAspectToken(text);
+      const normalizedPillText = normalizeFlowConfigPillText(text);
+      const looksLikeConfigChip = Boolean(normalizedPillText && looksLikeBottomComposerConfigPillText(text));
       const target = el.closest('button, [role="button"], [role="tab"], [aria-haspopup]') || el;
       if (!isVisible(target)) continue;
       const targetText = normalizeText(target.textContent || target.getAttribute('aria-label') || '');
@@ -2988,6 +3105,38 @@
 
   function collectFlowPageStateDiagnostic(mode) {
     const readiness = checkFlowComposerReady(mode);
+    const composer = findComposerElement();
+    const configPill = buildBottomComposerConfigPillSnapshot();
+    const visibleEditorMarkers = collectVisibleMarkers([
+      'Video',
+      'Frames',
+      'Ingredients',
+      'Image',
+      'Veo',
+      'Start',
+      'End',
+      '9:16',
+      '16:9',
+      '1x',
+    ], [
+      normalizeText(document.body?.innerText || '').slice(0, 2000),
+      document.title,
+      ...(collectVisibleTexts('button, [role="button"]', (el) => el.textContent || '')),
+      ...(collectVisibleTexts('[aria-label]', (el) => el.getAttribute('aria-label') || '')),
+    ]);
+    const currentModeVisible = readiness.current_mode_visible;
+    const pagePreselectionReady = Boolean(
+      readiness.signed_in_likely
+      && readiness.composer_found
+      && readiness.composer_editable
+      && Boolean(composer)
+      && readiness.generate_button_found
+      && !readiness.blocking_modal_detected
+      && (
+        String(currentModeVisible || '').includes('Video/Frames')
+        || (visibleEditorMarkers.includes('Video') && visibleEditorMarkers.includes('Frames'))
+      )
+    );
     const bodyText = normalizeText(document.body?.innerText || '').slice(0, 2000);
     const buttonTexts = collectVisibleTexts('button, [role="button"]', (el) => el.textContent || '');
     const textareaPlaceholders = collectVisibleTexts('textarea', (el) => el.getAttribute('placeholder') || el.getAttribute('aria-label') || '');
@@ -3042,18 +3191,10 @@
         'Permission denied',
         'You need access',
       ], markerSources),
-      visible_project_editor_markers: collectVisibleMarkers([
-        'Video',
-        'Frames',
-        'Ingredients',
-        'Image',
-        'Veo',
-        'Start',
-        'End',
-        '9:16',
-        '16:9',
-        '1x',
-      ], markerSources),
+      ok: pagePreselectionReady,
+      strict_composer_ok: readiness.ok,
+      strict_composer_error: readiness.error || null,
+      visible_project_editor_markers: visibleEditorMarkers,
       visible_composer_placeholder_markers: collectVisibleMarkers([
         'What do you want to create?',
         'Describe your video',
@@ -3069,7 +3210,11 @@
       signed_in_likely: readiness.signed_in_likely,
       composer_found: readiness.composer_found,
       composer_editable: readiness.composer_editable,
+      prompt_field_found: Boolean(composer),
       generate_button_found: readiness.generate_button_found,
+      bottom_composer_config_pill_visible: configPill.bottom_composer_config_pill_visible,
+      bottom_composer_config_pill_text: configPill.bottom_composer_config_pill_text,
+      bottom_composer_config_pill_raw_text: configPill.bottom_composer_config_pill_raw_text,
       current_mode_visible: readiness.current_mode_visible,
       blocking_modal_detected: readiness.blocking_modal_detected,
       observed: readiness.observed,
@@ -3951,10 +4096,26 @@
     const testConn = await new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: 'STATUS' }, (resp) => {
         const err = chrome.runtime.lastError;
-        resolve(resp || { ok: false, error: err?.message || 'UNKNOWN_ERROR' });
+        if (err) {
+          resolve({ ok: false, error: err?.message || 'ERR_EMPTY_BACKGROUND_STATUS' });
+          return;
+        }
+        const statusPayload = resp?.data && typeof resp.data === 'object' ? resp.data : resp;
+        resolve(statusPayload || { ok: false, error: 'ERR_EMPTY_BACKGROUND_STATUS' });
       });
     });
     console.log('[FlowAgent] Background connection test:', testConn);
+    const backgroundBuildId = String(
+      testConn?.buildId
+      || testConn?.build_id
+      || testConn?.background_build_id
+      || testConn?.gitSha
+      || testConn?.git_sha
+      || '',
+    ).trim();
+    const backgroundRuntimeReady = typeof testConn?.runtimeReady === 'boolean'
+      ? testConn.runtimeReady
+      : (typeof testConn?.runtime_ready === 'boolean' ? testConn.runtime_ready : true);
 
     const report = { ok: false, stages: [] };
     const request_id = job.request_id || `flow_${Date.now()}`;
@@ -3975,22 +4136,26 @@
 
     try {
       logStage(STAGES.FLOW_TAB_FOUND, 'PASS', 'flow_dom_listener_ready');
-      if (!testConn?.buildId) {
-        logStage(STAGES.RUNTIME_HANDSHAKE_VERIFIED, 'FAIL', `background_status_missing build=${testConn?.buildId || 'legacy'}`);
+      if (!backgroundBuildId) {
+        logStage(STAGES.RUNTIME_HANDSHAKE_VERIFIED, 'FAIL', `background_status_missing build=${backgroundBuildId || 'legacy-compatible'}`);
         throw new Error('ERR_BACKGROUND_STATUS_UNAVAILABLE');
       }
-      if (testConn.buildId !== FLOW_KIT_DOM_BUILD_ID) {
+      if (!backgroundRuntimeReady) {
+        logStage(STAGES.RUNTIME_HANDSHAKE_VERIFIED, 'FAIL', `background_runtime_not_ready build=${backgroundBuildId || 'legacy-compatible'}`);
+        throw new Error('ERR_BACKGROUND_STATUS_UNAVAILABLE');
+      }
+      if (backgroundBuildId !== FLOW_KIT_DOM_BUILD_ID) {
         logStage(
           STAGES.RUNTIME_HANDSHAKE_VERIFIED,
           'FAIL',
-          `background_build_id=${testConn.buildId} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
+          `background_build_id=${backgroundBuildId} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
         );
         throw new Error('ERR_BUILD_ID_MISMATCH');
       }
       logStage(
         STAGES.RUNTIME_HANDSHAKE_VERIFIED,
         'PASS',
-        `background_build_id=${testConn.buildId} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
+        `background_build_id=${backgroundBuildId} content_build_id=${FLOW_KIT_DOM_BUILD_ID}`,
       );
 
       // 0. Log job received

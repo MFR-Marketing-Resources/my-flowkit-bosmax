@@ -243,7 +243,15 @@ class FlowClient:
 
     async def execute_flow_job(self, job_data: dict) -> dict:
         """Trigger DOM automation in the extension for a generation job."""
-        return await self._send("EXECUTE_FLOW_JOB", {"job": job_data}, timeout=120)
+        # Content script ACKs immediately — if no response in 30s, SW is dead/sleeping
+        raw = await self._send("EXECUTE_FLOW_JOB", {"job": job_data}, timeout=30)
+        # _send returns {id, result: {...}} on success — unwrap like other methods
+        if raw.get("error"):
+            return {"ok": False, "error": raw["error"]}
+        inner = raw.get("result")
+        if isinstance(inner, dict):
+            return inner
+        return {"ok": True, "data": raw}
 
     async def debug_flow_dom_execution(self, mode: str, job: Optional[dict] = None) -> dict:
         """Trigger a debug action for DOM automation."""
@@ -299,7 +307,7 @@ class FlowClient:
 
     async def open_flow_new_project(self, mode: Optional[str] = None) -> dict:
         """Open Google Flow root, create a new project, and wait for a ready editor."""
-        result = await self._send("OPEN_FLOW_NEW_PROJECT", {"mode": mode}, timeout=75)
+        result = await self._send("OPEN_FLOW_NEW_PROJECT", {"mode": mode}, timeout=125)
         if result.get("error"):
             return {"ok": False, "error": result["error"]}
 
@@ -308,6 +316,38 @@ class FlowClient:
             return payload
 
         return {"ok": False, "error": "invalid open flow new project payload"}
+
+    async def get_extension_self_test(
+        self,
+        mode: Optional[str] = "F2V",
+        attempt_open_project: bool = False,
+    ) -> dict:
+        """Collect a non-generating runtime self-test from the extension service worker."""
+        result = await self._send(
+            "GET_RUNTIME_SELF_TEST",
+            {
+                "mode": mode,
+                "attempt_open_project": attempt_open_project,
+            },
+            timeout=60,
+        )
+        if result.get("error"):
+            return {
+                "ok": False,
+                "connected": self.connected,
+                "error": result["error"],
+            }
+
+        payload = result.get("result")
+        if isinstance(payload, dict):
+            payload.setdefault("connected", self.connected)
+            return payload
+
+        return {
+            "ok": False,
+            "connected": self.connected,
+            "error": "invalid extension self test payload",
+        }
 
     async def smoke_execute_flow_job(self, job_data: dict, timeout: float = 5) -> dict:
         """Verify the EXECUTE_FLOW_JOB bridge path without triggering generation."""

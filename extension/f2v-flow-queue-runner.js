@@ -93,6 +93,7 @@
 // Constants
 // ───────────────────────────────────────────────────────────────────────
 
+const F2V_FLOW_QUEUE_RUNNER_BUILD_ID = 'flowkit-f2v-runner-audit-2026-05-28b';
 const SOP_DEFAULT_SETTLE_MS = 300;
 const SOP_DEFAULT_OPEN_PANEL_TIMEOUT_MS = 4000;
 const SOP_DEFAULT_UPLOAD_WAIT_MS = 10000;
@@ -368,6 +369,7 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     'view_module', 'voice_selection',
   ]);
   function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+  function lower(s) { return normalize(s).toLowerCase(); }
   function stripIcon(s) {
     var trimmed = normalize(s);
     if (!trimmed) return '';
@@ -382,10 +384,36 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     var s = window.getComputedStyle(el);
     return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
   }
+  function getRect(el) {
+    if (!el || !el.getBoundingClientRect) return null;
+    var r = el.getBoundingClientRect();
+    return {
+      x: Math.round(r.left),
+      y: Math.round(r.top),
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+      right: Math.round(r.right),
+      bottom: Math.round(r.bottom),
+    };
+  }
   function getText(el) {
     if (!el) return '';
+    var textParts = [];
+    function walk(node) {
+      if (!node) return;
+      if (node.nodeType === 3) {
+        var value = normalize(node.nodeValue || '');
+        if (value) textParts.push(value);
+        return;
+      }
+      if (!node.childNodes || !node.childNodes.length) return;
+      for (var idx = 0; idx < node.childNodes.length; idx++) {
+        walk(node.childNodes[idx]);
+      }
+    }
+    walk(el);
     return stripIcon([
-      el.textContent || '',
+      textParts.join(' '),
       el.getAttribute ? (el.getAttribute('aria-label') || '') : '',
       el.getAttribute ? (el.getAttribute('title') || '') : '',
     ].join(' '));
@@ -409,54 +437,92 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     if (role && ['button', 'tab', 'option', 'combobox', 'menuitem', 'menuitemradio'].indexOf(role) >= 0) return true;
     return Boolean(el.hasAttribute && (
       el.hasAttribute('aria-haspopup')
+      || el.hasAttribute('aria-expanded')
       || el.hasAttribute('aria-selected')
       || el.hasAttribute('aria-pressed')
       || el.hasAttribute('data-state')
     ));
   }
-  function toInteractive(el) {
+  function isClickableLike(el) {
+    if (!el || !el.tagName) return false;
+    if (isInteractive(el)) return true;
+    if (typeof el.onclick === 'function') return true;
+    if (typeof el.tabIndex === 'number' && el.tabIndex >= 0) return true;
+    var style = window.getComputedStyle(el);
+    if (style && style.cursor === 'pointer') return true;
+    return Boolean(el.hasAttribute && (
+      el.hasAttribute('tabindex')
+      || el.hasAttribute('onclick')
+      || el.hasAttribute('data-state')
+      || el.hasAttribute('aria-haspopup')
+      || el.hasAttribute('aria-expanded')
+    ));
+  }
+  function toInteractive(el, stopAt) {
     if (!el) return null;
-    if (isInteractive(el)) return el;
-    return el.closest ? el.closest('button, [role="button"], [role="tab"], [role="option"], [role="combobox"], [aria-haspopup], [aria-selected], [aria-pressed], [data-state]') : null;
+    var current = el;
+    while (current) {
+      if (isClickableLike(current)) return current;
+      if (stopAt && current === stopAt) break;
+      current = current.parentElement || null;
+    }
+    return el.closest ? el.closest('button, [role="button"], [role="tab"], [role="option"], [role="combobox"], [aria-haspopup], [aria-expanded], [aria-selected], [aria-pressed], [data-state], [tabindex]') : null;
   }
   function getPromptField() {
     var slateEditors = document.querySelectorAll('[data-slate-editor="true"][contenteditable="true"]');
     var slateCandidates = [];
-    for (var i = 0; i < slateEditors.length; i++) {
-      if (!isVisible(slateEditors[i])) continue;
-      slateCandidates.push(slateEditors[i]);
+    for (var i2 = 0; i2 < slateEditors.length; i2++) {
+      if (!isVisible(slateEditors[i2])) continue;
+      slateCandidates.push(slateEditors[i2]);
     }
     if (slateCandidates.length) {
       var withPlaceholder = [];
-      for (var j = 0; j < slateCandidates.length; j++) {
-        var placeholder = slateCandidates[j].querySelector && slateCandidates[j].querySelector('[data-slate-placeholder]');
-        var label = normalize(placeholder && placeholder.textContent || '').toLowerCase();
+      for (var j2 = 0; j2 < slateCandidates.length; j2++) {
+        var placeholder = slateCandidates[j2].querySelector && slateCandidates[j2].querySelector('[data-slate-placeholder]');
+        var label = lower(placeholder && placeholder.textContent || '');
         if (label.indexOf('what do you want') >= 0 || label.indexOf('create') >= 0 || label.indexOf('generate') >= 0) {
-          withPlaceholder.push(slateCandidates[j]);
+          withPlaceholder.push(slateCandidates[j2]);
         }
       }
       var pool = withPlaceholder.length ? withPlaceholder : slateCandidates;
       pool.sort(function (a, b) { return b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom; });
       return pool[0];
     }
-    var inputs = document.querySelectorAll('textarea, [contenteditable="true"], input[type="text"]');
-    for (var k = 0; k < inputs.length; k++) {
-      if (!isVisible(inputs[k])) continue;
-      var probe = normalize([
-        inputs[k].getAttribute && (inputs[k].getAttribute('placeholder') || ''),
-        inputs[k].getAttribute && (inputs[k].getAttribute('aria-label') || ''),
-      ].join(' ')).toLowerCase();
-      if (probe.indexOf('what do you want to create') >= 0) return inputs[k];
+    var placeholderNodes = document.querySelectorAll('[data-slate-placeholder], [placeholder], [aria-label], span, div, p');
+    for (var k2 = 0; k2 < placeholderNodes.length; k2++) {
+      if (!isVisible(placeholderNodes[k2])) continue;
+      var markerText = lower([
+        placeholderNodes[k2].textContent || '',
+        placeholderNodes[k2].getAttribute ? (placeholderNodes[k2].getAttribute('placeholder') || '') : '',
+        placeholderNodes[k2].getAttribute ? (placeholderNodes[k2].getAttribute('aria-label') || '') : '',
+      ].join(' '));
+      if (markerText.indexOf('what do you want to create') === -1) continue;
+      var owner = toInteractive(placeholderNodes[k2]) || (placeholderNodes[k2].closest && placeholderNodes[k2].closest('[data-slate-editor="true"], [contenteditable="true"], textarea, input, form, section, article, div'));
+      if (owner && isVisible(owner)) return owner;
+      return placeholderNodes[k2];
     }
-    for (var m = 0; m < inputs.length; m++) {
-      if (isVisible(inputs[m])) return inputs[m];
+    var inputs = document.querySelectorAll('textarea, [contenteditable="true"], input[type="text"]');
+    for (var m2 = 0; m2 < inputs.length; m2++) {
+      if (!isVisible(inputs[m2])) continue;
+      var probe = lower([
+        inputs[m2].getAttribute && (inputs[m2].getAttribute('placeholder') || ''),
+        inputs[m2].getAttribute && (inputs[m2].getAttribute('aria-label') || ''),
+      ].join(' '));
+      if (probe.indexOf('what do you want to create') >= 0) return inputs[m2];
+    }
+    for (var n2 = 0; n2 < inputs.length; n2++) {
+      if (isVisible(inputs[n2])) return inputs[n2];
     }
     return null;
   }
   function getComposerRoot() {
     var prompt = getPromptField();
     if (!prompt || !prompt.closest) return prompt;
-    return prompt.closest('form, [role="form"], section, article, main, div') || prompt;
+    var owner = prompt.closest('form, [role="form"], section, article, main, div') || prompt;
+    if (!owner || !owner.getBoundingClientRect) return owner;
+    var rect = owner.getBoundingClientRect();
+    if (rect.width >= 240 && rect.height >= 120) return owner;
+    return owner.parentElement || owner;
   }
   function distanceToComposer(el) {
     var composer = getComposerRoot();
@@ -469,13 +535,41 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     var by = b.top + (b.height / 2);
     return Math.round(Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2)));
   }
+  function distanceBetween(aEl, bEl) {
+    if (!aEl || !bEl || !aEl.getBoundingClientRect || !bEl.getBoundingClientRect) return Number.MAX_SAFE_INTEGER;
+    var a = aEl.getBoundingClientRect();
+    var b = bEl.getBoundingClientRect();
+    var ax = a.left + (a.width / 2);
+    var ay = a.top + (a.height / 2);
+    var bx = b.left + (b.width / 2);
+    var by = b.top + (b.height / 2);
+    return Math.round(Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2)));
+  }
+  function getGenerateArrow() {
+    var composer = getComposerRoot();
+    if (!composer || !composer.querySelectorAll) return null;
+    var nodes = composer.querySelectorAll('button, [role="button"], [aria-label], [data-state], [aria-haspopup], [tabindex]');
+    var best = null;
+    for (var i3 = 0; i3 < nodes.length; i3++) {
+      var node = toInteractive(nodes[i3], composer) || nodes[i3];
+      if (!node || !isVisible(node)) continue;
+      var combined = lower((getText(node) + ' ' + getIconText(node)).trim());
+      if (combined.indexOf('arrow_forward') === -1 && combined.indexOf('generate') === -1 && combined.indexOf('create') === -1) continue;
+      var rect = node.getBoundingClientRect();
+      var score = Math.round(rect.left + rect.top + rect.width + rect.height);
+      if (!best || score > best.score) {
+        best = { el: node, score: score };
+      }
+    }
+    return best ? best.el : null;
+  }
   function summarizeTextList(selector, mapper) {
     var nodes = document.querySelectorAll(selector);
     var seen = Object.create(null);
     var out = [];
-    for (var i = 0; i < nodes.length; i++) {
-      if (!isVisible(nodes[i])) continue;
-      var value = normalize(mapper(nodes[i]) || '');
+    for (var i4 = 0; i4 < nodes.length; i4++) {
+      if (!isVisible(nodes[i4])) continue;
+      var value = normalize(mapper(nodes[i4]) || '');
       if (!value || seen[value]) continue;
       seen[value] = true;
       out.push(value.slice(0, 140));
@@ -483,37 +577,27 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     }
     return out;
   }
-  function getDiagnostics() {
-    return {
-      target_tab_url: String(window.location && window.location.href || ''),
-      document_title: String(document && document.title || ''),
-      composer_present: Boolean(getComposerRoot()),
-      prompt_field_present: Boolean(getPromptField()),
-      visible_button_texts: summarizeTextList('button', function (el) { return getText(el) || getIconText(el); }),
-      visible_aria_labels: summarizeTextList('[aria-label]', function (el) { return el.getAttribute('aria-label'); }),
-      visible_role_button_texts: summarizeTextList('[role="button"]', function (el) { return getText(el) || getIconText(el); }),
-      visible_svg_icon_texts: summarizeTextList('[data-icon], svg title, .material-symbols-outlined, .material-icons', function (el) {
-        return normalize(el.textContent || el.getAttribute && el.getAttribute('data-icon') || '');
-      }),
-    };
-  }
   function isTargetFlowTab(url) {
     return /^https:\/\/labs\.google\/fx(?:\/[^/]+)?\/tools\/flow(?:\/|$|[?#])/.test(String(url || ''));
   }
   function findOpenSurface() {
     var surfaces = document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"]');
     var best = null;
-    var targetTokens = ['video', 'frames', '9:16', '1x', 'veo'];
-    for (var i = 0; i < surfaces.length; i++) {
-      var surface = surfaces[i];
+    var targetTokens = ['video', 'frames', '9:16', '16:9', '1x', 'x2', 'veo 3.1 - lite', 'ingredients', 'image'];
+    for (var i5 = 0; i5 < surfaces.length; i5++) {
+      var surface = surfaces[i5];
       if (!isVisible(surface)) continue;
-      var text = normalize(surface.textContent || '').toLowerCase();
+      var text = lower(surface.textContent || '');
       var hits = 0;
-      for (var j = 0; j < targetTokens.length; j++) {
-        if (text.indexOf(targetTokens[j]) >= 0) hits += 1;
+      var markers = [];
+      for (var j5 = 0; j5 < targetTokens.length; j5++) {
+        if (text.indexOf(targetTokens[j5]) >= 0) {
+          hits += 1;
+          markers.push(targetTokens[j5]);
+        }
       }
       if (!best || hits > best.hits) {
-        best = { el: surface, hits: hits, role: surface.getAttribute('role') || null };
+        best = { el: surface, hits: hits, markers: markers, role: surface.getAttribute('role') || null };
       }
     }
     return best;
@@ -529,8 +613,14 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     try { el.dispatchEvent(new MouseEvent('mousedown', common)); } catch (e) { /* noop */ }
     try { el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerType: 'mouse' }, common))); } catch (e) { /* noop */ }
     try { el.dispatchEvent(new MouseEvent('mouseup', common)); } catch (e) { /* noop */ }
-    try { el.dispatchEvent(new MouseEvent('click', common)); } catch (e) { /* noop */ }
-    try { el.click(); } catch (e) { /* noop */ }
+    var clickDispatched = false;
+    try {
+      el.dispatchEvent(new MouseEvent('click', common));
+      clickDispatched = true;
+    } catch (e) { /* noop */ }
+    if (!clickDispatched) {
+      try { el.click(); } catch (e) { /* noop */ }
+    }
     return true;
   }
   function buildCandidate(interactive) {
@@ -546,46 +636,96 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     ].join(' '));
     var role = interactive.getAttribute && interactive.getAttribute('role') || null;
     var popup = interactive.getAttribute && interactive.getAttribute('aria-haspopup') || null;
-    var lower = combined.toLowerCase();
-    var lowerContainer = containerText.toLowerCase();
     var comboHits = 0;
     if (/\b(video|frames)\b/i.test(combined)) comboHits += 1;
-    if (/\b(9\s*:?\s*16|portrait)\b/i.test(combined)) comboHits += 1;
-    if (/\b(1x|1×|1 variation)\b/i.test(combined)) comboHits += 1;
+    if (/\b(9\s*:?\s*16|16\s*:?\s*9|portrait)\b/i.test(combined)) comboHits += 1;
+    if (/\b(1x|1×|1 variation|x2|2x)\b/i.test(combined)) comboHits += 1;
     if (/\b(veo|nano\s*banana|gemini|imagen|model)\b/i.test(combined)) comboHits += 1;
     return {
       el: interactive,
+      bbox: getRect(interactive),
       text: text,
       icon_text: iconText,
       role: role,
       popup: popup,
       combined: combined,
-      combined_lower: lower,
+      combined_lower: lower(combined),
       has_model_text: /\b(veo|nano\s*banana|gemini|imagen|model)\b/i.test(combined),
       has_model: /\b(veo|nano\s*banana|gemini|imagen|model)\b/i.test(combined) || /\b(veo|nano\s*banana|gemini|imagen)\b/i.test(containerText),
       has_settings: /\b(settings|view\s+settings|config|configure|tune|sliders)\b/i.test(combined + ' ' + containerText),
       has_arrow: /\b(arrow_drop_down|expand_more|dropdown|chevron|caret)\b/i.test(combined + ' ' + iconText + ' ' + containerText),
       has_mode: /\b(video|frames)\b/i.test(combined),
-      has_ratio: /\b(9\s*:?\s*16|portrait)\b/i.test(combined),
-      has_count: /\b(1x|1×|1 variation)\b/i.test(combined),
+      has_ratio: /\b(9\s*:?\s*16|16\s*:?\s*9|portrait)\b/i.test(combined),
+      has_count: /\b(1x|1×|1 variation|x2|2x)\b/i.test(combined),
       combo_hits: comboHits,
       near_composer: distanceToComposer(interactive) <= 460,
       distance_to_composer: distanceToComposer(interactive),
-      has_library_text: /\b(all\s+media|images|videos|voices|avatar|uploads|recent)\b/i.test(combined) && !/\b(veo|nano\s*banana|gemini|imagen|settings|config|9\s*:?\s*16|1x)\b/i.test(combined),
-      has_model_context: /\b(veo|nano\s*banana|gemini|imagen|video)\b/i.test(lowerContainer),
+      has_library_text: /\b(all\s+media|images|videos|voices|avatar|uploads|recent)\b/i.test(combined) && !/\b(veo|nano\s*banana|gemini|imagen|settings|config|9\s*:?\s*16|1x|x2)\b/i.test(combined),
+      has_model_context: /\b(veo|nano\s*banana|gemini|imagen|video)\b/i.test(lower(containerText)),
       width: Math.round(rect.width),
       height: Math.round(rect.height),
+      within_composer: distanceToComposer(interactive) <= 520,
+      tag_name: String(interactive.tagName || '').toLowerCase(),
+      near_generate: false,
+      distance_to_generate: Number.MAX_SAFE_INTEGER,
+      from_bottom_composer_scan: false,
+      candidate_source: 'interactive_scan',
     };
   }
-  function collectCandidates() {
-    var nodes = document.querySelectorAll('button, [role="button"], [role="tab"], [role="option"], [role="combobox"], [aria-haspopup], [aria-selected], [aria-pressed], [data-state]');
+  function collectBottomComposerPillCandidates() {
+    var composer = getComposerRoot();
+    var generateArrow = getGenerateArrow();
+    if (!composer || !composer.querySelectorAll) return [];
+    var nodes = composer.querySelectorAll('*');
     var out = [];
-    for (var i = 0; i < nodes.length; i++) {
-      var interactive = toInteractive(nodes[i]);
+    var seen = [];
+    for (var i6 = 0; i6 < nodes.length; i6++) {
+      var node = nodes[i6];
+      if (!isVisible(node)) continue;
+      var combined = normalize((getText(node) + ' ' + getIconText(node)).trim());
+      var combinedLower = lower(combined);
+      if (combinedLower.indexOf('video') === -1) continue;
+      if (combinedLower.indexOf('1x') === -1 && combinedLower.indexOf('1×') === -1 && combinedLower.indexOf('1 variation') === -1) continue;
+      var interactive = toInteractive(node, composer) || node.parentElement || node;
+      if (!interactive || !isVisible(interactive)) continue;
+      var duplicate = false;
+      for (var j6 = 0; j6 < seen.length; j6++) {
+        if (seen[j6] === interactive) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (duplicate) continue;
+      seen.push(interactive);
+      var candidate = buildCandidate(interactive);
+      if (!candidate) continue;
+      if (candidate.width > 220 || candidate.height > 80) continue;
+      candidate.from_bottom_composer_scan = true;
+      candidate.text_surface = combined;
+      candidate.has_mode = /\bvideo\b/i.test(combined);
+      candidate.has_count = /\b(1x|1×|1 variation)\b/i.test(combined);
+      candidate.has_ratio = /\b(9\s*:?\s*16|16\s*:?\s*9)\b/i.test(combined);
+      candidate.near_generate = distanceBetween(interactive, generateArrow) <= 220;
+      candidate.distance_to_generate = distanceBetween(interactive, generateArrow);
+      candidate.candidate_source = 'bottom_composer_text_scan';
+      out.push(candidate);
+    }
+    return out.sort(function (a, b) {
+      if (a.near_generate && !b.near_generate) return -1;
+      if (!a.near_generate && b.near_generate) return 1;
+      if (a.distance_to_generate !== b.distance_to_generate) return a.distance_to_generate - b.distance_to_generate;
+      return a.distance_to_composer - b.distance_to_composer;
+    });
+  }
+  function collectCandidates(bottomComposerCandidates) {
+    var nodes = document.querySelectorAll('button, [role="button"], [role="tab"], [role="option"], [role="combobox"], [aria-haspopup], [aria-expanded], [aria-selected], [aria-pressed], [data-state], [tabindex]');
+    var out = Array.isArray(bottomComposerCandidates) ? bottomComposerCandidates.slice() : [];
+    for (var i7 = 0; i7 < nodes.length; i7++) {
+      var interactive = toInteractive(nodes[i7]);
       if (!interactive) continue;
       var exists = false;
-      for (var j = 0; j < out.length; j++) {
-        if (out[j].el === interactive) { exists = true; break; }
+      for (var j7 = 0; j7 < out.length; j7++) {
+        if (out[j7].el === interactive) { exists = true; break; }
       }
       if (exists) continue;
       var candidate = buildCandidate(interactive);
@@ -596,16 +736,26 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
   }
   function rankCandidates(candidates) {
     return candidates.slice().sort(function (a, b) {
+      if (a.from_bottom_composer_scan && !b.from_bottom_composer_scan) return -1;
+      if (!a.from_bottom_composer_scan && b.from_bottom_composer_scan) return 1;
+      if (a.near_generate && !b.near_generate) return -1;
+      if (!a.near_generate && b.near_generate) return 1;
       if (a.popup && !b.popup) return -1;
       if (!a.popup && b.popup) return 1;
       if (a.near_composer && !b.near_composer) return -1;
       if (!a.near_composer && b.near_composer) return 1;
+      if (a.distance_to_generate !== b.distance_to_generate) return a.distance_to_generate - b.distance_to_generate;
       if (a.distance_to_composer !== b.distance_to_composer) return a.distance_to_composer - b.distance_to_composer;
       if (a.combo_hits !== b.combo_hits) return b.combo_hits - a.combo_hits;
       return a.combined.length - b.combined.length;
     });
   }
   function strategyMatches(candidates, strategyId) {
+    if (strategyId === 'bottom_composer_config_pill') {
+      return candidates.filter(function (c) {
+        return c.from_bottom_composer_scan && c.has_mode && c.has_count && (c.within_composer || c.near_composer);
+      });
+    }
     if (strategyId === 'model_chip') {
       return candidates.filter(function (c) {
         return c.has_model_text && (c.popup || c.near_composer || c.has_model_context);
@@ -632,22 +782,46 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
   }
   function summarizeCandidates(candidates) {
     var out = [];
-    for (var i = 0; i < candidates.length && i < 12; i++) {
+    for (var i8 = 0; i8 < candidates.length && i8 < 12; i8++) {
       out.push({
-        text: String(candidates[i].combined || '').slice(0, 140),
-        icon_text: String(candidates[i].icon_text || '').slice(0, 80),
-        role: candidates[i].role,
-        popup: candidates[i].popup || null,
-        near_composer: candidates[i].near_composer,
-        distance_to_composer: candidates[i].distance_to_composer,
-        combo_hits: candidates[i].combo_hits,
+        text: String(candidates[i8].combined || candidates[i8].text_surface || '').slice(0, 140),
+        icon_text: String(candidates[i8].icon_text || '').slice(0, 80),
+        role: candidates[i8].role,
+        popup: candidates[i8].popup || null,
+        source: candidates[i8].candidate_source || (candidates[i8].from_bottom_composer_scan ? 'bottom_composer_config_pill' : 'interactive_scan'),
+        near_composer: candidates[i8].near_composer,
+        distance_to_composer: candidates[i8].distance_to_composer,
+        near_generate: Boolean(candidates[i8].near_generate),
+        distance_to_generate: Number.isFinite(candidates[i8].distance_to_generate) ? candidates[i8].distance_to_generate : null,
+        combo_hits: candidates[i8].combo_hits,
+        bbox: candidates[i8].bbox || null,
       });
     }
     return out;
   }
-  var MODEL_RE = /\b(veo|nano\s*banana|imagen|gemini|wan|seedance|hailuo|kling|sora)\b/i;
+  function getDiagnostics(bottomComposerCandidates) {
+    var composerRoot = getComposerRoot();
+    var generateArrow = getGenerateArrow();
+    return {
+      target_tab_url: String(window.location && window.location.href || ''),
+      document_title: String(document && document.title || ''),
+      bottom_composer_detected: Boolean(composerRoot),
+      composer_present: Boolean(composerRoot),
+      prompt_field_present: Boolean(getPromptField()),
+      generate_arrow_detected: Boolean(generateArrow),
+      visible_button_texts: summarizeTextList('button', function (el) { return getText(el) || getIconText(el); }),
+      visible_aria_labels: summarizeTextList('[aria-label]', function (el) { return el.getAttribute('aria-label'); }),
+      visible_role_button_texts: summarizeTextList('[role="button"]', function (el) { return getText(el) || getIconText(el); }),
+      visible_svg_icon_texts: summarizeTextList('[data-icon], svg title, .material-symbols-outlined, .material-icons', function (el) {
+        return normalize(el.textContent || el.getAttribute && el.getAttribute('data-icon') || '');
+      }),
+      bottom_config_pill_candidates: summarizeCandidates(bottomComposerCandidates || []),
+      candidate_capture_marker: 'bottom_composer_config_pill',
+    };
+  }
   var openSurface = findOpenSurface();
-  var diagnostics = getDiagnostics();
+  var bottomComposerCandidates = collectBottomComposerPillCandidates();
+  var diagnostics = getDiagnostics(bottomComposerCandidates);
   if (!isTargetFlowTab(diagnostics.target_tab_url)) {
     return {
       ok: false,
@@ -665,12 +839,13 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
       surface_role: openSurface.role,
       diagnostics: diagnostics,
       attempted_strategies: [],
-      candidate_settings_launchers_found: [],
+      candidate_settings_launchers_found: summarizeCandidates(bottomComposerCandidates),
     };
   }
-  var candidates = collectCandidates();
+  var candidates = collectCandidates(bottomComposerCandidates);
   var visibleLauncherCandidates = summarizeCandidates(candidates);
   var strategies = [
+    { id: 'bottom_composer_config_pill', label: 'bottom composer config pill' },
     { id: 'model_chip', label: 'current model chip' },
     { id: 'dropdown_adjacent', label: 'dropdown adjacent to model label' },
     { id: 'config_pill', label: 'config pill near composer' },
@@ -678,11 +853,11 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     { id: 'combo_control', label: 'visible combo control near composer' },
   ];
   var attemptedStrategies = [];
-  for (var i = 0; i < strategies.length; i++) {
-    var strategy = strategies[i];
+  for (var i9 = 0; i9 < strategies.length; i9++) {
+    var strategy = strategies[i9];
     var matches = rankCandidates(strategyMatches(candidates, strategy.id));
     if (!matches.length) {
-      attemptedStrategies.push({ strategy: strategy.id, label: strategy.label, reason: 'no_candidates' });
+      attemptedStrategies.push({ strategy: strategy.id, label: strategy.label, reason: 'no_candidates', clicked_candidate: false });
       continue;
     }
     var launcher = matches[0];
@@ -690,8 +865,11 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
       strategy: strategy.id,
       label: strategy.label,
       reason: 'candidate_selected',
-      candidate_text: String(launcher.combined || '').slice(0, 140),
+      candidate_text: String(launcher.combined || launcher.text_surface || '').slice(0, 140),
+      candidate_bbox: launcher.bbox || null,
+      clicked_candidate: false,
       distance_to_composer: launcher.distance_to_composer,
+      distance_to_generate: Number.isFinite(launcher.distance_to_generate) ? launcher.distance_to_generate : null,
       popup: launcher.popup || null,
     });
     try { clickElement(launcher.el); } catch (e) {
@@ -699,6 +877,7 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
       attemptedStrategies[attemptedStrategies.length - 1].error = String(e && e.message || e || '');
       continue;
     }
+    attemptedStrategies[attemptedStrategies.length - 1].clicked_candidate = true;
     var stampId = String(stampAttr || 'data-bosmax-launcher') + '-' + Date.now();
     launcher.el.setAttribute(String(stampAttr || 'data-bosmax-launcher'), stampId);
     return {
@@ -706,7 +885,8 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
       already_open: false,
       clicked: true,
       strategy: strategy.id,
-      launcher_text: String(launcher.combined || '').slice(0, 140),
+      launcher_text: String(launcher.combined || launcher.text_surface || '').slice(0, 140),
+      launcher_bbox: launcher.bbox || null,
       stamp_id: stampId,
       diagnostics: diagnostics,
       attempted_strategies: attemptedStrategies,
@@ -745,25 +925,30 @@ function MAIN_isComposerSurfaceOpen() {
     var s = window.getComputedStyle(el);
     return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
   }
-  var tokens = ['video', 'frames', '9:16', '1x', 'veo'];
+  var tokens = ['video', 'frames', '9:16', '16:9', '1x', 'x2', 'veo 3.1 - lite', 'veo 3.1 lite', 'ingredients', 'image'];
   var surfaces = document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"]');
   var best = null;
   for (var i = 0; i < surfaces.length; i++) {
     if (!isVisible(surfaces[i])) continue;
     var text = String(surfaces[i].textContent || '').toLowerCase();
     var markerHits = 0;
+    var foundMarkers = [];
     for (var j = 0; j < tokens.length; j++) {
-      if (text.indexOf(tokens[j]) >= 0) markerHits += 1;
+      if (text.indexOf(tokens[j]) >= 0) {
+        markerHits += 1;
+        foundMarkers.push(tokens[j]);
+      }
     }
     if (!best || markerHits > best.marker_hits) {
       best = {
         role: surfaces[i].getAttribute('role'),
         marker_hits: markerHits,
+        found_markers: foundMarkers,
       };
     }
   }
-  if (best) return { ok: true, role: best.role, marker_hits: best.marker_hits };
-  return { ok: false };
+  if (best) return { ok: true, role: best.role, marker_hits: best.marker_hits, found_markers: best.found_markers || [] };
+  return { ok: false, found_markers: [] };
 }
 
 /**
@@ -1216,10 +1401,17 @@ function _buildSettingsPanelFailureDetail(reason, payload) {
     visible_aria_labels: Array.isArray(data.visible_aria_labels) ? data.visible_aria_labels : [],
     visible_role_button_texts: Array.isArray(data.visible_role_button_texts) ? data.visible_role_button_texts : [],
     visible_svg_icon_texts: Array.isArray(data.visible_svg_icon_texts) ? data.visible_svg_icon_texts : [],
+    bottom_composer_detected: Boolean(data.bottom_composer_detected),
     composer_present: Boolean(data.composer_present),
     prompt_field_present: Boolean(data.prompt_field_present),
+    generate_arrow_detected: Boolean(data.generate_arrow_detected),
+    bottom_config_pill_candidates: Array.isArray(data.bottom_config_pill_candidates) ? data.bottom_config_pill_candidates : [],
     candidate_settings_launchers_found: Array.isArray(data.candidate_settings_launchers_found) ? data.candidate_settings_launchers_found : [],
     attempted_strategies: Array.isArray(data.attempted_strategies) ? data.attempted_strategies : [],
+    clicked_candidate: data.clicked_candidate || null,
+    post_click_panel_markers_found: Boolean(data.post_click_panel_markers_found),
+    post_click_panel_markers: Array.isArray(data.post_click_panel_markers) ? data.post_click_panel_markers : [],
+    candidate_capture_marker: data.candidate_capture_marker || null,
   });
 }
 
@@ -1230,8 +1422,11 @@ function _buildSettingsOpenerScanMessage(panel) {
   return JSON.stringify({
     target_tab_url: diagnostics.target_tab_url || null,
     document_title: diagnostics.document_title || null,
+    bottom_composer_detected: Boolean(diagnostics.bottom_composer_detected),
     composer_present: Boolean(diagnostics.composer_present),
     prompt_field_present: Boolean(diagnostics.prompt_field_present),
+    generate_arrow_detected: Boolean(diagnostics.generate_arrow_detected),
+    bottom_config_pill_candidates: Array.isArray(diagnostics.bottom_config_pill_candidates) ? diagnostics.bottom_config_pill_candidates.length : 0,
     candidate_settings_launchers_found: Array.isArray(launchers) ? launchers.length : 0,
     attempted_strategies: Array.isArray(attempted) ? attempted.map((item) => item?.strategy || item?.label || null) : [],
   });
@@ -1278,9 +1473,54 @@ async function _openComposerSettingsPanel(scripting, tabId, opts) {
     const settle = Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS));
     await _sleep(settle);
   }
-  const surfaceCheck = await _runMainWorld(
+  let surfaceCheck = await _runMainWorld(
     scripting, tabId, MAIN_isComposerSurfaceOpen, [],
   );
+  diagnostics.clicked_candidate = result.clicked ? {
+    strategy: result.strategy || null,
+    text: result.launcher_text || null,
+    bbox: result.launcher_bbox || null,
+    click_method: 'dom',
+  } : null;
+  diagnostics.post_click_panel_markers_found = Boolean(surfaceCheck && surfaceCheck.ok === true);
+  diagnostics.post_click_panel_markers = surfaceCheck?.found_markers || [];
+  if ((!surfaceCheck || surfaceCheck.ok !== true) && result.strategy === 'bottom_composer_config_pill') {
+    const coordinateClick = opts?.coordinateClick || opts?.cdpCoordinateClick || null;
+    if (typeof coordinateClick === 'function' && result.launcher_bbox) {
+      const cdpResult = await coordinateClick({
+        tabId,
+        strategy: result.strategy,
+        text: result.launcher_text || null,
+        bbox: result.launcher_bbox,
+        x: Math.round(result.launcher_bbox.x + (result.launcher_bbox.width / 2)),
+        y: Math.round(result.launcher_bbox.y + (result.launcher_bbox.height / 2)),
+      });
+      diagnostics.attempted_strategies = (diagnostics.attempted_strategies || []).concat([{
+        strategy: 'bottom_composer_config_pill',
+        label: 'bottom composer config pill',
+        reason: 'cdp_fallback_invoked',
+        clicked_candidate: Boolean(cdpResult && cdpResult.ok === true),
+        click_method: 'cdp_visible_coordinate',
+        candidate_text: result.launcher_text || null,
+        candidate_bbox: result.launcher_bbox || null,
+      }]);
+      if (cdpResult && cdpResult.ok === true) {
+        const settle = Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS));
+        await _sleep(settle);
+        surfaceCheck = await _runMainWorld(
+          scripting, tabId, MAIN_isComposerSurfaceOpen, [],
+        );
+        diagnostics.clicked_candidate = {
+          strategy: result.strategy || null,
+          text: result.launcher_text || null,
+          bbox: result.launcher_bbox || null,
+          click_method: 'cdp_visible_coordinate',
+        };
+        diagnostics.post_click_panel_markers_found = Boolean(surfaceCheck && surfaceCheck.ok === true);
+        diagnostics.post_click_panel_markers = surfaceCheck?.found_markers || [];
+      }
+    }
+  }
   if (!surfaceCheck || surfaceCheck.ok !== true) {
     return {
       ok: false,
@@ -1298,6 +1538,7 @@ async function _openComposerSettingsPanel(scripting, tabId, opts) {
     already_open: Boolean(result.already_open),
     surface_role: surfaceCheck.role,
     strategy: result.strategy || null,
+    click_method: diagnostics.clicked_candidate?.click_method || (result.already_open ? 'already_open' : 'dom'),
     diagnostics,
   };
 }
@@ -1663,6 +1904,7 @@ const _api = {
   _clickUploadMedia,
   _invokeGenerate,
   // Constants
+  F2V_FLOW_QUEUE_RUNNER_BUILD_ID,
   SOP_SEQUENCE,
   ERR,
   SOP_DEFAULT_SETTLE_MS,

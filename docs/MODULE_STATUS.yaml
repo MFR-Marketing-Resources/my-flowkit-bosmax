@@ -29,6 +29,7 @@ domains:
       - agent/models/i2v_semantic_slot_resolver.py
       - agent/services/approved_product_package_service.py
       - agent/services/creative_asset_service.py
+      - agent/services/flow_client.py
       - agent/services/fastmoss_bulk_promotion_service.py
       - agent/services/fastmoss_product_reference_service.py
       - agent/services/bosmax_product_family.py
@@ -90,7 +91,11 @@ domains:
       - extension/popup.html
       - extension/popup.js
       - dashboard/src/types/index.ts
+      - scripts/forensic-f2v-runtime-audit.ps1
+      - scripts/forensic-import-simulation.js
       - scripts/test-f2v-asset-picker-modal.js
+      - scripts/test-f2v-flow-queue-runner.js
+      - scripts/test-cdp-visible-clicker.js
       - scripts/test-f2v-cdp-file-chooser-poc.js
       - scripts/test-f2v-playwright-persistent-context.js
       - scripts/test-flow-selector-registry.js

@@ -365,6 +365,7 @@ async function waitForCdpFileChooserProof(tabId) {
 
 const WS_METHOD_TIMEOUT_MS = {
 	get_status: 5000,
+	GET_RUNTIME_SELF_TEST: 60000,
 	CHECK_FLOW_COMPOSER_READY: 12000,
 	FLOW_PAGE_STATE_DIAGNOSTIC: 12000,
 	RELOAD_FLOW_TAB: 12000,
@@ -617,6 +618,19 @@ function summarizeFlowTab(tab) {
 		title: tab.title || null,
 		url: tab.url || null,
 	};
+}
+
+function classifyFlowTabKind(tab) {
+	if (!tab?.url) {
+		return "UNKNOWN";
+	}
+	if (isProjectEditorUrl(tab.url)) {
+		return "EDITOR";
+	}
+	if (isRootFlowUrl(tab.url)) {
+		return "ROOT";
+	}
+	return "OTHER_FLOW";
 }
 
 function summarizeOpenFlowResult(result) {
@@ -1408,15 +1422,17 @@ function connectToAgent() {
 			} else if (msg.method === "solve_captcha") {
 				await handleSolveCaptcha(msg);
 			} else if (msg.method === "get_status") {
-				const result = await executeWsMethodAndReply(msg, async () => ({
-					state,
-					flowKeyPresent: !!flowKey,
-					manualDisconnect,
-					tokenAge: metrics.tokenCapturedAt
-						? Date.now() - metrics.tokenCapturedAt
-						: null,
-					metrics,
-				}));
+				const result = await executeWsMethodAndReply(msg, async () =>
+					buildBackgroundStatusResponse(),
+				);
+				replyToAgent(msg, result);
+			} else if (msg.method === "GET_RUNTIME_SELF_TEST") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleRuntimeSelfTest(
+						msg.params?.mode,
+						msg.params?.attempt_open_project === true,
+					),
+				);
 				replyToAgent(msg, result);
 			} else if (msg.type === "callback_secret") {
 				_callbackSecret = msg.secret;
@@ -1861,7 +1877,36 @@ function broadcastStatus() {
 	sendRuntimeMessageNoThrow({ type: "STATUS_PUSH" });
 }
 
-const BUILD_ID = "flowkit-google-flow-phase1a-2026-05-23";
+const BUILD_ID = "flowkit-f2v-runner-audit-2026-05-28b";
+
+function buildBackgroundStatusResponse() {
+	const buildId = BUILD_ID;
+	const runtimeReady = true;
+	return {
+		connected: ws?.readyState === WebSocket.OPEN,
+		agentConnected: ws?.readyState === WebSocket.OPEN,
+		flowKeyPresent: !!flowKey,
+		manualDisconnect,
+		tokenAge: metrics.tokenCapturedAt
+			? Date.now() - metrics.tokenCapturedAt
+			: null,
+		metrics: {
+			requestCount: metrics.requestCount,
+			successCount: metrics.successCount,
+			failedCount: metrics.failedCount,
+			lastError: metrics.lastError,
+		},
+		state,
+		buildId,
+		build_id: buildId,
+		background_build_id: buildId,
+		gitSha: buildId,
+		git_sha: buildId,
+		runtimeReady,
+		runtime_ready: runtimeReady,
+		build_match: true,
+	};
+}
 
 function buildStageTelemetryPayload(message = {}, contentHealth = null) {
 	return {
@@ -1906,25 +1951,7 @@ function postStageTelemetry(message = {}, contentHealth = null) {
 
 async function handleMessage(msg, sender) {
 	if (msg.type === "STATUS") {
-		return {
-			connected: ws?.readyState === WebSocket.OPEN,
-			agentConnected: ws?.readyState === WebSocket.OPEN,
-			flowKeyPresent: !!flowKey,
-			manualDisconnect,
-			tokenAge: metrics.tokenCapturedAt
-				? Date.now() - metrics.tokenCapturedAt
-				: null,
-			metrics: {
-				requestCount: metrics.requestCount,
-				successCount: metrics.successCount,
-				failedCount: metrics.failedCount,
-				lastError: metrics.lastError,
-			},
-			state,
-			buildId: BUILD_ID,
-			gitSha: BUILD_ID,
-			runtimeReady: true,
-		};
+		return buildBackgroundStatusResponse();
 	}
 
 	if (msg.type === "DISCONNECT") {
@@ -2113,6 +2140,20 @@ async function handleMessage(msg, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+	if (message.type === "STATUS") {
+		sendResponse(buildBackgroundStatusResponse());
+		return false;
+	}
+
+	if (message.type === "GET_RUNTIME_SELF_TEST") {
+		return respondAsync(sendResponse, async () =>
+			handleRuntimeSelfTest(
+				message.mode,
+				message.attempt_open_project === true,
+			),
+		);
+	}
+
 	// LONG-RUNNING JOBS: Use immediate ACK pattern
 	if (message.type === "EXECUTE_FLOW_JOB") {
 		sendResponse({
@@ -2392,6 +2433,144 @@ async function handleFlowPageStateDiagnostic(mode) {
 		...diagnostic,
 		...response,
 		flow_url: response?.flow_url || flowTab.url,
+	};
+}
+
+function classifyContentReceiverError(rawError) {
+	const message = String(rawError || "").trim();
+	if (!message) {
+		return null;
+	}
+	if (
+		message.includes("ABORT_FLOW_MODE_MISMATCH") ||
+		message.includes("FLOW_MODE_MISMATCH")
+	) {
+		return null;
+	}
+	if (
+		message === "ERR_NO_RECEIVER" ||
+		message === "ERR_CONTENT_SCRIPT_STALE" ||
+		message === "ERR_MESSAGE_RESPONSE_TIMEOUT" ||
+		message.startsWith("ERR_RUNTIME_LASTERROR")
+	) {
+		return "ERR_FLOW_CONTENT_RECEIVER_MISSING";
+	}
+	return message;
+}
+
+function isPreselectionEditorReadyDiagnostic(diagnostic) {
+	if (!diagnostic || typeof diagnostic !== "object") {
+		return false;
+	}
+	const markers = Array.isArray(diagnostic.visible_project_editor_markers)
+		? diagnostic.visible_project_editor_markers.map((value) => String(value))
+		: [];
+	const modeVisible = String(diagnostic.current_mode_visible || "");
+	const showsVideoFrames =
+		modeVisible.includes("Video/Frames") ||
+		(markers.includes("Video") && markers.includes("Frames"));
+	return Boolean(
+		diagnostic.runtime_ready &&
+			diagnostic.content_script_loaded &&
+			diagnostic.content_script_alive &&
+			diagnostic.composer_found &&
+			diagnostic.composer_editable &&
+			diagnostic.generate_button_found &&
+			diagnostic.prompt_field_found &&
+			showsVideoFrames,
+	);
+}
+
+async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
+	const preferredUrl = await getStoredFlowProjectUrl();
+	let flowTabs = await getFlowTabs();
+	let selectedTab = selectBestFlowTab(flowTabs, preferredUrl);
+	let openFlowResult = null;
+
+	if (
+		attemptOpenProject &&
+		selectedTab &&
+		isRootFlowUrl(selectedTab.url) &&
+		!isProjectEditorUrl(selectedTab.url)
+	) {
+		openFlowResult = await handleOpenFlowNewProject(mode);
+		flowTabs = await getFlowTabs();
+		selectedTab = selectBestFlowTab(
+			flowTabs,
+			openFlowResult?.flow_url || preferredUrl,
+		);
+	}
+
+	const pageDiagnostic = await handleFlowPageStateDiagnostic(mode);
+	const composerDiagnostic = await handleCheckFlowComposerReady(mode);
+	const runnerApi =
+		typeof self !== "undefined" ? self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__ : null;
+	const contentBuildId = String(
+		pageDiagnostic?.content_build_id ||
+			composerDiagnostic?.content_build_id ||
+			"",
+	).trim();
+	const buildMismatchError =
+		contentBuildId && contentBuildId !== BUILD_ID
+			? "ERR_EXTENSION_BUILD_MISMATCH"
+			: null;
+	const pagePreselectionReady =
+		isPreselectionEditorReadyDiagnostic(pageDiagnostic);
+	const composerModeMismatchNonFatal =
+		pagePreselectionReady &&
+		String(composerDiagnostic?.error || "").includes(
+			"ABORT_FLOW_MODE_MISMATCH",
+		);
+	const contentReceiverError = classifyContentReceiverError(
+		pageDiagnostic?.error ||
+			pageDiagnostic?.raw_error ||
+			composerDiagnostic?.error ||
+			composerDiagnostic?.raw_error,
+	);
+	const lastError =
+		metrics.lastError ||
+		buildMismatchError ||
+		contentReceiverError ||
+		(composerModeMismatchNonFatal
+			? null
+			: composerDiagnostic?.error ||
+				pageDiagnostic?.error ||
+				openFlowResult?.error ||
+				null);
+	const selfTestOk = Boolean(selectedTab) && !lastError;
+
+	return {
+		ok: selfTestOk,
+		...buildBackgroundStatusResponse(),
+		extension_id: chrome.runtime.id || null,
+		expected_content_build_id: BUILD_ID,
+		bosmax_build_proof: BOSMAX_BUILD_PROOF,
+		runner_loaded: Boolean(runnerApi),
+		runner_api_keys: runnerApi ? Object.keys(runnerApi) : [],
+		cdp_engine_loaded: Boolean(
+			chrome?.debugger &&
+				typeof beginCdpFileChooserProof === "function" &&
+				typeof waitForCdpFileChooserProof === "function",
+		),
+		flow_tabs: flowTabs.map((tab) => ({
+			...summarizeFlowTab(tab),
+			tab_kind: classifyFlowTabKind(tab),
+		})),
+		target_tab: selectedTab
+			? {
+					...summarizeFlowTab(selectedTab),
+					tab_kind: classifyFlowTabKind(selectedTab),
+				}
+			: null,
+		preferred_flow_project_url: preferredUrl,
+		open_flow_result: summarizeOpenFlowResult(openFlowResult),
+		page_diagnostic: pageDiagnostic,
+		composer_diagnostic: composerDiagnostic,
+		page_preselection_ready: pagePreselectionReady,
+		composer_mode_mismatch_non_fatal: composerModeMismatchNonFatal,
+		content_receiver_error: contentReceiverError,
+		build_mismatch_error: buildMismatchError,
+		last_error: lastError,
 	};
 }
 

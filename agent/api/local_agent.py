@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
 import uuid
+from hashlib import sha1
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -79,6 +81,40 @@ def get_dashboard_paths() -> tuple[Path, Path]:
 def get_dashboard_serving_mode() -> str:
     _, index_file = get_dashboard_paths()
     return "BACKEND_SERVED_STATIC" if index_file.exists() else "BACKEND_BUILD_REQUIRED"
+
+
+def _file_sha1(path: Path) -> str | None:
+    try:
+        return sha1(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _file_mtime_iso(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+    except OSError:
+        return None
+
+
+def _dashboard_asset_manifest(dist_dir: Path) -> list[dict[str, str | int | None]]:
+    assets_dir = dist_dir / "assets"
+    if not assets_dir.exists():
+        return []
+
+    manifest: list[dict[str, str | int | None]] = []
+    for candidate in sorted(assets_dir.iterdir()):
+        if not candidate.is_file():
+            continue
+        manifest.append(
+            {
+                "name": candidate.name,
+                "size_bytes": candidate.stat().st_size,
+                "sha1": _file_sha1(candidate),
+                "modified_at": _file_mtime_iso(candidate),
+            }
+        )
+    return manifest[:12]
 
 
 def _ps_single_quote(value: str) -> str:
@@ -243,6 +279,76 @@ async def get_local_agent_status():
 @router.get("/registration", response_model=LocalAgentRegistration)
 async def get_local_agent_registration():
     return load_registration()
+
+
+@router.get("/extension-self-test")
+async def get_local_agent_extension_self_test(
+    mode: str = "F2V",
+    attempt_open_project: bool = True,
+):
+    from agent.config import API_HOST, API_PORT, DB_PATH, WS_HOST, WS_PORT
+    from agent.services.flow_client import get_flow_client
+
+    client = get_flow_client()
+    dist_dir, index_file = get_dashboard_paths()
+    try:
+        extension_status = await asyncio.wait_for(client.get_status(), timeout=8)
+    except TimeoutError:
+        extension_status = {
+            "ok": False,
+            "connected": getattr(client, "connected", False),
+            "error": "ERR_EXTENSION_STATUS_TIMEOUT",
+        }
+    except Exception as exc:  # pragma: no cover - defensive runtime guard
+        extension_status = {
+            "ok": False,
+            "connected": getattr(client, "connected", False),
+            "error": f"ERR_EXTENSION_STATUS_EXCEPTION: {exc}",
+        }
+
+    try:
+        extension_self_test = await asyncio.wait_for(
+            client.get_extension_self_test(
+                mode=mode,
+                attempt_open_project=attempt_open_project,
+            ),
+            timeout=20,
+        )
+    except TimeoutError:
+        extension_self_test = {
+            "ok": False,
+            "connected": getattr(client, "connected", False),
+            "error": "ERR_EXTENSION_SELF_TEST_TIMEOUT",
+        }
+    except Exception as exc:  # pragma: no cover - defensive runtime guard
+        extension_self_test = {
+            "ok": False,
+            "connected": getattr(client, "connected", False),
+            "error": f"ERR_EXTENSION_SELF_TEST_EXCEPTION: {exc}",
+        }
+
+    return {
+        "timestamp": _iso_now(),
+        "backend": {
+            "base_dir": str(BASE_DIR.resolve()),
+            "db_path": str(DB_PATH.resolve()),
+            "api_host": API_HOST,
+            "api_port": API_PORT,
+            "ws_host": WS_HOST,
+            "ws_port": WS_PORT,
+        },
+        "dashboard": {
+            "serving_mode": get_dashboard_serving_mode(),
+            "dist_dir": str(dist_dir.resolve()),
+            "index_file": str(index_file.resolve()),
+            "index_exists": index_file.exists(),
+            "index_sha1": _file_sha1(index_file),
+            "index_modified_at": _file_mtime_iso(index_file),
+            "asset_manifest": _dashboard_asset_manifest(dist_dir),
+        },
+        "extension_status": extension_status,
+        "extension_self_test": extension_self_test,
+    }
 
 
 @router.get("/repair", response_class=HTMLResponse)
