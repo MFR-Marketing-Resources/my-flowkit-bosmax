@@ -2233,6 +2233,44 @@ async function handleExecuteFlowJob(job) {
 	}
 	const flowTab = targetResolution.targetTab;
 
+	if (job && job.mode === "F2V") {
+		const runnerApi = typeof self !== "undefined" ? self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__ : null;
+		if (runnerApi) {
+			console.log("[FlowAgent] Routing F2V job directly to f2v-flow-queue-runner");
+			const deps = {
+				scripting: runnerApi.createChromeScriptingAdapter(chrome),
+				telemetry: (payload) => {
+					const contentHealth = getKnownContentScriptHealth(flowTab.id);
+					postStageTelemetry(
+						{
+							request_id: job.request_id || `flow_${Date.now()}`,
+							stage: payload.stage,
+							status: payload.status,
+							message: payload.message,
+							source: "extension",
+						},
+						contentHealth,
+					);
+				},
+			};
+			try {
+				const runnerResult = await runnerApi.executeF2VVisibleSopRunner(deps, flowTab.id, job, {
+					settleMs: 300,
+					uploadWaitMs: 10000,
+				});
+				return runnerResult;
+			} catch (err) {
+				return {
+					ok: false,
+					error: "ERR_F2V_SOP_RUNNER_THREW",
+					detail: String(err?.message || err || ''),
+				};
+			}
+		} else {
+			console.warn("[FlowAgent] F2V runner not loaded, falling back to content-flow-dom");
+		}
+	}
+
 	await ensureFlowDomScript(flowTab.id);
 
 	const initialHealth = await pingFlowDomScript(flowTab);

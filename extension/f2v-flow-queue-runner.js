@@ -122,21 +122,21 @@ const SOP_SEQUENCE = Object.freeze([
   },
   {
     label: '9:16',
-    aliases: ['9 : 16', 'Portrait 9:16'],
+    aliases: ['9 : 16', 'Portrait 9:16', 'crop_9_16', 'crop-9-16', 'crop 9:16', 'crop_9:16', 'crop_9_16 Portrait 9:16', 'crop_9_16 Portrait', 'crop_9_16 9:16'],
     preferredRoles: ['option', 'menuitemradio', 'menuitem', 'tab'],
     stage: 'F2V_SOP_RATIO_9_16_CLICKED',
     errorCode: 'ERR_F2V_OPTION_RATIO_9_16_NOT_FOUND',
   },
   {
     label: '1x',
-    aliases: ['1×', '1 variation'],
+    aliases: ['1×', '1 variation', '1 x', 'x1', '1x 1 variation', '1x 1'],
     preferredRoles: ['option', 'menuitemradio', 'menuitem', 'tab'],
     stage: 'F2V_SOP_COUNT_1X_CLICKED',
     errorCode: 'ERR_F2V_OPTION_COUNT_1X_NOT_FOUND',
   },
   {
     label: 'Veo 3.1 - Lite',
-    aliases: ['Veo 3.1 Lite', 'Veo 3.1-Lite', 'Veo 3.1 — Lite'],
+    aliases: ['Veo 3.1 Lite', 'Veo 3.1-Lite', 'Veo 3.1 — Lite', 'Veo 3.1', 'Veo', 'Veo 3.1 Lite (F2V)', 'Veo 3.1 - Lite (F2V)', 'Veo Lite'],
     preferredRoles: ['option', 'menuitemradio', 'menuitem'],
     stage: 'F2V_SOP_MODEL_VEO_CLICKED',
     errorCode: 'ERR_F2V_OPTION_VEO_3_1_LITE_NOT_FOUND',
@@ -1349,6 +1349,116 @@ function MAIN_stampGenerateButton(stampAttr) {
   return { ok: false, reason: 'no_generate_button_visible' };
 }
 
+/**
+ * MAIN-world: read the bottom composer config pill and current active model label
+ * to verify if our settings are already correctly applied (permits bypassing clicks).
+ */
+function MAIN_getBottomComposerState() {
+  function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+  function lower(s) { return normalize(s).toLowerCase(); }
+  
+  var els = document.querySelectorAll('*');
+  var pillText = '';
+  var modelText = '';
+  
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i];
+    if (el.offsetWidth === 0 || el.offsetHeight === 0) continue;
+    var style = window.getComputedStyle(el);
+    if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) continue;
+    
+    var txt = normalize(el.textContent || el.getAttribute('aria-label') || '');
+    var ltxt = txt.toLowerCase();
+    if (ltxt.indexOf('video') >= 0 && (ltxt.indexOf('crop') >= 0 || ltxt.indexOf('16:9') >= 0 || ltxt.indexOf('9:16') >= 0 || ltxt.indexOf('portrait') >= 0)) {
+      if (ltxt.indexOf('x2') >= 0 || ltxt.indexOf('1x') >= 0 || ltxt.indexOf('2x') >= 0 || ltxt.indexOf('variation') >= 0) {
+        if (!pillText || txt.length < pillText.length) {
+          pillText = txt;
+        }
+      }
+    }
+  }
+  
+  for (var j = 0; j < els.length; j++) {
+    var el2 = els[j];
+    if (el2.offsetWidth === 0 || el2.offsetHeight === 0) continue;
+    var txt2 = normalize(el2.textContent || el2.getAttribute('aria-label') || '');
+    if (/\b(veo|nano\s*banana|gemini|imagen|model)\b/i.test(txt2) && txt2.length < 80) {
+      if (txt2.toLowerCase().indexOf('create') === -1 && txt2.toLowerCase().indexOf('generate') === -1) {
+        modelText = txt2;
+      }
+    }
+  }
+  
+  return {
+    ok: true,
+    pillText: pillText,
+    modelText: modelText
+  };
+}
+
+/**
+ * MAIN-world: discover sub-launchers (e.g. aspect dropdown, variations dropdown, model selector)
+ * inside the open settings panel so the automation can unfold nested settings menus.
+ */
+function MAIN_findSettingLauncher(settingType) {
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+  function lower(s) { return normalize(s).toLowerCase(); }
+  
+  var surfaces = document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"]');
+  var panel = null;
+  for (var i = 0; i < surfaces.length; i++) {
+    if (isVisible(surfaces[i])) {
+      panel = surfaces[i];
+      break;
+    }
+  }
+  if (!panel) return null;
+  
+  var nodes = panel.querySelectorAll('button, [role="button"], [role="combobox"], [aria-haspopup], [data-state], [tabindex], div, span');
+  for (var j = 0; j < nodes.length; j++) {
+    var node = nodes[j];
+    if (!isVisible(node)) continue;
+    var text = lower(node.textContent || node.getAttribute('aria-label') || '');
+    
+    if (settingType === 'aspect') {
+      if (text.indexOf('crop') >= 0 || text.indexOf('16:9') >= 0 || text.indexOf('9:16') >= 0 || text.indexOf('aspect') >= 0 || text.indexOf('ratio') >= 0 || text.indexOf('portrait') >= 0 || text.indexOf('landscape') >= 0) {
+        var target = node;
+        if (node.closest) {
+          var interactive = node.closest('button, [role="button"], [role="combobox"], [aria-haspopup], [tabindex]');
+          if (interactive && isVisible(interactive)) target = interactive;
+        }
+        return target;
+      }
+    } else if (settingType === 'count') {
+      if (text.indexOf('variation') >= 0 || text.indexOf('1x') >= 0 || text.indexOf('2x') >= 0 || text.indexOf('x2') >= 0 || text.indexOf('x1') >= 0 || text.indexOf('count') >= 0 || text.indexOf('quantity') >= 0) {
+        var target = node;
+        if (node.closest) {
+          var interactive = node.closest('button, [role="button"], [role="combobox"], [aria-haspopup], [tabindex]');
+          if (interactive && isVisible(interactive)) target = interactive;
+        }
+        return target;
+      }
+    } else if (settingType === 'model') {
+      if (text.indexOf('veo') >= 0 || text.indexOf('imagen') >= 0 || text.indexOf('gemini') >= 0 || text.indexOf('model') >= 0 || text.indexOf('lite') >= 0) {
+        var target = node;
+        if (node.closest) {
+          var interactive = node.closest('button, [role="button"], [role="combobox"], [aria-haspopup], [tabindex]');
+          if (interactive && isVisible(interactive)) target = interactive;
+        }
+        return target;
+      }
+    }
+  }
+  return null;
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // Service-worker side
 // ───────────────────────────────────────────────────────────────────────
@@ -1546,23 +1656,116 @@ async function _openComposerSettingsPanel(scripting, tabId, opts) {
 /**
  * Steps 3–7 — click each visible option exactly. Stamps the matched
  * element, then clicks via a follow-up MAIN-world script that targets
- * by stamp id.
+ * by stamp id. If the setting is already visually correct in the composer,
+ * it is verified and skipped. If the option is hidden in nested menus,
+ * it discovers and opens the nested sub-launcher panel first.
  */
 async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
   const stampAttr = opts?.stampAttr || 'data-bosmax-option';
-  const findResult = await _runMainWorld(
+  
+  // 1. Semantic Verification - check if the setting is already applied!
+  const compState = await _runMainWorld(scripting, tabId, MAIN_getBottomComposerState, []);
+  if (compState && compState.ok === true) {
+    const pill = String(compState.pillText || '').toLowerCase();
+    const model = String(compState.modelText || '').toLowerCase();
+    
+    let alreadyApplied = false;
+    if (step.label === 'Video') {
+      alreadyApplied = pill.includes('video');
+    } else if (step.label === 'Frames') {
+      alreadyApplied = pill.includes('video') || model.includes('frames');
+    } else if (step.label === '9:16') {
+      alreadyApplied = pill.includes('crop_9_16') || pill.includes('9:16') || pill.includes('9 : 16') || pill.includes('portrait');
+    } else if (step.label === '1x') {
+      alreadyApplied = pill.includes('1x') || pill.includes('1×') || pill.includes('1 variation') || pill.includes('x1') || pill.includes('1 x');
+    } else if (step.label === 'Veo 3.1 - Lite') {
+      alreadyApplied = model.includes('veo 3.1') || model.includes('veo') || pill.includes('veo');
+    }
+    
+    if (alreadyApplied) {
+      console.log(`[FlowAgent] Setting ${step.label} is already applied, skipping click.`);
+      return {
+        ok: true,
+        label: step.label,
+        role: 'already_selected',
+        bbox: null,
+        skipped: true,
+      };
+    }
+  }
+
+  // 2. Try to find direct option first
+  let findResult = await _runMainWorld(
     scripting, tabId, MAIN_findVisibleCandidatesByExactLabel,
     [step.label, step.aliases || [], step.preferredRoles || [], stampAttr],
   );
+  
+  // If not visible, let's explore launchers for aspect/count/model settings
   if (!findResult || findResult.ok !== true || !Array.isArray(findResult.matches) || findResult.matches.length === 0) {
+    let settingCategory = null;
+    if (step.label === '9:16') settingCategory = 'aspect';
+    else if (step.label === '1x') settingCategory = 'count';
+    else if (step.label === 'Veo 3.1 - Lite') settingCategory = 'model';
+    
+    if (settingCategory) {
+      console.log(`[FlowAgent] Option ${step.label} not directly visible. Searching for launcher for: ${settingCategory}`);
+      // Find launcher inside settings panel
+      const launcherInfo = await _runMainWorld(
+        scripting, tabId,
+        function (category, attr) {
+          var el = MAIN_findSettingLauncher(category);
+          if (!el) return null;
+          var id = attr + '-' + Date.now();
+          el.setAttribute(attr, id);
+          var rect = el.getBoundingClientRect();
+          return { stamp_id: id, stamp_attr: attr, text: el.textContent, bbox: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } };
+        },
+        [settingCategory, 'data-bosmax-sublauncher']
+      );
+      
+      if (launcherInfo) {
+        console.log(`[FlowAgent] Found sub-launcher for ${settingCategory}: ${launcherInfo.text}. Clicking it to open nested menu.`);
+        // Click the sub-launcher to open portal/sub-menu
+        const clickLauncher = await _runMainWorld(
+          scripting, tabId, MAIN_clickStampedElement,
+          [launcherInfo.stamp_attr, launcherInfo.stamp_id]
+        );
+        
+        await _sleep(Math.max(300, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+        
+        // Now try finding the option again (it should be visible in portal/menu)
+        findResult = await _runMainWorld(
+          scripting, tabId, MAIN_findVisibleCandidatesByExactLabel,
+          [step.label, step.aliases || [], step.preferredRoles || [], stampAttr],
+        );
+      }
+    }
+  }
+
+  // 3. Fallback/Error if option still not visible
+  if (!findResult || findResult.ok !== true || !Array.isArray(findResult.matches) || findResult.matches.length === 0) {
+    const diagnostics = {
+      current_bottom_pill_before: compState?.pillText || 'unknown',
+      panel_opened: true,
+      panel_candidate_count: findResult?.visible_candidates?.length || 0,
+      visible_candidates: findResult?.visible_candidates || [],
+      clicked_aspect_candidate: null,
+      clicked_candidate_bbox: null,
+      click_method: 'DOM',
+      post_click_bottom_pill: 'unknown',
+      post_click_detected_aspect: 'unknown',
+      whether_panel_closed: false,
+    };
     return {
       ok: false,
       error: step.errorCode,
-      detail: 'no_visible_match',
+      detail: JSON.stringify(diagnostics),
       label: step.label,
       visible_candidates: findResult?.visible_candidates || [],
     };
   }
+
+  // 4. Stamp and click the matched option
   const top = findResult.matches[0];
   const clickResult = await _runMainWorld(
     scripting, tabId, MAIN_clickStampedElement,
@@ -1576,8 +1779,18 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
       label: step.label,
     };
   }
-  // Tiny settle so the next probe sees committed state.
+  
+  // Settle wait
   await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+
+  // 5. Recover if panel closed after click!
+  // If the surface closed, we reopen the settings panel for subsequent steps
+  const panelOpen = await _runMainWorld(scripting, tabId, MAIN_isComposerSurfaceOpen, []);
+  if (!panelOpen || panelOpen.ok !== true) {
+    console.log(`[FlowAgent] Settings surface closed after selecting ${step.label}. Re-opening launcher.`);
+    await _openComposerSettingsPanel(scripting, tabId, opts);
+  }
+
   return {
     ok: true,
     label: step.label,
