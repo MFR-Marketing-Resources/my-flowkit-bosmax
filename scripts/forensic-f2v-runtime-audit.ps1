@@ -2,8 +2,14 @@ param(
     [string]$ApiBaseUrl = "http://127.0.0.1:8100",
     [string]$ChromeUserDataDir = "$env:LOCALAPPDATA\\Google\\Chrome\\User Data",
     [string]$ProductId = "",
-    [switch]$AttemptOpenProject = $true
+    [switch]$AttemptOpenProject = $true,
+    [switch]$UseExistingFlowTab,
+    [switch]$NoOpenProject
 )
+
+if ($NoOpenProject) {
+    $AttemptOpenProject = $false
+}
 
 $ErrorActionPreference = "Stop"
 
@@ -484,10 +490,35 @@ $nonFatalModeMismatch = [bool](
         ([string]$extensionRuntime.last_error -like "*ABORT_FLOW_MODE_MISMATCH*")
     )
 )
+$liveWorkerBuildId = ""
+if ($extensionRuntime) {
+    $liveWorkerBuildId = [string](
+        $extensionRuntime.background_build_id
+    )
+    if ([string]::IsNullOrWhiteSpace($liveWorkerBuildId)) {
+        $liveWorkerBuildId = [string]($extensionRuntime.build_id)
+    }
+    if ([string]::IsNullOrWhiteSpace($liveWorkerBuildId)) {
+        $liveWorkerBuildId = [string]($extensionRuntime.buildId)
+    }
+    if ([string]::IsNullOrWhiteSpace($liveWorkerBuildId)) {
+        $liveWorkerBuildId = [string]($extensionRuntime.git_sha)
+    }
+    if ([string]::IsNullOrWhiteSpace($liveWorkerBuildId)) {
+        $liveWorkerBuildId = [string]($extensionRuntime.gitSha)
+    }
+}
+$liveWorkerBuildMatchesExpected = [bool](
+    $liveWorkerBuildId -and
+    $backgroundBuildId -and
+    ($liveWorkerBuildId -eq $backgroundBuildId)
+)
 $runnerSelfTestOk = [bool](
     $extensionSelfTest -and
     $extensionRuntime -and
     ($extensionRuntime.ok -eq $true) -and
+    ($extensionRuntime.runner_loaded -eq $true) -and
+    $liveWorkerBuildMatchesExpected -and
     -not $extensionRuntime.error -and
     (
         (-not $extensionRuntime.last_error) -or
@@ -501,6 +532,8 @@ Set-Section `
     -Details ([ordered]@{
         endpoint = "$ApiBaseUrl/api/local-agent/extension-self-test?mode=F2V&attempt_open_project=$($AttemptOpenProject.ToString().ToLowerInvariant())"
         endpoint_error = $selfTestError
+        expected_live_worker_build_id = $backgroundBuildId
+        live_worker_build_id = $liveWorkerBuildId
         payload = $extensionSelfTest
     }) `
     -RepairCommand "powershell -ExecutionPolicy Bypass -File .\scripts\start-local-agent.ps1 -ForceRestart"
@@ -548,7 +581,7 @@ Set-Section `
         target_tab = $targetTab
         open_flow_result = if ($extensionRuntime) { $extensionRuntime.open_flow_result } else { $null }
     }) `
-    -RepairCommand "Open a Google Flow editor tab or let the self-test attempt one root-to-editor transition, then rerun the audit."
+    -RepairCommand $(if ($UseExistingFlowTab) { "Open a Google Flow editor tab manually in your active Chrome session, then rerun the audit." } else { "Open a Google Flow editor tab or let the self-test attempt one root-to-editor transition, then rerun the audit." })
 
 $composerDiagnostic = if ($extensionRuntime) { $extensionRuntime.composer_diagnostic } else { $null }
 $flowEditorReadyOk = [bool](
@@ -567,7 +600,7 @@ Set-Section `
         composer_diagnostic = $composerDiagnostic
         page_diagnostic = $pageDiagnostic
     }) `
-    -RepairCommand "Invoke-RestMethod '$ApiBaseUrl/api/local-agent/extension-self-test?mode=F2V&attempt_open_project=true'"
+    -RepairCommand $(if ($NoOpenProject) { "Ensure an editor tab is open and fully loaded manually, then rerun the audit." } else { "Invoke-RestMethod '$ApiBaseUrl/api/local-agent/extension-self-test?mode=F2V&attempt_open_project=true'" })
 
 $parityChecks = [ordered]@{
     scripting_permission = $extensionFilesDetails.scripting_permission_present

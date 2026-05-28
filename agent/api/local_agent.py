@@ -351,6 +351,18 @@ async def get_local_agent_extension_self_test(
     }
 
 
+@router.get("/reload-flow-tab")
+async def get_reload_flow_tab():
+    from agent.services.flow_client import get_flow_client
+    client = get_flow_client()
+    if not client.connected:
+        return {"ok": False, "error": "Extension not connected"}
+    try:
+        return await asyncio.wait_for(client.reload_flow_tab(), timeout=15)
+    except Exception as exc:
+        return {"ok": False, "error": f"Reload failed: {exc}"}
+
+
 @router.get("/repair", response_class=HTMLResponse)
 async def get_repair_page():
     status = await get_local_agent_status()
