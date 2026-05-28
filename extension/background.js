@@ -5,6 +5,41 @@
  * Captures bearer token, solves reCAPTCHA, proxies API calls through browser.
  */
 
+// Runtime proof: this unpacked folder must loudly prove whether the
+// lightweight F2V SOP runner is present at service-worker startup.
+const BOSMAX_BUILD_PROOF = Object.freeze({
+	branch: "fix/mv3-message-port-lifecycle",
+	commit: "47ce04229877bb7e579fb195f42c257c9dcc0f66",
+});
+
+try {
+	// eslint-disable-next-line no-undef
+	importScripts("f2v-flow-queue-runner.js");
+} catch (_err) {
+	console.error(
+		"[BOSMAX_F2V_FLOW_QUEUE_RUNNER] ERR_F2V_SOP_RUNNER_IMPORT_FAILED",
+		_err,
+	);
+}
+
+const _bosmaxRunnerImported = Boolean(
+	typeof self !== "undefined" && self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__,
+);
+console.log(
+	`[BOSMAX_BUILD_PROOF] branch=${BOSMAX_BUILD_PROOF.branch} commit=${BOSMAX_BUILD_PROOF.commit} runner=${_bosmaxRunnerImported}`,
+);
+if (_bosmaxRunnerImported) {
+	console.log(
+		"[BOSMAX_F2V_FLOW_QUEUE_RUNNER] background_import_ok api_keys=" +
+			Object.keys(self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__).length,
+	);
+} else {
+	console.error(
+		"[BOSMAX_F2V_FLOW_QUEUE_RUNNER] ERR_F2V_SOP_RUNNER_IMPORT_FAILED" +
+			" — runner global missing after importScripts",
+	);
+}
+
 const AGENT_WS_URL = "ws://127.0.0.1:8101";
 // NOTE: This is a browser-restricted public API key — safe to ship in extension bundles.
 const _API_KEY = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY";
@@ -37,7 +72,11 @@ function respondOnce(reply, payload) {
 // room to surface its own normalized error before respondAsync gives up.
 const DEFAULT_RESPOND_ASYNC_TIMEOUT_MS = 4500;
 
-function respondAsync(reply, task, timeoutMs = DEFAULT_RESPOND_ASYNC_TIMEOUT_MS) {
+function respondAsync(
+	reply,
+	task,
+	timeoutMs = DEFAULT_RESPOND_ASYNC_TIMEOUT_MS,
+) {
 	let settled = false;
 	let timer = null;
 
@@ -501,17 +540,21 @@ async function executeWsMethodAndReply(msg, handler) {
 
 async function getFlowTab() {
 	const preferredUrl = await getStoredFlowProjectUrl();
-	const tabs = await chrome.tabs.query({
-		url: [
-			"https://labs.google/fx/tools/flow*",
-			"https://labs.google/fx/*/tools/flow*",
-		],
-	});
+	const tabs = await getFlowTabs();
 	if (!tabs.length) {
 		return null;
 	}
 
 	return selectBestFlowTab(tabs, preferredUrl);
+}
+
+async function getFlowTabs() {
+	return await chrome.tabs.query({
+		url: [
+			"https://labs.google/fx/tools/flow*",
+			"https://labs.google/fx/*/tools/flow*",
+		],
+	});
 }
 
 function isProjectEditorUrl(url) {
@@ -560,6 +603,104 @@ function selectBestFlowTab(tabs, preferredUrl = null) {
 
 	console.log("[FlowAgent] Falling back to first tab:", tabs[0].url);
 	return tabs[0];
+}
+
+function summarizeFlowTab(tab) {
+	if (!tab) {
+		return null;
+	}
+	return {
+		tab_id: tab.id ?? null,
+		window_id: tab.windowId ?? null,
+		active: Boolean(tab.active),
+		status: tab.status || null,
+		title: tab.title || null,
+		url: tab.url || null,
+	};
+}
+
+function summarizeOpenFlowResult(result) {
+	if (!result || typeof result !== "object") {
+		return null;
+	}
+	return {
+		ok: Boolean(result.ok),
+		error: result.error || null,
+		detail: result.detail || null,
+		editor_ready: Boolean(result.editor_ready),
+		new_project_clicked: Boolean(result.new_project_clicked),
+		project_list_or_landing_detected: Boolean(
+			result.project_list_or_landing_detected,
+		),
+		flow_tab_id: result.flow_tab_id ?? null,
+		flow_url_before: result.flow_url_before || null,
+		flow_url_after: result.flow_url_after || null,
+		flow_url: result.flow_url || null,
+	};
+}
+
+async function resolveFlowExecutionTarget(job = null) {
+	const preferredUrl = await getStoredFlowProjectUrl();
+	let tabs = await getFlowTabs();
+	const initialCandidateTabs = tabs.map(summarizeFlowTab).filter(Boolean);
+	if (!tabs.length) {
+		return {
+			ok: false,
+			error: "ERR_NO_FLOW_TAB",
+			detail: {
+				reason: "no_google_flow_tabs_found",
+				candidate_tabs: [],
+			},
+		};
+	}
+
+	let selectedTab = selectBestFlowTab(tabs, preferredUrl);
+	if (selectedTab && isProjectEditorUrl(selectedTab.url)) {
+		return {
+			ok: true,
+			targetTab: selectedTab,
+			candidate_tabs: initialCandidateTabs,
+		};
+	}
+
+	if (selectedTab && isRootFlowUrl(selectedTab.url)) {
+		const openResult = await handleOpenFlowNewProject(job?.mode);
+		tabs = await getFlowTabs();
+		const candidateTabs = tabs.map(summarizeFlowTab).filter(Boolean);
+		selectedTab =
+			tabs.find((tab) => tab.id === openResult?.flow_tab_id) ||
+			selectBestFlowTab(tabs, openResult?.flow_url || preferredUrl);
+		if (selectedTab && isProjectEditorUrl(selectedTab.url)) {
+			return {
+				ok: true,
+				targetTab: selectedTab,
+				candidate_tabs: candidateTabs,
+				open_flow_result: summarizeOpenFlowResult(openResult),
+			};
+		}
+		return {
+			ok: false,
+			error: "ERR_FLOW_TAB_NOT_TARGETED",
+			candidate_tabs: candidateTabs,
+			detail: {
+				reason: "flow_root_without_project_editor",
+				target_tab_url: selectedTab?.url || openResult?.flow_url || null,
+				candidate_tabs: candidateTabs,
+				open_flow_result: summarizeOpenFlowResult(openResult),
+			},
+		};
+	}
+
+	return {
+		ok: false,
+		error: "ERR_FLOW_TAB_NOT_TARGETED",
+		candidate_tabs: initialCandidateTabs,
+		detail: {
+			reason: "flow_tab_not_project_editor",
+			target_tab_url: selectedTab?.url || null,
+			candidate_tabs: initialCandidateTabs,
+		},
+	};
 }
 
 async function getStoredFlowProjectUrl() {
@@ -2040,10 +2181,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleExecuteFlowJob(job) {
-	const flowTab = await getFlowTab();
-	if (!flowTab) {
-		return { ok: false, error: "ERR_NO_FLOW_TAB" };
+	const targetResolution = await resolveFlowExecutionTarget(job);
+	if (!targetResolution.ok) {
+		return {
+			ok: false,
+			error: targetResolution.error,
+			detail: targetResolution.detail || null,
+			candidate_tabs: targetResolution.candidate_tabs || [],
+		};
 	}
+	const flowTab = targetResolution.targetTab;
 
 	await ensureFlowDomScript(flowTab.id);
 
