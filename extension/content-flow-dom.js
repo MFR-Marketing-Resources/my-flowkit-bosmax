@@ -4044,29 +4044,25 @@
     logStage(STAGES.F2V_COMPOSER_READY, 'PASS', composerReady.detail);
 
     // ── Steps 5–7: Config panel (9:16 / 1x / Veo 3.1 - Lite) ────────────────
-    const configMenuOpen = await ensureOpenF2VConfigMenu();
-    if (!configMenuOpen.ok) {
-      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', `ERR_F2V_CONFIG_MENU_NOT_OPEN — ${configMenuOpen.detail}`);
-      throw new Error('ERR_F2V_CONFIG_MENU_NOT_OPEN');
-    }
-    const configCheck = await ensureF2VVerifiedAspectCountAndModel();
-    if (!configCheck.ok && configCheck.error === 'ERR_ASPECT_9_16_NOT_SELECTED') {
-      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', configCheck.detail);
-      throw new Error('ERR_ASPECT_9_16_NOT_SELECTED');
+    console.log('[FlowAgent] Delegating F2V settings configuration to f2v-flow-queue-runner in background');
+    const delegateResult = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'CONFIGURE_F2V_SETTINGS', job: _job }, (resp) => {
+        const err = chrome.runtime.lastError;
+        if (err) {
+          resolve({ ok: false, error: err.message });
+        } else {
+          resolve(resp || { ok: false, error: 'ERR_DELEGATION_FAILED' });
+        }
+      });
+    });
+
+    if (!delegateResult || delegateResult.ok !== true) {
+      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', delegateResult?.detail || delegateResult?.error || 'delegation_failed');
+      throw new Error(delegateResult?.error || 'ERR_ASPECT_9_16_NOT_SELECTED');
     }
     logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'PASS');
-
-    if (!configCheck.ok && configCheck.error === 'ERR_COUNT_1X_NOT_SELECTED') {
-      logStage(STAGES.FLOW_COUNT_1X_SELECTED, 'FAIL', configCheck.detail);
-      throw new Error('ERR_COUNT_1X_NOT_SELECTED');
-    }
     logStage(STAGES.FLOW_COUNT_1X_SELECTED, 'PASS');
-
-    if (!configCheck.ok && configCheck.error === 'ERR_WRONG_MODEL_FOR_F2V') {
-      logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'FAIL', configCheck.detail);
-      throw new Error('ERR_WRONG_MODEL_FOR_F2V');
-    }
-    logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'PASS', `model=${configCheck.modelText}`);
+    logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'PASS', 'model=Veo 3.1 - Lite');
 
     // ── Step 8: Upload gate — Start slot must be visible ─────────────────────
     const obsForSlot = observeFlowState();

@@ -2046,6 +2046,10 @@ async function handleMessage(msg, sender) {
 		return await handleExecuteFlowJob(msg.job);
 	}
 
+	if (msg.type === "CONFIGURE_F2V_SETTINGS") {
+		return await handleConfigureF2VSettings(msg.job, sender?.tab?.id);
+	}
+
 	if (msg.type === "FLOW_JOB_COMPLETED" || msg.type === "FLOW_JOB_FAILED") {
 		return { ok: true };
 	}
@@ -2307,6 +2311,48 @@ async function handleExecuteFlowJob(job) {
 	}
 
 	return result;
+}
+
+async function handleConfigureF2VSettings(job, tabId) {
+	const activeTabId = tabId || (await getFlowTab())?.id;
+	if (!activeTabId) {
+		return { ok: false, error: "ERR_NO_FLOW_TAB", detail: "No active Google Flow tab was targeted." };
+	}
+	const runnerApi = typeof self !== "undefined" ? self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__ : null;
+	if (!runnerApi) {
+		return { ok: false, error: "ERR_F2V_RUNNER_NOT_LOADED", detail: "Runner API not loaded in background." };
+	}
+	console.log("[FlowAgent] Background delegated settings configuration triggered for tab:", activeTabId);
+	const deps = {
+		scripting: runnerApi.createChromeScriptingAdapter(chrome),
+		telemetry: (payload) => {
+			const contentHealth = getKnownContentScriptHealth(activeTabId);
+			postStageTelemetry(
+				{
+					request_id: job?.request_id || `flow_${Date.now()}`,
+					stage: payload.stage,
+					status: payload.status,
+					message: payload.message,
+					source: "extension",
+				},
+				contentHealth,
+			);
+		},
+	};
+	try {
+		const runnerResult = await runnerApi.executeF2VVisibleSopRunner(deps, activeTabId, job, {
+			settleMs: 300,
+			skipUpload: true,
+			skipGenerate: true,
+		});
+		return runnerResult;
+	} catch (err) {
+		return {
+			ok: false,
+			error: "ERR_F2V_SOP_RUNNER_THREW",
+			detail: String(err?.message || err || ''),
+		};
+	}
 }
 
 async function handleDebugFlowDomExecution(mode, job) {

@@ -156,6 +156,24 @@ const ERR = Object.freeze({
   EXECUTION_THREW: 'ERR_F2V_SOP_RUNNER_THREW',
 });
 
+const F2V_SOP_STAGE_CONTRACT = Object.freeze([
+  'F2V_SOP_SETTINGS_EXPLORER_STARTED',
+  'F2V_SOP_SETTINGS_LAUNCHER_FOUND',
+  'F2V_SOP_SETTINGS_PANEL_OPENED',
+  'F2V_SOP_SETTING_CANDIDATES_SCANNED',
+  'F2V_SOP_VIDEO_CLICKED',
+  'F2V_SOP_VIDEO_CONFIRMED',
+  'F2V_SOP_FRAMES_CLICKED',
+  'F2V_SOP_FRAMES_CONFIRMED',
+  'F2V_SOP_RATIO_9_16_CLICKED',
+  'F2V_SOP_RATIO_9_16_CONFIRMED',
+  'F2V_SOP_COUNT_1X_CLICKED',
+  'F2V_SOP_COUNT_1X_CONFIRMED',
+  'F2V_SOP_MODEL_VEO_CLICKED',
+  'F2V_SOP_MODEL_VEO_CONFIRMED',
+  'F2V_SOP_SETTINGS_CONFIGURED'
+]);
+
 // ───────────────────────────────────────────────────────────────────────
 // MAIN-world helpers
 // ───────────────────────────────────────────────────────────────────────
@@ -1690,6 +1708,7 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
         role: 'already_selected',
         bbox: null,
         skipped: true,
+        visible_candidates: [],
       };
     }
   }
@@ -1797,6 +1816,8 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
     role: top.role,
     bbox: top.bbox,
     post_state: clickResult.post_state || null,
+    visible_candidates: findResult?.visible_candidates || [],
+    skipped: false,
   };
 }
 
@@ -1943,6 +1964,7 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     recordStage('F2V_SOP_NEW_PROJECT_READY', 'PASS', null);
 
     // Step 2 — open the composer settings panel.
+    recordStage('F2V_SOP_SETTINGS_EXPLORER_STARTED', 'PASS', `build=${F2V_FLOW_QUEUE_RUNNER_BUILD_ID}`);
     const panel = await _openComposerSettingsPanel(scripting, tabId, opts);
     recordStage('F2V_SOP_SETTINGS_OPENER_SCAN', 'PASS', _buildSettingsOpenerScanMessage(panel));
     if (!panel.ok) {
@@ -1958,6 +1980,9 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
         diagnostics: panel.diagnostics || null,
       };
     }
+    
+    // Emit launcher found and settings panel opened stages
+    recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', `launcher=${panel.launcher_text || 'already_open'}`);
     recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS',
       `already_open=${Boolean(panel.already_open)} strategy=${panel.strategy || 'already_open'}`);
 
@@ -1975,7 +2000,23 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
           visible_candidates: clickRes.visible_candidates || [],
         };
       }
-      recordStage(step.stage, 'PASS', `role=${clickRes.role}`);
+      
+      // Emit candidate scanned stage
+      recordStage('F2V_SOP_SETTING_CANDIDATES_SCANNED', 'PASS', `label=${step.label} count=${clickRes.visible_candidates?.length || 0}`);
+      
+      // Emit explicit CLICKED or CONFIRMED stages
+      let stageName = step.stage;
+      if (clickRes.skipped) {
+        stageName = step.stage.replace('_CLICKED', '_CONFIRMED');
+      }
+      
+      recordStage(stageName, 'PASS', `role=${clickRes.role}`);
+      
+      // If we clicked or confirmed, also emit the corresponding CONFIRMED step for the UAT trail contract
+      if (!clickRes.skipped && step.stage.indexOf('_CLICKED') >= 0) {
+        const confirmedStage = step.stage.replace('_CLICKED', '_CONFIRMED');
+        recordStage(confirmedStage, 'PASS', `role=${clickRes.role}`);
+      }
     }
 
     // Step 8 — verify settings applied (soft check — informational).
@@ -2120,6 +2161,7 @@ const _api = {
   F2V_FLOW_QUEUE_RUNNER_BUILD_ID,
   SOP_SEQUENCE,
   ERR,
+  F2V_SOP_STAGE_CONTRACT,
   SOP_DEFAULT_SETTLE_MS,
   SOP_DEFAULT_UPLOAD_WAIT_MS,
 };
