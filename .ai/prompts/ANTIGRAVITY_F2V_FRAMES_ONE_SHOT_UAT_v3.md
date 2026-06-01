@@ -12,6 +12,9 @@ READ FIRST
 - `.ai/status/CURRENT_STATE.md`
 
 PRECONDITION GATE STATUS (verified green at the time of this prompt)
+- ✅ Clean pushed SHA: `d1f31677590664849a0b129f777143dd2ce19d65`
+      on branch `fix/mv3-message-port-lifecycle` (origin == local HEAD).
+- ✅ Build ID (background == content == runner, not legacy): `flowkit-f2v-runner-audit-2026-05-28b`.
 - ✅ `node --check extension/f2v-flow-queue-runner.js` — runner recovered from syntax corruption.
 - ✅ `node --check extension/content-flow-dom.js`.
 - ✅ `node scripts/test-f2v-asset-picker-modal.js` — frozen harness, 8/8 pass (asset-picker upload path covered).
@@ -21,9 +24,12 @@ PRECONDITION GATE STATUS (verified green at the time of this prompt)
   NOT part of this UAT. This UAT exercises the **current** asset-picker upload path only.
 
 ALSO REQUIRED BEFORE YOU RUN (UAT contract preconditions)
-- Codex has reported a clean **pushed** SHA for the runner recovery.
-- Runtime/build handshake passes; background and content build IDs match and are **not** legacy.
-- A valid `REQUEST_ID` is generated.
+- Clean pushed SHA confirmed: `d1f31677590664849a0b129f777143dd2ce19d65`. ✅
+- ⚠️ **Operator must reload the unpacked extension in Chrome to this build**
+  (`flowkit-f2v-runner-audit-2026-05-28b`) before you run. If Chrome is still running a
+  stale build, your report will show `build=legacy` and be REJECTED. Confirm the live
+  runtime handshake reports `background_build_id === content_build_id` and is not legacy.
+- A valid `REQUEST_ID` is generated at run start (no `REQUEST_ID=N/A`).
 
 UAT SCOPE — drive the full F2V Frames flow, STOP before Generate
 1. Step 1 — `+ New project`.
