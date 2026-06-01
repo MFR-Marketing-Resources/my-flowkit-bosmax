@@ -199,6 +199,41 @@ async function detachDebuggerSafe(debuggee) {
 	} catch (_) {}
 }
 
+async function cdpClickCoordinate(tabId, x, y) {
+	const debuggee = getCdpDebuggee(tabId);
+	let attached = false;
+	try {
+		await chrome.debugger.attach(debuggee, CDP_DEBUGGER_PROTOCOL_VERSION);
+		attached = true;
+	} catch (e) {
+		// ignore if already attached
+	}
+	try {
+		await chrome.debugger.sendCommand(debuggee, "Input.dispatchMouseEvent", {
+			type: "mousePressed",
+			x: x,
+			y: y,
+			button: "left",
+			clickCount: 1,
+		});
+		await new Promise((r) => setTimeout(r, 100));
+		await chrome.debugger.sendCommand(debuggee, "Input.dispatchMouseEvent", {
+			type: "mouseReleased",
+			x: x,
+			y: y,
+			button: "left",
+			clickCount: 1,
+		});
+	} finally {
+		if (attached) {
+			try {
+				await chrome.debugger.detach(debuggee);
+			} catch (_) {}
+		}
+	}
+	return { ok: true };
+}
+
 async function cleanupCdpFileChooserProofRun(_tabId, run) {
 	if (!run || run.cleanedUp) return;
 	run.cleanedUp = true;
@@ -361,6 +396,71 @@ async function waitForCdpFileChooserProof(tabId) {
 	const result = run.result || (await run.completionPromise);
 	cdpFileChooserProofRuns.delete(tabId);
 	return result;
+}
+
+async function fetchAssetBase64ForCdp(assetId) {
+	const url = `http://127.0.0.1:8100/api/products/${assetId}/image`;
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), 10000);
+	try {
+		const resp = await fetch(url, { signal: controller.signal });
+		clearTimeout(timeoutId);
+		if (!resp.ok) {
+			return { ok: false, error: "ERR_BACKGROUND_ASSET_FETCH_FAILED", detail: `HTTP_${resp.status}` };
+		}
+		const blob = await resp.blob();
+		const bytes = new Uint8Array(await blob.arrayBuffer());
+		let binary = "";
+		for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+		return { ok: true, base64: btoa(binary), mimeType: blob.type || "image/jpeg" };
+	} catch (e) {
+		clearTimeout(timeoutId);
+		return { ok: false, error: "ERR_BACKGROUND_ASSET_FETCH_FAILED", detail: String(e?.message || e) };
+	}
+}
+
+// Materialize an asset to a real disk path via the local agent (the MV3 service worker
+// cannot write files, and CDP DOM.setFileInputFiles requires an absolute path).
+async function materializeAssetToDiskPath(assetId, slotLabel) {
+	const fetched = await fetchAssetBase64ForCdp(assetId);
+	if (!fetched.ok) return fetched;
+	const ext = (fetched.mimeType.split("/")[1] || "png").replace("jpeg", "jpg");
+	const fileName = `${String(slotLabel || "start").toLowerCase()}-${assetId}.${ext}`;
+	try {
+		const resp = await fetch("http://127.0.0.1:8100/api/flow/materialize-local-file", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ image_base64: fetched.base64, file_name: fileName, mime_type: fetched.mimeType }),
+		});
+		if (!resp.ok) {
+			return { ok: false, error: "ERR_MATERIALIZE_ASSET_FAILED", detail: `HTTP_${resp.status}` };
+		}
+		const data = await resp.json();
+		if (!data?.local_file_path) {
+			return { ok: false, error: "ERR_MATERIALIZE_ASSET_NO_PATH", detail: "no local_file_path in response" };
+		}
+		return { ok: true, filePath: data.local_file_path, fileName: data.file_name || fileName, mimeType: data.mime_type || fetched.mimeType };
+	} catch (e) {
+		return { ok: false, error: "ERR_MATERIALIZE_ASSET_FAILED", detail: String(e?.message || e) };
+	}
+}
+
+// Phase 2 CDP upload dependency handed to the F2V runner. phase=arm resolves the asset to
+// a disk path and arms CDP file-chooser interception; phase=wait awaits the fed result.
+async function cdpFileChooserUploadForJob(tabId, req) {
+	const slot = req?.slotLabel || "Start";
+	if (req?.phase === "arm") {
+		if (!req.assetSource) {
+			return { ok: false, error: "ERR_CDP_UPLOAD_NO_ASSET", detail: `slot=${slot}` };
+		}
+		const mat = await materializeAssetToDiskPath(req.assetSource, slot);
+		if (!mat.ok) return mat;
+		return await beginCdpFileChooserProof(tabId, mat.filePath, mat.fileName, slot);
+	}
+	if (req?.phase === "wait") {
+		return await waitForCdpFileChooserProof(tabId);
+	}
+	return { ok: false, error: "ERR_CDP_UPLOAD_BAD_PHASE", detail: `phase=${req?.phase}` };
 }
 
 const WS_METHOD_TIMEOUT_MS = {
@@ -1148,6 +1248,15 @@ async function handleOpenFlowNewProject(mode) {
 	};
 }
 
+async function handleReloadExtension() {
+	setTimeout(() => {
+		try {
+			chrome.runtime.reload();
+		} catch (_) {}
+	}, 100);
+	return { ok: true, action: "RELOAD_EXTENSION" };
+}
+
 async function handleReloadFlowTab() {
 	const flowTab = await getFlowTab();
 	if (!flowTab) {
@@ -1446,6 +1555,11 @@ function connectToAgent() {
 			} else if (msg.method === "FLOW_PAGE_STATE_DIAGNOSTIC") {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleFlowPageStateDiagnostic(msg.params?.mode),
+				);
+				replyToAgent(msg, result);
+			} else if (msg.method === "RELOAD_EXTENSION") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleReloadExtension(),
 				);
 				replyToAgent(msg, result);
 			} else if (msg.method === "RELOAD_FLOW_TAB") {
@@ -2261,6 +2375,15 @@ async function handleExecuteFlowJob(job) {
 				const runnerResult = await runnerApi.executeF2VVisibleSopRunner(deps, flowTab.id, job, {
 					settleMs: 300,
 					uploadWaitMs: 10000,
+					cdpCoordinateClick: async (params) => {
+						console.log("[FlowAgent] Performing CDP coordinate click:", params);
+						return await cdpClickCoordinate(params.tabId, params.x, params.y);
+					},
+					// Phase 2 opt-in: only jobs that explicitly set use_cdp_upload get the CDP
+					// file-chooser upload path; everything else keeps the proven DOM path.
+					...(job.use_cdp_upload === true
+						? { cdpFileChooserUpload: (req) => cdpFileChooserUploadForJob(flowTab.id, req) }
+						: {}),
 				});
 				return runnerResult;
 			} catch (err) {
@@ -2344,6 +2467,10 @@ async function handleConfigureF2VSettings(job, tabId) {
 			settleMs: 300,
 			skipUpload: true,
 			skipGenerate: true,
+			cdpCoordinateClick: async (params) => {
+				console.log("[FlowAgent] Performing CDP coordinate click:", params);
+				return await cdpClickCoordinate(params.tabId, params.x, params.y);
+			}
 		});
 		return runnerResult;
 	} catch (err) {

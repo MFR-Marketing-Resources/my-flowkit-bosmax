@@ -2518,7 +2518,27 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     recordStage('F2V_SOP_PROMPT_INSERTED', 'PASS',
       `inserted_length=${promptResult.inserted_length} field_value_length=${promptResult.field_value_length}`);
 
-    // Step 10 — click Start (frame slot).
+    // Step 10/11 — Start-slot click + media attach.
+    // CDP upload (Phase 2, opt-in via opts.cdpFileChooserUpload) must ARM file-chooser
+    // interception BEFORE the Start-slot click, because that click opens the native OS
+    // file chooser (there is no in-DOM "Upload media" control — confirmed by live UAT).
+    // When the dep is absent, the proven DOM `_clickUploadMedia` path runs unchanged.
+    const _useCdpUpload = typeof opts?.cdpFileChooserUpload === 'function' && opts?.skipUpload !== true;
+    if (_useCdpUpload) {
+      const armRes = await opts.cdpFileChooserUpload({
+        phase: 'arm',
+        tabId,
+        slotLabel: 'Start',
+        assetSource: job?.startAsset || job?.productId || job?.startImageMediaId || null,
+      });
+      if (!armRes || armRes.ok !== true) {
+        recordStage('F2V_SOP_CDP_FILE_CHOOSER_ARMED', 'FAIL', `${armRes?.error || 'ERR_CDP_ARM_FAILED'} ${armRes?.detail || ''}`);
+        return { ok: false, error: armRes?.error || 'ERR_CDP_ARM_FAILED', detail: armRes?.detail || null, stages, stage_results: stageResults };
+      }
+      recordStage('F2V_SOP_CDP_FILE_CHOOSER_ARMED', 'PASS', `slot=Start file=${armRes.expectedFileName || ''}`);
+    }
+
+    // Step 10 — click Start (frame slot). In CDP mode this opens the native file chooser.
     const startResult = await _clickStart(scripting, tabId, opts);
     if (!startResult.ok) {
       recordStage('F2V_SOP_START_CLICKED', 'FAIL', `${startResult.error} ${startResult.detail}`);
@@ -2542,8 +2562,24 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     if (opts?.skipUpload === true) {
       recordStage('F2V_SOP_UPLOAD_CLICKED', 'SKIP', 'opts.skipUpload=true');
       recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'SKIP', 'opts.skipUpload=true');
+    } else if (_useCdpUpload) {
+      // Step 11 (CDP) — the Start click opened the native chooser; CDP feeds the local
+      // file via DOM.setFileInputFiles (background-owned chrome.debugger).
+      const fedRes = await opts.cdpFileChooserUpload({ phase: 'wait', tabId });
+      if (!fedRes || fedRes.ok !== true) {
+        recordStage('F2V_SOP_CDP_FILE_CHOOSER_FED', 'FAIL', `${fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND} ${fedRes?.detail || ''}`);
+        recordStage('F2V_SOP_UPLOAD_CLICKED', 'FAIL', `${fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND} strategy=cdp_file_chooser`);
+        return { ok: false, error: fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND, detail: fedRes?.detail || null, stages, stage_results: stageResults };
+      }
+      recordStage('F2V_SOP_CDP_FILE_CHOOSER_FED', 'PASS', `file=${fedRes.filePath || ''} backendNodeId=${fedRes.backendNodeId || ''}`);
+      recordStage('F2V_SOP_UPLOAD_CLICKED', 'PASS', 'strategy=cdp_file_chooser');
+      // Step 12 — wait for media attachment.
+      const waitMs = Math.max(0, Number(opts?.uploadWaitMs ?? SOP_DEFAULT_UPLOAD_WAIT_MS));
+      await _sleep(waitMs);
+      stageResults.media_attached = true;
+      recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'PASS', `waited_ms=${waitMs} strategy=cdp_file_chooser`);
     } else {
-      // Step 11 — click Upload media.
+      // Step 11 — click Upload media (proven DOM path; default).
       const uploadResult = await _clickUploadMedia(scripting, tabId, opts);
       if (!uploadResult.ok) {
         recordStage('F2V_SOP_UPLOAD_CLICKED', 'FAIL', `${uploadResult.error} ${uploadResult.detail}`);

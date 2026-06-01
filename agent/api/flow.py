@@ -1,6 +1,7 @@
 """Direct Flow API endpoints — for manual operations outside the queue."""
 import base64
 import json
+import re
 import tempfile
 from pathlib import Path
 from uuid import uuid4
@@ -11,6 +12,7 @@ from agent.services.flow_client import get_flow_client
 from agent.db import crud
 
 router = APIRouter(prefix="/flow", tags=["flow"])
+_ERROR_CODE_RE = re.compile(r"\b(ERR_[A-Z0-9_]+)\b")
 
 
 class GenerateImageRequest(BaseModel):
@@ -60,6 +62,12 @@ class UploadImageBase64Request(BaseModel):
     file_name: str = "image.png"
 
 
+class MaterializeLocalFileRequest(BaseModel):
+    image_base64: str
+    mime_type: str = "image/png"
+    file_name: str = "asset.png"
+
+
 class CheckStatusRequest(BaseModel):
     operations: list[dict]
 
@@ -75,6 +83,147 @@ class EditImageRequest(BaseModel):
 class CreateProjectRawRequest(BaseModel):
     project_title: str
     tool_name: str = "PINHOLE"
+
+
+def _extract_error_code(text: object) -> Optional[str]:
+    candidate = str(text or "").strip()
+    if not candidate:
+        return None
+    match = _ERROR_CODE_RE.search(candidate)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _parse_json_text(value: object) -> Optional[dict]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or text[0] not in "{[":
+        return None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _extract_json_after_marker(text: object, marker: str) -> Optional[dict]:
+    source = str(text or "")
+    marker_index = source.find(marker)
+    if marker_index < 0:
+        return None
+    start = source.find("{", marker_index + len(marker))
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for idx in range(start, len(source)):
+        ch = source[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    parsed = json.loads(source[start : idx + 1])
+                except Exception:
+                    return None
+                return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _parse_stage_message_dict(message: object) -> Optional[dict]:
+    parsed = _parse_json_text(message)
+    if parsed:
+        return parsed
+    return _extract_json_after_marker(message, "detail=")
+
+
+async def _build_manual_flow_failure_report(request_id: str, result: dict) -> dict:
+    stages = await crud.get_stage_history(request_id)
+    latest_extension_fail = next(
+        (
+            stage
+            for stage in reversed(stages)
+            if stage.get("source") == "extension"
+            and str(stage.get("status") or "").upper() == "FAIL"
+        ),
+        None,
+    )
+    target_resolution = next(
+        (stage for stage in reversed(stages) if stage.get("stage") == "F2V_SOP_TARGET_TAB_RESOLVED"),
+        None,
+    )
+    opener_scan = next(
+        (stage for stage in reversed(stages) if stage.get("stage") == "F2V_SOP_SETTINGS_OPENER_SCAN"),
+        None,
+    )
+
+    target_payload = _parse_stage_message_dict(target_resolution.get("message")) if target_resolution else None
+    scan_payload = _parse_stage_message_dict(opener_scan.get("message")) if opener_scan else None
+    detail_payload = _parse_json_text(result.get("detail")) or {}
+    if not detail_payload and latest_extension_fail:
+        detail_payload = _parse_stage_message_dict(latest_extension_fail.get("message")) or {}
+
+    report: dict = {
+        "error": result.get("error") or _extract_error_code(latest_extension_fail.get("message") if latest_extension_fail else None),
+        "error_code": (
+            _extract_error_code(result.get("error"))
+            or _extract_error_code(result.get("detail"))
+            or _extract_error_code(latest_extension_fail.get("message") if latest_extension_fail else None)
+        ),
+        "latest_extension_stage": latest_extension_fail.get("stage") if latest_extension_fail else None,
+        "latest_extension_status": latest_extension_fail.get("status") if latest_extension_fail else None,
+        "selected_tab": (
+            target_payload.get("selected_tab")
+            if isinstance(target_payload, dict)
+            else None
+        ),
+        "candidate_tabs": result.get("candidate_tabs")
+        or (
+            target_payload.get("candidate_tabs")
+            if isinstance(target_payload, dict)
+            else []
+        ),
+    }
+
+    if isinstance(scan_payload, dict):
+        for key in (
+            "target_tab_url",
+            "document_title",
+            "composer_present",
+            "prompt_field_present",
+            "candidate_settings_launchers_found",
+            "attempted_strategies",
+        ):
+            if key in scan_payload and report.get(key) is None:
+                report[key] = scan_payload[key]
+
+    if isinstance(detail_payload, dict):
+        report.update(detail_payload)
+
+    if not report.get("target_tab_url"):
+        selected_tab = report.get("selected_tab") or {}
+        report["target_tab_url"] = selected_tab.get("url")
+
+    if latest_extension_fail and latest_extension_fail.get("message"):
+        report["extension_fail_message"] = latest_extension_fail["message"]
+
+    return report
 
 
 @router.get("/status")
@@ -275,6 +424,42 @@ async def upload_image_base64(body: UploadImageBase64Request):
         "local_file_path": str(temp_file_path),
         "raw": result.get("data", result),
     }
+
+
+@router.post("/materialize-local-file")
+async def materialize_local_file(body: MaterializeLocalFileRequest):
+    """Write a base64 image to a temp staging file and return its absolute disk path.
+
+    Phase 2 CDP upload helper: the extension service worker cannot write to disk, and
+    CDP `DOM.setFileInputFiles` needs a real file path. This materializes the asset bytes
+    to flowkit-upload-staging/<uuid>.<ext> WITHOUT uploading to Google Flow (unlike
+    /upload-image-base64, which also performs the Flow upload).
+    """
+    image_base64 = body.image_base64.strip()
+    if "," in image_base64 and image_base64.startswith("data:"):
+        image_base64 = image_base64.split(",", 1)[1]
+
+    file_name = Path(body.file_name or "asset.png").name
+    ext = "png"
+    if "." in file_name:
+        ext = file_name.rsplit(".", 1)[-1].lower() or "png"
+
+    temp_dir = Path(tempfile.gettempdir()) / "flowkit-upload-staging"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_file_path = temp_dir / f"{uuid4().hex}.{ext}"
+    try:
+        temp_file_path.write_bytes(base64.b64decode(image_base64))
+    except Exception as e:
+        raise HTTPException(400, f"ERR_MATERIALIZE_DECODE_FAILED: {e}")
+
+    return {
+        "ok": True,
+        "local_file_path": str(temp_file_path),
+        "file_name": file_name,
+        "mime_type": body.mime_type,
+    }
+
+
 @router.post("/execute-flow-job")
 async def execute_flow_job(body: dict):
     """Trigger manual DOM automation in the extension for a generation job."""
@@ -323,19 +508,32 @@ async def execute_flow_job(body: dict):
         
     result = await client.execute_flow_job(body)
     if result.get("error"):
+        failure_report = await _build_manual_flow_failure_report(body["request_id"], result)
+        error_code = failure_report.get("error_code") or _extract_error_code(result["error"])
+        request_error_message = error_code or result["error"]
         await crud.upsert_request_telemetry(
             body["request_id"],
             status="FAILED",
             failed_at=crud._now(),
-            error_message=result["error"],
+            error_message=request_error_message,
+            error_code=error_code,
             last_heartbeat_at=crud._now(),
+        )
+        await crud.update_request(
+            body["request_id"],
+            status="FAILED",
+            error_message=request_error_message,
+            automation_report=json.dumps(failure_report, ensure_ascii=False),
+            updated_at=crud._now(),
         )
         await crud.add_stage_event(
             body["request_id"],
             "FAILED",
             "FAILED",
-            result["error"],
+            request_error_message,
             "backend",
+            fail_code=error_code,
+            first_fail_stage=failure_report.get("latest_extension_stage"),
         )
-        raise HTTPException(502, result["error"])
+        raise HTTPException(502, request_error_message)
     return result
