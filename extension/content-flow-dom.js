@@ -73,13 +73,46 @@
     try {
       chrome.runtime.sendMessage(payload, () => {
         const lastError = chrome.runtime.lastError;
-        if (lastError) {
-          console.warn('[FlowAgent] runtime message ignored:', lastError.message);
+        if (lastError && !shouldSilenceRuntimeMessageError(lastError)) {
+          const normalized = normalizeRuntimeMessageError(lastError);
+          console.warn('[FlowAgent] runtime message ignored:', normalized.detail);
         }
       });
     } catch (error) {
       console.warn('[FlowAgent] runtime message exception:', error);
     }
+  }
+
+  function normalizeRuntimeMessageError(rawError) {
+    const message = String(rawError?.message || rawError || '').trim();
+    if (!message) {
+      return {
+        error: 'ERR_RUNTIME_LASTERROR',
+        detail: 'Unknown Chrome runtime messaging failure.',
+      };
+    }
+    if (/Receiving end does not exist/i.test(message)) {
+      return { error: 'ERR_NO_RECEIVER', detail: message };
+    }
+    if (/Could not establish connection/i.test(message)) {
+      return { error: 'ERR_BACKGROUND_RECEIVER_MISSING', detail: message };
+    }
+    if (/message port closed before a response was received/i.test(message)) {
+      return { error: 'ERR_RUNTIME_MESSAGE_PORT_CLOSED', detail: message };
+    }
+    return {
+      error: 'ERR_RUNTIME_LASTERROR',
+      detail: message,
+    };
+  }
+
+  function shouldSilenceRuntimeMessageError(rawError) {
+    const normalized = normalizeRuntimeMessageError(rawError);
+    return [
+      'ERR_NO_RECEIVER',
+      'ERR_BACKGROUND_RECEIVER_MISSING',
+      'ERR_RUNTIME_MESSAGE_PORT_CLOSED',
+    ].includes(normalized.error);
   }
 
   function sendRuntimeMessageWithResponse(payload, timeoutMs = 15000) {
@@ -88,7 +121,11 @@
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        resolve({ ok: false, error: 'ERR_RUNTIME_MESSAGE_TIMEOUT' });
+        resolve({
+          ok: false,
+          error: 'ERR_RUNTIME_MESSAGE_TIMEOUT',
+          detail: `Timed out after ${timeoutMs}ms waiting for background response.`,
+        });
       }, timeoutMs);
 
       try {
@@ -99,7 +136,7 @@
 
           const lastError = chrome.runtime.lastError;
           if (lastError) {
-            resolve({ ok: false, error: lastError.message || 'ERR_RUNTIME_LASTERROR' });
+            resolve({ ok: false, ...normalizeRuntimeMessageError(lastError) });
             return;
           }
 
@@ -109,7 +146,11 @@
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve({ ok: false, error: String(error?.message || error) });
+        resolve({
+          ok: false,
+          error: 'ERR_RUNTIME_MESSAGE_EXCEPTION',
+          detail: String(error?.message || error),
+        });
       }
     });
   }
@@ -2584,23 +2625,12 @@
         const requestIdForProxy = stateObj?.request_id || null;
         console.log(`[FlowAgent] Resolving local asset via background proxy: ${assetId}`);
         setCheckpoint('UPLOAD_ASSET_PROXY_SEND');
-        const proxyResp = await new Promise((resolve) => {
-          const proxyTimeout = setTimeout(() => {
-            console.warn(`[FlowAgent] Background proxy timeout for ${assetId}`);
-            resolve({ ok: false, error: 'ERR_PROXY_MESSAGE_TIMEOUT' });
-          }, 15000);
-
-          chrome.runtime.sendMessage({
-            type: 'RESOLVE_LOCAL_ASSET',
-            assetId,
-            filename: `${assetId}.jpg`,
-            request_id: requestIdForProxy
-          }, (resp) => {
-            const err = chrome.runtime.lastError;
-            clearTimeout(proxyTimeout);
-            resolve(resp || { ok: false, error: err?.message || 'UNKNOWN_ERROR' });
-          });
-        });
+        const proxyResp = await sendRuntimeMessageWithResponse({
+          type: 'RESOLVE_LOCAL_ASSET',
+          assetId,
+          filename: `${assetId}.jpg`,
+          request_id: requestIdForProxy
+        }, 15000);
 
         if (!proxyResp?.ok) {
           console.error(`[FlowAgent] Background asset resolution failed: ${proxyResp?.error}`);
@@ -4045,16 +4075,10 @@
 
     // ── Steps 5–7: Config panel (9:16 / 1x / Veo 3.1 - Lite) ────────────────
     console.log('[FlowAgent] Delegating F2V settings configuration to f2v-flow-queue-runner in background');
-    const delegateResult = await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'CONFIGURE_F2V_SETTINGS', job: _job }, (resp) => {
-        const err = chrome.runtime.lastError;
-        if (err) {
-          resolve({ ok: false, error: err.message });
-        } else {
-          resolve(resp || { ok: false, error: 'ERR_DELEGATION_FAILED' });
-        }
-      });
-    });
+    const delegateResult = await sendRuntimeMessageWithResponse(
+      { type: 'CONFIGURE_F2V_SETTINGS', job: _job },
+      15000,
+    );
 
     if (!delegateResult || delegateResult.ok !== true) {
       logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', delegateResult?.detail || delegateResult?.error || 'delegation_failed');
@@ -4089,17 +4113,10 @@
   }
 
   async function executeFlowJob(job) {
-    const testConn = await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'STATUS' }, (resp) => {
-        const err = chrome.runtime.lastError;
-        if (err) {
-          resolve({ ok: false, error: err?.message || 'ERR_EMPTY_BACKGROUND_STATUS' });
-          return;
-        }
-        const statusPayload = resp?.data && typeof resp.data === 'object' ? resp.data : resp;
-        resolve(statusPayload || { ok: false, error: 'ERR_EMPTY_BACKGROUND_STATUS' });
-      });
-    });
+    const statusResp = await sendRuntimeMessageWithResponse({ type: 'STATUS' }, 6000);
+    const testConn = statusResp?.data && typeof statusResp.data === 'object'
+      ? statusResp.data
+      : (statusResp || { ok: false, error: 'ERR_EMPTY_BACKGROUND_STATUS' });
     console.log('[FlowAgent] Background connection test:', testConn);
     const backgroundBuildId = String(
       testConn?.buildId

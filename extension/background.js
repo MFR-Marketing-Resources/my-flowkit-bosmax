@@ -72,6 +72,46 @@ function respondOnce(reply, payload) {
 // room to surface its own normalized error before respondAsync gives up.
 const DEFAULT_RESPOND_ASYNC_TIMEOUT_MS = 4500;
 
+function normalizeChromeMessageError(rawError) {
+	const message = String(rawError?.message || rawError || "").trim();
+	if (!message) {
+		return {
+			error: "ERR_RUNTIME_LASTERROR",
+			detail: "Unknown Chrome runtime messaging failure.",
+		};
+	}
+	if (/Receiving end does not exist/i.test(message)) {
+		return { error: "ERR_NO_RECEIVER", detail: message };
+	}
+	if (/Could not establish connection/i.test(message)) {
+		return { error: "ERR_CONTENT_SCRIPT_STALE", detail: message };
+	}
+	if (
+		/No tab with id|tab was closed|frame .* removed|The tab was closed/i.test(
+			message,
+		)
+	) {
+		return { error: "ERR_TAB_RELOADED", detail: message };
+	}
+	if (/message port closed before a response was received/i.test(message)) {
+		return { error: "ERR_MESSAGE_RESPONSE_TIMEOUT", detail: message };
+	}
+	return {
+		error: "ERR_RUNTIME_LASTERROR",
+		detail: message,
+	};
+}
+
+function shouldSilenceChromeMessageError(rawError) {
+	const normalized = normalizeChromeMessageError(rawError);
+	return [
+		"ERR_NO_RECEIVER",
+		"ERR_CONTENT_SCRIPT_STALE",
+		"ERR_MESSAGE_RESPONSE_TIMEOUT",
+		"ERR_TAB_RELOADED",
+	].includes(normalized.error);
+}
+
 function respondAsync(
 	reply,
 	task,
@@ -110,13 +150,26 @@ function respondAsync(
 	return true;
 }
 
-function sendTabMessageSafe(tabId, payload, timeoutMs = 4000) {
+async function sendTabMessageSafe(tabId, payload, timeoutMs = 4000) {
+	const tab = await getTabSafe(tabId);
+	if (!tab?.id) {
+		return {
+			ok: false,
+			error: "ERR_TAB_RELOADED",
+			detail: `Tab ${tabId} no longer exists.`,
+		};
+	}
+
 	return new Promise((resolve) => {
 		let settled = false;
 		const timer = setTimeout(() => {
 			if (settled) return;
 			settled = true;
-			resolve({ ok: false, error: "ERR_MESSAGE_RESPONSE_TIMEOUT" });
+			resolve({
+				ok: false,
+				error: "ERR_MESSAGE_RESPONSE_TIMEOUT",
+				detail: `Timed out after ${timeoutMs}ms waiting for tab ${tabId}.`,
+			});
 		}, timeoutMs);
 
 		chrome.tabs.sendMessage(tabId, payload, (response) => {
@@ -126,30 +179,8 @@ function sendTabMessageSafe(tabId, payload, timeoutMs = 4000) {
 
 			const lastError = chrome.runtime.lastError;
 			if (lastError) {
-				const message = lastError.message || "MESSAGE_SEND_FAILED";
-				if (/Receiving end does not exist/i.test(message)) {
-					resolve({ ok: false, error: "ERR_NO_RECEIVER" });
-					return;
-				}
-				if (/Could not establish connection/i.test(message)) {
-					resolve({ ok: false, error: "ERR_CONTENT_SCRIPT_STALE" });
-					return;
-				}
-				if (
-					/No tab with id|tab was closed|frame .* removed|The tab was closed/i.test(
-						message,
-					)
-				) {
-					resolve({ ok: false, error: "ERR_TAB_RELOADED" });
-					return;
-				}
-				if (
-					/message port closed before a response was received/i.test(message)
-				) {
-					resolve({ ok: false, error: "ERR_MESSAGE_RESPONSE_TIMEOUT" });
-					return;
-				}
-				resolve({ ok: false, error: `ERR_RUNTIME_LASTERROR: ${message}` });
+				const normalized = normalizeChromeMessageError(lastError);
+				resolve({ ok: false, ...normalized });
 				return;
 			}
 			resolve(response ?? { ok: false, error: "ERR_NO_RECEIVER" });
@@ -162,8 +193,11 @@ function _sendRuntimeMessageSafe(payload) {
 		chrome.runtime.sendMessage(payload, (response) => {
 			const lastError = chrome.runtime.lastError;
 			if (lastError) {
-				console.warn("[FlowAgent] Runtime message error:", lastError.message);
-				resolve({ ok: false, error: lastError.message });
+				const normalized = normalizeChromeMessageError(lastError);
+				if (!shouldSilenceChromeMessageError(lastError)) {
+					console.warn("[FlowAgent] Runtime message error:", normalized.detail);
+				}
+				resolve({ ok: false, ...normalized });
 				return;
 			}
 			resolve(response ?? { ok: true });
@@ -175,8 +209,9 @@ function sendRuntimeMessageNoThrow(payload) {
 	try {
 		chrome.runtime.sendMessage(payload, () => {
 			const lastError = chrome.runtime.lastError;
-			if (lastError) {
-				console.warn("[FlowAgent] runtime message ignored:", lastError.message);
+			if (lastError && !shouldSilenceChromeMessageError(lastError)) {
+				const normalized = normalizeChromeMessageError(lastError);
+				console.warn("[FlowAgent] runtime message ignored:", normalized.detail);
 			}
 		});
 	} catch (error) {
@@ -722,7 +757,13 @@ async function getFlowTabs() {
 
 function isProjectEditorUrl(url) {
 	const value = String(url || "");
-	return value.includes("/project/") || value.includes("/edit/");
+	return (
+		value.includes("/project/") ||
+		value.includes("/edit/") ||
+		/^https:\/\/labs\.google\/fx(?:\/[^/]+)?\/tools\/flow\/[^?#/]+(?:[/?#].*)?$/.test(
+			value,
+		)
+	);
 }
 
 function isRootFlowUrl(url) {
@@ -779,6 +820,70 @@ function summarizeFlowTab(tab) {
 		status: tab.status || null,
 		title: tab.title || null,
 		url: tab.url || null,
+		is_root_flow_url: isRootFlowUrl(tab.url),
+		looks_like_editor_url: isProjectEditorUrl(tab.url),
+	};
+}
+
+async function getTabSafe(tabId) {
+	if (!tabId) {
+		return null;
+	}
+	try {
+		return await chrome.tabs.get(tabId);
+	} catch (_) {
+		return null;
+	}
+}
+
+function isActualFlowEditorProbe(result) {
+	if (!result || result.error) {
+		return false;
+	}
+	const modeVisible = String(result.current_mode_visible || "");
+	return Boolean(
+		result.flow_tab_found &&
+			result.signed_in_likely &&
+			(result.ok ||
+				result.composer_found ||
+				result.generate_button_found ||
+				modeVisible !== "UNKNOWN"),
+	);
+}
+
+async function probeFlowEditorCandidate(tab, mode) {
+	const safeTab = await getTabSafe(tab?.id);
+	if (!safeTab?.id) {
+		return {
+			ok: false,
+			error: "ERR_TAB_RELOADED",
+			tab: summarizeFlowTab(tab),
+		};
+	}
+	await ensureFlowDomScript(safeTab.id);
+	const diagnostic = await pingFlowDomScript(safeTab);
+	if (diagnostic.raw_error) {
+		return {
+			ok: false,
+			error: diagnostic.raw_error,
+			detail: diagnostic.raw_error,
+			tab: summarizeFlowTab(safeTab),
+			diagnostic,
+		};
+	}
+	const readiness = await sendTabMessageSafe(
+		safeTab.id,
+		{
+			type: "CHECK_FLOW_COMPOSER_READY",
+			mode,
+		},
+		12000,
+	);
+	return {
+		ok: isActualFlowEditorProbe(readiness),
+		tab: summarizeFlowTab(safeTab),
+		readiness,
+		diagnostic,
 	};
 }
 
@@ -839,6 +944,23 @@ async function resolveFlowExecutionTarget(job = null) {
 		};
 	}
 
+	const rankedTabs = [
+		selectedTab,
+		...tabs.filter((tab) => tab?.id !== selectedTab?.id),
+	].filter(Boolean);
+	for (const candidateTab of rankedTabs) {
+		const probe = await probeFlowEditorCandidate(candidateTab, job?.mode);
+		if (probe.ok) {
+			const probedTab = await getTabSafe(candidateTab.id);
+			return {
+				ok: true,
+				targetTab: probedTab || candidateTab,
+				candidate_tabs: initialCandidateTabs,
+				target_probe: probe.readiness || null,
+			};
+		}
+	}
+
 	if (selectedTab && isRootFlowUrl(selectedTab.url)) {
 		const openResult = await handleOpenFlowNewProject(job?.mode);
 		tabs = await getFlowTabs();
@@ -853,6 +975,19 @@ async function resolveFlowExecutionTarget(job = null) {
 				candidate_tabs: candidateTabs,
 				open_flow_result: summarizeOpenFlowResult(openResult),
 			};
+		}
+		if (selectedTab) {
+			const probe = await probeFlowEditorCandidate(selectedTab, job?.mode);
+			if (probe.ok) {
+				const probedTab = await getTabSafe(selectedTab.id);
+				return {
+					ok: true,
+					targetTab: probedTab || selectedTab,
+					candidate_tabs: candidateTabs,
+					open_flow_result: summarizeOpenFlowResult(openResult),
+					target_probe: probe.readiness || null,
+				};
+			}
 		}
 		return {
 			ok: false,
