@@ -4616,6 +4616,12 @@
         return false;
       }
 
+      // F2V jobs run exclusively via background.js (executeF2VVisibleSopRunner).
+      // Returning false without executing prevents double-execution.
+      if (msg.job?.mode === 'F2V') {
+        return false;
+      }
+
       // IMMEDIATE ACK - Send response right away, don't wait for job completion
       sendResponse({ ok: true, accepted: true, request_id: msg.job?.request_id });
       
