@@ -28,6 +28,7 @@ This repository is under an architecture reset. All agents must inherit the same
 - GitHub Copilot = IDE assistance only; no architecture override.
 - Antigravity = one-shot live UAT only; no patching, no debugging, no loop testing.
 - NotebookLM = source-of-truth research and Q&A library.
+- Hermes = implementation agent via MCP_DOCKER tools. Read `HERMES.md` before any file operation.
 - Gemini Deep Research = external research generator.
 
 ## Frozen And Proven Paths
