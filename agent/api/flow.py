@@ -3,6 +3,7 @@ import base64
 import json
 import re
 import tempfile
+import time
 from pathlib import Path
 from uuid import uuid4
 from fastapi import APIRouter, HTTPException
@@ -11,8 +12,35 @@ from typing import Optional
 from agent.services.flow_client import get_flow_client
 from agent.db import crud
 
+__all__ = ["router", "cleanup_old_staging_files"]
+
 router = APIRouter(prefix="/flow", tags=["flow"])
 _ERROR_CODE_RE = re.compile(r"\b(ERR_[A-Z0-9_]+)\b")
+_UPLOAD_STAGING_DIR = Path(tempfile.gettempdir()) / "flowkit-upload-staging"
+
+
+def cleanup_old_staging_files(max_age_seconds: int = 3600) -> int:
+    """Remove stale files from the local CDP upload staging directory."""
+    if max_age_seconds < 0:
+        raise ValueError("max_age_seconds must be non-negative")
+    if not _UPLOAD_STAGING_DIR.exists():
+        return 0
+
+    cutoff_time = time.time() - max_age_seconds
+    removed_count = 0
+    for entry in _UPLOAD_STAGING_DIR.iterdir():
+        if not entry.is_file():
+            continue
+        try:
+            if entry.stat().st_mtime > cutoff_time:
+                continue
+            entry.unlink()
+            removed_count += 1
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+    return removed_count
 
 
 class GenerateImageRequest(BaseModel):
@@ -403,9 +431,8 @@ async def upload_image_base64(body: UploadImageBase64Request):
     file_name = Path(body.file_name or "image.png").name
     if "." in file_name:
         ext = file_name.rsplit(".", 1)[-1].lower() or "png"
-    temp_dir = Path(tempfile.gettempdir()) / "flowkit-upload-staging"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    temp_file_path = temp_dir / f"{uuid4().hex}.{ext}"
+    _UPLOAD_STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    temp_file_path = _UPLOAD_STAGING_DIR / f"{uuid4().hex}.{ext}"
     temp_file_path.write_bytes(base64.b64decode(image_base64))
 
     result = await client.upload_image(
@@ -444,9 +471,8 @@ async def materialize_local_file(body: MaterializeLocalFileRequest):
     if "." in file_name:
         ext = file_name.rsplit(".", 1)[-1].lower() or "png"
 
-    temp_dir = Path(tempfile.gettempdir()) / "flowkit-upload-staging"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    temp_file_path = temp_dir / f"{uuid4().hex}.{ext}"
+    _UPLOAD_STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    temp_file_path = _UPLOAD_STAGING_DIR / f"{uuid4().hex}.{ext}"
     try:
         temp_file_path.write_bytes(base64.b64decode(image_base64))
     except Exception as e:

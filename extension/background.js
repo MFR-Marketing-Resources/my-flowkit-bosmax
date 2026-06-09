@@ -186,7 +186,7 @@ function sendRuntimeMessageNoThrow(payload) {
 
 const flowContentScriptHealth = new Map();
 const CDP_DEBUGGER_PROTOCOL_VERSION = "1.3";
-const CDP_FILE_CHOOSER_TIMEOUT_MS = 10000;
+const CDP_FILE_CHOOSER_TIMEOUT_MS = 15000;
 const cdpFileChooserProofRuns = new Map();
 
 function getCdpDebuggee(tabId) {
@@ -205,7 +205,7 @@ async function cdpClickCoordinate(tabId, x, y) {
 	try {
 		await chrome.debugger.attach(debuggee, CDP_DEBUGGER_PROTOCOL_VERSION);
 		attached = true;
-	} catch (e) {
+	} catch (_e) {
 		// ignore if already attached
 	}
 	try {
@@ -234,12 +234,20 @@ async function cdpClickCoordinate(tabId, x, y) {
 	return { ok: true };
 }
 
-async function cleanupCdpFileChooserProofRun(_tabId, run) {
+async function cleanupCdpFileChooserProofRun(tabId, run) {
 	if (!run || run.cleanedUp) return;
 	run.cleanedUp = true;
+
 	clearTimeout(run.timeoutId);
-	chrome.debugger.onEvent.removeListener(run.handleEvent);
-	chrome.debugger.onDetach.removeListener(run.handleDetach);
+
+	// Safe listener removal
+	try {
+		chrome.debugger.onEvent.removeListener(run.handleEvent);
+	} catch (_) {}
+	try {
+		chrome.debugger.onDetach.removeListener(run.handleDetach);
+	} catch (_) {}
+
 	try {
 		await chrome.debugger.sendCommand(
 			run.debuggee,
@@ -249,7 +257,11 @@ async function cleanupCdpFileChooserProofRun(_tabId, run) {
 			},
 		);
 	} catch (_) {}
+
 	await detachDebuggerSafe(run.debuggee);
+
+	// Ensure Map is cleaned
+	cdpFileChooserProofRuns.delete(tabId);
 }
 
 function settleCdpFileChooserProofRun(tabId, payload) {
@@ -406,16 +418,29 @@ async function fetchAssetBase64ForCdp(assetId) {
 		const resp = await fetch(url, { signal: controller.signal });
 		clearTimeout(timeoutId);
 		if (!resp.ok) {
-			return { ok: false, error: "ERR_BACKGROUND_ASSET_FETCH_FAILED", detail: `HTTP_${resp.status}` };
+			return {
+				ok: false,
+				error: "ERR_BACKGROUND_ASSET_FETCH_FAILED",
+				detail: `HTTP_${resp.status}`,
+			};
 		}
 		const blob = await resp.blob();
 		const bytes = new Uint8Array(await blob.arrayBuffer());
 		let binary = "";
-		for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-		return { ok: true, base64: btoa(binary), mimeType: blob.type || "image/jpeg" };
+		for (let i = 0; i < bytes.byteLength; i++)
+			binary += String.fromCharCode(bytes[i]);
+		return {
+			ok: true,
+			base64: btoa(binary),
+			mimeType: blob.type || "image/jpeg",
+		};
 	} catch (e) {
 		clearTimeout(timeoutId);
-		return { ok: false, error: "ERR_BACKGROUND_ASSET_FETCH_FAILED", detail: String(e?.message || e) };
+		return {
+			ok: false,
+			error: "ERR_BACKGROUND_ASSET_FETCH_FAILED",
+			detail: String(e?.message || e),
+		};
 	}
 }
 
@@ -427,21 +452,45 @@ async function materializeAssetToDiskPath(assetId, slotLabel) {
 	const ext = (fetched.mimeType.split("/")[1] || "png").replace("jpeg", "jpg");
 	const fileName = `${String(slotLabel || "start").toLowerCase()}-${assetId}.${ext}`;
 	try {
-		const resp = await fetch("http://127.0.0.1:8100/api/flow/materialize-local-file", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ image_base64: fetched.base64, file_name: fileName, mime_type: fetched.mimeType }),
-		});
+		const resp = await fetch(
+			"http://127.0.0.1:8100/api/flow/materialize-local-file",
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					image_base64: fetched.base64,
+					file_name: fileName,
+					mime_type: fetched.mimeType,
+				}),
+			},
+		);
 		if (!resp.ok) {
-			return { ok: false, error: "ERR_MATERIALIZE_ASSET_FAILED", detail: `HTTP_${resp.status}` };
+			return {
+				ok: false,
+				error: "ERR_MATERIALIZE_ASSET_FAILED",
+				detail: `HTTP_${resp.status}`,
+			};
 		}
 		const data = await resp.json();
 		if (!data?.local_file_path) {
-			return { ok: false, error: "ERR_MATERIALIZE_ASSET_NO_PATH", detail: "no local_file_path in response" };
+			return {
+				ok: false,
+				error: "ERR_MATERIALIZE_ASSET_NO_PATH",
+				detail: "no local_file_path in response",
+			};
 		}
-		return { ok: true, filePath: data.local_file_path, fileName: data.file_name || fileName, mimeType: data.mime_type || fetched.mimeType };
+		return {
+			ok: true,
+			filePath: data.local_file_path,
+			fileName: data.file_name || fileName,
+			mimeType: data.mime_type || fetched.mimeType,
+		};
 	} catch (e) {
-		return { ok: false, error: "ERR_MATERIALIZE_ASSET_FAILED", detail: String(e?.message || e) };
+		return {
+			ok: false,
+			error: "ERR_MATERIALIZE_ASSET_FAILED",
+			detail: String(e?.message || e),
+		};
 	}
 }
 
@@ -451,16 +500,29 @@ async function cdpFileChooserUploadForJob(tabId, req) {
 	const slot = req?.slotLabel || "Start";
 	if (req?.phase === "arm") {
 		if (!req.assetSource) {
-			return { ok: false, error: "ERR_CDP_UPLOAD_NO_ASSET", detail: `slot=${slot}` };
+			return {
+				ok: false,
+				error: "ERR_CDP_UPLOAD_NO_ASSET",
+				detail: `slot=${slot}`,
+			};
 		}
 		const mat = await materializeAssetToDiskPath(req.assetSource, slot);
 		if (!mat.ok) return mat;
-		return await beginCdpFileChooserProof(tabId, mat.filePath, mat.fileName, slot);
+		return await beginCdpFileChooserProof(
+			tabId,
+			mat.filePath,
+			mat.fileName,
+			slot,
+		);
 	}
 	if (req?.phase === "wait") {
 		return await waitForCdpFileChooserProof(tabId);
 	}
-	return { ok: false, error: "ERR_CDP_UPLOAD_BAD_PHASE", detail: `phase=${req?.phase}` };
+	return {
+		ok: false,
+		error: "ERR_CDP_UPLOAD_BAD_PHASE",
+		detail: `phase=${req?.phase}`,
+	};
 }
 
 const WS_METHOD_TIMEOUT_MS = {
@@ -2352,9 +2414,14 @@ async function handleExecuteFlowJob(job) {
 	const flowTab = targetResolution.targetTab;
 
 	if (job && job.mode === "F2V") {
-		const runnerApi = typeof self !== "undefined" ? self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__ : null;
+		const runnerApi =
+			typeof self !== "undefined"
+				? self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__
+				: null;
 		if (runnerApi) {
-			console.log("[FlowAgent] Routing F2V job directly to f2v-flow-queue-runner");
+			console.log(
+				"[FlowAgent] Routing F2V job directly to f2v-flow-queue-runner",
+			);
 			const deps = {
 				scripting: runnerApi.createChromeScriptingAdapter(chrome),
 				telemetry: (payload) => {
@@ -2372,29 +2439,42 @@ async function handleExecuteFlowJob(job) {
 				},
 			};
 			try {
-				const runnerResult = await runnerApi.executeF2VVisibleSopRunner(deps, flowTab.id, job, {
-					settleMs: 300,
-					uploadWaitMs: 10000,
-					cdpCoordinateClick: async (params) => {
-						console.log("[FlowAgent] Performing CDP coordinate click:", params);
-						return await cdpClickCoordinate(params.tabId, params.x, params.y);
+				const runnerResult = await runnerApi.executeF2VVisibleSopRunner(
+					deps,
+					flowTab.id,
+					job,
+					{
+						settleMs: 300,
+						uploadWaitMs: 10000,
+						cdpCoordinateClick: async (params) => {
+							console.log(
+								"[FlowAgent] Performing CDP coordinate click:",
+								params,
+							);
+							return await cdpClickCoordinate(params.tabId, params.x, params.y);
+						},
+						// Phase 2 opt-in: only jobs that explicitly set use_cdp_upload get the CDP
+						// file-chooser upload path; everything else keeps the proven DOM path.
+						...(job.use_cdp_upload === true
+							? {
+									cdpFileChooserUpload: (req) =>
+										cdpFileChooserUploadForJob(flowTab.id, req),
+								}
+							: {}),
 					},
-					// Phase 2 opt-in: only jobs that explicitly set use_cdp_upload get the CDP
-					// file-chooser upload path; everything else keeps the proven DOM path.
-					...(job.use_cdp_upload === true
-						? { cdpFileChooserUpload: (req) => cdpFileChooserUploadForJob(flowTab.id, req) }
-						: {}),
-				});
+				);
 				return runnerResult;
 			} catch (err) {
 				return {
 					ok: false,
 					error: "ERR_F2V_SOP_RUNNER_THREW",
-					detail: String(err?.message || err || ''),
+					detail: String(err?.message || err || ""),
 				};
 			}
 		} else {
-			console.warn("[FlowAgent] F2V runner not loaded, falling back to content-flow-dom");
+			console.warn(
+				"[FlowAgent] F2V runner not loaded, falling back to content-flow-dom",
+			);
 		}
 	}
 
@@ -2439,13 +2519,25 @@ async function handleExecuteFlowJob(job) {
 async function handleConfigureF2VSettings(job, tabId) {
 	const activeTabId = tabId || (await getFlowTab())?.id;
 	if (!activeTabId) {
-		return { ok: false, error: "ERR_NO_FLOW_TAB", detail: "No active Google Flow tab was targeted." };
+		return {
+			ok: false,
+			error: "ERR_NO_FLOW_TAB",
+			detail: "No active Google Flow tab was targeted.",
+		};
 	}
-	const runnerApi = typeof self !== "undefined" ? self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__ : null;
+	const runnerApi =
+		typeof self !== "undefined" ? self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__ : null;
 	if (!runnerApi) {
-		return { ok: false, error: "ERR_F2V_RUNNER_NOT_LOADED", detail: "Runner API not loaded in background." };
+		return {
+			ok: false,
+			error: "ERR_F2V_RUNNER_NOT_LOADED",
+			detail: "Runner API not loaded in background.",
+		};
 	}
-	console.log("[FlowAgent] Background delegated settings configuration triggered for tab:", activeTabId);
+	console.log(
+		"[FlowAgent] Background delegated settings configuration triggered for tab:",
+		activeTabId,
+	);
 	const deps = {
 		scripting: runnerApi.createChromeScriptingAdapter(chrome),
 		telemetry: (payload) => {
@@ -2463,21 +2555,26 @@ async function handleConfigureF2VSettings(job, tabId) {
 		},
 	};
 	try {
-		const runnerResult = await runnerApi.executeF2VVisibleSopRunner(deps, activeTabId, job, {
-			settleMs: 300,
-			skipUpload: true,
-			skipGenerate: true,
-			cdpCoordinateClick: async (params) => {
-				console.log("[FlowAgent] Performing CDP coordinate click:", params);
-				return await cdpClickCoordinate(params.tabId, params.x, params.y);
-			}
-		});
+		const runnerResult = await runnerApi.executeF2VVisibleSopRunner(
+			deps,
+			activeTabId,
+			job,
+			{
+				settleMs: 300,
+				skipUpload: true,
+				skipGenerate: true,
+				cdpCoordinateClick: async (params) => {
+					console.log("[FlowAgent] Performing CDP coordinate click:", params);
+					return await cdpClickCoordinate(params.tabId, params.x, params.y);
+				},
+			},
+		);
 		return runnerResult;
 	} catch (err) {
 		return {
 			ok: false,
 			error: "ERR_F2V_SOP_RUNNER_THREW",
-			detail: String(err?.message || err || ''),
+			detail: String(err?.message || err || ""),
 		};
 	}
 }

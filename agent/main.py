@@ -18,7 +18,7 @@ from agent.api.projects import router as projects_router
 from agent.api.videos import router as videos_router
 from agent.api.scenes import router as scenes_router
 from agent.api.requests import router as requests_router
-from agent.api.flow import router as flow_router
+from agent.api.flow import cleanup_old_staging_files, router as flow_router
 from agent.api.reviews import router as reviews_router
 from agent.api.tts import router as tts_router
 from agent.api.materials import router as materials_router
@@ -105,6 +105,8 @@ async def run_ws_server():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    cleanup_old_staging_files(max_age_seconds=3600)
+    logger.info("Startup cleanup: staging directory cleaned.")
     apply_runtime_provider_environment()
     logger.info("AI provider runtime environment hydrated from registry state")
 
