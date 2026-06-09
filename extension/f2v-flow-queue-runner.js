@@ -93,7 +93,7 @@
 // Constants
 // ───────────────────────────────────────────────────────────────────────
 
-const F2V_FLOW_QUEUE_RUNNER_BUILD_ID = 'flowkit-f2v-runner-audit-2026-05-28b';
+const F2V_FLOW_QUEUE_RUNNER_BUILD_ID = 'flowkit-f2v-runner-resilient-2026-06-10';
 const SOP_DEFAULT_SETTLE_MS = 300;
 const SOP_DEFAULT_OPEN_PANEL_TIMEOUT_MS = 4000;
 const SOP_DEFAULT_UPLOAD_WAIT_MS = 10000;
@@ -253,6 +253,15 @@ function MAIN_findVisibleCandidatesByExactLabel(targetLabel, aliases, preferredR
   for (var i = 0; i < all.length; i++) {
     var el = all[i];
     if (!isVisible(el)) continue;
+    // BLACKLIST: never interact with navigation anchors that redirect away from the editor.
+    var _blTag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (_blTag === 'a') {
+      var _blHref = (el.getAttribute && el.getAttribute('href')) || '';
+      if (_blHref && (_blHref.indexOf('/fx/tools/flow') >= 0 || (_blHref.indexOf('/fx/') >= 0 && _blHref.indexOf('flow') >= 0))) continue;
+      var _blAria = ((el.getAttribute && el.getAttribute('aria-label')) || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      var _blTxt  = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (_blTxt === 'google flow' || _blAria === 'google flow') continue;
+    }
     var raw = normalize(el.textContent || el.getAttribute('aria-label') || el.value || '');
     if (!raw) continue;
     var rawLower = raw.toLowerCase();
@@ -282,11 +291,19 @@ function MAIN_findVisibleCandidatesByExactLabel(targetLabel, aliases, preferredR
         'button, [role="tab"], [role="button"], [role="option"], [role="menuitem"], [role="menuitemradio"], [aria-selected], [aria-pressed], [data-state], a',
       );
       if (ancestor && isVisible(ancestor) && isInteractive(ancestor)) {
-        target = ancestor;
+        // BLACKLIST: never resolve to a dangerous navigation anchor.
+        var _anTag  = ancestor.tagName ? ancestor.tagName.toLowerCase() : '';
+        var _anHref = (ancestor.getAttribute && ancestor.getAttribute('href')) || '';
+        var _isDangerousAnchor = _anTag === 'a' && _anHref && (_anHref.indexOf('/fx/tools/flow') >= 0 || (_anHref.indexOf('/fx/') >= 0 && _anHref.indexOf('flow') >= 0));
+        if (!_isDangerousAnchor) target = ancestor;
       }
     }
     if (!isInteractive(target)) continue;
     if (!isVisible(target)) continue;
+    // BLACKLIST: final guard on the resolved target element.
+    var _tgTag  = target.tagName ? target.tagName.toLowerCase() : '';
+    var _tgHref = (target.getAttribute && target.getAttribute('href')) || '';
+    if (_tgTag === 'a' && _tgHref && (_tgHref.indexOf('/fx/tools/flow') >= 0 || (_tgHref.indexOf('/fx/') >= 0 && _tgHref.indexOf('flow') >= 0))) continue;
 
     var role = (target.getAttribute && target.getAttribute('role')) || target.tagName.toLowerCase();
     var rect = target.getBoundingClientRect();
@@ -1700,6 +1717,141 @@ function MAIN_findSettingLauncher(settingType) {
   return null;
 }
 
+/**
+ * MAIN-world: attempt to dismiss promo overlays, banners, and modal dialogs
+ * that appear before the settings panel (e.g. "Try Omni now" banners).
+ *
+ * Tolerant by design — returns {ok:true} even when nothing is found or
+ * dismissal fails. Never throws. Does NOT dispatch Escape unless a promo
+ * dialog was actually detected (avoids closing the project editor).
+ */
+function MAIN_dismissPromoOverlays() {
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function lower(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase(); }
+  function clickEl(el) {
+    if (!el) return;
+    var r = el.getBoundingClientRect();
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var common = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
+    try { el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerType: 'mouse' }, common))); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('mousedown', common)); } catch (e) {}
+    try { el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerType: 'mouse' }, common))); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('mouseup', common)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('click', common)); } catch (e) {}
+    try { el.click(); } catch (e) {}
+  }
+
+  var DISMISS_LABELS = [
+    'no thanks', 'not now', 'maybe later', 'skip', 'dismiss', 'got it', 'close', 'cancel',
+    'x', '×', 'later', 'no, thanks', 'close dialog', 'close modal',
+  ];
+  var PROMO_TOKENS = [
+    'try omni', 'omni now', 'upgrade', 'new feature', 'get started with', 'try now',
+    'try it', 'introducing', "what's new",
+  ];
+
+  var dismissed = false;
+  var method = null;
+  var triedCount = 0;
+
+  // Strategy 1: scan dialogs/overlays whose text contains a known promo token.
+  var overlays = document.querySelectorAll(
+    '[role="dialog"], [role="alertdialog"], div[class*="modal"], div[class*="overlay"], ' +
+    'div[class*="banner"], div[class*="promo"], div[class*="toast"]'
+  );
+  for (var i = 0; i < overlays.length; i++) {
+    var dlg = overlays[i];
+    if (!isVisible(dlg)) continue;
+    var dlgText = lower(dlg.textContent || '');
+    var isPromo = false;
+    for (var p = 0; p < PROMO_TOKENS.length; p++) {
+      if (dlgText.indexOf(PROMO_TOKENS[p]) >= 0) { isPromo = true; break; }
+    }
+    if (!isPromo) continue;
+    triedCount++;
+    var btns = dlg.querySelectorAll('button, [role="button"], a');
+    for (var b = 0; b < btns.length; b++) {
+      var btn = btns[b];
+      if (!isVisible(btn)) continue;
+      var btnText = lower(btn.textContent || btn.getAttribute('aria-label') || '');
+      var matched = false;
+      for (var d = 0; d < DISMISS_LABELS.length; d++) {
+        if (btnText === DISMISS_LABELS[d] || btnText.indexOf(DISMISS_LABELS[d]) >= 0) {
+          matched = true;
+          break;
+        }
+      }
+      if (matched) {
+        clickEl(btn);
+        dismissed = true;
+        method = 'promo_dialog_button:' + btnText.slice(0, 40);
+        break;
+      }
+      // Small button in the top-right corner of the dialog → likely a close icon.
+      if (!matched) {
+        var bRect = btn.getBoundingClientRect();
+        var dRect = dlg.getBoundingClientRect();
+        var nearTopRight = bRect.right >= dRect.right - 72 && bRect.top <= dRect.top + 72;
+        var smallArea   = bRect.width * bRect.height > 0 && bRect.width * bRect.height < 2500;
+        if (nearTopRight && smallArea) {
+          clickEl(btn);
+          dismissed = true;
+          method = 'promo_dialog_close_icon';
+          break;
+        }
+      }
+    }
+    if (dismissed) break;
+  }
+
+  // Strategy 2: standalone banner/dismiss buttons whose sibling text contains a promo token.
+  if (!dismissed) {
+    var allBtns = document.querySelectorAll('button, [role="button"]');
+    for (var j = 0; j < allBtns.length; j++) {
+      var ab = allBtns[j];
+      if (!isVisible(ab)) continue;
+      var abText = lower(ab.textContent || ab.getAttribute('aria-label') || '');
+      var parent = ab.parentElement;
+      var siblingText = parent ? lower(parent.textContent || '') : '';
+      var sibIsPromo = false;
+      for (var q = 0; q < PROMO_TOKENS.length; q++) {
+        if (siblingText.indexOf(PROMO_TOKENS[q]) >= 0) { sibIsPromo = true; break; }
+      }
+      if (!sibIsPromo) continue;
+      for (var d2 = 0; d2 < DISMISS_LABELS.length; d2++) {
+        if (abText === DISMISS_LABELS[d2] || abText.indexOf(DISMISS_LABELS[d2]) >= 0) {
+          clickEl(ab);
+          dismissed = true;
+          method = 'sibling_dismiss_button:' + abText.slice(0, 40);
+          break;
+        }
+      }
+      if (dismissed) break;
+    }
+  }
+
+  // Strategy 3: Escape on the focused element — ONLY when a promo overlay was detected.
+  if (!dismissed && triedCount > 0) {
+    try {
+      var focused = document.activeElement;
+      var escTarget = (focused && focused !== document.body) ? focused : document;
+      escTarget.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true,
+      }));
+      dismissed = true;
+      method = 'escape_key_fallback';
+    } catch (e) {}
+  }
+
+  return { ok: true, dismissed: dismissed, method: method, tried: triedCount };
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // Service-worker side
 // ───────────────────────────────────────────────────────────────────────
@@ -2089,10 +2241,24 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
     }
   }
 
-  // 3. Fallback/Error if option still not visible
+  // 3. Fallback/Error if option still not visible — capture a DOM snapshot before failing.
   if (!findResult || findResult.ok !== true || !Array.isArray(findResult.matches) || findResult.matches.length === 0) {
+    let failState = null;
+    let failUrl = null;
+    try { failState = await _runMainWorld(scripting, tabId, MAIN_getBottomComposerState, []); } catch (_) {}
+    try {
+      const urlSnap = await _runMainWorld(scripting, tabId, function () {
+        return { url: String(window.location.href || ''), title: String(document.title || '') };
+      }, []);
+      failUrl = urlSnap;
+    } catch (_) {}
     const diagnostics = {
       current_bottom_pill_before: compState?.pillText || 'unknown',
+      current_bottom_pill_at_fail: failState?.pillText || 'unknown',
+      current_url: failUrl?.url || 'unknown',
+      current_title: failUrl?.title || 'unknown',
+      top_mode: failState?.topMode || 'unknown',
+      sub_mode: failState?.subMode || 'unknown',
       panel_opened: true,
       panel_candidate_count: findResult?.visible_candidates?.length || 0,
       visible_candidates: findResult?.visible_candidates || [],
@@ -2364,27 +2530,47 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     // Steps 3-7 — click each visible option exactly.
     for (const step of SOP_SEQUENCE) {
       if (step.label === '9:16') {
-        // Step 2 — open the composer settings panel now that Video/Frames mode is active.
+        // Step 2 — configure settings. Try Tier One (direct pill interaction) first;
+        // fall back to opening the settings panel (Tier Two) only when needed.
         recordStage('F2V_SOP_SETTINGS_EXPLORER_STARTED', 'PASS', `build=${F2V_FLOW_QUEUE_RUNNER_BUILD_ID}`);
-        
-        // Dissmiss any open dialogs first to establish a clean slate!
-        await _runMainWorld(scripting, tabId, function() {
-          var escEvent = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
-          document.dispatchEvent(escEvent);
-          
-          var buttons = document.querySelectorAll('button, [role="button"]');
-          for (var i = 0; i < buttons.length; i++) {
-            var btn = buttons[i];
-            var txt = (btn.textContent || '').toLowerCase();
-            if (txt.indexOf('close') >= 0 || txt.indexOf('cancel') >= 0 || txt.indexOf('dismiss') >= 0) {
-              if (btn.offsetWidth > 0 && btn.offsetHeight > 0) {
-                btn.click();
-              }
-            }
-          }
-        }, []);
-        await _sleep(500);
 
+        // Dismiss promo overlays / banners before any interaction.
+        const dismissRes = await _runMainWorld(scripting, tabId, MAIN_dismissPromoOverlays, []);
+        if (dismissRes && dismissRes.dismissed) {
+          console.log(`[FlowAgent] Overlay dismissed via: ${dismissRes.method || 'unknown'}`);
+          await _sleep(350);
+        }
+
+        // Tier One: check if 9:16 is already directly visible on the bottom pill
+        // without opening the settings panel. This handles the new Flow layout where
+        // aspect ratio is visible as a direct button/chip on the composer row.
+        const t1StampAttr = opts?.stampAttr || 'data-bosmax-option';
+        const t1Find = await _runMainWorld(
+          scripting, tabId, MAIN_findVisibleCandidatesByExactLabel,
+          [step.label, step.aliases || [], step.preferredRoles || [], t1StampAttr],
+        );
+
+        if (t1Find && t1Find.ok === true && Array.isArray(t1Find.matches) && t1Find.matches.length > 0) {
+          console.log(`[FlowAgent] Tier One: ${step.label} directly visible — skipping panel open.`);
+          const t1Click = await _runMainWorld(
+            scripting, tabId, MAIN_clickStampedElement,
+            [t1Find.matches[0].stamp_attr, t1Find.matches[0].stamp_id],
+          );
+          if (t1Click && t1Click.ok === true) {
+            await _sleep(Math.max(150, settle));
+            recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', 'launcher=tier_one_direct_pill');
+            recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS', 'strategy=tier_one_direct already_open=false');
+            recordStage('F2V_SOP_SETTING_CANDIDATES_SCANNED', 'PASS', `label=${step.label} count=1 strategy=tier_one_direct`);
+            recordStage(step.stage, 'PASS', `role=${t1Find.matches[0].role} strategy=tier_one_direct`);
+            const t1Confirmed = step.stage.replace('_CLICKED', '_CONFIRMED');
+            if (t1Confirmed !== step.stage) {
+              recordStage(t1Confirmed, 'PASS', `role=${t1Find.matches[0].role} strategy=tier_one_direct`);
+            }
+            continue; // Step handled — skip _clickVisibleOptionExact for this step.
+          }
+        }
+
+        // Tier Two: Tier One failed or option not directly visible — open settings panel.
         const panel = await _openComposerSettingsPanel(scripting, tabId, opts);
         recordStage('F2V_SOP_SETTINGS_OPENER_SCAN', 'PASS', _buildSettingsOpenerScanMessage(panel));
         if (!panel.ok) {
@@ -2400,7 +2586,7 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
             diagnostics: panel.diagnostics || null,
           };
         }
-        
+
         // Emit launcher found and settings panel opened stages
         recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', `launcher=${panel.launcher_text || 'already_open'}`);
         recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS',
