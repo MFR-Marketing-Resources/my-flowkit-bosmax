@@ -234,7 +234,7 @@ async def ext_callback(request: Request):
 @app.get("/health")
 async def health():
     client = get_flow_client()
-    extension_status = await client.get_status()
+    extension_status = await client.get_status(probe_timeout=0)
     registration = load_registration()
     return {
         "status": "ok",

@@ -12,6 +12,8 @@ domains:
       - scripts/install-local-agent.ps1
       - scripts/local-agent-common.ps1
       - scripts/start-local-agent.ps1
+      - scripts/launch-clean-bosmax-flow-runtime.ps1
+      - scripts/launch-clean-bosmax-flow-runtime-helper.js
       - agent/api/ai_provider_settings.py
       - agent/api/local_agent.py
       - agent/api/flow.py

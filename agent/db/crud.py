@@ -254,27 +254,142 @@ async def create_request(req_type: str, orientation: str = None,
         await db.commit()
     return await _get_with_db(db, "request", "id", rid)
 
-async def get_request(rid: str): return await _get("request", "id", rid)
+def _apply_fallback_error(d: dict) -> None:
+    if d.get("status") == "FAILED" and not d.get("error_message"):
+        error_found = None
+        payload_str = d.get("request_lineage_payload")
+        if payload_str:
+            try:
+                payload = json.loads(payload_str)
+                if isinstance(payload, dict):
+                    error_found = payload.get("error") or payload.get("error_message") or payload.get("error_code")
+            except Exception:
+                pass
+        
+        if error_found:
+            d["error_message"] = str(error_found)
+        elif d.get("google_flow_stage") == "ERROR" or d.get("extension_stage") == "ERROR":
+            d["error_message"] = f"Flow automation failed: google_flow_stage={d.get('google_flow_stage')}, extension_stage={d.get('extension_stage')}. No structured error payload was recorded."
+
+async def get_request(rid: str) -> Optional[dict]:
+    db = await get_db()
+    cur = await db.execute("""
+        SELECT r.id, r.project_id, r.video_id, r.scene_id, r.character_id, r.type, r.orientation,
+               r.media_id, r.output_url, r.automation_report, r.retry_count, r.next_retry_at,
+               r.edit_prompt, r.source_media_id, r.created_at, r.updated_at,
+               t.google_flow_stage,
+               t.extension_stage,
+               t.worker_stage,
+               t.mode,
+               t.queued_at,
+               t.started_at,
+               t.completed_at,
+               t.failed_at,
+               t.last_heartbeat_at,
+               t.duration_seconds,
+               t.idle_seconds,
+               t.processing_seconds,
+               t.error_code,
+               t.background_build_id,
+               t.content_build_id,
+               t.prompt_package_snapshot_id,
+               t.workspace_execution_package_id,
+               t.asset_fingerprints,
+               t.request_lineage_payload,
+               CASE 
+                   WHEN t.failed_at IS NOT NULL THEN 'FAILED'
+                   WHEN t.error_code IS NOT NULL OR t.error_message IS NOT NULL THEN 'FAILED'
+                   WHEN UPPER(t.google_flow_stage) = 'ERROR' OR UPPER(t.extension_stage) = 'ERROR' THEN 'FAILED'
+                   WHEN t.completed_at IS NOT NULL THEN 'COMPLETED'
+                   WHEN t.started_at IS NOT NULL THEN 'PROCESSING'
+                   WHEN t.queued_at IS NOT NULL THEN 'QUEUED'
+                   ELSE COALESCE(t.status, r.status)
+               END as status,
+               COALESCE(t.error_message, r.error_message) as error_message
+        FROM request r
+        LEFT JOIN request_telemetry t ON r.id = t.request_id
+        WHERE r.id = ?
+    """, (rid,))
+    row = await cur.fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    _apply_fallback_error(d)
+    return d
+
 async def update_request(rid: str, **kw): return await _update("request", "id", rid, **kw)
 
 async def list_requests(scene_id: str = None, status: str = None,
                         video_id: str = None, project_id: str = None,
                         limit: int = None) -> list[dict]:
     db = await get_db()
-    q, params = "SELECT * FROM request WHERE 1=1", []
+    q = """
+        SELECT r.id, r.project_id, r.video_id, r.scene_id, r.character_id, r.type, r.orientation,
+               r.media_id, r.output_url, r.automation_report, r.retry_count, r.next_retry_at,
+               r.edit_prompt, r.source_media_id, r.created_at, r.updated_at,
+               t.google_flow_stage,
+               t.extension_stage,
+               t.worker_stage,
+               t.mode,
+               t.queued_at,
+               t.started_at,
+               t.completed_at,
+               t.failed_at,
+               t.last_heartbeat_at,
+               t.duration_seconds,
+               t.idle_seconds,
+               t.processing_seconds,
+               t.error_code,
+               t.background_build_id,
+               t.content_build_id,
+               t.prompt_package_snapshot_id,
+               t.workspace_execution_package_id,
+               t.asset_fingerprints,
+               t.request_lineage_payload,
+               CASE 
+                   WHEN t.failed_at IS NOT NULL THEN 'FAILED'
+                   WHEN t.error_code IS NOT NULL OR t.error_message IS NOT NULL THEN 'FAILED'
+                   WHEN UPPER(t.google_flow_stage) = 'ERROR' OR UPPER(t.extension_stage) = 'ERROR' THEN 'FAILED'
+                   WHEN t.completed_at IS NOT NULL THEN 'COMPLETED'
+                   WHEN t.started_at IS NOT NULL THEN 'PROCESSING'
+                   WHEN t.queued_at IS NOT NULL THEN 'QUEUED'
+                   ELSE COALESCE(t.status, r.status)
+               END as status,
+               COALESCE(t.error_message, r.error_message) as error_message
+        FROM request r
+        LEFT JOIN request_telemetry t ON r.id = t.request_id
+        WHERE 1=1
+    """
+    params = []
     if scene_id:
-        q += " AND scene_id=?"; params.append(scene_id)
+        q += " AND r.scene_id=?"; params.append(scene_id)
     if status:
-        q += " AND status=?"; params.append(status)
+        q += """ AND (
+               CASE 
+                   WHEN t.failed_at IS NOT NULL THEN 'FAILED'
+                   WHEN t.error_code IS NOT NULL OR t.error_message IS NOT NULL THEN 'FAILED'
+                   WHEN UPPER(t.google_flow_stage) = 'ERROR' OR UPPER(t.extension_stage) = 'ERROR' THEN 'FAILED'
+                   WHEN t.completed_at IS NOT NULL THEN 'COMPLETED'
+                   WHEN t.started_at IS NOT NULL THEN 'PROCESSING'
+                   WHEN t.queued_at IS NOT NULL THEN 'QUEUED'
+                   ELSE COALESCE(t.status, r.status)
+               END
+        ) = ?"""; params.append(status)
     if video_id:
-        q += " AND video_id=?"; params.append(video_id)
+        q += " AND r.video_id=?"; params.append(video_id)
     if project_id:
-        q += " AND project_id=?"; params.append(project_id)
-    q += " ORDER BY created_at DESC"
+        q += " AND r.project_id=?"; params.append(project_id)
+    q += " ORDER BY r.created_at DESC"
     if limit:
         q += " LIMIT ?"; params.append(limit)
     cur = await db.execute(q, params)
-    return [dict(r) for r in await cur.fetchall()]
+    rows = await cur.fetchall()
+    results = []
+    for row in rows:
+        d = dict(row)
+        _apply_fallback_error(d)
+        results.append(d)
+    return results
 
 async def list_pending_requests() -> list[dict]:
     db = await get_db()

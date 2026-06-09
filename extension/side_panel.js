@@ -2,8 +2,10 @@ const LOCAL_AGENT_BASE_URL = "http://127.0.0.1:8100";
 const LOCAL_AGENT_HEALTH_URL = `${LOCAL_AGENT_BASE_URL}/health`;
 const LOCAL_AGENT_STATUS_URL = `${LOCAL_AGENT_BASE_URL}/api/local-agent/status`;
 const DASHBOARD_STATIC_READY = "BACKEND_SERVED_STATIC";
-const HEALTH_REQUEST_TIMEOUT_MS = 1500;
+const HEALTH_REQUEST_TIMEOUT_MS = 6500;
 const IFRAME_LOAD_TIMEOUT_MS = 12000;
+const AUTO_RUNTIME_RETRY_MS = 5000;
+const LAST_KNOWN_RUNTIME_GRACE_MS = 60000;
 
 const DASHBOARD_ROUTES = {
 	operator: {
@@ -36,12 +38,14 @@ const DASHBOARD_ROUTES = {
 	},
 };
 
-const LAUNCHER_BUILD_LABEL = "issue88-extension-launcher-routes";
+const LAUNCHER_BUILD_LABEL = "issue88-extension-launcher-runtime-hardening-v2";
 const ROUTE_SYNC_MESSAGE_TYPE = "FLOWKIT_DASHBOARD_ROUTE_SYNC";
 
 let navigationToken = 0;
 let selectedRouteKey = "operator";
 let currentEmbeddedRoute = DASHBOARD_ROUTES.operator;
+let autoRuntimeRetryTimer = null;
+let lastKnownRuntimeSnapshot = null;
 
 function getElement(id) {
 	return document.getElementById(id);
@@ -152,6 +156,32 @@ function setCurrentEmbeddedRoute(route) {
 
 function setIframeSrcCopy(value) {
 	setRuntimeCopy("iframe-src-copy", value || "not-set");
+}
+
+function clearAutoRuntimeRetry() {
+	if (autoRuntimeRetryTimer !== null) {
+		window.clearInterval(autoRuntimeRetryTimer);
+		autoRuntimeRetryTimer = null;
+	}
+}
+
+function ensureAutoRuntimeRetry() {
+	if (autoRuntimeRetryTimer !== null) {
+		return;
+	}
+
+	autoRuntimeRetryTimer = window.setInterval(() => {
+		if (document.hidden || document.body.classList.contains("ready")) {
+			if (document.body.classList.contains("ready")) {
+				clearAutoRuntimeRetry();
+			}
+			return;
+		}
+		navigateToRoute(selectedRouteKey, {
+			forceReload: true,
+			silentRetry: true,
+		});
+	}, AUTO_RUNTIME_RETRY_MS);
 }
 
 function setFrameSource(value) {
@@ -282,6 +312,72 @@ function canEmbedDashboard(snapshot) {
 	);
 }
 
+function buildHealthSnapshotFromStatus(status) {
+	return {
+		status: "ok",
+		extension_connected: Boolean(status?.extension_connected),
+		extension_state: String(status?.extension_state || "UNKNOWN").toLowerCase(),
+		dashboard_serving_mode:
+			status?.dashboard_serving_mode || "BACKEND_BUILD_REQUIRED",
+		dashboard_url: status?.dashboard_url || DASHBOARD_ROUTES.operator.url,
+		repair_command:
+			status?.repair_command || ".\\scripts\\install-local-agent.ps1",
+	};
+}
+
+function buildStatusSnapshotFromHealth(health) {
+	return {
+		task_name: "BOSMAX Flow Kit Local Agent",
+		health_url: LOCAL_AGENT_HEALTH_URL,
+		dashboard_url: health?.dashboard_url || DASHBOARD_ROUTES.operator.url,
+		content_pack_url: `${LOCAL_AGENT_BASE_URL}/api/operator/content-pack`,
+		dashboard_serving_mode:
+			health?.dashboard_serving_mode || "BACKEND_BUILD_REQUIRED",
+		repair_command:
+			health?.repair_command || ".\\scripts\\install-local-agent.ps1",
+		extension_connected: Boolean(health?.extension_connected),
+		extension_state: String(health?.extension_state || "UNKNOWN").toUpperCase(),
+		offline_reason: health?.extension_connected
+			? null
+			: "STATUS_ENDPOINT_UNAVAILABLE",
+		auto_start_enabled: false,
+		auto_start_mode: "UNKNOWN",
+		auto_start_warning: "STATUS_ENDPOINT_UNAVAILABLE",
+		last_health_check: new Date().toISOString(),
+		license_status: "UNKNOWN",
+		approval_status: "UNKNOWN",
+		registration: null,
+	};
+}
+
+function rememberRuntimeSnapshot(snapshot) {
+	if (!snapshot?.status || !snapshot?.health) {
+		return;
+	}
+	lastKnownRuntimeSnapshot = {
+		capturedAt: snapshot.capturedAt,
+		status: snapshot.status,
+		health: snapshot.health,
+		errorCode: null,
+	};
+}
+
+function getLastKnownRuntimeSnapshot() {
+	if (!lastKnownRuntimeSnapshot?.capturedAt) {
+		return null;
+	}
+	const ageMs =
+		Date.now() - new Date(lastKnownRuntimeSnapshot.capturedAt).getTime();
+	if (!Number.isFinite(ageMs) || ageMs > LAST_KNOWN_RUNTIME_GRACE_MS) {
+		return null;
+	}
+	return {
+		...lastKnownRuntimeSnapshot,
+		capturedAt: new Date().toISOString(),
+		errorCode: "RUNTIME_SNAPSHOT_STALE_FALLBACK",
+	};
+}
+
 function syncRuntimeDiagnostics(snapshot, route) {
 	const capturedAt = snapshot?.capturedAt || "unavailable";
 	const extensionConnected = getExtensionConnected(snapshot);
@@ -314,6 +410,7 @@ function syncRuntimeDiagnostics(snapshot, route) {
 function renderUnavailableState(route, snapshot) {
 	syncRuntimeDiagnostics(snapshot, route);
 	setFrameSource("");
+	ensureAutoRuntimeRetry();
 
 	if (!snapshot || snapshot.errorCode === "LOCAL_AGENT_OFFLINE") {
 		setBanner(
@@ -383,6 +480,7 @@ function renderUnavailableState(route, snapshot) {
 
 function renderFrameLoadingState(route, snapshot) {
 	syncRuntimeDiagnostics(snapshot, route);
+	ensureAutoRuntimeRetry();
 
 	if (getExtensionConnected(snapshot)) {
 		setBanner(
@@ -407,6 +505,7 @@ function renderFrameLoadingState(route, snapshot) {
 
 function renderReadyState(route, snapshot) {
 	syncRuntimeDiagnostics(snapshot, route);
+	clearAutoRuntimeRetry();
 	if (getExtensionConnected(snapshot)) {
 		setBanner(
 			"success",
@@ -427,6 +526,7 @@ function renderReadyState(route, snapshot) {
 
 function renderFrameErrorState(route, snapshot, message) {
 	syncRuntimeDiagnostics(snapshot, route);
+	ensureAutoRuntimeRetry();
 	setBanner("error", "Embedded dashboard failed to load", message);
 	setPortalState("error", message, "Embedded dashboard failed");
 	setLastAction(`Iframe error: ${message}`);
@@ -472,18 +572,23 @@ async function fetchRuntimeSnapshot() {
 	if (statusOk) snapshot.status = statusResult.value;
 	if (healthOk) snapshot.health = healthResult.value;
 
+	if (statusOk && !healthOk) {
+		snapshot.health = buildHealthSnapshotFromStatus(snapshot.status);
+	}
+	if (!statusOk && healthOk) {
+		snapshot.status = buildStatusSnapshotFromHealth(snapshot.health);
+	}
+
 	if (!statusOk && !healthOk) {
+		const cachedSnapshot = getLastKnownRuntimeSnapshot();
+		if (cachedSnapshot) {
+			return cachedSnapshot;
+		}
 		snapshot.errorCode = "LOCAL_AGENT_OFFLINE";
 		return snapshot;
 	}
-	if (healthOk && !statusOk) {
-		snapshot.errorCode = "PARTIAL_AGENT_DIAGNOSTIC_FAILURE";
-		return snapshot;
-	}
-	if (!healthOk && statusOk) {
-		snapshot.errorCode = "HEALTH_ENDPOINT_FAILED";
-		return snapshot;
-	}
+
+	rememberRuntimeSnapshot(snapshot);
 
 	if (!getExtensionConnected(snapshot)) {
 		snapshot.errorCode = "EXTENSION_DISCONNECTED";
@@ -508,10 +613,14 @@ async function navigateToRoute(routeKey, options = {}) {
 	setActiveButton(routeKey);
 	setCurrentRoute(routeKey, route.url);
 	setCurrentEmbeddedRoute(route);
-	recordClick(route.label, route.url);
+	if (!options.silentRetry) {
+		recordClick(route.label, route.url);
+	}
 	setRuntimeCopy("route-label", route.label);
 	setRuntimeCopy("portal-url", route.url);
-	setLastAction(`Checking local agent before launching: ${route.label}`);
+	if (!options.silentRetry) {
+		setLastAction(`Checking local agent before launching: ${route.label}`);
+	}
 
 	let snapshot = null;
 	try {
@@ -579,7 +688,9 @@ async function navigateToRoute(routeKey, options = {}) {
 		frame.src = route.url;
 	}
 	setIframeSrcCopy(route.url);
-	setLastAction(`Iframe src updated: ${route.url}`);
+	if (!options.silentRetry) {
+		setLastAction(`Iframe src updated: ${route.url}`);
+	}
 }
 
 function bootSidePortal() {
@@ -624,12 +735,14 @@ function bootSidePortal() {
 	});
 
 	retryButton.addEventListener("click", () => {
+		clearAutoRuntimeRetry();
 		setLastAction("Retry requested from side panel shell.");
 		navigateToRoute(selectedRouteKey, { forceReload: true });
 	});
 
 	buttons.forEach((button) => {
 		button.addEventListener("click", () => {
+			clearAutoRuntimeRetry();
 			const routeKey =
 				button.getAttribute("data-dashboard-route") || "operator";
 			navigateToRoute(routeKey, { forceReload: true });
@@ -639,6 +752,22 @@ function bootSidePortal() {
 	setLastAction(`Launcher bindings attached: ${buttons.length} buttons ready.`);
 	setPanelState("loading");
 	window.addEventListener("message", handleEmbeddedRouteSync);
+	window.addEventListener("focus", () => {
+		if (!document.body.classList.contains("ready")) {
+			navigateToRoute(selectedRouteKey, {
+				forceReload: true,
+				silentRetry: true,
+			});
+		}
+	});
+	document.addEventListener("visibilitychange", () => {
+		if (!document.hidden && !document.body.classList.contains("ready")) {
+			navigateToRoute(selectedRouteKey, {
+				forceReload: true,
+				silentRetry: true,
+			});
+		}
+	});
 	navigateToRoute("operator", { forceReload: true });
 }
 

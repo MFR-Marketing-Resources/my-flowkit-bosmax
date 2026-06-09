@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agent.services import fastmoss_bulk_promotion_service as _svc
@@ -157,3 +158,46 @@ async def update_queue_row_status(
         status_code = 404 if result["error"] == "NOT_IN_QUEUE" else 422
         raise HTTPException(status_code=status_code, detail=result["error"])
     return result
+
+
+@router.post("/queue/{reference_id}/force-approve-claim-risk")
+async def force_approve_claim_risk_row(reference_id: str) -> dict[str, Any]:
+    """Operator override: force-approve a CLAIM_RISK row by bypassing the claim gate.
+
+    Only valid for rows in CLAIM_RISK status with a draft_id.
+    The operator confirms the flagged tokens are false positives.
+    """
+    result = await _svc.force_approve_claim_risk_override(reference_id)
+    if result.get("error"):
+        status_code = 404 if result["error"] == "NOT_IN_QUEUE" else 422
+        raise HTTPException(status_code=status_code, detail=result["error"])
+    return result
+
+
+class ImportEnrichmentRequest(BaseModel):
+    items: list[dict[str, Any]]
+
+
+@router.get("/queue/export-missing-csv")
+async def export_missing_csv() -> StreamingResponse:
+    """Download a CSV of all MISSING_REQUIRED_FIELD rows ready for operator enrichment."""
+    csv_content = await _svc.export_missing_as_csv()
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=missing_required_field.csv"},
+    )
+
+
+@router.post("/queue/import-enrichment")
+async def import_enrichment(body: ImportEnrichmentRequest) -> dict[str, Any]:
+    """
+    Accept enriched product knowledge rows (from CSV re-upload) and recompute.
+
+    Each item must have reference_id plus any subset of:
+    product_knowledge_text, benefits_text, usage_text,
+    target_customer_text, ingredients_text, warnings_text
+    """
+    if not body.items:
+        raise HTTPException(status_code=422, detail="items must not be empty")
+    return await _svc.import_enrichment(body.items)

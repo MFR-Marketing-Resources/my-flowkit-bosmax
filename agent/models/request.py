@@ -54,3 +54,18 @@ class Request(BaseModel):
     source_media_id: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    
+    # Telemetry fields
+    google_flow_stage: Optional[str] = None
+    extension_stage: Optional[str] = None
+    mode: Optional[str] = None
+    failed_at: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    idle_seconds: Optional[float] = None
+    processing_seconds: Optional[float] = None
+    error_code: Optional[str] = None
+    background_build_id: Optional[str] = None
+    content_build_id: Optional[str] = None
+    prompt_package_snapshot_id: Optional[str] = None
+    workspace_execution_package_id: Optional[str] = None
+    asset_fingerprints: Optional[str] = None

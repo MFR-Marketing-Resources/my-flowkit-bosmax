@@ -33,12 +33,16 @@ class FlowClient:
         self._ws_connected_at: Optional[float] = None
         self._ws_last_disconnect_at: Optional[float] = None
         self.last_state = "OFFLINE"
+        self._last_status_snapshot = self._build_status_snapshot()
 
     def set_extension(self, ws):
         """Called when extension connects via WS."""
         self._extension_ws = ws
         self._ws_connect_count += 1
         self._ws_connected_at = time.time()
+        if self.last_state == "OFFLINE":
+            self.last_state = "idle"
+        self._last_status_snapshot = self._build_status_snapshot()
         logger.info("Extension connected #%d (waiting for extension_ready/token_captured to sync)", self._ws_connect_count)
 
     def clear_extension(self):
@@ -46,6 +50,7 @@ class FlowClient:
         self._extension_ws = None
         self._ws_disconnect_count += 1
         self._ws_last_disconnect_at = time.time()
+        self.last_state = "OFFLINE"
         # Cancel all pending futures (copy to avoid RuntimeError on concurrent modification)
         pending_copy = list(self._pending.items())
         count = len(pending_copy)
@@ -53,10 +58,12 @@ class FlowClient:
             if not future.done():
                 future.set_exception(ConnectionError("Extension disconnected"))
         self._pending.clear()
+        self._last_status_snapshot = self._build_status_snapshot(error="Extension disconnected")
         logger.warning("Extension disconnected, cleared %d pending requests", count)
 
     def set_flow_key(self, key: str):
         self._flow_key = key
+        self._last_status_snapshot = self._build_status_snapshot()
 
     @property
     def connected(self) -> bool:
@@ -74,15 +81,49 @@ class FlowClient:
             "uptime_s": uptime,
         }
 
+    def _build_status_snapshot(self, payload: Optional[dict] = None, error: Optional[str] = None) -> dict:
+        snapshot = {
+            "connected": self.connected,
+            "state": self.last_state if self.connected else "off",
+            "flowKeyPresent": bool(self._flow_key),
+            "manualDisconnect": False,
+            "metrics": {},
+        }
+        if isinstance(payload, dict):
+            snapshot.update(payload)
+        snapshot["connected"] = self.connected
+        snapshot["state"] = snapshot.get("state") or ("idle" if self.connected else "off")
+        snapshot["flowKeyPresent"] = bool(snapshot.get("flowKeyPresent", bool(self._flow_key)))
+        snapshot["manualDisconnect"] = bool(snapshot.get("manualDisconnect", False))
+        snapshot["metrics"] = snapshot.get("metrics") if isinstance(snapshot.get("metrics"), dict) else {}
+        if error:
+            snapshot["error"] = error
+        elif "error" in snapshot and snapshot["error"] is None:
+            snapshot.pop("error", None)
+        self.last_state = str(snapshot["state"])
+        return snapshot
+
+    def _cache_status_snapshot(self, payload: Optional[dict] = None, error: Optional[str] = None) -> dict:
+        self._last_status_snapshot = self._build_status_snapshot(payload=payload, error=error)
+        return dict(self._last_status_snapshot)
+
     async def handle_message(self, data: dict):
         """Handle incoming message from extension."""
         if data.get("type") == "token_captured":
             self._flow_key = data.get("flowKey")
+            self._cache_status_snapshot({"flowKeyPresent": True})
             logger.info("Flow key captured from extension")
             asyncio.create_task(self._sync_tier())
             return
 
         if data.get("type") == "extension_ready":
+            self._cache_status_snapshot(
+                {
+                    "connected": True,
+                    "state": "idle",
+                    "flowKeyPresent": bool(data.get("flowKeyPresent") or self._flow_key),
+                }
+            )
             logger.info("Extension ready, flowKey=%s", "yes" if data.get("flowKeyPresent") else "no")
             asyncio.create_task(self._sync_tier())
             return
@@ -103,6 +144,11 @@ class FlowClient:
         # Response to a pending request
         req_id = data.get("id")
         if req_id and req_id in self._pending:
+            payload = data.get("result")
+            if isinstance(payload, dict) and (
+                "state" in payload or "flowKeyPresent" in payload or "metrics" in payload
+            ):
+                self._cache_status_snapshot(payload)
             if not self._pending[req_id].done():
                 self._pending[req_id].set_result(data)
             return
@@ -244,7 +290,7 @@ class FlowClient:
     async def execute_flow_job(self, job_data: dict) -> dict:
         """Trigger DOM automation in the extension for a generation job."""
         # Content script ACKs immediately — if no response in 30s, SW is dead/sleeping
-        raw = await self._send("EXECUTE_FLOW_JOB", {"job": job_data}, timeout=30)
+        raw = await self._send("EXECUTE_FLOW_JOB", {"job": job_data}, timeout=130)
         # _send returns {id, result: {...}} on success — unwrap like other methods
         if raw.get("error"):
             return {"ok": False, "error": raw["error"]}
@@ -653,41 +699,50 @@ class FlowClient:
             "headers": random_headers(),
         }, timeout=15)
 
-    async def get_status(self) -> dict:
+    async def get_status(self, probe_timeout: float = 5) -> dict:
         """Query live extension runtime state over the WebSocket bridge."""
         if not self.connected:
-            return {
-                "connected": False,
-                "state": "off",
-                "flowKeyPresent": False,
-                "manualDisconnect": False,
-                "metrics": {},
-            }
+            return self._cache_status_snapshot(
+                {
+                    "connected": False,
+                    "state": "off",
+                    "flowKeyPresent": False,
+                    "manualDisconnect": False,
+                    "metrics": {},
+                }
+            )
 
-        result = await self._send("get_status", {}, timeout=5)
+        if probe_timeout <= 0:
+            return self._cache_status_snapshot()
+
+        result = await self._send("get_status", {}, timeout=probe_timeout)
         if result.get("error"):
-            return {
-                "connected": True,
-                "state": "unknown",
-                "flowKeyPresent": False,
-                "manualDisconnect": False,
-                "metrics": {},
-                "error": result["error"],
-            }
+            return self._cache_status_snapshot(
+                {
+                    "connected": True,
+                    "state": self.last_state if self.last_state != "OFFLINE" else "unknown",
+                    "flowKeyPresent": bool(self._flow_key),
+                    "manualDisconnect": False,
+                    "metrics": self._last_status_snapshot.get("metrics", {}),
+                },
+                error=result["error"],
+            )
 
         data = result.get("result")
         if isinstance(data, dict):
             data.setdefault("connected", self.connected)
-            return data
+            return self._cache_status_snapshot(data)
 
-        return {
-            "connected": self.connected,
-            "state": "unknown",
-            "flowKeyPresent": False,
-            "manualDisconnect": False,
-            "metrics": {},
-            "error": "invalid extension status payload",
-        }
+        return self._cache_status_snapshot(
+            {
+                "connected": self.connected,
+                "state": self.last_state if self.last_state != "OFFLINE" else "unknown",
+                "flowKeyPresent": bool(self._flow_key),
+                "manualDisconnect": False,
+                "metrics": self._last_status_snapshot.get("metrics", {}),
+            },
+            error="invalid extension status payload",
+        )
 
     async def validate_media_id(self, media_id: str) -> bool:
         """Check if a mediaId is still valid.

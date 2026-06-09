@@ -29,6 +29,7 @@ export default function ProductRegistrationPage() {
 	const [currentPageDrafts, setCurrentPageDrafts] = useState(1);
 	const [isProcessing, setIsProcessing] = useState(false);
 	const [isLoadingDrafts, setIsLoadingDrafts] = useState(false);
+	const [isBatchRecomputing, setIsBatchRecomputing] = useState(false);
 
 	const fetchDrafts = useCallback(async () => {
 		setIsLoadingDrafts(true);
@@ -127,6 +128,31 @@ export default function ProductRegistrationPage() {
 		(safePageDrafts - 1) * PAGE_SIZE_DRAFTS,
 		safePageDrafts * PAGE_SIZE_DRAFTS,
 	);
+
+	const handleBatchRecompute = async () => {
+		if (isBatchRecomputing) return;
+		setIsBatchRecomputing(true);
+		try {
+			const result = await postAPI<{
+				recomputed: string[];
+				skipped_committed: string[];
+				errors: { draft_id: string; error: string }[];
+				total_recomputed: number;
+			}>("/api/product-registration/review-drafts/batch-recompute", {});
+			// If currently viewed draft was recomputed, reload it
+			if (
+				reviewDraft &&
+				result.recomputed.includes(reviewDraft.review_draft_id)
+			) {
+				await handleOpenDraftById(reviewDraft.review_draft_id);
+			}
+			await fetchDrafts();
+		} catch (err) {
+			console.error("Batch recompute failed:", err);
+		} finally {
+			setIsBatchRecomputing(false);
+		}
+	};
 
 	return (
 		<div className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-8 overflow-y-auto">
@@ -321,26 +347,55 @@ export default function ProductRegistrationPage() {
 								<h4 className="text-xs font-bold uppercase tracking-widest text-slate-500">
 									Review Draft Queue
 								</h4>
-								<button
-									type="button"
-									onClick={fetchDrafts}
-									className="p-1 hover:text-white text-slate-500 transition-colors"
-								>
-									<svg
-										aria-hidden="true"
-										className={`w-3.5 h-3.5 ${isLoadingDrafts ? "animate-spin" : ""}`}
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
+								<div className="flex items-center gap-2">
+									<button
+										type="button"
+										onClick={() => void handleBatchRecompute()}
+										disabled={
+											isBatchRecomputing ||
+											savedDrafts.filter((d) => d.review_status !== "COMMITTED")
+												.length === 0
+										}
+										title="Recompute all pending drafts — system auto-fills missing evidence"
+										className="flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 text-[9px] font-bold uppercase tracking-widest transition-all disabled:opacity-40 disabled:cursor-not-allowed"
 									>
-										<path
-											strokeLinecap="round"
-											strokeLinejoin="round"
+										<svg
+											aria-hidden="true"
+											className={`w-3 h-3 ${isBatchRecomputing ? "animate-spin" : ""}`}
+											fill="none"
+											viewBox="0 0 24 24"
+											stroke="currentColor"
 											strokeWidth={2}
-											d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-										/>
-									</svg>
-								</button>
+										>
+											<path
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+											/>
+										</svg>
+										{isBatchRecomputing ? "Running..." : "Recompute All"}
+									</button>
+									<button
+										type="button"
+										onClick={fetchDrafts}
+										className="p-1 hover:text-white text-slate-500 transition-colors"
+									>
+										<svg
+											aria-hidden="true"
+											className={`w-3.5 h-3.5 ${isLoadingDrafts ? "animate-spin" : ""}`}
+											fill="none"
+											viewBox="0 0 24 24"
+											stroke="currentColor"
+										>
+											<path
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												strokeWidth={2}
+												d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+											/>
+										</svg>
+									</button>
+								</div>
 							</div>
 
 							<div className="space-y-2 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
@@ -416,7 +471,7 @@ export default function ProductRegistrationPage() {
 								)}
 							</div>
 							{totalPagesDrafts > 1 && (
-								<div className="flex items-center justify-center gap-1 mt-3">
+								<div className="flex items-center justify-center gap-1 mt-3 flex-wrap">
 									<button
 										type="button"
 										onClick={() =>
@@ -427,19 +482,42 @@ export default function ProductRegistrationPage() {
 									>
 										Prev
 									</button>
-									{Array.from(
-										{ length: totalPagesDrafts },
-										(_, i) => i + 1,
-									).map((pg) => (
-										<button
-											key={pg}
-											type="button"
-											onClick={() => setCurrentPageDrafts(pg)}
-											className={`w-6 h-6 rounded text-[10px] border ${safePageDrafts === pg ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"}`}
-										>
-											{pg}
-										</button>
-									))}
+									{(() => {
+										const pages: (number | string)[] = [];
+										const delta = 1;
+										let last = 0;
+										for (let pg = 1; pg <= totalPagesDrafts; pg++) {
+											if (
+												pg === 1 ||
+												pg === totalPagesDrafts ||
+												(pg >= safePageDrafts - delta &&
+													pg <= safePageDrafts + delta)
+											) {
+												if (last && pg - last > 1) pages.push("e" + pg);
+												pages.push(pg);
+												last = pg;
+											}
+										}
+										return pages.map((pg) =>
+											typeof pg === "string" ? (
+												<span
+													key={pg}
+													className="px-1 text-[10px] text-slate-600"
+												>
+													…
+												</span>
+											) : (
+												<button
+													key={pg}
+													type="button"
+													onClick={() => setCurrentPageDrafts(pg as number)}
+													className={`w-6 h-6 rounded text-[10px] border ${safePageDrafts === pg ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"}`}
+												>
+													{pg}
+												</button>
+											),
+										);
+									})()}
 									<button
 										type="button"
 										onClick={() =>

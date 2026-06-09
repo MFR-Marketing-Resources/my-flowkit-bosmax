@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Query, HTTPException
 from typing import List, Optional
 from agent.db import crud
@@ -5,6 +6,7 @@ from agent.models.request import Request
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/telemetry", tags=["telemetry"])
+_ERROR_CODE_RE = re.compile(r"\b(ERR_[A-Z0-9_]+)\b")
 
 class TelemetrySummary(BaseModel):
     total_today: int
@@ -37,6 +39,36 @@ class StageEventCreate(BaseModel):
     fail_code: Optional[str] = None
     first_fail_stage: Optional[str] = None
 
+
+def _derive_error_code(event: StageEventCreate) -> Optional[str]:
+    candidate = str(event.fail_code or "").strip()
+    if candidate:
+        return candidate
+    message = str(event.message or "")
+    match = _ERROR_CODE_RE.search(message)
+    if match:
+        return match.group(1)
+    return None
+
+@router.get("/summary", response_model=TelemetrySummary)
+async def get_summary():
+    return await crud.get_telemetry_summary()
+
+@router.get("/requests")
+async def get_requests(
+    project_id: Optional[str] = None,
+    video_id: Optional[str] = None,
+    limit: int = 50
+):
+    return await crud.list_request_telemetry(project_id, video_id, limit)
+
+@router.get("/requests/{request_id}")
+async def get_request_detail(request_id: str):
+    telemetry = await crud.get_request_telemetry(request_id)
+    if not telemetry:
+        raise HTTPException(status_code=404, detail="Telemetry not found")
+    
+
 @router.get("/summary", response_model=TelemetrySummary)
 async def get_summary():
     return await crud.get_telemetry_summary()
@@ -68,12 +100,28 @@ async def add_stage(event: StageEventCreate):
     if event.background_build_id.strip().lower() == "legacy" or event.content_build_id.strip().lower() == "legacy":
         raise HTTPException(status_code=422, detail="LEGACY_BUILD_REJECTED")
 
+    from agent.db.schema import get_db
+    db = await get_db()
+    cursor = await db.execute("SELECT id FROM request WHERE id = ?", (event.request_id,))
+    row = await cursor.fetchone()
+    is_batch_variant = False
+    if not row:
+        is_batch_variant = True
+        now = crud._now()
+        async with crud._db_lock:
+            await db.execute(
+                "INSERT INTO request (id, type, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (event.request_id, "TRUE_F2V", "PROCESSING", now, now)
+            )
+            await db.commit()
+
     # Update telemetry status based on stage if needed
     status_map = {
         "FLOW_MODE_SELECTED": "FLOW_RUNNING",
         "GENERATION_STARTED": "FLOW_RUNNING",
         "COMPLETED": "COMPLETED",
-        "FAILED": "FAILED"
+        "FAILED": "FAILED",
+        "ERROR": "FAILED"
     }
     
     kw = {
@@ -86,12 +134,18 @@ async def add_stage(event: StageEventCreate):
         "google_flow_stage": event.stage,
         "extension_stage": event.stage,
     }
+    if is_batch_variant:
+        kw["request_type"] = "TRUE_F2V"
     if event.stage in status_map:
         kw["status"] = status_map[event.stage]
     
-    if event.stage == "FAILED":
+    if event.stage in ("FAILED", "ERROR") or event.status == "FAIL":
+        kw["status"] = "FAILED"
         kw["failed_at"] = crud._now()
         kw["error_message"] = event.message
+        error_code = _derive_error_code(event)
+        if error_code:
+            kw["error_code"] = error_code
     elif event.stage == "COMPLETED":
         kw["completed_at"] = crud._now()
     

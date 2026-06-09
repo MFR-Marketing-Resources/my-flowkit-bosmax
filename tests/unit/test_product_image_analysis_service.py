@@ -92,6 +92,10 @@ def test_configured_provider_returns_analyzed_payload_and_merges_metadata(monkey
             metadata={"provider_roundtrip": True},
         ),
     )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.is_lane_execution_enabled",
+        lambda lane: True,
+    )
 
     result = analyze_product_image_payload(
         {
@@ -120,6 +124,10 @@ def test_configured_provider_failure_falls_closed_to_analysis_failed(monkeypatch
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service._analyze_with_provider",
         lambda provider, payload, metadata: None,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.is_lane_execution_enabled",
+        lambda lane: True,
     )
 
     result = analyze_product_image_payload(

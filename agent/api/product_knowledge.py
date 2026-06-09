@@ -21,6 +21,7 @@ router = APIRouter(prefix="/product-knowledge", tags=["product-knowledge"])
 async def product_knowledge_complete(
     request: ProductKnowledgeCompleteRequest,
 ) -> ProductKnowledgeCompleteResponse:
+    request.allow_live_image_analysis = True
     return complete_product_knowledge(request)
 
 

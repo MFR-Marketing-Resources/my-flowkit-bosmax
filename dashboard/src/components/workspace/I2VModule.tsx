@@ -404,15 +404,25 @@ export default function I2VModule({
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-300/80">
 								I2V — All 3 Slots Are Reference Images
 							</div>
-							<p>Subject = avatar/character · Scene = product · Style = scene context/environment.</p>
-							<p>The model SEES all three images. Your prompt describes <strong className="text-blue-200">the event</strong> — how the character interacts with the product within the scene. No need to re-describe the visuals.</p>
+							<p>
+								Subject = avatar/character · Scene = product · Style = scene
+								context/environment.
+							</p>
+							<p>
+								The model SEES all three images. Your prompt describes{" "}
+								<strong className="text-blue-200">the event</strong> — how the
+								character interacts with the product within the scene. No need
+								to re-describe the visuals.
+							</p>
 						</div>
 						<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-[11px] text-emerald-100">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/80">
 								Asset Resolver
 							</div>
 							<div className="mt-1">
-								Product auto-resolves as scene reference. Select Character and Style / Mood from Creative Library to complete the ingredient set.
+								Product auto-resolves as scene reference. Select Character and
+								Style / Mood from Creative Library to complete the ingredient
+								set.
 							</div>
 						</div>
 						<div className="grid gap-4 md:grid-cols-2">
@@ -755,10 +765,26 @@ export default function I2VModule({
 						I2V — Prompt Guide
 					</h4>
 					<div className="text-[10px] text-purple-300/55 leading-relaxed space-y-2">
-						<p><strong className="text-purple-300/80">Subject</strong> = avatar/character reference image. Model sees the person — describe their action, not their look.</p>
-						<p><strong className="text-purple-300/80">Scene</strong> = product reference image. Model sees the product — describe how it's handled/demonstrated.</p>
-						<p><strong className="text-purple-300/80">Style</strong> = scene context/environment reference. Model sees the environment — describe the mood/activity, not the background.</p>
-						<p><strong className="text-purple-300/80">Product size</strong> → always include a verbal scale anchor (e.g. "serum bottle, 30ml, fits in one hand").</p>
+						<p>
+							<strong className="text-purple-300/80">Subject</strong> =
+							avatar/character reference image. Model sees the person — describe
+							their action, not their look.
+						</p>
+						<p>
+							<strong className="text-purple-300/80">Scene</strong> = product
+							reference image. Model sees the product — describe how it's
+							handled/demonstrated.
+						</p>
+						<p>
+							<strong className="text-purple-300/80">Style</strong> = scene
+							context/environment reference. Model sees the environment —
+							describe the mood/activity, not the background.
+						</p>
+						<p>
+							<strong className="text-purple-300/80">Product size</strong> →
+							always include a verbal scale anchor (e.g. "serum bottle, 30ml,
+							fits in one hand").
+						</p>
 					</div>
 				</section>
 			</div>

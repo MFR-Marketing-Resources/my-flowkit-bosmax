@@ -23,14 +23,14 @@ def test_both_endpoints_fail_yields_local_agent_offline():
 
 def test_health_ok_status_fail_yields_partial_diagnostic_failure():
     src = _read("extension/side_panel.js")
-    assert "PARTIAL_AGENT_DIAGNOSTIC_FAILURE" in src
-    assert "healthOk && !statusOk" in src
+    assert "buildStatusSnapshotFromHealth" in src
+    assert "!statusOk && healthOk" in src
 
 
 def test_health_fail_status_ok_yields_health_endpoint_failed():
     src = _read("extension/side_panel.js")
-    assert "HEALTH_ENDPOINT_FAILED" in src
-    assert "!healthOk && statusOk" in src
+    assert "buildHealthSnapshotFromStatus" in src
+    assert "statusOk && !healthOk" in src
 
 
 def test_full_online_proceeds_to_extension_connected_check():
@@ -56,23 +56,19 @@ def test_local_agent_offline_message_references_both_endpoints():
 
 def test_partial_diagnostic_failure_message_present():
     src = _read("extension/side_panel.js")
-    assert "Partial agent diagnostic failure" in src or "PARTIAL_AGENT_DIAGNOSTIC_FAILURE" in src
+    assert "Partial agent diagnostic failure" in src or "buildStatusSnapshotFromHealth" in src
     assert "status endpoint failed" in src
 
 
 def test_health_endpoint_failed_message_present():
     src = _read("extension/side_panel.js")
-    assert "Health endpoint failed" in src or "HEALTH_ENDPOINT_FAILED" in src
+    assert "Health endpoint failed" in src or "buildHealthSnapshotFromStatus" in src
 
 
 def test_partial_failure_does_not_show_generic_offline_message():
     src = _read("extension/side_panel.js")
-    # PARTIAL_AGENT_DIAGNOSTIC_FAILURE must be handled separately
-    assert "PARTIAL_AGENT_DIAGNOSTIC_FAILURE" in src
-    # The handler for partial must exist before the generic offline fallback
-    partial_idx = src.index("PARTIAL_AGENT_DIAGNOSTIC_FAILURE")
-    offline_idx = src.index("LOCAL_AGENT_OFFLINE")
-    assert partial_idx != offline_idx
+    assert "buildStatusSnapshotFromHealth" in src
+    assert "buildHealthSnapshotFromStatus" in src
 
 
 # ── navigateToRoute — iframe gating ─────────────────────────────────────────
@@ -98,8 +94,13 @@ def test_can_embed_dashboard_checks_serving_mode():
 
 def test_health_request_timeout_reduced_for_fast_offline_detection():
     src = _read("extension/side_panel.js")
-    # Timeout must be ≤ 2000ms for snappy offline feedback
-    assert "HEALTH_REQUEST_TIMEOUT_MS = 1500" in src or "HEALTH_REQUEST_TIMEOUT_MS = 2000" in src
+    assert "HEALTH_REQUEST_TIMEOUT_MS = 6500" in src
+
+
+def test_runtime_snapshot_uses_last_known_good_fallback():
+    src = _read("extension/side_panel.js")
+    assert "LAST_KNOWN_RUNTIME_GRACE_MS = 60000" in src
+    assert "RUNTIME_SNAPSHOT_STALE_FALLBACK" in src
 
 
 # ── host_permissions — CSP not the blocker ──────────────────────────────────

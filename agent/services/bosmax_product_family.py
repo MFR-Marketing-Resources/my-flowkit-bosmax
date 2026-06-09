@@ -301,7 +301,7 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
     elif category in {"womenswear and underwear", "fashion", "muslim fashion"}:
         family = "fashion_apparel"
         reason = "Apparel taxonomy fallback matched."
-    elif category in {"food beverage", "food and beverage"}:
+    elif category in {"food beverage", "food beverages", "food and beverage", "food and beverages"}:
         family = "food_packaged"
         reason = "Food taxonomy fallback matched."
     elif category == "stationery":

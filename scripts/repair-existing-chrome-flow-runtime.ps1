@@ -179,7 +179,7 @@ function Get-SelfTest {
 
 $selfTest = Get-SelfTest
 $savedUrl = $null
-if ($selfTest -and $selfTest.extension_self_test -and $selfTest.extension_self_test.target_tab) {
+if ($selfTest -and $selfTest.PSObject.Properties['extension_self_test'] -and $selfTest.extension_self_test -and $selfTest.extension_self_test.PSObject.Properties['target_tab'] -and $selfTest.extension_self_test.target_tab) {
     $savedUrl = $selfTest.extension_self_test.target_tab.url
     Write-Output "Detected existing Flow editor URL: $savedUrl"
 }
@@ -293,13 +293,9 @@ if ($state -eq "BUILD_MISMATCH" -or $state -eq $false) {
     Stop-Process -Name chrome -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
 
-    $launchUrl = if ($savedUrl) { $savedUrl } else { "https://labs.google/fx/tools/flow" }
+    $launchUrl = if ($savedUrl) { $savedUrl } else { "https://labs.google/fx/tools/flow/project/ff250f80-7d0c-4f0e-9b26-9d341c47697c" }
     Write-Output "Restarting Chrome in same session/profile..."
-    $procArgs = @(
-        "--user-data-dir=$discoveredUserDataDir",
-        "--profile-directory=$discoveredProfile",
-        $launchUrl
-    )
+    $procArgs = "--user-data-dir=`"$discoveredUserDataDir`" --profile-directory=`"$discoveredProfile`" `"$launchUrl`""
     Start-Process -FilePath $chromePath -ArgumentList $procArgs
     
     Write-Output "Waiting 8 seconds for Chrome and extension to reconnect..."

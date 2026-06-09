@@ -1243,11 +1243,17 @@ async def cancel_scheduled_batch_run(scheduled_run_id: str) -> dict | None:
 
 
 async def _scheduler_loop() -> None:
-    """Background loop: fires scheduled batch runs when their scheduled_at time is reached."""
+    """Background loop: fires scheduled batch runs when their scheduled_at time is reached.
+
+    NOTE: Waits 120s on startup before first check so the server becomes healthy
+    and the operator can cancel pending jobs before they auto-fire.
+    """
     import datetime as _dt
     import json as _json_mod
 
-    _batch_logger.info("Scheduled batch runner started")
+    _batch_logger.info("Scheduled batch runner started — waiting 120s before first check")
+    await _asyncio.sleep(120)  # startup grace period: no auto-fire until server is stable
+    _batch_logger.info("Scheduled batch runner active")
     while True:
         try:
             now_iso = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")

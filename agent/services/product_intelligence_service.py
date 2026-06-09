@@ -1278,7 +1278,7 @@ def _resolve_family_from_taxonomy(product: dict[str, Any]) -> tuple[str, str]:
         return "HOUSEHOLD_STORAGE_ORGANIZER", "taxonomy_fallback:storage"
     if any(token in taxonomy for token in ["stationery", "envelope"]):
         return "stationery_paper", "taxonomy_fallback:stationery"
-    if any(token in taxonomy for token in ["baby & maternity", "baby care", "diapers"]):
+    if any(token in taxonomy for token in ["baby and maternity", "baby maternity", "baby care", "diapers"]):
         if "wipes" in taxonomy:
             return "BABY_WIPES", "taxonomy_fallback:baby_wipes"
         return "BABY_DIAPER", "taxonomy_fallback:baby_diaper"
@@ -1286,15 +1286,15 @@ def _resolve_family_from_taxonomy(product: dict[str, Any]) -> tuple[str, str]:
         return "MALE_HEALTH_SENSITIVE", "taxonomy_fallback:male_health_sensitive"
     if "female health" in taxonomy or "feminine care" in taxonomy:
         return "FEMALE_HEALTH_SENSITIVE", "taxonomy_fallback:female_health_sensitive"
-    if any(token in taxonomy for token in ["food & beverage", "food & beverages", "kitchenware"]):
+    if any(token in taxonomy for token in ["food and beverage", "food and beverages", "food beverage", "food beverages", "kitchenware"]):
         return "food_packaged", "taxonomy_fallback:food"
     if any(token in taxonomy for token in ["health", "supplements"]):
         return "HEALTH_SUPPLEMENT", "taxonomy_fallback:health_supplement"
     if any(token in taxonomy for token in ["pet supplies"]):
         return "PET_CARE_GENERAL", "taxonomy_fallback:petcare"
-    if any(token in taxonomy for token in ["tools & hardware", "automotive & motorcycle", "home improvement"]):
+    if any(token in taxonomy for token in ["tools and hardware", "tools hardware", "automotive and motorcycle", "automotive motorcycle", "home improvement"]):
         return "AUTO_TOOL_GENERAL", "taxonomy_fallback:auto_tools"
-    if any(token in taxonomy for token in ["phones & electronics", "electronics", "computers & office equipment", "household appliances"]):
+    if any(token in taxonomy for token in ["phones and electronics", "phones electronics", "electronics", "computers and office equipment", "computers office equipment", "household appliances"]):
         return "electronics_wearable", "taxonomy_fallback:electronics"
     return "UNKNOWN_REVIEW_REQUIRED", "taxonomy_fallback:unknown"
 

@@ -243,12 +243,22 @@ export default function T2VModule({
 						T2V — No Reference Images
 					</h4>
 					<p className="text-[10px] text-blue-300/70 leading-relaxed">
-						No images are uploaded. Google Flow has <strong className="text-blue-300">nothing to look at</strong> — every visual detail must come from the prompt text.
+						No images are uploaded. Google Flow has{" "}
+						<strong className="text-blue-300">nothing to look at</strong> —
+						every visual detail must come from the prompt text.
 					</p>
-					<p className="text-[10px] font-bold text-blue-300/80 uppercase tracking-[0.12em]">Prompt must include:</p>
+					<p className="text-[10px] font-bold text-blue-300/80 uppercase tracking-[0.12em]">
+						Prompt must include:
+					</p>
 					<ul className="text-[10px] text-blue-300/55 leading-relaxed space-y-1 list-disc list-inside">
-						<li>Character — appearance, skin tone, body type, posture, wardrobe (detailed)</li>
-						<li>Product — name, size &amp; scale description (e.g. "lip balm, palm-sized, fits between two fingers")</li>
+						<li>
+							Character — appearance, skin tone, body type, posture, wardrobe
+							(detailed)
+						</li>
+						<li>
+							Product — name, size &amp; scale description (e.g. "lip balm,
+							palm-sized, fits between two fingers")
+						</li>
 						<li>Action — what character does with the product</li>
 						<li>Camera — shot type, angle, movement</li>
 						<li>Audio — dialogue or voiceover script</li>

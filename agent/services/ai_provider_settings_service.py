@@ -61,7 +61,7 @@ LANE_EXECUTION_ENV_VARS: dict[str, str] = {
     "text_assist": "BOSMAX_TEXT_ASSIST_EXECUTION_ENABLED",
 }
 LANE_EXECUTION_DEFAULTS: dict[str, bool] = {
-    "vision": True,
+    "vision": False,
     "text_assist": True,
 }
 
@@ -72,6 +72,13 @@ PROVIDER_LANE_DEFAULTS: dict[str, str] = {
     "vision": "anthropic",
     "text_assist": "qwen",
 }
+
+
+def _is_provider_runtime_enabled(provider_id: str) -> bool:
+    normalized = str(provider_id or "").strip().lower()
+    if normalized == "anthropic":
+        return is_lane_execution_enabled("vision")
+    return True
 
 
 def _iso_now() -> str:
@@ -221,7 +228,7 @@ def apply_runtime_provider_environment(payload: dict | None = None) -> None:
     for provider_id in PROVIDER_IDS:
         key = str(resolved["providers"][provider_id].get("api_key") or "").strip()
         env_var = PROVIDER_ENV_VARS[provider_id]
-        if key:
+        if key and _is_provider_runtime_enabled(provider_id):
             os.environ[env_var] = key
         else:
             os.environ.pop(env_var, None)

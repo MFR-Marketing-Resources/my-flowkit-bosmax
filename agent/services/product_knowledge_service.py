@@ -556,6 +556,7 @@ def _build_temp_product(
         "local_image_path": request.local_image_path,
         "source_url": request.source_url or request.product_url,
         "tiktok_product_url": request.tiktok_product_url or request.tiktok_shop_url,
+        "allow_live_image_analysis": request.allow_live_image_analysis,
     }
 
 
@@ -619,11 +620,28 @@ def _size_evidence_is_soft_for_context(
         "phones",
         "electronics",
     }
+    # For affiliate/marketplace lanes (FASTMOSS, TIKTOKSHOP), size is frequently
+    # absent from the raw product data pulled via scraping. These lanes have
+    # no structured size field to read from, so the evidence is genuinely
+    # unavailable at import time. We soft-exempt them so the system does not
+    # demand what it cannot auto-produce.
+    affiliate_lanes = {"FASTMOSS", "TIKTOKSHOP"}
+    lane = _normalize_source_lane(request.source_lane)
+    if lane in affiliate_lanes:
+        return True
+
     family = str(intelligence.get("bosmax_product_family") or "")
     category_lower = normalize_mapping_text(request.category or "")
     if family in size_exempt_families:
         return True
     if any(sub in category_lower for sub in size_exempt_category_substrings):
+        return True
+
+    # Food & Beverage products frequently have size embedded in product name
+    # but not always. If the text truly has no parseable size, soft-exempt
+    # rather than hard-blocking registration.
+    food_bev_category_substrings = {"food", "beverage", "makanan", "minuman", "snack"}
+    if any(sub in category_lower for sub in food_bev_category_substrings):
         return True
 
     context = normalize_mapping_text(
@@ -791,34 +809,48 @@ def _resolve_taxonomy_candidate(
 
 
 def _evaluate_completion_status(
-    request: ProductKnowledgeCompleteRequest, 
+    request: ProductKnowledgeCompleteRequest,
     facts: dict[str, Any],
-    intelligence: dict[str, Any]
+    intelligence: dict[str, Any],
 ) -> tuple[str, str, list[str]]:
     missing = []
+    lane = _normalize_source_lane(request.source_lane)
+    affiliate_lanes = {"FASTMOSS", "TIKTOKSHOP"}
+    is_affiliate = lane in affiliate_lanes
+
     if not request.product_name:
         missing.append("PRODUCT_NAME")
     if not request.product_knowledge_text and not request.paste_anything_about_product:
         missing.append("PRODUCT_DESCRIPTION_OR_KNOWLEDGE")
-    if not _size_evidence_is_soft_for_context(request, intelligence) and not facts.get("size_or_volume") and not request.size_or_volume:
+    # SIZE: only hard-flag when not soft for context AND no value present anywhere
+    if (
+        not _size_evidence_is_soft_for_context(request, intelligence)
+        and not facts.get("size_or_volume")
+        and not request.size_or_volume
+    ):
         missing.append("SIZE_OR_VOLUME_EVIDENCE")
     if request.price is None:
         missing.append("PRICE_EVIDENCE")
     if not request.currency:
         missing.append("CURRENCY_EVIDENCE")
-    if request.commission_amount is None and (
-        not request.commission_rate or str(request.commission_rate).strip().upper() == "UNKNOWN"
-    ):
+
+    # COMMISSION: only flag COMMISSION_EVIDENCE when BOTH amount and rate are absent.
+    # If commission_rate is present (e.g. "15%"), that satisfies the commission signal.
+    commission_rate_str = str(request.commission_rate or "").strip().upper()
+    has_commission_rate = bool(commission_rate_str) and commission_rate_str != "UNKNOWN"
+    has_commission_amount = request.commission_amount is not None
+    if not has_commission_rate and not has_commission_amount:
         missing.append("COMMISSION_EVIDENCE")
-    if not request.commission_rate or str(request.commission_rate).strip().upper() == "UNKNOWN":
+    if not has_commission_rate:
         missing.append("COMMISSION_RATE_EVIDENCE")
-    
-    if intelligence.get("bosmax_product_family") == "UNKNOWN_REVIEW_REQUIRED":
+
+    # FAMILY: for affiliate lanes, UNKNOWN_REVIEW_REQUIRED is expected — don't hard-block.
+    if intelligence.get("bosmax_product_family") == "UNKNOWN_REVIEW_REQUIRED" and not is_affiliate:
         missing.append("CLEAR_PRODUCT_FAMILY_INFERENCE")
 
     if not missing:
         return "COMPLETION_READY", "SUFFICIENT", []
-    
+
     status = "NEEDS_REVIEW"
     quality = "PARTIAL" if len(missing) < 3 else "POOR"
     return status, quality, missing

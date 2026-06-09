@@ -272,3 +272,30 @@ def test_forensic_runtime_audit_contract_is_wired_to_backend_extension_and_impor
         "import_block_files",
     ]:
         assert token in import_helper
+
+
+def test_clean_runtime_launcher_uses_persistent_chrome_profile_and_unpacked_extension_only():
+    launcher_script = _read("scripts/launch-clean-bosmax-flow-runtime.ps1")
+    launcher_helper = _read("scripts/launch-clean-bosmax-flow-runtime-helper.js")
+
+    for token in [
+        "launch-clean-bosmax-flow-runtime-helper.js",
+        "Stop-AllChromeProcesses",
+        "Stop-AllAgentMainProcesses",
+        "start-local-agent.ps1",
+        "launch_helper_report",
+        "browser_channel",
+        "Test-RuntimeActivationReady",
+    ]:
+        assert token in launcher_script
+
+    for token in [
+        "chromium.launchPersistentContext",
+        "channel: browserChannel",
+        "--disable-extensions-except=",
+        "--load-extension=",
+        "chrome-extension://${extensionId}/popup.html",
+        "flow_url_opened",
+        "status: \"READY\"",
+    ]:
+        assert token in launcher_helper

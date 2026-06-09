@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import subprocess
+import time
 import uuid
 from hashlib import sha1
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ LOCAL_AGENT_HEALTH_URL = "http://127.0.0.1:8100/health"
 LOCAL_AGENT_CONTENT_PACK_URL = "http://127.0.0.1:8100/api/operator/content-pack"
 LOCAL_AGENT_START_SCRIPT = str((BASE_DIR / "scripts" / "start-local-agent.ps1").resolve())
 LOCAL_AGENT_STARTUP_SHORTCUT = Path.home() / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/BOSMAX Flow Kit Local Agent.lnk"
+AUTOSTART_METADATA_CACHE_TTL_SECONDS = 300
 
 
 class LocalAgentRegistration(BaseModel):
@@ -132,6 +134,11 @@ def _autostart_metadata_defaults() -> dict[str, str | bool | None]:
     }
 
 
+_AUTOSTART_METADATA_CACHE = _autostart_metadata_defaults()
+_AUTOSTART_METADATA_CACHE_AT = 0.0
+_AUTOSTART_METADATA_REFRESH_TASK: asyncio.Task | None = None
+
+
 def _inspect_autostart_metadata() -> dict[str, str | bool | None]:
     if os.name != "nt":
         return _autostart_metadata_defaults()
@@ -213,6 +220,32 @@ $result | ConvertTo-Json -Compress
     return defaults
 
 
+def _refresh_autostart_metadata_cache_sync() -> dict[str, str | bool | None]:
+    global _AUTOSTART_METADATA_CACHE, _AUTOSTART_METADATA_CACHE_AT
+    metadata = _inspect_autostart_metadata()
+    _AUTOSTART_METADATA_CACHE = metadata
+    _AUTOSTART_METADATA_CACHE_AT = time.monotonic()
+    return metadata
+
+
+async def _get_autostart_metadata_cached() -> dict[str, str | bool | None]:
+    global _AUTOSTART_METADATA_REFRESH_TASK
+
+    cache_fresh = (
+        _AUTOSTART_METADATA_CACHE_AT > 0
+        and (time.monotonic() - _AUTOSTART_METADATA_CACHE_AT) < AUTOSTART_METADATA_CACHE_TTL_SECONDS
+    )
+    if cache_fresh:
+        return dict(_AUTOSTART_METADATA_CACHE)
+
+    if _AUTOSTART_METADATA_REFRESH_TASK is None or _AUTOSTART_METADATA_REFRESH_TASK.done():
+        _AUTOSTART_METADATA_REFRESH_TASK = asyncio.create_task(
+            asyncio.to_thread(_refresh_autostart_metadata_cache_sync)
+        )
+
+    return dict(_AUTOSTART_METADATA_CACHE)
+
+
 def load_registration() -> LocalAgentRegistration:
     LOCAL_AGENT_STATE_DIR.mkdir(parents=True, exist_ok=True)
     if not LOCAL_AGENT_REGISTRATION_FILE.exists():
@@ -248,8 +281,8 @@ async def get_local_agent_status():
     from agent.services.flow_client import get_flow_client
     client = get_flow_client()
     registration = load_registration()
-    extension_status = await client.get_status()
-    autostart = _inspect_autostart_metadata()
+    extension_status = await client.get_status(probe_timeout=0)
+    autostart = await _get_autostart_metadata_cached()
 
     offline_reason = None
     if not client.connected:
@@ -361,6 +394,69 @@ async def get_reload_flow_tab():
         return await asyncio.wait_for(client.reload_flow_tab(), timeout=15)
     except Exception as exc:
         return {"ok": False, "error": f"Reload failed: {exc}"}
+
+
+@router.get("/reload-extension")
+async def get_reload_extension():
+    from agent.services.flow_client import get_flow_client
+    client = get_flow_client()
+    if not client.connected:
+        return {"ok": False, "error": "Extension not connected"}
+    try:
+        return await asyncio.wait_for(client._send("RELOAD_EXTENSION", {}), timeout=15)
+    except Exception as exc:
+        return {"ok": False, "error": f"Extension reload failed: {exc}"}
+
+
+@router.get("/diagnostic-inputs")
+async def get_diagnostic_inputs():
+    from agent.services.flow_client import get_flow_client
+    client = get_flow_client()
+    if not client.connected:
+        return {"ok": False, "error": "Extension not connected"}
+    js_code = """
+    (function() {
+      function getElDiagnostics(el) {
+        var r = el.getBoundingClientRect();
+        var s = window.getComputedStyle(el);
+        return {
+          tagName: el.tagName,
+          id: el.id,
+          className: el.className,
+          contentEditable: el.contentEditable,
+          dataSlateEditor: el.getAttribute('data-slate-editor'),
+          placeholder: el.getAttribute('placeholder'),
+          ariaLabel: el.getAttribute('aria-label'),
+          width: r.width,
+          height: r.height,
+          left: r.left,
+          top: r.top,
+          display: s ? s.display : 'none',
+          visibility: s ? s.visibility : 'hidden',
+          opacity: s ? s.opacity : '0'
+        };
+      }
+      var nodes = document.querySelectorAll('textarea, [contenteditable="true"], input, [data-slate-editor="true"]');
+      var results = [];
+      for (var i = 0; i < nodes.length; i++) {
+        results.push(getElDiagnostics(nodes[i]));
+      }
+      return results;
+    })()
+    """
+    try:
+        raw = await asyncio.wait_for(
+            client._send("DEBUG_FLOW_DOM_EXECUTION", {
+                "params": {
+                    "mode": "eval",
+                    "job": {"js": js_code}
+                }
+            }),
+            timeout=20
+        )
+        return raw
+    except Exception as exc:
+        return {"ok": False, "error": f"Diagnostic failed: {exc}"}
 
 
 @router.get("/repair", response_class=HTMLResponse)

@@ -68,6 +68,8 @@ def _build_completion_request_from_draft(
         "tiktok_shop_url": evidence.get("tiktok_shop_url"),
         "local_image_path": evidence.get("local_image_path"),
         "paste_anything_about_product": evidence.get("paste_anything_about_product"),
+        "category": evidence.get("category"),
+        "allow_live_image_analysis": True,
     }
     return ProductKnowledgeCompleteRequest.model_validate(payload)
 
@@ -109,6 +111,11 @@ def recompute_review_draft(draft: RegistrationReviewDraft) -> RegistrationReview
     else:
         refreshed.system_inferred_fields["cta_angles_source"] = "GENERATED"
 
+    # AUTO-BACKFILL: promote system-suggested values into declared_evidence_fields
+    # for any field that is currently empty/missing. This means the system fills
+    # in what it already knows so the user never has to re-enter inferred data.
+    _backfill_suggested_to_declared(refreshed, completion)
+
     image_asset_status, image_asset_detail = derive_draft_image_asset_state(
         refreshed.declared_evidence_fields,
     )
@@ -122,3 +129,57 @@ def recompute_review_draft(draft: RegistrationReviewDraft) -> RegistrationReview
     refreshed.last_recomputed_at = now
     refreshed.draft_freshness_status = "FRESH"
     return refreshed
+
+
+def _backfill_suggested_to_declared(
+    refreshed: RegistrationReviewDraft,
+    completion: Any,
+) -> None:
+    """Promote system-inferred/suggested values into declared_evidence_fields
+    for any field that is currently absent or empty. Only fills blanks — never
+    overwrites a value the user already declared.
+    """
+    ev = refreshed.declared_evidence_fields
+
+    def _fill(key: str, suggested_value: Any) -> None:
+        existing = str(ev.get(key) or "").strip()
+        if not existing and suggested_value:
+            ev[key] = suggested_value
+            refreshed.system_inferred_fields[f"{key}_auto_filled"] = True
+
+    # Size / volume
+    _fill("size_or_volume", _clean(getattr(completion, "suggested_size_or_volume", None)))
+
+    # Category
+    _fill("category", _clean(getattr(completion, "suggested_category", None)))
+
+    # Package notes
+    _fill("package_notes", _clean(getattr(completion, "suggested_package_notes", None)))
+
+    # Currency — default MYR when absent
+    existing_currency = str(ev.get("currency") or "").strip()
+    if not existing_currency:
+        ev["currency"] = "MYR"
+        refreshed.system_inferred_fields["currency_auto_filled"] = True
+
+    # Normalised product name — push back if blank
+    _fill("product_name", _clean(getattr(completion, "suggested_normalized_name", None)))
+
+    # Target customer
+    _fill(
+        "target_customer_text",
+        _clean(getattr(completion, "suggested_target_customer", None)),
+    )
+
+    # Hook/CTA angles (only fill if nothing declared yet)
+    if not _clean_list(ev.get("hook_angles")):
+        suggested_hooks = list(getattr(completion, "suggested_hook_angles", None) or [])
+        if suggested_hooks:
+            ev["hook_angles"] = suggested_hooks
+            refreshed.system_inferred_fields["hook_angles_auto_filled"] = True
+
+    if not _clean_list(ev.get("cta_angles")):
+        suggested_ctas = list(getattr(completion, "suggested_cta_angles", None) or [])
+        if suggested_ctas:
+            ev["cta_angles"] = suggested_ctas
+            refreshed.system_inferred_fields["cta_angles_auto_filled"] = True

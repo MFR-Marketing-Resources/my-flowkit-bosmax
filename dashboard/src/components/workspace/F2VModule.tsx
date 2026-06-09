@@ -154,11 +154,26 @@ export default function F2VModule({
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-300/80">
 								F2V — Reference Image Logic
 							</div>
-							<p>Every image uploaded here becomes a <strong className="text-blue-200">reference image</strong>. The model SEES the image — your prompt describes <strong className="text-blue-200">what happens to it</strong>, not what it looks like.</p>
+							<p>
+								Every image uploaded here becomes a{" "}
+								<strong className="text-blue-200">reference image</strong>. The
+								model SEES the image — your prompt describes{" "}
+								<strong className="text-blue-200">what happens to it</strong>,
+								not what it looks like.
+							</p>
 							<ul className="list-disc list-inside space-y-0.5 text-blue-300/50 mt-1">
-								<li>Start = avatar photo → describe action + product details on-the-fly (no product ref, so describe size/scale/name)</li>
-								<li>Start = product photo → describe avatar fully on-the-fly (appearance, wardrobe) + action</li>
-								<li>Start + End both uploaded → describe the transition/event between them</li>
+								<li>
+									Start = avatar photo → describe action + product details
+									on-the-fly (no product ref, so describe size/scale/name)
+								</li>
+								<li>
+									Start = product photo → describe avatar fully on-the-fly
+									(appearance, wardrobe) + action
+								</li>
+								<li>
+									Start + End both uploaded → describe the transition/event
+									between them
+								</li>
 							</ul>
 						</div>
 						{workspacePackage ? (
@@ -167,7 +182,8 @@ export default function F2VModule({
 									Auto Asset Baseline
 								</div>
 								<div className="mt-1">
-									Resolved product image loads as the Start Frame reference. End Frame is optional.
+									Resolved product image loads as the Start Frame reference. End
+									Frame is optional.
 								</div>
 							</div>
 						) : (
@@ -176,7 +192,8 @@ export default function F2VModule({
 									Manual Asset Upload
 								</div>
 								<div className="mt-1">
-									No approved package loaded. Upload your reference image(s) manually.
+									No approved package loaded. Upload your reference image(s)
+									manually.
 								</div>
 							</div>
 						)}
@@ -403,10 +420,28 @@ export default function F2VModule({
 						F2V — Prompt Guide
 					</h4>
 					<div className="text-[10px] text-blue-300/55 leading-relaxed space-y-2">
-						<p><strong className="text-blue-300/80">Image uploaded = reference.</strong> Model sees it — describe the <em>action</em>, not the appearance.</p>
-						<p><strong className="text-blue-300/80">Subject not in any image (on the fly)</strong> → describe fully: look, skin tone, wardrobe, body type.</p>
-						<p><strong className="text-blue-300/80">Product size</strong> → always state scale explicitly (e.g. "lip balm, palm-sized, fits between two fingers") — Google Flow struggles with size without a verbal anchor.</p>
-						<p><strong className="text-blue-300/80">Both frames uploaded</strong> → describe the event/transition between them.</p>
+						<p>
+							<strong className="text-blue-300/80">
+								Image uploaded = reference.
+							</strong>{" "}
+							Model sees it — describe the <em>action</em>, not the appearance.
+						</p>
+						<p>
+							<strong className="text-blue-300/80">
+								Subject not in any image (on the fly)
+							</strong>{" "}
+							→ describe fully: look, skin tone, wardrobe, body type.
+						</p>
+						<p>
+							<strong className="text-blue-300/80">Product size</strong> →
+							always state scale explicitly (e.g. "lip balm, palm-sized, fits
+							between two fingers") — Google Flow struggles with size without a
+							verbal anchor.
+						</p>
+						<p>
+							<strong className="text-blue-300/80">Both frames uploaded</strong>{" "}
+							→ describe the event/transition between them.
+						</p>
 					</div>
 				</section>
 			</div>

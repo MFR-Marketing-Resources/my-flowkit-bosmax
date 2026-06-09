@@ -54,22 +54,25 @@ async def test_get_local_agent_status_surfaces_autostart_warning(monkeypatch):
     class _FakeFlowClient:
         connected = True
 
-        async def get_status(self):
+        async def get_status(self, probe_timeout=5):
             return {"state": "idle"}
 
     monkeypatch.setattr(
         "agent.services.flow_client.get_flow_client",
         lambda: _FakeFlowClient(),
     )
-    monkeypatch.setattr(
-        local_agent,
-        "_inspect_autostart_metadata",
-        lambda: {
+    async def _fake_autostart_metadata():
+        return {
             "enabled": True,
             "mode": "SCHEDULED_TASK",
             "warning": "STALE_STARTUP_SHORTCUT_PRESENT",
             "scheduled_task_name": "BOSMAX Flow Kit Local Agent Watchdog",
-        },
+        }
+
+    monkeypatch.setattr(
+        local_agent,
+        "_get_autostart_metadata_cached",
+        _fake_autostart_metadata,
     )
     monkeypatch.setattr(local_agent, "load_registration", local_agent._default_registration)
 
@@ -89,7 +92,7 @@ async def test_extension_self_test_endpoint_surfaces_backend_dashboard_and_exten
     class _FakeFlowClient:
         connected = True
 
-        async def get_status(self):
+        async def get_status(self, probe_timeout=5):
             return {"state": "idle", "flowKeyPresent": True}
 
         async def get_extension_self_test(self, mode="F2V", attempt_open_project=False):

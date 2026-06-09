@@ -17,6 +17,7 @@ Governance invariants enforced here:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -269,6 +270,7 @@ def _ref_to_completion_request(ref: dict[str, Any]) -> ProductKnowledgeCompleteR
         commission_rate=commission_rate,
         price=ref.get("price"),
         currency=ref.get("currency") or "MYR",
+        allow_live_image_analysis=True,
     )
 
 
@@ -471,7 +473,10 @@ async def create_draft_from_reference(reference_id: str) -> dict[str, Any]:
 
     completion_req = _ref_to_completion_request(ref)
     try:
-        completion = complete_product_knowledge(completion_req)
+        # Run synchronous CPU+IO work off the event loop to avoid blocking
+        # (complete_product_knowledge → resolve_product_intelligence_profile →
+        #  analyze_product_image_payload → synchronous Anthropic httpx call)
+        completion = await asyncio.to_thread(complete_product_knowledge, completion_req)
     except Exception as e:
         await crud.update_bulk_queue_row(
             reference_id, promotion_status="MISSING_REQUIRED_FIELD",
@@ -980,3 +985,302 @@ async def update_queue_row_status(reference_id: str, promotion_status: str) -> d
         reference_id, promotion_status=promotion_status, updated_at=_now()
     )
     return updated or {"reference_id": reference_id, "promotion_status": promotion_status}
+
+
+async def force_approve_claim_risk_override(reference_id: str) -> dict[str, Any]:
+    """Operator override: force-approve a CLAIM_RISK row by bypassing the claim gate.
+
+    The draft's claim_risk_level and claim_gate are lowered to LOW/CLAIM_SAFE
+    in-place before committing. This is an explicit operator governance action
+    — the operator confirms the flagged tokens are false positives.
+
+    Only valid for rows already in CLAIM_RISK status with an existing draft_id.
+    """
+    row = await crud.get_bulk_queue_row(reference_id)
+    if not row:
+        return {"error": "NOT_IN_QUEUE", "reference_id": reference_id}
+
+    current_status = row.get("promotion_status")
+    if current_status != "CLAIM_RISK":
+        return {"error": f"NOT_CLAIM_RISK:{current_status}", "reference_id": reference_id}
+
+    draft_id = row.get("draft_id")
+    if not draft_id:
+        return {"error": "NO_DRAFT:run_recompute_first", "reference_id": reference_id}
+
+    # Load draft and lower claim gate for operator override
+    draft = RegistrationDraftStorageService.get_draft(draft_id)
+    if not draft:
+        return {"error": "DRAFT_NOT_FOUND", "reference_id": reference_id}
+
+    # Check that missing_required_evidence is clear — override only fixes claim risk,
+    # not structural gaps.
+    if draft.missing_required_evidence:
+        return {
+            "error": f"MISSING_REQUIRED_EVIDENCE:{','.join(draft.missing_required_evidence[:5])}",
+            "reference_id": reference_id,
+        }
+
+    # Operator override: lower claim gate so commit proceeds
+    draft.claim_risk_level = "LOW"
+    draft.claim_gate = "CLAIM_SAFE"
+    draft.claim_tokens = []
+    RegistrationDraftStorageService.save_draft(draft)
+
+    commit_req = RegistrationCommitRequest(
+        draft_id=draft_id,
+        write_back_confirmed=True,
+        user_confirmation_phrase=_BULK_APPROVE_PHRASE,
+    )
+    commit_result = await RegistrationCommitService.commit_fastmoss_promoted_draft(commit_req)
+
+    if commit_result.get("commit_status") == "COMMITTED":
+        committed_id = commit_result.get("committed_product_id")
+        await crud.update_bulk_queue_row(
+            reference_id,
+            promotion_status="APPROVED",
+            committed_product_id=committed_id,
+            claim_risk_level="LOW",
+            error_message=None,
+            updated_at=_now(),
+        )
+        return {
+            "reference_id": reference_id,
+            "outcome": "APPROVED",
+            "committed_product_id": committed_id,
+        }
+    else:
+        reasons = commit_result.get("blocked_reasons") or commit_result.get("errors") or []
+        return {
+            "reference_id": reference_id,
+            "outcome": "FAILED",
+            "reasons": reasons,
+        }
+
+
+# ── Enrichment export / import ────────────────────────────────────────────────
+
+_ENRICHMENT_EXPORT_FIELDS = [
+    "reference_id",
+    "draft_id",
+    "raw_product_title",
+    "category",
+    "tiktok_product_url",
+    "source_url",
+    "image_url",
+    "sold_count",
+    "commission_rate",
+    "missing_fields",
+    # Columns for operator to fill in:
+    "product_knowledge_text",
+    "benefits_text",
+    "usage_text",
+    "target_customer_text",
+    "ingredients_text",
+    "warnings_text",
+]
+
+
+async def export_missing_as_csv() -> str:
+    """
+    Return a CSV string of all MISSING_REQUIRED_FIELD rows so the operator
+    can enrich them via ChatGPT / Gemini and re-import.
+    """
+    import csv
+    import io
+
+    rows = await crud.list_bulk_queue(promotion_status="MISSING_REQUIRED_FIELD", page_size=2000)
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=_ENRICHMENT_EXPORT_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        err = row.get("error_message") or ""
+        missing_fields = err[8:] if err.startswith("MISSING:") else err
+        writer.writerow({
+            "reference_id": row.get("reference_id", ""),
+            "draft_id": row.get("draft_id") or "",
+            "raw_product_title": row.get("raw_product_title", ""),
+            "category": row.get("category") or "",
+            "tiktok_product_url": row.get("tiktok_product_url") or "",
+            "source_url": row.get("source_url") or "",
+            "image_url": row.get("image_url") or "",
+            "sold_count": row.get("sold_count") or "",
+            "commission_rate": row.get("commission_rate") or "",
+            "missing_fields": missing_fields,
+            "product_knowledge_text": "",
+            "benefits_text": "",
+            "usage_text": "",
+            "target_customer_text": "",
+            "ingredients_text": "",
+            "warnings_text": "",
+        })
+    return output.getvalue()
+
+
+async def import_enrichment(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Accept operator-enriched rows (from CSV re-upload), re-run completion with
+    the extra knowledge fields injected, and recompute the queue status.
+
+    Required per item: reference_id
+    Enrichment fields (any subset): product_knowledge_text, benefits_text,
+        usage_text, target_customer_text, ingredients_text, warnings_text
+    """
+    results: list[dict[str, Any]] = []
+    recomputed = 0
+    skipped = 0
+    failed = 0
+    now = _now()
+
+    for item in items:
+        ref_id = str(item.get("reference_id") or "").strip()
+        if not ref_id:
+            skipped += 1
+            results.append({"reference_id": ref_id, "outcome": "SKIPPED", "error": "MISSING_REFERENCE_ID"})
+            continue
+
+        row = await crud.get_bulk_queue_row(ref_id)
+        if not row:
+            skipped += 1
+            results.append({"reference_id": ref_id, "outcome": "SKIPPED", "error": "NOT_IN_QUEUE"})
+            continue
+
+        def _s(key: str) -> str | None:
+            v = str(item.get(key) or "").strip()
+            return v or None
+
+        raw_title = _clean(row.get("raw_product_title")) or ""
+        category = _clean(row.get("category")) or None
+        commission_rate = _clean(row.get("commission_rate")) or None
+        sold_count = row.get("sold_count")
+
+        # Build paste_anything from row metadata + operator-supplied knowledge
+        knowledge_parts = [f"Product: {raw_title}"] if raw_title else []
+        if category:
+            knowledge_parts.append(f"Category: {category}")
+        if sold_count:
+            knowledge_parts.append(f"Sold count: {sold_count}")
+        if commission_rate:
+            knowledge_parts.append(f"Commission: {commission_rate}")
+        base_knowledge = " | ".join(knowledge_parts) or None
+        extra_knowledge = _s("product_knowledge_text")
+        paste_knowledge: str | None
+        if base_knowledge and extra_knowledge:
+            paste_knowledge = base_knowledge + "\n\n" + extra_knowledge
+        elif extra_knowledge:
+            paste_knowledge = extra_knowledge
+        else:
+            paste_knowledge = base_knowledge
+
+        try:
+            # Fetch ref early so price and lineage data are available for the
+            # completion request — list_fastmoss_reference_products is cached,
+            # so this is cheap after the first call in the loop.
+            all_refs = await list_fastmoss_reference_products(limit=2000)
+            ref = next((r for r in all_refs if _clean(r.get("id")) == ref_id), None) or {
+                "id": ref_id,
+                "raw_product_title": raw_title,
+            }
+            # Use price from the original FastMoss reference so PRICE_EVIDENCE
+            # is satisfied (the queue row doesn't store price separately).
+            # Price priority: item dict (operator-supplied) → workbook ref → None
+            _item_price_raw = item.get("price")
+            item_price: float | None = None
+            if _item_price_raw is not None:
+                try:
+                    item_price = float(_item_price_raw)
+                except (TypeError, ValueError):
+                    item_price = None
+            ref_price: float | None = ref.get("price")
+            resolved_price = item_price if item_price is not None else ref_price
+
+            completion_req = ProductKnowledgeCompleteRequest(
+                product_name=raw_title or None,
+                source_lane="FASTMOSS_PROMOTED",
+                paste_anything_about_product=paste_knowledge,
+                category=category,
+                image_url=_clean(row.get("image_url")) or None,
+                source_url=_clean(row.get("source_url")) or None,
+                tiktok_product_url=_clean(row.get("tiktok_product_url")) or None,
+                commission_rate=commission_rate,
+                price=resolved_price,
+                currency=row.get("currency") or ref.get("currency") or "MYR",
+                benefits_text=_s("benefits_text"),
+                usage_text=_s("usage_text"),
+                target_customer_text=_s("target_customer_text"),
+                ingredients_text=_s("ingredients_text"),
+                warnings_text=_s("warnings_text"),
+            )
+            # Run synchronous CPU-bound call in thread so event loop stays free
+            completion = await asyncio.to_thread(complete_product_knowledge, completion_req)
+            draft = create_registration_review_draft(completion)
+
+            draft = _apply_lineage_to_draft(draft, ref, ref_id)
+            draft.last_recomputed_at = now
+            draft.draft_freshness_status = "FRESH"
+
+            img_status, img_detail = derive_draft_image_asset_state(draft.declared_evidence_fields)
+            draft.image_asset_status = img_status
+            draft.image_asset_detail = img_detail
+
+            if draft.declared_evidence_fields.get("product_name"):
+                draft.approval_checklist["normalized_name"] = True
+
+            saved_draft = RegistrationDraftStorageService.save_draft(draft)
+
+            image_readiness = _derive_image_readiness(draft.declared_evidence_fields.get("image_url"))
+            claim_risk = draft.claim_risk_level or "HIGH"
+            missing = list(draft.missing_required_evidence or [])
+            duplicate_candidate = await _detect_queue_duplicate_candidate(
+                ref_id,
+                draft.declared_evidence_fields.get("product_name") or raw_title,
+                draft.declared_evidence_fields.get("tiktok_product_url"),
+                ignore_product_id=_clean(row.get("duplicate_ignore_product_id")) or None,
+            )
+            promo_status = _classify_promotion_status(claim_risk, image_readiness, missing, duplicate_candidate is not None)
+
+            err_msg: str | None = None
+            if promo_status == "MISSING_REQUIRED_FIELD" and missing:
+                err_msg = "MISSING:" + ",".join(missing[:10])
+            elif promo_status == "DUPLICATE_SUSPECTED" and duplicate_candidate:
+                err_msg = f"DUPLICATE_CANDIDATE:{duplicate_candidate.get('id')}:{duplicate_candidate.get('match_reason')}"
+            elif promo_status == "CLAIM_RISK":
+                tokens_str = ",".join(draft.claim_tokens[:5]) if draft.claim_tokens else ""
+                err_msg = f"CLAIM_RISK:{draft.claim_gate}" + (f":{tokens_str}" if tokens_str else "")
+
+            await crud.update_bulk_queue_row(
+                ref_id,
+                promotion_status=promo_status,
+                draft_id=saved_draft.review_draft_id,
+                claim_risk_level=claim_risk,
+                image_readiness=image_readiness,
+                error_message=err_msg,
+                updated_at=now,
+            )
+
+            recomputed += 1
+            results.append({
+                "reference_id": ref_id,
+                "outcome": "OK",
+                "new_status": promo_status,
+                "draft_id": saved_draft.review_draft_id,
+                "error": None,
+            })
+
+        except Exception as exc:
+            failed += 1
+            logger.exception("import_enrichment failed for %s: %s", ref_id, exc)
+            results.append({
+                "reference_id": ref_id,
+                "outcome": "ERROR",
+                "new_status": None,
+                "error": str(exc),
+            })
+
+    return {
+        "total": len(items),
+        "recomputed": recomputed,
+        "skipped": skipped,
+        "failed": failed,
+        "results": results,
+    }

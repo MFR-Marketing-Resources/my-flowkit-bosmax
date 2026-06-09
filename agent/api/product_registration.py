@@ -22,6 +22,7 @@ from agent.services.registration_commit_service import RegistrationCommitService
 from agent.services.registration_draft_evidence_editor_service import (
     patch_registration_draft_evidence,
 )
+from agent.services.registration_draft_recompute_service import recompute_review_draft
 
 
 router = APIRouter(prefix="/product-registration", tags=["product-registration"])
@@ -44,6 +45,48 @@ async def product_registration_review_draft(
 @router.get("/review-drafts", response_model=List[RegistrationReviewDraft])
 async def list_review_drafts() -> List[RegistrationReviewDraft]:
     return RegistrationDraftStorageService.list_drafts()
+
+
+@router.post("/review-drafts/batch-recompute")
+async def batch_recompute_review_drafts() -> dict:
+    """Recompute all non-COMMITTED drafts in one shot.
+    The system auto-fills missing evidence from its intelligence pipeline
+    so that no manual intervention is required for inferred fields.
+    """
+    all_drafts = RegistrationDraftStorageService.list_drafts()
+    recomputed: list[str] = []
+    skipped: list[str] = []
+    errors: list[dict] = []
+    for draft in all_drafts:
+        if draft.review_status == "COMMITTED":
+            skipped.append(draft.review_draft_id)
+            continue
+        try:
+            refreshed = recompute_review_draft(draft)
+            RegistrationDraftStorageService.save_draft(refreshed)
+            recomputed.append(draft.review_draft_id)
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"draft_id": draft.review_draft_id, "error": str(exc)})
+    return {
+        "recomputed": recomputed,
+        "skipped_committed": skipped,
+        "errors": errors,
+        "total_recomputed": len(recomputed),
+    }
+
+
+@router.post("/review-drafts/{draft_id}/recompute", response_model=RegistrationReviewDraft)
+async def recompute_single_draft(draft_id: str) -> RegistrationReviewDraft:
+    """Recompute a single draft by ID.
+    The system auto-fills all inferred fields so the user doesn't have to.
+    """
+    draft = RegistrationDraftStorageService.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.review_status == "COMMITTED":
+        raise HTTPException(status_code=409, detail="Cannot recompute a committed draft")
+    refreshed = recompute_review_draft(draft)
+    return RegistrationDraftStorageService.save_draft(refreshed)
 
 
 @router.post("/review-drafts", response_model=RegistrationReviewDraft)

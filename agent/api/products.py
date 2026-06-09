@@ -457,22 +457,27 @@ async def _list_products_response(
     lifecycle_status: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    compact: bool = False,
 ):
     requested_source = (source or "").strip().upper() or None
     requested_source_lane = (source_lane or "").strip().upper() or None
     db_source = _normalize_source(requested_source) if requested_source in {"FASTMOSS", "MANUAL", "TIKTOKSHOP", "IMPORTED"} else None
     requested_lifecycle = (lifecycle_status or "").strip().upper() or None
     db_include_archived = include_archived or requested_lifecycle == "ARCHIVED"
-    db_products = await crud.list_products(
-        source=db_source,
-        include_archived=db_include_archived,
-        lifecycle_status=requested_lifecycle,
-    )
-    enriched_all = [await _enrich_product(product) for product in db_products]
+    include_reference_lane = not compact or requested_source_lane == FASTMOSS_REFERENCE_LANE
+    db_products = [
+        _catalog_list_projection(product)
+        for product in await crud.list_products(
+            source=db_source,
+            include_archived=db_include_archived,
+            lifecycle_status=requested_lifecycle,
+        )
+    ]
     merged_products = await _merge_catalog_products(
-        enriched_all,
+        db_products,
         requested_source=requested_source,
         requested_source_lane=requested_source_lane,
+        include_fastmoss_reference=include_reference_lane,
     )
     filtered_all = _filter_products_for_catalog(
         merged_products,
@@ -484,13 +489,24 @@ async def _list_products_response(
         lifecycle_status=requested_lifecycle,
     )
     total = len(filtered_all)
+    page_items = filtered_all[offset:offset + limit]
+    if compact:
+        items = [_compact_catalog_item(product) for product in page_items]
+        return {
+            "total_count": total,
+            "returned_count": len(items),
+            "has_pagination": (offset + len(items)) < total,
+            "limit": limit,
+            "offset": offset,
+            "items": items,
+        }
+
     enriched = []
-    for product in filtered_all[offset:offset + limit]:
-        refreshed_product = await _refresh_claim_safe_product_row_if_needed(product)
-        if refreshed_product is product:
+    for product in page_items:
+        if product.get("preflight") and product.get("mode_readiness"):
             enriched.append(product)
             continue
-        enriched.append(await _enrich_product(refreshed_product))
+        enriched.append(await _enrich_product(product))
 
     return {
         "total_count": total,
@@ -516,16 +532,72 @@ def _catalog_priority(product: dict[str, Any]) -> tuple[int, int, int, int, int]
     }.get(source, 4)
     prompt_rank = {"READY": 0, "NEEDS_REVIEW": 1}.get(prompt_status, 2)
     image_rank = 0 if image_status in {"IMAGE_READY", "IMAGE_CACHE_READY"} else 1
-    test_rank = 1 if product.get("is_test_product") else 0
+    test_rank = 1 if bool(product.get("is_test_product")) or _is_test_product(product) else 0
     return (lifecycle_rank, test_rank, source_rank, prompt_rank, image_rank)
 
 
+def _catalog_list_projection(product: dict[str, Any]) -> dict[str, Any]:
+    projected = dict(product)
+    source = str(projected.get("source") or "").upper() or "MANUAL"
+    projected.setdefault("source", source)
+    projected.setdefault("source_lane", projected.get("source") or "MANUAL")
+    projected.setdefault("source_label", projected.get("source_lane") or projected.get("source") or "MANUAL")
+    projected.setdefault("reference_only", False)
+    projected["is_test_product"] = bool(projected.get("is_test_product")) or _is_test_product(projected)
+    return projected
+
+
+def _compact_catalog_item(product: dict[str, Any]) -> dict[str, Any]:
+    fields = {
+        "id",
+        "product_id",
+        "source",
+        "source_lane",
+        "source_label",
+        "reference_only",
+        "catalog_blockers",
+        "catalog_visibility_reason",
+        "raw_product_title",
+        "product_display_name",
+        "product_short_name",
+        "category",
+        "subcategory",
+        "type",
+        "product_type",
+        "claim_risk_level",
+        "shop_name",
+        "price",
+        "currency",
+        "image_url",
+        "local_image_path",
+        "image_readiness_status",
+        "image_readiness_detail",
+        "prompt_readiness_status",
+        "prompt_missing_fields",
+        "mapping_status",
+        "mapping_missing_fields",
+        "lifecycle_status",
+        "is_test_product",
+        "fastmoss_reference_id",
+        "updated_at",
+        "created_at",
+    }
+    compact = {key: product.get(key) for key in fields}
+    compact["source"] = compact.get("source") or "MANUAL"
+    compact["source_lane"] = compact.get("source_lane") or compact["source"]
+    compact["source_label"] = compact.get("source_label") or compact["source_lane"]
+    compact["reference_only"] = bool(compact.get("reference_only"))
+    compact["is_test_product"] = bool(compact.get("is_test_product"))
+    return compact
+
+
 def _matches_catalog_source(product: dict[str, Any], requested_source: str | None) -> bool:
+    is_test_product = bool(product.get("is_test_product")) or _is_test_product(product)
     if requested_source == "ALL":
         return True
     if requested_source == "TEST":
-        return bool(product.get("is_test_product"))
-    if product.get("is_test_product"):
+        return is_test_product
+    if is_test_product:
         return False
     if not requested_source:
         return True
@@ -610,7 +682,10 @@ async def _merge_catalog_products(
     *,
     requested_source: str | None,
     requested_source_lane: str | None,
+    include_fastmoss_reference: bool = True,
 ) -> list[dict[str, Any]]:
+    if not include_fastmoss_reference:
+        return _dedupe_catalog_products(persisted_products)
     include_fastmoss_reference = (
         requested_source in {None, "ALL", "FASTMOSS"}
         and requested_source_lane in {None, "ALL", FASTMOSS_REFERENCE_LANE}
@@ -678,6 +753,7 @@ async def list_products(
     lifecycle_status: str | None = Query(default=None),
     limit: int = Query(default=50),
     offset: int = Query(default=0),
+    compact: bool = Query(default=False),
 ):
     return await _list_products_response(
         q=q,
@@ -688,6 +764,7 @@ async def list_products(
         lifecycle_status=lifecycle_status,
         limit=limit,
         offset=offset,
+        compact=compact,
     )
 
 
@@ -700,6 +777,7 @@ async def search_products(
     lifecycle_status: str | None = Query(default=None),
     limit: int = Query(default=25),
     offset: int = Query(default=0),
+    compact: bool = Query(default=False),
 ):
     return await _list_products_response(
         q=q,
@@ -709,6 +787,7 @@ async def search_products(
         lifecycle_status=lifecycle_status,
         limit=limit,
         offset=offset,
+        compact=compact,
     )
 
 

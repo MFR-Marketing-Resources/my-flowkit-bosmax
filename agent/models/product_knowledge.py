@@ -33,6 +33,7 @@ class ProductKnowledgeCompleteRequest(BaseModel):
     image_filename: str | None = None
     paste_anything_about_product: str | None = None
     category: str | None = None
+    allow_live_image_analysis: bool = False
 
 
 class ModeReadiness(BaseModel):

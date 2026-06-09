@@ -484,28 +484,28 @@ export default function RegistrationReviewDraftPanel({
 							and recompute the registration snapshot before commit.
 						</p>
 					</div>
-					<div className="grid grid-cols-1 gap-2 text-[10px] uppercase tracking-widest text-slate-400 md:grid-cols-3">
-						<div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+					<div className="flex flex-wrap items-center gap-3 text-[10px] uppercase tracking-widest text-slate-400">
+						<div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 min-w-[110px] flex-grow flex-shrink-0">
 							<div className="font-bold text-slate-500">Draft Freshness</div>
-							<div className={isFresh ? "text-emerald-400" : "text-amber-400"}>
+							<div className={`mt-1 font-bold ${isFresh ? "text-emerald-400" : "text-amber-400"}`}>
 								{draft.draft_freshness_status}
 							</div>
 						</div>
-						<div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+						<div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 min-w-[120px] flex-grow flex-shrink-0">
 							<div className="font-bold text-slate-500">Image Asset</div>
 							<div
-								className={
+								className={`mt-1 font-bold break-all ${
 									draft.image_asset_status.includes("READY")
 										? "text-emerald-400"
 										: "text-amber-400"
-								}
+								}`}
 							>
 								{draft.image_asset_status}
 							</div>
 						</div>
-						<div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+						<div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 min-w-[130px] flex-grow flex-shrink-0">
 							<div className="font-bold text-slate-500">Vision Provider</div>
-							<div className="text-sky-300">
+							<div className="mt-1 font-bold text-sky-300 break-all">
 								{String(
 									draft.system_inferred_fields.image_analysis_status ||
 										"UNKNOWN",
@@ -781,8 +781,8 @@ export default function RegistrationReviewDraftPanel({
 								</div>
 							</div>
 
-							<div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]">
-								<div className="space-y-2">
+							<div className="mt-4 flex flex-col sm:flex-row lg:flex-row xl:flex-col 2xl:flex-row gap-4">
+								<div className="space-y-2 flex-shrink-0 w-full sm:w-60 lg:w-60 xl:w-full 2xl:w-60">
 									<p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
 										Image Preview
 									</p>
@@ -800,35 +800,41 @@ export default function RegistrationReviewDraftPanel({
 										)}
 									</div>
 								</div>
-								<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-									<div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-										<div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-											Image Asset Status
+								<div className="flex-grow grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-2">
+									<div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 flex flex-col justify-between min-w-0">
+										<div>
+											<div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+												Image Asset Status
+											</div>
+											<div className="mt-2 text-sm font-bold text-emerald-300 break-words leading-tight">
+												{draft.image_asset_status}
+											</div>
 										</div>
-										<div className="mt-1 text-sm font-semibold text-emerald-300">
-											{draft.image_asset_status}
-										</div>
-										<p className="mt-2 text-xs text-slate-400">
+										<p className="mt-3 text-xs text-slate-400 leading-relaxed">
 											{draft.image_asset_detail}
 										</p>
 									</div>
-									<div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-										<div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-											Semantic Vision Status
+									<div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 flex flex-col justify-between min-w-0">
+										<div>
+											<div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+												Semantic Vision Status
+											</div>
+											<div className="mt-2 text-sm font-bold text-sky-300 break-words leading-tight">
+												{String(
+													draft.system_inferred_fields.image_analysis_status ||
+														"UNKNOWN",
+												)}
+											</div>
 										</div>
-										<div className="mt-1 text-sm font-semibold text-sky-300">
-											{String(
-												draft.system_inferred_fields.image_analysis_status ||
-													"UNKNOWN",
-											)}
+										<div className="mt-3 text-xs text-slate-400 flex flex-wrap items-center gap-1.5 min-w-0">
+											<span className="text-slate-500">Provider:</span>
+											<code className="text-slate-300 bg-slate-950/60 px-1.5 py-0.5 rounded text-[10px] font-mono select-all break-all">
+												{String(
+													draft.system_inferred_fields.image_analysis_provider ||
+														"not_configured",
+												)}
+											</code>
 										</div>
-										<p className="mt-2 text-xs text-slate-400">
-											Provider:{" "}
-											{String(
-												draft.system_inferred_fields.image_analysis_provider ||
-													"not_configured",
-											)}
-										</p>
 									</div>
 								</div>
 							</div>
@@ -929,7 +935,7 @@ export default function RegistrationReviewDraftPanel({
 										<span className="mt-1 shrink-0 text-[10px] font-bold uppercase text-slate-500">
 											{key.replace(/_/g, " ")}
 										</span>
-										<span className="line-clamp-4 text-right text-xs text-slate-300">
+										<span className="min-w-0 break-all line-clamp-4 text-right text-xs text-slate-300">
 											{Array.isArray(value) ? value.join(", ") : String(value)}
 										</span>
 									</div>
@@ -953,7 +959,7 @@ export default function RegistrationReviewDraftPanel({
 										<span className="mt-1 shrink-0 text-[10px] font-bold uppercase text-slate-500">
 											{key.replace(/_/g, " ")}
 										</span>
-										<span className="line-clamp-4 text-right text-xs text-slate-300">
+										<span className="min-w-0 break-all line-clamp-4 text-right text-xs text-slate-300">
 											{Array.isArray(value) ? value.join(", ") : String(value)}
 										</span>
 									</div>

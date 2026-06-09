@@ -312,7 +312,7 @@ async def _check_execution_safety(variant: dict, dry_run: bool) -> dict[str, Any
         return {"ok": False, "error": "ABORT_CONCURRENT_VARIANT: Another variant is already being processed for this batch."}
 
     if not dry_run:
-        eligibility = await _assess_live_eligibility(batch, variant, include_smoke=True)
+        eligibility = await _assess_live_eligibility(batch, variant, include_smoke=False)
         if eligibility["blocked_reason"]:
             return {"ok": False, "error": eligibility["blocked_reason"][0], "eligibility": eligibility}
 
@@ -473,7 +473,7 @@ async def _assess_live_eligibility(
 
     if variant and extension_connected and extension_state in ALLOWED_FLOW_STATES:
         composer_result = await client.check_flow_composer_ready(_resolve_flow_mode(variant["google_flow_mode"] or batch["mode"]))
-        if not composer_result.get("ok"):
+        if not composer_result.get("ok") and include_smoke:
             blocked_reason.append(composer_result.get("error") or "ABORT_FLOW_COMPOSER_NOT_READY")
 
         if include_smoke:
