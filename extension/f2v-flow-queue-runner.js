@@ -93,7 +93,7 @@
 // Constants
 // ───────────────────────────────────────────────────────────────────────
 
-const F2V_FLOW_QUEUE_RUNNER_BUILD_ID = 'flowkit-f2v-runner-resilient-2026-06-10';
+const F2V_FLOW_QUEUE_RUNNER_BUILD_ID = 'flowkit-f2v-runner-adaptive-pill-2026-06-10';
 const SOP_DEFAULT_SETTLE_MS = 300;
 const SOP_DEFAULT_OPEN_PANEL_TIMEOUT_MS = 4000;
 const SOP_DEFAULT_UPLOAD_WAIT_MS = 10000;
@@ -1534,37 +1534,98 @@ function MAIN_getBottomComposerState() {
   function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
   function lower(s) { return normalize(s).toLowerCase(); }
   
-  var els = document.querySelectorAll('*');
+  // Token extractors — mirror content-flow-dom canonical logic. CRITICAL:
+  // the composer pill is MODEL-AGNOSTIC. A Nano Banana / image-frame job
+  // shows e.g. "Nano Banana Pro crop_9_16 1x" with NO "video" token, so
+  // detection must NOT require the word "video".
+  function ratioFromText(t) {
+    var s = lower(t);
+    if (/crop[_\s-]*9[_\s:.\-]*16/.test(s) || /\b9\s*[:：]\s*16\b/.test(s) || s.indexOf('portrait') >= 0) return '9:16';
+    if (/crop[_\s-]*16[_\s:.\-]*9/.test(s) || /\b16\s*[:：]\s*9\b/.test(s) || s.indexOf('landscape') >= 0) return '16:9';
+    if (/crop[_\s-]*1[_\s:.\-]*1/.test(s) || /\b1\s*[:：]\s*1\b/.test(s) || s.indexOf('square') >= 0) return '1:1';
+    return null;
+  }
+  function countFromText(t) {
+    var s = lower(t);
+    var m = s.match(/\b(\d)\s*(?:[x×]|variations?)\b/);
+    if (m) return m[1] + 'x';
+    var m2 = s.match(/\bx\s*(\d)\b/);
+    if (m2) return m2[1] + 'x';
+    if (/\b1\s*variation\b/.test(s)) return '1x';
+    return null;
+  }
+  function modelCanonFromText(t) {
+    var s = lower(t);
+    if (s.indexOf('veo 3.1 - lite') >= 0 || s.indexOf('veo 3.1 lite') >= 0) return 'veo 3.1 - lite';
+    if (s.indexOf('veo 3.1 - pro') >= 0 || s.indexOf('veo 3.1 pro') >= 0) return 'veo 3.1 - pro';
+    if (s.indexOf('veo 3.1 - fast') >= 0 || s.indexOf('veo 3.1 fast') >= 0) return 'veo 3.1 - fast';
+    if (s.indexOf('veo 3.1 - quality') >= 0 || s.indexOf('veo 3.1 quality') >= 0) return 'veo 3.1 - quality';
+    if (s.indexOf('nano banana 2') >= 0) return 'nano banana 2';
+    if (s.indexOf('nano banana pro') >= 0 || s.indexOf('nano banana - pro') >= 0) return 'nano banana pro';
+    if (s.indexOf('veo 3.1') >= 0) return 'veo 3.1';
+    if (s.indexOf('nano banana') >= 0) return 'nano banana';
+    if (s.indexOf('imagen') >= 0) return 'imagen';
+    if (s.indexOf('gemini') >= 0) return 'gemini';
+    return '';
+  }
+  function familyOf(canon) {
+    if (!canon) return '';
+    if (canon.indexOf('nano banana') >= 0) return 'nano banana';
+    if (canon.indexOf('veo') >= 0) return 'veo';
+    if (canon.indexOf('imagen') >= 0) return 'imagen';
+    if (canon.indexOf('gemini') >= 0) return 'gemini';
+    return canon;
+  }
+
+  function isVisibleNode(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+
+  var els = document.querySelectorAll('button, [role="button"], [role="tab"], [aria-haspopup], [data-state], [aria-label], span, div');
   var pillText = '';
+  var pillRatio = null;
+  var pillCount = null;
   var modelText = '';
-  
+  var bestModelCanon = '';
+  var bestPillScore = -1;
+
   for (var i = 0; i < els.length; i++) {
     var el = els[i];
-    if (el.offsetWidth === 0 || el.offsetHeight === 0) continue;
-    var style = window.getComputedStyle(el);
-    if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) continue;
-    
+    if (!isVisibleNode(el)) continue;
     var txt = normalize(el.textContent || el.getAttribute('aria-label') || '');
-    var ltxt = txt.toLowerCase();
-    if (ltxt.indexOf('video') >= 0 && (ltxt.indexOf('crop') >= 0 || ltxt.indexOf('16:9') >= 0 || ltxt.indexOf('9:16') >= 0 || ltxt.indexOf('portrait') >= 0)) {
-      if (ltxt.indexOf('x2') >= 0 || ltxt.indexOf('1x') >= 0 || ltxt.indexOf('2x') >= 0 || ltxt.indexOf('variation') >= 0) {
-        if (!pillText || txt.length < pillText.length) {
-          pillText = txt;
-        }
+    if (!txt || txt.length > 160) continue;
+    var lc = txt.toLowerCase();
+    var r = ratioFromText(txt);
+    var c = countFromText(txt);
+    var mc = modelCanonFromText(txt);
+
+    // Pill candidate: any compact chip carrying a ratio AND/OR count token.
+    // Score favors chips bundling ratio+count(+model); ties → shortest text.
+    if (r || c) {
+      var score = (r ? 2 : 0) + (c ? 2 : 0) + (mc ? 1 : 0);
+      if (score > bestPillScore || (score === bestPillScore && (!pillText || txt.length < pillText.length))) {
+        bestPillScore = score;
+        pillText = txt;
+        pillRatio = r;
+        pillCount = c;
+      }
+    }
+    // Model text: keep the most specific recognized model label.
+    if (mc && lc.indexOf('create') === -1 && lc.indexOf('generate') === -1) {
+      if (mc.length > bestModelCanon.length) {
+        bestModelCanon = mc;
+        if (txt.length <= 80) modelText = txt;
+      } else if (!modelText && txt.length <= 80) {
+        modelText = txt;
       }
     }
   }
-  
-  for (var j = 0; j < els.length; j++) {
-    var el2 = els[j];
-    if (el2.offsetWidth === 0 || el2.offsetHeight === 0) continue;
-    var txt2 = normalize(el2.textContent || el2.getAttribute('aria-label') || '');
-    if (/\b(veo|nano\s*banana|gemini|imagen|model)\b/i.test(txt2) && txt2.length < 80) {
-      if (txt2.toLowerCase().indexOf('create') === -1 && txt2.toLowerCase().indexOf('generate') === -1) {
-        modelText = txt2;
-      }
-    }
-  }
+  var modelCanonical = bestModelCanon;
+  var modelFamily = familyOf(bestModelCanon);
 
   // Detect top level active mode trigger
   var topMode = 'UNKNOWN';
@@ -1649,6 +1710,10 @@ function MAIN_getBottomComposerState() {
     ok: true,
     pillText: pillText,
     modelText: modelText,
+    detectedRatio: pillRatio,
+    detectedCount: pillCount,
+    detectedModelCanonical: modelCanonical,
+    detectedModelFamily: modelFamily,
     topMode: topMode,
     subMode: subMode
   };
@@ -1704,7 +1769,7 @@ function MAIN_findSettingLauncher(settingType) {
         return target;
       }
     } else if (settingType === 'model') {
-      if (text.indexOf('veo') >= 0 || text.indexOf('imagen') >= 0 || text.indexOf('gemini') >= 0 || text.indexOf('model') >= 0 || text.indexOf('lite') >= 0) {
+      if (text.indexOf('veo') >= 0 || text.indexOf('imagen') >= 0 || text.indexOf('gemini') >= 0 || text.indexOf('model') >= 0 || text.indexOf('lite') >= 0 || text.indexOf('nano') >= 0 || text.indexOf('banana') >= 0 || text.indexOf('pro') >= 0) {
         var target = node;
         if (node.closest) {
           var interactive = node.closest('button, [role="button"], [role="combobox"], [aria-haspopup], [tabindex]');
@@ -2083,27 +2148,42 @@ async function _openComposerSettingsPanel(scripting, tabId, opts) {
 async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
   const stampAttr = opts?.stampAttr || 'data-bosmax-option';
   
-  // 1. Semantic Verification - check if the setting is already applied!
+  // 1. Semantic Verification — check if the setting is already applied.
+  // Uses structured pill tokens (detectedRatio/Count/ModelFamily) so it works
+  // even when the pill is model-agnostic (e.g. "Nano Banana Pro crop_9_16 1x"
+  // with no "video" token). Ratio/count/model do NOT hard-require topMode to
+  // be 'Video' — the presence of the token on the pill is the proof; we only
+  // exclude an explicit Image-mode workspace.
   const compState = await _runMainWorld(scripting, tabId, MAIN_getBottomComposerState, []);
   if (compState && compState.ok === true) {
-    const pill = String(compState.pillText || '').toLowerCase();
-    const model = String(compState.modelText || '').toLowerCase();
-    
+    const kind = step.kind || _stepKind(step);
+    const notImageMode = compState.topMode !== 'Image';
     let alreadyApplied = false;
-    if (step.label === 'Video') {
-      alreadyApplied = (compState.topMode === 'Video') && pill.includes('video');
-    } else if (step.label === 'Frames') {
+    if (kind === 'mode') {
+      alreadyApplied = compState.topMode === 'Video';
+    } else if (kind === 'submode') {
       alreadyApplied = (compState.topMode === 'Video') && (compState.subMode === 'Frames');
-    } else if (step.label === '9:16') {
-      alreadyApplied = (compState.topMode === 'Video') && (pill.includes('crop_9_16') || pill.includes('9:16') || pill.includes('9 : 16') || pill.includes('portrait'));
-    } else if (step.label === '1x') {
-      alreadyApplied = (compState.topMode === 'Video') && (pill.includes('1x') || pill.includes('1×') || pill.includes('1 variation') || pill.includes('x1') || pill.includes('1 x'));
-    } else if (step.label === 'Veo 3.1 - Lite') {
-      alreadyApplied = (compState.topMode === 'Video') && (model.includes('veo 3.1') || model.includes('veo') || pill.includes('veo'));
+    } else if (kind === 'ratio') {
+      alreadyApplied = notImageMode && (compState.detectedRatio === '9:16');
+    } else if (kind === 'count') {
+      alreadyApplied = notImageMode && (compState.detectedCount === '1x');
+    } else if (kind === 'model') {
+      const obsFamily = compState.detectedModelFamily || '';
+      const obsCanon = compState.detectedModelCanonical || '';
+      if (step.acceptCurrent) {
+        // No explicit model requested → any recognized model on the pill is fine.
+        alreadyApplied = Boolean(obsCanon || obsFamily);
+      } else {
+        const wantFamily = step.modelFamily || '';
+        const wantCanon = step.modelCanonical || '';
+        // Family-level match so Nano Banana Pro / 2 / plain all satisfy a
+        // "Nano Banana" request without needless model-switching.
+        alreadyApplied = Boolean((wantFamily && obsFamily === wantFamily) || (wantCanon && obsCanon === wantCanon));
+      }
     }
-    
+
     if (alreadyApplied) {
-      console.log(`[FlowAgent] Setting ${step.label} is already applied, skipping click.`);
+      console.log(`[FlowAgent] Setting ${step.label} (kind=${kind}) already applied — confirming, no click.`);
       return {
         ok: true,
         label: step.label,
@@ -2192,9 +2272,10 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
   // If not visible, let's explore launchers for aspect/count/model settings
   if (!findResult || findResult.ok !== true || !Array.isArray(findResult.matches) || findResult.matches.length === 0) {
     let settingCategory = null;
-    if (step.label === '9:16') settingCategory = 'aspect';
-    else if (step.label === '1x') settingCategory = 'count';
-    else if (step.label === 'Veo 3.1 - Lite') settingCategory = 'model';
+    const _stepK = step.kind || _stepKind(step);
+    if (_stepK === 'ratio') settingCategory = 'aspect';
+    else if (_stepK === 'count') settingCategory = 'count';
+    else if (_stepK === 'model') settingCategory = 'model';
     
     if (settingCategory) {
       console.log(`[FlowAgent] Option ${step.label} not directly visible. Searching for launcher for: ${settingCategory}`);
@@ -2296,6 +2377,41 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
   // Settle wait
   await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
 
+  // 4b. Coordinate-click fallback — if the DOM-dispatched click did NOT change
+  // the observed setting, retry once via a real hardware-level CDP click at the
+  // element center. This rescues cases where React/Radix ignore synthetic
+  // events (isTrusted gating). Only for config settings that surface on the pill.
+  const _kindForFallback = step.kind || _stepKind(step);
+  const _coordClick = opts?.cdpCoordinateClick || opts?.coordinateClick || null;
+  if (typeof _coordClick === 'function' && top.bbox &&
+      (_kindForFallback === 'ratio' || _kindForFallback === 'count' || _kindForFallback === 'model')) {
+    const verifyState = await _runMainWorld(scripting, tabId, MAIN_getBottomComposerState, []);
+    let applied = false;
+    if (verifyState && verifyState.ok === true) {
+      if (_kindForFallback === 'ratio') applied = verifyState.detectedRatio === '9:16';
+      else if (_kindForFallback === 'count') applied = verifyState.detectedCount === '1x';
+      else if (_kindForFallback === 'model') {
+        applied = step.acceptCurrent
+          ? Boolean(verifyState.detectedModelCanonical)
+          : (Boolean(step.modelFamily) && verifyState.detectedModelFamily === step.modelFamily);
+      }
+    }
+    if (!applied) {
+      console.log(`[FlowAgent] DOM click for ${step.label} did not register — retrying via CDP coordinate click.`);
+      try {
+        await _coordClick({
+          tabId,
+          strategy: `option_${_kindForFallback}`,
+          text: top.text || step.label,
+          bbox: top.bbox,
+          x: Math.round(top.bbox.x + (top.bbox.width / 2)),
+          y: Math.round(top.bbox.y + (top.bbox.height / 2)),
+        });
+        await _sleep(Math.max(200, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+      } catch (_) { /* tolerant — coordinate click is best-effort */ }
+    }
+  }
+
   // 5. Recover if panel closed after click!
   // If the surface closed, we reopen the settings panel for subsequent steps
   const panelOpen = await _runMainWorld(scripting, tabId, MAIN_isComposerSurfaceOpen, []);
@@ -2321,9 +2437,10 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
  * OR data-state=active. Failure here only DOWNGRADES success — it
  * doesn't fail the runner — because some UIs use class-only state.
  */
-async function _verifySettingsPanelApplied(scripting, tabId, opts) {
+async function _verifySettingsPanelApplied(scripting, tabId, opts, sequence) {
   const results = {};
-  for (const step of SOP_SEQUENCE) {
+  const seq = Array.isArray(sequence) && sequence.length ? sequence : SOP_SEQUENCE;
+  for (const step of seq) {
     const found = await _runMainWorld(
       scripting, tabId, MAIN_findVisibleCandidatesByExactLabel,
       [step.label, step.aliases || [], step.preferredRoles || [], opts?.stampAttr || 'data-bosmax-option'],
@@ -2493,6 +2610,89 @@ async function _invokeGenerate(scripting, tabId, opts) {
  * @param {object} [opts]
  * @returns {Promise<{ok, error?, detail?, stages, stage_results, summary?}>}
  */
+// ── Model + step-kind resolution (service-worker side) ──────────────────
+// Mirrors content-flow-dom.js canonicalizeFlowModelLabel so the runner agrees
+// with the rest of the repo on what "Nano Banana" / "Veo" mean.
+function _canonicalModel(value) {
+  const s = String(value == null ? '' : value).replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!s) return '';
+  if (s.indexOf('veo 3.1 - lite') >= 0 || s.indexOf('veo 3.1 lite') >= 0) return 'veo 3.1 - lite';
+  if (s.indexOf('veo 3.1 - pro') >= 0 || s.indexOf('veo 3.1 pro') >= 0) return 'veo 3.1 - pro';
+  if (s.indexOf('veo 3.1 - fast') >= 0 || s.indexOf('veo 3.1 fast') >= 0) return 'veo 3.1 - fast';
+  if (s.indexOf('veo 3.1 - quality') >= 0 || s.indexOf('veo 3.1 quality') >= 0) return 'veo 3.1 - quality';
+  if (s.indexOf('nano banana 2') >= 0) return 'nano banana 2';
+  if (s.indexOf('nano banana pro') >= 0 || s.indexOf('nano banana - pro') >= 0) return 'nano banana pro';
+  if (s.indexOf('veo 3.1') >= 0) return 'veo 3.1';
+  if (s.indexOf('nano banana') >= 0) return 'nano banana';
+  if (s.indexOf('imagen') >= 0) return 'imagen';
+  if (s.indexOf('gemini') >= 0) return 'gemini';
+  return s;
+}
+function _modelFamily(canon) {
+  const c = String(canon || '');
+  if (!c) return '';
+  if (c.indexOf('nano banana') >= 0) return 'nano banana';
+  if (c.indexOf('veo') >= 0) return 'veo';
+  if (c.indexOf('imagen') >= 0) return 'imagen';
+  if (c.indexOf('gemini') >= 0) return 'gemini';
+  return c;
+}
+function _modelAliases(canon, rawLabel) {
+  const fam = _modelFamily(canon);
+  const out = new Set();
+  if (rawLabel) out.add(String(rawLabel));
+  if (canon) out.add(canon);
+  if (fam === 'nano banana') {
+    ['Nano Banana', 'Nano Banana Pro', 'Nano Banana 2', 'Nano Banana - Pro', 'Nano Banana Pro (Image)', '🍌 Nano Banana Pro'].forEach((a) => out.add(a));
+  } else if (fam === 'veo') {
+    ['Veo 3.1 - Lite', 'Veo 3.1 Lite', 'Veo 3.1', 'Veo', 'Veo 3.1 - Pro', 'Veo 3.1 - Fast', 'Veo 3.1 - Quality'].forEach((a) => out.add(a));
+  }
+  return Array.from(out);
+}
+/**
+ * Resolve the desired model from the job. Returns null when the job does not
+ * request a specific model — in that case the runner ACCEPTS whatever model
+ * the editor already shows on the composer pill (no needless switching).
+ */
+function _resolveDesiredModel(job) {
+  const raw = job && (job.modelLabel || job.model || job.model_label || job.modelName);
+  if (!raw) return null;
+  const canon = _canonicalModel(raw);
+  return { label: String(raw), canon, family: _modelFamily(canon), aliases: _modelAliases(canon, raw) };
+}
+function _stepKind(step) {
+  if (!step) return 'other';
+  if (step.kind) return step.kind;
+  const label = String(step.label || '');
+  if (label === 'Video') return 'mode';
+  if (label === 'Frames') return 'submode';
+  if (label === '9:16') return 'ratio';
+  if (label === '1x') return 'count';
+  if (/veo|nano\s*banana|imagen|gemini/i.test(label)) return 'model';
+  return 'other';
+}
+/**
+ * Build the effective step sequence for this job. The model step (frozen as
+ * "Veo 3.1 - Lite" in SOP_SEQUENCE) is rewritten to target the job's requested
+ * model, or marked acceptCurrent when none was requested. Stage keys are left
+ * unchanged so the telemetry contract stays stable.
+ */
+function _buildEffectiveSequence(desiredModel) {
+  return SOP_SEQUENCE.map((s) => {
+    const kind = _stepKind(s);
+    if (kind !== 'model') return Object.assign({}, s, { kind });
+    if (!desiredModel) return Object.assign({}, s, { kind, acceptCurrent: true });
+    return Object.assign({}, s, {
+      kind,
+      acceptCurrent: false,
+      label: desiredModel.label,
+      aliases: desiredModel.aliases,
+      modelFamily: desiredModel.family,
+      modelCanonical: desiredModel.canon,
+    });
+  });
+}
+
 async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
   const scripting = deps && deps.scripting;
   if (!scripting || typeof scripting.executeScript !== 'function') {
@@ -2527,70 +2727,63 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     }
     recordStage('F2V_SOP_NEW_PROJECT_READY', 'PASS', null);
 
-    // Steps 3-7 — click each visible option exactly.
-    for (const step of SOP_SEQUENCE) {
-      if (step.label === '9:16') {
-        // Step 2 — configure settings. Try Tier One (direct pill interaction) first;
-        // fall back to opening the settings panel (Tier Two) only when needed.
+    // Resolve the requested model (Nano Banana, Veo, …). When the job does not
+    // name a model we accept whatever the editor already shows on the pill —
+    // the live reality is "🍌 Nano Banana Pro crop_9_16 1x".
+    const desiredModel = _resolveDesiredModel(job);
+    const effectiveSequence = _buildEffectiveSequence(desiredModel);
+    recordStage('F2V_SOP_MODEL_TARGET_RESOLVED', 'PASS',
+      `desired=${desiredModel ? desiredModel.canon : 'accept_current'} family=${desiredModel ? desiredModel.family : 'any'}`);
+
+    // Steps 3-7 — configure each visible option.
+    for (const step of effectiveSequence) {
+      if (step.kind === 'ratio') {
+        // SETTINGS GATE. Read the composer pill FIRST. If aspect + count + model
+        // are already correct (the Tier One reality), CONFIRM them without ever
+        // opening the settings panel — clicking an already-correct chip risks
+        // toggling it off. Only when something is wrong do we dismiss overlays
+        // and open the panel (Tier Two).
         recordStage('F2V_SOP_SETTINGS_EXPLORER_STARTED', 'PASS', `build=${F2V_FLOW_QUEUE_RUNNER_BUILD_ID}`);
 
-        // Dismiss promo overlays / banners before any interaction.
-        const dismissRes = await _runMainWorld(scripting, tabId, MAIN_dismissPromoOverlays, []);
-        if (dismissRes && dismissRes.dismissed) {
-          console.log(`[FlowAgent] Overlay dismissed via: ${dismissRes.method || 'unknown'}`);
-          await _sleep(350);
-        }
+        const preState = await _runMainWorld(scripting, tabId, MAIN_getBottomComposerState, []);
+        const ratioOk = Boolean(preState && preState.detectedRatio === '9:16');
+        const countOk = Boolean(preState && preState.detectedCount === '1x');
+        const modelOk = Boolean(preState && (desiredModel
+          ? (preState.detectedModelFamily === desiredModel.family || preState.detectedModelCanonical === desiredModel.canon)
+          : Boolean(preState.detectedModelCanonical)));
 
-        // Tier One: check if 9:16 is already directly visible on the bottom pill
-        // without opening the settings panel. This handles the new Flow layout where
-        // aspect ratio is visible as a direct button/chip on the composer row.
-        const t1StampAttr = opts?.stampAttr || 'data-bosmax-option';
-        const t1Find = await _runMainWorld(
-          scripting, tabId, MAIN_findVisibleCandidatesByExactLabel,
-          [step.label, step.aliases || [], step.preferredRoles || [], t1StampAttr],
-        );
-
-        if (t1Find && t1Find.ok === true && Array.isArray(t1Find.matches) && t1Find.matches.length > 0) {
-          console.log(`[FlowAgent] Tier One: ${step.label} directly visible — skipping panel open.`);
-          const t1Click = await _runMainWorld(
-            scripting, tabId, MAIN_clickStampedElement,
-            [t1Find.matches[0].stamp_attr, t1Find.matches[0].stamp_id],
-          );
-          if (t1Click && t1Click.ok === true) {
-            await _sleep(Math.max(150, settle));
-            recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', 'launcher=tier_one_direct_pill');
-            recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS', 'strategy=tier_one_direct already_open=false');
-            recordStage('F2V_SOP_SETTING_CANDIDATES_SCANNED', 'PASS', `label=${step.label} count=1 strategy=tier_one_direct`);
-            recordStage(step.stage, 'PASS', `role=${t1Find.matches[0].role} strategy=tier_one_direct`);
-            const t1Confirmed = step.stage.replace('_CLICKED', '_CONFIRMED');
-            if (t1Confirmed !== step.stage) {
-              recordStage(t1Confirmed, 'PASS', `role=${t1Find.matches[0].role} strategy=tier_one_direct`);
-            }
-            continue; // Step handled — skip _clickVisibleOptionExact for this step.
+        if (ratioOk && countOk && modelOk) {
+          console.log('[FlowAgent] Tier One: aspect + count + model already configured on the pill — no panel needed.');
+          recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', 'launcher=tier_one_pill_confirmed');
+          recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS',
+            `strategy=tier_one_pill_confirmed pill=${JSON.stringify(String(preState.pillText || '').slice(0, 80))}`);
+          // Fall through: each ratio/count/model step semantic-skips below.
+        } else {
+          // Tier Two — dismiss promo overlays, then open the settings panel.
+          const dismissRes = await _runMainWorld(scripting, tabId, MAIN_dismissPromoOverlays, []);
+          if (dismissRes && dismissRes.dismissed) {
+            console.log(`[FlowAgent] Overlay dismissed via: ${dismissRes.method || 'unknown'}`);
+            await _sleep(350);
           }
+          const panel = await _openComposerSettingsPanel(scripting, tabId, opts);
+          recordStage('F2V_SOP_SETTINGS_OPENER_SCAN', 'PASS', _buildSettingsOpenerScanMessage(panel));
+          if (!panel.ok) {
+            recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'FAIL',
+              `${panel.error} detail=${panel.detail} launchers=${JSON.stringify(panel.visible_launchers || [])} strategies=${JSON.stringify(panel.attempted_strategies || [])}`);
+            return {
+              ok: false,
+              error: panel.error,
+              detail: panel.detail,
+              stages,
+              visible_launchers: panel.visible_launchers || [],
+              attempted_strategies: panel.attempted_strategies || [],
+              diagnostics: panel.diagnostics || null,
+            };
+          }
+          recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', `launcher=${panel.launcher_text || 'already_open'}`);
+          recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS',
+            `already_open=${Boolean(panel.already_open)} strategy=${panel.strategy || 'already_open'}`);
         }
-
-        // Tier Two: Tier One failed or option not directly visible — open settings panel.
-        const panel = await _openComposerSettingsPanel(scripting, tabId, opts);
-        recordStage('F2V_SOP_SETTINGS_OPENER_SCAN', 'PASS', _buildSettingsOpenerScanMessage(panel));
-        if (!panel.ok) {
-          recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'FAIL',
-            `${panel.error} detail=${panel.detail} launchers=${JSON.stringify(panel.visible_launchers || [])} strategies=${JSON.stringify(panel.attempted_strategies || [])}`);
-          return {
-            ok: false,
-            error: panel.error,
-            detail: panel.detail,
-            stages,
-            visible_launchers: panel.visible_launchers || [],
-            attempted_strategies: panel.attempted_strategies || [],
-            diagnostics: panel.diagnostics || null,
-          };
-        }
-
-        // Emit launcher found and settings panel opened stages
-        recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', `launcher=${panel.launcher_text || 'already_open'}`);
-        recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS',
-          `already_open=${Boolean(panel.already_open)} strategy=${panel.strategy || 'already_open'}`);
       }
 
       const clickRes = await _clickVisibleOptionExact(scripting, tabId, step, opts);
@@ -2625,7 +2818,7 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     }
 
     // Step 8 — verify settings applied (soft check — informational).
-    const verify = await _verifySettingsPanelApplied(scripting, tabId, opts);
+    const verify = await _verifySettingsPanelApplied(scripting, tabId, opts, effectiveSequence);
     stageResults.settings_configured = true;
     recordStage('F2V_SOP_SETTINGS_CONFIGURED', 'PASS', `results=${JSON.stringify(verify.results || {})}`);
 
@@ -2856,6 +3049,8 @@ const _api = {
   MAIN_insertComposerPrompt,
   MAIN_invokeReactFiberSubmit,
   MAIN_stampGenerateButton,
+  MAIN_getBottomComposerState,
+  MAIN_dismissPromoOverlays,
   // Internal helpers (exported for unit tests)
   _openComposerSettingsPanel,
   _clickVisibleOptionExact,
