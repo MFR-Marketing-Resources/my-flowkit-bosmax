@@ -1,4 +1,6 @@
-from agent.api.products import _filter_products_for_catalog
+import pytest
+
+from agent.api.products import _filter_products_for_catalog, _merge_catalog_products
 from agent.services.product_catalog_audit import CANONICAL_FATIMA_PRODUCT_ID, build_cleanup_plan, build_mapping_summary
 from agent.services.product_intelligence import enrich_product
 
@@ -46,7 +48,7 @@ async def test_enrich_product_normalizes_baby_wipes_price_commission_and_taxonom
     assert enriched["copywriting_angle"] == "Trust-led baby hygiene and gentle newborn care"
 
 
-def test_catalog_default_hides_test_products_and_prioritizes_ready_fastmoss():
+def test_catalog_default_hides_test_products_and_prioritizes_canonical_truth():
     items = [
         {
             "id": "test_prod_1",
@@ -80,9 +82,15 @@ def test_catalog_default_hides_test_products_and_prioritizes_ready_fastmoss():
         },
     ]
 
-    filtered = _filter_products_for_catalog(items, source=None, readiness=None)
+    filtered = _filter_products_for_catalog(
+        items,
+        query=None,
+        source=None,
+        source_lane=None,
+        readiness=None,
+    )
 
-    assert [item["id"] for item in filtered] == ["real_fastmoss", "manual_prod"]
+    assert [item["id"] for item in filtered] == ["manual_prod", "real_fastmoss"]
 
 
 def test_catalog_test_filter_only_returns_test_products():
@@ -91,7 +99,13 @@ def test_catalog_test_filter_only_returns_test_products():
         {"id": "real_fastmoss", "source": "FASTMOSS", "is_test_product": False, "updated_at": "2026-05-09T09:00:00", "created_at": "2026-05-09T09:00:00"},
     ]
 
-    filtered = _filter_products_for_catalog(items, source="TEST", readiness=None)
+    filtered = _filter_products_for_catalog(
+        items,
+        query=None,
+        source="TEST",
+        source_lane=None,
+        readiness=None,
+    )
 
     assert [item["id"] for item in filtered] == ["test_prod_1"]
 
@@ -192,3 +206,136 @@ def test_mapping_summary_groups_blocked_products_by_missing_fields_and_source():
     assert summary["blocked_by_missing_field"] == {"category": 1, "trigger_id": 1}
     assert summary["blocked_by_mapping_source"] == {"fallback": 1}
     assert summary["sample_blocked_products"][0]["id"] == "blocked_1"
+
+
+@pytest.mark.asyncio
+async def test_merge_catalog_prefers_canonical_truth_over_fastmoss_reference(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    raw_title = (
+        "Sumikko 50PCS Premium Baby Diaper pants disposable diaper tape diaper pants "
+        "pull-ups Ultra-thin and breathable All size S/M/L/XL/XXL/XXXL"
+    )
+    tiktok_url = "https://shop.tiktok.com/view/product/1730591357281076897?region=MY&local=en"
+    fastmoss_url = "https://www.fastmoss.com/zh/e-commerce/detail/1730591357281076897"
+    reference_id = "fastmoss-ref:613e6aeb961c103b"
+
+    persisted_products = [
+        {
+            "id": "raw-fastmoss-row",
+            "source": "FASTMOSS",
+            "source_lane": None,
+            "reference_only": False,
+            "raw_product_title": raw_title,
+            "product_display_name": "Sumikko FastMoss Raw",
+            "product_short_name": "Sumikko Baby Diaper pants",
+            "source_url": tiktok_url,
+            "tiktok_product_url": tiktok_url,
+            "mapping_source": "rule",
+            "fastmoss_reference_id": None,
+        },
+        {
+            "id": "canonical-product-truth",
+            "source": "MANUAL",
+            "source_lane": None,
+            "reference_only": False,
+            "raw_product_title": raw_title,
+            "product_display_name": raw_title,
+            "product_short_name": raw_title[:80],
+            "source_url": fastmoss_url,
+            "tiktok_product_url": tiktok_url,
+            "mapping_source": "manual",
+            "fastmoss_reference_id": reference_id,
+        },
+    ]
+    reference_products = [
+        {
+            "id": reference_id,
+            "source": "FASTMOSS",
+            "source_lane": "FASTMOSS_REFERENCE",
+            "reference_only": True,
+            "raw_product_title": raw_title,
+            "product_display_name": "Sumikko FastMoss Reference",
+            "product_short_name": "Sumikko Baby Diaper pants",
+            "source_url": fastmoss_url,
+            "tiktok_product_url": tiktok_url,
+        }
+    ]
+
+    async def fake_list_fastmoss_reference_products(limit: int = 500):
+        assert limit == 500
+        return reference_products
+
+    monkeypatch.setattr(
+        "agent.api.products.list_fastmoss_reference_products",
+        fake_list_fastmoss_reference_products,
+    )
+
+    merged = await _merge_catalog_products(
+        persisted_products,
+        requested_source=None,
+        requested_source_lane=None,
+    )
+
+    matching = [row for row in merged if row.get("raw_product_title") == raw_title]
+    assert len(matching) == 1
+    assert matching[0]["id"] == "canonical-product-truth"
+    assert matching[0].get("reference_only") is False
+
+
+@pytest.mark.asyncio
+async def test_merge_catalog_keeps_reference_only_row_when_truth_not_committed(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    raw_title = "Reference-only product title"
+    tiktok_url = "https://shop.tiktok.com/view/product/abc"
+    fastmoss_url = "https://www.fastmoss.com/zh/e-commerce/detail/abc"
+    reference_id = "fastmoss-ref:abc123"
+
+    persisted_products = [
+        {
+            "id": "raw-fastmoss-row",
+            "source": "FASTMOSS",
+            "source_lane": None,
+            "reference_only": False,
+            "raw_product_title": raw_title,
+            "product_display_name": raw_title,
+            "product_short_name": "Reference Product",
+            "source_url": tiktok_url,
+            "tiktok_product_url": tiktok_url,
+            "mapping_source": "rule",
+            "fastmoss_reference_id": None,
+        }
+    ]
+    reference_products = [
+        {
+            "id": reference_id,
+            "source": "FASTMOSS",
+            "source_lane": "FASTMOSS_REFERENCE",
+            "reference_only": True,
+            "raw_product_title": raw_title,
+            "product_display_name": raw_title,
+            "product_short_name": "Reference Product",
+            "source_url": fastmoss_url,
+            "tiktok_product_url": tiktok_url,
+        }
+    ]
+
+    async def fake_list_fastmoss_reference_products(limit: int = 500):
+        return reference_products
+
+    monkeypatch.setattr(
+        "agent.api.products.list_fastmoss_reference_products",
+        fake_list_fastmoss_reference_products,
+    )
+
+    merged = await _merge_catalog_products(
+        persisted_products,
+        requested_source=None,
+        requested_source_lane=None,
+    )
+
+    matching = [row for row in merged if row.get("raw_product_title") == raw_title]
+    assert len(matching) == 1
+    assert matching[0]["id"] == reference_id
+    assert matching[0].get("reference_only") is True

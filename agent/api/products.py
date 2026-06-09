@@ -509,9 +509,9 @@ def _catalog_priority(product: dict[str, Any]) -> tuple[int, int, int, int, int]
     lifecycle_rank = 1 if resolve_lifecycle_status(product) == "ARCHIVED" else 0
 
     source_rank = {
-        "FASTMOSS": 0,
+        "MANUAL": 0,
         "IMPORTED": 1,
-        "MANUAL": 2,
+        "FASTMOSS": 2,
         "TIKTOKSHOP": 3,
     }.get(source, 4)
     prompt_rank = {"READY": 0, "NEEDS_REVIEW": 1}.get(prompt_status, 2)
@@ -566,6 +566,45 @@ def _catalog_identity_keys(product: dict[str, Any]) -> set[str]:
     return keys
 
 
+def _is_reference_only_catalog_product(product: dict[str, Any]) -> bool:
+    return bool(product.get("reference_only")) or (
+        str(product.get("source_lane") or "").upper() == FASTMOSS_REFERENCE_LANE
+    )
+
+
+def _is_canonical_catalog_product(product: dict[str, Any]) -> bool:
+    if _is_reference_only_catalog_product(product):
+        return False
+    source = str(product.get("source") or "").upper()
+    mapping_source = str(product.get("mapping_source") or "").upper()
+    if source in {"MANUAL", "IMPORTED"}:
+        return True
+    return bool(str(product.get("fastmoss_reference_id") or "").strip()) or (
+        mapping_source == "FASTMOSS_PROMOTED"
+    )
+
+
+def _catalog_identity_preference(product: dict[str, Any]) -> int:
+    if _is_canonical_catalog_product(product):
+        return 0
+    if _is_reference_only_catalog_product(product):
+        return 1
+    return 2
+
+
+def _dedupe_catalog_products(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen_identity_keys: set[str] = set()
+    prioritized = sorted(products, key=_catalog_identity_preference)
+    for product in prioritized:
+        identity_keys = _catalog_identity_keys(product)
+        if identity_keys and identity_keys & seen_identity_keys:
+            continue
+        deduped.append(product)
+        seen_identity_keys.update(identity_keys)
+    return deduped
+
+
 async def _merge_catalog_products(
     persisted_products: list[dict[str, Any]],
     *,
@@ -577,20 +616,27 @@ async def _merge_catalog_products(
         and requested_source_lane in {None, "ALL", FASTMOSS_REFERENCE_LANE}
     ) or requested_source_lane == FASTMOSS_REFERENCE_LANE
     if not include_fastmoss_reference:
-        return persisted_products
+        return _dedupe_catalog_products(persisted_products)
 
     reference_products = await list_fastmoss_reference_products(limit=500)
-    seen_keys = {
-        identity_key
+    preserve_reference_lane = requested_source_lane == FASTMOSS_REFERENCE_LANE
+    resolved_reference_ids = {
+        str(product.get("fastmoss_reference_id") or "").strip()
         for product in persisted_products
-        for identity_key in _catalog_identity_keys(product)
+        if _is_canonical_catalog_product(product)
+        and str(product.get("fastmoss_reference_id") or "").strip()
     }
     merged = list(persisted_products)
     for reference_product in reference_products:
-        if _catalog_identity_keys(reference_product) & seen_keys:
+        if (
+            not preserve_reference_lane
+            and str(reference_product.get("id") or "").strip() in resolved_reference_ids
+        ):
             continue
         merged.append(reference_product)
-    return merged
+    if preserve_reference_lane:
+        return merged
+    return _dedupe_catalog_products(merged)
 
 
 def _filter_products_for_catalog(
