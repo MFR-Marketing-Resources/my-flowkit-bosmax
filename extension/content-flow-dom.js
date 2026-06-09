@@ -130,11 +130,11 @@
 
       try {
         chrome.runtime.sendMessage(payload, (response) => {
+          const lastError = chrome.runtime.lastError;
           if (settled) return;
           settled = true;
           clearTimeout(timer);
 
-          const lastError = chrome.runtime.lastError;
           if (lastError) {
             resolve({ ok: false, ...normalizeRuntimeMessageError(lastError) });
             return;

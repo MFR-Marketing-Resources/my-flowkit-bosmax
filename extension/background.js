@@ -173,11 +173,11 @@ async function sendTabMessageSafe(tabId, payload, timeoutMs = 4000) {
 		}, timeoutMs);
 
 		chrome.tabs.sendMessage(tabId, payload, (response) => {
+			const lastError = chrome.runtime.lastError;
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
 
-			const lastError = chrome.runtime.lastError;
 			if (lastError) {
 				const normalized = normalizeChromeMessageError(lastError);
 				resolve({ ok: false, ...normalized });
