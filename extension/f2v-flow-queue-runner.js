@@ -1783,6 +1783,59 @@ function MAIN_findSettingLauncher(settingType) {
 }
 
 /**
+ * MAIN-world: find a setting launcher AND stamp it in one self-contained execution.
+ * This function is passed directly to chrome.scripting.executeScript as `func` and
+ * must be fully self-contained — no references to outer-scope symbols are allowed,
+ * because executeScript serializes via .toString() and the closure is lost.
+ */
+function MAIN_findAndStampSettingLauncher(settingType, stampAttr) {
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function lower(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase(); }
+
+  var surfaces = document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"]');
+  var panel = null;
+  for (var i = 0; i < surfaces.length; i++) {
+    if (isVisible(surfaces[i])) { panel = surfaces[i]; break; }
+  }
+  if (!panel) return null;
+
+  var nodes = panel.querySelectorAll('button, [role="button"], [role="combobox"], [aria-haspopup], [data-state], [tabindex], div, span');
+  var el = null;
+  for (var j = 0; j < nodes.length; j++) {
+    var node = nodes[j];
+    if (!isVisible(node)) continue;
+    var text = lower(node.textContent || node.getAttribute('aria-label') || '');
+    var match = false;
+    if (settingType === 'aspect') {
+      match = text.indexOf('crop') >= 0 || text.indexOf('16:9') >= 0 || text.indexOf('9:16') >= 0 || text.indexOf('aspect') >= 0 || text.indexOf('ratio') >= 0 || text.indexOf('portrait') >= 0 || text.indexOf('landscape') >= 0;
+    } else if (settingType === 'count') {
+      match = text.indexOf('variation') >= 0 || text.indexOf('1x') >= 0 || text.indexOf('2x') >= 0 || text.indexOf('x2') >= 0 || text.indexOf('x1') >= 0 || text.indexOf('count') >= 0 || text.indexOf('quantity') >= 0;
+    } else if (settingType === 'model') {
+      match = text.indexOf('veo') >= 0 || text.indexOf('imagen') >= 0 || text.indexOf('gemini') >= 0 || text.indexOf('model') >= 0 || text.indexOf('lite') >= 0 || text.indexOf('nano') >= 0 || text.indexOf('banana') >= 0 || text.indexOf('pro') >= 0;
+    }
+    if (match) {
+      el = node;
+      if (node.closest) {
+        var interactive = node.closest('button, [role="button"], [role="combobox"], [aria-haspopup], [tabindex]');
+        if (interactive && isVisible(interactive)) el = interactive;
+      }
+      break;
+    }
+  }
+  if (!el) return null;
+  var id = stampAttr + '-' + Date.now();
+  el.setAttribute(stampAttr, id);
+  var rect = el.getBoundingClientRect();
+  return { stamp_id: id, stamp_attr: stampAttr, text: el.textContent, bbox: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } };
+}
+
+/**
  * MAIN-world: attempt to dismiss promo overlays, banners, and modal dialogs
  * that appear before the settings panel (e.g. "Try Omni now" banners).
  *
@@ -2282,14 +2335,7 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
       // Find launcher inside settings panel
       const launcherInfo = await _runMainWorld(
         scripting, tabId,
-        function (category, attr) {
-          var el = MAIN_findSettingLauncher(category);
-          if (!el) return null;
-          var id = attr + '-' + Date.now();
-          el.setAttribute(attr, id);
-          var rect = el.getBoundingClientRect();
-          return { stamp_id: id, stamp_attr: attr, text: el.textContent, bbox: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } };
-        },
+        MAIN_findAndStampSettingLauncher,
         [settingCategory, 'data-bosmax-sublauncher']
       );
       
