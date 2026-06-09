@@ -1,51 +1,105 @@
 # Hermes Agent Contract
 
-Read AGENTS.md first, then this file.
+## WAJIB BACA SEBELUM BUAT APA-APA
 
-## Role
-Hermes = implementation agent using MCP_DOCKER (Desktop Commander) tools for file edits.
+---
 
-## MCP_DOCKER Tool Rules — MANDATORY
+## PREFLIGHT CHECKLIST — Wajib sebelum setiap `edit_block`
 
-### Path Format
-All file paths MUST use Linux container format:
+Jangan skip satu pun. Kalau skip, `edit_block` AKAN gagal.
+
 ```
-/C/Users/USER/Desktop/_ref_flowkit/<relative-path>
+[ ] 1. grep -n untuk cari line number fungsi yang nak diedit
+[ ] 2. sed -n 'X,Yp' untuk baca teks SEMASA dari fail
+[ ] 3. Salin teks EXACT dari output sed sebagai old_string
+[ ] 4. Baru hantar edit_block
 ```
-NOT Windows format: `C:\Users\USER\Desktop\_ref_flowkit\...`
 
-### edit_block (patch tool)
-
-> ⚠️ Tool name is `edit_block` — NOT `patch`. There is NO tool named `patch` in MCP_DOCKER.
-
-Parameter name is `file_path` — NOT `path`, NOT `filepath`. No `mode`, no `replace_all`.
-
+### Command untuk Step 1 (grep):
 ```json
 {
-  "tool": "edit_block",
+  "tool": "start_process",
   "parameters": {
-    "file_path": "/C/Users/USER/Desktop/_ref_flowkit/extension/background.js",
-    "old_string": "exact text to find",
-    "new_string": "replacement text"
+    "command": "grep -n 'nama_fungsi_atau_pattern' /C/Users/USER/Desktop/_ref_flowkit/<path-to-file>",
+    "timeout_ms": 10000
   }
 }
 ```
 
-`{"error": "path required"}` = tool name salah (`patch` instead of `edit_block`) OR `file_path` param missing.
+### Command untuk Step 2 (sed — guna line number dari Step 1):
+```json
+{
+  "tool": "start_process",
+  "parameters": {
+    "command": "sed -n '100,150p' /C/Users/USER/Desktop/_ref_flowkit/<path-to-file>",
+    "timeout_ms": 10000
+  }
+}
+```
 
-### read_file
-Accepts both Windows and Linux paths. Linux path preferred for consistency.
+### Command untuk Step 4 (edit_block):
+```json
+{
+  "tool": "edit_block",
+  "parameters": {
+    "file_path": "/C/Users/USER/Desktop/_ref_flowkit/<path-to-file>",
+    "old_string": "<teks EXACT dari output sed — jangan tulis dari ingatan>",
+    "new_string": "<teks pengganti>"
+  }
+}
+```
 
-### write_file
-Use Linux path. Max 50 lines per call — split large writes into chunks.
+---
 
-### start_process
-Use for shell commands inside the container. Linux commands only (`ls`, `cat`, `grep`).
+## Rules Yang Tak Boleh Dilanggar
 
-## Line Endings
-All project files are LF (normalized via `.gitattributes`). No CRLF handling needed.
+| Perkara | Betul | Salah |
+|---|---|---|
+| Tool name untuk edit | `edit_block` | `patch` |
+| Parameter name | `file_path` | `path`, `filepath` |
+| Path format | `/C/Users/USER/Desktop/_ref_flowkit/...` | `C:\Users\...` atau `/home/...` |
+| `old_string` source | Output `sed` yang baru dibaca | Ingatan / proposal lama |
+| Fail besar (1000+ baris) | `start_process` + `sed`/`grep` | `read_file` tanpa offset |
 
-## Project Root (inside container)
+### Error `{"error": "path required"}`
+= Tool name salah (`patch` bukan `edit_block`) ATAU parameter `file_path` tiada.
+
+### Error string not found / edit gagal
+= `old_string` tak match teks semasa. Wajib buat Step 1→2 semula untuk baca teks terkini.
+
+---
+
+## Path & Environment
+
+**Project root dalam container:**
 ```
 /C/Users/USER/Desktop/_ref_flowkit/
 ```
+
+**Fail-fail utama:**
+```
+extension/background.js       — 3200+ baris, MESTI guna sed/grep
+extension/content-flow-dom.js — guna sed/grep
+extension/side_panel.js
+```
+
+**Line endings:** Semua fail adalah LF. Tiada CRLF. Tiada isu line ending.
+
+---
+
+## Cara Baca Fail Besar (CONFIRMED BERJAYA)
+
+`read_file` sahaja GAGAL untuk fail 1000+ baris. Guna cara ini:
+
+```bash
+# Cari line number
+grep -n 'nama_fungsi' /C/Users/USER/Desktop/_ref_flowkit/extension/background.js
+
+# Baca 50 baris dari line 2542
+sed -n '2542,2592p' /C/Users/USER/Desktop/_ref_flowkit/extension/background.js
+```
+
+Kedua-dua command ini dijalankan melalui `start_process` dengan `timeout_ms: 10000`.
+
+Path untuk `start_process` adalah SAMA dengan tool lain: `/C/Users/USER/Desktop/_ref_flowkit/...`
+JANGAN guna `/home/...` — itu template generic yang tidak apply di sini.

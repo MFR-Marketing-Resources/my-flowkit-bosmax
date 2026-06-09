@@ -961,6 +961,21 @@ async function resolveFlowExecutionTarget(job = null) {
 		}
 	}
 
+	await new Promise((resolve) => setTimeout(resolve, 1500));
+	const retryTabs = await getFlowTabs();
+	for (const candidateTab of retryTabs) {
+		const probe = await probeFlowEditorCandidate(candidateTab, job?.mode);
+		if (probe.ok) {
+			const probedTab = await getTabSafe(candidateTab.id);
+			return {
+				ok: true,
+				targetTab: probedTab || candidateTab,
+				candidate_tabs: initialCandidateTabs,
+				target_probe: probe.readiness || null,
+			};
+		}
+	}
+
 	if (selectedTab && isRootFlowUrl(selectedTab.url)) {
 		const openResult = await handleOpenFlowNewProject(job?.mode);
 		tabs = await getFlowTabs();
@@ -1775,10 +1790,13 @@ function connectToAgent() {
 				);
 				replyToAgent(msg, result);
 			} else if (msg.method === "EXECUTE_FLOW_JOB") {
-				const result = await executeWsMethodAndReply(msg, () =>
-					handleExecuteFlowJob(msg.params?.job),
-				);
-				replyToAgent(msg, result);
+				// ACK immediately to prevent agent timeout on long jobs
+				replyToAgent(msg, { accepted: true });
+
+				// Run job asynchronously
+				handleExecuteFlowJob(msg.params?.job).catch((err) => {
+					console.error("[EXECUTE_FLOW_JOB] Async execution error:", err);
+				});
 			} else if (msg.method === "DEBUG_FLOW_DOM_EXECUTION") {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleDebugFlowDomExecution(msg.params?.mode, msg.params?.job),
