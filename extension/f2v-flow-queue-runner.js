@@ -1843,6 +1843,58 @@ function MAIN_findAndStampSettingLauncher(settingType, stampAttr) {
  * dismissal fails. Never throws. Does NOT dispatch Escape unless a promo
  * dialog was actually detected (avoids closing the project editor).
  */
+
+/**
+ * MAIN-world: keyword-based model option scanner.
+ * Scans all visible interactive elements for any option whose text contains
+ * the target model family keyword. Used as a fallback when exact label
+ * matching fails due to Google Flow UI renames or reformats.
+ *
+ * Family keyword contract (per user spec):
+ *   'veo'         → video model  (match anything containing 'veo')
+ *   'nano banana' → image model  (match anything containing 'nano' or 'banana')
+ *   'imagen'      → image model  (match anything containing 'imagen')
+ */
+function MAIN_findVisibleModelByKeyword(familyKeyword, stampAttr) {
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function lower(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase(); }
+  var kw = lower(familyKeyword || '');
+  var tokens = [];
+  if (kw.indexOf('veo') >= 0) {
+    tokens = ['veo'];
+  } else if (kw.indexOf('nano banana') >= 0 || kw.indexOf('nano') >= 0) {
+    tokens = ['nano banana', 'nano', 'banana'];
+  } else if (kw.indexOf('imagen') >= 0) {
+    tokens = ['imagen'];
+  } else if (kw) {
+    tokens = [kw];
+  }
+  if (!tokens.length) return null;
+  var nodes = document.querySelectorAll(
+    '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"], button, [role="button"]'
+  );
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    if (!isVisible(el)) continue;
+    var text = lower(el.textContent || el.getAttribute('aria-label') || '');
+    for (var t = 0; t < tokens.length; t++) {
+      if (text.indexOf(tokens[t]) >= 0) {
+        var id = stampAttr + '-kw-' + Date.now();
+        el.setAttribute(stampAttr, id);
+        var rect = el.getBoundingClientRect();
+        return { stamp_id: id, stamp_attr: stampAttr, text: el.textContent, bbox: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } };
+      }
+    }
+  }
+  return null;
+}
+
 function MAIN_dismissPromoOverlays() {
   function isVisible(el) {
     if (!el || !el.getBoundingClientRect) return false;
@@ -2224,13 +2276,15 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
       const obsFamily = compState.detectedModelFamily || '';
       const obsCanon = compState.detectedModelCanonical || '';
       if (step.acceptCurrent) {
-        // No explicit model requested → any recognized model on the pill is fine.
-        alreadyApplied = Boolean(obsCanon || obsFamily);
+        // No specific model requested — always skip immediately.
+        // Pill detection is unreliable when the settings panel is open (pill
+        // is occluded), so never scan DOM for a model we don't need to change.
+        alreadyApplied = true;
       } else {
         const wantFamily = step.modelFamily || '';
         const wantCanon = step.modelCanonical || '';
-        // Family-level match so Nano Banana Pro / 2 / plain all satisfy a
-        // "Nano Banana" request without needless model-switching.
+        // Family-level match: any Veo variant satisfies 'veo' family request,
+        // any Nano Banana variant satisfies 'nano banana' family request.
         alreadyApplied = Boolean((wantFamily && obsFamily === wantFamily) || (wantCanon && obsCanon === wantCanon));
       }
     }
@@ -2354,17 +2408,51 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
           scripting, tabId, MAIN_findVisibleCandidatesByExactLabel,
           [step.label, step.aliases || [], step.preferredRoles || [], stampAttr],
         );
+        // Keyword fallback: exact label not found after sub-launcher click.
+        // Scan for ANY option containing the target model family keyword.
+        // Handles Google Flow UI renames (e.g. 'Veo 3.2', 'Veo Fast', etc.)
+        if (settingCategory === 'model' && (!findResult || !findResult.ok || !Array.isArray(findResult.matches) || !findResult.matches.length)) {
+          const kw = step.modelFamily || '';
+          if (kw) {
+            const kwFind = await _runMainWorld(scripting, tabId, MAIN_findVisibleModelByKeyword, [kw, stampAttr]);
+            if (kwFind) {
+              findResult = { ok: true, matches: [kwFind] };
+              console.log(`[FlowAgent] Model keyword fallback after sub-launcher: family='${kw}' matched '${kwFind.text}'`);
+            }
+          }
+        }
       } else if (settingCategory === 'model') {
-        console.log("[FlowAgent] Model launcher not found on Tier One. Veo 3.1 - Lite is already the default/only model. Bypassing selection with success.");
-        return {
-          ok: true,
-          label: step.label,
-          role: 'defaulted',
-          bbox: null,
-          skipped: true,
-          visible_candidates: [],
-        };
+        console.log("[FlowAgent] Model launcher not found in settings panel. Trying keyword scan for model family.");
+        const kw = step.modelFamily || (step.acceptCurrent ? '' : 'veo');
+        if (kw) {
+          const kwFind = await _runMainWorld(scripting, tabId, MAIN_findVisibleModelByKeyword, [kw, stampAttr]);
+          if (kwFind) {
+            findResult = { ok: true, matches: [kwFind] };
+            console.log(`[FlowAgent] Model keyword direct scan: family='${kw}' matched '${kwFind.text}'`);
+          }
+        }
+        if (!findResult?.matches?.length) {
+          console.log("[FlowAgent] No model option found. Bypassing model step — current model is accepted.");
+          return { ok: true, label: step.label, role: 'defaulted', bbox: null, skipped: true, visible_candidates: [] };
+        }
       }
+    }
+  }
+
+  // Keyword fallback for model step before error path: scan entire visible DOM.
+  if (settingCategory === 'model' && (!findResult || !findResult.ok || !Array.isArray(findResult.matches) || !findResult.matches.length)) {
+    const kw = step.modelFamily || '';
+    if (kw) {
+      const kwFind = await _runMainWorld(scripting, tabId, MAIN_findVisibleModelByKeyword, [kw, stampAttr]);
+      if (kwFind) {
+        findResult = { ok: true, matches: [kwFind] };
+        console.log(`[FlowAgent] Model keyword last-resort scan: family='${kw}' matched '${kwFind.text}'`);
+      }
+    }
+    // If still nothing found, bypass gracefully if acceptCurrent
+    if ((!findResult || !findResult.matches?.length) && step.acceptCurrent) {
+      console.log('[FlowAgent] Model not found but acceptCurrent=true — bypassing model step.');
+      return { ok: true, label: step.label, role: 'defaulted', bbox: null, skipped: true, visible_candidates: [] };
     }
   }
 
@@ -3097,6 +3185,7 @@ const _api = {
   MAIN_stampGenerateButton,
   MAIN_getBottomComposerState,
   MAIN_dismissPromoOverlays,
+  MAIN_findVisibleModelByKeyword,
   // Internal helpers (exported for unit tests)
   _openComposerSettingsPanel,
   _clickVisibleOptionExact,
