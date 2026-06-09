@@ -2546,6 +2546,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 		});
 	}
 
+	// CONFIGURE_F2V_SETTINGS runs the full settings SOP (Video → Frames → 9:16 → 1x → Model).
+	// Each of the 6 steps has ~300ms settle + executeScript round-trips — total can reach 10-30s.
+	// Must NOT fall through to the 4500ms default catch-all or it times out every time.
+	if (message.type === "CONFIGURE_F2V_SETTINGS") {
+		return respondAsync(sendResponse, async () => {
+			const data = await handleMessage(message, sender);
+			return data && typeof data === "object" && "ok" in data
+				? data
+				: { ok: true, data };
+		}, 60000);
+	}
+
 	return respondAsync(sendResponse, async () => {
 		const data = await handleMessage(message, sender);
 		return data && typeof data === "object" && "ok" in data
