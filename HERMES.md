@@ -15,7 +15,10 @@ All file paths MUST use Linux container format:
 NOT Windows format: `C:\Users\USER\Desktop\_ref_flowkit\...`
 
 ### edit_block (patch tool)
-Parameter name is `file_path` — NOT `path`, NOT `filepath`.
+
+> ⚠️ Tool name is `edit_block` — NOT `patch`. There is NO tool named `patch` in MCP_DOCKER.
+
+Parameter name is `file_path` — NOT `path`, NOT `filepath`. No `mode`, no `replace_all`.
 
 ```json
 {
@@ -28,7 +31,7 @@ Parameter name is `file_path` — NOT `path`, NOT `filepath`.
 }
 ```
 
-`{"error": "path required"}` means `file_path` parameter is missing or named wrong.
+`{"error": "path required"}` = tool name salah (`patch` instead of `edit_block`) OR `file_path` param missing.
 
 ### read_file
 Accepts both Windows and Linux paths. Linux path preferred for consistency.
