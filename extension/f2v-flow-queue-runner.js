@@ -1463,7 +1463,7 @@ function MAIN_stampGenerateButton(stampAttr) {
     for (var i = 0; i < buttons.length; i++) {
       var btn = buttons[i];
       if (!isVisible(btn)) continue;
-      var icon = btn.querySelector('i.google-symbols, .google-symbols, .material-symbols-outlined, .material-icons');
+      var icon = btn.querySelector('i.google-symbols, .google-symbols, .material-symbols-outlined, .material-symbols-rounded, .material-symbols-sharp, .material-icons, [class*="material-symbol"]');
       var text = normalize(icon && icon.textContent || btn.textContent || '');
       if (text.indexOf('arrow_forward') >= 0) hits.push(btn);
     }
@@ -1889,6 +1889,67 @@ function MAIN_findVisibleModelByKeyword(familyKeyword, stampAttr) {
         el.setAttribute(stampAttr, id);
         var rect = el.getBoundingClientRect();
         return { stamp_id: id, stamp_attr: stampAttr, text: el.textContent, bbox: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * MAIN-world: find an upload entry-point by aria-label or icon symbol.
+ * Fallback for when exact-label matching fails because the button shows
+ * only a Material Icon glyph (+/add/drive_folder_upload) with no text.
+ *
+ * Priority:
+ *   1. aria-label containing "upload" (strongest signal)
+ *   2. Button whose full text is a known upload-icon token
+ *   3. Pure add/add_2 icon button that lives inside a panel whose ancestor
+ *      text references "upload" or "start frame" (context-gated + weak)
+ */
+function MAIN_findUploadBySymbol(stampAttr) {
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function lower(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase(); }
+  function stamp(el) {
+    var id = (stampAttr || 'data-bosmax-option') + '-sym-' + Date.now();
+    el.setAttribute(stampAttr || 'data-bosmax-option', id);
+    var r = el.getBoundingClientRect();
+    return { stamp_id: id, stamp_attr: stampAttr || 'data-bosmax-option', text: el.textContent, bbox: { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) } };
+  }
+  var UPLOAD_ICONS = ['drive_folder_upload', 'file_upload', 'upload_file', 'upload'];
+  var ADD_ICONS = ['add_2', 'add'];
+  var nodes = document.querySelectorAll('button, [role="button"], [role="menuitem"], [role="option"]');
+  var addCandidates = [];
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    if (!isVisible(el)) continue;
+    // Priority 1: aria-label
+    var ariaLabel = lower(el.getAttribute('aria-label') || el.getAttribute('title') || '');
+    if (ariaLabel.indexOf('upload') >= 0) return stamp(el);
+    var text = lower(el.textContent || '');
+    // Priority 2: known upload icon glyphs
+    for (var u = 0; u < UPLOAD_ICONS.length; u++) {
+      if (text === UPLOAD_ICONS[u] || text.indexOf(UPLOAD_ICONS[u] + ' ') === 0 || text.indexOf(' ' + UPLOAD_ICONS[u]) >= 0) {
+        return stamp(el);
+      }
+    }
+    // Collect pure add-icon buttons for context-gated check below
+    for (var a = 0; a < ADD_ICONS.length; a++) {
+      if (text === ADD_ICONS[a]) { addCandidates.push(el); break; }
+    }
+  }
+  // Priority 3: pure + icon inside upload/media panel context
+  for (var c = 0; c < addCandidates.length; c++) {
+    var parent = addCandidates[c].parentElement;
+    for (var depth = 0; depth < 8 && parent; depth++, parent = parent.parentElement) {
+      var panelText = lower(parent.textContent || '');
+      if (panelText.indexOf('upload') >= 0 || panelText.indexOf('add media') >= 0 || panelText.indexOf('start frame') >= 0) {
+        return stamp(addCandidates[c]);
       }
     }
   }
@@ -2694,7 +2755,21 @@ async function _clickUploadMedia(scripting, tabId, opts) {
     errorCode: ERR.UPLOAD_MEDIA_NOT_FOUND,
     stage: 'F2V_SOP_UPLOAD_CLICKED',
   };
-  return _clickVisibleOptionExact(scripting, tabId, step, opts);
+  const result = await _clickVisibleOptionExact(scripting, tabId, step, opts);
+  if (result.ok) return result;
+  // Symbol fallback: exact label failed — try aria-label / icon-only detection.
+  // Covers the case where Google Flow shows only a + (add) icon with no text label.
+  const stampAttr = opts?.stampAttr || 'data-bosmax-option';
+  console.log('[FlowAgent] Upload media: exact label not found. Trying symbol/aria-label fallback.');
+  const sym = await _runMainWorld(scripting, tabId, MAIN_findUploadBySymbol, [stampAttr]);
+  if (sym && sym.stamp_id) {
+    console.log(`[FlowAgent] Upload media: symbol match — "${String(sym.text || '').trim()}". Clicking.`);
+    const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [sym.stamp_attr, sym.stamp_id]);
+    if (click && click.ok === true) {
+      return { ok: true, label: 'Upload media', role: 'symbol_fallback', bbox: sym.bbox };
+    }
+  }
+  return result;
 }
 
 /**
@@ -3186,6 +3261,7 @@ const _api = {
   MAIN_getBottomComposerState,
   MAIN_dismissPromoOverlays,
   MAIN_findVisibleModelByKeyword,
+  MAIN_findUploadBySymbol,
   // Internal helpers (exported for unit tests)
   _openComposerSettingsPanel,
   _clickVisibleOptionExact,
