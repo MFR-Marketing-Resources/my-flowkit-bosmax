@@ -133,7 +133,8 @@ def test_flow_dom_f2v_config_launcher_accepts_preselection_counts_before_panel_o
 	assert "hasFlowCountToken(text)" in launcher_section
 	assert "hasFlowAspectToken(text)" in launcher_section
 	assert "text.includes('1x')" not in launcher_section
-	assert "hasFlowCountToken(text) && hasFlowAspectToken(text)" in generic_launcher_section
+	assert "normalizeFlowConfigPillText(text)" in generic_launcher_section
+	assert "looksLikeBottomComposerConfigPillText(text)" in generic_launcher_section
 	assert "collectComposerContextRoots(composer)" in generic_launcher_section
 
 
@@ -208,3 +209,44 @@ def test_background_flow_blocker_classifier_fail_closes_on_runtime_or_build_mism
 	)
 
 	assert "!result?.runtime_ready || !result?.build_match" in classifier_section
+
+
+def test_flow_dom_softens_known_preselection_mode_probe_mismatch_and_yields_captcha_bridge():
+	dom_source = _read("extension/content-flow-dom.js")
+
+	for token in [
+		"prompt_field_found: Boolean(composer)",
+		"function isPreselectionEditorReadyDiagnostic(diagnostic) {",
+		"result.page_preselection_ready = isPreselectionEditorReadyDiagnostic(result);",
+		"result.mode_mismatch_non_fatal = Boolean(",
+		"String(verifyResult.reason || '').includes(\"Expected model to contain 'Veo'\")",
+		"if (msg.type === 'GET_CAPTCHA' || msg.type === 'FLOWKIT_CAPTCHA_PING') {",
+	]:
+		assert token in dom_source
+
+
+def test_captcha_bridge_contract_injects_content_script_and_proxies_to_main_world():
+	background_source = _read("extension/background.js")
+	content_source = _read("extension/content.js")
+	captcha_section = _section(
+		background_source,
+		"async function requestCaptchaFromTab(tabId, requestId, pageAction) {",
+		"async function solveCaptcha(requestId, captchaAction) {",
+	)
+
+	for token in [
+		"await chrome.scripting.executeScript({",
+		'files: [\"content.js\"]',
+		"16000,",
+		'msg.includes(\"ERR_UNKNOWN_MESSAGE_TYPE\")',
+		'msg.includes(\"ERR_NO_RECEIVER\")',
+	]:
+		assert token in captcha_section
+
+	for token in [
+		"const DEFAULT_CAPTCHA_RESPOND_ASYNC_TIMEOUT_MS = 20000;",
+		"script.src = chrome.runtime.getURL('injected.js');",
+		"window.addEventListener('CAPTCHA_RESULT', onCaptchaResult);",
+		"window.dispatchEvent(new CustomEvent('GET_CAPTCHA', {",
+	]:
+		assert token in content_source

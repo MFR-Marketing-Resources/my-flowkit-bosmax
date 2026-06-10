@@ -3273,6 +3273,7 @@
       signed_in_likely: inferSignedInLikely(composer, observed),
       composer_found: !!composer,
       composer_editable: !!composer && isComposerEditable(composer),
+      prompt_field_found: Boolean(composer),
       generate_button_found: !!generateBtn,
       current_mode_visible: currentModeVisible,
       blocking_modal_detected: !!blockingModal,
@@ -3299,9 +3300,19 @@
       if (expectedJob) {
         const verifyResult = verifyFlowMode(expectedJob, observed);
         if (!verifyResult.ok) {
-          result.ok = false;
-          result.error = `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`;
           result.verify = verifyResult;
+          result.page_preselection_ready = isPreselectionEditorReadyDiagnostic(result);
+          result.mode_mismatch_non_fatal = Boolean(
+            mode === 'F2V' &&
+            result.page_preselection_ready &&
+            String(verifyResult.reason || '').includes("Expected model to contain 'Veo'"),
+          );
+          if (result.mode_mismatch_non_fatal) {
+            result.ok = true;
+          } else {
+            result.ok = false;
+            result.error = `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`;
+          }
         }
       }
     }
@@ -3578,10 +3589,16 @@
 
     const verifyResult = verifyFlowMode(job, readiness.observed);
     if (!verifyResult.ok) {
-      result.status = 'FAIL_MODE_MISMATCH';
-      result.error = `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`;
       result.verify = verifyResult;
-      return result;
+      const nonFatalModeMismatch = Boolean(
+        readiness.page_preselection_ready &&
+        String(verifyResult.reason || '').includes("Expected model to contain 'Veo'"),
+      );
+      if (!nonFatalModeMismatch) {
+        result.status = 'FAIL_MODE_MISMATCH';
+        result.error = `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`;
+        return result;
+      }
     }
 
     return {
@@ -3592,6 +3609,26 @@
       composer: readiness,
       observed_state: readiness.observed,
     };
+  }
+
+  function isPreselectionEditorReadyDiagnostic(diagnostic) {
+    if (!diagnostic || typeof diagnostic !== 'object') {
+      return false;
+    }
+    const markers = Array.isArray(diagnostic.visible_project_editor_markers)
+      ? diagnostic.visible_project_editor_markers.map((value) => String(value))
+      : [];
+    const modeVisible = String(diagnostic.current_mode_visible || '');
+    const showsVideoFrames = modeVisible.includes('Video/Frames')
+      || (markers.includes('Video') && markers.includes('Frames'));
+    return Boolean(
+      diagnostic.runtime_ready
+      && diagnostic.composer_found
+      && diagnostic.composer_editable
+      && diagnostic.generate_button_found
+      && diagnostic.prompt_field_found
+      && showsVideoFrames,
+    );
   }
 
   /**
@@ -4647,6 +4684,11 @@
       }, 0);
       
       // Return false - we already called sendResponse synchronously
+      return false;
+    }
+
+    if (msg.type === 'GET_CAPTCHA' || msg.type === 'FLOWKIT_CAPTCHA_PING') {
+      // Let the dedicated captcha content script own these messages.
       return false;
     }
 

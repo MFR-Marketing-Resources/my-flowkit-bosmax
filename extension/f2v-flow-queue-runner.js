@@ -2313,6 +2313,20 @@ async function _openComposerSettingsPanel(scripting, tabId, opts) {
  */
 async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
   const stampAttr = opts?.stampAttr || 'data-bosmax-option';
+  var settingCategory = null;
+  function _pillShowsRatio(rawText, target) {
+    const s = String(rawText || '').toLowerCase();
+    if (target === '9:16') return /crop[_\s-]*9[_\s:.\-]*16/.test(s) || /\b9\s*[:：]\s*16\b/.test(s) || s.indexOf('portrait') >= 0;
+    if (target === '16:9') return /crop[_\s-]*16[_\s:.\-]*9/.test(s) || /\b16\s*[:：]\s*9\b/.test(s) || s.indexOf('landscape') >= 0;
+    if (target === '1:1') return /crop[_\s-]*1[_\s:.\-]*1/.test(s) || /\b1\s*[:：]\s*1\b/.test(s) || s.indexOf('square') >= 0;
+    return false;
+  }
+  function _pillShowsCount(rawText, target) {
+    const s = String(rawText || '').toLowerCase();
+    if (target === '1x') return /\b1\s*(?:x|×|variation)\b/.test(s) || /\bx\s*1\b/.test(s) || s.indexOf('1x') >= 0;
+    if (target === '2x') return /\b2\s*(?:x|×|variations)\b/.test(s) || /\bx\s*2\b/.test(s) || s.indexOf('2x') >= 0;
+    return false;
+  }
   
   // 1. Semantic Verification — check if the setting is already applied.
   // Uses structured pill tokens (detectedRatio/Count/ModelFamily) so it works
@@ -2323,16 +2337,16 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
   const compState = await _runMainWorld(scripting, tabId, MAIN_getBottomComposerState, []);
   if (compState && compState.ok === true) {
     const kind = step.kind || _stepKind(step);
-    const notImageMode = compState.topMode !== 'Image';
+    const rawPillText = String(compState.pillText || '');
     let alreadyApplied = false;
     if (kind === 'mode') {
       alreadyApplied = compState.topMode === 'Video';
     } else if (kind === 'submode') {
       alreadyApplied = (compState.topMode === 'Video') && (compState.subMode === 'Frames');
     } else if (kind === 'ratio') {
-      alreadyApplied = notImageMode && (compState.detectedRatio === '9:16');
+      alreadyApplied = (compState.detectedRatio === '9:16') || _pillShowsRatio(rawPillText, '9:16');
     } else if (kind === 'count') {
-      alreadyApplied = notImageMode && (compState.detectedCount === '1x');
+      alreadyApplied = (compState.detectedCount === '1x') || _pillShowsCount(rawPillText, '1x');
     } else if (kind === 'model') {
       const obsFamily = compState.detectedModelFamily || '';
       const obsCanon = compState.detectedModelCanonical || '';
@@ -2439,7 +2453,6 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
 
   // If not visible, let's explore launchers for aspect/count/model settings
   if (!findResult || findResult.ok !== true || !Array.isArray(findResult.matches) || findResult.matches.length === 0) {
-    let settingCategory = null;
     const _stepK = step.kind || _stepKind(step);
     if (_stepK === 'ratio') settingCategory = 'aspect';
     else if (_stepK === 'count') settingCategory = 'count';
@@ -2528,6 +2541,31 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
       }, []);
       failUrl = urlSnap;
     } catch (_) {}
+    const failKind = step.kind || _stepKind(step);
+    let verifiedFromPill = false;
+    const rawFailPillText = String(failState?.pillText || '');
+    if (failState && failState.ok === true) {
+      if (failKind === 'ratio') {
+        verifiedFromPill = (failState.detectedRatio === '9:16') || _pillShowsRatio(rawFailPillText, '9:16');
+      } else if (failKind === 'count') {
+        verifiedFromPill = (failState.detectedCount === '1x') || _pillShowsCount(rawFailPillText, '1x');
+      } else if (failKind === 'model') {
+        verifiedFromPill = step.acceptCurrent
+          ? Boolean(failState.detectedModelCanonical || failState.detectedModelFamily)
+          : (Boolean(step.modelFamily) && failState.detectedModelFamily === step.modelFamily);
+      }
+    }
+    if (verifiedFromPill) {
+      console.log(`[FlowAgent] Setting ${step.label} confirmed from composer pill after menu scan failure — accepting current state.`);
+      return {
+        ok: true,
+        label: step.label,
+        role: 'pill_confirmed_after_scan_failure',
+        bbox: null,
+        skipped: true,
+        visible_candidates: findResult?.visible_candidates || [],
+      };
+    }
     const diagnostics = {
       current_bottom_pill_before: compState?.pillText || 'unknown',
       current_bottom_pill_at_fail: failState?.pillText || 'unknown',

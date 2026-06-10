@@ -1886,11 +1886,22 @@ function sendToAgent(msg) {
 // ─── reCAPTCHA Solving ──────────────────────────────────────
 
 async function requestCaptchaFromTab(tabId, requestId, pageAction) {
-	const initialResponse = await sendTabMessageSafe(tabId, {
-		type: "GET_CAPTCHA",
-		requestId,
-		pageAction,
-	});
+	try {
+		await chrome.scripting.executeScript({
+			target: { tabId },
+			files: ["content.js"],
+		});
+	} catch (_) {}
+
+	const initialResponse = await sendTabMessageSafe(
+		tabId,
+		{
+			type: "GET_CAPTCHA",
+			requestId,
+			pageAction,
+		},
+		16000,
+	);
 
 	if (!initialResponse?.error) {
 		return initialResponse;
@@ -1899,7 +1910,9 @@ async function requestCaptchaFromTab(tabId, requestId, pageAction) {
 	const msg = initialResponse.error || "";
 	const shouldInject =
 		msg.includes("Receiving end does not exist") ||
-		msg.includes("Could not establish connection");
+		msg.includes("Could not establish connection") ||
+		msg.includes("ERR_UNKNOWN_MESSAGE_TYPE") ||
+		msg.includes("ERR_NO_RECEIVER");
 	if (!shouldInject) {
 		return initialResponse;
 	}
@@ -1909,11 +1922,15 @@ async function requestCaptchaFromTab(tabId, requestId, pageAction) {
 		files: ["content.js"],
 	});
 	await sleep(200);
-	return await sendTabMessageSafe(tabId, {
-		type: "GET_CAPTCHA",
-		requestId,
-		pageAction,
-	});
+	return await sendTabMessageSafe(
+		tabId,
+		{
+			type: "GET_CAPTCHA",
+			requestId,
+			pageAction,
+		},
+		16000,
+	);
 }
 
 async function solveCaptcha(requestId, captchaAction) {
@@ -2550,12 +2567,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 	// Each of the 6 steps has ~300ms settle + executeScript round-trips — total can reach 10-30s.
 	// Must NOT fall through to the 4500ms default catch-all or it times out every time.
 	if (message.type === "CONFIGURE_F2V_SETTINGS") {
-		return respondAsync(sendResponse, async () => {
-			const data = await handleMessage(message, sender);
-			return data && typeof data === "object" && "ok" in data
-				? data
-				: { ok: true, data };
-		}, 60000);
+		return respondAsync(
+			sendResponse,
+			async () => {
+				const data = await handleMessage(message, sender);
+				return data && typeof data === "object" && "ok" in data
+					? data
+					: { ok: true, data };
+			},
+			60000,
+		);
 	}
 
 	return respondAsync(sendResponse, async () => {
