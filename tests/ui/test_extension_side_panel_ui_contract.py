@@ -250,3 +250,15 @@ def test_captcha_bridge_contract_injects_content_script_and_proxies_to_main_worl
 		"window.dispatchEvent(new CustomEvent('GET_CAPTCHA', {",
 	]:
 		assert token in content_source
+
+
+def test_background_rehydrates_root_flow_tabs_via_preferred_project_before_new_project():
+	background_source = _read("extension/background.js")
+
+	for token in [
+		"async function openPreferredFlowProjectOrNewProject(mode, preferredUrl = null) {",
+		'open_strategy: "preferred_project_url"',
+		'open_strategy: "new_project"',
+		"await openPreferredFlowProjectOrNewProject(",
+	]:
+		assert token in background_source

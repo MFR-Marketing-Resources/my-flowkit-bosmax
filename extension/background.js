@@ -977,20 +977,17 @@ async function resolveFlowExecutionTarget(job = null) {
 	}
 
 	if (selectedTab && isRootFlowUrl(selectedTab.url)) {
-		const openResult = await handleOpenFlowNewProject(job?.mode);
+		const openResult = await openPreferredFlowProjectOrNewProject(
+			job?.mode,
+			preferredUrl,
+		);
+		const settledTab = await settleFlowProjectAfterOpen(openResult);
 		tabs = await getFlowTabs();
 		const candidateTabs = tabs.map(summarizeFlowTab).filter(Boolean);
 		selectedTab =
+			settledTab ||
 			tabs.find((tab) => tab.id === openResult?.flow_tab_id) ||
 			selectBestFlowTab(tabs, openResult?.flow_url || preferredUrl);
-		if (selectedTab && isProjectEditorUrl(selectedTab.url)) {
-			return {
-				ok: true,
-				targetTab: selectedTab,
-				candidate_tabs: candidateTabs,
-				open_flow_result: summarizeOpenFlowResult(openResult),
-			};
-		}
 		if (selectedTab) {
 			const probe = await probeFlowEditorCandidate(selectedTab, job?.mode);
 			if (probe.ok) {
@@ -1383,6 +1380,46 @@ async function handleOpenTargetFlowProject(flowProjectUrl) {
 		extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
 		...diagnostic,
 	};
+}
+
+async function openPreferredFlowProjectOrNewProject(mode, preferredUrl = null) {
+	const normalizedPreferredUrl = String(preferredUrl || "").trim();
+	if (normalizedPreferredUrl) {
+		const preferredResult = await handleOpenTargetFlowProject(
+			normalizedPreferredUrl,
+		);
+		if (
+			preferredResult?.ok ||
+			isProjectEditorUrl(
+				preferredResult?.flow_url_after || preferredResult?.flow_url,
+			)
+		) {
+			return {
+				...preferredResult,
+				open_strategy: "preferred_project_url",
+			};
+		}
+	}
+
+	const newProjectResult = await handleOpenFlowNewProject(mode);
+	return {
+		...newProjectResult,
+		open_strategy: "new_project",
+	};
+}
+
+async function settleFlowProjectAfterOpen(openFlowResult, settleMs = 2500) {
+	const targetTabId = openFlowResult?.flow_tab_id ?? null;
+	if (!targetTabId) {
+		return await getFlowTab();
+	}
+	try {
+		await waitForTabComplete(targetTabId, 20000);
+	} catch (_) {}
+	if (settleMs > 0) {
+		await new Promise((resolve) => setTimeout(resolve, settleMs));
+	}
+	return (await getTabSafe(targetTabId)) || (await getFlowTab());
 }
 
 async function handleOpenFlowNewProject(mode) {
@@ -2781,8 +2818,22 @@ async function handleDebugFlowDomExecution(mode, job) {
 }
 
 async function handleCheckFlowComposerReady(mode) {
-	const flowTab = await getFlowTab();
-	const base = buildFlowReadinessBase(flowTab);
+	const preferredUrl = await getStoredFlowProjectUrl();
+	const normalizedPreferredUrl = String(preferredUrl || "").trim();
+	let flowTab = await getFlowTab();
+	let openFlowResult = null;
+	if (
+		flowTab &&
+		isRootFlowUrl(flowTab.url) &&
+		!isProjectEditorUrl(flowTab.url)
+	) {
+		openFlowResult = await openPreferredFlowProjectOrNewProject(
+			mode,
+			preferredUrl,
+		);
+		flowTab = await settleFlowProjectAfterOpen(openFlowResult);
+	}
+	let base = buildFlowReadinessBase(flowTab);
 	if (!flowTab) {
 		return finalizeFlowReadiness({
 			...base,
@@ -2794,19 +2845,54 @@ async function handleCheckFlowComposerReady(mode) {
 
 	await ensureFlowDomScript(flowTab.id);
 
-	const diagnostic = await pingFlowDomScript(flowTab);
+	let diagnostic = await pingFlowDomScript(flowTab);
 	if (diagnostic.raw_error) {
 		return finalizeFlowReadiness({
 			...base,
 			...diagnostic,
 			error: diagnostic.raw_error,
+			open_flow_result: summarizeOpenFlowResult(openFlowResult),
 		});
 	}
 
-	const response = await sendTabMessageSafe(flowTab.id, {
+	let response = await sendTabMessageSafe(flowTab.id, {
 		type: "CHECK_FLOW_COMPOSER_READY",
 		mode,
 	});
+	const activeTabUrl = String(flowTab?.url || "").trim();
+	const shouldRetryFreshProject =
+		Boolean(normalizedPreferredUrl) &&
+		activeTabUrl === normalizedPreferredUrl &&
+		isProjectEditorUrl(activeTabUrl) &&
+		(!response?.ok || response?.error);
+	if (shouldRetryFreshProject) {
+		openFlowResult = await handleOpenFlowNewProject(mode);
+		flowTab = await settleFlowProjectAfterOpen(openFlowResult);
+		base = buildFlowReadinessBase(flowTab);
+		if (!flowTab) {
+			return finalizeFlowReadiness({
+				...base,
+				error: "ERR_NO_FLOW_TAB",
+				raw_error: "ERR_NO_FLOW_TAB",
+				detail: "Fresh project fallback did not produce a usable Flow tab.",
+				open_flow_result: summarizeOpenFlowResult(openFlowResult),
+			});
+		}
+		await ensureFlowDomScript(flowTab.id);
+		diagnostic = await pingFlowDomScript(flowTab);
+		if (diagnostic.raw_error) {
+			return finalizeFlowReadiness({
+				...base,
+				...diagnostic,
+				error: diagnostic.raw_error,
+				open_flow_result: summarizeOpenFlowResult(openFlowResult),
+			});
+		}
+		response = await sendTabMessageSafe(flowTab.id, {
+			type: "CHECK_FLOW_COMPOSER_READY",
+			mode,
+		});
+	}
 	if (response?.error === "ERR_MESSAGE_RESPONSE_TIMEOUT") {
 		return finalizeFlowReadiness({
 			...base,
@@ -2814,6 +2900,7 @@ async function handleCheckFlowComposerReady(mode) {
 			error: "ERR_MESSAGE_RESPONSE_TIMEOUT",
 			raw_error: "ERR_MESSAGE_RESPONSE_TIMEOUT",
 			detail: "Timed out waiting for content script readiness response.",
+			open_flow_result: summarizeOpenFlowResult(openFlowResult),
 		});
 	}
 	if (response?.error) {
@@ -2823,6 +2910,7 @@ async function handleCheckFlowComposerReady(mode) {
 			error: response.error,
 			raw_error: response.error,
 			detail: response.error,
+			open_flow_result: summarizeOpenFlowResult(openFlowResult),
 		});
 	}
 	if (!response?.ok && !response?.error) {
@@ -2831,19 +2919,35 @@ async function handleCheckFlowComposerReady(mode) {
 			...diagnostic,
 			error: "ABORT_FLOW_COMPOSER_NOT_READY",
 			raw_error: "ERR_EMPTY_COMPOSER_RESPONSE",
+			open_flow_result: summarizeOpenFlowResult(openFlowResult),
 		});
 	}
 	return finalizeFlowReadiness({
 		...base,
 		...diagnostic,
 		...response,
+		open_flow_result: summarizeOpenFlowResult(openFlowResult),
 		flow_url: response?.flow_url || flowTab.url,
 	});
 }
 
 async function handleFlowPageStateDiagnostic(mode) {
-	const flowTab = await getFlowTab();
-	const base = buildFlowReadinessBase(flowTab);
+	const preferredUrl = await getStoredFlowProjectUrl();
+	const normalizedPreferredUrl = String(preferredUrl || "").trim();
+	let flowTab = await getFlowTab();
+	let openFlowResult = null;
+	if (
+		flowTab &&
+		isRootFlowUrl(flowTab.url) &&
+		!isProjectEditorUrl(flowTab.url)
+	) {
+		openFlowResult = await openPreferredFlowProjectOrNewProject(
+			mode,
+			preferredUrl,
+		);
+		flowTab = await settleFlowProjectAfterOpen(openFlowResult);
+	}
+	let base = buildFlowReadinessBase(flowTab);
 	if (!flowTab) {
 		return {
 			...base,
@@ -2864,12 +2968,13 @@ async function handleFlowPageStateDiagnostic(mode) {
 			input_placeholders: [],
 			contenteditable_texts: [],
 			aria_labels: [],
+			open_flow_result: summarizeOpenFlowResult(openFlowResult),
 		};
 	}
 
 	await ensureFlowDomScript(flowTab.id);
 
-	const diagnostic = await pingFlowDomScript(flowTab);
+	let diagnostic = await pingFlowDomScript(flowTab);
 	if (diagnostic.raw_error) {
 		return {
 			...base,
@@ -2890,13 +2995,78 @@ async function handleFlowPageStateDiagnostic(mode) {
 			input_placeholders: [],
 			contenteditable_texts: [],
 			aria_labels: [],
+			open_flow_result: summarizeOpenFlowResult(openFlowResult),
 		};
 	}
 
-	const response = await sendTabMessageSafe(flowTab.id, {
+	let response = await sendTabMessageSafe(flowTab.id, {
 		type: "FLOW_PAGE_STATE_DIAGNOSTIC",
 		mode,
 	});
+	const activeTabUrl = String(flowTab?.url || "").trim();
+	const shouldRetryFreshProject =
+		Boolean(normalizedPreferredUrl) &&
+		activeTabUrl === normalizedPreferredUrl &&
+		isProjectEditorUrl(activeTabUrl) &&
+		Array.isArray(response?.visible_error_markers) &&
+		response.visible_error_markers.length > 0;
+	if (shouldRetryFreshProject) {
+		openFlowResult = await handleOpenFlowNewProject(mode);
+		flowTab = await settleFlowProjectAfterOpen(openFlowResult);
+		base = buildFlowReadinessBase(flowTab);
+		if (!flowTab) {
+			return {
+				...base,
+				error: "ERR_NO_FLOW_TAB",
+				raw_error: "ERR_NO_FLOW_TAB",
+				detail: "Fresh project fallback did not produce a usable Flow tab.",
+				location_href: null,
+				document_title: null,
+				document_ready_state: null,
+				body_text_first_2000_chars: "",
+				visible_login_markers: [],
+				visible_loading_markers: [],
+				visible_error_markers: [],
+				visible_project_editor_markers: [],
+				visible_composer_placeholder_markers: [],
+				button_texts: [],
+				textarea_placeholders: [],
+				input_placeholders: [],
+				contenteditable_texts: [],
+				aria_labels: [],
+				open_flow_result: summarizeOpenFlowResult(openFlowResult),
+			};
+		}
+		await ensureFlowDomScript(flowTab.id);
+		diagnostic = await pingFlowDomScript(flowTab);
+		if (diagnostic.raw_error) {
+			return {
+				...base,
+				...diagnostic,
+				error: diagnostic.raw_error,
+				detail: diagnostic.raw_error,
+				location_href: flowTab.url,
+				document_title: null,
+				document_ready_state: null,
+				body_text_first_2000_chars: "",
+				visible_login_markers: [],
+				visible_loading_markers: [],
+				visible_error_markers: [],
+				visible_project_editor_markers: [],
+				visible_composer_placeholder_markers: [],
+				button_texts: [],
+				textarea_placeholders: [],
+				input_placeholders: [],
+				contenteditable_texts: [],
+				aria_labels: [],
+				open_flow_result: summarizeOpenFlowResult(openFlowResult),
+			};
+		}
+		response = await sendTabMessageSafe(flowTab.id, {
+			type: "FLOW_PAGE_STATE_DIAGNOSTIC",
+			mode,
+		});
+	}
 
 	if (response?.error) {
 		return {
@@ -2919,6 +3089,7 @@ async function handleFlowPageStateDiagnostic(mode) {
 			input_placeholders: [],
 			contenteditable_texts: [],
 			aria_labels: [],
+			open_flow_result: summarizeOpenFlowResult(openFlowResult),
 		};
 	}
 
@@ -2926,6 +3097,7 @@ async function handleFlowPageStateDiagnostic(mode) {
 		...base,
 		...diagnostic,
 		...response,
+		open_flow_result: summarizeOpenFlowResult(openFlowResult),
 		flow_url: response?.flow_url || flowTab.url,
 	};
 }
@@ -2987,11 +3159,17 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 		isRootFlowUrl(selectedTab.url) &&
 		!isProjectEditorUrl(selectedTab.url)
 	) {
-		openFlowResult = await handleOpenFlowNewProject(mode);
+		openFlowResult = await openPreferredFlowProjectOrNewProject(
+			mode,
+			preferredUrl,
+		);
+		const settledTab = await settleFlowProjectAfterOpen(openFlowResult);
 		flowTabs = await getFlowTabs();
 		selectedTab = selectBestFlowTab(
-			flowTabs,
-			openFlowResult?.flow_url || preferredUrl,
+			settledTab?.url
+				? [settledTab, ...flowTabs.filter((tab) => tab.id !== settledTab.id)]
+				: flowTabs,
+			settledTab?.url || openFlowResult?.flow_url || preferredUrl,
 		);
 	}
 
