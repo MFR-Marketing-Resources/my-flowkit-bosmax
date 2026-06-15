@@ -793,10 +793,30 @@ function selectBestFlowTab(tabs, preferredUrl = null) {
 		}
 	}
 
-	const editorTab = tabs.find((tab) => isProjectEditorUrl(tab.url));
-	if (editorTab) {
-		console.log("[FlowAgent] Using project editor tab:", editorTab.url);
-		return editorTab;
+	const scored = tabs
+		.map((tab) => {
+			const title = String(tab.title || "").toLowerCase();
+			let score = 0;
+			if (isProjectEditorUrl(tab.url)) score += 50;
+			if (!isRootFlowUrl(tab.url)) score += 10;
+			if (tab.active) score += 25;
+			if (tab.status === "complete") score += 10;
+			if (title.includes("something went wrong")) score -= 100;
+			if (title.includes("application error")) score -= 100;
+			if (/google flow - [a-z]{3}\s+\d{1,2},/i.test(String(tab.title || "")))
+				score += 20;
+			return { tab, score };
+		})
+		.sort((a, b) => b.score - a.score);
+
+	if (scored.length && scored[0].score > -50) {
+		console.log("[FlowAgent] Using scored Flow tab:", {
+			id: scored[0].tab.id,
+			url: scored[0].tab.url,
+			title: scored[0].tab.title,
+			score: scored[0].score,
+		});
+		return scored[0].tab;
 	}
 
 	const nonRootTab = tabs.find((tab) => !isRootFlowUrl(tab.url));

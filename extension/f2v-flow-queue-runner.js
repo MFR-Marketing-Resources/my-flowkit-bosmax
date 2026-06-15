@@ -2549,6 +2549,154 @@ function MAIN_findAddToPromptButton(stampAttr) {
   return { ok: false, reason: 'no_add_to_prompt_button_visible' };
 }
 
+function MAIN_selectAssetPickerCandidate(stampAttr) {
+  function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+  function lower(s) { return normalize(s).toLowerCase(); }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seen = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seen.has(curr)) continue;
+      seen.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var idx = 0; idx < direct.length; idx++) out.push(direct[idx]);
+        var descendants = curr.querySelectorAll('*');
+        for (var jdx = 0; jdx < descendants.length; jdx++) {
+          if (descendants[jdx].shadowRoot && !seen.has(descendants[jdx].shadowRoot)) {
+            queue.push(descendants[jdx].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
+  var dialogs = collectAll(document, '[role="dialog"], [role="menu"], [role="listbox"]');
+  var panel = null;
+  var firstVisibleDialog = null;
+  for (var d = 0; d < dialogs.length; d++) {
+    if (!isVisible(dialogs[d])) continue;
+    if (!firstVisibleDialog) firstVisibleDialog = dialogs[d];
+    var dialogText = lower(dialogs[d].textContent || '');
+    if (dialogText.indexOf('upload media') >= 0 || dialogText.indexOf('search assets') >= 0 || dialogText.indexOf('recent') >= 0) {
+      panel = dialogs[d];
+      break;
+    }
+  }
+  if (!panel) panel = firstVisibleDialog;
+  if (!panel) return { ok: false, reason: 'asset_picker_panel_not_found' };
+  var candidates = collectAll(panel, 'button, [role="button"], [role="option"], [tabindex]');
+  for (var i = 0; i < candidates.length; i++) {
+    var el = candidates[i];
+    if (!isVisible(el)) continue;
+    var text = lower(el.textContent || el.getAttribute('aria-label') || '');
+    if (!text) continue;
+    if (text.indexOf('upload media') >= 0 || text.indexOf('add to prompt') >= 0 || text === 'all' || text === 'images' || text === 'videos' || text === 'voices' || text === 'characters' || text === 'avatar' || text === 'uploads' || text === 'recent') {
+      continue;
+    }
+    var hasPreview = Boolean(el.querySelector && el.querySelector('img, canvas, video, picture'));
+    if (!hasPreview && text.length < 12) continue;
+    var attr = String(stampAttr || 'data-bosmax-option');
+    var id = attr + '-asset-card-' + Date.now();
+    el.setAttribute(attr, id);
+    var r = el.getBoundingClientRect();
+    return {
+      ok: true,
+      stamp_id: id,
+      stamp_attr: attr,
+      text: normalize(el.textContent || el.getAttribute('aria-label') || '').slice(0, 120),
+      bbox: { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) },
+    };
+  }
+  return { ok: false, reason: 'asset_picker_candidate_not_found' };
+}
+
+function MAIN_closeComposerSettingsPanel() {
+  function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function clickEl(el) {
+    var r = el.getBoundingClientRect();
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var common = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: 1 };
+    try { el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerId: 1, pointerType: 'mouse' }, common))); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('mousedown', common)); } catch (e) {}
+    try { el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 1, pointerType: 'mouse' }, common))); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('mouseup', common)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('click', common)); } catch (e) {}
+    try { el.click(); } catch (e) {}
+  }
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seen = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seen.has(curr)) continue;
+      seen.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var idx = 0; idx < direct.length; idx++) out.push(direct[idx]);
+        var descendants = curr.querySelectorAll('*');
+        for (var jdx = 0; jdx < descendants.length; jdx++) {
+          if (descendants[jdx].shadowRoot && !seen.has(descendants[jdx].shadowRoot)) {
+            queue.push(descendants[jdx].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
+  var slateEditors = collectAll(document, '[data-slate-editor="true"]');
+  var editorCount = slateEditors.length;
+  var editorCE = [];
+  for (var e0 = 0; e0 < slateEditors.length; e0++) editorCE.push(slateEditors[e0].getAttribute('contenteditable'));
+
+  var buttons = collectAll(document, 'button, [role="button"], [aria-expanded]');
+  for (var i = 0; i < buttons.length; i++) {
+    var btn = buttons[i];
+    if (!isVisible(btn)) continue;
+    var raw = normalize(btn.textContent || btn.getAttribute('aria-label') || '');
+    var lower = raw.toLowerCase();
+    if (!raw || raw.length > 200) continue;
+    if (/crop_9_16/i.test(raw) || /crop_free/i.test(raw) ||
+        (/video/i.test(raw) && /1x/i.test(raw)) ||
+        (/frames/i.test(raw) && /1x/i.test(raw)) ||
+        ((lower === 'video' || lower.indexOf('video ') === 0) && btn.getAttribute('aria-expanded') === 'true')) {
+      clickEl(btn);
+      return { action: 'pill_closed_pass1', editor_count: editorCount, editor_ce: editorCE, btn_text: raw.slice(0, 80) };
+    }
+  }
+  for (var e2 = 0; e2 < buttons.length; e2++) {
+    if (buttons[e2].getAttribute && buttons[e2].getAttribute('aria-expanded') === 'true' && isVisible(buttons[e2])) {
+      clickEl(buttons[e2]);
+      return { action: 'pill_closed_expanded', editor_count: editorCount, editor_ce: editorCE };
+    }
+  }
+  var focused = document.activeElement;
+  if (focused && focused !== document.body) {
+    var escEvent = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
+    focused.dispatchEvent(escEvent);
+    document.dispatchEvent(escEvent);
+    return { action: 'escape_on_focused', editor_count: editorCount, editor_ce: editorCE };
+  }
+  return { action: 'no_close_action_taken', editor_count: editorCount, editor_ce: editorCE };
+}
+
 function MAIN_dismissPromoOverlays() {
   function isVisible(el) {
     if (!el || !el.getBoundingClientRect) return false;
@@ -2907,6 +3055,7 @@ async function _openComposerSettingsPanel(scripting, tabId, opts) {
 async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
   const stampAttr = opts?.stampAttr || 'data-bosmax-option';
   var settingCategory = null;
+  const explicitModelStep = (step.kind || _stepKind(step)) === 'model' && !step.acceptCurrent;
   function _pillShowsRatio(rawText, target) {
     const s = String(rawText || '').toLowerCase();
     if (target === '9:16') return /crop[_\s-]*9[_\s:.\-]*16/.test(s) || /\b9\s*[:：]\s*16\b/.test(s) || s.indexOf('portrait') >= 0;
@@ -2976,6 +3125,14 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
       document.dispatchEvent(escEvent);
     }, []);
     await _sleep(300);
+  }
+
+  if (explicitModelStep) {
+    const surfaceState = await _runMainWorld(scripting, tabId, MAIN_isComposerSurfaceOpen, []);
+    if (!surfaceState || surfaceState.ok !== true) {
+      console.log("[FlowAgent] Explicit model requested. Opening settings panel before model scan.");
+      await _openComposerSettingsPanel(scripting, tabId, opts);
+    }
   }
 
   // 2. Try to find direct option first
@@ -3372,6 +3529,8 @@ async function _insertPrompt(scripting, tabId, promptText) {
  * click target is the real asset-picker launcher when present.
  */
 async function _clickStartEntryPoint(scripting, tabId, opts) {
+  await _runMainWorld(scripting, tabId, MAIN_closeComposerSettingsPanel, []);
+  await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
   const stampAttr = opts?.stampAttr || 'data-bosmax-option';
   const launcher = await _runMainWorld(scripting, tabId, MAIN_stampAssetPickerLauncher, [stampAttr]);
   if (launcher && launcher.ok === true && launcher.stamp_id) {
@@ -3486,6 +3645,20 @@ async function _clickAddToPrompt(scripting, tabId, opts) {
   const result = await _clickVisibleActionExact(scripting, tabId, step, opts);
   if (result.ok) return result;
   const stampAttr = opts?.stampAttr || 'data-bosmax-option';
+  const assetCard = await _runMainWorld(scripting, tabId, MAIN_selectAssetPickerCandidate, [stampAttr]);
+  if (assetCard && assetCard.ok === true && assetCard.stamp_id) {
+    const selectClick = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [assetCard.stamp_attr, assetCard.stamp_id]);
+    if (selectClick && selectClick.ok === true) {
+      await _sleep(Math.max(200, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+      const retryResult = await _clickVisibleActionExact(scripting, tabId, step, opts);
+      if (retryResult.ok) {
+        return {
+          ...retryResult,
+          role: retryResult.role || 'asset_card_then_add_to_prompt',
+        };
+      }
+    }
+  }
   const addPrompt = await _runMainWorld(scripting, tabId, MAIN_findAddToPromptButton, [stampAttr]);
   if (addPrompt && addPrompt.ok === true && addPrompt.stamp_id) {
     const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [addPrompt.stamp_attr, addPrompt.stamp_id]);
@@ -3780,63 +3953,7 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     // is open. Close the panel by re-clicking the bottom composer config pill (toggle button).
     // We do this unconditionally because the panel may be open even when all settings were
     // already_selected (no click was needed, so the panel was never explicitly closed).
-    const panelCloseResult = await _runMainWorld(scripting, tabId, function() {
-      function isVisible(el) {
-        if (!el || !el.getBoundingClientRect) return false;
-        var r = el.getBoundingClientRect();
-        if (r.width === 0 || r.height === 0) return false;
-        var s = window.getComputedStyle(el);
-        return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
-      }
-      function clickEl(el) {
-        var r = el.getBoundingClientRect();
-        var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-        var common = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: 1 };
-        try { el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerId: 1, pointerType: 'mouse' }, common))); } catch (e) {}
-        try { el.dispatchEvent(new MouseEvent('mousedown', common)); } catch (e) {}
-        try { el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 1, pointerType: 'mouse' }, common))); } catch (e) {}
-        try { el.dispatchEvent(new MouseEvent('mouseup', common)); } catch (e) {}
-        try { el.dispatchEvent(new MouseEvent('click', common)); } catch (e) {}
-        try { el.click(); } catch (e) {}
-      }
-      var slateEditors = document.querySelectorAll('[data-slate-editor="true"]');
-      var editorCount = slateEditors.length;
-      var editorCE = [];
-      for (var e0 = 0; e0 < slateEditors.length; e0++) {
-        editorCE.push(slateEditors[e0].getAttribute('contenteditable'));
-      }
-      var buttons = document.querySelectorAll('button, [role="button"]');
-      // Pass 1: bottom composer pill by content signature (crop_9_16, video+1x, frames+1x)
-      for (var i = 0; i < buttons.length; i++) {
-        var btn = buttons[i];
-        if (!isVisible(btn)) continue;
-        var raw = btn.textContent || '';
-        if (raw.length > 3 && raw.length < 200) {
-          if (/crop_9_16/i.test(raw) || /crop_free/i.test(raw) ||
-              (/video/i.test(raw) && /1x/i.test(raw)) ||
-              (/frames/i.test(raw) && /1x/i.test(raw))) {
-            clickEl(btn);
-            return { action: 'pill_closed_pass1', editor_count: editorCount, editor_ce: editorCE, btn_text: raw.slice(0, 80) };
-          }
-        }
-      }
-      // Pass 2: look for aria-expanded="true" button (the open settings toggle)
-      var expanded = document.querySelectorAll('button[aria-expanded="true"], [role="button"][aria-expanded="true"]');
-      for (var e2 = 0; e2 < expanded.length; e2++) {
-        if (isVisible(expanded[e2])) {
-          clickEl(expanded[e2]);
-          return { action: 'pill_closed_expanded', editor_count: editorCount, editor_ce: editorCE };
-        }
-      }
-      // Pass 3: press Escape on the focused element only
-      var focused = document.activeElement;
-      if (focused && focused !== document.body) {
-        var escEvent = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
-        focused.dispatchEvent(escEvent);
-        return { action: 'escape_on_focused', editor_count: editorCount, editor_ce: editorCE };
-      }
-      return { action: 'no_close_action_taken', editor_count: editorCount, editor_ce: editorCE };
-    }, []);
+    const panelCloseResult = await _runMainWorld(scripting, tabId, MAIN_closeComposerSettingsPanel, []);
     recordStage('F2V_SOP_SETTINGS_PANEL_CLOSE_ATTEMPT', 'PASS', JSON.stringify(panelCloseResult || {}));
     await _sleep(800);
 
@@ -4017,6 +4134,8 @@ const _api = {
   MAIN_findUploadSlotByLabel,
   MAIN_findUploadBySymbol,
   MAIN_findAddToPromptButton,
+  MAIN_selectAssetPickerCandidate,
+  MAIN_closeComposerSettingsPanel,
   // Internal helpers (exported for unit tests)
   _openComposerSettingsPanel,
   _clickVisibleOptionExact,

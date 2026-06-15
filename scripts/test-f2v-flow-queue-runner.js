@@ -384,6 +384,29 @@ async function testAssetPickerLauncherPrefersComposerAddCreateButton() {
 	assert.match(String(stamped.text || ""), /Create/);
 }
 
+async function testCloseComposerSettingsPanelTraversesShadowRoots() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+
+	const host = document.createElement("div");
+	document.body.appendChild(host);
+	setVisibleRect(host, 580, 840, 220, 40);
+	const shadow = host.attachShadow({ mode: "open" });
+	const button = document.createElement("button");
+	button.type = "button";
+	button.textContent = "Video 1x";
+	let clicked = 0;
+	button.addEventListener("click", () => {
+		clicked += 1;
+	});
+	shadow.appendChild(button);
+	setVisibleRect(button, 600, 848, 120, 32);
+
+	const result = runner.MAIN_closeComposerSettingsPanel();
+	assert.equal(result.action, "pill_closed_pass1");
+	assert.ok(clicked >= 1, "shadow-root config pill should be clicked");
+}
+
 async function testStartSlotFallbackAcceptsCreateOrDropMediaLabel() {
 	installDom(baseComposerHtml());
 	applyCommonRects(document);
@@ -549,6 +572,41 @@ async function testRunnerUploadsBeforePromptInsertionViaAssetPickerFlow() {
 	const promptStageIndex = result.stages.findIndex((stage) => stage.stage === "F2V_SOP_PROMPT_INSERTED" && stage.status === "PASS");
 	assert.ok(uploadWaitIndex >= 0, "upload wait stage must pass");
 	assert.ok(promptStageIndex > uploadWaitIndex, "prompt insertion must happen after upload wait completes");
+}
+
+async function testAddToPromptFallbackClicksAssetCardFirst() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+
+	const modal = document.createElement("div");
+	modal.setAttribute("role", "dialog");
+	modal.innerHTML = `
+		<div id="picker-shell">
+			<button id="asset-card" type="button"><img id="asset-img" alt="asset" />generated-image-178138</button>
+		</div>
+	`;
+	document.body.appendChild(modal);
+	setVisibleRect(modal, 40, 60, 640, 420);
+	setVisibleRect(document.getElementById("picker-shell"), 60, 90, 240, 220);
+	const assetCard = document.getElementById("asset-card");
+	setVisibleRect(assetCard, 80, 120, 180, 140);
+	setVisibleRect(document.getElementById("asset-img"), 90, 130, 120, 90);
+
+	let selected = false;
+	assetCard.addEventListener("click", () => {
+		if (selected) return;
+		selected = true;
+		const addButton = document.createElement("button");
+		addButton.id = "add-after-select";
+		addButton.type = "button";
+		addButton.textContent = "Add to Prompt";
+		modal.appendChild(addButton);
+		setVisibleRect(addButton, 220, 360, 180, 36);
+	});
+
+	const result = await runner._clickAddToPrompt(createScriptingAdapter(), 9005, {});
+	assert.equal(result.ok, true, "asset-card fallback should recover Add to Prompt");
+	assert.equal(selected, true, "asset card must be selected first");
 }
 
 async function testShadowRootRatioOptionIsFoundAndClickable() {
@@ -849,10 +907,12 @@ async function main() {
 	await testNavLogoIsBlacklisted();
 	await testUploadMediaAcceptsAddMediaButton();
 	await testAssetPickerLauncherPrefersComposerAddCreateButton();
+	await testCloseComposerSettingsPanelTraversesShadowRoots();
 	await testStartSlotFallbackAcceptsCreateOrDropMediaLabel();
 	await testStartSlotFallbackTraversesShadowHostContainer();
 	await testStartSlotFallbackUsesLabelNodeWhenContainerOwnsClick();
 	await testRunnerUploadsBeforePromptInsertionViaAssetPickerFlow();
+	await testAddToPromptFallbackClicksAssetCardFirst();
 	await testShadowRootRatioOptionIsFoundAndClickable();
 	await testBottomComposerStateSplitChipsDoNotCollapseTo1x();
 	await testBottomComposerStateRecoversRatioFromRegionText();
