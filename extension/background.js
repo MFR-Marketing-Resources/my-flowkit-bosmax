@@ -445,8 +445,11 @@ async function waitForCdpFileChooserProof(tabId) {
 	return result;
 }
 
-async function fetchAssetBase64ForCdp(assetId) {
-	const url = `http://127.0.0.1:8100/api/products/${assetId}/image`;
+async function fetchAssetBase64ForCdp(assetRef) {
+	const ref = String(assetRef == null ? "" : assetRef);
+	const url = /^https?:\/\//i.test(ref)
+		? ref
+		: `http://127.0.0.1:8100/api/products/${ref}/image`;
 	const controller = new AbortController();
 	const timeoutId = setTimeout(() => controller.abort(), 10000);
 	try {
@@ -481,11 +484,24 @@ async function fetchAssetBase64ForCdp(assetId) {
 
 // Materialize an asset to a real disk path via the local agent (the MV3 service worker
 // cannot write files, and CDP DOM.setFileInputFiles requires an absolute path).
-async function materializeAssetToDiskPath(assetId, slotLabel) {
-	const fetched = await fetchAssetBase64ForCdp(assetId);
+async function materializeAssetToDiskPath(assetRef, slotLabel) {
+	const ref = String(assetRef == null ? "" : assetRef);
+	const slot = String(slotLabel || "start").toLowerCase();
+	// Workspace-materialized asset already on local disk — feed it directly with
+	// no refetch (CDP DOM.setFileInputFiles needs an absolute path, which this is).
+	if (/^(?:[a-zA-Z]:[\\/]|\/)/.test(ref) && !/^https?:\/\//i.test(ref)) {
+		const baseName = ref.split(/[\\/]/).pop() || `${slot}.png`;
+		return { ok: true, filePath: ref, fileName: baseName, mimeType: "image/*" };
+	}
+	const fetched = await fetchAssetBase64ForCdp(ref);
 	if (!fetched.ok) return fetched;
 	const ext = (fetched.mimeType.split("/")[1] || "png").replace("jpeg", "jpg");
-	const fileName = `${String(slotLabel || "start").toLowerCase()}-${assetId}.${ext}`;
+	const safeToken =
+		ref
+			.replace(/^https?:\/\//i, "")
+			.replace(/[^a-zA-Z0-9._-]+/g, "_")
+			.slice(-40) || "asset";
+	const fileName = `${slot}-${safeToken}.${ext}`;
 	try {
 		const resp = await fetch(
 			"http://127.0.0.1:8100/api/flow/materialize-local-file",
@@ -558,6 +574,44 @@ async function cdpFileChooserUploadForJob(tabId, req) {
 		error: "ERR_CDP_UPLOAD_BAD_PHASE",
 		detail: `phase=${req?.phase}`,
 	};
+}
+
+// Resolve an operator/workspace F2V job into a single CDP-feedable Start-frame
+// asset reference. Preference order keeps the SELECTED media authoritative (not
+// the generic product image), and tolerates the real job shape — the dashboard
+// sends `startAsset` (object) + snake_case `product_id`, never camelCase:
+//   1. startAsset.localFilePath            — already materialized on disk
+//   2. startAsset.downloadUrl/previewUrl   — fetchable signed URL
+//   3. startAsset.mediaId/assetId          — id forms
+//   4. product_id / productId / startImageMediaId
+// Returns null when the job carries no upload asset (DOM path stays untouched).
+function resolveF2VUploadAssetSource(job) {
+	if (!job) return null;
+	const a = job.startAsset;
+	if (a && typeof a === "object") {
+		const fromAsset =
+			a.localFilePath ||
+			a.downloadUrl ||
+			a.previewUrl ||
+			a.mediaId ||
+			a.assetId;
+		if (fromAsset) return fromAsset;
+	} else if (typeof a === "string" && a) {
+		return a;
+	}
+	return job.product_id || job.productId || job.startImageMediaId || null;
+}
+
+// CDP upload is the only background-owned lane that can deterministically feed
+// a real file into the native chooser for F2V Frames jobs. Default it on when
+// the job carries a resolvable asset, unless the caller explicitly opts out.
+function shouldUseF2VCdpUpload(
+	job,
+	assetSource = resolveF2VUploadAssetSource(job),
+) {
+	if (!job || job.skipUpload === true) return false;
+	if (job.use_cdp_upload === false) return false;
+	return job.use_cdp_upload === true || assetSource != null;
 }
 
 const WS_METHOD_TIMEOUT_MS = {
@@ -2720,6 +2774,38 @@ async function handleExecuteFlowJob(job) {
 				},
 			};
 			try {
+				// F2V Frames jobs require a Start-frame media upload. The DOM upload
+				// branch cannot deliver a local file (no in-DOM upload control), so any
+				// F2V job carrying a resolvable upload asset takes the CDP file-chooser
+				// path BY DEFAULT. Explicit opt-out: use_cdp_upload:false or skipUpload:true.
+				// (Previously CDP was opt-in via use_cdp_upload:true, which operator/
+				// workspace jobs never set — leaving Frames jobs on the empty DOM path and
+				// failing at F2V_SOP_UPLOAD_WAIT_DONE / ERR_F2V_ADD_TO_PROMPT_NOT_FOUND.)
+				const f2vUploadAssetSource = resolveF2VUploadAssetSource(job);
+				const f2vWantsCdpUpload = shouldUseF2VCdpUpload(
+					job,
+					f2vUploadAssetSource,
+				);
+				const f2vCdpUploadOpt = f2vWantsCdpUpload
+					? {
+							cdpFileChooserUpload: (req) =>
+								cdpFileChooserUploadForJob(flowTab.id, {
+									...req,
+									// Authoritative selected-media reference resolved from the
+									// real job shape; overrides the runner's raw object guess.
+									assetSource: f2vUploadAssetSource || req?.assetSource,
+								}),
+						}
+					: {};
+				console.log(
+					"[FlowAgent] F2V upload lane:",
+					`cdp=${f2vWantsCdpUpload}`,
+					`assetSource=${
+						typeof f2vUploadAssetSource === "string"
+							? f2vUploadAssetSource.slice(0, 80)
+							: f2vUploadAssetSource
+					}`,
+				);
 				const runnerResult = await runnerApi.executeF2VVisibleSopRunner(
 					deps,
 					flowTab.id,
@@ -2734,14 +2820,7 @@ async function handleExecuteFlowJob(job) {
 							);
 							return await cdpClickCoordinate(params.tabId, params.x, params.y);
 						},
-						// Phase 2 opt-in: only jobs that explicitly set use_cdp_upload get the CDP
-						// file-chooser upload path; everything else keeps the proven DOM path.
-						...(job.use_cdp_upload === true
-							? {
-									cdpFileChooserUpload: (req) =>
-										cdpFileChooserUploadForJob(flowTab.id, req),
-								}
-							: {}),
+						...f2vCdpUploadOpt,
 					},
 				);
 				return runnerResult;
