@@ -936,13 +936,6 @@ async function resolveFlowExecutionTarget(job = null) {
 	}
 
 	let selectedTab = selectBestFlowTab(tabs, preferredUrl);
-	if (selectedTab && isProjectEditorUrl(selectedTab.url)) {
-		return {
-			ok: true,
-			targetTab: selectedTab,
-			candidate_tabs: initialCandidateTabs,
-		};
-	}
 
 	const rankedTabs = [
 		selectedTab,
@@ -976,7 +969,10 @@ async function resolveFlowExecutionTarget(job = null) {
 		}
 	}
 
-	if (selectedTab && isRootFlowUrl(selectedTab.url)) {
+	if (
+		selectedTab &&
+		(isRootFlowUrl(selectedTab.url) || isProjectEditorUrl(selectedTab.url))
+	) {
 		const openResult = await openPreferredFlowProjectOrNewProject(
 			job?.mode,
 			preferredUrl,
@@ -1006,7 +1002,9 @@ async function resolveFlowExecutionTarget(job = null) {
 			error: "ERR_FLOW_TAB_NOT_TARGETED",
 			candidate_tabs: candidateTabs,
 			detail: {
-				reason: "flow_root_without_project_editor",
+				reason: isRootFlowUrl(selectedTab?.url)
+					? "flow_root_without_project_editor"
+					: "flow_project_editor_unhealthy",
 				target_tab_url: selectedTab?.url || openResult?.flow_url || null,
 				candidate_tabs: candidateTabs,
 				open_flow_result: summarizeOpenFlowResult(openResult),
@@ -1156,11 +1154,7 @@ function classifyFlowPrimaryBlocker(result) {
 	if (!result?.signed_in_likely) {
 		return "FLOW_EDITOR_NOT_AUTHENTICATED";
 	}
-	if (
-		result?.flow_url &&
-		!result.flow_url.includes("/project/") &&
-		!result.flow_url.includes("/edit/")
-	) {
+	if (result?.flow_url && !isProjectEditorUrl(result.flow_url)) {
 		return "FLOW_PROJECT_LIST_NOT_EDITOR";
 	}
 	if (result?.composer_found && !result?.composer_editable) {
@@ -1315,7 +1309,7 @@ async function openTabInNormalWindow(url) {
 	return createdTab;
 }
 
-async function handleOpenTargetFlowProject(flowProjectUrl) {
+async function handleOpenTargetFlowProject(flowProjectUrl, mode = null) {
 	const normalizedUrl = String(flowProjectUrl || "").trim();
 	if (!normalizedUrl) {
 		return {
@@ -1369,6 +1363,24 @@ async function handleOpenTargetFlowProject(flowProjectUrl) {
 		};
 	}
 
+	const probe = await probeFlowEditorCandidate(targetTab, mode);
+	if (!probe.ok) {
+		return {
+			ok: false,
+			error: probe.error || "FLOW_PROJECT_EDITOR_NOT_READY",
+			detail: probe.readiness?.error || probe.detail || null,
+			flow_project_url: normalizedUrl,
+			flow_tab_id: flowTabId,
+			flow_url_before: flowUrlBefore,
+			flow_url_after: flowUrlAfter,
+			flow_url: flowUrlAfter,
+			extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
+			target_probe: probe.readiness || null,
+			target_probe_diagnostic: probe.diagnostic || null,
+			...diagnostic,
+		};
+	}
+
 	return {
 		ok: true,
 		error: diagnostic.raw_error || null,
@@ -1387,13 +1399,9 @@ async function openPreferredFlowProjectOrNewProject(mode, preferredUrl = null) {
 	if (normalizedPreferredUrl) {
 		const preferredResult = await handleOpenTargetFlowProject(
 			normalizedPreferredUrl,
+			mode,
 		);
-		if (
-			preferredResult?.ok ||
-			isProjectEditorUrl(
-				preferredResult?.flow_url_after || preferredResult?.flow_url,
-			)
-		) {
+		if (preferredResult?.ok) {
 			return {
 				...preferredResult,
 				open_strategy: "preferred_project_url",
@@ -2260,7 +2268,7 @@ function broadcastStatus() {
 	sendRuntimeMessageNoThrow({ type: "STATUS_PUSH" });
 }
 
-const BUILD_ID = "flowkit-f2v-runner-audit-2026-05-28b";
+const BUILD_ID = "flowkit-f2v-runner-audit-2026-06-15a";
 
 function buildBackgroundStatusResponse() {
 	const buildId = BUILD_ID;
@@ -2647,6 +2655,36 @@ async function handleExecuteFlowJob(job) {
 			);
 			const deps = {
 				scripting: runnerApi.createChromeScriptingAdapter(chrome),
+				newProjectFn: async (tabId, runnerJob) => {
+					const currentTab = await getTabSafe(tabId);
+					if (currentTab?.id && isProjectEditorUrl(currentTab.url)) {
+						const existingProbe = await probeFlowEditorCandidate(
+							currentTab,
+							runnerJob?.mode || job?.mode,
+						);
+						if (existingProbe.ok) {
+							return {
+								ok: true,
+								flow_tab_id: currentTab.id,
+								flow_url: currentTab.url,
+								open_strategy: "already_on_editor",
+							};
+						}
+					}
+
+					const preferredUrl = await getStoredFlowProjectUrl();
+					const openFlowResult = await openPreferredFlowProjectOrNewProject(
+						runnerJob?.mode || job?.mode,
+						preferredUrl,
+					);
+					const settledTab = await settleFlowProjectAfterOpen(openFlowResult);
+					return {
+						...openFlowResult,
+						ok: Boolean(openFlowResult?.ok && settledTab?.id),
+						flow_tab_id: settledTab?.id ?? openFlowResult?.flow_tab_id ?? null,
+						flow_url: settledTab?.url || openFlowResult?.flow_url || null,
+					};
+				},
 				telemetry: (payload) => {
 					const contentHealth = getKnownContentScriptHealth(flowTab.id);
 					postStageTelemetry(
@@ -2763,6 +2801,36 @@ async function handleConfigureF2VSettings(job, tabId) {
 	);
 	const deps = {
 		scripting: runnerApi.createChromeScriptingAdapter(chrome),
+		newProjectFn: async (tabId, runnerJob) => {
+			const currentTab = await getTabSafe(tabId);
+			if (currentTab?.id && isProjectEditorUrl(currentTab.url)) {
+				const existingProbe = await probeFlowEditorCandidate(
+					currentTab,
+					runnerJob?.mode || job?.mode,
+				);
+				if (existingProbe.ok) {
+					return {
+						ok: true,
+						flow_tab_id: currentTab.id,
+						flow_url: currentTab.url,
+						open_strategy: "already_on_editor",
+					};
+				}
+			}
+
+			const preferredUrl = await getStoredFlowProjectUrl();
+			const openFlowResult = await openPreferredFlowProjectOrNewProject(
+				runnerJob?.mode || job?.mode,
+				preferredUrl,
+			);
+			const settledTab = await settleFlowProjectAfterOpen(openFlowResult);
+			return {
+				...openFlowResult,
+				ok: Boolean(openFlowResult?.ok && settledTab?.id),
+				flow_tab_id: settledTab?.id ?? openFlowResult?.flow_tab_id ?? null,
+				flow_url: settledTab?.url || openFlowResult?.flow_url || null,
+			};
+		},
 		telemetry: (payload) => {
 			const contentHealth = getKnownContentScriptHealth(activeTabId);
 			postStageTelemetry(

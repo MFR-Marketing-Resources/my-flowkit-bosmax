@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $ExpectedExtensionPath = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "extension"))
-$ExpectedBuildMarker = "flowkit-f2v-runner-audit-2026-05-28b"
+$ExpectedBuildMarker = "flowkit-f2v-runner-audit-2026-06-15a"
 $ApiBaseUrl = "http://127.0.0.1:8100"
 
 Write-Output "=== BOSMAX Same-Session Chrome Flow Repair ==="
