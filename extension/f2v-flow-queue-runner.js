@@ -45,10 +45,10 @@
  *   F2V_SOP_COUNT_1X_CLICKED
  *   F2V_SOP_MODEL_VEO_CLICKED
  *   F2V_SOP_SETTINGS_CONFIGURED
- *   F2V_SOP_PROMPT_INSERTED
  *   F2V_SOP_START_CLICKED
  *   F2V_SOP_UPLOAD_CLICKED
  *   F2V_SOP_UPLOAD_WAIT_DONE
+ *   F2V_SOP_PROMPT_INSERTED
  *   F2V_SOP_GENERATE_SUBMITTED
  *
  * Strict order. No inference gate. Each click probes for the visible
@@ -93,7 +93,7 @@
 // Constants
 // ───────────────────────────────────────────────────────────────────────
 
-const F2V_FLOW_QUEUE_RUNNER_BUILD_ID = 'flowkit-f2v-runner-adaptive-pill-2026-06-10';
+const F2V_FLOW_QUEUE_RUNNER_BUILD_ID = 'flowkit-f2v-runner-audit-2026-06-15a';
 const SOP_DEFAULT_SETTLE_MS = 300;
 const SOP_DEFAULT_OPEN_PANEL_TIMEOUT_MS = 4000;
 const SOP_DEFAULT_UPLOAD_WAIT_MS = 10000;
@@ -152,6 +152,7 @@ const ERR = Object.freeze({
   PROMPT_FIELD_NOT_FOUND: 'ERR_F2V_PROMPT_FIELD_NOT_FOUND',
   START_BUTTON_NOT_FOUND: 'ERR_F2V_START_BUTTON_NOT_FOUND',
   UPLOAD_MEDIA_NOT_FOUND: 'ERR_F2V_UPLOAD_MEDIA_NOT_FOUND',
+  ADD_TO_PROMPT_NOT_FOUND: 'ERR_F2V_ADD_TO_PROMPT_NOT_FOUND',
   NEW_PROJECT_FAILED: 'ERR_F2V_NEW_PROJECT_FAILED',
   EXECUTION_THREW: 'ERR_F2V_SOP_RUNNER_THREW',
 });
@@ -239,6 +240,27 @@ function MAIN_findVisibleCandidatesByExactLabel(targetLabel, aliases, preferredR
     if (el.hasAttribute && (el.hasAttribute('aria-selected') || el.hasAttribute('aria-pressed') || el.hasAttribute('data-state'))) return true;
     return false;
   }
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seenRoots = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seenRoots.has(curr)) continue;
+      seenRoots.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var idx = 0; idx < direct.length; idx++) out.push(direct[idx]);
+        var descendants = curr.querySelectorAll('*');
+        for (var jdx = 0; jdx < descendants.length; jdx++) {
+          if (descendants[jdx].shadowRoot && !seenRoots.has(descendants[jdx].shadowRoot)) {
+            queue.push(descendants[jdx].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
 
   var needle = normalize(targetLabel).toLowerCase();
   var aliasNeedles = (aliases || []).map(function (s) { return normalize(s).toLowerCase(); });
@@ -246,7 +268,7 @@ function MAIN_findVisibleCandidatesByExactLabel(targetLabel, aliases, preferredR
 
   var matches = [];
   var visibleCandidates = [];
-  var all = document.querySelectorAll(
+  var all = collectAll(document,
     'button, a, input, textarea, [role], [aria-selected], [aria-pressed], [data-state], li, span, div, label',
   );
 
@@ -352,7 +374,29 @@ function MAIN_findVisibleCandidatesByExactLabel(targetLabel, aliases, preferredR
  * aria-pressed) so the runner can decide whether to retry.
  */
 function MAIN_clickStampedElement(stampAttr, stampId) {
-  var el = document.querySelector('[' + stampAttr + '="' + stampId + '"]');
+  function findStamped(root) {
+    var queue = [root || document];
+    var seenRoots = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seenRoots.has(curr)) continue;
+      seenRoots.add(curr);
+      if (curr.querySelector) {
+        var found = curr.querySelector('[' + stampAttr + '="' + stampId + '"]');
+        if (found) return found;
+      }
+      if (curr.querySelectorAll) {
+        var descendants = curr.querySelectorAll('*');
+        for (var idx = 0; idx < descendants.length; idx++) {
+          if (descendants[idx].shadowRoot && !seenRoots.has(descendants[idx].shadowRoot)) {
+            queue.push(descendants[idx].shadowRoot);
+          }
+        }
+      }
+    }
+    return null;
+  }
+  var el = findStamped(document);
   if (!el) return { ok: false, reason: 'stamp_not_found' };
   try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) { /* noop */ }
   // Dispatch pointer + mouse + click; React picks up the click event,
@@ -718,6 +762,7 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
       popup: popup,
       combined: combined,
       combined_lower: lower(combined),
+      has_view_settings: /\bview\s+settings\b/i.test(combined),
       has_model_text: /(veo|nano\s*banana|gemini|imagen|model)/i.test(combined),
       has_model: /(veo|nano\s*banana|gemini|imagen|model)/i.test(combined) || /(veo|nano\s*banana|gemini|imagen)/i.test(containerText),
       has_settings: /(settings|view\s+settings|config|configure|tune|sliders)/i.test(combined + ' ' + containerText),
@@ -843,6 +888,11 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
         return c.from_bottom_composer_scan && c.has_mode && c.has_count && (c.within_composer || c.near_composer);
       });
     }
+    if (strategyId === 'view_settings_button') {
+      return candidates.filter(function (c) {
+        return c.near_composer && c.has_view_settings;
+      });
+    }
     if (strategyId === 'model_chip') {
       return candidates.filter(function (c) {
         return c.has_model_text && (c.popup || c.near_composer || c.has_model_context);
@@ -932,6 +982,7 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
   var candidates = collectCandidates(bottomComposerCandidates);
   var visibleLauncherCandidates = summarizeCandidates(candidates);
   var strategies = [
+    { id: 'view_settings_button', label: 'view settings button near composer' },
     { id: 'bottom_composer_config_pill', label: 'bottom composer config pill' },
     { id: 'model_chip', label: 'current model chip' },
     { id: 'dropdown_adjacent', label: 'dropdown adjacent to model label' },
@@ -1013,7 +1064,29 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
 }
 
 function MAIN_getLauncherOuterHTML(stampAttr, stampId) {
-  var el = document.querySelector('[' + stampAttr + '="' + stampId + '"]');
+  function findStamped(root) {
+    var queue = [root || document];
+    var seenRoots = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seenRoots.has(curr)) continue;
+      seenRoots.add(curr);
+      if (curr.querySelector) {
+        var found = curr.querySelector('[' + stampAttr + '="' + stampId + '"]');
+        if (found) return found;
+      }
+      if (curr.querySelectorAll) {
+        var descendants = curr.querySelectorAll('*');
+        for (var idx = 0; idx < descendants.length; idx++) {
+          if (descendants[idx].shadowRoot && !seenRoots.has(descendants[idx].shadowRoot)) {
+            queue.push(descendants[idx].shadowRoot);
+          }
+        }
+      }
+    }
+    return null;
+  }
+  var el = findStamped(document);
   if (!el) return 'not_found';
   return {
     outerHTML: el.outerHTML,
@@ -1527,12 +1600,170 @@ function MAIN_stampGenerateButton(stampAttr) {
 }
 
 /**
+ * MAIN-world: locate the visible composer-side asset-picker launcher.
+ * Live Flow renders this as the left-side "+ / add_2 Create" button near
+ * the prompt composer. It must be distinguished from the right-side
+ * arrow_forward Create / Generate submit button.
+ */
+function MAIN_stampAssetPickerLauncher(stampAttr) {
+  function normalize(s) {
+    return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  }
+  function lower(s) {
+    return normalize(s).toLowerCase();
+  }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seen = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seen.has(curr)) continue;
+      seen.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var i = 0; i < direct.length; i++) out.push(direct[i]);
+        var descendants = curr.querySelectorAll('*');
+        for (var j = 0; j < descendants.length; j++) {
+          if (descendants[j].shadowRoot && !seen.has(descendants[j].shadowRoot)) {
+            queue.push(descendants[j].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
+  function findComposer() {
+    return document.querySelector('[data-slate-editor="true"][contenteditable="true"], textarea[placeholder*="What do you want"], textarea, [contenteditable="true"], [role="textbox"]');
+  }
+  function collectComposerRoots(composer) {
+    var roots = [];
+    var seen = new Set();
+    var current = composer;
+    for (var depth = 0; current && depth < 5; depth++) {
+      if (!seen.has(current)) {
+        roots.push(current);
+        seen.add(current);
+      }
+      current = current.parentElement;
+    }
+    return roots;
+  }
+  function looksExcluded(btnText) {
+    return btnText.indexOf('create with flow') >= 0
+      || btnText.indexOf('create new project') >= 0
+      || btnText === 'create new'
+      || btnText.indexOf('create project') >= 0
+      || btnText.indexOf('arrow_forward') >= 0
+      || btnText.indexOf('generate') >= 0;
+  }
+  function scoreCandidate(el, composerRect, inComposerRoot) {
+    var text = lower(el.textContent || el.getAttribute('aria-label') || '');
+    if (!text || looksExcluded(text)) return null;
+    var hasAddGlyph = text.indexOf('add_2') >= 0 || text.indexOf(' add ') >= 0 || text === 'add' || text === 'add_2';
+    var hasCreateLabel = text.indexOf('create') >= 0;
+    var hasPlusGlyph = normalize(el.textContent || '') === '+';
+    if (!hasAddGlyph && !hasCreateLabel && !hasPlusGlyph) return null;
+    var rect = el.getBoundingClientRect();
+    var score = 0;
+    if (inComposerRoot) score += 40;
+    if (hasAddGlyph || hasPlusGlyph) score += 25;
+    if (hasCreateLabel) score += 10;
+    if (composerRect) {
+      var composerMidX = composerRect.left + (composerRect.width / 2);
+      var launcherMidY = rect.top + (rect.height / 2);
+      var composerMidY = composerRect.top + (composerRect.height / 2);
+      if (rect.left <= composerMidX) score += 20;
+      score -= Math.abs(launcherMidY - composerMidY) / 20;
+      score -= Math.abs(rect.left - composerRect.left) / 40;
+    }
+    return {
+      el: el,
+      rect: rect,
+      score: score,
+      text: normalize(el.textContent || el.getAttribute('aria-label') || ''),
+      strategy: hasAddGlyph || hasPlusGlyph ? 'add_create_launcher' : 'create_launcher',
+    };
+  }
+
+  var composer = findComposer();
+  var composerRect = composer && composer.getBoundingClientRect ? composer.getBoundingClientRect() : null;
+  var roots = composer ? collectComposerRoots(composer) : [];
+  roots.push(document);
+
+  var candidates = [];
+  var seenEls = new Set();
+  for (var r = 0; r < roots.length; r++) {
+    var root = roots[r];
+    var buttons = collectAll(root, 'button, [role="button"]');
+    for (var b = 0; b < buttons.length; b++) {
+      var btn = buttons[b];
+      if (!isVisible(btn) || seenEls.has(btn)) continue;
+      seenEls.add(btn);
+      var scored = scoreCandidate(btn, composerRect, root !== document);
+      if (scored) candidates.push(scored);
+    }
+  }
+  if (!candidates.length) return { ok: false, reason: 'no_asset_picker_launcher_visible' };
+  candidates.sort(function (a, b) {
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.rect.left !== b.rect.left) return a.rect.left - b.rect.left;
+    return a.rect.top - b.rect.top;
+  });
+  var best = candidates[0];
+  var attr = String(stampAttr || 'data-bosmax-option');
+  var id = attr + '-asset-launcher-' + Date.now();
+  best.el.setAttribute(attr, id);
+  return {
+    ok: true,
+    stamp_id: id,
+    stamp_attr: attr,
+    text: best.text,
+    strategy: best.strategy,
+    bbox: {
+      x: best.rect.left,
+      y: best.rect.top,
+      width: best.rect.width,
+      height: best.rect.height,
+    },
+  };
+}
+
+/**
  * MAIN-world: read the bottom composer config pill and current active model label
  * to verify if our settings are already correctly applied (permits bypassing clicks).
  */
 function MAIN_getBottomComposerState() {
   function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
   function lower(s) { return normalize(s).toLowerCase(); }
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seenRoots = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seenRoots.has(curr)) continue;
+      seenRoots.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var idx = 0; idx < direct.length; idx++) out.push(direct[idx]);
+        var descendants = curr.querySelectorAll('*');
+        for (var jdx = 0; jdx < descendants.length; jdx++) {
+          if (descendants[jdx].shadowRoot && !seenRoots.has(descendants[jdx].shadowRoot)) {
+            queue.push(descendants[jdx].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
   
   // Token extractors — mirror content-flow-dom canonical logic. CRITICAL:
   // the composer pill is MODEL-AGNOSTIC. A Nano Banana / image-frame job
@@ -1552,6 +1783,14 @@ function MAIN_getBottomComposerState() {
     var m2 = s.match(/\bx\s*(\d)\b/);
     if (m2) return m2[1] + 'x';
     if (/\b1\s*variation\b/.test(s)) return '1x';
+    // Glued-token fallback. Live Flow renders the bottom config pill as a SINGLE
+    // button whose textContent concatenates its icon/label spans with no
+    // whitespace, e.g. "Videocrop_9_161x". The \b-anchored patterns above cannot
+    // isolate the trailing "1x" because it abuts the ratio's "16" (…161x has no
+    // word boundary before the count digit). Match a 1–4 count digit immediately
+    // followed by x that is not part of a longer word/number.
+    var m3 = s.match(/([1-4])\s*[x×](?![a-z0-9])/);
+    if (m3) return m3[1] + 'x';
     return null;
   }
   function modelCanonFromText(t) {
@@ -1584,14 +1823,41 @@ function MAIN_getBottomComposerState() {
     var s = window.getComputedStyle(el);
     return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
   }
+  function getComposerRootLocal() {
+    var prompts = collectAll(document, '[data-slate-editor="true"][contenteditable="true"], textarea, [contenteditable="true"], input[type="text"]');
+    for (var pIdx = 0; pIdx < prompts.length; pIdx++) {
+      if (!isVisibleNode(prompts[pIdx])) continue;
+      var placeholder = normalize(
+        (prompts[pIdx].getAttribute && (prompts[pIdx].getAttribute('placeholder') || prompts[pIdx].getAttribute('aria-label') || ''))
+        || prompts[pIdx].textContent
+        || '',
+      ).toLowerCase();
+      if (placeholder.indexOf('what do you want to create') >= 0) {
+        return prompts[pIdx].closest && prompts[pIdx].closest('form, [role="form"], section, article, main, div') || prompts[pIdx];
+      }
+    }
+    return prompts.length ? prompts[0].closest && prompts[0].closest('form, [role="form"], section, article, main, div') || prompts[0] : null;
+  }
+  function distanceToComposer(el) {
+    var composer = getComposerRootLocal();
+    if (!composer || !composer.getBoundingClientRect || !el || !el.getBoundingClientRect) return Number.MAX_SAFE_INTEGER;
+    var a = composer.getBoundingClientRect();
+    var b = el.getBoundingClientRect();
+    var ax = a.left + (a.width / 2);
+    var ay = a.top + (a.height / 2);
+    var bx = b.left + (b.width / 2);
+    var by = b.top + (b.height / 2);
+    return Math.round(Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2)));
+  }
 
-  var els = document.querySelectorAll('button, [role="button"], [role="tab"], [aria-haspopup], [data-state], [aria-label], span, div');
+  var els = collectAll(document, 'button, [role="button"], [role="tab"], [aria-haspopup], [data-state], [aria-label], span, div');
   var pillText = '';
   var pillRatio = null;
   var pillCount = null;
   var modelText = '';
   var bestModelCanon = '';
   var bestPillScore = -1;
+  var pillCandidates = [];
 
   for (var i = 0; i < els.length; i++) {
     var el = els[i];
@@ -1602,16 +1868,24 @@ function MAIN_getBottomComposerState() {
     var r = ratioFromText(txt);
     var c = countFromText(txt);
     var mc = modelCanonFromText(txt);
+    var dist = distanceToComposer(el);
+    var compact = txt.length <= 120;
 
     // Pill candidate: any compact chip carrying a ratio AND/OR count token.
     // Score favors chips bundling ratio+count(+model); ties → shortest text.
     if (r || c) {
-      var score = (r ? 2 : 0) + (c ? 2 : 0) + (mc ? 1 : 0);
+      var score = (r ? 4 : 0) + (c ? 4 : 0) + (mc ? 2 : 0) + (compact ? 1 : 0) + (dist <= 520 ? 1 : 0);
+      pillCandidates.push({ txt: txt, ratio: r, count: c, modelCanon: mc, dist: dist, score: score });
       if (score > bestPillScore || (score === bestPillScore && (!pillText || txt.length < pillText.length))) {
         bestPillScore = score;
         pillText = txt;
-        pillRatio = r;
-        pillCount = c;
+        // Sticky tokens: a shorter / equal-scoring chip that lacks a ratio or
+        // count must NOT erase one already discovered on another chip. Split
+        // layouts place the ratio and count on separate adjacent chips, so a
+        // later "1x" chip winning the tie-break previously clobbered the
+        // already-found ratio back to null.
+        if (r) pillRatio = r;
+        if (c) pillCount = c;
       }
     }
     // Model text: keep the most specific recognized model label.
@@ -1624,12 +1898,81 @@ function MAIN_getBottomComposerState() {
       }
     }
   }
+  if ((!pillRatio || !pillCount) && pillCandidates.length) {
+    pillCandidates.sort(function (a, b) {
+      if (a.score !== b.score) return b.score - a.score;
+      if (a.dist !== b.dist) return a.dist - b.dist;
+      return a.txt.length - b.txt.length;
+    });
+    var ratioCandidate = null;
+    var countCandidate = null;
+    var modelCandidate = null;
+    for (var p = 0; p < pillCandidates.length; p++) {
+      if (!ratioCandidate && pillCandidates[p].ratio) ratioCandidate = pillCandidates[p];
+      if (!countCandidate && pillCandidates[p].count) countCandidate = pillCandidates[p];
+      if (!modelCandidate && pillCandidates[p].modelCanon) modelCandidate = pillCandidates[p];
+      if (ratioCandidate && countCandidate && modelCandidate) break;
+    }
+    pillRatio = pillRatio || (ratioCandidate && ratioCandidate.ratio) || null;
+    pillCount = pillCount || (countCandidate && countCandidate.count) || null;
+    if (!bestModelCanon && modelCandidate && modelCandidate.modelCanon) {
+      bestModelCanon = modelCandidate.modelCanon;
+      if (!modelText || modelText.length > modelCandidate.txt.length) modelText = modelCandidate.txt;
+    }
+    if ((!pillText || pillText === pillCount || pillText === pillRatio) && (ratioCandidate || countCandidate || modelCandidate)) {
+      var stitched = [];
+      if (modelCandidate && stitched.indexOf(modelCandidate.txt) === -1) stitched.push(modelCandidate.txt);
+      if (ratioCandidate && stitched.indexOf(ratioCandidate.txt) === -1) stitched.push(ratioCandidate.txt);
+      if (countCandidate && stitched.indexOf(countCandidate.txt) === -1) stitched.push(countCandidate.txt);
+      pillText = stitched.join(' ').trim() || pillText;
+    }
+  }
+
+  // Region-text fallback. When per-element chip scanning cannot isolate the
+  // ratio/count — split or icon-only chips, the only carrier being a single
+  // >160-char container, or a pill occluded by an open settings panel — recover
+  // the tokens from the visible composer-region text and, last, from body text.
+  // This mirrors the DOM diagnostic lane (content-flow-dom collectVisibleMarkers)
+  // which reads these tokens reliably from aggregate text. It is the deterministic
+  // cure for the runner-vs-diagnostic mismatch that produced a degraded "1x" pill
+  // and ERR_F2V_OPTION_RATIO_9_16_NOT_FOUND on an editor already at 9:16.
+  if (!pillRatio || !pillCount) {
+    var fallbackTexts = [];
+    var composerRegion = getComposerRootLocal();
+    if (composerRegion) {
+      var regionText = normalize(composerRegion.innerText || composerRegion.textContent || '');
+      if (regionText) fallbackTexts.push(regionText);
+    }
+    var bodyFallbackText = normalize((document.body && (document.body.innerText || document.body.textContent)) || '');
+    if (bodyFallbackText) fallbackTexts.push(bodyFallbackText);
+    for (var ft = 0; ft < fallbackTexts.length; ft++) {
+      if (!pillRatio) {
+        var fbRatio = ratioFromText(fallbackTexts[ft]);
+        if (fbRatio) pillRatio = fbRatio;
+      }
+      if (!pillCount) {
+        var fbCount = countFromText(fallbackTexts[ft]);
+        if (fbCount) pillCount = fbCount;
+      }
+      if (pillRatio && pillCount) break;
+    }
+    // Keep pillText informative for telemetry when it had degraded to a single
+    // partial token (e.g. "1x") but structured data is now available.
+    if ((pillRatio || pillCount) && (!pillText || pillText.length <= 3)) {
+      var rebuilt = [];
+      if (modelText) rebuilt.push(modelText);
+      if (pillRatio) rebuilt.push(pillRatio === '9:16' ? 'crop_9_16' : (pillRatio === '16:9' ? 'crop_16_9' : pillRatio));
+      if (pillCount) rebuilt.push(pillCount);
+      if (rebuilt.length) pillText = rebuilt.join(' ');
+    }
+  }
+
   var modelCanonical = bestModelCanon;
   var modelFamily = familyOf(bestModelCanon);
 
   // Detect top level active mode trigger
   var topMode = 'UNKNOWN';
-  var buttons = document.querySelectorAll('button, [role="tab"], [role="button"]');
+  var buttons = collectAll(document, 'button, [role="tab"], [role="button"]');
   var videoModeBtn = null;
   var imageModeBtn = null;
   for (var k = 0; k < buttons.length; k++) {
@@ -1734,7 +2077,28 @@ function MAIN_findSettingLauncher(settingType) {
   function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
   function lower(s) { return normalize(s).toLowerCase(); }
   
-  var surfaces = document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"]');
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seenRoots = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seenRoots.has(curr)) continue;
+      seenRoots.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var idx = 0; idx < direct.length; idx++) out.push(direct[idx]);
+        var descendants = curr.querySelectorAll('*');
+        for (var jdx = 0; jdx < descendants.length; jdx++) {
+          if (descendants[jdx].shadowRoot && !seenRoots.has(descendants[jdx].shadowRoot)) {
+            queue.push(descendants[jdx].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
+  var surfaces = collectAll(document, '[role="menu"], [role="listbox"], [role="dialog"]');
   var panel = null;
   for (var i = 0; i < surfaces.length; i++) {
     if (isVisible(surfaces[i])) {
@@ -1744,7 +2108,7 @@ function MAIN_findSettingLauncher(settingType) {
   }
   if (!panel) return null;
   
-  var nodes = panel.querySelectorAll('button, [role="button"], [role="combobox"], [aria-haspopup], [data-state], [tabindex], div, span');
+  var nodes = collectAll(panel, 'button, [role="button"], [role="combobox"], [aria-haspopup], [data-state], [tabindex], div, span');
   for (var j = 0; j < nodes.length; j++) {
     var node = nodes[j];
     if (!isVisible(node)) continue;
@@ -1798,14 +2162,35 @@ function MAIN_findAndStampSettingLauncher(settingType, stampAttr) {
   }
   function lower(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase(); }
 
-  var surfaces = document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"]');
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seenRoots = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seenRoots.has(curr)) continue;
+      seenRoots.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var idx = 0; idx < direct.length; idx++) out.push(direct[idx]);
+        var descendants = curr.querySelectorAll('*');
+        for (var jdx = 0; jdx < descendants.length; jdx++) {
+          if (descendants[jdx].shadowRoot && !seenRoots.has(descendants[jdx].shadowRoot)) {
+            queue.push(descendants[jdx].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
+  var surfaces = collectAll(document, '[role="menu"], [role="listbox"], [role="dialog"]');
   var panel = null;
   for (var i = 0; i < surfaces.length; i++) {
     if (isVisible(surfaces[i])) { panel = surfaces[i]; break; }
   }
   if (!panel) return null;
 
-  var nodes = panel.querySelectorAll('button, [role="button"], [role="combobox"], [aria-haspopup], [data-state], [tabindex], div, span');
+  var nodes = collectAll(panel, 'button, [role="button"], [role="combobox"], [aria-haspopup], [data-state], [tabindex], div, span');
   var el = null;
   for (var j = 0; j < nodes.length; j++) {
     var node = nodes[j];
@@ -1864,6 +2249,27 @@ function MAIN_findVisibleModelByKeyword(familyKeyword, stampAttr) {
     return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
   }
   function lower(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase(); }
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seenRoots = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seenRoots.has(curr)) continue;
+      seenRoots.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var idx = 0; idx < direct.length; idx++) out.push(direct[idx]);
+        var descendants = curr.querySelectorAll('*');
+        for (var jdx = 0; jdx < descendants.length; jdx++) {
+          if (descendants[jdx].shadowRoot && !seenRoots.has(descendants[jdx].shadowRoot)) {
+            queue.push(descendants[jdx].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
   var kw = lower(familyKeyword || '');
   var tokens = [];
   if (kw.indexOf('veo') >= 0) {
@@ -1876,7 +2282,7 @@ function MAIN_findVisibleModelByKeyword(familyKeyword, stampAttr) {
     tokens = [kw];
   }
   if (!tokens.length) return null;
-  var nodes = document.querySelectorAll(
+  var nodes = collectAll(document,
     '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"], button, [role="button"]'
   );
   for (var i = 0; i < nodes.length; i++) {
@@ -1896,12 +2302,141 @@ function MAIN_findVisibleModelByKeyword(familyKeyword, stampAttr) {
 }
 
 /**
+ * MAIN-world: resolve a visible upload slot by semantic label instead of
+ * exact equality. Flow commonly renders the Start slot as
+ * "Start creating or drop media", which exact label scanning misses.
+ */
+function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
+  function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+  function lower(s) { return normalize(s).toLowerCase(); }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
+  }
+  function isInteractive(el) {
+    if (!el || !el.tagName) return false;
+    var tag = String(el.tagName || '').toLowerCase();
+    if (tag === 'button' || tag === 'a' || tag === 'input' || tag === 'label') return true;
+    var role = el.getAttribute && el.getAttribute('role');
+    if (role && ['button', 'option', 'tab', 'menuitem', 'menuitemradio'].indexOf(role) >= 0) return true;
+    return Boolean(el.hasAttribute && (
+      el.hasAttribute('aria-haspopup')
+      || el.hasAttribute('aria-expanded')
+      || el.hasAttribute('aria-selected')
+      || el.hasAttribute('aria-pressed')
+      || el.hasAttribute('data-state')
+      || el.hasAttribute('tabindex')
+    ));
+  }
+  function nextParent(node) {
+    if (!node) return null;
+    if (node.parentElement) return node.parentElement;
+    if (node.getRootNode) {
+      var root = node.getRootNode();
+      if (root && root.host) return root.host;
+    }
+    return null;
+  }
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seenRoots = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seenRoots.has(curr)) continue;
+      seenRoots.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var idx = 0; idx < direct.length; idx++) out.push(direct[idx]);
+        var descendants = curr.querySelectorAll('*');
+        for (var jdx = 0; jdx < descendants.length; jdx++) {
+          if (descendants[jdx].shadowRoot && !seenRoots.has(descendants[jdx].shadowRoot)) {
+            queue.push(descendants[jdx].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
+  function stamp(el) {
+    var attr = stampAttr || 'data-bosmax-option';
+    var id = attr + '-slot-' + Date.now();
+    el.setAttribute(attr, id);
+    var rect = el.getBoundingClientRect();
+    return {
+      stamp_id: id,
+      stamp_attr: attr,
+      text: normalize(el.textContent || el.getAttribute && el.getAttribute('aria-label') || '').slice(0, 160),
+      role: (el.getAttribute && el.getAttribute('role')) || String(el.tagName || '').toLowerCase(),
+      bbox: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+    };
+  }
+  function buildTargets(labelNode, container) {
+    var targets = [];
+    function push(el, source) {
+      if (!el || !isVisible(el)) return;
+      if (targets.some(function (item) { return item.el === el; })) return;
+      targets.push({ el: el, source: source });
+    }
+    push(labelNode && labelNode.closest && labelNode.closest('button, [role="button"]'), 'label_closest_button');
+    push(labelNode, 'label_node');
+    push(container && container.querySelector && container.querySelector('button, [role="button"]'), 'container_button');
+    push(container, 'container');
+    return targets;
+  }
+
+  var needle = lower(slotLabel || '');
+  var labelCandidates = collectAll(document, 'label, span, div, p, button, [role="button"], a');
+  for (var i = 0; i < labelCandidates.length; i++) {
+    var labelNode = labelCandidates[i];
+    if (!isVisible(labelNode)) continue;
+    var labelText = normalize(labelNode.textContent || labelNode.getAttribute && labelNode.getAttribute('aria-label') || '');
+    var labelLower = labelText.toLowerCase();
+    if (!labelLower) continue;
+    if (needle === 'start') {
+      if (labelLower.indexOf('start') === -1 || labelLower.indexOf('end') >= 0) continue;
+    } else if (labelLower.indexOf(needle) === -1) {
+      continue;
+    }
+
+    var current = labelNode;
+    for (var depth = 0; current && depth < 8; depth++) {
+      if (isVisible(current)) {
+        var currentText = normalize(current.textContent || current.getAttribute && current.getAttribute('aria-label') || '');
+        var currentLower = currentText.toLowerCase();
+        var hasUploadMarker = /(upload|add|media|image|browse|drop|create)/i.test(currentText);
+        var isClickableContainer = isInteractive(current) || Boolean(current.matches && current.matches('button, [role="button"], label, a'));
+        if ((hasUploadMarker || isClickableContainer) && currentLower.indexOf(needle) >= 0) {
+          if (needle === 'start' && currentLower.indexOf('end') >= 0) {
+            current = nextParent(current);
+            continue;
+          }
+          var targets = buildTargets(labelNode, current);
+          for (var t = 0; t < targets.length; t++) {
+            var stamped = stamp(targets[t].el);
+            if (stamped) {
+              stamped.target_source = targets[t].source;
+              return stamped;
+            }
+          }
+        }
+      }
+      current = nextParent(current);
+    }
+  }
+  return null;
+}
+
+/**
  * MAIN-world: find an upload entry-point by aria-label or icon symbol.
  * Fallback for when exact-label matching fails because the button shows
  * only a Material Icon glyph (+/add/drive_folder_upload) with no text.
  *
  * Priority:
- *   1. aria-label containing "upload" (strongest signal)
+ *   1. aria-label/title containing "upload" or "add media" (strongest signal)
  *   2. Button whose full text is a known upload-icon token
  *   3. Pure add/add_2 icon button that lives inside a panel whose ancestor
  *      text references "upload" or "start frame" (context-gated + weak)
@@ -1930,8 +2465,9 @@ function MAIN_findUploadBySymbol(stampAttr) {
     if (!isVisible(el)) continue;
     // Priority 1: aria-label
     var ariaLabel = lower(el.getAttribute('aria-label') || el.getAttribute('title') || '');
-    if (ariaLabel.indexOf('upload') >= 0) return stamp(el);
+    if (ariaLabel.indexOf('upload') >= 0 || ariaLabel.indexOf('add media') >= 0) return stamp(el);
     var text = lower(el.textContent || '');
+    if (text.indexOf('add media') >= 0) return stamp(el);
     // Priority 2: known upload icon glyphs
     for (var u = 0; u < UPLOAD_ICONS.length; u++) {
       if (text === UPLOAD_ICONS[u] || text.indexOf(UPLOAD_ICONS[u] + ' ') === 0 || text.indexOf(' ' + UPLOAD_ICONS[u]) >= 0) {
@@ -1954,6 +2490,63 @@ function MAIN_findUploadBySymbol(stampAttr) {
     }
   }
   return null;
+}
+
+/**
+ * MAIN-world: find the confirmation button inside the asset picker after the
+ * upload finishes. Live Flow currently labels this button "Add to Prompt".
+ */
+function MAIN_findAddToPromptButton(stampAttr) {
+  function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+  function lower(s) { return normalize(s).toLowerCase(); }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seen = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seen.has(curr)) continue;
+      seen.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var idx = 0; idx < direct.length; idx++) out.push(direct[idx]);
+        var descendants = curr.querySelectorAll('*');
+        for (var jdx = 0; jdx < descendants.length; jdx++) {
+          if (descendants[jdx].shadowRoot && !seen.has(descendants[jdx].shadowRoot)) {
+            queue.push(descendants[jdx].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
+  var nodes = collectAll(document, 'button, [role="button"], [role="menuitem"], [role="option"]');
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    if (!isVisible(el)) continue;
+    var txt = lower(el.textContent || el.getAttribute('aria-label') || '');
+    if (txt === 'add to prompt' || txt === 'add prompt' || txt.indexOf('add to prompt') >= 0) {
+      var attr = String(stampAttr || 'data-bosmax-option');
+      var id = attr + '-add-to-prompt-' + Date.now();
+      el.setAttribute(attr, id);
+      var r = el.getBoundingClientRect();
+      return {
+        ok: true,
+        stamp_id: id,
+        stamp_attr: attr,
+        text: normalize(el.textContent || el.getAttribute('aria-label') || ''),
+        bbox: { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) },
+      };
+    }
+  }
+  return { ok: false, reason: 'no_add_to_prompt_button_visible' };
 }
 
 function MAIN_dismissPromoOverlays() {
@@ -2771,10 +3364,31 @@ async function _insertPrompt(scripting, tabId, promptText) {
 }
 
 /**
- * Steps 10/11 — click Start, then click Upload media. Both use the
- * exact-label finder. If the SOP runner is called WITHOUT a media
- * asset (smoke test), the caller can pass opts.skipUpload = true.
+ * Upload lane helpers.
+ *
+ * Live Flow currently enters the upload modal from the composer-side
+ * "+ / add_2 Create" launcher, not from a literal Start button. The
+ * telemetry stage name stays frozen as F2V_SOP_START_CLICKED, but the
+ * click target is the real asset-picker launcher when present.
  */
+async function _clickStartEntryPoint(scripting, tabId, opts) {
+  const stampAttr = opts?.stampAttr || 'data-bosmax-option';
+  const launcher = await _runMainWorld(scripting, tabId, MAIN_stampAssetPickerLauncher, [stampAttr]);
+  if (launcher && launcher.ok === true && launcher.stamp_id) {
+    const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [launcher.stamp_attr, launcher.stamp_id]);
+    if (click && click.ok === true) {
+      return {
+        ok: true,
+        label: 'Start',
+        role: launcher.strategy || 'asset_picker_launcher',
+        bbox: launcher.bbox || null,
+        visible_candidates: [],
+      };
+    }
+  }
+  return _clickStart(scripting, tabId, opts);
+}
+
 async function _clickStart(scripting, tabId, opts) {
   const step = {
     label: 'Start',
@@ -2783,17 +3397,68 @@ async function _clickStart(scripting, tabId, opts) {
     errorCode: ERR.START_BUTTON_NOT_FOUND,
     stage: 'F2V_SOP_START_CLICKED',
   };
-  return _clickVisibleOptionExact(scripting, tabId, step, opts);
+  const result = await _clickVisibleOptionExact(scripting, tabId, step, opts);
+  if (result.ok) return result;
+  const stampAttr = opts?.stampAttr || 'data-bosmax-option';
+  console.log('[FlowAgent] Start slot: exact label not found. Trying semantic slot fallback.');
+  const slot = await _runMainWorld(scripting, tabId, MAIN_findUploadSlotByLabel, ['Start', stampAttr]);
+  if (slot && slot.stamp_id) {
+    const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [slot.stamp_attr, slot.stamp_id]);
+    if (click && click.ok === true) {
+      return { ok: true, label: 'Start', role: slot.role || 'slot_fallback', bbox: slot.bbox || null, visible_candidates: [] };
+    }
+  }
+  return result;
 }
+
+async function _clickVisibleActionExact(scripting, tabId, step, opts) {
+  const stampAttr = opts?.stampAttr || 'data-bosmax-option';
+  const findResult = await _runMainWorld(
+    scripting, tabId, MAIN_findVisibleCandidatesByExactLabel,
+    [step.label, step.aliases || [], step.preferredRoles || [], stampAttr],
+  );
+  if (!findResult || findResult.ok !== true || !Array.isArray(findResult.matches) || findResult.matches.length === 0) {
+    return {
+      ok: false,
+      error: step.errorCode,
+      detail: 'visible_action_not_found',
+      label: step.label,
+      visible_candidates: findResult?.visible_candidates || [],
+    };
+  }
+  const top = findResult.matches[0];
+  const clickResult = await _runMainWorld(
+    scripting, tabId, MAIN_clickStampedElement,
+    [top.stamp_attr, top.stamp_id],
+  );
+  if (!clickResult || clickResult.ok !== true) {
+    return {
+      ok: false,
+      error: step.errorCode,
+      detail: clickResult?.reason || 'click_failed',
+      label: step.label,
+      visible_candidates: findResult?.visible_candidates || [],
+    };
+  }
+  await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+  return {
+    ok: true,
+    label: step.label,
+    role: top.role,
+    bbox: top.bbox,
+    visible_candidates: findResult?.visible_candidates || [],
+  };
+}
+
 async function _clickUploadMedia(scripting, tabId, opts) {
   const step = {
     label: 'Upload media',
-    aliases: ['upload Upload media', 'Upload', 'Upload from device'],
+    aliases: ['upload Upload media', 'Upload', 'Upload from device', 'Add Media', 'add Add Media'],
     preferredRoles: ['button', 'option', 'menuitem'],
     errorCode: ERR.UPLOAD_MEDIA_NOT_FOUND,
     stage: 'F2V_SOP_UPLOAD_CLICKED',
   };
-  const result = await _clickVisibleOptionExact(scripting, tabId, step, opts);
+  const result = await _clickVisibleActionExact(scripting, tabId, step, opts);
   if (result.ok) return result;
   // Symbol fallback: exact label failed — try aria-label / icon-only detection.
   // Covers the case where Google Flow shows only a + (add) icon with no text label.
@@ -2805,6 +3470,27 @@ async function _clickUploadMedia(scripting, tabId, opts) {
     const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [sym.stamp_attr, sym.stamp_id]);
     if (click && click.ok === true) {
       return { ok: true, label: 'Upload media', role: 'symbol_fallback', bbox: sym.bbox };
+    }
+  }
+  return result;
+}
+
+async function _clickAddToPrompt(scripting, tabId, opts) {
+  const step = {
+    label: 'Add to Prompt',
+    aliases: ['Add Prompt'],
+    preferredRoles: ['button', 'option', 'menuitem'],
+    errorCode: ERR.ADD_TO_PROMPT_NOT_FOUND,
+    stage: 'F2V_SOP_UPLOAD_WAIT_DONE',
+  };
+  const result = await _clickVisibleActionExact(scripting, tabId, step, opts);
+  if (result.ok) return result;
+  const stampAttr = opts?.stampAttr || 'data-bosmax-option';
+  const addPrompt = await _runMainWorld(scripting, tabId, MAIN_findAddToPromptButton, [stampAttr]);
+  if (addPrompt && addPrompt.ok === true && addPrompt.stamp_id) {
+    const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [addPrompt.stamp_attr, addPrompt.stamp_id]);
+    if (click && click.ok === true) {
+      return { ok: true, label: 'Add to Prompt', role: 'add_to_prompt_fallback', bbox: addPrompt.bbox || null };
     }
   }
   return result;
@@ -2971,6 +3657,10 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
         recordStage('F2V_SOP_NEW_PROJECT_READY', 'FAIL', np?.error || 'new_project_failed');
         return { ok: false, error: ERR.NEW_PROJECT_FAILED, detail: np?.error || null, stages };
       }
+      const settledTabId = Number(np.flow_tab_id || np.tabId || 0);
+      if (settledTabId > 0) {
+        tabId = settledTabId;
+      }
     }
     recordStage('F2V_SOP_NEW_PROJECT_READY', 'PASS', null);
 
@@ -2995,15 +3685,31 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
         const preState = await _runMainWorld(scripting, tabId, MAIN_getBottomComposerState, []);
         const ratioOk = Boolean(preState && preState.detectedRatio === '9:16');
         const countOk = Boolean(preState && preState.detectedCount === '1x');
+        const modelReadable = Boolean(preState && preState.detectedModelCanonical);
         const modelOk = Boolean(preState && (desiredModel
           ? (preState.detectedModelFamily === desiredModel.family || preState.detectedModelCanonical === desiredModel.canon)
-          : Boolean(preState.detectedModelCanonical)));
+          : modelReadable));
+        // Model non-fatal. The live F2V bottom pill is "Video crop_9_16 1x" — it
+        // does NOT carry the model, so detectedModel is UNKNOWN even on a perfectly
+        // configured editor. When aspect + count are already correct but the model
+        // simply cannot be read from the pill, opening the settings panel to
+        // "verify" a model we can't see is actively harmful: Flow swaps the pill out
+        // for the expanded panel, so the subsequent ratio/count confirmation can no
+        // longer read the pill and the collapsed aspect sub-menu returns 0
+        // candidates → ERR_F2V_OPTION_RATIO_9_16_NOT_FOUND on an already-9:16 editor.
+        // The DOM diagnostic lane already treats F2V model-UNKNOWN as non-fatal
+        // (mode_mismatch_non_fatal / page_preselection_ready); mirror that here and
+        // let the model step accept the current model without a panel.
+        const modelNonFatal = ratioOk && countOk && !modelReadable;
 
-        if (ratioOk && countOk && modelOk) {
-          console.log('[FlowAgent] Tier One: aspect + count + model already configured on the pill — no panel needed.');
-          recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', 'launcher=tier_one_pill_confirmed');
+        if (ratioOk && countOk && (modelOk || modelNonFatal)) {
+          const confirmReason = modelOk
+            ? 'tier_one_pill_confirmed'
+            : 'tier_one_pill_confirmed_model_nonfatal';
+          console.log(`[FlowAgent] Tier One: aspect + count${modelOk ? ' + model' : ' (model accepted as current — not on pill)'} already configured — no panel needed.`);
+          recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', `launcher=${confirmReason}`);
           recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS',
-            `strategy=tier_one_pill_confirmed pill=${JSON.stringify(String(preState.pillText || '').slice(0, 80))}`);
+            `strategy=${confirmReason} pill=${JSON.stringify(String(preState.pillText || '').slice(0, 80))}`);
           // Fall through: each ratio/count/model step semantic-skips below.
         } else {
           // Tier Two — dismiss promo overlays, then open the settings panel.
@@ -3134,17 +3840,7 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     recordStage('F2V_SOP_SETTINGS_PANEL_CLOSE_ATTEMPT', 'PASS', JSON.stringify(panelCloseResult || {}));
     await _sleep(800);
 
-    // Step 9 — insert prompt.
-    const promptResult = await _insertPrompt(scripting, tabId, job?.prompt || '');
-    if (!promptResult.ok) {
-      recordStage('F2V_SOP_PROMPT_INSERTED', 'FAIL', `${promptResult.error} ${promptResult.detail}`);
-      return { ok: false, error: promptResult.error, detail: promptResult.detail, stages, stage_results: stageResults };
-    }
-    stageResults.prompt_inserted = true;
-    recordStage('F2V_SOP_PROMPT_INSERTED', 'PASS',
-      `inserted_length=${promptResult.inserted_length} field_value_length=${promptResult.field_value_length}`);
-
-    // Step 10/11 — Start-slot click + media attach.
+    // Step 9/10/11 — upload lane.
     // CDP upload (Phase 2, opt-in via opts.cdpFileChooserUpload) must ARM file-chooser
     // interception BEFORE the Start-slot click, because that click opens the native OS
     // file chooser (there is no in-DOM "Upload media" control — confirmed by live UAT).
@@ -3164,8 +3860,11 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
       recordStage('F2V_SOP_CDP_FILE_CHOOSER_ARMED', 'PASS', `slot=Start file=${armRes.expectedFileName || ''}`);
     }
 
-    // Step 10 — click Start (frame slot). In CDP mode this opens the native file chooser.
-    const startResult = await _clickStart(scripting, tabId, opts);
+    // Step 10 — open the upload entrypoint. Default DOM flow uses the live
+    // composer asset launcher; CDP retains the slot-click semantics.
+    const startResult = _useCdpUpload
+      ? await _clickStart(scripting, tabId, opts)
+      : await _clickStartEntryPoint(scripting, tabId, opts);
     if (!startResult.ok) {
       recordStage('F2V_SOP_START_CLICKED', 'FAIL', `${startResult.error} ${startResult.detail}`);
       return { ok: false, error: startResult.error, detail: startResult.detail, stages, stage_results: stageResults };
@@ -3205,19 +3904,34 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
       stageResults.media_attached = true;
       recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'PASS', `waited_ms=${waitMs} strategy=cdp_file_chooser`);
     } else {
-      // Step 11 — click Upload media (proven DOM path; default).
+      // Step 11 — click Upload media in the asset picker.
       const uploadResult = await _clickUploadMedia(scripting, tabId, opts);
       if (!uploadResult.ok) {
         recordStage('F2V_SOP_UPLOAD_CLICKED', 'FAIL', `${uploadResult.error} ${uploadResult.detail}`);
         return { ok: false, error: uploadResult.error, detail: uploadResult.detail, stages, stage_results: stageResults };
       }
       recordStage('F2V_SOP_UPLOAD_CLICKED', 'PASS', `role=${uploadResult.role}`);
-      // Step 12 — wait 10 seconds for media attachment.
+      // Step 12 — wait for the upload card to settle, then confirm it into the prompt.
       const waitMs = Math.max(0, Number(opts?.uploadWaitMs ?? SOP_DEFAULT_UPLOAD_WAIT_MS));
       await _sleep(waitMs);
+      const addPromptResult = await _clickAddToPrompt(scripting, tabId, opts);
+      if (!addPromptResult.ok) {
+        recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'FAIL', `${addPromptResult.error} ${addPromptResult.detail}`);
+        return { ok: false, error: addPromptResult.error, detail: addPromptResult.detail, stages, stage_results: stageResults };
+      }
       stageResults.media_attached = true;
-      recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'PASS', `waited_ms=${waitMs}`);
+      recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'PASS', `waited_ms=${waitMs} add_to_prompt_role=${addPromptResult.role}`);
     }
+
+    // Step 12 — insert prompt after asset upload confirmation.
+    const promptResult = await _insertPrompt(scripting, tabId, job?.prompt || '');
+    if (!promptResult.ok) {
+      recordStage('F2V_SOP_PROMPT_INSERTED', 'FAIL', `${promptResult.error} ${promptResult.detail}`);
+      return { ok: false, error: promptResult.error, detail: promptResult.detail, stages, stage_results: stageResults };
+    }
+    stageResults.prompt_inserted = true;
+    recordStage('F2V_SOP_PROMPT_INSERTED', 'PASS',
+      `inserted_length=${promptResult.inserted_length} field_value_length=${promptResult.field_value_length}`);
 
     // HARD GATE before generate — operator-specified.
     if (stageResults.prompt_inserted !== true || (opts?.skipUpload !== true && stageResults.media_attached !== true)) {
@@ -3296,17 +4010,22 @@ const _api = {
   MAIN_insertComposerPrompt,
   MAIN_invokeReactFiberSubmit,
   MAIN_stampGenerateButton,
+  MAIN_stampAssetPickerLauncher,
   MAIN_getBottomComposerState,
   MAIN_dismissPromoOverlays,
   MAIN_findVisibleModelByKeyword,
+  MAIN_findUploadSlotByLabel,
   MAIN_findUploadBySymbol,
+  MAIN_findAddToPromptButton,
   // Internal helpers (exported for unit tests)
   _openComposerSettingsPanel,
   _clickVisibleOptionExact,
   _verifySettingsPanelApplied,
   _insertPrompt,
+  _clickStartEntryPoint,
   _clickStart,
   _clickUploadMedia,
+  _clickAddToPrompt,
   _invokeGenerate,
   // Constants
   F2V_FLOW_QUEUE_RUNNER_BUILD_ID,
