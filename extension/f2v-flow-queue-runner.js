@@ -3523,29 +3523,45 @@ async function _insertPrompt(scripting, tabId, promptText) {
 /**
  * Upload lane helpers.
  *
- * Live Flow currently enters the upload modal from the composer-side
- * "+ / add_2 Create" launcher, not from a literal Start button. The
- * telemetry stage name stays frozen as F2V_SOP_START_CLICKED, but the
- * click target is the real asset-picker launcher when present.
+ * The current source-of-truth F2V path is:
+ *   Start -> Upload media -> wait -> Add to Prompt -> prompt -> arrow.
+ * A composer-side "+ / add_2 Create" launcher is kept only as a last-resort
+ * fallback when the Start slot is genuinely unavailable in the live DOM.
  */
 async function _clickStartEntryPoint(scripting, tabId, opts) {
   await _runMainWorld(scripting, tabId, MAIN_closeComposerSettingsPanel, []);
-  await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+  await _sleep(Math.max(300, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+
+  const startSlot = await _clickStart(scripting, tabId, opts);
+  if (startSlot.ok) {
+    return startSlot;
+  }
+
   const stampAttr = opts?.stampAttr || 'data-bosmax-option';
-  const launcher = await _runMainWorld(scripting, tabId, MAIN_stampAssetPickerLauncher, [stampAttr]);
+  const launcher = await _runMainWorld(
+    scripting,
+    tabId,
+    MAIN_stampAssetPickerLauncher,
+    [stampAttr],
+  );
   if (launcher && launcher.ok === true && launcher.stamp_id) {
-    const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [launcher.stamp_attr, launcher.stamp_id]);
+    const click = await _runMainWorld(
+      scripting,
+      tabId,
+      MAIN_clickStampedElement,
+      [launcher.stamp_attr, launcher.stamp_id],
+    );
     if (click && click.ok === true) {
       return {
         ok: true,
         label: 'Start',
-        role: launcher.strategy || 'asset_picker_launcher',
+        role: launcher.strategy || 'asset_picker_launcher_fallback',
         bbox: launcher.bbox || null,
         visible_candidates: [],
       };
     }
   }
-  return _clickStart(scripting, tabId, opts);
+  return startSlot;
 }
 
 async function _clickStart(scripting, tabId, opts) {
@@ -3977,8 +3993,8 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
       recordStage('F2V_SOP_CDP_FILE_CHOOSER_ARMED', 'PASS', `slot=Start file=${armRes.expectedFileName || ''}`);
     }
 
-    // Step 10 — open the upload entrypoint. Default DOM flow uses the live
-    // composer asset launcher; CDP retains the slot-click semantics.
+    // Step 10 — open the upload entrypoint. Primary DOM flow clicks the
+    // visible Start slot first, then continues into Upload media.
     const startResult = _useCdpUpload
       ? await _clickStart(scripting, tabId, opts)
       : await _clickStartEntryPoint(scripting, tabId, opts);
@@ -4021,13 +4037,15 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
       stageResults.media_attached = true;
       recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'PASS', `waited_ms=${waitMs} strategy=cdp_file_chooser`);
     } else {
+      const startToUploadWaitMs = Math.max(0, Number(opts?.startToUploadWaitMs ?? 1000));
+      await _sleep(startToUploadWaitMs);
       // Step 11 — click Upload media in the asset picker.
       const uploadResult = await _clickUploadMedia(scripting, tabId, opts);
       if (!uploadResult.ok) {
         recordStage('F2V_SOP_UPLOAD_CLICKED', 'FAIL', `${uploadResult.error} ${uploadResult.detail}`);
         return { ok: false, error: uploadResult.error, detail: uploadResult.detail, stages, stage_results: stageResults };
       }
-      recordStage('F2V_SOP_UPLOAD_CLICKED', 'PASS', `role=${uploadResult.role}`);
+      recordStage('F2V_SOP_UPLOAD_CLICKED', 'PASS', `role=${uploadResult.role} waited_ms=${startToUploadWaitMs}`);
       // Step 12 — wait for the upload card to settle, then confirm it into the prompt.
       const waitMs = Math.max(0, Number(opts?.uploadWaitMs ?? SOP_DEFAULT_UPLOAD_WAIT_MS));
       await _sleep(waitMs);
@@ -4037,7 +4055,9 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
         return { ok: false, error: addPromptResult.error, detail: addPromptResult.detail, stages, stage_results: stageResults };
       }
       stageResults.media_attached = true;
-      recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'PASS', `waited_ms=${waitMs} add_to_prompt_role=${addPromptResult.role}`);
+      const postAddToPromptWaitMs = Math.max(0, Number(opts?.postAddToPromptWaitMs ?? 500));
+      await _sleep(postAddToPromptWaitMs);
+      recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'PASS', `waited_ms=${waitMs} add_to_prompt_role=${addPromptResult.role} post_wait_ms=${postAddToPromptWaitMs}`);
     }
 
     // Step 12 — insert prompt after asset upload confirmation.

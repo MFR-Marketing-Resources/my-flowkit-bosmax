@@ -469,7 +469,37 @@ async function testStartSlotFallbackUsesLabelNodeWhenContainerOwnsClick() {
 	assert.ok(clicked >= 1, "label-node Start fallback should bubble into the owning container");
 }
 
-async function testRunnerUploadsBeforePromptInsertionViaAssetPickerFlow() {
+async function testStartEntryPointPrefersVisibleStartSlotOverCreateLauncher() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+
+	let startClicks = 0;
+	const startButton = document.createElement("button");
+	startButton.type = "button";
+	startButton.textContent = "Start";
+	startButton.addEventListener("click", () => {
+		startClicks += 1;
+	});
+	document.getElementById("composer").appendChild(startButton);
+	setVisibleRect(startButton, 380, 770, 70, 26);
+
+	let createClicks = 0;
+	const createLauncher = document.createElement("button");
+	createLauncher.type = "button";
+	createLauncher.textContent = "add_2 Create";
+	createLauncher.addEventListener("click", () => {
+		createClicks += 1;
+	});
+	document.getElementById("footer").appendChild(createLauncher);
+	setVisibleRect(createLauncher, 382, 848, 94, 32);
+
+	const result = await runner._clickStartEntryPoint(createScriptingAdapter(), 9004, { settleMs: 0 });
+	assert.equal(result.ok, true, "start entrypoint should succeed");
+	assert.ok(startClicks >= 1, "visible Start button must be preferred");
+	assert.equal(createClicks, 0, "composer create launcher must stay fallback-only when Start exists");
+}
+
+async function testRunnerUploadsBeforePromptInsertionViaStartSlotFlow() {
 	installDom(`
 		<!doctype html>
 		<html>
@@ -479,6 +509,7 @@ async function testRunnerUploadsBeforePromptInsertionViaAssetPickerFlow() {
 					<button id="frames-mode" type="button" data-state="active">Frames</button>
 				</div>
 				<form id="composer">
+					<button id="start-slot" type="button">Start</button>
 					<textarea id="prompt" placeholder="What do you want to create?"></textarea>
 					<div id="footer">
 						<button id="create-launcher" type="button">add_2 Create</button>
@@ -496,6 +527,7 @@ async function testRunnerUploadsBeforePromptInsertionViaAssetPickerFlow() {
 	setVisibleRect(document.getElementById("video-mode"), 360, 80, 70, 28);
 	setVisibleRect(document.getElementById("frames-mode"), 440, 80, 80, 28);
 	setVisibleRect(document.getElementById("composer"), 360, 760, 560, 130);
+	setVisibleRect(document.getElementById("start-slot"), 380, 770, 70, 26);
 	setVisibleRect(document.getElementById("prompt"), 390, 815, 470, 26);
 	setVisibleRect(document.getElementById("footer"), 380, 848, 520, 40);
 	setVisibleRect(document.getElementById("create-launcher"), 382, 848, 94, 32);
@@ -503,6 +535,7 @@ async function testRunnerUploadsBeforePromptInsertionViaAssetPickerFlow() {
 	setVisibleRect(document.getElementById("generate-btn"), 864, 848, 32, 32);
 
 	const events = [];
+	let startCaptured = false;
 	let createClickCaptured = false;
 	let uploadClickCaptured = false;
 	let addToPromptCaptured = false;
@@ -515,11 +548,11 @@ async function testRunnerUploadsBeforePromptInsertionViaAssetPickerFlow() {
 		}
 	});
 
-	const createLauncher = document.getElementById("create-launcher");
-	createLauncher.addEventListener("click", () => {
-		if (!createClickCaptured) {
-			events.push("create-launcher-clicked");
-			createClickCaptured = true;
+	const startSlot = document.getElementById("start-slot");
+	startSlot.addEventListener("click", () => {
+		if (!startCaptured) {
+			events.push("start-clicked");
+			startCaptured = true;
 		}
 		const modal = document.createElement("div");
 		modal.id = "asset-modal";
@@ -553,19 +586,28 @@ async function testRunnerUploadsBeforePromptInsertionViaAssetPickerFlow() {
 		});
 	});
 
+	const createLauncher = document.getElementById("create-launcher");
+	createLauncher.addEventListener("click", () => {
+		if (!createClickCaptured) {
+			events.push("create-launcher-clicked");
+			createClickCaptured = true;
+		}
+	});
+
 	const deps = { scripting: createScriptingAdapter(), telemetry: () => {} };
 	const result = await runner.executeF2VVisibleSopRunner(
 		deps,
 		9004,
 		{ mode: "F2V", prompt: "hero product shot" },
-		{ settleMs: 0, uploadWaitMs: 0, skipGenerate: true },
+		{ settleMs: 0, startToUploadWaitMs: 0, uploadWaitMs: 0, postAddToPromptWaitMs: 0, skipGenerate: true },
 	);
 	assert.equal(result.ok, true, "asset picker upload path should succeed: " + JSON.stringify(result.error || result.detail || ""));
 	assert.deepEqual(
 		events.slice(0, 4),
-		["create-launcher-clicked", "upload-media-clicked", "add-to-prompt-clicked", "prompt-inserted"],
-		"runner must upload and confirm the asset before inserting the prompt",
+		["start-clicked", "upload-media-clicked", "add-to-prompt-clicked", "prompt-inserted"],
+		"runner must use Start first, then upload and confirm the asset before inserting the prompt",
 	);
+	assert.equal(createClickCaptured, false, "create launcher must not be used when Start exists");
 	assert.equal(result.stage_results.media_attached, true);
 	assert.equal(result.stage_results.prompt_inserted, true);
 	const uploadWaitIndex = result.stages.findIndex((stage) => stage.stage === "F2V_SOP_UPLOAD_WAIT_DONE" && stage.status === "PASS");
@@ -911,7 +953,8 @@ async function main() {
 	await testStartSlotFallbackAcceptsCreateOrDropMediaLabel();
 	await testStartSlotFallbackTraversesShadowHostContainer();
 	await testStartSlotFallbackUsesLabelNodeWhenContainerOwnsClick();
-	await testRunnerUploadsBeforePromptInsertionViaAssetPickerFlow();
+	await testStartEntryPointPrefersVisibleStartSlotOverCreateLauncher();
+	await testRunnerUploadsBeforePromptInsertionViaStartSlotFlow();
 	await testAddToPromptFallbackClicksAssetCardFirst();
 	await testShadowRootRatioOptionIsFoundAndClickable();
 	await testBottomComposerStateSplitChipsDoNotCollapseTo1x();
