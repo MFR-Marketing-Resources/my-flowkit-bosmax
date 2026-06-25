@@ -93,11 +93,20 @@ class FlowClient:
             snapshot.update(payload)
         snapshot["connected"] = self.connected
         snapshot["state"] = snapshot.get("state") or ("idle" if self.connected else "off")
+        if self.connected and str(snapshot["state"]).lower() == "off":
+            snapshot["state"] = "idle"
         snapshot["flowKeyPresent"] = bool(snapshot.get("flowKeyPresent", bool(self._flow_key)))
         snapshot["manualDisconnect"] = bool(snapshot.get("manualDisconnect", False))
         snapshot["metrics"] = snapshot.get("metrics") if isinstance(snapshot.get("metrics"), dict) else {}
+        healthy_bridge = (
+            self.connected
+            and bool(snapshot.get("ws_connected"))
+            and str(snapshot["state"]).lower() != "off"
+        )
         if error:
             snapshot["error"] = error
+        elif healthy_bridge and snapshot.get("error") == "Extension disconnected":
+            snapshot.pop("error", None)
         elif "error" in snapshot and snapshot["error"] is None:
             snapshot.pop("error", None)
         self.last_state = str(snapshot["state"])
@@ -111,7 +120,16 @@ class FlowClient:
         """Handle incoming message from extension."""
         if data.get("type") == "token_captured":
             self._flow_key = data.get("flowKey")
-            self._cache_status_snapshot({"flowKeyPresent": True})
+            self._cache_status_snapshot(
+                {
+                    "connected": True,
+                    "state": "idle",
+                    "flowKeyPresent": True,
+                    "ws_connected": True,
+                    "runtime_reason": "AGENT_WS_CONNECTED",
+                    "runtime_detail": "Flow Kit background is connected to the local agent.",
+                }
+            )
             logger.info("Flow key captured from extension")
             asyncio.create_task(self._sync_tier())
             return
@@ -122,6 +140,9 @@ class FlowClient:
                     "connected": True,
                     "state": "idle",
                     "flowKeyPresent": bool(data.get("flowKeyPresent") or self._flow_key),
+                    "ws_connected": True,
+                    "runtime_reason": "AGENT_WS_CONNECTED",
+                    "runtime_detail": "Flow Kit background is connected to the local agent.",
                 }
             )
             logger.info("Extension ready, flowKey=%s", "yes" if data.get("flowKeyPresent") else "no")

@@ -1830,6 +1830,7 @@ function connectToAgent() {
 		console.log("[FlowAgent] Connected to agent");
 		chrome.alarms.clear("reconnect");
 		setState("idle");
+		clearHealthyBridgeWsError();
 
 		// Token refresh alarm — 45 min gives buffer before ~60 min expiry
 		chrome.alarms.create("token-refresh", { periodInMinutes: 45 });
@@ -1973,6 +1974,13 @@ function connectToAgent() {
 
 function scheduleReconnect() {
 	chrome.alarms.create("reconnect", { delayInMinutes: 0.083 }); // ~5s
+}
+
+function clearHealthyBridgeWsError() {
+	if (!ws || ws.readyState !== WebSocket.OPEN) return;
+	if (metrics.lastError !== "WS_ERROR") return;
+	metrics.lastError = null;
+	chrome.storage.local.set({ metrics });
 }
 
 function keepAlive() {
