@@ -516,6 +516,11 @@ def _classify_flow_primary_blocker(
     if not composer.get("signed_in_likely", True):
         return "FLOW_EDITOR_NOT_AUTHENTICATED"
 
+    ui_contract_v2 = composer.get("ui_contract_v2") or {}
+    settings_proof = ui_contract_v2.get("settings_proof") or {}
+    if settings_proof.get("visible_wrong_model_in_settings_context"):
+        return "FLOW_VISIBLE_MODEL_MISMATCH"
+
     flow_url = str(composer.get("flow_url") or "")
     if "/project/" not in flow_url and "/edit/" not in flow_url:
         return "FLOW_PROJECT_LIST_NOT_EDITOR"
@@ -529,6 +534,29 @@ def _classify_flow_primary_blocker(
         return "FLOW_PROJECT_LIST_NOT_EDITOR"
     return None
 
+
+def _collect_pre_generate_blockers(composer: dict[str, Any]) -> list[str]:
+    ui_contract_v2 = composer.get("ui_contract_v2") or {}
+    blockers: list[str] = []
+    upload_proof = ui_contract_v2.get("upload_proof") or {}
+    add_to_prompt_proof = ui_contract_v2.get("add_to_prompt_proof") or {}
+    settings_proof = ui_contract_v2.get("settings_proof") or {}
+    prompt_proof = ui_contract_v2.get("prompt_proof") or {}
+    generate_proof = ui_contract_v2.get("generate_proof") or {}
+
+    if upload_proof and not upload_proof.get("passed"):
+        blockers.append("FLOW_UPLOAD_PROOF_MISSING")
+    if add_to_prompt_proof and not add_to_prompt_proof.get("passed"):
+        blockers.append("FLOW_ADD_TO_PROMPT_PROOF_MISSING")
+    if settings_proof.get("visible_wrong_model_in_settings_context"):
+        blockers.append("FLOW_VISIBLE_MODEL_MISMATCH")
+    elif settings_proof and not settings_proof.get("passed"):
+        blockers.append("FLOW_SETTINGS_PROOF_MISSING")
+    if prompt_proof and not prompt_proof.get("passed"):
+        blockers.append("FLOW_PROMPT_NOT_ACCEPTED")
+    if generate_proof and not generate_proof.get("passed"):
+        blockers.append("GENERATE_BUTTON_NOT_ENABLED")
+    return blockers
 
 def _classify_flow_page_state(diagnostic: dict[str, Any]) -> tuple[str, bool]:
     login_markers = [str(item) for item in diagnostic.get("visible_login_markers") or []]
@@ -643,6 +671,15 @@ async def flow_readiness_smoke(body: FlowReadinessSmokeRequest):
     status = await get_flow_client().get_status()
     extension_connected = bool(status.get("connected"))
     composer = await get_flow_client().check_flow_composer_ready(body.mode)
+    ui_contract_v2 = composer.get("ui_contract_v2") or {}
+    editor_capability_ready = bool(
+        composer.get("editor_capability_ready")
+        or ui_contract_v2.get("editor_capability_ready")
+    )
+    pre_generate_ready = bool(
+        composer.get("pre_generate_ready")
+        or ui_contract_v2.get("pre_generate_ready")
+    )
     batch_context = None
     if body.batch_id and body.variant_id:
         batch_context = {"batch_id": body.batch_id, "variant_id": body.variant_id}
@@ -656,6 +693,7 @@ async def flow_readiness_smoke(body: FlowReadinessSmokeRequest):
         execute_status = "PASS" if smoke_result.get("ok") else "STRUCTURED_FAIL"
 
     primary_blocker = _classify_flow_primary_blocker(extension_connected, composer, smoke_result)
+    pre_generate_blockers = _collect_pre_generate_blockers(composer)
     return {
         "status": "BLOCKED" if primary_blocker else "READY",
         "checked_mode": body.mode,
@@ -675,8 +713,11 @@ async def flow_readiness_smoke(body: FlowReadinessSmokeRequest):
         "current_mode_visible": composer.get("current_mode_visible") or composer.get("observed", {}).get("topMode") or "UNKNOWN",
         "blocking_modal_detected": composer.get("blocking_modal_detected", False),
         "flow_composer_ready": bool(composer.get("ok")),
+        "editor_capability_ready": editor_capability_ready,
+        "pre_generate_ready": pre_generate_ready,
         "execute_flow_job_smoke": execute_status,
         "primary_blocker": primary_blocker,
+        "pre_generate_blockers": pre_generate_blockers,
         "last_checked_at": composer.get("last_checked_at") or datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
         "raw_error": composer.get("raw_error") or composer.get("detail") or composer.get("error"),
         "composer": composer,

@@ -263,7 +263,10 @@
 
   function buildDiagnosticPingResponse() {
     const composer = findComposerElement();
+    const observed = observeFlowState();
+    const generateBtn = findGenerateButtonNearComposer();
     const configPill = buildBottomComposerConfigPillSnapshot();
+    const uiContractV2 = buildUiContractV2Proof(null, observed, composer, generateBtn);
     return {
       ok: true,
       runtime_ready: true,
@@ -277,6 +280,11 @@
       prompt_field_found: Boolean(composer),
       bottom_composer_config_pill_visible: configPill.bottom_composer_config_pill_visible,
       bottom_composer_config_pill_text: configPill.bottom_composer_config_pill_text,
+      observed,
+      editor_capability_ready: Boolean(uiContractV2.editor_capability_ready),
+      pre_generate_ready: Boolean(uiContractV2.pre_generate_ready),
+      ui_contract_version: uiContractV2.ui_contract_version,
+      ui_contract_v2: uiContractV2,
       timestamp: new Date().toISOString(),
     };
   }
@@ -292,6 +300,18 @@
     return null;
   }
 
+function flowCropTokenToAspectRatio(token) {
+    switch (token) {
+      case 'crop_9_16': return '9:16';
+      case 'crop_16_9': return '16:9';
+      case 'crop_4_3': return '4:3';
+      case 'crop_1_1': return '1:1';
+      case 'crop_3_4': return '3:4';
+      default: return null;
+    }
+  }
+
+
   function canonicalizeFlowConfigCountToken(text) {
     const lower = String(text || '').toLowerCase().replace(/\s+/g, '');
     if (!lower) return null;
@@ -301,6 +321,321 @@
     if (reverseMatch) return `${reverseMatch[1]}x`;
     return null;
   }
+
+function isSettingsScopedModelSource(source) {
+    return [
+      'settings_context',
+      'settings_panel',
+      'settings_surface',
+      'model_dropdown',
+      'config_pill',
+      'composer_settings_surface',
+    ].includes(String(source || ''));
+  }
+
+  function collectVisiblePreviewNodesWithin(root) {
+    if (!root || !root.querySelectorAll) return [];
+    const nodes = root.querySelectorAll('img, canvas, video, picture, [style*="background-image"]');
+    const previews = [];
+    for (const node of nodes) {
+      if (!isVisible(node)) continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 24 || rect.height < 24) continue;
+      previews.push({
+        node,
+        rect,
+        tagName: String(node.tagName || '').toLowerCase(),
+      });
+    }
+    return previews;
+  }
+
+  function getComposerAssetPreviewState(composer = null) {
+    const resolvedComposer = composer || findComposerElement();
+    if (!resolvedComposer) {
+      return {
+        ok: false,
+        preview_found: false,
+        scope: 'composer_surface',
+      };
+    }
+
+    const scopedRoots = collectComposerContextRoots(resolvedComposer, 5);
+    for (const root of scopedRoots) {
+      const previews = collectVisiblePreviewNodesWithin(root);
+      const composerRect = resolvedComposer.getBoundingClientRect();
+      const scopedPreview = previews.find((preview) => {
+        const rect = preview.rect;
+        const horizontallyNear = rect.right >= (composerRect.left - 160)
+          && rect.left <= (composerRect.right + 220);
+        const verticallyNear = Math.abs((rect.top + rect.height / 2) - (composerRect.top + composerRect.height / 2))
+          <= Math.max(composerRect.height * 2.5, 220);
+        return horizontallyNear && verticallyNear;
+      });
+      if (scopedPreview) {
+        return {
+          ok: true,
+          preview_found: true,
+          scope: 'composer_surface',
+          strategy: 'composer_surface_preview',
+          tag_name: scopedPreview.tagName,
+          bbox: {
+            x: Math.round(scopedPreview.rect.left),
+            y: Math.round(scopedPreview.rect.top),
+            width: Math.round(scopedPreview.rect.width),
+            height: Math.round(scopedPreview.rect.height),
+          },
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      preview_found: false,
+      scope: 'composer_surface',
+    };
+  }
+
+  function isComposerScopedSlotContainer(slotContainer, composer = null) {
+    if (!slotContainer) return false;
+    const resolvedComposer = composer || findComposerElement();
+    if (!resolvedComposer) return false;
+    const scopedRoots = collectComposerContextRoots(resolvedComposer, 5);
+    if (scopedRoots.some((root) => root && (root.contains(slotContainer) || slotContainer.contains(root)))) {
+      return true;
+    }
+    return isNearComposerDock(slotContainer, resolvedComposer);
+  }
+
+  function findVisibleSettingsSaveButton() {
+    const roots = [];
+    const settingsSection = findFlowSettingsSection('F2V') || findFlowSettingsSection('IMG');
+    if (settingsSection) roots.push(settingsSection);
+    const composer = findComposerElement();
+    roots.push(...collectComposerContextRoots(composer, 5));
+    roots.push(document);
+    const seen = new Set();
+    for (const root of roots) {
+      if (!root || seen.has(root) || !root.querySelectorAll) continue;
+      seen.add(root);
+      const buttons = root.querySelectorAll('button, [role="button"], [role="menuitem"]');
+      for (const btn of buttons) {
+        if (!isVisible(btn)) continue;
+        const text = normalizeText(btn.textContent || btn.getAttribute('aria-label') || '');
+        if (text.toLowerCase() === 'save') {
+          return btn;
+        }
+      }
+    }
+    return null;
+  }
+
+  function getComposerAcceptedPromptState(composer = null) {
+    const resolvedComposer = composer || findComposerElement();
+    if (!resolvedComposer) {
+      return {
+        ok: false,
+        prompt_accepted: false,
+        value_length: 0,
+      };
+    }
+    const rawValue = typeof resolvedComposer.value === 'string'
+      ? resolvedComposer.value
+      : (resolvedComposer.textContent || '');
+    const normalizedValue = normalizeText(rawValue);
+    const placeholder = normalizeText(
+      resolvedComposer.getAttribute('placeholder')
+      || resolvedComposer.getAttribute('aria-label')
+      || resolvedComposer.getAttribute('data-placeholder')
+      || '',
+    );
+    const promptAccepted = Boolean(
+      normalizedValue
+      && normalizedValue !== 'What do you want to create?'
+      && normalizedValue !== placeholder
+      && normalizedValue !== 'Editable text'
+    );
+    return {
+      ok: true,
+      prompt_accepted: promptAccepted,
+      value_length: normalizedValue.length,
+      placeholder_text: placeholder || null,
+    };
+  }
+
+  function buildUiContractV2Proof(mode, observed, composer, generateBtn) {
+    const resolvedComposer = composer || findComposerElement();
+    const resolvedObserved = observed || observeFlowState();
+    const resolvedGenerateBtn = generateBtn || findGenerateButtonNearComposer();
+    const configLauncher = findFlowConfigLauncher();
+    const startSlotContainer = resolveSlotContainer('Start');
+    const startSlotPreviewScoped = Boolean(
+      startSlotContainer
+      && containerHasVisualPreview(startSlotContainer)
+      && isComposerScopedSlotContainer(startSlotContainer, resolvedComposer)
+    );
+    const composerPreview = getComposerAssetPreviewState(resolvedComposer);
+    const promptState = getComposerAcceptedPromptState(resolvedComposer);
+    const saveButton = findVisibleSettingsSaveButton();
+    const modelSource = String(resolvedObserved.modelSource || 'unknown');
+    const modelScoped = isSettingsScopedModelSource(modelSource);
+    const observedModelCanonical = canonicalizeFlowModelLabel(resolvedObserved.model);
+    const expectedModelCanonical = canonicalizeFlowModelLabel(resolveRequestedModel({ mode: mode || 'F2V' }) || FLOW_MODE_CONFIG.F2V.defaultModel);
+    const visibleWrongModelInSettingsContext = Boolean(
+      modelScoped
+      && observedModelCanonical
+      && observedModelCanonical !== 'unknown'
+      && expectedModelCanonical
+      && observedModelCanonical !== expectedModelCanonical
+    );
+    const settingsPersisted = Boolean(
+      resolvedObserved.aspectRatio === '9:16'
+      && resolvedObserved.count === '1x'
+      && (
+        !observedModelCanonical
+        || observedModelCanonical === 'unknown'
+        || !modelScoped
+        || observedModelCanonical === expectedModelCanonical
+      )
+    );
+    const uploadProofPassed = Boolean(
+      composerPreview.preview_found
+      || startSlotPreviewScoped
+    );
+    const addToPromptProofPassed = Boolean(composerPreview.preview_found);
+    const settingsProofPassed = Boolean(
+      settingsPersisted
+      && !visibleWrongModelInSettingsContext
+    );
+    const generateEnabled = Boolean(
+      resolvedGenerateBtn
+      && !resolvedGenerateBtn.disabled
+      && resolvedObserved.generateButtonState === 'enabled'
+    );
+    const editorCapabilityReady = Boolean(
+      resolvedObserved.topMode === 'Video'
+      && resolvedComposer
+      && isComposerEditable(resolvedComposer)
+      && resolvedGenerateBtn
+      && configLauncher
+      && (
+        resolvedObserved.visibleUploadSlots.includes('Start')
+        || Boolean(findElementByText('button, [role="button"], [role="menuitem"]', 'Upload media'))
+        || Boolean(findElementByText('button, [role="button"], [role="menuitem"]', 'Add Media'))
+      )
+    );
+    const preGenerateReady = Boolean(
+      uploadProofPassed
+      && addToPromptProofPassed
+      && settingsProofPassed
+      && promptState.prompt_accepted
+      && generateEnabled
+    );
+
+    return {
+      ui_contract_version: 'GOOGLE_FLOW_UI_CONTRACT_V2',
+      editor_capability_ready: editorCapabilityReady,
+      pre_generate_ready: preGenerateReady,
+      upload_proof: {
+        passed: uploadProofPassed,
+        composer_asset_preview_found: Boolean(composerPreview.preview_found),
+        start_slot_preview_scoped: startSlotPreviewScoped,
+        rejected_visible_upload_slots_only: !uploadProofPassed && resolvedObserved.visibleUploadSlots.includes('Start'),
+      },
+      add_to_prompt_proof: {
+        passed: addToPromptProofPassed,
+        prompt_bound_media_preview_found: Boolean(composerPreview.preview_found),
+      },
+      settings_proof: {
+        passed: settingsProofPassed,
+        aspect_ratio_9_16: resolvedObserved.aspectRatio === '9:16',
+        count_1x: resolvedObserved.count === '1x',
+        expected_model: expectedModelCanonical || 'veo 3.1 - lite',
+        observed_model: resolvedObserved.model,
+        observed_model_scope: modelSource,
+        visible_wrong_model_in_settings_context: visibleWrongModelInSettingsContext,
+        save_visible: Boolean(saveButton),
+        persistence_source: settingsPersisted ? 'collapsed_config_pill_or_settings_surface' : null,
+      },
+      prompt_proof: {
+        passed: Boolean(promptState.prompt_accepted),
+        value_length: promptState.value_length,
+      },
+      generate_proof: {
+        passed: generateEnabled,
+        button_found: Boolean(resolvedGenerateBtn),
+        enabled: generateEnabled,
+      },
+    };
+  }
+
+  function normalizeRequestedAspectRatio(value) {
+    const normalized = normalizeText(value || '');
+    if (!normalized) return null;
+    if (normalized === '9:15') return '9:16';
+    return normalized;
+  }
+
+  function getFlowSettingsSectionHeading(mode) {
+    return String(mode || '').toUpperCase() === 'IMG'
+      ? 'Image generation default'
+      : 'Video generation default';
+  }
+
+  function collectFlowSettingsHeadingNodes(headingText, root = document) {
+    if (!headingText || !root?.querySelectorAll) return [];
+    const needle = normalizeText(headingText).toLowerCase();
+    const nodes = Array.from(
+      root.querySelectorAll('h1, h2, h3, h4, h5, h6, label, p, span, div, button'),
+    );
+    return nodes.filter((node) => {
+      if (!isVisible(node)) return false;
+      const text = normalizeText(
+        node.textContent || node.getAttribute?.('aria-label') || '',
+      ).toLowerCase();
+      return text.includes(needle);
+    });
+  }
+
+  function findFlowSettingsSection(mode, root = document) {
+    const headingText = getFlowSettingsSectionHeading(mode);
+    const headings = collectFlowSettingsHeadingNodes(headingText, root);
+    if (!headings.length) return null;
+
+    const scored = [];
+    for (const heading of headings) {
+      let current = heading;
+      let depth = 0;
+      while (current && depth < 8) {
+        if (current === document.body || current === document.documentElement) break;
+        if (isVisible(current)) {
+          const text = normalizeText(current.innerText || current.textContent || '');
+          if (
+            text.toLowerCase().includes(headingText.toLowerCase())
+            && (canonicalizeFlowConfigCountToken(text) || canonicalizeFlowConfigAspectToken(text) || /nano banana|veo|omni flash/i.test(text))
+          ) {
+            const rect = current.getBoundingClientRect();
+            const area = Math.round(rect.width * rect.height);
+            scored.push({ element: current, area, depth });
+          }
+        }
+        current = current.parentElement;
+        depth += 1;
+      }
+    }
+
+    if (!scored.length) {
+      return headings[0].parentElement || headings[0];
+    }
+
+    scored.sort((left, right) => {
+      const areaDelta = left.area - right.area;
+      if (areaDelta !== 0) return areaDelta;
+      return left.depth - right.depth;
+    });
+    return scored[0].element;
+  }
+
 
   function normalizeFlowConfigPillText(text) {
     const normalized = normalizeText(text);
@@ -3012,8 +3347,11 @@
       topMode: 'UNKNOWN',
       subMode: 'UNKNOWN',
       model: 'UNKNOWN',
+      modelSource: 'unknown',
       aspectRatio: 'UNKNOWN',
+      aspectRatioSource: 'unknown',
       count: 'UNKNOWN',
+      countSource: 'unknown',
       visibleUploadSlots: [],
       visibleAssetPreviews: [],
       composerPresent: false,
@@ -3061,39 +3399,109 @@
     }
     console.log(`[FlowAgent] Detected subMode: ${observed.subMode}`);
 
-    // 3. Detect model
-    const modelElements = document.querySelectorAll('button, span, div, p');
-    for (const el of modelElements) {
-      if (!isVisible(el)) continue;
-      const detectedModel = extractObservedModelLabel(el.textContent);
-      if (detectedModel) {
-        observed.model = detectedModel;
-        break;
+    // 3. Detect model. Flow's model selector is frequently an icon-only Radix
+    // control, so fall back to aria-label/title when textContent carries no label.
+    const scopedSection = observed.topMode === 'Image'
+      ? findFlowSettingsSection('IMG')
+      : findFlowSettingsSection('F2V');
+    const scopedConfig = extractFlowSectionConfig(scopedSection);
+    if (scopedConfig.model !== 'UNKNOWN') {
+      observed.model = scopedConfig.model;
+      observed.modelSource = 'settings_context';
+    }
+    if (scopedConfig.aspectRatio !== 'UNKNOWN') {
+      observed.aspectRatio = scopedConfig.aspectRatio;
+      observed.aspectRatioSource = 'settings_context';
+    }
+    if (scopedConfig.count !== 'UNKNOWN') {
+      observed.count = scopedConfig.count;
+      observed.countSource = 'settings_context';
+    }
+
+    if (observed.model === 'UNKNOWN') {
+      const configPill = buildBottomComposerConfigPillSnapshot();
+      const configPillText = String(
+        configPill.bottom_composer_config_pill_raw_text
+        || configPill.bottom_composer_config_pill_text
+        || '',
+      );
+      const pillModel = extractObservedModelLabel(configPillText);
+      if (pillModel) {
+        observed.model = pillModel;
+        observed.modelSource = 'config_pill';
       }
     }
 
-    // 4. Detect aspect ratio
-    const aspectElements = document.querySelectorAll('button, [role="tab"], [role="button"], span');
-    for (const el of aspectElements) {
-      if (!isVisible(el)) continue;
-      const text = el.textContent.trim();
-      const matchedRatio = IMAGE_ASPECT_RATIOS.find((ratio) => text.includes(ratio));
-      if (!matchedRatio) continue;
-      if (isSelectedControl(el, matchedRatio) || isSelectedControl(el.closest('button'), matchedRatio)) {
-        observed.aspectRatio = matchedRatio;
-        break;
-      }
-    }
-
-    // 5. Detect count
-    const countElements = document.querySelectorAll('button, [role="tab"], [role="button"], span');
-    for (const el of countElements) {
-      if (!isVisible(el)) continue;
-      const text = el.textContent.trim();
-      if (/^[1-4]x$/.test(text)) {
-        if (isSelectedControl(el, text) || isSelectedControl(el.closest('button'), text)) {
-          observed.count = text;
+    if (observed.model === 'UNKNOWN') {
+      const modelElements = document.querySelectorAll('button, span, div, p, [aria-label], [title]');
+      for (const el of modelElements) {
+        if (!isVisible(el)) continue;
+        const detectedModel = extractObservedModelLabel(el.textContent)
+          || extractObservedModelLabel(el.getAttribute('aria-label'))
+          || extractObservedModelLabel(el.getAttribute('title'));
+        if (detectedModel) {
+          observed.model = detectedModel;
+          observed.modelSource = 'global_text';
           break;
+        }
+      }
+    }
+
+    if (observed.aspectRatio === 'UNKNOWN') {
+      const aspectElements = document.querySelectorAll('button, [role="tab"], [role="button"], span');
+      for (const el of aspectElements) {
+        if (!isVisible(el)) continue;
+        const text = el.textContent.trim();
+        const matchedRatio = IMAGE_ASPECT_RATIOS.find((ratio) => text.includes(ratio));
+        if (!matchedRatio) continue;
+        if (isSelectedControl(el, matchedRatio) || isSelectedControl(el.closest('button'), matchedRatio)) {
+          observed.aspectRatio = matchedRatio;
+          observed.aspectRatioSource = 'settings_context';
+          break;
+        }
+      }
+    }
+
+    if (observed.count === 'UNKNOWN') {
+      const countElements = document.querySelectorAll('button, [role="tab"], [role="button"], span');
+      for (const el of countElements) {
+        if (!isVisible(el)) continue;
+        const text = el.textContent.trim();
+        if (/^[1-4]x$/.test(text)) {
+          if (isSelectedControl(el, text) || isSelectedControl(el.closest('button'), text)) {
+            observed.count = text;
+            observed.countSource = 'settings_context';
+            break;
+          }
+        }
+      }
+    }
+
+    // 5b. Collapsed-editor fallback: the F2V/T2V composer folds mode, aspect and
+    // count into a single bottom config pill (e.g. "Video · 10s crop_9_16 1x").
+    // When the expanded controls are not individually selectable, read the pill.
+    if (observed.aspectRatio === 'UNKNOWN' || observed.count === 'UNKNOWN' || observed.topMode === 'UNKNOWN') {
+      const configPill = buildBottomComposerConfigPillSnapshot();
+      const pillText = configPill.bottom_composer_config_pill_raw_text
+        || configPill.bottom_composer_config_pill_text
+        || '';
+      if (pillText) {
+        if (observed.aspectRatio === 'UNKNOWN') {
+          const mappedAspect = flowCropTokenToAspectRatio(canonicalizeFlowConfigAspectToken(pillText));
+          if (mappedAspect) {
+            observed.aspectRatio = mappedAspect;
+            observed.aspectRatioSource = 'config_pill';
+          }
+        }
+        if (observed.count === 'UNKNOWN') {
+          const countToken = canonicalizeFlowConfigCountToken(pillText);
+          if (countToken) {
+            observed.count = countToken;
+            observed.countSource = 'config_pill';
+          }
+        }
+        if (observed.topMode === 'UNKNOWN' && /video/i.test(pillText)) {
+          observed.topMode = 'Video';
         }
       }
     }
@@ -3121,6 +3529,15 @@
     }
     console.log(`[FlowAgent] Detected slots: ${observed.visibleUploadSlots.join(', ')}`);
 
+    // 6b. F2V (Video/Frames) only ever exposes Start/End upload slots. Strip any
+    // slot labels that leaked in from mode toggles or unrelated text so the F2V
+    // surface is not misreported with bogus slots (e.g. "Image", "Scene").
+    if (observed.topMode === 'Video' && observed.subMode === 'Frames') {
+      const F2V_SLOTS = ['Start', 'End'];
+      observed.visibleUploadSlots = observed.visibleUploadSlots.filter((slot) => F2V_SLOTS.includes(slot));
+      observed.visibleAssetPreviews = observed.visibleAssetPreviews.filter((slot) => F2V_SLOTS.includes(slot));
+    }
+
     // 7. Check composer
     observed.composerPresent = !!findComposerElement();
 
@@ -3136,7 +3553,9 @@
   function collectFlowPageStateDiagnostic(mode) {
     const readiness = checkFlowComposerReady(mode);
     const composer = findComposerElement();
+    const generateBtn = findGenerateButtonNearComposer();
     const configPill = buildBottomComposerConfigPillSnapshot();
+    const uiContractV2 = buildUiContractV2Proof(mode, readiness.observed, composer, generateBtn);
     const visibleEditorMarkers = collectVisibleMarkers([
       'Video',
       'Frames',
@@ -3157,15 +3576,8 @@
     const currentModeVisible = readiness.current_mode_visible;
     const pagePreselectionReady = Boolean(
       readiness.signed_in_likely
-      && readiness.composer_found
-      && readiness.composer_editable
-      && Boolean(composer)
-      && readiness.generate_button_found
+      && Boolean(uiContractV2.editor_capability_ready)
       && !readiness.blocking_modal_detected
-      && (
-        String(currentModeVisible || '').includes('Video/Frames')
-        || (visibleEditorMarkers.includes('Video') && visibleEditorMarkers.includes('Frames'))
-      )
     );
     const bodyText = normalizeText(document.body?.innerText || '').slice(0, 2000);
     const buttonTexts = collectVisibleTexts('button, [role="button"]', (el) => el.textContent || '');
@@ -3242,6 +3654,10 @@
       composer_editable: readiness.composer_editable,
       prompt_field_found: Boolean(composer),
       generate_button_found: readiness.generate_button_found,
+      editor_capability_ready: Boolean(uiContractV2.editor_capability_ready),
+      pre_generate_ready: Boolean(uiContractV2.pre_generate_ready),
+      ui_contract_version: uiContractV2.ui_contract_version,
+      ui_contract_v2: uiContractV2,
       bottom_composer_config_pill_visible: configPill.bottom_composer_config_pill_visible,
       bottom_composer_config_pill_text: configPill.bottom_composer_config_pill_text,
       bottom_composer_config_pill_raw_text: configPill.bottom_composer_config_pill_raw_text,
@@ -3282,6 +3698,11 @@
       content_build_id: FLOW_KIT_DOM_BUILD_ID,
       git_sha: FLOW_KIT_DOM_BUILD_ID,
     };
+    const uiContractV2 = buildUiContractV2Proof(mode, observed, composer, generateBtn);
+    result.ui_contract_version = uiContractV2.ui_contract_version;
+    result.ui_contract_v2 = uiContractV2;
+    result.editor_capability_ready = Boolean(uiContractV2.editor_capability_ready);
+    result.pre_generate_ready = Boolean(uiContractV2.pre_generate_ready);
 
     if (mode) {
       result.expected_mode = mode;
@@ -3289,9 +3710,7 @@
 
     result.ok = Boolean(
       result.signed_in_likely &&
-      result.composer_found &&
-      result.composer_editable &&
-      result.generate_button_found &&
+      result.editor_capability_ready &&
       !result.blocking_modal_detected
     );
 
@@ -3458,9 +3877,7 @@
         readiness = await ensureVideoFramesEditorReady();
       }
 
-      const modeVisible = String(readiness.current_mode_visible || '');
-      const modeReady = modeVisible.includes('Video/Frames');
-      if (readiness.ok && readiness.composer_found && readiness.composer_editable && readiness.generate_button_found && modeReady) {
+      if (readiness.ok && readiness.editor_capability_ready === true) {
         return {
           ok: true,
           editor_ready: true,
@@ -3520,7 +3937,7 @@
     let projectListDetected = initialState.landingDetected;
 
     const alreadyReady = await ensureVideoFramesEditorReady();
-    if (alreadyReady.composer_found && alreadyReady.composer_editable && alreadyReady.generate_button_found && String(alreadyReady.current_mode_visible || '').includes('Video/Frames')) {
+    if (alreadyReady.editor_capability_ready === true) {
       return {
         ok: true,
         open_flow_root: initialState.isRoot,
@@ -3615,19 +4032,12 @@
     if (!diagnostic || typeof diagnostic !== 'object') {
       return false;
     }
-    const markers = Array.isArray(diagnostic.visible_project_editor_markers)
-      ? diagnostic.visible_project_editor_markers.map((value) => String(value))
-      : [];
-    const modeVisible = String(diagnostic.current_mode_visible || '');
-    const showsVideoFrames = modeVisible.includes('Video/Frames')
-      || (markers.includes('Video') && markers.includes('Frames'));
     return Boolean(
       diagnostic.runtime_ready
-      && diagnostic.composer_found
-      && diagnostic.composer_editable
-      && diagnostic.generate_button_found
-      && diagnostic.prompt_field_found
-      && showsVideoFrames,
+      && (
+        diagnostic.editor_capability_ready === true
+        || diagnostic.ui_contract_v2?.editor_capability_ready === true
+      ),
     );
   }
 
@@ -3654,14 +4064,11 @@
     if (job.mode === 'F2V') {
       // TRUE_F2V requirements
       expectations.topMode = 'Video';
-      expectations.subMode = 'Frames';
       expectations.modelContains = 'Veo';
       expectations.modelLabel =
         resolveRequestedModel(job) || FLOW_MODE_CONFIG.F2V.defaultModel;
-      expectations.startSlotVisible = true;
       expectations.noImageMode = true;
       expectations.noNanoBanana = true;
-      expectations.noIngredients = true;
       expectations.composerPresent = true;
 
       // Check each requirement
@@ -3673,17 +4080,18 @@
         result.observed = observed;
         return result;
       }
-      if (observed.subMode !== 'Frames') {
+      if (observed.subMode === 'Ingredients') {
         result.ok = false;
         result.error = 'FLOW_MODE_MISMATCH';
-        result.reason = `Expected subMode='Frames', got '${observed.subMode}'`;
+        result.reason = `Expected F2V to avoid Ingredients mode, got '${observed.subMode}'`;
         result.expected = expectations;
         result.observed = observed;
         return result;
       }
       const observedModel = canonicalizeFlowModelLabel(observed.model);
       const expectedModel = canonicalizeFlowModelLabel(expectations.modelLabel);
-      if (!observedModel.includes('veo')) {
+      const scopedModelVisible = isSettingsScopedModelSource(observed.modelSource);
+      if (scopedModelVisible && observedModel && observedModel !== 'unknown' && !observedModel.includes('veo')) {
         result.ok = false;
         result.error = 'FLOW_MODE_MISMATCH';
         result.reason = `Expected model to contain 'Veo', got '${observed.model}'`;
@@ -3691,18 +4099,10 @@
         result.observed = observed;
         return result;
       }
-      if (expectedModel && observedModel && observedModel !== expectedModel) {
+      if (scopedModelVisible && expectedModel && observedModel && observedModel !== 'unknown' && observedModel !== expectedModel) {
         result.ok = false;
         result.error = 'FLOW_MODE_MISMATCH';
         result.reason = `Expected model='${expectations.modelLabel}', got '${observed.model}'`;
-        result.expected = expectations;
-        result.observed = observed;
-        return result;
-      }
-      if (!observed.visibleUploadSlots.includes('Start')) {
-        result.ok = false;
-        result.error = 'FLOW_MODE_MISMATCH';
-        result.reason = `Expected Start slot visible, got slots: ${observed.visibleUploadSlots.join(', ')}`;
         result.expected = expectations;
         result.observed = observed;
         return result;
@@ -3890,13 +4290,12 @@
    */
   function isF2VWorkspaceAlreadyReady() {
     const obs = observeFlowState();
-    if (obs.topMode !== 'Video') return false;
-    if (obs.subMode !== 'Frames') return false;
-    if (!obs.visibleUploadSlots.includes('Start')) return false;
-    if (obs.model && /nano.?banana/i.test(obs.model)) return false;
     const composer = findComposerElement();
-    if (!composer || !isVisible(composer)) return false;
-    return true;
+    const generateBtn = findGenerateButtonNearComposer();
+    const uiContractV2 = buildUiContractV2Proof('F2V', obs, composer, generateBtn);
+    if (obs.topMode !== 'Video') return false;
+    if (obs.model && /nano.?banana/i.test(obs.model) && isSettingsScopedModelSource(obs.modelSource)) return false;
+    return uiContractV2.editor_capability_ready === true;
   }
 
   /**
@@ -4090,18 +4489,25 @@
     }
     logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'PASS', 'topMode=Video');
 
-    // ── Step 4: Select Frames submode ────────────────────────────────────────
+    // ── Step 4: Legacy Frames selector is optional in UI Contract V2. Keep the
+    // click when a visible control exists, but do not hard-fail when the live UI
+    // reaches a valid editor without exposing a Frames button.
     if (subBtn && isVisible(subBtn) && !isSelectedControl(subBtn, 'Frames')) {
       subBtn.click();
       await sleep(800);
     }
 
     const obsAfterFrames = observeFlowState();
-    if (obsAfterFrames.subMode !== 'Frames') {
+    const uiContractAfterFrames = buildUiContractV2Proof('F2V', obsAfterFrames, findComposerElement(), findGenerateButtonNearComposer());
+    if (obsAfterFrames.subMode === 'Ingredients') {
       logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'FAIL', `subMode=${obsAfterFrames.subMode}`);
       throw new Error('ERR_FRAMES_MODE_NOT_ACTIVE');
     }
-    logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'PASS', 'subMode=Frames');
+    if (uiContractAfterFrames.editor_capability_ready !== true) {
+      logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'FAIL', `editor_capability_ready=${uiContractAfterFrames.editor_capability_ready}`);
+      throw new Error('ERR_FRAMES_MODE_NOT_ACTIVE');
+    }
+    logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'PASS', `subMode=${obsAfterFrames.subMode}`);
 
     const composerReady = await ensureF2VComposerReadyBeforeConfig();
     if (!composerReady.ok) {
@@ -4125,16 +4531,19 @@
     logStage(STAGES.FLOW_COUNT_1X_SELECTED, 'PASS');
     logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'PASS', 'model=Veo 3.1 - Lite');
 
-    // ── Step 8: Upload gate — Start slot must be visible ─────────────────────
+    // ── Step 8: Upload gate — V2 requires an upload control, not an old Frames
+    // selector path. Keep Start-slot evidence when present, but accept any valid
+    // editor capability surface.
     const obsForSlot = observeFlowState();
-    if (!obsForSlot.visibleUploadSlots.includes('Start')) {
+    const slotUiContract = buildUiContractV2Proof('F2V', obsForSlot, findComposerElement(), findGenerateButtonNearComposer());
+    if (slotUiContract.editor_capability_ready !== true) {
       logStage(STAGES.START_SLOT_VISIBLE, 'FAIL',
-        `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`,
+        `editor_capability_ready=${slotUiContract.editor_capability_ready} slots=[${obsForSlot.visibleUploadSlots.join(',')}]`,
         buildSelectorEvidenceMeta('upload_slot_label_scan'));
       throw new Error('ERR_START_SLOT_NOT_VISIBLE');
     }
     logStage(STAGES.START_SLOT_VISIBLE, 'PASS',
-      `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`,
+      `slots=[${obsForSlot.visibleUploadSlots.join(',')}] editor_capability_ready=${slotUiContract.editor_capability_ready}`,
       buildSelectorEvidenceMeta('upload_slot_label_scan'));
 
     // ── Step 9: Prompt field must be present ─────────────────────────────────

@@ -261,10 +261,56 @@ function MAIN_findVisibleCandidatesByExactLabel(targetLabel, aliases, preferredR
     }
     return out;
   }
+  function findSectionRootByHeading(headingText) {
+    var heading = normalize(headingText || '').toLowerCase();
+    if (!heading) return null;
+    var nodes = collectAll(document, 'h1, h2, h3, h4, h5, h6, label, p, span, div, button');
+    var best = null;
+    for (var idx2 = 0; idx2 < nodes.length; idx2++) {
+      var node = nodes[idx2];
+      if (!isVisible(node)) continue;
+      var text = normalize(node.textContent || node.getAttribute && node.getAttribute('aria-label') || '').toLowerCase();
+      if (text.indexOf(heading) === -1) continue;
+      var current = node;
+      var depth = 0;
+      while (current && depth < 8) {
+        if (current === document.body || current === document.documentElement) break;
+        if (isVisible(current)) {
+          var scopeText = normalize(current.innerText || current.textContent || '').toLowerCase();
+          if (
+            scopeText.indexOf(heading) >= 0
+            && (scopeText.indexOf('1x') >= 0 || scopeText.indexOf('16:9') >= 0 || scopeText.indexOf('9:16') >= 0 || scopeText.indexOf('veo') >= 0 || scopeText.indexOf('omni flash') >= 0)
+          ) {
+            var rect = current.getBoundingClientRect();
+            var area = rect.width * rect.height;
+            if (!best || area < best.area) {
+              best = { el: current, area: area };
+            }
+          }
+        }
+        current = current.parentElement || null;
+        depth += 1;
+      }
+    }
+    return best ? best.el : null;
+  }
+  function isWithinScope(node, scopeRoot) {
+    if (!node || !scopeRoot) return false;
+    var current = node;
+    while (current) {
+      if (current === scopeRoot) return true;
+      current = current.parentElement || null;
+    }
+    return false;
+  }
 
   var needle = normalize(targetLabel).toLowerCase();
   var aliasNeedles = (aliases || []).map(function (s) { return normalize(s).toLowerCase(); });
   var preferred = Array.isArray(preferredRoles) && preferredRoles.length > 0 ? preferredRoles : null;
+  var videoSectionRoot = findSectionRootByHeading('Video generation default');
+  var configScopedNeedle = /^(9:16|16:9|4:3|3:4|1:1|1x|2x|3x|4x)$/i.test(needle)
+    || needle.indexOf('veo') >= 0
+    || needle.indexOf('omni flash') >= 0;
 
   var matches = [];
   var visibleCandidates = [];
@@ -348,6 +394,13 @@ function MAIN_findVisibleCandidatesByExactLabel(targetLabel, aliases, preferredR
       return aIdx - bIdx;
     });
   }
+  if (configScopedNeedle && videoSectionRoot) {
+    matches.sort(function (a, b) {
+      var aScore = isWithinScope(a.el, videoSectionRoot) ? 0 : 1;
+      var bScore = isWithinScope(b.el, videoSectionRoot) ? 0 : 1;
+      return aScore - bScore;
+    });
+  }
 
   // Stamp + serialise to a plain JSON-safe shape.
   var stampPrefix = String(stampAttr || 'data-bosmax-target');
@@ -362,6 +415,13 @@ function MAIN_findVisibleCandidatesByExactLabel(targetLabel, aliases, preferredR
       role: m.role,
       bbox: m.bbox,
       text: m.text.slice(0, 80),
+      selected: Boolean(
+        m.el.getAttribute && (
+          m.el.getAttribute('aria-selected') === 'true'
+          || m.el.getAttribute('aria-pressed') === 'true'
+          || m.el.getAttribute('data-state') === 'active'
+        )
+      ),
     });
   }
   return { ok: true, matches: out, visible_candidates: visibleCandidates };
@@ -1566,7 +1626,7 @@ function MAIN_stampGenerateButton(stampAttr) {
     }
     return null;
   }
-  var composer = document.querySelector('[data-slate-editor="true"][contenteditable="true"], textarea[placeholder*="What do you want"], textarea, [contenteditable="true"]');
+  var composer = document.querySelector('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea[placeholder*="What do you want"], textarea, [contenteditable="true"]');
   var roots = [];
   if (composer && composer.closest) {
     var formRoot = composer.closest('form, [role="form"], div');
@@ -1593,6 +1653,7 @@ function MAIN_stampGenerateButton(stampAttr) {
         stamp_attr: String(stampAttr || 'data-bosmax-submit-target'),
         text: normalize(b.textContent || b.getAttribute('aria-label') || '').slice(0, 60),
         strategy: strategies[j].name,
+        disabled: Boolean(b.disabled || b.getAttribute('aria-disabled') === 'true'),
       };
     }
   }
@@ -2620,6 +2681,179 @@ function MAIN_selectAssetPickerCandidate(stampAttr) {
   return { ok: false, reason: 'asset_picker_candidate_not_found' };
 }
 
+function MAIN_getUploadSlotPreviewState(slotLabel) {
+  function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+  function lower(s) { return normalize(s).toLowerCase(); }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function describePreviewNode(node) {
+    if (!node || !isVisible(node)) return null;
+    var rect = node.getBoundingClientRect();
+    if (rect.width < 24 || rect.height < 24) return null;
+    var tagName = String(node.tagName || '').toLowerCase();
+    if (tagName === 'picture') {
+      var nestedImg = node.querySelector && node.querySelector('img');
+      return nestedImg ? describePreviewNode(nestedImg) : null;
+    }
+    if (tagName === 'img') {
+      var src = node.currentSrc || node.src || node.getAttribute('src') || '';
+      if (!src) return null;
+      return { tagName: tagName, identity: src, rect: rect };
+    }
+    if (tagName === 'canvas') {
+      return { tagName: tagName, identity: 'canvas', rect: rect };
+    }
+    if (tagName === 'video') {
+      return { tagName: tagName, identity: node.currentSrc || node.getAttribute('src') || 'video', rect: rect };
+    }
+    var style = window.getComputedStyle(node);
+    var bg = style && style.backgroundImage;
+    if (bg && bg !== 'none') {
+      return { tagName: tagName || 'styled', identity: bg, rect: rect };
+    }
+    return null;
+  }
+  function collectCandidateContainers(slot) {
+    var out = [];
+    var seen = new Set();
+    function push(el) {
+      if (!el || seen.has(el) || !isVisible(el)) return;
+      seen.add(el);
+      out.push(el);
+    }
+    var slotInfo = MAIN_findUploadSlotByLabel(slot, 'data-bosmax-preview-probe');
+    var stamped = null;
+    if (slotInfo && slotInfo.stamp_id) {
+      stamped = document.querySelector('[' + slotInfo.stamp_attr + '="' + slotInfo.stamp_id + '"]');
+    }
+    var current = stamped;
+    for (var depth = 0; current && depth < 5; depth++) {
+      push(current);
+      current = current.parentElement || null;
+    }
+    return out;
+  }
+  function collectVisiblePreviewNodes(root) {
+    var nodes = root && root.querySelectorAll
+      ? root.querySelectorAll('img, canvas, video, picture, [style*="background-image"]')
+      : [];
+    var out = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var described = describePreviewNode(nodes[i]);
+      if (described) out.push(described);
+    }
+    return out;
+  }
+  var containers = collectCandidateContainers(slotLabel || 'Start');
+  for (var i = 0; i < containers.length; i++) {
+    var container = containers[i];
+    var previews = collectVisiblePreviewNodes(container);
+    var text = lower(container.textContent || '');
+    var uploadPending = text.indexOf('uploading') >= 0 || text.indexOf('processing') >= 0 || text.indexOf('loading') >= 0;
+    var fileLikeText = /\.(png|jpe?g|webp|gif|bmp)\b/i.test(text)
+      || text.indexOf('generated-') >= 0
+      || text.indexOf('image-') >= 0
+      || text.indexOf('replace') >= 0
+      || text.indexOf('remove') >= 0;
+    if (previews.length > 0 || (!uploadPending && fileLikeText && text.indexOf('drop media') === -1)) {
+      var rect = container.getBoundingClientRect();
+      return {
+        ok: true,
+        slot_found: true,
+        preview_found: previews.length > 0 || fileLikeText,
+        preview_count: previews.length,
+        upload_pending: uploadPending,
+        text: normalize(container.textContent || '').slice(0, 200),
+        bbox: { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) },
+        strategy: 'slot_preview_probe',
+      };
+    }
+  }
+  return { ok: false, slot_found: containers.length > 0, preview_found: false };
+}
+
+function MAIN_getComposerAssetPreviewState() {
+  function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function findComposer() {
+    return document.querySelector('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea[placeholder*="What do you want"], textarea, [contenteditable="true"]');
+  }
+  function collectRoots(composer) {
+    var roots = [];
+    var seen = new Set();
+    var current = composer;
+    var depth = 0;
+    while (current && depth <= 5) {
+      if (!seen.has(current)) {
+        roots.push(current);
+        seen.add(current);
+      }
+      current = current.parentElement || null;
+      depth += 1;
+    }
+    return roots;
+  }
+  function collectPreviewNodes(root) {
+    if (!root || !root.querySelectorAll) return [];
+    var nodes = root.querySelectorAll('img, canvas, video, picture, [style*="background-image"]');
+    var out = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (!isVisible(node)) continue;
+      var rect = node.getBoundingClientRect();
+      if (rect.width < 24 || rect.height < 24) continue;
+      out.push({
+        node: node,
+        rect: rect,
+        text: normalize(node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || ''),
+      });
+    }
+    return out;
+  }
+  var composer = findComposer();
+  if (!composer || !isVisible(composer)) {
+    return { ok: false, preview_found: false, scope: 'composer_surface' };
+  }
+  var composerRect = composer.getBoundingClientRect();
+  var roots = collectRoots(composer);
+  for (var rIdx = 0; rIdx < roots.length; rIdx++) {
+    var previews = collectPreviewNodes(roots[rIdx]);
+    for (var pIdx = 0; pIdx < previews.length; pIdx++) {
+      var rect = previews[pIdx].rect;
+      var horizontallyNear = rect.right >= (composerRect.left - 160) && rect.left <= (composerRect.right + 220);
+      var verticallyNear = Math.abs((rect.top + rect.height / 2) - (composerRect.top + composerRect.height / 2))
+        <= Math.max(composerRect.height * 2.5, 220);
+      if (!horizontallyNear || !verticallyNear) continue;
+      return {
+        ok: true,
+        preview_found: true,
+        scope: 'composer_surface',
+        strategy: 'composer_surface_preview',
+        bbox: {
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        },
+      };
+    }
+  }
+  return { ok: true, preview_found: false, scope: 'composer_surface' };
+}
+
+
+
 function MAIN_closeComposerSettingsPanel() {
   function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
   function isVisible(el) {
@@ -3421,22 +3655,131 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
  * doesn't fail the runner — because some UIs use class-only state.
  */
 async function _verifySettingsPanelApplied(scripting, tabId, opts, sequence) {
+  function pillShowsRatio(rawText, target) {
+    const s = String(rawText || '').toLowerCase();
+    if (target === '9:16') return /crop[_\s-]*9[_\s:.\-]*16/.test(s) || /\b9\s*[:：]\s*16\b/.test(s) || s.indexOf('portrait') >= 0;
+    return false;
+  }
+  function pillShowsCount(rawText, target) {
+    const s = String(rawText || '').toLowerCase();
+    if (target === '1x') return /\b1\s*(?:x|×|variation)\b/.test(s) || /\bx\s*1\b/.test(s) || s.indexOf('1x') >= 0;
+    return false;
+  }
   const results = {};
   const seq = Array.isArray(sequence) && sequence.length ? sequence : SOP_SEQUENCE;
+  const stampAttr = opts?.stampAttr || 'data-bosmax-option';
   for (const step of seq) {
     const found = await _runMainWorld(
       scripting, tabId, MAIN_findVisibleCandidatesByExactLabel,
-      [step.label, step.aliases || [], step.preferredRoles || [], opts?.stampAttr || 'data-bosmax-option'],
+      [step.label, step.aliases || [], step.preferredRoles || [], stampAttr],
     );
     if (found?.ok && Array.isArray(found.matches) && found.matches.length > 0) {
-      // We can't easily fetch the live aria-selected after stamping
-      // without another script roundtrip; record presence + first match.
-      results[step.label] = { found: true, role: found.matches[0].role };
+      results[step.label] = {
+        found: true,
+        role: found.matches[0].role,
+        selected: found.matches[0].selected === true,
+      };
     } else {
       results[step.label] = { found: false };
     }
   }
-  return { ok: true, results };
+  let saveVisible = false;
+  let saveClicked = false;
+  const saveButton = await _runMainWorld(
+    scripting,
+    tabId,
+    MAIN_findVisibleCandidatesByExactLabel,
+    ['Save', [], ['button', 'menuitem'], stampAttr],
+  );
+  if (saveButton?.ok && Array.isArray(saveButton.matches) && saveButton.matches.length > 0) {
+    saveVisible = true;
+    const saveClick = await _runMainWorld(
+      scripting,
+      tabId,
+      MAIN_clickStampedElement,
+      [saveButton.matches[0].stamp_attr, saveButton.matches[0].stamp_id],
+    );
+    saveClicked = Boolean(saveClick?.ok);
+    await _sleep(Math.max(300, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+  }
+
+  const closeResult = await _runMainWorld(scripting, tabId, MAIN_closeComposerSettingsPanel, []);
+  await _sleep(Math.max(500, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+  const collapsedState = await _runMainWorld(scripting, tabId, MAIN_getBottomComposerState, []);
+  const desiredModel = _resolveDesiredModel(opts?.job || null);
+  const desiredModelCanonical = desiredModel?.canon || '';
+  const desiredModelFamily = desiredModel?.family || '';
+  const collapsedRatioOk = Boolean(collapsedState && (
+    collapsedState.detectedRatio === '9:16' || pillShowsRatio(collapsedState.pillText || '', '9:16')
+  ));
+  const collapsedCountOk = Boolean(collapsedState && (
+    collapsedState.detectedCount === '1x' || pillShowsCount(collapsedState.pillText || '', '1x')
+  ));
+  const collapsedModelCanonical = String(collapsedState?.detectedModelCanonical || '').toLowerCase();
+  const collapsedModelFamily = String(collapsedState?.detectedModelFamily || '').toLowerCase();
+  const visibleWrongModelInSettingsContext = Boolean(
+    desiredModelCanonical
+    && collapsedModelCanonical
+    && collapsedModelCanonical !== desiredModelCanonical
+  );
+  let modelProof = {
+    visible: Boolean(collapsedModelCanonical),
+    passed: !desiredModelCanonical || !collapsedModelCanonical || collapsedModelCanonical === desiredModelCanonical,
+    source: collapsedModelCanonical ? 'collapsed_config_pill' : null,
+  };
+
+  if (!modelProof.visible && desiredModelCanonical) {
+    const reopenPanel = await _openComposerSettingsPanel(scripting, tabId, opts);
+    if (reopenPanel?.ok) {
+      const exactModel = await _runMainWorld(
+        scripting,
+        tabId,
+        MAIN_findVisibleCandidatesByExactLabel,
+        [desiredModel.label, desiredModel.aliases || [], ['button', 'option', 'menuitemradio', 'menuitem'], stampAttr],
+      );
+      if (exactModel?.ok && Array.isArray(exactModel.matches) && exactModel.matches.length > 0) {
+        modelProof = {
+          visible: true,
+          passed: exactModel.matches[0].selected === true,
+          source: 'reopened_settings_panel',
+        };
+      } else {
+        const familyModel = desiredModelFamily
+          ? await _runMainWorld(scripting, tabId, MAIN_findVisibleModelByKeyword, [desiredModelFamily, stampAttr])
+          : null;
+        if (familyModel) {
+          modelProof = {
+            visible: true,
+            passed: true,
+            source: 'reopened_settings_panel_family_visible',
+          };
+        }
+      }
+      await _runMainWorld(scripting, tabId, MAIN_closeComposerSettingsPanel, []);
+      await _sleep(Math.max(400, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+    }
+  }
+
+  const persistenceVerified = Boolean(
+    collapsedRatioOk
+    && collapsedCountOk
+    && !visibleWrongModelInSettingsContext
+    && modelProof.passed
+    && (!saveVisible || saveClicked)
+  );
+  return {
+    ok: persistenceVerified,
+    results,
+    save_visible: saveVisible,
+    save_clicked: saveClicked,
+    close_result: closeResult || null,
+    ratio_9_16_persisted: collapsedRatioOk,
+    count_1x_persisted: collapsedCountOk,
+    model_proof: modelProof,
+    visible_wrong_model_in_settings_context: visibleWrongModelInSettingsContext,
+    persistence_verified: persistenceVerified,
+    persistence_source: modelProof.source || 'collapsed_config_pill',
+  };
 }
 
 /**
@@ -3658,31 +4001,48 @@ async function _clickAddToPrompt(scripting, tabId, opts) {
     errorCode: ERR.ADD_TO_PROMPT_NOT_FOUND,
     stage: 'F2V_SOP_UPLOAD_WAIT_DONE',
   };
-  const result = await _clickVisibleActionExact(scripting, tabId, step, opts);
-  if (result.ok) return result;
   const stampAttr = opts?.stampAttr || 'data-bosmax-option';
-  const assetCard = await _runMainWorld(scripting, tabId, MAIN_selectAssetPickerCandidate, [stampAttr]);
-  if (assetCard && assetCard.ok === true && assetCard.stamp_id) {
-    const selectClick = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [assetCard.stamp_attr, assetCard.stamp_id]);
-    if (selectClick && selectClick.ok === true) {
-      await _sleep(Math.max(200, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
-      const retryResult = await _clickVisibleActionExact(scripting, tabId, step, opts);
-      if (retryResult.ok) {
-        return {
-          ...retryResult,
-          role: retryResult.role || 'asset_card_then_add_to_prompt',
-        };
+  const deadline = Date.now() + Math.max(0, Number(opts?.addToPromptWaitMs ?? 12000));
+  let lastResult = { ok: false, error: step.errorCode, detail: 'visible_action_not_found' };
+  while (Date.now() <= deadline) {
+    const result = await _clickVisibleActionExact(scripting, tabId, step, opts);
+    if (result.ok) return result;
+    lastResult = result;
+    const assetCard = await _runMainWorld(scripting, tabId, MAIN_selectAssetPickerCandidate, [stampAttr]);
+    if (assetCard && assetCard.ok === true && assetCard.stamp_id) {
+      const selectClick = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [assetCard.stamp_attr, assetCard.stamp_id]);
+      if (selectClick && selectClick.ok === true) {
+        await _sleep(Math.max(250, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+        const retryResult = await _clickVisibleActionExact(scripting, tabId, step, opts);
+        if (retryResult.ok) {
+          return {
+            ...retryResult,
+            role: retryResult.role || 'asset_card_then_add_to_prompt',
+          };
+        }
+        lastResult = retryResult;
       }
     }
-  }
-  const addPrompt = await _runMainWorld(scripting, tabId, MAIN_findAddToPromptButton, [stampAttr]);
-  if (addPrompt && addPrompt.ok === true && addPrompt.stamp_id) {
-    const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [addPrompt.stamp_attr, addPrompt.stamp_id]);
-    if (click && click.ok === true) {
-      return { ok: true, label: 'Add to Prompt', role: 'add_to_prompt_fallback', bbox: addPrompt.bbox || null };
+    const addPrompt = await _runMainWorld(scripting, tabId, MAIN_findAddToPromptButton, [stampAttr]);
+    if (addPrompt && addPrompt.ok === true && addPrompt.stamp_id) {
+      const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [addPrompt.stamp_attr, addPrompt.stamp_id]);
+      if (click && click.ok === true) {
+        return { ok: true, label: 'Add to Prompt', role: 'add_to_prompt_fallback', bbox: addPrompt.bbox || null };
+      }
     }
+    const composerPreviewState = await _runMainWorld(scripting, tabId, MAIN_getComposerAssetPreviewState, []);
+    if (composerPreviewState && composerPreviewState.ok === true && composerPreviewState.preview_found === true) {
+      return {
+        ok: true,
+        label: 'Add to Prompt',
+        role: 'composer_prompt_bound_preview_present',
+        skipped: true,
+        bbox: composerPreviewState.bbox || null,
+      };
+    }
+    await _sleep(500);
   }
-  return result;
+  return lastResult;
 }
 
 /**
@@ -3695,6 +4055,9 @@ async function _invokeGenerate(scripting, tabId, opts) {
   const stamp = await _runMainWorld(scripting, tabId, MAIN_stampGenerateButton, [stampAttr]);
   if (!stamp || stamp.ok !== true) {
     return { ok: false, error: ERR.MAIN_WORLD_SUBMIT_HANDLER_NOT_FOUND, detail: 'generate_button_not_visible' };
+  }
+  if (stamp.disabled === true) {
+    return { ok: false, error: ERR.GENERATE_PRECONDITION_FAILED, detail: 'generate_button_disabled', button_text: stamp.text || null };
   }
   const fiber = await _runMainWorld(scripting, tabId, MAIN_invokeReactFiberSubmit, [stamp.stamp_attr, stamp.stamp_id]);
   if (fiber && fiber.ok === true) {
@@ -3830,9 +4193,14 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
 
   const stageResults = {
     settings_configured: false,
+    settings_proof: null,
     prompt_inserted: false,
+    prompt_proof: null,
     start_clicked: false,
     media_attached: false,
+    upload_proof: null,
+    add_to_prompt_proof: null,
+    generate_proof: null,
     generate_submitted: false,
   };
 
@@ -3960,18 +4328,20 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     }
 
     // Step 8 — verify settings applied (soft check — informational).
-    const verify = await _verifySettingsPanelApplied(scripting, tabId, opts, effectiveSequence);
-    stageResults.settings_configured = true;
-    recordStage('F2V_SOP_SETTINGS_CONFIGURED', 'PASS', `results=${JSON.stringify(verify.results || {})}`);
-
-    // Step 8b: Unconditionally close the settings panel before inserting the prompt.
-    // Google Flow sets contenteditable="false" on the Slate editor when the settings panel
-    // is open. Close the panel by re-clicking the bottom composer config pill (toggle button).
-    // We do this unconditionally because the panel may be open even when all settings were
-    // already_selected (no click was needed, so the panel was never explicitly closed).
-    const panelCloseResult = await _runMainWorld(scripting, tabId, MAIN_closeComposerSettingsPanel, []);
-    recordStage('F2V_SOP_SETTINGS_PANEL_CLOSE_ATTEMPT', 'PASS', JSON.stringify(panelCloseResult || {}));
-    await _sleep(800);
+    const verify = await _verifySettingsPanelApplied(scripting, tabId, { ...opts, job }, effectiveSequence);
+    stageResults.settings_proof = verify;
+    stageResults.settings_configured = Boolean(verify?.ok);
+    if (!verify?.ok) {
+      recordStage('F2V_SOP_SETTINGS_CONFIGURED', 'FAIL', `results=${JSON.stringify(verify || {})}`);
+      return {
+        ok: false,
+        error: ERR.SETTINGS_NOT_CONFIGURED_BEFORE_UPLOAD,
+        detail: 'ui_contract_v2_settings_persistence_failed',
+        stages,
+        stage_results: stageResults,
+      };
+    }
+    recordStage('F2V_SOP_SETTINGS_CONFIGURED', 'PASS', `results=${JSON.stringify(verify.results || {})} save_visible=${Boolean(verify.save_visible)} save_clicked=${Boolean(verify.save_clicked)} persistence_source=${verify.persistence_source || 'unknown'}`);
 
     // Step 9/10/11 — upload lane.
     // CDP upload (Phase 2, opt-in via opts.cdpFileChooserUpload) must ARM file-chooser
@@ -4055,6 +4425,16 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
         return { ok: false, error: addPromptResult.error, detail: addPromptResult.detail, stages, stage_results: stageResults };
       }
       stageResults.media_attached = true;
+      stageResults.add_to_prompt_proof = {
+        passed: true,
+        role: addPromptResult.role || null,
+        prompt_bound_media_preview: addPromptResult.role === 'composer_prompt_bound_preview_present',
+      };
+      stageResults.upload_proof = {
+        passed: true,
+        media_attached: true,
+        via: 'dom_upload_lane',
+      };
       const postAddToPromptWaitMs = Math.max(0, Number(opts?.postAddToPromptWaitMs ?? 500));
       await _sleep(postAddToPromptWaitMs);
       recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'PASS', `waited_ms=${waitMs} add_to_prompt_role=${addPromptResult.role} post_wait_ms=${postAddToPromptWaitMs}`);
@@ -4067,6 +4447,11 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
       return { ok: false, error: promptResult.error, detail: promptResult.detail, stages, stage_results: stageResults };
     }
     stageResults.prompt_inserted = true;
+    stageResults.prompt_proof = {
+      passed: true,
+      inserted_length: promptResult.inserted_length,
+      field_value_length: promptResult.field_value_length,
+    };
     recordStage('F2V_SOP_PROMPT_INSERTED', 'PASS',
       `inserted_length=${promptResult.inserted_length} field_value_length=${promptResult.field_value_length}`);
 
@@ -4087,11 +4472,26 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
       recordStage('F2V_SOP_GENERATE_SUBMITTED', 'SKIP', 'opts.skipGenerate=true');
       return { ok: true, stages, stage_results: stageResults, summary: { generated: false, reason: 'skip_generate_opt_in' } };
     }
-    const gen = await _invokeGenerate(scripting, tabId, opts);
+    const preGenerateSettleMs = Math.max(0, Number(opts?.preGenerateSettleMs ?? 1200));
+    if (preGenerateSettleMs > 0) {
+      await _sleep(preGenerateSettleMs);
+    }
+    await _runMainWorld(scripting, tabId, MAIN_dismissPromoOverlays, []);
+    let gen = await _invokeGenerate(scripting, tabId, { ...opts, allowFallbackClick: true });
+    if (!gen.ok && gen.detail === 'generate_button_not_visible') {
+      await _sleep(Math.max(500, Number(opts?.retryGenerateSettleMs ?? 1000)));
+      await _runMainWorld(scripting, tabId, MAIN_dismissPromoOverlays, []);
+      gen = await _invokeGenerate(scripting, tabId, { ...opts, allowFallbackClick: true });
+    }
     if (!gen.ok) {
       recordStage('F2V_SOP_GENERATE_SUBMITTED', 'FAIL', `${gen.error} ${gen.detail}`);
       return { ok: false, error: gen.error, detail: gen.detail, stages, stage_results: stageResults };
     }
+    stageResults.generate_proof = {
+      passed: true,
+      enabled: true,
+      button_found: true,
+    };
     stageResults.generate_submitted = true;
     recordStage('F2V_SOP_GENERATE_SUBMITTED', 'PASS',
       `strategy=${gen.strategy} fiber_visited=${gen.fiber_visited || 0} button=${JSON.stringify(gen.button_text || null)}`);
@@ -4155,6 +4555,8 @@ const _api = {
   MAIN_findUploadBySymbol,
   MAIN_findAddToPromptButton,
   MAIN_selectAssetPickerCandidate,
+  MAIN_getUploadSlotPreviewState,
+  MAIN_getComposerAssetPreviewState,
   MAIN_closeComposerSettingsPanel,
   // Internal helpers (exported for unit tests)
   _openComposerSettingsPanel,

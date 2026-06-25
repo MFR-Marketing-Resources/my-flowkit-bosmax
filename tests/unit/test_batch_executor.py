@@ -13,7 +13,7 @@ import pytest
 import uuid
 from unittest.mock import AsyncMock, patch, MagicMock
 from agent.db import crud
-from agent.api.operator import _classify_flow_primary_blocker
+from agent.api.operator import _classify_flow_primary_blocker, _collect_pre_generate_blockers
 from agent.services import batch_executor, batch_queue, batch_planner
 from agent.services.flow_client import get_flow_client
 
@@ -420,3 +420,78 @@ def test_flow_primary_blocker_prefers_mode_mismatch_over_auth_failure():
     )
 
     assert blocker == "FLOW_MODE_MISMATCH"
+
+
+def test_flow_primary_blocker_does_not_fail_editor_ready_page_for_missing_upload_only():
+    blocker = _classify_flow_primary_blocker(
+        True,
+        {
+            "flow_tab_found": True,
+            "content_script_loaded": True,
+            "flow_url": "https://labs.google/fx/tools/flow/project/123",
+            "signed_in_likely": True,
+            "composer_found": True,
+            "composer_editable": True,
+            "generate_button_found": True,
+            "ui_contract_v2": {
+                "editor_capability_ready": True,
+                "pre_generate_ready": False,
+                "upload_proof": {"passed": False},
+                "add_to_prompt_proof": {"passed": False},
+                "settings_proof": {"passed": True},
+                "prompt_proof": {"passed": False},
+                "generate_proof": {"passed": True},
+            },
+        },
+        None,
+    )
+
+    assert blocker is None
+
+
+def test_flow_primary_blocker_hard_fails_scoped_visible_wrong_model():
+    blocker = _classify_flow_primary_blocker(
+        True,
+        {
+            "flow_tab_found": True,
+            "content_script_loaded": True,
+            "flow_url": "https://labs.google/fx/tools/flow/project/123",
+            "signed_in_likely": True,
+            "composer_found": True,
+            "composer_editable": True,
+            "generate_button_found": True,
+            "ui_contract_v2": {
+                "editor_capability_ready": True,
+                "pre_generate_ready": False,
+                "settings_proof": {
+                    "passed": False,
+                    "visible_wrong_model_in_settings_context": True,
+                },
+            },
+        },
+        None,
+    )
+
+    assert blocker == "FLOW_VISIBLE_MODEL_MISMATCH"
+
+
+def test_collect_pre_generate_blockers_maps_ui_contract_v2_gaps():
+    blockers = _collect_pre_generate_blockers(
+        {
+            "ui_contract_v2": {
+                "upload_proof": {"passed": False},
+                "add_to_prompt_proof": {"passed": False},
+                "settings_proof": {"passed": False},
+                "prompt_proof": {"passed": False},
+                "generate_proof": {"passed": False},
+            }
+        }
+    )
+
+    assert blockers == [
+        "FLOW_UPLOAD_PROOF_MISSING",
+        "FLOW_ADD_TO_PROMPT_PROOF_MISSING",
+        "FLOW_SETTINGS_PROOF_MISSING",
+        "FLOW_PROMPT_NOT_ACCEPTED",
+        "GENERATE_BUTTON_NOT_ENABLED",
+    ]

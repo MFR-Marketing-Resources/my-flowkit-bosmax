@@ -216,6 +216,9 @@ def test_flow_dom_softens_known_preselection_mode_probe_mismatch_and_yields_capt
 
 	for token in [
 		"prompt_field_found: Boolean(composer)",
+		"editor_capability_ready",
+		"pre_generate_ready",
+		"ui_contract_v2",
 		"function isPreselectionEditorReadyDiagnostic(diagnostic) {",
 		"result.page_preselection_ready = isPreselectionEditorReadyDiagnostic(result);",
 		"result.mode_mismatch_non_fatal = Boolean(",
@@ -223,6 +226,38 @@ def test_flow_dom_softens_known_preselection_mode_probe_mismatch_and_yields_capt
 		"if (msg.type === 'GET_CAPTCHA' || msg.type === 'FLOWKIT_CAPTCHA_PING') {",
 	]:
 		assert token in dom_source
+
+
+def test_flow_dom_ui_contract_v2_uses_split_readiness_and_scoped_media_model_proof():
+	dom_source = _read("extension/content-flow-dom.js")
+
+	for token in [
+		"function buildUiContractV2Proof(mode, observed, composer, generateBtn) {",
+		"editor_capability_ready: editorCapabilityReady",
+		"pre_generate_ready: preGenerateReady",
+		"visible_wrong_model_in_settings_context",
+		"rejected_visible_upload_slots_only",
+		"composer_asset_preview_found",
+		"prompt_bound_media_preview_found",
+		"save_visible: Boolean(saveButton)",
+	]:
+		assert token in dom_source
+
+
+def test_runner_ui_contract_v2_requires_prompt_bound_media_and_settings_persistence():
+	runner_source = _read("extension/f2v-flow-queue-runner.js")
+
+	for token in [
+		"function MAIN_getComposerAssetPreviewState() {",
+		"role: 'composer_prompt_bound_preview_present'",
+		"save_visible",
+		"save_clicked",
+		"persistence_verified",
+		"visible_wrong_model_in_settings_context",
+		"ui_contract_v2_settings_persistence_failed",
+		"detail: 'generate_button_disabled'",
+	]:
+		assert token in runner_source
 
 
 def test_captcha_bridge_contract_injects_content_script_and_proxies_to_main_world():
