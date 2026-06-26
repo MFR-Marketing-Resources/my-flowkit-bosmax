@@ -59,6 +59,53 @@ const metrics = {
 	failedCount: 0,
 	lastError: null,
 };
+const runtimeDiagnostics = {
+	worker_alive: true,
+	service_worker_started_at: new Date().toISOString(),
+	ws_connected: false,
+	runtime_reason: "EXTENSION_BOOTING",
+	runtime_detail: "Flow Kit background service worker started.",
+	auth_state: "UNKNOWN",
+	flow_path_state: "NO_FLOW_TAB",
+	target_project_state: "UNKNOWN",
+	target_project_url: null,
+	flow_tab_url: null,
+	fallback_editor_url: null,
+	stored_flow_project_url: null,
+	last_bad_redirect_url: null,
+	diagnostic_code: null,
+	diagnostic_detail: null,
+	selected_tab_id: null,
+	active_editor_tab_id: null,
+	selected_tab_active: false,
+	selected_tab_url: null,
+	active_editor_tab_url: null,
+	rebound_to_active_editor_tab: false,
+	same_project_url: false,
+	content_script_alive_on_active_tab: false,
+	safe_to_click_active_tab: false,
+	last_updated_at: new Date().toISOString(),
+};
+
+function updateRuntimeDiagnostics(partial = {}) {
+	const next = {
+		...runtimeDiagnostics,
+		...(partial && typeof partial === "object" ? partial : {}),
+	};
+	next.worker_alive = true;
+	next.ws_connected =
+		typeof next.ws_connected === "boolean"
+			? next.ws_connected
+			: ws?.readyState === WebSocket.OPEN;
+	next.last_updated_at = new Date().toISOString();
+	Object.assign(runtimeDiagnostics, next);
+	return { ...runtimeDiagnostics };
+}
+
+function isAbnormalRedirectUrl(url) {
+	const value = String(url || "").trim();
+	return /^http:\/\/0\.0\.0\.\d+(?:[:/]|$)/i.test(value);
+}
 
 function respondOnce(reply, payload) {
 	if (typeof reply !== "function") return;
@@ -223,6 +270,8 @@ const flowContentScriptHealth = new Map();
 const CDP_DEBUGGER_PROTOCOL_VERSION = "1.3";
 const CDP_FILE_CHOOSER_TIMEOUT_MS = 15000;
 const cdpFileChooserProofRuns = new Map();
+const cdpFileChooserProofResults = new Map();
+const cdpFileChooserProofAliases = new Map();
 
 function getCdpDebuggee(tabId) {
 	return { tabId };
@@ -297,6 +346,13 @@ async function cleanupCdpFileChooserProofRun(tabId, run) {
 
 	// Ensure Map is cleaned
 	cdpFileChooserProofRuns.delete(tabId);
+	for (const [aliasTabId, targetTabId] of Array.from(
+		cdpFileChooserProofAliases.entries(),
+	)) {
+		if (aliasTabId === tabId || targetTabId === tabId) {
+			cdpFileChooserProofAliases.delete(aliasTabId);
+		}
+	}
 }
 
 function settleCdpFileChooserProofRun(tabId, payload) {
@@ -304,9 +360,46 @@ function settleCdpFileChooserProofRun(tabId, payload) {
 	if (!run || run.settled) return;
 	run.settled = true;
 	run.result = payload;
+	cdpFileChooserProofResults.set(tabId, payload);
 	void cleanupCdpFileChooserProofRun(tabId, run).finally(() => {
 		run.resolve(payload);
 	});
+}
+
+function rememberCdpFileChooserProofAlias(aliasTabId, targetTabId) {
+	const alias = Number(aliasTabId || 0);
+	const target = Number(targetTabId || 0);
+	if (!alias || !target) return;
+	cdpFileChooserProofAliases.set(alias, target);
+}
+
+function resolveCdpFileChooserProofTabId(...candidateTabIds) {
+	const numericCandidates = candidateTabIds
+		.map((value) => Number(value || 0))
+		.filter((value) => Number.isFinite(value) && value > 0);
+	for (const candidate of numericCandidates) {
+		if (
+			cdpFileChooserProofRuns.has(candidate) ||
+			cdpFileChooserProofResults.has(candidate)
+		) {
+			return candidate;
+		}
+		const aliasTarget = cdpFileChooserProofAliases.get(candidate);
+		if (
+			aliasTarget &&
+			(cdpFileChooserProofRuns.has(aliasTarget) ||
+				cdpFileChooserProofResults.has(aliasTarget))
+		) {
+			return aliasTarget;
+		}
+	}
+	if (cdpFileChooserProofRuns.size === 1) {
+		return Array.from(cdpFileChooserProofRuns.keys())[0] || null;
+	}
+	if (cdpFileChooserProofResults.size === 1) {
+		return Array.from(cdpFileChooserProofResults.keys())[0] || null;
+	}
+	return numericCandidates[0] || null;
 }
 
 async function beginCdpFileChooserProof(
@@ -326,6 +419,7 @@ async function beginCdpFileChooserProof(
 	if (existingRun && !existingRun.settled) {
 		return { ok: false, error: "ERR_CDP_FILE_CHOOSER_ALREADY_ARMED" };
 	}
+	cdpFileChooserProofResults.delete(tabId);
 
 	const debuggee = getCdpDebuggee(tabId);
 	await chrome.debugger.attach(debuggee, CDP_DEBUGGER_PROTOCOL_VERSION);
@@ -435,18 +529,48 @@ async function beginCdpFileChooserProof(
 }
 
 async function waitForCdpFileChooserProof(tabId) {
-	const run = cdpFileChooserProofRuns.get(tabId);
+	const resolvedTabId = resolveCdpFileChooserProofTabId(tabId);
+	const run = cdpFileChooserProofRuns.get(resolvedTabId);
 	if (!run) {
-		return { ok: false, error: "ERR_CDP_FILE_CHOOSER_NOT_ARMED" };
+		const settledResult = cdpFileChooserProofResults.get(resolvedTabId);
+		if (settledResult) {
+			cdpFileChooserProofResults.delete(resolvedTabId);
+			return settledResult;
+		}
+		return {
+			ok: false,
+			error: "ERR_CDP_FILE_CHOOSER_NOT_ARMED",
+			detail: `requested_tab_id=${tabId || "null"} resolved_tab_id=${resolvedTabId || "null"}`,
+		};
 	}
 
 	const result = run.result || (await run.completionPromise);
-	cdpFileChooserProofRuns.delete(tabId);
+	cdpFileChooserProofRuns.delete(resolvedTabId);
+	cdpFileChooserProofResults.delete(resolvedTabId);
 	return result;
 }
 
 async function fetchAssetBase64ForCdp(assetRef) {
 	const ref = String(assetRef == null ? "" : assetRef);
+	if (/^data:/i.test(ref)) {
+		const match = ref.match(/^data:([^;,]+)?(?:;base64)?,(.*)$/i);
+		if (!match) {
+			return {
+				ok: false,
+				error: "ERR_BACKGROUND_ASSET_FETCH_FAILED",
+				detail: "INVALID_DATA_URL",
+			};
+		}
+		const mimeType = match[1] || "image/png";
+		const payload = match[2] || "";
+		return {
+			ok: true,
+			base64: /;base64,/i.test(ref)
+				? payload
+				: btoa(decodeURIComponent(payload)),
+			mimeType,
+		};
+	}
 	const url = /^https?:\/\//i.test(ref)
 		? ref
 		: `http://127.0.0.1:8100/api/products/${ref}/image`;
@@ -548,6 +672,13 @@ async function materializeAssetToDiskPath(assetRef, slotLabel) {
 // Phase 2 CDP upload dependency handed to the F2V runner. phase=arm resolves the asset to
 // a disk path and arms CDP file-chooser interception; phase=wait awaits the fed result.
 async function cdpFileChooserUploadForJob(tabId, req) {
+	const preferredUrl = await getStoredFlowProjectUrl();
+	const liveEditorTab =
+		(await resolveLiveFlowEditorTab(preferredUrl, "F2V")) ||
+		(await getTabSafe(req?.tabId || tabId)) ||
+		(await getFlowTab());
+	const requestedTabId = req?.tabId || tabId || null;
+	const effectiveTabId = liveEditorTab?.id || requestedTabId;
 	const slot = req?.slotLabel || "Start";
 	if (req?.phase === "arm") {
 		if (!req.assetSource) {
@@ -559,21 +690,65 @@ async function cdpFileChooserUploadForJob(tabId, req) {
 		}
 		const mat = await materializeAssetToDiskPath(req.assetSource, slot);
 		if (!mat.ok) return mat;
+		rememberCdpFileChooserProofAlias(requestedTabId, effectiveTabId);
+		rememberCdpFileChooserProofAlias(effectiveTabId, effectiveTabId);
 		return await beginCdpFileChooserProof(
-			tabId,
+			effectiveTabId,
 			mat.filePath,
 			mat.fileName,
 			slot,
 		);
 	}
 	if (req?.phase === "wait") {
-		return await waitForCdpFileChooserProof(tabId);
+		const boundTabId = resolveCdpFileChooserProofTabId(
+			requestedTabId,
+			effectiveTabId,
+		);
+		return await waitForCdpFileChooserProof(boundTabId);
 	}
 	return {
 		ok: false,
 		error: "ERR_CDP_UPLOAD_BAD_PHASE",
 		detail: `phase=${req?.phase}`,
 	};
+}
+
+async function domFileUploadFallbackForJob(tabId, req) {
+	const slot = req?.slotLabel || "Start";
+	const preferredUrl = await getStoredFlowProjectUrl();
+	const liveEditorTab =
+		(await resolveLiveFlowEditorTab(preferredUrl, "F2V")) ||
+		(await getTabSafe(req?.tabId || tabId)) ||
+		(await getFlowTab());
+	const effectiveTabId = liveEditorTab?.id || req?.tabId || tabId || null;
+	if (!effectiveTabId) {
+		return {
+			ok: false,
+			error: "ERR_DOM_UPLOAD_TAB_ID_MISSING",
+			detail: `slot=${slot}`,
+		};
+	}
+	if (!req?.assetSource) {
+		return {
+			ok: false,
+			error: "ERR_DOM_UPLOAD_NO_ASSET",
+			detail: `slot=${slot}`,
+		};
+	}
+	await ensureFlowDomScript(effectiveTabId);
+	return await sendTabMessageSafe(
+		effectiveTabId,
+		{
+			type: "FLOWKIT_SIMULATE_FILE_UPLOAD",
+			slotLabel: slot,
+			assetSource: req.assetSource,
+			options: {
+				reuseOpenModal: true,
+				stopAfterDispatch: true,
+			},
+		},
+		30000,
+	);
 }
 
 // Resolve an operator/workspace F2V job into a single CDP-feedable Start-frame
@@ -602,6 +777,37 @@ function resolveF2VUploadAssetSource(job) {
 	return job.product_id || job.productId || job.startImageMediaId || null;
 }
 
+function resolveF2VDomFallbackAssetSource(job) {
+	if (!job) return null;
+	const a = job.startAsset;
+	if (a && typeof a === "object") {
+		const previewUrl =
+			a.previewUrl || a.preview_url || a.downloadUrl || a.download_url || null;
+		if (previewUrl) {
+			return {
+				previewUrl,
+				fileName: a.fileName || a.file_name || a.label || "Start.png",
+			};
+		}
+	}
+
+	const uploadAssetSource = resolveF2VUploadAssetSource(job);
+	if (!uploadAssetSource || typeof uploadAssetSource !== "string") return null;
+	if (
+		/^(?:[a-zA-Z]:[\\/]|\/)/.test(uploadAssetSource) &&
+		!/^https?:\/\//i.test(uploadAssetSource)
+	) {
+		return null;
+	}
+	if (/^https?:\/\//i.test(uploadAssetSource)) {
+		return {
+			previewUrl: uploadAssetSource,
+			fileName: "Start.png",
+		};
+	}
+	return uploadAssetSource;
+}
+
 // CDP upload is the only background-owned lane that can deterministically feed
 // a real file into the native chooser for F2V Frames jobs. Default it on when
 // the job carries a resolvable asset, unless the caller explicitly opts out.
@@ -617,6 +823,7 @@ function shouldUseF2VCdpUpload(
 const WS_METHOD_TIMEOUT_MS = {
 	get_status: 5000,
 	GET_RUNTIME_SELF_TEST: 60000,
+	BOOTSTRAP_FLOW_PROJECT_EDITOR: 90000,
 	CHECK_FLOW_COMPOSER_READY: 12000,
 	FLOW_PAGE_STATE_DIAGNOSTIC: 12000,
 	RELOAD_FLOW_TAB: 12000,
@@ -659,6 +866,10 @@ function getMethodStageField(method, phase) {
 		OPEN_FLOW_NEW_PROJECT: {
 			received: "BACKGROUND_RECEIVED_OPEN_FLOW_NEW_PROJECT",
 			sent: "BACKGROUND_SENT_OPEN_FLOW_NEW_PROJECT_RESPONSE",
+		},
+		BOOTSTRAP_FLOW_PROJECT_EDITOR: {
+			received: "BACKGROUND_RECEIVED_BOOTSTRAP_FLOW_PROJECT_EDITOR",
+			sent: "BACKGROUND_SENT_BOOTSTRAP_FLOW_PROJECT_EDITOR_RESPONSE",
 		},
 	};
 	return stageFields[method]?.[phase] || null;
@@ -797,7 +1008,9 @@ async function getFlowTab() {
 		return null;
 	}
 
-	return selectBestFlowTab(tabs, preferredUrl);
+	const focusedActiveTab = await getFocusedActiveBrowserTab();
+	return buildFlowTabSelectionBinding(tabs, preferredUrl, focusedActiveTab)
+		?.selectedTab;
 }
 
 async function getFlowTabs() {
@@ -807,6 +1020,36 @@ async function getFlowTabs() {
 			"https://labs.google/fx/*/tools/flow*",
 		],
 	});
+}
+
+async function resolveLiveFlowEditorTab(preferredUrl = null, mode = null) {
+	const tabs = await getFlowTabs();
+	if (!tabs.length) {
+		return null;
+	}
+	const focusedActiveTab = await getFocusedActiveBrowserTab();
+	const binding = buildFlowTabSelectionBinding(
+		tabs,
+		preferredUrl,
+		focusedActiveTab,
+	);
+	const selected = binding?.selectedTab || null;
+	const editorTabs = tabs.filter(
+		(tab) => isProjectEditorUrl(tab?.url) && !isRootFlowUrl(tab?.url),
+	);
+	const ranked = buildUniqueFlowProbeCandidates(
+		editorTabs.length ? editorTabs : tabs,
+		selected && isProjectEditorUrl(selected?.url) && !isRootFlowUrl(selected?.url)
+			? selected
+			: null,
+	);
+	for (const candidate of ranked) {
+		const probe = await probeFlowEditorCandidate(candidate, mode);
+		if (probe.ok) {
+			return (await getTabSafe(candidate.id)) || candidate;
+		}
+	}
+	return selected || null;
 }
 
 function isProjectEditorUrl(url) {
@@ -827,6 +1070,325 @@ function isRootFlowUrl(url) {
 	);
 }
 
+function normalizeFlowProjectUrl(url) {
+	const value = String(url || "").trim();
+	if (!value) {
+		return null;
+	}
+	try {
+		const parsed = new URL(value);
+		const normalizedPath = parsed.pathname.replace(/\/+$/, "");
+		return `${parsed.origin}${normalizedPath}`;
+	} catch (_) {
+		return value.replace(/[?#].*$/, "").replace(/\/+$/, "") || null;
+	}
+}
+
+function isSameFlowProjectUrl(leftUrl, rightUrl) {
+	const left = normalizeFlowProjectUrl(leftUrl);
+	const right = normalizeFlowProjectUrl(rightUrl);
+	return Boolean(left && right && left === right);
+}
+
+function flowTabLooksBroken(tab) {
+	const title = String(tab?.title || "").toLowerCase();
+	return (
+		title.includes("something went wrong") ||
+		title.includes("application error")
+	);
+}
+
+function findFocusedActiveFlowEditorTab(tabs, focusedActiveTab = null) {
+	const focusedTabId = Number(focusedActiveTab?.id || 0);
+	if (focusedTabId > 0) {
+		const focusedMatch =
+			tabs.find((tab) => Number(tab?.id || 0) === focusedTabId) || focusedActiveTab;
+		if (
+			focusedMatch?.id &&
+			focusedMatch?.active &&
+			isProjectEditorUrl(focusedMatch?.url) &&
+			!isRootFlowUrl(focusedMatch?.url)
+		) {
+			return focusedMatch;
+		}
+	}
+	return (
+		tabs.find(
+			(tab) =>
+				tab?.active &&
+				isProjectEditorUrl(tab?.url) &&
+				!isRootFlowUrl(tab?.url),
+		) || null
+	);
+}
+
+function buildFlowTabSelectionBinding(
+	tabs,
+	preferredUrl = null,
+	focusedActiveTab = null,
+	selectedTabOverride = null,
+) {
+	const list = Array.isArray(tabs) ? tabs.filter(Boolean) : [];
+	const initialSelectedTab =
+		selectedTabOverride || selectBestFlowTab(list, preferredUrl);
+	const activeEditorTab = findFocusedActiveFlowEditorTab(list, focusedActiveTab);
+	const normalizedPreferredUrl = normalizeFlowProjectUrl(preferredUrl);
+	const activeEditorMatchesPreferred = normalizedPreferredUrl
+		? isSameFlowProjectUrl(activeEditorTab?.url, normalizedPreferredUrl)
+		: Boolean(activeEditorTab?.id);
+	const sameProjectUrl = Boolean(
+		activeEditorMatchesPreferred ||
+			(!normalizedPreferredUrl &&
+				isSameFlowProjectUrl(initialSelectedTab?.url, activeEditorTab?.url)),
+	);
+	let selectedTab = initialSelectedTab || activeEditorTab || null;
+	let reboundToActiveEditorTab = false;
+	let error = null;
+
+	if (!activeEditorTab?.id) {
+		error = "FLOW_ACTIVE_EDITOR_TAB_NOT_FOUND";
+	} else if (selectedTab?.id && Number(selectedTab.id) !== Number(activeEditorTab.id)) {
+		if (sameProjectUrl) {
+			selectedTab = activeEditorTab;
+			reboundToActiveEditorTab = true;
+		} else {
+			error = "FLOW_TARGET_TAB_MISMATCH";
+		}
+	} else if (!selectedTab?.id && activeEditorMatchesPreferred) {
+		selectedTab = activeEditorTab;
+	}
+
+	return {
+		initialSelectedTab,
+		selectedTab: selectedTab || null,
+		activeEditorTab: activeEditorTab || null,
+		selectedTabActive: Boolean(selectedTab?.active),
+		selectedTabUrl: String(selectedTab?.url || "").trim() || null,
+		activeEditorTabUrl: String(activeEditorTab?.url || "").trim() || null,
+		sameProjectUrl,
+		reboundToActiveEditorTab,
+		error,
+	};
+}
+
+function classifyFlowPathState(url) {
+	const value = String(url || "").trim();
+	if (!value) {
+		return "NO_FLOW_TAB";
+	}
+	if (isAbnormalRedirectUrl(value)) {
+		return "ABNORMAL_REDIRECT";
+	}
+	if (/^https:\/\/accounts\.google\.com\//i.test(value)) {
+		return "FLOW_AUTH_ROUTE";
+	}
+	if (isProjectEditorUrl(value) && !isRootFlowUrl(value)) {
+		return "FLOW_PROJECT_EDITOR";
+	}
+	if (isRootFlowUrl(value) && !isProjectEditorUrl(value)) {
+		return "FLOW_ROOT";
+	}
+	if (/^https:\/\/labs\.google\/fx\//i.test(value)) {
+		return "FLOW_OTHER";
+	}
+	return "NON_FLOW_URL";
+}
+
+function classifyAuthStateFromDiagnostic(flowUrl, pageDiagnostic = null) {
+	const value = String(flowUrl || "").trim();
+	const loginMarkers = Array.isArray(pageDiagnostic?.visible_login_markers)
+		? pageDiagnostic.visible_login_markers
+		: [];
+	if (/^https:\/\/accounts\.google\.com\//i.test(value) || loginMarkers.length) {
+		return "AUTH_REQUIRED";
+	}
+	if (/^https:\/\/labs\.google\/fx\//i.test(value)) {
+		return "LIKELY_AUTHENTICATED";
+	}
+	return "UNKNOWN";
+}
+
+function buildRuntimeDiagnosticPayload({
+	flowUrl = null,
+	preferredUrl = null,
+	selectedTab = null,
+	pageDiagnostic = null,
+	openFlowResult = null,
+} = {}) {
+	const normalizedFlowUrl = String(
+		flowUrl || selectedTab?.url || pageDiagnostic?.flow_url || "",
+	).trim();
+	const normalizedPreferredUrl = String(preferredUrl || "").trim();
+	const title = String(
+		pageDiagnostic?.document_title || selectedTab?.title || "",
+	).toLowerCase();
+	const visibleErrorMarkers = Array.isArray(pageDiagnostic?.visible_error_markers)
+		? pageDiagnostic.visible_error_markers
+		: [];
+	const flowPathState = classifyFlowPathState(normalizedFlowUrl);
+	const authState = classifyAuthStateFromDiagnostic(
+		normalizedFlowUrl,
+		pageDiagnostic,
+	);
+	const agentConnected = ws?.readyState === WebSocket.OPEN;
+	const abnormalUrl =
+		isAbnormalRedirectUrl(normalizedFlowUrl) ||
+		isAbnormalRedirectUrl(openFlowResult?.flow_url_after)
+			? String(normalizedFlowUrl || openFlowResult?.flow_url_after || "").trim()
+			: null;
+	let runtimeReason = agentConnected
+		? "FLOW_RUNTIME_CONNECTED"
+		: "EXTENSION_DISCONNECTED";
+	let runtimeDetail = agentConnected
+		? "Flow Kit background is connected to the local agent."
+		: "Flow Kit extension WebSocket bridge is offline.";
+	let targetProjectState = "UNKNOWN";
+	let diagnosticCode = null;
+	let diagnosticDetail = null;
+
+	if (abnormalUrl) {
+		runtimeReason = "ABNORMAL_REDIRECT";
+		runtimeDetail = `Flow navigation landed on unexpected URL: ${abnormalUrl}`;
+		targetProjectState = "ABNORMAL_REDIRECT";
+		diagnosticCode = "ABNORMAL_REDIRECT";
+		diagnosticDetail = runtimeDetail;
+	} else if (!normalizedFlowUrl) {
+		runtimeReason = agentConnected ? "NO_FLOW_TAB" : "EXTENSION_DISCONNECTED";
+		runtimeDetail = "No Google Flow tab is currently open.";
+		targetProjectState = "NO_FLOW_TAB";
+		diagnosticCode = "NO_FLOW_TAB";
+		diagnosticDetail = runtimeDetail;
+	} else if (authState === "AUTH_REQUIRED") {
+		runtimeReason = "FLOW_AUTH_REQUIRED";
+		runtimeDetail = "Google authentication is required before Flow editor can open.";
+		targetProjectState = "AUTH_REQUIRED";
+		diagnosticCode = "FLOW_AUTH_REQUIRED";
+		diagnosticDetail = runtimeDetail;
+	} else if (
+		normalizedPreferredUrl &&
+		normalizedFlowUrl === normalizedPreferredUrl &&
+		(visibleErrorMarkers.length ||
+			title.includes("something went wrong") ||
+			title.includes("application error"))
+	) {
+		runtimeReason = "TARGET_PROJECT_BROKEN";
+		runtimeDetail =
+			"Stored Flow project opened with visible error markers instead of a usable editor.";
+		targetProjectState = "TARGET_PROJECT_BROKEN";
+		diagnosticCode = "TARGET_PROJECT_BROKEN";
+		diagnosticDetail = runtimeDetail;
+	} else if (flowPathState === "FLOW_ROOT") {
+		runtimeReason = agentConnected
+			? "FLOW_ROOT_OPEN_INSTEAD_OF_EDITOR"
+			: "AUTH_OK_BUT_EXTENSION_OFF";
+		runtimeDetail = agentConnected
+			? "Flow dashboard/root is open instead of a project editor."
+			: "Flow dashboard/root is open, but the WebSocket bridge is offline.";
+		targetProjectState = "FLOW_ROOT";
+		diagnosticCode = "FLOW_ROOT_OPEN_INSTEAD_OF_EDITOR";
+		diagnosticDetail = runtimeDetail;
+	} else if (flowPathState === "FLOW_PROJECT_EDITOR") {
+		runtimeReason = agentConnected
+			? "FLOW_EDITOR_READY"
+			: "AUTH_OK_BUT_EXTENSION_OFF";
+		runtimeDetail = agentConnected
+			? "Flow project editor URL is active."
+			: "Flow project editor URL is active, but the WebSocket bridge is offline.";
+		targetProjectState = "EDITOR_URL_ACTIVE";
+		diagnosticCode = agentConnected ? "FLOW_EDITOR_READY" : "AUTH_OK_BUT_EXTENSION_OFF";
+		diagnosticDetail = runtimeDetail;
+	} else if (/FLOW_PROJECT_EDITOR_NOT_OPEN/i.test(String(openFlowResult?.error || ""))) {
+		runtimeReason = "FLOW_PROJECT_EDITOR_NOT_OPEN";
+		runtimeDetail =
+			"Preferred Flow project did not settle on an editor URL after navigation.";
+		targetProjectState = "PREFERRED_PROJECT_NOT_OPEN";
+		diagnosticCode = "FLOW_PROJECT_EDITOR_NOT_OPEN";
+		diagnosticDetail = runtimeDetail;
+	}
+
+	return {
+		ws_connected: agentConnected,
+		runtime_reason: runtimeReason,
+		runtime_detail: runtimeDetail,
+		auth_state: authState,
+		flow_path_state: flowPathState,
+		target_project_state: targetProjectState,
+		target_project_url: normalizedPreferredUrl || null,
+		flow_tab_url: normalizedFlowUrl || null,
+		fallback_editor_url: String(openFlowResult?.flow_url || "").trim() || null,
+		stored_flow_project_url: normalizedPreferredUrl || null,
+		last_bad_redirect_url: abnormalUrl,
+		diagnostic_code: diagnosticCode,
+		diagnostic_detail: diagnosticDetail,
+	};
+}
+
+function shouldAdoptSelectedFlowProjectUrl(
+	selectedTab,
+	flowTabs = [],
+	preferredUrl = null,
+) {
+	const normalizedSelectedUrl = String(selectedTab?.url || "").trim();
+	if (
+		!normalizedSelectedUrl ||
+		!isProjectEditorUrl(normalizedSelectedUrl) ||
+		isRootFlowUrl(normalizedSelectedUrl)
+	) {
+		return false;
+	}
+
+	const normalizedPreferredUrl = String(preferredUrl || "").trim();
+	if (!normalizedPreferredUrl) {
+		return true;
+	}
+	if (normalizedPreferredUrl === normalizedSelectedUrl) {
+		return false;
+	}
+
+	const exactPreferredTabOpen = Array.isArray(flowTabs)
+		? flowTabs.some(
+				(tab) => String(tab?.url || "").trim() === normalizedPreferredUrl,
+			)
+		: false;
+
+	return Boolean(selectedTab?.active) || flowTabs.length === 1 || !exactPreferredTabOpen;
+}
+
+async function adoptSelectedFlowProjectUrlIfNeeded(
+	selectedTab,
+	flowTabs = [],
+	preferredUrl = null,
+) {
+	const normalizedPreferredUrl = String(preferredUrl || "").trim() || null;
+	if (
+		!shouldAdoptSelectedFlowProjectUrl(
+			selectedTab,
+			Array.isArray(flowTabs) ? flowTabs : [],
+			normalizedPreferredUrl,
+		)
+	) {
+		return {
+			preferred_flow_project_url: normalizedPreferredUrl,
+			sync_result: null,
+		};
+	}
+
+	const syncResult = await syncStoredFlowProjectUrlToActiveEditor(selectedTab?.url, {
+		currentStoredUrl: normalizedPreferredUrl,
+		openedViaRecovery: true,
+		allowWhenMissing: true,
+		force: true,
+	});
+
+	return {
+		preferred_flow_project_url:
+			syncResult?.stored_flow_project_url ||
+			String(selectedTab?.url || "").trim() ||
+			normalizedPreferredUrl,
+		sync_result: syncResult,
+	};
+}
+
 function selectBestFlowTab(tabs, preferredUrl = null) {
 	if (!tabs.length) {
 		console.log("[FlowAgent] No tabs found in query");
@@ -838,12 +1400,51 @@ function selectBestFlowTab(tabs, preferredUrl = null) {
 		tabs.map((t) => ({ id: t.id, url: t.url, status: t.status })),
 	);
 
-	const normalizedPreferredUrl = String(preferredUrl || "").trim();
+	const normalizedPreferredUrl = normalizeFlowProjectUrl(preferredUrl);
+	const activeEditorTab = findFocusedActiveFlowEditorTab(tabs);
+	if (
+		activeEditorTab?.id &&
+		(!normalizedPreferredUrl ||
+			isSameFlowProjectUrl(activeEditorTab?.url, normalizedPreferredUrl))
+	) {
+		console.log("[FlowAgent] Using focused active editor tab:", {
+			id: activeEditorTab.id,
+			url: activeEditorTab.url,
+			title: activeEditorTab.title,
+		});
+		return activeEditorTab;
+	}
 	if (normalizedPreferredUrl) {
-		const exactMatch = tabs.find((tab) => tab.url === normalizedPreferredUrl);
+		const exactMatches = tabs.filter((tab) =>
+			isSameFlowProjectUrl(tab?.url, normalizedPreferredUrl),
+		);
+		const exactMatch =
+			exactMatches.find(
+				(tab) =>
+					tab?.active &&
+					isProjectEditorUrl(tab?.url) &&
+					!isRootFlowUrl(tab?.url),
+			) ||
+			exactMatches.find((tab) => !flowTabLooksBroken(tab)) ||
+			exactMatches[0] ||
+			null;
 		if (exactMatch) {
-			console.log("[FlowAgent] Using exact preferred match:", exactMatch.url);
-			return exactMatch;
+			const exactLooksBroken = flowTabLooksBroken(exactMatch);
+			const activeEditorDiffers =
+				activeEditorTab &&
+				!isSameFlowProjectUrl(activeEditorTab?.url, normalizedPreferredUrl);
+			if (!activeEditorDiffers && !exactLooksBroken) {
+				console.log("[FlowAgent] Using exact preferred match:", exactMatch.url);
+				return exactMatch;
+			}
+			console.warn(
+				"[FlowAgent] Bypassing stored preferred Flow tab in favor of active/current editor",
+				{
+					preferred_url: normalizedPreferredUrl,
+					active_editor_url: activeEditorTab?.url || null,
+					exact_looks_broken: exactLooksBroken,
+				},
+			);
 		}
 	}
 
@@ -883,6 +1484,39 @@ function selectBestFlowTab(tabs, preferredUrl = null) {
 	return tabs[0];
 }
 
+function buildUniqueFlowProbeCandidates(tabs, preferredTab = null) {
+	const orderedTabs = [
+		preferredTab,
+		...tabs.filter((tab) => tab?.id !== preferredTab?.id),
+	].filter(Boolean);
+	const seen = new Map();
+	const unique = [];
+	for (const tab of orderedTabs) {
+		const url = String(tab?.url || "").trim();
+		const normalizedProjectUrl = normalizeFlowProjectUrl(tab?.url);
+		const key =
+			normalizedProjectUrl &&
+			isProjectEditorUrl(tab?.url) &&
+			!isRootFlowUrl(tab?.url)
+				? `editor:${normalizedProjectUrl}`
+				: `tab:${tab.id ?? url}`;
+		if (!seen.has(key)) {
+			seen.set(key, unique.length);
+			unique.push(tab);
+			continue;
+		}
+		const existingIndex = seen.get(key);
+		const existingTab = unique[existingIndex];
+		const shouldReplace =
+			(Boolean(tab?.active) && !existingTab?.active) ||
+			(Boolean(tab?.status === "complete") && existingTab?.status !== "complete");
+		if (shouldReplace) {
+			unique[existingIndex] = tab;
+		}
+	}
+	return unique;
+}
+
 function summarizeFlowTab(tab) {
 	if (!tab) {
 		return null;
@@ -899,6 +1533,305 @@ function summarizeFlowTab(tab) {
 	};
 }
 
+function buildDuplicateFlowEditorInventory(tabs = []) {
+	const grouped = new Map();
+	for (const tab of Array.isArray(tabs) ? tabs : []) {
+		if (!isProjectEditorUrl(tab?.url) || isRootFlowUrl(tab?.url)) {
+			continue;
+		}
+		const normalizedProjectUrl = normalizeFlowProjectUrl(tab?.url);
+		if (!normalizedProjectUrl) {
+			continue;
+		}
+		if (!grouped.has(normalizedProjectUrl)) {
+			grouped.set(normalizedProjectUrl, []);
+		}
+		grouped.get(normalizedProjectUrl).push({
+			tab_id: tab?.id ?? null,
+			window_id: tab?.windowId ?? null,
+			active: Boolean(tab?.active),
+			status: tab?.status || null,
+			url: tab?.url || null,
+			title: tab?.title || null,
+		});
+	}
+	return Array.from(grouped.entries())
+		.filter(([, duplicates]) => duplicates.length > 1)
+		.map(([normalized_project_url, duplicates]) => ({
+			normalized_project_url,
+			duplicate_count: duplicates.length,
+			tabs: duplicates,
+		}));
+}
+
+function extractFlowProjectId(url) {
+	const value = String(url || "").trim();
+	const match = value.match(/\/project\/([^/?#]+)/i);
+	return match?.[1] || null;
+}
+
+function determineFlowBootstrapStartState(flowTabs = [], focusedActiveTab = null) {
+	const tabs = Array.isArray(flowTabs) ? flowTabs.filter(Boolean) : [];
+	const editorTabs = tabs.filter(
+		(tab) => isProjectEditorUrl(tab?.url) && !isRootFlowUrl(tab?.url),
+	);
+	const rootTabs = tabs.filter((tab) => isRootFlowUrl(tab?.url));
+	const activeEditorTab = findFocusedActiveFlowEditorTab(editorTabs, focusedActiveTab);
+	if (editorTabs.length) {
+		return {
+			startedFrom: "EXISTING_PROJECT_EDITOR",
+			entryTab:
+				activeEditorTab ||
+				editorTabs
+					.slice()
+					.sort((left, right) => Number(right?.id || 0) - Number(left?.id || 0))[0] ||
+				null,
+			editorTabs,
+			rootTabs,
+			activeEditorTab: activeEditorTab || null,
+		};
+	}
+	if (rootTabs.length) {
+		const focusedRootTab =
+			(focusedActiveTab?.id &&
+				rootTabs.find(
+					(tab) => Number(tab?.id || 0) === Number(focusedActiveTab?.id || 0),
+				)) ||
+			rootTabs.find((tab) => tab?.active) ||
+			rootTabs[0] ||
+			null;
+		return {
+			startedFrom: "ROOT_FLOW_PAGE",
+			entryTab: focusedRootTab,
+			editorTabs,
+			rootTabs,
+			activeEditorTab: null,
+		};
+	}
+	return {
+		startedFrom: "NO_FLOW_TAB",
+		entryTab: null,
+		editorTabs,
+		rootTabs,
+		activeEditorTab: null,
+	};
+}
+
+function rankFlowBootstrapEditorCandidates(editorTabs = [], focusedActiveTab = null) {
+	const activeEditorTab = findFocusedActiveFlowEditorTab(editorTabs, focusedActiveTab);
+	return [...(Array.isArray(editorTabs) ? editorTabs : [])].sort((left, right) => {
+		if (Number(left?.id || 0) === Number(activeEditorTab?.id || 0)) return -1;
+		if (Number(right?.id || 0) === Number(activeEditorTab?.id || 0)) return 1;
+		if (Boolean(left?.active) !== Boolean(right?.active)) {
+			return left?.active ? -1 : 1;
+		}
+		if (String(left?.status || "") !== String(right?.status || "")) {
+			if (left?.status === "complete") return -1;
+			if (right?.status === "complete") return 1;
+		}
+		return Number(right?.id || 0) - Number(left?.id || 0);
+	});
+}
+
+function mapFlowBootstrapBindingFailureCode(preflightError) {
+	switch (String(preflightError || "")) {
+		case "FLOW_ACTIVE_TAB_CONTENT_SCRIPT_NOT_READY":
+			return "FLOW_PROJECT_CONTENT_SCRIPT_NOT_READY";
+		case "FLOW_ACTIVE_TAB_ADD_MEDIA_LAUNCHER_NOT_FOUND":
+			return "FLOW_PROJECT_EDITOR_SURFACE_NOT_READY";
+		default:
+			return "FLOW_PROJECT_EDITOR_TAB_BIND_FAILED";
+	}
+}
+
+function mapOpenFlowNewProjectFailureCode(result) {
+	const authState = classifyAuthStateFromDiagnostic(
+		result?.flow_url || result?.location_href || "",
+		result,
+	);
+	if (
+		authState === "AUTH_REQUIRED" ||
+		(Array.isArray(result?.visible_login_markers) &&
+			result.visible_login_markers.length > 0)
+	) {
+		return "FLOW_LOGIN_REQUIRED";
+	}
+	switch (String(result?.error || "")) {
+		case "FLOW_PROJECT_LIST_OR_LANDING_NOT_DETECTED":
+			return "FLOW_ROOT_PAGE_NOT_READY";
+		case "FLOW_PROJECT_CREATION_PATH_MISSING":
+			return result?.new_project_clicked === true
+				? "FLOW_CREATE_PROJECT_CLICK_FAILED"
+				: "FLOW_CREATE_PROJECT_CONTROL_NOT_FOUND";
+		case "FLOW_PROJECT_EDITOR_NOT_READY":
+			return isProjectEditorUrl(result?.flow_url)
+				? "FLOW_PROJECT_EDITOR_SURFACE_NOT_READY"
+				: "FLOW_PROJECT_EDITOR_URL_TIMEOUT";
+		default:
+			if (String(result?.error || "").includes("ERR_MESSAGE")) {
+				return "FLOW_ROOT_PAGE_NOT_READY";
+			}
+			return "FLOW_CREATE_PROJECT_CLICK_FAILED";
+	}
+}
+
+async function getFocusedActiveBrowserTab() {
+	try {
+		const tabs = await chrome.tabs.query({
+			active: true,
+			lastFocusedWindow: true,
+		});
+		return tabs?.[0] || null;
+	} catch (_) {
+		return null;
+	}
+}
+
+function isFlowContentScriptReadyForActiveTab(diagnostic) {
+	if (!diagnostic || typeof diagnostic !== "object") {
+		return false;
+	}
+	if (diagnostic.error || diagnostic.raw_error) {
+		return false;
+	}
+	const contentScriptAlive =
+		typeof diagnostic.content_script_alive === "boolean"
+			? diagnostic.content_script_alive
+			: Boolean(diagnostic.content_script_loaded);
+	const buildMatch =
+		typeof diagnostic.build_match === "boolean"
+			? diagnostic.build_match
+			: diagnostic.content_build_id
+				? diagnostic.content_build_id === BUILD_ID
+				: true;
+	return Boolean(
+		diagnostic.content_script_loaded &&
+			contentScriptAlive &&
+			diagnostic.runtime_ready &&
+			buildMatch,
+	);
+}
+
+function isActiveTabAddMediaLauncherReady(mode, diagnostic) {
+	if (!diagnostic || typeof diagnostic !== "object") {
+		return false;
+	}
+	const observedSlots = Array.isArray(diagnostic?.observed?.visibleUploadSlots)
+		? diagnostic.observed.visibleUploadSlots.map((value) => String(value))
+		: [];
+	const editorCapabilityReady = Boolean(
+		diagnostic?.editor_capability_ready === true ||
+			diagnostic?.ui_contract_v2?.editor_capability_ready === true,
+	);
+	if (diagnostic?.blocking_modal_detected) {
+		return false;
+	}
+	if (String(mode || "").trim().toUpperCase() !== "F2V") {
+		return editorCapabilityReady;
+	}
+	// F2V: accept editorCapabilityReady OR strict_composer_ok (strong signals),
+	// OR a live composer with visible upload slots (surface-signal fallback that handles
+	// the case where configLauncher detection fails due to targetLooksLikePageShell
+	// false-positive when the pill's closest button ancestor wraps "add media" text).
+	const composerLive = Boolean(
+		diagnostic?.composer_found && diagnostic?.composer_editable,
+	);
+	const uploadSlotsVisible =
+		observedSlots.includes("Start") || observedSlots.includes("End");
+	return Boolean(
+		editorCapabilityReady ||
+			diagnostic?.strict_composer_ok === true ||
+			(composerLive && uploadSlotsVisible),
+	);
+}
+
+function evaluateActiveFlowTabPreflight(
+	binding,
+	contentDiagnostic = null,
+	pageDiagnostic = null,
+	composerDiagnostic = null,
+	mode = null,
+) {
+	const selectedTab = binding?.selectedTab || null;
+	const activeEditorTab = binding?.activeEditorTab || null;
+	const mergedContentDiagnostic =
+		contentDiagnostic && typeof contentDiagnostic === "object"
+			? contentDiagnostic
+			: {};
+	const mergedComposerDiagnostic =
+		composerDiagnostic && typeof composerDiagnostic === "object"
+			? {
+					...mergedContentDiagnostic,
+					...composerDiagnostic,
+				}
+			: mergedContentDiagnostic;
+	const contentScriptAliveOnActiveTab =
+		isFlowContentScriptReadyForActiveTab(mergedContentDiagnostic);
+	// Reject a broken editor page as runtime authority. Real page-level evidence
+	// (visible "Something went wrong"/error markers) means the bound project is a
+	// dead Flow error surface even though its URL/title look like a valid editor.
+	// Such a target must not keep winning just because it is the active/stored tab.
+	const brokenErrorMarkers = Array.isArray(pageDiagnostic?.visible_error_markers)
+		? pageDiagnostic.visible_error_markers.map((value) => String(value))
+		: [];
+	const activeEditorBroken = Boolean(
+		activeEditorTab?.id &&
+			(brokenErrorMarkers.length > 0 || flowTabLooksBroken(activeEditorTab)),
+	);
+	const safeToClickActiveTab =
+		!activeEditorBroken &&
+		contentScriptAliveOnActiveTab &&
+		isActiveTabAddMediaLauncherReady(
+			mode,
+			mergedComposerDiagnostic || pageDiagnostic || mergedContentDiagnostic,
+		);
+	const preflight = {
+		selected_tab_id: Number(selectedTab?.id || 0),
+		active_editor_tab_id: Number(activeEditorTab?.id || 0),
+		selected_tab_active: Boolean(selectedTab?.active),
+		same_project_url: Boolean(binding?.sameProjectUrl),
+		content_script_alive_on_active_tab: contentScriptAliveOnActiveTab,
+		safe_to_click_active_tab: safeToClickActiveTab,
+		broken_target_rejected: activeEditorBroken,
+	};
+	let error = null;
+	if (!activeEditorTab?.id) {
+		error = "FLOW_ACTIVE_EDITOR_TAB_NOT_FOUND";
+	} else if (activeEditorBroken) {
+		// Broken editor surface — treat as no usable active editor so strict
+		// recovery looks for a healthy editor (or opens a fresh one) instead of
+		// binding the dead project.
+		error = "FLOW_ACTIVE_EDITOR_TAB_NOT_FOUND";
+	} else if (binding?.error === "FLOW_TARGET_TAB_MISMATCH") {
+		error = "FLOW_TARGET_TAB_MISMATCH";
+	} else if (!selectedTab?.id || Number(selectedTab.id) !== Number(activeEditorTab.id)) {
+		error = "FLOW_REBOUND_TO_ACTIVE_TAB_FAILED";
+	} else if (!contentScriptAliveOnActiveTab) {
+		error = "FLOW_ACTIVE_TAB_CONTENT_SCRIPT_NOT_READY";
+	} else if (!safeToClickActiveTab) {
+		error = "FLOW_ACTIVE_TAB_ADD_MEDIA_LAUNCHER_NOT_FOUND";
+	}
+	return {
+		ok: !error,
+		error,
+		preflight,
+		selectedTab,
+		activeEditorTab,
+		reboundToActiveEditorTab: Boolean(binding?.reboundToActiveEditorTab),
+		selectedTabActive: Boolean(selectedTab?.active),
+		selectedTabUrl: String(selectedTab?.url || "").trim() || null,
+		activeEditorTabUrl: String(activeEditorTab?.url || "").trim() || null,
+		sameProjectUrl: Boolean(binding?.sameProjectUrl),
+		contentScriptAliveOnActiveTab,
+		safeToClickActiveTab,
+		brokenTargetRejected: activeEditorBroken,
+		brokenTargetUrl: activeEditorBroken
+			? String(activeEditorTab?.url || "").trim() || null
+			: null,
+		brokenTargetMarkers: activeEditorBroken ? brokenErrorMarkers : [],
+	};
+}
+
 async function getTabSafe(tabId) {
 	if (!tabId) {
 		return null;
@@ -910,11 +1843,663 @@ async function getTabSafe(tabId) {
 	}
 }
 
-function isActualFlowEditorProbe(result) {
+async function buildActiveFlowTabPreflight(mode = "F2V", options = {}) {
+	const preferredUrl =
+		options?.preferredUrl !== undefined
+			? options.preferredUrl
+			: await getStoredFlowProjectUrl();
+	const tabs = Array.isArray(options?.tabs)
+		? options.tabs.filter(Boolean)
+		: await getFlowTabs();
+	const focusedActiveTab =
+		options?.focusedActiveTab !== undefined
+			? options.focusedActiveTab
+			: await getFocusedActiveBrowserTab();
+	const binding = buildFlowTabSelectionBinding(
+		tabs,
+		preferredUrl,
+		focusedActiveTab,
+		options?.selectedTabOverride || null,
+	);
+	const duplicateTabInventory = buildDuplicateFlowEditorInventory(tabs);
+	const targetTab =
+		(await getTabSafe(binding?.selectedTab?.id || binding?.activeEditorTab?.id)) ||
+		binding?.selectedTab ||
+		binding?.activeEditorTab ||
+		null;
+	let contentDiagnostic = null;
+	let pageDiagnostic = null;
+	let composerDiagnostic = null;
+
+	if (targetTab?.id) {
+		await ensureFlowDomScript(targetTab.id);
+		contentDiagnostic = await pingFlowDomScript(targetTab);
+		if (isFlowContentScriptReadyForActiveTab(contentDiagnostic)) {
+			pageDiagnostic = await sendTabMessageSafe(
+				targetTab.id,
+				{
+					type: "FLOW_PAGE_STATE_DIAGNOSTIC",
+					mode,
+				},
+				12000,
+			);
+			if (canUsePageDiagnosticForComposerReadiness(pageDiagnostic)) {
+				composerDiagnostic = buildComposerReadinessFromPageDiagnostic(pageDiagnostic);
+			} else {
+				composerDiagnostic = await sendTabMessageSafe(
+					targetTab.id,
+					{
+						type: "CHECK_FLOW_COMPOSER_READY",
+						mode,
+					},
+					12000,
+				);
+			}
+		}
+	}
+
+	const evaluated = evaluateActiveFlowTabPreflight(
+		{
+			...binding,
+			selectedTab: targetTab || binding?.selectedTab || null,
+		},
+		contentDiagnostic,
+		pageDiagnostic,
+		composerDiagnostic,
+		mode,
+	);
+	return {
+		...evaluated,
+		duplicate_tab_inventory: duplicateTabInventory,
+		content_diagnostic: contentDiagnostic,
+		page_diagnostic: pageDiagnostic,
+		composer_diagnostic:
+			composerDiagnostic || (canUsePageDiagnosticForComposerReadiness(pageDiagnostic)
+				? buildComposerReadinessFromPageDiagnostic(pageDiagnostic)
+				: null),
+	};
+}
+
+async function recoverStrictActiveFlowTabTarget(
+	mode = "F2V",
+	options = {},
+	deps = {},
+) {
+	const api = {
+		getFlowTabs: deps.getFlowTabs || getFlowTabs,
+		getTabSafe: deps.getTabSafe || getTabSafe,
+		focusTab: deps.focusTab || focusTab,
+		waitForTabComplete: deps.waitForTabComplete || waitForTabComplete,
+		buildActiveFlowTabPreflight:
+			deps.buildActiveFlowTabPreflight || buildActiveFlowTabPreflight,
+		probeFlowEditorCandidate:
+			deps.probeFlowEditorCandidate || probeFlowEditorCandidate,
+		openFlowProjectFn:
+			deps.openFlowProjectFn || openPreferredFlowProjectOrNewProject,
+		settleFlowProjectAfterOpen:
+			deps.settleFlowProjectAfterOpen || settleFlowProjectAfterOpen,
+	};
+	const preferredUrl =
+		options?.preferredUrl !== undefined ? options.preferredUrl : null;
+	const allowBootstrapRecovery = options?.allowBootstrapRecovery !== false;
+	const initialTabs = Array.isArray(options?.tabs)
+		? options.tabs.filter(Boolean)
+		: await api.getFlowTabs();
+	const initialPreflight =
+		options?.activeTabPreflight ||
+		(await api.buildActiveFlowTabPreflight(mode, {
+			preferredUrl,
+			tabs: initialTabs,
+		}));
+
+	if (initialPreflight?.ok) {
+		return {
+			ok: true,
+			activeTabPreflight: initialPreflight,
+			focus_recovery_attempted: false,
+			focus_recovery_succeeded: false,
+			focused_editor_tab_id: 0,
+			bootstrap_recovery_attempted: false,
+			bootstrap_recovery_succeeded: false,
+			bootstrapped_editor_tab_id: 0,
+		};
+	}
+
+	if (String(initialPreflight?.error || "") !== "FLOW_ACTIVE_EDITOR_TAB_NOT_FOUND") {
+		return {
+			ok: false,
+			activeTabPreflight: initialPreflight,
+			focus_recovery_attempted: false,
+			focus_recovery_succeeded: false,
+			focused_editor_tab_id: 0,
+			bootstrap_recovery_attempted: false,
+			bootstrap_recovery_succeeded: false,
+			bootstrapped_editor_tab_id: 0,
+		};
+	}
+
+	const selectedTab = selectBestFlowTab(initialTabs, preferredUrl);
+	const editorTabs = initialTabs.filter(
+		(tab) => isProjectEditorUrl(tab?.url) && !isRootFlowUrl(tab?.url),
+	);
+	const preferredProbeTab =
+		selectedTab &&
+		isProjectEditorUrl(selectedTab?.url) &&
+		!isRootFlowUrl(selectedTab?.url)
+			? selectedTab
+			: null;
+	const rankedEditorTabs = rankFlowBootstrapEditorCandidates(editorTabs);
+	const candidates = buildUniqueFlowProbeCandidates(
+		rankedEditorTabs,
+		preferredProbeTab,
+	);
+
+	let anyEditorProbeOk = false;
+	let anyEditorProbeAlive = false;
+	let lastRecoveredPreflight = null;
+	let lastFocusedEditorTabId = 0;
+	for (const candidateTab of candidates) {
+		const probe = await api.probeFlowEditorCandidate(candidateTab, mode);
+		const probeShowsLiveEditor = Boolean(
+			isFlowContentScriptReadyForActiveTab(probe?.diagnostic) &&
+				isProjectEditorUrl(probe?.tab?.url || candidateTab?.url),
+		);
+		if (!probe?.ok && !probeShowsLiveEditor) {
+			continue;
+		}
+		if (probeShowsLiveEditor) {
+			anyEditorProbeAlive = true;
+		}
+		if (probe?.ok) {
+			anyEditorProbeOk = true;
+		}
+		let focusedTab = (await api.getTabSafe(candidateTab?.id)) || candidateTab;
+		try {
+			focusedTab = (await api.focusTab(focusedTab)) || focusedTab;
+		} catch (_) {}
+		try {
+			focusedTab = (await api.waitForTabComplete(focusedTab.id, 20000)) || focusedTab;
+		} catch (_) {
+			focusedTab = (await api.getTabSafe(focusedTab.id)) || focusedTab;
+		}
+		lastFocusedEditorTabId = Number(focusedTab?.id || 0);
+		const refreshedTabs = await api.getFlowTabs();
+		const recoveredPreflight = await api.buildActiveFlowTabPreflight(mode, {
+			preferredUrl: focusedTab?.url || preferredUrl,
+			tabs:
+				refreshedTabs.length > 0
+					? refreshedTabs
+					: [
+							focusedTab,
+							...initialTabs.filter(
+								(tab) => Number(tab?.id || 0) !== Number(focusedTab?.id || 0),
+							),
+						],
+			focusedActiveTab: focusedTab,
+			selectedTabOverride: focusedTab,
+		});
+		lastRecoveredPreflight = recoveredPreflight || lastRecoveredPreflight;
+		if (recoveredPreflight?.ok) {
+			return {
+				ok: true,
+				activeTabPreflight: recoveredPreflight,
+				focus_recovery_attempted: true,
+				focus_recovery_succeeded: true,
+				focused_editor_tab_id: Number(focusedTab?.id || 0),
+				bootstrap_recovery_attempted: false,
+				bootstrap_recovery_succeeded: false,
+				bootstrapped_editor_tab_id: 0,
+			};
+		}
+	}
+
+	// REOPEN GUARD — a live Flow project editor is already open (a candidate tab
+	// probed OK and was focused) but its active-tab preflight gate did not pass
+	// (e.g. launcher-readiness race right after focus). Opening/creating a SECOND
+	// project here would duplicate the editor and invalidate B.2A. Fail closed and
+	// surface the real preflight blocker instead of silently bootstrapping a new
+	// project. The caller reads activeTabPreflight.error, so the precise existing
+	// blocker (e.g. FLOW_ACTIVE_TAB_ADD_MEDIA_LAUNCHER_NOT_FOUND) is what surfaces;
+	// FLOW_PROJECT_REOPEN_LOOP is recorded on the recovery envelope as the reason
+	// the bootstrap was suppressed.
+	if (anyEditorProbeAlive || anyEditorProbeOk) {
+		return {
+			ok: false,
+			error: "FLOW_PROJECT_REOPEN_LOOP",
+			reopen_suppressed: true,
+			activeTabPreflight: lastRecoveredPreflight || initialPreflight,
+			focus_recovery_attempted: true,
+			focus_recovery_succeeded: false,
+			focused_editor_tab_id: lastFocusedEditorTabId,
+			bootstrap_recovery_attempted: false,
+			bootstrap_recovery_succeeded: false,
+			bootstrapped_editor_tab_id: 0,
+		};
+	}
+
+	if (!allowBootstrapRecovery) {
+		return {
+			ok: false,
+			activeTabPreflight: lastRecoveredPreflight || initialPreflight,
+			focus_recovery_attempted: candidates.length > 0,
+			focus_recovery_succeeded: false,
+			focused_editor_tab_id: lastFocusedEditorTabId,
+			bootstrap_recovery_attempted: false,
+			bootstrap_recovery_succeeded: false,
+			bootstrapped_editor_tab_id: 0,
+			bootstrap_recovery_blocked: true,
+		};
+	}
+
+	// When the rejected target was a broken Flow editor page, the remembered
+	// (preferred) project URL is the dead one. Do NOT pass it to the open fallback
+	// or it would re-navigate to the same broken project — open a fresh project
+	// instead by dropping the broken preferred URL.
+	const brokenPreferredUrl = Boolean(
+		initialPreflight?.brokenTargetRejected || lastRecoveredPreflight?.brokenTargetRejected,
+	);
+	const bootstrapPreferredUrl = brokenPreferredUrl ? null : preferredUrl;
+	let openFlowResult = null;
+	let settledTab = null;
+	try {
+		openFlowResult = await api.openFlowProjectFn(mode, bootstrapPreferredUrl);
+		settledTab = await api.settleFlowProjectAfterOpen(openFlowResult);
+	} catch (_) {}
+	if (settledTab?.id) {
+		const refreshedTabs = await api.getFlowTabs();
+		const bootstrappedPreflight = await api.buildActiveFlowTabPreflight(mode, {
+			preferredUrl: settledTab?.url || preferredUrl,
+			tabs:
+				refreshedTabs.length > 0
+					? refreshedTabs
+					: [
+							settledTab,
+							...initialTabs.filter(
+								(tab) => Number(tab?.id || 0) !== Number(settledTab?.id || 0),
+							),
+						],
+			focusedActiveTab: settledTab,
+			selectedTabOverride: settledTab,
+		});
+		if (bootstrappedPreflight?.ok) {
+			return {
+				ok: true,
+				activeTabPreflight: bootstrappedPreflight,
+				focus_recovery_attempted: candidates.length > 0,
+				focus_recovery_succeeded: false,
+				focused_editor_tab_id: 0,
+				bootstrap_recovery_attempted: true,
+				bootstrap_recovery_succeeded: true,
+				bootstrapped_editor_tab_id: Number(settledTab?.id || 0),
+			};
+		}
+	}
+
+	return {
+		ok: false,
+		activeTabPreflight: initialPreflight,
+		focus_recovery_attempted: candidates.length > 0,
+		focus_recovery_succeeded: false,
+		focused_editor_tab_id: 0,
+		bootstrap_recovery_attempted: true,
+		bootstrap_recovery_succeeded: false,
+		bootstrapped_editor_tab_id: 0,
+	};
+}
+
+async function bootstrapFlowProjectEditorForB2A0(mode = "F2V", deps = {}) {
+	const api = {
+		getStoredFlowProjectUrl: deps.getStoredFlowProjectUrl || getStoredFlowProjectUrl,
+		getFlowTabs: deps.getFlowTabs || getFlowTabs,
+		getFocusedActiveBrowserTab:
+			deps.getFocusedActiveBrowserTab || getFocusedActiveBrowserTab,
+		getFlowTab: deps.getFlowTab || getFlowTab,
+		getTabSafe: deps.getTabSafe || getTabSafe,
+		focusTab: deps.focusTab || focusTab,
+		openTabInNormalWindow: deps.openTabInNormalWindow || openTabInNormalWindow,
+		waitForTabComplete: deps.waitForTabComplete || waitForTabComplete,
+		ensureFlowDomScript: deps.ensureFlowDomScript || ensureFlowDomScript,
+		pingFlowDomScript: deps.pingFlowDomScript || pingFlowDomScript,
+		sendTabMessageSafe: deps.sendTabMessageSafe || sendTabMessageSafe,
+		buildActiveFlowTabPreflight:
+			deps.buildActiveFlowTabPreflight || buildActiveFlowTabPreflight,
+		probeFlowEditorCandidate:
+			deps.probeFlowEditorCandidate || probeFlowEditorCandidate,
+		handleOpenFlowNewProject: deps.handleOpenFlowNewProject || handleOpenFlowNewProject,
+		settleFlowProjectAfterOpen:
+			deps.settleFlowProjectAfterOpen || settleFlowProjectAfterOpen,
+		classifyAuthStateFromDiagnostic:
+			deps.classifyAuthStateFromDiagnostic || classifyAuthStateFromDiagnostic,
+	};
+	const rootUrl = "https://labs.google/fx/tools/flow";
+	const stageEvents = [];
+	const proof = {
+		flow_entry_url: rootUrl,
+		started_from: "NO_FLOW_TAB",
+		created_new_project: false,
+		selected_tab_id_before: 0,
+		selected_tab_id_after: 0,
+		selected_tab_url_after: null,
+		project_id: null,
+		content_script_ready: false,
+		editor_surface_ready: false,
+		safe_to_run_b2a: false,
+		stopped_before_add_media: true,
+	};
+	const recordStage = (stage, status, message = null) => {
+		stageEvents.push({ stage, status, message });
+	};
+	const buildFailure = (error, stage = null, message = null) => {
+		if (stage) {
+			recordStage(stage, "FAIL", message || error);
+		}
+		return {
+			ok: false,
+			error,
+			detail: message || error,
+			stages: stageEvents.map((item) => item.stage),
+			stage_events: stageEvents,
+			...proof,
+		};
+	};
+	const finalizeBoundEditor = async (projectTab, startedFrom, extra = {}) => {
+		let focusedTab = (await api.getTabSafe(projectTab?.id)) || projectTab || null;
+		if (!focusedTab?.id) {
+			return buildFailure(
+				"FLOW_PROJECT_EDITOR_TAB_BIND_FAILED",
+				"F2V_V2A0_PROJECT_EDITOR_TAB_BOUND",
+				"FLOW_PROJECT_EDITOR_TAB_BIND_FAILED",
+			);
+		}
+		try {
+			focusedTab = (await api.focusTab(focusedTab)) || focusedTab;
+		} catch (_) {}
+		try {
+			focusedTab = (await api.waitForTabComplete(focusedTab.id, 20000)) || focusedTab;
+		} catch (_) {
+			focusedTab = (await api.getTabSafe(focusedTab.id)) || focusedTab;
+		}
+		const preflight = await api.buildActiveFlowTabPreflight(mode, {
+			preferredUrl: focusedTab?.url || null,
+			selectedTabOverride: focusedTab,
+		});
+		if (!preflight?.ok) {
+			const mappedError = mapFlowBootstrapBindingFailureCode(preflight?.error);
+			const failStage =
+				mappedError === "FLOW_PROJECT_CONTENT_SCRIPT_NOT_READY"
+					? "F2V_V2A0_CONTENT_SCRIPT_READY"
+					: mappedError === "FLOW_PROJECT_EDITOR_SURFACE_NOT_READY"
+						? "F2V_V2A0_EDITOR_SURFACE_READY"
+						: "F2V_V2A0_PROJECT_EDITOR_TAB_BOUND";
+			return buildFailure(mappedError, failStage, preflight?.error || mappedError);
+		}
+		proof.started_from = startedFrom;
+		proof.selected_tab_id_after = Number(
+			preflight?.preflight?.selected_tab_id || focusedTab?.id || 0,
+		);
+		proof.selected_tab_url_after =
+			preflight?.selectedTabUrl || focusedTab?.url || null;
+		proof.project_id = extractFlowProjectId(proof.selected_tab_url_after);
+		proof.content_script_ready = Boolean(
+			preflight?.preflight?.content_script_alive_on_active_tab,
+		);
+		proof.editor_surface_ready = Boolean(
+			preflight?.preflight?.safe_to_click_active_tab,
+		);
+		proof.safe_to_run_b2a = Boolean(preflight?.ok);
+		recordStage(
+			"F2V_V2A0_PROJECT_EDITOR_TAB_BOUND",
+			"PASS",
+			JSON.stringify({
+				selected_tab_id: proof.selected_tab_id_after,
+				selected_tab_url: proof.selected_tab_url_after,
+				rebound_to_active_editor_tab: Boolean(
+					preflight?.reboundToActiveEditorTab,
+				),
+			}),
+		);
+		recordStage(
+			"F2V_V2A0_CONTENT_SCRIPT_READY",
+			"PASS",
+			JSON.stringify({
+				content_script_alive_on_active_tab: true,
+			}),
+		);
+		recordStage(
+			"F2V_V2A0_EDITOR_SURFACE_READY",
+			"PASS",
+			JSON.stringify({
+				safe_to_click_active_tab: true,
+			}),
+		);
+		recordStage(
+			"F2V_V2A0_STOPPED_BEFORE_ADD_MEDIA",
+			"PASS",
+			JSON.stringify({
+				add_media_clicked: false,
+				upload_picker_opened: false,
+				file_upload_attempted: false,
+				add_to_prompt_attempted: false,
+				settings_attempted: false,
+				prompt_injection_attempted: false,
+				generate_attempted: false,
+			}),
+		);
+		return {
+			ok: true,
+			stages: stageEvents.map((item) => item.stage),
+			stage_events: stageEvents,
+			...proof,
+			...extra,
+		};
+	};
+
+	const preferredUrl = await api.getStoredFlowProjectUrl();
+	let flowTabs = await api.getFlowTabs();
+	const focusedActiveTab = await api.getFocusedActiveBrowserTab();
+	const selectedBeforeTab = await api.getFlowTab();
+	proof.selected_tab_id_before = Number(selectedBeforeTab?.id || 0);
+	const startState = determineFlowBootstrapStartState(flowTabs, focusedActiveTab);
+	proof.started_from = startState.startedFrom;
+	proof.flow_entry_url = String(startState.entryTab?.url || rootUrl);
+
+	if (startState.startedFrom === "EXISTING_PROJECT_EDITOR") {
+		recordStage(
+			"F2V_V2A0_EXISTING_PROJECT_EDITOR_FOUND",
+			"PASS",
+			JSON.stringify({
+				editor_tab_ids: startState.editorTabs.map((tab) => Number(tab?.id || 0)),
+				active_editor_tab_id: Number(startState.activeEditorTab?.id || 0),
+			}),
+		);
+		for (const candidate of rankFlowBootstrapEditorCandidates(
+			startState.editorTabs,
+			focusedActiveTab,
+		)) {
+			const probe = await api.probeFlowEditorCandidate(candidate, mode);
+			if (!probe?.ok) {
+				continue;
+			}
+			let usableTab = (await api.getTabSafe(candidate.id)) || candidate;
+			if (!usableTab?.active) {
+				try {
+					usableTab = (await api.focusTab(usableTab)) || usableTab;
+				} catch (_) {}
+			}
+			return await finalizeBoundEditor(usableTab, "EXISTING_PROJECT_EDITOR", {
+				created_new_project: false,
+			});
+		}
+	}
+
+	let flowEntryTab = startState.entryTab;
+	if (startState.startedFrom === "NO_FLOW_TAB") {
+		try {
+			flowEntryTab = await api.openTabInNormalWindow(rootUrl);
+			flowEntryTab = await api.waitForTabComplete(flowEntryTab.id, 30000);
+		} catch (error) {
+			return buildFailure(
+				"FLOW_TAB_OPEN_FAILED",
+				"F2V_V2A0_FLOW_ENTRY_OPENED_OR_FOUND",
+				String(error?.message || error || "FLOW_TAB_OPEN_FAILED"),
+			);
+		}
+	} else if (flowEntryTab?.id) {
+		try {
+			flowEntryTab = (await api.focusTab(flowEntryTab)) || flowEntryTab;
+		} catch (_) {}
+	}
+
+	proof.flow_entry_url = String(flowEntryTab?.url || rootUrl);
+	recordStage(
+		"F2V_V2A0_FLOW_ENTRY_OPENED_OR_FOUND",
+		"PASS",
+		JSON.stringify({
+			started_from: proof.started_from,
+			flow_entry_url: proof.flow_entry_url,
+			tab_id: Number(flowEntryTab?.id || 0),
+		}),
+	);
+	if (!flowEntryTab?.id) {
+		return buildFailure(
+			"FLOW_TAB_OPEN_FAILED",
+			"F2V_V2A0_FLOW_ENTRY_OPENED_OR_FOUND",
+			"FLOW_TAB_OPEN_FAILED",
+		);
+	}
+
+	await api.ensureFlowDomScript(flowEntryTab.id);
+	const entryDiagnostic = await api.pingFlowDomScript(flowEntryTab);
+	if (entryDiagnostic?.raw_error) {
+		return buildFailure(
+			"FLOW_ROOT_PAGE_NOT_READY",
+			"F2V_V2A0_ROOT_PAGE_DETECTED_OR_SKIPPED",
+			entryDiagnostic.raw_error,
+		);
+	}
+	const entryPageDiagnostic = await api.sendTabMessageSafe(
+		flowEntryTab.id,
+		{
+			type: "FLOW_PAGE_STATE_DIAGNOSTIC",
+			mode,
+		},
+		12000,
+	);
+	const authState = api.classifyAuthStateFromDiagnostic(
+		entryPageDiagnostic?.flow_url || flowEntryTab?.url || "",
+		entryPageDiagnostic,
+	);
+	if (
+		authState === "AUTH_REQUIRED" ||
+		(Array.isArray(entryPageDiagnostic?.visible_login_markers) &&
+			entryPageDiagnostic.visible_login_markers.length > 0)
+	) {
+		return buildFailure(
+			"FLOW_LOGIN_REQUIRED",
+			"F2V_V2A0_FLOW_AUTHENTICATED",
+			"FLOW_LOGIN_REQUIRED",
+		);
+	}
+	recordStage(
+		"F2V_V2A0_FLOW_AUTHENTICATED",
+		"PASS",
+		JSON.stringify({
+			auth_state: authState,
+		}),
+	);
+	recordStage(
+		"F2V_V2A0_ROOT_PAGE_DETECTED_OR_SKIPPED",
+		"PASS",
+		JSON.stringify({
+			root_page_detected: Boolean(
+				isRootFlowUrl(entryPageDiagnostic?.flow_url || flowEntryTab?.url || ""),
+			),
+		}),
+	);
+
+	const openFlowResult = await api.handleOpenFlowNewProject(mode);
+	if (!openFlowResult?.ok) {
+		const mappedError = mapOpenFlowNewProjectFailureCode(openFlowResult);
+		if (mappedError === "FLOW_ROOT_PAGE_NOT_READY") {
+			return buildFailure(
+				mappedError,
+				"F2V_V2A0_ROOT_PAGE_DETECTED_OR_SKIPPED",
+				openFlowResult?.error || mappedError,
+			);
+		}
+		if (mappedError === "FLOW_CREATE_PROJECT_CONTROL_NOT_FOUND") {
+			return buildFailure(
+				mappedError,
+				"F2V_V2A0_CREATE_PROJECT_CONTROL_FOUND",
+				openFlowResult?.error || mappedError,
+			);
+		}
+		return buildFailure(
+			mappedError,
+			"F2V_V2A0_CREATE_PROJECT_CLICKED",
+			openFlowResult?.error || mappedError,
+		);
+	}
+	recordStage(
+		"F2V_V2A0_CREATE_PROJECT_CONTROL_FOUND",
+		"PASS",
+		JSON.stringify({
+			project_list_or_landing_detected: Boolean(
+				openFlowResult?.project_list_or_landing_detected,
+			),
+		}),
+	);
+	proof.created_new_project = openFlowResult?.new_project_clicked === true;
+	recordStage(
+		"F2V_V2A0_CREATE_PROJECT_CLICKED",
+		"PASS",
+		JSON.stringify({
+			new_project_clicked: openFlowResult?.new_project_clicked === true,
+		}),
+	);
+	const settledTab = await api.settleFlowProjectAfterOpen(openFlowResult);
+	if (!settledTab?.id || !isProjectEditorUrl(settledTab?.url)) {
+		return buildFailure(
+			"FLOW_PROJECT_EDITOR_URL_TIMEOUT",
+			"F2V_V2A0_PROJECT_EDITOR_URL_CONFIRMED",
+			openFlowResult?.error || "FLOW_PROJECT_EDITOR_URL_TIMEOUT",
+		);
+	}
+	recordStage(
+		"F2V_V2A0_PROJECT_EDITOR_URL_CONFIRMED",
+		"PASS",
+		JSON.stringify({
+			selected_tab_id_after: Number(settledTab?.id || 0),
+			selected_tab_url_after: settledTab?.url || null,
+			project_id: extractFlowProjectId(settledTab?.url),
+		}),
+	);
+	return await finalizeBoundEditor(settledTab, proof.started_from, {
+		created_new_project: proof.created_new_project,
+	});
+}
+
+function isActualFlowEditorProbe(result, mode = null) {
 	if (!result || result.error) {
 		return false;
 	}
 	const modeVisible = String(result.current_mode_visible || "");
+	const visibleUploadSlots = Array.isArray(result?.observed?.visibleUploadSlots)
+		? result.observed.visibleUploadSlots.map((value) => String(value))
+		: [];
+	const normalizedMode = String(mode || "").trim().toUpperCase();
+	if (normalizedMode === "F2V") {
+		const looksLikeFramesEditor =
+			modeVisible.includes("Video/Frames") ||
+			visibleUploadSlots.includes("Start") ||
+			visibleUploadSlots.includes("End");
+		return Boolean(
+			result.flow_tab_found &&
+				result.signed_in_likely &&
+				result.ok &&
+				looksLikeFramesEditor,
+		);
+	}
 	return Boolean(
 		result.flow_tab_found &&
 			result.signed_in_likely &&
@@ -954,10 +2539,72 @@ async function probeFlowEditorCandidate(tab, mode) {
 		12000,
 	);
 	return {
-		ok: isActualFlowEditorProbe(readiness),
+		ok: isActualFlowEditorProbe(readiness, mode),
 		tab: summarizeFlowTab(safeTab),
 		readiness,
 		diagnostic,
+	};
+}
+
+async function resolveExistingProjectEditorAuthority(tab, mode) {
+	const safeTab = await getTabSafe(tab?.id);
+	if (
+		!safeTab?.id ||
+		!isProjectEditorUrl(safeTab?.url) ||
+		isRootFlowUrl(safeTab?.url)
+	) {
+		return {
+			ok: false,
+			error: "FLOW_EDITOR_AUTHORITY_NOT_ELIGIBLE",
+			tab: summarizeFlowTab(tab),
+		};
+	}
+	if (flowTabLooksBroken(safeTab)) {
+		return {
+			ok: false,
+			error: "FLOW_EDITOR_AUTHORITY_BROKEN",
+			tab: summarizeFlowTab(safeTab),
+		};
+	}
+	await ensureFlowDomScript(safeTab.id);
+	const diagnostic = await pingFlowDomScript(safeTab);
+	if (!isFlowContentScriptReadyForActiveTab(diagnostic)) {
+		return {
+			ok: false,
+			error:
+				diagnostic?.raw_error || "FLOW_ACTIVE_TAB_CONTENT_SCRIPT_NOT_READY",
+			tab: summarizeFlowTab(safeTab),
+			diagnostic,
+		};
+	}
+	let pageDiagnostic = null;
+	try {
+		pageDiagnostic = await sendTabMessageSafe(
+			safeTab.id,
+			{
+				type: "FLOW_PAGE_STATE_DIAGNOSTIC",
+				mode,
+			},
+			12000,
+		);
+	} catch (_) {}
+	const brokenErrorMarkers = Array.isArray(pageDiagnostic?.visible_error_markers)
+		? pageDiagnostic.visible_error_markers.map((value) => String(value))
+		: [];
+	if (brokenErrorMarkers.length) {
+		return {
+			ok: false,
+			error: "FLOW_EDITOR_AUTHORITY_BROKEN",
+			tab: summarizeFlowTab(safeTab),
+			diagnostic,
+			page_diagnostic: pageDiagnostic,
+		};
+	}
+	return {
+		ok: true,
+		tab: summarizeFlowTab(safeTab),
+		diagnostic,
+		page_diagnostic: pageDiagnostic,
 	};
 }
 
@@ -994,6 +2641,85 @@ function summarizeOpenFlowResult(result) {
 	};
 }
 
+async function getLocalRuntimeDiagnosticSnapshot() {
+	const preferredUrl = await getStoredFlowProjectUrl();
+	const flowTabs = await getFlowTabs();
+	const activeTabPreflight = await buildActiveFlowTabPreflight("F2V", {
+		preferredUrl,
+		tabs: flowTabs,
+	});
+	const selectedTab = activeTabPreflight?.selectedTab || null;
+	const adoptedTarget = await adoptSelectedFlowProjectUrlIfNeeded(
+		selectedTab,
+		flowTabs,
+		preferredUrl,
+	);
+	const effectivePreferredUrl =
+		adoptedTarget?.preferred_flow_project_url || preferredUrl;
+	const badRedirectTabs = await chrome.tabs.query({ url: ["http://0.0.0.43/*"] });
+	const badRedirectTab = badRedirectTabs.length ? badRedirectTabs[0] : null;
+	const diagnostics = buildRuntimeDiagnosticPayload({
+		flowUrl: selectedTab?.url || badRedirectTab?.url || null,
+		preferredUrl: effectivePreferredUrl,
+		selectedTab: selectedTab || badRedirectTab,
+	});
+	diagnostics.selected_tab_id = activeTabPreflight?.preflight?.selected_tab_id || null;
+	diagnostics.active_editor_tab_id =
+		activeTabPreflight?.preflight?.active_editor_tab_id || null;
+	diagnostics.selected_tab_active = Boolean(
+		activeTabPreflight?.preflight?.selected_tab_active,
+	);
+	diagnostics.selected_tab_url = activeTabPreflight?.selectedTabUrl || null;
+	diagnostics.active_editor_tab_url =
+		activeTabPreflight?.activeEditorTabUrl || null;
+	diagnostics.rebound_to_active_editor_tab = Boolean(
+		activeTabPreflight?.reboundToActiveEditorTab,
+	);
+	diagnostics.same_project_url = Boolean(
+		activeTabPreflight?.preflight?.same_project_url,
+	);
+	diagnostics.content_script_alive_on_active_tab = Boolean(
+		activeTabPreflight?.preflight?.content_script_alive_on_active_tab,
+	);
+	diagnostics.safe_to_click_active_tab = Boolean(
+		activeTabPreflight?.preflight?.safe_to_click_active_tab,
+	);
+	updateRuntimeDiagnostics(diagnostics);
+	return {
+		ok: true,
+		...buildBackgroundStatusResponse(),
+		flow_tabs: flowTabs.map((tab) => ({
+			...summarizeFlowTab(tab),
+			tab_kind: classifyFlowTabKind(tab),
+		})),
+		target_tab: selectedTab
+			? {
+					...summarizeFlowTab(selectedTab),
+					tab_kind: classifyFlowTabKind(selectedTab),
+				}
+			: null,
+		last_bad_redirect_tab: badRedirectTab ? summarizeFlowTab(badRedirectTab) : null,
+		preferred_flow_project_url: effectivePreferredUrl,
+		target_auto_sync: adoptedTarget?.sync_result || null,
+		active_tab_preflight: activeTabPreflight?.preflight || null,
+		target_binding_error: activeTabPreflight?.error || null,
+		target_binding_telemetry: activeTabPreflight
+			? {
+					selected_tab_id: activeTabPreflight.preflight?.selected_tab_id || 0,
+					active_editor_tab_id:
+						activeTabPreflight.preflight?.active_editor_tab_id || 0,
+					selected_tab_active:
+						Boolean(activeTabPreflight.preflight?.selected_tab_active),
+					selected_tab_url: activeTabPreflight.selectedTabUrl || null,
+					active_editor_tab_url: activeTabPreflight.activeEditorTabUrl || null,
+					rebound_to_active_editor_tab:
+						Boolean(activeTabPreflight.reboundToActiveEditorTab),
+				}
+			: null,
+		duplicate_editor_tabs: activeTabPreflight?.duplicate_tab_inventory || [],
+	};
+}
+
 async function resolveFlowExecutionTarget(job = null) {
 	const preferredUrl = await getStoredFlowProjectUrl();
 	let tabs = await getFlowTabs();
@@ -1009,12 +2735,138 @@ async function resolveFlowExecutionTarget(job = null) {
 		};
 	}
 
-	let selectedTab = selectBestFlowTab(tabs, preferredUrl);
+	const strictActiveBinding =
+		String(job?.mode || "").trim().toUpperCase() === "F2V";
+	let activeTabPreflight = null;
+	if (strictActiveBinding) {
+		const strictRecovery = await recoverStrictActiveFlowTabTarget(
+			job?.mode || "F2V",
+			{
+				preferredUrl,
+				tabs,
+			},
+		);
+		activeTabPreflight = strictRecovery?.activeTabPreflight || null;
+		if (strictRecovery?.ok) {
+			tabs = await getFlowTabs();
+		}
+		if (!activeTabPreflight?.ok) {
+			return {
+				ok: false,
+				error: activeTabPreflight?.error || "FLOW_REBOUND_TO_ACTIVE_TAB_FAILED",
+				candidate_tabs: initialCandidateTabs,
+				detail: {
+					reason: "active_flow_tab_preflight_failed",
+					selected_tab_id: activeTabPreflight?.preflight?.selected_tab_id || 0,
+					active_editor_tab_id:
+						activeTabPreflight?.preflight?.active_editor_tab_id || 0,
+					selected_tab_active:
+						Boolean(activeTabPreflight?.preflight?.selected_tab_active),
+					same_project_url:
+						Boolean(activeTabPreflight?.preflight?.same_project_url),
+					content_script_alive_on_active_tab: Boolean(
+						activeTabPreflight?.preflight?.content_script_alive_on_active_tab,
+					),
+					safe_to_click_active_tab: Boolean(
+						activeTabPreflight?.preflight?.safe_to_click_active_tab,
+					),
+					selected_tab_url: activeTabPreflight?.selectedTabUrl || null,
+					active_editor_tab_url: activeTabPreflight?.activeEditorTabUrl || null,
+					rebound_to_active_editor_tab: Boolean(
+						activeTabPreflight?.reboundToActiveEditorTab,
+					),
+					focus_recovery_attempted: Boolean(
+						strictRecovery?.focus_recovery_attempted,
+					),
+					focus_recovery_succeeded: Boolean(
+						strictRecovery?.focus_recovery_succeeded,
+					),
+					focused_editor_tab_id:
+						Number(strictRecovery?.focused_editor_tab_id || 0),
+					bootstrap_recovery_attempted: Boolean(
+						strictRecovery?.bootstrap_recovery_attempted,
+					),
+					bootstrap_recovery_succeeded: Boolean(
+						strictRecovery?.bootstrap_recovery_succeeded,
+					),
+					bootstrapped_editor_tab_id:
+						Number(strictRecovery?.bootstrapped_editor_tab_id || 0),
+					reopen_suppressed: Boolean(strictRecovery?.reopen_suppressed),
+					reopen_suppressed_reason: strictRecovery?.reopen_suppressed
+						? strictRecovery?.error || "FLOW_PROJECT_REOPEN_LOOP"
+						: null,
+					duplicate_editor_tabs:
+						activeTabPreflight?.duplicate_tab_inventory || [],
+				},
+			};
+		}
+		const preflightTarget =
+			(await getTabSafe(activeTabPreflight?.selectedTab?.id)) ||
+			activeTabPreflight?.selectedTab ||
+			null;
+		return {
+			ok: true,
+			targetTab: preflightTarget,
+			candidate_tabs: initialCandidateTabs,
+			target_probe:
+				activeTabPreflight?.composer_diagnostic ||
+				activeTabPreflight?.page_diagnostic ||
+				activeTabPreflight?.content_diagnostic ||
+				null,
+			active_tab_preflight: activeTabPreflight?.preflight || null,
+			focus_recovery_attempted: Boolean(
+				strictRecovery?.focus_recovery_attempted,
+			),
+			focus_recovery_succeeded: Boolean(
+				strictRecovery?.focus_recovery_succeeded,
+			),
+			focused_editor_tab_id: Number(strictRecovery?.focused_editor_tab_id || 0),
+			bootstrap_recovery_attempted: Boolean(
+				strictRecovery?.bootstrap_recovery_attempted,
+			),
+			bootstrap_recovery_succeeded: Boolean(
+				strictRecovery?.bootstrap_recovery_succeeded,
+			),
+			bootstrapped_editor_tab_id: Number(
+				strictRecovery?.bootstrapped_editor_tab_id || 0,
+			),
+		};
+	}
 
-	const rankedTabs = [
-		selectedTab,
-		...tabs.filter((tab) => tab?.id !== selectedTab?.id),
-	].filter(Boolean);
+	let selectedTab = selectBestFlowTab(tabs, preferredUrl);
+	const selectedTitle = String(selectedTab?.title || "").toLowerCase();
+	const canFastTrackSelectedEditor =
+		Boolean(selectedTab?.id) &&
+		isProjectEditorUrl(selectedTab?.url) &&
+		!isRootFlowUrl(selectedTab?.url) &&
+		!selectedTitle.includes("something went wrong") &&
+		!selectedTitle.includes("application error");
+	if (canFastTrackSelectedEditor) {
+		await ensureFlowDomScript(selectedTab.id);
+		const fastDiagnostic = await pingFlowDomScript(selectedTab);
+		if (!fastDiagnostic?.raw_error) {
+			const probedTab = await getTabSafe(selectedTab.id);
+			return {
+				ok: true,
+				targetTab: probedTab || selectedTab,
+				candidate_tabs: initialCandidateTabs,
+				target_probe: fastDiagnostic,
+			};
+		}
+	}
+	const nonRootEditors = tabs.filter(
+		(tab) => isProjectEditorUrl(tab?.url) && !isRootFlowUrl(tab?.url),
+	);
+	const preferredProbeTab =
+		selectedTab &&
+		isProjectEditorUrl(selectedTab?.url) &&
+		!isRootFlowUrl(selectedTab?.url)
+			? selectedTab
+			: null;
+	const rankedTabs = buildUniqueFlowProbeCandidates(
+		nonRootEditors.length ? nonRootEditors : tabs,
+		preferredProbeTab,
+	);
 	for (const candidateTab of rankedTabs) {
 		const probe = await probeFlowEditorCandidate(candidateTab, job?.mode);
 		if (probe.ok) {
@@ -1030,7 +2882,21 @@ async function resolveFlowExecutionTarget(job = null) {
 
 	await new Promise((resolve) => setTimeout(resolve, 1500));
 	const retryTabs = await getFlowTabs();
-	for (const candidateTab of retryTabs) {
+	const retryNonRootEditors = retryTabs.filter(
+		(tab) => isProjectEditorUrl(tab?.url) && !isRootFlowUrl(tab?.url),
+	);
+	const retrySelectedTab = selectBestFlowTab(retryTabs, preferredUrl);
+	const retryPreferredProbeTab =
+		retrySelectedTab &&
+		isProjectEditorUrl(retrySelectedTab?.url) &&
+		!isRootFlowUrl(retrySelectedTab?.url)
+			? retrySelectedTab
+			: null;
+	const retryRankedTabs = buildUniqueFlowProbeCandidates(
+		retryNonRootEditors.length ? retryNonRootEditors : retryTabs,
+		retryPreferredProbeTab,
+	);
+	for (const candidateTab of retryRankedTabs) {
 		const probe = await probeFlowEditorCandidate(candidateTab, job?.mode);
 		if (probe.ok) {
 			const probedTab = await getTabSafe(candidateTab.id);
@@ -1111,12 +2977,57 @@ async function setStoredFlowProjectUrl(flowProjectUrl) {
 	const normalized = String(flowProjectUrl || "").trim();
 	if (!normalized) {
 		await chrome.storage.local.remove(FLOW_PROJECT_URL_STORAGE_KEY);
+		updateRuntimeDiagnostics({ stored_flow_project_url: null });
 		return null;
 	}
 	await chrome.storage.local.set({
 		[FLOW_PROJECT_URL_STORAGE_KEY]: normalized,
 	});
+	updateRuntimeDiagnostics({ stored_flow_project_url: normalized });
 	return normalized;
+}
+
+async function syncStoredFlowProjectUrlToActiveEditor(
+	activeEditorUrl,
+	options = {},
+) {
+	const normalizedActiveUrl = String(activeEditorUrl || "").trim();
+	if (!isProjectEditorUrl(normalizedActiveUrl) || isRootFlowUrl(normalizedActiveUrl)) {
+		return {
+			ok: false,
+			synced: false,
+			reason: "ACTIVE_URL_NOT_EDITOR",
+			stored_flow_project_url: await getStoredFlowProjectUrl(),
+			active_flow_project_url: normalizedActiveUrl || null,
+		};
+	}
+	const currentStoredUrl = String(
+		options.currentStoredUrl || (await getStoredFlowProjectUrl()) || "",
+	).trim();
+	const openedViaRecovery = Boolean(options.openedViaRecovery);
+	const allowWhenMissing = options.allowWhenMissing !== false;
+	const force = options.force === true;
+	const shouldSync =
+		force ||
+		(openedViaRecovery && normalizedActiveUrl !== currentStoredUrl) ||
+		(allowWhenMissing && !currentStoredUrl);
+	if (!shouldSync) {
+		return {
+			ok: true,
+			synced: false,
+			reason: "SYNC_NOT_REQUIRED",
+			stored_flow_project_url: currentStoredUrl || null,
+			active_flow_project_url: normalizedActiveUrl,
+		};
+	}
+	const stored = await setStoredFlowProjectUrl(normalizedActiveUrl);
+	return {
+		ok: true,
+		synced: Boolean(stored),
+		reason: openedViaRecovery ? "RECOVERY_EDITOR_SYNCED" : "EDITOR_SYNCED",
+		stored_flow_project_url: stored,
+		active_flow_project_url: normalizedActiveUrl,
+	};
 }
 
 async function ensureFlowDomScript(tabId) {
@@ -1259,6 +3170,74 @@ function finalizeFlowReadiness(result) {
 	}
 	finalized.primary_blocker = classifyFlowPrimaryBlocker(finalized);
 	return finalized;
+}
+
+function isRecoverableComposerRouteError(error) {
+	const rawError = String(error || "").trim();
+	return [
+		"ERR_MESSAGE_RESPONSE_TIMEOUT",
+		"ERR_NO_RECEIVER",
+		"ERR_CONTENT_SCRIPT_STALE",
+		"ERR_TAB_RELOADED",
+	].includes(rawError);
+}
+
+function canUsePageDiagnosticForComposerReadiness(pageDiagnostic) {
+	return Boolean(
+		pageDiagnostic &&
+			typeof pageDiagnostic === "object" &&
+			!pageDiagnostic.error &&
+			pageDiagnostic.flow_url &&
+			pageDiagnostic.ui_contract_v2 &&
+			pageDiagnostic.content_script_loaded &&
+			pageDiagnostic.content_script_protocol_version ===
+				FLOW_DOM_PROTOCOL_VERSION &&
+			pageDiagnostic.runtime_ready &&
+			pageDiagnostic.content_build_id === BUILD_ID,
+	);
+}
+
+function buildComposerReadinessFromPageDiagnostic(pageDiagnostic) {
+	const strictComposerOk =
+		typeof pageDiagnostic?.strict_composer_ok === "boolean"
+			? pageDiagnostic.strict_composer_ok
+			: Boolean(
+					pageDiagnostic?.signed_in_likely &&
+						pageDiagnostic?.editor_capability_ready &&
+						!pageDiagnostic?.blocking_modal_detected,
+				);
+	return {
+		ok: strictComposerOk,
+		flow_tab_found: Boolean(pageDiagnostic?.flow_url),
+		flow_url: pageDiagnostic?.flow_url || null,
+		location_href: pageDiagnostic?.location_href || pageDiagnostic?.flow_url || null,
+		document_title: pageDiagnostic?.document_title || null,
+		document_ready_state: pageDiagnostic?.document_ready_state || null,
+		signed_in_likely: Boolean(pageDiagnostic?.signed_in_likely),
+		composer_found: Boolean(pageDiagnostic?.composer_found),
+		composer_editable: Boolean(pageDiagnostic?.composer_editable),
+		prompt_field_found: Boolean(pageDiagnostic?.prompt_field_found),
+		generate_button_found: Boolean(pageDiagnostic?.generate_button_found),
+		current_mode_visible: pageDiagnostic?.current_mode_visible || "UNKNOWN",
+		blocking_modal_detected: Boolean(pageDiagnostic?.blocking_modal_detected),
+		observed: pageDiagnostic?.observed || null,
+		runtime_ready: Boolean(pageDiagnostic?.runtime_ready),
+		content_build_id: pageDiagnostic?.content_build_id || null,
+		content_script_loaded: Boolean(pageDiagnostic?.content_script_loaded),
+		content_script_alive: Boolean(pageDiagnostic?.content_script_loaded),
+		content_script_protocol_version:
+			pageDiagnostic?.content_script_protocol_version || null,
+		ui_contract_version: pageDiagnostic?.ui_contract_version || null,
+		ui_contract_v2: pageDiagnostic?.ui_contract_v2 || null,
+		editor_capability_ready: Boolean(pageDiagnostic?.editor_capability_ready),
+		pre_generate_ready: Boolean(pageDiagnostic?.pre_generate_ready),
+		strict_composer_ok: Boolean(pageDiagnostic?.strict_composer_ok),
+		strict_composer_error: pageDiagnostic?.strict_composer_error || null,
+		page_preselection_ready: Boolean(pageDiagnostic?.ok),
+		mode_mismatch_non_fatal: Boolean(pageDiagnostic?.mode_mismatch_non_fatal),
+		recovered_via_flow_page_state_diagnostic: true,
+		raw_error: null,
+	};
 }
 
 async function pingFlowDomScript(flowTab) {
@@ -1422,11 +3401,36 @@ async function handleOpenTargetFlowProject(flowProjectUrl, mode = null) {
 	const diagnostic = await pingFlowDomScript(targetTab);
 	const flowUrlAfter = targetTab?.url || normalizedUrl;
 	const flowTabId = targetTab?.id ?? null;
+	const pathState = classifyFlowPathState(flowUrlAfter);
+	const nonEditorDiagnosticCode = isAbnormalRedirectUrl(flowUrlAfter)
+		? "ABNORMAL_REDIRECT"
+		: pathState === "FLOW_ROOT"
+			? "FLOW_ROOT_OPEN_INSTEAD_OF_EDITOR"
+			: "FLOW_PROJECT_EDITOR_NOT_OPEN";
+	const nonEditorDiagnosticDetail = isAbnormalRedirectUrl(flowUrlAfter)
+		? `Flow navigation landed on unexpected URL: ${flowUrlAfter}`
+		: pathState === "FLOW_ROOT"
+			? "Flow dashboard/root stayed open instead of a project editor."
+			: "Preferred Flow project did not settle on an editor URL.";
 
 	if (!isProjectEditorUrl(flowUrlAfter)) {
+		updateRuntimeDiagnostics(
+			buildRuntimeDiagnosticPayload({
+				flowUrl: flowUrlAfter,
+				preferredUrl: normalizedUrl,
+				selectedTab: targetTab,
+				openFlowResult: {
+					error: "FLOW_PROJECT_EDITOR_NOT_OPEN",
+					flow_url_after: flowUrlAfter,
+					flow_url: flowUrlAfter,
+				},
+			}),
+		);
 		return {
 			ok: false,
 			error: "FLOW_PROJECT_EDITOR_NOT_OPEN",
+			diagnostic_code: nonEditorDiagnosticCode,
+			diagnostic_detail: nonEditorDiagnosticDetail,
 			flow_project_url: normalizedUrl,
 			flow_tab_id: flowTabId,
 			flow_url_before: flowUrlBefore,
@@ -1439,6 +3443,23 @@ async function handleOpenTargetFlowProject(flowProjectUrl, mode = null) {
 
 	const probe = await probeFlowEditorCandidate(targetTab, mode);
 	if (!probe.ok) {
+		updateRuntimeDiagnostics({
+			...buildRuntimeDiagnosticPayload({
+				flowUrl: flowUrlAfter,
+				preferredUrl: normalizedUrl,
+				selectedTab: targetTab,
+			}),
+			runtime_reason: "FLOW_PROJECT_EDITOR_NOT_READY",
+			runtime_detail:
+				probe.readiness?.error ||
+				probe.detail ||
+				"Flow project editor URL is open, but the editor did not become ready.",
+			diagnostic_code: "FLOW_PROJECT_EDITOR_NOT_READY",
+			diagnostic_detail:
+				probe.readiness?.error ||
+				probe.detail ||
+				"Flow project editor URL is open, but the editor did not become ready.",
+		});
 		return {
 			ok: false,
 			error: probe.error || "FLOW_PROJECT_EDITOR_NOT_READY",
@@ -1455,6 +3476,13 @@ async function handleOpenTargetFlowProject(flowProjectUrl, mode = null) {
 		};
 	}
 
+	updateRuntimeDiagnostics(
+		buildRuntimeDiagnosticPayload({
+			flowUrl: flowUrlAfter,
+			preferredUrl: normalizedUrl,
+			selectedTab: targetTab,
+		}),
+	);
 	return {
 		ok: true,
 		error: diagnostic.raw_error || null,
@@ -1492,16 +3520,26 @@ async function openPreferredFlowProjectOrNewProject(mode, preferredUrl = null) {
 
 async function settleFlowProjectAfterOpen(openFlowResult, settleMs = 2500) {
 	const targetTabId = openFlowResult?.flow_tab_id ?? null;
-	if (!targetTabId) {
-		return await getFlowTab();
+	if (targetTabId) {
+		try {
+			await waitForTabComplete(targetTabId, 20000);
+		} catch (_) {}
 	}
-	try {
-		await waitForTabComplete(targetTabId, 20000);
-	} catch (_) {}
 	if (settleMs > 0) {
 		await new Promise((resolve) => setTimeout(resolve, settleMs));
 	}
-	return (await getTabSafe(targetTabId)) || (await getFlowTab());
+	const preferredUrl =
+		String(
+			openFlowResult?.flow_url_after ||
+				openFlowResult?.flow_url ||
+				(await getStoredFlowProjectUrl()) ||
+				"",
+		).trim() || null;
+	return (
+		(await resolveLiveFlowEditorTab(preferredUrl, "F2V")) ||
+		(await getTabSafe(targetTabId)) ||
+		(await getFlowTab())
+	);
 }
 
 async function handleOpenFlowNewProject(mode) {
@@ -1556,8 +3594,17 @@ async function handleOpenFlowNewProject(mode) {
 	const resolvedFlowUrl = String(
 		result?.flow_url || refreshedTab?.url || targetTab?.url || rootUrl,
 	).trim();
-	if (isProjectEditorUrl(resolvedFlowUrl)) {
-		await setStoredFlowProjectUrl(resolvedFlowUrl);
+	const settledEditorTab =
+		(await resolveLiveFlowEditorTab(
+			isProjectEditorUrl(resolvedFlowUrl) ? resolvedFlowUrl : null,
+			mode,
+		)) || null;
+	const effectiveFlowTab = settledEditorTab || refreshedTab || targetTab;
+	const effectiveFlowUrl = String(
+		settledEditorTab?.url || resolvedFlowUrl || rootUrl,
+	).trim();
+	if (isProjectEditorUrl(effectiveFlowUrl)) {
+		await setStoredFlowProjectUrl(effectiveFlowUrl);
 	}
 
 	return {
@@ -1570,13 +3617,17 @@ async function handleOpenFlowNewProject(mode) {
 		editor_ready: Boolean(result?.editor_ready),
 		error: result?.error || null,
 		detail: result?.detail || null,
-		flow_tab_id: refreshedTab?.id ?? targetTab?.id ?? null,
+		flow_tab_id: effectiveFlowTab?.id ?? refreshedTab?.id ?? targetTab?.id ?? null,
 		flow_url_before: rootUrl,
-		flow_url_after: resolvedFlowUrl,
-		flow_url: resolvedFlowUrl,
+		flow_url_after: effectiveFlowUrl,
+		flow_url: effectiveFlowUrl,
 		extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
 		...result,
 	};
+}
+
+async function handleBootstrapFlowProjectEditor(mode = "F2V") {
+	return await bootstrapFlowProjectEditorForB2A0(mode);
 }
 
 async function handleReloadExtension() {
@@ -1831,6 +3882,13 @@ function connectToAgent() {
 		chrome.alarms.clear("reconnect");
 		setState("idle");
 		clearHealthyBridgeWsError();
+		updateRuntimeDiagnostics({
+			ws_connected: true,
+			runtime_reason: "AGENT_WS_CONNECTED",
+			runtime_detail: "Flow Kit background is connected to the local agent.",
+			diagnostic_code: null,
+			diagnostic_detail: null,
+		});
 
 		// Token refresh alarm — 45 min gives buffer before ~60 min expiry
 		chrome.alarms.create("token-refresh", { periodInMinutes: 45 });
@@ -1863,8 +3921,9 @@ function connectToAgent() {
 			} else if (msg.method === "solve_captcha") {
 				await handleSolveCaptcha(msg);
 			} else if (msg.method === "get_status") {
-				const result = await executeWsMethodAndReply(msg, async () =>
-					buildBackgroundStatusResponse(),
+				const result = await executeWsMethodAndReply(
+					msg,
+					async () => getLocalRuntimeDiagnosticSnapshot(),
 				);
 				replyToAgent(msg, result);
 			} else if (msg.method === "GET_RUNTIME_SELF_TEST") {
@@ -1873,6 +3932,11 @@ function connectToAgent() {
 						msg.params?.mode,
 						msg.params?.attempt_open_project === true,
 					),
+				);
+				replyToAgent(msg, result);
+			} else if (msg.method === "BOOTSTRAP_FLOW_PROJECT_EDITOR") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleBootstrapFlowProjectEditor(msg.params?.mode),
 				);
 				replyToAgent(msg, result);
 			} else if (msg.type === "callback_secret") {
@@ -1913,8 +3977,20 @@ function connectToAgent() {
 				// ACK immediately to prevent agent timeout on long jobs
 				replyToAgent(msg, { accepted: true });
 
-				// Run job asynchronously
-				handleExecuteFlowJob(msg.params?.job).catch((err) => {
+				// Run job asynchronously — post terminal telemetry when done so
+				// the dashboard poll loop can exit (WAITING_FLOW otherwise stays forever).
+				handleExecuteFlowJob(msg.params?.job).then((result) => {
+					const requestId = msg.params?.job?.request_id;
+					if (requestId) {
+						postStageTelemetry({
+							request_id: requestId,
+							stage: result?.ok ? "COMPLETED" : "FAILED",
+							status: result?.ok ? "PASS" : "FAIL",
+							message: result?.error || result?.detail || (result?.ok ? "Job completed" : "Job failed"),
+							source: "extension",
+						}, null);
+					}
+				}).catch((err) => {
 					console.error("[EXECUTE_FLOW_JOB] Async execution error:", err);
 				});
 			} else if (msg.method === "DEBUG_FLOW_DOM_EXECUTION") {
@@ -1962,12 +4038,26 @@ function connectToAgent() {
 	ws.onclose = () => {
 		setState("off");
 		chrome.alarms.clear("token-refresh");
+		updateRuntimeDiagnostics({
+			ws_connected: false,
+			runtime_reason: "EXTENSION_DISCONNECTED",
+			runtime_detail: "Flow Kit extension WebSocket bridge closed.",
+			diagnostic_code: "EXTENSION_DISCONNECTED",
+			diagnostic_detail: "WebSocket connection to local agent is closed.",
+		});
 		if (!manualDisconnect) scheduleReconnect();
 	};
 
 	ws.onerror = (e) => {
 		console.error("[FlowAgent] WS error:", e);
 		metrics.lastError = "WS_ERROR";
+		updateRuntimeDiagnostics({
+			ws_connected: false,
+			runtime_reason: "WS_ERROR",
+			runtime_detail: "WebSocket connection to local agent failed.",
+			diagnostic_code: "WS_ERROR",
+			diagnostic_detail: String(e?.message || "WebSocket error"),
+		});
 		chrome.storage.local.set({ metrics });
 	};
 }
@@ -2378,6 +4468,33 @@ function buildBackgroundStatusResponse() {
 		runtimeReady,
 		runtime_ready: runtimeReady,
 		build_match: true,
+		worker_alive: true,
+		service_worker_started_at: runtimeDiagnostics.service_worker_started_at,
+		ws_connected: ws?.readyState === WebSocket.OPEN,
+		runtime_reason: runtimeDiagnostics.runtime_reason,
+		runtime_detail: runtimeDiagnostics.runtime_detail,
+		auth_state: runtimeDiagnostics.auth_state,
+		flow_path_state: runtimeDiagnostics.flow_path_state,
+		target_project_state: runtimeDiagnostics.target_project_state,
+		target_project_url: runtimeDiagnostics.target_project_url,
+		flow_tab_url: runtimeDiagnostics.flow_tab_url,
+		fallback_editor_url: runtimeDiagnostics.fallback_editor_url,
+		stored_flow_project_url: runtimeDiagnostics.stored_flow_project_url,
+		last_bad_redirect_url: runtimeDiagnostics.last_bad_redirect_url,
+		diagnostic_code: runtimeDiagnostics.diagnostic_code,
+		diagnostic_detail: runtimeDiagnostics.diagnostic_detail,
+		selected_tab_id: runtimeDiagnostics.selected_tab_id,
+		active_editor_tab_id: runtimeDiagnostics.active_editor_tab_id,
+		selected_tab_active: runtimeDiagnostics.selected_tab_active,
+		selected_tab_url: runtimeDiagnostics.selected_tab_url,
+		active_editor_tab_url: runtimeDiagnostics.active_editor_tab_url,
+		rebound_to_active_editor_tab:
+			runtimeDiagnostics.rebound_to_active_editor_tab,
+		same_project_url: runtimeDiagnostics.same_project_url,
+		content_script_alive_on_active_tab:
+			runtimeDiagnostics.content_script_alive_on_active_tab,
+		safe_to_click_active_tab: runtimeDiagnostics.safe_to_click_active_tab,
+		last_updated_at: runtimeDiagnostics.last_updated_at,
 	};
 }
 
@@ -2423,8 +4540,26 @@ function postStageTelemetry(message = {}, contentHealth = null) {
 }
 
 async function handleMessage(msg, sender) {
+	if (
+		msg?.type !== "DISCONNECT" &&
+		msg?.type !== "RECONNECT" &&
+		(!ws ||
+			ws.readyState === WebSocket.CLOSED ||
+			ws.readyState === WebSocket.CLOSING)
+	) {
+		connectToAgent();
+	}
+
 	if (msg.type === "STATUS") {
 		return buildBackgroundStatusResponse();
+	}
+
+	if (msg.type === "LOCAL_RUNTIME_DIAGNOSTIC") {
+		return getLocalRuntimeDiagnosticSnapshot();
+	}
+
+	if (msg.type === "BOOTSTRAP_FLOW_PROJECT_EDITOR") {
+		return await handleBootstrapFlowProjectEditor(msg.mode);
 	}
 
 	if (msg.type === "DISCONNECT") {
@@ -2539,10 +4674,27 @@ async function handleMessage(msg, sender) {
 	}
 
 	if (msg.type === "FLOWKIT_CDP_BEGIN_FILE_CHOOSER_POC") {
+		let filePath = msg.filePath;
+		let expectedFileName = msg.expectedFileName;
+		if (
+			(!filePath || typeof filePath !== "string") &&
+			msg.assetSource != null
+		) {
+			const materialized = await materializeAssetToDiskPath(
+				msg.assetSource,
+				msg.slotLabel,
+			);
+			if (!materialized?.ok) {
+				return materialized;
+			}
+			filePath = materialized.filePath;
+			expectedFileName =
+				expectedFileName || materialized.fileName || msg.expectedFileName;
+		}
 		return await beginCdpFileChooserProof(
 			sender?.tab?.id || null,
-			msg.filePath,
-			msg.expectedFileName,
+			filePath,
+			expectedFileName,
 			msg.slotLabel,
 		);
 	}
@@ -2717,6 +4869,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleExecuteFlowJob(job) {
 	const targetResolution = await resolveFlowExecutionTarget(job);
 	if (!targetResolution.ok) {
+		// Post FAILED stage so the backend telemetry status exits WAITING_FLOW.
+		// Without this the dashboard poll loop never terminates.
+		const requestId = job?.request_id;
+		if (requestId) {
+			postStageTelemetry({
+				request_id: requestId,
+				stage: "FAILED",
+				status: "FAIL",
+				message: targetResolution.error || "FLOW_EXECUTION_TARGET_FAILED",
+				source: "extension",
+			}, null);
+		}
 		return {
 			ok: false,
 			error: targetResolution.error,
@@ -2740,16 +4904,21 @@ async function handleExecuteFlowJob(job) {
 				newProjectFn: async (tabId, runnerJob) => {
 					const currentTab = await getTabSafe(tabId);
 					if (currentTab?.id && isProjectEditorUrl(currentTab.url)) {
-						const existingProbe = await probeFlowEditorCandidate(
+						const existingAuthority =
+							await resolveExistingProjectEditorAuthority(
 							currentTab,
 							runnerJob?.mode || job?.mode,
 						);
-						if (existingProbe.ok) {
+						if (existingAuthority.ok) {
 							return {
 								ok: true,
 								flow_tab_id: currentTab.id,
 								flow_url: currentTab.url,
-								open_strategy: "already_on_editor",
+								open_strategy: "already_on_editor_authority",
+								target_probe:
+									existingAuthority.page_diagnostic ||
+									existingAuthority.diagnostic ||
+									null,
 							};
 						}
 					}
@@ -2760,11 +4929,23 @@ async function handleExecuteFlowJob(job) {
 						preferredUrl,
 					);
 					const settledTab = await settleFlowProjectAfterOpen(openFlowResult);
+					const settledProbe =
+						settledTab?.id && isProjectEditorUrl(settledTab?.url)
+							? await probeFlowEditorCandidate(
+									settledTab,
+									runnerJob?.mode || job?.mode,
+								)
+							: null;
 					return {
 						...openFlowResult,
-						ok: Boolean(openFlowResult?.ok && settledTab?.id),
+						ok: Boolean(openFlowResult?.ok && settledProbe?.ok),
+						error:
+							openFlowResult?.ok && !settledProbe?.ok
+								? settledProbe?.error || "FLOW_PROJECT_EDITOR_NOT_READY"
+								: openFlowResult?.error || null,
 						flow_tab_id: settledTab?.id ?? openFlowResult?.flow_tab_id ?? null,
 						flow_url: settledTab?.url || openFlowResult?.flow_url || null,
+						target_probe: settledProbe?.readiness || null,
 					};
 				},
 				telemetry: (payload) => {
@@ -2790,6 +4971,7 @@ async function handleExecuteFlowJob(job) {
 				// workspace jobs never set — leaving Frames jobs on the empty DOM path and
 				// failing at F2V_SOP_UPLOAD_WAIT_DONE / ERR_F2V_ADD_TO_PROMPT_NOT_FOUND.)
 				const f2vUploadAssetSource = resolveF2VUploadAssetSource(job);
+				const f2vDomFallbackAssetSource = resolveF2VDomFallbackAssetSource(job);
 				const f2vWantsCdpUpload = shouldUseF2VCdpUpload(
 					job,
 					f2vUploadAssetSource,
@@ -2803,6 +4985,15 @@ async function handleExecuteFlowJob(job) {
 									// real job shape; overrides the runner's raw object guess.
 									assetSource: f2vUploadAssetSource || req?.assetSource,
 								}),
+							domUploadFallback:
+								f2vDomFallbackAssetSource != null
+									? (req) =>
+											domFileUploadFallbackForJob(flowTab.id, {
+												...req,
+												assetSource:
+													f2vDomFallbackAssetSource || req?.assetSource,
+											})
+									: null,
 						}
 					: {};
 				console.log(
@@ -2821,6 +5012,8 @@ async function handleExecuteFlowJob(job) {
 					{
 						settleMs: 300,
 						uploadWaitMs: 10000,
+						skipUpload: job?.skipUpload === true,
+						skipGenerate: job?.skipGenerate === true,
 						cdpCoordinateClick: async (params) => {
 							console.log(
 								"[FlowAgent] Performing CDP coordinate click:",
@@ -2911,16 +5104,20 @@ async function handleConfigureF2VSettings(job, tabId) {
 		newProjectFn: async (tabId, runnerJob) => {
 			const currentTab = await getTabSafe(tabId);
 			if (currentTab?.id && isProjectEditorUrl(currentTab.url)) {
-				const existingProbe = await probeFlowEditorCandidate(
+				const existingAuthority = await resolveExistingProjectEditorAuthority(
 					currentTab,
 					runnerJob?.mode || job?.mode,
 				);
-				if (existingProbe.ok) {
+				if (existingAuthority.ok) {
 					return {
 						ok: true,
 						flow_tab_id: currentTab.id,
 						flow_url: currentTab.url,
-						open_strategy: "already_on_editor",
+						open_strategy: "already_on_editor_authority",
+						target_probe:
+							existingAuthority.page_diagnostic ||
+							existingAuthority.diagnostic ||
+							null,
 					};
 				}
 			}
@@ -2931,11 +5128,20 @@ async function handleConfigureF2VSettings(job, tabId) {
 				preferredUrl,
 			);
 			const settledTab = await settleFlowProjectAfterOpen(openFlowResult);
+			const settledProbe =
+				settledTab?.id && isProjectEditorUrl(settledTab?.url)
+					? await probeFlowEditorCandidate(settledTab, runnerJob?.mode || job?.mode)
+					: null;
 			return {
 				...openFlowResult,
-				ok: Boolean(openFlowResult?.ok && settledTab?.id),
+				ok: Boolean(openFlowResult?.ok && settledProbe?.ok),
+				error:
+					openFlowResult?.ok && !settledProbe?.ok
+						? settledProbe?.error || "FLOW_PROJECT_EDITOR_NOT_READY"
+						: openFlowResult?.error || null,
 				flow_tab_id: settledTab?.id ?? openFlowResult?.flow_tab_id ?? null,
 				flow_url: settledTab?.url || openFlowResult?.flow_url || null,
+				target_probe: settledProbe?.readiness || null,
 			};
 		},
 		telemetry: (payload) => {
@@ -2992,12 +5198,15 @@ async function handleDebugFlowDomExecution(mode, job) {
 	);
 }
 
-async function handleCheckFlowComposerReady(mode) {
+async function handleCheckFlowComposerReady(mode, options = {}) {
 	const preferredUrl = await getStoredFlowProjectUrl();
 	const normalizedPreferredUrl = String(preferredUrl || "").trim();
+	const allowProjectOpenRecovery = options?.allowProjectOpenRecovery === true;
+	const allowFreshProjectRecovery = options?.allowFreshProjectRecovery === true;
 	let flowTab = await getFlowTab();
 	let openFlowResult = null;
 	if (
+		allowProjectOpenRecovery &&
 		flowTab &&
 		isRootFlowUrl(flowTab.url) &&
 		!isProjectEditorUrl(flowTab.url)
@@ -3040,7 +5249,7 @@ async function handleCheckFlowComposerReady(mode) {
 		activeTabUrl === normalizedPreferredUrl &&
 		isProjectEditorUrl(activeTabUrl) &&
 		(!response?.ok || response?.error);
-	if (shouldRetryFreshProject) {
+	if (shouldRetryFreshProject && allowFreshProjectRecovery) {
 		openFlowResult = await handleOpenFlowNewProject(mode);
 		flowTab = await settleFlowProjectAfterOpen(openFlowResult);
 		base = buildFlowReadinessBase(flowTab);
@@ -3067,6 +5276,25 @@ async function handleCheckFlowComposerReady(mode) {
 			type: "CHECK_FLOW_COMPOSER_READY",
 			mode,
 		});
+	}
+	if (response?.error && isRecoverableComposerRouteError(response.error)) {
+		const pageDiagnosticResponse = await sendTabMessageSafe(
+			flowTab.id,
+			{
+				type: "FLOW_PAGE_STATE_DIAGNOSTIC",
+				mode,
+			},
+			12000,
+		);
+		if (canUsePageDiagnosticForComposerReadiness(pageDiagnosticResponse)) {
+			return finalizeFlowReadiness({
+				...base,
+				...diagnostic,
+				...buildComposerReadinessFromPageDiagnostic(pageDiagnosticResponse),
+				open_flow_result: summarizeOpenFlowResult(openFlowResult),
+				flow_url: pageDiagnosticResponse?.flow_url || flowTab.url,
+			});
+		}
 	}
 	if (response?.error === "ERR_MESSAGE_RESPONSE_TIMEOUT") {
 		return finalizeFlowReadiness({
@@ -3106,12 +5334,15 @@ async function handleCheckFlowComposerReady(mode) {
 	});
 }
 
-async function handleFlowPageStateDiagnostic(mode) {
+async function handleFlowPageStateDiagnostic(mode, options = {}) {
 	const preferredUrl = await getStoredFlowProjectUrl();
 	const normalizedPreferredUrl = String(preferredUrl || "").trim();
+	const allowProjectOpenRecovery = options?.allowProjectOpenRecovery === true;
+	const allowFreshProjectRecovery = options?.allowFreshProjectRecovery === true;
 	let flowTab = await getFlowTab();
 	let openFlowResult = null;
 	if (
+		allowProjectOpenRecovery &&
 		flowTab &&
 		isRootFlowUrl(flowTab.url) &&
 		!isProjectEditorUrl(flowTab.url)
@@ -3185,7 +5416,7 @@ async function handleFlowPageStateDiagnostic(mode) {
 		isProjectEditorUrl(activeTabUrl) &&
 		Array.isArray(response?.visible_error_markers) &&
 		response.visible_error_markers.length > 0;
-	if (shouldRetryFreshProject) {
+	if (shouldRetryFreshProject && allowFreshProjectRecovery) {
 		openFlowResult = await handleOpenFlowNewProject(mode);
 		flowTab = await settleFlowProjectAfterOpen(openFlowResult);
 		base = buildFlowReadinessBase(flowTab);
@@ -3268,13 +5499,32 @@ async function handleFlowPageStateDiagnostic(mode) {
 		};
 	}
 
-	return {
+	const finalResult = {
 		...base,
 		...diagnostic,
 		...response,
 		open_flow_result: summarizeOpenFlowResult(openFlowResult),
 		flow_url: response?.flow_url || flowTab.url,
 	};
+	const finalFlowUrl = String(finalResult.flow_url || "").trim();
+	const openedViaRecovery = Boolean(
+		finalResult?.open_flow_result?.ok &&
+			(finalResult?.open_flow_result?.new_project_clicked ||
+				finalResult?.open_flow_result?.open_strategy === "new_project" ||
+				(normalizedPreferredUrl &&
+					finalFlowUrl &&
+					finalFlowUrl !== normalizedPreferredUrl)),
+	);
+	if (finalFlowUrl) {
+		const syncResult = await syncStoredFlowProjectUrlToActiveEditor(finalFlowUrl, {
+			currentStoredUrl: normalizedPreferredUrl,
+			openedViaRecovery,
+			allowWhenMissing: true,
+		});
+		finalResult.stored_flow_project_url =
+			syncResult.stored_flow_project_url || normalizedPreferredUrl || null;
+	}
+	return finalResult;
 }
 
 function classifyContentReceiverError(rawError) {
@@ -3323,9 +5573,37 @@ function isPreselectionEditorReadyDiagnostic(diagnostic) {
 }
 
 async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
-	const preferredUrl = await getStoredFlowProjectUrl();
+	let preferredUrl = await getStoredFlowProjectUrl();
 	let flowTabs = await getFlowTabs();
-	let selectedTab = selectBestFlowTab(flowTabs, preferredUrl);
+	let activeTabPreflight = await buildActiveFlowTabPreflight(mode, {
+		preferredUrl,
+		tabs: flowTabs,
+	});
+
+	// If the editor tab exists but isn't currently active (common post-reload focus mismatch),
+	// apply the same focus recovery that job execution uses in resolveFlowExecutionTarget.
+	if (activeTabPreflight?.error === "FLOW_ACTIVE_EDITOR_TAB_NOT_FOUND") {
+		const strictRecovery = await recoverStrictActiveFlowTabTarget(mode, {
+			preferredUrl,
+			tabs: flowTabs,
+			activeTabPreflight,
+			allowBootstrapRecovery: attemptOpenProject === true,
+		});
+		if (strictRecovery?.activeTabPreflight) {
+			activeTabPreflight = strictRecovery.activeTabPreflight;
+			if (strictRecovery.ok) {
+				flowTabs = await getFlowTabs();
+			}
+		}
+	}
+
+	let selectedTab = activeTabPreflight?.selectedTab || null;
+	const adoptedTarget = await adoptSelectedFlowProjectUrlIfNeeded(
+		selectedTab,
+		flowTabs,
+		preferredUrl,
+	);
+	preferredUrl = adoptedTarget?.preferred_flow_project_url || preferredUrl;
 	let openFlowResult = null;
 
 	if (
@@ -3340,16 +5618,35 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 		);
 		const settledTab = await settleFlowProjectAfterOpen(openFlowResult);
 		flowTabs = await getFlowTabs();
-		selectedTab = selectBestFlowTab(
-			settledTab?.url
+		activeTabPreflight = await buildActiveFlowTabPreflight(mode, {
+			preferredUrl: settledTab?.url || openFlowResult?.flow_url || preferredUrl,
+			tabs: settledTab?.url
 				? [settledTab, ...flowTabs.filter((tab) => tab.id !== settledTab.id)]
 				: flowTabs,
+		});
+		selectedTab = activeTabPreflight?.selectedTab || null;
+		const adoptedSettledTarget = await adoptSelectedFlowProjectUrlIfNeeded(
+			selectedTab,
+			flowTabs,
 			settledTab?.url || openFlowResult?.flow_url || preferredUrl,
 		);
+		preferredUrl =
+			adoptedSettledTarget?.preferred_flow_project_url || preferredUrl;
 	}
 
-	const pageDiagnostic = await handleFlowPageStateDiagnostic(mode);
-	const composerDiagnostic = await handleCheckFlowComposerReady(mode);
+	const pageDiagnostic = await handleFlowPageStateDiagnostic(mode, {
+		allowProjectOpenRecovery: attemptOpenProject === true,
+		allowFreshProjectRecovery: attemptOpenProject === true,
+	});
+	const composerDiagnostic = canUsePageDiagnosticForComposerReadiness(
+		pageDiagnostic,
+	)
+		? buildComposerReadinessFromPageDiagnostic(pageDiagnostic)
+		: await handleCheckFlowComposerReady(mode, {
+				allowProjectOpenRecovery: attemptOpenProject === true,
+				allowFreshProjectRecovery: attemptOpenProject === true,
+			});
+	const resolvedPreferredUrl = await getStoredFlowProjectUrl();
 	const runnerApi =
 		typeof self !== "undefined" ? self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__ : null;
 	const contentBuildId = String(
@@ -3377,6 +5674,7 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 	const lastError =
 		metrics.lastError ||
 		buildMismatchError ||
+		activeTabPreflight?.error ||
 		contentReceiverError ||
 		(composerModeMismatchNonFatal
 			? null
@@ -3385,6 +5683,47 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 				openFlowResult?.error ||
 				null);
 	const selfTestOk = Boolean(selectedTab) && !lastError;
+	const runtimePayload = {
+		...buildRuntimeDiagnosticPayload({
+			flowUrl:
+				pageDiagnostic?.flow_url ||
+				selectedTab?.url ||
+				openFlowResult?.flow_url_after ||
+				null,
+			preferredUrl: resolvedPreferredUrl || preferredUrl,
+			selectedTab,
+			pageDiagnostic,
+			openFlowResult,
+		}),
+		selected_tab_id: activeTabPreflight?.preflight?.selected_tab_id || null,
+		active_editor_tab_id:
+			activeTabPreflight?.preflight?.active_editor_tab_id || null,
+		selected_tab_active: Boolean(
+			activeTabPreflight?.preflight?.selected_tab_active,
+		),
+		selected_tab_url: activeTabPreflight?.selectedTabUrl || null,
+		active_editor_tab_url: activeTabPreflight?.activeEditorTabUrl || null,
+		rebound_to_active_editor_tab: Boolean(
+			activeTabPreflight?.reboundToActiveEditorTab,
+		),
+		same_project_url: Boolean(activeTabPreflight?.preflight?.same_project_url),
+		content_script_alive_on_active_tab: Boolean(
+			activeTabPreflight?.preflight?.content_script_alive_on_active_tab,
+		),
+		safe_to_click_active_tab: Boolean(
+			activeTabPreflight?.preflight?.safe_to_click_active_tab,
+		),
+	};
+	if (buildMismatchError) {
+		runtimePayload.diagnostic_code = buildMismatchError;
+		runtimePayload.diagnostic_detail =
+			"Background build ID does not match the content script build ID.";
+	}
+	if (lastError && !runtimePayload.diagnostic_code) {
+		runtimePayload.diagnostic_code = String(lastError);
+		runtimePayload.diagnostic_detail = String(lastError);
+	}
+	updateRuntimeDiagnostics(runtimePayload);
 
 	return {
 		ok: selfTestOk,
@@ -3409,8 +5748,24 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 					tab_kind: classifyFlowTabKind(selectedTab),
 				}
 			: null,
-		preferred_flow_project_url: preferredUrl,
+		preferred_flow_project_url: resolvedPreferredUrl || preferredUrl,
 		open_flow_result: summarizeOpenFlowResult(openFlowResult),
+		active_tab_preflight: activeTabPreflight?.preflight || null,
+		target_binding_error: activeTabPreflight?.error || null,
+		target_binding_telemetry: activeTabPreflight
+			? {
+					selected_tab_id: activeTabPreflight.preflight?.selected_tab_id || 0,
+					active_editor_tab_id:
+						activeTabPreflight.preflight?.active_editor_tab_id || 0,
+					selected_tab_active:
+						Boolean(activeTabPreflight.preflight?.selected_tab_active),
+					selected_tab_url: activeTabPreflight.selectedTabUrl || null,
+					active_editor_tab_url: activeTabPreflight.activeEditorTabUrl || null,
+					rebound_to_active_editor_tab:
+						Boolean(activeTabPreflight.reboundToActiveEditorTab),
+				}
+			: null,
+		duplicate_editor_tabs: activeTabPreflight?.duplicate_tab_inventory || [],
 		page_diagnostic: pageDiagnostic,
 		composer_diagnostic: composerDiagnostic,
 		page_preselection_ready: pagePreselectionReady,
