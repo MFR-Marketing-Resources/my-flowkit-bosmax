@@ -34,7 +34,7 @@
         "http://127.0.0.1:5173/*",
         "http://localhost:5173/*"
       ],
-      "js": ["content.js", "selector-registry.js", "content-flow-dom.js"],
+      "js": ["content.js", "selector-registry.js", "gfv2-readiness.js", "content-flow-dom.js"],
       "run_at": "document_start"
     }
   ],

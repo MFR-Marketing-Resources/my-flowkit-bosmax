@@ -7,6 +7,7 @@ const assert = require("node:assert/strict");
 const {
 	GFV2_BLOCKERS,
 	evaluateGoogleFlowV2Readiness,
+	buildGoogleFlowV2Diagnostic,
 } = require("../extension/gfv2-readiness.js");
 
 // A fully-ready V2 diagnostic. Individual tests clone + mutate this.
@@ -228,6 +229,144 @@ test("editor not ready blocks first", () => {
 	d.composer_present = false;
 	const r = evaluateGoogleFlowV2Readiness(d);
 	assert.equal(r.primary_blocker, GFV2_BLOCKERS.EDITOR_NOT_READY);
+});
+
+// ---- buildGoogleFlowV2Diagnostic (live DOM signal mapper) tests ----
+
+function liveSignals() {
+	return {
+		flow_editor_open: true,
+		extension_content_script_alive: true,
+		login_or_access_blocker: false,
+		composer_or_prompt_surface_exists: true,
+		button_texts: ["Upload media", "Add to Prompt", "Settings", "9:16", "1x"],
+		upload_media_available: true,
+		add_to_prompt_found: true,
+		add_to_prompt_completed: true,
+		asset_preview_in_prompt: true,
+		settings_launcher_found: true,
+		settings_panel_opened: true,
+		video_generation_settings_found: true,
+		aspect_9_16_found: true,
+		aspect_9_16_confirmed: true,
+		count_1x_found: true,
+		count_1x_confirmed: true,
+		model_dropdown_found: true,
+		model_veo_lite_found: true,
+		model_veo_lite_confirmed: true,
+		visible_wrong_model: false,
+		save_button_found: false,
+		settings_saved_or_persisted: true,
+		prompt_field_found: true,
+		prompt_inserted: true,
+		prompt_inserted_length: 900,
+		prompt_reflected: true,
+		prompt_accepted: true,
+		generate_button_found: true,
+		generate_button_enabled: true,
+		blocking_modal_detected: false,
+		subMode_Frames_inferred: true,
+		visibleUploadSlots: ["Start"],
+		body_contains_Start: true,
+	};
+}
+
+// mapper: Frames/Ingredients absence is not a failure (editor proof from composer)
+test("mapper: frames/ingredients absence does not fail editor", () => {
+	const s = liveSignals();
+	s.frames_button_present = false;
+	s.ingredients_button_present = false;
+	const diag = buildGoogleFlowV2Diagnostic(s);
+	const r = evaluateGoogleFlowV2Readiness(diag);
+	assert.equal(diag.flow_editor_open, true);
+	assert.equal(r.proofs.editor.ok, true);
+});
+
+// mapper: synthetic subMode=Frames only lands in deprecated_or_weak_signals
+test("mapper: synthetic subMode=Frames marked weak/inferred only", () => {
+	const diag = buildGoogleFlowV2Diagnostic(liveSignals());
+	assert.equal(diag.deprecated_or_weak_signals.subMode_Frames_inferred, true);
+	assert.equal(diag.subMode_source, "inferred");
+	// it is NOT a top-level readiness field
+	assert.equal(diag.flow_editor_open, true); // editor stands on composer, not subMode
+});
+
+// mapper: visibleUploadSlots alone does NOT set asset_added_to_prompt
+test("mapper: visibleUploadSlots alone does not set asset_added_to_prompt", () => {
+	const s = liveSignals();
+	s.add_to_prompt_completed = false;
+	s.asset_preview_in_prompt = false;
+	s.prompt_attachment_chip_exists = false;
+	s.media_attached = false;
+	s.visibleUploadSlots = ["Start"];
+	s.body_contains_Start = true;
+	const diag = buildGoogleFlowV2Diagnostic(s);
+	assert.equal(diag.asset_added_to_prompt, false);
+	assert.equal(diag.deprecated_or_weak_signals.visibleUploadSlots.length, 1);
+	assert.equal(
+		evaluateGoogleFlowV2Readiness(diag).primary_blocker,
+		GFV2_BLOCKERS.UPLOAD_MEDIA_NOT_FOUND,
+	);
+});
+
+// mapper: Add to Prompt / chip / preview each set upload proof
+test("mapper: strong upload signals set asset_added_to_prompt", () => {
+	for (const key of [
+		"add_to_prompt_completed",
+		"asset_preview_in_prompt",
+		"prompt_attachment_chip_exists",
+		"media_attached",
+	]) {
+		const s = liveSignals();
+		s.add_to_prompt_completed = false;
+		s.asset_preview_in_prompt = false;
+		s.prompt_attachment_chip_exists = false;
+		s.media_attached = false;
+		s[key] = true;
+		assert.equal(
+			buildGoogleFlowV2Diagnostic(s).asset_added_to_prompt,
+			true,
+			`${key} must set upload proof`,
+		);
+	}
+});
+
+// mapper: settings fields map correctly to the evaluator
+test("mapper: settings fields map to evaluator", () => {
+	const diag = buildGoogleFlowV2Diagnostic(liveSignals());
+	const r = evaluateGoogleFlowV2Readiness(diag);
+	assert.equal(r.proofs.settings.ok, true);
+	assert.equal(r.proofs.settings.ratio_9_16_confirmed, true);
+	assert.equal(r.proofs.settings.count_1x_confirmed, true);
+});
+
+// mapper: visible wrong model maps to hard fail
+test("mapper: visible wrong model maps to hard fail", () => {
+	const s = liveSignals();
+	s.visible_wrong_model = true;
+	s.model_veo_lite_confirmed = false;
+	s.model_canonical = "nano banana 2";
+	const diag = buildGoogleFlowV2Diagnostic(s);
+	const r = evaluateGoogleFlowV2Readiness(diag);
+	assert.equal(r.primary_blocker, GFV2_BLOCKERS.VISIBLE_WRONG_MODEL);
+});
+
+// mapper: prompt field detection + generate enabled map (generate not clicked)
+test("mapper: prompt + generate map correctly", () => {
+	const diag = buildGoogleFlowV2Diagnostic(liveSignals());
+	const r = evaluateGoogleFlowV2Readiness(diag);
+	assert.equal(r.proofs.prompt.ok, true);
+	assert.equal(r.proofs.generate.ok, true);
+	assert.equal(diag.generate_button_enabled, true);
+	// fully ready: lane stops BEFORE generate; readiness is true but no click occurs.
+	assert.equal(r.ready, true);
+	const sNoField = liveSignals();
+	sNoField.prompt_field_found = false;
+	assert.equal(
+		evaluateGoogleFlowV2Readiness(buildGoogleFlowV2Diagnostic(sNoField))
+			.primary_blocker,
+		GFV2_BLOCKERS.PROMPT_FIELD_NOT_FOUND,
+	);
 });
 
 function main() {
