@@ -180,6 +180,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		requestId: null,
 	});
 	const pollTimerRef = useRef<number | null>(null);
+	// In-flight guard: block a second START GENERATION while one execution is
+	// still pending (the button re-enables on fast failures, so without this a
+	// quick re-click dispatches a duplicate job to the same editor).
+	const executionInFlightRef = useRef(false);
 
 	const pathMode = location.pathname.split("/").pop()?.toUpperCase();
 	const mode =
@@ -328,8 +332,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	}, [isPortalMode, mode]);
 
 	const handleExecute = async (data: WorkspaceExecutePayload) => {
+		if (executionInFlightRef.current) {
+			console.log("[BOSMAX_DEBUG] DUPLICATE_EXECUTION_BLOCKED");
+			return;
+		}
+		executionInFlightRef.current = true;
 		setIsExecuting(true);
-		console.log("Operator executing:", data);
+		console.log(
+			"[BOSMAX_DEBUG] OPERATOR_EXECUTE_PAYLOAD",
+			JSON.stringify(data, null, 2),
+		);
 		if (pollTimerRef.current != null) {
 			window.clearTimeout(pollTimerRef.current);
 			pollTimerRef.current = null;
@@ -384,11 +396,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 				if (status === "FAILED") {
 					setIsExecuting(false);
+					executionInFlightRef.current = false;
 					return;
 				}
 
 				if (status === "COMPLETED" || !ACTIVE_TELEMETRY_STATUSES.has(status)) {
 					setIsExecuting(false);
+					executionInFlightRef.current = false;
 					return;
 				}
 
@@ -407,6 +421,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					requestId: targetRequestId,
 				});
 				setIsExecuting(false);
+				executionInFlightRef.current = false;
 			}
 		};
 
@@ -447,7 +462,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			}
 
 			const result = await response.json();
-			console.log("Execution result:", result);
+			console.log(
+				"[BOSMAX_DEBUG] EXECUTE_FLOW_JOB_RESPONSE",
+				"http_status=" + response.status,
+				"request_id=" + requestId,
+				JSON.stringify(result, null, 2),
+			);
 			setNotice({
 				tone: "info",
 				title: "Flow job accepted",
@@ -468,6 +488,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			});
 			alert(`Execution Error: ${message}`);
 			setIsExecuting(false);
+			executionInFlightRef.current = false;
 		}
 	};
 
