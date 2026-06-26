@@ -617,6 +617,56 @@ async function materializeAssetToDiskPath(assetRef, slotLabel) {
 		const baseName = ref.split(/[\\/]/).pop() || `${slot}.png`;
 		return { ok: true, filePath: ref, fileName: baseName, mimeType: "image/*" };
 	}
+	// Remote package assets should be fetched and staged by the local agent.
+	// The extension service worker must not depend on remote host permissions.
+	if (/^https?:\/\//i.test(ref)) {
+		let remoteFileName = `${slot}.png`;
+		try {
+			const remoteUrl = new URL(ref);
+			remoteFileName =
+				remoteUrl.pathname.split("/").pop() || remoteFileName;
+		} catch (_) {}
+		try {
+			const resp = await fetch(
+				"http://127.0.0.1:8100/api/flow/materialize-remote-file",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						source_url: ref,
+						file_name: remoteFileName,
+					}),
+				},
+			);
+			if (!resp.ok) {
+				return {
+					ok: false,
+					error: "ERR_MATERIALIZE_ASSET_FAILED",
+					detail: `HTTP_${resp.status}`,
+				};
+			}
+			const data = await resp.json();
+			if (!data?.local_file_path) {
+				return {
+					ok: false,
+					error: "ERR_MATERIALIZE_ASSET_NO_PATH",
+					detail: "no local_file_path in remote materialize response",
+				};
+			}
+			return {
+				ok: true,
+				filePath: data.local_file_path,
+				fileName: data.file_name || remoteFileName,
+				mimeType: data.mime_type || "image/*",
+			};
+		} catch (e) {
+			return {
+				ok: false,
+				error: "ERR_MATERIALIZE_ASSET_FAILED",
+				detail: String(e?.message || e),
+			};
+		}
+	}
 	const fetched = await fetchAssetBase64ForCdp(ref);
 	if (!fetched.ok) return fetched;
 	const ext = (fetched.mimeType.split("/")[1] || "png").replace("jpeg", "jpg");
@@ -806,6 +856,59 @@ function resolveF2VDomFallbackAssetSource(job) {
 		};
 	}
 	return uploadAssetSource;
+}
+
+// F2V_PACKAGE_UPLOAD_ONLY lane — strict package-to-current-editor Start upload.
+// This lane intentionally does NOT open/create projects, touch settings/model/
+// aspect/count, click Agent, or generate. It binds the CURRENT healthy editor
+// only and uploads the package Start asset via the existing CDP file chooser.
+function isF2VPackageUploadOnly(job) {
+	if (!job) return false;
+	return (
+		job.lane === "F2V_PACKAGE_UPLOAD_ONLY" || job.upload_only === true
+	);
+}
+
+// Validate the BOSMAX workspace execution package is the source of truth before
+// this lane touches the editor. Returns { ok, error, detail } — fail closed.
+function validateF2VPackageUploadOnlyJob(job) {
+	if (!job) {
+		return { ok: false, error: "ERR_PACKAGE_REQUIRED", detail: "job missing" };
+	}
+	if (!job.request_id) {
+		return { ok: false, error: "ERR_PACKAGE_REQUIRED", detail: "request_id missing" };
+	}
+	if (!job.workspace_execution_package_id) {
+		return {
+			ok: false,
+			error: "ERR_PACKAGE_REQUIRED",
+			detail: "workspace_execution_package_id missing",
+		};
+	}
+	if (String(job.mode || "").trim().toUpperCase() !== "F2V") {
+		return { ok: false, error: "ERR_PACKAGE_REQUIRED", detail: "mode must be F2V" };
+	}
+	if (!job.prompt || String(job.prompt).trim().length === 0) {
+		return { ok: false, error: "ERR_PACKAGE_REQUIRED", detail: "prompt missing" };
+	}
+	const startAsset = job.startAsset;
+	if (!startAsset) {
+		return { ok: false, error: "ERR_PACKAGE_REQUIRED", detail: "start asset missing" };
+	}
+	const localFilePath =
+		(startAsset && typeof startAsset === "object" &&
+			(startAsset.localFilePath || startAsset.local_file_path)) ||
+		job.local_file_path ||
+		job.localFilePath ||
+		null;
+	if (!localFilePath || typeof localFilePath !== "string" || !localFilePath.trim()) {
+		return {
+			ok: false,
+			error: "ERR_PACKAGE_START_LOCAL_FILE_REQUIRED",
+			detail: "start asset has no usable local_file_path/localFilePath",
+		};
+	}
+	return { ok: true, localFilePath };
 }
 
 // CDP upload is the only background-owned lane that can deterministically feed
@@ -4866,7 +4969,85 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 	});
 });
 
+// Strict lane: bind the CURRENT healthy Flow editor only. NEVER opens/creates a
+// project, NEVER runs broad recovery. Fails closed if no healthy editor exists.
+async function handleF2VPackageUploadOnlyJob(job) {
+	const requestId = job?.request_id || null;
+	const emit = (stage, status, message) => {
+		if (!requestId) return;
+		postStageTelemetry(
+			{ request_id: requestId, stage, status, message, source: "extension" },
+			null,
+		);
+	};
+
+	// Preflight: package is the only source of truth.
+	const validation = validateF2VPackageUploadOnlyJob(job);
+	if (!validation.ok) {
+		emit("FAILED", "FAIL", validation.error);
+		return { ok: false, error: validation.error, detail: validation.detail };
+	}
+	emit("F2V_PACKAGE_UPLOAD_ONLY_ACCEPTED", "PASS", `request_id=${requestId}`);
+	emit(
+		"PACKAGE_SOURCE_VALIDATED",
+		"PASS",
+		`workspace_execution_package_id=${job.workspace_execution_package_id}`,
+	);
+
+	// Bind the CURRENT editor only — read-only preflight, no recovery, no open.
+	const preferredUrl = await getStoredFlowProjectUrl();
+	const tabs = await getFlowTabs();
+	const activeTabPreflight = await buildActiveFlowTabPreflight("F2V", {
+		preferredUrl,
+		tabs,
+	});
+	const selectedTab = activeTabPreflight?.selectedTab || null;
+	const selectedUrl = String(selectedTab?.url || "").trim();
+	const editorHealthy = Boolean(
+		activeTabPreflight?.ok &&
+			selectedTab?.id &&
+			isProjectEditorUrl(selectedUrl) &&
+			!isRootFlowUrl(selectedUrl) &&
+			!activeTabPreflight?.brokenTargetRejected,
+	);
+	if (!editorHealthy) {
+		const failCode = activeTabPreflight?.brokenTargetRejected
+			? "ERR_FLOW_EDITOR_BROKEN"
+			: "ERR_FLOW_EDITOR_REQUIRED";
+		emit("FAILED", "FAIL", failCode);
+		return {
+			ok: false,
+			error: failCode,
+			detail: {
+				reason: "no_healthy_current_editor_for_upload_only_lane",
+				runtime_binding_error: activeTabPreflight?.error || null,
+				selected_tab_url: selectedUrl || null,
+				broken_target_rejected: Boolean(activeTabPreflight?.brokenTargetRejected),
+			},
+		};
+	}
+	emit("FLOW_EDITOR_READY", "PASS", `tab=${selectedTab.id} url=${selectedUrl}`);
+
+	// Route to the content-script strict path — never the broad SOP runner.
+	await ensureFlowDomScript(selectedTab.id);
+	const laneJob = { ...job, lane: "F2V_PACKAGE_UPLOAD_ONLY", upload_only: true };
+	const result = await sendTabMessageSafe(
+		selectedTab.id,
+		{ type: "EXECUTE_FLOW_JOB", job: laneJob },
+		120000,
+	);
+	if (result?.raw_error) {
+		emit("FAILED", "FAIL", result.raw_error);
+		return { ok: false, error: result.raw_error, detail: result.detail || null };
+	}
+	return result;
+}
+
 async function handleExecuteFlowJob(job) {
+	// Strict package-upload-only lane bypasses target recovery / project open.
+	if (isF2VPackageUploadOnly(job)) {
+		return await handleF2VPackageUploadOnlyJob(job);
+	}
 	const targetResolution = await resolveFlowExecutionTarget(job);
 	if (!targetResolution.ok) {
 		// Post FAILED stage so the backend telemetry status exits WAITING_FLOW.

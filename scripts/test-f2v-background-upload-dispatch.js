@@ -130,6 +130,8 @@ function loadHelpers() {
 			extractFunctionSource(source, "resolveF2VUploadAssetSource"),
 			extractFunctionSource(source, "resolveF2VDomFallbackAssetSource"),
 			extractFunctionSource(source, "shouldUseF2VCdpUpload"),
+			extractFunctionSource(source, "isF2VPackageUploadOnly"),
+			extractFunctionSource(source, "validateF2VPackageUploadOnlyJob"),
 			extractFunctionSource(source, "isProjectEditorUrl"),
 			extractFunctionSource(source, "isRootFlowUrl"),
 			extractFunctionSource(source, "normalizeFlowProjectUrl"),
@@ -152,7 +154,7 @@ function loadHelpers() {
 			extractFunctionSource(source, "resolveExistingProjectEditorAuthority"),
 			extractFunctionSource(source, "recoverStrictActiveFlowTabTarget"),
 			extractFunctionSource(source, "bootstrapFlowProjectEditorForB2A0"),
-			"this.__helpers = { resolveF2VUploadAssetSource, resolveF2VDomFallbackAssetSource, shouldUseF2VCdpUpload, normalizeFlowProjectUrl, extractFlowProjectId, determineFlowBootstrapStartState, rankFlowBootstrapEditorCandidates, mapFlowBootstrapBindingFailureCode, mapOpenFlowNewProjectFailureCode, selectBestFlowTab, buildFlowTabSelectionBinding, isActualFlowEditorProbe, buildUniqueFlowProbeCandidates, isFlowContentScriptReadyForActiveTab, isActiveTabAddMediaLauncherReady, evaluateActiveFlowTabPreflight, resolveExistingProjectEditorAuthority, recoverStrictActiveFlowTabTarget, bootstrapFlowProjectEditorForB2A0 };",
+			"this.__helpers = { resolveF2VUploadAssetSource, resolveF2VDomFallbackAssetSource, shouldUseF2VCdpUpload, isF2VPackageUploadOnly, validateF2VPackageUploadOnlyJob, normalizeFlowProjectUrl, extractFlowProjectId, determineFlowBootstrapStartState, rankFlowBootstrapEditorCandidates, mapFlowBootstrapBindingFailureCode, mapOpenFlowNewProjectFailureCode, selectBestFlowTab, buildFlowTabSelectionBinding, isActualFlowEditorProbe, buildUniqueFlowProbeCandidates, isFlowContentScriptReadyForActiveTab, isActiveTabAddMediaLauncherReady, evaluateActiveFlowTabPreflight, resolveExistingProjectEditorAuthority, recoverStrictActiveFlowTabTarget, bootstrapFlowProjectEditorForB2A0 };",
 		].join("\n"),
 		sandbox,
 	);
@@ -230,6 +232,77 @@ function testAssetSourceResolution(resolveF2VUploadAssetSource) {
 	assert(
 		resolveF2VUploadAssetSource({}) === null,
 		"jobs with no upload asset must remain on the DOM lane",
+	);
+}
+
+function testPackageUploadOnlyLaneDetection(isF2VPackageUploadOnly) {
+	assert(
+		isF2VPackageUploadOnly({ lane: "F2V_PACKAGE_UPLOAD_ONLY" }) === true,
+		"lane flag must activate the package-upload-only lane",
+	);
+	assert(
+		isF2VPackageUploadOnly({ upload_only: true }) === true,
+		"upload_only flag must activate the package-upload-only lane",
+	);
+	assert(
+		isF2VPackageUploadOnly({ mode: "F2V" }) === false,
+		"a normal F2V job must NOT be treated as the upload-only lane",
+	);
+	assert(
+		isF2VPackageUploadOnly(null) === false,
+		"null job must not activate the lane",
+	);
+}
+
+function testPackageUploadOnlyValidation(validateF2VPackageUploadOnlyJob) {
+	const goodJob = {
+		request_id: "req_1",
+		workspace_execution_package_id: "pkg_1",
+		mode: "F2V",
+		prompt: "hero product shot",
+		startAsset: { localFilePath: "C:\\tmp\\start.png" },
+	};
+	assert(
+		validateF2VPackageUploadOnlyJob(goodJob).ok === true,
+		"a complete package job must validate",
+	);
+	// Missing local file path → ERR_PACKAGE_START_LOCAL_FILE_REQUIRED.
+	const noLocal = validateF2VPackageUploadOnlyJob({
+		...goodJob,
+		startAsset: { downloadUrl: "https://cdn.example/start.png" },
+	});
+	assert(
+		noLocal.ok === false &&
+			noLocal.error === "ERR_PACKAGE_START_LOCAL_FILE_REQUIRED",
+		"start asset without local_file_path must fail closed",
+	);
+	// local_file_path (snake_case) is also accepted.
+	assert(
+		validateF2VPackageUploadOnlyJob({
+			...goodJob,
+			startAsset: { local_file_path: "C:\\tmp\\start.png" },
+		}).ok === true,
+		"snake_case local_file_path must be accepted",
+	);
+	// Each missing required field fails closed with ERR_PACKAGE_REQUIRED.
+	for (const drop of [
+		"request_id",
+		"workspace_execution_package_id",
+		"prompt",
+		"startAsset",
+	]) {
+		const j = { ...goodJob };
+		delete j[drop];
+		const r = validateF2VPackageUploadOnlyJob(j);
+		assert(
+			r.ok === false && r.error === "ERR_PACKAGE_REQUIRED",
+			`missing ${drop} must fail closed with ERR_PACKAGE_REQUIRED`,
+		);
+	}
+	// Wrong mode must fail closed (lane is F2V-only).
+	assert(
+		validateF2VPackageUploadOnlyJob({ ...goodJob, mode: "I2V" }).ok === false,
+		"non-F2V mode must fail closed",
 	);
 }
 
@@ -1892,6 +1965,8 @@ async function main() {
 		resolveF2VUploadAssetSource,
 		resolveF2VDomFallbackAssetSource,
 		shouldUseF2VCdpUpload,
+		isF2VPackageUploadOnly,
+		validateF2VPackageUploadOnlyJob,
 		normalizeFlowProjectUrl,
 		selectBestFlowTab,
 		buildFlowTabSelectionBinding,
@@ -1905,6 +1980,8 @@ async function main() {
 	testAssetSourceResolution(resolveF2VUploadAssetSource);
 	testDomFallbackAssetResolution(resolveF2VDomFallbackAssetSource);
 	testCdpDispatchGate(shouldUseF2VCdpUpload);
+	testPackageUploadOnlyLaneDetection(isF2VPackageUploadOnly);
+	testPackageUploadOnlyValidation(validateF2VPackageUploadOnlyJob);
 	testF2VEditorProbeGate(isActualFlowEditorProbe);
 	testUniqueFlowProbeCandidates(buildUniqueFlowProbeCandidates);
 	testSelectBestFlowTabPrefersActiveDuplicate(
