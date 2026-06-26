@@ -251,10 +251,123 @@ function evaluateGoogleFlowV2Readiness(diagnostic = {}) {
 	};
 }
 
+// Map raw DOM-observed signals (produced by observeGoogleFlowV2State in the
+// content script) into the canonical V2 diagnostic shape. PURE — no DOM, no side
+// effects — so the mapping rules are unit-testable without a live Flow tab.
+//
+// Crucially: `asset_added_to_prompt` is derived ONLY from strong signals
+// (Add to Prompt / preview-in-prompt / chip / media_attached). visibleUploadSlots
+// and Start-body text are recorded under deprecated_or_weak_signals and never
+// promote upload proof. The returned object also carries the alias fields that
+// evaluateGoogleFlowV2Readiness reads, so one object feeds both.
+function buildGoogleFlowV2Diagnostic(signals = {}) {
+	const s = signals && typeof signals === "object" ? signals : {};
+	const strongUpload = Boolean(
+		_bool(s.add_to_prompt_completed) ||
+			_bool(s.asset_preview_in_prompt) ||
+			_bool(s.prompt_attachment_chip_exists) ||
+			_bool(s.media_attached),
+	);
+	const insertedLen = Number(s.prompt_inserted_length || 0);
+	const promptInserted =
+		_bool(s.prompt_inserted) || insertedLen > 0;
+
+	const diagnostic = {
+		google_flow_ui_contract: GFV2_CONTRACT,
+
+		// Editor — driven by composer/editor surface, NOT Frames/Ingredients.
+		flow_editor_open: _bool(s.flow_editor_open),
+		extension_content_script_alive: _bool(s.extension_content_script_alive),
+		login_or_access_blocker: _bool(s.login_or_access_blocker),
+		composer_or_prompt_surface_exists: _bool(s.composer_or_prompt_surface_exists),
+
+		button_texts: Array.isArray(s.button_texts) ? s.button_texts.slice(0, 80) : [],
+		upload_media_available: _bool(s.upload_media_available),
+		add_to_prompt_found: _bool(s.add_to_prompt_found),
+
+		asset_uploaded: _bool(s.asset_uploaded),
+		// STRONG-ONLY upload proof:
+		asset_added_to_prompt: strongUpload,
+		asset_preview_in_prompt: _bool(s.asset_preview_in_prompt),
+		prompt_attachment_chip_exists: _bool(s.prompt_attachment_chip_exists),
+
+		settings_launcher_found: _bool(s.settings_launcher_found),
+		settings_panel_opened: _bool(s.settings_panel_opened),
+		video_generation_settings_found: _bool(s.video_generation_settings_found),
+		aspect_9_16_found: _bool(s.aspect_9_16_found),
+		aspect_9_16_confirmed: _bool(s.aspect_9_16_confirmed),
+		count_1x_found: _bool(s.count_1x_found),
+		count_1x_confirmed: _bool(s.count_1x_confirmed),
+		model_dropdown_found: _bool(s.model_dropdown_found),
+		model_veo_lite_found: _bool(s.model_veo_lite_found),
+		model_veo_lite_confirmed: _bool(s.model_veo_lite_confirmed),
+		visible_wrong_model: _bool(s.visible_wrong_model),
+		model_hidden_safe_pass: false, // computed by the evaluator
+		save_button_found: _bool(s.save_button_found),
+		settings_saved_or_persisted: _bool(s.settings_saved_or_persisted),
+
+		prompt_field_found: _bool(s.prompt_field_found),
+		prompt_inserted: promptInserted,
+		prompt_accepted: _bool(s.prompt_accepted),
+
+		generate_button_found: _bool(s.generate_button_found),
+		generate_button_enabled: _bool(s.generate_button_enabled),
+
+		deprecated_or_weak_signals: {
+			subMode_Frames_inferred: _bool(s.subMode_Frames_inferred),
+			visibleUploadSlots: Array.isArray(s.visibleUploadSlots)
+				? s.visibleUploadSlots.slice(0, 12)
+				: [],
+			body_contains_Start: _bool(s.body_contains_Start),
+		},
+
+		primary_blocker: null,
+	};
+
+	// Alias fields read by evaluateGoogleFlowV2Readiness (single source of truth).
+	diagnostic.flow_tab_found = diagnostic.flow_editor_open;
+	diagnostic.editor_surface_present = diagnostic.composer_or_prompt_surface_exists;
+	diagnostic.content_script_alive = diagnostic.extension_content_script_alive;
+	diagnostic.login_blocker = diagnostic.login_or_access_blocker;
+	diagnostic.composer_present = diagnostic.composer_or_prompt_surface_exists;
+	diagnostic.frames_button_present = _bool(s.frames_button_present);
+	diagnostic.ingredients_button_present = _bool(s.ingredients_button_present);
+	diagnostic.subMode_source = diagnostic.deprecated_or_weak_signals
+		.subMode_Frames_inferred
+		? "inferred"
+		: "none";
+	diagnostic.add_to_prompt_completed = _bool(s.add_to_prompt_completed);
+	diagnostic.asset_card_bound_to_prompt = _bool(s.asset_card_bound_to_prompt);
+	diagnostic.prompt_attachment_chip_present = diagnostic.prompt_attachment_chip_exists;
+	diagnostic.body_includes_image = _bool(s.body_includes_image);
+	diagnostic.side_panel_asset_categories = _bool(s.side_panel_asset_categories);
+	diagnostic.ratio_9_16_confirmed = diagnostic.aspect_9_16_confirmed;
+	diagnostic.model_visible =
+		diagnostic.visible_wrong_model || diagnostic.model_veo_lite_confirmed;
+	diagnostic.model_canonical = diagnostic.visible_wrong_model
+		? String(s.model_canonical || "wrong")
+		: diagnostic.model_veo_lite_confirmed
+			? "veo 3.1 - lite"
+			: "UNKNOWN";
+	diagnostic.save_clicked = _bool(s.save_clicked);
+	diagnostic.settings_persisted = diagnostic.settings_saved_or_persisted;
+	diagnostic.prompt_inserted_length = insertedLen;
+	diagnostic.prompt_reflected = _bool(s.prompt_reflected) || _bool(s.prompt_accepted);
+	diagnostic.prompt_editable_after_settings =
+		s.prompt_editable_after_settings === undefined
+			? true
+			: _bool(s.prompt_editable_after_settings);
+	diagnostic.product_truth_anchor_present = _bool(s.product_truth_anchor_present);
+	diagnostic.blocking_modal_detected = _bool(s.blocking_modal_detected);
+
+	return diagnostic;
+}
+
 const _api = {
 	GFV2_CONTRACT,
 	GFV2_BLOCKERS,
 	classifyGoogleFlowV2Model,
+	buildGoogleFlowV2Diagnostic,
 	evaluateEditorProof,
 	evaluateUploadProof,
 	evaluateSettingsProof,

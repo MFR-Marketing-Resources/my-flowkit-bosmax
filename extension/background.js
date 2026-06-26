@@ -22,6 +22,13 @@ try {
 	);
 }
 
+try {
+	// eslint-disable-next-line no-undef
+	importScripts("gfv2-readiness.js"); // exposes self.__GFV2_READINESS__
+} catch (_err) {
+	console.error("[GFV2] ERR_GFV2_READINESS_IMPORT_FAILED", _err);
+}
+
 const _bosmaxRunnerImported = Boolean(
 	typeof self !== "undefined" && self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__,
 );
@@ -5753,6 +5760,61 @@ function isPreselectionEditorReadyDiagnostic(diagnostic) {
 	);
 }
 
+// Read-only Google Flow V2 readiness capture. Asks the content script to observe
+// the live DOM (GFV2_OBSERVE_STATE — no clicks), then evaluates it through the
+// gfv2-readiness proof model. Emits diagnostic-only telemetry/logs. Returns
+// { ok, diagnostic, evaluation } or a structured error — never throws.
+async function captureGoogleFlowV2Readiness(selectedTab) {
+	const gfv2Api =
+		typeof self !== "undefined" ? self.__GFV2_READINESS__ : null;
+	if (!selectedTab?.id) {
+		return { ok: false, error: "GFV2_NO_FLOW_TAB", diagnostic: null, evaluation: null };
+	}
+	try {
+		await ensureFlowDomScript(selectedTab.id);
+		const resp = await sendTabMessageSafe(
+			selectedTab.id,
+			{ type: "GFV2_OBSERVE_STATE" },
+			12000,
+		);
+		const diagnostic = resp?.diagnostic || null;
+		if (!resp?.ok || !diagnostic) {
+			return {
+				ok: false,
+				error: resp?.error || "GFV2_OBSERVE_FAILED",
+				detail: resp?.detail || resp?.raw_error || null,
+				diagnostic: diagnostic || null,
+				evaluation: null,
+			};
+		}
+		console.log("[GFV2] GFV2_DIAGNOSTIC_CAPTURED", {
+			contract: diagnostic.google_flow_ui_contract,
+			tab: selectedTab.id,
+		});
+		let evaluation = null;
+		if (gfv2Api && typeof gfv2Api.evaluateGoogleFlowV2Readiness === "function") {
+			evaluation = gfv2Api.evaluateGoogleFlowV2Readiness(diagnostic);
+			console.log("[GFV2] GFV2_READINESS_EVALUATED", {
+				ready: evaluation.ready,
+				primary_blocker: evaluation.primary_blocker,
+				upload: evaluation.proofs?.upload?.ok,
+				settings: evaluation.proofs?.settings?.ok,
+				prompt: evaluation.proofs?.prompt?.ok,
+				generate: evaluation.proofs?.generate?.ok,
+			});
+		}
+		return { ok: true, diagnostic, evaluation };
+	} catch (err) {
+		return {
+			ok: false,
+			error: "GFV2_CAPTURE_THREW",
+			detail: String(err?.message || err),
+			diagnostic: null,
+			evaluation: null,
+		};
+	}
+}
+
 async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 	let preferredUrl = await getStoredFlowProjectUrl();
 	let flowTabs = await getFlowTabs();
@@ -5906,8 +5968,14 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 	}
 	updateRuntimeDiagnostics(runtimePayload);
 
+	// Google Flow UI Contract V2 — read-only diagnostic capture + evaluation.
+	// Never clicks. Surfaces the V2 readiness alongside the self-test so a live
+	// snapshot can be requested without a new endpoint.
+	const gfv2 = await captureGoogleFlowV2Readiness(selectedTab);
+
 	return {
 		ok: selfTestOk,
+		gfv2,
 		...buildBackgroundStatusResponse(),
 		extension_id: chrome.runtime.id || null,
 		expected_content_build_id: BUILD_ID,

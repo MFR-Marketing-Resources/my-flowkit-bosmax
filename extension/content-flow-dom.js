@@ -3673,6 +3673,128 @@ function isSettingsScopedModelSource(source) {
     };
   }
 
+  // Google Flow UI Contract V2 — live DOM observer (read-only, never clicks).
+  // Reads the real Flow DOM into raw signals, then maps them to the canonical V2
+  // diagnostic via gfv2-readiness.js (self.__GFV2_READINESS__). Editor readiness
+  // is driven by the composer/prompt surface — NOT Frames/Ingredients buttons.
+  // Strong upload proof requires Add-to-Prompt/preview/chip; visibleUploadSlots
+  // and Start-body text are recorded only as deprecated/weak signals.
+  function observeGoogleFlowV2State() {
+    // Defensive: broken/error Flow pages ("Something went wrong") can make some
+    // DOM helpers throw. Never throw — fall back to safe values so a diagnostic
+    // always returns (showing editor-not-ready rather than an opaque failure).
+    const safe = (fn, fallback) => {
+      try {
+        return fn();
+      } catch (_) {
+        return fallback;
+      }
+    };
+    const obs = safe(() => observeFlowState(), {}) || {};
+    const composer = safe(() => findComposerElement(), null);
+    const bodyText = safe(() => (document.body && document.body.innerText) || '', '');
+    const composerEditable = Boolean(composer && safe(() => isComposerEditable(composer), false));
+    const generateBtn = safe(() => findGenerateButtonNearComposer(), null);
+
+    function isVisible(el) {
+      if (!el || !el.getBoundingClientRect) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return false;
+      const s = window.getComputedStyle(el);
+      return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+    }
+    const buttonTexts = [];
+    const seenText = new Set();
+    document.querySelectorAll('button, [role="button"], a').forEach((el) => {
+      if (!isVisible(el)) return;
+      const t = normalizeText(
+        (el.textContent || '') + ' ' + (el.getAttribute && el.getAttribute('aria-label') || ''),
+      );
+      if (t && !seenText.has(t) && t.length <= 60) {
+        seenText.add(t);
+        buttonTexts.push(t);
+      }
+    });
+    const lowerTexts = buttonTexts.map((t) => t.toLowerCase());
+    const has = (needle) => lowerTexts.some((t) => t.includes(needle));
+
+    const modelLower = String(obs.model || '').toLowerCase();
+    const isVeo = /veo/.test(modelLower);
+    const isWrongModel = !isVeo && /nano banana|imagen|\bimage\b/.test(modelLower);
+    const composerRoot =
+      (composer && composer.closest && composer.closest('form, [role="form"]')) || null;
+    const assetPreviewInPrompt = Boolean(
+      composerRoot &&
+        composerRoot.querySelector &&
+        composerRoot.querySelector('img, [style*="background-image"], [data-asset], [class*="thumbnail" i]'),
+    );
+    const promptText = composer
+      ? normalizeText(composer.textContent || composer.value || '')
+      : '';
+    const settingsPanelOpen = Boolean(
+      document.querySelector('[role="dialog"], [role="menu"]') && (has('9:16') || has('aspect')),
+    );
+
+    const signals = {
+      // editor
+      flow_editor_open: Boolean(composer) || /\/tools\/flow/.test(String(location.href || '')),
+      extension_content_script_alive: true,
+      login_or_access_blocker: /sign in|log in|continue with google/i.test(bodyText) && !composer,
+      composer_or_prompt_surface_exists: Boolean(composer),
+      frames_button_present: has('frames'),
+      ingredients_button_present: has('ingredients'),
+      // buttons / upload
+      button_texts: buttonTexts,
+      upload_media_available: has('upload media') || has('upload'),
+      add_to_prompt_found: has('add to prompt'),
+      // strong upload proof is action-confirmed by the runner; passive observe
+      // can only assert preview/chip presence, not Add-to-Prompt completion.
+      add_to_prompt_completed: false,
+      asset_preview_in_prompt: assetPreviewInPrompt,
+      prompt_attachment_chip_exists: assetPreviewInPrompt,
+      // settings
+      settings_launcher_found: has('settings') || has('view settings') || has('tune'),
+      settings_panel_opened: settingsPanelOpen,
+      video_generation_settings_found: has('9:16') || has('aspect ratio') || settingsPanelOpen,
+      aspect_9_16_found: obs.aspectRatio === '9:16' || has('9:16'),
+      aspect_9_16_confirmed: obs.aspectRatio === '9:16',
+      count_1x_found: obs.count === '1x' || has('1x'),
+      count_1x_confirmed: obs.count === '1x',
+      model_dropdown_found: isVeo || isWrongModel || has('veo') || has('nano banana'),
+      model_veo_lite_found: /veo[\s\S]*lite/.test(modelLower) || has('veo 3.1 - lite'),
+      model_veo_lite_confirmed: /veo[\s\S]*lite/.test(modelLower),
+      visible_wrong_model: isWrongModel,
+      model_canonical: obs.model || null,
+      save_button_found: has('save'),
+      settings_saved_or_persisted: obs.aspectRatio === '9:16' && obs.count === '1x',
+      // prompt
+      prompt_field_found: composerEditable,
+      prompt_inserted: promptText.length > 0,
+      prompt_inserted_length: promptText.length,
+      prompt_reflected: promptText.length > 0,
+      prompt_accepted: promptText.length > 0,
+      // generate
+      generate_button_found: Boolean(generateBtn),
+      generate_button_enabled: Boolean(generateBtn && !generateBtn.disabled),
+      blocking_modal_detected: Boolean(safe(() => detectBlockingModal(), false)),
+      // weak/deprecated signals
+      subMode_Frames_inferred: obs.subMode === 'Frames',
+      visibleUploadSlots: Array.isArray(obs.visibleUploadSlots) ? obs.visibleUploadSlots : [],
+      body_contains_Start: bodyText.includes('Start'),
+      product_truth_anchor_present: false,
+    };
+
+    if (
+      typeof self !== 'undefined' &&
+      self.__GFV2_READINESS__ &&
+      typeof self.__GFV2_READINESS__.buildGoogleFlowV2Diagnostic === 'function'
+    ) {
+      return self.__GFV2_READINESS__.buildGoogleFlowV2Diagnostic(signals);
+    }
+    // Fallback: module not loaded as a content script — return raw signals.
+    return Object.assign({ google_flow_ui_contract: 'V2_UPLOAD_SETTINGS_PROMPT_GENERATE' }, signals);
+  }
+
   function checkFlowComposerReady(mode) {
     const observed = observeFlowState();
     const composer = findComposerElement();
@@ -5160,6 +5282,16 @@ function isSettingsScopedModelSource(source) {
           generate_button_found: false,
           detail: String(error?.message || error),
         });
+      }
+      return false;
+    }
+
+    if (msg.type === 'GFV2_OBSERVE_STATE') {
+      // Read-only Google Flow V2 diagnostic. Inspects the DOM only — never clicks.
+      try {
+        sendResponse({ ok: true, diagnostic: observeGoogleFlowV2State() });
+      } catch (error) {
+        sendResponse({ ok: false, error: 'GFV2_OBSERVE_FAILED', detail: String(error?.message || error) });
       }
       return false;
     }
