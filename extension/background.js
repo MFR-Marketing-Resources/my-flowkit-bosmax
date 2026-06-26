@@ -5782,6 +5782,7 @@ async function captureGoogleFlowV2Readiness(selectedTab) {
 			return {
 				ok: false,
 				error: resp?.error || "GFV2_OBSERVE_FAILED",
+				detail: resp?.detail || resp?.raw_error || null,
 				diagnostic: diagnostic || null,
 				evaluation: null,
 			};

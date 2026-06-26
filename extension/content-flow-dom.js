@@ -3680,11 +3680,21 @@ function isSettingsScopedModelSource(source) {
   // Strong upload proof requires Add-to-Prompt/preview/chip; visibleUploadSlots
   // and Start-body text are recorded only as deprecated/weak signals.
   function observeGoogleFlowV2State() {
-    const obs = observeFlowState();
-    const composer = findComposerElement();
-    const bodyText = (document.body && document.body.innerText) || '';
-    const composerEditable = Boolean(composer && isComposerEditable(composer));
-    const generateBtn = findGenerateButtonNearComposer();
+    // Defensive: broken/error Flow pages ("Something went wrong") can make some
+    // DOM helpers throw. Never throw — fall back to safe values so a diagnostic
+    // always returns (showing editor-not-ready rather than an opaque failure).
+    const safe = (fn, fallback) => {
+      try {
+        return fn();
+      } catch (_) {
+        return fallback;
+      }
+    };
+    const obs = safe(() => observeFlowState(), {}) || {};
+    const composer = safe(() => findComposerElement(), null);
+    const bodyText = safe(() => (document.body && document.body.innerText) || '', '');
+    const composerEditable = Boolean(composer && safe(() => isComposerEditable(composer), false));
+    const generateBtn = safe(() => findGenerateButtonNearComposer(), null);
 
     function isVisible(el) {
       if (!el || !el.getBoundingClientRect) return false;
@@ -3766,7 +3776,7 @@ function isSettingsScopedModelSource(source) {
       // generate
       generate_button_found: Boolean(generateBtn),
       generate_button_enabled: Boolean(generateBtn && !generateBtn.disabled),
-      blocking_modal_detected: Boolean(detectBlockingModal()),
+      blocking_modal_detected: Boolean(safe(() => detectBlockingModal(), false)),
       // weak/deprecated signals
       subMode_Frames_inferred: obs.subMode === 'Frames',
       visibleUploadSlots: Array.isArray(obs.visibleUploadSlots) ? obs.visibleUploadSlots : [],
