@@ -5,7 +5,10 @@ import re
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
+
+import aiohttp
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -486,6 +489,43 @@ async def materialize_local_file(body: MaterializeLocalFileRequest):
     }
 
 
+async def _materialize_remote_url_to_staging(
+    source_url: str, file_name: str = "asset.png"
+) -> dict:
+    """Fetch a remote image server-side and stage it on disk for CDP upload.
+
+    The strict F2V_PACKAGE_UPLOAD_ONLY lane's CDP file chooser needs a real local
+    file, so a remote-only package Start asset is materialized to a local path
+    before dispatch. Returns {local_file_path, file_name, mime_type}.
+    """
+    source_url = str(source_url or "").strip()
+    if not re.match(r"^https?://", source_url, re.IGNORECASE):
+        raise ValueError("ERR_REMOTE_MATERIALIZE_BAD_URL")
+    timeout = aiohttp.ClientTimeout(total=20)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(source_url) as resp:
+            if resp.status >= 400:
+                raise ValueError(f"ERR_REMOTE_MATERIALIZE_FETCH_FAILED: HTTP_{resp.status}")
+            raw_bytes = await resp.read()
+            if not raw_bytes:
+                raise ValueError("ERR_REMOTE_MATERIALIZE_FETCH_FAILED: EMPTY_BODY")
+            mime_type = (
+                (resp.headers.get("Content-Type") or "image/png").split(";", 1)[0].strip()
+                or "image/png"
+            )
+    parsed = urlparse(source_url)
+    default_name = Path(parsed.path).name or "asset"
+    file_name = Path(file_name or default_name).name
+    if "." not in file_name:
+        ext = (mime_type.split("/", 1)[-1] or "png").lower().replace("jpeg", "jpg")
+        file_name = f"{file_name}.{ext}"
+    ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else "png"
+    _UPLOAD_STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    temp_file_path = _UPLOAD_STAGING_DIR / f"{uuid4().hex}.{ext}"
+    temp_file_path.write_bytes(raw_bytes)
+    return {"local_file_path": str(temp_file_path), "file_name": file_name, "mime_type": mime_type}
+
+
 @router.post("/execute-flow-job")
 async def execute_flow_job(body: dict):
     """Trigger manual DOM automation in the extension for a generation job."""
@@ -554,6 +594,72 @@ async def execute_flow_job(body: dict):
         ),
         "backend",
     )
+
+    # Strict upload-only lane needs a real local file for the CDP file chooser.
+    # When the package Start asset is remote-only (no localFilePath/local_file_path),
+    # materialize it to a local staging file BEFORE dispatching to the extension.
+    # If materialization is impossible/fails, FAIL CLOSED here rather than dispatch
+    # a remote-only asset that the lane would only reject.
+    _is_upload_only_lane = (
+        body.get("lane") == "F2V_PACKAGE_UPLOAD_ONLY" or body.get("upload_only") is True
+    )
+    if _is_upload_only_lane and isinstance(_start_asset, dict) and not _has_local_start:
+
+        async def _fail_closed_materialize(stage_message: str, error_code: str):
+            await crud.add_stage_event(
+                body["request_id"],
+                "BACKEND_START_ASSET_MATERIALIZE_FAILED",
+                "FAIL",
+                stage_message,
+                "backend",
+            )
+            await crud.upsert_request_telemetry(
+                body["request_id"],
+                status="FAILED",
+                failed_at=crud._now(),
+                error_message=error_code,
+                error_code=error_code,
+                last_heartbeat_at=crud._now(),
+            )
+            await crud.add_stage_event(
+                body["request_id"], "FAILED", "FAILED", error_code, "backend",
+                fail_code=error_code, first_fail_stage="BACKEND_START_ASSET_MATERIALIZE_FAILED",
+            )
+            raise HTTPException(422, error_code)
+
+        _remote_url = (
+            _start_asset.get("downloadUrl")
+            or _start_asset.get("download_url")
+            or _start_asset.get("previewUrl")
+            or _start_asset.get("preview_url")
+        )
+        if not _remote_url:
+            await _fail_closed_materialize(
+                "startAsset is remote-only with no usable URL to materialize",
+                "ERR_PACKAGE_START_LOCAL_FILE_REQUIRED",
+            )
+        try:
+            _materialized = await _materialize_remote_url_to_staging(
+                str(_remote_url),
+                _start_asset.get("fileName") or _start_asset.get("file_name") or "Start.png",
+            )
+        except Exception as exc:
+            await _fail_closed_materialize(
+                str(exc), "ERR_PACKAGE_START_MATERIALIZE_FAILED"
+            )
+        _local_path = _materialized["local_file_path"]
+        # Set both camelCase and snake_case; preserve all other startAsset fields
+        # (fileName / mediaId / previewUrl / downloadUrl) by mutating in place.
+        _start_asset["localFilePath"] = _local_path
+        _start_asset["local_file_path"] = _local_path
+        body["startAsset"] = _start_asset
+        await crud.add_stage_event(
+            body["request_id"],
+            "BACKEND_START_ASSET_MATERIALIZED",
+            "WAITING_FLOW",
+            f"local_file_path={_local_path} source={str(_remote_url)[:80]}",
+            "backend",
+        )
 
     result = await client.execute_flow_job(body)
     if result.get("error"):
