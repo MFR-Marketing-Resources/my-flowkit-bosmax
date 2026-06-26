@@ -120,7 +120,14 @@ export default function F2VModule({
 	};
 
 	const handleExecute = () => {
+		// Dispatch through the strict F2V_PACKAGE_UPLOAD_ONLY extension lane:
+		// upload the package Start asset into the CURRENT editor and stop before
+		// Generate. Without these flags the extension falls back to the broad F2V
+		// SOP (new project / settings / generate), which is exactly the drift this
+		// lane exists to avoid.
 		onExecute({
+			lane: "F2V_PACKAGE_UPLOAD_ONLY",
+			upload_only: true,
 			prompt: manualPrompt,
 			orientation,
 			model,
