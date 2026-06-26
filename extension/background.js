@@ -5055,6 +5055,8 @@ async function handleF2VPackageUploadOnlyJob(job) {
 // Does NOT require Frames/Ingredients buttons, /project/ URL, or Start-slot proof.
 // Reuses the proven SOP runner (skipGenerate) and stops BEFORE Generate.
 
+const GFV2_FLOW_ROOT_URL = "https://labs.google/fx/tools/flow";
+
 function isGfv2Lane(job) {
 	return Boolean(
 		job &&
@@ -5124,23 +5126,93 @@ async function gfv2EnsureSurface(mode, emit) {
 		return { ok: true, tab: (await getTabSafe(tab.id)) || tab };
 	}
 
-	// 2. No healthy surface — open Flow root and reach a fresh session.
-	//    Pass null preferredUrl so we NEVER reopen a stale stored project.
-	const openResult = await openPreferredFlowProjectOrNewProject(mode, null);
-	emit("GFV2_FLOW_ROOT_OPENED", "WAITING_FLOW", `strategy=${openResult?.open_strategy || "new_session"}`);
-	const settled = await settleFlowProjectAfterOpen(openResult);
-	if (settled?.id) {
-		const cap = await captureGoogleFlowV2Readiness(settled);
-		const cls = gfv2ClassifySurface(settled, cap);
-		if (cls.healthy) {
-			emit("GFV2_SURFACE_READY", "PASS", `tab=${settled.id} url=${String(settled.url).slice(0, 80)} strategy=opened`);
-			return { ok: true, tab: settled };
-		}
-		emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `reason=${cls.reason} url=${settled.url || "?"}`);
-		return { ok: false, error: "GFV2_SURFACE_NOT_READY", detail: { reason: cls.reason, settled_url: settled.url || null } };
+	// 2. No healthy surface — open a BRAND-NEW tab directly to Flow root.
+	//    Deliberately do NOT call openPreferredFlowProjectOrNewProject (it settled
+	//    back onto the stale c240ebbd project), do NOT reuse any existing tab, and
+	//    do NOT touch the stored project URL. New tab only.
+	let rootTab;
+	try {
+		rootTab = await openTabInNormalWindow(GFV2_FLOW_ROOT_URL);
+	} catch (err) {
+		emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `open_error=${String(err?.message || err)}`);
+		return { ok: false, error: "GFV2_ROOT_LOAD_TIMEOUT", detail: { open_error: String(err?.message || err) } };
 	}
-	emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `open_error=${openResult?.error || "no_tab"}`);
-	return { ok: false, error: "GFV2_SURFACE_NOT_READY", detail: { open_error: openResult?.error || null } };
+	try {
+		rootTab = await waitForTabComplete(rootTab.id, 30000);
+	} catch (_) {
+		try {
+			rootTab = await chrome.tabs.get(rootTab.id);
+		} catch (_) {}
+	}
+	if (!rootTab?.id) {
+		emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", "root_tab_load_timeout");
+		return { ok: false, error: "GFV2_ROOT_LOAD_TIMEOUT", detail: { reason: "no_root_tab" } };
+	}
+	emit("GFV2_FLOW_ROOT_OPENED", "WAITING_FLOW", `tab=${rootTab.id} url=${String(rootTab.url || "").slice(0, 80)} strategy=new_root_tab`);
+
+	// 3. Classify the fresh root tab.
+	await ensureFlowDomScript(rootTab.id);
+	let cap = await captureGoogleFlowV2Readiness(rootTab);
+	let cls = gfv2ClassifySurface(rootTab, cap);
+	if (cap?.diagnostic?.login_or_access_blocker) {
+		emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", "login_or_access_blocker");
+		return { ok: false, error: "GFV2_LOGIN_REQUIRED", detail: { url: rootTab.url || null } };
+	}
+	if (cls.healthy) {
+		emit("GFV2_SURFACE_READY", "PASS", `tab=${rootTab.id} strategy=root_composer`);
+		return { ok: true, tab: rootTab };
+	}
+
+	// 4. Root/dashboard shows no composer — automate the New/Create action to reach
+	//    a session. Reuses the proven OPEN_FLOW_NEW_PROJECT content-script click.
+	let createResult = await sendTabMessageSafe(
+		rootTab.id,
+		{ type: "OPEN_FLOW_NEW_PROJECT", mode },
+		70000,
+	);
+	if (
+		[
+			"ERR_MESSAGE_RESPONSE_TIMEOUT",
+			"ERR_NO_RECEIVER",
+			"ERR_CONTENT_SCRIPT_STALE",
+			"ERR_TAB_RELOADED",
+		].includes(createResult?.error)
+	) {
+		await ensureFlowDomScript(rootTab.id);
+		createResult = await sendTabMessageSafe(
+			rootTab.id,
+			{ type: "OPEN_FLOW_NEW_PROJECT", mode },
+			70000,
+		);
+	}
+	const createDidAct = Boolean(
+		createResult &&
+			(createResult.ok ||
+				createResult.new_project_clicked ||
+				createResult.editor_ready),
+	);
+	if (!createDidAct) {
+		emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `create_error=${createResult?.error || "no_create_action"}`);
+		return { ok: false, error: "GFV2_CREATE_SESSION_NOT_FOUND", detail: { create_error: createResult?.error || null } };
+	}
+
+	// 5. Wait for the editor to settle on the SAME tab, then re-classify.
+	try {
+		rootTab = await waitForTabComplete(rootTab.id, 20000);
+	} catch (_) {
+		try {
+			rootTab = await chrome.tabs.get(rootTab.id);
+		} catch (_) {}
+	}
+	await ensureFlowDomScript(rootTab.id);
+	cap = await captureGoogleFlowV2Readiness(rootTab);
+	cls = gfv2ClassifySurface(rootTab, cap);
+	if (cls.healthy) {
+		emit("GFV2_SURFACE_READY", "PASS", `tab=${rootTab.id} strategy=created_session`);
+		return { ok: true, tab: rootTab };
+	}
+	emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `reason=${cls.reason} url=${rootTab?.url || "?"}`);
+	return { ok: false, error: "GFV2_SURFACE_NOT_READY", detail: { reason: cls.reason, url: rootTab?.url || null } };
 }
 
 async function handleGfv2Job(job) {

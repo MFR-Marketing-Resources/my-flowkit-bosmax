@@ -133,6 +133,44 @@ test("GFV2_STAGE_MAP maps the SOP stages to the V2 contract stages", () => {
 	assert(GFV2_STAGE_MAP.F2V_SOP_COUNT_1X_CONFIRMED === "GFV2_COUNT_1X_CONFIRMED", "count");
 });
 
+// --- Surface-acquisition source contract (GFV2_ENSURE_SURFACE fix) ---
+const ENSURE_SRC = extractFunctionSource(SRC, "gfv2EnsureSurface");
+const HANDLE_SRC = extractFunctionSource(SRC, "handleGfv2Job");
+
+test("ENSURE_SURFACE opens a brand-new root tab (not a reused/stale tab)", () => {
+	assert(/openTabInNormalWindow\(\s*GFV2_FLOW_ROOT_URL\s*\)/.test(ENSURE_SRC), "must open a fresh tab to Flow root");
+	assert(SRC.includes('const GFV2_FLOW_ROOT_URL = "https://labs.google/fx/tools/flow"'), "root URL constant");
+});
+
+test("ENSURE_SURFACE does NOT use openPreferredFlowProjectOrNewProject for fallback", () => {
+	// the call form `openPreferredFlowProjectOrNewProject(` must be absent (a comment
+	// mentioning the name with a space before '(' is allowed).
+	assert(!/openPreferredFlowProjectOrNewProject\(/.test(ENSURE_SRC), "must not CALL openPreferredFlowProjectOrNewProject");
+	assert(!/settleFlowProjectAfterOpen\(/.test(ENSURE_SRC), "must not reuse settleFlowProjectAfterOpen path that settled on c240ebbd");
+});
+
+test("ENSURE_SURFACE never reads/writes the stored project URL", () => {
+	assert(!/setStoredFlowProjectUrl\(/.test(ENSURE_SRC), "must not write stored project URL");
+	assert(!/getStoredFlowProjectUrl\(/.test(ENSURE_SRC), "must not read stored project URL");
+	// c240ebbd appears only in an explanatory comment, never in navigation code:
+	const code = ENSURE_SRC.replace(/\/\/[^\n]*/g, "");
+	assert(!/c240ebbd/.test(code), "must not reference c240ebbd in executable code");
+});
+
+test("ENSURE_SURFACE automates New/Create and emits named blockers", () => {
+	assert(/OPEN_FLOW_NEW_PROJECT/.test(ENSURE_SRC), "automates the New/Create click");
+	assert(ENSURE_SRC.includes('"GFV2_LOGIN_REQUIRED"'), "named login blocker");
+	assert(ENSURE_SRC.includes('"GFV2_CREATE_SESSION_NOT_FOUND"'), "named create-session blocker");
+	assert(ENSURE_SRC.includes('"GFV2_ROOT_LOAD_TIMEOUT"'), "named root-load blocker");
+	assert(ENSURE_SRC.includes('"GFV2_SURFACE_NOT_READY"'), "named generic surface blocker");
+});
+
+test("runner still uses skipGenerate:true and stops before generate", () => {
+	assert(/skipGenerate:\s*true/.test(HANDLE_SRC), "skipGenerate must be true");
+	assert(HANDLE_SRC.includes('"GFV2_STOP_BEFORE_GENERATE"'), "must emit GFV2_STOP_BEFORE_GENERATE");
+	assert(!/"GENERATE_CLICKED"|invokeGenerate/.test(HANDLE_SRC), "must not click generate");
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
 	try {
