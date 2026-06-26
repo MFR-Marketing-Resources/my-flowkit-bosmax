@@ -4558,6 +4558,123 @@ function isSettingsScopedModelSource(source) {
     return { ok: true };
   }
 
+  function isF2VPackageUploadOnlyLane(job) {
+    return Boolean(
+      job && (job.lane === 'F2V_PACKAGE_UPLOAD_ONLY' || job.upload_only === true),
+    );
+  }
+
+  // STRICT package-to-current-editor Start upload lane. Reuses the existing CDP
+  // file-chooser upload + prompt-insert primitives. Touches NO settings/model/
+  // aspect/count/agent/generate path. Fails closed with precise diagnostics and
+  // never accepts Add Media / Scenebuilder / asset-library as Start success.
+  async function executePackageUploadOnly(job, logStage, request_id, report) {
+    report.lane = 'F2V_PACKAGE_UPLOAD_ONLY';
+
+    // 1. Editor must be a real project editor surface — not root / broken / library.
+    const url = String(location.href || '');
+    const bodyText = (document.body && document.body.innerText) || '';
+    const onProjectEditor = url.indexOf('/project/') >= 0;
+    const looksBroken = /something went wrong|application error/i.test(bodyText);
+    if (!onProjectEditor || looksBroken) {
+      const code = !onProjectEditor ? 'ERR_FLOW_EDITOR_REQUIRED' : 'ERR_FLOW_EDITOR_BROKEN';
+      logStage('FLOW_EDITOR_READY', 'FAIL', code);
+      report.ok = false;
+      report.error = code;
+      return report;
+    }
+    logStage('FLOW_EDITOR_READY', 'PASS', `url=${url}`);
+
+    // 2. Locate the Start slot (the only valid upload entry for this lane).
+    const slotInfo = findUploadSlotByLabel('Start');
+    const startContainer = slotInfo?.container || resolveSlotContainer('Start');
+    const visibleSlots = observeFlowState().visibleUploadSlots;
+    if (!visibleSlots.includes('Start') && !startContainer) {
+      logStage('START_SLOT_FOUND', 'FAIL', 'ERR_START_UPLOAD_TARGET_NOT_FOUND');
+      report.ok = false;
+      report.error = 'ERR_START_UPLOAD_TARGET_NOT_FOUND';
+      return report;
+    }
+    logStage('START_SLOT_FOUND', 'PASS', `visible_slots=${visibleSlots.join(',')}`);
+
+    // 3. Package Start asset MUST resolve to a local file for the CDP file chooser.
+    const startAssetSource = job.startAsset || job.productId || job.startImageMediaId;
+    const localFilePath = resolveAssetLocalFilePath(startAssetSource);
+    if (!localFilePath) {
+      logStage('UPLOAD_MEDIA_ACTION_SELECTED', 'FAIL', 'ERR_PACKAGE_START_LOCAL_FILE_REQUIRED');
+      report.ok = false;
+      report.error = 'ERR_PACKAGE_START_LOCAL_FILE_REQUIRED';
+      return report;
+    }
+    logStage('UPLOAD_MEDIA_ACTION_SELECTED', 'PASS', 'strategy=cdp_file_chooser slot=Start');
+    logStage('CDP_FILE_CHOOSER_ARMED', 'PASS', `local_file_path=${localFilePath}`);
+
+    // 4. Upload the Start asset via CDP file chooser ONLY (never legacy DOM fake,
+    //    never Add Media / Scenebuilder / asset library).
+    const uploadState = { lastCheckpoint: 'NONE', request_id };
+    let okStart;
+    try {
+      okStart = await Promise.race([
+        simulateCdpFileUpload('Start', startAssetSource, uploadState),
+        new Promise((_, rej) =>
+          setTimeout(() => rej(new Error('ERR_START_UPLOAD_TIMEOUT')), 30000),
+        ),
+      ]);
+    } catch (err) {
+      logStage('START_UPLOAD_ACCEPTED', 'FAIL', err.message || 'ERR_START_UPLOAD_TIMEOUT');
+      report.ok = false;
+      report.error = err.message || 'ERR_START_UPLOAD_TIMEOUT';
+      return report;
+    }
+    if (!okStart || okStart.ok !== true) {
+      const shellMatch = /scenebuilder|all media|asset library/i.test(bodyText);
+      const code = shellMatch
+        ? 'ERR_FORBIDDEN_ASSET_LIBRARY_PATH'
+        : okStart?.error || 'ERR_UPLOAD_MEDIA_ACTION_NOT_FOUND';
+      logStage('START_UPLOAD_ACCEPTED', 'FAIL', code);
+      report.ok = false;
+      report.error = code;
+      return report;
+    }
+
+    // 5. Verify the Start slot preview actually appeared/changed.
+    const startPreview = await waitForAssetPreview('Start', okStart.slotElement || null, {
+      slotContainer: okStart.slotContainer || null,
+      beforeSnapshot: okStart.beforeSnapshot || null,
+      timeoutMs: 30000,
+    });
+    if (!startPreview.ok) {
+      logStage('START_UPLOAD_ACCEPTED', 'FAIL', startPreview.error || 'ERR_START_PREVIEW_TIMEOUT');
+      report.ok = false;
+      report.error = startPreview.error || 'ERR_START_PREVIEW_TIMEOUT';
+      return report;
+    }
+    logStage(
+      'START_UPLOAD_ACCEPTED',
+      'PASS',
+      `slot=Start preview_found=true checkpoint=${okStart.lastCheckpoint || 'done'}`,
+    );
+
+    // 6. Insert the package prompt (no settings, no agent).
+    const composer = findComposerElement();
+    if (!composer || !isComposerEditable(composer)) {
+      logStage('PROMPT_INSERTED', 'FAIL', 'ERR_PROMPT_FIELD_NOT_FOUND');
+      report.ok = false;
+      report.error = 'ERR_PROMPT_FIELD_NOT_FOUND';
+      return report;
+    }
+    await humanTypePrompt(composer, job.prompt);
+    logStage('PROMPT_INSERTED', 'PASS', `${String(job.prompt).length} chars`);
+
+    // 7. Stop strictly BEFORE Generate.
+    logStage('STOP_BEFORE_GENERATE', 'PASS', 'upload_only_lane_complete');
+    report.ok = true;
+    report.stopped_before_generate = true;
+    report.start_upload_verified = true;
+    report.prompt_inserted = true;
+    return report;
+  }
+
   async function executeFlowJob(job) {
     const statusResp = await sendRuntimeMessageWithResponse({ type: 'STATUS' }, 6000);
     const testConn = statusResp?.data && typeof statusResp.data === 'object'
@@ -4627,6 +4744,13 @@ function isSettingsScopedModelSource(source) {
 
       // CRITICAL: Clear any pre-existing state
       logStage(STAGES.PRE_EXECUTION_STATE_CLEARED);
+
+      // STRICT LANE: F2V_PACKAGE_UPLOAD_ONLY. Skip ALL settings/mode/aspect/count/
+      // model/agent/generate. Only: current editor -> Start slot -> Upload media
+      // (CDP) -> verify preview -> insert prompt -> stop before Generate.
+      if (isF2VPackageUploadOnlyLane(job)) {
+        return await executePackageUploadOnly(job, logStage, request_id, report);
+      }
 
       if (job.mode === 'F2V') {
         // CRITICAL: F2V SOP state machine — deterministic golden path:
