@@ -120,14 +120,14 @@ export default function F2VModule({
 	};
 
 	const handleExecute = () => {
-		// Dispatch through the strict F2V_PACKAGE_UPLOAD_ONLY extension lane:
-		// upload the package Start asset into the CURRENT editor and stop before
-		// Generate. Without these flags the extension falls back to the broad F2V
-		// SOP (new project / settings / generate), which is exactly the drift this
-		// lane exists to avoid.
+		// Dispatch through the Google Flow V2 runtime lane
+		// (GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE): auto-acquire a healthy V2 surface,
+		// then Upload media -> Add to Prompt -> Settings -> Prompt and STOP before
+		// Generate. The backend still materializes the remote Start image to a local
+		// file for the CDP file chooser (lane recognised by flow.py).
 		onExecute({
-			lane: "F2V_PACKAGE_UPLOAD_ONLY",
-			upload_only: true,
+			lane: "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE",
+			gfv2: true,
 			prompt: manualPrompt,
 			orientation,
 			model,

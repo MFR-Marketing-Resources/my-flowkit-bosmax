@@ -601,7 +601,10 @@ async def execute_flow_job(body: dict):
     # If materialization is impossible/fails, FAIL CLOSED here rather than dispatch
     # a remote-only asset that the lane would only reject.
     _is_upload_only_lane = (
-        body.get("lane") == "F2V_PACKAGE_UPLOAD_ONLY" or body.get("upload_only") is True
+        body.get("lane") == "F2V_PACKAGE_UPLOAD_ONLY"
+        or body.get("lane") == "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE"
+        or body.get("upload_only") is True
+        or body.get("gfv2") is True
     )
     if _is_upload_only_lane and isinstance(_start_asset, dict) and not _has_local_start:
 

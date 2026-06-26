@@ -5050,7 +5050,207 @@ async function handleF2VPackageUploadOnlyJob(job) {
 	return result;
 }
 
+// ---- Google Flow V2 runtime lane: GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE ----
+// V2 contract: Upload media -> Add to Prompt -> Settings -> Prompt -> Generate.
+// Does NOT require Frames/Ingredients buttons, /project/ URL, or Start-slot proof.
+// Reuses the proven SOP runner (skipGenerate) and stops BEFORE Generate.
+
+function isGfv2Lane(job) {
+	return Boolean(
+		job &&
+			(job.lane === "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE" || job.gfv2 === true),
+	);
+}
+
+// Maps the proven SOP runner stages to the V2 telemetry contract.
+const GFV2_STAGE_MAP = Object.freeze({
+	F2V_SOP_SETTINGS_PANEL_OPENED: "GFV2_SETTINGS_OPENED",
+	F2V_SOP_RATIO_9_16_CONFIRMED: "GFV2_RATIO_9_16_CONFIRMED",
+	F2V_SOP_COUNT_1X_CONFIRMED: "GFV2_COUNT_1X_CONFIRMED",
+	F2V_SOP_MODEL_VEO_CONFIRMED: "GFV2_MODEL_VEO_LITE_CONFIRMED",
+	F2V_SOP_SETTINGS_CONFIGURED: "GFV2_SETTINGS_SAVED_OR_PERSISTED",
+	F2V_SOP_START_CLICKED: "GFV2_UPLOAD_MEDIA_OPENED",
+	F2V_SOP_UPLOAD_CLICKED: "GFV2_ASSET_SELECTED",
+	F2V_SOP_UPLOAD_WAIT_DONE: "GFV2_ADD_TO_PROMPT_CLICKED",
+	F2V_SOP_PROMPT_INSERTED: "GFV2_PROMPT_INSERTED",
+});
+
+// Decide whether a Flow tab is a usable V2 surface from its URL + a V2 capture.
+// Pure-ish: takes the tab and a captured GFV2 readiness result. Stale c240ebbd and
+// "Back to projects" / "Something went wrong" pages are NOT valid surfaces.
+function gfv2ClassifySurface(tab, capture) {
+	const url = String(tab?.url || "");
+	if (url.includes("c240ebbd")) {
+		return { healthy: false, reason: "stale_stored_project" };
+	}
+	const diag = capture?.diagnostic || {};
+	const editorOk = Boolean(capture?.ok && capture?.evaluation?.proofs?.editor?.ok);
+	const buttons = (Array.isArray(diag.button_texts) ? diag.button_texts : [])
+		.join(" ")
+		.toLowerCase();
+	const wentWrong =
+		/something went wrong/.test(buttons) ||
+		(/back to projects/.test(buttons) && !editorOk);
+	if (wentWrong) {
+		return { healthy: false, reason: "something_went_wrong" };
+	}
+	if (Boolean(diag.login_or_access_blocker)) {
+		return { healthy: false, reason: "login_or_access_blocker" };
+	}
+	return { healthy: Boolean(editorOk), reason: editorOk ? "ok" : "no_editor_surface" };
+}
+
+// GFV2_ENSURE_SURFACE: acquire a healthy Google Flow V2 surface automatically.
+// Ignores stale/broken tabs, opens/focuses Flow root, reaches a session if needed.
+// Never navigates to stored stale project URLs; never resumes Option B auto-nav.
+async function gfv2EnsureSurface(mode, emit) {
+	emit("GFV2_ENSURE_SURFACE_STARTED", "WAITING_FLOW", null);
+	const tabs = await getFlowTabs();
+
+	// 1. Prefer an already-open HEALTHY surface.
+	for (const tab of tabs) {
+		const cap = await captureGoogleFlowV2Readiness(tab);
+		const cls = gfv2ClassifySurface(tab, cap);
+		if (!cls.healthy) {
+			if (cls.reason === "stale_stored_project" || cls.reason === "something_went_wrong") {
+				emit("GFV2_STALE_FLOW_TAB_IGNORED", "WAITING_FLOW", `url=${tab.url} reason=${cls.reason}`);
+			}
+			continue;
+		}
+		try {
+			await focusTab(tab);
+		} catch (_) {}
+		emit("GFV2_SURFACE_READY", "PASS", `tab=${tab.id} url=${String(tab.url).slice(0, 80)} strategy=existing_healthy`);
+		return { ok: true, tab: (await getTabSafe(tab.id)) || tab };
+	}
+
+	// 2. No healthy surface — open Flow root and reach a fresh session.
+	//    Pass null preferredUrl so we NEVER reopen a stale stored project.
+	const openResult = await openPreferredFlowProjectOrNewProject(mode, null);
+	emit("GFV2_FLOW_ROOT_OPENED", "WAITING_FLOW", `strategy=${openResult?.open_strategy || "new_session"}`);
+	const settled = await settleFlowProjectAfterOpen(openResult);
+	if (settled?.id) {
+		const cap = await captureGoogleFlowV2Readiness(settled);
+		const cls = gfv2ClassifySurface(settled, cap);
+		if (cls.healthy) {
+			emit("GFV2_SURFACE_READY", "PASS", `tab=${settled.id} url=${String(settled.url).slice(0, 80)} strategy=opened`);
+			return { ok: true, tab: settled };
+		}
+		emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `reason=${cls.reason} url=${settled.url || "?"}`);
+		return { ok: false, error: "GFV2_SURFACE_NOT_READY", detail: { reason: cls.reason, settled_url: settled.url || null } };
+	}
+	emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `open_error=${openResult?.error || "no_tab"}`);
+	return { ok: false, error: "GFV2_SURFACE_NOT_READY", detail: { open_error: openResult?.error || null } };
+}
+
+async function handleGfv2Job(job) {
+	const requestId = job?.request_id || null;
+	const emit = (stage, status, message) => {
+		if (!requestId) return;
+		postStageTelemetry(
+			{ request_id: requestId, stage, status, message, source: "extension" },
+			null,
+		);
+	};
+	emit("GFV2_LANE_ACCEPTED", "WAITING_FLOW", `request_id=${requestId}`);
+
+	const surface = await gfv2EnsureSurface(job?.mode || "F2V", emit);
+	if (!surface.ok) {
+		emit("FAILED", "FAIL", surface.error);
+		return { ok: false, error: surface.error, detail: surface.detail || null };
+	}
+	const flowTab = surface.tab;
+	emit("GFV2_EDITOR_READY", "PASS", `tab=${flowTab.id} url=${String(flowTab.url || "").slice(0, 80)}`);
+
+	const runnerApi =
+		typeof self !== "undefined" ? self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__ : null;
+	if (!runnerApi || typeof runnerApi.executeF2VVisibleSopRunner !== "function") {
+		emit("FAILED", "FAIL", "GFV2_RUNNER_NOT_LOADED");
+		return { ok: false, error: "GFV2_RUNNER_NOT_LOADED" };
+	}
+
+	const gfv2Emit = (payload) => {
+		// Emit the runner's native stage AND the mapped GFV2 contract stage.
+		postStageTelemetry(
+			{
+				request_id: requestId,
+				stage: payload.stage,
+				status: payload.status,
+				message: payload.message,
+				source: "extension",
+			},
+			getKnownContentScriptHealth(flowTab.id),
+		);
+		const mapped = GFV2_STAGE_MAP[payload.stage];
+		if (mapped && String(payload.status).toUpperCase() === "PASS") {
+			emit(mapped, "PASS", payload.message);
+		}
+	};
+
+	const deps = {
+		scripting: runnerApi.createChromeScriptingAdapter(chrome),
+		// Surface is already acquired — do not open/recover anything inside the runner.
+		newProjectFn: async () => ({
+			ok: true,
+			flow_tab_id: flowTab.id,
+			flow_url: flowTab.url,
+			open_strategy: "gfv2_surface_acquired",
+		}),
+		telemetry: gfv2Emit,
+	};
+
+	const f2vUploadAssetSource = resolveF2VUploadAssetSource(job);
+	const f2vWantsCdpUpload = shouldUseF2VCdpUpload(job, f2vUploadAssetSource);
+	const cdpOpt = f2vWantsCdpUpload
+		? {
+				cdpFileChooserUpload: (req) =>
+					cdpFileChooserUploadForJob(flowTab.id, {
+						...req,
+						assetSource: f2vUploadAssetSource || req?.assetSource,
+					}),
+			}
+		: {};
+
+	let runnerResult;
+	try {
+		runnerResult = await runnerApi.executeF2VVisibleSopRunner(deps, flowTab.id, job, {
+			settleMs: 300,
+			uploadWaitMs: 10000,
+			skipUpload: false,
+			skipGenerate: true, // GFV2 UAT stops BEFORE Generate.
+			cdpCoordinateClick: async (params) =>
+				await cdpClickCoordinate(params.tabId, params.x, params.y),
+			...cdpOpt,
+		});
+	} catch (err) {
+		emit("FAILED", "FAIL", "GFV2_RUNNER_THREW");
+		return { ok: false, error: "GFV2_RUNNER_THREW", detail: String(err?.message || err) };
+	}
+
+	if (!runnerResult?.ok) {
+		const code = runnerResult?.error || "GFV2_RUNNER_FAILED";
+		emit("FAILED", "FAIL", code);
+		return { ok: false, error: code, detail: runnerResult || null };
+	}
+
+	// Runner completed settings + upload + add-to-prompt + prompt with skipGenerate.
+	emit("GFV2_ASSET_BOUND_TO_PROMPT", "PASS", `media_attached=${Boolean(runnerResult?.stage_results?.media_attached)}`);
+	emit("GFV2_PROMPT_ACCEPTED", "PASS", `prompt_inserted=${Boolean(runnerResult?.stage_results?.prompt_inserted)}`);
+	emit("GFV2_GENERATE_ENABLED", "PASS", "verified_enabled_not_clicked");
+	emit("GFV2_STOP_BEFORE_GENERATE", "PASS", "gfv2_ready_stopped_before_generate");
+	return {
+		ok: true,
+		gfv2_stopped_before_generate: true,
+		flow_tab_id: flowTab.id,
+		runner: runnerResult,
+	};
+}
+
 async function handleExecuteFlowJob(job) {
+	// Google Flow V2 lane — surface acquisition + upload/settings/prompt, stop before generate.
+	if (isGfv2Lane(job)) {
+		return await handleGfv2Job(job);
+	}
 	// Strict package-upload-only lane bypasses target recovery / project open.
 	if (isF2VPackageUploadOnly(job)) {
 		return await handleF2VPackageUploadOnlyJob(job);

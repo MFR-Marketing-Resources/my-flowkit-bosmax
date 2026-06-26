@@ -354,6 +354,7 @@ export interface WorkspaceExecutePayload {
 	// (no new project, no settings, no Agent, no Generate).
 	lane?: string;
 	upload_only?: boolean;
+	gfv2?: boolean;
 }
 
 export interface CreativeAsset {
