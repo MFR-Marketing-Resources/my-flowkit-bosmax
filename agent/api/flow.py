@@ -531,7 +531,30 @@ async def execute_flow_job(body: dict):
         "Operator workspace submitted manual Flow job.",
         "dashboard",
     )
-        
+
+    # Dispatch-wiring proof: record exactly which lane/flags the dashboard sent,
+    # so a missing F2V_PACKAGE_UPLOAD_ONLY flag is visible in telemetry rather
+    # than silently falling back to the broad F2V SOP path.
+    _start_asset = body.get("startAsset") or {}
+    _has_local_start = bool(
+        isinstance(_start_asset, dict)
+        and (_start_asset.get("localFilePath") or _start_asset.get("local_file_path"))
+    )
+    await crud.add_stage_event(
+        body["request_id"],
+        "BACKEND_FLOW_JOB_BUILT",
+        "WAITING_FLOW",
+        (
+            f"lane={body.get('lane')} upload_only={body.get('upload_only')} "
+            f"mode={body.get('mode')} "
+            f"request_id={'yes' if body.get('request_id') else 'no'} "
+            f"workspace_execution_package_id={'yes' if body.get('workspace_execution_package_id') else 'no'} "
+            f"prompt={'yes' if body.get('prompt') else 'no'} "
+            f"start_local_file={'yes' if _has_local_start else 'no'}"
+        ),
+        "backend",
+    )
+
     result = await client.execute_flow_job(body)
     if result.get("error"):
         failure_report = await _build_manual_flow_failure_report(body["request_id"], result)

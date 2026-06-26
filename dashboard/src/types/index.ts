@@ -349,6 +349,11 @@ export interface WorkspaceExecutePayload {
 		manual_slot_overrides?: Record<string, string | null>;
 	};
 	mode: WorkspaceMode;
+	// Strict extension execution lane. When set, the extension uploads the
+	// package Start asset into the current editor and stops before Generate
+	// (no new project, no settings, no Agent, no Generate).
+	lane?: string;
+	upload_only?: boolean;
 }
 
 export interface CreativeAsset {
