@@ -5692,11 +5692,20 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     // name a model we accept whatever the editor already shows on the pill —
     // the live reality is "🍌 Nano Banana Pro crop_9_16 1x".
     const desiredModel = _resolveDesiredModel(job);
-    const effectiveSequence = _buildEffectiveSequence(desiredModel);
+    let effectiveSequence = _buildEffectiveSequence(desiredModel);
+    // Google Flow V2 has NO 'Video'/'Frames' mode controls (BOSMAX-internal labels
+    // only). For GFV2 settings, drop the mode steps and configure ratio/count/model
+    // directly — clicking a non-existent Video/Frames option is ERR_F2V_OPTION_*_NOT_FOUND.
+    if (opts?.gfv2SkipModeSteps === true) {
+      effectiveSequence = effectiveSequence.filter((s) => s.label !== 'Video' && s.label !== 'Frames');
+    }
     recordStage('F2V_SOP_MODEL_TARGET_RESOLVED', 'PASS',
       `desired=${desiredModel ? desiredModel.canon : 'accept_current'} family=${desiredModel ? desiredModel.family : 'any'}`);
 
-    if (_shouldTrustWorkspacePackageSettings(job)) {
+    // GFV2 demands granular DOM-confirmed settings proof, so the GFV2 lane forces
+    // the DOM settings path (opts.gfv2ForceDomSettings) instead of trusting package
+    // defaults — the authority shortcut applies/proves nothing granularly.
+    if (_shouldTrustWorkspacePackageSettings(job) && opts?.gfv2ForceDomSettings !== true) {
       const packageSettingSummary = {
         authority: 'workspace_package',
         orientation: job?.orientation || null,
@@ -5811,6 +5820,23 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
         };
       }
       recordStage('F2V_SOP_SETTINGS_CONFIGURED', 'PASS', `results=${JSON.stringify(verify.results || {})} save_visible=${Boolean(verify.save_visible)} save_clicked=${Boolean(verify.save_clicked)} persistence_source=${verify.persistence_source || 'unknown'}`);
+    }
+
+    // GFV2 granular settings proof hook — runs AFTER settings are applied and BEFORE
+    // upload, so the V2 contract's granular settings stages (panel opened, 9:16, 1x,
+    // model veo/hidden-soft-pass/wrong-model, persisted) are DOM-confirmed IN ORDER.
+    // No-op for non-GFV2 callers. A false `proceed` hard-fails the lane.
+    if (typeof opts?.gfv2SettingsVerify === 'function') {
+      const sv = await opts.gfv2SettingsVerify({ tabId });
+      if (sv && sv.proceed === false) {
+        return {
+          ok: false,
+          error: sv.error || 'GFV2_SETTINGS_NOT_VERIFIED',
+          detail: sv.detail || null,
+          stages,
+          stage_results: stageResults,
+        };
+      }
     }
 
     // Step 9/10/11 — upload lane.

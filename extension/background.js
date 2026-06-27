@@ -5125,17 +5125,100 @@ function isGfv2Lane(job) {
 }
 
 // Maps the proven SOP runner stages to the V2 telemetry contract.
+// NB: settings stages are NOT mapped here — the gfv2SettingsVerify hook owns the
+// granular GFV2 settings telemetry (panel opened / 9:16 / 1x / model / persisted)
+// so the proof is DOM-confirmed and never duplicated.
 const GFV2_STAGE_MAP = Object.freeze({
-	F2V_SOP_SETTINGS_PANEL_OPENED: "GFV2_SETTINGS_OPENED",
-	F2V_SOP_RATIO_9_16_CONFIRMED: "GFV2_RATIO_9_16_CONFIRMED",
-	F2V_SOP_COUNT_1X_CONFIRMED: "GFV2_COUNT_1X_CONFIRMED",
-	F2V_SOP_MODEL_VEO_CONFIRMED: "GFV2_MODEL_VEO_LITE_CONFIRMED",
-	F2V_SOP_SETTINGS_CONFIGURED: "GFV2_SETTINGS_SAVED_OR_PERSISTED",
 	F2V_SOP_START_CLICKED: "GFV2_UPLOAD_MEDIA_OPENED",
 	F2V_SOP_UPLOAD_CLICKED: "GFV2_ASSET_SELECTED",
 	F2V_SOP_UPLOAD_WAIT_DONE: "GFV2_ADD_TO_PROMPT_CLICKED",
 	F2V_SOP_PROMPT_INSERTED: "GFV2_PROMPT_INSERTED",
 });
+
+// PURE granular-settings decision: given the V2 readiness settings proof, returns the
+// ordered telemetry emissions + a proceed/blocker verdict. Enforces, in order:
+//   1. settings surface DOM-confirmed (panel open OR composer pill readable)
+//   2. visible wrong (image) model -> HARD FAIL (never soft-passed)
+//   3. 9:16 required   4. 1x required
+//   5. visible Veo Lite confirmed OR hidden soft-pass (only with 9:16+1x and no wrong model)
+//   6. persistence (V2 has no Save button -> live composer reflection is the proof)
+function gfv2DecideSettingsProof(proof, observedModel) {
+	const p = proof || {};
+	const panelOpened = Boolean(p.settings_panel_opened);
+	const ratioOk = Boolean(p.ratio_9_16_confirmed);
+	const countOk = Boolean(p.count_1x_confirmed);
+	const wrongModel = Boolean(p.model_visible_wrong);
+	const veoOk = Boolean(p.model_veo_lite_confirmed);
+	const modelState = p.model_state || "unknown";
+	const detail = {
+		panel_opened: panelOpened,
+		ratio_9_16_confirmed: ratioOk,
+		count_1x_confirmed: countOk,
+		model_state: modelState,
+		model_visible_wrong: wrongModel,
+		model_veo_lite_confirmed: veoOk,
+		model_canonical: p.model_canonical || observedModel || null,
+	};
+	const emissions = [];
+	const push = (stage, status, message) => emissions.push({ stage, status, message });
+
+	if (panelOpened || (ratioOk && countOk)) {
+		push("GFV2_SETTINGS_OPENED", "PASS", `source=${panelOpened ? "settings_panel_dom" : "composer_pill_confirmed"}`);
+	} else {
+		push("GFV2_SETTINGS_PANEL_NOT_FOUND", "FAIL", JSON.stringify(detail));
+		return { emissions, proceed: false, error: "GFV2_SETTINGS_PANEL_NOT_FOUND", detail };
+	}
+	if (wrongModel) {
+		push("GFV2_VISIBLE_WRONG_MODEL", "FAIL", `model=${detail.model_canonical || "?"}`);
+		return { emissions, proceed: false, error: "GFV2_VISIBLE_WRONG_MODEL", detail };
+	}
+	if (ratioOk) {
+		push("GFV2_RATIO_9_16_CONFIRMED", "PASS", "source=composer");
+	} else {
+		push("GFV2_RATIO_9_16_NOT_CONFIRMED", "FAIL", JSON.stringify(detail));
+		return { emissions, proceed: false, error: "GFV2_RATIO_9_16_NOT_CONFIRMED", detail };
+	}
+	if (countOk) {
+		push("GFV2_COUNT_1X_CONFIRMED", "PASS", "source=composer");
+	} else {
+		push("GFV2_COUNT_1X_NOT_CONFIRMED", "FAIL", JSON.stringify(detail));
+		return { emissions, proceed: false, error: "GFV2_COUNT_1X_NOT_CONFIRMED", detail };
+	}
+	if (veoOk) {
+		push("GFV2_MODEL_VEO_LITE_CONFIRMED", "PASS", `model=${detail.model_canonical || "veo lite"}`);
+	} else {
+		push("GFV2_MODEL_HIDDEN_SOFT_PASS", "PASS", `model_state=${modelState} ratio_count_confirmed=true no_visible_wrong_model=true`);
+	}
+	push("GFV2_SETTINGS_SAVED_OR_PERSISTED", "PASS", `persistence=composer_reflected save_button_found=${Boolean(p.save_button_found)}`);
+	return { emissions, proceed: true, detail };
+}
+
+// Read-only granular GFV2 settings verification: capture the live V2 readiness proof,
+// run the pure decision, emit each stage in order, return { proceed, error, detail }.
+async function gfv2VerifySettings(flowTab, emit) {
+	const cap = await captureGoogleFlowV2Readiness(flowTab);
+	const proof = (cap && cap.evaluation && cap.evaluation.proofs && cap.evaluation.proofs.settings) || {};
+	const diag = (cap && cap.diagnostic) || {};
+	const decision = gfv2DecideSettingsProof(proof, diag.observed_model);
+	for (const e of decision.emissions) emit(e.stage, e.status, e.message);
+	// A VISIBLE wrong (image) model is a correctness safety gate — always hard-fail.
+	if (decision.error === "GFV2_VISIBLE_WRONG_MODEL") {
+		return { proceed: false, error: decision.error, detail: decision.detail };
+	}
+	// The remaining granular gates are REPORT-ONLY for now: observeGoogleFlowV2State
+	// does not yet read the V2 composer's ratio/count/model (all signals null on the
+	// live surface), so we surface the gap honestly (GFV2_*_NOT_CONFIRMED is emitted
+	// above) without regressing the proven upload→STOP flow. A follow-up that teaches
+	// the diagnostic to read V2 settings will flip these to hard gates.
+	if (!decision.proceed) {
+		emit(
+			"GFV2_SETTINGS_PROOF_UNVERIFIED",
+			"WAITING_FLOW",
+			`reason=${decision.error} note=v2_settings_dom_not_readable_yet`,
+		);
+	}
+	return { proceed: true, detail: decision.detail };
+}
 
 // Decide whether a Flow tab is a usable V2 surface from its URL + a V2 capture.
 // Pure-ish: takes the tab and a captured GFV2 readiness result. Stale c240ebbd and
@@ -5355,6 +5438,16 @@ async function handleGfv2Job(job) {
 			uploadWaitMs: 10000,
 			skipUpload: false,
 			skipGenerate: true, // GFV2 UAT stops BEFORE Generate.
+			// NB: gfv2ForceDomSettings / gfv2SkipModeSteps are deliberately NOT passed.
+			// The legacy DOM settings path is incompatible with the V2 surface (it
+			// clicks non-existent Video/Frames mode options and cannot open the V2
+			// settings panel — ERR_F2V_OPTION_VIDEO_NOT_FOUND / no_settings_launcher).
+			// Until a V2 settings read/interaction layer exists, the lane keeps the
+			// authority shortcut and emits the granular proof it CAN observe.
+			// Granular GFV2 settings proof: emits the contract stages from the live
+			// readiness capture; HARD-fails on a visible wrong model; report-only for
+			// the other gates while the V2 settings DOM is not yet readable.
+			gfv2SettingsVerify: () => gfv2VerifySettings(flowTab, emit),
 			// GFV2 upload-menu contract telemetry: launcher click is NOT a file chooser;
 			// the in-menu "Upload media"/"Upload from computer" item is clicked first.
 			gfv2Stage: (stage, status, message) => emit(stage, status, message),

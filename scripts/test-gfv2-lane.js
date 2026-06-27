@@ -60,11 +60,24 @@ vm.runInContext(
 		extractConstObject(SRC, "GFV2_STAGE_MAP"),
 		extractFunctionSource(SRC, "isGfv2Lane"),
 		extractFunctionSource(SRC, "gfv2ClassifySurface"),
-		"this.__t = { GFV2_STAGE_MAP, isGfv2Lane, gfv2ClassifySurface };",
+		extractFunctionSource(SRC, "gfv2DecideSettingsProof"),
+		"this.__t = { GFV2_STAGE_MAP, isGfv2Lane, gfv2ClassifySurface, gfv2DecideSettingsProof };",
 	].join("\n"),
 	sandbox,
 );
-const { GFV2_STAGE_MAP, isGfv2Lane, gfv2ClassifySurface } = sandbox.__t;
+const { GFV2_STAGE_MAP, isGfv2Lane, gfv2ClassifySurface, gfv2DecideSettingsProof } = sandbox.__t;
+
+// Helpers for the settings-proof decision tests.
+const stagesOf = (r) => r.emissions.map((e) => `${e.stage}:${e.status}`);
+const FULL_OK_PROOF = {
+	settings_panel_opened: true,
+	ratio_9_16_confirmed: true,
+	count_1x_confirmed: true,
+	model_visible_wrong: false,
+	model_veo_lite_confirmed: true,
+	model_state: "correct",
+	save_button_found: false,
+};
 
 const tests = [];
 const test = (n, f) => tests.push([n, f]);
@@ -125,12 +138,15 @@ test("gfv2ClassifySurface: editor not ready rejected", () => {
 	assert(r.healthy === false && r.reason === "no_editor_surface", "no editor surface must be rejected");
 });
 
-test("GFV2_STAGE_MAP maps the SOP stages to the V2 contract stages", () => {
+test("GFV2_STAGE_MAP maps upload/prompt SOP stages (settings owned by the hook)", () => {
 	assert(GFV2_STAGE_MAP.F2V_SOP_START_CLICKED === "GFV2_UPLOAD_MEDIA_OPENED", "upload media");
 	assert(GFV2_STAGE_MAP.F2V_SOP_UPLOAD_WAIT_DONE === "GFV2_ADD_TO_PROMPT_CLICKED", "add to prompt");
 	assert(GFV2_STAGE_MAP.F2V_SOP_PROMPT_INSERTED === "GFV2_PROMPT_INSERTED", "prompt inserted");
-	assert(GFV2_STAGE_MAP.F2V_SOP_RATIO_9_16_CONFIRMED === "GFV2_RATIO_9_16_CONFIRMED", "ratio");
-	assert(GFV2_STAGE_MAP.F2V_SOP_COUNT_1X_CONFIRMED === "GFV2_COUNT_1X_CONFIRMED", "count");
+	// Settings stages must NOT be in the map — they come from gfv2VerifySettings so the
+	// proof is DOM-confirmed (not silently mapped from the authority shortcut).
+	assert(GFV2_STAGE_MAP.F2V_SOP_RATIO_9_16_CONFIRMED === undefined, "ratio not auto-mapped");
+	assert(GFV2_STAGE_MAP.F2V_SOP_COUNT_1X_CONFIRMED === undefined, "count not auto-mapped");
+	assert(GFV2_STAGE_MAP.F2V_SOP_SETTINGS_CONFIGURED === undefined, "persisted not auto-mapped");
 });
 
 // --- Surface-acquisition source contract (GFV2_ENSURE_SURFACE fix) ---
@@ -238,6 +254,76 @@ test("CDP chooser timeout recovers via direct input[type=file] feed", () => {
 
 test("broken DOM-message fallback is NOT wired into the GFV2 lane", () => {
 	assert(!/domUploadFallback:/.test(HANDLE_SRC), "must not wire the unimplemented FLOWKIT_SIMULATE_FILE_UPLOAD fallback");
+});
+
+// --- Granular GFV2 settings proof (audit contract) ---
+test("settings: full valid proof emits all granular stages and proceeds", () => {
+	const r = gfv2DecideSettingsProof(FULL_OK_PROOF, "veo 3.1 - lite");
+	assert(r.proceed === true, "proceeds");
+	const s = stagesOf(r);
+	for (const stage of ["GFV2_SETTINGS_OPENED", "GFV2_RATIO_9_16_CONFIRMED", "GFV2_COUNT_1X_CONFIRMED", "GFV2_MODEL_VEO_LITE_CONFIRMED", "GFV2_SETTINGS_SAVED_OR_PERSISTED"]) {
+		assert(s.includes(`${stage}:PASS`), `${stage} emitted PASS`);
+	}
+});
+
+test("settings: GFV2_SETTINGS_OPENED only when panel open OR pill (ratio+count) readable", () => {
+	const noSurface = gfv2DecideSettingsProof({ settings_panel_opened: false, ratio_9_16_confirmed: false, count_1x_confirmed: false }, null);
+	assert(noSurface.proceed === false && noSurface.error === "GFV2_SETTINGS_PANEL_NOT_FOUND", "no surface -> panel not found");
+	assert(stagesOf(noSurface).includes("GFV2_SETTINGS_PANEL_NOT_FOUND:FAIL"), "blocker emitted");
+	// pill-confirmed (ratio+count) counts as opened even without a panel signal
+	const pill = gfv2DecideSettingsProof({ settings_panel_opened: false, ratio_9_16_confirmed: true, count_1x_confirmed: true, model_veo_lite_confirmed: true }, null);
+	assert(stagesOf(pill)[0] === "GFV2_SETTINGS_OPENED:PASS", "pill-confirmed opens settings");
+});
+
+test("settings: 9:16 confirmation is required", () => {
+	const r = gfv2DecideSettingsProof({ ...FULL_OK_PROOF, ratio_9_16_confirmed: false, count_1x_confirmed: false, settings_panel_opened: true }, null);
+	assert(r.proceed === false && r.error === "GFV2_RATIO_9_16_NOT_CONFIRMED", "ratio required");
+});
+
+test("settings: 1x confirmation is required", () => {
+	const r = gfv2DecideSettingsProof({ ...FULL_OK_PROOF, count_1x_confirmed: false }, null);
+	assert(r.proceed === false && r.error === "GFV2_COUNT_1X_NOT_CONFIRMED", "count required");
+});
+
+test("settings: visible WRONG model hard-fails (never soft-passed)", () => {
+	const r = gfv2DecideSettingsProof({ ...FULL_OK_PROOF, model_visible_wrong: true, model_veo_lite_confirmed: false, model_state: "wrong", model_canonical: "nano banana" }, "nano banana");
+	assert(r.proceed === false && r.error === "GFV2_VISIBLE_WRONG_MODEL", "wrong model hard fail");
+	assert(!stagesOf(r).some((x) => x.startsWith("GFV2_MODEL_HIDDEN_SOFT_PASS")), "must NOT soft-pass a visible wrong model");
+});
+
+test("settings: hidden/UNKNOWN model soft-passes ONLY with 9:16+1x and no wrong model", () => {
+	const hidden = gfv2DecideSettingsProof({ settings_panel_opened: true, ratio_9_16_confirmed: true, count_1x_confirmed: true, model_visible_wrong: false, model_veo_lite_confirmed: false, model_state: "unknown" }, null);
+	assert(hidden.proceed === true, "hidden soft-pass proceeds");
+	assert(stagesOf(hidden).includes("GFV2_MODEL_HIDDEN_SOFT_PASS:PASS"), "hidden soft-pass emitted");
+	// without ratio/count it never reaches the model step (fails earlier) — soft-pass not reachable on weak proof
+	const weak = gfv2DecideSettingsProof({ settings_panel_opened: true, ratio_9_16_confirmed: false, count_1x_confirmed: false, model_state: "unknown" }, null);
+	assert(!stagesOf(weak).some((x) => x.startsWith("GFV2_MODEL_HIDDEN_SOFT_PASS")), "no soft-pass without ratio/count");
+});
+
+test("settings: persisted is the last gate before the lane proceeds to upload/prompt", () => {
+	const r = gfv2DecideSettingsProof(FULL_OK_PROOF, null);
+	const s = stagesOf(r);
+	assert(s[s.length - 1] === "GFV2_SETTINGS_SAVED_OR_PERSISTED:PASS", "persisted is last + proceed");
+	assert(r.proceed === true, "only then proceeds");
+});
+
+test("GFV2 lane wires the verify hook and does NOT force the V2-incompatible DOM path", () => {
+	assert(/gfv2SettingsVerify:\s*\(\)\s*=>\s*gfv2VerifySettings\(flowTab, emit\)/.test(HANDLE_SRC), "wires gfv2SettingsVerify");
+	// The legacy DOM settings path clicks non-existent Video/Frames options on V2, so
+	// the lane must NOT force it (it is left inert in the runner for a future V2 build).
+	assert(!/gfv2ForceDomSettings:\s*true/.test(HANDLE_SRC), "lane must NOT force the broken DOM settings path");
+	assert(!/gfv2SkipModeSteps:\s*true/.test(HANDLE_SRC), "lane must NOT engage the legacy mode-step path");
+	assert(/typeof opts\?\.gfv2SettingsVerify === 'function'/.test(RUNNER_SRC), "runner calls the verify hook before upload");
+	// runner guards for a future V2 settings build remain inert but present
+	assert(/opts\?\.gfv2ForceDomSettings !== true/.test(RUNNER_SRC), "runner force-flag guard present (inert)");
+});
+
+test("settings verify hard-fails ONLY on visible wrong model; other gates report-only", () => {
+	const VERIFY_SRC = extractFunctionSource(SRC, "gfv2VerifySettings");
+	assert(/decision\.error === "GFV2_VISIBLE_WRONG_MODEL"/.test(VERIFY_SRC), "wrong model hard-fails");
+	assert(/proceed: false, error: decision\.error/.test(VERIFY_SRC), "wrong model returns proceed:false");
+	assert(/GFV2_SETTINGS_PROOF_UNVERIFIED/.test(VERIFY_SRC), "other gaps surfaced honestly, not hidden");
+	assert(/return \{ proceed: true/.test(VERIFY_SRC), "report-only otherwise (does not regress STOP)");
 });
 
 let failed = 0;
