@@ -61,11 +61,12 @@ vm.runInContext(
 		extractFunctionSource(SRC, "isGfv2Lane"),
 		extractFunctionSource(SRC, "gfv2ClassifySurface"),
 		extractFunctionSource(SRC, "gfv2DecideSettingsProof"),
-		"this.__t = { GFV2_STAGE_MAP, isGfv2Lane, gfv2ClassifySurface, gfv2DecideSettingsProof };",
+		extractFunctionSource(SRC, "gfv2ClassifyAssetSource"),
+		"this.__t = { GFV2_STAGE_MAP, isGfv2Lane, gfv2ClassifySurface, gfv2DecideSettingsProof, gfv2ClassifyAssetSource };",
 	].join("\n"),
 	sandbox,
 );
-const { GFV2_STAGE_MAP, isGfv2Lane, gfv2ClassifySurface, gfv2DecideSettingsProof } = sandbox.__t;
+const { GFV2_STAGE_MAP, isGfv2Lane, gfv2ClassifySurface, gfv2DecideSettingsProof, gfv2ClassifyAssetSource } = sandbox.__t;
 
 // Helpers for the settings-proof decision tests.
 const stagesOf = (r) => r.emissions.map((e) => `${e.stage}:${e.status}`);
@@ -324,8 +325,55 @@ test("GFV2 settings proof runs POST-upload (V2 SOP) and is a real hard gate", ()
 test("post-upload settings driver is a real gate (no report-only bypass)", () => {
 	const DRIVE_SRC = extractFunctionSource(SRC, "gfv2DriveSettingsVerify");
 	assert(/if \(!decision\.proceed\)/.test(DRIVE_SRC), "any blocker fails");
-	assert(/return \{ proceed: false, error: decision\.error/.test(DRIVE_SRC), "returns the named blocker, not proceed:true");
+	assert(/return \{ proceed: false, error: err/.test(DRIVE_SRC), "returns the named blocker, not proceed:true");
 	assert(!/GFV2_SETTINGS_PROOF_UNVERIFIED/.test(DRIVE_SRC), "no report-only bypass post-upload");
+	assert(/requireVisibleVeo: true/.test(DRIVE_SRC), "video lane requires Veo (no hidden soft-pass)");
+});
+
+// --- GFV2 asset source: must be the system job asset, never a Desktop/manual pick ---
+test("asset: workspace package Start (remote URL) resolves as system asset", () => {
+	const r = gfv2ClassifyAssetSource({ workspace_execution_package_id: "wep_x", startAsset: { fileName: "start.jpg", downloadUrl: "https://s.500fd.com/tt_product/abc123~tplv.jpeg" } });
+	assert(r.ok && r.source_type === "workspace_package_start", "workspace package start");
+	assert(r.safe_name && !/[\\/]/.test(r.safe_name), "safe_name is a basename, no path");
+});
+
+test("asset: ref_flowkit resolves as ref_flowkit", () => {
+	const r = gfv2ClassifyAssetSource({ ref_flowkit: "ref_flowkit_start.png" });
+	assert(r.ok && r.source_type === "ref_flowkit", "ref_flowkit");
+});
+
+test("asset: backend-materialized staging temp file resolves as materialized_temp_file", () => {
+	const r = gfv2ClassifyAssetSource({ startAsset: { localFilePath: "C:/Users/USER/AppData/Local/Temp/flowkit-upload-staging/77aea8.jpg" } });
+	assert(r.ok && r.source_type === "materialized_temp_file" && r.materialized === true, "materialized temp");
+	assert(r.safe_name === "77aea8.jpg", "safe basename/hash only (no private dir)");
+});
+
+test("asset: existing Flow media id resolves as existing_flow_media", () => {
+	const r = gfv2ClassifyAssetSource({ startAsset: { mediaId: "media_abc", fileName: "x.png" } });
+	assert(r.ok && r.source_type === "existing_flow_media", "existing flow media");
+});
+
+test("asset: NO system asset fails closed with GFV2_ASSET_SOURCE_NOT_FOUND", () => {
+	assert(gfv2ClassifyAssetSource({}).error === "GFV2_ASSET_SOURCE_NOT_FOUND", "empty job");
+	assert(gfv2ClassifyAssetSource(null).error === "GFV2_ASSET_SOURCE_NOT_FOUND", "null job");
+});
+
+test("asset: untrusted Desktop/local path (not in staging) fails closed — no Desktop pick", () => {
+	const desktop = gfv2ClassifyAssetSource({ startAsset: { localFilePath: "C:/Users/USER/Desktop/screenshot.png" } });
+	assert(desktop.ok === false && desktop.error === "GFV2_ASSET_SOURCE_NOT_FOUND", "Desktop path rejected");
+	const dl = gfv2ClassifyAssetSource({ startAsset: "C:/Users/USER/Downloads/pic.png" });
+	assert(dl.ok === false, "Downloads string path rejected");
+});
+
+test("asset: lane fails closed on missing source (no Desktop picker) + emits source telemetry", () => {
+	assert(/GFV2_ASSET_SOURCE_NOT_FOUND/.test(HANDLE_SRC), "fail-closed stage");
+	assert(/GFV2_ASSET_SOURCE_RESOLVED/.test(HANDLE_SRC), "resolved stage");
+	assert(/GFV2_ASSET_MATERIALIZED/.test(HANDLE_SRC), "materialized stage");
+	assert(/GFV2_ASSET_UPLOADED_OR_SELECTED/.test(HANDLE_SRC), "uploaded/selected stage");
+	// no Desktop/Downloads/hard-coded path anywhere in the lane's executable code
+	// (comments may explain the rule; strip them before asserting).
+	const code = HANDLE_SRC.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+	assert(!/Desktop|Downloads/.test(code), "no Desktop/Downloads dependency in lane code");
 });
 
 // --- V2 settings read/interaction primitive (content-flow-dom.js) ---
@@ -351,12 +399,48 @@ test("content: settings launcher prefers tune (generation), not Video/Frames/Ing
 	assert(!/\bingredients\b/i.test(lf), "no Ingredients control dependency");
 });
 
-test("content: visible image models (Nano Banana / Omni Flash / Imagen) are WRONG", () => {
+test("content: settings primitive is SECTION-SCOPED to Video generation default", () => {
 	const ap = SRC_BLOCK(CFD_SRC, "gfv2ApplySettings");
-	assert(/nano banana/.test(ap), "nano banana classified");
-	assert(/omni flash/.test(ap), "omni flash classified");
-	assert(/imagen/.test(ap), "imagen classified");
-	assert(/model_visible_wrong = true/.test(ap), "sets visible-wrong");
+	assert(/_gfv2VideoBand\(\)/.test(ap), "builds the Video generation default band");
+	assert(/_gfv2FindOptionInBand/.test(ap), "selects 9:16/1x scoped to the video band");
+	assert(/_gfv2FindModelTriggerInBand/.test(ap), "video model trigger scoped to the band");
+	assert(/video_generation_default_section_not_found/.test(ap), "fails if the video section is absent");
+	const band = SRC_BLOCK(CFD_SRC, "_gfv2VideoBand");
+	assert(/video generation default/.test(band), "band keyed off the 'Video generation default' label");
+});
+
+test("content: video model — Veo Lite target; Omni Flash wrong; Nano Banana NOT in video classification", () => {
+	const ap = SRC_BLOCK(CFD_SRC, "gfv2ApplySettings");
+	assert(/veo 3\.1 - lite/.test(ap), "selects Veo 3.1 - Lite");
+	assert(/omni flash\|imagen/.test(ap) || /omni flash/.test(ap), "Omni Flash (video) classified wrong");
+	// Nano Banana lives in the IMAGE section (above the band) — must NOT appear in the
+	// video model classification logic.
+	assert(!/nano banana/.test(ap), "Nano Banana is not part of the video-section model logic");
+	assert(/GFV2_MODEL_VEO_LITE_NOT_FOUND/.test(ap), "named blocker when Veo Lite unavailable");
+});
+
+test("decide: video lane (requireVisibleVeo) — hidden model fails VEO_LITE_NOT_FOUND, not soft-pass", () => {
+	const hidden = { settings_panel_opened: true, ratio_9_16_confirmed: true, count_1x_confirmed: true, model_visible_wrong: false, model_veo_lite_confirmed: false, model_state: "unknown" };
+	const r = gfv2DecideSettingsProof(hidden, null, { requireVisibleVeo: true });
+	assert(r.proceed === false && r.error === "GFV2_MODEL_VEO_LITE_NOT_FOUND", "no soft-pass for the video lane");
+	assert(!stagesOf(r).some((x) => x.startsWith("GFV2_MODEL_HIDDEN_SOFT_PASS")), "must not soft-pass");
+	// confirmed Veo passes
+	const ok = gfv2DecideSettingsProof({ ...hidden, model_veo_lite_confirmed: true, model_state: "correct" }, "veo 3.1 - lite", { requireVisibleVeo: true });
+	assert(ok.proceed === true && stagesOf(ok).includes("GFV2_MODEL_VEO_LITE_CONFIRMED:PASS"), "Veo Lite passes");
+});
+
+test("decide: visible wrong VIDEO model (Omni Flash) hard-fails; persistence false fails", () => {
+	const wrong = gfv2DecideSettingsProof({ settings_panel_opened: true, ratio_9_16_confirmed: true, count_1x_confirmed: true, model_visible_wrong: true, model_veo_lite_confirmed: false, model_state: "wrong", model_canonical: "omni flash" }, "omni flash", { requireVisibleVeo: true });
+	assert(wrong.proceed === false && wrong.error === "GFV2_VISIBLE_WRONG_MODEL", "omni flash (video) hard-fail");
+	const notPersist = gfv2DecideSettingsProof({ settings_panel_opened: true, ratio_9_16_confirmed: true, count_1x_confirmed: true, model_veo_lite_confirmed: true, model_state: "correct", settings_persisted: false }, "veo 3.1 - lite", { requireVisibleVeo: true });
+	assert(notPersist.proceed === false && notPersist.error === "GFV2_SETTINGS_NOT_PERSISTED", "explicit non-persist fails");
+});
+
+test("decide: Nano Banana is NOT passed into the video decision (image-section ignored upstream)", () => {
+	// The driver builds proof from the VIDEO-section primitive result only; image-section
+	// Nano Banana never sets model_visible_wrong. Simulate a clean video proof:
+	const r = gfv2DecideSettingsProof({ settings_panel_opened: true, ratio_9_16_confirmed: true, count_1x_confirmed: true, model_veo_lite_confirmed: true, model_state: "correct", settings_persisted: true }, "veo 3.1 - lite", { requireVisibleVeo: true });
+	assert(r.proceed === true, "image-section Nano Banana irrelevant — video proof passes");
 });
 
 test("content: selection truthiness reads aria-selected / aria-checked / data-state", () => {

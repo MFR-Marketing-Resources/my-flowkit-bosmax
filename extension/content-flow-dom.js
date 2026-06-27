@@ -3825,15 +3825,31 @@ function isSettingsScopedModelSource(source) {
     try {
       el.scrollIntoView({ block: 'center' });
     } catch (_) {}
+    // Full pointer+mouse sequence — Material UI / Radix comboboxes (e.g. the video
+    // model dropdown) open on pointerdown/mousedown, not a bare .click().
+    const fireMouse = (type) => {
+      try {
+        el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0 }));
+      } catch (_) {}
+    };
+    const firePointer = (type) => {
+      try {
+        el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, view: window, pointerId: 1, pointerType: 'mouse', button: 0 }));
+      } catch (_) {}
+    };
+    try {
+      el.focus();
+    } catch (_) {}
+    firePointer('pointerover');
+    firePointer('pointerdown');
+    fireMouse('mousedown');
+    firePointer('pointerup');
+    fireMouse('mouseup');
     try {
       el.click();
-      return true;
     } catch (_) {}
-    try {
-      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      return true;
-    } catch (_) {}
-    return false;
+    fireMouse('click');
+    return true;
   }
   // Find a clickable option by visible label/aria (exact-ish), returns the element.
   function _gfv2FindOption(labels) {
@@ -3850,6 +3866,109 @@ function isSettingsScopedModelSource(source) {
           if (!best) best = el;
         }
       }
+    });
+    return best;
+  }
+
+  function _gfv2ElTop(el) {
+    try {
+      return el.getBoundingClientRect().top;
+    } catch (_) {
+      return -1;
+    }
+  }
+  // Find the top Y of a settings section label (e.g. "Video generation default").
+  function _gfv2FindSectionTop(labelRe) {
+    let best = null;
+    document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,div,label,legend,b,strong').forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const t = _gfv2Norm(el.textContent || '').toLowerCase();
+      if (t.length > 60) return;
+      if (labelRe.test(t)) {
+        const top = _gfv2ElTop(el);
+        if (top >= 0 && (best === null || top < best)) best = top;
+      }
+    });
+    return best;
+  }
+  // Y-band of the "Video generation default" section: from its label down to the
+  // Save button (or panel bottom). The "Image generation default" section sits ABOVE
+  // it, so this band cleanly excludes the image ratio/count/model controls.
+  function _gfv2VideoBand() {
+    let videoTop = _gfv2FindSectionTop(/^video generation default$/);
+    if (videoTop == null) videoTop = _gfv2FindSectionTop(/video generation default/);
+    if (videoTop == null) return null;
+    let saveTop = null;
+    document.querySelectorAll('button, [role="button"]').forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const t = _gfv2Norm(el.textContent || '').toLowerCase();
+      if (/^save$|^done$|^apply$/.test(t)) {
+        const top = _gfv2ElTop(el);
+        if (top > videoTop && (saveTop === null || top < saveTop)) saveTop = top;
+      }
+    });
+    return { minY: videoTop, maxY: saveTop != null ? saveTop : videoTop + 1000 };
+  }
+  function _gfv2InBand(el, band) {
+    if (!band) return true;
+    const top = _gfv2ElTop(el);
+    return top >= band.minY - 4 && top < band.maxY;
+  }
+  // Option finder scoped to a Y-band (so video-section 9:16/1x are not confused with
+  // the image-section ones above).
+  function _gfv2FindOptionInBand(labels, band) {
+    const wanted = labels.map((l) => l.toLowerCase());
+    const sel = 'button, [role="button"], [role="option"], [role="menuitemradio"], [role="radio"], [role="tab"], [role="switch"]';
+    let best = null;
+    document.querySelectorAll(sel).forEach((el) => {
+      if (best || !_gfv2Vis(el) || !_gfv2InBand(el, band)) return;
+      const text = _gfv2Norm(el.textContent || '').toLowerCase();
+      const aria = _gfv2Norm((el.getAttribute && el.getAttribute('aria-label')) || '').toLowerCase();
+      for (const w of wanted) {
+        if (text === w || aria === w || text.indexOf(w) >= 0 || aria.indexOf(w) >= 0) {
+          best = el;
+          break;
+        }
+      }
+    });
+    return best;
+  }
+  // Find the "Veo 3.1 - Lite" option in an open model dropdown (portaled anywhere).
+  // Matches veo+lite, excludes Fast/Quality. Lenient on dash/spacing.
+  function _gfv2FindVeoLiteOption() {
+    const sel = 'button, [role="button"], [role="option"], [role="menuitem"], [role="menuitemradio"], li, [role="row"], div[role], span';
+    let best = null;
+    document.querySelectorAll(sel).forEach((el) => {
+      if (best || !_gfv2Vis(el)) return;
+      const t = _gfv2Norm(el.textContent || '').toLowerCase();
+      if (t.length > 40) return;
+      if (/veo/.test(t) && /lite/.test(t) && !/fast|quality/.test(t)) best = el;
+    });
+    return best;
+  }
+  function _gfv2DumpModelOptions() {
+    const sel = 'button, [role="button"], [role="option"], [role="menuitem"], [role="menuitemradio"], li, [role="row"], div[role]';
+    const out = [];
+    const seen = new Set();
+    document.querySelectorAll(sel).forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const t = _gfv2Norm(el.textContent || '');
+      if (!t || t.length > 40 || seen.has(t)) return;
+      if (/veo|omni|flash|nano/i.test(t)) {
+        seen.add(t);
+        out.push(t);
+      }
+    });
+    return out.slice(0, 12);
+  }
+  // The video-section model dropdown trigger (shows Omni Flash / Veo / arrow_drop_down).
+  function _gfv2FindModelTriggerInBand(band) {
+    const sel = 'button, [role="button"], [role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="menu"], [aria-haspopup="true"]';
+    let best = null;
+    document.querySelectorAll(sel).forEach((el) => {
+      if (best || !_gfv2Vis(el) || !_gfv2InBand(el, band)) return;
+      const blob = _gfv2Blob(el);
+      if (/omni flash|veo|arrow_drop_down/.test(blob)) best = el;
     });
     return best;
   }
@@ -3912,105 +4031,144 @@ function isSettingsScopedModelSource(source) {
       result.detail = 'no_settings_launcher';
       return result;
     }
-    // Try each settings-like launcher until one reveals generation settings
-    // (9:16 / aspect / model). Close (Escape) between attempts.
-    const revealRe = /9:16|16:9|1:1|3:4|4:3|aspect|portrait|landscape|veo|nano|imagen|variation|\b[1-4]x\b/;
+    // Open Agent settings — the panel must expose the "Video generation default"
+    // SECTION (not just any generation settings). Try each launcher; build a Y-band
+    // scoped to that section. The "Image generation default" section (Nano Banana)
+    // sits above this band and is ignored entirely.
     result.launchers_tried = [];
-    let openControls = null;
+    let band = null;
     for (const cand of launchers.slice(0, 6)) {
       _gfv2ClickEl(cand.el);
       await _gfv2Sleep(Math.max(450, Number(options.panelWaitMs || 800)));
-      const ctrls = _gfv2DumpControls();
-      const txt = ctrls.map((c) => (c.text || '') + ' ' + (c.aria || '')).join(' ').toLowerCase();
-      const revealed = revealRe.test(txt);
-      result.launchers_tried.push({ launcher: cand.blob, revealed });
-      if (revealed) {
+      band = _gfv2VideoBand();
+      result.launchers_tried.push({ launcher: cand.blob, revealed: Boolean(band) });
+      if (band) {
         result.launcher = cand.blob;
         result.settings_panel_opened = true;
-        openControls = ctrls;
         break;
       }
-      // close whatever opened before trying the next candidate
       try {
         document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       } catch (_) {}
       await _gfv2Sleep(250);
     }
-    result.controls_seen = (openControls || _gfv2DumpAllVisible()).slice(0, 45);
-    if (!result.settings_panel_opened) {
+    result.controls_seen = _gfv2DumpControls().slice(0, 50);
+    if (!result.settings_panel_opened || !band) {
       result.error = 'GFV2_SETTINGS_PANEL_NOT_FOUND';
-      result.detail = 'no_launcher_revealed_generation_settings';
+      result.detail = 'video_generation_default_section_not_found';
       return result;
     }
+    result.video_band = { minY: Math.round(band.minY), maxY: Math.round(band.maxY) };
 
-    // --- 9:16 ---
-    const ratioEl = _gfv2FindOption(['9:16', 'crop_9_16', 'portrait 9:16', 'crop_9_16 9:16', '9 : 16']);
+    // --- VIDEO 9:16 (scoped to the Video generation default band) ---
+    const ratioEl = _gfv2FindOptionInBand(['9:16', 'crop_9_16', 'portrait 9:16', '9 : 16'], band);
     if (ratioEl) {
       if (!_gfv2IsSelected(ratioEl)) {
         _gfv2ClickEl(ratioEl);
-        result.actions.push('clicked_9_16');
+        result.actions.push('clicked_video_9_16');
         await _gfv2Sleep(450);
       } else {
-        result.actions.push('9_16_already_selected');
+        result.actions.push('video_9_16_already_selected');
       }
-      const recheck = _gfv2FindOption(['9:16', 'crop_9_16', 'portrait 9:16', '9 : 16']);
+      const recheck = _gfv2FindOptionInBand(['9:16', 'crop_9_16', '9 : 16'], band);
       result.ratio_9_16_confirmed = Boolean(recheck && _gfv2IsSelected(recheck));
     }
 
-    // --- 1x ---
-    const countEl = _gfv2FindOption(['1x', '1×', '1 variation', 'x1', '1 output']);
+    // --- VIDEO 1x (scoped) ---
+    const countEl = _gfv2FindOptionInBand(['1x', '1×', 'x1'], band);
     if (countEl) {
       if (!_gfv2IsSelected(countEl)) {
         _gfv2ClickEl(countEl);
-        result.actions.push('clicked_1x');
+        result.actions.push('clicked_video_1x');
         await _gfv2Sleep(450);
       } else {
-        result.actions.push('1x_already_selected');
+        result.actions.push('video_1x_already_selected');
       }
-      const recheck = _gfv2FindOption(['1x', '1×', '1 variation', 'x1', '1 output']);
+      const recheck = _gfv2FindOptionInBand(['1x', '1×', 'x1'], band);
       result.count_1x_confirmed = Boolean(recheck && _gfv2IsSelected(recheck));
     }
 
-    // --- model (read; never change unless wrong handled by caller) ---
-    const modelControls = _gfv2DumpControls();
-    const modelBlob = modelControls
-      .map((c) => (c.text || '') + ' ' + (c.aria || ''))
-      .join(' ')
-      .toLowerCase();
-    const veoMatch = /veo[\s\S]{0,12}(3\.1)?[\s\S]{0,8}lite/.test(modelBlob) || /veo 3\.1\s*-?\s*lite/.test(modelBlob);
-    // Visible image models in a video (F2V) context are WRONG: Nano Banana, Imagen,
-    // Omni Flash (all image-generation models).
-    const wrongMatch = /nano banana|imagen|\bimagine\b|omni flash/.test(modelBlob);
-    if (wrongMatch && !/veo/.test(modelBlob)) {
-      result.model_visible_wrong = true;
-      result.model_canonical = (modelBlob.match(/nano banana|imagen|omni flash/) || [null])[0];
-    } else if (veoMatch) {
-      result.model_veo_lite_confirmed = true;
-      result.model_canonical = 'veo 3.1 - lite';
-    } else if (/veo/.test(modelBlob)) {
-      result.model_canonical = 'veo';
+    // --- VIDEO model: select Veo 3.1 - Lite (scoped dropdown) ---
+    const modelTrigger = _gfv2FindModelTriggerInBand(band);
+    if (modelTrigger) {
+      const beforeText = _gfv2Norm(modelTrigger.textContent || '').toLowerCase();
+      result.model_before = beforeText.slice(0, 40);
+      if (!/veo[\s\S]*lite/.test(beforeText)) {
+        _gfv2ClickEl(modelTrigger);
+        result.actions.push('opened_video_model_dropdown');
+        await _gfv2Sleep(800);
+        // dropdown options are portaled outside the band — search globally; Veo labels
+        // are unambiguous (the image section has no Veo). Retry once for late render.
+        let veoLite = _gfv2FindVeoLiteOption();
+        if (!veoLite) {
+          await _gfv2Sleep(700);
+          veoLite = _gfv2FindVeoLiteOption();
+        }
+        result.model_dropdown_options = _gfv2DumpModelOptions();
+        if (veoLite) {
+          result.veo_lite_option_text = _gfv2Norm(veoLite.textContent || '').slice(0, 40);
+          _gfv2ClickEl(veoLite);
+          result.actions.push('selected_veo_3_1_lite');
+          await _gfv2Sleep(650);
+        } else {
+          // re-open once in case the first click toggled it shut
+          _gfv2ClickEl(modelTrigger);
+          await _gfv2Sleep(700);
+          veoLite = _gfv2FindVeoLiteOption();
+          result.model_dropdown_options = _gfv2DumpModelOptions();
+          if (veoLite) {
+            _gfv2ClickEl(veoLite);
+            result.actions.push('selected_veo_3_1_lite_retry');
+            await _gfv2Sleep(650);
+          } else {
+            result.error = 'GFV2_MODEL_VEO_LITE_NOT_FOUND';
+            result.detail = 'veo_lite_not_in_video_dropdown';
+          }
+        }
+      }
+      const trigger2 = _gfv2FindModelTriggerInBand(_gfv2VideoBand() || band) || modelTrigger;
+      const afterText = _gfv2Norm(trigger2.textContent || '').toLowerCase();
+      result.model_after = afterText.slice(0, 40);
+      if (/veo[\s\S]*lite/.test(afterText)) {
+        result.model_veo_lite_confirmed = true;
+        result.model_canonical = 'veo 3.1 - lite';
+      } else if (/omni flash|imagen/.test(afterText)) {
+        // a visible WRONG model inside the Video section (Nano Banana is image-only,
+        // never in this band)
+        result.model_visible_wrong = true;
+        result.model_canonical = (afterText.match(/omni flash|imagen/) || [null])[0];
+      } else if (/veo[\s\S]*(fast|quality)/.test(afterText)) {
+        result.model_canonical = afterText.slice(0, 40);
+        if (!result.error) result.error = 'GFV2_MODEL_VEO_LITE_NOT_FOUND';
+      } else {
+        result.model_canonical = afterText ? afterText.slice(0, 40) : null;
+      }
     } else {
-      result.model_canonical = null; // hidden / unreadable
+      result.model_canonical = null; // no video model trigger visible
     }
 
-    // --- save / persist ---
+    // --- SAVE / PERSIST (video-section values only) ---
     const saveEl = _gfv2FindOption(['save', 'done', 'apply']);
     if (saveEl) {
       result.save_button_found = true;
       _gfv2ClickEl(saveEl);
       result.actions.push('clicked_save');
-      await _gfv2Sleep(500);
+      await _gfv2Sleep(650);
     }
-    // persistence: re-read; confirmed settings still reflected => persisted
-    const persistRatio = _gfv2FindOption(['9:16', 'crop_9_16', '9 : 16']);
-    const persistCount = _gfv2FindOption(['1x', '1×', 'x1']);
-    const stillRatio = result.ratio_9_16_confirmed || Boolean(persistRatio && _gfv2IsSelected(persistRatio));
-    const stillCount = result.count_1x_confirmed || Boolean(persistCount && _gfv2IsSelected(persistCount));
+    // Re-read the video band to verify persistence of ratio/count/model.
+    const band2 = _gfv2VideoBand() || band;
+    if (band2) {
+      const pr = _gfv2FindOptionInBand(['9:16', 'crop_9_16', '9 : 16'], band2);
+      const pc = _gfv2FindOptionInBand(['1x', '1×', 'x1'], band2);
+      const mt = _gfv2FindModelTriggerInBand(band2);
+      const mTxt = mt ? _gfv2Norm(mt.textContent || '').toLowerCase() : '';
+      result.ratio_9_16_confirmed = result.ratio_9_16_confirmed || Boolean(pr && _gfv2IsSelected(pr));
+      result.count_1x_confirmed = result.count_1x_confirmed || Boolean(pc && _gfv2IsSelected(pc));
+      result.model_veo_lite_confirmed = result.model_veo_lite_confirmed || /veo[\s\S]*lite/.test(mTxt);
+    }
     result.settings_saved_or_persisted = Boolean(
-      (result.save_button_found ? result.actions.includes('clicked_save') : true) && stillRatio && stillCount,
+      result.ratio_9_16_confirmed && result.count_1x_confirmed && result.model_veo_lite_confirmed,
     );
-    result.ratio_9_16_confirmed = result.ratio_9_16_confirmed || stillRatio;
-    result.count_1x_confirmed = result.count_1x_confirmed || stillCount;
     return result;
   }
 

@@ -894,6 +894,61 @@ function resolveF2VUploadAssetSource(job) {
 	return job.product_id || job.productId || job.startImageMediaId || null;
 }
 
+// Classify the GFV2 upload asset STRICTLY from the system job payload — never a
+// Desktop/manual OS pick. Returns { ok, source_type, safe_name, materialized } or a
+// fail-closed { ok:false, error:'GFV2_ASSET_SOURCE_NOT_FOUND' }. safe_name is a
+// basename/hash only (never a full private path).
+function gfv2ClassifyAssetSource(job) {
+	const safeName = (v) => {
+		if (!v || typeof v !== "string") return null;
+		const base = v.split("?")[0].split(/[\\/]/).pop() || null;
+		return base ? base.slice(0, 80) : null;
+	};
+	if (!job) return { ok: false, error: "GFV2_ASSET_SOURCE_NOT_FOUND", reason: "no_job" };
+
+	// 1. Explicit FlowKit reference (ref_flowkit / image_ref).
+	const refFlowkit = job.ref_flowkit || job.refFlowkit || job.image_ref || job.imageRef || null;
+	if (refFlowkit) {
+		const v = typeof refFlowkit === "string" ? refFlowkit : refFlowkit.fileName || refFlowkit.downloadUrl || refFlowkit.mediaId;
+		return { ok: true, source_type: "ref_flowkit", safe_name: safeName(v) || "ref_flowkit", materialized: false };
+	}
+
+	const a = job.startAsset;
+	if (a && typeof a === "object") {
+		const localPath = a.localFilePath || a.local_file_path || null;
+		// 2. Backend-materialized controlled temp file (the canonical GFV2 path).
+		if (localPath && /flowkit-upload-staging/i.test(String(localPath))) {
+			return { ok: true, source_type: "materialized_temp_file", safe_name: safeName(localPath), materialized: true };
+		}
+		// 3. Existing Google Flow media (id present) — prefer selecting the card.
+		const mediaId = a.mediaId || a.media_id || a.assetId || a.asset_id || null;
+		if (mediaId) {
+			return { ok: true, source_type: "existing_flow_media", safe_name: safeName(a.fileName || a.file_name) || String(mediaId).slice(0, 80), materialized: false };
+		}
+		// 4. Workspace package Start asset (remote URL the backend materializes).
+		const url = a.downloadUrl || a.download_url || a.previewUrl || a.preview_url || null;
+		if (url) {
+			const isWorkspace = Boolean(job.workspace_execution_package_id || job.prompt_package_snapshot_id);
+			return { ok: true, source_type: isWorkspace ? "workspace_package_start" : "start_asset", safe_name: safeName(a.fileName || a.file_name || url), materialized: false };
+		}
+		if (localPath) {
+			// An absolute local path that is NOT under the controlled staging dir is not
+			// trusted as a system asset (could be a Desktop pick) — fail closed.
+			return { ok: false, error: "GFV2_ASSET_SOURCE_NOT_FOUND", reason: "untrusted_local_path_not_in_staging" };
+		}
+	} else if (typeof a === "string" && a) {
+		if (/^https?:/i.test(a)) return { ok: true, source_type: "start_asset", safe_name: safeName(a), materialized: false };
+		if (/flowkit-upload-staging/i.test(a)) return { ok: true, source_type: "materialized_temp_file", safe_name: safeName(a), materialized: true };
+		return { ok: false, error: "GFV2_ASSET_SOURCE_NOT_FOUND", reason: "untrusted_local_string" };
+	}
+
+	// 5. Product / existing-media id fallback.
+	const pid = job.product_id || job.productId || job.startImageMediaId || null;
+	if (pid) return { ok: true, source_type: "existing_flow_media", safe_name: String(pid).slice(0, 80), materialized: false };
+
+	return { ok: false, error: "GFV2_ASSET_SOURCE_NOT_FOUND", reason: "no_system_asset_in_job" };
+}
+
 function resolveF2VDomFallbackAssetSource(job) {
 	if (!job) return null;
 	const a = job.startAsset;
@@ -5142,7 +5197,8 @@ const GFV2_STAGE_MAP = Object.freeze({
 //   3. 9:16 required   4. 1x required
 //   5. visible Veo Lite confirmed OR hidden soft-pass (only with 9:16+1x and no wrong model)
 //   6. persistence (V2 has no Save button -> live composer reflection is the proof)
-function gfv2DecideSettingsProof(proof, observedModel) {
+function gfv2DecideSettingsProof(proof, observedModel, opts) {
+	const requireVisibleVeo = Boolean(opts && opts.requireVisibleVeo);
 	const p = proof || {};
 	const panelOpened = Boolean(p.settings_panel_opened);
 	const ratioOk = Boolean(p.ratio_9_16_confirmed);
@@ -5186,10 +5242,21 @@ function gfv2DecideSettingsProof(proof, observedModel) {
 	}
 	if (veoOk) {
 		push("GFV2_MODEL_VEO_LITE_CONFIRMED", "PASS", `model=${detail.model_canonical || "veo lite"}`);
+	} else if (requireVisibleVeo) {
+		// Video lane: the target Veo 3.1 - Lite must be confirmed (no soft-pass when a
+		// concrete video model dropdown exists but Veo Lite could not be selected).
+		push("GFV2_MODEL_VEO_LITE_NOT_FOUND", "FAIL", `model_state=${modelState} model=${detail.model_canonical || "?"}`);
+		return { emissions, proceed: false, error: "GFV2_MODEL_VEO_LITE_NOT_FOUND", detail };
 	} else {
 		push("GFV2_MODEL_HIDDEN_SOFT_PASS", "PASS", `model_state=${modelState} ratio_count_confirmed=true no_visible_wrong_model=true`);
 	}
-	push("GFV2_SETTINGS_SAVED_OR_PERSISTED", "PASS", `persistence=composer_reflected save_button_found=${Boolean(p.save_button_found)}`);
+	// Persistence: an explicit false from the interactive primitive is a hard fail;
+	// undefined (pure-logic tests / observe path) is treated as composer-reflected.
+	if (p.settings_persisted === false) {
+		push("GFV2_SETTINGS_NOT_PERSISTED", "FAIL", `ratio=${ratioOk} count=${countOk} veo=${veoOk}`);
+		return { emissions, proceed: false, error: "GFV2_SETTINGS_NOT_PERSISTED", detail };
+	}
+	push("GFV2_SETTINGS_SAVED_OR_PERSISTED", "PASS", `persistence=${p.settings_persisted === undefined ? "composer_reflected" : "video_section_verified"} save_button_found=${Boolean(p.save_button_found)}`);
 	return { emissions, proceed: true, detail };
 }
 
@@ -5227,6 +5294,12 @@ async function gfv2DriveSettingsVerify(flowTab, emit) {
 			emit("GFV2_SETTINGS_DISCOVERY", "WAITING_FLOW", `part${Math.floor(i / 1800)} ${json.slice(i, i + 1800)}`);
 		}
 	}
+	emit("GFV2_SETTINGS_VIDEO_BAND", "WAITING_FLOW", JSON.stringify({ band: res.video_band || null, model_before: res.model_before || null, model_after: res.model_after || null, model_dropdown_options: res.model_dropdown_options || null, veo_lite_option_text: res.veo_lite_option_text || null, actions: res.actions || [] }).slice(0, 800));
+	// The primitive could not even locate the Video generation default section.
+	if (res.error === "GFV2_SETTINGS_PANEL_NOT_FOUND" && !res.settings_panel_opened) {
+		emit("GFV2_SETTINGS_PANEL_NOT_FOUND", "FAIL", res.detail || "video_section_not_found");
+		return { proceed: false, error: "GFV2_SETTINGS_PANEL_NOT_FOUND", detail: res };
+	}
 	const proof = {
 		settings_panel_opened: Boolean(res.settings_panel_opened),
 		ratio_9_16_confirmed: Boolean(res.ratio_9_16_confirmed),
@@ -5238,12 +5311,18 @@ async function gfv2DriveSettingsVerify(flowTab, emit) {
 		save_button_found: Boolean(res.save_button_found),
 		settings_persisted: Boolean(res.settings_saved_or_persisted),
 	};
-	const decision = gfv2DecideSettingsProof(proof, proof.model_canonical);
+	// Video lane: require Veo 3.1 - Lite to be confirmed inside the Video section (no
+	// hidden soft-pass when a real video model dropdown exists).
+	const decision = gfv2DecideSettingsProof(proof, proof.model_canonical, { requireVisibleVeo: true });
 	for (const e of decision.emissions) emit(e.stage, e.status, e.message);
-	// Post-upload, the V2 generation settings DO render — so these are real live gates:
-	// any blocker (panel-not-found / 9:16 / 1x not confirmed / visible wrong model) fails.
+	// Post-upload, the V2 generation settings DO render — these are real live gates.
 	if (!decision.proceed) {
-		return { proceed: false, error: decision.error, detail: { decision: decision.detail, applied: res } };
+		// surface the primitive's more specific Veo-not-found cause if applicable
+		const err =
+			res.error === "GFV2_MODEL_VEO_LITE_NOT_FOUND" && decision.error === "GFV2_MODEL_VEO_LITE_NOT_FOUND"
+				? res.error
+				: decision.error;
+		return { proceed: false, error: err, detail: { decision: decision.detail, applied: res } };
 	}
 	return { proceed: true, detail: decision.detail };
 }
@@ -5401,6 +5480,19 @@ async function handleGfv2Job(job) {
 	};
 	emit("GFV2_LANE_ACCEPTED", "WAITING_FLOW", `request_id=${requestId}`);
 
+	// Asset source MUST be the system job asset (ref_flowkit / workspace package Start
+	// / materialized temp), never a Desktop/manual OS pick. Fail closed otherwise.
+	const assetSrc = gfv2ClassifyAssetSource(job);
+	if (!assetSrc.ok) {
+		emit("GFV2_ASSET_SOURCE_NOT_FOUND", "FAIL", `reason=${assetSrc.reason || "no_system_asset"}`);
+		emit("FAILED", "FAIL", "GFV2_ASSET_SOURCE_NOT_FOUND");
+		return { ok: false, error: "GFV2_ASSET_SOURCE_NOT_FOUND", detail: { reason: assetSrc.reason || null } };
+	}
+	emit("GFV2_ASSET_SOURCE_RESOLVED", "PASS", `source_type=${assetSrc.source_type} name=${assetSrc.safe_name || "?"}`);
+	if (assetSrc.materialized || assetSrc.source_type === "workspace_package_start" || assetSrc.source_type === "ref_flowkit") {
+		emit("GFV2_ASSET_MATERIALIZED", "PASS", `source_type=${assetSrc.source_type} name=${assetSrc.safe_name || "?"} dir=flowkit-upload-staging`);
+	}
+
 	const surface = await gfv2EnsureSurface(job?.mode || "F2V", emit);
 	if (!surface.ok) {
 		emit("FAILED", "FAIL", surface.error);
@@ -5499,6 +5591,7 @@ async function handleGfv2Job(job) {
 	}
 
 	// Runner completed upload + add-to-prompt + prompt with skipGenerate.
+	emit("GFV2_ASSET_UPLOADED_OR_SELECTED", "PASS", `via=${runnerResult?.stage_results?.upload_proof?.via || "cdp_file_chooser"} source=system_job_asset`);
 	emit("GFV2_ASSET_BOUND_TO_PROMPT", "PASS", `media_attached=${Boolean(runnerResult?.stage_results?.media_attached)}`);
 
 	// GRANULAR SETTINGS PROOF (post-upload, V2 SOP order). Opens the tune-settings
