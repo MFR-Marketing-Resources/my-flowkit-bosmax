@@ -173,6 +173,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [creatorPersona, setCreatorPersona] = useState("DEFAULT_CREATOR");
 	const [block1Duration, setBlock1Duration] = useState(8);
 	const [block2Duration, setBlock2Duration] = useState(8);
+	// WPS chaining opt-in (default OFF). When an engine vendor is selected the
+	// preview/generate payload sends engine_duration_target +
+	// requested_total_duration_seconds so the backend enforces the WPS Blocking
+	// Template. Empty vendor = existing behavior, byte-identical payload.
+	const [engineDurationTarget, setEngineDurationTarget] = useState<
+		"" | "GROK" | "GOOGLE_FLOW"
+	>("");
+	const [requestedTotalDuration, setRequestedTotalDuration] = useState<
+		number | ""
+	>("");
 	const [notice, setNotice] = useState<OperatorNotice>({
 		tone: "idle",
 		title: "Idle",
@@ -594,6 +604,17 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								{ block_index: 2, duration_seconds: block2Duration },
 							]
 						: [],
+				...(engineDurationTarget
+					? {
+							engine_duration_target: engineDurationTarget,
+							...(requestedTotalDuration !== ""
+								? {
+										requested_total_duration_seconds:
+											requestedTotalDuration,
+									}
+								: {}),
+						}
+					: {}),
 			});
 			setPreviewPackage(preview);
 			setNotice({
@@ -641,6 +662,17 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								{ block_index: 2, duration_seconds: block2Duration },
 							]
 						: [],
+				...(engineDurationTarget
+					? {
+							engine_duration_target: engineDurationTarget,
+							...(requestedTotalDuration !== ""
+								? {
+										requested_total_duration_seconds:
+											requestedTotalDuration,
+									}
+								: {}),
+						}
+					: {}),
 			});
 			setWorkspacePackage(pkg);
 			setPreviewPackage(null);
@@ -939,6 +971,56 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</div>
 					</div>
 					<div className="mt-4 grid gap-3 md:grid-cols-2">
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								WPS Engine Vendor (optional)
+							</div>
+							<select
+								title="WPS engine vendor"
+								value={engineDurationTarget}
+								onChange={(e) =>
+									setEngineDurationTarget(
+										e.target.value as "" | "GROK" | "GOOGLE_FLOW",
+									)
+								}
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+							>
+								<option value="">None (no WPS chaining)</option>
+								<option value="GROK">Grok</option>
+								<option value="GOOGLE_FLOW">Google Flow</option>
+							</select>
+							<div className="text-[11px] text-slate-400">
+								Select a vendor to enforce the WPS Blocking Template.
+							</div>
+						</div>
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								WPS Total Duration (s)
+							</div>
+							<input
+								type="number"
+								min={1}
+								title="WPS requested total duration seconds"
+								value={
+									requestedTotalDuration === ""
+										? ""
+										: String(requestedTotalDuration)
+								}
+								onChange={(e) =>
+									setRequestedTotalDuration(
+										e.target.value === "" ? "" : Number(e.target.value),
+									)
+								}
+								disabled={engineDurationTarget === ""}
+								placeholder="e.g. 24"
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 disabled:opacity-40"
+							/>
+							<div className="text-[11px] text-slate-400">
+								Total video seconds; backend resolves the block chain.
+							</div>
+						</div>
+					</div>
+					<div className="mt-4 grid gap-3 md:grid-cols-2">
 						<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
 								Shot Plan
@@ -1171,6 +1253,28 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							{previewPackage.warnings?.length ? (
 								<div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
 									{previewPackage.warnings.join(" · ")}
+								</div>
+							) : null}
+							{previewPackage.wps_chaining_enforced ? (
+								<div className="rounded-xl border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-[11px] text-sky-200">
+									<div className="font-semibold">
+										WPS enforced ·{" "}
+										{previewPackage.engine_duration_target ?? "—"}
+									</div>
+									<div className="mt-1">
+										Chain: [
+										{(previewPackage.resolved_block_chain ?? []).join(", ")}] ·
+										Budget: [
+										{previewPackage.dialogue_word_budget_per_block.join(", ")}]
+									</div>
+									<div className="mt-1">
+										Actual: [
+										{(
+											previewPackage.actual_dialogue_word_count_per_block ?? []
+										).join(", ")}
+										] · Status: [
+										{(previewPackage.wps_status_per_block ?? []).join(", ")}]
+									</div>
 								</div>
 							) : null}
 							<div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
