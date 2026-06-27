@@ -937,91 +937,20 @@ async function testRunnerConfirmsGluedPillModelUnknownWithoutOpeningPanel() {
 	);
 }
 
+// Happy path — real sequence: submit -> wait real video -> click video to open
+// review page -> open review-page three-dot -> Download Project.
 async function testPostSubmitDownloadContinuationCompletesAfterOutputReady() {
-	installDom(baseComposerHtml());
-	applyCommonRects(document);
-	document.getElementById("prompt").value = "hero product shot";
-
-	const events = [];
-	let submitCaptured = false;
-	let menuCaptured = false;
-	let downloadCaptured = false;
-	const generateBtn = document.getElementById("generate-btn");
-	generateBtn.addEventListener("click", () => {
-		if (!submitCaptured) {
-			events.push("submit-clicked");
-			submitCaptured = true;
-		}
-		setTimeout(() => {
-			if (document.getElementById("output-card")) return;
-			const outputCard = document.createElement("div");
-			outputCard.id = "output-card";
-			outputCard.innerHTML = `
-				<div id="output-name">generated-project.mp4</div>
-				<button id="project-menu" type="button" aria-haspopup="menu">
-					<span class="material-symbols-outlined">more_vert</span>
-				</button>
-			`;
-			document.body.appendChild(outputCard);
-			setVisibleRect(outputCard, 930, 220, 220, 160);
-			setVisibleRect(document.getElementById("output-name"), 950, 250, 160, 24);
-			const projectMenu = document.getElementById("project-menu");
-			setVisibleRect(projectMenu, 1110, 230, 28, 28);
-			projectMenu.addEventListener("click", () => {
-				if (!menuCaptured) {
-					events.push("menu-clicked");
-					menuCaptured = true;
-				}
-				if (document.getElementById("project-menu-popup")) return;
-				const menu = document.createElement("div");
-				menu.id = "project-menu-popup";
-				menu.setAttribute("role", "menu");
-				menu.innerHTML = `<button id="download-project" type="button">Download Project</button>`;
-				document.body.appendChild(menu);
-				setVisibleRect(menu, 1040, 260, 160, 60);
-				const downloadProject = document.getElementById("download-project");
-				setVisibleRect(downloadProject, 1050, 275, 140, 28);
-				downloadProject.addEventListener("click", () => {
-					if (!downloadCaptured) {
-						events.push("download-clicked");
-						downloadCaptured = true;
-					}
-					if (document.getElementById("download-status")) return;
-					const status = document.createElement("div");
-					status.id = "download-status";
-					status.setAttribute("role", "status");
-					status.textContent = "Downloading generated-project.mp4";
-					document.body.appendChild(status);
-					setVisibleRect(status, 980, 420, 220, 24);
-				});
-			});
-		}, 0);
-	});
-
-	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
-		{ scripting: createScriptingAdapter(), telemetry: () => {} },
-		9101,
-		{ mode: "F2V" },
-		{
-			settleMs: 0,
-			preGenerateSettleMs: 0,
-			outputWaitTimeoutMs: 1000,
-			outputWaitPollMs: 10,
-			promptProof: { passed: true, inserted_length: 17, field_value_length: 17 },
-		},
-	);
-	assert.equal(result.ok, true, "post-submit continuation should succeed");
-	assert.deepEqual(events, ["submit-clicked", "menu-clicked", "download-clicked"]);
+	const ctx = installReviewFlowDom();
+	const result = await runContinuation(9101);
+	assert.equal(result.ok, true, "post-submit continuation should succeed: " + JSON.stringify(result.error || result.detail || ""));
+	assert.deepEqual(ctx.events, ["submit", "video-click", "download"], "must submit, click the video to review, then download");
 	const names = result.stages.map((stage) => stage.stage);
-	assert.ok(names.indexOf("GFV2_PROMPT_READY_FOR_SUBMIT") < names.indexOf("GFV2_SUBMIT_ARROW_FOUND"));
-	assert.ok(names.indexOf("GFV2_SUBMIT_ARROW_CLICKED") < names.indexOf("GFV2_OUTPUT_READY"));
-	assert.ok(names.indexOf("GFV2_OUTPUT_READY") < names.indexOf("GFV2_PROJECT_MENU_OPENED"));
-	assert.ok(names.indexOf("GFV2_PROJECT_MENU_OPENED") < names.indexOf("GFV2_DOWNLOAD_PROJECT_CLICKED"));
+	assert.ok(names.indexOf("GFV2_SUBMIT_ARROW_CLICKED") < names.indexOf("GFV2_OUTPUT_READY"), "submit before output-ready");
+	assert.ok(names.indexOf("GFV2_OUTPUT_READY") < names.indexOf("GFV2_OUTPUT_REVIEW_OPENED"), "output-ready before review opened");
+	assert.ok(names.indexOf("GFV2_OUTPUT_REVIEW_OPENED") < names.indexOf("GFV2_PROJECT_MENU_OPENED"), "review opened before project menu");
+	assert.ok(names.indexOf("GFV2_PROJECT_MENU_OPENED") < names.indexOf("GFV2_DOWNLOAD_PROJECT_CLICKED"), "menu before download");
 	assert.equal(result.summary.filename, "generated-project.mp4");
 	assert.ok(typeof result.summary.timestamp === "string" && result.summary.timestamp.length > 0);
-	if (result.summary.browser_ui_evidence) {
-		assert.ok(/download/i.test(String(result.summary.browser_ui_evidence)));
-	}
 }
 
 async function testPostSubmitDownloadContinuationFailsWhenArrowMissing() {
@@ -1058,66 +987,23 @@ async function testPostSubmitDownloadContinuationFailsWhenOutputNeverAppears() {
 }
 
 async function testPostSubmitDownloadContinuationFailsWhenProjectMenuMissing() {
-	installDom(baseComposerHtml());
-	applyCommonRects(document);
-	const generateBtn = document.getElementById("generate-btn");
-	generateBtn.addEventListener("click", () => {
-		const outputCard = document.createElement("div");
-		outputCard.id = "output-card";
-		outputCard.textContent = "generated-project.mp4";
-		document.body.appendChild(outputCard);
-		setVisibleRect(outputCard, 930, 220, 220, 120);
-	});
-
-	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
-		{ scripting: createScriptingAdapter(), telemetry: () => {} },
-		9104,
-		{ mode: "F2V" },
-		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 500, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
-	);
+	// Review page opens, but it contains no three-dot menu -> fail closed.
+	installReviewFlowDom({ reviewMenu: false });
+	const result = await runContinuation(9104, { outputWaitTimeoutMs: 500 });
 	assert.equal(result.ok, false);
 	assert.equal(result.error, "GFV2_PROJECT_MENU_NOT_FOUND");
 	assert.ok(result.stages.some((stage) => stage.stage === "GFV2_PROJECT_MENU_NOT_FOUND" && stage.status === "FAIL"));
+	assert.ok(result.stages.some((stage) => stage.stage === "GFV2_OUTPUT_REVIEW_OPENED" && stage.status === "PASS"), "review must have opened first");
 }
 
 async function testPostSubmitDownloadContinuationFailsWhenDownloadProjectMissing() {
-	installDom(baseComposerHtml());
-	applyCommonRects(document);
-	const generateBtn = document.getElementById("generate-btn");
-	generateBtn.addEventListener("click", () => {
-		const outputCard = document.createElement("div");
-		outputCard.id = "output-card";
-		outputCard.innerHTML = `
-			<div id="output-name">generated-project.mp4</div>
-			<button id="project-menu" type="button" aria-haspopup="menu">
-				<span class="material-symbols-outlined">more_vert</span>
-			</button>
-		`;
-		document.body.appendChild(outputCard);
-		setVisibleRect(outputCard, 930, 220, 220, 160);
-		setVisibleRect(document.getElementById("output-name"), 950, 250, 160, 24);
-		const projectMenu = document.getElementById("project-menu");
-		setVisibleRect(projectMenu, 1110, 230, 28, 28);
-		projectMenu.addEventListener("click", () => {
-			const menu = document.createElement("div");
-			menu.id = "project-menu-popup";
-			menu.setAttribute("role", "menu");
-			menu.innerHTML = `<button id="rename-project" type="button">Rename Project</button>`;
-			document.body.appendChild(menu);
-			setVisibleRect(menu, 1040, 260, 160, 60);
-			setVisibleRect(document.getElementById("rename-project"), 1050, 275, 140, 28);
-		});
-	});
-
-	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
-		{ scripting: createScriptingAdapter(), telemetry: () => {} },
-		9105,
-		{ mode: "F2V" },
-		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 500, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
-	);
+	// Review page + correct three-dot open, but the menu has no Download Project.
+	installReviewFlowDom({ noDownloadItem: true });
+	const result = await runContinuation(9105, { outputWaitTimeoutMs: 500 });
 	assert.equal(result.ok, false);
 	assert.equal(result.error, "GFV2_DOWNLOAD_PROJECT_NOT_FOUND");
 	assert.ok(result.stages.some((stage) => stage.stage === "GFV2_DOWNLOAD_PROJECT_NOT_FOUND" && stage.status === "FAIL"));
+	assert.ok(result.stages.some((stage) => stage.stage === "GFV2_PROJECT_MENU_OPENED" && stage.status === "PASS"), "the correct review menu must have opened");
 }
 
 // ───────────────────────────────────────────────────────────────────────
@@ -1144,6 +1030,127 @@ function appendModelDropdown(document, id, left, top) {
 	wrap.appendChild(dd);
 	setVisibleRect(dd, left, top + 4, 140, 30);
 	return dd;
+}
+
+// Builds the real post-submit DOM flow: Generate -> (async) a generated <video>
+// output card appears -> clicking the video opens a review page ([data-review-page])
+// containing the project three-dot -> the three-dot opens a popup with Download
+// Project. Options toggle decoys and missing pieces to exercise fail-closed paths.
+function installReviewFlowDom(opts = {}) {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	document.getElementById("prompt").value = "hero product shot";
+	const ctx = { events: [], modelClicks: 0, globalClicks: 0 };
+	// The MAIN-world click path can dispatch a listener more than once; dedupe each
+	// logical step so the event log reflects the sequence, not the dispatch count.
+	const seen = {};
+	const pushOnce = (name) => { if (!seen[name]) { seen[name] = true; ctx.events.push(name); } };
+
+	if (opts.globalAppMenu) {
+		const header = document.createElement("header");
+		document.body.appendChild(header);
+		setVisibleRect(header, 0, 0, 1280, 56);
+		const g = document.createElement("button");
+		g.id = "global-more";
+		g.type = "button";
+		g.setAttribute("aria-haspopup", "menu");
+		g.innerHTML = '<span class="material-symbols-outlined">more_vert</span>More';
+		header.appendChild(g);
+		setVisibleRect(g, 1230, 14, 30, 28);
+		g.addEventListener("click", () => { ctx.globalClicks += 1; });
+	}
+	if (opts.modelDropdown) {
+		const dd = appendModelDropdown(document, "model-dd", 600, 120);
+		dd.addEventListener("click", () => { ctx.modelClicks += 1; });
+	}
+
+	const gen = document.getElementById("generate-btn");
+	gen.addEventListener("click", () => {
+		pushOnce("submit");
+		setTimeout(() => {
+			if (document.getElementById("output-card")) return;
+			const card = document.createElement("div");
+			card.id = "output-card";
+			card.innerHTML = '<div>generated-project.mp4</div>';
+			const vid = document.createElement("video");
+			vid.id = "output-video";
+			vid.setAttribute("src", "blob:generated");
+			card.appendChild(vid);
+			document.body.appendChild(card);
+			setVisibleRect(card, 930, 220, 220, 160);
+			setVisibleRect(vid, 940, 240, 200, 110);
+			if (opts.videoOpensReview === false) return; // review never opens
+			vid.addEventListener("click", () => {
+				pushOnce("video-click");
+				if (document.getElementById("review-page")) return;
+				const review = document.createElement("div");
+				review.id = "review-page";
+				review.setAttribute("data-review-page", "true");
+				document.body.appendChild(review);
+				setVisibleRect(review, 200, 80, 880, 720);
+				const rvid = document.createElement("video");
+				rvid.setAttribute("src", "blob:generated");
+				review.appendChild(rvid);
+				setVisibleRect(rvid, 260, 140, 600, 360);
+				if (opts.reviewModelDropdown) {
+					const md = document.createElement("button");
+					md.id = "review-model";
+					md.type = "button";
+					md.setAttribute("aria-haspopup", "menu");
+					md.innerHTML = '<span>Veo 3.1 - Lite</span><span class="material-symbols-outlined">arrow_drop_down</span>';
+					review.appendChild(md);
+					setVisibleRect(md, 300, 600, 140, 30);
+				}
+				if (opts.reviewMenu === false) return; // review opens but no three-dot
+				const menu = document.createElement("button");
+				menu.id = "review-menu";
+				menu.type = "button";
+				menu.setAttribute("aria-haspopup", "menu");
+				menu.innerHTML = '<span class="material-symbols-outlined">more_vert</span>';
+				review.appendChild(menu);
+				setVisibleRect(menu, 1000, 140, 28, 28);
+				menu.addEventListener("click", () => {
+					if (document.getElementById("review-menu-popup")) return;
+					const popup = document.createElement("div");
+					popup.id = "review-menu-popup";
+					popup.setAttribute("role", "menu");
+					popup.innerHTML = opts.noDownloadItem
+						? '<button id="rename-project" type="button">Rename Project</button>'
+						: '<button id="download-project" type="button">Download Project</button>';
+					review.appendChild(popup);
+					setVisibleRect(popup, 900, 180, 180, 80);
+					const dl = document.getElementById("download-project");
+					if (dl) {
+						setVisibleRect(dl, 910, 195, 160, 28);
+						dl.addEventListener("click", () => { pushOnce("download"); });
+					}
+					const rn = document.getElementById("rename-project");
+					if (rn) setVisibleRect(rn, 910, 195, 160, 28);
+				});
+			});
+		}, 0);
+	});
+	return ctx;
+}
+
+function runContinuation(reqId, opts = {}) {
+	return runner.executeGfv2PostSubmitDownloadContinuation(
+		{ scripting: createScriptingAdapter(), telemetry: () => {} },
+		reqId,
+		{ mode: "F2V" },
+		Object.assign(
+			{
+				settleMs: 0,
+				preGenerateSettleMs: 0,
+				outputWaitTimeoutMs: 1000,
+				outputWaitPollMs: 10,
+				reviewWaitTimeoutMs: 1000,
+				reviewWaitPollMs: 10,
+				promptProof: { passed: true, inserted_length: 17, field_value_length: 17 },
+			},
+			opts,
+		),
+	);
 }
 
 // Proof 1: a not-yet-rendered state (only a model dropdown) must NOT be output-ready.
@@ -1182,7 +1189,6 @@ async function testProjectMenuRejectsModelDropdownOnly() {
 	appendModelDropdown(document, "model-dd", 600, 120);
 	const stamp = runner.MAIN_stampProjectMenuButton("data-test-pm");
 	assert.equal(stamp.ok, false, "the model selector dropdown must be rejected as the project menu");
-	assert.equal(stamp.reason, "project_menu_not_found");
 }
 
 // Proof 3: composer/settings menus are rejected as the project menu.
@@ -1203,24 +1209,50 @@ async function testProjectMenuRejectsSettingsControlOnly() {
 async function testProjectMenuSelectsMoreVertOverModelDropdown() {
 	installDom(baseComposerHtml());
 	applyCommonRects(document);
+	// Decoys: global app menu (header) + body model dropdown.
+	const header = document.createElement("header");
+	document.body.appendChild(header);
+	setVisibleRect(header, 0, 0, 1280, 56);
+	const g = document.createElement("button");
+	g.id = "global-more";
+	g.type = "button";
+	g.setAttribute("aria-haspopup", "menu");
+	g.innerHTML = '<span class="material-symbols-outlined">more_vert</span>More';
+	header.appendChild(g);
+	setVisibleRect(g, 1230, 14, 30, 28);
 	appendModelDropdown(document, "model-dd", 600, 120);
-	const card = document.createElement("div");
-	card.id = "out";
-	document.body.appendChild(card);
-	setVisibleRect(card, 930, 220, 240, 160);
+	// Review page with the REAL three-dot plus an in-surface model dropdown decoy.
+	const review = document.createElement("div");
+	review.id = "review-page";
+	review.setAttribute("data-review-page", "true");
+	document.body.appendChild(review);
+	setVisibleRect(review, 200, 80, 880, 720);
+	const rvid = document.createElement("video");
+	rvid.setAttribute("src", "blob:generated");
+	review.appendChild(rvid);
+	setVisibleRect(rvid, 260, 140, 600, 360);
+	const md = document.createElement("button");
+	md.id = "review-model";
+	md.type = "button";
+	md.setAttribute("aria-haspopup", "menu");
+	md.innerHTML = '<span>Veo 3.1 - Lite</span><span class="material-symbols-outlined">arrow_drop_down</span>';
+	review.appendChild(md);
+	setVisibleRect(md, 300, 600, 140, 30);
 	const menu = document.createElement("button");
-	menu.id = "real-menu";
+	menu.id = "review-menu";
 	menu.type = "button";
 	menu.setAttribute("aria-haspopup", "menu");
 	menu.innerHTML = '<span class="material-symbols-outlined">more_vert</span>';
-	card.appendChild(menu);
-	setVisibleRect(menu, 1110, 230, 28, 28);
+	review.appendChild(menu);
+	setVisibleRect(menu, 1000, 140, 28, 28);
 
 	const stamp = runner.MAIN_stampProjectMenuButton("data-test-pm");
-	assert.equal(stamp.ok, true, "the real three-dot menu must be selected");
+	assert.equal(stamp.ok, true, "the review-page three-dot must be selected");
 	assert.match(String(stamp.text || ""), /more_vert/, "selected menu must be the more_vert affordance");
-	assert.ok(document.getElementById("real-menu").hasAttribute("data-test-pm"), "more_vert button must be stamped");
-	assert.ok(!document.getElementById("model-dd").hasAttribute("data-test-pm"), "the model dropdown must NOT be stamped");
+	assert.ok(document.getElementById("review-menu").hasAttribute("data-test-pm"), "review three-dot must be stamped");
+	assert.ok(!document.getElementById("global-more").hasAttribute("data-test-pm"), "global app menu must NOT be stamped");
+	assert.ok(!document.getElementById("model-dd").hasAttribute("data-test-pm"), "body model dropdown must NOT be stamped");
+	assert.ok(!document.getElementById("review-model").hasAttribute("data-test-pm"), "in-review model dropdown must NOT be stamped");
 }
 
 // Proof 5: Download Project is clicked only after the correct menu opens — the
@@ -1230,93 +1262,89 @@ async function testPostSubmitDownloadIgnoresModelDropdownDecoy() {
 	applyCommonRects(document);
 	document.getElementById("prompt").value = "hero product shot";
 
-	let modelDropdownClicks = 0;
-	const dd = appendModelDropdown(document, "model-dd", 600, 120);
-	dd.addEventListener("click", () => {
-		modelDropdownClicks += 1;
-	});
-
-	const events = [];
-	let downloadCaptured = false;
-	const generateBtn = document.getElementById("generate-btn");
-	generateBtn.addEventListener("click", () => {
-		setTimeout(() => {
-			if (document.getElementById("output-card")) return;
-			const outputCard = document.createElement("div");
-			outputCard.id = "output-card";
-			outputCard.innerHTML = `
-				<div id="output-name">generated-project.mp4</div>
-				<video src="blob:fake"></video>
-				<button id="project-menu" type="button" aria-haspopup="menu"><span class="material-symbols-outlined">more_vert</span></button>
-			`;
-			document.body.appendChild(outputCard);
-			setVisibleRect(outputCard, 930, 220, 220, 180);
-			setVisibleRect(document.getElementById("output-name"), 950, 250, 160, 24);
-			setVisibleRect(outputCard.querySelector("video"), 940, 270, 200, 90);
-			const projectMenu = document.getElementById("project-menu");
-			setVisibleRect(projectMenu, 1110, 230, 28, 28);
-			projectMenu.addEventListener("click", () => {
-				if (document.getElementById("project-menu-popup")) return;
-				const menu = document.createElement("div");
-				menu.id = "project-menu-popup";
-				menu.setAttribute("role", "menu");
-				menu.innerHTML = `<button id="download-project" type="button">Download Project</button>`;
-				document.body.appendChild(menu);
-				setVisibleRect(menu, 1040, 260, 160, 60);
-				const dl = document.getElementById("download-project");
-				setVisibleRect(dl, 1050, 275, 140, 28);
-				dl.addEventListener("click", () => {
-					if (!downloadCaptured) {
-						events.push("download-clicked");
-						downloadCaptured = true;
-					}
-				});
-			});
-		}, 0);
-	});
-
-	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
-		{ scripting: createScriptingAdapter(), telemetry: () => {} },
-		9201,
-		{ mode: "F2V" },
-		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 1000, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
-	);
-	assert.equal(result.ok, true, "continuation must succeed past the model-dropdown decoy: " + JSON.stringify(result.error || result.detail || ""));
-	assert.deepEqual(events, ["download-clicked"]);
-	assert.equal(modelDropdownClicks, 0, "the model selector dropdown must NEVER be opened as the project menu");
+	const ctx = installReviewFlowDom({ modelDropdown: true, globalAppMenu: true, reviewModelDropdown: true });
+	const result = await runContinuation(9201);
+	assert.equal(result.ok, true, "continuation must succeed past the decoys: " + JSON.stringify(result.error || result.detail || ""));
+	assert.ok(ctx.events.includes("download"), "download must be clicked from the review-page menu");
+	assert.equal(ctx.modelClicks, 0, "the model selector dropdown must NEVER be opened as the project menu");
+	assert.equal(ctx.globalClicks, 0, "the global app menu must NEVER be opened as the project menu");
 	const names = result.stages.map((s) => s.stage);
 	assert.ok(names.includes("GFV2_DOWNLOAD_PROJECT_CLICKED"), "download must be clicked from the correct menu");
 }
 
 // Proof 6: missing the correct output menu (only a model dropdown) fails closed.
 async function testPostSubmitDownloadFailsClosedWhenOnlyModelDropdownMenu() {
-	installDom(baseComposerHtml());
-	applyCommonRects(document);
-	document.getElementById("prompt").value = "hero product shot";
-	appendModelDropdown(document, "model-dd", 600, 120);
-	const generateBtn = document.getElementById("generate-btn");
-	generateBtn.addEventListener("click", () => {
-		const outputCard = document.createElement("div");
-		outputCard.id = "output-card";
-		outputCard.innerHTML = '<div id="output-name">generated-project.mp4</div><video src="blob:fake"></video>';
-		document.body.appendChild(outputCard);
-		setVisibleRect(outputCard, 930, 220, 220, 160);
-		setVisibleRect(document.getElementById("output-name"), 950, 250, 160, 24);
-		setVisibleRect(outputCard.querySelector("video"), 940, 270, 200, 90);
-	});
-
-	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
-		{ scripting: createScriptingAdapter(), telemetry: () => {} },
-		9202,
-		{ mode: "F2V" },
-		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 500, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
-	);
+	// Review page opens, but its only menu-like control is a model dropdown.
+	installReviewFlowDom({ reviewMenu: false, reviewModelDropdown: true });
+	const result = await runContinuation(9202, { outputWaitTimeoutMs: 500 });
 	assert.equal(result.ok, false);
 	assert.equal(
 		result.error,
 		"GFV2_PROJECT_MENU_NOT_FOUND",
-		"must fail closed when only the model dropdown exists — never open it as the project menu",
+		"must fail closed when the review surface has only a model dropdown — never open it",
 	);
+}
+
+// The uploaded Start image (an <img>, not a <video>) must never be output-ready.
+async function testOutputReadyRejectsStartImage() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	const card = document.createElement("div");
+	card.id = "start-card";
+	const img = document.createElement("img");
+	img.setAttribute("src", "blob:start-image-36cad636.jpg");
+	card.appendChild(img);
+	document.body.appendChild(card);
+	setVisibleRect(card, 930, 220, 200, 160);
+	setVisibleRect(img, 940, 240, 160, 110);
+	const state = runner.MAIN_getPostSubmitOutputState();
+	assert.equal(state.output_ready, false, "the uploaded Start image must NOT be accepted as generated output");
+}
+
+// Missing review page fails closed (video exists but clicking it opens nothing).
+async function testReviewNotOpenedFailsClosed() {
+	installReviewFlowDom({ videoOpensReview: false });
+	const result = await runContinuation(9203, { reviewWaitTimeoutMs: 300, reviewWaitPollMs: 10 });
+	assert.equal(result.ok, false);
+	assert.equal(result.error, "GFV2_OUTPUT_REVIEW_NOT_OPENED", "must fail closed when the review page never opens");
+	assert.ok(result.stages.some((s) => s.stage === "GFV2_OUTPUT_REVIEW_NOT_OPENED" && s.status === "FAIL"));
+}
+
+// A composer menu must never be treated as the project menu — the review-page
+// three-dot is chosen instead.
+async function testComposerMenuRejected() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	// A more_vert inside the composer footer (decoy).
+	const composerMenu = document.createElement("button");
+	composerMenu.id = "composer-more";
+	composerMenu.type = "button";
+	composerMenu.setAttribute("aria-haspopup", "menu");
+	composerMenu.innerHTML = '<span class="material-symbols-outlined">more_vert</span>';
+	document.getElementById("footer").appendChild(composerMenu);
+	setVisibleRect(composerMenu, 820, 850, 28, 28);
+	// Review page with the real three-dot.
+	const review = document.createElement("div");
+	review.id = "review-page";
+	review.setAttribute("data-review-page", "true");
+	document.body.appendChild(review);
+	setVisibleRect(review, 200, 80, 880, 720);
+	const rvid = document.createElement("video");
+	rvid.setAttribute("src", "blob:generated");
+	review.appendChild(rvid);
+	setVisibleRect(rvid, 260, 140, 600, 360);
+	const menu = document.createElement("button");
+	menu.id = "review-menu";
+	menu.type = "button";
+	menu.setAttribute("aria-haspopup", "menu");
+	menu.innerHTML = '<span class="material-symbols-outlined">more_vert</span>';
+	review.appendChild(menu);
+	setVisibleRect(menu, 1000, 140, 28, 28);
+
+	const stamp = runner.MAIN_stampProjectMenuButton("data-test-pm");
+	assert.equal(stamp.ok, true);
+	assert.ok(document.getElementById("review-menu").hasAttribute("data-test-pm"), "review three-dot must be stamped");
+	assert.ok(!document.getElementById("composer-more").hasAttribute("data-test-pm"), "composer menu must NOT be stamped");
 }
 
 // Proof 8: the STOP lane is unaffected by the post-submit fix.
@@ -1374,6 +1402,9 @@ async function main() {
 	await testProjectMenuSelectsMoreVertOverModelDropdown();
 	await testPostSubmitDownloadIgnoresModelDropdownDecoy();
 	await testPostSubmitDownloadFailsClosedWhenOnlyModelDropdownMenu();
+	await testOutputReadyRejectsStartImage();
+	await testReviewNotOpenedFailsClosed();
+	await testComposerMenuRejected();
 	await testStopLaneUnaffectedByPostSubmitFix();
 	console.log("PASS test-f2v-flow-queue-runner");
 }

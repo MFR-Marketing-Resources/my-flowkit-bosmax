@@ -160,6 +160,8 @@ const ERR = Object.freeze({
   GFV2_PROJECT_MENU_NOT_FOUND: 'GFV2_PROJECT_MENU_NOT_FOUND',
   GFV2_DOWNLOAD_PROJECT_NOT_FOUND: 'GFV2_DOWNLOAD_PROJECT_NOT_FOUND',
   GFV2_DOWNLOAD_NOT_CONFIRMED: 'GFV2_DOWNLOAD_NOT_CONFIRMED',
+  GFV2_GENERATED_VIDEO_NOT_FOUND: 'GFV2_GENERATED_VIDEO_NOT_FOUND',
+  GFV2_OUTPUT_REVIEW_NOT_OPENED: 'GFV2_OUTPUT_REVIEW_NOT_OPENED',
 });
 
 const F2V_SOP_STAGE_CONTRACT = Object.freeze([
@@ -5557,54 +5559,47 @@ function MAIN_getPostSubmitOutputState() {
     var match = String(text || '').match(/\b([a-z0-9][a-z0-9._-]*\.(?:mp4|mov|webm|png|jpe?g|webp|gif))\b/i);
     return match ? match[1] : null;
   }
-  // Output-ready requires GENUINE render evidence — a rendered <video>, a real
-  // media filename, or media co-present with an explicit project/render signal.
-  // A bare menu/dropdown (e.g. the "Veo 3.1 - Lite" model selector) is NOT an
-  // output and must never satisfy output_ready. Regression: the previous version
-  // declared output_ready as soon as ANY menu-like control existed, so
-  // GFV2_OUTPUT_READY fired ~1s after Generate, before the video rendered.
-  function hasRenderedVideo(root) {
-    if (!root || !root.querySelectorAll) return false;
-    var vids = root.querySelectorAll('video');
-    for (var i = 0; i < vids.length; i++) {
-      var v = vids[i];
-      if (!isVisible(v)) continue;
-      if (v.currentSrc || v.src || (v.querySelector && v.querySelector('source[src]'))) return true;
-      var r = v.getBoundingClientRect();
-      if (r.width > 80 && r.height > 80) return true;
+  // Output-ready requires a GENUINE GENERATED VIDEO — a rendered, visible <video>
+  // element outside the composer. The uploaded Start asset is an <img>, so it can
+  // never satisfy this (regression: output_ready previously matched the Start
+  // image's .jpg filename and fired ~1s after Generate, before any render). An
+  // optional excludeNames list also rejects a <video> whose src/poster matches the
+  // uploaded Start asset, as belt-and-suspenders.
+  var opts = arguments.length > 0 ? (arguments[0] || {}) : {};
+  var excludeNames = (opts && opts.excludeNames) || [];
+  function isExcluded(value) {
+    var s = String(value == null ? '' : value).toLowerCase();
+    if (!s) return false;
+    for (var i = 0; i < excludeNames.length; i++) {
+      var e = String(excludeNames[i] == null ? '' : excludeNames[i]).toLowerCase();
+      if (e && s.indexOf(e) >= 0) return true;
     }
     return false;
   }
+  function videoSrc(v) {
+    var s = v.currentSrc || v.src || (v.getAttribute && (v.getAttribute('src') || v.getAttribute('poster'))) || '';
+    if (!s && v.querySelector) {
+      var src = v.querySelector('source[src]');
+      if (src && src.getAttribute) s = src.getAttribute('src') || '';
+    }
+    return String(s || '');
+  }
 
   var composerRoot = getComposerRoot();
-  var containers = document.querySelectorAll('article, section, div, li, figure, aside');
+  var vids = document.querySelectorAll('video');
   var best = null;
-  for (var idx = 0; idx < containers.length; idx++) {
-    var container = containers[idx];
-    if (!isVisible(container) || isInsideComposer(container, composerRoot)) continue;
-    var text = normalize(container.textContent || '');
-    var filename = extractFilename(text);
-    var video = hasRenderedVideo(container);
-    var hasMedia = Boolean(container.querySelector && container.querySelector('img, video, canvas'));
-    var hasProjectSignal = /download project|generated-|render(?:ed|ing)?|\.mp4\b|\.mov\b|\.webm\b|\.png\b|\.jpe?g\b|\.webp\b|\.gif\b/i.test(text);
-    var qualifies = Boolean(video || filename || (hasMedia && hasProjectSignal));
-    if (!qualifies) continue;
-    var rect = container.getBoundingClientRect();
-    var score = 0;
-    if (video) score += 200;
-    if (filename) score += 120;
-    if (hasMedia) score += 60;
-    if (hasProjectSignal) score += 50;
-    if (rect.top < 700) score += 40;
-    score += Math.round(rect.left / 10);
+  for (var i = 0; i < vids.length; i++) {
+    var v = vids[i];
+    if (!isVisible(v) || isInsideComposer(v, composerRoot)) continue;
+    var src = videoSrc(v);
+    if (isExcluded(src)) continue;
+    var rect = v.getBoundingClientRect();
+    var hasSrc = Boolean(src);
+    var sizable = rect.width > 80 && rect.height > 80;
+    if (!hasSrc && !sizable) continue; // ignore placeholder/hidden video shells
+    var score = (hasSrc ? 200 : 0) + Math.round((rect.width * rect.height) / 1000) - Math.round(rect.top / 10);
     if (!best || score > best.score) {
-      best = {
-        score: score,
-        text: text,
-        filename: filename,
-        has_video: video,
-        has_media: hasMedia,
-      };
+      best = { el: v, score: score, src: src };
     }
   }
 
@@ -5612,21 +5607,22 @@ function MAIN_getPostSubmitOutputState() {
     return {
       ok: true,
       output_ready: false,
-      menu_found: false,
+      video_found: false,
       filename: null,
-      menu_text: null,
       output_text_excerpt: '',
     };
   }
 
+  var card = (best.el.closest && best.el.closest('article, section, figure, li, div')) || best.el.parentElement || best.el;
+  var text = normalize((card && card.textContent) || '');
+  var filename = extractFilename(text);
+  if (filename && isExcluded(filename)) filename = null;
   return {
     ok: true,
     output_ready: true,
-    menu_found: false,
-    filename: best.filename,
-    menu_text: null,
-    has_video: Boolean(best.has_video),
-    output_text_excerpt: String(best.text || '').slice(0, 200),
+    video_found: true,
+    filename: filename,
+    output_text_excerpt: String(text || '').slice(0, 200),
   };
 }
 
@@ -5658,22 +5654,50 @@ function MAIN_stampProjectMenuButton(stampAttr) {
     return false;
   }
 
+  function isWithin(el, root) {
+    if (!el || !root) return false;
+    var cur = el;
+    while (cur) { if (cur === root) return true; cur = cur.parentElement || null; }
+    return false;
+  }
+  function isInGlobalChrome(el) {
+    // Top app bar / nav / banner host the GLOBAL "More" app menu (Flow TV / Help /
+    // account) — never the per-project three-dot. Reject anything inside them.
+    return Boolean(el && el.closest && el.closest('header, nav, [role="banner"], [role="navigation"]'));
+  }
+
   var composerRoot = getComposerRoot();
-  // Many composer controls expose aria-haspopup="menu" (the model selector,
-  // settings openers, aspect/count chips, the agent panel). NONE of them is the
-  // project/output three-dot menu. Reject them and require a genuine "more
-  // options" affordance, so Download Project is searched in the correct menu.
-  // Regression: the previous version accepted any aria-haspopup="menu", so the
-  // "Veo 3.1 - Lite ▾" model dropdown was opened and Download Project was absent.
+  // The three-dot lives INSIDE the generated-video review/project page (opened in
+  // Step 14). Scope the search to that review surface and reject everything else:
+  // the global top-right app menu, settings panel, model dropdown, composer menus,
+  // help/app menu. Regression: searching the whole document matched the global
+  // "more_vertMore" app menu (Step 14 was missing), so Download Project was absent.
+  var reviewSurfaces = document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-review-page="true"], main');
+  var surfaces = [];
+  for (var s = 0; s < reviewSurfaces.length; s++) {
+    var surf = reviewSurfaces[s];
+    if (isVisible(surf) && !isInsideComposer(surf, composerRoot)) surfaces.push(surf);
+  }
+  if (surfaces.length === 0) {
+    return { ok: false, reason: 'review_surface_not_found' };
+  }
+  function insideAnyReviewSurface(el) {
+    for (var k = 0; k < surfaces.length; k++) { if (isWithin(el, surfaces[k])) return true; }
+    return false;
+  }
+
   var DISALLOW = [
     'arrow_drop_down', 'veo', 'nano banana', 'sora', 'kling', 'imagen', 'flux',
     'view settings', 'settings_2', 'tune', 'agent', 'crop_', 'aspect', 'generate', 'model',
+    'flow tv', 'help', 'account',
   ];
   var nodes = document.querySelectorAll('button, [role="button"], [aria-haspopup="menu"]');
   var best = null;
   for (var i = 0; i < nodes.length; i++) {
     var node = nodes[i];
     if (!isVisible(node) || isInsideComposer(node, composerRoot)) continue;
+    if (isInGlobalChrome(node)) continue;          // reject global app/top-bar menu
+    if (!insideAnyReviewSurface(node)) continue;    // require the review/project surface
     var ariaLabel = (node.getAttribute && (node.getAttribute('aria-label') || '')) || '';
     var title = (node.getAttribute && (node.getAttribute('title') || '')) || '';
     var combined = normalize((node.textContent || '') + ' ' + ariaLabel + ' ' + title).toLowerCase();
@@ -5695,7 +5719,6 @@ function MAIN_stampProjectMenuButton(stampAttr) {
     var score = 0;
     if (combined.indexOf('more_vert') >= 0) score += 300;
     if (node.getAttribute && node.getAttribute('aria-haspopup') === 'menu') score += 60;
-    if (rect.top < 700) score += 60;
     score += Math.round(rect.left);
     if (!best || score > best.score) {
       best = { el: node, score: score, text: combined };
@@ -5711,6 +5734,100 @@ function MAIN_stampProjectMenuButton(stampAttr) {
     stamp_id: id,
     text: normalize(best.el.textContent || best.el.getAttribute && (best.el.getAttribute('aria-label') || best.el.getAttribute('title')) || ''),
   };
+}
+
+// MAIN-world: stamp the generated VIDEO (or its clickable card) so the caller can
+// click it to open the review/project page (Step 14). Excludes the uploaded Start
+// asset and never returns a composer-scoped element.
+function MAIN_stampGeneratedVideo(stampAttr, opts) {
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
+  }
+  function getComposerRoot() {
+    var prompt = document.querySelector('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea, [contenteditable="true"], input[type="text"]');
+    if (prompt && prompt.closest) {
+      return prompt.closest('form, [role="form"], section, article, main, div') || prompt;
+    }
+    return document.querySelector('form, [role="form"]');
+  }
+  function isInsideComposer(el, composerRoot) {
+    if (!el || !composerRoot) return false;
+    var cur = el;
+    while (cur) { if (cur === composerRoot) return true; cur = cur.parentElement || null; }
+    return false;
+  }
+  var o = opts || {};
+  var excludeNames = o.excludeNames || [];
+  function isExcluded(value) {
+    var s = String(value == null ? '' : value).toLowerCase();
+    if (!s) return false;
+    for (var i = 0; i < excludeNames.length; i++) {
+      var e = String(excludeNames[i] == null ? '' : excludeNames[i]).toLowerCase();
+      if (e && s.indexOf(e) >= 0) return true;
+    }
+    return false;
+  }
+  var composerRoot = getComposerRoot();
+  var vids = document.querySelectorAll('video');
+  var best = null;
+  for (var i = 0; i < vids.length; i++) {
+    var v = vids[i];
+    if (!isVisible(v) || isInsideComposer(v, composerRoot)) continue;
+    var src = v.currentSrc || v.src || (v.getAttribute && (v.getAttribute('src') || v.getAttribute('poster'))) || '';
+    if (isExcluded(src)) continue;
+    var rect = v.getBoundingClientRect();
+    if (!src && !(rect.width > 80 && rect.height > 80)) continue;
+    var score = (src ? 200 : 0) + Math.round((rect.width * rect.height) / 1000) - Math.round(rect.top / 10);
+    if (!best || score > best.score) best = { el: v, score: score };
+  }
+  if (!best || !best.el) return { ok: false, reason: 'generated_video_not_found' };
+  // Click the nearest clickable ancestor (the card), else the video itself.
+  var target = best.el;
+  var cur = best.el;
+  var hops = 0;
+  while (cur && hops < 4) {
+    var role = cur.getAttribute && cur.getAttribute('role');
+    var clickable = cur.tagName === 'A' || cur.tagName === 'BUTTON' || role === 'button' || role === 'link' || (cur.onclick != null);
+    if (clickable) { target = cur; break; }
+    cur = cur.parentElement; hops++;
+  }
+  var attr = String(stampAttr || 'data-bosmax-generated-video');
+  var id = attr + '-' + Date.now();
+  target.setAttribute(attr, id);
+  return { ok: true, stamp_attr: attr, stamp_id: id };
+}
+
+// MAIN-world: is the generated-video review/project page open? (Step 14 proof)
+// True only when a review surface (dialog / modal / data-review-page) containing a
+// visible <video> exists, or the URL is a project route. The composer/grid root is
+// NOT a review surface.
+function MAIN_getReviewSurfaceState() {
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
+  }
+  var surfaces = document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-review-page="true"]');
+  for (var i = 0; i < surfaces.length; i++) {
+    var s = surfaces[i];
+    if (!isVisible(s)) continue;
+    var v = s.querySelector && s.querySelector('video');
+    if (v && isVisible(v)) {
+      return { ok: true, opened: true, surface: (s.getAttribute && s.getAttribute('role')) || 'review', tag: s.tagName };
+    }
+  }
+  try {
+    if (String((location && location.pathname) || '').indexOf('/project/') >= 0) {
+      return { ok: true, opened: true, surface: 'route' };
+    }
+  } catch (e) { /* ignore */ }
+  return { ok: true, opened: false };
 }
 
 function MAIN_getDownloadObservableState() {
@@ -5767,12 +5884,15 @@ async function _submitGenerateArrow(scripting, tabId, opts) {
 }
 
 async function _waitForPostSubmitOutput(scripting, tabId, opts) {
-  const timeoutMs = Math.max(1000, Number(opts?.outputWaitTimeoutMs ?? 30000));
+  // Default render window is generous (real Veo renders take minutes); callers may
+  // override. Fail closed if no genuine generated <video> appears in time.
+  const timeoutMs = Math.max(1000, Number(opts?.outputWaitTimeoutMs ?? 180000));
   const pollMs = Math.max(100, Number(opts?.outputWaitPollMs ?? 400));
+  const excludeNames = Array.isArray(opts?.outputExcludeNames) ? opts.outputExcludeNames : [];
   const deadline = Date.now() + timeoutMs;
   let lastState = null;
   do {
-    lastState = await _runMainWorld(scripting, tabId, MAIN_getPostSubmitOutputState, []);
+    lastState = await _runMainWorld(scripting, tabId, MAIN_getPostSubmitOutputState, [{ excludeNames }]);
     if (lastState && lastState.ok === true && lastState.output_ready === true) {
       return { ok: true, state: lastState };
     }
@@ -5780,6 +5900,35 @@ async function _waitForPostSubmitOutput(scripting, tabId, opts) {
     await _sleep(pollMs);
   } while (true);
   return { ok: false, error: ERR.GFV2_OUTPUT_NOT_READY, detail: lastState || 'output_not_ready' };
+}
+
+// Step 14: click the generated video to open its review/project page, then confirm
+// the review surface is open. Fails closed (GFV2_OUTPUT_REVIEW_NOT_OPENED) so the
+// menu/download steps never run against the composer/grid or the global app menu.
+async function _clickGeneratedVideoToReview(scripting, tabId, opts) {
+  const stampAttr = opts?.generatedVideoStampAttr || 'data-bosmax-generated-video';
+  const excludeNames = Array.isArray(opts?.outputExcludeNames) ? opts.outputExcludeNames : [];
+  const stamp = await _runMainWorld(scripting, tabId, MAIN_stampGeneratedVideo, [stampAttr, { excludeNames }]);
+  if (!stamp || stamp.ok !== true) {
+    return { ok: false, error: ERR.GFV2_GENERATED_VIDEO_NOT_FOUND, detail: stamp?.reason || 'generated_video_not_found' };
+  }
+  const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [stamp.stamp_attr, stamp.stamp_id]);
+  if (!click || click.ok !== true) {
+    return { ok: false, error: ERR.GFV2_GENERATED_VIDEO_NOT_FOUND, detail: click?.reason || 'generated_video_click_failed' };
+  }
+  const timeoutMs = Math.max(500, Number(opts?.reviewWaitTimeoutMs ?? 15000));
+  const pollMs = Math.max(50, Number(opts?.reviewWaitPollMs ?? 250));
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  do {
+    last = await _runMainWorld(scripting, tabId, MAIN_getReviewSurfaceState, []);
+    if (last && last.ok === true && last.opened === true) {
+      return { ok: true, state: last };
+    }
+    if (Date.now() >= deadline) break;
+    await _sleep(pollMs);
+  } while (true);
+  return { ok: false, error: ERR.GFV2_OUTPUT_REVIEW_NOT_OPENED, detail: last || 'review_not_opened' };
 }
 
 async function _openProjectMenu(scripting, tabId, opts) {
@@ -5832,6 +5981,8 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
     submit_clicked: false,
     output_ready: false,
     output_proof: null,
+    review_opened: false,
+    review_proof: null,
     project_menu_opened: false,
     project_menu_proof: null,
     download_clicked: false,
@@ -5870,12 +6021,25 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
     recordStage('GFV2_SUBMIT_ARROW_CLICKED', 'PASS', `strategy=${submit.strategy} fiber_visited=${submit.fiber_visited || 0}`);
     recordStage('GFV2_GENERATE_SUBMITTED', 'PASS', `strategy=${submit.strategy}`);
 
+    // Exclude the uploaded Start asset from output/menu detection (belt-and-
+    // suspenders; output-ready already requires a real <video>, not the Start <img>).
+    const startAsset = (job && job.startAsset) || {};
+    const startNames = [];
+    ['fileName', 'file_name', 'localFilePath', 'local_file_path', 'previewUrl', 'preview_url', 'downloadUrl', 'download_url'].forEach((k) => {
+      const val = startAsset[k];
+      if (val) {
+        const base = String(val).split(/[\\/]/).pop();
+        if (base) startNames.push(base);
+      }
+    });
+    const flowOpts = { ...opts, outputExcludeNames: (opts?.outputExcludeNames || []).concat(startNames) };
+
     recordStage(
       'GFV2_OUTPUT_WAIT_STARTED',
       'PASS',
-      `timeout_ms=${Math.max(1000, Number(opts?.outputWaitTimeoutMs ?? 30000))} poll_ms=${Math.max(100, Number(opts?.outputWaitPollMs ?? 400))}`,
+      `timeout_ms=${Math.max(1000, Number(opts?.outputWaitTimeoutMs ?? 180000))} poll_ms=${Math.max(100, Number(opts?.outputWaitPollMs ?? 400))}`,
     );
-    const output = await _waitForPostSubmitOutput(scripting, tabId, opts);
+    const output = await _waitForPostSubmitOutput(scripting, tabId, flowOpts);
     if (!output.ok) {
       recordStage('GFV2_OUTPUT_NOT_READY', 'FAIL', JSON.stringify(output.detail || null));
       return { ok: false, error: output.error, detail: output.detail, stages, stage_results: stageResults };
@@ -5885,10 +6049,21 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
     recordStage(
       'GFV2_OUTPUT_READY',
       'PASS',
-      `menu_found=${Boolean(output.state && output.state.menu_found)} filename=${output.state && output.state.filename ? output.state.filename : ''}`.trim(),
+      `video_found=${Boolean(output.state && output.state.video_found)} filename=${output.state && output.state.filename ? output.state.filename : ''}`.trim(),
     );
 
-    const menu = await _openProjectMenu(scripting, tabId, opts);
+    // Step 14 — click the generated video to open its review/project page. Steps 15
+    // (three-dot) and 16 (Download Project) operate ONLY inside this review surface.
+    const review = await _clickGeneratedVideoToReview(scripting, tabId, flowOpts);
+    if (!review.ok) {
+      recordStage('GFV2_OUTPUT_REVIEW_NOT_OPENED', 'FAIL', JSON.stringify(review.detail || review.error || null));
+      return { ok: false, error: review.error, detail: review.detail, stages, stage_results: stageResults };
+    }
+    stageResults.review_opened = true;
+    stageResults.review_proof = review.state || null;
+    recordStage('GFV2_OUTPUT_REVIEW_OPENED', 'PASS', `surface=${review.state && review.state.surface ? review.state.surface : 'review'}`);
+
+    const menu = await _openProjectMenu(scripting, tabId, flowOpts);
     if (!menu.ok) {
       recordStage('GFV2_PROJECT_MENU_NOT_FOUND', 'FAIL', menu.detail);
       return { ok: false, error: menu.error, detail: menu.detail, stages, stage_results: stageResults };
@@ -6628,6 +6803,8 @@ const _api = {
   MAIN_getPostSubmitOutputState,
   MAIN_stampProjectMenuButton,
   MAIN_getDownloadObservableState,
+  MAIN_stampGeneratedVideo,
+  MAIN_getReviewSurfaceState,
   MAIN_stampAssetPickerLauncher,
   MAIN_findComposerAddMediaLauncher,
   MAIN_getUploadPickerStateForB2A,
@@ -6654,6 +6831,7 @@ const _api = {
   _invokeGenerate,
   _submitGenerateArrow,
   _waitForPostSubmitOutput,
+  _clickGeneratedVideoToReview,
   _openProjectMenu,
   _clickDownloadProjectAction,
   _runB2AUploadPickerOpenOnly,
