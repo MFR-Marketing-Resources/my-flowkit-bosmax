@@ -51,6 +51,10 @@ class WorkspaceExecutionPackageRequest(BaseModel):
     scene_context_reference_asset_id: str | None = None
     style_reference_asset_id: str | None = None
     blocks: list[WorkspacePromptBlockRequest] = Field(default_factory=list)
+    # WPS Blocking Template enforcement (optional; engine VENDOR, distinct from
+    # `mode`). When set, the compiler resolves the deterministic block chain.
+    engine_duration_target: str | None = None
+    requested_total_duration_seconds: int | None = None
 
 
 class WorkspacePromptCompileRequest(BaseModel):
@@ -65,6 +69,10 @@ class WorkspacePromptCompileRequest(BaseModel):
     overlay_enabled: bool = True
     dialogue_enabled: bool = True
     blocks: list[WorkspacePromptBlockRequest] = Field(default_factory=list)
+    # WPS Blocking Template enforcement (optional; engine VENDOR, distinct from
+    # `mode`). When set, the compiler resolves the deterministic block chain.
+    engine_duration_target: str | None = None
+    requested_total_duration_seconds: int | None = None
 
 
 class WorkspacePackageReadinessRequest(BaseModel):
@@ -95,6 +103,8 @@ async def post_workspace_execution_package(request: WorkspaceExecutionPackageReq
             scene_context_reference_asset_id=request.scene_context_reference_asset_id,
             style_reference_asset_id=request.style_reference_asset_id,
             blocks=[block.model_dump() for block in request.blocks],
+            engine_duration_target=request.engine_duration_target,
+            requested_total_duration_seconds=request.requested_total_duration_seconds,
         )
     except ValueError as exc:
         message = str(exc)
@@ -145,6 +155,8 @@ async def post_workspace_prompt_compile(request: WorkspacePromptCompileRequest):
             overlay_enabled=request.overlay_enabled,
             dialogue_enabled=request.dialogue_enabled,
             blocks=[block.model_dump() for block in request.blocks],
+            engine_duration_target=request.engine_duration_target,
+            requested_total_duration_seconds=request.requested_total_duration_seconds,
         )
     except ValueError as exc:
         message = str(exc)
