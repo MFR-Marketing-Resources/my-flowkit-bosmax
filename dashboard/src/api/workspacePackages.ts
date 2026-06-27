@@ -46,6 +46,10 @@ export async function createWorkspaceExecutionPackage(input: {
 		block_index: number;
 		duration_seconds: number;
 	}>;
+	// WPS Blocking Template enforcement (optional; engine VENDOR, distinct from
+	// `mode`). Forwarded only when explicitly supplied — no default is sent.
+	engine_duration_target?: string;
+	requested_total_duration_seconds?: number;
 }): Promise<WorkspaceExecutionPackage> {
 	return postAPI<WorkspaceExecutionPackage>(
 		"/api/workspace/execution-package",
@@ -116,6 +120,10 @@ export async function compileWorkspacePromptPreview(input: {
 		block_index: number;
 		duration_seconds: number;
 	}>;
+	// WPS Blocking Template enforcement (optional; engine VENDOR, distinct from
+	// `mode`). Forwarded only when explicitly supplied — no default is sent.
+	engine_duration_target?: string;
+	requested_total_duration_seconds?: number;
 }): Promise<WorkspacePromptPreviewResult> {
 	return postAPI<WorkspacePromptPreviewResult>(
 		"/api/workspace/ugc-video-prompt-compile",
