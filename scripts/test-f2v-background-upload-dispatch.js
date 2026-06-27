@@ -128,6 +128,7 @@ function loadHelpers() {
 	vm.runInContext(
 		[
 			extractFunctionSource(source, "resolveF2VUploadAssetSource"),
+			extractFunctionSource(source, "gfv2ClassifyAssetSource"),
 			extractFunctionSource(source, "resolveF2VDomFallbackAssetSource"),
 			extractFunctionSource(source, "shouldUseF2VCdpUpload"),
 			extractFunctionSource(source, "isF2VPackageUploadOnly"),
@@ -154,7 +155,7 @@ function loadHelpers() {
 			extractFunctionSource(source, "resolveExistingProjectEditorAuthority"),
 			extractFunctionSource(source, "recoverStrictActiveFlowTabTarget"),
 			extractFunctionSource(source, "bootstrapFlowProjectEditorForB2A0"),
-			"this.__helpers = { resolveF2VUploadAssetSource, resolveF2VDomFallbackAssetSource, shouldUseF2VCdpUpload, isF2VPackageUploadOnly, validateF2VPackageUploadOnlyJob, normalizeFlowProjectUrl, extractFlowProjectId, determineFlowBootstrapStartState, rankFlowBootstrapEditorCandidates, mapFlowBootstrapBindingFailureCode, mapOpenFlowNewProjectFailureCode, selectBestFlowTab, buildFlowTabSelectionBinding, isActualFlowEditorProbe, buildUniqueFlowProbeCandidates, isFlowContentScriptReadyForActiveTab, isActiveTabAddMediaLauncherReady, evaluateActiveFlowTabPreflight, resolveExistingProjectEditorAuthority, recoverStrictActiveFlowTabTarget, bootstrapFlowProjectEditorForB2A0 };",
+			"this.__helpers = { resolveF2VUploadAssetSource, gfv2ClassifyAssetSource, resolveF2VDomFallbackAssetSource, shouldUseF2VCdpUpload, isF2VPackageUploadOnly, validateF2VPackageUploadOnlyJob, normalizeFlowProjectUrl, extractFlowProjectId, determineFlowBootstrapStartState, rankFlowBootstrapEditorCandidates, mapFlowBootstrapBindingFailureCode, mapOpenFlowNewProjectFailureCode, selectBestFlowTab, buildFlowTabSelectionBinding, isActualFlowEditorProbe, buildUniqueFlowProbeCandidates, isFlowContentScriptReadyForActiveTab, isActiveTabAddMediaLauncherReady, evaluateActiveFlowTabPreflight, resolveExistingProjectEditorAuthority, recoverStrictActiveFlowTabTarget, bootstrapFlowProjectEditorForB2A0 };",
 		].join("\n"),
 		sandbox,
 	);
@@ -232,6 +233,27 @@ function testAssetSourceResolution(resolveF2VUploadAssetSource) {
 	assert(
 		resolveF2VUploadAssetSource({}) === null,
 		"jobs with no upload asset must remain on the DOM lane",
+	);
+	assert(
+		resolveF2VUploadAssetSource({ ref_flowkit: "ref.png" }) === null,
+		"ref_flowkit must not appear resolved until it is wired to the real upload lane",
+	);
+	assert(
+		resolveF2VUploadAssetSource({ image_ref: "image_ref.png" }) === null,
+		"image_ref must not appear resolved until it is wired to the real upload lane",
+	);
+}
+
+function testGfv2ClassifierRejectsUnwiredRefs(gfv2ClassifyAssetSource) {
+	assert(
+		gfv2ClassifyAssetSource({ ref_flowkit: "ref.png" }).error ===
+			"GFV2_ASSET_SOURCE_UNWIRED",
+		"GFV2 classifier must fail closed on ref_flowkit-only payloads",
+	);
+	assert(
+		gfv2ClassifyAssetSource({ image_ref: "image_ref.png" }).error ===
+			"GFV2_ASSET_SOURCE_UNWIRED",
+		"GFV2 classifier must fail closed on image_ref-only payloads",
 	);
 }
 
@@ -330,6 +352,14 @@ function testCdpDispatchGate(shouldUseF2VCdpUpload) {
 	assert(
 		shouldUseF2VCdpUpload({}, null) === false,
 		"jobs without upload assets must not be forced onto CDP upload",
+	);
+	assert(
+		shouldUseF2VCdpUpload({ ref_flowkit: "ref.png" }, null) === false,
+		"unwired ref_flowkit payloads must not enable CDP upload",
+	);
+	assert(
+		shouldUseF2VCdpUpload({ image_ref: "image_ref.png" }, null) === false,
+		"unwired image_ref payloads must not enable CDP upload",
 	);
 }
 
@@ -1963,6 +1993,7 @@ async function main() {
 		source,
 		__sandbox,
 		resolveF2VUploadAssetSource,
+		gfv2ClassifyAssetSource,
 		resolveF2VDomFallbackAssetSource,
 		shouldUseF2VCdpUpload,
 		isF2VPackageUploadOnly,
@@ -1978,6 +2009,7 @@ async function main() {
 		bootstrapFlowProjectEditorForB2A0,
 	} = loadHelpers();
 	testAssetSourceResolution(resolveF2VUploadAssetSource);
+	testGfv2ClassifierRejectsUnwiredRefs(gfv2ClassifyAssetSource);
 	testDomFallbackAssetResolution(resolveF2VDomFallbackAssetSource);
 	testCdpDispatchGate(shouldUseF2VCdpUpload);
 	testPackageUploadOnlyLaneDetection(isF2VPackageUploadOnly);

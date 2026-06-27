@@ -809,12 +809,27 @@ async function cdpFileChooserUploadForJob(tabId, req) {
 		if (!mat.ok) return mat;
 		rememberCdpFileChooserProofAlias(requestedTabId, effectiveTabId);
 		rememberCdpFileChooserProofAlias(effectiveTabId, effectiveTabId);
-		return await beginCdpFileChooserProof(
+		const armed = await beginCdpFileChooserProof(
 			effectiveTabId,
 			mat.filePath,
 			mat.fileName,
 			slot,
 		);
+		if (!armed?.ok) return armed;
+		return {
+			...armed,
+			materialized: true,
+			materializedName:
+				(mat.filePath && mat.filePath.split(/[\\/]/).pop()) ||
+				mat.fileName ||
+				null,
+			materializedDirLabel: /flowkit-upload-staging/i.test(
+				String(mat.filePath || ""),
+			)
+				? "flowkit-upload-staging"
+				: "staged_local_file",
+			sourceType: req?.sourceType || null,
+		};
 	}
 	if (req?.phase === "wait") {
 		const boundTabId = resolveCdpFileChooserProofTabId(
@@ -906,11 +921,18 @@ function gfv2ClassifyAssetSource(job) {
 	};
 	if (!job) return { ok: false, error: "GFV2_ASSET_SOURCE_NOT_FOUND", reason: "no_job" };
 
-	// 1. Explicit FlowKit reference (ref_flowkit / image_ref).
+	// ref_flowkit / image_ref are not wired into the actual CDP upload resolver yet.
+	// Reject them explicitly so the lane cannot report a deterministic source it will
+	// never hand to DOM.setFileInputFiles.
 	const refFlowkit = job.ref_flowkit || job.refFlowkit || job.image_ref || job.imageRef || null;
 	if (refFlowkit) {
 		const v = typeof refFlowkit === "string" ? refFlowkit : refFlowkit.fileName || refFlowkit.downloadUrl || refFlowkit.mediaId;
-		return { ok: true, source_type: "ref_flowkit", safe_name: safeName(v) || "ref_flowkit", materialized: false };
+		return {
+			ok: false,
+			error: "GFV2_ASSET_SOURCE_UNWIRED",
+			reason: "ref_flowkit_or_image_ref_unwired",
+			safe_name: safeName(v) || "ref_flowkit",
+		};
 	}
 
 	const a = job.startAsset;
@@ -5480,18 +5502,32 @@ async function handleGfv2Job(job) {
 	};
 	emit("GFV2_LANE_ACCEPTED", "WAITING_FLOW", `request_id=${requestId}`);
 
-	// Asset source MUST be the system job asset (ref_flowkit / workspace package Start
-	// / materialized temp), never a Desktop/manual OS pick. Fail closed otherwise.
+	// Asset source MUST be the same system-controlled source the CDP upload lane will
+	// actually resolve and feed. Fail closed if the classifier or the resolver disagree.
+	const f2vUploadAssetSource = resolveF2VUploadAssetSource(job);
 	const assetSrc = gfv2ClassifyAssetSource(job);
-	if (!assetSrc.ok) {
-		emit("GFV2_ASSET_SOURCE_NOT_FOUND", "FAIL", `reason=${assetSrc.reason || "no_system_asset"}`);
-		emit("FAILED", "FAIL", "GFV2_ASSET_SOURCE_NOT_FOUND");
-		return { ok: false, error: "GFV2_ASSET_SOURCE_NOT_FOUND", detail: { reason: assetSrc.reason || null } };
+	const f2vWantsCdpUpload = shouldUseF2VCdpUpload(job, f2vUploadAssetSource);
+	if (!assetSrc.ok || !f2vUploadAssetSource || !f2vWantsCdpUpload) {
+		const sourceError =
+			assetSrc.error ||
+			(!f2vUploadAssetSource
+				? "GFV2_ASSET_SOURCE_NOT_FOUND"
+				: "GFV2_ASSET_SOURCE_UNWIRED");
+		emit(sourceError, "FAIL", `reason=${assetSrc.reason || "resolver_disagreed"}`);
+		emit("FAILED", "FAIL", sourceError);
+		return {
+			ok: false,
+			error: sourceError,
+			detail: {
+				reason:
+					assetSrc.reason ||
+					(!f2vUploadAssetSource
+						? "resolver_disagreed"
+						: "cdp_upload_disabled"),
+			},
+		};
 	}
 	emit("GFV2_ASSET_SOURCE_RESOLVED", "PASS", `source_type=${assetSrc.source_type} name=${assetSrc.safe_name || "?"}`);
-	if (assetSrc.materialized || assetSrc.source_type === "workspace_package_start" || assetSrc.source_type === "ref_flowkit") {
-		emit("GFV2_ASSET_MATERIALIZED", "PASS", `source_type=${assetSrc.source_type} name=${assetSrc.safe_name || "?"} dir=flowkit-upload-staging`);
-	}
 
 	const surface = await gfv2EnsureSurface(job?.mode || "F2V", emit);
 	if (!surface.ok) {
@@ -5538,14 +5574,13 @@ async function handleGfv2Job(job) {
 		telemetry: gfv2Emit,
 	};
 
-	const f2vUploadAssetSource = resolveF2VUploadAssetSource(job);
-	const f2vWantsCdpUpload = shouldUseF2VCdpUpload(job, f2vUploadAssetSource);
 	const cdpOpt = f2vWantsCdpUpload
 		? {
 				cdpFileChooserUpload: (req) =>
 					cdpFileChooserUploadForJob(flowTab.id, {
 						...req,
 						assetSource: f2vUploadAssetSource || req?.assetSource,
+						sourceType: assetSrc.source_type,
 					}),
 				// NB: the DOM upload fallback (FLOWKIT_SIMULATE_FILE_UPLOAD) is NOT wired
 				// here on purpose — it is unimplemented in the content script and a

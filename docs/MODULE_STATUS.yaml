@@ -98,6 +98,7 @@ domains:
       - scripts/test-f2v-asset-picker-modal.js
       - scripts/test-f2v-flow-queue-runner.js
       - scripts/test-f2v-background-upload-dispatch.js
+      - scripts/test-gfv2-lane.js
       - scripts/test-cdp-visible-clicker.js
       - scripts/test-f2v-cdp-file-chooser-poc.js
       - scripts/test-f2v-playwright-persistent-context.js

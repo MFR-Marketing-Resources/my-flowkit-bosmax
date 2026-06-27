@@ -5859,6 +5859,13 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
       recordStage('F2V_SOP_CDP_FILE_CHOOSER_ARMED', 'PASS', `slot=Start file=${armRes.expectedFileName || ''}`);
       // GFV2 contract telemetry (no-op for non-GFV2 callers).
       opts?.gfv2Stage?.('GFV2_CDP_FILE_CHOOSER_ARMED', 'PASS', `file=${armRes.expectedFileName || ''}`);
+      if (armRes.materialized === true) {
+        opts?.gfv2Stage?.(
+          'GFV2_ASSET_MATERIALIZED',
+          'PASS',
+          `source_type=${armRes.sourceType || 'unknown'} name=${armRes.materializedName || armRes.expectedFileName || '?'} dir=${armRes.materializedDirLabel || 'flowkit-upload-staging'}`,
+        );
+      }
     }
 
     // Step 10 — open the upload entrypoint. Primary DOM flow clicks the

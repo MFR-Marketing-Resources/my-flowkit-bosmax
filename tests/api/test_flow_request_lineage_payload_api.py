@@ -161,3 +161,83 @@ def test_execute_flow_job_failure_persists_snapshot_visible_report(monkeypatch):
     assert report["visible_aria_labels"] == ["Go to banner 1"]
     assert report["composer_present"] is False
     assert report["prompt_field_present"] is False
+
+
+def test_execute_flow_job_materialization_stage_redacts_private_local_path(monkeypatch):
+    captured = {"stage_events": [], "executed_body": None}
+
+    async def fake_get_request(request_id: str):
+        return {"id": request_id}
+
+    async def fake_upsert(*_args, **_kwargs):
+        return {}
+
+    async def fake_stage_event(request_id: str, stage: str, status: str, message=None, source="backend", **extra):
+        captured["stage_events"].append(
+            {
+                "request_id": request_id,
+                "stage": stage,
+                "status": status,
+                "message": message,
+                "source": source,
+                "extra": extra,
+            }
+        )
+        return {}
+
+    async def fake_materialize(source_url: str, file_name: str = "asset.png"):
+        assert source_url == "https://cdn.example/private/start.png"
+        return {
+            "local_file_path": r"C:\Users\USER\Desktop\private\flowkit-upload-staging\77aea8.jpg",
+            "file_name": "77aea8.jpg",
+            "mime_type": "image/jpeg",
+        }
+
+    class _CapturingClient:
+        connected = True
+
+        async def execute_flow_job(self, body: dict):
+            captured["executed_body"] = body
+            return {"ok": True, "request_id": body["request_id"]}
+
+    monkeypatch.setattr("agent.api.flow.get_flow_client", lambda: _CapturingClient())
+    monkeypatch.setattr("agent.api.flow.crud.get_request", fake_get_request)
+    monkeypatch.setattr("agent.api.flow.crud.upsert_request_telemetry", fake_upsert)
+    monkeypatch.setattr("agent.api.flow.crud.add_stage_event", fake_stage_event)
+    monkeypatch.setattr("agent.api.flow.crud._now", lambda: "2026-06-27T00:00:00Z")
+    monkeypatch.setattr("agent.api.flow._materialize_remote_url_to_staging", fake_materialize)
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/flow/execute-flow-job",
+        json={
+            "request_id": "manual_materialize_001",
+            "mode": "F2V",
+            "lane": "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE",
+            "gfv2": True,
+            "workspace_execution_package_id": "wep_001",
+            "prompt": "hero product shot",
+            "startAsset": {
+                "downloadUrl": "https://cdn.example/private/start.png",
+                "fileName": "start.png",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    stage = next(
+        event for event in captured["stage_events"]
+        if event["stage"] == "BACKEND_START_ASSET_MATERIALIZED"
+    )
+    assert stage["message"] == (
+        "source_type=workspace_package_start "
+        "name=77aea8.jpg "
+        "dir=flowkit-upload-staging"
+    )
+    assert "C:\\" not in stage["message"]
+    assert "Desktop" not in stage["message"]
+    assert "Downloads" not in stage["message"]
+    assert "/Users/" not in stage["message"]
+    assert "/home/" not in stage["message"]
+    assert "https://cdn.example/private/start.png" not in stage["message"]
+    assert captured["executed_body"]["startAsset"]["localFilePath"].endswith("77aea8.jpg")

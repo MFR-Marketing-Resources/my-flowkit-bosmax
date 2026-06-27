@@ -184,6 +184,27 @@ def _parse_stage_message_dict(message: object) -> Optional[dict]:
     return _extract_json_after_marker(message, "detail=")
 
 
+def _safe_stage_basename(value: object) -> str:
+    candidate = Path(str(value or "")).name.strip()
+    return (candidate or "asset").strip()[:80]
+
+
+def _build_materialized_stage_message(
+    local_file_path: str,
+    source_type: str,
+) -> str:
+    dir_label = (
+        "flowkit-upload-staging"
+        if "flowkit-upload-staging" in str(local_file_path or "").lower()
+        else "staged_local_file"
+    )
+    return (
+        f"source_type={source_type} "
+        f"name={_safe_stage_basename(local_file_path)} "
+        f"dir={dir_label}"
+    )
+
+
 async def _build_manual_flow_failure_report(request_id: str, result: dict) -> dict:
     stages = await crud.get_stage_history(request_id)
     latest_extension_fail = next(
@@ -656,11 +677,17 @@ async def execute_flow_job(body: dict):
         _start_asset["localFilePath"] = _local_path
         _start_asset["local_file_path"] = _local_path
         body["startAsset"] = _start_asset
+        _source_type = (
+            "workspace_package_start"
+            if body.get("workspace_execution_package_id")
+            or body.get("prompt_package_snapshot_id")
+            else "start_asset"
+        )
         await crud.add_stage_event(
             body["request_id"],
             "BACKEND_START_ASSET_MATERIALIZED",
             "WAITING_FLOW",
-            f"local_file_path={_local_path} source={str(_remote_url)[:80]}",
+            _build_materialized_stage_message(_local_path, _source_type),
             "backend",
         )
 

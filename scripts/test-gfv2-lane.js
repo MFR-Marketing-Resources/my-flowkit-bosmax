@@ -337,9 +337,14 @@ test("asset: workspace package Start (remote URL) resolves as system asset", () 
 	assert(r.safe_name && !/[\\/]/.test(r.safe_name), "safe_name is a basename, no path");
 });
 
-test("asset: ref_flowkit resolves as ref_flowkit", () => {
+test("asset: ref_flowkit-only fails closed as unwired", () => {
 	const r = gfv2ClassifyAssetSource({ ref_flowkit: "ref_flowkit_start.png" });
-	assert(r.ok && r.source_type === "ref_flowkit", "ref_flowkit");
+	assert(r.ok === false && r.error === "GFV2_ASSET_SOURCE_UNWIRED", "ref_flowkit must not false-pass");
+});
+
+test("asset: image_ref-only fails closed as unwired", () => {
+	const r = gfv2ClassifyAssetSource({ image_ref: "image_ref_start.png" });
+	assert(r.ok === false && r.error === "GFV2_ASSET_SOURCE_UNWIRED", "image_ref must not false-pass");
 });
 
 test("asset: backend-materialized staging temp file resolves as materialized_temp_file", () => {
@@ -367,13 +372,15 @@ test("asset: untrusted Desktop/local path (not in staging) fails closed — no D
 
 test("asset: lane fails closed on missing source (no Desktop picker) + emits source telemetry", () => {
 	assert(/GFV2_ASSET_SOURCE_NOT_FOUND/.test(HANDLE_SRC), "fail-closed stage");
+	assert(/GFV2_ASSET_SOURCE_UNWIRED/.test(HANDLE_SRC), "unwired-source blocker");
 	assert(/GFV2_ASSET_SOURCE_RESOLVED/.test(HANDLE_SRC), "resolved stage");
-	assert(/GFV2_ASSET_MATERIALIZED/.test(HANDLE_SRC), "materialized stage");
+	assert(/GFV2_ASSET_MATERIALIZED/.test(RUNNER_SRC), "materialized stage is emitted from the real CDP arm path");
 	assert(/GFV2_ASSET_UPLOADED_OR_SELECTED/.test(HANDLE_SRC), "uploaded/selected stage");
 	// no Desktop/Downloads/hard-coded path anywhere in the lane's executable code
 	// (comments may explain the rule; strip them before asserting).
 	const code = HANDLE_SRC.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
 	assert(!/Desktop|Downloads/.test(code), "no Desktop/Downloads dependency in lane code");
+	assert(!/assetSrc\.source_type === "workspace_package_start"|assetSrc\.source_type === "ref_flowkit"/.test(code), "materialized telemetry must not be pre-emitted before real staging");
 });
 
 // --- V2 settings read/interaction primitive (content-flow-dom.js) ---

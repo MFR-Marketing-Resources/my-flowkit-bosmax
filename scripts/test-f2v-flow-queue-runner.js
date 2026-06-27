@@ -208,7 +208,7 @@ async function testViewSettingsLauncherPreferredNearComposer() {
 
 	const result = runner.MAIN_openComposerSettingsPanel("data-test-launcher");
 	assert.equal(result.ok, true);
-	assert.equal(result.strategy, "view_settings_button");
+	assert.equal(result.strategy, "settings_icon");
 	assert.equal(wrongChipClicks, 0, "standalone count chip must not be used as the settings opener");
 }
 
