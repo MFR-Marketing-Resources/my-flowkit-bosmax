@@ -597,6 +597,61 @@ function isSettingsScopedModelSource(source) {
     });
   }
 
+  // Extract { model, aspectRatio, count } from a scoped Flow settings section.
+  // Previously referenced by observeFlowState() but never defined — a missing
+  // definition that threw ReferenceError on every Video/Image observe (and broke
+  // OPEN_FLOW_NEW_PROJECT + the asset-picker harness). aspectRatio is normalised to
+  // colon form ('9:16') to match the downstream V2 signal comparisons.
+  function extractFlowSectionConfig(section) {
+    const config = { model: 'UNKNOWN', aspectRatio: 'UNKNOWN', count: 'UNKNOWN' };
+    if (!section) return config;
+    let text = '';
+    try {
+      text = normalizeText(section.innerText || section.textContent || '');
+    } catch (_) {
+      text = '';
+    }
+    if (text) {
+      try {
+        const m = extractObservedModelLabel(text);
+        if (m) config.model = m;
+      } catch (_) {}
+      try {
+        const aspectToken = canonicalizeFlowConfigAspectToken(text);
+        if (aspectToken) {
+          const map = {
+            crop_9_16: '9:16',
+            crop_16_9: '16:9',
+            crop_4_3: '4:3',
+            crop_1_1: '1:1',
+            crop_3_4: '3:4',
+          };
+          config.aspectRatio = map[aspectToken] || aspectToken;
+        }
+      } catch (_) {}
+      try {
+        const c = canonicalizeFlowConfigCountToken(text);
+        if (c) config.count = c;
+      } catch (_) {}
+    }
+    if (config.model === 'UNKNOWN' && section.querySelectorAll) {
+      try {
+        const els = section.querySelectorAll('button, span, div, [aria-label], [title]');
+        for (const el of els) {
+          const dm =
+            extractObservedModelLabel(el.textContent) ||
+            extractObservedModelLabel(el.getAttribute && el.getAttribute('aria-label')) ||
+            extractObservedModelLabel(el.getAttribute && el.getAttribute('title'));
+          if (dm) {
+            config.model = dm;
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+    return config;
+  }
+
   function findFlowSettingsSection(mode, root = document) {
     const headingText = getFlowSettingsSectionHeading(mode);
     const headings = collectFlowSettingsHeadingNodes(headingText, root);
@@ -3679,6 +3734,286 @@ function isSettingsScopedModelSource(source) {
   // is driven by the composer/prompt surface — NOT Frames/Ingredients buttons.
   // Strong upload proof requires Add-to-Prompt/preview/chip; visibleUploadSlots
   // and Start-body text are recorded only as deprecated/weak signals.
+  // ---- Google Flow V2 settings read/interaction primitive ----
+  // V2 settings live behind a "View Settings" launcher (settings/tune icon) in the
+  // composer — NOT the legacy Video/Frames controls. These helpers open that panel,
+  // read/select 9:16 + 1x, read the model, and verify persistence.
+  const _gfv2Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function _gfv2Vis(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    const s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function _gfv2Norm(s) {
+    return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  }
+  function _gfv2Blob(el) {
+    return (
+      _gfv2Norm(el.textContent || '') + ' ' +
+      _gfv2Norm((el.getAttribute && el.getAttribute('aria-label')) || '') + ' ' +
+      _gfv2Norm((el.getAttribute && el.getAttribute('title')) || '')
+    ).toLowerCase();
+  }
+  function _gfv2Describe(el) {
+    return {
+      text: _gfv2Norm(el.textContent || '').slice(0, 50) || null,
+      aria: _gfv2Norm((el.getAttribute && el.getAttribute('aria-label')) || '') || null,
+      title: _gfv2Norm((el.getAttribute && el.getAttribute('title')) || '') || null,
+      role: (el.getAttribute && el.getAttribute('role')) || null,
+      tag: String(el.tagName || '').toLowerCase(),
+      pressed: el.getAttribute && el.getAttribute('aria-pressed'),
+      checked: el.getAttribute && el.getAttribute('aria-checked'),
+      selected: el.getAttribute && el.getAttribute('aria-selected'),
+      dataState: el.getAttribute && el.getAttribute('data-state'),
+      cls: _gfv2Norm(typeof el.className === 'string' ? el.className : '').slice(0, 70) || null,
+    };
+  }
+  // Selection truthiness across the patterns Flow's React/Material UI uses.
+  function _gfv2IsSelected(el) {
+    if (!el) return false;
+    const get = (a) => (el.getAttribute && el.getAttribute(a)) || '';
+    if (get('aria-pressed') === 'true') return true;
+    if (get('aria-checked') === 'true') return true;
+    if (get('aria-selected') === 'true') return true;
+    const ds = get('data-state').toLowerCase();
+    if (ds === 'on' || ds === 'active' || ds === 'checked' || ds === 'selected') return true;
+    const cls = (typeof el.className === 'string' ? el.className : '').toLowerCase();
+    if (/\bselected\b|\bactive\b|\bchecked\b/.test(cls)) return true;
+    return false;
+  }
+  function _gfv2DumpControls() {
+    const out = [];
+    const seen = new Set();
+    const sel = '[role="dialog"] *, [role="menu"] *, [data-radix-popper-content-wrapper] *, [role="listbox"] *, button, [role="button"], [role="option"], [role="menuitemradio"], [role="radio"], [role="tab"], [role="switch"]';
+    document.querySelectorAll(sel).forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const d = _gfv2Describe(el);
+      const key = (d.text || '') + '|' + (d.aria || '') + '|' + d.role + '|' + d.cls;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const blob = ((d.text || '') + ' ' + (d.aria || '') + ' ' + (d.title || '')).toLowerCase();
+      const interesting =
+        d.pressed != null || d.checked != null || d.selected != null || d.dataState != null ||
+        /9:16|16:9|1:1|3:4|4:3|\b1x\b|\b2x\b|\b3x\b|\b4x\b|veo|nano|imagen|aspect|ratio|portrait|landscape|model|output|variation|count|quality|resolution/.test(blob);
+      if (interesting && out.length < 70) out.push(d);
+    });
+    return out;
+  }
+  // Find the V2 settings launcher (View Settings / settings / tune icon).
+  function _gfv2FindSettingsLauncher() {
+    const cands = [];
+    document.querySelectorAll('button, [role="button"], [aria-label], [title]').forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const blob = _gfv2Blob(el);
+      if (!blob) return;
+      let score = 0;
+      // 'tune'/'Settings' (tune icon) is the GENERATION settings (9:16/1x/model);
+      // 'View Settings' (settings_2 icon) is project settings — lower priority.
+      if (/\btune\b|tunesettings|tune settings|sliders|adjust/.test(blob)) score = 100;
+      else if (/aspect|ratio|output settings/.test(blob)) score = 90;
+      else if (/^settings\b/.test(blob) && !/view settings/.test(blob)) score = 85;
+      else if (/view settings/.test(blob)) score = 70;
+      else if (/\bsettings\b/.test(blob)) score = 60;
+      if (score > 0) cands.push({ el, blob: blob.slice(0, 50), score });
+    });
+    cands.sort((a, b) => b.score - a.score);
+    return cands;
+  }
+  function _gfv2ClickEl(el) {
+    try {
+      el.scrollIntoView({ block: 'center' });
+    } catch (_) {}
+    try {
+      el.click();
+      return true;
+    } catch (_) {}
+    try {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      return true;
+    } catch (_) {}
+    return false;
+  }
+  // Find a clickable option by visible label/aria (exact-ish), returns the element.
+  function _gfv2FindOption(labels) {
+    const wanted = labels.map((l) => l.toLowerCase());
+    const sel = 'button, [role="button"], [role="option"], [role="menuitemradio"], [role="radio"], [role="tab"], [role="switch"], [aria-label]';
+    let best = null;
+    document.querySelectorAll(sel).forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const text = _gfv2Norm(el.textContent || '').toLowerCase();
+      const aria = _gfv2Norm((el.getAttribute && el.getAttribute('aria-label')) || '').toLowerCase();
+      const stripped = text.replace(/^[a-z_]+(?=[A-Z0-9])/, ''); // drop leading icon ligature
+      for (const w of wanted) {
+        if (text === w || aria === w || stripped === w || text.indexOf(w) >= 0 || aria.indexOf(w) >= 0) {
+          if (!best) best = el;
+        }
+      }
+    });
+    return best;
+  }
+
+  async function gfv2DiscoverSettings() {
+    const launchers = _gfv2FindSettingsLauncher();
+    const before = _gfv2DumpControls();
+    let clicked = null;
+    if (launchers.length) {
+      if (_gfv2ClickEl(launchers[0].el)) clicked = launchers[0].blob;
+      await _gfv2Sleep(900);
+    }
+    const after = _gfv2DumpControls();
+    return {
+      ok: true,
+      launcher_candidates: launchers.slice(0, 10).map((l) => ({ blob: l.blob, score: l.score })),
+      clicked,
+      before_count: before.length,
+      after_controls: after,
+    };
+  }
+
+  // Broad dump of ALL visible interactive elements (incl. icon-only buttons) so the
+  // real V2 composer/settings affordances can be discovered even when no obvious
+  // settings launcher matches.
+  function _gfv2DumpAllVisible() {
+    const out = [];
+    const seen = new Set();
+    document.querySelectorAll('button, [role="button"], [role="option"], [role="menuitemradio"], [role="radio"], [role="tab"], [role="switch"], [aria-label], [data-state]').forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const d = _gfv2Describe(el);
+      const key = (d.text || '') + '|' + (d.aria || '') + '|' + (d.title || '') + '|' + d.role;
+      if (seen.has(key)) return;
+      seen.add(key);
+      if ((d.text || d.aria || d.title) && out.length < 90) out.push(d);
+    });
+    return out;
+  }
+
+  // Interactive: open settings, confirm/select 9:16 + 1x, read model, persist.
+  async function gfv2ApplySettings(options) {
+    const result = {
+      settings_panel_opened: false,
+      launcher: null,
+      ratio_9_16_confirmed: false,
+      count_1x_confirmed: false,
+      model_canonical: null,
+      model_visible_wrong: false,
+      model_veo_lite_confirmed: false,
+      save_button_found: false,
+      settings_saved_or_persisted: false,
+      actions: [],
+    };
+    // Always capture the composer affordances first (discovery aid).
+    result.controls_seen = _gfv2DumpAllVisible();
+    const launchers = _gfv2FindSettingsLauncher();
+    result.launcher_candidates = launchers.slice(0, 10).map((l) => l.blob);
+    if (!launchers.length) {
+      result.error = 'GFV2_SETTINGS_PANEL_NOT_FOUND';
+      result.detail = 'no_settings_launcher';
+      return result;
+    }
+    // Try each settings-like launcher until one reveals generation settings
+    // (9:16 / aspect / model). Close (Escape) between attempts.
+    const revealRe = /9:16|16:9|1:1|3:4|4:3|aspect|portrait|landscape|veo|nano|imagen|variation|\b[1-4]x\b/;
+    result.launchers_tried = [];
+    let openControls = null;
+    for (const cand of launchers.slice(0, 6)) {
+      _gfv2ClickEl(cand.el);
+      await _gfv2Sleep(Math.max(450, Number(options.panelWaitMs || 800)));
+      const ctrls = _gfv2DumpControls();
+      const txt = ctrls.map((c) => (c.text || '') + ' ' + (c.aria || '')).join(' ').toLowerCase();
+      const revealed = revealRe.test(txt);
+      result.launchers_tried.push({ launcher: cand.blob, revealed });
+      if (revealed) {
+        result.launcher = cand.blob;
+        result.settings_panel_opened = true;
+        openControls = ctrls;
+        break;
+      }
+      // close whatever opened before trying the next candidate
+      try {
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      } catch (_) {}
+      await _gfv2Sleep(250);
+    }
+    result.controls_seen = (openControls || _gfv2DumpAllVisible()).slice(0, 45);
+    if (!result.settings_panel_opened) {
+      result.error = 'GFV2_SETTINGS_PANEL_NOT_FOUND';
+      result.detail = 'no_launcher_revealed_generation_settings';
+      return result;
+    }
+
+    // --- 9:16 ---
+    const ratioEl = _gfv2FindOption(['9:16', 'crop_9_16', 'portrait 9:16', 'crop_9_16 9:16', '9 : 16']);
+    if (ratioEl) {
+      if (!_gfv2IsSelected(ratioEl)) {
+        _gfv2ClickEl(ratioEl);
+        result.actions.push('clicked_9_16');
+        await _gfv2Sleep(450);
+      } else {
+        result.actions.push('9_16_already_selected');
+      }
+      const recheck = _gfv2FindOption(['9:16', 'crop_9_16', 'portrait 9:16', '9 : 16']);
+      result.ratio_9_16_confirmed = Boolean(recheck && _gfv2IsSelected(recheck));
+    }
+
+    // --- 1x ---
+    const countEl = _gfv2FindOption(['1x', '1×', '1 variation', 'x1', '1 output']);
+    if (countEl) {
+      if (!_gfv2IsSelected(countEl)) {
+        _gfv2ClickEl(countEl);
+        result.actions.push('clicked_1x');
+        await _gfv2Sleep(450);
+      } else {
+        result.actions.push('1x_already_selected');
+      }
+      const recheck = _gfv2FindOption(['1x', '1×', '1 variation', 'x1', '1 output']);
+      result.count_1x_confirmed = Boolean(recheck && _gfv2IsSelected(recheck));
+    }
+
+    // --- model (read; never change unless wrong handled by caller) ---
+    const modelControls = _gfv2DumpControls();
+    const modelBlob = modelControls
+      .map((c) => (c.text || '') + ' ' + (c.aria || ''))
+      .join(' ')
+      .toLowerCase();
+    const veoMatch = /veo[\s\S]{0,12}(3\.1)?[\s\S]{0,8}lite/.test(modelBlob) || /veo 3\.1\s*-?\s*lite/.test(modelBlob);
+    // Visible image models in a video (F2V) context are WRONG: Nano Banana, Imagen,
+    // Omni Flash (all image-generation models).
+    const wrongMatch = /nano banana|imagen|\bimagine\b|omni flash/.test(modelBlob);
+    if (wrongMatch && !/veo/.test(modelBlob)) {
+      result.model_visible_wrong = true;
+      result.model_canonical = (modelBlob.match(/nano banana|imagen|omni flash/) || [null])[0];
+    } else if (veoMatch) {
+      result.model_veo_lite_confirmed = true;
+      result.model_canonical = 'veo 3.1 - lite';
+    } else if (/veo/.test(modelBlob)) {
+      result.model_canonical = 'veo';
+    } else {
+      result.model_canonical = null; // hidden / unreadable
+    }
+
+    // --- save / persist ---
+    const saveEl = _gfv2FindOption(['save', 'done', 'apply']);
+    if (saveEl) {
+      result.save_button_found = true;
+      _gfv2ClickEl(saveEl);
+      result.actions.push('clicked_save');
+      await _gfv2Sleep(500);
+    }
+    // persistence: re-read; confirmed settings still reflected => persisted
+    const persistRatio = _gfv2FindOption(['9:16', 'crop_9_16', '9 : 16']);
+    const persistCount = _gfv2FindOption(['1x', '1×', 'x1']);
+    const stillRatio = result.ratio_9_16_confirmed || Boolean(persistRatio && _gfv2IsSelected(persistRatio));
+    const stillCount = result.count_1x_confirmed || Boolean(persistCount && _gfv2IsSelected(persistCount));
+    result.settings_saved_or_persisted = Boolean(
+      (result.save_button_found ? result.actions.includes('clicked_save') : true) && stillRatio && stillCount,
+    );
+    result.ratio_9_16_confirmed = result.ratio_9_16_confirmed || stillRatio;
+    result.count_1x_confirmed = result.count_1x_confirmed || stillCount;
+    return result;
+  }
+
   function observeGoogleFlowV2State() {
     // Defensive: broken/error Flow pages ("Something went wrong") can make some
     // DOM helpers throw. Never throw — fall back to safe values so a diagnostic
@@ -5294,6 +5629,17 @@ function isSettingsScopedModelSource(source) {
         sendResponse({ ok: false, error: 'GFV2_OBSERVE_FAILED', detail: String(error?.message || error) });
       }
       return false;
+    }
+
+    if (msg.type === 'GFV2_DISCOVER_SETTINGS') {
+      // DISCOVERY-ONLY: clicks the V2 settings launcher then dumps the resulting
+      // controls + selection states so the real V2 settings DOM can be mapped.
+      return respondAsync(sendResponse, async () => gfv2DiscoverSettings());
+    }
+
+    if (msg.type === 'GFV2_APPLY_SETTINGS') {
+      // Interactive: open V2 settings, confirm/select 9:16 + 1x, read model, persist.
+      return respondAsync(sendResponse, async () => gfv2ApplySettings(msg.options || {}));
     }
 
     if (msg.type === 'OPEN_FLOW_NEW_PROJECT') {

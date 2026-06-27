@@ -5195,31 +5195,63 @@ function gfv2DecideSettingsProof(proof, observedModel) {
 
 // Read-only granular GFV2 settings verification: capture the live V2 readiness proof,
 // run the pure decision, emit each stage in order, return { proceed, error, detail }.
-async function gfv2VerifySettings(flowTab, emit) {
-	const cap = await captureGoogleFlowV2Readiness(flowTab);
-	const proof = (cap && cap.evaluation && cap.evaluation.proofs && cap.evaluation.proofs.settings) || {};
-	const diag = (cap && cap.diagnostic) || {};
-	const decision = gfv2DecideSettingsProof(proof, diag.observed_model);
-	for (const e of decision.emissions) emit(e.stage, e.status, e.message);
-	// A VISIBLE wrong (image) model is a correctness safety gate — always hard-fail.
-	if (decision.error === "GFV2_VISIBLE_WRONG_MODEL") {
-		return { proceed: false, error: decision.error, detail: decision.detail };
+// Interactive granular settings verification: drive the content-script V2 settings
+// primitive (open panel, confirm/select 9:16 + 1x, read model, persist), then run the
+// pure decision over the REAL applied result. These are live hard gates.
+async function gfv2DriveSettingsVerify(flowTab, emit) {
+	await ensureFlowDomScript(flowTab.id);
+	let res = await sendTabMessageSafe(
+		flowTab.id,
+		{ type: "GFV2_APPLY_SETTINGS", options: {} },
+		35000,
+	);
+	if (
+		[
+			"ERR_MESSAGE_RESPONSE_TIMEOUT",
+			"ERR_NO_RECEIVER",
+			"ERR_CONTENT_SCRIPT_STALE",
+			"ERR_TAB_RELOADED",
+		].includes(res?.error)
+	) {
+		await ensureFlowDomScript(flowTab.id);
+		res = await sendTabMessageSafe(flowTab.id, { type: "GFV2_APPLY_SETTINGS", options: {} }, 35000);
 	}
-	// The remaining granular gates are REPORT-ONLY for now: observeGoogleFlowV2State
-	// does not yet read the V2 composer's ratio/count/model (all signals null on the
-	// live surface), so we surface the gap honestly (GFV2_*_NOT_CONFIRMED is emitted
-	// above) without regressing the proven upload→STOP flow. A follow-up that teaches
-	// the diagnostic to read V2 settings will flip these to hard gates.
+	res = res || {};
+	// Surface the real V2 controls + launcher candidates for forensics.
+	if (Array.isArray(res.launcher_candidates)) {
+		emit("GFV2_SETTINGS_LAUNCHERS", "WAITING_FLOW", JSON.stringify(res.launcher_candidates).slice(0, 1000));
+	}
+	if (Array.isArray(res.controls_seen) && res.controls_seen.length) {
+		const json = JSON.stringify(res.controls_seen);
+		for (let i = 0; i < json.length && i < 9000; i += 1800) {
+			emit("GFV2_SETTINGS_DISCOVERY", "WAITING_FLOW", `part${Math.floor(i / 1800)} ${json.slice(i, i + 1800)}`);
+		}
+	}
+	const proof = {
+		settings_panel_opened: Boolean(res.settings_panel_opened),
+		ratio_9_16_confirmed: Boolean(res.ratio_9_16_confirmed),
+		count_1x_confirmed: Boolean(res.count_1x_confirmed),
+		model_visible_wrong: Boolean(res.model_visible_wrong),
+		model_veo_lite_confirmed: Boolean(res.model_veo_lite_confirmed),
+		model_state: res.model_visible_wrong ? "wrong" : res.model_veo_lite_confirmed ? "correct" : "unknown",
+		model_canonical: res.model_canonical || null,
+		save_button_found: Boolean(res.save_button_found),
+		settings_persisted: Boolean(res.settings_saved_or_persisted),
+	};
+	const decision = gfv2DecideSettingsProof(proof, proof.model_canonical);
+	for (const e of decision.emissions) emit(e.stage, e.status, e.message);
+	// Post-upload, the V2 generation settings DO render — so these are real live gates:
+	// any blocker (panel-not-found / 9:16 / 1x not confirmed / visible wrong model) fails.
 	if (!decision.proceed) {
-		emit(
-			"GFV2_SETTINGS_PROOF_UNVERIFIED",
-			"WAITING_FLOW",
-			`reason=${decision.error} note=v2_settings_dom_not_readable_yet`,
-		);
+		return { proceed: false, error: decision.error, detail: { decision: decision.detail, applied: res } };
 	}
 	return { proceed: true, detail: decision.detail };
 }
 
+// Post-upload settings probe: once media is in the composer, re-drive the V2 settings
+// primitive to discover whether the generation settings (9:16/1x/model) are now
+// reachable. Emits a probe stage with the result + a discovery dump. Read/observe;
+// hard-fails nothing here (investigation), but reports the real reachability.
 // Decide whether a Flow tab is a usable V2 surface from its URL + a V2 capture.
 // Pure-ish: takes the tab and a captured GFV2 readiness result. Stale c240ebbd and
 // "Back to projects" / "Something went wrong" pages are NOT valid surfaces.
@@ -5444,10 +5476,10 @@ async function handleGfv2Job(job) {
 			// settings panel — ERR_F2V_OPTION_VIDEO_NOT_FOUND / no_settings_launcher).
 			// Until a V2 settings read/interaction layer exists, the lane keeps the
 			// authority shortcut and emits the granular proof it CAN observe.
-			// Granular GFV2 settings proof: emits the contract stages from the live
-			// readiness capture; HARD-fails on a visible wrong model; report-only for
-			// the other gates while the V2 settings DOM is not yet readable.
-			gfv2SettingsVerify: () => gfv2VerifySettings(flowTab, emit),
+			// NB: settings are NOT verified pre-upload. Live discovery proved the V2
+			// generation settings (tune panel: 9:16/1x/model) only render in the composer
+			// AFTER media is added — matching the original V2 SOP
+			// (Upload -> Add to Prompt -> Settings). Settings proof runs post-upload below.
 			// GFV2 upload-menu contract telemetry: launcher click is NOT a file chooser;
 			// the in-menu "Upload media"/"Upload from computer" item is clicked first.
 			gfv2Stage: (stage, status, message) => emit(stage, status, message),
@@ -5466,8 +5498,18 @@ async function handleGfv2Job(job) {
 		return { ok: false, error: code, detail: runnerResult || null };
 	}
 
-	// Runner completed settings + upload + add-to-prompt + prompt with skipGenerate.
+	// Runner completed upload + add-to-prompt + prompt with skipGenerate.
 	emit("GFV2_ASSET_BOUND_TO_PROMPT", "PASS", `media_attached=${Boolean(runnerResult?.stage_results?.media_attached)}`);
+
+	// GRANULAR SETTINGS PROOF (post-upload, V2 SOP order). Opens the tune-settings
+	// panel, confirms/selects 9:16 + 1x, classifies the model (Veo / hidden-soft-pass
+	// / visible-wrong hard-fail), verifies persistence. Real live gate before STOP.
+	const settings = await gfv2DriveSettingsVerify(flowTab, emit);
+	if (!settings.proceed) {
+		emit("FAILED", "FAIL", settings.error || "GFV2_SETTINGS_NOT_VERIFIED");
+		return { ok: false, error: settings.error || "GFV2_SETTINGS_NOT_VERIFIED", detail: settings.detail || null };
+	}
+
 	emit("GFV2_PROMPT_ACCEPTED", "PASS", `prompt_inserted=${Boolean(runnerResult?.stage_results?.prompt_inserted)}`);
 	emit("GFV2_GENERATE_ENABLED", "PASS", "verified_enabled_not_clicked");
 	emit("GFV2_STOP_BEFORE_GENERATE", "PASS", "gfv2_ready_stopped_before_generate");

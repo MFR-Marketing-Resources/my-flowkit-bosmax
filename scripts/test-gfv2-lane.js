@@ -307,23 +307,68 @@ test("settings: persisted is the last gate before the lane proceeds to upload/pr
 	assert(r.proceed === true, "only then proceeds");
 });
 
-test("GFV2 lane wires the verify hook and does NOT force the V2-incompatible DOM path", () => {
-	assert(/gfv2SettingsVerify:\s*\(\)\s*=>\s*gfv2VerifySettings\(flowTab, emit\)/.test(HANDLE_SRC), "wires gfv2SettingsVerify");
-	// The legacy DOM settings path clicks non-existent Video/Frames options on V2, so
-	// the lane must NOT force it (it is left inert in the runner for a future V2 build).
+test("GFV2 settings proof runs POST-upload (V2 SOP) and is a real hard gate", () => {
+	// V2 renders generation settings only after media is in the composer, so the proof
+	// runs after GFV2_ASSET_BOUND_TO_PROMPT and gates STOP.
+	const boundIdx = HANDLE_SRC.indexOf('GFV2_ASSET_BOUND_TO_PROMPT", "PASS"');
+	const driveIdx = HANDLE_SRC.indexOf("await gfv2DriveSettingsVerify(flowTab, emit)");
+	const stopIdx = HANDLE_SRC.indexOf('GFV2_STOP_BEFORE_GENERATE", "PASS"');
+	assert(boundIdx >= 0 && driveIdx >= 0 && stopIdx >= 0, "all three present");
+	assert(boundIdx < driveIdx, "settings proof runs AFTER asset bound to prompt");
+	assert(driveIdx < stopIdx, "settings proof gates BEFORE stop-before-generate");
+	assert(/if \(!settings\.proceed\)/.test(HANDLE_SRC), "settings is a hard gate (blocks STOP on failure)");
+	// must NOT force the V2-incompatible legacy DOM settings path
 	assert(!/gfv2ForceDomSettings:\s*true/.test(HANDLE_SRC), "lane must NOT force the broken DOM settings path");
-	assert(!/gfv2SkipModeSteps:\s*true/.test(HANDLE_SRC), "lane must NOT engage the legacy mode-step path");
-	assert(/typeof opts\?\.gfv2SettingsVerify === 'function'/.test(RUNNER_SRC), "runner calls the verify hook before upload");
-	// runner guards for a future V2 settings build remain inert but present
-	assert(/opts\?\.gfv2ForceDomSettings !== true/.test(RUNNER_SRC), "runner force-flag guard present (inert)");
 });
 
-test("settings verify hard-fails ONLY on visible wrong model; other gates report-only", () => {
-	const VERIFY_SRC = extractFunctionSource(SRC, "gfv2VerifySettings");
-	assert(/decision\.error === "GFV2_VISIBLE_WRONG_MODEL"/.test(VERIFY_SRC), "wrong model hard-fails");
-	assert(/proceed: false, error: decision\.error/.test(VERIFY_SRC), "wrong model returns proceed:false");
-	assert(/GFV2_SETTINGS_PROOF_UNVERIFIED/.test(VERIFY_SRC), "other gaps surfaced honestly, not hidden");
-	assert(/return \{ proceed: true/.test(VERIFY_SRC), "report-only otherwise (does not regress STOP)");
+test("post-upload settings driver is a real gate (no report-only bypass)", () => {
+	const DRIVE_SRC = extractFunctionSource(SRC, "gfv2DriveSettingsVerify");
+	assert(/if \(!decision\.proceed\)/.test(DRIVE_SRC), "any blocker fails");
+	assert(/return \{ proceed: false, error: decision\.error/.test(DRIVE_SRC), "returns the named blocker, not proceed:true");
+	assert(!/GFV2_SETTINGS_PROOF_UNVERIFIED/.test(DRIVE_SRC), "no report-only bypass post-upload");
+});
+
+// --- V2 settings read/interaction primitive (content-flow-dom.js) ---
+const CFD_SRC = fs.readFileSync(
+	path.join(__dirname, "..", "extension", "content-flow-dom.js"),
+	"utf8",
+);
+const SRC_BLOCK = extractFunctionSource;
+
+test("content: V2 settings primitives exist (open/read/apply, discovery)", () => {
+	assert(/async function gfv2ApplySettings\(/.test(CFD_SRC), "gfv2ApplySettings present");
+	assert(/async function gfv2DiscoverSettings\(/.test(CFD_SRC), "gfv2DiscoverSettings present");
+	assert(/function _gfv2FindSettingsLauncher\(/.test(CFD_SRC), "launcher finder present");
+	assert(/'GFV2_APPLY_SETTINGS'/.test(CFD_SRC), "GFV2_APPLY_SETTINGS message handled");
+});
+
+test("content: settings launcher prefers tune (generation), not Video/Frames/Ingredients", () => {
+	const lf = SRC_BLOCK(CFD_SRC, "_gfv2FindSettingsLauncher");
+	assert(/tune/.test(lf), "tune scored");
+	// must NOT key off legacy mode controls
+	assert(!/\bvideo\b/i.test(lf), "no Video control dependency");
+	assert(!/\bframes\b/i.test(lf), "no Frames control dependency");
+	assert(!/\bingredients\b/i.test(lf), "no Ingredients control dependency");
+});
+
+test("content: visible image models (Nano Banana / Omni Flash / Imagen) are WRONG", () => {
+	const ap = SRC_BLOCK(CFD_SRC, "gfv2ApplySettings");
+	assert(/nano banana/.test(ap), "nano banana classified");
+	assert(/omni flash/.test(ap), "omni flash classified");
+	assert(/imagen/.test(ap), "imagen classified");
+	assert(/model_visible_wrong = true/.test(ap), "sets visible-wrong");
+});
+
+test("content: selection truthiness reads aria-selected / aria-checked / data-state", () => {
+	const sel = SRC_BLOCK(CFD_SRC, "_gfv2IsSelected");
+	assert(/aria-pressed/.test(sel) && /aria-checked/.test(sel) && /aria-selected/.test(sel), "aria states");
+	assert(/data-state/.test(sel), "data-state");
+});
+
+test("content: extractFlowSectionConfig is now DEFINED (red-gate fix)", () => {
+	assert(/function extractFlowSectionConfig\(/.test(CFD_SRC), "function defined");
+	// normalises crop_9_16 -> 9:16 for the V2 signal comparisons
+	assert(/crop_9_16:\s*'9:16'/.test(CFD_SRC), "aspect normalised to colon form");
 });
 
 let failed = 0;
