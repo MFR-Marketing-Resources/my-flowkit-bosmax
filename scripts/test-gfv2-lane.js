@@ -85,7 +85,9 @@ const test = (n, f) => tests.push([n, f]);
 
 test("isGfv2Lane: lane flag and gfv2 flag activate; others do not", () => {
 	assert(isGfv2Lane({ lane: "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE" }) === true, "lane flag");
+	assert(isGfv2Lane({ lane: "GFV2_POST_SUBMIT_DOWNLOAD" }) === true, "post-submit lane flag");
 	assert(isGfv2Lane({ gfv2: true }) === true, "gfv2 flag");
+	assert(isGfv2Lane({ postSubmitDownload: true }) === true, "postSubmitDownload flag");
 	assert(isGfv2Lane({ lane: "F2V_PACKAGE_UPLOAD_ONLY" }) === false, "old lane is not GFV2");
 	assert(isGfv2Lane({ mode: "F2V" }) === false, "plain F2V not GFV2");
 	assert(isGfv2Lane(null) === false, "null not GFV2");
@@ -185,7 +187,21 @@ test("ENSURE_SURFACE automates New/Create and emits named blockers", () => {
 test("runner still uses skipGenerate:true and stops before generate", () => {
 	assert(/skipGenerate:\s*true/.test(HANDLE_SRC), "skipGenerate must be true");
 	assert(HANDLE_SRC.includes('"GFV2_STOP_BEFORE_GENERATE"'), "must emit GFV2_STOP_BEFORE_GENERATE");
-	assert(!/"GENERATE_CLICKED"|invokeGenerate/.test(HANDLE_SRC), "must not click generate");
+	assert(HANDLE_SRC.includes("executeGfv2PostSubmitDownloadContinuation"), "opt-in continuation is wired separately");
+});
+
+test("post-submit lane is gated behind settings success and does not replace the default STOP lane", () => {
+	const settingsFailIdx = HANDLE_SRC.indexOf('if (!settings.proceed)');
+	const promptAcceptedIdx = HANDLE_SRC.indexOf('GFV2_PROMPT_ACCEPTED", "PASS"');
+	const continuationIdx = HANDLE_SRC.indexOf("executeGfv2PostSubmitDownloadContinuation");
+	const stopIdx = HANDLE_SRC.indexOf('GFV2_STOP_BEFORE_GENERATE", "PASS"');
+	assert(settingsFailIdx >= 0 && promptAcceptedIdx >= 0 && continuationIdx >= 0 && stopIdx >= 0, "all control points present");
+	assert(settingsFailIdx < continuationIdx, "continuation only runs after settings gate");
+	assert(promptAcceptedIdx < continuationIdx, "continuation only runs after prompt accepted proof");
+	assert(/if \(postSubmitDownload\)/.test(HANDLE_SRC), "continuation is opt-in only");
+	assert(/GFV2_SETTINGS_SAVE_CLICKED/.test(HANDLE_SRC), "save-click telemetry emitted for continuation lane");
+	assert(/GFV2_SETTINGS_SAVE_ALREADY_PERSISTED/.test(HANDLE_SRC), "already-persisted telemetry emitted for continuation lane");
+	assert(continuationIdx < stopIdx, "default STOP lane remains in the non-post-submit branch");
 });
 
 // --- Upload-menu contract (ERR_CDP_FILE_CHOOSER_TIMEOUT fix) ---

@@ -5197,7 +5197,19 @@ const GFV2_FLOW_ROOT_URL = "https://labs.google/fx/tools/flow";
 function isGfv2Lane(job) {
 	return Boolean(
 		job &&
-			(job.lane === "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE" || job.gfv2 === true),
+			(
+				job.lane === "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE" ||
+				job.lane === "GFV2_POST_SUBMIT_DOWNLOAD" ||
+				job.gfv2 === true ||
+				job.postSubmitDownload === true
+			),
+	);
+}
+
+function isGfv2PostSubmitDownload(job) {
+	return Boolean(
+		job &&
+			(job.lane === "GFV2_POST_SUBMIT_DOWNLOAD" || job.postSubmitDownload === true),
 	);
 }
 
@@ -5346,7 +5358,7 @@ async function gfv2DriveSettingsVerify(flowTab, emit) {
 				: decision.error;
 		return { proceed: false, error: err, detail: { decision: decision.detail, applied: res } };
 	}
-	return { proceed: true, detail: decision.detail };
+	return { proceed: true, detail: decision.detail, proof, applied: res };
 }
 
 // Post-upload settings probe: once media is in the composer, re-drive the V2 settings
@@ -5493,6 +5505,7 @@ async function gfv2EnsureSurface(mode, emit) {
 
 async function handleGfv2Job(job) {
 	const requestId = job?.request_id || null;
+	const postSubmitDownload = isGfv2PostSubmitDownload(job);
 	const emit = (stage, status, message) => {
 		if (!requestId) return;
 		postStageTelemetry(
@@ -5638,7 +5651,42 @@ async function handleGfv2Job(job) {
 		return { ok: false, error: settings.error || "GFV2_SETTINGS_NOT_VERIFIED", detail: settings.detail || null };
 	}
 
+	if (postSubmitDownload) {
+		const saveButtonFound = Boolean(settings?.proof?.save_button_found || settings?.applied?.save_button_found);
+		emit(
+			saveButtonFound ? "GFV2_SETTINGS_SAVE_CLICKED" : "GFV2_SETTINGS_SAVE_ALREADY_PERSISTED",
+			"PASS",
+			`save_button_found=${saveButtonFound} persistence=${settings?.proof?.settings_persisted === true ? "video_section_verified" : "composer_reflected"}`,
+		);
+	}
 	emit("GFV2_PROMPT_ACCEPTED", "PASS", `prompt_inserted=${Boolean(runnerResult?.stage_results?.prompt_inserted)}`);
+	if (postSubmitDownload) {
+		if (typeof runnerApi.executeGfv2PostSubmitDownloadContinuation !== "function") {
+			emit("FAILED", "FAIL", "GFV2_POST_SUBMIT_CONTINUATION_NOT_LOADED");
+			return { ok: false, error: "GFV2_POST_SUBMIT_CONTINUATION_NOT_LOADED" };
+		}
+		const continuation = await runnerApi.executeGfv2PostSubmitDownloadContinuation(
+			deps,
+			flowTab.id,
+			job,
+			{
+				settleMs: 300,
+				promptProof: runnerResult?.stage_results?.prompt_proof || null,
+			},
+		);
+		if (!continuation?.ok) {
+			const code = continuation?.error || "GFV2_POST_SUBMIT_CONTINUATION_FAILED";
+			emit("FAILED", "FAIL", code);
+			return { ok: false, error: code, detail: continuation || null };
+		}
+		return {
+			ok: true,
+			gfv2_post_submit_download: true,
+			flow_tab_id: flowTab.id,
+			runner: runnerResult,
+			continuation,
+		};
+	}
 	emit("GFV2_GENERATE_ENABLED", "PASS", "verified_enabled_not_clicked");
 	emit("GFV2_STOP_BEFORE_GENERATE", "PASS", "gfv2_ready_stopped_before_generate");
 	return {

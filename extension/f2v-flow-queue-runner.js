@@ -155,6 +155,11 @@ const ERR = Object.freeze({
   ADD_TO_PROMPT_NOT_FOUND: 'ERR_F2V_ADD_TO_PROMPT_NOT_FOUND',
   NEW_PROJECT_FAILED: 'ERR_F2V_NEW_PROJECT_FAILED',
   EXECUTION_THREW: 'ERR_F2V_SOP_RUNNER_THREW',
+  GFV2_SUBMIT_ARROW_NOT_FOUND: 'GFV2_SUBMIT_ARROW_NOT_FOUND',
+  GFV2_OUTPUT_NOT_READY: 'GFV2_OUTPUT_NOT_READY',
+  GFV2_PROJECT_MENU_NOT_FOUND: 'GFV2_PROJECT_MENU_NOT_FOUND',
+  GFV2_DOWNLOAD_PROJECT_NOT_FOUND: 'GFV2_DOWNLOAD_PROJECT_NOT_FOUND',
+  GFV2_DOWNLOAD_NOT_CONFIRMED: 'GFV2_DOWNLOAD_NOT_CONFIRMED',
 });
 
 const F2V_SOP_STAGE_CONTRACT = Object.freeze([
@@ -5521,6 +5526,438 @@ async function _invokeGenerate(scripting, tabId, opts) {
   };
 }
 
+function MAIN_getPostSubmitOutputState() {
+  function normalize(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
+  }
+  function getComposerRoot() {
+    var prompt = document.querySelector('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea, [contenteditable="true"], input[type="text"]');
+    if (prompt && prompt.closest) {
+      return prompt.closest('form, [role="form"], section, article, main, div') || prompt;
+    }
+    return document.querySelector('form, [role="form"]');
+  }
+  function isInsideComposer(el, composerRoot) {
+    if (!el || !composerRoot) return false;
+    var current = el;
+    while (current) {
+      if (current === composerRoot) return true;
+      current = current.parentElement || null;
+    }
+    return false;
+  }
+  function extractFilename(text) {
+    var match = String(text || '').match(/\b([a-z0-9][a-z0-9._-]*\.(?:mp4|mov|webm|png|jpe?g|webp|gif))\b/i);
+    return match ? match[1] : null;
+  }
+  function isMenuLike(el) {
+    if (!el || !isVisible(el)) return false;
+    var combined = normalize((el.textContent || '') + ' ' + ((el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))) || '')).toLowerCase();
+    if (combined.indexOf('download project') >= 0) return false;
+    if (combined.indexOf('more_vert') >= 0) return true;
+    if (combined.indexOf('more') >= 0 && combined.indexOf('project') >= 0) return true;
+    if (combined.indexOf('options') >= 0) return true;
+    if (combined === 'menu') return true;
+    return Boolean(
+      el.getAttribute &&
+      (
+        el.getAttribute('aria-haspopup') === 'menu' ||
+        el.getAttribute('aria-label') === 'More' ||
+        el.getAttribute('aria-label') === 'More options'
+      )
+    );
+  }
+  function findMenuButton(root, composerRoot) {
+    if (!root || !root.querySelectorAll) return null;
+    var nodes = root.querySelectorAll('button, [role="button"], [aria-haspopup="menu"]');
+    var best = null;
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (!isMenuLike(node) || isInsideComposer(node, composerRoot)) continue;
+      var rect = node.getBoundingClientRect();
+      var score = 0;
+      var combined = normalize((node.textContent || '') + ' ' + ((node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title'))) || '')).toLowerCase();
+      if (combined.indexOf('more_vert') >= 0) score += 200;
+      if (node.getAttribute && node.getAttribute('aria-haspopup') === 'menu') score += 80;
+      score += Math.round(rect.left);
+      score += Math.round(rect.top / 10);
+      if (!best || score > best.score) {
+        best = { el: node, score: score };
+      }
+    }
+    return best ? best.el : null;
+  }
+
+  var composerRoot = getComposerRoot();
+  var containers = document.querySelectorAll('article, section, div, li, figure, aside');
+  var best = null;
+  for (var idx = 0; idx < containers.length; idx++) {
+    var container = containers[idx];
+    if (!isVisible(container) || isInsideComposer(container, composerRoot)) continue;
+    var text = normalize(container.textContent || '');
+    var menuBtn = findMenuButton(container, composerRoot);
+    var hasMedia = Boolean(container.querySelector && container.querySelector('img, video, canvas, svg'));
+    var hasProjectSignal = /download project|generated-|project|render|\.mp4\b|\.mov\b|\.webm\b|\.png\b|\.jpe?g\b|\.webp\b|\.gif\b/i.test(text);
+    if (!menuBtn && !hasMedia && !hasProjectSignal) continue;
+    var rect = container.getBoundingClientRect();
+    var score = 0;
+    if (menuBtn) score += 180;
+    if (hasProjectSignal) score += 90;
+    if (hasMedia) score += 60;
+    if (rect.top < 700) score += 40;
+    score += Math.round(rect.left / 10);
+    if (!best || score > best.score) {
+      best = {
+        score: score,
+        text: text,
+        filename: extractFilename(text),
+        menuBtn: menuBtn,
+      };
+    }
+  }
+
+  if (!best) {
+    var fallbackMenu = findMenuButton(document, composerRoot);
+    if (fallbackMenu) {
+      var fallbackText = normalize(fallbackMenu.textContent || fallbackMenu.getAttribute && (fallbackMenu.getAttribute('aria-label') || fallbackMenu.getAttribute('title')) || '');
+      return {
+        ok: true,
+        output_ready: true,
+        menu_found: true,
+        filename: null,
+        menu_text: fallbackText,
+        output_text_excerpt: '',
+      };
+    }
+    return {
+      ok: true,
+      output_ready: false,
+      menu_found: false,
+      filename: null,
+      menu_text: null,
+      output_text_excerpt: '',
+    };
+  }
+
+  return {
+    ok: true,
+    output_ready: true,
+    menu_found: Boolean(best.menuBtn),
+    filename: best.filename,
+    menu_text: best.menuBtn ? normalize(best.menuBtn.textContent || best.menuBtn.getAttribute && (best.menuBtn.getAttribute('aria-label') || best.menuBtn.getAttribute('title')) || '') : null,
+    output_text_excerpt: String(best.text || '').slice(0, 200),
+  };
+}
+
+function MAIN_stampProjectMenuButton(stampAttr) {
+  function normalize(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
+  }
+  function getComposerRoot() {
+    var prompt = document.querySelector('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea, [contenteditable="true"], input[type="text"]');
+    if (prompt && prompt.closest) {
+      return prompt.closest('form, [role="form"], section, article, main, div') || prompt;
+    }
+    return document.querySelector('form, [role="form"]');
+  }
+  function isInsideComposer(el, composerRoot) {
+    if (!el || !composerRoot) return false;
+    var current = el;
+    while (current) {
+      if (current === composerRoot) return true;
+      current = current.parentElement || null;
+    }
+    return false;
+  }
+
+  var composerRoot = getComposerRoot();
+  var nodes = document.querySelectorAll('button, [role="button"], [aria-haspopup="menu"]');
+  var best = null;
+  for (var i = 0; i < nodes.length; i++) {
+    var node = nodes[i];
+    if (!isVisible(node) || isInsideComposer(node, composerRoot)) continue;
+    var combined = normalize((node.textContent || '') + ' ' + ((node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title'))) || '')).toLowerCase();
+    if (combined.indexOf('download project') >= 0) continue;
+    var isMenuCandidate =
+      combined.indexOf('more_vert') >= 0 ||
+      combined.indexOf('more options') >= 0 ||
+      combined.indexOf('project menu') >= 0 ||
+      (node.getAttribute && node.getAttribute('aria-haspopup') === 'menu');
+    if (!isMenuCandidate) continue;
+    var rect = node.getBoundingClientRect();
+    var score = rect.left + rect.top;
+    if (combined.indexOf('more_vert') >= 0) score += 300;
+    if (node.getAttribute && node.getAttribute('aria-haspopup') === 'menu') score += 120;
+    if (!best || score > best.score) {
+      best = { el: node, score: score, text: combined };
+    }
+  }
+  if (!best || !best.el) return { ok: false, reason: 'project_menu_not_found' };
+  var attr = String(stampAttr || 'data-bosmax-project-menu');
+  var id = attr + '-' + Date.now();
+  best.el.setAttribute(attr, id);
+  return {
+    ok: true,
+    stamp_attr: attr,
+    stamp_id: id,
+    text: normalize(best.el.textContent || best.el.getAttribute && (best.el.getAttribute('aria-label') || best.el.getAttribute('title')) || ''),
+  };
+}
+
+function MAIN_getDownloadObservableState() {
+  function normalize(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
+  }
+  var nodes = document.querySelectorAll('[role="status"], [aria-live], button, [role="button"], div, span');
+  for (var i = 0; i < nodes.length; i++) {
+    var node = nodes[i];
+    if (!isVisible(node)) continue;
+    var text = normalize(node.textContent || node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || '');
+    if (!text) continue;
+    if (/download|downloading|saved/i.test(text)) {
+      return { ok: true, observable: true, text: text.slice(0, 200) };
+    }
+  }
+  return { ok: true, observable: false, text: null };
+}
+
+async function _submitGenerateArrow(scripting, tabId, opts) {
+  const stampAttr = opts?.submitStampAttr || 'data-bosmax-submit-target';
+  const stamp = await _runMainWorld(scripting, tabId, MAIN_stampGenerateButton, [stampAttr]);
+  if (!stamp || stamp.ok !== true) {
+    return { ok: false, error: ERR.GFV2_SUBMIT_ARROW_NOT_FOUND, detail: 'generate_button_not_visible' };
+  }
+  if (stamp.disabled === true) {
+    return { ok: false, error: ERR.GENERATE_PRECONDITION_FAILED, detail: 'generate_button_disabled', button_text: stamp.text || null, stamp };
+  }
+  const fiber = await _runMainWorld(scripting, tabId, MAIN_invokeReactFiberSubmit, [stamp.stamp_attr, stamp.stamp_id]);
+  if (fiber && fiber.ok === true) {
+    return { ok: true, strategy: fiber.strategy, fiber_visited: fiber.visited, button_text: stamp.text, stamp };
+  }
+  if (opts?.allowFallbackClick === true) {
+    const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [stamp.stamp_attr, stamp.stamp_id]);
+    if (click && click.ok === true) {
+      return { ok: true, strategy: 'fallback_synthetic_click', fiber_visited: fiber?.visited || 0, button_text: stamp.text, stamp };
+    }
+  }
+  return {
+    ok: false,
+    error: ERR.MAIN_WORLD_SUBMIT_HANDLER_NOT_FOUND,
+    detail: fiber?.reason || 'react_handler_not_found',
+    fiber_visited: fiber?.visited || 0,
+    button_text: stamp.text || null,
+    stamp,
+  };
+}
+
+async function _waitForPostSubmitOutput(scripting, tabId, opts) {
+  const timeoutMs = Math.max(1000, Number(opts?.outputWaitTimeoutMs ?? 30000));
+  const pollMs = Math.max(100, Number(opts?.outputWaitPollMs ?? 400));
+  const deadline = Date.now() + timeoutMs;
+  let lastState = null;
+  do {
+    lastState = await _runMainWorld(scripting, tabId, MAIN_getPostSubmitOutputState, []);
+    if (lastState && lastState.ok === true && lastState.output_ready === true) {
+      return { ok: true, state: lastState };
+    }
+    if (Date.now() >= deadline) break;
+    await _sleep(pollMs);
+  } while (true);
+  return { ok: false, error: ERR.GFV2_OUTPUT_NOT_READY, detail: lastState || 'output_not_ready' };
+}
+
+async function _openProjectMenu(scripting, tabId, opts) {
+  const stampAttr = opts?.projectMenuStampAttr || 'data-bosmax-project-menu';
+  const menu = await _runMainWorld(scripting, tabId, MAIN_stampProjectMenuButton, [stampAttr]);
+  if (!menu || menu.ok !== true) {
+    return { ok: false, error: ERR.GFV2_PROJECT_MENU_NOT_FOUND, detail: menu?.reason || 'project_menu_not_found' };
+  }
+  const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [menu.stamp_attr, menu.stamp_id]);
+  if (!click || click.ok !== true) {
+    return { ok: false, error: ERR.GFV2_PROJECT_MENU_NOT_FOUND, detail: click?.reason || 'project_menu_click_failed', menu };
+  }
+  await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+  return { ok: true, menu };
+}
+
+async function _clickDownloadProjectAction(scripting, tabId, opts) {
+  const result = await _clickVisibleActionExact(scripting, tabId, {
+    label: 'Download Project',
+    aliases: [],
+    preferredRoles: ['button', 'menuitem'],
+    errorCode: ERR.GFV2_DOWNLOAD_PROJECT_NOT_FOUND,
+  }, opts);
+  if (!result.ok) return result;
+  const observed = await _runMainWorld(scripting, tabId, MAIN_getDownloadObservableState, []);
+  return {
+    ok: true,
+    label: result.label,
+    role: result.role,
+    bbox: result.bbox,
+    observable: Boolean(observed && observed.observable),
+    observable_text: observed && observed.observable ? observed.text : null,
+  };
+}
+
+async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts = {}) {
+  const scripting = deps && deps.scripting;
+  if (!scripting || typeof scripting.executeScript !== 'function') {
+    return { ok: false, error: ERR.EXECUTION_THREW, detail: 'scripting_adapter_missing', stages: [] };
+  }
+  const telemetry = deps && deps.telemetry;
+  const stages = [];
+  const recordStage = (stage, status, message) => {
+    stages.push({ stage, status, message });
+    _emitStage(telemetry, stage, status, message);
+  };
+  const stageResults = {
+    prompt_ready: false,
+    submit_arrow_found: false,
+    submit_clicked: false,
+    output_ready: false,
+    output_proof: null,
+    project_menu_opened: false,
+    project_menu_proof: null,
+    download_clicked: false,
+    download_proof: null,
+  };
+
+  try {
+    const promptProof = opts?.promptProof || null;
+    if (!promptProof || promptProof.passed !== true) {
+      recordStage('GFV2_PROMPT_READY_FOR_SUBMIT', 'FAIL', 'prompt_proof_missing');
+      return { ok: false, error: ERR.GENERATE_PRECONDITION_FAILED, detail: 'prompt_proof_missing', stages, stage_results: stageResults };
+    }
+    stageResults.prompt_ready = true;
+    recordStage(
+      'GFV2_PROMPT_READY_FOR_SUBMIT',
+      'PASS',
+      `inserted_length=${Number(promptProof.inserted_length || 0)} field_value_length=${Number(promptProof.field_value_length || 0)}`,
+    );
+
+    const preGenerateSettleMs = Math.max(0, Number(opts?.preGenerateSettleMs ?? 1200));
+    if (preGenerateSettleMs > 0) {
+      await _sleep(preGenerateSettleMs);
+    }
+    await _runMainWorld(scripting, tabId, MAIN_dismissPromoOverlays, []);
+
+    const submit = await _submitGenerateArrow(scripting, tabId, { ...opts, allowFallbackClick: true });
+    if (!submit.ok) {
+      if (submit.error === ERR.GFV2_SUBMIT_ARROW_NOT_FOUND) {
+        recordStage('GFV2_SUBMIT_ARROW_NOT_FOUND', 'FAIL', submit.detail);
+      }
+      return { ok: false, error: submit.error, detail: submit.detail, stages, stage_results: stageResults };
+    }
+    stageResults.submit_arrow_found = true;
+    stageResults.submit_clicked = true;
+    recordStage('GFV2_SUBMIT_ARROW_FOUND', 'PASS', `button=${JSON.stringify(submit.button_text || null)}`);
+    recordStage('GFV2_SUBMIT_ARROW_CLICKED', 'PASS', `strategy=${submit.strategy} fiber_visited=${submit.fiber_visited || 0}`);
+    recordStage('GFV2_GENERATE_SUBMITTED', 'PASS', `strategy=${submit.strategy}`);
+
+    recordStage(
+      'GFV2_OUTPUT_WAIT_STARTED',
+      'PASS',
+      `timeout_ms=${Math.max(1000, Number(opts?.outputWaitTimeoutMs ?? 30000))} poll_ms=${Math.max(100, Number(opts?.outputWaitPollMs ?? 400))}`,
+    );
+    const output = await _waitForPostSubmitOutput(scripting, tabId, opts);
+    if (!output.ok) {
+      recordStage('GFV2_OUTPUT_NOT_READY', 'FAIL', JSON.stringify(output.detail || null));
+      return { ok: false, error: output.error, detail: output.detail, stages, stage_results: stageResults };
+    }
+    stageResults.output_ready = true;
+    stageResults.output_proof = output.state;
+    recordStage(
+      'GFV2_OUTPUT_READY',
+      'PASS',
+      `menu_found=${Boolean(output.state && output.state.menu_found)} filename=${output.state && output.state.filename ? output.state.filename : ''}`.trim(),
+    );
+
+    const menu = await _openProjectMenu(scripting, tabId, opts);
+    if (!menu.ok) {
+      recordStage('GFV2_PROJECT_MENU_NOT_FOUND', 'FAIL', menu.detail);
+      return { ok: false, error: menu.error, detail: menu.detail, stages, stage_results: stageResults };
+    }
+    stageResults.project_menu_opened = true;
+    stageResults.project_menu_proof = {
+      button_text: menu.menu && menu.menu.text ? menu.menu.text : null,
+    };
+    recordStage('GFV2_PROJECT_MENU_FOUND', 'PASS', `button=${JSON.stringify(menu.menu?.text || null)}`);
+    recordStage('GFV2_PROJECT_MENU_OPENED', 'PASS', `button=${JSON.stringify(menu.menu?.text || null)}`);
+
+    const download = await _clickDownloadProjectAction(scripting, tabId, opts);
+    if (!download.ok) {
+      recordStage('GFV2_DOWNLOAD_PROJECT_NOT_FOUND', 'FAIL', download.detail);
+      return { ok: false, error: download.error, detail: download.detail, stages, stage_results: stageResults };
+    }
+    const timestamp = new Date().toISOString();
+    stageResults.download_clicked = true;
+    stageResults.download_proof = {
+      clicked: true,
+      timestamp,
+      filename: output.state && output.state.filename ? output.state.filename : null,
+      browser_ui_evidence: download.observable_text || null,
+      observable: Boolean(download.observable),
+    };
+    recordStage('GFV2_DOWNLOAD_PROJECT_CLICKED', 'PASS', `role=${download.role || 'button'}`);
+    recordStage(
+      'GFV2_DOWNLOAD_STARTED',
+      'PASS',
+      `timestamp=${timestamp} filename=${stageResults.download_proof.filename || ''} observable=${Boolean(download.observable)}`,
+    );
+    recordStage(
+      'GFV2_OUTPUT_RETURNED_TO_SYSTEM',
+      'PASS',
+      JSON.stringify({
+        timestamp,
+        filename: stageResults.download_proof.filename || null,
+        browser_ui_evidence: stageResults.download_proof.browser_ui_evidence || null,
+      }),
+    );
+
+    return {
+      ok: true,
+      stages,
+      stage_results: stageResults,
+      summary: {
+        download_clicked: true,
+        timestamp,
+        filename: stageResults.download_proof.filename || null,
+        browser_ui_evidence: stageResults.download_proof.browser_ui_evidence || null,
+      },
+    };
+  } catch (err) {
+    recordStage('GFV2_OUTPUT_RETURNED_TO_SYSTEM', 'FAIL', `ERR_F2V_POST_SUBMIT_THREW: ${String(err?.message || err || '')}`);
+    return {
+      ok: false,
+      error: ERR.EXECUTION_THREW,
+      detail: String(err?.message || err || ''),
+      stages,
+      stage_results: stageResults,
+    };
+  }
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // Public orchestrator
 // ───────────────────────────────────────────────────────────────────────
@@ -6181,6 +6618,7 @@ function createChromeScriptingAdapter(chromeApi) {
 const _api = {
   // Public orchestrator
   executeF2VVisibleSopRunner,
+  executeGfv2PostSubmitDownloadContinuation,
   // Adapter factory
   createChromeScriptingAdapter,
   // MAIN-world helpers (exported for unit tests)
@@ -6192,6 +6630,9 @@ const _api = {
   MAIN_insertComposerPrompt,
   MAIN_invokeReactFiberSubmit,
   MAIN_stampGenerateButton,
+  MAIN_getPostSubmitOutputState,
+  MAIN_stampProjectMenuButton,
+  MAIN_getDownloadObservableState,
   MAIN_stampAssetPickerLauncher,
   MAIN_findComposerAddMediaLauncher,
   MAIN_getUploadPickerStateForB2A,
@@ -6216,6 +6657,10 @@ const _api = {
   _clickUploadMedia,
   _clickAddToPrompt,
   _invokeGenerate,
+  _submitGenerateArrow,
+  _waitForPostSubmitOutput,
+  _openProjectMenu,
+  _clickDownloadProjectAction,
   _runB2AUploadPickerOpenOnly,
   // Constants
   F2V_FLOW_QUEUE_RUNNER_BUILD_ID,

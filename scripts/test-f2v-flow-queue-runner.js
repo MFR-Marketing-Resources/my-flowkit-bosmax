@@ -937,6 +937,189 @@ async function testRunnerConfirmsGluedPillModelUnknownWithoutOpeningPanel() {
 	);
 }
 
+async function testPostSubmitDownloadContinuationCompletesAfterOutputReady() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	document.getElementById("prompt").value = "hero product shot";
+
+	const events = [];
+	let submitCaptured = false;
+	let menuCaptured = false;
+	let downloadCaptured = false;
+	const generateBtn = document.getElementById("generate-btn");
+	generateBtn.addEventListener("click", () => {
+		if (!submitCaptured) {
+			events.push("submit-clicked");
+			submitCaptured = true;
+		}
+		setTimeout(() => {
+			if (document.getElementById("output-card")) return;
+			const outputCard = document.createElement("div");
+			outputCard.id = "output-card";
+			outputCard.innerHTML = `
+				<div id="output-name">generated-project.mp4</div>
+				<button id="project-menu" type="button" aria-haspopup="menu">
+					<span class="material-symbols-outlined">more_vert</span>
+				</button>
+			`;
+			document.body.appendChild(outputCard);
+			setVisibleRect(outputCard, 930, 220, 220, 160);
+			setVisibleRect(document.getElementById("output-name"), 950, 250, 160, 24);
+			const projectMenu = document.getElementById("project-menu");
+			setVisibleRect(projectMenu, 1110, 230, 28, 28);
+			projectMenu.addEventListener("click", () => {
+				if (!menuCaptured) {
+					events.push("menu-clicked");
+					menuCaptured = true;
+				}
+				if (document.getElementById("project-menu-popup")) return;
+				const menu = document.createElement("div");
+				menu.id = "project-menu-popup";
+				menu.setAttribute("role", "menu");
+				menu.innerHTML = `<button id="download-project" type="button">Download Project</button>`;
+				document.body.appendChild(menu);
+				setVisibleRect(menu, 1040, 260, 160, 60);
+				const downloadProject = document.getElementById("download-project");
+				setVisibleRect(downloadProject, 1050, 275, 140, 28);
+				downloadProject.addEventListener("click", () => {
+					if (!downloadCaptured) {
+						events.push("download-clicked");
+						downloadCaptured = true;
+					}
+					if (document.getElementById("download-status")) return;
+					const status = document.createElement("div");
+					status.id = "download-status";
+					status.setAttribute("role", "status");
+					status.textContent = "Downloading generated-project.mp4";
+					document.body.appendChild(status);
+					setVisibleRect(status, 980, 420, 220, 24);
+				});
+			});
+		}, 0);
+	});
+
+	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
+		{ scripting: createScriptingAdapter(), telemetry: () => {} },
+		9101,
+		{ mode: "F2V" },
+		{
+			settleMs: 0,
+			preGenerateSettleMs: 0,
+			outputWaitTimeoutMs: 1000,
+			outputWaitPollMs: 10,
+			promptProof: { passed: true, inserted_length: 17, field_value_length: 17 },
+		},
+	);
+	assert.equal(result.ok, true, "post-submit continuation should succeed");
+	assert.deepEqual(events, ["submit-clicked", "menu-clicked", "download-clicked"]);
+	const names = result.stages.map((stage) => stage.stage);
+	assert.ok(names.indexOf("GFV2_PROMPT_READY_FOR_SUBMIT") < names.indexOf("GFV2_SUBMIT_ARROW_FOUND"));
+	assert.ok(names.indexOf("GFV2_SUBMIT_ARROW_CLICKED") < names.indexOf("GFV2_OUTPUT_READY"));
+	assert.ok(names.indexOf("GFV2_OUTPUT_READY") < names.indexOf("GFV2_PROJECT_MENU_OPENED"));
+	assert.ok(names.indexOf("GFV2_PROJECT_MENU_OPENED") < names.indexOf("GFV2_DOWNLOAD_PROJECT_CLICKED"));
+	assert.equal(result.summary.filename, "generated-project.mp4");
+	assert.ok(typeof result.summary.timestamp === "string" && result.summary.timestamp.length > 0);
+	if (result.summary.browser_ui_evidence) {
+		assert.ok(/download/i.test(String(result.summary.browser_ui_evidence)));
+	}
+}
+
+async function testPostSubmitDownloadContinuationFailsWhenArrowMissing() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	document.getElementById("generate-btn").remove();
+
+	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
+		{ scripting: createScriptingAdapter(), telemetry: () => {} },
+		9102,
+		{ mode: "F2V" },
+		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 200, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
+	);
+	assert.equal(result.ok, false);
+	assert.equal(result.error, "GFV2_SUBMIT_ARROW_NOT_FOUND");
+	assert.ok(result.stages.some((stage) => stage.stage === "GFV2_SUBMIT_ARROW_NOT_FOUND" && stage.status === "FAIL"));
+}
+
+async function testPostSubmitDownloadContinuationFailsWhenOutputNeverAppears() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	const generateBtn = document.getElementById("generate-btn");
+	generateBtn.addEventListener("click", () => {});
+
+	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
+		{ scripting: createScriptingAdapter(), telemetry: () => {} },
+		9103,
+		{ mode: "F2V" },
+		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 150, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
+	);
+	assert.equal(result.ok, false);
+	assert.equal(result.error, "GFV2_OUTPUT_NOT_READY");
+	assert.ok(result.stages.some((stage) => stage.stage === "GFV2_OUTPUT_NOT_READY" && stage.status === "FAIL"));
+}
+
+async function testPostSubmitDownloadContinuationFailsWhenProjectMenuMissing() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	const generateBtn = document.getElementById("generate-btn");
+	generateBtn.addEventListener("click", () => {
+		const outputCard = document.createElement("div");
+		outputCard.id = "output-card";
+		outputCard.textContent = "generated-project.mp4";
+		document.body.appendChild(outputCard);
+		setVisibleRect(outputCard, 930, 220, 220, 120);
+	});
+
+	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
+		{ scripting: createScriptingAdapter(), telemetry: () => {} },
+		9104,
+		{ mode: "F2V" },
+		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 500, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
+	);
+	assert.equal(result.ok, false);
+	assert.equal(result.error, "GFV2_PROJECT_MENU_NOT_FOUND");
+	assert.ok(result.stages.some((stage) => stage.stage === "GFV2_PROJECT_MENU_NOT_FOUND" && stage.status === "FAIL"));
+}
+
+async function testPostSubmitDownloadContinuationFailsWhenDownloadProjectMissing() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	const generateBtn = document.getElementById("generate-btn");
+	generateBtn.addEventListener("click", () => {
+		const outputCard = document.createElement("div");
+		outputCard.id = "output-card";
+		outputCard.innerHTML = `
+			<div id="output-name">generated-project.mp4</div>
+			<button id="project-menu" type="button" aria-haspopup="menu">
+				<span class="material-symbols-outlined">more_vert</span>
+			</button>
+		`;
+		document.body.appendChild(outputCard);
+		setVisibleRect(outputCard, 930, 220, 220, 160);
+		setVisibleRect(document.getElementById("output-name"), 950, 250, 160, 24);
+		const projectMenu = document.getElementById("project-menu");
+		setVisibleRect(projectMenu, 1110, 230, 28, 28);
+		projectMenu.addEventListener("click", () => {
+			const menu = document.createElement("div");
+			menu.id = "project-menu-popup";
+			menu.setAttribute("role", "menu");
+			menu.innerHTML = `<button id="rename-project" type="button">Rename Project</button>`;
+			document.body.appendChild(menu);
+			setVisibleRect(menu, 1040, 260, 160, 60);
+			setVisibleRect(document.getElementById("rename-project"), 1050, 275, 140, 28);
+		});
+	});
+
+	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
+		{ scripting: createScriptingAdapter(), telemetry: () => {} },
+		9105,
+		{ mode: "F2V" },
+		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 500, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
+	);
+	assert.equal(result.ok, false);
+	assert.equal(result.error, "GFV2_DOWNLOAD_PROJECT_NOT_FOUND");
+	assert.ok(result.stages.some((stage) => stage.stage === "GFV2_DOWNLOAD_PROJECT_NOT_FOUND" && stage.status === "FAIL"));
+}
+
 async function main() {
 	await testBottomComposerConfigPillOpensPanel();
 	await testSplitSpansResolveToInteractiveAncestor();
@@ -962,6 +1145,11 @@ async function main() {
 	await testRunnerConfirmsSplitChipConfigWithoutOpeningPanel();
 	await testBottomComposerStateGluedLivePillDetectsCount();
 	await testRunnerConfirmsGluedPillModelUnknownWithoutOpeningPanel();
+	await testPostSubmitDownloadContinuationCompletesAfterOutputReady();
+	await testPostSubmitDownloadContinuationFailsWhenArrowMissing();
+	await testPostSubmitDownloadContinuationFailsWhenOutputNeverAppears();
+	await testPostSubmitDownloadContinuationFailsWhenProjectMenuMissing();
+	await testPostSubmitDownloadContinuationFailsWhenDownloadProjectMissing();
 	console.log("PASS test-f2v-flow-queue-runner");
 }
 
