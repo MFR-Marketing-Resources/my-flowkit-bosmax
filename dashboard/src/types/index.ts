@@ -567,6 +567,15 @@ export interface WorkspacePromptPreviewResult {
 	warnings: string[];
 	blockers: string[];
 	source_of_truth_notes: string[];
+	// WPS chaining enforcement metadata (present when engine_duration_target is
+	// supplied; optional so legacy responses remain valid).
+	wps_chaining_enforced?: boolean;
+	engine_duration_target?: string | null;
+	requested_total_duration_seconds?: number | null;
+	resolved_block_chain?: number[];
+	resolved_block_chain_source?: string;
+	actual_dialogue_word_count_per_block?: number[];
+	wps_status_per_block?: string[];
 }
 
 export interface PromptCompilerRuntimeConfig {
