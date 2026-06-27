@@ -193,6 +193,8 @@ async def create_workspace_execution_package(
     scene_context_reference_asset_id: str | None = None,
     style_reference_asset_id: str | None = None,
     blocks: list[dict[str, Any]] | None = None,
+    engine_duration_target: str | None = None,
+    requested_total_duration_seconds: int | None = None,
 ) -> dict[str, Any]:
     package = await get_approved_product_package(product_id, mode)
     normalized_mode = normalize_mode(mode)
@@ -210,6 +212,8 @@ async def create_workspace_execution_package(
         dialogue_enabled=dialogue_enabled,
         blocks=blocks or [],
         approved_package=package,
+        engine_duration_target=engine_duration_target,
+        requested_total_duration_seconds=requested_total_duration_seconds,
     )
     prompt_fingerprint = compiler_result["prompt_fingerprint"]
     total_duration_seconds = int(compiler_result["total_duration_seconds"])
@@ -399,8 +403,31 @@ async def compile_workspace_prompt_preview(
     dialogue_enabled: bool = True,
     blocks: list[dict[str, Any]] | None = None,
     approved_package: dict[str, Any] | None = None,
+    engine_duration_target: str | None = None,
+    requested_total_duration_seconds: int | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
+    # ── WPS chaining wiring (deterministic, fail-safe — no silent ignore) ──
+    # Only resolves a total when the operator explicitly opted into engine-vendor
+    # chaining by supplying engine_duration_target. Unsupported engine/duration
+    # combinations are rejected downstream by the compiler (ValueError).
+    wps_chaining_warnings: list[str] = []
+    resolved_total_duration_seconds = requested_total_duration_seconds
+    if engine_duration_target is not None:
+        if normalized_mode == "IMG":
+            raise ValueError("WPS_CHAINING_NOT_SUPPORTED_FOR_IMG")
+        if resolved_total_duration_seconds is None:
+            block_list = blocks or []
+            if block_list:
+                # Deterministic, safe derivation from explicit block durations.
+                resolved_total_duration_seconds = sum(
+                    int(block.get("duration_seconds") or 0) for block in block_list
+                )
+                wps_chaining_warnings.append("WPS_TOTAL_DERIVED_FROM_BLOCKS")
+            else:
+                # Cannot derive a total — fail safe rather than silently dropping
+                # WPS enforcement.
+                raise ValueError("WPS_CHAINING_REQUIRES_TOTAL_DURATION")
     product = await crud.get_product(product_id)
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
@@ -432,6 +459,8 @@ async def compile_workspace_prompt_preview(
             duration_seconds=duration_seconds,
             blocks=blocks or [],
             engine_target=normalized_mode,
+            engine_duration_target=engine_duration_target,
+            requested_total_duration_seconds=resolved_total_duration_seconds,
             overlay_enabled=overlay_enabled,
             dialogue_enabled=dialogue_enabled,
             claim_safe_rewrite=package.get("claim_safe_rewrite"),
@@ -447,6 +476,11 @@ async def compile_workspace_prompt_preview(
     compiler_result["runtime_config_snapshot"] = get_runtime_config()
     compiler_result["product_id"] = product_id
     compiler_result["mode"] = normalized_mode
+    # Surface whether the WPS Blocking Template was actually enforced on this
+    # compile, and propagate any deterministic derivation warning.
+    compiler_result["wps_chaining_enforced"] = engine_duration_target is not None
+    if wps_chaining_warnings:
+        compiler_result.setdefault("warnings", []).extend(wps_chaining_warnings)
     return compiler_result
 
 
