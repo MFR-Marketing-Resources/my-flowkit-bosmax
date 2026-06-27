@@ -19,6 +19,13 @@ from agent.services.prompt_compiler_runtime_config_service import (
     normalize_target_language,
     validate_duration_seconds,
 )
+from agent.services.wps_chaining_policy_service import (
+    LEGACY_UI_MAX_BLOCKS,
+    WPS_STATUS_OVER_BUDGET,
+    evaluate_block_wps,
+    normalize_engine_duration_target,
+    resolve_block_chain,
+)
 
 
 COMPILER_VERSION = "ugc_video_prompt_compiler_v1"
@@ -333,6 +340,29 @@ def _trim_to_word_budget(text: str, max_words: int) -> str:
     return trimmed
 
 
+def _enforce_segment_budget(segments: list[str], word_budget: int) -> list[str]:
+    """Hard-cap spoken segments so their combined word count never exceeds budget.
+
+    Distributes ``word_budget`` across the non-empty (spoken) segments only, so
+    visual-beat slots never consume budget. Each spoken segment is trimmed to its
+    allotment; segments whose allotment rounds to zero are dropped. Because the
+    per-segment caps sum to exactly ``word_budget``, the total spoken word count
+    is guaranteed ``<= word_budget`` — including the BM_MS fallback path.
+    """
+    if word_budget <= 0:
+        return segments
+    spoken_positions = [i for i, seg in enumerate(segments) if seg]
+    spoken_count = len(spoken_positions)
+    if spoken_count == 0:
+        return segments
+    base, remainder = divmod(word_budget, spoken_count)
+    out = list(segments)
+    for rank, position in enumerate(spoken_positions):
+        cap = base + (1 if rank < remainder else 0)
+        out[position] = _trim_to_word_budget(out[position], cap) if cap > 0 else ""
+    return out
+
+
 def _clean_name_for_dialog(product_name: str) -> str:
     """Strip bracket/parenthesis-enclosed store/listing tags from product name.
 
@@ -540,6 +570,8 @@ def _build_engine_prompt_text(
         safe_hook, claim_safe_rewrite, safe_cta,
         len(shots), dialogue_enabled=dialogue_enabled, word_budget=word_budget,
     )
+    # Final WPS guard: guarantee total spoken words <= per-block budget.
+    dialog_segments = _enforce_segment_budget(dialog_segments, word_budget)
 
     if not dialogue_enabled:
         parts.append("AUDIO: Silent — no spoken dialogue. Visual storytelling only.")
@@ -572,9 +604,14 @@ def _build_engine_prompt_text(
                     fallback_segments.append(fallback_cta)
                 else:
                     fallback_segments.append(fallback_mid)
+            # Fallback copy must respect the same per-block WPS budget.
+            fallback_segments = _enforce_segment_budget(fallback_segments, word_budget)
             script_lines = [f"DIALOG SCRIPT ({target_language}):"]
             for i, line in enumerate(fallback_segments, start=1):
-                script_lines.append(f'  Shot {i}: "{line}"')
+                if line:
+                    script_lines.append(f'  Shot {i}: "{line}"')
+                else:
+                    script_lines.append(f"  Shot {i}: (visual beat — no spoken line)")
             parts.append("\n".join(script_lines))
             dialog_segments = fallback_segments  # use for shot breakdown below
 
@@ -756,6 +793,24 @@ def _normalize_blocks(
     return normalized[:2]
 
 
+def _blocks_from_chain(block_chain: list[int]) -> list[dict[str, Any]]:
+    """Build N normalized blocks from a resolved engine duration chain.
+
+    The first block is the ANCHOR; every subsequent block is a CONTINUATION.
+    Each block duration is validated individually (chains only use 6/8/10s,
+    all members of ALLOWED_BLOCK_DURATIONS_SECONDS). This deliberately bypasses
+    the legacy 2-block cap so WPS chaining can produce 3+ blocks.
+    """
+    return [
+        {
+            "block_index": index,
+            "block_role": "ANCHOR" if index == 1 else "CONTINUATION",
+            "duration_seconds": validate_duration_seconds(duration),
+        }
+        for index, duration in enumerate(block_chain, start=1)
+    ]
+
+
 def compile_ugc_video_prompt(
     *,
     product: dict[str, Any],
@@ -769,6 +824,8 @@ def compile_ugc_video_prompt(
     duration_seconds: int = 8,
     blocks: list[dict[str, Any]] | None = None,
     engine_target: str | None = None,
+    engine_duration_target: str | None = None,
+    requested_total_duration_seconds: int | None = None,
     overlay_enabled: bool = True,
     dialogue_enabled: bool = True,
     claim_safe_rewrite: str | None = None,
@@ -798,11 +855,29 @@ def compile_ugc_video_prompt(
         list(safe_cta_angles or []),
         "Close with a calm, claim-safe CTA that stays product-first and commercially credible.",
     )
-    normalized_blocks = _normalize_blocks(
-        generation_mode=resolved_generation_mode,
-        duration_seconds=duration_seconds,
-        blocks=blocks,
-    )
+    # ── Engine duration → block-chain resolution (WPS Blocking Template) ──
+    # Active only when BOTH the engine vendor and a requested total are given.
+    # When absent, the legacy SINGLE/EXTEND block path is byte-for-byte unchanged.
+    resolved_engine_duration_target: str | None = None
+    resolved_block_chain: list[int] | None = None
+    if engine_duration_target is not None and requested_total_duration_seconds is not None:
+        resolved_engine_duration_target = normalize_engine_duration_target(
+            engine_duration_target,
+        )
+        # Raises ValueError on an invalid engine/total combination (rejected, not silent).
+        resolved_block_chain = resolve_block_chain(
+            resolved_engine_duration_target,
+            requested_total_duration_seconds,
+        )
+
+    if resolved_block_chain is not None:
+        normalized_blocks = _blocks_from_chain(resolved_block_chain)
+    else:
+        normalized_blocks = _normalize_blocks(
+            generation_mode=resolved_generation_mode,
+            duration_seconds=duration_seconds,
+            blocks=blocks,
+        )
     compiled_blocks: list[dict[str, Any]] = []
     continuation_lineage: list[dict[str, Any]] = []
     for block in normalized_blocks:
@@ -844,8 +919,41 @@ def compile_ugc_video_prompt(
         block["engine_prompt_text"] for block in compiled_blocks
     )
     warnings: list[str] = []
+    blockers: list[str] = []
     if resolved_character_presence == "FACELESS":
         warnings.append("FACELESS_MODE_REQUIRES_EXPLICIT_OPERATOR_CHOICE")
+
+    # ── WPS enforcement: count actual spoken words and grade each block ──
+    for block in compiled_blocks:
+        wps = evaluate_block_wps(
+            engine_prompt_text=block["engine_prompt_text"],
+            dialogue_word_budget=block["dialogue_word_budget"],
+        )
+        block["actual_dialogue_word_count"] = wps["actual_dialogue_word_count"]
+        block["wps_status"] = wps["wps_status"]
+        if wps["wps_status"] == WPS_STATUS_OVER_BUDGET:
+            blockers.append(
+                "WPS_OVER_BUDGET:block_{index}:{actual}>{budget}".format(
+                    index=block["block_index"],
+                    actual=wps["actual_dialogue_word_count"],
+                    budget=block["dialogue_word_budget"],
+                )
+            )
+
+    # Resolved chain reflects what was actually compiled, regardless of path.
+    compiled_block_chain = [block["duration_seconds"] for block in compiled_blocks]
+    if resolved_block_chain is not None:
+        resolved_block_chain_source = "ENGINE_DURATION_POLICY"
+        # Backend enforces N blocks even though the current 2-block UI cannot
+        # represent them — surface a clear blocker for that unsupported UI path.
+        if len(resolved_block_chain) > LEGACY_UI_MAX_BLOCKS:
+            blockers.append(
+                "CHAIN_REQUIRES_MULTI_BLOCK_UI:{n}_BLOCKS".format(
+                    n=len(resolved_block_chain),
+                )
+            )
+    else:
+        resolved_block_chain_source = "LEGACY_BLOCKS"
 
     return {
         "final_compiled_prompt_text": final_compiled_prompt_text,
@@ -868,9 +976,23 @@ def compile_ugc_video_prompt(
         "dialogue_word_budget_per_block": [
             block["dialogue_word_budget"] for block in compiled_blocks
         ],
+        "actual_dialogue_word_count_per_block": [
+            block["actual_dialogue_word_count"] for block in compiled_blocks
+        ],
+        "wps_status_per_block": [
+            block["wps_status"] for block in compiled_blocks
+        ],
+        "engine_duration_target": resolved_engine_duration_target,
+        "requested_total_duration_seconds": (
+            int(requested_total_duration_seconds)
+            if requested_total_duration_seconds is not None
+            else None
+        ),
+        "resolved_block_chain": compiled_block_chain,
+        "resolved_block_chain_source": resolved_block_chain_source,
         "prompt_fingerprint": _fingerprint(final_compiled_prompt_text),
         "warnings": warnings,
-        "blockers": [],
+        "blockers": blockers,
         "source_of_truth_notes": [
             "Compiler v1 uses internal product intelligence + claim-safe package + central compiler config.",
             "Sovereign/Satellite pack ingestion is future work.",
