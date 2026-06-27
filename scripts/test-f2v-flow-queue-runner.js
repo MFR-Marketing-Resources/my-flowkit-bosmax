@@ -1120,6 +1120,223 @@ async function testPostSubmitDownloadContinuationFailsWhenDownloadProjectMissing
 	assert.ok(result.stages.some((stage) => stage.stage === "GFV2_DOWNLOAD_PROJECT_NOT_FOUND" && stage.status === "FAIL"));
 }
 
+// ───────────────────────────────────────────────────────────────────────
+// Post-submit DOWNLOAD regression suite — reproduces the LIVE failure on the
+// clean-surface retry (request gfv2_postsubmit_retry_clean_surface_20260628_01):
+//   1) GFV2_OUTPUT_READY fired ~1s after Generate because a menu existed
+//      (false-positive: output_ready keyed on menu presence, not a real render).
+//   2) GFV2_PROJECT_MENU_OPENED opened the model selector "Veo 3.1 - Lite ▾"
+//      instead of the right-side three-dot menu → GFV2_DOWNLOAD_PROJECT_NOT_FOUND.
+// The fix requires real render evidence for output-ready and targets the true
+// more-options menu while rejecting model/settings/composer controls.
+// ───────────────────────────────────────────────────────────────────────
+
+function appendModelDropdown(document, id, left, top) {
+	const wrap = document.createElement("div");
+	wrap.id = id + "-wrap";
+	document.body.appendChild(wrap);
+	setVisibleRect(wrap, left, top, 200, 40);
+	const dd = document.createElement("button");
+	dd.id = id;
+	dd.type = "button";
+	dd.setAttribute("aria-haspopup", "menu");
+	dd.innerHTML = '<span>Veo 3.1 - Lite</span><span class="material-symbols-outlined">arrow_drop_down</span>';
+	wrap.appendChild(dd);
+	setVisibleRect(dd, left, top + 4, 140, 30);
+	return dd;
+}
+
+// Proof 1: a not-yet-rendered state (only a model dropdown) must NOT be output-ready.
+async function testOutputReadyRejectsBareModelDropdown() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	appendModelDropdown(document, "model-dd", 600, 120);
+	const state = runner.MAIN_getPostSubmitOutputState();
+	assert.equal(state.ok, true);
+	assert.equal(
+		state.output_ready,
+		false,
+		"a bare model dropdown (no rendered video/filename) must NOT satisfy output-ready",
+	);
+}
+
+// Proof 1b: a real rendered output card (video + filename) IS output-ready.
+async function testOutputReadyTrueOnRenderedOutputCard() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	const card = document.createElement("div");
+	card.id = "out";
+	card.innerHTML = '<div>generated-project.mp4</div><video src="blob:fake"></video>';
+	document.body.appendChild(card);
+	setVisibleRect(card, 930, 220, 240, 180);
+	setVisibleRect(card.querySelector("video"), 940, 240, 200, 120);
+	const state = runner.MAIN_getPostSubmitOutputState();
+	assert.equal(state.output_ready, true, "a rendered output card must satisfy output-ready");
+	assert.equal(state.filename, "generated-project.mp4");
+}
+
+// Proof 2: model dropdown "Veo 3.1 - Lite ▾" is rejected as the project menu.
+async function testProjectMenuRejectsModelDropdownOnly() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	appendModelDropdown(document, "model-dd", 600, 120);
+	const stamp = runner.MAIN_stampProjectMenuButton("data-test-pm");
+	assert.equal(stamp.ok, false, "the model selector dropdown must be rejected as the project menu");
+	assert.equal(stamp.reason, "project_menu_not_found");
+}
+
+// Proof 3: composer/settings menus are rejected as the project menu.
+async function testProjectMenuRejectsSettingsControlOnly() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	const s = document.createElement("button");
+	s.type = "button";
+	s.setAttribute("aria-haspopup", "menu");
+	s.textContent = "settings_2 View Settings";
+	document.body.appendChild(s);
+	setVisibleRect(s, 600, 120, 160, 30);
+	const stamp = runner.MAIN_stampProjectMenuButton("data-test-pm");
+	assert.equal(stamp.ok, false, "a settings/view-settings control must be rejected as the project menu");
+}
+
+// Proof 4: the actual right-side three-dot menu is selected over the model dropdown.
+async function testProjectMenuSelectsMoreVertOverModelDropdown() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	appendModelDropdown(document, "model-dd", 600, 120);
+	const card = document.createElement("div");
+	card.id = "out";
+	document.body.appendChild(card);
+	setVisibleRect(card, 930, 220, 240, 160);
+	const menu = document.createElement("button");
+	menu.id = "real-menu";
+	menu.type = "button";
+	menu.setAttribute("aria-haspopup", "menu");
+	menu.innerHTML = '<span class="material-symbols-outlined">more_vert</span>';
+	card.appendChild(menu);
+	setVisibleRect(menu, 1110, 230, 28, 28);
+
+	const stamp = runner.MAIN_stampProjectMenuButton("data-test-pm");
+	assert.equal(stamp.ok, true, "the real three-dot menu must be selected");
+	assert.match(String(stamp.text || ""), /more_vert/, "selected menu must be the more_vert affordance");
+	assert.ok(document.getElementById("real-menu").hasAttribute("data-test-pm"), "more_vert button must be stamped");
+	assert.ok(!document.getElementById("model-dd").hasAttribute("data-test-pm"), "the model dropdown must NOT be stamped");
+}
+
+// Proof 5: Download Project is clicked only after the correct menu opens — the
+// model-dropdown decoy is never clicked.
+async function testPostSubmitDownloadIgnoresModelDropdownDecoy() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	document.getElementById("prompt").value = "hero product shot";
+
+	let modelDropdownClicks = 0;
+	const dd = appendModelDropdown(document, "model-dd", 600, 120);
+	dd.addEventListener("click", () => {
+		modelDropdownClicks += 1;
+	});
+
+	const events = [];
+	let downloadCaptured = false;
+	const generateBtn = document.getElementById("generate-btn");
+	generateBtn.addEventListener("click", () => {
+		setTimeout(() => {
+			if (document.getElementById("output-card")) return;
+			const outputCard = document.createElement("div");
+			outputCard.id = "output-card";
+			outputCard.innerHTML = `
+				<div id="output-name">generated-project.mp4</div>
+				<video src="blob:fake"></video>
+				<button id="project-menu" type="button" aria-haspopup="menu"><span class="material-symbols-outlined">more_vert</span></button>
+			`;
+			document.body.appendChild(outputCard);
+			setVisibleRect(outputCard, 930, 220, 220, 180);
+			setVisibleRect(document.getElementById("output-name"), 950, 250, 160, 24);
+			setVisibleRect(outputCard.querySelector("video"), 940, 270, 200, 90);
+			const projectMenu = document.getElementById("project-menu");
+			setVisibleRect(projectMenu, 1110, 230, 28, 28);
+			projectMenu.addEventListener("click", () => {
+				if (document.getElementById("project-menu-popup")) return;
+				const menu = document.createElement("div");
+				menu.id = "project-menu-popup";
+				menu.setAttribute("role", "menu");
+				menu.innerHTML = `<button id="download-project" type="button">Download Project</button>`;
+				document.body.appendChild(menu);
+				setVisibleRect(menu, 1040, 260, 160, 60);
+				const dl = document.getElementById("download-project");
+				setVisibleRect(dl, 1050, 275, 140, 28);
+				dl.addEventListener("click", () => {
+					if (!downloadCaptured) {
+						events.push("download-clicked");
+						downloadCaptured = true;
+					}
+				});
+			});
+		}, 0);
+	});
+
+	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
+		{ scripting: createScriptingAdapter(), telemetry: () => {} },
+		9201,
+		{ mode: "F2V" },
+		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 1000, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
+	);
+	assert.equal(result.ok, true, "continuation must succeed past the model-dropdown decoy: " + JSON.stringify(result.error || result.detail || ""));
+	assert.deepEqual(events, ["download-clicked"]);
+	assert.equal(modelDropdownClicks, 0, "the model selector dropdown must NEVER be opened as the project menu");
+	const names = result.stages.map((s) => s.stage);
+	assert.ok(names.includes("GFV2_DOWNLOAD_PROJECT_CLICKED"), "download must be clicked from the correct menu");
+}
+
+// Proof 6: missing the correct output menu (only a model dropdown) fails closed.
+async function testPostSubmitDownloadFailsClosedWhenOnlyModelDropdownMenu() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	document.getElementById("prompt").value = "hero product shot";
+	appendModelDropdown(document, "model-dd", 600, 120);
+	const generateBtn = document.getElementById("generate-btn");
+	generateBtn.addEventListener("click", () => {
+		const outputCard = document.createElement("div");
+		outputCard.id = "output-card";
+		outputCard.innerHTML = '<div id="output-name">generated-project.mp4</div><video src="blob:fake"></video>';
+		document.body.appendChild(outputCard);
+		setVisibleRect(outputCard, 930, 220, 220, 160);
+		setVisibleRect(document.getElementById("output-name"), 950, 250, 160, 24);
+		setVisibleRect(outputCard.querySelector("video"), 940, 270, 200, 90);
+	});
+
+	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
+		{ scripting: createScriptingAdapter(), telemetry: () => {} },
+		9202,
+		{ mode: "F2V" },
+		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 500, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
+	);
+	assert.equal(result.ok, false);
+	assert.equal(
+		result.error,
+		"GFV2_PROJECT_MENU_NOT_FOUND",
+		"must fail closed when only the model dropdown exists — never open it as the project menu",
+	);
+}
+
+// Proof 8: the STOP lane is unaffected by the post-submit fix.
+async function testStopLaneUnaffectedByPostSubmitFix() {
+	installDom(configuredPillHtml());
+	applyConfiguredPillRects(document);
+	const deps = { scripting: createScriptingAdapter(), telemetry: () => {} };
+	const result = await runner.executeF2VVisibleSopRunner(
+		deps,
+		7373,
+		{ mode: "F2V", prompt: "hero product shot" }, // accept current model on the pill
+		{ settleMs: 0, uploadWaitMs: 0, skipUpload: true, skipGenerate: true },
+	);
+	assert.equal(result.ok, true, "STOP lane must still reach generate-ready");
+	const names = result.stages.map((s) => s.stage);
+	assert.ok(!names.includes("GFV2_SUBMIT_ARROW_CLICKED"), "STOP lane must not click submit");
+	assert.ok(!names.includes("GFV2_GENERATE_SUBMITTED"), "STOP lane must not submit generate");
+	assert.ok(!names.includes("GFV2_DOWNLOAD_PROJECT_CLICKED"), "STOP lane must not download");
+}
+
 async function main() {
 	await testBottomComposerConfigPillOpensPanel();
 	await testSplitSpansResolveToInteractiveAncestor();
@@ -1150,6 +1367,14 @@ async function main() {
 	await testPostSubmitDownloadContinuationFailsWhenOutputNeverAppears();
 	await testPostSubmitDownloadContinuationFailsWhenProjectMenuMissing();
 	await testPostSubmitDownloadContinuationFailsWhenDownloadProjectMissing();
+	await testOutputReadyRejectsBareModelDropdown();
+	await testOutputReadyTrueOnRenderedOutputCard();
+	await testProjectMenuRejectsModelDropdownOnly();
+	await testProjectMenuRejectsSettingsControlOnly();
+	await testProjectMenuSelectsMoreVertOverModelDropdown();
+	await testPostSubmitDownloadIgnoresModelDropdownDecoy();
+	await testPostSubmitDownloadFailsClosedWhenOnlyModelDropdownMenu();
+	await testStopLaneUnaffectedByPostSubmitFix();
 	console.log("PASS test-f2v-flow-queue-runner");
 }
 

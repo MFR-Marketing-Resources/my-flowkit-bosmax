@@ -5557,42 +5557,23 @@ function MAIN_getPostSubmitOutputState() {
     var match = String(text || '').match(/\b([a-z0-9][a-z0-9._-]*\.(?:mp4|mov|webm|png|jpe?g|webp|gif))\b/i);
     return match ? match[1] : null;
   }
-  function isMenuLike(el) {
-    if (!el || !isVisible(el)) return false;
-    var combined = normalize((el.textContent || '') + ' ' + ((el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))) || '')).toLowerCase();
-    if (combined.indexOf('download project') >= 0) return false;
-    if (combined.indexOf('more_vert') >= 0) return true;
-    if (combined.indexOf('more') >= 0 && combined.indexOf('project') >= 0) return true;
-    if (combined.indexOf('options') >= 0) return true;
-    if (combined === 'menu') return true;
-    return Boolean(
-      el.getAttribute &&
-      (
-        el.getAttribute('aria-haspopup') === 'menu' ||
-        el.getAttribute('aria-label') === 'More' ||
-        el.getAttribute('aria-label') === 'More options'
-      )
-    );
-  }
-  function findMenuButton(root, composerRoot) {
-    if (!root || !root.querySelectorAll) return null;
-    var nodes = root.querySelectorAll('button, [role="button"], [aria-haspopup="menu"]');
-    var best = null;
-    for (var i = 0; i < nodes.length; i++) {
-      var node = nodes[i];
-      if (!isMenuLike(node) || isInsideComposer(node, composerRoot)) continue;
-      var rect = node.getBoundingClientRect();
-      var score = 0;
-      var combined = normalize((node.textContent || '') + ' ' + ((node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title'))) || '')).toLowerCase();
-      if (combined.indexOf('more_vert') >= 0) score += 200;
-      if (node.getAttribute && node.getAttribute('aria-haspopup') === 'menu') score += 80;
-      score += Math.round(rect.left);
-      score += Math.round(rect.top / 10);
-      if (!best || score > best.score) {
-        best = { el: node, score: score };
-      }
+  // Output-ready requires GENUINE render evidence — a rendered <video>, a real
+  // media filename, or media co-present with an explicit project/render signal.
+  // A bare menu/dropdown (e.g. the "Veo 3.1 - Lite" model selector) is NOT an
+  // output and must never satisfy output_ready. Regression: the previous version
+  // declared output_ready as soon as ANY menu-like control existed, so
+  // GFV2_OUTPUT_READY fired ~1s after Generate, before the video rendered.
+  function hasRenderedVideo(root) {
+    if (!root || !root.querySelectorAll) return false;
+    var vids = root.querySelectorAll('video');
+    for (var i = 0; i < vids.length; i++) {
+      var v = vids[i];
+      if (!isVisible(v)) continue;
+      if (v.currentSrc || v.src || (v.querySelector && v.querySelector('source[src]'))) return true;
+      var r = v.getBoundingClientRect();
+      if (r.width > 80 && r.height > 80) return true;
     }
-    return best ? best.el : null;
+    return false;
   }
 
   var composerRoot = getComposerRoot();
@@ -5602,40 +5583,32 @@ function MAIN_getPostSubmitOutputState() {
     var container = containers[idx];
     if (!isVisible(container) || isInsideComposer(container, composerRoot)) continue;
     var text = normalize(container.textContent || '');
-    var menuBtn = findMenuButton(container, composerRoot);
-    var hasMedia = Boolean(container.querySelector && container.querySelector('img, video, canvas, svg'));
-    var hasProjectSignal = /download project|generated-|project|render|\.mp4\b|\.mov\b|\.webm\b|\.png\b|\.jpe?g\b|\.webp\b|\.gif\b/i.test(text);
-    if (!menuBtn && !hasMedia && !hasProjectSignal) continue;
+    var filename = extractFilename(text);
+    var video = hasRenderedVideo(container);
+    var hasMedia = Boolean(container.querySelector && container.querySelector('img, video, canvas'));
+    var hasProjectSignal = /download project|generated-|render(?:ed|ing)?|\.mp4\b|\.mov\b|\.webm\b|\.png\b|\.jpe?g\b|\.webp\b|\.gif\b/i.test(text);
+    var qualifies = Boolean(video || filename || (hasMedia && hasProjectSignal));
+    if (!qualifies) continue;
     var rect = container.getBoundingClientRect();
     var score = 0;
-    if (menuBtn) score += 180;
-    if (hasProjectSignal) score += 90;
+    if (video) score += 200;
+    if (filename) score += 120;
     if (hasMedia) score += 60;
+    if (hasProjectSignal) score += 50;
     if (rect.top < 700) score += 40;
     score += Math.round(rect.left / 10);
     if (!best || score > best.score) {
       best = {
         score: score,
         text: text,
-        filename: extractFilename(text),
-        menuBtn: menuBtn,
+        filename: filename,
+        has_video: video,
+        has_media: hasMedia,
       };
     }
   }
 
   if (!best) {
-    var fallbackMenu = findMenuButton(document, composerRoot);
-    if (fallbackMenu) {
-      var fallbackText = normalize(fallbackMenu.textContent || fallbackMenu.getAttribute && (fallbackMenu.getAttribute('aria-label') || fallbackMenu.getAttribute('title')) || '');
-      return {
-        ok: true,
-        output_ready: true,
-        menu_found: true,
-        filename: null,
-        menu_text: fallbackText,
-        output_text_excerpt: '',
-      };
-    }
     return {
       ok: true,
       output_ready: false,
@@ -5649,9 +5622,10 @@ function MAIN_getPostSubmitOutputState() {
   return {
     ok: true,
     output_ready: true,
-    menu_found: Boolean(best.menuBtn),
+    menu_found: false,
     filename: best.filename,
-    menu_text: best.menuBtn ? normalize(best.menuBtn.textContent || best.menuBtn.getAttribute && (best.menuBtn.getAttribute('aria-label') || best.menuBtn.getAttribute('title')) || '') : null,
+    menu_text: null,
+    has_video: Boolean(best.has_video),
     output_text_excerpt: String(best.text || '').slice(0, 200),
   };
 }
@@ -5685,23 +5659,44 @@ function MAIN_stampProjectMenuButton(stampAttr) {
   }
 
   var composerRoot = getComposerRoot();
+  // Many composer controls expose aria-haspopup="menu" (the model selector,
+  // settings openers, aspect/count chips, the agent panel). NONE of them is the
+  // project/output three-dot menu. Reject them and require a genuine "more
+  // options" affordance, so Download Project is searched in the correct menu.
+  // Regression: the previous version accepted any aria-haspopup="menu", so the
+  // "Veo 3.1 - Lite ▾" model dropdown was opened and Download Project was absent.
+  var DISALLOW = [
+    'arrow_drop_down', 'veo', 'nano banana', 'sora', 'kling', 'imagen', 'flux',
+    'view settings', 'settings_2', 'tune', 'agent', 'crop_', 'aspect', 'generate', 'model',
+  ];
   var nodes = document.querySelectorAll('button, [role="button"], [aria-haspopup="menu"]');
   var best = null;
   for (var i = 0; i < nodes.length; i++) {
     var node = nodes[i];
     if (!isVisible(node) || isInsideComposer(node, composerRoot)) continue;
-    var combined = normalize((node.textContent || '') + ' ' + ((node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title'))) || '')).toLowerCase();
+    var ariaLabel = (node.getAttribute && (node.getAttribute('aria-label') || '')) || '';
+    var title = (node.getAttribute && (node.getAttribute('title') || '')) || '';
+    var combined = normalize((node.textContent || '') + ' ' + ariaLabel + ' ' + title).toLowerCase();
     if (combined.indexOf('download project') >= 0) continue;
-    var isMenuCandidate =
+    var labelLc = normalize(ariaLabel).toLowerCase();
+    var isMoreOptions =
       combined.indexOf('more_vert') >= 0 ||
       combined.indexOf('more options') >= 0 ||
-      combined.indexOf('project menu') >= 0 ||
-      (node.getAttribute && node.getAttribute('aria-haspopup') === 'menu');
-    if (!isMenuCandidate) continue;
+      labelLc === 'more' ||
+      labelLc === 'more options' ||
+      labelLc === 'project options';
+    if (!isMoreOptions) continue;
+    var disallowed = false;
+    for (var d = 0; d < DISALLOW.length; d++) {
+      if (combined.indexOf(DISALLOW[d]) >= 0) { disallowed = true; break; }
+    }
+    if (disallowed) continue;
     var rect = node.getBoundingClientRect();
-    var score = rect.left + rect.top;
+    var score = 0;
     if (combined.indexOf('more_vert') >= 0) score += 300;
-    if (node.getAttribute && node.getAttribute('aria-haspopup') === 'menu') score += 120;
+    if (node.getAttribute && node.getAttribute('aria-haspopup') === 'menu') score += 60;
+    if (rect.top < 700) score += 60;
+    score += Math.round(rect.left);
     if (!best || score > best.score) {
       best = { el: node, score: score, text: combined };
     }
