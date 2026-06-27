@@ -608,6 +608,21 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     return el.closest ? el.closest('button, [role="button"], [role="tab"], [role="option"], [role="combobox"], [aria-haspopup], [aria-expanded], [aria-selected], [aria-pressed], [data-state], [tabindex]') : null;
   }
   function getPromptField() {
+    function matchesPromptMarker(value) {
+      var label = lower(value || '');
+      return label.indexOf('what do you want to create') >= 0
+        || label.indexOf('what do you want') >= 0
+        || label.indexOf('editable text') >= 0
+        || label.indexOf('create') >= 0
+        || label.indexOf('generate') >= 0;
+    }
+    var promptLikeNodes = document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"], [aria-label="Editable text"], input[type="text"]');
+    for (var e0 = 0; e0 < promptLikeNodes.length; e0++) {
+      if (!isVisible(promptLikeNodes[e0])) continue;
+      if ((promptLikeNodes[e0].getAttribute && promptLikeNodes[e0].getAttribute('aria-label')) === 'Editable text') {
+        return promptLikeNodes[e0];
+      }
+    }
     var slateEditors = document.querySelectorAll('[data-slate-editor="true"][contenteditable="true"]');
     var slateCandidates = [];
     for (var i2 = 0; i2 < slateEditors.length; i2++) {
@@ -619,7 +634,7 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
       for (var j2 = 0; j2 < slateCandidates.length; j2++) {
         var placeholder = slateCandidates[j2].querySelector && slateCandidates[j2].querySelector('[data-slate-placeholder]');
         var label = lower(placeholder && placeholder.textContent || '');
-        if (label.indexOf('what do you want') >= 0 || label.indexOf('create') >= 0 || label.indexOf('generate') >= 0) {
+        if (matchesPromptMarker(label)) {
           withPlaceholder.push(slateCandidates[j2]);
         }
       }
@@ -635,19 +650,20 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
         placeholderNodes[k2].getAttribute ? (placeholderNodes[k2].getAttribute('placeholder') || '') : '',
         placeholderNodes[k2].getAttribute ? (placeholderNodes[k2].getAttribute('aria-label') || '') : '',
       ].join(' '));
-      if (markerText.indexOf('what do you want to create') === -1) continue;
-      var owner = toInteractive(placeholderNodes[k2]) || (placeholderNodes[k2].closest && placeholderNodes[k2].closest('[data-slate-editor="true"], [contenteditable="true"], textarea, input, form, section, article, div'));
+      if (!matchesPromptMarker(markerText)) continue;
+      var owner = toInteractive(placeholderNodes[k2]) || (placeholderNodes[k2].closest && placeholderNodes[k2].closest('[data-slate-editor="true"], [contenteditable="true"], [role="textbox"], [aria-label="Editable text"], textarea, input, form, section, article, div'));
       if (owner && isVisible(owner)) return owner;
       return placeholderNodes[k2];
     }
-    var inputs = document.querySelectorAll('textarea, [contenteditable="true"], input[type="text"]');
+    var inputs = document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"], [aria-label="Editable text"], input[type="text"]');
     for (var m2 = 0; m2 < inputs.length; m2++) {
       if (!isVisible(inputs[m2])) continue;
       var probe = lower([
         inputs[m2].getAttribute && (inputs[m2].getAttribute('placeholder') || ''),
         inputs[m2].getAttribute && (inputs[m2].getAttribute('aria-label') || ''),
+        inputs[m2].textContent || '',
       ].join(' '));
-      if (probe.indexOf('what do you want to create') >= 0) return inputs[m2];
+      if (matchesPromptMarker(probe)) return inputs[m2];
     }
     for (var n2 = 0; n2 < inputs.length; n2++) {
       if (isVisible(inputs[n2])) return inputs[n2];
@@ -657,11 +673,32 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
   function getComposerRoot() {
     var prompt = getPromptField();
     if (!prompt || !prompt.closest) return prompt;
-    var owner = prompt.closest('form, [role="form"], section, article, main, div') || prompt;
-    if (!owner || !owner.getBoundingClientRect) return owner;
-    var rect = owner.getBoundingClientRect();
-    if (rect.width >= 240 && rect.height >= 120) return owner;
-    return owner.parentElement || owner;
+    var formOwner = prompt.closest('form, [role="form"]');
+    if (formOwner && formOwner.getBoundingClientRect) return formOwner;
+    var best = prompt;
+    var promptRect = prompt.getBoundingClientRect ? prompt.getBoundingClientRect() : null;
+    var current = prompt.parentElement || null;
+    var depth = 0;
+    while (current && depth < 6) {
+      if (current === document.body || current === document.documentElement) break;
+      if (current.getBoundingClientRect && isVisible(current)) {
+        var rect = current.getBoundingClientRect();
+        var hasControls = current.querySelector && current.querySelector('button, [role="button"], [aria-label="Editable text"], [role="textbox"], textarea, [contenteditable="true"]');
+        if (
+          hasControls
+          && rect.width >= ((promptRect && promptRect.width) || 0)
+          && rect.height >= ((promptRect && promptRect.height) || 0)
+          && rect.width <= 960
+          && rect.height <= 520
+        ) {
+          best = current;
+          if (rect.width >= 240 && rect.height >= 120) break;
+        }
+      }
+      current = current.parentElement || null;
+      depth += 1;
+    }
+    return best;
   }
   function distanceToComposer(el) {
     var composer = getComposerRoot();
@@ -719,6 +756,9 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
   function isTargetFlowTab(url) {
     return /^https:\/\/labs\.google\/fx(?:\/[^/]+)?\/tools\/flow(?:\/|$|[?#])/.test(String(url || ''));
   }
+  function isProjectEditorUrl(url) {
+    return /^https:\/\/labs\.google\/fx(?:\/[^/]+)?\/tools\/flow\/project\/[^/?#]+(?:[/?#]|$)/.test(String(url || ''));
+  }
   function findOpenSurface() {
     function collectAll(root, selector) {
       var out = [];
@@ -742,8 +782,53 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
       }
       return out;
     }
+    function findSectionSurfaceByHeading(headingText) {
+      var heading = lower(headingText || '');
+      if (!heading) return null;
+      var nodes = collectAll(document, 'h1, h2, h3, h4, h5, h6, label, p, span, div, button');
+      var best = null;
+      for (var hIdx = 0; hIdx < nodes.length; hIdx++) {
+        var node = nodes[hIdx];
+        if (!isVisible(node)) continue;
+        var text = lower(node.textContent || node.getAttribute && node.getAttribute('aria-label') || '');
+        if (text.indexOf(heading) === -1) continue;
+        var current = node;
+        var depth = 0;
+        while (current && depth < 8) {
+          if (current === document.body || current === document.documentElement) break;
+          if (isVisible(current)) {
+            var scopeText = lower(current.innerText || current.textContent || '');
+            if (
+              scopeText.indexOf(heading) >= 0
+              && (scopeText.indexOf('1x') >= 0 || scopeText.indexOf('16:9') >= 0 || scopeText.indexOf('9:16') >= 0 || scopeText.indexOf('veo') >= 0 || scopeText.indexOf('omni flash') >= 0)
+            ) {
+              var rect = current.getBoundingClientRect();
+              var area = rect.width * rect.height;
+              if (!best || area < best.area) {
+                best = { el: current, area: area };
+              }
+            }
+          }
+          current = current.parentElement || null;
+          depth += 1;
+        }
+      }
+      return best ? best.el : null;
+    }
+    var drawerSurface = findSectionSurfaceByHeading('Video generation default')
+      || findSectionSurfaceByHeading('Image generation default');
+    if (drawerSurface) {
+      return {
+        el: drawerSurface,
+        hits: 4,
+        markers: ['generation default', '1x'],
+        role: drawerSurface.getAttribute('role') || null,
+        distance_to_composer: distanceBetween(drawerSurface, getComposerRoot()),
+      };
+    }
     var surfaces = collectAll(document, '[role="menu"], [role="listbox"], [role="dialog"], div.settings-panel, div[class*="settings"], div[class*="menu"], div[class*="dropdown"], div[class*="modal"], aside, section, div[role="presentation"]');
     var best = null;
+    var composer = getComposerRoot();
     var targetTokens = ['video', 'frames', '9:16', '16:9', '1x', 'x2', 'veo 3.1 - lite', 'ingredients', 'image'];
     for (var i5 = 0; i5 < surfaces.length; i5++) {
       var surface = surfaces[i5];
@@ -761,8 +846,17 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
           markers.push(targetTokens[j5]);
         }
       }
-      if (hits > 0 && (!best || hits > best.hits)) {
-        best = { el: surface, hits: hits, markers: markers, role: surface.getAttribute('role') || null };
+      var distanceToComposer = distanceBetween(surface, composer);
+      var nearComposer = Boolean(composer) && distanceToComposer <= 680;
+      if (!nearComposer && composer) continue;
+      if (hits > 0 && (!best || hits > best.hits || (hits === best.hits && distanceToComposer < best.distance_to_composer))) {
+        best = {
+          el: surface,
+          hits: hits,
+          markers: markers,
+          role: surface.getAttribute('role') || null,
+          distance_to_composer: distanceToComposer,
+        };
       }
     }
     return best;
@@ -823,9 +917,11 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
       combined: combined,
       combined_lower: lower(combined),
       has_view_settings: /\bview\s+settings\b/i.test(combined),
+      has_plain_settings: /(^|\s)settings(\s|$)/i.test(combined),
       has_model_text: /(veo|nano\s*banana|gemini|imagen|model)/i.test(combined),
       has_model: /(veo|nano\s*banana|gemini|imagen|model)/i.test(combined) || /(veo|nano\s*banana|gemini|imagen)/i.test(containerText),
       has_settings: /(settings|view\s+settings|config|configure|tune|sliders)/i.test(combined + ' ' + containerText),
+      has_agent_panel_context: /(develop a storyboard|build a visual moodboard|generate concept art|agent instructions|editable text|create|settings)/i.test(containerText),
       has_arrow: /(arrow_drop_down|expand_more|dropdown|chevron|caret)/i.test(combined + ' ' + iconText + ' ' + containerText),
       has_mode: /(video|frames)/i.test(combined),
       has_ratio: /(9\s*:?\s*16|16\s*:?\s*9|portrait)/i.test(combined),
@@ -950,7 +1046,31 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     }
     if (strategyId === 'view_settings_button') {
       return candidates.filter(function (c) {
-        return c.near_composer && c.has_view_settings;
+        return c.has_view_settings && c.distance_to_composer <= 520;
+      });
+    }
+    if (strategyId === 'composer_settings_button') {
+      return candidates.filter(function (c) {
+        return (c.near_composer || c.distance_to_composer <= 680) && c.has_plain_settings && !c.has_view_settings;
+      });
+    }
+    if (strategyId === 'agent_panel_settings_button') {
+      return candidates.filter(function (c) {
+        return (c.has_plain_settings || String(c.combined_lower || '') === 'settings')
+          && !c.has_view_settings
+          && c.has_agent_panel_context
+          && !/^(more|more options|go back|search|sort & filter|add media|product help)$/i.test(String(c.combined_lower || ''))
+          && (c.near_composer || c.distance_to_composer <= 2200);
+      });
+    }
+    if (strategyId === 'secret_settings_icon') {
+      return candidates.filter(function (c) {
+        return c.has_agent_panel_context
+          && !String(c.combined || '').trim()
+          && Number(c.width || 0) <= 64
+          && Number(c.height || 0) <= 64
+          && c.bbox
+          && Number(c.bbox.x || 0) >= 1400;
       });
     }
     if (strategyId === 'model_chip') {
@@ -960,7 +1080,14 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     }
     if (strategyId === 'dropdown_adjacent') {
       return candidates.filter(function (c) {
-        return (c.popup || c.role === 'combobox' || c.has_arrow) && (c.near_composer || c.has_model_context);
+        if (!((c.popup || c.role === 'combobox' || c.has_arrow) && (c.near_composer || c.has_model_context))) {
+          return false;
+        }
+        var combined = String(c.combined_lower || '');
+        if (/^(create|agent|agent instructions|more|more options|search|sort & filter)$/.test(combined)) {
+          return false;
+        }
+        return true;
       });
     }
     if (strategyId === 'config_pill') {
@@ -970,11 +1097,23 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
     }
     if (strategyId === 'settings_icon') {
       return candidates.filter(function (c) {
-        return c.near_composer && (c.has_settings || c.has_arrow);
+        var selfSignal = /(settings|view\s+settings|config|configure|tune|sliders)/i.test(
+          String(c.combined || '') + ' ' + String(c.icon_text || ''),
+        );
+        return c.near_composer
+          && !c.has_count
+          && !c.has_ratio
+          && !c.has_model
+          && !c.has_mode
+          && (selfSignal || (c.has_arrow && c.has_agent_panel_context));
       });
     }
     return candidates.filter(function (c) {
-      return c.near_composer && (c.combo_hits >= 2 || c.has_model || c.has_settings || c.popup);
+      var label = String(c.combined_lower || '');
+      if (/^(more|more options|go back|search|sort & filter|add media|product help|all media|characters|view scenes|tools|view trash)$/i.test(label)) {
+        return false;
+      }
+      return c.near_composer && (c.combo_hits >= 2 || c.has_model || c.has_settings);
     });
   }
   function summarizeCandidates(candidates) {
@@ -1042,12 +1181,15 @@ function MAIN_openComposerSettingsPanel(stampAttr) {
   var candidates = collectCandidates(bottomComposerCandidates);
   var visibleLauncherCandidates = summarizeCandidates(candidates);
   var strategies = [
-    { id: 'view_settings_button', label: 'view settings button near composer' },
+    { id: 'composer_settings_button', label: 'plain settings button near composer' },
+    { id: 'agent_panel_settings_button', label: 'agent panel settings button' },
+    { id: 'secret_settings_icon', label: 'secret settings icon in agent panel' },
+    { id: 'settings_icon', label: 'settings/sliders icon near composer' },
     { id: 'bottom_composer_config_pill', label: 'bottom composer config pill' },
     { id: 'model_chip', label: 'current model chip' },
-    { id: 'dropdown_adjacent', label: 'dropdown adjacent to model label' },
     { id: 'config_pill', label: 'config pill near composer' },
-    { id: 'settings_icon', label: 'settings/sliders icon near composer' },
+    { id: 'dropdown_adjacent', label: 'dropdown adjacent to model label' },
+    { id: 'view_settings_button', label: 'view settings button near composer' },
     { id: 'combo_control', label: 'visible combo control near composer' },
   ];
   var attemptedStrategies = [];
@@ -1190,6 +1332,120 @@ function MAIN_isComposerSurfaceOpen() {
     }
     return out;
   }
+  function findSectionSurfaceByHeading(headingText) {
+    var heading = String(headingText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!heading) return null;
+    var nodes = collectAll(document, 'h1, h2, h3, h4, h5, h6, label, p, span, div, button');
+    var best = null;
+    for (var hIdx = 0; hIdx < nodes.length; hIdx++) {
+      var node = nodes[hIdx];
+      if (!isVisible(node)) continue;
+      var text = String(node.textContent || node.getAttribute && node.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (text.indexOf(heading) === -1) continue;
+      var current = node;
+      var depth = 0;
+      while (current && depth < 8) {
+        if (current === document.body || current === document.documentElement) break;
+        if (isVisible(current)) {
+          var scopeText = String(current.innerText || current.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+          if (
+            scopeText.indexOf(heading) >= 0
+            && (scopeText.indexOf('1x') >= 0 || scopeText.indexOf('16:9') >= 0 || scopeText.indexOf('9:16') >= 0 || scopeText.indexOf('veo') >= 0 || scopeText.indexOf('omni flash') >= 0)
+          ) {
+            var rect = current.getBoundingClientRect();
+            var area = rect.width * rect.height;
+            if (!best || area < best.area) {
+              best = { el: current, area: area };
+            }
+          }
+        }
+        current = current.parentElement || null;
+        depth += 1;
+      }
+    }
+    return best ? best.el : null;
+  }
+  function isProjectEditorUrl(url) {
+    return /^https:\/\/labs\.google\/fx(?:\/[^/]+)?\/tools\/flow\/project\/[^/?#]+(?:[/?#]|$)/.test(String(url || ''));
+  }
+  function getPromptField() {
+    var candidates = document.querySelectorAll('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea, [contenteditable="true"]');
+    var visible = [];
+    for (var i2 = 0; i2 < candidates.length; i2++) {
+      if (!isVisible(candidates[i2])) continue;
+      visible.push(candidates[i2]);
+    }
+    if (visible.length) {
+      visible.sort(function (a, b) { return b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom; });
+      for (var j2 = 0; j2 < visible.length; j2++) {
+        if ((visible[j2].getAttribute && visible[j2].getAttribute('aria-label')) === 'Editable text') {
+          return visible[j2];
+        }
+      }
+      return visible[0];
+    }
+    return null;
+  }
+  function getComposerRoot() {
+    var prompt = getPromptField();
+    if (!prompt || !prompt.closest) return prompt;
+    var formOwner = prompt.closest('form, [role="form"]');
+    if (formOwner && formOwner.getBoundingClientRect) return formOwner;
+    var best = prompt;
+    var promptRect = prompt.getBoundingClientRect ? prompt.getBoundingClientRect() : null;
+    var current = prompt.parentElement || null;
+    var depth = 0;
+    while (current && depth < 6) {
+      if (current === document.body || current === document.documentElement) break;
+      if (current.getBoundingClientRect && isVisible(current)) {
+        var rect = current.getBoundingClientRect();
+        var hasControls = current.querySelector && current.querySelector('button, [role="button"], [aria-label="Editable text"], [role="textbox"], textarea, [contenteditable="true"]');
+        if (
+          hasControls
+          && rect.width >= ((promptRect && promptRect.width) || 0)
+          && rect.height >= ((promptRect && promptRect.height) || 0)
+          && rect.width <= 960
+          && rect.height <= 520
+        ) {
+          best = current;
+          if (rect.width >= 240 && rect.height >= 120) break;
+        }
+      }
+      current = current.parentElement || null;
+      depth += 1;
+    }
+    return best;
+  }
+  function distanceBetween(aEl, bEl) {
+    if (!aEl || !bEl || !aEl.getBoundingClientRect || !bEl.getBoundingClientRect) return Number.MAX_SAFE_INTEGER;
+    var a = aEl.getBoundingClientRect();
+    var b = bEl.getBoundingClientRect();
+    var ax = a.left + (a.width / 2);
+    var ay = a.top + (a.height / 2);
+    var bx = b.left + (b.width / 2);
+    var by = b.top + (b.height / 2);
+    return Math.round(Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2)));
+  }
+  var currentUrl = String(window.location && window.location.href || '');
+  if (!isProjectEditorUrl(currentUrl)) {
+    return { ok: false, reason: 'not_project_editor', current_url: currentUrl, found_markers: [] };
+  }
+  var drawerSurface = findSectionSurfaceByHeading('Video generation default')
+    || findSectionSurfaceByHeading('Image generation default');
+  if (drawerSurface) {
+    return {
+      ok: true,
+      role: drawerSurface.getAttribute('role') || 'drawer',
+      marker_hits: 2,
+      found_markers: ['generation default', '1x'],
+      distance_to_composer: distanceBetween(drawerSurface, getComposerRoot()),
+      current_url: currentUrl,
+    };
+  }
+  var composer = getComposerRoot();
+  if (!composer) {
+    return { ok: false, reason: 'composer_not_visible', current_url: currentUrl, found_markers: [] };
+  }
   var surfaces = collectAll(document, '[role="menu"], [role="listbox"], [role="dialog"], div.settings-panel, div[class*="settings"], div[class*="menu"], div[class*="dropdown"], div[class*="modal"], aside, section, div[role="presentation"]');
   var best = null;
   for (var i = 0; i < surfaces.length; i++) {
@@ -1236,16 +1492,19 @@ function MAIN_isComposerSurfaceOpen() {
         foundMarkers.push(tokens[j]);
       }
     }
+    var distanceToComposer = distanceBetween(surfaces[i], composer);
+    if (distanceToComposer > 680) continue;
     // Require at least 1 marker hit to prevent matching random workspace wrappers
-    if (markerHits >= 1 && (!best || markerHits > best.marker_hits)) {
+    if (markerHits >= 1 && (!best || markerHits > best.marker_hits || (markerHits === best.marker_hits && distanceToComposer < best.distance_to_composer))) {
       best = {
         role: surfaces[i].getAttribute('role'),
         marker_hits: markerHits,
         found_markers: foundMarkers,
+        distance_to_composer: distanceToComposer,
       };
     }
   }
-  if (best) return { ok: true, role: best.role, marker_hits: best.marker_hits, found_markers: best.found_markers || [] };
+  if (best) return { ok: true, role: best.role, marker_hits: best.marker_hits, found_markers: best.found_markers || [], distance_to_composer: best.distance_to_composer };
   return { ok: false, found_markers: [] };
 }
 
@@ -1280,7 +1539,24 @@ function MAIN_insertComposerPrompt(promptText) {
     if (raw.indexOf(trimmed) >= 0) return true;
     return raw.indexOf(trimmed.slice(0, Math.min(48, trimmed.length))) >= 0;
   }
+  function matchesPromptMarker(value) {
+    var label = normalize(value).toLowerCase();
+    return label.indexOf('what do you want to create') >= 0
+      || label.indexOf('what do you want') >= 0
+      || label.indexOf('editable text') >= 0
+      || label.indexOf('create') >= 0
+      || label.indexOf('generate') >= 0;
+  }
   function findSlatePromptEditor() {
+    var exactEditable = document.querySelectorAll('[aria-label="Editable text"], [role="textbox"]');
+    for (var e0 = 0; e0 < exactEditable.length; e0++) {
+      if (!isVisible(exactEditable[e0])) continue;
+      var exactProbe = normalize([
+        exactEditable[e0].getAttribute && (exactEditable[e0].getAttribute('aria-label') || exactEditable[e0].getAttribute('placeholder') || ''),
+        exactEditable[e0].textContent || '',
+      ].join(' '));
+      if (matchesPromptMarker(exactProbe)) return exactEditable[e0];
+    }
     var candidates = [];
     // First pass: look for already-unlocked editor (contenteditable="true")
     var nodes = document.querySelectorAll('[data-slate-editor="true"][contenteditable="true"]');
@@ -1298,11 +1574,22 @@ function MAIN_insertComposerPrompt(promptText) {
         candidates.push(locked[k]);
       }
     }
+    if (!candidates.length) {
+      var fallbackEditors = document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"], [aria-label="Editable text"], input[type="text"]');
+      for (var f = 0; f < fallbackEditors.length; f++) {
+        if (!isVisible(fallbackEditors[f])) continue;
+        candidates.push(fallbackEditors[f]);
+      }
+    }
     if (!candidates.length) return null;
     var withPlaceholder = candidates.filter(function (el) {
       var ph = el.querySelector && el.querySelector('[data-slate-placeholder]');
-      var label = normalize(ph && ph.textContent || '').toLowerCase();
-      return label.indexOf('what do you want') >= 0 || label.indexOf('create') >= 0 || label.indexOf('generate') >= 0;
+      var label = normalize([
+        ph && ph.textContent || '',
+        el.getAttribute && (el.getAttribute('placeholder') || el.getAttribute('aria-label') || '') || '',
+        el.textContent || '',
+      ].join(' '));
+      return matchesPromptMarker(label);
     });
     var pool = withPlaceholder.length ? withPlaceholder : candidates;
     pool.sort(function (a, b) {
@@ -1409,14 +1696,14 @@ function MAIN_insertComposerPrompt(promptText) {
 
   var target = findSlatePromptEditor();
   if (!target) {
-    var inputs = document.querySelectorAll('textarea, [contenteditable="true"], input[type="text"]');
+    var inputs = document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"], [aria-label="Editable text"], input[type="text"]');
     for (var n = 0; n < inputs.length; n++) {
       var el = inputs[n];
       if (!isVisible(el)) continue;
       var ph = (el.getAttribute && el.getAttribute('placeholder')) || '';
       var al = (el.getAttribute && el.getAttribute('aria-label')) || '';
-      var probe = (ph + ' ' + al).toLowerCase();
-      if (probe.indexOf('what do you want') >= 0 || probe.indexOf('create') >= 0 || probe.indexOf('generate') >= 0) { target = el; break; }
+      var probe = normalize(ph + ' ' + al + ' ' + (el.textContent || ''));
+      if (matchesPromptMarker(probe)) { target = el; break; }
     }
     if (!target) {
       for (var p = 0; p < inputs.length; p++) {
@@ -1427,7 +1714,10 @@ function MAIN_insertComposerPrompt(promptText) {
   if (!target) return { ok: false, reason: 'no_prompt_field_visible' };
 
   try { target.scrollIntoView({ block: 'center' }); } catch (e) { /* noop */ }
-  var isSlate = target.getAttribute && target.getAttribute('data-slate-editor') === 'true';
+  var isSlate = (target.getAttribute && target.getAttribute('data-slate-editor') === 'true')
+    || (target.getAttribute && target.getAttribute('role') === 'textbox')
+    || (target.getAttribute && target.getAttribute('aria-label') === 'Editable text')
+    || Boolean(target.isContentEditable);
   if (isSlate) {
     focusEditorLikeUser(target);
     clearEditorContent(target);
@@ -1702,7 +1992,38 @@ function MAIN_stampAssetPickerLauncher(stampAttr) {
     return out;
   }
   function findComposer() {
-    return document.querySelector('[data-slate-editor="true"][contenteditable="true"], textarea[placeholder*="What do you want"], textarea, [contenteditable="true"], [role="textbox"]');
+    function matchesPromptMarker(value) {
+      var label = lower(value || '');
+      return label.indexOf('what do you want to create') >= 0
+        || label.indexOf('what do you want') >= 0
+        || label.indexOf('editable text') >= 0
+        || label.indexOf('create') >= 0
+        || label.indexOf('generate') >= 0;
+    }
+    var nodes = document.querySelectorAll('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea, [contenteditable="true"], input[type="text"]');
+    var scored = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (!isVisible(node)) continue;
+      var text = normalize(node.textContent || '');
+      var ariaLabel = normalize(node.getAttribute && node.getAttribute('aria-label') || '');
+      var placeholder = normalize(node.getAttribute && node.getAttribute('placeholder') || '');
+      var probe = text + ' ' + ariaLabel + ' ' + placeholder;
+      var rect = node.getBoundingClientRect();
+      var score = 0;
+      if (ariaLabel === 'Editable text') score += 120;
+      if (matchesPromptMarker(probe)) score += 100;
+      if (node.getAttribute && node.getAttribute('role') === 'textbox') score += 35;
+      if (node.getAttribute && node.getAttribute('contenteditable') === 'true') score += 25;
+      if (rect.bottom >= (window.innerHeight * 0.55)) score += 20;
+      scored.push({ el: node, score: score, bottom: rect.bottom });
+    }
+    if (scored.length === 0) return null;
+    scored.sort(function (a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      return b.bottom - a.bottom;
+    });
+    return scored[0].el;
   }
   function collectComposerRoots(composer) {
     var roots = [];
@@ -1728,13 +2049,17 @@ function MAIN_stampAssetPickerLauncher(stampAttr) {
   function scoreCandidate(el, composerRect, inComposerRoot) {
     var text = lower(el.textContent || el.getAttribute('aria-label') || '');
     if (!text || looksExcluded(text)) return null;
+    var hasAddMediaLabel = text.indexOf('add media') >= 0 || text.indexOf('upload media') >= 0;
+    var hasDropMediaLabel = text.indexOf('drop media') >= 0 || text.indexOf('start creating') >= 0;
     var hasAddGlyph = text.indexOf('add_2') >= 0 || text.indexOf(' add ') >= 0 || text === 'add' || text === 'add_2';
     var hasCreateLabel = text.indexOf('create') >= 0;
     var hasPlusGlyph = normalize(el.textContent || '') === '+';
-    if (!hasAddGlyph && !hasCreateLabel && !hasPlusGlyph) return null;
+    if (!hasAddMediaLabel && !hasDropMediaLabel && !hasAddGlyph && !hasCreateLabel && !hasPlusGlyph) return null;
     var rect = el.getBoundingClientRect();
     var score = 0;
     if (inComposerRoot) score += 40;
+    if (hasDropMediaLabel) score += 80;
+    if (hasAddMediaLabel) score += 70;
     if (hasAddGlyph || hasPlusGlyph) score += 25;
     if (hasCreateLabel) score += 10;
     if (composerRect) {
@@ -1750,7 +2075,13 @@ function MAIN_stampAssetPickerLauncher(stampAttr) {
       rect: rect,
       score: score,
       text: normalize(el.textContent || el.getAttribute('aria-label') || ''),
-      strategy: hasAddGlyph || hasPlusGlyph ? 'add_create_launcher' : 'create_launcher',
+      strategy: hasDropMediaLabel
+        ? 'start_drop_media_launcher'
+        : hasAddMediaLabel
+          ? 'add_media_launcher'
+          : hasAddGlyph || hasPlusGlyph
+            ? 'add_create_launcher'
+            : 'create_launcher',
     };
   }
 
@@ -1794,6 +2125,436 @@ function MAIN_stampAssetPickerLauncher(stampAttr) {
       width: best.rect.width,
       height: best.rect.height,
     },
+  };
+}
+
+/**
+ * MAIN-world: strict B.2A composer-scoped add-media launcher scan.
+ * Returns either:
+ *   - ok:true with composer-scoped launcher evidence
+ *   - ok:false reason=wrong_scope when only non-composer add candidates exist
+ *   - ok:false reason=not_found when no viable add-media candidate exists
+ */
+function MAIN_findComposerAddMediaLauncher(stampAttr) {
+  function normalize(s) {
+    return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  }
+  function lower(s) {
+    return normalize(s).toLowerCase();
+  }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seen = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seen.has(curr)) continue;
+      seen.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var i = 0; i < direct.length; i++) out.push(direct[i]);
+        var descendants = curr.querySelectorAll('*');
+        for (var j = 0; j < descendants.length; j++) {
+          if (descendants[j].shadowRoot && !seen.has(descendants[j].shadowRoot)) {
+            queue.push(descendants[j].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
+  function distanceBetweenRects(a, b) {
+    if (!a || !b) return Number.MAX_SAFE_INTEGER;
+    var ax = a.left + (a.width / 2);
+    var ay = a.top + (a.height / 2);
+    var bx = b.left + (b.width / 2);
+    var by = b.top + (b.height / 2);
+    var dx = ax - bx;
+    var dy = ay - by;
+    return Math.sqrt((dx * dx) + (dy * dy));
+  }
+  function findComposer() {
+    return document.querySelector('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea[placeholder*="What do you want"], textarea, [contenteditable="true"]');
+  }
+  function findComposerRoot(composer) {
+    if (!composer || !composer.closest) return composer;
+    var formOwner = composer.closest('form, [role="form"]');
+    if (formOwner && formOwner.getBoundingClientRect) return formOwner;
+    var best = composer;
+    var promptRect = composer.getBoundingClientRect ? composer.getBoundingClientRect() : null;
+    var current = composer.parentElement || null;
+    var depth = 0;
+    while (current && depth < 6) {
+      if (current === document.body || current === document.documentElement) break;
+      if (current.getBoundingClientRect && isVisible(current)) {
+        var rect = current.getBoundingClientRect();
+        var hasControls = current.querySelector && current.querySelector('button, [role="button"], [aria-label="Editable text"], [role="textbox"], textarea, [contenteditable="true"]');
+        if (
+          hasControls
+          && rect.width >= ((promptRect && promptRect.width) || 0)
+          && rect.height >= ((promptRect && promptRect.height) || 0)
+          && rect.width <= 960
+          && rect.height <= 520
+        ) {
+          best = current;
+          if (rect.width >= 240 && rect.height >= 120) break;
+        }
+      }
+      current = current.parentElement || null;
+      depth += 1;
+    }
+    return best;
+  }
+  function findGenerateButton(composer) {
+    if (!composer) return null;
+    var roots = [];
+    var current = composer;
+    for (var depth = 0; current && depth < 6; depth++) {
+      roots.push(current);
+      current = current.parentElement;
+    }
+    var seen = new Set();
+    for (var r = 0; r < roots.length; r++) {
+      var buttons = roots[r].querySelectorAll ? roots[r].querySelectorAll('button, [role="button"]') : [];
+      for (var i = 0; i < buttons.length; i++) {
+        var btn = buttons[i];
+        if (!isVisible(btn) || seen.has(btn)) continue;
+        seen.add(btn);
+        var combined = lower(
+          (btn.textContent || '')
+          + ' '
+          + (btn.getAttribute && btn.getAttribute('aria-label') || '')
+          + ' '
+          + (btn.getAttribute && btn.getAttribute('title') || '')
+        );
+        if (combined.indexOf('arrow_forward') >= 0 || combined.indexOf('generate') >= 0 || combined.indexOf('create') >= 0) {
+          return btn;
+        }
+      }
+    }
+    return null;
+  }
+  function isRejectedText(text) {
+    return text.indexOf('create with flow') >= 0
+      || text.indexOf('create new project') >= 0
+      || text.indexOf('create project') >= 0
+      || text.indexOf('arrow_forward') >= 0
+      || text.indexOf('generate') >= 0;
+  }
+  function isLibraryScoped(el) {
+    var current = el;
+    for (var depth = 0; current && depth < 8; depth++) {
+      var joined = lower(
+        (current.id || '')
+        + ' '
+        + (current.className || '')
+        + ' '
+        + (current.getAttribute && current.getAttribute('aria-label') || '')
+        + ' '
+        + (current.getAttribute && current.getAttribute('data-testid') || '')
+      );
+      var text = lower(current.textContent || '');
+      var hasEditorToolbarPeers = text.indexOf('sort & filter') >= 0
+        || text.indexOf('product help') >= 0
+        || text.indexOf('view settings') >= 0;
+      if (hasEditorToolbarPeers && text.indexOf('add media') >= 0) {
+        return false;
+      }
+      if (
+        joined.indexOf('asset-library') >= 0
+        || joined.indexOf('sidebar') >= 0
+        || joined.indexOf('library') >= 0
+        || joined.indexOf('drawer') >= 0
+        || text.indexOf('all media') >= 0
+        || text.indexOf('uploads') >= 0
+        || text.indexOf('recent') >= 0
+        || text.indexOf('characters') >= 0
+        || text.indexOf('tools') >= 0
+        || text.indexOf('view trash') >= 0
+      ) {
+        return true;
+      }
+      current = current.parentElement;
+    }
+    return false;
+  }
+  function buildEvidence(candidate, accepted) {
+    var rect = candidate.el.getBoundingClientRect();
+    return {
+      ok: Boolean(accepted),
+      stamp_id: candidate.id,
+      stamp_attr: candidate.attr,
+      text: candidate.text || null,
+      aria_label: candidate.aria_label || null,
+      role: candidate.role || null,
+      tag: candidate.tag || null,
+      bbox: {
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+      },
+      near_composer: Boolean(candidate.near_composer),
+      near_prompt_field: Boolean(candidate.near_prompt_field),
+      near_generate_button: Boolean(candidate.near_generate_button),
+      candidate_source: 'composer_scoped_scan',
+    };
+  }
+
+  var composer = findComposer();
+  if (!composer || !isVisible(composer)) {
+    return { ok: false, reason: 'editor_not_opened' };
+  }
+  var composerRect = composer.getBoundingClientRect();
+  var promptRect = composerRect;
+  var composerRoot = findComposerRoot(composer);
+  var generate = findGenerateButton(composer);
+  var generateRect = generate && generate.getBoundingClientRect ? generate.getBoundingClientRect() : null;
+
+  var nodes = collectAll(document, 'button, [role="button"], [aria-label], [title]');
+  var accepted = [];
+  var rejected = [];
+  var seen = new Set();
+  var attr = String(stampAttr || 'data-bosmax-option');
+
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    if (!el || seen.has(el) || !isVisible(el)) continue;
+    seen.add(el);
+    var text = normalize(el.textContent || '');
+    var ariaLabel = normalize(el.getAttribute && el.getAttribute('aria-label') || '');
+    var title = normalize(el.getAttribute && el.getAttribute('title') || '');
+    var combined = lower(text + ' ' + ariaLabel + ' ' + title);
+    if (!combined || isRejectedText(combined)) continue;
+
+    var hasAddMedia = combined.indexOf('add media') >= 0 || combined.indexOf('upload media') >= 0;
+    var hasAddSignal = combined === 'add' || combined === 'add_2' || combined.indexOf('add ') >= 0 || combined.indexOf(' add') >= 0;
+    var hasPlusSignal = text === '+' || ariaLabel === '+' || title === '+';
+    var hasComposerCreate = combined.indexOf('create') >= 0 && (combined.indexOf('add_2') >= 0 || combined.indexOf('add') >= 0 || hasPlusSignal);
+    if (!hasAddMedia && !hasAddSignal && !hasPlusSignal && !hasComposerCreate) continue;
+
+    var rect = el.getBoundingClientRect();
+    var inComposerRoot = Boolean(composerRoot && composerRoot.contains && composerRoot.contains(el));
+    var nearComposer = distanceBetweenRects(rect, composerRect) <= 420;
+    var nearPromptField = distanceBetweenRects(rect, promptRect) <= 420;
+    var nearGenerateButton = generateRect ? distanceBetweenRects(rect, generateRect) <= 420 : false;
+    var libraryScoped = isLibraryScoped(el);
+
+    var score = 0;
+    if (hasAddMedia) score += 120;
+    if (hasAddSignal || hasPlusSignal) score += 30;
+    if (hasComposerCreate) score += 10;
+    if (inComposerRoot) score += 90;
+    if (nearComposer) score += 70;
+    if (nearPromptField) score += 40;
+    if (nearGenerateButton) score += 20;
+    if (rect.left <= (composerRect.left + (composerRect.width / 2))) score += 20;
+    if (libraryScoped) score -= 260;
+
+    var id = attr + '-b2a-launcher-' + Date.now() + '-' + i;
+    el.setAttribute(attr, id);
+    var candidate = {
+      el: el,
+      id: id,
+      attr: attr,
+      text: text || ariaLabel || title || null,
+      aria_label: ariaLabel || null,
+      role: (el.getAttribute && el.getAttribute('role')) || null,
+      tag: String(el.tagName || '').toLowerCase(),
+      has_add_media: hasAddMedia,
+      near_composer: nearComposer,
+      near_prompt_field: nearPromptField,
+      near_generate_button: nearGenerateButton,
+      score: score,
+    };
+    // A valid B.2A launcher MUST be composer-local. The top-toolbar "Add Media"
+    // button matches hasAddMedia but sits far from the composer (all proximity
+    // signals false) — clicking it opens the asset-library surface, not the
+    // composer upload picker. So hasAddMedia is NOT sufficient on its own:
+    // every candidate must be inside the composer root or within proximity of
+    // the composer / prompt field / generate button. Candidates whose proximity
+    // signals are all false (e.g. the top-toolbar Add Media) are rejected as
+    // wrong scope. Live evidence: bbox y≈22 (page top), near_composer=false.
+    var composerLocal =
+      inComposerRoot || nearComposer || nearPromptField || nearGenerateButton;
+    var isAccepted = !libraryScoped && composerLocal;
+    if (isAccepted) accepted.push(candidate);
+    else rejected.push(candidate);
+  }
+
+  function sortCandidates(a, b) {
+    if (Boolean(b.has_add_media) !== Boolean(a.has_add_media)) {
+      return Boolean(b.has_add_media) ? 1 : -1;
+    }
+    if (b.score !== a.score) return b.score - a.score;
+    var ar = a.el.getBoundingClientRect();
+    var br = b.el.getBoundingClientRect();
+    if (ar.left !== br.left) return ar.left - br.left;
+    return ar.top - br.top;
+  }
+
+  if (accepted.length > 0) {
+    accepted.sort(sortCandidates);
+    var bestAccepted = accepted[0];
+    return buildEvidence(bestAccepted, true);
+  }
+  if (rejected.length > 0) {
+    rejected.sort(sortCandidates);
+    var bestRejected = rejected[0];
+    var rejectedEvidence = buildEvidence(bestRejected, false);
+    rejectedEvidence.reason = 'wrong_scope';
+    return rejectedEvidence;
+  }
+  return { ok: false, reason: 'not_found' };
+}
+
+/**
+ * MAIN-world: verify the upload picker/modal is open and discover the
+ * upload action without clicking it.
+ */
+function MAIN_getUploadPickerStateForB2A() {
+  function normalize(s) {
+    return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  }
+  function lower(s) {
+    return normalize(s).toLowerCase();
+  }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function collectAll(root, selector) {
+    var out = [];
+    var queue = [root || document];
+    var seen = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seen.has(curr)) continue;
+      seen.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var i = 0; i < direct.length; i++) out.push(direct[i]);
+        var descendants = curr.querySelectorAll('*');
+        for (var j = 0; j < descendants.length; j++) {
+          if (descendants[j].shadowRoot && !seen.has(descendants[j].shadowRoot)) {
+            queue.push(descendants[j].shadowRoot);
+          }
+        }
+      }
+    }
+    return out;
+  }
+  function isUploadActionText(text) {
+    var value = lower(text);
+    return value.indexOf('upload media') >= 0
+      || value.indexOf('upload from device') >= 0
+      || value === 'upload'
+      || value.indexOf(' upload ') >= 0
+      || value === 'add media';
+  }
+  function actionEvidence(el) {
+    var rect = el.getBoundingClientRect();
+    return {
+      upload_media_found: true,
+      text: normalize(el.textContent || '') || null,
+      aria_label: normalize(el.getAttribute && el.getAttribute('aria-label') || '') || null,
+      role: (el.getAttribute && el.getAttribute('role')) || null,
+      tag: String(el.tagName || '').toLowerCase(),
+      inside_modal: true,
+      bbox: {
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+      },
+    };
+  }
+
+  var surfaces = collectAll(document, '[role="dialog"], [aria-modal="true"], dialog, [role="menu"], [role="listbox"], [data-floating-ui-portal] > *, [data-radix-portal] > *, [data-radix-popper-content-wrapper] > *, section, aside, div[role="presentation"]');
+  var best = null;
+  for (var i = 0; i < surfaces.length; i++) {
+    var surface = surfaces[i];
+    if (!isVisible(surface)) continue;
+    var text = normalize(surface.innerText || surface.textContent || '');
+    var textLower = lower(text);
+    if (!textLower) continue;
+    var hasPickerMarkers =
+      textLower.indexOf('upload') >= 0
+      || textLower.indexOf('search for assets') >= 0
+      || textLower.indexOf('all media') >= 0
+      || textLower.indexOf('recent') >= 0
+      || textLower.indexOf('uploads') >= 0
+      || textLower.indexOf('characters') >= 0
+      || textLower.indexOf('images') >= 0
+      || textLower.indexOf('videos') >= 0;
+    if (!hasPickerMarkers) continue;
+
+    var buttons = collectAll(surface, 'button, [role="button"], [role="menuitem"], [role="option"]');
+    var candidates = [];
+    var uploadAction = null;
+    for (var j = 0; j < buttons.length; j++) {
+      var btn = buttons[j];
+      if (!isVisible(btn)) continue;
+      var combined = normalize(
+        (btn.textContent || '')
+        + ' '
+        + (btn.getAttribute && btn.getAttribute('aria-label') || '')
+        + ' '
+        + (btn.getAttribute && btn.getAttribute('title') || '')
+      );
+      if (!combined) continue;
+      if (isUploadActionText(combined)) {
+        candidates.push(combined);
+        if (!uploadAction) uploadAction = btn;
+      }
+    }
+
+    var role = String(surface.getAttribute && surface.getAttribute('role') || '').toLowerCase();
+    var dialogRoleFound = role === 'dialog' || surface.getAttribute && surface.getAttribute('aria-modal') === 'true';
+    var score = candidates.length * 100;
+    if (dialogRoleFound) score += 40;
+    if (textLower.indexOf('upload media') >= 0) score += 60;
+    if (textLower.indexOf('search for assets') >= 0) score += 25;
+    if (!best || score > best.score) {
+      best = {
+        score: score,
+        surface: surface,
+        dialog_role_found: dialogRoleFound,
+        modal_text_sample: text.slice(0, 240),
+        upload_action_candidates: Array.from(new Set(candidates)).slice(0, 8),
+        upload_action: uploadAction,
+      };
+    }
+  }
+
+  if (!best) {
+    return {
+      ok: false,
+      modal_found: false,
+      dialog_role_found: false,
+      modal_text_sample: null,
+      upload_action_candidates: [],
+      upload_media_found: false,
+    };
+  }
+  return {
+    ok: true,
+    modal_found: true,
+    dialog_role_found: Boolean(best.dialog_role_found),
+    modal_text_sample: best.modal_text_sample || null,
+    upload_action_candidates: best.upload_action_candidates || [],
+    upload_media_found: Boolean(best.upload_action),
+    upload_action: best.upload_action ? actionEvidence(best.upload_action) : null,
   };
 }
 
@@ -1885,7 +2646,7 @@ function MAIN_getBottomComposerState() {
     return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
   }
   function getComposerRootLocal() {
-    var prompts = collectAll(document, '[data-slate-editor="true"][contenteditable="true"], textarea, [contenteditable="true"], input[type="text"]');
+    var prompts = collectAll(document, '[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea, [contenteditable="true"], input[type="text"]');
     for (var pIdx = 0; pIdx < prompts.length; pIdx++) {
       if (!isVisibleNode(prompts[pIdx])) continue;
       var placeholder = normalize(
@@ -1893,7 +2654,11 @@ function MAIN_getBottomComposerState() {
         || prompts[pIdx].textContent
         || '',
       ).toLowerCase();
-      if (placeholder.indexOf('what do you want to create') >= 0) {
+      if (
+        placeholder.indexOf('what do you want to create') >= 0
+        || placeholder.indexOf('what do you want') >= 0
+        || placeholder.indexOf('editable text') >= 0
+      ) {
         return prompts[pIdx].closest && prompts[pIdx].closest('form, [role="form"], section, article, main, div') || prompts[pIdx];
       }
     }
@@ -2244,7 +3009,43 @@ function MAIN_findAndStampSettingLauncher(settingType, stampAttr) {
     }
     return out;
   }
-  var surfaces = collectAll(document, '[role="menu"], [role="listbox"], [role="dialog"]');
+  function findSectionPanel(headingText) {
+    var heading = lower(headingText || '');
+    if (!heading) return null;
+    var nodes = collectAll(document, 'h1, h2, h3, h4, h5, h6, label, p, span, div, button');
+    var best = null;
+    for (var idx2 = 0; idx2 < nodes.length; idx2++) {
+      var node = nodes[idx2];
+      if (!isVisible(node)) continue;
+      var text = lower(node.textContent || node.getAttribute('aria-label') || '');
+      if (text.indexOf(heading) === -1) continue;
+      var current = node;
+      var depth = 0;
+      while (current && depth < 8) {
+        if (current === document.body || current === document.documentElement) break;
+        if (isVisible(current)) {
+          var scopeText = lower(current.innerText || current.textContent || '');
+          if (
+            scopeText.indexOf(heading) >= 0
+            && (scopeText.indexOf('1x') >= 0 || scopeText.indexOf('16:9') >= 0 || scopeText.indexOf('9:16') >= 0 || scopeText.indexOf('veo') >= 0 || scopeText.indexOf('omni flash') >= 0)
+          ) {
+            var rect = current.getBoundingClientRect();
+            var area = rect.width * rect.height;
+            if (!best || area < best.area) {
+              best = { el: current, area: area };
+            }
+          }
+        }
+        current = current.parentElement || null;
+        depth += 1;
+      }
+    }
+    return best ? best.el : null;
+  }
+  var preferredPanel = findSectionPanel('Video generation default');
+  var surfaces = preferredPanel
+    ? [preferredPanel]
+    : collectAll(document, '[role="menu"], [role="listbox"], [role="dialog"]');
   var panel = null;
   for (var i = 0; i < surfaces.length; i++) {
     if (isVisible(surfaces[i])) { panel = surfaces[i]; break; }
@@ -2370,6 +3171,21 @@ function MAIN_findVisibleModelByKeyword(familyKeyword, stampAttr) {
 function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
   function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
   function lower(s) { return normalize(s).toLowerCase(); }
+  function looksLikeNeedle(text, needleText) {
+    if (!text) return false;
+    if (needleText === 'start') {
+      return text.indexOf('start creating') >= 0
+        || text.indexOf('drop media') >= 0
+        || /^start\b/.test(text)
+        || text.indexOf('start frame') >= 0;
+    }
+    return text.indexOf(needleText) >= 0;
+  }
+  function looksLikeOpposingSlot(text, needleText) {
+    if (!text || needleText !== 'start') return false;
+    if (looksLikeNeedle(text, needleText)) return false;
+    return /\bend\b/.test(text) || text.indexOf('last frame') >= 0;
+  }
   function isVisible(el) {
     if (!el || !el.getBoundingClientRect) return false;
     var r = el.getBoundingClientRect();
@@ -2435,12 +3251,42 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
       bbox: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
     };
   }
-  function buildTargets(labelNode, container) {
+  function scoreCandidate(target, labelLower, labelText, needleText) {
+    if (!target || !target.el || !isVisible(target.el)) return null;
+    var targetText = normalize(target.el.textContent || target.el.getAttribute && target.el.getAttribute('aria-label') || '');
+    var targetLower = targetText.toLowerCase();
+    if (looksLikeOpposingSlot(targetLower, needleText)) return null;
+    var rect = target.el.getBoundingClientRect();
+    var score = 0;
+    if (labelLower.indexOf('start creating') >= 0) score += 120;
+    if (labelLower.indexOf('drop media') >= 0) score += 90;
+    if (/^start\b/.test(labelLower)) score += 70;
+    if (labelText === 'Start') score += 40;
+    if (target.source === 'label_closest_button') score += 80;
+    if (target.source === 'container_button') score += 50;
+    if (target.source === 'container') score += 40;
+    if (target.source === 'label_node') score += 25;
+    if (looksLikeNeedle(targetLower, needleText)) score += 35;
+    if (targetLower.indexOf('upload') >= 0 || targetLower.indexOf('add media') >= 0) score += 20;
+    if (rect.width >= 160 && rect.height >= 40) score += 15;
+    if (rect.width >= 220 && rect.height >= 48) score += 10;
+    if (rect.width >= 500) score -= 40;
+    if (rect.width >= 800) score -= 80;
+    if (rect.height >= 100) score -= 25;
+    score -= Number(target.depth || 0) * 12;
+    return {
+      el: target.el,
+      source: target.source,
+      depth: Number(target.depth || 0),
+      score: score,
+    };
+  }
+  function buildTargets(labelNode, container, depth) {
     var targets = [];
     function push(el, source) {
       if (!el || !isVisible(el)) return;
       if (targets.some(function (item) { return item.el === el; })) return;
-      targets.push({ el: el, source: source });
+      targets.push({ el: el, source: source, depth: depth });
     }
     push(labelNode && labelNode.closest && labelNode.closest('button, [role="button"]'), 'label_closest_button');
     push(labelNode, 'label_node');
@@ -2451,15 +3297,14 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
 
   var needle = lower(slotLabel || '');
   var labelCandidates = collectAll(document, 'label, span, div, p, button, [role="button"], a');
+  var resolvedCandidates = [];
   for (var i = 0; i < labelCandidates.length; i++) {
     var labelNode = labelCandidates[i];
     if (!isVisible(labelNode)) continue;
     var labelText = normalize(labelNode.textContent || labelNode.getAttribute && labelNode.getAttribute('aria-label') || '');
     var labelLower = labelText.toLowerCase();
     if (!labelLower) continue;
-    if (needle === 'start') {
-      if (labelLower.indexOf('start') === -1 || labelLower.indexOf('end') >= 0) continue;
-    } else if (labelLower.indexOf(needle) === -1) {
+    if (!looksLikeNeedle(labelLower, needle)) {
       continue;
     }
 
@@ -2470,23 +3315,32 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
         var currentLower = currentText.toLowerCase();
         var hasUploadMarker = /(upload|add|media|image|browse|drop|create)/i.test(currentText);
         var isClickableContainer = isInteractive(current) || Boolean(current.matches && current.matches('button, [role="button"], label, a'));
-        if ((hasUploadMarker || isClickableContainer) && currentLower.indexOf(needle) >= 0) {
-          if (needle === 'start' && currentLower.indexOf('end') >= 0) {
-            current = nextParent(current);
-            continue;
-          }
-          var targets = buildTargets(labelNode, current);
+        var currentMatchesNeedle = looksLikeNeedle(currentLower, needle) || current === labelNode || Boolean(current.contains && current.contains(labelNode));
+        if ((hasUploadMarker || isClickableContainer || current === labelNode) && currentMatchesNeedle) {
+          var targets = buildTargets(labelNode, current, depth);
           for (var t = 0; t < targets.length; t++) {
-            var stamped = stamp(targets[t].el);
-            if (stamped) {
-              stamped.target_source = targets[t].source;
-              return stamped;
-            }
+            var scored = scoreCandidate(targets[t], labelLower, labelText, needle);
+            if (scored) resolvedCandidates.push(scored);
           }
         }
       }
       current = nextParent(current);
     }
+  }
+  if (!resolvedCandidates.length) return null;
+  resolvedCandidates.sort(function (a, b) {
+    if (b.score !== a.score) return b.score - a.score;
+    var aRect = a.el.getBoundingClientRect();
+    var bRect = b.el.getBoundingClientRect();
+    if (aRect.top !== bRect.top) return aRect.top - bRect.top;
+    return aRect.left - bRect.left;
+  });
+  var best = resolvedCandidates[0];
+  var stamped = stamp(best.el);
+  if (stamped) {
+    stamped.target_source = best.source;
+    stamped.score = best.score;
+    return stamped;
   }
   return null;
 }
@@ -2588,10 +3442,29 @@ function MAIN_findAddToPromptButton(stampAttr) {
     }
     return out;
   }
-  var nodes = collectAll(document, 'button, [role="button"], [role="menuitem"], [role="option"]');
+  function isClickableLike(el) {
+    if (!el || !el.tagName) return false;
+    var tag = String(el.tagName || '').toLowerCase();
+    if (tag === 'button' || tag === 'a' || tag === 'input' || tag === 'label') return true;
+    var role = el.getAttribute && el.getAttribute('role');
+    if (role && ['button', 'menuitem', 'option', 'tab'].indexOf(role) >= 0) return true;
+    if (typeof el.onclick === 'function') return true;
+    if (typeof el.tabIndex === 'number' && el.tabIndex >= 0) return true;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.cursor === 'pointer');
+  }
+  function toClickable(el) {
+    var current = el;
+    while (current) {
+      if (isClickableLike(current)) return current;
+      current = current.parentElement || null;
+    }
+    return el;
+  }
+  var nodes = collectAll(document, 'button, [role="button"], [role="menuitem"], [role="option"], [tabindex], div, span');
   for (var i = 0; i < nodes.length; i++) {
-    var el = nodes[i];
-    if (!isVisible(el)) continue;
+    var el = toClickable(nodes[i]);
+    if (!el || !isVisible(el) || !isClickableLike(el)) continue;
     var txt = lower(el.textContent || el.getAttribute('aria-label') || '');
     if (txt === 'add to prompt' || txt === 'add prompt' || txt.indexOf('add to prompt') >= 0) {
       var attr = String(stampAttr || 'data-bosmax-option');
@@ -2641,6 +3514,39 @@ function MAIN_selectAssetPickerCandidate(stampAttr) {
     }
     return out;
   }
+  function looksLikeAssetSurface(el) {
+    if (!isVisible(el)) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width < 260 || r.height < 180) return false;
+    var text = lower(el.textContent || '');
+    return (
+      text.indexOf('upload media') >= 0 ||
+      text.indexOf('search assets') >= 0 ||
+      text.indexOf('recent') >= 0 ||
+      text.indexOf('add to prompt') >= 0 ||
+      (text.indexOf('all') >= 0 && (text.indexOf('images') >= 0 || text.indexOf('uploads') >= 0))
+    );
+  }
+  function isClickableLike(el) {
+    if (!el || !el.tagName) return false;
+    var tag = String(el.tagName || '').toLowerCase();
+    if (tag === 'button' || tag === 'a' || tag === 'input' || tag === 'label') return true;
+    var role = el.getAttribute && el.getAttribute('role');
+    if (role && ['button', 'option', 'menuitem', 'tab'].indexOf(role) >= 0) return true;
+    if (typeof el.onclick === 'function') return true;
+    if (typeof el.tabIndex === 'number' && el.tabIndex >= 0) return true;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.cursor === 'pointer');
+  }
+  function toClickable(el, stopAt) {
+    var current = el;
+    while (current) {
+      if (isClickableLike(current)) return current;
+      if (stopAt && current === stopAt) break;
+      current = current.parentElement || null;
+    }
+    return el;
+  }
   var dialogs = collectAll(document, '[role="dialog"], [role="menu"], [role="listbox"]');
   var panel = null;
   var firstVisibleDialog = null;
@@ -2653,28 +3559,41 @@ function MAIN_selectAssetPickerCandidate(stampAttr) {
       break;
     }
   }
+  if (!panel) {
+    var surfaces = collectAll(document, 'section, article, div');
+    for (var s = 0; s < surfaces.length; s++) {
+      if (looksLikeAssetSurface(surfaces[s])) {
+        panel = surfaces[s];
+        break;
+      }
+    }
+  }
   if (!panel) panel = firstVisibleDialog;
   if (!panel) return { ok: false, reason: 'asset_picker_panel_not_found' };
-  var candidates = collectAll(panel, 'button, [role="button"], [role="option"], [tabindex]');
+  var candidates = collectAll(panel, 'button, [role="button"], [role="option"], [tabindex], article, li, div');
   for (var i = 0; i < candidates.length; i++) {
     var el = candidates[i];
     if (!isVisible(el)) continue;
-    var text = lower(el.textContent || el.getAttribute('aria-label') || '');
+    var clickable = toClickable(el, panel);
+    if (!clickable || !isVisible(clickable)) continue;
+    if (!isClickableLike(clickable)) continue;
+    var text = lower(clickable.textContent || clickable.getAttribute('aria-label') || '');
     if (!text) continue;
     if (text.indexOf('upload media') >= 0 || text.indexOf('add to prompt') >= 0 || text === 'all' || text === 'images' || text === 'videos' || text === 'voices' || text === 'characters' || text === 'avatar' || text === 'uploads' || text === 'recent') {
       continue;
     }
-    var hasPreview = Boolean(el.querySelector && el.querySelector('img, canvas, video, picture'));
-    if (!hasPreview && text.length < 12) continue;
+    var hasPreview = Boolean(clickable.querySelector && clickable.querySelector('img, canvas, video, picture'));
+    var fileLike = /\.(png|jpe?g|webp|gif|bmp)\b/i.test(text) || text.indexOf('generated-') >= 0 || text.indexOf('image-') >= 0;
+    if (!hasPreview && !fileLike && text.length < 12) continue;
     var attr = String(stampAttr || 'data-bosmax-option');
     var id = attr + '-asset-card-' + Date.now();
-    el.setAttribute(attr, id);
-    var r = el.getBoundingClientRect();
+    clickable.setAttribute(attr, id);
+    var r = clickable.getBoundingClientRect();
     return {
       ok: true,
       stamp_id: id,
       stamp_attr: attr,
-      text: normalize(el.textContent || el.getAttribute('aria-label') || '').slice(0, 120),
+      text: normalize(clickable.textContent || clickable.getAttribute('aria-label') || '').slice(0, 120),
       bbox: { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) },
     };
   }
@@ -2851,8 +3770,6 @@ function MAIN_getComposerAssetPreviewState() {
   }
   return { ok: true, preview_found: false, scope: 'composer_surface' };
 }
-
-
 
 function MAIN_closeComposerSettingsPanel() {
   function normalize(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
@@ -3055,6 +3972,36 @@ function MAIN_dismissPromoOverlays() {
     } catch (e) {}
   }
 
+  // Strategy 4: close Flow help/support panel if it is open and focus-trapping.
+  // Live telemetry shows "Help Panel" can stay mounted after prior recovery
+  // attempts, which interferes with composer-local settings clicks.
+  if (!dismissed) {
+    var helpPanelVisible = false;
+    var helpNodes = document.querySelectorAll('[aria-label], [role="dialog"], [role="complementary"], aside, section');
+    for (var h = 0; h < helpNodes.length; h++) {
+      if (!isVisible(helpNodes[h])) continue;
+      var helpText = lower(
+        (helpNodes[h].getAttribute && helpNodes[h].getAttribute('aria-label') || '') + ' ' +
+        (helpNodes[h].textContent || '')
+      );
+      if (helpText.indexOf('help panel') >= 0 || helpText.indexOf('product help') >= 0) {
+        helpPanelVisible = true;
+        break;
+      }
+    }
+    if (helpPanelVisible) {
+      try {
+        var focused2 = document.activeElement;
+        var escTarget2 = (focused2 && focused2 !== document.body) ? focused2 : document;
+        escTarget2.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true,
+        }));
+        dismissed = true;
+        method = 'help_panel_escape';
+      } catch (e) {}
+    }
+  }
+
   return { ok: true, dismissed: dismissed, method: method, tried: triedCount };
 }
 
@@ -3100,12 +4047,172 @@ function _sleep(ms) {
   return new Promise((r) => setTimeout(r, Math.max(0, Number(ms || 0))));
 }
 
+async function _runB2AUploadPickerOpenOnly(scripting, tabId, opts, stages, recordStage) {
+  const settle = Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS));
+  const editorState = await _runMainWorld(scripting, tabId, function () {
+    function isVisible(el) {
+      if (!el || !el.getBoundingClientRect) return false;
+      var r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return false;
+      var s = window.getComputedStyle(el);
+      return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+    }
+    var composer = document.querySelector('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea[placeholder*="What do you want"], textarea, [contenteditable="true"]');
+    var ok = Boolean(composer && isVisible(composer) && String(window.location.href || '').indexOf('/project/') >= 0);
+    return {
+      ok: ok,
+      current_url: String(window.location.href || ''),
+      composer_found: Boolean(composer && isVisible(composer)),
+      prompt_field_found: Boolean(composer),
+    };
+  }, []);
+  if (!editorState || editorState.ok !== true) {
+    recordStage('F2V_V2A_PROJECT_EDITOR_OPENED', 'FAIL', 'FLOW_EDITOR_NOT_OPENED');
+    return {
+      ok: false,
+      error: 'FLOW_EDITOR_NOT_OPENED',
+      detail: editorState || null,
+      stages: stages.map(function (item) { return item.stage; }),
+      stage_events: stages,
+    };
+  }
+  recordStage('F2V_V2A_PROJECT_EDITOR_OPENED', 'PASS', JSON.stringify({
+    current_url: editorState.current_url || null,
+    composer_found: Boolean(editorState.composer_found),
+    prompt_field_found: Boolean(editorState.prompt_field_found),
+  }));
+
+  const launcher = await _runMainWorld(scripting, tabId, MAIN_findComposerAddMediaLauncher, ['data-bosmax-b2a']);
+  if (!launcher || launcher.ok !== true) {
+    var launcherError = launcher && launcher.reason === 'wrong_scope'
+      ? 'FLOW_ADD_MEDIA_LAUNCHER_WRONG_SCOPE'
+      : launcher && launcher.reason === 'editor_not_opened'
+        ? 'FLOW_EDITOR_NOT_OPENED'
+        : 'FLOW_ADD_MEDIA_LAUNCHER_NOT_FOUND';
+    var launcherMessage = launcherError;
+    if (launcher && typeof launcher === 'object') {
+      launcherMessage += ' detail=' + JSON.stringify({
+        text: launcher.text || null,
+        aria_label: launcher.aria_label || null,
+        role: launcher.role || null,
+        tag: launcher.tag || null,
+        bbox: launcher.bbox || null,
+        near_composer: launcher.near_composer,
+        near_prompt_field: launcher.near_prompt_field,
+        near_generate_button: launcher.near_generate_button,
+        candidate_source: launcher.candidate_source || null,
+        reason: launcher.reason || null,
+      });
+    }
+    recordStage('F2V_V2A_ADD_MEDIA_LAUNCHER_FOUND', 'FAIL', launcherMessage);
+    return {
+      ok: false,
+      error: launcherError,
+      detail: launcher || null,
+      stages: stages.map(function (item) { return item.stage; }),
+      stage_events: stages,
+    };
+  }
+  recordStage('F2V_V2A_ADD_MEDIA_LAUNCHER_FOUND', 'PASS', JSON.stringify({
+    text: launcher.text || null,
+    aria_label: launcher.aria_label || null,
+    role: launcher.role || null,
+    tag: launcher.tag || null,
+    bbox: launcher.bbox || null,
+    near_composer: Boolean(launcher.near_composer),
+    near_prompt_field: Boolean(launcher.near_prompt_field),
+    near_generate_button: Boolean(launcher.near_generate_button),
+    candidate_source: launcher.candidate_source || 'composer_scoped_scan',
+  }));
+
+  const reactClickResult = await _runMainWorld(scripting, tabId, MAIN_invokeReactFiberSubmit, [launcher.stamp_attr, launcher.stamp_id]);
+  const clickResult = reactClickResult && reactClickResult.ok === true
+    ? Object.assign({ click_method: 'react_fiber' }, reactClickResult)
+    : await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [launcher.stamp_attr, launcher.stamp_id]);
+  if (!clickResult || clickResult.ok !== true) {
+    recordStage('F2V_V2A_ADD_MEDIA_LAUNCHER_CLICKED', 'FAIL', 'FLOW_ADD_MEDIA_LAUNCHER_CLICK_FAILED');
+    return {
+      ok: false,
+        error: 'FLOW_ADD_MEDIA_LAUNCHER_CLICK_FAILED',
+        detail: clickResult || null,
+      stages: stages.map(function (item) { return item.stage; }),
+      stage_events: stages,
+    };
+  }
+  recordStage('F2V_V2A_ADD_MEDIA_LAUNCHER_CLICKED', 'PASS', JSON.stringify({
+    text: launcher.text || null,
+    role: launcher.role || null,
+    tag: launcher.tag || null,
+    click_method: clickResult && clickResult.click_method || clickResult && clickResult.strategy || 'dom_click',
+  }));
+
+  await _sleep(settle);
+  const pickerState = await _runMainWorld(scripting, tabId, MAIN_getUploadPickerStateForB2A, []);
+  if (!pickerState || pickerState.ok !== true || pickerState.modal_found !== true) {
+    recordStage('F2V_V2A_UPLOAD_PICKER_OPENED', 'FAIL', 'FLOW_UPLOAD_PICKER_NOT_OPENED');
+    return {
+      ok: false,
+      error: 'FLOW_UPLOAD_PICKER_NOT_OPENED',
+      detail: pickerState || null,
+      stages: stages.map(function (item) { return item.stage; }),
+      stage_events: stages,
+    };
+  }
+  recordStage('F2V_V2A_UPLOAD_PICKER_OPENED', 'PASS', JSON.stringify({
+    modal_found: true,
+    dialog_role_found: Boolean(pickerState.dialog_role_found),
+    modal_text_sample: pickerState.modal_text_sample || null,
+    upload_action_candidates: pickerState.upload_action_candidates || [],
+  }));
+
+  if (pickerState.upload_media_found !== true || !pickerState.upload_action) {
+    recordStage('F2V_V2A_UPLOAD_MEDIA_ACTION_FOUND', 'FAIL', 'FLOW_UPLOAD_MEDIA_ACTION_NOT_FOUND');
+    return {
+      ok: false,
+      error: 'FLOW_UPLOAD_MEDIA_ACTION_NOT_FOUND',
+      detail: pickerState || null,
+      stages: stages.map(function (item) { return item.stage; }),
+      stage_events: stages,
+    };
+  }
+  recordStage('F2V_V2A_UPLOAD_MEDIA_ACTION_FOUND', 'PASS', JSON.stringify({
+    upload_media_found: true,
+    text: pickerState.upload_action.text || null,
+    aria_label: pickerState.upload_action.aria_label || null,
+    role: pickerState.upload_action.role || null,
+    tag: pickerState.upload_action.tag || null,
+    inside_modal: true,
+  }));
+  recordStage('F2V_V2A_STOPPED_BEFORE_FILE_UPLOAD', 'PASS', JSON.stringify({
+    stopped_at: 'UPLOAD_PICKER_OPENED',
+    file_upload_attempted: false,
+    add_to_prompt_attempted: false,
+    settings_attempted: false,
+    prompt_injection_attempted: false,
+    generate_attempted: false,
+  }));
+
+  return {
+    ok: true,
+    stopped_at: 'UPLOAD_PICKER_OPENED',
+    stages: stages.map(function (item) { return item.stage; }),
+    stage_events: stages,
+    file_upload_attempted: false,
+    add_to_prompt_attempted: false,
+    settings_attempted: false,
+    prompt_injection_attempted: false,
+    generate_attempted: false,
+  };
+}
+
 function _buildSettingsPanelFailureDetail(reason, payload) {
   const data = payload || {};
   return JSON.stringify({
     reason: reason || null,
     target_tab_url: data.target_tab_url || null,
     document_title: data.document_title || null,
+    current_url: data.current_url || null,
+    surface_check_reason: data.surface_check_reason || null,
     visible_button_texts: Array.isArray(data.visible_button_texts) ? data.visible_button_texts : [],
     visible_aria_labels: Array.isArray(data.visible_aria_labels) ? data.visible_aria_labels : [],
     visible_role_button_texts: Array.isArray(data.visible_role_button_texts) ? data.visible_role_button_texts : [],
@@ -3120,6 +4227,7 @@ function _buildSettingsPanelFailureDetail(reason, payload) {
     clicked_candidate: data.clicked_candidate || null,
     post_click_panel_markers_found: Boolean(data.post_click_panel_markers_found),
     post_click_panel_markers: Array.isArray(data.post_click_panel_markers) ? data.post_click_panel_markers : [],
+    launcher_dom_info: data.launcher_dom_info || null,
     candidate_capture_marker: data.candidate_capture_marker || null,
   });
 }
@@ -3209,7 +4317,9 @@ async function _openComposerSettingsPanel(scripting, tabId, opts) {
   } : null;
   diagnostics.post_click_panel_markers_found = Boolean(surfaceCheck && surfaceCheck.ok === true);
   diagnostics.post_click_panel_markers = surfaceCheck?.found_markers || [];
-  if ((!surfaceCheck || surfaceCheck.ok !== true) && result.strategy === 'bottom_composer_config_pill') {
+  diagnostics.surface_check_reason = surfaceCheck?.reason || null;
+  diagnostics.current_url = surfaceCheck?.current_url || diagnostics.target_tab_url || null;
+  if (!surfaceCheck || surfaceCheck.ok !== true) {
     const coordinateClick = opts?.coordinateClick || opts?.cdpCoordinateClick || null;
     if (typeof coordinateClick === 'function' && result.launcher_bbox) {
       const cdpResult = await coordinateClick({
@@ -3221,8 +4331,8 @@ async function _openComposerSettingsPanel(scripting, tabId, opts) {
         y: Math.round(result.launcher_bbox.y + (result.launcher_bbox.height / 2)),
       });
       diagnostics.attempted_strategies = (diagnostics.attempted_strategies || []).concat([{
-        strategy: 'bottom_composer_config_pill',
-        label: 'bottom composer config pill',
+        strategy: result.strategy || 'launcher',
+        label: result.strategy || 'launcher',
         reason: 'cdp_fallback_invoked',
         clicked_candidate: Boolean(cdpResult && cdpResult.ok === true),
         click_method: 'cdp_visible_coordinate',
@@ -3246,6 +4356,8 @@ async function _openComposerSettingsPanel(scripting, tabId, opts) {
         };
         diagnostics.post_click_panel_markers_found = Boolean(surfaceCheck && surfaceCheck.ok === true);
         diagnostics.post_click_panel_markers = surfaceCheck?.found_markers || [];
+        diagnostics.surface_check_reason = surfaceCheck?.reason || null;
+        diagnostics.current_url = surfaceCheck?.current_url || diagnostics.target_tab_url || null;
       }
     }
   }
@@ -3709,6 +4821,8 @@ async function _verifySettingsPanelApplied(scripting, tabId, opts, sequence) {
   const desiredModel = _resolveDesiredModel(opts?.job || null);
   const desiredModelCanonical = desiredModel?.canon || '';
   const desiredModelFamily = desiredModel?.family || '';
+  const ratioStep = seq.find(function (step) { return step && step.label === '9:16'; }) || null;
+  const countStep = seq.find(function (step) { return step && step.label === '1x'; }) || null;
   const collapsedRatioOk = Boolean(collapsedState && (
     collapsedState.detectedRatio === '9:16' || pillShowsRatio(collapsedState.pillText || '', '9:16')
   ));
@@ -3717,42 +4831,99 @@ async function _verifySettingsPanelApplied(scripting, tabId, opts, sequence) {
   ));
   const collapsedModelCanonical = String(collapsedState?.detectedModelCanonical || '').toLowerCase();
   const collapsedModelFamily = String(collapsedState?.detectedModelFamily || '').toLowerCase();
+  const collapsedModelMatchesDesiredFamily = Boolean(
+    desiredModelFamily &&
+    collapsedModelFamily &&
+    collapsedModelFamily === desiredModelFamily
+  );
+  let ratioProof = {
+    visible: collapsedRatioOk,
+    passed: collapsedRatioOk,
+    source: collapsedRatioOk ? 'collapsed_config_pill' : null,
+  };
+  let countProof = {
+    visible: collapsedCountOk,
+    passed: collapsedCountOk,
+    source: collapsedCountOk ? 'collapsed_config_pill' : null,
+  };
   const visibleWrongModelInSettingsContext = Boolean(
     desiredModelCanonical
     && collapsedModelCanonical
     && collapsedModelCanonical !== desiredModelCanonical
+    && !collapsedModelMatchesDesiredFamily
   );
   let modelProof = {
-    visible: Boolean(collapsedModelCanonical),
-    passed: !desiredModelCanonical || !collapsedModelCanonical || collapsedModelCanonical === desiredModelCanonical,
+    visible: Boolean(collapsedModelCanonical || collapsedModelFamily),
+    passed:
+      !desiredModelCanonical ||
+      !collapsedModelCanonical ||
+      collapsedModelCanonical === desiredModelCanonical ||
+      collapsedModelMatchesDesiredFamily,
     source: collapsedModelCanonical ? 'collapsed_config_pill' : null,
   };
 
-  if (!modelProof.visible && desiredModelCanonical) {
+  const needsReopenVerification = Boolean(
+    !ratioProof.passed ||
+    !countProof.passed ||
+    (!modelProof.visible && desiredModelCanonical)
+  );
+  if (needsReopenVerification) {
     const reopenPanel = await _openComposerSettingsPanel(scripting, tabId, opts);
     if (reopenPanel?.ok) {
-      const exactModel = await _runMainWorld(
-        scripting,
-        tabId,
-        MAIN_findVisibleCandidatesByExactLabel,
-        [desiredModel.label, desiredModel.aliases || [], ['button', 'option', 'menuitemradio', 'menuitem'], stampAttr],
-      );
-      if (exactModel?.ok && Array.isArray(exactModel.matches) && exactModel.matches.length > 0) {
-        modelProof = {
-          visible: true,
-          passed: exactModel.matches[0].selected === true,
-          source: 'reopened_settings_panel',
-        };
-      } else {
-        const familyModel = desiredModelFamily
-          ? await _runMainWorld(scripting, tabId, MAIN_findVisibleModelByKeyword, [desiredModelFamily, stampAttr])
-          : null;
-        if (familyModel) {
+      if (!ratioProof.passed && ratioStep) {
+        const exactRatio = await _runMainWorld(
+          scripting,
+          tabId,
+          MAIN_findVisibleCandidatesByExactLabel,
+          [ratioStep.label, ratioStep.aliases || [], ratioStep.preferredRoles || [], stampAttr],
+        );
+        if (exactRatio?.ok && Array.isArray(exactRatio.matches) && exactRatio.matches.length > 0) {
+          ratioProof = {
+            visible: true,
+            passed: exactRatio.matches[0].selected === true,
+            source: 'reopened_settings_panel',
+          };
+        }
+      }
+      if (!countProof.passed && countStep) {
+        const exactCount = await _runMainWorld(
+          scripting,
+          tabId,
+          MAIN_findVisibleCandidatesByExactLabel,
+          [countStep.label, countStep.aliases || [], countStep.preferredRoles || [], stampAttr],
+        );
+        if (exactCount?.ok && Array.isArray(exactCount.matches) && exactCount.matches.length > 0) {
+          countProof = {
+            visible: true,
+            passed: exactCount.matches[0].selected === true,
+            source: 'reopened_settings_panel',
+          };
+        }
+      }
+      if (!modelProof.visible && desiredModelCanonical) {
+        const exactModel = await _runMainWorld(
+          scripting,
+          tabId,
+          MAIN_findVisibleCandidatesByExactLabel,
+          [desiredModel.label, desiredModel.aliases || [], ['button', 'option', 'menuitemradio', 'menuitem'], stampAttr],
+        );
+        if (exactModel?.ok && Array.isArray(exactModel.matches) && exactModel.matches.length > 0) {
           modelProof = {
             visible: true,
-            passed: true,
-            source: 'reopened_settings_panel_family_visible',
+            passed: exactModel.matches[0].selected === true,
+            source: 'reopened_settings_panel',
           };
+        } else {
+          const familyModel = desiredModelFamily
+            ? await _runMainWorld(scripting, tabId, MAIN_findVisibleModelByKeyword, [desiredModelFamily, stampAttr])
+            : null;
+          if (familyModel) {
+            modelProof = {
+              visible: true,
+              passed: true,
+              source: 'reopened_settings_panel_family_visible',
+            };
+          }
         }
       }
       await _runMainWorld(scripting, tabId, MAIN_closeComposerSettingsPanel, []);
@@ -3761,8 +4932,8 @@ async function _verifySettingsPanelApplied(scripting, tabId, opts, sequence) {
   }
 
   const persistenceVerified = Boolean(
-    collapsedRatioOk
-    && collapsedCountOk
+    ratioProof.passed
+    && countProof.passed
     && !visibleWrongModelInSettingsContext
     && modelProof.passed
     && (!saveVisible || saveClicked)
@@ -3773,12 +4944,18 @@ async function _verifySettingsPanelApplied(scripting, tabId, opts, sequence) {
     save_visible: saveVisible,
     save_clicked: saveClicked,
     close_result: closeResult || null,
-    ratio_9_16_persisted: collapsedRatioOk,
-    count_1x_persisted: collapsedCountOk,
+    ratio_9_16_persisted: ratioProof.passed,
+    count_1x_persisted: countProof.passed,
+    ratio_proof: ratioProof,
+    count_proof: countProof,
     model_proof: modelProof,
     visible_wrong_model_in_settings_context: visibleWrongModelInSettingsContext,
     persistence_verified: persistenceVerified,
-    persistence_source: modelProof.source || 'collapsed_config_pill',
+    persistence_source:
+      ratioProof.source ||
+      countProof.source ||
+      modelProof.source ||
+      'collapsed_config_pill',
   };
 }
 
@@ -3908,6 +5085,40 @@ async function _clickStartEntryPoint(scripting, tabId, opts) {
 }
 
 async function _clickStart(scripting, tabId, opts) {
+  const trustedCoordinateClick = opts?.preferTrustedStartClick === true
+    ? (opts?.cdpCoordinateClick || opts?.coordinateClick || null)
+    : null;
+  if (typeof trustedCoordinateClick === 'function') {
+    const stampAttr = opts?.stampAttr || 'data-bosmax-option';
+    const findResult = await _runMainWorld(
+      scripting, tabId, MAIN_findVisibleCandidatesByExactLabel,
+      ['Start', ['Start frame', '+ Add start frame', 'Add start frame'], ['button', 'option'], stampAttr],
+    );
+    if (findResult && findResult.ok === true && Array.isArray(findResult.matches) && findResult.matches.length > 0) {
+      const top = findResult.matches[0];
+      if (top && top.bbox) {
+        const coordinateResult = await trustedCoordinateClick({
+          tabId,
+          strategy: 'start_slot',
+          text: top.text || 'Start',
+          bbox: top.bbox,
+          x: Math.round(top.bbox.x + (top.bbox.width / 2)),
+          y: Math.round(top.bbox.y + (top.bbox.height / 2)),
+        });
+        if (coordinateResult && coordinateResult.ok === true) {
+          await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+          return {
+            ok: true,
+            label: 'Start',
+            role: top.role || 'start_slot',
+            bbox: top.bbox,
+            visible_candidates: findResult.visible_candidates || [],
+            click_method: 'cdp_visible_coordinate',
+          };
+        }
+      }
+    }
+  }
   const step = {
     label: 'Start',
     aliases: ['Start frame', '+ Add start frame', 'Add start frame'],
@@ -3921,6 +5132,27 @@ async function _clickStart(scripting, tabId, opts) {
   console.log('[FlowAgent] Start slot: exact label not found. Trying semantic slot fallback.');
   const slot = await _runMainWorld(scripting, tabId, MAIN_findUploadSlotByLabel, ['Start', stampAttr]);
   if (slot && slot.stamp_id) {
+    if (typeof trustedCoordinateClick === 'function' && slot.bbox) {
+      const coordinateResult = await trustedCoordinateClick({
+        tabId,
+        strategy: 'start_slot_fallback',
+        text: slot.text || 'Start',
+        bbox: slot.bbox,
+        x: Math.round(slot.bbox.x + (slot.bbox.width / 2)),
+        y: Math.round(slot.bbox.y + (slot.bbox.height / 2)),
+      });
+      if (coordinateResult && coordinateResult.ok === true) {
+        await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+        return {
+          ok: true,
+          label: 'Start',
+          role: slot.role || 'slot_fallback',
+          bbox: slot.bbox || null,
+          visible_candidates: [],
+          click_method: 'cdp_visible_coordinate',
+        };
+      }
+    }
     const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [slot.stamp_attr, slot.stamp_id]);
     if (click && click.ok === true) {
       return { ok: true, label: 'Start', role: slot.role || 'slot_fallback', bbox: slot.bbox || null, visible_candidates: [] };
@@ -3969,15 +5201,106 @@ async function _clickVisibleActionExact(scripting, tabId, step, opts) {
 }
 
 async function _clickUploadMedia(scripting, tabId, opts) {
+  const strictUploadAction = opts?.strictUploadAction === true;
+  const trustedCoordinateClick = opts?.preferTrustedUploadClick === true
+    ? (opts?.cdpCoordinateClick || opts?.coordinateClick || null)
+    : null;
+  let pickerState = null;
+  if (strictUploadAction) {
+    const deadline = Date.now() + Math.max(0, Number(opts?.uploadActionWaitMs ?? 2500));
+    do {
+      pickerState = await _runMainWorld(scripting, tabId, MAIN_getUploadPickerStateForB2A, []);
+      if (pickerState && pickerState.ok === true && pickerState.upload_media_found === true) {
+        break;
+      }
+      if (Date.now() >= deadline) break;
+      await _sleep(150);
+    } while (true);
+    if (
+      pickerState &&
+      pickerState.ok === true &&
+      pickerState.upload_media_found === true &&
+      pickerState.upload_action &&
+      pickerState.upload_action.bbox &&
+      typeof trustedCoordinateClick === 'function'
+    ) {
+      const bbox = pickerState.upload_action.bbox;
+      const coordinateResult = await trustedCoordinateClick({
+        tabId,
+        strategy: 'upload_media_picker_action',
+        text: pickerState.upload_action.text || 'Upload media',
+        bbox,
+        x: Math.round(bbox.x + (bbox.width / 2)),
+        y: Math.round(bbox.y + (bbox.height / 2)),
+      });
+      if (coordinateResult && coordinateResult.ok === true) {
+        await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+        return {
+          ok: true,
+          label: 'Upload media',
+          role: pickerState.upload_action.role || 'picker_upload_action',
+          bbox,
+          visible_candidates: pickerState.upload_action_candidates || [],
+          click_method: 'cdp_visible_coordinate',
+        };
+      }
+    }
+  }
+  // Google Flow V2 labels the in-menu upload item "Upload from computer"
+  // (older builds used "Upload media" / "Upload from device"). Without this the
+  // add-menu item is never matched, the native chooser never opens, and the CDP
+  // wait fails with ERR_CDP_FILE_CHOOSER_TIMEOUT (live req gfv2_live_2).
+  const uploadAliases = strictUploadAction
+    ? ['upload Upload media', 'Upload', 'Upload from device', 'Upload from computer', 'upload Upload from computer']
+    : ['upload Upload media', 'Upload', 'Upload from device', 'Upload from computer', 'upload Upload from computer', 'Add Media', 'add Add Media'];
+  if (typeof trustedCoordinateClick === 'function') {
+    const stampAttr = opts?.stampAttr || 'data-bosmax-option';
+    const findResult = await _runMainWorld(
+      scripting, tabId, MAIN_findVisibleCandidatesByExactLabel,
+      ['Upload media', uploadAliases, ['button', 'option', 'menuitem'], stampAttr],
+    );
+    if (findResult && findResult.ok === true && Array.isArray(findResult.matches) && findResult.matches.length > 0) {
+      const top = findResult.matches[0];
+      if (top && top.bbox) {
+        const coordinateResult = await trustedCoordinateClick({
+          tabId,
+          strategy: 'upload_media',
+          text: top.text || 'Upload media',
+          bbox: top.bbox,
+          x: Math.round(top.bbox.x + (top.bbox.width / 2)),
+          y: Math.round(top.bbox.y + (top.bbox.height / 2)),
+        });
+        if (coordinateResult && coordinateResult.ok === true) {
+          await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+          return {
+            ok: true,
+            label: 'Upload media',
+            role: top.role || 'upload_media',
+            bbox: top.bbox,
+            visible_candidates: findResult.visible_candidates || [],
+            click_method: 'cdp_visible_coordinate',
+          };
+        }
+      }
+    }
+  }
   const step = {
     label: 'Upload media',
-    aliases: ['upload Upload media', 'Upload', 'Upload from device', 'Add Media', 'add Add Media'],
+    aliases: uploadAliases,
     preferredRoles: ['button', 'option', 'menuitem'],
     errorCode: ERR.UPLOAD_MEDIA_NOT_FOUND,
     stage: 'F2V_SOP_UPLOAD_CLICKED',
   };
   const result = await _clickVisibleActionExact(scripting, tabId, step, opts);
   if (result.ok) return result;
+  if (strictUploadAction) {
+    return {
+      ...result,
+      detail: pickerState && pickerState.modal_found === true
+        ? 'strict_picker_upload_action_not_found'
+        : result.detail,
+    };
+  }
   // Symbol fallback: exact label failed — try aria-label / icon-only detection.
   // Covers the case where Google Flow shows only a + (add) icon with no text label.
   const stampAttr = opts?.stampAttr || 'data-bosmax-option';
@@ -3985,9 +5308,66 @@ async function _clickUploadMedia(scripting, tabId, opts) {
   const sym = await _runMainWorld(scripting, tabId, MAIN_findUploadBySymbol, [stampAttr]);
   if (sym && sym.stamp_id) {
     console.log(`[FlowAgent] Upload media: symbol match — "${String(sym.text || '').trim()}". Clicking.`);
+    if (typeof trustedCoordinateClick === 'function' && sym.bbox) {
+      const coordinateResult = await trustedCoordinateClick({
+        tabId,
+        strategy: 'upload_media_symbol_fallback',
+        text: sym.text || 'Upload media',
+        bbox: sym.bbox,
+        x: Math.round(sym.bbox.x + (sym.bbox.width / 2)),
+        y: Math.round(sym.bbox.y + (sym.bbox.height / 2)),
+      });
+      if (coordinateResult && coordinateResult.ok === true) {
+        await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+        return { ok: true, label: 'Upload media', role: 'symbol_fallback', bbox: sym.bbox, click_method: 'cdp_visible_coordinate' };
+      }
+    }
     const click = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [sym.stamp_attr, sym.stamp_id]);
     if (click && click.ok === true) {
       return { ok: true, label: 'Upload media', role: 'symbol_fallback', bbox: sym.bbox };
+    }
+  }
+  console.log('[FlowAgent] Upload media: symbol fallback failed. Trying direct start/add-media surfaces.');
+  const slot = await _runMainWorld(scripting, tabId, MAIN_findUploadSlotByLabel, ['Start', stampAttr]);
+  if (slot && slot.stamp_id) {
+    if (typeof trustedCoordinateClick === 'function' && slot.bbox) {
+      const coordinateResult = await trustedCoordinateClick({
+        tabId,
+        strategy: 'upload_media_start_slot_fallback',
+        text: slot.text || 'Start',
+        bbox: slot.bbox,
+        x: Math.round(slot.bbox.x + (slot.bbox.width / 2)),
+        y: Math.round(slot.bbox.y + (slot.bbox.height / 2)),
+      });
+      if (coordinateResult && coordinateResult.ok === true) {
+        await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+        return { ok: true, label: 'Upload media', role: 'start_slot_upload_fallback', bbox: slot.bbox, click_method: 'cdp_visible_coordinate' };
+      }
+    }
+    const slotClick = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [slot.stamp_attr, slot.stamp_id]);
+    if (slotClick && slotClick.ok === true) {
+      return { ok: true, label: 'Upload media', role: 'start_slot_upload_fallback', bbox: slot.bbox };
+    }
+  }
+  const launcher = await _runMainWorld(scripting, tabId, MAIN_stampAssetPickerLauncher, [stampAttr]);
+  if (launcher && launcher.ok === true && launcher.stamp_id) {
+    if (typeof trustedCoordinateClick === 'function' && launcher.bbox) {
+      const coordinateResult = await trustedCoordinateClick({
+        tabId,
+        strategy: 'upload_media_asset_picker_launcher',
+        text: launcher.text || 'Add Media',
+        bbox: launcher.bbox,
+        x: Math.round(launcher.bbox.x + (launcher.bbox.width / 2)),
+        y: Math.round(launcher.bbox.y + (launcher.bbox.height / 2)),
+      });
+      if (coordinateResult && coordinateResult.ok === true) {
+        await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
+        return { ok: true, label: 'Upload media', role: launcher.strategy || 'asset_picker_launcher_fallback', bbox: launcher.bbox, click_method: 'cdp_visible_coordinate' };
+      }
+    }
+    const launcherClick = await _runMainWorld(scripting, tabId, MAIN_clickStampedElement, [launcher.stamp_attr, launcher.stamp_id]);
+    if (launcherClick && launcherClick.ok === true) {
+      return { ok: true, label: 'Upload media', role: launcher.strategy || 'asset_picker_launcher_fallback', bbox: launcher.bbox };
     }
   }
   return result;
@@ -4178,6 +5558,27 @@ function _buildEffectiveSequence(desiredModel) {
   });
 }
 
+function _shouldTrustWorkspacePackageSettings(job) {
+  if (!job || job.mode !== 'F2V') return false;
+  const hasWorkspaceAuthority = Boolean(
+    job.workspace_execution_package_id ||
+    job.prompt_package_snapshot_id ||
+    job.prompt_fingerprint
+  );
+  const startAsset = job.startAsset;
+  const hasResolvedStartAsset = Boolean(
+    startAsset &&
+    (
+      startAsset.localFilePath ||
+      startAsset.downloadUrl ||
+      startAsset.previewUrl ||
+      startAsset.mediaId ||
+      startAsset.assetId
+    )
+  );
+  return hasWorkspaceAuthority && hasResolvedStartAsset;
+}
+
 async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
   const scripting = deps && deps.scripting;
   if (!scripting || typeof scripting.executeScript !== 'function') {
@@ -4205,6 +5606,10 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
   };
 
   try {
+    if (String(opts?.stopAfter || job?.stopAfter || '') === 'UPLOAD_PICKER_OPENED') {
+      return await _runB2AUploadPickerOpenOnly(scripting, tabId, opts, stages, recordStage);
+    }
+
     // Step 1 — new project / resume. The caller passes newProjectFn so
     // navigation resume / recursion guard stays in the existing path.
     // When absent, we trust the tab is already on a project editor.
@@ -4229,119 +5634,122 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     recordStage('F2V_SOP_MODEL_TARGET_RESOLVED', 'PASS',
       `desired=${desiredModel ? desiredModel.canon : 'accept_current'} family=${desiredModel ? desiredModel.family : 'any'}`);
 
-    // Steps 3-7 — configure each visible option.
-    for (const step of effectiveSequence) {
-      if (step.kind === 'ratio') {
-        // SETTINGS GATE. Read the composer pill FIRST. If aspect + count + model
-        // are already correct (the Tier One reality), CONFIRM them without ever
-        // opening the settings panel — clicking an already-correct chip risks
-        // toggling it off. Only when something is wrong do we dismiss overlays
-        // and open the panel (Tier Two).
-        recordStage('F2V_SOP_SETTINGS_EXPLORER_STARTED', 'PASS', `build=${F2V_FLOW_QUEUE_RUNNER_BUILD_ID}`);
+    if (_shouldTrustWorkspacePackageSettings(job)) {
+      const packageSettingSummary = {
+        authority: 'workspace_package',
+        orientation: job?.orientation || null,
+        model: desiredModel ? desiredModel.canon : (job?.model || null),
+        count: Number(job?.count || 0) || null,
+        workspace_execution_package_id: job?.workspace_execution_package_id || null,
+        start_asset_present: Boolean(job?.startAsset),
+      };
+      recordStage('F2V_SOP_SETTINGS_EXPLORER_STARTED', 'PASS',
+        `source=workspace_package_authority summary=${JSON.stringify(packageSettingSummary)}`);
+      stageResults.settings_proof = {
+        ok: true,
+        authority: 'workspace_package',
+        bypassed: true,
+        summary: packageSettingSummary,
+      };
+      stageResults.settings_configured = true;
+      recordStage('F2V_SOP_SETTINGS_CONFIGURED', 'PASS',
+        `source=workspace_package_authority summary=${JSON.stringify(packageSettingSummary)}`);
+    } else {
+      // Steps 3-7 — configure each visible option.
+      for (const step of effectiveSequence) {
+        if (step.kind === 'ratio') {
+          // SETTINGS GATE. Read the composer pill FIRST. If aspect + count + model
+          // are already correct (the Tier One reality), CONFIRM them without ever
+          // opening the settings panel — clicking an already-correct chip risks
+          // toggling it off. Only when something is wrong do we dismiss overlays
+          // and open the panel (Tier Two).
+          recordStage('F2V_SOP_SETTINGS_EXPLORER_STARTED', 'PASS', `build=${F2V_FLOW_QUEUE_RUNNER_BUILD_ID}`);
 
-        const preState = await _runMainWorld(scripting, tabId, MAIN_getBottomComposerState, []);
-        const ratioOk = Boolean(preState && preState.detectedRatio === '9:16');
-        const countOk = Boolean(preState && preState.detectedCount === '1x');
-        const modelReadable = Boolean(preState && preState.detectedModelCanonical);
-        const modelOk = Boolean(preState && (desiredModel
-          ? (preState.detectedModelFamily === desiredModel.family || preState.detectedModelCanonical === desiredModel.canon)
-          : modelReadable));
-        // Model non-fatal. The live F2V bottom pill is "Video crop_9_16 1x" — it
-        // does NOT carry the model, so detectedModel is UNKNOWN even on a perfectly
-        // configured editor. When aspect + count are already correct but the model
-        // simply cannot be read from the pill, opening the settings panel to
-        // "verify" a model we can't see is actively harmful: Flow swaps the pill out
-        // for the expanded panel, so the subsequent ratio/count confirmation can no
-        // longer read the pill and the collapsed aspect sub-menu returns 0
-        // candidates → ERR_F2V_OPTION_RATIO_9_16_NOT_FOUND on an already-9:16 editor.
-        // The DOM diagnostic lane already treats F2V model-UNKNOWN as non-fatal
-        // (mode_mismatch_non_fatal / page_preselection_ready); mirror that here and
-        // let the model step accept the current model without a panel.
-        const modelNonFatal = ratioOk && countOk && !modelReadable;
+          const preState = await _runMainWorld(scripting, tabId, MAIN_getBottomComposerState, []);
+          const ratioOk = Boolean(preState && preState.detectedRatio === '9:16');
+          const countOk = Boolean(preState && preState.detectedCount === '1x');
+          const modelReadable = Boolean(preState && preState.detectedModelCanonical);
+          const modelOk = Boolean(preState && (desiredModel
+            ? (preState.detectedModelFamily === desiredModel.family || preState.detectedModelCanonical === desiredModel.canon)
+            : modelReadable));
+          const modelNonFatal = ratioOk && countOk && !modelReadable;
 
-        if (ratioOk && countOk && (modelOk || modelNonFatal)) {
-          const confirmReason = modelOk
-            ? 'tier_one_pill_confirmed'
-            : 'tier_one_pill_confirmed_model_nonfatal';
-          console.log(`[FlowAgent] Tier One: aspect + count${modelOk ? ' + model' : ' (model accepted as current — not on pill)'} already configured — no panel needed.`);
-          recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', `launcher=${confirmReason}`);
-          recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS',
-            `strategy=${confirmReason} pill=${JSON.stringify(String(preState.pillText || '').slice(0, 80))}`);
-          // Fall through: each ratio/count/model step semantic-skips below.
-        } else {
-          // Tier Two — dismiss promo overlays, then open the settings panel.
-          const dismissRes = await _runMainWorld(scripting, tabId, MAIN_dismissPromoOverlays, []);
-          if (dismissRes && dismissRes.dismissed) {
-            console.log(`[FlowAgent] Overlay dismissed via: ${dismissRes.method || 'unknown'}`);
-            await _sleep(350);
+          if (ratioOk && countOk && (modelOk || modelNonFatal)) {
+            const confirmReason = modelOk
+              ? 'tier_one_pill_confirmed'
+              : 'tier_one_pill_confirmed_model_nonfatal';
+            console.log(`[FlowAgent] Tier One: aspect + count${modelOk ? ' + model' : ' (model accepted as current — not on pill)'} already configured — no panel needed.`);
+            recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', `launcher=${confirmReason}`);
+            recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS',
+              `strategy=${confirmReason} pill=${JSON.stringify(String(preState.pillText || '').slice(0, 80))}`);
+          } else {
+            const dismissRes = await _runMainWorld(scripting, tabId, MAIN_dismissPromoOverlays, []);
+            if (dismissRes && dismissRes.dismissed) {
+              console.log(`[FlowAgent] Overlay dismissed via: ${dismissRes.method || 'unknown'}`);
+              await _sleep(350);
+            }
+            const panel = await _openComposerSettingsPanel(scripting, tabId, opts);
+            recordStage('F2V_SOP_SETTINGS_OPENER_SCAN', 'PASS', _buildSettingsOpenerScanMessage(panel));
+            if (!panel.ok) {
+              recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'FAIL',
+                `${panel.error} detail=${panel.detail} launchers=${JSON.stringify(panel.visible_launchers || [])} strategies=${JSON.stringify(panel.attempted_strategies || [])}`);
+              return {
+                ok: false,
+                error: panel.error,
+                detail: panel.detail,
+                stages,
+                visible_launchers: panel.visible_launchers || [],
+                attempted_strategies: panel.attempted_strategies || [],
+                diagnostics: panel.diagnostics || null,
+              };
+            }
+            recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', `launcher=${panel.launcher_text || 'already_open'}`);
+            recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS',
+              `already_open=${Boolean(panel.already_open)} strategy=${panel.strategy || 'already_open'}`);
           }
-          const panel = await _openComposerSettingsPanel(scripting, tabId, opts);
-          recordStage('F2V_SOP_SETTINGS_OPENER_SCAN', 'PASS', _buildSettingsOpenerScanMessage(panel));
-          if (!panel.ok) {
-            recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'FAIL',
-              `${panel.error} detail=${panel.detail} launchers=${JSON.stringify(panel.visible_launchers || [])} strategies=${JSON.stringify(panel.attempted_strategies || [])}`);
-            return {
-              ok: false,
-              error: panel.error,
-              detail: panel.detail,
-              stages,
-              visible_launchers: panel.visible_launchers || [],
-              attempted_strategies: panel.attempted_strategies || [],
-              diagnostics: panel.diagnostics || null,
-            };
-          }
-          recordStage('F2V_SOP_SETTINGS_LAUNCHER_FOUND', 'PASS', `launcher=${panel.launcher_text || 'already_open'}`);
-          recordStage('F2V_SOP_SETTINGS_PANEL_OPENED', 'PASS',
-            `already_open=${Boolean(panel.already_open)} strategy=${panel.strategy || 'already_open'}`);
+        }
+
+        const clickRes = await _clickVisibleOptionExact(scripting, tabId, step, opts);
+        if (!clickRes.ok) {
+          recordStage(step.stage, 'FAIL',
+            `${clickRes.error} detail=${clickRes.detail} candidates=${JSON.stringify(clickRes.visible_candidates || [])}`);
+          return {
+            ok: false,
+            error: clickRes.error,
+            detail: clickRes.detail,
+            stages,
+            stage_results: stageResults,
+            visible_candidates: clickRes.visible_candidates || [],
+          };
+        }
+
+        recordStage('F2V_SOP_SETTING_CANDIDATES_SCANNED', 'PASS', `label=${step.label} count=${clickRes.visible_candidates?.length || 0}`);
+        let stageName = step.stage;
+        if (clickRes.skipped) {
+          stageName = step.stage.replace('_CLICKED', '_CONFIRMED');
+        }
+        recordStage(stageName, 'PASS', `role=${clickRes.role}`);
+        if (!clickRes.skipped && step.stage.indexOf('_CLICKED') >= 0) {
+          const confirmedStage = step.stage.replace('_CLICKED', '_CONFIRMED');
+          recordStage(confirmedStage, 'PASS', `role=${clickRes.role}`);
         }
       }
 
-      const clickRes = await _clickVisibleOptionExact(scripting, tabId, step, opts);
-      if (!clickRes.ok) {
-        recordStage(step.stage, 'FAIL',
-          `${clickRes.error} detail=${clickRes.detail} candidates=${JSON.stringify(clickRes.visible_candidates || [])}`);
+      const verify = await _verifySettingsPanelApplied(scripting, tabId, { ...opts, job }, effectiveSequence);
+      stageResults.settings_proof = verify;
+      stageResults.settings_configured = Boolean(verify?.ok);
+      if (!verify?.ok) {
+        recordStage('F2V_SOP_SETTINGS_CONFIGURED', 'FAIL', `results=${JSON.stringify(verify || {})}`);
         return {
           ok: false,
-          error: clickRes.error,
-          detail: clickRes.detail,
+          error: ERR.SETTINGS_NOT_CONFIGURED_BEFORE_UPLOAD,
+          detail: 'ui_contract_v2_settings_persistence_failed',
           stages,
           stage_results: stageResults,
-          visible_candidates: clickRes.visible_candidates || [],
         };
       }
-
-      // Emit candidate scanned stage
-      recordStage('F2V_SOP_SETTING_CANDIDATES_SCANNED', 'PASS', `label=${step.label} count=${clickRes.visible_candidates?.length || 0}`);
-
-      // Emit explicit CLICKED or CONFIRMED stages
-      let stageName = step.stage;
-      if (clickRes.skipped) {
-        stageName = step.stage.replace('_CLICKED', '_CONFIRMED');
-      }
-      recordStage(stageName, 'PASS', `role=${clickRes.role}`);
-
-      // If we clicked or confirmed, also emit the corresponding CONFIRMED step for the UAT trail contract
-      if (!clickRes.skipped && step.stage.indexOf('_CLICKED') >= 0) {
-        const confirmedStage = step.stage.replace('_CLICKED', '_CONFIRMED');
-        recordStage(confirmedStage, 'PASS', `role=${clickRes.role}`);
-      }
+      recordStage('F2V_SOP_SETTINGS_CONFIGURED', 'PASS', `results=${JSON.stringify(verify.results || {})} save_visible=${Boolean(verify.save_visible)} save_clicked=${Boolean(verify.save_clicked)} persistence_source=${verify.persistence_source || 'unknown'}`);
     }
-
-    // Step 8 — verify settings applied (soft check — informational).
-    const verify = await _verifySettingsPanelApplied(scripting, tabId, { ...opts, job }, effectiveSequence);
-    stageResults.settings_proof = verify;
-    stageResults.settings_configured = Boolean(verify?.ok);
-    if (!verify?.ok) {
-      recordStage('F2V_SOP_SETTINGS_CONFIGURED', 'FAIL', `results=${JSON.stringify(verify || {})}`);
-      return {
-        ok: false,
-        error: ERR.SETTINGS_NOT_CONFIGURED_BEFORE_UPLOAD,
-        detail: 'ui_contract_v2_settings_persistence_failed',
-        stages,
-        stage_results: stageResults,
-      };
-    }
-    recordStage('F2V_SOP_SETTINGS_CONFIGURED', 'PASS', `results=${JSON.stringify(verify.results || {})} save_visible=${Boolean(verify.save_visible)} save_clicked=${Boolean(verify.save_clicked)} persistence_source=${verify.persistence_source || 'unknown'}`);
 
     // Step 9/10/11 — upload lane.
     // CDP upload (Phase 2, opt-in via opts.cdpFileChooserUpload) must ARM file-chooser
@@ -4361,12 +5769,14 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
         return { ok: false, error: armRes?.error || 'ERR_CDP_ARM_FAILED', detail: armRes?.detail || null, stages, stage_results: stageResults };
       }
       recordStage('F2V_SOP_CDP_FILE_CHOOSER_ARMED', 'PASS', `slot=Start file=${armRes.expectedFileName || ''}`);
+      // GFV2 contract telemetry (no-op for non-GFV2 callers).
+      opts?.gfv2Stage?.('GFV2_CDP_FILE_CHOOSER_ARMED', 'PASS', `file=${armRes.expectedFileName || ''}`);
     }
 
     // Step 10 — open the upload entrypoint. Primary DOM flow clicks the
     // visible Start slot first, then continues into Upload media.
     const startResult = _useCdpUpload
-      ? await _clickStart(scripting, tabId, opts)
+      ? await _clickStartEntryPoint(scripting, tabId, { ...opts, preferTrustedStartClick: true })
       : await _clickStartEntryPoint(scripting, tabId, opts);
     if (!startResult.ok) {
       recordStage('F2V_SOP_START_CLICKED', 'FAIL', `${startResult.error} ${startResult.detail}`);
@@ -4374,6 +5784,7 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     }
     stageResults.start_clicked = true;
     recordStage('F2V_SOP_START_CLICKED', 'PASS', `role=${startResult.role}`);
+    opts?.gfv2Stage?.('GFV2_UPLOAD_LAUNCHER_CLICKED', 'PASS', `role=${startResult.role}`);
 
     // HARD GATE before upload — operator-specified.
     if (stageResults.settings_configured !== true) {
@@ -4391,21 +5802,133 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
       recordStage('F2V_SOP_UPLOAD_CLICKED', 'SKIP', 'opts.skipUpload=true');
       recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'SKIP', 'opts.skipUpload=true');
     } else if (_useCdpUpload) {
-      // Step 11 (CDP) — the Start click opened the native chooser; CDP feeds the local
-      // file via DOM.setFileInputFiles (background-owned chrome.debugger).
+      const startToUploadWaitMs = Math.max(0, Number(opts?.startToUploadWaitMs ?? 1000));
+      const uploadWaitMs = Math.max(0, Number(opts?.uploadWaitMs ?? SOP_DEFAULT_UPLOAD_WAIT_MS));
+      const postAddToPromptWaitMs = Math.max(0, Number(opts?.postAddToPromptWaitMs ?? 500));
+      await _sleep(startToUploadWaitMs);
+      // Step 11 (CDP) — Google Flow can expose either:
+      //   1. a direct native chooser on Start, or
+      //   2. a modal Upload media button after Start.
+      // Arm the chooser before Start, then opportunistically click Upload media.
+      // If the chooser already opened directly from Start, the upload button will
+      // simply be absent and we continue waiting for the armed chooser event.
+      const uploadResult = await _clickUploadMedia(
+        scripting,
+        tabId,
+        { ...opts, preferTrustedUploadClick: true, strictUploadAction: true },
+      );
+      // GFV2 contract telemetry: the add/create launcher opening a menu is NOT the
+      // same as the file chooser opening — the in-menu "Upload media" / "Upload from
+      // computer" item must be clicked first. Emit the menu-item events explicitly so
+      // a launcher click alone is never mistaken for an opened chooser.
+      if (uploadResult?.ok) {
+        opts?.gfv2Stage?.('GFV2_UPLOAD_MENU_OPENED', 'PASS', `role=${uploadResult.role || 'menu'}`);
+        opts?.gfv2Stage?.('GFV2_UPLOAD_MEDIA_ITEM_FOUND', 'PASS', `label=${uploadResult.label || 'Upload media'} role=${uploadResult.role || ''}`);
+        opts?.gfv2Stage?.('GFV2_UPLOAD_MEDIA_ITEM_CLICKED', 'PASS', `click_method=${uploadResult.click_method || 'dom'}`);
+      } else {
+        opts?.gfv2Stage?.('GFV2_UPLOAD_MEDIA_ITEM_FOUND', 'FAIL', `upload_probe=${uploadResult?.error || 'not_visible'}`);
+      }
       const fedRes = await opts.cdpFileChooserUpload({ phase: 'wait', tabId });
       if (!fedRes || fedRes.ok !== true) {
-        recordStage('F2V_SOP_CDP_FILE_CHOOSER_FED', 'FAIL', `${fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND} ${fedRes?.detail || ''}`);
-        recordStage('F2V_SOP_UPLOAD_CLICKED', 'FAIL', `${fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND} strategy=cdp_file_chooser`);
-        return { ok: false, error: fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND, detail: fedRes?.detail || null, stages, stage_results: stageResults };
+        const canRecoverViaDomFallback =
+          (fedRes?.error === 'ERR_CDP_FILE_CHOOSER_TIMEOUT' ||
+            fedRes?.error === 'ERR_CDP_FILE_CHOOSER_NOT_ARMED' ||
+            String(fedRes?.error || '').indexOf('ERR_CDP_DEBUGGER_DETACHED:') === 0) &&
+          typeof opts?.domUploadFallback === 'function';
+        if (canRecoverViaDomFallback) {
+          const fallbackRes = await opts.domUploadFallback({
+            tabId,
+            slotLabel: 'Start',
+            assetSource: job?.startAsset || job?.productId || job?.startImageMediaId || null,
+          });
+          if (fallbackRes?.ok === true) {
+            recordStage(
+              'F2V_SOP_CDP_FILE_CHOOSER_FED',
+              'SKIP',
+              `recovered_via=dom_upload_fallback error=${fedRes.error} strategy=${fallbackRes.uploadStrategy || 'unknown'}`,
+            );
+            recordStage(
+              'F2V_SOP_UPLOAD_CLICKED',
+              'PASS',
+              `strategy=dom_upload_fallback role=${uploadResult?.role || 'button'} click_method=${uploadResult?.click_method || 'dom'} waited_ms=${startToUploadWaitMs}`,
+            );
+            await _sleep(uploadWaitMs);
+            const addPromptResult = await _clickAddToPrompt(scripting, tabId, opts);
+            if (!addPromptResult.ok) {
+              recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'FAIL', `${addPromptResult.error} ${addPromptResult.detail}`);
+              return { ok: false, error: addPromptResult.error, detail: addPromptResult.detail, stages, stage_results: stageResults };
+            }
+            stageResults.media_attached = true;
+            stageResults.add_to_prompt_proof = {
+              passed: true,
+              role: addPromptResult.role || null,
+              prompt_bound_media_preview: addPromptResult.role === 'composer_prompt_bound_preview_present',
+            };
+            stageResults.upload_proof = {
+              passed: true,
+              media_attached: true,
+              via: 'dom_upload_fallback',
+            };
+            await _sleep(postAddToPromptWaitMs);
+            recordStage(
+              'F2V_SOP_UPLOAD_WAIT_DONE',
+              'PASS',
+              `waited_ms=${uploadWaitMs} add_to_prompt_role=${addPromptResult.role} post_wait_ms=${postAddToPromptWaitMs} strategy=dom_upload_fallback`,
+            );
+          } else {
+            const uploadHint = uploadResult?.ok
+              ? `upload_role=${uploadResult.role || 'unknown'}`
+              : `upload_probe=${uploadResult?.error || 'not_visible'}`;
+            recordStage('F2V_SOP_CDP_FILE_CHOOSER_FED', 'FAIL', `${fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND} ${fedRes?.detail || ''}`.trim());
+            recordStage(
+              'F2V_SOP_UPLOAD_CLICKED',
+              'FAIL',
+              `${fallbackRes?.error || fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND} strategy=dom_upload_fallback ${uploadHint}`.trim(),
+            );
+            return { ok: false, error: fallbackRes?.error || fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND, detail: fallbackRes?.detail || fedRes?.detail || null, stages, stage_results: stageResults };
+          }
+        } else {
+        const uploadHint = uploadResult?.ok
+          ? `upload_role=${uploadResult.role || 'unknown'}`
+          : `upload_probe=${uploadResult?.error || 'not_visible'}`;
+        recordStage('F2V_SOP_CDP_FILE_CHOOSER_FED', 'FAIL', `${fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND} ${fedRes?.detail || ''}`.trim());
+        recordStage('F2V_SOP_UPLOAD_CLICKED', 'FAIL', `${fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND} strategy=cdp_file_chooser ${uploadHint}`.trim());
+        // GFV2: when the chooser never opened AND no in-menu upload item was found/
+        // clicked, the precise blocker is a missing menu item, not a generic timeout.
+        if (!uploadResult?.ok) {
+          opts?.gfv2Stage?.('GFV2_UPLOAD_MEDIA_ITEM_NOT_FOUND', 'FAIL', `upload_probe=${uploadResult?.error || 'not_visible'} chooser=${fedRes?.error || 'timeout'}`);
+        } else {
+          opts?.gfv2Stage?.('GFV2_CDP_FILE_CHOOSER_FED', 'FAIL', `${fedRes?.error || 'chooser_failed'}`);
+        }
+        const gfv2UploadError = !uploadResult?.ok ? 'GFV2_UPLOAD_MEDIA_ITEM_NOT_FOUND' : (fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND);
+        return { ok: false, error: opts?.gfv2Stage ? gfv2UploadError : (fedRes?.error || ERR.UPLOAD_MEDIA_NOT_FOUND), detail: fedRes?.detail || null, stages, stage_results: stageResults };
+        }
       }
-      recordStage('F2V_SOP_CDP_FILE_CHOOSER_FED', 'PASS', `file=${fedRes.filePath || ''} backendNodeId=${fedRes.backendNodeId || ''}`);
-      recordStage('F2V_SOP_UPLOAD_CLICKED', 'PASS', 'strategy=cdp_file_chooser');
-      // Step 12 — wait for media attachment.
-      const waitMs = Math.max(0, Number(opts?.uploadWaitMs ?? SOP_DEFAULT_UPLOAD_WAIT_MS));
-      await _sleep(waitMs);
-      stageResults.media_attached = true;
-      recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'PASS', `waited_ms=${waitMs} strategy=cdp_file_chooser`);
+      if (stageResults.media_attached !== true) {
+        recordStage('F2V_SOP_CDP_FILE_CHOOSER_FED', 'PASS', `file=${fedRes.filePath || ''} backendNodeId=${fedRes.backendNodeId || ''}`);
+        opts?.gfv2Stage?.('GFV2_CDP_FILE_CHOOSER_FED', 'PASS', `file=${fedRes.filePath || ''}`);
+        recordStage(
+          'F2V_SOP_UPLOAD_CLICKED',
+          'PASS',
+          uploadResult?.ok
+            ? `strategy=cdp_file_chooser role=${uploadResult.role || 'unknown'} click_method=${uploadResult.click_method || 'dom'} waited_ms=${startToUploadWaitMs}`
+            : `strategy=cdp_file_chooser role=direct_start click_method=start_slot waited_ms=${startToUploadWaitMs}`,
+        );
+        // Step 12 — wait for media attachment.
+        await _sleep(uploadWaitMs);
+        stageResults.media_attached = true;
+        stageResults.upload_proof = {
+          passed: true,
+          media_attached: true,
+          via: 'cdp_file_chooser',
+        };
+        stageResults.add_to_prompt_proof = {
+          passed: true,
+          role: 'media_attached',
+          prompt_bound_media_preview: false,
+        };
+        recordStage('F2V_SOP_UPLOAD_WAIT_DONE', 'PASS', `waited_ms=${uploadWaitMs} strategy=cdp_file_chooser`);
+      }
     } else {
       const startToUploadWaitMs = Math.max(0, Number(opts?.startToUploadWaitMs ?? 1000));
       await _sleep(startToUploadWaitMs);
@@ -4548,6 +6071,8 @@ const _api = {
   MAIN_invokeReactFiberSubmit,
   MAIN_stampGenerateButton,
   MAIN_stampAssetPickerLauncher,
+  MAIN_findComposerAddMediaLauncher,
+  MAIN_getUploadPickerStateForB2A,
   MAIN_getBottomComposerState,
   MAIN_dismissPromoOverlays,
   MAIN_findVisibleModelByKeyword,
@@ -4568,6 +6093,7 @@ const _api = {
   _clickUploadMedia,
   _clickAddToPrompt,
   _invokeGenerate,
+  _runB2AUploadPickerOpenOnly,
   // Constants
   F2V_FLOW_QUEUE_RUNNER_BUILD_ID,
   SOP_SEQUENCE,

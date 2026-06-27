@@ -5290,6 +5290,9 @@ async function handleGfv2Job(job) {
 			uploadWaitMs: 10000,
 			skipUpload: false,
 			skipGenerate: true, // GFV2 UAT stops BEFORE Generate.
+			// GFV2 upload-menu contract telemetry: launcher click is NOT a file chooser;
+			// the in-menu "Upload media"/"Upload from computer" item is clicked first.
+			gfv2Stage: (stage, status, message) => emit(stage, status, message),
 			cdpCoordinateClick: async (params) =>
 				await cdpClickCoordinate(params.tabId, params.x, params.y),
 			...cdpOpt,

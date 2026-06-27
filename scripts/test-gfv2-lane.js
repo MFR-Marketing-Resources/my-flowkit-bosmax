@@ -171,6 +171,52 @@ test("runner still uses skipGenerate:true and stops before generate", () => {
 	assert(!/"GENERATE_CLICKED"|invokeGenerate/.test(HANDLE_SRC), "must not click generate");
 });
 
+// --- Upload-menu contract (ERR_CDP_FILE_CHOOSER_TIMEOUT fix) ---
+const RUNNER_SRC = fs.readFileSync(
+	path.join(__dirname, "..", "extension", "f2v-flow-queue-runner.js"),
+	"utf8",
+);
+
+test("upload alias list includes the V2 'Upload from computer' menu item", () => {
+	assert(RUNNER_SRC.includes("'Upload from computer'"), "must match the V2 'Upload from computer' label");
+	assert(RUNNER_SRC.includes("'Upload from device'"), "keeps legacy 'Upload from device'");
+	assert(RUNNER_SRC.includes("'upload Upload media'"), "keeps 'Upload media'");
+});
+
+test("launcher click alone is NOT treated as the file chooser opening", () => {
+	// The add/create launcher (F2V_SOP_START_CLICKED) and the in-menu item are
+	// distinct: _clickUploadMedia must run BEFORE the CDP chooser wait.
+	const startIdx = RUNNER_SRC.indexOf("F2V_SOP_START_CLICKED', 'PASS'");
+	const clickUploadIdx = RUNNER_SRC.indexOf("await _clickUploadMedia(\n        scripting");
+	const waitIdx = RUNNER_SRC.indexOf("cdpFileChooserUpload({ phase: 'wait'");
+	assert(startIdx >= 0 && clickUploadIdx >= 0 && waitIdx >= 0, "all three steps present");
+	assert(startIdx < clickUploadIdx, "launcher click precedes upload-media click");
+	assert(clickUploadIdx < waitIdx, "upload-media click precedes the CDP chooser wait");
+});
+
+test("runner emits the GFV2 upload-menu telemetry sequence", () => {
+	for (const stage of [
+		"GFV2_CDP_FILE_CHOOSER_ARMED",
+		"GFV2_UPLOAD_LAUNCHER_CLICKED",
+		"GFV2_UPLOAD_MENU_OPENED",
+		"GFV2_UPLOAD_MEDIA_ITEM_FOUND",
+		"GFV2_UPLOAD_MEDIA_ITEM_CLICKED",
+		"GFV2_CDP_FILE_CHOOSER_FED",
+	]) {
+		assert(RUNNER_SRC.includes(`'${stage}'`), `runner must emit ${stage}`);
+	}
+});
+
+test("missing upload menu item returns named blocker GFV2_UPLOAD_MEDIA_ITEM_NOT_FOUND", () => {
+	assert(RUNNER_SRC.includes("'GFV2_UPLOAD_MEDIA_ITEM_NOT_FOUND'"), "named menu-item blocker emitted");
+	assert(/gfv2UploadError\s*=\s*!uploadResult\?\.ok\s*\?\s*'GFV2_UPLOAD_MEDIA_ITEM_NOT_FOUND'/.test(RUNNER_SRC), "returns the named blocker when the item was never found/clicked");
+});
+
+test("GFV2 lane wires gfv2Stage into the runner", () => {
+	assert(/gfv2Stage:\s*\(stage, status, message\) =>\s*emit\(stage, status, message\)/.test(HANDLE_SRC), "handleGfv2Job passes gfv2Stage to the runner");
+	assert(/opts\?\.gfv2Stage\?\.\(/.test(RUNNER_SRC), "runner invokes opts.gfv2Stage (no-op for non-GFV2 callers)");
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
 	try {
