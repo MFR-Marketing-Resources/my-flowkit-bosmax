@@ -2419,6 +2419,61 @@ function MAIN_findComposerAddMediaLauncher(stampAttr) {
  * MAIN-world: verify the upload picker/modal is open and discover the
  * upload action without clicking it.
  */
+// READ-ONLY diagnostic: enumerate every visible clickable element's label text /
+// aria-label / role. Used only when the upload menu item is not matched, so the
+// telemetry reveals the REAL Google Flow V2 add-menu labels (no clicks performed).
+function MAIN_dumpVisibleClickableTexts() {
+  function norm(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function collectAll(selector) {
+    var out = [];
+    var queue = [document];
+    var seen = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seen.has(curr)) continue;
+      seen.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var i = 0; i < direct.length; i++) out.push(direct[i]);
+        var all = curr.querySelectorAll('*');
+        for (var j = 0; j < all.length; j++) {
+          if (all[j].shadowRoot && !seen.has(all[j].shadowRoot)) queue.push(all[j].shadowRoot);
+        }
+      }
+    }
+    return out;
+  }
+  var els = collectAll('button, [role="button"], [role="menuitem"], [role="option"], a, li');
+  var items = [];
+  var seenLabel = new Set();
+  for (var i = 0; i < els.length && items.length < 40; i++) {
+    var el = els[i];
+    if (!isVisible(el)) continue;
+    var label = norm(
+      (el.textContent || '') + ' | ' +
+      ((el.getAttribute && el.getAttribute('aria-label')) || '') + ' | ' +
+      ((el.getAttribute && el.getAttribute('title')) || '')
+    ).replace(/\s*\|\s*$/, '');
+    var key = label + '::' + ((el.getAttribute && el.getAttribute('role')) || el.tagName);
+    if (!label || seenLabel.has(key)) continue;
+    seenLabel.add(key);
+    items.push({
+      text: norm(el.textContent || '').slice(0, 60) || null,
+      aria: norm((el.getAttribute && el.getAttribute('aria-label')) || '') || null,
+      role: (el.getAttribute && el.getAttribute('role')) || null,
+      tag: String(el.tagName || '').toLowerCase(),
+    });
+  }
+  return { ok: true, count: items.length, items: items };
+}
+
 function MAIN_getUploadPickerStateForB2A() {
   function normalize(s) {
     return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
@@ -5246,13 +5301,20 @@ async function _clickUploadMedia(scripting, tabId, opts) {
       }
     }
   }
-  // Google Flow V2 labels the in-menu upload item "Upload from computer"
-  // (older builds used "Upload media" / "Upload from device"). Without this the
-  // add-menu item is never matched, the native chooser never opens, and the CDP
-  // wait fails with ERR_CDP_FILE_CHOOSER_TIMEOUT (live req gfv2_live_2).
-  const uploadAliases = strictUploadAction
-    ? ['upload Upload media', 'Upload', 'Upload from device', 'Upload from computer', 'upload Upload from computer']
-    : ['upload Upload media', 'Upload', 'Upload from device', 'Upload from computer', 'upload Upload from computer', 'Add Media', 'add Add Media'];
+  // Google Flow V2's add/upload control is labelled "Add Media" (Material icon
+  // ligature renders the textContent as "addAdd Media"; the matcher's stripIcon
+  // reduces it to "Add Media"). Older builds used "Upload media" / "Upload from
+  // device" / "Upload from computer". The strict (CDP) path previously omitted
+  // "Add Media", so the item was never matched, the native chooser never opened,
+  // and the CDP wait failed with ERR_CDP_FILE_CHOOSER_TIMEOUT (gfv2_live_2/3/4 —
+  // live dump showed "addAdd Media" / "dashboardAll Media", no "Upload media").
+  // In V2 the add/upload control is "Add Media", which opens a nested submenu whose
+  // item is "Upload from computer" (it, in turn, opens the native chooser). The first
+  // pass clicks "Add Media"; the nested pass (opts.uploadSubmenu) targets the upload
+  // item and deliberately EXCLUDES "Add Media" to avoid re-clicking the parent.
+  const uploadAliases = opts?.uploadSubmenu
+    ? ['Upload from computer', 'upload Upload from computer', 'Upload media', 'upload Upload media', 'Upload from device', 'Upload', 'Upload from gallery']
+    : ['Add Media', 'add Add Media', 'upload Upload media', 'Upload', 'Upload from device', 'Upload from computer', 'upload Upload from computer'];
   if (typeof trustedCoordinateClick === 'function') {
     const stampAttr = opts?.stampAttr || 'data-bosmax-option';
     const findResult = await _runMainWorld(
@@ -5825,8 +5887,34 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
         opts?.gfv2Stage?.('GFV2_UPLOAD_MENU_OPENED', 'PASS', `role=${uploadResult.role || 'menu'}`);
         opts?.gfv2Stage?.('GFV2_UPLOAD_MEDIA_ITEM_FOUND', 'PASS', `label=${uploadResult.label || 'Upload media'} role=${uploadResult.role || ''}`);
         opts?.gfv2Stage?.('GFV2_UPLOAD_MEDIA_ITEM_CLICKED', 'PASS', `click_method=${uploadResult.click_method || 'dom'}`);
+        // V2 nests: "Add Media" opens a submenu with "Upload from computer", which
+        // opens the native chooser. Try the nested upload item (harmless if the
+        // chooser already opened directly — the find simply misses and CDP still waits).
+        await _sleep(Math.max(300, Number(opts?.uploadSubmenuWaitMs ?? 700)));
+        let nestedMenuDump = '';
+        try {
+          const dump = await _runMainWorld(scripting, tabId, MAIN_dumpVisibleClickableTexts, []);
+          nestedMenuDump = (dump?.items || []).map((it) => it.text || it.aria).filter(Boolean).slice(0, 24).join(' / ').slice(0, 400);
+        } catch (_) {}
+        const nested = await _clickUploadMedia(scripting, tabId, { ...opts, preferTrustedUploadClick: true, strictUploadAction: true, uploadSubmenu: true });
+        if (nested?.ok) {
+          opts?.gfv2Stage?.('GFV2_UPLOAD_MEDIA_ITEM_CLICKED', 'PASS', `nested_item=${nested.label || 'Upload from computer'} click_method=${nested.click_method || 'dom'}`);
+        } else {
+          opts?.gfv2Stage?.('GFV2_UPLOAD_SUBMENU_ITEMS', 'WAITING_FLOW', `nested_probe=${nested?.error || 'not_visible'} visible_items=[${nestedMenuDump}]`);
+        }
       } else {
-        opts?.gfv2Stage?.('GFV2_UPLOAD_MEDIA_ITEM_FOUND', 'FAIL', `upload_probe=${uploadResult?.error || 'not_visible'}`);
+        // READ-ONLY: dump the real visible add-menu labels so we learn the V2 text.
+        let menuDumpStr = '';
+        try {
+          const dump = await _runMainWorld(scripting, tabId, MAIN_dumpVisibleClickableTexts, []);
+          menuDumpStr = (dump?.items || [])
+            .map((it) => it.text || it.aria)
+            .filter(Boolean)
+            .slice(0, 24)
+            .join(' / ')
+            .slice(0, 400);
+        } catch (_) {}
+        opts?.gfv2Stage?.('GFV2_UPLOAD_MEDIA_ITEM_FOUND', 'FAIL', `upload_probe=${uploadResult?.error || 'not_visible'} visible_items=[${menuDumpStr}]`);
       }
       const fedRes = await opts.cdpFileChooserUpload({ phase: 'wait', tabId });
       if (!fedRes || fedRes.ok !== true) {
@@ -5847,6 +5935,7 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
               'SKIP',
               `recovered_via=dom_upload_fallback error=${fedRes.error} strategy=${fallbackRes.uploadStrategy || 'unknown'}`,
             );
+            opts?.gfv2Stage?.('GFV2_CDP_FILE_CHOOSER_FED', 'PASS', `recovered_via=dom_upload_fallback strategy=${fallbackRes.uploadStrategy || 'dom_input'}`);
             recordStage(
               'F2V_SOP_UPLOAD_CLICKED',
               'PASS',
@@ -6073,6 +6162,7 @@ const _api = {
   MAIN_stampAssetPickerLauncher,
   MAIN_findComposerAddMediaLauncher,
   MAIN_getUploadPickerStateForB2A,
+  MAIN_dumpVisibleClickableTexts,
   MAIN_getBottomComposerState,
   MAIN_dismissPromoOverlays,
   MAIN_findVisibleModelByKeyword,

@@ -217,6 +217,29 @@ test("GFV2 lane wires gfv2Stage into the runner", () => {
 	assert(/opts\?\.gfv2Stage\?\.\(/.test(RUNNER_SRC), "runner invokes opts.gfv2Stage (no-op for non-GFV2 callers)");
 });
 
+test("V2 'Add Media' nests: runner attempts the nested upload-submenu item", () => {
+	assert(RUNNER_SRC.includes("uploadSubmenu: true"), "second pass targets the nested submenu");
+	assert(/opts\?\.uploadSubmenu/.test(RUNNER_SRC), "alias list switches for the submenu pass");
+	assert(RUNNER_SRC.includes("'Upload from computer'"), "submenu aliases include 'Upload from computer'");
+	assert(RUNNER_SRC.includes("'Add Media'"), "first pass aliases include 'Add Media'");
+});
+
+test("CDP chooser timeout recovers via direct input[type=file] feed", () => {
+	const BG_SRC = fs.readFileSync(path.join(__dirname, "..", "extension", "background.js"), "utf8");
+	assert(/async function tryDirectFileInputFeed\(/.test(BG_SRC), "direct-input helper exists");
+	assert(BG_SRC.includes('"DOM.querySelectorAll"') && BG_SRC.includes("input[type=file]"), "queries file inputs");
+	assert(BG_SRC.includes('"DOM.setFileInputFiles"'), "feeds via DOM.setFileInputFiles");
+	// must be invoked from the chooser timeout (additive — does not change the proven
+	// fileChooserOpened path).
+	const timeoutIdx = BG_SRC.indexOf("run.timeoutId = setTimeout(async");
+	assert(timeoutIdx >= 0, "timeout handler is async");
+	assert(BG_SRC.indexOf("await tryDirectFileInputFeed(debuggee, filePath)", timeoutIdx) > timeoutIdx, "timeout calls the direct feed before failing");
+});
+
+test("broken DOM-message fallback is NOT wired into the GFV2 lane", () => {
+	assert(!/domUploadFallback:/.test(HANDLE_SRC), "must not wire the unimplemented FLOWKIT_SIMULATE_FILE_UPLOAD fallback");
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
 	try {

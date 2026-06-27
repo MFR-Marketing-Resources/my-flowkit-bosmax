@@ -512,10 +512,27 @@ async function beginCdpFileChooserProof(
 		});
 	};
 
-	run.timeoutId = setTimeout(() => {
+	run.timeoutId = setTimeout(async () => {
+		// The native chooser never opened — recover by feeding any hidden file input.
+		const direct = await tryDirectFileInputFeed(debuggee, filePath);
+		if (direct.ok) {
+			settleCdpFileChooserProofRun(tabId, {
+				ok: true,
+				method: "DOM.setFileInputFiles_direct",
+				recovered_via: "direct_input",
+				nodeId: direct.nodeId,
+				input_count: direct.inputCount,
+				filePath,
+				expectedFileName: expectedFileName || null,
+				slotLabel: slotLabel || "Start",
+			});
+			return;
+		}
 		settleCdpFileChooserProofRun(tabId, {
 			ok: false,
 			error: "ERR_CDP_FILE_CHOOSER_TIMEOUT",
+			direct_input_error: direct.error || null,
+			direct_input_detail: direct.detail || null,
 			filePath,
 			expectedFileName: expectedFileName || null,
 			slotLabel: slotLabel || "Start",
@@ -533,6 +550,49 @@ async function beginCdpFileChooserProof(
 		expectedFileName: run.expectedFileName,
 		timeout_ms: CDP_FILE_CHOOSER_TIMEOUT_MS,
 	};
+}
+
+// Robust recovery for upload widgets that attach a hidden <input type=file> but
+// never fire Page.fileChooserOpened (Google Flow V2's "Add Media" -> "Upload media"
+// path — confirmed by live req gfv2_live_3..7 hitting ERR_CDP_FILE_CHOOSER_TIMEOUT).
+// Queries the DOM directly for file inputs and feeds the materialized path via
+// DOM.setFileInputFiles. Only invoked AFTER the interception times out, so the
+// proven fileChooserOpened path (F2V) is unaffected.
+async function tryDirectFileInputFeed(debuggee, filePath) {
+	try {
+		const doc = await chrome.debugger.sendCommand(debuggee, "DOM.getDocument", {
+			depth: 0,
+		});
+		const rootNodeId = doc?.root?.nodeId;
+		if (!rootNodeId) return { ok: false, error: "ERR_CDP_NO_DOCUMENT" };
+		const found = await chrome.debugger.sendCommand(
+			debuggee,
+			"DOM.querySelectorAll",
+			{ nodeId: rootNodeId, selector: "input[type=file], input[type='file']" },
+		);
+		const nodeIds = Array.isArray(found?.nodeIds) ? found.nodeIds : [];
+		if (nodeIds.length === 0) return { ok: false, error: "ERR_CDP_NO_FILE_INPUT" };
+		// Most-recently-attached input is usually the live upload target — try last first.
+		let lastErr = null;
+		for (let i = nodeIds.length - 1; i >= 0; i -= 1) {
+			try {
+				await chrome.debugger.sendCommand(debuggee, "DOM.setFileInputFiles", {
+					files: [filePath],
+					nodeId: nodeIds[i],
+				});
+				return { ok: true, nodeId: nodeIds[i], inputCount: nodeIds.length };
+			} catch (error) {
+				lastErr = String(error?.message || error);
+			}
+		}
+		return { ok: false, error: "ERR_CDP_SET_FILE_INPUT_FAILED", detail: lastErr };
+	} catch (error) {
+		return {
+			ok: false,
+			error: "ERR_CDP_DIRECT_INPUT_FEED_FAILED",
+			detail: String(error?.message || error),
+		};
+	}
 }
 
 async function waitForCdpFileChooserProof(tabId) {
@@ -5280,6 +5340,11 @@ async function handleGfv2Job(job) {
 						...req,
 						assetSource: f2vUploadAssetSource || req?.assetSource,
 					}),
+				// NB: the DOM upload fallback (FLOWKIT_SIMULATE_FILE_UPLOAD) is NOT wired
+				// here on purpose — it is unimplemented in the content script and a
+				// content script cannot set <input type=file>.files (browser security).
+				// The robust recovery for the V2 widget is a CDP direct
+				// input[type=file] + DOM.setFileInputFiles path (see cdpFileChooserUploadForJob).
 			}
 		: {};
 
