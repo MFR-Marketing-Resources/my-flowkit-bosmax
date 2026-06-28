@@ -477,6 +477,46 @@ async def upload_image_base64(body: UploadImageBase64Request):
     }
 
 
+class ShootOneshotRequest(BaseModel):
+    """OTAK envelope — INTEGRATION_CONTRACT.md §5. (project_id/scene_id minted here.)"""
+    prompt: str
+    aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT"
+    user_paygate_tier: str = "PAYGATE_TIER_ONE"
+    start_frame: dict = {}
+
+
+@router.post("/shoot-oneshot")
+async def shoot_oneshot(body: ShootOneshotRequest):
+    """Async one-shot video: envelope -> job_id. Poll GET /flow/job/{id}. Contract §4.1."""
+    from agent.services import shoot_oneshot as _os
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    # Precondition: real account tier must be paid. Read it live (don't trust the
+    # envelope), and pass the real tier downstream to avoid a tier-mismatch 500.
+    cred = await client.get_credits()
+    if cred.get("error"):
+        raise HTTPException(502, cred["error"])
+    real_tier = (cred.get("data", cred) or {}).get("userPaygateTier", "")
+    if real_tier not in _os.PAID_TIERS:
+        raise HTTPException(
+            500,
+            f"Account tier '{real_tier}' cannot generate video — "
+            "needs a paid (Pro/Ultra) subscription.",
+        )
+    return await _os.start_job(body.model_dump(), real_tier)
+
+
+@router.get("/job/{job_id}")
+async def get_oneshot_job(job_id: str):
+    """Poll a one-shot video job. Contract §4.2."""
+    from agent.services import shoot_oneshot as _os
+    job = _os.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "job not found")
+    return job
+
+
 @router.post("/materialize-local-file")
 async def materialize_local_file(body: MaterializeLocalFileRequest):
     """Write a base64 image to a temp staging file and return its absolute disk path.
