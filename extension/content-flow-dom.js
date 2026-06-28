@@ -3443,7 +3443,7 @@ function isSettingsScopedModelSource(source) {
    * }
    */
   function observeFlowState() {
-    console.log('[FlowAgent] Observing Flow State...');
+    if (!window.__FLOWKIT_OBSERVE_HEADER_LOGGED__) { window.__FLOWKIT_OBSERVE_HEADER_LOGGED__ = true; console.log('[FlowAgent] Observing Flow State...'); }
     const observed = {
       topMode: 'UNKNOWN',
       subMode: 'UNKNOWN',
@@ -3476,7 +3476,7 @@ function isSettingsScopedModelSource(source) {
         observed.topMode = 'Image';
       }
     }
-    console.log(`[FlowAgent] Detected topMode: ${observed.topMode}`);
+    if (window.__FLOWKIT_LAST_TOPMODE__ !== observed.topMode) { window.__FLOWKIT_LAST_TOPMODE__ = observed.topMode; console.log(`[FlowAgent] Detected topMode: ${observed.topMode}`); }
 
     // 2. Detect submode (Frames vs Ingredients)
     if (observed.topMode === 'Video') {
@@ -3498,7 +3498,7 @@ function isSettingsScopedModelSource(source) {
         }
       }
     }
-    console.log(`[FlowAgent] Detected subMode: ${observed.subMode}`);
+    if (window.__FLOWKIT_LAST_SUBMODE__ !== observed.subMode) { window.__FLOWKIT_LAST_SUBMODE__ = observed.subMode; console.log(`[FlowAgent] Detected subMode: ${observed.subMode}`); }
 
     // 3. Detect model. Flow's model selector is frequently an icon-only Radix
     // control, so fall back to aria-label/title when textContent carries no label.
@@ -3628,7 +3628,7 @@ function isSettingsScopedModelSource(source) {
         observed.visibleAssetPreviews.push(label);
       }
     }
-    console.log(`[FlowAgent] Detected slots: ${observed.visibleUploadSlots.join(', ')}`);
+    { const __fkSlots = observed.visibleUploadSlots.join(', '); if (window.__FLOWKIT_LAST_SLOTS__ !== __fkSlots) { window.__FLOWKIT_LAST_SLOTS__ = __fkSlots; console.log(`[FlowAgent] Detected slots: ${__fkSlots}`); } }
 
     // 6b. F2V (Video/Frames) only ever exposes Start/End upload slots. Strip any
     // slot labels that leaked in from mode toggles or unrelated text so the F2V
