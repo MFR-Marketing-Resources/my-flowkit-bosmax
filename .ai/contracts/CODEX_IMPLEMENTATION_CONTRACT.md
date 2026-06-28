@@ -8,7 +8,7 @@
 - Keep changes scoped to the active phase.
 - Run local validation before commit.
 - Push tracked repo changes to GitHub or report the exact blocker.
-- Hand live UAT to Antigravity only after the preflight contract is satisfied.
+- Hand live UAT to an operator-authorized runner (Codex, Claude Code, or Antigravity) only after the preflight contract is satisfied.
 
 ## Must Not Do
 - Do not use Antigravity as an iterative debugger.

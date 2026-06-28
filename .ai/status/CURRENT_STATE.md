@@ -22,7 +22,7 @@
   - `content-flow-dom.js` accumulated reactive fallbacks, unverified selectors, direct upload tricks, recursive shadow scanning, and mixed telemetry/execution logic
   - Antigravity must stop iterative debugging
   - Codex owns implementation, local harness, repo cleanup, and commits
-  - Antigravity is one-shot UAT only after strict preflight
+  - live UAT is one-shot only, run by an operator-authorized runner (Codex, Claude Code, or Antigravity) after strict preflight
   - Playwright persistent-context harness is required before live UAT
   - CDP file chooser interception is the recommended upload direction
   - runtime and build telemetry lockdown is required
@@ -41,7 +41,7 @@
 3. Phase 1C: selector and evidence registry
 4. Phase 2: CDP file chooser upload proof of concept
 5. Phase 3: decontaminate `content-flow-dom.js` upload logic
-6. Phase 4: one-shot Antigravity UAT only
+6. Phase 4: one-shot live UAT by an operator-authorized runner (Codex, Claude Code, or Antigravity)
 
 ## Frozen Paths
 - Video mode selection

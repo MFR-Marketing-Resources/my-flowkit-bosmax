@@ -19,7 +19,7 @@
 
 ## Live UAT Rule
 - Live Google Flow work is forbidden until local harness and preflight pass.
-- Antigravity may run one-shot UAT only under the dedicated UAT contract.
+- One-shot live UAT may be run by an operator-authorized runner (Codex, Claude Code, or Antigravity) only under `.ai/contracts/ANTIGRAVITY_UAT_CONTRACT.md` and only when every gate in that contract passes.
 
 ## Evidence Rule
 - Manual screenshots are not proof by themselves.

@@ -17,16 +17,16 @@ This repository is under an architecture reset. All agents must inherit the same
 ## Current Strategic Decision
 - Architecture reset is confirmed.
 - Local harness and preflight gates are mandatory before any live Google Flow work.
-- Antigravity is one-shot live UAT only after Codex reports a clean pushed SHA and the preflight gates pass.
+- Live UAT is one-shot only and may be run by an operator-authorized runner (Codex, Claude Code, or Antigravity) after a clean pushed SHA exists and the preflight gates pass.
 - `content-flow-dom.js` is not a tactical dumping ground. Proven mode/config logic stays frozen; unstable upload/runtime/telemetry lanes are rebuilt deliberately.
 
 ## Roles
-- Codex = implementation, local harness, repo cleanup, static validation, commits, push proof.
+- Codex = implementation, local harness, repo cleanup, static validation, commits, push proof; may run one-shot live UAT when operator-authorized and all UAT gates pass.
 - ChatGPT = strategic operator, audit reviewer, prompt author, decision router.
-- Claude Code = review and refactor planner unless specifically assigned implementation.
+- Claude Code = review and refactor planner unless specifically assigned implementation; may run one-shot live UAT as an evidence-collection runner only when explicitly assigned by the operator and all UAT gates pass.
 - Cursor = implementation assistant only under these repo contracts.
 - GitHub Copilot = IDE assistance only; no architecture override.
-- Antigravity = one-shot live UAT only; no patching, no debugging, no loop testing.
+- Antigravity = allowed but no longer required one-shot live UAT runner; no patching, no debugging, no loop testing.
 - NotebookLM = source-of-truth research and Q&A library.
 - Hermes = implementation agent via MCP_DOCKER tools. Read `HERMES.md` before any file operation.
 - Gemini Deep Research = external research generator.
@@ -61,6 +61,10 @@ This repository is under an architecture reset. All agents must inherit the same
 - No mixing proven selectors with failed selectors in the same execution path.
 - No Generate click unless explicitly authorized.
 - No implementation of CDP upload until the approved Phase 2 prompt is executed.
+- No live UAT before a clean pushed SHA exists.
+- No second live UAT retry without explicit operator approval.
+- No patching, debugging, or loop testing during a live UAT run, regardless of runner.
+- No `PASS_STAGES` accepted without raw telemetry.
 
 ## Validation Gates
 - Docs-only work:
@@ -83,7 +87,7 @@ This repository is under an architecture reset. All agents must inherit the same
   - exact push target
   - exact push result
   - `NEXT_DECISION`
-- Antigravity UAT report must include:
+- Live UAT report (any operator-authorized runner) must include:
   - `REQUEST_ID`
   - `COMMIT_SHA`
   - `FIRST_FAIL_STAGE`
