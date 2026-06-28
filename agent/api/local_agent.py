@@ -435,6 +435,122 @@ async def get_local_agent_build_proof(mode: str = "F2V"):
     return verdict.as_dict()
 
 
+class Gfv2PostSubmitDownloadRequest(BaseModel):
+    workspace_execution_package_id: str
+    product_id: str
+    confirm_live_credit_burn: bool = False
+    request_id: str | None = None
+
+
+@router.post("/gfv2-post-submit-download")
+async def post_gfv2_post_submit_download(body: Gfv2PostSubmitDownloadRequest):
+    """Operator-gated trigger for the GFV2_POST_SUBMIT_DOWNLOAD lane.
+
+    DRY_RUN (default): assemble and return the exact job JSON — no dispatch, no
+    POST, no credit. LIVE (confirm_live_credit_burn=true) dispatches exactly one
+    job to the extension. Fail-closed gates (both modes): build-proof must be PASS,
+    no active GFV2 job, package + product present and matched, request_id unique.
+    """
+    from agent.db import crud
+    from agent.db.schema import get_db
+    from agent.services.flow_client import get_flow_client
+    from agent.services.build_proof import evaluate_build_proof, read_canonical_build_id
+    from agent.services import gfv2_post_submit_download as gfv2
+
+    db = await get_db()
+
+    cur = await db.execute(
+        "SELECT * FROM workspace_execution_package WHERE workspace_execution_package_id = ?",
+        (body.workspace_execution_package_id,),
+    )
+    pkg_row = await cur.fetchone()
+    package = dict(pkg_row) if pkg_row else None
+
+    cur = await db.execute("SELECT * FROM product WHERE id = ?", (body.product_id,))
+    prod_row = await cur.fetchone()
+    product = dict(prod_row) if prod_row else None
+
+    request_id = (body.request_id or f"gfv2psd-{uuid.uuid4().hex[:12]}").strip()
+    cur = await db.execute("SELECT 1 FROM request WHERE id = ?", (request_id,))
+    request_id_exists = (await cur.fetchone()) is not None
+
+    # Build-proof (live, fail-closed)
+    expected_build_id = read_canonical_build_id(BASE_DIR)
+    client = get_flow_client()
+    build_proof_pass = False
+    build_proof_summary = {"verdict": "BLOCK", "reason": "EXTENSION_OFFLINE"}
+    if getattr(client, "connected", False):
+        try:
+            self_test = await asyncio.wait_for(
+                client.get_extension_self_test(mode="F2V", attempt_open_project=False),
+                timeout=20,
+            )
+            bp = evaluate_build_proof(self_test, expected_build_id, now=datetime.now(timezone.utc))
+            build_proof_pass = bp.ok
+            build_proof_summary = {"verdict": bp.verdict, "reason": bp.reason}
+        except Exception as exc:  # pragma: no cover - defensive runtime guard
+            build_proof_summary = {"verdict": "BLOCK", "reason": f"SELF_TEST_ERROR: {exc}"}
+
+    cur = await db.execute(
+        "SELECT COUNT(*) FROM request WHERE status IN ('PENDING','PROCESSING')"
+    )
+    active_job_count = (await cur.fetchone())[0]
+
+    decision = gfv2.evaluate_trigger(
+        confirm_live=bool(body.confirm_live_credit_burn),
+        build_proof_pass=build_proof_pass,
+        active_job_count=active_job_count,
+        package=package,
+        product=product,
+        request_id=request_id,
+        request_id_exists=request_id_exists,
+    )
+
+    base = {
+        "request_id": request_id,
+        "lane": gfv2.LANE,
+        "build_proof": build_proof_summary,
+        "active_job_count": active_job_count,
+        "package_present": bool(package),
+        "product_present": bool(product),
+        "evaluated_at": _iso_now(),
+    }
+
+    if decision["action"] == gfv2.ACTION_REJECT:
+        return {**base, "verdict": "REJECT", "reason": decision["reason"]}
+
+    job = gfv2.assemble_job(package, product, request_id)
+
+    if decision["action"] == gfv2.ACTION_DRY_RUN:
+        return {**base, "verdict": "DRY_RUN", "dispatched": False, "job": job}
+
+    # LIVE dispatch — exactly one job. Persist telemetry (lane + flags) BEFORE dispatch.
+    lineage = {
+        "lane": gfv2.LANE,
+        "postSubmitDownload": True,
+        "gfv2": True,
+        "workspace_execution_package_id": body.workspace_execution_package_id,
+        "product_id": body.product_id,
+    }
+    now = crud._now()
+    await db.execute(
+        "INSERT INTO request (id, type, status, created_at, updated_at) VALUES (?,?,?,?,?)",
+        (request_id, "MANUAL_FLOW_JOB", "PROCESSING", now, now),
+    )
+    await db.commit()
+    await crud.upsert_request_telemetry(
+        request_id,
+        request_type="MANUAL_FLOW_JOB",
+        status="PROCESSING",
+        product_id=body.product_id,
+        workspace_execution_package_id=body.workspace_execution_package_id,
+        google_flow_stage="GFV2_POST_SUBMIT_DOWNLOAD_DISPATCHED",
+        request_lineage_payload=json.dumps(lineage),
+    )
+    report = await client.execute_flow_job(job)
+    return {**base, "verdict": "LIVE_DISPATCHED", "dispatched": True, "job": job, "report": report}
+
+
 @router.get("/reload-flow-tab")
 async def get_reload_flow_tab():
     from agent.services.flow_client import get_flow_client
