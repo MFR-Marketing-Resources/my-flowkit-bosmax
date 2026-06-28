@@ -13,7 +13,20 @@ $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\local-agent-common.ps1"
 
 $ExpectedExtensionPath = Join-Path $script:RepoRoot "extension"
-$ExpectedBuildId = "flowkit-f2v-runner-audit-2026-06-15a"
+# Build id SSOT: derive from the injected content script so this launcher gate can
+# never drift from the actual extension build. (Regression: this was hardcoded to a
+# stale build id that no longer matched the loaded runtime, causing false mismatches.)
+$ContentScriptPath = Join-Path $ExpectedExtensionPath "content-flow-dom.js"
+$ExpectedBuildId = $null
+if (Test-Path -LiteralPath $ContentScriptPath) {
+    $ContentScriptSource = Get-Content -LiteralPath $ContentScriptPath -Raw
+    if ($ContentScriptSource -match "FLOW_KIT_DOM_BUILD_ID\s*=\s*['""]([^'""]+)['""]") {
+        $ExpectedBuildId = $Matches[1]
+    }
+}
+if ([string]::IsNullOrWhiteSpace($ExpectedBuildId)) {
+    throw "Unable to derive canonical build id from $ContentScriptPath"
+}
 $LaunchHelperScript = Join-Path $PSScriptRoot "launch-clean-bosmax-flow-runtime-helper.js"
 $LaunchRuntimeStateDir = Join-Path $script:LocalAgentStateDir "chrome-runtime"
 $LaunchHelperReport = Join-Path $LaunchRuntimeStateDir "launch-report.json"

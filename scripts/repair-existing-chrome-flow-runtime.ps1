@@ -4,7 +4,20 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $ExpectedExtensionPath = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "extension"))
-$ExpectedBuildMarker = "flowkit-f2v-runner-audit-2026-06-15a"
+# Build id SSOT: derive from the injected content script (regression: this was
+# hardcoded to a stale build id, making this repair gate validate against the wrong
+# build and mask the real loaded runtime build).
+$ContentScriptPath = Join-Path $ExpectedExtensionPath "content-flow-dom.js"
+$ExpectedBuildMarker = $null
+if (Test-Path -LiteralPath $ContentScriptPath) {
+    $ContentScriptSource = Get-Content -LiteralPath $ContentScriptPath -Raw
+    if ($ContentScriptSource -match "FLOW_KIT_DOM_BUILD_ID\s*=\s*['""]([^'""]+)['""]") {
+        $ExpectedBuildMarker = $Matches[1]
+    }
+}
+if ([string]::IsNullOrWhiteSpace($ExpectedBuildMarker)) {
+    throw "Unable to derive canonical build id from $ContentScriptPath"
+}
 $ApiBaseUrl = "http://127.0.0.1:8100"
 
 Write-Output "=== BOSMAX Same-Session Chrome Flow Repair ==="

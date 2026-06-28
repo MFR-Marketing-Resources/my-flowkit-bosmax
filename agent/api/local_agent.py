@@ -384,6 +384,57 @@ async def get_local_agent_extension_self_test(
     }
 
 
+@router.get("/build-proof")
+async def get_local_agent_build_proof(mode: str = "F2V"):
+    """No-credit, fail-closed build-identity handshake.
+
+    Proves the build currently loaded on the ACTIVE Flow tab. Never reads
+    persisted request telemetry (which goes stale across reloads). Returns
+    verdict PASS only when background and content builds both equal the repo
+    canonical build id, the extension asserts build_match, and the handshake is
+    fresh; otherwise BLOCK with an exact reason (NO_FLOW_TAB, MISSING_CONTENT_SCRIPT,
+    BUILD_MISMATCH, BACKGROUND_BUILD_MISMATCH, STALE_HANDSHAKE, ...).
+    """
+    from datetime import datetime, timezone
+    from agent.services.flow_client import get_flow_client
+    from agent.services.build_proof import (
+        BLOCK,
+        REASON_EXTENSION_OFFLINE,
+        REASON_NO_SELF_TEST,
+        evaluate_build_proof,
+        read_canonical_build_id,
+    )
+
+    expected_build_id = read_canonical_build_id(BASE_DIR)
+    client = get_flow_client()
+    if not getattr(client, "connected", False):
+        return {
+            "verdict": BLOCK,
+            "reason": REASON_EXTENSION_OFFLINE,
+            "detail": "Extension WebSocket is not connected.",
+            "expected_build_id": expected_build_id,
+            "evaluated_at": _iso_now(),
+        }
+    try:
+        self_test = await asyncio.wait_for(
+            client.get_extension_self_test(mode=mode, attempt_open_project=False),
+            timeout=20,
+        )
+    except Exception as exc:  # pragma: no cover - defensive runtime guard
+        return {
+            "verdict": BLOCK,
+            "reason": REASON_NO_SELF_TEST,
+            "detail": f"Self-test failed: {exc}",
+            "expected_build_id": expected_build_id,
+            "evaluated_at": _iso_now(),
+        }
+
+    verdict = evaluate_build_proof(
+        self_test, expected_build_id, now=datetime.now(timezone.utc)
+    )
+    return verdict.as_dict()
+
+
 @router.get("/reload-flow-tab")
 async def get_reload_flow_tab():
     from agent.services.flow_client import get_flow_client
