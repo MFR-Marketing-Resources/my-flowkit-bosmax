@@ -9,6 +9,7 @@ import uuid
 from hashlib import sha1
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
@@ -440,6 +441,7 @@ class Gfv2PostSubmitDownloadRequest(BaseModel):
     product_id: str
     confirm_live_credit_burn: bool = False
     request_id: str | None = None
+    completion_mode: Literal["DOWNLOAD_PROJECT", "OUTPUT_ONLY"] = "DOWNLOAD_PROJECT"
 
 
 @router.post("/gfv2-post-submit-download")
@@ -504,33 +506,56 @@ async def post_gfv2_post_submit_download(body: Gfv2PostSubmitDownloadRequest):
         request_id_exists=request_id_exists,
     )
 
+    completion_mode = body.completion_mode
+    job = gfv2.assemble_job(package, product, request_id)
+    if completion_mode == "OUTPUT_ONLY":
+        job.update(
+            {
+                "lane": "GFV2_POST_SUBMIT_OUTPUT_ONLY",
+                "postSubmitOutputOnly": True,
+                "postSubmitDownload": False,
+                "stopAfterOutputDetected": True,
+            }
+        )
+    else:
+        job.update(
+            {
+                "lane": gfv2.LANE,
+                "postSubmitDownload": True,
+                "postSubmitOutputOnly": False,
+                "stopAfterOutputDetected": False,
+            }
+        )
+
     base = {
         "request_id": request_id,
-        "lane": gfv2.LANE,
+        "lane": job["lane"],
         "build_proof": build_proof_summary,
         "active_job_count": active_job_count,
         "active_job_scope": "gfv2psd_manual_flow_job_effective_status",
         "reconciliation": reconciliation,
         "package_present": bool(package),
         "product_present": bool(product),
+        "completion_mode": completion_mode,
         "evaluated_at": _iso_now(),
     }
 
     if decision["action"] == gfv2.ACTION_REJECT:
         return {**base, "verdict": "REJECT", "reason": decision["reason"]}
 
-    job = gfv2.assemble_job(package, product, request_id)
-
     if decision["action"] == gfv2.ACTION_DRY_RUN:
         return {**base, "verdict": "DRY_RUN", "dispatched": False, "job": job}
 
     # LIVE dispatch — exactly one job. Persist telemetry (lane + flags) BEFORE dispatch.
     lineage = {
-        "lane": gfv2.LANE,
-        "postSubmitDownload": True,
+        "lane": job["lane"],
+        "postSubmitDownload": job.get("postSubmitDownload") is True,
+        "postSubmitOutputOnly": job.get("postSubmitOutputOnly") is True,
+        "stopAfterOutputDetected": job.get("stopAfterOutputDetected") is True,
         "gfv2": True,
         "workspace_execution_package_id": body.workspace_execution_package_id,
         "product_id": body.product_id,
+        "completion_mode": completion_mode,
     }
     now = crud._now()
     await db.execute(

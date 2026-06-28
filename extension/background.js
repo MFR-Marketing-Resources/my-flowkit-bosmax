@@ -5209,8 +5209,10 @@ function isGfv2Lane(job) {
 			(
 				job.lane === "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE" ||
 				job.lane === "GFV2_POST_SUBMIT_DOWNLOAD" ||
+				job.lane === "GFV2_POST_SUBMIT_OUTPUT_ONLY" ||
 				job.gfv2 === true ||
-				job.postSubmitDownload === true
+				job.postSubmitDownload === true ||
+				job.postSubmitOutputOnly === true
 			),
 	);
 }
@@ -5219,6 +5221,17 @@ function isGfv2PostSubmitDownload(job) {
 	return Boolean(
 		job &&
 			(job.lane === "GFV2_POST_SUBMIT_DOWNLOAD" || job.postSubmitDownload === true),
+	);
+}
+
+function isGfv2PostSubmitOutputOnly(job) {
+	return Boolean(
+		job &&
+			(
+				job.lane === "GFV2_POST_SUBMIT_OUTPUT_ONLY" ||
+				job.postSubmitOutputOnly === true ||
+				job.stopAfterOutputDetected === true
+			),
 	);
 }
 
@@ -5679,6 +5692,9 @@ async function gfv2VerifyRuntimeBuildAlignment(flowTab, runnerApi) {
 async function handleGfv2Job(job) {
 	const requestId = job?.request_id || null;
 	const postSubmitDownload = isGfv2PostSubmitDownload(job);
+	const postSubmitOutputOnly = isGfv2PostSubmitOutputOnly(job);
+	const requiresPostSubmitContinuation =
+		postSubmitDownload || postSubmitOutputOnly;
 	const emit = (stage, status, message, buildProof = null) => {
 		if (!requestId) return;
 		const buildFields = buildProof
@@ -5867,7 +5883,7 @@ async function handleGfv2Job(job) {
 	// panel, confirms/selects 9:16 + 1x, classifies the model (Veo / hidden-soft-pass
 	// / visible-wrong hard-fail), verifies persistence. Real live gate before STOP.
 	const settings = await gfv2DriveSettingsVerify(flowTab, emit, {
-		requireSaveTransition: postSubmitDownload,
+		requireSaveTransition: requiresPostSubmitContinuation,
 		expectedPrompt: job?.prompt,
 	});
 	if (!settings.proceed) {
@@ -5876,7 +5892,7 @@ async function handleGfv2Job(job) {
 	}
 
 	emit("GFV2_PROMPT_ACCEPTED", "PASS", `prompt_inserted=${Boolean(runnerResult?.stage_results?.prompt_inserted)}`);
-	if (postSubmitDownload) {
+	if (requiresPostSubmitContinuation) {
 		if (typeof runnerApi.executeGfv2PostSubmitDownloadContinuation !== "function") {
 			emit("FAILED", "FAIL", "GFV2_POST_SUBMIT_CONTINUATION_NOT_LOADED");
 			return { ok: false, error: "GFV2_POST_SUBMIT_CONTINUATION_NOT_LOADED" };
@@ -5891,6 +5907,7 @@ async function handleGfv2Job(job) {
 				flowUrl: flowTab.url || null,
 				surfaceIdentity: `flow_tab:${flowTab.id}`,
 				settingsState: "closed_verified",
+				stopAfterOutputDetected: postSubmitOutputOnly,
 				settingsComposerIdentity:
 					settings?.applied?.composer_identity_after_save || null,
 			},
@@ -5903,6 +5920,7 @@ async function handleGfv2Job(job) {
 		return {
 			ok: true,
 			gfv2_post_submit_download: true,
+			gfv2_post_submit_output_only: postSubmitOutputOnly,
 			flow_tab_id: flowTab.id,
 			runner: runnerResult,
 			continuation,

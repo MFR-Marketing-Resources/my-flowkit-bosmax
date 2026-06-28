@@ -1077,6 +1077,49 @@ async function testPostSubmitDownloadContinuationCompletesAfterOutputReady() {
 	assert.ok(typeof result.summary.timestamp === "string" && result.summary.timestamp.length > 0);
 }
 
+async function testPostSubmitOutputOnlyStopsAtOutputDetection() {
+	const ctx = installReviewFlowDom();
+	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
+		{
+			scripting: createScriptingAdapter(),
+			downloads: createCompletedDownloadsAdapter(),
+			telemetry: () => {},
+		},
+		9106,
+		{
+			mode: "F2V",
+			prompt: "hero product shot",
+			lane: "GFV2_POST_SUBMIT_OUTPUT_ONLY",
+			postSubmitOutputOnly: true,
+			stopAfterOutputDetected: true,
+		},
+		{
+			settleMs: 0,
+			preGenerateSettleMs: 0,
+			outputWaitTimeoutMs: 1000,
+			outputWaitPollMs: 10,
+			reviewWaitTimeoutMs: 1000,
+			reviewWaitPollMs: 10,
+			downloadWaitTimeoutMs: 1000,
+			downloadWaitPollMs: 10,
+			stopAfterOutputDetected: true,
+			promptProof: { passed: true, inserted_length: 17, field_value_length: 17 },
+		},
+	);
+	assert.equal(result.ok, true, "output-only continuation should succeed: " + JSON.stringify(result.error || result.detail || ""));
+	assert.equal(result.output_only_terminal, true, "output-only should return the terminal seam result");
+	assert.deepEqual(ctx.events, ["submit"], "output-only must not open review or click download");
+	assert.equal(result.stage_results.output_ready, true, "output detection must still pass");
+	assert.equal(result.stage_results.output_detected_terminal, true, "terminal output-only stage must be recorded");
+	const names = result.stages.map((stage) => stage.stage);
+	assert.ok(names.includes("GFV2_OUTPUT_READY"), "output-ready stage required");
+	assert.ok(names.includes("GFV2_OUTPUT_DETECTED_TERMINAL"), "terminal seam stage required");
+	assert.ok(!names.includes("GFV2_OUTPUT_REVIEW_OPENED"), "output-only must stop before review");
+	assert.ok(!names.includes("GFV2_PROJECT_MENU_OPENED"), "output-only must stop before project menu");
+	assert.ok(!names.includes("GFV2_DOWNLOAD_PROJECT_CLICKED"), "output-only must stop before download click");
+	assert.match(result.summary.filename, /generated-project\.mp4$/);
+}
+
 async function testPostSubmitDownloadContinuationFailsWhenArrowMissing() {
 	installDom(baseComposerHtml());
 	applyCommonRects(document);
@@ -1765,6 +1808,7 @@ async function main() {
 	await testBottomComposerStateGluedLivePillDetectsCount();
 	await testRunnerConfirmsGluedPillModelUnknownWithoutOpeningPanel();
 	await testPostSubmitDownloadContinuationCompletesAfterOutputReady();
+	await testPostSubmitOutputOnlyStopsAtOutputDetection();
 	await testPostSubmitDownloadContinuationFailsWhenArrowMissing();
 	await testPostSubmitDownloadContinuationFailsWhenOutputNeverAppears();
 	await testPostSubmitDownloadContinuationFailsWhenProjectMenuMissing();

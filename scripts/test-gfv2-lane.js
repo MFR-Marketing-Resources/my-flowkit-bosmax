@@ -81,15 +81,16 @@ vm.runInContext(
 		extractFunctionSource(SRC, "isProjectEditorUrl"),
 		extractFunctionSource(SRC, "isRootFlowUrl"),
 		extractFunctionSource(SRC, "isGfv2Lane"),
+		extractFunctionSource(SRC, "isGfv2PostSubmitOutputOnly"),
 		extractFunctionSource(SRC, "gfv2ClassifySurface"),
 		extractFunctionSource(SRC, "gfv2DecideBuildProof"),
 		extractFunctionSource(SRC, "gfv2DecideSettingsProof"),
 		extractFunctionSource(SRC, "gfv2ClassifyAssetSource"),
-		"this.__t = { GFV2_STAGE_MAP, buildStageTelemetryPayload, isGfv2Lane, gfv2ClassifySurface, gfv2DecideBuildProof, gfv2DecideSettingsProof, gfv2ClassifyAssetSource };",
+		"this.__t = { GFV2_STAGE_MAP, buildStageTelemetryPayload, isGfv2Lane, isGfv2PostSubmitOutputOnly, gfv2ClassifySurface, gfv2DecideBuildProof, gfv2DecideSettingsProof, gfv2ClassifyAssetSource };",
 	].join("\n"),
 	sandbox,
 );
-const { GFV2_STAGE_MAP, buildStageTelemetryPayload, isGfv2Lane, gfv2ClassifySurface, gfv2DecideBuildProof, gfv2DecideSettingsProof, gfv2ClassifyAssetSource } = sandbox.__t;
+const { GFV2_STAGE_MAP, buildStageTelemetryPayload, isGfv2Lane, isGfv2PostSubmitOutputOnly, gfv2ClassifySurface, gfv2DecideBuildProof, gfv2DecideSettingsProof, gfv2ClassifyAssetSource } = sandbox.__t;
 
 // Helpers for the settings-proof decision tests.
 const stagesOf = (r) => r.emissions.map((e) => `${e.stage}:${e.status}`);
@@ -109,11 +110,20 @@ const test = (n, f) => tests.push([n, f]);
 test("isGfv2Lane: lane flag and gfv2 flag activate; others do not", () => {
 	assert(isGfv2Lane({ lane: "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE" }) === true, "lane flag");
 	assert(isGfv2Lane({ lane: "GFV2_POST_SUBMIT_DOWNLOAD" }) === true, "post-submit lane flag");
+	assert(isGfv2Lane({ lane: "GFV2_POST_SUBMIT_OUTPUT_ONLY" }) === true, "output-only lane flag");
 	assert(isGfv2Lane({ gfv2: true }) === true, "gfv2 flag");
 	assert(isGfv2Lane({ postSubmitDownload: true }) === true, "postSubmitDownload flag");
+	assert(isGfv2Lane({ postSubmitOutputOnly: true }) === true, "postSubmitOutputOnly flag");
 	assert(isGfv2Lane({ lane: "F2V_PACKAGE_UPLOAD_ONLY" }) === false, "old lane is not GFV2");
 	assert(isGfv2Lane({ mode: "F2V" }) === false, "plain F2V not GFV2");
 	assert(isGfv2Lane(null) === false, "null not GFV2");
+});
+
+test("isGfv2PostSubmitOutputOnly activates only for the reduced MVP lane flags", () => {
+	assert(isGfv2PostSubmitOutputOnly({ lane: "GFV2_POST_SUBMIT_OUTPUT_ONLY" }) === true, "lane flag");
+	assert(isGfv2PostSubmitOutputOnly({ postSubmitOutputOnly: true }) === true, "explicit output-only flag");
+	assert(isGfv2PostSubmitOutputOnly({ stopAfterOutputDetected: true }) === true, "terminal stop flag");
+	assert(isGfv2PostSubmitOutputOnly({ lane: "GFV2_POST_SUBMIT_DOWNLOAD" }) === false, "download lane is not output-only");
 });
 
 test("gfv2ClassifySurface: stale c240ebbd is never a valid surface", () => {
@@ -324,14 +334,16 @@ test("post-submit lane is gated behind settings success and does not replace the
 	assert(settingsFailIdx >= 0 && promptAcceptedIdx >= 0 && continuationIdx >= 0 && stopIdx >= 0, "all control points present");
 	assert(settingsFailIdx < continuationIdx, "continuation only runs after settings gate");
 	assert(promptAcceptedIdx < continuationIdx, "continuation only runs after prompt accepted proof");
-	assert(/if \(postSubmitDownload\)/.test(HANDLE_SRC), "continuation is opt-in only");
-	assert(/requireSaveTransition:\s*postSubmitDownload/.test(HANDLE_SRC), "post-submit requires verified Save transition");
+	assert(/requiresPostSubmitContinuation\s*=\s*postSubmitDownload\s*\|\|\s*postSubmitOutputOnly/.test(HANDLE_SRC), "continuation is opt-in only");
+	assert(/if \(requiresPostSubmitContinuation\)/.test(HANDLE_SRC), "continuation is gated behind the combined post-submit modes");
+	assert(/requireSaveTransition:\s*requiresPostSubmitContinuation/.test(HANDLE_SRC), "post-submit requires verified Save transition");
+	assert(/stopAfterOutputDetected:\s*postSubmitOutputOnly/.test(HANDLE_SRC), "output-only must pass the terminal stop flag into continuation");
 	assert(continuationIdx < stopIdx, "default STOP lane remains in the non-post-submit branch");
 });
 
 test("post-submit settings require verified Save exit before continuation", () => {
 	assert(
-		/gfv2DriveSettingsVerify\(\s*flowTab,\s*emit,\s*\{[\s\S]*requireSaveTransition:\s*postSubmitDownload[\s\S]*expectedPrompt:\s*job\?\.prompt/.test(
+		/gfv2DriveSettingsVerify\(\s*flowTab,\s*emit,\s*\{[\s\S]*requireSaveTransition:\s*requiresPostSubmitContinuation[\s\S]*expectedPrompt:\s*job\?\.prompt/.test(
 			HANDLE_SRC,
 		),
 		"post-submit must require Save transition and accepted prompt reflection",

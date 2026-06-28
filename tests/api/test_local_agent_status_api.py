@@ -314,11 +314,57 @@ async def test_gfv2_trigger_dry_run_reconciles_stale_failed_row(monkeypatch):
 
     assert payload["verdict"] == "DRY_RUN"
     assert payload["active_job_count"] == 0
+    assert payload["lane"] == "GFV2_POST_SUBMIT_DOWNLOAD"
+    assert payload["completion_mode"] == "DOWNLOAD_PROJECT"
+    assert payload["job"]["lane"] == "GFV2_POST_SUBMIT_DOWNLOAD"
+    assert payload["job"]["postSubmitDownload"] is True
+    assert payload["job"]["postSubmitOutputOnly"] is False
+    assert payload["job"]["stopAfterOutputDetected"] is False
     assert payload["reconciliation"]["reconciled_count"] == 1
     assert (
         payload["reconciliation"]["reconciled_rows"][0]["request_id"]
         == "gfv2psd-legacy-failed"
     )
+
+
+@pytest.mark.asyncio
+async def test_gfv2_trigger_dry_run_output_only_assembles_reduced_mvp_lane(monkeypatch):
+    product_id = await _seed_package_and_product()
+
+    monkeypatch.setattr(
+        "agent.services.flow_client.get_flow_client",
+        lambda: _FakeBuildProofFlowClient(),
+    )
+    monkeypatch.setattr(
+        "agent.services.build_proof.read_canonical_build_id",
+        lambda _base_dir: "flowkit-test-build",
+    )
+    monkeypatch.setattr(
+        "agent.services.build_proof.evaluate_build_proof",
+        lambda *_args, **_kwargs: type(
+            "_Verdict",
+            (),
+            {"ok": True, "verdict": "PASS", "reason": None},
+        )(),
+    )
+
+    payload = await local_agent.post_gfv2_post_submit_download(
+        local_agent.Gfv2PostSubmitDownloadRequest(
+            workspace_execution_package_id="wep_1fc9b182d3b352e6",
+            product_id=product_id,
+            completion_mode="OUTPUT_ONLY",
+            confirm_live_credit_burn=False,
+        )
+    )
+
+    assert payload["verdict"] == "DRY_RUN"
+    assert payload["active_job_count"] == 0
+    assert payload["lane"] == "GFV2_POST_SUBMIT_OUTPUT_ONLY"
+    assert payload["completion_mode"] == "OUTPUT_ONLY"
+    assert payload["job"]["lane"] == "GFV2_POST_SUBMIT_OUTPUT_ONLY"
+    assert payload["job"]["postSubmitDownload"] is False
+    assert payload["job"]["postSubmitOutputOnly"] is True
+    assert payload["job"]["stopAfterOutputDetected"] is True
 
 
 @pytest.mark.asyncio

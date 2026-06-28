@@ -6738,6 +6738,7 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
     generation_transition_proof: null,
     output_ready: false,
     output_proof: null,
+    output_detected_terminal: false,
     review_opened: false,
     review_proof: null,
     project_menu_opened: false,
@@ -6901,6 +6902,35 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
         output_identity: output.state?.output_identity || null,
       },
     );
+    const stopAfterOutputDetected = Boolean(
+      opts?.stopAfterOutputDetected === true
+      || job?.stopAfterOutputDetected === true
+      || job?.postSubmitOutputOnly === true
+      || job?.lane === 'GFV2_POST_SUBMIT_OUTPUT_ONLY',
+    );
+    if (stopAfterOutputDetected) {
+      stageResults.output_detected_terminal = true;
+      recordStage(
+        'GFV2_OUTPUT_DETECTED_TERMINAL',
+        'PASS',
+        `filename=${output.state && output.state.filename ? output.state.filename : ''}`.trim() || 'output_ready_terminal',
+        {
+          generation_state: 'output_ready_terminal',
+          review_state: 'not_opened',
+          download_evidence: null,
+        },
+      );
+      return {
+        ok: true,
+        output_only_terminal: true,
+        summary: {
+          filename: output.state?.filename || null,
+          timestamp: new Date().toISOString(),
+        },
+        stages,
+        stage_results: stageResults,
+      };
+    }
 
     // Step 14 — click the generated video to open its review/project page. Steps 15
     // (three-dot) and 16 (Download Project) operate ONLY inside this review surface.
