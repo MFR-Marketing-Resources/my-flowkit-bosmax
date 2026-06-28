@@ -3,6 +3,8 @@ import subprocess
 
 import pytest
 
+from agent.db import crud
+from agent.db.schema import get_db
 from agent.api import local_agent
 
 
@@ -144,3 +146,217 @@ async def test_extension_self_test_endpoint_surfaces_backend_dashboard_and_exten
     assert payload["extension_status"]["state"] == "idle"
     assert payload["extension_self_test"]["runner_loaded"] is True
     assert payload["extension_self_test"]["attempt_open_project"] is True
+
+
+class _FakeBuildProofFlowClient:
+    connected = True
+
+    async def get_extension_self_test(self, mode="F2V", attempt_open_project=False):
+        return {
+            "connected": True,
+            "agentConnected": True,
+            "flow_tab_found": True,
+            "background_build_id": "flowkit-test-build",
+            "content_build_id": "flowkit-test-build",
+            "build_match": True,
+            "timestamp": "2026-06-28T15:13:06Z",
+        }
+
+    async def execute_flow_job(self, _job):
+        raise AssertionError("live dispatch must not run in gate tests")
+
+
+async def _seed_package_and_product():
+    db = await get_db()
+    product_id = "de3ee6bd-592b-4228-bf96-f2cdcf15e78c"
+    await db.execute(
+        "INSERT OR IGNORE INTO product "
+        "(id, raw_product_title, product_display_name, product_short_name, image_url, asset_status, "
+        "category, subcategory, type, product_type, silo, trigger_id, formula, copywriting_angle, claim_risk_level, "
+        "physics_class, recommended_grip, handling_notes, camera_handling_notes, scene_context, camera_style, "
+        "camera_behavior, camera_shot, section_4_hint, section_5_physics_hint, section_6_copy_hint, section_9_overlay_hint) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            product_id,
+            "Test Diaper Pack",
+            "Test Diaper Pack",
+            "Diapers",
+            "http://example.com/test.jpg",
+            "DOWNLOADED",
+            "Baby Care",
+            "Diapering",
+            "Pants",
+            "STEALTH",
+            "baby_care_universal_01",
+            "TRUST_01",
+            "PAS",
+            "Trust-led framing",
+            "LOW",
+            "soft_pack",
+            "two-hand hold",
+            "stable handling",
+            "clean reveal",
+            "nursery shelf",
+            "product close-up",
+            "slow push-in",
+            "hero shot",
+            "reveal hint",
+            "physics hint",
+            "copy hint",
+            "overlay hint",
+        ),
+    )
+    await db.commit()
+    await crud.create_or_replace_workspace_execution_package(
+        "wep_1fc9b182d3b352e6",
+        product_id=product_id,
+        mode="F2V",
+        duration_seconds=8,
+        aspect_ratio="9:16",
+        model="Veo 3.1 - Lite",
+        manual_override=False,
+        prompt_text="Vertical 9:16 prompt",
+        prompt_fingerprint="fp-test",
+        prompt_package_snapshot_id="pps-test",
+        asset_slots=json.dumps([]),
+        resolved_assets=json.dumps([]),
+        readiness="READY",
+        execution_allowed=True,
+        production_generation_allowed=False,
+        manual_fallback="[]",
+        blockers="[]",
+        request_lineage_payload=json.dumps({}),
+        source_of_truth_notes="test",
+    )
+    return product_id
+
+
+async def _insert_request_and_telemetry(
+    request_id: str,
+    *,
+    request_status: str,
+    request_type: str = "MANUAL_FLOW_JOB",
+    telemetry_status: str | None = None,
+    google_flow_stage: str | None = None,
+    extension_stage: str | None = None,
+    failed_at: str | None = None,
+    completed_at: str | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+):
+    db = await get_db()
+    now = crud._now()
+    await db.execute(
+        "INSERT INTO request (id, type, status, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (request_id, request_type, request_status, None, now, now),
+    )
+    if telemetry_status:
+        await db.execute(
+            """
+            INSERT INTO request_telemetry (
+                request_id, request_type, status, google_flow_stage, extension_stage,
+                failed_at, completed_at, error_code, error_message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                request_id,
+                request_type,
+                telemetry_status,
+                google_flow_stage,
+                extension_stage,
+                failed_at,
+                completed_at,
+                error_code,
+                error_message,
+            ),
+        )
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_gfv2_trigger_dry_run_reconciles_stale_failed_row(monkeypatch):
+    product_id = await _seed_package_and_product()
+    await _insert_request_and_telemetry(
+        "gfv2psd-legacy-failed",
+        request_status="PROCESSING",
+        telemetry_status="FAILED",
+        google_flow_stage="FAILED",
+        extension_stage="FAILED",
+        failed_at="2026-06-28T14:30:50Z",
+        error_code="ERR_F2V_OPTION_VIDEO_NOT_FOUND",
+        error_message="ERR_F2V_OPTION_VIDEO_NOT_FOUND",
+    )
+
+    monkeypatch.setattr(
+        "agent.services.flow_client.get_flow_client",
+        lambda: _FakeBuildProofFlowClient(),
+    )
+    monkeypatch.setattr(
+        "agent.services.build_proof.read_canonical_build_id",
+        lambda _base_dir: "flowkit-test-build",
+    )
+    monkeypatch.setattr(
+        "agent.services.build_proof.evaluate_build_proof",
+        lambda *_args, **_kwargs: type(
+            "_Verdict",
+            (),
+            {"ok": True, "verdict": "PASS", "reason": None},
+        )(),
+    )
+
+    payload = await local_agent.post_gfv2_post_submit_download(
+        local_agent.Gfv2PostSubmitDownloadRequest(
+            workspace_execution_package_id="wep_1fc9b182d3b352e6",
+            product_id=product_id,
+            confirm_live_credit_burn=False,
+        )
+    )
+
+    assert payload["verdict"] == "DRY_RUN"
+    assert payload["active_job_count"] == 0
+    assert payload["reconciliation"]["reconciled_count"] == 1
+    assert (
+        payload["reconciliation"]["reconciled_rows"][0]["request_id"]
+        == "gfv2psd-legacy-failed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_gfv2_trigger_gate_still_blocks_real_active_row(monkeypatch):
+    product_id = await _seed_package_and_product()
+    await _insert_request_and_telemetry(
+        "gfv2psd-real-active",
+        request_status="PROCESSING",
+        telemetry_status="PROCESSING",
+        google_flow_stage="GFV2_POST_SUBMIT_DOWNLOAD_DISPATCHED",
+        extension_stage="GFV2_POST_SUBMIT_DOWNLOAD_DISPATCHED",
+    )
+
+    monkeypatch.setattr(
+        "agent.services.flow_client.get_flow_client",
+        lambda: _FakeBuildProofFlowClient(),
+    )
+    monkeypatch.setattr(
+        "agent.services.build_proof.read_canonical_build_id",
+        lambda _base_dir: "flowkit-test-build",
+    )
+    monkeypatch.setattr(
+        "agent.services.build_proof.evaluate_build_proof",
+        lambda *_args, **_kwargs: type(
+            "_Verdict",
+            (),
+            {"ok": True, "verdict": "PASS", "reason": None},
+        )(),
+    )
+
+    payload = await local_agent.post_gfv2_post_submit_download(
+        local_agent.Gfv2PostSubmitDownloadRequest(
+            workspace_execution_package_id="wep_1fc9b182d3b352e6",
+            product_id=product_id,
+            confirm_live_credit_burn=False,
+        )
+    )
+
+    assert payload["verdict"] == "REJECT"
+    assert payload["reason"] == "ACTIVE_JOB_EXISTS"
+    assert payload["active_job_count"] == 1

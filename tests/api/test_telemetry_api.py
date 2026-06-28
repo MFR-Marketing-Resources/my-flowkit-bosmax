@@ -1,7 +1,10 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 from agent.api.telemetry import router
+from agent.db import crud
+from agent.db.schema import get_db
 
 
 def _build_app() -> FastAPI:
@@ -222,3 +225,170 @@ def test_telemetry_stage_syncs_gfv2psd_terminal_completion_into_base_request(mon
     assert captured["request_id"] == "gfv2psd-telemetry-complete"
     assert captured["request_update"]["status"] == "COMPLETED"
     assert captured["request_update"]["error_message"] is None
+
+
+async def _insert_request(
+    request_id: str,
+    *,
+    request_type: str,
+    status: str,
+    error_message: str | None = None,
+):
+    db = await get_db()
+    now = crud._now()
+    await db.execute(
+        "INSERT INTO request (id, type, status, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (request_id, request_type, status, error_message, now, now),
+    )
+    await db.commit()
+
+
+async def _insert_request_telemetry(
+    request_id: str,
+    *,
+    request_type: str = "MANUAL_FLOW_JOB",
+    status: str,
+    google_flow_stage: str,
+    extension_stage: str,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    completed_at: str | None = None,
+    failed_at: str | None = None,
+):
+    db = await get_db()
+    await db.execute(
+        """
+        INSERT INTO request_telemetry (
+            request_id, request_type, status, google_flow_stage, extension_stage,
+            error_code, error_message, completed_at, failed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            request_id,
+            request_type,
+            status,
+            google_flow_stage,
+            extension_stage,
+            error_code,
+            error_message,
+            completed_at,
+            failed_at,
+        ),
+    )
+    await db.commit()
+
+
+async def _get_request_row(request_id: str) -> dict:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT id, type, status, error_message FROM request WHERE id = ?",
+        (request_id,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else {}
+
+
+@pytest.mark.asyncio
+async def test_reconcile_failed_gfv2psd_row_and_clear_active_block():
+    request_id = "gfv2psd-reconcile-failed"
+    await _insert_request(request_id, request_type="MANUAL_FLOW_JOB", status="PROCESSING")
+    await _insert_request_telemetry(
+        request_id,
+        status="FAILED",
+        google_flow_stage="FAILED",
+        extension_stage="FAILED",
+        error_code="ERR_F2V_OPTION_VIDEO_NOT_FOUND",
+        error_message="ERR_F2V_OPTION_VIDEO_NOT_FOUND",
+        failed_at="2026-06-28T14:30:50Z",
+    )
+
+    reconciliation = await crud.reconcile_gfv2psd_manual_request_statuses()
+    request_row = await _get_request_row(request_id)
+
+    assert reconciliation["reconciled_count"] == 1
+    assert reconciliation["reconciled_rows"][0]["request_id"] == request_id
+    assert request_row["status"] == "FAILED"
+    assert request_row["error_message"] == "ERR_F2V_OPTION_VIDEO_NOT_FOUND"
+    assert await crud.count_active_gfv2psd_manual_requests() == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_completed_gfv2psd_row_and_clear_active_block():
+    request_id = "gfv2psd-reconcile-completed"
+    await _insert_request(
+        request_id,
+        request_type="MANUAL_FLOW_JOB",
+        status="PROCESSING",
+        error_message="old error",
+    )
+    await _insert_request_telemetry(
+        request_id,
+        status="COMPLETED",
+        google_flow_stage="COMPLETED",
+        extension_stage="COMPLETED",
+        completed_at="2026-06-28T14:31:50Z",
+    )
+
+    reconciliation = await crud.reconcile_gfv2psd_manual_request_statuses()
+    request_row = await _get_request_row(request_id)
+
+    assert reconciliation["reconciled_count"] == 1
+    assert request_row["status"] == "COMPLETED"
+    assert request_row["error_message"] is None
+    assert await crud.count_active_gfv2psd_manual_requests() == 0
+
+
+@pytest.mark.asyncio
+async def test_genuine_active_gfv2psd_row_still_blocks():
+    request_id = "gfv2psd-active-real"
+    await _insert_request(request_id, request_type="MANUAL_FLOW_JOB", status="PROCESSING")
+
+    reconciliation = await crud.reconcile_gfv2psd_manual_request_statuses()
+    request_row = await _get_request_row(request_id)
+
+    assert reconciliation["reconciled_count"] == 0
+    assert request_row["status"] == "PROCESSING"
+    assert await crud.count_active_gfv2psd_manual_requests() == 1
+
+
+@pytest.mark.asyncio
+async def test_non_gfv2psd_manual_flow_row_is_not_mutated():
+    request_id = "manual-not-gfv2psd"
+    await _insert_request(request_id, request_type="MANUAL_FLOW_JOB", status="PROCESSING")
+    await _insert_request_telemetry(
+        request_id,
+        status="FAILED",
+        google_flow_stage="FAILED",
+        extension_stage="FAILED",
+        error_code="ERR_OTHER",
+        error_message="ERR_OTHER",
+        failed_at="2026-06-28T14:32:50Z",
+    )
+
+    reconciliation = await crud.reconcile_gfv2psd_manual_request_statuses()
+    request_row = await _get_request_row(request_id)
+
+    assert reconciliation["reconciled_count"] == 0
+    assert request_row["status"] == "PROCESSING"
+
+
+@pytest.mark.asyncio
+async def test_non_manual_flow_row_is_not_mutated():
+    request_id = "gfv2psd-worker-row"
+    await _insert_request(request_id, request_type="TRUE_F2V", status="PROCESSING")
+    await _insert_request_telemetry(
+        request_id,
+        request_type="TRUE_F2V",
+        status="FAILED",
+        google_flow_stage="FAILED",
+        extension_stage="FAILED",
+        error_code="ERR_WORKER",
+        error_message="ERR_WORKER",
+        failed_at="2026-06-28T14:33:50Z",
+    )
+
+    reconciliation = await crud.reconcile_gfv2psd_manual_request_statuses()
+    request_row = await _get_request_row(request_id)
+
+    assert reconciliation["reconciled_count"] == 0
+    assert request_row["status"] == "PROCESSING"

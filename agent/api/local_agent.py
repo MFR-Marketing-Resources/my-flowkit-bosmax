@@ -491,10 +491,8 @@ async def post_gfv2_post_submit_download(body: Gfv2PostSubmitDownloadRequest):
         except Exception as exc:  # pragma: no cover - defensive runtime guard
             build_proof_summary = {"verdict": "BLOCK", "reason": f"SELF_TEST_ERROR: {exc}"}
 
-    cur = await db.execute(
-        "SELECT COUNT(*) FROM request WHERE status IN ('PENDING','PROCESSING')"
-    )
-    active_job_count = (await cur.fetchone())[0]
+    reconciliation = await crud.reconcile_gfv2psd_manual_request_statuses()
+    active_job_count = await crud.count_active_gfv2psd_manual_requests()
 
     decision = gfv2.evaluate_trigger(
         confirm_live=bool(body.confirm_live_credit_burn),
@@ -511,6 +509,8 @@ async def post_gfv2_post_submit_download(body: Gfv2PostSubmitDownloadRequest):
         "lane": gfv2.LANE,
         "build_proof": build_proof_summary,
         "active_job_count": active_job_count,
+        "active_job_scope": "gfv2psd_manual_flow_job_effective_status",
+        "reconciliation": reconciliation,
         "package_present": bool(package),
         "product_present": bool(product),
         "evaluated_at": _iso_now(),

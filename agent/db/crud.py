@@ -49,10 +49,159 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
+_ACTIVE_REQUEST_STATUSES = frozenset(
+    {"PENDING", "PROCESSING", "WAITING_FLOW", "FLOW_RUNNING", "QUEUED"}
+)
+_TERMINAL_REQUEST_STATUSES = frozenset({"FAILED", "COMPLETED"})
+
+
 def _safe_kwargs(table: str, kwargs: dict) -> dict:
     """Filter kwargs to only allowed columns."""
     allowed = _COLUMNS.get(table, set())
     return {k: v for k, v in kwargs.items() if k in allowed}
+
+
+def _normalize_request_status(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().upper()
+    return text or None
+
+
+def derive_request_effective_status(row: dict | None) -> str | None:
+    """Derive effective status from base request + telemetry fields."""
+    if not row:
+        return None
+
+    request_status = _normalize_request_status(
+        row.get("request_status", row.get("status"))
+    )
+    telemetry_status = _normalize_request_status(
+        row.get("telemetry_status", row.get("status"))
+    )
+    google_flow_stage = _normalize_request_status(row.get("google_flow_stage"))
+    extension_stage = _normalize_request_status(row.get("extension_stage"))
+
+    if row.get("failed_at") or row.get("error_code") or row.get("error_message"):
+        return "FAILED"
+    if telemetry_status == "FAILED":
+        return "FAILED"
+    if google_flow_stage in {"FAILED", "ERROR"} or extension_stage in {
+        "FAILED",
+        "ERROR",
+    }:
+        return "FAILED"
+
+    if row.get("completed_at"):
+        return "COMPLETED"
+    if telemetry_status == "COMPLETED":
+        return "COMPLETED"
+    if google_flow_stage == "COMPLETED" or extension_stage == "COMPLETED":
+        return "COMPLETED"
+
+    if telemetry_status in _ACTIVE_REQUEST_STATUSES:
+        return telemetry_status
+    if request_status in _ACTIVE_REQUEST_STATUSES:
+        return request_status
+    if telemetry_status:
+        return telemetry_status
+    return request_status
+
+
+async def reconcile_gfv2psd_manual_request_statuses() -> dict:
+    """Repair legacy GFV2 manual-flow base rows from terminal telemetry truth."""
+    db = await get_db()
+    cur = await db.execute(
+        """
+        SELECT r.id,
+               r.type,
+               r.status AS request_status,
+               r.error_message AS request_error_message,
+               t.status AS telemetry_status,
+               t.google_flow_stage,
+               t.extension_stage,
+               t.completed_at,
+               t.failed_at,
+               t.error_code,
+               t.error_message AS telemetry_error_message
+        FROM request r
+        LEFT JOIN request_telemetry t ON r.id = t.request_id
+        WHERE r.type = 'MANUAL_FLOW_JOB'
+          AND r.id LIKE 'gfv2psd-%'
+        ORDER BY r.updated_at DESC
+        """
+    )
+    rows = [dict(r) for r in await cur.fetchall()]
+
+    reconciled = []
+    async with _db_lock:
+        for row in rows:
+            effective_status = derive_request_effective_status(row)
+            if effective_status not in _TERMINAL_REQUEST_STATUSES:
+                continue
+            if _normalize_request_status(row.get("request_status")) == effective_status:
+                continue
+
+            error_message = (
+                row.get("telemetry_error_message")
+                or row.get("error_code")
+                or row.get("request_error_message")
+                if effective_status == "FAILED"
+                else None
+            )
+            await db.execute(
+                "UPDATE request SET status = ?, error_message = ?, updated_at = ? WHERE id = ?",
+                (effective_status, error_message, _now(), row["id"]),
+            )
+            reconciled.append(
+                {
+                    "request_id": row["id"],
+                    "from_status": row.get("request_status"),
+                    "to_status": effective_status,
+                    "error_message": error_message,
+                }
+            )
+        if reconciled:
+            await db.commit()
+
+    return {
+        "scope": "gfv2psd_manual_flow_job",
+        "examined_count": len(rows),
+        "reconciled_count": len(reconciled),
+        "failed_count": sum(1 for item in reconciled if item["to_status"] == "FAILED"),
+        "completed_count": sum(
+            1 for item in reconciled if item["to_status"] == "COMPLETED"
+        ),
+        "reconciled_rows": reconciled,
+    }
+
+
+async def count_active_gfv2psd_manual_requests() -> int:
+    db = await get_db()
+    cur = await db.execute(
+        """
+        SELECT r.id,
+               r.type,
+               r.status AS request_status,
+               t.status AS telemetry_status,
+               t.google_flow_stage,
+               t.extension_stage,
+               t.completed_at,
+               t.failed_at,
+               t.error_code,
+               t.error_message
+        FROM request r
+        LEFT JOIN request_telemetry t ON r.id = t.request_id
+        WHERE r.type = 'MANUAL_FLOW_JOB'
+          AND r.id LIKE 'gfv2psd-%'
+        """
+    )
+    rows = [dict(r) for r in await cur.fetchall()]
+    return sum(
+        1
+        for row in rows
+        if derive_request_effective_status(row) in _ACTIVE_REQUEST_STATUSES
+    )
 
 
 async def _update(table: str, pk: str, pk_val: str, **kwargs) -> Optional[dict]:
