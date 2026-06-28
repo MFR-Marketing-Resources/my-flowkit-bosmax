@@ -2083,6 +2083,7 @@ function isSettingsScopedModelSource(source) {
 
   function findGenerateButtonNearComposer() {
     const composer = findComposerElement();
+    if (!composer) return null;
     const generateButtonQuery = getSelectorRegistryQuery(
       'generate_button_composer_scoped',
       'button, [role="button"]',
@@ -2134,20 +2135,61 @@ function isSettingsScopedModelSource(source) {
   function findComposerElement() {
     const candidates = Array.from(document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]'));
 
+    const visibleCandidates = candidates.filter(isVisible);
+
+    const candidateLooksLikeFlowComposer = (el) => {
+      if (!el) return false;
+      const aria = normalizeText(el.getAttribute('aria-label') || '');
+      const placeholder = normalizeText(
+        el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || '',
+      );
+      const text = normalizeText(el.textContent || ('value' in el ? el.value : ''));
+      const combined = `${aria} ${placeholder} ${text}`.toLowerCase();
+      if (aria === 'Editable text') return true;
+      if (
+        /what do you want to create|describe your video|describe your image|write a prompt|enter prompt|editable text/.test(
+          combined,
+        )
+      ) {
+        return true;
+      }
+
+      const scope =
+        el.closest('form, [role="form"], section, article, div') || el.parentElement;
+      if (!scope || !scope.querySelectorAll) return false;
+
+      const scopedButtons = Array.from(scope.querySelectorAll('button, [role="button"]'));
+      if (scopedButtons.some((btn) => isVisible(btn) && looksLikeGenerateButton(btn))) {
+        return true;
+      }
+
+      const configSelectors = getSelectorRegistryQuery(
+        'flow_config_launcher_compact',
+        'button, [role="button"], [role="tab"], [aria-haspopup], span, div',
+      );
+      return Array.from(scope.querySelectorAll(configSelectors)).some((candidate) => {
+        if (!isVisible(candidate)) return false;
+        const rawText = normalizeText(
+          candidate.textContent || candidate.getAttribute('aria-label') || '',
+        );
+        return looksLikeBottomComposerConfigPillText(rawText);
+      });
+    };
+
     // 1. Target by specific aria-label found in diagnostic
-    const specific = candidates.find(el => el.getAttribute('aria-label') === 'Editable text' && isVisible(el));
+    const specific = visibleCandidates.find(el => el.getAttribute('aria-label') === 'Editable text');
     if (specific) return specific;
 
     // 2. Target by placeholder/text content
-    const withPlaceholder = candidates.find(el => {
-      if (!isVisible(el)) return false;
+    const withPlaceholder = visibleCandidates.find(el => {
       const text = el.textContent || el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || '';
       return text.includes('What do you want to create?');
     });
     if (withPlaceholder) return withPlaceholder;
 
-    // 3. General visible candidate
-    return candidates.find(isVisible) || candidates[0] || null;
+    // 3. Only accept a generic textbox when it is clearly anchored to the real
+    // composer surface. Blind visible textbox fallback can false-pass the Flow root.
+    return visibleCandidates.find(candidateLooksLikeFlowComposer) || null;
   }
 
   function detectBlockingModal() {
@@ -4345,10 +4387,42 @@ function isSettingsScopedModelSource(source) {
     const settingsPanelOpen = Boolean(
       document.querySelector('[role="dialog"], [role="menu"]') && (has('9:16') || has('aspect')),
     );
+    const rootFlowUrl = isRootFlowUrl(window.location.href);
+    const bottomComposerConfig = safe(
+      () => buildBottomComposerConfigPillSnapshot(),
+      {
+        bottom_composer_config_pill_visible: false,
+        bottom_composer_config_pill_text: null,
+        bottom_composer_config_pill_raw_text: null,
+      },
+    );
+    const landingNavMarkers = collectVisibleMarkers(
+      [
+        'Create with Flow',
+        'Projects',
+        'Recent',
+        'New project',
+        'Create new',
+        'Flow TV',
+        'Help Center',
+        'Learn More',
+        'Go to banner',
+      ],
+      [bodyText, document.title, ...buttonTexts],
+    );
+    const landingNavOnly = Boolean(
+      rootFlowUrl &&
+        landingNavMarkers.length > 0 &&
+        !composerEditable &&
+        !generateBtn &&
+        !bottomComposerConfig.bottom_composer_config_pill_visible &&
+        obs.topMode === 'UNKNOWN' &&
+        obs.subMode === 'UNKNOWN',
+    );
 
     const signals = {
       // editor
-      flow_editor_open: Boolean(composer) || /\/tools\/flow/.test(String(location.href || '')),
+      flow_editor_open: Boolean(composer),
       extension_content_script_alive: true,
       login_or_access_blocker: /sign in|log in|continue with google/i.test(bodyText) && !composer,
       composer_or_prompt_surface_exists: Boolean(composer),
@@ -4393,17 +4467,35 @@ function isSettingsScopedModelSource(source) {
       visibleUploadSlots: Array.isArray(obs.visibleUploadSlots) ? obs.visibleUploadSlots : [],
       body_contains_Start: bodyText.includes('Start'),
       product_truth_anchor_present: false,
+      root_flow_url: rootFlowUrl,
+      landing_nav_only: landingNavOnly,
+      landing_nav_markers: landingNavMarkers,
+      bottom_composer_config_pill_visible: Boolean(
+        bottomComposerConfig.bottom_composer_config_pill_visible,
+      ),
+      bottom_composer_config_pill_text:
+        bottomComposerConfig.bottom_composer_config_pill_text || null,
     };
 
+    let diagnostic = null;
     if (
       typeof self !== 'undefined' &&
       self.__GFV2_READINESS__ &&
       typeof self.__GFV2_READINESS__.buildGoogleFlowV2Diagnostic === 'function'
     ) {
-      return self.__GFV2_READINESS__.buildGoogleFlowV2Diagnostic(signals);
+      diagnostic = self.__GFV2_READINESS__.buildGoogleFlowV2Diagnostic(signals);
+    } else {
+      diagnostic = Object.assign({ google_flow_ui_contract: 'V2_UPLOAD_SETTINGS_PROMPT_GENERATE' }, signals);
     }
-    // Fallback: module not loaded as a content script — return raw signals.
-    return Object.assign({ google_flow_ui_contract: 'V2_UPLOAD_SETTINGS_PROMPT_GENERATE' }, signals);
+    diagnostic.root_flow_url = rootFlowUrl;
+    diagnostic.landing_nav_only = landingNavOnly;
+    diagnostic.landing_nav_markers = landingNavMarkers;
+    diagnostic.bottom_composer_config_pill_visible = Boolean(
+      bottomComposerConfig.bottom_composer_config_pill_visible,
+    );
+    diagnostic.bottom_composer_config_pill_text =
+      bottomComposerConfig.bottom_composer_config_pill_text || null;
+    return diagnostic;
   }
 
   function checkFlowComposerReady(mode) {

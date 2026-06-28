@@ -122,3 +122,103 @@ def test_telemetry_stage_extracts_real_error_code_from_fail_message(monkeypatch)
     assert captured["telemetry_kwargs"]["status"] == "FAILED"
     assert captured["telemetry_kwargs"]["error_message"].startswith("ERR_F2V_SETTINGS_PANEL_NOT_OPEN")
     assert captured["telemetry_kwargs"]["error_code"] == "ERR_F2V_SETTINGS_PANEL_NOT_OPEN"
+
+
+def test_telemetry_stage_syncs_gfv2psd_terminal_failure_into_base_request(monkeypatch):
+    captured = {}
+
+    class _FakeCursor:
+        async def fetchone(self):
+            return {"id": "gfv2psd-telemetry-fail", "type": "MANUAL_FLOW_JOB"}
+
+    class _FakeDb:
+        async def execute(self, *_args, **_kwargs):
+            return _FakeCursor()
+
+    async def fake_upsert(*_args, **_kwargs):
+        return {}
+
+    async def fake_update_request(request_id: str, **kwargs):
+        captured["request_id"] = request_id
+        captured["request_update"] = kwargs
+        return {"id": request_id, **kwargs}
+
+    async def fake_add_stage_event(*_args, **_kwargs):
+        return {}
+
+    async def fake_get_db():
+        return _FakeDb()
+
+    monkeypatch.setattr("agent.db.schema.get_db", fake_get_db)
+    monkeypatch.setattr("agent.api.telemetry.crud.upsert_request_telemetry", fake_upsert)
+    monkeypatch.setattr("agent.api.telemetry.crud.update_request", fake_update_request)
+    monkeypatch.setattr("agent.api.telemetry.crud.add_stage_event", fake_add_stage_event)
+    monkeypatch.setattr("agent.api.telemetry.crud._now", lambda: "2026-06-28T08:00:00Z")
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/telemetry/stage",
+        json=_valid_stage_payload(
+            request_id="gfv2psd-telemetry-fail",
+            stage="FAILED",
+            checkpoint="FAILED",
+            status="FAIL",
+            source="extension",
+            message="GFV2_EDITOR_ENTRY_FAILED",
+        ),
+    )
+
+    assert response.status_code == 200
+    assert captured["request_id"] == "gfv2psd-telemetry-fail"
+    assert captured["request_update"]["status"] == "FAILED"
+    assert captured["request_update"]["error_message"] == "GFV2_EDITOR_ENTRY_FAILED"
+
+
+def test_telemetry_stage_syncs_gfv2psd_terminal_completion_into_base_request(monkeypatch):
+    captured = {}
+
+    class _FakeCursor:
+        async def fetchone(self):
+            return {"id": "gfv2psd-telemetry-complete", "type": "MANUAL_FLOW_JOB"}
+
+    class _FakeDb:
+        async def execute(self, *_args, **_kwargs):
+            return _FakeCursor()
+
+    async def fake_upsert(*_args, **_kwargs):
+        return {}
+
+    async def fake_update_request(request_id: str, **kwargs):
+        captured["request_id"] = request_id
+        captured["request_update"] = kwargs
+        return {"id": request_id, **kwargs}
+
+    async def fake_add_stage_event(*_args, **_kwargs):
+        return {}
+
+    async def fake_get_db():
+        return _FakeDb()
+
+    monkeypatch.setattr("agent.db.schema.get_db", fake_get_db)
+    monkeypatch.setattr("agent.api.telemetry.crud.upsert_request_telemetry", fake_upsert)
+    monkeypatch.setattr("agent.api.telemetry.crud.update_request", fake_update_request)
+    monkeypatch.setattr("agent.api.telemetry.crud.add_stage_event", fake_add_stage_event)
+    monkeypatch.setattr("agent.api.telemetry.crud._now", lambda: "2026-06-28T08:05:00Z")
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/telemetry/stage",
+        json=_valid_stage_payload(
+            request_id="gfv2psd-telemetry-complete",
+            stage="COMPLETED",
+            checkpoint="COMPLETED",
+            status="PASS",
+            source="extension",
+            message="Job completed",
+        ),
+    )
+
+    assert response.status_code == 200
+    assert captured["request_id"] == "gfv2psd-telemetry-complete"
+    assert captured["request_update"]["status"] == "COMPLETED"
+    assert captured["request_update"]["error_message"] is None

@@ -50,6 +50,21 @@ def _derive_error_code(event: StageEventCreate) -> Optional[str]:
         return match.group(1)
     return None
 
+
+def _should_sync_gfv2psd_terminal_request_status(
+    event: StageEventCreate,
+    request_row: Optional[dict],
+) -> bool:
+    if event.source != "extension":
+        return False
+    if event.stage not in {"FAILED", "COMPLETED"}:
+        return False
+    if not event.request_id.startswith("gfv2psd-"):
+        return False
+    if not request_row:
+        return False
+    return request_row.get("type") == "MANUAL_FLOW_JOB"
+
 @router.get("/summary", response_model=TelemetrySummary)
 async def get_summary():
     return await crud.get_telemetry_summary()
@@ -102,8 +117,9 @@ async def add_stage(event: StageEventCreate):
 
     from agent.db.schema import get_db
     db = await get_db()
-    cursor = await db.execute("SELECT id FROM request WHERE id = ?", (event.request_id,))
+    cursor = await db.execute("SELECT id, type FROM request WHERE id = ?", (event.request_id,))
     row = await cursor.fetchone()
+    request_row = dict(row) if row else None
     is_batch_variant = False
     if not row:
         is_batch_variant = True
@@ -152,6 +168,16 @@ async def add_stage(event: StageEventCreate):
     kw["last_heartbeat_at"] = crud._now()
     
     await crud.upsert_request_telemetry(event.request_id, **kw)
+    if _should_sync_gfv2psd_terminal_request_status(event, request_row):
+        update_kw = {
+            "status": "FAILED" if event.stage == "FAILED" else "COMPLETED",
+            "error_message": (
+                event.message or _derive_error_code(event)
+                if event.stage == "FAILED"
+                else None
+            ),
+        }
+        await crud.update_request(event.request_id, **update_kw)
     return await crud.add_stage_event(
         event.request_id, 
         event.stage, 

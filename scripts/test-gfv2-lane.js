@@ -78,6 +78,8 @@ vm.runInContext(
 		`const BUILD_ID = ${JSON.stringify(BACKGROUND_BUILD_ID)};`,
 		extractConstObject(SRC, "GFV2_STAGE_MAP"),
 		extractFunctionSource(SRC, "buildStageTelemetryPayload"),
+		extractFunctionSource(SRC, "isProjectEditorUrl"),
+		extractFunctionSource(SRC, "isRootFlowUrl"),
 		extractFunctionSource(SRC, "isGfv2Lane"),
 		extractFunctionSource(SRC, "gfv2ClassifySurface"),
 		extractFunctionSource(SRC, "gfv2DecideBuildProof"),
@@ -142,16 +144,47 @@ test("gfv2ClassifySurface: login blocker rejected", () => {
 	assert(r.healthy === false && r.reason === "login_or_access_blocker", "login blocker must be rejected");
 });
 
-test("gfv2ClassifySurface: healthy editor surface (no Frames/project required)", () => {
+test("gfv2ClassifySurface: root landing nav only is rejected", () => {
 	const r = gfv2ClassifySurface(
-		{ url: "https://labs.google/fx/tools/flow" }, // root, NOT /project/
+		{ url: "https://labs.google/fx/tools/flow" },
+		{
+			ok: true,
+			evaluation: { proofs: { editor: { ok: false } } },
+			diagnostic: {
+				root_flow_url: true,
+				landing_nav_only: true,
+				button_texts: [
+					"Flow TV",
+					"Help Center",
+					"Learn More",
+					"Go to banner 1",
+					"New project",
+				],
+			},
+		},
+	);
+	assert(r.healthy === false && r.reason === "landing_nav_only", "landing-only root must be rejected");
+});
+
+test("gfv2ClassifySurface: strict composer proof may pass on root after editor entry", () => {
+	const r = gfv2ClassifySurface(
+		{ url: "https://labs.google/fx/tools/flow" },
 		{
 			ok: true,
 			evaluation: { proofs: { editor: { ok: true } } },
-			diagnostic: { button_texts: ["Upload media", "Settings"] },
+			diagnostic: {
+				root_flow_url: true,
+				landing_nav_only: false,
+				composer_found: true,
+				composer_editable: true,
+				generate_button_found: true,
+				bottom_composer_config_pill_visible: true,
+				current_mode_visible: "Video/Frames",
+				button_texts: ["Upload media", "Settings"],
+			},
 		},
 	);
-	assert(r.healthy === true && r.reason === "ok", "a composer/editor surface must pass without /project/ or Frames");
+	assert(r.healthy === true && r.reason === "ok", "strict composer/editor proof must pass");
 });
 
 test("gfv2ClassifySurface: editor not ready rejected", () => {
@@ -272,9 +305,9 @@ test("ENSURE_SURFACE never reads/writes the stored project URL", () => {
 test("ENSURE_SURFACE automates New/Create and emits named blockers", () => {
 	assert(/OPEN_FLOW_NEW_PROJECT/.test(ENSURE_SRC), "automates the New/Create click");
 	assert(ENSURE_SRC.includes('"GFV2_LOGIN_REQUIRED"'), "named login blocker");
-	assert(ENSURE_SRC.includes('"GFV2_CREATE_SESSION_NOT_FOUND"'), "named create-session blocker");
+	assert(ENSURE_SRC.includes('"GFV2_EDITOR_ENTRY_FAILED"'), "named editor-entry blocker");
+	assert(ENSURE_SRC.includes('"GFV2_EDITOR_NOT_READY_LANDING_NAV_ONLY"'), "named landing-only blocker");
 	assert(ENSURE_SRC.includes('"GFV2_ROOT_LOAD_TIMEOUT"'), "named root-load blocker");
-	assert(ENSURE_SRC.includes('"GFV2_SURFACE_NOT_READY"'), "named generic surface blocker");
 });
 
 test("runner still uses skipGenerate:true and stops before generate", () => {

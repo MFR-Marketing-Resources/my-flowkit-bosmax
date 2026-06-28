@@ -2543,7 +2543,7 @@ async function bootstrapFlowProjectEditorForB2A0(mode = "F2V", deps = {}) {
 	};
 
 	const preferredUrl = await api.getStoredFlowProjectUrl();
-	let flowTabs = await api.getFlowTabs();
+	const flowTabs = await api.getFlowTabs();
 	const focusedActiveTab = await api.getFocusedActiveBrowserTab();
 	const selectedBeforeTab = await api.getFlowTab();
 	proof.selected_tab_id_before = Number(selectedBeforeTab?.id || 0);
@@ -5497,6 +5497,15 @@ function gfv2ClassifySurface(tab, capture) {
 	}
 	const diag = capture?.diagnostic || {};
 	const editorOk = Boolean(capture?.ok && capture?.evaluation?.proofs?.editor?.ok);
+	const routeLooksEditor = Boolean(isProjectEditorUrl(url) && !isRootFlowUrl(url));
+	const composerStrong = Boolean(
+		diag?.composer_found &&
+			diag?.composer_editable &&
+			!diag?.landing_nav_only &&
+			(diag?.generate_button_found ||
+				diag?.bottom_composer_config_pill_visible ||
+				diag?.current_mode_visible !== "UNKNOWN"),
+	);
 	const buttons = (Array.isArray(diag.button_texts) ? diag.button_texts : [])
 		.join(" ")
 		.toLowerCase();
@@ -5506,10 +5515,19 @@ function gfv2ClassifySurface(tab, capture) {
 	if (wentWrong) {
 		return { healthy: false, reason: "something_went_wrong" };
 	}
-	if (Boolean(diag.login_or_access_blocker)) {
+	if (diag.login_or_access_blocker) {
 		return { healthy: false, reason: "login_or_access_blocker" };
 	}
-	return { healthy: Boolean(editorOk), reason: editorOk ? "ok" : "no_editor_surface" };
+	if (diag.landing_nav_only) {
+		return { healthy: false, reason: "landing_nav_only" };
+	}
+	if (editorOk && (routeLooksEditor || composerStrong)) {
+		return { healthy: true, reason: "ok" };
+	}
+	if (diag.root_flow_url && !routeLooksEditor && !composerStrong) {
+		return { healthy: false, reason: "landing_nav_only" };
+	}
+	return { healthy: false, reason: "no_editor_surface" };
 }
 
 // GFV2_ENSURE_SURFACE: acquire a healthy Google Flow V2 surface automatically.
@@ -5603,7 +5621,15 @@ async function gfv2EnsureSurface(mode, emit) {
 	);
 	if (!createDidAct) {
 		emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `create_error=${createResult?.error || "no_create_action"}`);
-		return { ok: false, error: "GFV2_CREATE_SESSION_NOT_FOUND", detail: { create_error: createResult?.error || null } };
+		return {
+			ok: false,
+			error: "GFV2_EDITOR_ENTRY_FAILED",
+			detail: {
+				create_error: createResult?.error || "no_create_action",
+				create_result: createResult || null,
+				url: rootTab?.url || null,
+			},
+		};
 	}
 
 	// 5. Wait for the editor to settle on the SAME tab, then re-classify.
@@ -5622,7 +5648,18 @@ async function gfv2EnsureSurface(mode, emit) {
 		return { ok: true, tab: rootTab };
 	}
 	emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `reason=${cls.reason} url=${rootTab?.url || "?"}`);
-	return { ok: false, error: "GFV2_SURFACE_NOT_READY", detail: { reason: cls.reason, url: rootTab?.url || null } };
+	return {
+		ok: false,
+		error:
+			cls.reason === "landing_nav_only"
+				? "GFV2_EDITOR_NOT_READY_LANDING_NAV_ONLY"
+				: "GFV2_EDITOR_ENTRY_FAILED",
+		detail: {
+			reason: cls.reason,
+			url: rootTab?.url || null,
+			create_result: createResult || null,
+		},
+	};
 }
 
 async function gfv2VerifyRuntimeBuildAlignment(flowTab, runnerApi) {
