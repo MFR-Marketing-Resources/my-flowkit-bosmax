@@ -129,15 +129,11 @@ async def _record_stage(
     status: str,
     message: str | None = None,
     *,
-    project_id: str | None = None,
-    scene_id: str | None = None,
     error_code: str | None = None,
 ):
     now = crud._now()
     telemetry_updates = {
         "request_type": REQUEST_TYPE,
-        "project_id": project_id,
-        "scene_id": scene_id,
         "worker_stage": stage,
         "status": status,
         "last_heartbeat_at": now,
@@ -181,15 +177,7 @@ async def _fail_job(
         error_message=f"{error_code}: {message}",
         automation_report=json.dumps(payload, default=str),
     )
-    await _record_stage(
-        job_id,
-        "failed",
-        "FAILED",
-        message,
-        project_id=body.project_id,
-        scene_id=body.scene_id,
-        error_code=error_code,
-    )
+    await _record_stage(job_id, "failed", "FAILED", message, error_code=error_code)
 
 
 async def _run_shoot_oneshot(job_id: str, body: ShootOneShotRequest, normalized_image_base64: str):
@@ -206,7 +194,7 @@ async def _run_shoot_oneshot(job_id: str, body: ShootOneShotRequest, normalized_
 
     try:
         await crud.update_request(job_id, status="PROCESSING")
-        await _record_stage(job_id, "upload_image", "PROCESSING", project_id=body.project_id, scene_id=body.scene_id)
+        await _record_stage(job_id, "upload_image", "PROCESSING")
 
         upload_result = await asyncio.wait_for(
             client.upload_image(
@@ -230,7 +218,7 @@ async def _run_shoot_oneshot(job_id: str, body: ShootOneShotRequest, normalized_
             return
 
         await crud.update_request(job_id, media_id=media_id, automation_report=json.dumps(report, default=str))
-        await _record_stage(job_id, "submit_video", "PROCESSING", project_id=body.project_id, scene_id=body.scene_id)
+        await _record_stage(job_id, "submit_video", "PROCESSING")
 
         video_result = await asyncio.wait_for(
             client.generate_video(
@@ -262,8 +250,6 @@ async def _run_shoot_oneshot(job_id: str, body: ShootOneShotRequest, normalized_
             "waiting_flow",
             "COMPLETED",
             "One-shot upload submitted to Flow; use job status for stored result and Flow status polling for operation progress.",
-            project_id=body.project_id,
-            scene_id=body.scene_id,
         )
     except asyncio.TimeoutError:
         await _fail_job(job_id, body, ERROR_TIMEOUT, "One-shot job timed out", report)
@@ -292,13 +278,9 @@ async def shoot_oneshot(body: ShootOneShotRequest):
             {"user_paygate_tier": body.user_paygate_tier, "aspect_ratio": body.aspect_ratio},
         )
 
-    request = await crud.create_request(
-        REQUEST_TYPE,
-        project_id=body.project_id,
-        scene_id=body.scene_id,
-    )
+    request = await crud.create_request(REQUEST_TYPE)
     job_id = request["id"]
-    await _record_stage(job_id, "queued", "QUEUED", project_id=body.project_id, scene_id=body.scene_id)
+    await _record_stage(job_id, "queued", "QUEUED")
 
     asyncio.create_task(_run_shoot_oneshot(job_id, body, normalized_image_base64))
 
@@ -337,8 +319,8 @@ async def get_job(job_id: str):
         job_id=request["id"],
         status=request.get("status"),
         request_type=request.get("type"),
-        project_id=request.get("project_id"),
-        scene_id=request.get("scene_id"),
+        project_id=request.get("project_id") or report.get("project_id"),
+        scene_id=request.get("scene_id") or report.get("scene_id"),
         uploaded_media_id=request.get("media_id"),
         output_url=request.get("output_url"),
         error_code=error_code,
