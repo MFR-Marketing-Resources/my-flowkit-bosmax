@@ -1,3 +1,4 @@
+// biome-ignore-all format: preserve the line-stable service-worker runtime for narrow gate patches
 /**
  * Flow Kit — Chrome Extension Background Service Worker
  *
@@ -4714,7 +4715,9 @@ function buildBackgroundStatusResponse() {
 		git_sha: buildId,
 		runtimeReady,
 		runtime_ready: runtimeReady,
-		build_match: true,
+		// Background-only identity is not build alignment proof.
+		build_match: false,
+		build_match_scope: "background_only_unverified",
 		worker_alive: true,
 		service_worker_started_at: runtimeDiagnostics.service_worker_started_at,
 		ws_connected: ws?.readyState === WebSocket.OPEN,
@@ -4746,28 +4749,34 @@ function buildBackgroundStatusResponse() {
 }
 
 function buildStageTelemetryPayload(message = {}, contentHealth = null) {
+	const contentBuildId =
+		message.content_build_id ||
+		contentHealth?.content_build_id ||
+		"CONTENT_BUILD_UNAVAILABLE";
+	const runtimeReady =
+		typeof message.runtime_ready === "boolean"
+			? message.runtime_ready
+			: Boolean(contentHealth?.runtime_ready);
+	const calculatedBuildMatch = Boolean(
+		runtimeReady &&
+			contentBuildId !== "CONTENT_BUILD_UNAVAILABLE" &&
+			contentBuildId === BUILD_ID,
+	);
 	return {
 		request_id: message.request_id,
 		timestamp: message.timestamp || new Date().toISOString(),
 		git_sha: message.git_sha || BUILD_ID,
 		background_build_id: BUILD_ID,
-		content_build_id:
-			message.content_build_id || contentHealth?.content_build_id || BUILD_ID,
+		content_build_id: contentBuildId,
 		stage: message.stage,
 		checkpoint: message.checkpoint || message.stage,
 		status: message.status,
 		message: message.message || null,
 		source: message.source || "extension",
-		runtime_ready:
-			typeof message.runtime_ready === "boolean"
-				? message.runtime_ready
-				: Boolean(contentHealth?.runtime_ready),
+		runtime_ready: runtimeReady,
 		build_match:
-			typeof message.build_match === "boolean"
-				? message.build_match
-				: (message.content_build_id ||
-						contentHealth?.content_build_id ||
-						BUILD_ID) === BUILD_ID,
+			calculatedBuildMatch &&
+			(typeof message.build_match !== "boolean" || message.build_match),
 		selector_used: message.selector_used || null,
 		evidence_pointer: message.evidence_pointer || null,
 		fail_code: message.fail_code || null,
@@ -5224,6 +5233,75 @@ const GFV2_STAGE_MAP = Object.freeze({
 	F2V_SOP_PROMPT_INSERTED: "GFV2_PROMPT_INSERTED",
 });
 
+// PURE three-party build decision. A matching background ID alone is never
+// sufficient: GFV2 requires a live page response from content-flow-dom plus
+// the runner's exported build ID before any visible SOP action may execute.
+function gfv2DecideBuildProof(input) {
+	const backgroundBuildId = String(input?.background_build_id || "").trim();
+	const runnerBuildId = String(input?.runner_build_id || "").trim();
+	const pageDiagnostic = input?.page_diagnostic || null;
+	const contentBuildId = String(
+		pageDiagnostic?.content_build_id || "",
+	).trim();
+	const contentProofLive = Boolean(
+		pageDiagnostic &&
+			contentBuildId &&
+			pageDiagnostic.content_script_loaded === true &&
+			pageDiagnostic.content_script_alive === true &&
+			pageDiagnostic.runtime_ready === true,
+	);
+	const detail = {
+		background_build_id: backgroundBuildId || null,
+		runner_build_id: runnerBuildId || null,
+		content_build_id: contentBuildId || null,
+		content_script_loaded: Boolean(pageDiagnostic?.content_script_loaded),
+		content_script_alive: Boolean(pageDiagnostic?.content_script_alive),
+		runtime_ready: Boolean(pageDiagnostic?.runtime_ready),
+		page_build_match: pageDiagnostic?.build_match === true,
+	};
+
+	if (!contentProofLive) {
+		return {
+			...detail,
+			proceed: false,
+			build_match: false,
+			error: "GFV2_CONTENT_BUILD_UNAVAILABLE",
+			detail,
+		};
+	}
+	if (!backgroundBuildId || !runnerBuildId) {
+		return {
+			...detail,
+			proceed: false,
+			build_match: false,
+			error: "GFV2_BUILD_PROOF_UNAVAILABLE",
+			detail,
+		};
+	}
+
+	const buildMatch = Boolean(
+		pageDiagnostic.build_match === true &&
+			backgroundBuildId === runnerBuildId &&
+			backgroundBuildId === contentBuildId,
+	);
+	if (!buildMatch) {
+		return {
+			...detail,
+			proceed: false,
+			build_match: false,
+			error: "GFV2_BUILD_MISMATCH",
+			detail,
+		};
+	}
+	return {
+		...detail,
+		proceed: true,
+		build_match: true,
+		error: null,
+		detail,
+	};
+}
+
 // PURE granular-settings decision: given the V2 readiness settings proof, returns the
 // ordered telemetry emissions + a proceed/blocker verdict. Enforces, in order:
 //   1. settings surface DOM-confirmed (panel open OR composer pill readable)
@@ -5503,13 +5581,45 @@ async function gfv2EnsureSurface(mode, emit) {
 	return { ok: false, error: "GFV2_SURFACE_NOT_READY", detail: { reason: cls.reason, url: rootTab?.url || null } };
 }
 
+async function gfv2VerifyRuntimeBuildAlignment(flowTab, runnerApi) {
+	const capture = await captureGoogleFlowV2Readiness(flowTab);
+	const decision = gfv2DecideBuildProof({
+		background_build_id: BUILD_ID,
+		runner_build_id: runnerApi?.F2V_FLOW_QUEUE_RUNNER_BUILD_ID,
+		page_diagnostic: capture?.ok ? capture.diagnostic : null,
+	});
+	return {
+		...decision,
+		capture_error: capture?.ok ? null : capture?.error || "GFV2_OBSERVE_FAILED",
+		capture_detail: capture?.ok ? null : capture?.detail || null,
+	};
+}
+
 async function handleGfv2Job(job) {
 	const requestId = job?.request_id || null;
 	const postSubmitDownload = isGfv2PostSubmitDownload(job);
-	const emit = (stage, status, message) => {
+	const emit = (stage, status, message, buildProof = null) => {
 		if (!requestId) return;
+		const buildFields = buildProof
+			? {
+					content_build_id: buildProof.content_build_id || undefined,
+					runtime_ready: Boolean(buildProof.runtime_ready),
+					build_match: buildProof.build_match === true,
+					fail_code:
+						String(status).toUpperCase() === "FAIL"
+							? buildProof.error || null
+							: null,
+				}
+			: {};
 		postStageTelemetry(
-			{ request_id: requestId, stage, status, message, source: "extension" },
+			{
+				request_id: requestId,
+				stage,
+				status,
+				message,
+				source: "extension",
+				...buildFields,
+			},
 			null,
 		);
 	};
@@ -5556,6 +5666,29 @@ async function handleGfv2Job(job) {
 		emit("FAILED", "FAIL", "GFV2_RUNNER_NOT_LOADED");
 		return { ok: false, error: "GFV2_RUNNER_NOT_LOADED" };
 	}
+
+	const buildProof = await gfv2VerifyRuntimeBuildAlignment(flowTab, runnerApi);
+	const buildProofMessage = [
+		`background=${buildProof.background_build_id || "unavailable"}`,
+		`runner=${buildProof.runner_build_id || "unavailable"}`,
+		`content=${buildProof.content_build_id || "unavailable"}`,
+		`build_match=${buildProof.build_match ? 1 : 0}`,
+	].join(" ");
+	if (!buildProof.proceed) {
+		emit(buildProof.error, "FAIL", buildProofMessage, buildProof);
+		emit("FAILED", "FAIL", buildProof.error, buildProof);
+		return {
+			ok: false,
+			error: buildProof.error,
+			detail: buildProof.detail,
+		};
+	}
+	emit(
+		"GFV2_BUILD_ALIGNMENT_VERIFIED",
+		"PASS",
+		buildProofMessage,
+		buildProof,
+	);
 
 	const gfv2Emit = (payload) => {
 		// Emit the runner's native stage AND the mapped GFV2 contract stage.
@@ -6425,7 +6558,10 @@ async function captureGoogleFlowV2Readiness(selectedTab) {
 		await ensureFlowDomScript(selectedTab.id);
 		const resp = await sendTabMessageSafe(
 			selectedTab.id,
-			{ type: "GFV2_OBSERVE_STATE" },
+			{
+				type: "GFV2_OBSERVE_STATE",
+				expected_background_build_id: BUILD_ID,
+			},
 			12000,
 		);
 		const diagnostic = resp?.diagnostic || null;
@@ -6543,15 +6679,15 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 	const resolvedPreferredUrl = await getStoredFlowProjectUrl();
 	const runnerApi =
 		typeof self !== "undefined" ? self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__ : null;
-	const contentBuildId = String(
-		pageDiagnostic?.content_build_id ||
-			composerDiagnostic?.content_build_id ||
-			"",
-	).trim();
-	const buildMismatchError =
-		contentBuildId && contentBuildId !== BUILD_ID
-			? "ERR_EXTENSION_BUILD_MISMATCH"
-			: null;
+	const runtimeBuildProof = gfv2DecideBuildProof({
+		background_build_id: BUILD_ID,
+		runner_build_id: runnerApi?.F2V_FLOW_QUEUE_RUNNER_BUILD_ID,
+		page_diagnostic: pageDiagnostic,
+	});
+	const contentBuildId = runtimeBuildProof.content_build_id || null;
+	const buildMismatchError = runtimeBuildProof.proceed
+		? null
+		: runtimeBuildProof.error;
 	const pagePreselectionReady =
 		isPreselectionEditorReadyDiagnostic(pageDiagnostic);
 	const composerModeMismatchNonFatal =
@@ -6611,7 +6747,7 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 	if (buildMismatchError) {
 		runtimePayload.diagnostic_code = buildMismatchError;
 		runtimePayload.diagnostic_detail =
-			"Background build ID does not match the content script build ID.";
+			`GFV2 runtime build proof failed: background=${runtimeBuildProof.background_build_id || "unavailable"} runner=${runtimeBuildProof.runner_build_id || "unavailable"} content=${runtimeBuildProof.content_build_id || "unavailable"}.`;
 	}
 	if (lastError && !runtimePayload.diagnostic_code) {
 		runtimePayload.diagnostic_code = String(lastError);
@@ -6628,6 +6764,13 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 		ok: selfTestOk,
 		gfv2,
 		...buildBackgroundStatusResponse(),
+		runner_build_id: runtimeBuildProof.runner_build_id,
+		content_build_id: contentBuildId,
+		build_match: runtimeBuildProof.build_match,
+		build_match_scope: runtimeBuildProof.content_build_id
+			? "background_runner_content_page_proof"
+			: "content_page_proof_unavailable",
+		build_proof: runtimeBuildProof,
 		extension_id: chrome.runtime.id || null,
 		expected_content_build_id: BUILD_ID,
 		bosmax_build_proof: BOSMAX_BUILD_PROOF,

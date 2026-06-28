@@ -18,6 +18,10 @@ const SRC = fs.readFileSync(
 	path.join(__dirname, "..", "extension", "background.js"),
 	"utf8",
 );
+const BACKGROUND_BUILD_ID = SRC.match(
+	/const BUILD_ID = ["']([^"']+)["']/,
+)?.[1];
+assert(BACKGROUND_BUILD_ID, "missing BUILD_ID in background.js");
 
 function extractFunctionSource(source, name) {
 	const markers = [`function ${name}(`, `async function ${name}(`];
@@ -26,7 +30,21 @@ function extractFunctionSource(source, name) {
 		.filter((i) => i >= 0)
 		.sort((a, b) => a - b)[0];
 	assert(start >= 0, `missing ${name} in background.js`);
-	const firstBrace = source.indexOf("{", source.indexOf("(", start));
+	const firstParen = source.indexOf("(", start);
+	let parenDepth = 0;
+	let closingParen = -1;
+	for (let i = firstParen; i < source.length; i += 1) {
+		if (source[i] === "(") parenDepth += 1;
+		else if (source[i] === ")") {
+			parenDepth -= 1;
+			if (parenDepth === 0) {
+				closingParen = i;
+				break;
+			}
+		}
+	}
+	assert(closingParen >= 0, `unbalanced parameters for ${name}`);
+	const firstBrace = source.indexOf("{", closingParen);
 	let depth = 0;
 	for (let i = firstBrace; i < source.length; i += 1) {
 		if (source[i] === "{") depth += 1;
@@ -57,16 +75,19 @@ const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(
 	[
+		`const BUILD_ID = ${JSON.stringify(BACKGROUND_BUILD_ID)};`,
 		extractConstObject(SRC, "GFV2_STAGE_MAP"),
+		extractFunctionSource(SRC, "buildStageTelemetryPayload"),
 		extractFunctionSource(SRC, "isGfv2Lane"),
 		extractFunctionSource(SRC, "gfv2ClassifySurface"),
+		extractFunctionSource(SRC, "gfv2DecideBuildProof"),
 		extractFunctionSource(SRC, "gfv2DecideSettingsProof"),
 		extractFunctionSource(SRC, "gfv2ClassifyAssetSource"),
-		"this.__t = { GFV2_STAGE_MAP, isGfv2Lane, gfv2ClassifySurface, gfv2DecideSettingsProof, gfv2ClassifyAssetSource };",
+		"this.__t = { GFV2_STAGE_MAP, buildStageTelemetryPayload, isGfv2Lane, gfv2ClassifySurface, gfv2DecideBuildProof, gfv2DecideSettingsProof, gfv2ClassifyAssetSource };",
 	].join("\n"),
 	sandbox,
 );
-const { GFV2_STAGE_MAP, isGfv2Lane, gfv2ClassifySurface, gfv2DecideSettingsProof, gfv2ClassifyAssetSource } = sandbox.__t;
+const { GFV2_STAGE_MAP, buildStageTelemetryPayload, isGfv2Lane, gfv2ClassifySurface, gfv2DecideBuildProof, gfv2DecideSettingsProof, gfv2ClassifyAssetSource } = sandbox.__t;
 
 // Helpers for the settings-proof decision tests.
 const stagesOf = (r) => r.emissions.map((e) => `${e.stage}:${e.status}`);
@@ -150,6 +171,78 @@ test("GFV2_STAGE_MAP maps upload/prompt SOP stages (settings owned by the hook)"
 	assert(GFV2_STAGE_MAP.F2V_SOP_RATIO_9_16_CONFIRMED === undefined, "ratio not auto-mapped");
 	assert(GFV2_STAGE_MAP.F2V_SOP_COUNT_1X_CONFIRMED === undefined, "count not auto-mapped");
 	assert(GFV2_STAGE_MAP.F2V_SOP_SETTINGS_CONFIGURED === undefined, "persisted not auto-mapped");
+});
+
+test("GFV2 build proof fails closed when background, runner, and content IDs mismatch", () => {
+	const result = gfv2DecideBuildProof({
+		background_build_id: "build-current",
+		runner_build_id: "build-current",
+		page_diagnostic: {
+			content_build_id: "build-stale",
+			content_script_loaded: true,
+			content_script_alive: true,
+			runtime_ready: true,
+			build_match: false,
+		},
+	});
+	assert(result.proceed === false, "mismatched content executor must not proceed");
+	assert(result.error === "GFV2_BUILD_MISMATCH", "mismatch must use the named fail-closed code");
+});
+
+test("GFV2 build proof fails closed when real page/content proof is unavailable", () => {
+	const result = gfv2DecideBuildProof({
+		background_build_id: "build-current",
+		runner_build_id: "build-current",
+		page_diagnostic: null,
+	});
+	assert(result.proceed === false, "missing page proof must not proceed");
+	assert(result.error === "GFV2_CONTENT_BUILD_UNAVAILABLE", "missing proof must use the named unavailable code");
+});
+
+test("GFV2 build proof passes only with matching IDs and live page/content proof", () => {
+	const result = gfv2DecideBuildProof({
+		background_build_id: "build-current",
+		runner_build_id: "build-current",
+		page_diagnostic: {
+			content_build_id: "build-current",
+			content_script_loaded: true,
+			content_script_alive: true,
+			runtime_ready: true,
+			build_match: true,
+		},
+	});
+	assert(result.proceed === true, "matching live proof must proceed");
+	assert(result.build_match === true, "three-party match must be explicit");
+});
+
+test("background-only telemetry cannot claim content build alignment", () => {
+	const payload = buildStageTelemetryPayload({
+		request_id: "req-build-proof",
+		stage: "GFV2_LANE_ACCEPTED",
+		status: "WAITING_FLOW",
+		build_match: true,
+	});
+	assert(
+		payload.content_build_id === "CONTENT_BUILD_UNAVAILABLE",
+		"missing content proof must be explicit",
+	);
+	assert(payload.build_match === false, "background-only build_match must be false");
+});
+
+test("telemetry reports build_match only from live matching content health", () => {
+	const payload = buildStageTelemetryPayload(
+		{
+			request_id: "req-build-proof",
+			stage: "GFV2_BUILD_ALIGNMENT_VERIFIED",
+			status: "PASS",
+		},
+		{
+			content_build_id: BACKGROUND_BUILD_ID,
+			runtime_ready: true,
+		},
+	);
+	assert(payload.content_build_id === BACKGROUND_BUILD_ID, "real content ID retained");
+	assert(payload.build_match === true, "matching live content health may pass");
 });
 
 // --- Surface-acquisition source contract (GFV2_ENSURE_SURFACE fix) ---
@@ -405,6 +498,31 @@ const CFD_SRC = fs.readFileSync(
 	"utf8",
 );
 const SRC_BLOCK = extractFunctionSource;
+
+test("background, runner, and content executor source build IDs are aligned", () => {
+	const backgroundBuild = SRC.match(/const BUILD_ID = ["']([^"']+)["']/)?.[1];
+	const runnerBuild = RUNNER_SRC.match(
+		/const F2V_FLOW_QUEUE_RUNNER_BUILD_ID = ["']([^"']+)["']/,
+	)?.[1];
+	const contentBuild = CFD_SRC.match(
+		/const FLOW_KIT_DOM_BUILD_ID = ["']([^"']+)["']/,
+	)?.[1];
+	assert(backgroundBuild, "background build ID missing");
+	assert(runnerBuild, "runner build ID missing");
+	assert(contentBuild, "content executor build ID missing");
+	assert(backgroundBuild === runnerBuild, "background and runner build IDs differ");
+	assert(backgroundBuild === contentBuild, "background and content build IDs differ");
+});
+
+test("GFV2 build gate runs before the visible SOP runner", () => {
+	const gateIdx = HANDLE_SRC.indexOf("gfv2VerifyRuntimeBuildAlignment");
+	const runnerIdx = HANDLE_SRC.indexOf(
+		"await runnerApi.executeF2VVisibleSopRunner",
+	);
+	assert(gateIdx >= 0, "GFV2 runtime build gate is missing");
+	assert(runnerIdx >= 0, "visible SOP runner call is missing");
+	assert(gateIdx < runnerIdx, "build gate must run before runner execution");
+});
 
 test("content: V2 settings primitives exist (open/read/apply, discovery)", () => {
 	assert(/async function gfv2ApplySettings\(/.test(CFD_SRC), "gfv2ApplySettings present");

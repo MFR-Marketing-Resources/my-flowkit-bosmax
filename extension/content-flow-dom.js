@@ -15,7 +15,7 @@
 (() => {
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
-  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-f2v-runner-audit-2026-05-28b';
+  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-f2v-runner-audit-2026-06-15a';
   const FLOW_KIT_PLAYWRIGHT_HARNESS = hasPlaywrightHarnessMarker();
   const FLOW_KIT_TEST_MODE = Boolean(window.__FLOWKIT_TEST_MODE__);
   const FLOW_KIT_ENABLE_TEST_HOOKS =
@@ -4310,6 +4310,9 @@ function isSettingsScopedModelSource(source) {
       blocking_modal_detected: !!blockingModal,
       observed,
       runtime_ready: true,
+      content_script_loaded: true,
+      content_script_alive: true,
+      content_script_protocol_version: FLOW_KIT_DOM_PROTOCOL_VERSION,
       content_build_id: FLOW_KIT_DOM_BUILD_ID,
       git_sha: FLOW_KIT_DOM_BUILD_ID,
     };
@@ -5782,7 +5785,23 @@ function isSettingsScopedModelSource(source) {
     if (msg.type === 'GFV2_OBSERVE_STATE') {
       // Read-only Google Flow V2 diagnostic. Inspects the DOM only — never clicks.
       try {
-        sendResponse({ ok: true, diagnostic: observeGoogleFlowV2State() });
+        const diagnostic = { ...observeGoogleFlowV2State() };
+        const expectedBackgroundBuildId = String(msg.expected_background_build_id || '').trim();
+        diagnostic.content_script_loaded = true;
+        diagnostic.content_script_alive = true;
+        diagnostic.runtime_ready = true;
+        diagnostic.content_script_protocol_version = FLOW_KIT_DOM_PROTOCOL_VERSION;
+        diagnostic.content_build_id = FLOW_KIT_DOM_BUILD_ID;
+        diagnostic.git_sha = FLOW_KIT_DOM_BUILD_ID;
+        diagnostic.expected_background_build_id = expectedBackgroundBuildId || null;
+        diagnostic.build_match = Boolean(
+          expectedBackgroundBuildId
+          && diagnostic.content_build_id === expectedBackgroundBuildId
+          && diagnostic.content_script_loaded === true
+          && diagnostic.content_script_alive === true
+          && diagnostic.runtime_ready === true
+        );
+        sendResponse({ ok: true, diagnostic });
       } catch (error) {
         sendResponse({ ok: false, error: 'GFV2_OBSERVE_FAILED', detail: String(error?.message || error) });
       }
