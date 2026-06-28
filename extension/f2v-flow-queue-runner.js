@@ -4784,7 +4784,27 @@ async function _clickVisibleOptionExact(scripting, tabId, step, opts) {
         visible_candidates: findResult?.visible_candidates || [],
       };
     }
+    // Adaptive Google Flow UI: Video/Frames (mode/submode) steps may have no
+    // standalone tab. Prefer a live F2V composer surface over clicking a missing
+    // mode pill; otherwise fail closed with a clearer reason than "not found".
+    let modeDecision = null;
+    if (failKind === 'mode' || failKind === 'submode') {
+      modeDecision = _modeStepConfirmDecision(failKind, failState, findResult?.visible_candidates || []);
+      if (modeDecision.accept) {
+        console.log(`[FlowAgent] ${step.label}: live F2V composer detected (no standalone mode tab) — accepting composer readiness.`);
+        return {
+          ok: true,
+          label: step.label,
+          role: 'composer_ready_no_mode_tab',
+          bbox: null,
+          skipped: true,
+          mode_confirm_reason: modeDecision.reason,
+          visible_candidates: findResult?.visible_candidates || [],
+        };
+      }
+    }
     const diagnostics = {
+      mode_surface_reason: modeDecision ? modeDecision.reason : null,
       current_bottom_pill_before: compState?.pillText || 'unknown',
       current_bottom_pill_at_fail: failState?.pillText || 'unknown',
       current_url: failUrl?.url || 'unknown',
@@ -7119,6 +7139,48 @@ function _stepKind(step) {
   if (/veo|nano\s*banana|imagen|gemini/i.test(label)) return 'model';
   return 'other';
 }
+
+/**
+ * Decide what to do for a mode/submode step (Video / Frames) when the scan found
+ * no matching mode control. The live Google Flow UI is adaptive: the prompt
+ * composer is model-agnostic and may expose NO standalone "Video"/"Frames" tab
+ * (a Nano Banana / image-frame composer shows e.g. "crop_9_16 1x" with no
+ * "video" token). Decision:
+ *   - accept (skip the click) when a live F2V composer surface is detected — the
+ *     pill bears a real ratio/count/model token (prefer composer readiness).
+ *   - else fail closed with a clear reason, distinguishing a Flow landing/home
+ *     surface (only global nav candidates: New project / Flow TV / Help / banners)
+ *     from a genuinely undetected composer. Never treat global nav as a mode
+ *     choice.
+ * Pure (no DOM / chrome) so it is unit-testable.
+ */
+function _modeStepConfirmDecision(failKind, failState, visibleCandidates) {
+  if (failKind !== 'mode' && failKind !== 'submode') {
+    return { accept: false, reason: 'NOT_A_MODE_STEP' };
+  }
+  const composerLive = Boolean(
+    failState && failState.ok === true && (
+      failState.detectedRatio ||
+      failState.detectedCount ||
+      failState.detectedModelCanonical ||
+      failState.detectedModelFamily
+    )
+  );
+  if (composerLive) {
+    return { accept: true, reason: 'F2V_COMPOSER_ALREADY_READY_NO_MODE_TAB' };
+  }
+  const cands = (Array.isArray(visibleCandidates) ? visibleCandidates : [])
+    .map((c) => String((c && c.text) || '').toLowerCase());
+  const navOnly = cands.some((t) =>
+    /flow tv|help center|new project|go to banner|google flow agent|more_vert/.test(t));
+  return {
+    accept: false,
+    reason: navOnly
+      ? 'NOT_IN_F2V_COMPOSER_SURFACE_LANDING_NAV_ONLY'
+      : 'F2V_COMPOSER_SURFACE_NOT_DETECTED',
+  };
+}
+
 /**
  * Build the effective step sequence for this job. The model step (frozen as
  * "Veo 3.1 - Lite" in SOP_SEQUENCE) is rewritten to target the job's requested
@@ -7767,6 +7829,7 @@ const _api = {
   _snapshotDownloads,
   _waitForCompletedDownload,
   _runB2AUploadPickerOpenOnly,
+  _modeStepConfirmDecision,
   // Constants
   F2V_FLOW_QUEUE_RUNNER_BUILD_ID,
   SOP_SEQUENCE,
