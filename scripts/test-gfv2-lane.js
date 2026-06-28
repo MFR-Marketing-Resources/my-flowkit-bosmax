@@ -18,6 +18,10 @@ const SRC = fs.readFileSync(
 	path.join(__dirname, "..", "extension", "background.js"),
 	"utf8",
 );
+const CONTENT_SRC = fs.readFileSync(
+	path.join(__dirname, "..", "extension", "content-flow-dom.js"),
+	"utf8",
+);
 const BACKGROUND_BUILD_ID = SRC.match(
 	/const BUILD_ID = ["']([^"']+)["']/,
 )?.[1];
@@ -318,6 +322,21 @@ test("ENSURE_SURFACE automates New/Create and emits named blockers", () => {
 	assert(ENSURE_SRC.includes('"GFV2_EDITOR_ENTRY_FAILED"'), "named editor-entry blocker");
 	assert(ENSURE_SRC.includes('"GFV2_EDITOR_NOT_READY_LANDING_NAV_ONLY"'), "named landing-only blocker");
 	assert(ENSURE_SRC.includes('"GFV2_ROOT_LOAD_TIMEOUT"'), "named root-load blocker");
+});
+
+test("OPEN_FLOW_NEW_PROJECT listener uses a dedicated long async timeout budget", () => {
+	assert(
+		CONTENT_SRC.includes(
+			"const OPEN_FLOW_NEW_PROJECT_RESPOND_ASYNC_TIMEOUT_MS = 60000;",
+		),
+		"new-project listener must declare a long timeout budget",
+	);
+	assert(
+		/if \(msg\.type === 'OPEN_FLOW_NEW_PROJECT'\) \{[\s\S]*OPEN_FLOW_NEW_PROJECT_RESPOND_ASYNC_TIMEOUT_MS[\s\S]*\}/.test(
+			CONTENT_SRC,
+		),
+		"new-project listener must use the dedicated timeout budget",
+	);
 });
 
 test("runner still uses skipGenerate:true and stops before generate", () => {

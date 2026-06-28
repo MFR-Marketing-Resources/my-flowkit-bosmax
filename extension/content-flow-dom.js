@@ -227,6 +227,10 @@
   // tab-side task can still drain a chained background roundtrip cleanly
   // before its own port is forcibly closed.
   const DEFAULT_CONTENT_RESPOND_ASYNC_TIMEOUT_MS = 5000;
+  // OPEN_FLOW_NEW_PROJECT can legitimately wait for root -> project/editor
+  // navigation, so it needs a dedicated timeout budget larger than the generic
+  // content-listener default.
+  const OPEN_FLOW_NEW_PROJECT_RESPOND_ASYNC_TIMEOUT_MS = 60000;
 
   function respondAsync(sendResponse, task, timeoutMs = DEFAULT_CONTENT_RESPOND_ASYNC_TIMEOUT_MS) {
     let settled = false;
@@ -6030,7 +6034,11 @@ function isSettingsScopedModelSource(source) {
     }
 
     if (msg.type === 'OPEN_FLOW_NEW_PROJECT') {
-      return respondAsync(sendResponse, async () => openFlowNewProjectFlow(msg.mode));
+      return respondAsync(
+        sendResponse,
+        async () => openFlowNewProjectFlow(msg.mode),
+        OPEN_FLOW_NEW_PROJECT_RESPOND_ASYNC_TIMEOUT_MS,
+      );
     }
 
     if (msg.type === 'EXECUTE_FLOW_JOB') {
