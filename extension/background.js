@@ -4688,7 +4688,7 @@ function broadcastStatus() {
 	sendRuntimeMessageNoThrow({ type: "STATUS_PUSH" });
 }
 
-const BUILD_ID = "flowkit-f2v-runner-audit-2026-06-15a";
+const BUILD_ID = "flowkit-gfv2-post-submit-proof-2026-06-28a";
 
 function buildBackgroundStatusResponse() {
 	const buildId = BUILD_ID;
@@ -5377,11 +5377,15 @@ function gfv2DecideSettingsProof(proof, observedModel, opts) {
 // Interactive granular settings verification: drive the content-script V2 settings
 // primitive (open panel, confirm/select 9:16 + 1x, read model, persist), then run the
 // pure decision over the REAL applied result. These are live hard gates.
-async function gfv2DriveSettingsVerify(flowTab, emit) {
+async function gfv2DriveSettingsVerify(flowTab, emit, options = {}) {
 	await ensureFlowDomScript(flowTab.id);
+	const applyOptions = {
+		requireSaveTransition: options.requireSaveTransition === true,
+		expectedPrompt: String(options.expectedPrompt || ""),
+	};
 	let res = await sendTabMessageSafe(
 		flowTab.id,
-		{ type: "GFV2_APPLY_SETTINGS", options: {} },
+		{ type: "GFV2_APPLY_SETTINGS", options: applyOptions },
 		35000,
 	);
 	if (
@@ -5393,7 +5397,11 @@ async function gfv2DriveSettingsVerify(flowTab, emit) {
 		].includes(res?.error)
 	) {
 		await ensureFlowDomScript(flowTab.id);
-		res = await sendTabMessageSafe(flowTab.id, { type: "GFV2_APPLY_SETTINGS", options: {} }, 35000);
+		res = await sendTabMessageSafe(
+			flowTab.id,
+			{ type: "GFV2_APPLY_SETTINGS", options: applyOptions },
+			35000,
+		);
 	}
 	res = res || {};
 	// Surface the real V2 controls + launcher candidates for forensics.
@@ -5411,6 +5419,30 @@ async function gfv2DriveSettingsVerify(flowTab, emit) {
 	if (res.error === "GFV2_SETTINGS_PANEL_NOT_FOUND" && !res.settings_panel_opened) {
 		emit("GFV2_SETTINGS_PANEL_NOT_FOUND", "FAIL", res.detail || "video_section_not_found");
 		return { proceed: false, error: "GFV2_SETTINGS_PANEL_NOT_FOUND", detail: res };
+	}
+	if (applyOptions.requireSaveTransition) {
+		if (res.save_button_found) {
+			emit(
+				"GFV2_SETTINGS_SAVE_CLICKED",
+				"WAITING_FLOW",
+				`settings_state_before=${res?.agent_settings_state_before_save?.identity || "unknown"}`,
+			);
+		}
+		if (res.settings_transition_verified !== true) {
+			const transitionError =
+				res.error || "GFV2_COMPOSER_NOT_READY_AFTER_SETTINGS";
+			emit(
+				"GFV2_SETTINGS_SAVE_VERIFICATION_FAILED",
+				"FAIL",
+				JSON.stringify({
+					error: transitionError,
+					settings_active: Boolean(res.agent_settings_active_after_save),
+					composer_editable: Boolean(res.composer_editable_after_save),
+					prompt_reflected: Boolean(res.prompt_reflected_after_save),
+				}),
+			);
+			return { proceed: false, error: transitionError, detail: res };
+		}
 	}
 	const proof = {
 		settings_panel_opened: Boolean(res.settings_panel_opened),
@@ -5435,6 +5467,18 @@ async function gfv2DriveSettingsVerify(flowTab, emit) {
 				? res.error
 				: decision.error;
 		return { proceed: false, error: err, detail: { decision: decision.detail, applied: res } };
+	}
+	if (applyOptions.requireSaveTransition) {
+		emit(
+			"GFV2_SETTINGS_SAVE_VERIFIED",
+			"PASS",
+			JSON.stringify({
+				settings_active: false,
+				composer_editable: true,
+				prompt_reflected: true,
+				composer_identity: res.composer_identity_after_save || null,
+			}),
+		);
 	}
 	return { proceed: true, detail: decision.detail, proof, applied: res };
 }
@@ -5699,6 +5743,8 @@ async function handleGfv2Job(job) {
 				status: payload.status,
 				message: payload.message,
 				source: "extension",
+				selector_used: payload.selector_used || null,
+				evidence_pointer: payload.evidence_pointer || null,
 			},
 			getKnownContentScriptHealth(flowTab.id),
 		);
@@ -5710,6 +5756,11 @@ async function handleGfv2Job(job) {
 
 	const deps = {
 		scripting: runnerApi.createChromeScriptingAdapter(chrome),
+		downloads:
+			typeof runnerApi.createChromeDownloadsAdapter === "function" &&
+			chrome?.downloads
+				? runnerApi.createChromeDownloadsAdapter(chrome)
+				: null,
 		// Surface is already acquired — do not open/recover anything inside the runner.
 		newProjectFn: async () => ({
 			ok: true,
@@ -5778,20 +5829,15 @@ async function handleGfv2Job(job) {
 	// GRANULAR SETTINGS PROOF (post-upload, V2 SOP order). Opens the tune-settings
 	// panel, confirms/selects 9:16 + 1x, classifies the model (Veo / hidden-soft-pass
 	// / visible-wrong hard-fail), verifies persistence. Real live gate before STOP.
-	const settings = await gfv2DriveSettingsVerify(flowTab, emit);
+	const settings = await gfv2DriveSettingsVerify(flowTab, emit, {
+		requireSaveTransition: postSubmitDownload,
+		expectedPrompt: job?.prompt,
+	});
 	if (!settings.proceed) {
 		emit("FAILED", "FAIL", settings.error || "GFV2_SETTINGS_NOT_VERIFIED");
 		return { ok: false, error: settings.error || "GFV2_SETTINGS_NOT_VERIFIED", detail: settings.detail || null };
 	}
 
-	if (postSubmitDownload) {
-		const saveButtonFound = Boolean(settings?.proof?.save_button_found || settings?.applied?.save_button_found);
-		emit(
-			saveButtonFound ? "GFV2_SETTINGS_SAVE_CLICKED" : "GFV2_SETTINGS_SAVE_ALREADY_PERSISTED",
-			"PASS",
-			`save_button_found=${saveButtonFound} persistence=${settings?.proof?.settings_persisted === true ? "video_section_verified" : "composer_reflected"}`,
-		);
-	}
 	emit("GFV2_PROMPT_ACCEPTED", "PASS", `prompt_inserted=${Boolean(runnerResult?.stage_results?.prompt_inserted)}`);
 	if (postSubmitDownload) {
 		if (typeof runnerApi.executeGfv2PostSubmitDownloadContinuation !== "function") {
@@ -5805,6 +5851,11 @@ async function handleGfv2Job(job) {
 			{
 				settleMs: 300,
 				promptProof: runnerResult?.stage_results?.prompt_proof || null,
+				flowUrl: flowTab.url || null,
+				surfaceIdentity: `flow_tab:${flowTab.id}`,
+				settingsState: "closed_verified",
+				settingsComposerIdentity:
+					settings?.applied?.composer_identity_after_save || null,
 			},
 		);
 		if (!continuation?.ok) {

@@ -93,6 +93,130 @@ function createScriptingAdapter() {
 	};
 }
 
+function createCompletedDownloadsAdapter() {
+	let searchCount = 0;
+	return {
+		async search() {
+			searchCount += 1;
+			if (searchCount === 1) return [];
+			const startedAt = new Date(Date.now() + 1000).toISOString();
+			const endedAt = new Date(Date.now() + 2000).toISOString();
+			return [
+				{
+					id: 701,
+					filename: "C:\\Downloads\\generated-project.mp4",
+					state: "complete",
+					exists: true,
+					startTime: startedAt,
+					endTime: endedAt,
+					mime: "video/mp4",
+					totalBytes: 4096,
+					bytesReceived: 4096,
+				},
+			];
+		},
+	};
+}
+
+async function testStampedClickDispatchesExactlyOneClickEvent() {
+	installDom('<!doctype html><html><body><button id="target" type="button">Save</button></body></html>');
+	const target = document.getElementById("target");
+	setVisibleRect(target, 20, 20, 100, 32);
+	target.setAttribute("data-test-click", "save-target");
+	let clickCount = 0;
+	target.addEventListener("click", () => {
+		clickCount += 1;
+	});
+
+	const result = runner.MAIN_clickStampedElement(
+		"data-test-click",
+		"save-target",
+	);
+	assert.equal(result.ok, true);
+	assert.equal(
+		clickCount,
+		1,
+		"the shared submit/save/menu primitive must fire exactly one click event",
+	);
+}
+
+async function testSubmitArrowRejectsAgentSettingsNeverControl() {
+	installDom(`
+		<!doctype html>
+		<html>
+			<body>
+				<form id="composer">
+					<textarea id="prompt">hero product shot</textarea>
+				</form>
+				<div id="agent-settings" role="dialog">
+					<h2>Agent settings</h2>
+					<div>Confirm before generating</div>
+					<button id="never" type="button" role="radio">
+						Never Agent will generate media and spend credits automatically
+					</button>
+				</div>
+			</body>
+		</html>
+	`);
+	setVisibleRect(document.body, 0, 0, 1280, 900);
+	setVisibleRect(document.getElementById("composer"), 700, 700, 500, 160);
+	setVisibleRect(document.getElementById("prompt"), 740, 760, 390, 50);
+	setVisibleRect(document.getElementById("agent-settings"), 900, 80, 320, 620);
+	setVisibleRect(document.getElementById("never"), 930, 190, 250, 45);
+
+	const stamp = runner.MAIN_stampGenerateButton(
+		"data-test-submit",
+		"hero product shot",
+	);
+	assert.equal(
+		stamp.ok,
+		false,
+		"Agent settings Never radio must never be eligible as submit",
+	);
+	assert.ok(
+		!document.getElementById("never").hasAttribute("data-test-submit"),
+		"Never radio must remain unstamped",
+	);
+}
+
+async function testSubmitArrowRequiresAcceptedPromptInSameComposer() {
+	installDom(`
+		<!doctype html>
+		<html>
+			<body>
+				<form id="accepted-composer">
+					<textarea id="accepted-prompt">hero product shot</textarea>
+				</form>
+				<form id="wrong-composer">
+					<textarea id="wrong-prompt">different prompt</textarea>
+					<button id="wrong-submit" type="button">
+						<span class="material-symbols-outlined">arrow_forward</span>
+					</button>
+				</form>
+			</body>
+		</html>
+	`);
+	setVisibleRect(document.body, 0, 0, 1280, 900);
+	setVisibleRect(document.getElementById("accepted-composer"), 700, 620, 500, 120);
+	setVisibleRect(document.getElementById("accepted-prompt"), 740, 660, 390, 40);
+	setVisibleRect(document.getElementById("wrong-composer"), 700, 760, 500, 120);
+	setVisibleRect(document.getElementById("wrong-prompt"), 740, 790, 390, 40);
+	setVisibleRect(document.getElementById("wrong-submit"), 1140, 830, 40, 32);
+
+	const stamp = runner.MAIN_stampGenerateButton(
+		"data-test-submit",
+		"hero product shot",
+	);
+	assert.equal(
+		stamp.ok,
+		false,
+		"submit outside the accepted-prompt composer must be rejected",
+	);
+	assert.ok(
+		!document.getElementById("wrong-submit").hasAttribute("data-test-submit"),
+	);
+}
+
 async function testBottomComposerConfigPillOpensPanel() {
 	installDom(baseComposerHtml('<button id="library-video" type="button">Video</button>'));
 	applyCommonRects(document);
@@ -949,19 +1073,20 @@ async function testPostSubmitDownloadContinuationCompletesAfterOutputReady() {
 	assert.ok(names.indexOf("GFV2_OUTPUT_READY") < names.indexOf("GFV2_OUTPUT_REVIEW_OPENED"), "output-ready before review opened");
 	assert.ok(names.indexOf("GFV2_OUTPUT_REVIEW_OPENED") < names.indexOf("GFV2_PROJECT_MENU_OPENED"), "review opened before project menu");
 	assert.ok(names.indexOf("GFV2_PROJECT_MENU_OPENED") < names.indexOf("GFV2_DOWNLOAD_PROJECT_CLICKED"), "menu before download");
-	assert.equal(result.summary.filename, "generated-project.mp4");
+	assert.match(result.summary.filename, /generated-project\.mp4$/);
 	assert.ok(typeof result.summary.timestamp === "string" && result.summary.timestamp.length > 0);
 }
 
 async function testPostSubmitDownloadContinuationFailsWhenArrowMissing() {
 	installDom(baseComposerHtml());
 	applyCommonRects(document);
+	document.getElementById("prompt").value = "hero product shot";
 	document.getElementById("generate-btn").remove();
 
 	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
 		{ scripting: createScriptingAdapter(), telemetry: () => {} },
 		9102,
-		{ mode: "F2V" },
+		{ mode: "F2V", prompt: "hero product shot" },
 		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 200, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
 	);
 	assert.equal(result.ok, false);
@@ -972,18 +1097,32 @@ async function testPostSubmitDownloadContinuationFailsWhenArrowMissing() {
 async function testPostSubmitDownloadContinuationFailsWhenOutputNeverAppears() {
 	installDom(baseComposerHtml());
 	applyCommonRects(document);
+	document.getElementById("prompt").value = "hero product shot";
 	const generateBtn = document.getElementById("generate-btn");
 	generateBtn.addEventListener("click", () => {});
 
 	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
 		{ scripting: createScriptingAdapter(), telemetry: () => {} },
 		9103,
-		{ mode: "F2V" },
+		{ mode: "F2V", prompt: "hero product shot" },
 		{ settleMs: 0, preGenerateSettleMs: 0, outputWaitTimeoutMs: 150, outputWaitPollMs: 10, promptProof: { passed: true, inserted_length: 17, field_value_length: 17 } },
 	);
 	assert.equal(result.ok, false);
-	assert.equal(result.error, "GFV2_OUTPUT_NOT_READY");
-	assert.ok(result.stages.some((stage) => stage.stage === "GFV2_OUTPUT_NOT_READY" && stage.status === "FAIL"));
+	assert.equal(result.error, "GFV2_GENERATION_TRANSITION_NOT_OBSERVED");
+	assert.ok(
+		!result.stages.some(
+			(stage) =>
+				stage.stage === "GFV2_GENERATE_SUBMITTED" && stage.status === "PASS",
+		),
+		"click attempt alone must not emit GFV2_GENERATE_SUBMITTED=PASS",
+	);
+	assert.ok(
+		result.stages.some(
+			(stage) =>
+				stage.stage === "GFV2_GENERATION_TRANSITION_NOT_OBSERVED" &&
+				stage.status === "FAIL",
+		),
+	);
 }
 
 async function testPostSubmitDownloadContinuationFailsWhenProjectMenuMissing() {
@@ -1080,7 +1219,7 @@ function installReviewFlowDom(opts = {}) {
 			setVisibleRect(card, 930, 220, 220, 160);
 			setVisibleRect(vid, 940, 240, 200, 110);
 			if (opts.videoOpensReview === false) return; // review never opens
-			vid.addEventListener("click", () => {
+			card.addEventListener("click", () => {
 				pushOnce("video-click");
 				if (document.getElementById("review-page")) return;
 				const review = document.createElement("div");
@@ -1092,6 +1231,17 @@ function installReviewFlowDom(opts = {}) {
 				rvid.setAttribute("src", "blob:generated");
 				review.appendChild(rvid);
 				setVisibleRect(rvid, 260, 140, 600, 360);
+				const done = document.createElement("button");
+				done.id = "review-done";
+				done.type = "button";
+				done.textContent = "Done";
+				review.appendChild(done);
+				setVisibleRect(done, 1000, 100, 60, 30);
+				const timeline = document.createElement("div");
+				timeline.id = "review-timeline";
+				timeline.setAttribute("data-timeline", "true");
+				review.appendChild(timeline);
+				setVisibleRect(timeline, 220, 560, 820, 120);
 				if (opts.reviewModelDropdown) {
 					const md = document.createElement("button");
 					md.id = "review-model";
@@ -1135,9 +1285,13 @@ function installReviewFlowDom(opts = {}) {
 
 function runContinuation(reqId, opts = {}) {
 	return runner.executeGfv2PostSubmitDownloadContinuation(
-		{ scripting: createScriptingAdapter(), telemetry: () => {} },
+		{
+			scripting: createScriptingAdapter(),
+			downloads: createCompletedDownloadsAdapter(),
+			telemetry: () => {},
+		},
 		reqId,
-		{ mode: "F2V" },
+		{ mode: "F2V", prompt: "hero product shot" },
 		Object.assign(
 			{
 				settleMs: 0,
@@ -1146,6 +1300,8 @@ function runContinuation(reqId, opts = {}) {
 				outputWaitPollMs: 10,
 				reviewWaitTimeoutMs: 1000,
 				reviewWaitPollMs: 10,
+				downloadWaitTimeoutMs: 1000,
+				downloadWaitPollMs: 10,
 				promptProof: { passed: true, inserted_length: 17, field_value_length: 17 },
 			},
 			opts,
@@ -1180,6 +1336,193 @@ async function testOutputReadyTrueOnRenderedOutputCard() {
 	const state = runner.MAIN_getPostSubmitOutputState();
 	assert.equal(state.output_ready, true, "a rendered output card must satisfy output-ready");
 	assert.equal(state.filename, "generated-project.mp4");
+}
+
+async function testOutputBaselineRejectsPreexistingVideo() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	const card = document.createElement("div");
+	card.id = "stale-output";
+	card.innerHTML = '<div>stale-project.mp4</div><video id="stale-video" src="blob:stale"></video>';
+	document.body.appendChild(card);
+	setVisibleRect(card, 930, 220, 240, 180);
+	setVisibleRect(document.getElementById("stale-video"), 940, 240, 200, 120);
+
+	const baseline = runner.MAIN_getPostSubmitOutputState();
+	assert.ok(
+		Array.isArray(baseline.output_identities) &&
+			baseline.output_identities.length === 1,
+		"baseline must capture the visible stale output identity",
+	);
+	const afterSubmit = runner.MAIN_getPostSubmitOutputState({
+		baselineIdentities: baseline.output_identities,
+	});
+	assert.equal(
+		afterSubmit.output_ready,
+		false,
+		"an unchanged pre-submit video must not be accepted as new output",
+	);
+}
+
+async function testGeneratedReviewTargetIsCardNotRawVideo() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	const card = document.createElement("article");
+	card.id = "generated-card";
+	card.innerHTML = '<div>generated-project.mp4</div><video id="generated-video" src="blob:new-output"></video>';
+	document.body.appendChild(card);
+	setVisibleRect(card, 930, 220, 240, 180);
+	setVisibleRect(document.getElementById("generated-video"), 940, 240, 200, 120);
+
+	const output = runner.MAIN_getPostSubmitOutputState();
+	const stamp = runner.MAIN_stampGeneratedVideo(
+		"data-test-generated",
+		{
+			requiredIdentity: output.output_identity,
+		},
+	);
+	assert.equal(stamp.ok, true);
+	assert.ok(
+		card.hasAttribute("data-test-generated"),
+		"review target must be the generated card/affordance",
+	);
+	assert.ok(
+		!document.getElementById("generated-video").hasAttribute("data-test-generated"),
+		"raw video element must not be the blind click target",
+	);
+}
+
+async function testReviewRouteAloneIsNotProof() {
+	const dom = installDom(baseComposerHtml());
+	applyCommonRects(document);
+	dom.reconfigure({
+		url: "https://labs.google/fx/tools/flow/project/existing-composer",
+	});
+	const state = runner.MAIN_getReviewSurfaceState();
+	assert.equal(
+		state.opened,
+		false,
+		"/project/ route alone is a composer/project route, not review proof",
+	);
+}
+
+async function testReviewSurfaceRejectsVideoWithoutTimelineEvidence() {
+	installDom(baseComposerHtml());
+	applyCommonRects(document);
+	const review = document.createElement("div");
+	review.setAttribute("data-review-page", "true");
+	review.innerHTML = '<video id="review-video" src="blob:generated"></video>';
+	document.body.appendChild(review);
+	setVisibleRect(review, 200, 80, 880, 720);
+	setVisibleRect(document.getElementById("review-video"), 260, 140, 600, 360);
+	const state = runner.MAIN_getReviewSurfaceState();
+	assert.equal(
+		state.opened,
+		false,
+		"video-only container without Done/timeline evidence is not review",
+	);
+}
+
+async function testContinuationRequiresCompletedDownloadEvidence() {
+	installReviewFlowDom();
+	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
+		{ scripting: createScriptingAdapter(), telemetry: () => {} },
+		9301,
+		{ mode: "F2V", prompt: "hero product shot" },
+		{
+			settleMs: 0,
+			preGenerateSettleMs: 0,
+			outputWaitTimeoutMs: 1000,
+			outputWaitPollMs: 10,
+			reviewWaitTimeoutMs: 1000,
+			reviewWaitPollMs: 10,
+			downloadWaitTimeoutMs: 100,
+			downloadWaitPollMs: 10,
+			promptProof: {
+				passed: true,
+				inserted_length: 17,
+				field_value_length: 17,
+			},
+		},
+	);
+	assert.equal(result.ok, false);
+	assert.equal(
+		result.error,
+		"GFV2_DOWNLOAD_NOT_CONFIRMED",
+		"Download Project click without chrome.downloads proof must fail closed",
+	);
+	assert.ok(
+		!result.stages.some(
+			(stage) =>
+				stage.stage === "GFV2_DOWNLOAD_STARTED" &&
+				stage.status === "PASS",
+		),
+	);
+}
+
+async function testPostSubmitTelemetryCarriesVerifiedStateIdentities() {
+	installReviewFlowDom();
+	const telemetry = [];
+	const result = await runner.executeGfv2PostSubmitDownloadContinuation(
+		{
+			scripting: createScriptingAdapter(),
+			downloads: createCompletedDownloadsAdapter(),
+			telemetry: (payload) => telemetry.push(payload),
+		},
+		9401,
+		{ mode: "F2V", prompt: "hero product shot" },
+		{
+			settleMs: 0,
+			preGenerateSettleMs: 0,
+			outputWaitTimeoutMs: 1000,
+			outputWaitPollMs: 10,
+			reviewWaitTimeoutMs: 1000,
+			reviewWaitPollMs: 10,
+			downloadWaitTimeoutMs: 100,
+			downloadWaitPollMs: 10,
+			flowUrl: "https://labs.google/fx/tools/flow/project/test",
+			surfaceIdentity: "flow_project:test",
+			settingsState: "closed_verified",
+			settingsComposerIdentity: "textarea|prompt|accepted",
+			promptProof: {
+				passed: true,
+				inserted_length: 17,
+				field_value_length: 17,
+			},
+		},
+	);
+	assert.equal(result.ok, true);
+	const requiredStages = [
+		"GFV2_GENERATE_SUBMITTED",
+		"GFV2_OUTPUT_READY",
+		"GFV2_OUTPUT_REVIEW_OPENED",
+		"GFV2_DOWNLOAD_STARTED",
+	];
+	for (const stageName of requiredStages) {
+		const payload = telemetry.find(
+			(item) => item.stage === stageName && item.status === "PASS",
+		);
+		assert.ok(payload, `missing ${stageName}=PASS telemetry`);
+		const evidence = JSON.parse(payload.message);
+		assert.equal(evidence.active_tab_id, 9401);
+		assert.match(evidence.url, /\/project\/test$/);
+		assert.ok(evidence.surface_identity);
+		assert.ok(evidence.composer_identity);
+		assert.equal(evidence.settings_state, "closed_verified");
+		assert.ok(evidence.generation_state);
+		assert.ok(
+			Object.hasOwn(evidence, "output_identity"),
+			"output identity field required",
+		);
+		assert.ok(
+			Object.hasOwn(evidence, "review_state"),
+			"review state field required",
+		);
+		assert.ok(
+			Object.hasOwn(evidence, "download_evidence"),
+			"download evidence field required",
+		);
+	}
 }
 
 // Proof 2: model dropdown "Veo 3.1 - Lite ▾" is rejected as the project menu.
@@ -1231,6 +1574,15 @@ async function testProjectMenuSelectsMoreVertOverModelDropdown() {
 	rvid.setAttribute("src", "blob:generated");
 	review.appendChild(rvid);
 	setVisibleRect(rvid, 260, 140, 600, 360);
+	const done = document.createElement("button");
+	done.type = "button";
+	done.textContent = "Done";
+	review.appendChild(done);
+	setVisibleRect(done, 1000, 100, 60, 30);
+	const timeline = document.createElement("div");
+	timeline.setAttribute("data-timeline", "true");
+	review.appendChild(timeline);
+	setVisibleRect(timeline, 220, 560, 820, 120);
 	const md = document.createElement("button");
 	md.id = "review-model";
 	md.type = "button";
@@ -1246,7 +1598,12 @@ async function testProjectMenuSelectsMoreVertOverModelDropdown() {
 	review.appendChild(menu);
 	setVisibleRect(menu, 1000, 140, 28, 28);
 
-	const stamp = runner.MAIN_stampProjectMenuButton("data-test-pm");
+	const reviewProof = runner.MAIN_getReviewSurfaceState("data-test-review");
+	assert.equal(reviewProof.opened, true);
+	const stamp = runner.MAIN_stampProjectMenuButton(
+		"data-test-pm",
+		reviewProof,
+	);
 	assert.equal(stamp.ok, true, "the review-page three-dot must be selected");
 	assert.match(String(stamp.text || ""), /more_vert/, "selected menu must be the more_vert affordance");
 	assert.ok(document.getElementById("review-menu").hasAttribute("data-test-pm"), "review three-dot must be stamped");
@@ -1333,6 +1690,15 @@ async function testComposerMenuRejected() {
 	rvid.setAttribute("src", "blob:generated");
 	review.appendChild(rvid);
 	setVisibleRect(rvid, 260, 140, 600, 360);
+	const done = document.createElement("button");
+	done.type = "button";
+	done.textContent = "Done";
+	review.appendChild(done);
+	setVisibleRect(done, 1000, 100, 60, 30);
+	const timeline = document.createElement("div");
+	timeline.setAttribute("data-timeline", "true");
+	review.appendChild(timeline);
+	setVisibleRect(timeline, 220, 560, 820, 120);
 	const menu = document.createElement("button");
 	menu.id = "review-menu";
 	menu.type = "button";
@@ -1341,7 +1707,12 @@ async function testComposerMenuRejected() {
 	review.appendChild(menu);
 	setVisibleRect(menu, 1000, 140, 28, 28);
 
-	const stamp = runner.MAIN_stampProjectMenuButton("data-test-pm");
+	const reviewProof = runner.MAIN_getReviewSurfaceState("data-test-review");
+	assert.equal(reviewProof.opened, true);
+	const stamp = runner.MAIN_stampProjectMenuButton(
+		"data-test-pm",
+		reviewProof,
+	);
 	assert.equal(stamp.ok, true);
 	assert.ok(document.getElementById("review-menu").hasAttribute("data-test-pm"), "review three-dot must be stamped");
 	assert.ok(!document.getElementById("composer-more").hasAttribute("data-test-pm"), "composer menu must NOT be stamped");
@@ -1366,6 +1737,9 @@ async function testStopLaneUnaffectedByPostSubmitFix() {
 }
 
 async function main() {
+	await testStampedClickDispatchesExactlyOneClickEvent();
+	await testSubmitArrowRejectsAgentSettingsNeverControl();
+	await testSubmitArrowRequiresAcceptedPromptInSameComposer();
 	await testBottomComposerConfigPillOpensPanel();
 	await testSplitSpansResolveToInteractiveAncestor();
 	await testAssetLibraryVideoIgnored();
@@ -1397,6 +1771,10 @@ async function main() {
 	await testPostSubmitDownloadContinuationFailsWhenDownloadProjectMissing();
 	await testOutputReadyRejectsBareModelDropdown();
 	await testOutputReadyTrueOnRenderedOutputCard();
+	await testOutputBaselineRejectsPreexistingVideo();
+	await testGeneratedReviewTargetIsCardNotRawVideo();
+	await testReviewRouteAloneIsNotProof();
+	await testReviewSurfaceRejectsVideoWithoutTimelineEvidence();
 	await testProjectMenuRejectsModelDropdownOnly();
 	await testProjectMenuRejectsSettingsControlOnly();
 	await testProjectMenuSelectsMoreVertOverModelDropdown();
@@ -1405,6 +1783,8 @@ async function main() {
 	await testOutputReadyRejectsStartImage();
 	await testReviewNotOpenedFailsClosed();
 	await testComposerMenuRejected();
+	await testContinuationRequiresCompletedDownloadEvidence();
+	await testPostSubmitTelemetryCarriesVerifiedStateIdentities();
 	await testStopLaneUnaffectedByPostSubmitFix();
 	console.log("PASS test-f2v-flow-queue-runner");
 }

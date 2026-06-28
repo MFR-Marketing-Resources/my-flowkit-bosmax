@@ -15,7 +15,7 @@
 (() => {
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
-  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-f2v-runner-audit-2026-06-15a';
+  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-gfv2-post-submit-proof-2026-06-28a';
   const FLOW_KIT_PLAYWRIGHT_HARNESS = hasPlaywrightHarnessMarker();
   const FLOW_KIT_TEST_MODE = Boolean(window.__FLOWKIT_TEST_MODE__);
   const FLOW_KIT_ENABLE_TEST_HOOKS =
@@ -3845,10 +3845,11 @@ function isSettingsScopedModelSource(source) {
     fireMouse('mousedown');
     firePointer('pointerup');
     fireMouse('mouseup');
+    // HTMLElement.click() is the single click actuator. Do not dispatch a
+    // second synthetic click after it.
     try {
       el.click();
     } catch (_) {}
-    fireMouse('click');
     return true;
   }
   // Find a clickable option by visible label/aria (exact-ish), returns the element.
@@ -3971,6 +3972,79 @@ function isSettingsScopedModelSource(source) {
       if (/omni flash|veo|arrow_drop_down/.test(blob)) best = el;
     });
     return best;
+  }
+
+  function _gfv2FindAgentSettingsRoot() {
+    const roots = document.querySelectorAll('[role="dialog"], [aria-modal="true"], aside, section');
+    for (const root of roots) {
+      if (!_gfv2Vis(root)) continue;
+      const text = _gfv2Norm(root.textContent || '').toLowerCase();
+      const agentSettings = text.includes('agent settings');
+      const generationDefaults =
+        text.includes('confirm before generating')
+        && text.includes('video generation default');
+      if (agentSettings || generationDefaults) {
+        return root;
+      }
+    }
+    return null;
+  }
+
+  function _gfv2GetAgentSettingsState() {
+    const root = _gfv2FindAgentSettingsRoot();
+    if (root) {
+      const text = _gfv2Norm(root.textContent || '').toLowerCase();
+      return {
+        active: true,
+        identity: text.includes('agent settings')
+          ? 'agent_settings_dialog'
+          : 'generation_defaults_dialog',
+        text_excerpt: text.slice(0, 240),
+      };
+    }
+    return { active: false, identity: null, text_excerpt: '' };
+  }
+
+  function _gfv2GetComposerPromptState(expectedPrompt) {
+    const expected = _gfv2Norm(expectedPrompt || '');
+    const nodes = document.querySelectorAll(
+      'textarea, [role="textbox"], [aria-label="Editable text"], [data-slate-editor="true"], [contenteditable="true"]',
+    );
+    for (const node of nodes) {
+      if (!_gfv2Vis(node)) continue;
+      const text = _gfv2Norm(node.value || node.textContent || '');
+      const editable = Boolean(
+        !node.disabled
+        && !node.readOnly
+        && node.getAttribute('aria-disabled') !== 'true'
+        && node.getAttribute('contenteditable') !== 'false',
+      );
+      const promptReflected = Boolean(
+        expected
+        && (text.includes(expected) || text.includes(expected.slice(0, Math.min(48, expected.length)))),
+      );
+      if (!expected || promptReflected) {
+        return {
+          found: true,
+          editable,
+          prompt_reflected: promptReflected,
+          identity: [
+            String(node.tagName || '').toLowerCase(),
+            node.id || '',
+            node.getAttribute('aria-label') || '',
+            node.getAttribute('placeholder') || '',
+          ].join('|').slice(0, 240),
+          text_length: text.length,
+        };
+      }
+    }
+    return {
+      found: false,
+      editable: false,
+      prompt_reflected: false,
+      identity: null,
+      text_length: 0,
+    };
   }
 
   async function gfv2DiscoverSettings() {
@@ -4148,7 +4222,20 @@ function isSettingsScopedModelSource(source) {
     }
 
     // --- SAVE / PERSIST (video-section values only) ---
-    const saveEl = _gfv2FindOption(['save', 'done', 'apply']);
+    result.agent_settings_state_before_save = _gfv2GetAgentSettingsState();
+    const settingsRoot = _gfv2FindAgentSettingsRoot();
+    let saveEl = null;
+    if (settingsRoot) {
+      settingsRoot.querySelectorAll('button, [role="button"]').forEach((el) => {
+        if (saveEl || !_gfv2Vis(el)) return;
+        const text = _gfv2Norm(
+          (el.textContent || '')
+          + ' '
+          + ((el.getAttribute && el.getAttribute('aria-label')) || ''),
+        ).toLowerCase();
+        if (/^(save|done|apply)$/.test(text)) saveEl = el;
+      });
+    }
     if (saveEl) {
       result.save_button_found = true;
       _gfv2ClickEl(saveEl);
@@ -4166,9 +4253,40 @@ function isSettingsScopedModelSource(source) {
       result.count_1x_confirmed = result.count_1x_confirmed || Boolean(pc && _gfv2IsSelected(pc));
       result.model_veo_lite_confirmed = result.model_veo_lite_confirmed || /veo[\s\S]*lite/.test(mTxt);
     }
-    result.settings_saved_or_persisted = Boolean(
+    const selectionTruth = Boolean(
       result.ratio_9_16_confirmed && result.count_1x_confirmed && result.model_veo_lite_confirmed,
     );
+    const settingsAfterSave = _gfv2GetAgentSettingsState();
+    const composerAfterSave = _gfv2GetComposerPromptState(options.expectedPrompt || '');
+    result.agent_settings_active_after_save = settingsAfterSave.active;
+    result.agent_settings_state_after_save = settingsAfterSave;
+    result.composer_editable_after_save = composerAfterSave.editable;
+    result.prompt_reflected_after_save = composerAfterSave.prompt_reflected;
+    result.composer_identity_after_save = composerAfterSave.identity;
+    result.settings_transition_verified = Boolean(
+      result.save_button_found
+      && !settingsAfterSave.active
+      && composerAfterSave.found
+      && composerAfterSave.editable
+      && (!options.expectedPrompt || composerAfterSave.prompt_reflected),
+    );
+    result.settings_saved_or_persisted = Boolean(
+      selectionTruth
+      && (!options.requireSaveTransition || result.settings_transition_verified),
+    );
+    if (options.requireSaveTransition && !result.settings_transition_verified) {
+      if (!result.save_button_found) {
+        result.error = 'GFV2_SETTINGS_SAVE_NOT_FOUND';
+      } else if (settingsAfterSave.active) {
+        result.error = 'GFV2_SETTINGS_STILL_ACTIVE';
+      } else {
+        result.error = 'GFV2_COMPOSER_NOT_READY_AFTER_SETTINGS';
+      }
+      result.detail = JSON.stringify({
+        settings_after_save: settingsAfterSave,
+        composer_after_save: composerAfterSave,
+      });
+    }
     return result;
   }
 

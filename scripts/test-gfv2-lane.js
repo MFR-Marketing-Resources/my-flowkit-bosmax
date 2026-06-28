@@ -292,9 +292,27 @@ test("post-submit lane is gated behind settings success and does not replace the
 	assert(settingsFailIdx < continuationIdx, "continuation only runs after settings gate");
 	assert(promptAcceptedIdx < continuationIdx, "continuation only runs after prompt accepted proof");
 	assert(/if \(postSubmitDownload\)/.test(HANDLE_SRC), "continuation is opt-in only");
-	assert(/GFV2_SETTINGS_SAVE_CLICKED/.test(HANDLE_SRC), "save-click telemetry emitted for continuation lane");
-	assert(/GFV2_SETTINGS_SAVE_ALREADY_PERSISTED/.test(HANDLE_SRC), "already-persisted telemetry emitted for continuation lane");
+	assert(/requireSaveTransition:\s*postSubmitDownload/.test(HANDLE_SRC), "post-submit requires verified Save transition");
 	assert(continuationIdx < stopIdx, "default STOP lane remains in the non-post-submit branch");
+});
+
+test("post-submit settings require verified Save exit before continuation", () => {
+	assert(
+		/gfv2DriveSettingsVerify\(\s*flowTab,\s*emit,\s*\{[\s\S]*requireSaveTransition:\s*postSubmitDownload[\s\S]*expectedPrompt:\s*job\?\.prompt/.test(
+			HANDLE_SRC,
+		),
+		"post-submit must require Save transition and accepted prompt reflection",
+	);
+	assert(
+		SRC.includes('"GFV2_SETTINGS_SAVE_VERIFIED"'),
+		"verified Save transition stage is required",
+	);
+	assert(
+		!/emit\(\s*saveButtonFound \? "GFV2_SETTINGS_SAVE_CLICKED"[\s\S]*"PASS"/.test(
+			HANDLE_SRC,
+		),
+		"Save click attempt must not be emitted as PASS",
+	);
 });
 
 // --- Upload-menu contract (ERR_CDP_FILE_CHOOSER_TIMEOUT fix) ---
@@ -302,6 +320,27 @@ const RUNNER_SRC = fs.readFileSync(
 	path.join(__dirname, "..", "extension", "f2v-flow-queue-runner.js"),
 	"utf8",
 );
+const MANIFEST = JSON.parse(
+	fs.readFileSync(
+		path.join(__dirname, "..", "extension", "manifest.json"),
+		"utf8",
+	),
+);
+
+test("post-submit download proof is wired to chrome.downloads", () => {
+	assert(
+		MANIFEST.permissions.includes("downloads"),
+		"manifest downloads permission is required",
+	);
+	assert(
+		HANDLE_SRC.includes("createChromeDownloadsAdapter"),
+		"background must pass the chrome.downloads adapter to the runner",
+	);
+	assert(
+		RUNNER_SRC.includes("GFV2_DOWNLOAD_NOT_CONFIRMED"),
+		"missing completed-download evidence must fail closed",
+	);
+});
 
 test("upload alias list includes the V2 'Upload from computer' menu item", () => {
 	assert(RUNNER_SRC.includes("'Upload from computer'"), "must match the V2 'Upload from computer' label");
@@ -421,7 +460,7 @@ test("GFV2 settings proof runs POST-upload (V2 SOP) and is a real hard gate", ()
 	// V2 renders generation settings only after media is in the composer, so the proof
 	// runs after GFV2_ASSET_BOUND_TO_PROMPT and gates STOP.
 	const boundIdx = HANDLE_SRC.indexOf('GFV2_ASSET_BOUND_TO_PROMPT", "PASS"');
-	const driveIdx = HANDLE_SRC.indexOf("await gfv2DriveSettingsVerify(flowTab, emit)");
+	const driveIdx = HANDLE_SRC.indexOf("await gfv2DriveSettingsVerify(flowTab, emit,");
 	const stopIdx = HANDLE_SRC.indexOf('GFV2_STOP_BEFORE_GENERATE", "PASS"');
 	assert(boundIdx >= 0 && driveIdx >= 0 && stopIdx >= 0, "all three present");
 	assert(boundIdx < driveIdx, "settings proof runs AFTER asset bound to prompt");
@@ -488,7 +527,12 @@ test("asset: lane fails closed on missing source (no Desktop picker) + emits sou
 	// no Desktop/Downloads/hard-coded path anywhere in the lane's executable code
 	// (comments may explain the rule; strip them before asserting).
 	const code = HANDLE_SRC.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-	assert(!/Desktop|Downloads/.test(code), "no Desktop/Downloads dependency in lane code");
+	assert(
+		!/(?:[A-Z]:[\\/]|\/Users\/|[\\/]Desktop[\\/]|[\\/]Downloads[\\/])/i.test(
+			code,
+		),
+		"no Desktop/Downloads path dependency in lane code",
+	);
 	assert(!/assetSrc\.source_type === "workspace_package_start"|assetSrc\.source_type === "ref_flowkit"/.test(code), "materialized telemetry must not be pre-emitted before real staging");
 });
 

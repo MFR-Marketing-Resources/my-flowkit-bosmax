@@ -206,6 +206,68 @@ function createHarness() {
   };
 }
 
+function makeVisibleAt(node, left, top, width = 240, height = 40) {
+  node.style.display = 'block';
+  node.style.visibility = 'visible';
+  node.style.opacity = '1';
+  Object.defineProperty(node, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({
+      x: left,
+      y: top,
+      top,
+      left,
+      right: left + width,
+      bottom: top + height,
+      width,
+      height,
+      toJSON() {
+        return { x: left, y: top, width, height };
+      },
+    }),
+  });
+  return node;
+}
+
+function createRuntimeMessageHarness(html) {
+  const dom = new JSDOM(html, {
+    url: 'https://labs.google/fx/tools/flow/project/test',
+    pretendToBeVisual: true,
+    runScripts: 'outside-only',
+  });
+  const { window } = dom;
+  installDomPolyfills(window);
+  window.__FLOWKIT_TEST_MODE__ = false;
+  window.__FLOWKIT_ENABLE_TEST_HOOKS__ = false;
+  let runtimeListener = null;
+  window.chrome.runtime.onMessage.addListener = (listener) => {
+    runtimeListener = listener;
+  };
+  makeVisibleAt(window.document.body, 0, 0, 1280, 900);
+  window.eval(SOURCE_TEXT);
+  assert.equal(typeof runtimeListener, 'function', 'Expected production runtime listener');
+  return {
+    window,
+    document: window.document,
+    async send(message) {
+      return await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${message.type}`)), 8000);
+        const returned = runtimeListener(message, {}, (response) => {
+          clearTimeout(timer);
+          resolve(response);
+        });
+        if (returned !== true && returned !== false && returned !== undefined) {
+          clearTimeout(timer);
+          reject(new Error(`Unexpected listener return: ${String(returned)}`));
+        }
+      });
+    },
+    close() {
+      window.close();
+    },
+  };
+}
+
 function createStartSlot(window, options = {}) {
   const { withInput = false } = options;
   const slotButton = window.document.createElement('button');
@@ -562,6 +624,84 @@ async function runDiagnosticPingHeaderTest() {
   }
 }
 
+async function runAgentSettingsSaveTransitionTest() {
+  const harness = createRuntimeMessageHarness(`
+    <!doctype html>
+    <html>
+      <body>
+        <button id="settings-launcher" type="button" aria-label="tune">tune</button>
+        <form id="composer">
+          <textarea id="prompt" placeholder="What do you want to create?">hero product shot</textarea>
+          <button id="submit" type="button"><span>arrow_forward</span></button>
+        </form>
+      </body>
+    </html>
+  `);
+  const { document, window } = harness;
+  try {
+    const launcher = document.getElementById('settings-launcher');
+    const composer = document.getElementById('composer');
+    const prompt = document.getElementById('prompt');
+    const submit = document.getElementById('submit');
+    makeVisibleAt(launcher, 900, 820, 40, 32);
+    makeVisibleAt(composer, 700, 700, 520, 180);
+    makeVisibleAt(prompt, 740, 760, 390, 50);
+    makeVisibleAt(submit, 1140, 820, 40, 32);
+    let saveClicks = 0;
+
+    launcher.addEventListener('click', () => {
+      if (document.getElementById('agent-settings')) return;
+      const panel = document.createElement('div');
+      panel.id = 'agent-settings';
+      panel.setAttribute('role', 'dialog');
+      panel.innerHTML = `
+        <h2 id="agent-title">Agent settings</h2>
+        <div id="confirm">Confirm before generating</div>
+        <button id="never-radio" type="button" role="radio">Never Agent will generate media and spend credits automatically</button>
+        <div id="video-label">Video generation default</div>
+        <button id="ratio" type="button" aria-pressed="true">9:16</button>
+        <button id="count" type="button" aria-pressed="true">1x</button>
+        <button id="model" type="button">Veo 3.1 - Lite</button>
+        <button id="save" type="button">Save</button>
+      `;
+      document.body.appendChild(panel);
+      makeVisibleAt(panel, 900, 80, 320, 620);
+      makeVisibleAt(document.getElementById('agent-title'), 930, 100, 180, 30);
+      makeVisibleAt(document.getElementById('confirm'), 930, 150, 220, 30);
+      makeVisibleAt(document.getElementById('never-radio'), 930, 190, 250, 45);
+      makeVisibleAt(document.getElementById('video-label'), 930, 300, 220, 30);
+      makeVisibleAt(document.getElementById('ratio'), 930, 350, 80, 32);
+      makeVisibleAt(document.getElementById('count'), 930, 400, 80, 32);
+      makeVisibleAt(document.getElementById('model'), 930, 450, 180, 32);
+      const save = document.getElementById('save');
+      makeVisibleAt(save, 930, 620, 240, 36);
+      save.addEventListener('click', () => {
+        saveClicks += 1;
+        panel.remove();
+        prompt.disabled = false;
+      });
+    });
+
+    const result = await harness.send({
+      type: 'GFV2_APPLY_SETTINGS',
+      options: {
+        panelWaitMs: 0,
+        requireSaveTransition: true,
+        expectedPrompt: 'hero product shot',
+      },
+    });
+    assert.equal(saveClicks, 1, 'Save must receive exactly one click');
+    assert.equal(result.settings_transition_verified, true);
+    assert.equal(result.agent_settings_active_after_save, false);
+    assert.equal(result.composer_editable_after_save, true);
+    assert.equal(result.prompt_reflected_after_save, true);
+    assert.equal(result.settings_saved_or_persisted, true);
+    assert.equal(window.document.getElementById('agent-settings'), null);
+  } finally {
+    harness.close();
+  }
+}
+
 async function main() {
   const tests = [
     ['Direct slot fallback', runDirectSlotFallbackTest],
@@ -572,6 +712,7 @@ async function main() {
     ['Timeout path', runTimeoutPathTest],
     ['Composer generate targeting', runComposerGenerateTargetingTest],
     ['Diagnostic ping header', runDiagnosticPingHeaderTest],
+    ['Agent settings Save transition', runAgentSettingsSaveTransitionTest],
   ];
 
   let failures = 0;

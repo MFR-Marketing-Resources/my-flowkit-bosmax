@@ -93,7 +93,7 @@
 // Constants
 // ───────────────────────────────────────────────────────────────────────
 
-const F2V_FLOW_QUEUE_RUNNER_BUILD_ID = 'flowkit-f2v-runner-audit-2026-06-15a';
+const F2V_FLOW_QUEUE_RUNNER_BUILD_ID = 'flowkit-gfv2-post-submit-proof-2026-06-28a';
 const SOP_DEFAULT_SETTLE_MS = 300;
 const SOP_DEFAULT_OPEN_PANEL_TIMEOUT_MS = 4000;
 const SOP_DEFAULT_UPLOAD_WAIT_MS = 10000;
@@ -160,6 +160,7 @@ const ERR = Object.freeze({
   GFV2_PROJECT_MENU_NOT_FOUND: 'GFV2_PROJECT_MENU_NOT_FOUND',
   GFV2_DOWNLOAD_PROJECT_NOT_FOUND: 'GFV2_DOWNLOAD_PROJECT_NOT_FOUND',
   GFV2_DOWNLOAD_NOT_CONFIRMED: 'GFV2_DOWNLOAD_NOT_CONFIRMED',
+  GFV2_GENERATION_TRANSITION_NOT_OBSERVED: 'GFV2_GENERATION_TRANSITION_NOT_OBSERVED',
   GFV2_GENERATED_VIDEO_NOT_FOUND: 'GFV2_GENERATED_VIDEO_NOT_FOUND',
   GFV2_OUTPUT_REVIEW_NOT_OPENED: 'GFV2_OUTPUT_REVIEW_NOT_OPENED',
 });
@@ -476,7 +477,8 @@ function MAIN_clickStampedElement(stampAttr, stampId) {
   try { el.dispatchEvent(new MouseEvent('mousedown', common)); } catch (e) { /* noop */ }
   try { el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerType: 'mouse' }, common))); } catch (e) { /* noop */ }
   try { el.dispatchEvent(new MouseEvent('mouseup', common)); } catch (e) { /* noop */ }
-  try { el.dispatchEvent(new MouseEvent('click', common)); } catch (e) { /* noop */ }
+  // HTMLElement.click() is the single click actuator. Dispatching a synthetic
+  // click first would execute React/DOM handlers twice.
   try { el.click(); } catch (e) { /* noop */ }
   return {
     ok: true,
@@ -1876,7 +1878,7 @@ function MAIN_invokeReactFiberSubmit(stampAttr, stampId) {
  *     textarea (search inside textarea.closest('form') first, then
  *     fall through to document scan)
  */
-function MAIN_stampGenerateButton(stampAttr) {
+function MAIN_stampGenerateButton(stampAttr, expectedPrompt) {
   function isVisible(el) {
     if (!el || !el.getBoundingClientRect) return false;
     var r = el.getBoundingClientRect();
@@ -1887,74 +1889,125 @@ function MAIN_stampGenerateButton(stampAttr) {
   function normalize(s) {
     return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
   }
-  function findCreateButtonByArrowIcon(root) {
+  function nodeText(el) {
+    return normalize((el && (el.value || el.textContent)) || '');
+  }
+  function isAgentSettingsSurface(el) {
+    if (!el || !el.closest) return false;
+    var dialog = el.closest('[role="dialog"], [aria-modal="true"]');
+    if (!dialog || !isVisible(dialog)) return false;
+    var text = nodeText(dialog).toLowerCase();
+    return text.indexOf('agent settings') >= 0
+      || (
+        text.indexOf('confirm before generating') >= 0
+        && text.indexOf('video generation default') >= 0
+      );
+  }
+  function hasActiveAgentSettings() {
+    var roots = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+    for (var i = 0; i < roots.length; i++) {
+      if (isAgentSettingsSurface(roots[i])) return true;
+    }
+    return false;
+  }
+  function isRejectedControl(el) {
+    if (!el || !el.closest) return true;
+    if (isAgentSettingsSurface(el)) return true;
+    return Boolean(
+      el.closest(
+        '[role="radio"], [role="menu"], [role="menuitem"], [role="menuitemradio"], [role="listbox"], [role="option"], [role="combobox"]',
+      ),
+    );
+  }
+  function findSubmitArrow(root, composer) {
     var buttons = root.querySelectorAll('button');
     var hits = [];
+    var composerRect = composer && composer.getBoundingClientRect
+      ? composer.getBoundingClientRect()
+      : null;
     for (var i = 0; i < buttons.length; i++) {
       var btn = buttons[i];
-      if (!isVisible(btn)) continue;
+      if (!isVisible(btn) || isRejectedControl(btn)) continue;
+      if (composerRect) {
+        var buttonRect = btn.getBoundingClientRect();
+        var nearComposer = Boolean(
+          buttonRect.left >= composerRect.left - 140
+          && buttonRect.right <= composerRect.right + 200
+          && buttonRect.top >= composerRect.top - 100
+          && buttonRect.bottom <= composerRect.bottom + 140
+        );
+        if (!nearComposer) continue;
+      }
       var icon = btn.querySelector('i.google-symbols, .google-symbols, .material-symbols-outlined, .material-symbols-rounded, .material-symbols-sharp, .material-icons, [class*="material-symbol"]');
       var text = normalize(icon && icon.textContent || btn.textContent || '');
-      if (text.indexOf('arrow_forward') >= 0) hits.push(btn);
+      if (text === 'arrow_forward' || text.indexOf('arrow_forward') >= 0) {
+        hits.push(btn);
+      }
     }
     if (!hits.length) return null;
     hits.sort(function (a, b) { return b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom; });
     return hits[0];
   }
-  function findCreateButtonByHiddenLabel(root) {
-    var buttons = root.querySelectorAll('button');
-    for (var i = 0; i < buttons.length; i++) {
-      var btn = buttons[i];
-      if (!isVisible(btn)) continue;
-      var spans = btn.querySelectorAll('span');
-      for (var j = 0; j < spans.length; j++) {
-        if (normalize(spans[j].textContent).toLowerCase() === 'create') return btn;
+
+  if (hasActiveAgentSettings()) {
+    return { ok: false, reason: 'agent_settings_active' };
+  }
+  var expected = normalize(expectedPrompt || '');
+  var promptNodes = document.querySelectorAll(
+    '[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea[placeholder*="What do you want"], textarea, [contenteditable="true"]',
+  );
+  for (var i = 0; i < promptNodes.length; i++) {
+    var composer = promptNodes[i];
+    if (!isVisible(composer) || isRejectedControl(composer)) continue;
+    var promptText = nodeText(composer);
+    var promptAccepted = Boolean(
+      !expected
+      || promptText.indexOf(expected) >= 0
+      || promptText.indexOf(expected.slice(0, Math.min(48, expected.length))) >= 0,
+    );
+    if (!promptAccepted) continue;
+
+    var root = composer.closest && composer.closest('form, [role="form"]');
+    if (!root) {
+      var current = composer.parentElement;
+      var hops = 0;
+      while (current && hops < 7) {
+        if (current === document.body) break;
+        if (findSubmitArrow(current, composer)) {
+          root = current;
+          break;
+        }
+        current = current.parentElement;
+        hops += 1;
       }
     }
-    return null;
+    if (!root || isAgentSettingsSurface(root)) continue;
+    var button = findSubmitArrow(root, composer);
+    if (!button) continue;
+    var attr = String(stampAttr || 'data-bosmax-submit-target');
+    var id = attr + '-' + Date.now();
+    button.setAttribute(attr, id);
+    var composerRect = composer.getBoundingClientRect();
+    return {
+      ok: true,
+      stamp_id: id,
+      stamp_attr: attr,
+      text: normalize(button.textContent || button.getAttribute('aria-label') || '').slice(0, 60),
+      strategy: 'accepted_prompt_composer_arrow',
+      disabled: Boolean(button.disabled || button.getAttribute('aria-disabled') === 'true'),
+      composer_identity: [
+        String(composer.tagName || '').toLowerCase(),
+        composer.id || '',
+        composer.getAttribute('aria-label') || '',
+        composer.getAttribute('placeholder') || '',
+        Math.round(composerRect.left),
+        Math.round(composerRect.top),
+      ].join('|').slice(0, 240),
+      prompt_length: promptText.length,
+      settings_state: 'closed',
+    };
   }
-  function findByTextScan(root) {
-    var buttons = root.querySelectorAll('button, [role="button"]');
-    for (var i = 0; i < buttons.length; i++) {
-      var btn = buttons[i];
-      if (!isVisible(btn)) continue;
-      var lower = normalize((btn.textContent || btn.getAttribute('aria-label') || '')).toLowerCase();
-      if (lower.indexOf('create') >= 0 || lower.indexOf('generate') >= 0 || lower.indexOf('create video') >= 0) return btn;
-    }
-    return null;
-  }
-  var composer = document.querySelector('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea[placeholder*="What do you want"], textarea, [contenteditable="true"]');
-  var roots = [];
-  if (composer && composer.closest) {
-    var formRoot = composer.closest('form, [role="form"], div');
-    if (formRoot) roots.push(formRoot);
-  }
-  roots.push(document);
-  var seen = new Set();
-  for (var i = 0; i < roots.length; i++) {
-    var root = roots[i];
-    var strategies = [
-      { name: 'arrow_forward_icon', fn: findCreateButtonByArrowIcon },
-      { name: 'hidden_create_label', fn: findCreateButtonByHiddenLabel },
-      { name: 'text_scan', fn: findByTextScan },
-    ];
-    for (var j = 0; j < strategies.length; j++) {
-      var b = strategies[j].fn(root);
-      if (!b || seen.has(b)) continue;
-      seen.add(b);
-      var id = String(stampAttr || 'data-bosmax-submit-target') + '-' + Date.now();
-      b.setAttribute(String(stampAttr || 'data-bosmax-submit-target'), id);
-      return {
-        ok: true,
-        stamp_id: id,
-        stamp_attr: String(stampAttr || 'data-bosmax-submit-target'),
-        text: normalize(b.textContent || b.getAttribute('aria-label') || '').slice(0, 60),
-        strategy: strategies[j].name,
-        disabled: Boolean(b.disabled || b.getAttribute('aria-disabled') === 'true'),
-      };
-    }
-  }
-  return { ok: false, reason: 'no_generate_button_visible' };
+  return { ok: false, reason: 'accepted_prompt_composer_arrow_not_found' };
 }
 
 /**
@@ -4099,9 +4152,16 @@ async function _runMainWorld(scripting, tabId, func, args) {
   return out[0]?.result ?? null;
 }
 
-function _emitStage(telemetry, stage, status, message) {
+function _emitStage(telemetry, stage, status, message, extra) {
   if (telemetry && typeof telemetry === 'function') {
-    try { telemetry({ stage, status, message }); } catch (_) { /* noop */ }
+    try {
+      telemetry({
+        stage,
+        status,
+        message,
+        ...(extra && typeof extra === 'object' ? extra : {}),
+      });
+    } catch (_) { /* noop */ }
   }
 }
 
@@ -5528,6 +5588,134 @@ async function _invokeGenerate(scripting, tabId, opts) {
   };
 }
 
+function MAIN_getGfv2GenerationState(expectedPrompt) {
+  function normalize(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
+  }
+  function isAgentSettingsActive() {
+    var roots = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+    for (var i = 0; i < roots.length; i++) {
+      if (!isVisible(roots[i])) continue;
+      var text = normalize(roots[i].textContent || '').toLowerCase();
+      if (
+        text.indexOf('agent settings') >= 0
+        || (
+          text.indexOf('confirm before generating') >= 0
+          && text.indexOf('video generation default') >= 0
+        )
+      ) return true;
+    }
+    return false;
+  }
+  function videoIdentity(video) {
+    var src = video.currentSrc || video.src || (video.getAttribute && (video.getAttribute('src') || video.getAttribute('poster'))) || '';
+    if (!src && video.querySelector) {
+      var source = video.querySelector('source[src]');
+      if (source) src = source.getAttribute('src') || '';
+    }
+    var card = (video.closest && video.closest('article, section, figure, li, [role="button"], [role="link"], div')) || video.parentElement;
+    var text = normalize((card && card.textContent) || '').slice(0, 120);
+    var rect = video.getBoundingClientRect();
+    return src || text
+      ? [String(src || ''), text].join('|')
+      : [
+          'geometry',
+          Math.round(rect.left),
+          Math.round(rect.top),
+          Math.round(rect.width),
+          Math.round(rect.height),
+        ].join('|');
+  }
+
+  var expected = normalize(expectedPrompt || '');
+  var prompts = document.querySelectorAll(
+    '[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"], textarea, [contenteditable="true"]',
+  );
+  var composer = null;
+  var promptText = '';
+  for (var p = 0; p < prompts.length; p++) {
+    if (!isVisible(prompts[p])) continue;
+    var text = normalize(prompts[p].value || prompts[p].textContent || '');
+    if (
+      !expected
+      || text.indexOf(expected) >= 0
+      || text.indexOf(expected.slice(0, Math.min(48, expected.length))) >= 0
+    ) {
+      composer = prompts[p];
+      promptText = text;
+      break;
+    }
+  }
+  var root = composer && composer.closest
+    ? composer.closest('form, [role="form"]')
+    : null;
+  var submit = root && root.querySelector
+    ? root.querySelector('button')
+    : null;
+  if (root && root.querySelectorAll) {
+    var buttons = root.querySelectorAll('button');
+    submit = null;
+    for (var b = 0; b < buttons.length; b++) {
+      var iconText = normalize(buttons[b].textContent || '');
+      if (isVisible(buttons[b]) && iconText.indexOf('arrow_forward') >= 0) {
+        submit = buttons[b];
+        break;
+      }
+    }
+  }
+
+  var marker = null;
+  var markerNodes = document.querySelectorAll('[role="status"], [aria-live], button, [role="button"]');
+  for (var m = 0; m < markerNodes.length; m++) {
+    if (!isVisible(markerNodes[m])) continue;
+    var markerText = normalize(markerNodes[m].textContent || markerNodes[m].getAttribute && markerNodes[m].getAttribute('aria-label') || '');
+    if (/generating|rendering|queued|processing|cancel generation|stop generating/i.test(markerText)) {
+      marker = markerText.slice(0, 160);
+      break;
+    }
+  }
+
+  var outputIdentities = [];
+  var videos = document.querySelectorAll('video');
+  for (var v = 0; v < videos.length; v++) {
+    if (!isVisible(videos[v])) continue;
+    outputIdentities.push(videoIdentity(videos[v]));
+  }
+  var rect = composer ? composer.getBoundingClientRect() : null;
+  return {
+    ok: true,
+    url: String((window.location && window.location.href) || ''),
+    surface_identity: String((window.location && window.location.pathname) || ''),
+    settings_active: isAgentSettingsActive(),
+    composer_found: Boolean(composer),
+    composer_identity: composer
+      ? [
+          String(composer.tagName || '').toLowerCase(),
+          composer.id || '',
+          composer.getAttribute('aria-label') || '',
+          composer.getAttribute('placeholder') || '',
+          Math.round(rect.left),
+          Math.round(rect.top),
+        ].join('|').slice(0, 240)
+      : null,
+    prompt_reflected: Boolean(composer && expected),
+    prompt_length: promptText.length,
+    submit_found: Boolean(submit),
+    submit_disabled: Boolean(
+      submit && (submit.disabled || submit.getAttribute('aria-disabled') === 'true'),
+    ),
+    generation_marker: marker,
+    output_identities: outputIdentities,
+  };
+}
+
 function MAIN_getPostSubmitOutputState() {
   function normalize(value) {
     return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
@@ -5567,6 +5755,7 @@ function MAIN_getPostSubmitOutputState() {
   // uploaded Start asset, as belt-and-suspenders.
   var opts = arguments.length > 0 ? (arguments[0] || {}) : {};
   var excludeNames = (opts && opts.excludeNames) || [];
+  var baselineIdentities = new Set((opts && opts.baselineIdentities) || []);
   function isExcluded(value) {
     var s = String(value == null ? '' : value).toLowerCase();
     if (!s) return false;
@@ -5584,10 +5773,23 @@ function MAIN_getPostSubmitOutputState() {
     }
     return String(s || '');
   }
+  function buildIdentity(video, src, card, text) {
+    var rect = video.getBoundingClientRect();
+    return src || text
+      ? [String(src || ''), String(text || '').slice(0, 120)].join('|')
+      : [
+          'geometry',
+          Math.round(rect.left),
+          Math.round(rect.top),
+          Math.round(rect.width),
+          Math.round(rect.height),
+        ].join('|');
+  }
 
   var composerRoot = getComposerRoot();
   var vids = document.querySelectorAll('video');
   var best = null;
+  var outputIdentities = [];
   for (var i = 0; i < vids.length; i++) {
     var v = vids[i];
     if (!isVisible(v) || isInsideComposer(v, composerRoot)) continue;
@@ -5597,9 +5799,21 @@ function MAIN_getPostSubmitOutputState() {
     var hasSrc = Boolean(src);
     var sizable = rect.width > 80 && rect.height > 80;
     if (!hasSrc && !sizable) continue; // ignore placeholder/hidden video shells
+    var card = (v.closest && v.closest('article, section, figure, li, [role="button"], [role="link"], div')) || v.parentElement || v;
+    var text = normalize((card && card.textContent) || '');
+    var identity = buildIdentity(v, src, card, text);
+    outputIdentities.push(identity);
+    if (baselineIdentities.has(identity)) continue;
     var score = (hasSrc ? 200 : 0) + Math.round((rect.width * rect.height) / 1000) - Math.round(rect.top / 10);
     if (!best || score > best.score) {
-      best = { el: v, score: score, src: src };
+      best = {
+        el: v,
+        score: score,
+        src: src,
+        card: card,
+        text: text,
+        identity: identity,
+      };
     }
   }
 
@@ -5610,11 +5824,13 @@ function MAIN_getPostSubmitOutputState() {
       video_found: false,
       filename: null,
       output_text_excerpt: '',
+      output_identity: null,
+      output_identities: outputIdentities,
+      baseline_count: baselineIdentities.size,
     };
   }
 
-  var card = (best.el.closest && best.el.closest('article, section, figure, li, div')) || best.el.parentElement || best.el;
-  var text = normalize((card && card.textContent) || '');
+  var text = best.text;
   var filename = extractFilename(text);
   if (filename && isExcluded(filename)) filename = null;
   return {
@@ -5623,10 +5839,13 @@ function MAIN_getPostSubmitOutputState() {
     video_found: true,
     filename: filename,
     output_text_excerpt: String(text || '').slice(0, 200),
+    output_identity: best.identity,
+    output_identities: outputIdentities,
+    baseline_count: baselineIdentities.size,
   };
 }
 
-function MAIN_stampProjectMenuButton(stampAttr) {
+function MAIN_stampProjectMenuButton(stampAttr, reviewProof) {
   function normalize(value) {
     return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
   }
@@ -5667,23 +5886,32 @@ function MAIN_stampProjectMenuButton(stampAttr) {
   }
 
   var composerRoot = getComposerRoot();
+  var proof = reviewProof || {};
+  if (
+    proof.opened !== true
+    || proof.surface !== 'review_timeline'
+    || !proof.surface_attr
+    || !proof.surface_stamp_id
+  ) {
+    return { ok: false, reason: 'verified_review_surface_required' };
+  }
   // The three-dot lives INSIDE the generated-video review/project page (opened in
   // Step 14). Scope the search to that review surface and reject everything else:
   // the global top-right app menu, settings panel, model dropdown, composer menus,
   // help/app menu. Regression: searching the whole document matched the global
   // "more_vertMore" app menu (Step 14 was missing), so Download Project was absent.
-  var reviewSurfaces = document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-review-page="true"], main');
-  var surfaces = [];
-  for (var s = 0; s < reviewSurfaces.length; s++) {
-    var surf = reviewSurfaces[s];
-    if (isVisible(surf) && !isInsideComposer(surf, composerRoot)) surfaces.push(surf);
-  }
-  if (surfaces.length === 0) {
+  var reviewRoot = document.querySelector(
+    '[' + proof.surface_attr + '="' + proof.surface_stamp_id + '"]',
+  );
+  if (
+    !reviewRoot
+    || !isVisible(reviewRoot)
+    || isInsideComposer(reviewRoot, composerRoot)
+  ) {
     return { ok: false, reason: 'review_surface_not_found' };
   }
   function insideAnyReviewSurface(el) {
-    for (var k = 0; k < surfaces.length; k++) { if (isWithin(el, surfaces[k])) return true; }
-    return false;
+    return isWithin(el, reviewRoot);
   }
 
   var DISALLOW = [
@@ -5691,7 +5919,9 @@ function MAIN_stampProjectMenuButton(stampAttr) {
     'view settings', 'settings_2', 'tune', 'agent', 'crop_', 'aspect', 'generate', 'model',
     'flow tv', 'help', 'account',
   ];
-  var nodes = document.querySelectorAll('button, [role="button"], [aria-haspopup="menu"]');
+  var nodes = reviewRoot.querySelectorAll(
+    'button, [role="button"], [aria-haspopup="menu"]',
+  );
   var best = null;
   for (var i = 0; i < nodes.length; i++) {
     var node = nodes[i];
@@ -5733,6 +5963,7 @@ function MAIN_stampProjectMenuButton(stampAttr) {
     stamp_attr: attr,
     stamp_id: id,
     text: normalize(best.el.textContent || best.el.getAttribute && (best.el.getAttribute('aria-label') || best.el.getAttribute('title')) || ''),
+    review_surface_identity: proof.surface_identity || null,
   };
 }
 
@@ -5762,6 +5993,7 @@ function MAIN_stampGeneratedVideo(stampAttr, opts) {
   }
   var o = opts || {};
   var excludeNames = o.excludeNames || [];
+  var requiredIdentity = String(o.requiredIdentity || '');
   function isExcluded(value) {
     var s = String(value == null ? '' : value).toLowerCase();
     if (!s) return false;
@@ -5781,31 +6013,43 @@ function MAIN_stampGeneratedVideo(stampAttr, opts) {
     if (isExcluded(src)) continue;
     var rect = v.getBoundingClientRect();
     if (!src && !(rect.width > 80 && rect.height > 80)) continue;
+    var card = (v.closest && v.closest('article, section, figure, li, [role="button"], [role="link"], div')) || v.parentElement;
+    if (!card || card === v) continue;
+    var text = String((card && card.textContent) || '').replace(/\s+/g, ' ').trim();
+    var identity = src || text
+      ? [String(src || ''), text.slice(0, 120)].join('|')
+      : [
+          'geometry',
+          Math.round(rect.left),
+          Math.round(rect.top),
+          Math.round(rect.width),
+          Math.round(rect.height),
+        ].join('|');
+    if (requiredIdentity && identity !== requiredIdentity) continue;
     var score = (src ? 200 : 0) + Math.round((rect.width * rect.height) / 1000) - Math.round(rect.top / 10);
-    if (!best || score > best.score) best = { el: v, score: score };
+    if (!best || score > best.score) {
+      best = { video: v, target: card, score: score, identity: identity };
+    }
   }
-  if (!best || !best.el) return { ok: false, reason: 'generated_video_not_found' };
-  // Click the nearest clickable ancestor (the card), else the video itself.
-  var target = best.el;
-  var cur = best.el;
-  var hops = 0;
-  while (cur && hops < 4) {
-    var role = cur.getAttribute && cur.getAttribute('role');
-    var clickable = cur.tagName === 'A' || cur.tagName === 'BUTTON' || role === 'button' || role === 'link' || (cur.onclick != null);
-    if (clickable) { target = cur; break; }
-    cur = cur.parentElement; hops++;
-  }
+  if (!best || !best.target) return { ok: false, reason: 'generated_card_not_found' };
+  var target = best.target;
   var attr = String(stampAttr || 'data-bosmax-generated-video');
   var id = attr + '-' + Date.now();
   target.setAttribute(attr, id);
-  return { ok: true, stamp_attr: attr, stamp_id: id };
+  return {
+    ok: true,
+    stamp_attr: attr,
+    stamp_id: id,
+    target_kind: 'generated_card',
+    output_identity: best.identity,
+  };
 }
 
 // MAIN-world: is the generated-video review/project page open? (Step 14 proof)
 // True only when a review surface (dialog / modal / data-review-page) containing a
 // visible <video> exists, or the URL is a project route. The composer/grid root is
 // NOT a review surface.
-function MAIN_getReviewSurfaceState() {
+function MAIN_getReviewSurfaceState(stampAttr) {
   function isVisible(el) {
     if (!el || !el.getBoundingClientRect) return false;
     var rect = el.getBoundingClientRect();
@@ -5813,21 +6057,79 @@ function MAIN_getReviewSurfaceState() {
     var style = window.getComputedStyle(el);
     return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
   }
-  var surfaces = document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-review-page="true"]');
+  function normalize(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  }
+  function findVisibleExactButton(root, label) {
+    var buttons = root.querySelectorAll('button, [role="button"]');
+    for (var i = 0; i < buttons.length; i++) {
+      if (!isVisible(buttons[i])) continue;
+      var text = normalize(
+        (buttons[i].textContent || '')
+        + ' '
+        + (buttons[i].getAttribute('aria-label') || ''),
+      ).toLowerCase();
+      if (text === label || text.endsWith(' ' + label)) return buttons[i];
+    }
+    return null;
+  }
+  var surfaces = document.querySelectorAll(
+    '[role="dialog"], [aria-modal="true"], [data-review-page="true"], main',
+  );
   for (var i = 0; i < surfaces.length; i++) {
     var s = surfaces[i];
     if (!isVisible(s)) continue;
     var v = s.querySelector && s.querySelector('video');
-    if (v && isVisible(v)) {
-      return { ok: true, opened: true, surface: (s.getAttribute && s.getAttribute('role')) || 'review', tag: s.tagName };
+    if (!v || !isVisible(v)) continue;
+    var done = findVisibleExactButton(s, 'done');
+    var surfaceText = normalize(s.textContent || '').toLowerCase();
+    var timeline = s.querySelector(
+      '[data-timeline], [aria-label*="timeline" i], [class*="timeline" i]',
+    );
+    var timelineVisible = Boolean(
+      (timeline && isVisible(timeline))
+      || surfaceText.indexOf('hide history') >= 0
+      || surfaceText.indexOf('describe your edits') >= 0,
+    );
+    if (done && timelineVisible) {
+      var attr = String(stampAttr || 'data-bosmax-review-surface');
+      var id = attr + '-' + Date.now();
+      s.setAttribute(attr, id);
+      var rect = s.getBoundingClientRect();
+      var videoSrc =
+        v.currentSrc
+        || v.src
+        || (v.getAttribute && (v.getAttribute('src') || v.getAttribute('poster')))
+        || '';
+      return {
+        ok: true,
+        opened: true,
+        surface: 'review_timeline',
+        surface_identity: [
+          String(s.tagName || '').toLowerCase(),
+          s.id || '',
+          String(videoSrc || ''),
+          Math.round(rect.left),
+          Math.round(rect.top),
+          Math.round(rect.width),
+          Math.round(rect.height),
+        ].join('|'),
+        surface_attr: attr,
+        surface_stamp_id: id,
+        tag: s.tagName,
+        done_text: normalize(done.textContent || done.getAttribute('aria-label') || ''),
+        timeline_visible: true,
+        url: String((window.location && window.location.href) || ''),
+      };
     }
   }
-  try {
-    if (String((location && location.pathname) || '').indexOf('/project/') >= 0) {
-      return { ok: true, opened: true, surface: 'route' };
-    }
-  } catch (e) { /* ignore */ }
-  return { ok: true, opened: false };
+  return {
+    ok: true,
+    opened: false,
+    surface: null,
+    surface_identity: null,
+    url: String((window.location && window.location.href) || ''),
+  };
 }
 
 function MAIN_getDownloadObservableState() {
@@ -5854,9 +6156,131 @@ function MAIN_getDownloadObservableState() {
   return { ok: true, observable: false, text: null };
 }
 
+function MAIN_getProjectDownloadMenuState(reviewProof) {
+  function normalize(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
+  }
+  var proof = reviewProof || {};
+  if (
+    proof.opened !== true
+    || proof.surface !== 'review_timeline'
+    || !proof.surface_attr
+    || !proof.surface_stamp_id
+  ) {
+    return { ok: false, menu_open: false, reason: 'verified_review_surface_required' };
+  }
+  var root = document.querySelector(
+    '[' + proof.surface_attr + '="' + proof.surface_stamp_id + '"]',
+  );
+  if (!root || !isVisible(root)) {
+    return { ok: false, menu_open: false, reason: 'review_surface_not_found' };
+  }
+  var menus = root.querySelectorAll('[role="menu"]');
+  var visibleMenuFound = false;
+  for (var i = 0; i < menus.length; i++) {
+    if (!isVisible(menus[i])) continue;
+    visibleMenuFound = true;
+    var items = menus[i].querySelectorAll(
+      'button, [role="button"], [role="menuitem"]',
+    );
+    for (var j = 0; j < items.length; j++) {
+      if (!isVisible(items[j])) continue;
+      var text = normalize(
+        (items[j].textContent || '')
+        + ' '
+        + (items[j].getAttribute('aria-label') || ''),
+      ).toLowerCase();
+      if (text === 'download project') {
+        return {
+          ok: true,
+          menu_open: true,
+          action_found: true,
+          action_text: 'Download Project',
+          review_surface_identity: proof.surface_identity || null,
+        };
+      }
+    }
+  }
+  return {
+    ok: true,
+    menu_open: visibleMenuFound,
+    action_found: false,
+    reason: visibleMenuFound
+      ? 'download_project_action_not_found'
+      : 'download_project_menu_not_open',
+  };
+}
+
+function MAIN_stampDownloadProjectAction(stampAttr, reviewProof) {
+  function normalize(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
+  }
+  var proof = reviewProof || {};
+  if (
+    proof.opened !== true
+    || proof.surface !== 'review_timeline'
+    || !proof.surface_attr
+    || !proof.surface_stamp_id
+  ) {
+    return { ok: false, reason: 'verified_review_surface_required' };
+  }
+  var root = document.querySelector(
+    '[' + proof.surface_attr + '="' + proof.surface_stamp_id + '"]',
+  );
+  if (!root || !isVisible(root)) {
+    return { ok: false, reason: 'review_surface_not_found' };
+  }
+  var menus = root.querySelectorAll('[role="menu"]');
+  for (var i = 0; i < menus.length; i++) {
+    if (!isVisible(menus[i])) continue;
+    var items = menus[i].querySelectorAll(
+      'button, [role="button"], [role="menuitem"]',
+    );
+    for (var j = 0; j < items.length; j++) {
+      var item = items[j];
+      if (!isVisible(item)) continue;
+      var text = normalize(
+        (item.textContent || '')
+        + ' '
+        + (item.getAttribute('aria-label') || ''),
+      ).toLowerCase();
+      if (text !== 'download project') continue;
+      var attr = String(stampAttr || 'data-bosmax-download-project');
+      var id = attr + '-' + Date.now();
+      item.setAttribute(attr, id);
+      return {
+        ok: true,
+        stamp_attr: attr,
+        stamp_id: id,
+        text: 'Download Project',
+        role: item.getAttribute('role') || String(item.tagName || '').toLowerCase(),
+        review_surface_identity: proof.surface_identity || null,
+      };
+    }
+  }
+  return { ok: false, reason: 'download_project_action_not_found_in_review_menu' };
+}
+
 async function _submitGenerateArrow(scripting, tabId, opts) {
   const stampAttr = opts?.submitStampAttr || 'data-bosmax-submit-target';
-  const stamp = await _runMainWorld(scripting, tabId, MAIN_stampGenerateButton, [stampAttr]);
+  const stamp = await _runMainWorld(scripting, tabId, MAIN_stampGenerateButton, [
+    stampAttr,
+    opts?.expectedPrompt || '',
+  ]);
   if (!stamp || stamp.ok !== true) {
     return { ok: false, error: ERR.GFV2_SUBMIT_ARROW_NOT_FOUND, detail: 'generate_button_not_visible' };
   }
@@ -5883,16 +6307,107 @@ async function _submitGenerateArrow(scripting, tabId, opts) {
   };
 }
 
+function _decideGenerationTransition(beforeState, afterState) {
+  const before = beforeState || {};
+  const after = afterState || {};
+  const beforeOutputs = new Set(
+    Array.isArray(before.output_identities) ? before.output_identities : [],
+  );
+  const newOutputIdentity = (
+    Array.isArray(after.output_identities) ? after.output_identities : []
+  ).find((identity) => !beforeOutputs.has(identity)) || null;
+  const evidence = {
+    settings_closed: after.settings_active === false,
+    composer_identity_before: before.composer_identity || null,
+    composer_identity_after: after.composer_identity || null,
+    prompt_changed: Boolean(
+      before.prompt_reflected === true
+      && (
+        after.prompt_reflected !== true
+        || Number(after.prompt_length || 0) !== Number(before.prompt_length || 0)
+      )
+    ),
+    submit_became_disabled: Boolean(
+      before.submit_disabled !== true && after.submit_disabled === true,
+    ),
+    generation_marker: after.generation_marker || null,
+    new_output_identity: newOutputIdentity,
+    url_before: before.url || null,
+    url_after: after.url || null,
+  };
+  const transitioned = Boolean(
+    evidence.settings_closed
+    && (
+      evidence.prompt_changed
+      || evidence.submit_became_disabled
+      || evidence.generation_marker
+      || evidence.new_output_identity
+    )
+  );
+  return { transitioned, evidence };
+}
+
+async function _waitForGfv2GenerationTransition(
+  scripting,
+  tabId,
+  expectedPrompt,
+  beforeState,
+  opts,
+) {
+  const timeoutMs = Math.max(
+    250,
+    Number(opts?.generationTransitionTimeoutMs ?? 15000),
+  );
+  const pollMs = Math.max(
+    50,
+    Number(opts?.generationTransitionPollMs ?? 250),
+  );
+  const deadline = Date.now() + timeoutMs;
+  let lastState = null;
+  let decision = null;
+  do {
+    lastState = await _runMainWorld(
+      scripting,
+      tabId,
+      MAIN_getGfv2GenerationState,
+      [expectedPrompt],
+    );
+    decision = _decideGenerationTransition(beforeState, lastState);
+    if (decision.transitioned) {
+      return { ok: true, state: lastState, evidence: decision.evidence };
+    }
+    if (Date.now() >= deadline) break;
+    await _sleep(pollMs);
+  } while (true);
+  return {
+    ok: false,
+    error: ERR.GFV2_GENERATION_TRANSITION_NOT_OBSERVED,
+    detail: {
+      before: beforeState || null,
+      after: lastState || null,
+      evidence: decision?.evidence || null,
+    },
+  };
+}
+
 async function _waitForPostSubmitOutput(scripting, tabId, opts) {
   // Default render window is generous (real Veo renders take minutes); callers may
   // override. Fail closed if no genuine generated <video> appears in time.
   const timeoutMs = Math.max(1000, Number(opts?.outputWaitTimeoutMs ?? 180000));
   const pollMs = Math.max(100, Number(opts?.outputWaitPollMs ?? 400));
   const excludeNames = Array.isArray(opts?.outputExcludeNames) ? opts.outputExcludeNames : [];
+  const baselineIdentities = Array.isArray(opts?.outputBaselineIdentities)
+    ? opts.outputBaselineIdentities
+    : [];
   const deadline = Date.now() + timeoutMs;
   let lastState = null;
   do {
-    lastState = await _runMainWorld(scripting, tabId, MAIN_getPostSubmitOutputState, [{ excludeNames }]);
+    lastState = await _runMainWorld(
+      scripting,
+      tabId,
+      MAIN_getPostSubmitOutputState,
+      [{ excludeNames, baselineIdentities }],
+    );
     if (lastState && lastState.ok === true && lastState.output_ready === true) {
       return { ok: true, state: lastState };
     }
@@ -5908,7 +6423,21 @@ async function _waitForPostSubmitOutput(scripting, tabId, opts) {
 async function _clickGeneratedVideoToReview(scripting, tabId, opts) {
   const stampAttr = opts?.generatedVideoStampAttr || 'data-bosmax-generated-video';
   const excludeNames = Array.isArray(opts?.outputExcludeNames) ? opts.outputExcludeNames : [];
-  const stamp = await _runMainWorld(scripting, tabId, MAIN_stampGeneratedVideo, [stampAttr, { excludeNames }]);
+  const reviewSurfaceAttr =
+    opts?.reviewSurfaceStampAttr || 'data-bosmax-review-surface';
+  const beforeReview = await _runMainWorld(
+    scripting,
+    tabId,
+    MAIN_getReviewSurfaceState,
+    [reviewSurfaceAttr],
+  );
+  const stamp = await _runMainWorld(scripting, tabId, MAIN_stampGeneratedVideo, [
+    stampAttr,
+    {
+      excludeNames,
+      requiredIdentity: opts?.requiredOutputIdentity || '',
+    },
+  ]);
   if (!stamp || stamp.ok !== true) {
     return { ok: false, error: ERR.GFV2_GENERATED_VIDEO_NOT_FOUND, detail: stamp?.reason || 'generated_video_not_found' };
   }
@@ -5921,9 +6450,30 @@ async function _clickGeneratedVideoToReview(scripting, tabId, opts) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
   do {
-    last = await _runMainWorld(scripting, tabId, MAIN_getReviewSurfaceState, []);
-    if (last && last.ok === true && last.opened === true) {
-      return { ok: true, state: last };
+    last = await _runMainWorld(
+      scripting,
+      tabId,
+      MAIN_getReviewSurfaceState,
+      [reviewSurfaceAttr],
+    );
+    if (
+      last
+      && last.ok === true
+      && last.opened === true
+      && (
+        beforeReview?.opened !== true
+        || beforeReview.surface_identity !== last.surface_identity
+      )
+    ) {
+      return {
+        ok: true,
+        state: last,
+        transition: {
+          before_surface_identity: beforeReview?.surface_identity || null,
+          after_surface_identity: last.surface_identity || null,
+        },
+        target: stamp,
+      };
     }
     if (Date.now() >= deadline) break;
     await _sleep(pollMs);
@@ -5933,7 +6483,13 @@ async function _clickGeneratedVideoToReview(scripting, tabId, opts) {
 
 async function _openProjectMenu(scripting, tabId, opts) {
   const stampAttr = opts?.projectMenuStampAttr || 'data-bosmax-project-menu';
-  const menu = await _runMainWorld(scripting, tabId, MAIN_stampProjectMenuButton, [stampAttr]);
+  const reviewProof = opts?.reviewProof || null;
+  const menu = await _runMainWorld(
+    scripting,
+    tabId,
+    MAIN_stampProjectMenuButton,
+    [stampAttr, reviewProof],
+  );
   if (!menu || menu.ok !== true) {
     return { ok: false, error: ERR.GFV2_PROJECT_MENU_NOT_FOUND, detail: menu?.reason || 'project_menu_not_found' };
   }
@@ -5941,26 +6497,182 @@ async function _openProjectMenu(scripting, tabId, opts) {
   if (!click || click.ok !== true) {
     return { ok: false, error: ERR.GFV2_PROJECT_MENU_NOT_FOUND, detail: click?.reason || 'project_menu_click_failed', menu };
   }
-  await _sleep(Math.max(150, Number(opts?.settleMs ?? SOP_DEFAULT_SETTLE_MS)));
-  return { ok: true, menu };
+  const timeoutMs = Math.max(250, Number(opts?.menuWaitTimeoutMs ?? 3000));
+  const pollMs = Math.max(50, Number(opts?.menuWaitPollMs ?? 150));
+  const deadline = Date.now() + timeoutMs;
+  let menuState = null;
+  do {
+    menuState = await _runMainWorld(
+      scripting,
+      tabId,
+      MAIN_getProjectDownloadMenuState,
+      [reviewProof],
+    );
+    if (
+      menuState
+      && menuState.ok === true
+      && menuState.menu_open === true
+    ) {
+      return { ok: true, menu, menu_state: menuState };
+    }
+    if (Date.now() >= deadline) break;
+    await _sleep(pollMs);
+  } while (true);
+  return {
+    ok: false,
+    error: ERR.GFV2_PROJECT_MENU_NOT_FOUND,
+    detail: menuState || 'verified_download_menu_not_open',
+    menu,
+  };
 }
 
 async function _clickDownloadProjectAction(scripting, tabId, opts) {
-  const result = await _clickVisibleActionExact(scripting, tabId, {
-    label: 'Download Project',
-    aliases: [],
-    preferredRoles: ['button', 'menuitem'],
-    errorCode: ERR.GFV2_DOWNLOAD_PROJECT_NOT_FOUND,
-  }, opts);
-  if (!result.ok) return result;
-  const observed = await _runMainWorld(scripting, tabId, MAIN_getDownloadObservableState, []);
+  const stampAttr =
+    opts?.downloadProjectStampAttr || 'data-bosmax-download-project';
+  const result = await _runMainWorld(
+    scripting,
+    tabId,
+    MAIN_stampDownloadProjectAction,
+    [stampAttr, opts?.reviewProof || null],
+  );
+  if (!result || result.ok !== true) {
+    return {
+      ok: false,
+      error: ERR.GFV2_DOWNLOAD_PROJECT_NOT_FOUND,
+      detail: result?.reason || 'download_project_action_not_found',
+    };
+  }
+  const click = await _runMainWorld(
+    scripting,
+    tabId,
+    MAIN_clickStampedElement,
+    [result.stamp_attr, result.stamp_id],
+  );
+  if (!click || click.ok !== true) {
+    return {
+      ok: false,
+      error: ERR.GFV2_DOWNLOAD_PROJECT_NOT_FOUND,
+      detail: click?.reason || 'download_project_click_failed',
+    };
+  }
   return {
     ok: true,
-    label: result.label,
+    label: result.text,
     role: result.role,
-    bbox: result.bbox,
-    observable: Boolean(observed && observed.observable),
-    observable_text: observed && observed.observable ? observed.text : null,
+    review_surface_identity: result.review_surface_identity || null,
+  };
+}
+
+async function _snapshotDownloads(downloads) {
+  if (!downloads || typeof downloads.search !== 'function') {
+    return {
+      ok: false,
+      error: ERR.GFV2_DOWNLOAD_NOT_CONFIRMED,
+      detail: 'chrome_downloads_adapter_missing',
+    };
+  }
+  try {
+    const items = await downloads.search({
+      orderBy: ['-startTime'],
+      limit: 100,
+    });
+    return {
+      ok: true,
+      captured_at: new Date().toISOString(),
+      ids: (Array.isArray(items) ? items : []).map((item) => Number(item.id)),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: ERR.GFV2_DOWNLOAD_NOT_CONFIRMED,
+      detail: String(error?.message || error || 'downloads_search_failed'),
+    };
+  }
+}
+
+async function _waitForCompletedDownload(downloads, baseline, opts) {
+  if (!baseline?.ok || !downloads || typeof downloads.search !== 'function') {
+    return {
+      ok: false,
+      error: ERR.GFV2_DOWNLOAD_NOT_CONFIRMED,
+      detail: baseline?.detail || 'chrome_downloads_adapter_missing',
+    };
+  }
+  const baselineIds = new Set(
+    Array.isArray(baseline.ids) ? baseline.ids.map((id) => Number(id)) : [],
+  );
+  const baselineCapturedAt = Date.parse(baseline.captured_at || '');
+  const timeoutMs = Math.max(
+    250,
+    Number(opts?.downloadWaitTimeoutMs ?? 120000),
+  );
+  const pollMs = Math.max(
+    50,
+    Number(opts?.downloadWaitPollMs ?? 500),
+  );
+  const deadline = Date.now() + timeoutMs;
+  let lastNewItems = [];
+  do {
+    let items = [];
+    try {
+      items = await downloads.search({
+        orderBy: ['-startTime'],
+        limit: 100,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: ERR.GFV2_DOWNLOAD_NOT_CONFIRMED,
+        detail: String(error?.message || error || 'downloads_search_failed'),
+      };
+    }
+    lastNewItems = (Array.isArray(items) ? items : []).filter(
+      (item) => !baselineIds.has(Number(item.id)),
+    );
+    const completed = lastNewItems.find(
+      (item) =>
+        item
+        && item.state === 'complete'
+        && item.exists !== false
+        && String(item.filename || '').trim()
+        && /\.(?:zip|mp4|mov|webm)$/i.test(String(item.filename || ''))
+        && Number.isFinite(Date.parse(item.startTime || ''))
+        && (
+          !Number.isFinite(baselineCapturedAt)
+          || Date.parse(item.startTime) >= baselineCapturedAt - 2000
+        ),
+    );
+    if (completed) {
+      return {
+        ok: true,
+        evidence: {
+          download_id: Number(completed.id),
+          filename: completed.filename,
+          state: completed.state,
+          exists: completed.exists !== false,
+          start_time: completed.startTime || null,
+          end_time: completed.endTime || null,
+          mime: completed.mime || null,
+          total_bytes: Number(completed.totalBytes || 0),
+          bytes_received: Number(completed.bytesReceived || 0),
+        },
+      };
+    }
+    if (Date.now() >= deadline) break;
+    await _sleep(pollMs);
+  } while (true);
+  return {
+    ok: false,
+    error: ERR.GFV2_DOWNLOAD_NOT_CONFIRMED,
+    detail: {
+      baseline_ids: Array.from(baselineIds),
+      new_items: lastNewItems.map((item) => ({
+        id: Number(item.id),
+        filename: item.filename || null,
+        state: item.state || null,
+        exists: item.exists !== false,
+      })),
+    },
   };
 }
 
@@ -5971,14 +6683,39 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
   }
   const telemetry = deps && deps.telemetry;
   const stages = [];
-  const recordStage = (stage, status, message) => {
-    stages.push({ stage, status, message });
-    _emitStage(telemetry, stage, status, message);
+  const telemetryState = {
+    active_tab_id: Number(tabId),
+    url: opts?.flowUrl || null,
+    surface_identity: opts?.surfaceIdentity || 'gfv2_composer',
+    composer_identity: opts?.settingsComposerIdentity || null,
+    settings_state: opts?.settingsState || 'unknown',
+    generation_state: 'not_submitted',
+    output_identity: null,
+    review_state: 'closed',
+    download_evidence: null,
+  };
+  const recordStage = (stage, status, message, statePatch = null) => {
+    if (statePatch && typeof statePatch === 'object') {
+      Object.assign(telemetryState, statePatch);
+    }
+    const evidence = {
+      ...telemetryState,
+      event_message:
+        typeof message === 'string' ? message : JSON.stringify(message || null),
+    };
+    const serialized = JSON.stringify(evidence);
+    stages.push({ stage, status, message: serialized, evidence });
+    _emitStage(telemetry, stage, status, serialized, {
+      selector_used: evidence.selector_used || null,
+      evidence_pointer: evidence.evidence_pointer || null,
+    });
   };
   const stageResults = {
     prompt_ready: false,
     submit_arrow_found: false,
     submit_clicked: false,
+    generation_transition_verified: false,
+    generation_transition_proof: null,
     output_ready: false,
     output_proof: null,
     review_opened: false,
@@ -6008,7 +6745,42 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
     }
     await _runMainWorld(scripting, tabId, MAIN_dismissPromoOverlays, []);
 
-    const submit = await _submitGenerateArrow(scripting, tabId, { ...opts, allowFallbackClick: true });
+    const expectedPrompt = String(job?.prompt || '');
+    const preSubmitState = await _runMainWorld(
+      scripting,
+      tabId,
+      MAIN_getGfv2GenerationState,
+      [expectedPrompt],
+    );
+    if (
+      !preSubmitState
+      || preSubmitState.settings_active === true
+      || preSubmitState.composer_found !== true
+      || preSubmitState.prompt_reflected !== true
+    ) {
+      recordStage(
+        'GFV2_PROMPT_READY_FOR_SUBMIT',
+        'FAIL',
+        JSON.stringify(preSubmitState || null),
+      );
+      return {
+        ok: false,
+        error: ERR.GENERATE_PRECONDITION_FAILED,
+        detail: preSubmitState || 'composer_generation_state_unavailable',
+        stages,
+        stage_results: stageResults,
+      };
+    }
+    telemetryState.composer_identity =
+      preSubmitState.composer_identity || telemetryState.composer_identity;
+    telemetryState.surface_identity =
+      preSubmitState.surface_identity || telemetryState.surface_identity;
+
+    const submit = await _submitGenerateArrow(scripting, tabId, {
+      ...opts,
+      allowFallbackClick: true,
+      expectedPrompt,
+    });
     if (!submit.ok) {
       if (submit.error === ERR.GFV2_SUBMIT_ARROW_NOT_FOUND) {
         recordStage('GFV2_SUBMIT_ARROW_NOT_FOUND', 'FAIL', submit.detail);
@@ -6017,9 +6789,59 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
     }
     stageResults.submit_arrow_found = true;
     stageResults.submit_clicked = true;
-    recordStage('GFV2_SUBMIT_ARROW_FOUND', 'PASS', `button=${JSON.stringify(submit.button_text || null)}`);
-    recordStage('GFV2_SUBMIT_ARROW_CLICKED', 'PASS', `strategy=${submit.strategy} fiber_visited=${submit.fiber_visited || 0}`);
-    recordStage('GFV2_GENERATE_SUBMITTED', 'PASS', `strategy=${submit.strategy}`);
+    recordStage(
+      'GFV2_SUBMIT_ARROW_FOUND',
+      'PASS',
+      `button=${JSON.stringify(submit.button_text || null)}`,
+      {
+        composer_identity:
+          submit.stamp?.composer_identity || telemetryState.composer_identity,
+        settings_state:
+          telemetryState.settings_state === 'closed_verified'
+            ? 'closed_verified'
+            : submit.stamp?.settings_state || 'closed_verified',
+        selector_used: submit.stamp?.strategy || null,
+      },
+    );
+    recordStage(
+      'GFV2_SUBMIT_ARROW_CLICKED',
+      'PASS',
+      `strategy=${submit.strategy} fiber_visited=${submit.fiber_visited || 0}`,
+      { generation_state: 'submit_click_dispatched_once' },
+    );
+    const generationTransition = await _waitForGfv2GenerationTransition(
+      scripting,
+      tabId,
+      expectedPrompt,
+      preSubmitState,
+      opts,
+    );
+    if (!generationTransition.ok) {
+      recordStage(
+        'GFV2_GENERATION_TRANSITION_NOT_OBSERVED',
+        'FAIL',
+        JSON.stringify(generationTransition.detail || null),
+      );
+      return {
+        ok: false,
+        error: generationTransition.error,
+        detail: generationTransition.detail,
+        stages,
+        stage_results: stageResults,
+      };
+    }
+    stageResults.generation_transition_verified = true;
+    stageResults.generation_transition_proof = generationTransition.evidence;
+    recordStage(
+      'GFV2_GENERATE_SUBMITTED',
+      'PASS',
+      JSON.stringify(generationTransition.evidence),
+      {
+        generation_state: 'transition_observed',
+        output_identity:
+          generationTransition.evidence?.new_output_identity || null,
+      },
+    );
 
     // Exclude the uploaded Start asset from output/menu detection (belt-and-
     // suspenders; output-ready already requires a real <video>, not the Start <img>).
@@ -6032,7 +6854,11 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
         if (base) startNames.push(base);
       }
     });
-    const flowOpts = { ...opts, outputExcludeNames: (opts?.outputExcludeNames || []).concat(startNames) };
+    const flowOpts = {
+      ...opts,
+      outputExcludeNames: (opts?.outputExcludeNames || []).concat(startNames),
+      outputBaselineIdentities: preSubmitState.output_identities || [],
+    };
 
     recordStage(
       'GFV2_OUTPUT_WAIT_STARTED',
@@ -6050,50 +6876,134 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
       'GFV2_OUTPUT_READY',
       'PASS',
       `video_found=${Boolean(output.state && output.state.video_found)} filename=${output.state && output.state.filename ? output.state.filename : ''}`.trim(),
+      {
+        generation_state: 'output_ready',
+        output_identity: output.state?.output_identity || null,
+      },
     );
 
     // Step 14 — click the generated video to open its review/project page. Steps 15
     // (three-dot) and 16 (Download Project) operate ONLY inside this review surface.
-    const review = await _clickGeneratedVideoToReview(scripting, tabId, flowOpts);
+    const review = await _clickGeneratedVideoToReview(scripting, tabId, {
+      ...flowOpts,
+      requiredOutputIdentity: output.state?.output_identity || '',
+    });
     if (!review.ok) {
       recordStage('GFV2_OUTPUT_REVIEW_NOT_OPENED', 'FAIL', JSON.stringify(review.detail || review.error || null));
       return { ok: false, error: review.error, detail: review.detail, stages, stage_results: stageResults };
     }
     stageResults.review_opened = true;
     stageResults.review_proof = review.state || null;
-    recordStage('GFV2_OUTPUT_REVIEW_OPENED', 'PASS', `surface=${review.state && review.state.surface ? review.state.surface : 'review'}`);
+    recordStage(
+      'GFV2_OUTPUT_REVIEW_OPENED',
+      'PASS',
+      `surface=${review.state && review.state.surface ? review.state.surface : 'review'}`,
+      {
+        surface_identity:
+          review.state?.surface_identity || telemetryState.surface_identity,
+        review_state: 'review_timeline_opened',
+      },
+    );
 
-    const menu = await _openProjectMenu(scripting, tabId, flowOpts);
+    const reviewScopedOpts = {
+      ...flowOpts,
+      reviewProof: review.state || null,
+    };
+    const menu = await _openProjectMenu(scripting, tabId, reviewScopedOpts);
     if (!menu.ok) {
-      recordStage('GFV2_PROJECT_MENU_NOT_FOUND', 'FAIL', menu.detail);
+      recordStage(
+        menu.error === ERR.GFV2_DOWNLOAD_PROJECT_NOT_FOUND
+          ? 'GFV2_DOWNLOAD_PROJECT_NOT_FOUND'
+          : 'GFV2_PROJECT_MENU_NOT_FOUND',
+        'FAIL',
+        JSON.stringify(menu.detail || null),
+      );
       return { ok: false, error: menu.error, detail: menu.detail, stages, stage_results: stageResults };
     }
     stageResults.project_menu_opened = true;
     stageResults.project_menu_proof = {
       button_text: menu.menu && menu.menu.text ? menu.menu.text : null,
+      review_surface_identity:
+        menu.menu?.review_surface_identity || null,
+      download_action_found: Boolean(menu.menu_state?.action_found),
     };
-    recordStage('GFV2_PROJECT_MENU_FOUND', 'PASS', `button=${JSON.stringify(menu.menu?.text || null)}`);
-    recordStage('GFV2_PROJECT_MENU_OPENED', 'PASS', `button=${JSON.stringify(menu.menu?.text || null)}`);
+    recordStage(
+      'GFV2_PROJECT_MENU_FOUND',
+      'PASS',
+      `button=${JSON.stringify(menu.menu?.text || null)}`,
+      {
+        review_state: 'review_project_menu_found',
+        selector_used: 'verified_review_surface_more_vert',
+      },
+    );
+    recordStage(
+      'GFV2_PROJECT_MENU_OPENED',
+      'PASS',
+      `button=${JSON.stringify(menu.menu?.text || null)}`,
+      { review_state: 'review_project_menu_opened' },
+    );
 
-    const download = await _clickDownloadProjectAction(scripting, tabId, opts);
+    const downloadBaseline = await _snapshotDownloads(deps?.downloads);
+    if (!downloadBaseline.ok) {
+      recordStage(
+        'GFV2_DOWNLOAD_NOT_CONFIRMED',
+        'FAIL',
+        String(downloadBaseline.detail || downloadBaseline.error),
+      );
+      return {
+        ok: false,
+        error: ERR.GFV2_DOWNLOAD_NOT_CONFIRMED,
+        detail: downloadBaseline.detail,
+        stages,
+        stage_results: stageResults,
+      };
+    }
+    const download = await _clickDownloadProjectAction(
+      scripting,
+      tabId,
+      reviewScopedOpts,
+    );
     if (!download.ok) {
       recordStage('GFV2_DOWNLOAD_PROJECT_NOT_FOUND', 'FAIL', download.detail);
       return { ok: false, error: download.error, detail: download.detail, stages, stage_results: stageResults };
+    }
+    const completedDownload = await _waitForCompletedDownload(
+      deps?.downloads,
+      downloadBaseline,
+      opts,
+    );
+    if (!completedDownload.ok) {
+      recordStage(
+        'GFV2_DOWNLOAD_NOT_CONFIRMED',
+        'FAIL',
+        JSON.stringify(completedDownload.detail || null),
+      );
+      return {
+        ok: false,
+        error: ERR.GFV2_DOWNLOAD_NOT_CONFIRMED,
+        detail: completedDownload.detail,
+        stages,
+        stage_results: stageResults,
+      };
     }
     const timestamp = new Date().toISOString();
     stageResults.download_clicked = true;
     stageResults.download_proof = {
       clicked: true,
       timestamp,
-      filename: output.state && output.state.filename ? output.state.filename : null,
-      browser_ui_evidence: download.observable_text || null,
-      observable: Boolean(download.observable),
+      output_identity: output.state?.output_identity || null,
+      review_surface_identity: review.state?.surface_identity || null,
+      ...completedDownload.evidence,
     };
     recordStage('GFV2_DOWNLOAD_PROJECT_CLICKED', 'PASS', `role=${download.role || 'button'}`);
     recordStage(
       'GFV2_DOWNLOAD_STARTED',
       'PASS',
-      `timestamp=${timestamp} filename=${stageResults.download_proof.filename || ''} observable=${Boolean(download.observable)}`,
+      JSON.stringify(stageResults.download_proof),
+      {
+        review_state: 'download_completed',
+        download_evidence: stageResults.download_proof,
+      },
     );
     recordStage(
       'GFV2_OUTPUT_RETURNED_TO_SYSTEM',
@@ -6101,7 +7011,9 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
       JSON.stringify({
         timestamp,
         filename: stageResults.download_proof.filename || null,
-        browser_ui_evidence: stageResults.download_proof.browser_ui_evidence || null,
+        download_id: stageResults.download_proof.download_id,
+        state: stageResults.download_proof.state,
+        exists: stageResults.download_proof.exists,
       }),
     );
 
@@ -6113,7 +7025,9 @@ async function executeGfv2PostSubmitDownloadContinuation(deps, tabId, job, opts 
         download_clicked: true,
         timestamp,
         filename: stageResults.download_proof.filename || null,
-        browser_ui_evidence: stageResults.download_proof.browser_ui_evidence || null,
+        download_id: stageResults.download_proof.download_id,
+        state: stageResults.download_proof.state,
+        exists: stageResults.download_proof.exists,
       },
     };
   } catch (err) {
@@ -6785,12 +7699,24 @@ function createChromeScriptingAdapter(chromeApi) {
   };
 }
 
+function createChromeDownloadsAdapter(chromeApi) {
+  if (!chromeApi || !chromeApi.downloads) {
+    throw new Error('createChromeDownloadsAdapter: chrome.downloads is required');
+  }
+  return {
+    search(query) {
+      return chromeApi.downloads.search(query);
+    },
+  };
+}
+
 const _api = {
   // Public orchestrator
   executeF2VVisibleSopRunner,
   executeGfv2PostSubmitDownloadContinuation,
   // Adapter factory
   createChromeScriptingAdapter,
+  createChromeDownloadsAdapter,
   // MAIN-world helpers (exported for unit tests)
   MAIN_findVisibleCandidatesByExactLabel,
   MAIN_clickStampedElement,
@@ -6800,9 +7726,12 @@ const _api = {
   MAIN_insertComposerPrompt,
   MAIN_invokeReactFiberSubmit,
   MAIN_stampGenerateButton,
+  MAIN_getGfv2GenerationState,
   MAIN_getPostSubmitOutputState,
   MAIN_stampProjectMenuButton,
   MAIN_getDownloadObservableState,
+  MAIN_getProjectDownloadMenuState,
+  MAIN_stampDownloadProjectAction,
   MAIN_stampGeneratedVideo,
   MAIN_getReviewSurfaceState,
   MAIN_stampAssetPickerLauncher,
@@ -6830,10 +7759,13 @@ const _api = {
   _clickAddToPrompt,
   _invokeGenerate,
   _submitGenerateArrow,
+  _waitForGfv2GenerationTransition,
   _waitForPostSubmitOutput,
   _clickGeneratedVideoToReview,
   _openProjectMenu,
   _clickDownloadProjectAction,
+  _snapshotDownloads,
+  _waitForCompletedDownload,
   _runB2AUploadPickerOpenOnly,
   // Constants
   F2V_FLOW_QUEUE_RUNNER_BUILD_ID,
