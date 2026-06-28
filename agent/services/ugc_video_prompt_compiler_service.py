@@ -774,6 +774,7 @@ def compile_ugc_video_prompt(
     claim_safe_rewrite: str | None = None,
     safe_hook_angles: list[str] | None = None,
     safe_cta_angles: list[str] | None = None,
+    has_system_avatar: bool = True,
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "").strip().upper()
     if normalized_mode not in SUPPORTED_MODES:
@@ -783,6 +784,16 @@ def compile_ugc_video_prompt(
     resolved_character_presence = normalize_character_presence(character_presence)
     resolved_creator_persona = normalize_creator_persona(creator_persona)
     resolved_target_language = normalize_target_language(target_language)
+    # System-avatar contract: a visible human on screen must be backed by a system
+    # avatar reference. With no system avatar, downgrade to FACELESS (product-only)
+    # so the engine never invents an uncontrolled person ("ambil dari luar").
+    from agent.services.system_avatar_contract import (
+        resolve_presence_for_avatar,
+        WARN_CHARACTER_DOWNGRADED_NO_SYSTEM_AVATAR,
+    )
+    effective_character_presence, _character_downgraded_no_avatar = resolve_presence_for_avatar(
+        resolved_character_presence, has_system_avatar
+    )
     capability = get_engine_mode_capability(normalized_mode)
     if resolved_generation_mode not in capability.get("supports_generation_modes", []):
         raise ValueError(
@@ -818,7 +829,7 @@ def compile_ugc_video_prompt(
             block_role=block["block_role"],
             duration_seconds=block["duration_seconds"],
             camera_style=resolved_camera_style,
-            character_presence=resolved_character_presence,
+            character_presence=effective_character_presence,
             creator_persona=resolved_creator_persona,
             target_language=resolved_target_language,
             claim_safe_rewrite=resolved_claim_safe_rewrite,
@@ -844,6 +855,8 @@ def compile_ugc_video_prompt(
         block["engine_prompt_text"] for block in compiled_blocks
     )
     warnings: list[str] = []
+    if _character_downgraded_no_avatar:
+        warnings.append(WARN_CHARACTER_DOWNGRADED_NO_SYSTEM_AVATAR)
     if resolved_character_presence == "FACELESS":
         warnings.append("FACELESS_MODE_REQUIRES_EXPLICIT_OPERATOR_CHOICE")
 
@@ -854,7 +867,7 @@ def compile_ugc_video_prompt(
         "generation_mode": resolved_generation_mode,
         "total_duration_seconds": sum(block["duration_seconds"] for block in compiled_blocks),
         "camera_style": resolved_camera_style,
-        "character_presence": resolved_character_presence,
+        "character_presence": effective_character_presence,
         "creator_persona": resolved_creator_persona,
         "target_language": resolved_target_language,
         "shot_plan": [

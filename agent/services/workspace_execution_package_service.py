@@ -17,6 +17,7 @@ from agent.services.prompt_compiler_runtime_config_service import get_runtime_co
 from agent.services.ugc_video_prompt_compiler_service import (
     compile_ugc_video_prompt,
 )
+from agent.services.system_avatar_contract import package_has_system_avatar
 from agent.services.i2v_semantic_slot_resolver_service import (
     resolve_i2v_semantic_slots,
 )
@@ -197,6 +198,13 @@ async def create_workspace_execution_package(
     package = await get_approved_product_package(product_id, mode)
     normalized_mode = normalize_mode(mode)
     resolved_model = model or _default_model_for_mode(normalized_mode)
+    # System-avatar contract: a visible creator/avatar on screen is only allowed
+    # when a system avatar reference exists (character_reference_asset_id or a
+    # character slot in the approved package). Otherwise the compiler downgrades
+    # to FACELESS so Google Flow never invents an uncontrolled person.
+    has_system_avatar = bool(character_reference_asset_id) or package_has_system_avatar(
+        package.get("asset_slots")
+    )
     compiler_result = await compile_workspace_prompt_preview(
         product_id=product_id,
         mode=normalized_mode,
@@ -210,6 +218,7 @@ async def create_workspace_execution_package(
         dialogue_enabled=dialogue_enabled,
         blocks=blocks or [],
         approved_package=package,
+        has_system_avatar=has_system_avatar,
     )
     prompt_fingerprint = compiler_result["prompt_fingerprint"]
     total_duration_seconds = int(compiler_result["total_duration_seconds"])
@@ -399,6 +408,7 @@ async def compile_workspace_prompt_preview(
     dialogue_enabled: bool = True,
     blocks: list[dict[str, Any]] | None = None,
     approved_package: dict[str, Any] | None = None,
+    has_system_avatar: bool = True,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
     product = await crud.get_product(product_id)
@@ -437,6 +447,7 @@ async def compile_workspace_prompt_preview(
             claim_safe_rewrite=package.get("claim_safe_rewrite"),
             safe_hook_angles=list(safe_package.get("safe_hook_angles") or []),
             safe_cta_angles=list(safe_package.get("safe_cta_angles") or []),
+            has_system_avatar=has_system_avatar,
         )
     prompt_scan = scan_prompt_text(
         compiler_result["final_compiled_prompt_text"],

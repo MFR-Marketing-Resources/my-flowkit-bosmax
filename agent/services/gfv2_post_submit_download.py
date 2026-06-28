@@ -18,6 +18,11 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from agent.services.system_avatar_contract import (
+    assert_system_avatar_contract,
+    package_has_system_avatar,
+)
+
 LANE = "GFV2_POST_SUBMIT_DOWNLOAD"
 
 # Reject reasons
@@ -128,6 +133,19 @@ def evaluate_trigger(
         return reject(REJECT_BUILD_PROOF_NOT_PASS)
     if active_job_count and active_job_count > 0:
         return reject(REJECT_ACTIVE_JOB_EXISTS)
+
+    # System-avatar contract (operator mandate): never let Google Flow invent an
+    # uncontrolled human. If the package prompt demands a visible creator / AI
+    # avatar but the package carries no system avatar reference, fail closed.
+    avatar_error = assert_system_avatar_contract(
+        package.get("prompt_text"),
+        package_has_system_avatar(
+            _coerce(package.get("resolved_assets")) or _coerce(package.get("asset_slots")),
+            avatar_id=package.get("avatar_id"),
+        ),
+    )
+    if avatar_error:
+        return reject(avatar_error)
 
     return {
         "action": ACTION_LIVE if confirm_live else ACTION_DRY_RUN,

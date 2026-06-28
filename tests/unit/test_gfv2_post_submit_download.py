@@ -16,7 +16,7 @@ def _package() -> dict:
         "aspect_ratio": "9:16",
         "model": "Veo 3.1 - Lite",
         "duration_seconds": 8,
-        "prompt_text": "Vertical 9:16 handheld. MCU to CU framing. CHARACTER: one visible creator.",
+        "prompt_text": "Vertical 9:16 handheld. MCU to CU framing. Product-only reveal.",
         "prompt_package_snapshot_id": "pkg_9391fa3e44ec43df",
         "prompt_fingerprint": "8f1cca4d78de4deb774df2af6eb4dbde4cdbd29a",
         "resolved_assets": json.dumps([
@@ -128,3 +128,26 @@ def test_dry_run_never_reaches_live_even_with_block():
     # A blocked build in dry-run is still a REJECT (no job leaks as "ready")
     d = gfv2.evaluate_trigger(**_ok_kwargs(confirm_live=False, build_proof_pass=False))
     assert d["action"] == gfv2.ACTION_REJECT
+
+
+def test_visible_creator_prompt_without_system_avatar_rejects():
+    # System-avatar contract: product-only package whose prompt demands a visible
+    # creator must be blocked (Google Flow would invent an uncontrolled human).
+    from agent.services.system_avatar_contract import ERR_CHARACTER_PROMPT_WITHOUT_SYSTEM_AVATAR
+    pkg = _package()
+    pkg["prompt_text"] = "Vertical 9:16. CHARACTER: One visible creator on screen."
+    d = gfv2.evaluate_trigger(**_ok_kwargs(confirm_live=True, package=pkg))
+    assert d["action"] == gfv2.ACTION_REJECT
+    assert d["reason"] == ERR_CHARACTER_PROMPT_WITHOUT_SYSTEM_AVATAR
+
+
+def test_visible_creator_prompt_with_avatar_asset_allowed():
+    # Same prompt, but the package carries a system avatar reference -> allowed.
+    pkg = _package()
+    pkg["prompt_text"] = "Vertical 9:16. CHARACTER: One visible creator on screen."
+    pkg["resolved_assets"] = json.dumps([
+        {"slot_key": "start_frame", "asset_source": "PRODUCT_IMAGE_URL"},
+        {"slot_key": "character_reference", "asset_source": "AVATAR_UPLOAD"},
+    ])
+    d = gfv2.evaluate_trigger(**_ok_kwargs(confirm_live=False, package=pkg))
+    assert d["action"] == gfv2.ACTION_DRY_RUN
