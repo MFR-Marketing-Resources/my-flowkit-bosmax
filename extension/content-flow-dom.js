@@ -3536,11 +3536,10 @@ function isSettingsScopedModelSource(source) {
     if (observed.model === 'UNKNOWN') {
       const modelElements = document.querySelectorAll('button, span, div, p, [aria-label], [title]');
       for (const el of modelElements) {
-        if (!isVisible(el)) continue;
         const detectedModel = extractObservedModelLabel(el.textContent)
           || extractObservedModelLabel(el.getAttribute('aria-label'))
           || extractObservedModelLabel(el.getAttribute('title'));
-        if (detectedModel) {
+        if (detectedModel && isVisible(el)) { // perf: cheap label match before layout-forcing isVisible
           observed.model = detectedModel;
           observed.modelSource = 'global_text';
           break;
@@ -3609,10 +3608,11 @@ function isSettingsScopedModelSource(source) {
 
     // 6. Detect upload slots
     const slotLabels = ['Start', 'End', 'Ingredients', 'Image', 'Subject', 'Scene', 'Style'];
+    const __fkSlotScanEls = Array.from(document.querySelectorAll('label, span, div, p')); // perf: query DOM once, not per-label
     for (const label of slotLabels) {
       // Find elements that exactly match or contain the label text in a small container
-      const candidateLabels = Array.from(document.querySelectorAll('label, span, div, p'))
-        .filter(el => isVisible(el) && el.textContent.trim() === label);
+      const candidateLabels = __fkSlotScanEls
+        .filter(el => el.textContent.trim() === label && isVisible(el));
       
       if (candidateLabels.length > 0) {
         observed.visibleUploadSlots.push(label);
