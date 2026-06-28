@@ -4349,6 +4349,47 @@ function sendToAgent(msg) {
 
 // ─── reCAPTCHA Solving ──────────────────────────────────────
 
+// A stale / discarded / navigated Flow tab makes executeScript throw a host-access
+// error ("Cannot access contents of the page. Extension manifest must request
+// permission...") and the captcha solve dies with no recovery. Detect that class of
+// failure and reload the Flow tab once to re-init grecaptcha, then retry.
+function isStaleTabError(msg) {
+	msg = msg || "";
+	return (
+		msg.includes("Cannot access contents") ||
+		msg.includes("must request permission") ||
+		msg.includes("cannot be scripted") ||
+		msg.includes("No tab with id") ||
+		msg.includes("No window with id") ||
+		msg.includes("The tab was closed") ||
+		msg.includes("was discarded") ||
+		msg.includes("ERR_MESSAGE_RESPONSE_TIMEOUT") ||
+		msg.includes("ERR_RUNTIME_LASTERROR")
+	);
+}
+
+async function reloadTabAndWait(tabId, timeoutMs = 12000) {
+	try {
+		await chrome.tabs.reload(tabId);
+	} catch (_) {
+		return false;
+	}
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		await sleep(500);
+		try {
+			const t = await chrome.tabs.get(tabId);
+			if (t && t.status === "complete") {
+				await sleep(1500); // let grecaptcha Enterprise re-initialise
+				return true;
+			}
+		} catch (_) {
+			return false;
+		}
+	}
+	return false;
+}
+
 async function requestCaptchaFromTab(tabId, requestId, pageAction) {
 	try {
 		await chrome.scripting.executeScript({
@@ -4377,24 +4418,59 @@ async function requestCaptchaFromTab(tabId, requestId, pageAction) {
 		msg.includes("Could not establish connection") ||
 		msg.includes("ERR_UNKNOWN_MESSAGE_TYPE") ||
 		msg.includes("ERR_NO_RECEIVER");
+	const askForCaptcha = () =>
+		sendTabMessageSafe(
+			tabId,
+			{ type: "GET_CAPTCHA", requestId, pageAction },
+			16000,
+		);
+
+	const reloadAndRetry = async () => {
+		const reloaded = await reloadTabAndWait(tabId);
+		if (!reloaded) return null;
+		try {
+			await chrome.scripting.executeScript({
+				target: { tabId },
+				files: ["content.js"],
+			});
+		} catch (_) {}
+		await sleep(300);
+		return await askForCaptcha();
+	};
+
 	if (!shouldInject) {
+		// First response is an error we don't normally re-inject for — but if the tab
+		// is stale/discarded/host-access, a reload can still recover it.
+		if (isStaleTabError(msg)) {
+			const recovered = await reloadAndRetry();
+			if (recovered) return recovered;
+		}
 		return initialResponse;
 	}
 
-	await chrome.scripting.executeScript({
-		target: { tabId },
-		files: ["content.js"],
-	});
-	await sleep(200);
-	return await sendTabMessageSafe(
-		tabId,
-		{
-			type: "GET_CAPTCHA",
-			requestId,
-			pageAction,
-		},
-		16000,
-	);
+	// Re-inject the content script and retry. The injection itself can throw the
+	// host-access error on a stale tab, so capture it instead of letting it bubble.
+	let reinjectResponse;
+	try {
+		await chrome.scripting.executeScript({
+			target: { tabId },
+			files: ["content.js"],
+		});
+		await sleep(200);
+		reinjectResponse = await askForCaptcha();
+	} catch (e) {
+		reinjectResponse = { error: e.message || String(e) };
+	}
+	if (!reinjectResponse?.error) {
+		return reinjectResponse;
+	}
+
+	// Re-inject still failed. If the tab is stale, reload it once and retry.
+	if (isStaleTabError(reinjectResponse.error)) {
+		const recovered = await reloadAndRetry();
+		if (recovered) return recovered;
+	}
+	return reinjectResponse;
 }
 
 async function solveCaptcha(requestId, captchaAction) {
@@ -4424,7 +4500,7 @@ async function solveCaptcha(requestId, captchaAction) {
 			const resp = await Promise.race([
 				requestCaptchaFromTab(retryTabs[0].id, requestId, captchaAction),
 				new Promise((_, rej) =>
-					setTimeout(() => rej(new Error("CAPTCHA_TIMEOUT")), 30000),
+					setTimeout(() => rej(new Error("CAPTCHA_TIMEOUT")), 60000),
 				),
 			]);
 			return resp;
@@ -4437,7 +4513,7 @@ async function solveCaptcha(requestId, captchaAction) {
 		const resp = await Promise.race([
 			requestCaptchaFromTab(tabs[0].id, requestId, captchaAction),
 			new Promise((_, rej) =>
-				setTimeout(() => rej(new Error("CAPTCHA_TIMEOUT")), 30000),
+				setTimeout(() => rej(new Error("CAPTCHA_TIMEOUT")), 60000),
 			),
 		]);
 		return resp;
