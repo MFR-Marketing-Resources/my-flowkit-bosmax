@@ -53,6 +53,23 @@ async def _bind_editor_session(client, requested_project_id=None) -> dict:
     project_id = diag.get("projectId") if isinstance(diag, dict) else None
     if not project_id or "/project/" not in str(flow_url):
         raise RuntimeError("NO_OPEN_EDITOR: the Flow tab is not on a project editor — open the project first")
+    page_diag_fn = getattr(client, "flow_page_state_diagnostic", None)
+    if callable(page_diag_fn):
+        page_diag = await page_diag_fn("F2V")
+        error_markers = [
+            str(item).strip()
+            for item in (page_diag.get("visible_error_markers") or [])
+            if str(item).strip()
+        ] if isinstance(page_diag, dict) else []
+        if error_markers:
+            raise RuntimeError(
+                "BROKEN_EDITOR_PAGE: the bound Flow editor shows error markers — "
+                + ", ".join(error_markers)
+            )
+        if isinstance(page_diag, dict) and page_diag.get("build_match") is False:
+            raise RuntimeError(
+                "CONTENT_BUILD_MISMATCH: reload the Flow tab so the content script matches the background build"
+            )
     if requested_project_id and requested_project_id != project_id:
         raise RuntimeError(
             f"PROJECT_TAB_MISMATCH: requested {requested_project_id} but the open editor is {project_id}")

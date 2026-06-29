@@ -9,11 +9,15 @@ import agent.services.make_video as mv
 
 
 class _FakeClient:
-    def __init__(self, harvest):
+    def __init__(self, harvest, page_diag=None):
         self._harvest = harvest
+        self._page_diag = page_diag
 
     async def harvest_video_urls(self, tab_id=None):
         return self._harvest
+
+    async def flow_page_state_diagnostic(self, mode=None):
+        return self._page_diag or {}
 
 
 def _run(coro):
@@ -60,6 +64,32 @@ def test_bind_project_mismatch_raises():
         assert False, "expected PROJECT_TAB_MISMATCH"
     except RuntimeError as e:
         assert "PROJECT_TAB_MISMATCH" in str(e)
+
+
+def test_bind_broken_editor_page_raises():
+    url = "https://labs.google/fx/tools/flow/project/abc-123"
+    client = _FakeClient(
+        _harvest("abc-123", url, 42),
+        page_diag={"visible_error_markers": ["Something went wrong"], "build_match": True},
+    )
+    try:
+        _run(mv._bind_editor_session(client))
+        assert False, "expected BROKEN_EDITOR_PAGE"
+    except RuntimeError as e:
+        assert "BROKEN_EDITOR_PAGE" in str(e)
+
+
+def test_bind_content_build_mismatch_raises():
+    url = "https://labs.google/fx/tools/flow/project/abc-123"
+    client = _FakeClient(
+        _harvest("abc-123", url, 42),
+        page_diag={"visible_error_markers": [], "build_match": False},
+    )
+    try:
+        _run(mv._bind_editor_session(client))
+        assert False, "expected CONTENT_BUILD_MISMATCH"
+    except RuntimeError as e:
+        assert "CONTENT_BUILD_MISMATCH" in str(e)
 
 
 def test_single_flight_rejects_second_video_job():
