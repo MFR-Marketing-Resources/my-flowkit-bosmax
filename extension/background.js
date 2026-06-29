@@ -3865,6 +3865,16 @@ async function openPreferredFlowProjectOrNewProject(mode, preferredUrl = null) {
 				open_strategy: "preferred_project_url",
 			};
 		}
+		// Fail CLOSED: a preferred project URL was set but opening it failed. Do NOT cascade
+		// into new-project creation — that mints blank projects and pollutes the session.
+		return {
+			...(preferredResult || {}),
+			ok: false,
+			error:
+				(preferredResult && preferredResult.error) ||
+				"ERR_PREFERRED_PROJECT_OPEN_FAILED",
+			open_strategy: "preferred_failed_no_fallback",
+		};
 	}
 
 	const newProjectResult = await handleOpenFlowNewProject(mode);
@@ -6645,6 +6655,9 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 	);
 	preferredUrl = adoptedTarget?.preferred_flow_project_url || preferredUrl;
 	let openFlowResult = null;
+	// A single self-test call performs project-open recovery AT MOST ONCE (was: the direct open
+	// here PLUS the page + composer diagnostics could each re-open → blank project/tab fan-out).
+	let projectOpenRecoveryUsed = false;
 
 	if (
 		attemptOpenProject &&
@@ -6652,6 +6665,7 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 		isRootFlowUrl(selectedTab.url) &&
 		!isProjectEditorUrl(selectedTab.url)
 	) {
+		projectOpenRecoveryUsed = true;
 		openFlowResult = await openPreferredFlowProjectOrNewProject(
 			mode,
 			preferredUrl,
@@ -6674,17 +6688,21 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 			adoptedSettledTarget?.preferred_flow_project_url || preferredUrl;
 	}
 
+	// The single recovery allowance goes to whichever runs first (the direct open above OR the
+	// page diagnostic). Consuming it here keeps the composer diagnostic strictly read-only.
+	const allowDiagRecovery = attemptOpenProject === true && !projectOpenRecoveryUsed;
+	if (allowDiagRecovery) projectOpenRecoveryUsed = true;
 	const pageDiagnostic = await handleFlowPageStateDiagnostic(mode, {
-		allowProjectOpenRecovery: attemptOpenProject === true,
-		allowFreshProjectRecovery: attemptOpenProject === true,
+		allowProjectOpenRecovery: allowDiagRecovery,
+		allowFreshProjectRecovery: allowDiagRecovery,
 	});
 	const composerDiagnostic = canUsePageDiagnosticForComposerReadiness(
 		pageDiagnostic,
 	)
 		? buildComposerReadinessFromPageDiagnostic(pageDiagnostic)
 		: await handleCheckFlowComposerReady(mode, {
-				allowProjectOpenRecovery: attemptOpenProject === true,
-				allowFreshProjectRecovery: attemptOpenProject === true,
+				allowProjectOpenRecovery: false,
+				allowFreshProjectRecovery: false,
 			});
 	const resolvedPreferredUrl = await getStoredFlowProjectUrl();
 	const runnerApi =
