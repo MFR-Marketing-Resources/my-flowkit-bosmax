@@ -410,7 +410,14 @@ async def _run_negotiate(job_id, prompt, image_prompt=None, dry=True,
             target_model=model, target_duration_s=duration_s, approve=not dry)
         job["transcript"] = res.get("transcript")
         job["result"] = {k: v for k, v in res.items() if k != "transcript"}
-        job["status"], job["stage"] = "DONE", "done"
+        # Defense-in-depth: a dry capture MUST end on a would_approve proposal. If it instead
+        # short-circuited to generation_started (no would_approve), fail loud rather than report
+        # a clean DONE — that result is the wrong shape for I4a.
+        if dry and "would_approve" not in res and res.get("generation_started"):
+            job["status"], job["error"], job["stage"] = (
+                "FAILED", "DRY_SHORT_CIRCUIT: generation_started without would_approve", "failed")
+        else:
+            job["status"], job["stage"] = "DONE", "done"
     except Exception as e:  # noqa: BLE001
         job["status"], job["error"], job["stage"] = "FAILED", str(e), "failed"
 

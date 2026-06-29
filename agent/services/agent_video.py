@@ -86,9 +86,13 @@ def parse_agent_sse(text) -> dict:
                         pass
     joined = " ".join(texts)
     low = joined.lower()
-    started = (any(p in low for p in _STARTED_PHRASES)
-               or any(t in _GEN_TOOLS for t in tools))
+    # started_tool is the HARD proof — a real generation toolInvocation fired. `started` keeps
+    # the soft phrases too, but ONLY for post-approve confirmation / transcript. The PRE-approve
+    # bail must use started_tool so soft text can never short-circuit a proposal (dry-lane fix).
+    started_tool = any(t in _GEN_TOOLS for t in tools)
+    started = (any(p in low for p in _STARTED_PHRASES) or started_tool)
     return {"permission": permission, "tools": tools, "started": started,
+            "started_tool": started_tool,
             "error": error, "text": joined[:600], "model": model,
             "duration_used": duration_used}
 
@@ -167,7 +171,9 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
     while turn < max_turns:
         if state["error"]:
             return {"ok": False, "stage": "error", "error": state["error"], "transcript": transcript}
-        if state["started"]:
+        # PRE-approve bail: only a real generation toolInvocation (started_tool) may short-circuit
+        # here. Soft text alone must NOT — else it suppresses would_approve on the dry lane (I4a).
+        if state["started_tool"]:
             return {"ok": True, "generation_started": True,
                     **_verdict(state),
                     "agent_text": state["text"], "transcript": transcript}

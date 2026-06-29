@@ -4,9 +4,24 @@ Authority fixture: tests/fixtures/agent_sse_proposal.txt — a REAL pre-approve 
 0-credit. It proves the ask_for_permission proposal carries no model (model appears only
 post-approve), so cost is the Lite proxy pre-approve and the model is verified post-approve.
 """
+import asyncio
 import os
 
 from agent.services import agent_video as av
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+class _FakeAgentClient:
+    """Returns the same SSE for every turn — enough to drive one negotiate decision."""
+    def __init__(self, sse):
+        self._sse = sse
+
+    async def agent_stream_chat(self, session_id, project_id, turn, text,
+                                media_ids=None, permission_action=None):
+        return {"data": self._sse}
 
 _FIXT = os.path.join(os.path.dirname(__file__), "..", "fixtures", "agent_sse_proposal.txt")
 
@@ -122,6 +137,42 @@ def test_decide_rejects_video_plus_images():
 def test_decide_waits_on_empty():
     k, _m, a = av.decide(None, "veo_3_1_lite")
     assert k == "wait" and a is None
+
+
+# --- dry-lane short-circuit regression (Codex finding): soft-phrase started must NOT
+#     suppress would_approve; only a real generation toolInvocation may bail pre-approve. ---
+
+_SOFT_PLUS_PROPOSAL = (
+    'data: {"text": "Sure, I\'m generating your video concept now."}\n'   # soft phrase, no tool
+    'data: {"agentMessage": {"agentEvents": [{"eventId": "p","toolInvocation": '
+    '{"toolName": "ask_for_permission","toolArguments": '
+    '{"num_videos": 1,"num_images": 0,"total_cost": 10,"num_total": 1}}}],"responseId": "p"}}\n'
+)
+
+_GEN_TOOL_PREAPPROVE = (
+    'data: {"agentMessage": {"agentEvents": [{"eventId": "g","toolInvocation": '
+    '{"toolName": "generate_video_with_references","toolArguments": '
+    '{"model_usage_key": "veo_3_1_r2v_lite","duration": 8.0}}}],"responseId": "g"}}\n'
+)
+
+
+def test_dry_soft_phrase_does_not_suppress_would_approve():
+    # soft "i'm generating" text + a valid proposal, NO generation tool → dry must reach would_approve
+    res = _run(av.negotiate_and_generate(
+        _FakeAgentClient(_SOFT_PLUS_PROPOSAL), "p1", "s1", "make a video", None,
+        target_model="veo_3_1_lite", target_duration_s=8, approve=False))
+    assert res.get("would_approve") == {"num_videos": 1, "num_images": 0,
+                                        "total_cost": 10, "num_total": 1}
+    assert not res.get("generation_started")   # MUST NOT short-circuit on soft text
+
+
+def test_real_gen_tool_preapprove_still_bails():
+    # control: a real generation toolInvocation before approval still bails with generation_started
+    res = _run(av.negotiate_and_generate(
+        _FakeAgentClient(_GEN_TOOL_PREAPPROVE), "p1", "s1", "make a video", None,
+        target_model="veo_3_1_lite", target_duration_s=8, approve=False))
+    assert res.get("generation_started") is True
+    assert "would_approve" not in res
 
 
 if __name__ == "__main__":
