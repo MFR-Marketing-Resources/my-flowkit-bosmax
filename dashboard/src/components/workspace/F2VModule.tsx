@@ -7,6 +7,7 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
+import ModelSelect, { type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface F2VModuleProps {
@@ -14,12 +15,13 @@ interface F2VModuleProps {
 	isExecuting: boolean;
 	compact?: boolean;
 	workspacePackage?: WorkspaceExecutionPackage | null;
+	videoModels: VideoModel[];
 }
 
-const F2V_LOCKED_MODEL = "Veo 3.1 - Lite";
+const F2V_DEFAULT_MODEL = "Veo 3.1 - Lite";
 
-function normalizeF2VModel(_value: string | null | undefined): string {
-	return F2V_LOCKED_MODEL;
+function normalizeF2VModel(value: string | null | undefined): string {
+	return value || F2V_DEFAULT_MODEL;
 }
 
 function toUploadedAsset(
@@ -52,12 +54,13 @@ export default function F2VModule({
 	isExecuting,
 	compact = false,
 	workspacePackage = null,
+	videoModels,
 }: F2VModuleProps) {
 	// --- States ---
 	const [manualPrompt, setManualPrompt] = useState("");
 	const [isManualOverride, setIsManualOverride] = useState(false);
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
-	const [model, setModel] = useState(F2V_LOCKED_MODEL);
+	const [model, setModel] = useState(F2V_DEFAULT_MODEL);
 	const [count, setCount] = useState(1);
 	const [isUploading, setIsUploading] = useState(false);
 	const [startPreviewFailed, setStartPreviewFailed] = useState(false);
@@ -387,23 +390,11 @@ export default function F2VModule({
 								))}
 							</div>
 						</div>
-						<div className="space-y-3">
-							<p className="text-xs font-bold text-slate-400">
-								Generation Model
-							</p>
-							<select
-								title="Select generation model"
-								value={model}
-								onChange={(e) => setModel(normalizeF2VModel(e.target.value))}
-								className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] font-bold text-slate-300 outline-none"
-							>
-								<option>{F2V_LOCKED_MODEL}</option>
-							</select>
-							<p className="text-[10px] text-slate-500">
-								F2V stays locked to Veo 3.1 - Lite to match the verified
-								Video/Frames execution lane.
-							</p>
-						</div>
+						<ModelSelect
+							models={videoModels}
+							value={model}
+							onChange={setModel}
+						/>
 						<div className="space-y-3">
 							<p className="text-xs font-bold text-slate-400">Count</p>
 							<div className="grid grid-cols-4 gap-2">

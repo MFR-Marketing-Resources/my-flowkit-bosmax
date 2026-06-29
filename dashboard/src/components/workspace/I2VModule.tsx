@@ -16,6 +16,7 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
+import ModelSelect, { type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface I2VModuleProps {
@@ -24,6 +25,7 @@ interface I2VModuleProps {
 	compact?: boolean;
 	workspacePackage?: WorkspaceExecutionPackage | null;
 	onWorkspacePackageUpdated?: (pkg: WorkspaceExecutionPackage) => void;
+	videoModels: VideoModel[];
 }
 
 const RECIPE_OPTIONS: Array<{
@@ -116,11 +118,12 @@ export default function I2VModule({
 	compact = false,
 	workspacePackage = null,
 	onWorkspacePackageUpdated,
+	videoModels,
 }: I2VModuleProps) {
 	const [manualPrompt, setManualPrompt] = useState("");
 	const [isManualOverride, setIsManualOverride] = useState(false);
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
-	const [model] = useState("Veo 3.1 - Pro");
+	const [model, setModel] = useState("Veo 3.1 - Lite");
 	const [count, setCount] = useState(1);
 	const [isUploading, setIsUploading] = useState(false);
 	const [isRefreshingPackage, setIsRefreshingPackage] = useState(false);
@@ -743,7 +746,12 @@ export default function I2VModule({
 							</div>
 						</div>
 						<div className="space-y-3">
-							<p className="text-xs font-bold text-slate-400">Count</p>
+							<ModelSelect
+									models={videoModels}
+									value={model}
+									onChange={setModel}
+								/>
+								<p className="text-xs font-bold text-slate-400">Count</p>
 							<div className="grid grid-cols-4 gap-2">
 								{[1, 2, 3, 4].map((v) => (
 									<button

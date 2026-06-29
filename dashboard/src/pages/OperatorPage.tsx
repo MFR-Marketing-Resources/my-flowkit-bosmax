@@ -14,6 +14,7 @@ import {
 } from "../api/workspacePackages";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import F2VModule from "../components/workspace/F2VModule";
+import type { VideoModel } from "../components/workspace/ModelSelect";
 import I2VModule from "../components/workspace/I2VModule";
 import IMGModule from "../components/workspace/IMGModule";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
@@ -274,6 +275,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		};
 	}, []);
 
+	const [videoModels, setVideoModels] = useState<VideoModel[]>([]);
+	useEffect(() => {
+		fetchAPI<{ models: VideoModel[]; default: string }>("/api/flow/video-models")
+			.then((r) => setVideoModels(r.models || []))
+			.catch(() => {});
+	}, []);
+
 	useEffect(() => {
 		if (!isPortalMode) {
 			setModeRequests([]);
@@ -463,6 +471,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					prompt: data.prompt,
 					image_media_ids: refs,
 					aspect,
+					model: data.model,
+					duration_s: videoModels.find((m) => m.ui_label === data.model)
+						?.default_duration_s,
 				}),
 			});
 
@@ -728,6 +739,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						isExecuting={isExecuting}
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
+						videoModels={videoModels}
 					/>
 				);
 			case "T2V":
@@ -737,6 +749,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						isExecuting={isExecuting}
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
+						videoModels={videoModels}
 					/>
 				);
 			case "I2V":
@@ -747,6 +760,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
 						onWorkspacePackageUpdated={setWorkspacePackage}
+						videoModels={videoModels}
 					/>
 				);
 			case "IMG":
