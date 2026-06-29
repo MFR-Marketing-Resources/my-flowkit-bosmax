@@ -36,6 +36,15 @@
       ],
       "js": ["content.js", "selector-registry.js", "gfv2-readiness.js", "content-flow-dom.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://labs.google/fx/tools/flow*",
+        "https://labs.google/fx/*/tools/flow*"
+      ],
+      "js": ["injected.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ],
   "web_accessible_resources": [

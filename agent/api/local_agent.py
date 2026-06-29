@@ -408,6 +408,27 @@ async def get_reload_extension():
         return {"ok": False, "error": f"Extension reload failed: {exc}"}
 
 
+_CAPTURED_VIDEO_PAYLOAD: dict = {"marker": None, "list": []}
+
+
+@router.post("/capture-video-payload")
+async def post_capture_video_payload(body: dict):
+    """Debug: receive POST request bodies captured from the Flow UI (find the video one)."""
+    if body.get("marker"):
+        _CAPTURED_VIDEO_PAYLOAD["marker"] = body
+        return {"ok": True}
+    lst = _CAPTURED_VIDEO_PAYLOAD["list"]
+    lst.append(body)
+    del lst[:-150]  # keep last 150 (a full flow from scratch generates many POSTs)
+    return {"ok": True}
+
+
+@router.get("/capture-video-payload")
+async def get_capture_video_payload():
+    """Debug: read captured POST bodies + the load marker."""
+    return {"marker": _CAPTURED_VIDEO_PAYLOAD.get("marker"), "captures": _CAPTURED_VIDEO_PAYLOAD["list"]}
+
+
 @router.get("/diagnostic-inputs")
 async def get_diagnostic_inputs():
     from agent.services.flow_client import get_flow_client

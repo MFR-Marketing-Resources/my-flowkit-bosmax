@@ -1,5 +1,28 @@
 # CURRENT_STATE
 
+## ⚡ 2026-06-29 — ARCHITECTURE PIVOT (supersedes the DOM-automation plan below)
+**Google Flow's UI is now Omni/V2 (a conversational "Agent" box). The old Video/Frames TAB UI is
+GONE — so the DOM-clicking automation, the Playwright-harness/CDP-upload phases, and the
+`content-flow-dom.js` tab SOP are RETIRED, not broken. Do not fix or resurrect them.**
+
+New reality = **API-first**: extension is transport only (auth + reCAPTCHA + relay + harvest),
+the backend is the brain, the UI is thin buttons.
+
+- **THE ONE DOOR:** `POST /api/flow/generate {mode: IMG|T2V|I2V|F2V}` → job; poll
+  `GET /api/flow/generate-job/{id}`. Full reference: **`docs/UNIFIED_GENERATE_PIPELINE.md`** (read it).
+- **PROVEN end-to-end:** real 2.0 MB mp4 (`e7871bde`) generated from a user's uploaded image
+  (I2V) and saved to `output/retrieved/`. Engine + dashboard wiring build-validated.
+- **Operating principles (locked):** don't fix what isn't broken · don't reinvent the wheel ·
+  surgical patches only (no full rewrite without architecture-change approval) · verify-before-claim
+  (no success without the saved file) · one entry point (`/generate`) · ask before credits.
+- **TODO:** live-verify each mode once from the button (IMG cheap; T2V/I2V/F2V ~10 credits each —
+  ask the owner first); then documentation handoff to Codex/sibling.
+
+Everything below is the historical architecture-reset record. Where it conflicts with this pivot,
+**this pivot wins.**
+
+---
+
 ## Current Repo Head
 - Live `main` head must be verified from Git at runtime using:
   - `git rev-parse HEAD`

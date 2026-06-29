@@ -126,6 +126,102 @@ function respondOnce(reply, payload) {
 // room to surface its own normalized error before respondAsync gives up.
 const DEFAULT_RESPOND_ASYNC_TIMEOUT_MS = 4500;
 
+// ─── Live video-request capture (debug) ─────────────────────
+// Capture the EXACT body Google Flow's own UI sends to the video generate endpoints
+// so we can match our API request to the CURRENT payload (model key + shape).
+// Observational webRequest only (no blocking). Posts the body to the local agent.
+function _postCapture(payload) {
+	try {
+		fetch("http://127.0.0.1:8100/api/local-agent/capture-video-payload", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		}).catch(() => {});
+	} catch (_) {}
+}
+// Load marker — proves THIS build's hook is live after an extension reload.
+_postCapture({ marker: "hook-loaded", ts: Date.now() });
+try {
+	chrome.webRequest.onBeforeRequest.addListener(
+		(details) => {
+			try {
+				if (details.method !== "POST") return; // generate calls are POST
+				const raw = details.requestBody && details.requestBody.raw;
+				if (!raw || !raw.length) return;
+				const chunks = [];
+				let total = 0;
+				for (const part of raw) {
+					if (part.bytes) { const u = new Uint8Array(part.bytes); chunks.push(u); total += u.length; }
+				}
+				const merged = new Uint8Array(total);
+				let off = 0;
+				for (const c of chunks) { merged.set(c, off); off += c.length; }
+				const body = new TextDecoder("utf-8").decode(merged);
+				const _url = details.url, _method = details.method;
+				if (details.tabId >= 0 && chrome.scripting) {
+					chrome.scripting.executeScript({
+						target: { tabId: details.tabId },
+						func: () => document.documentElement.dataset.flowkitActions || "",
+					}).then((res) => {
+						_postCapture({ url: _url, method: _method, body, grecaptchaActions: (res && res[0] && res[0].result) || "", ts: Date.now() });
+					}).catch(() => _postCapture({ url: _url, method: _method, body, ts: Date.now() }));
+				} else {
+					_postCapture({ url: _url, method: _method, body, ts: Date.now() });
+				}
+			} catch (_) {}
+		},
+		{ urls: ["https://aisandbox-pa.googleapis.com/*", "https://labs.google/fx/api/*"] },
+		["requestBody"],
+	);
+} catch (_) {}
+
+// Scan the Flow tab's DOM for finished video URLs (storage.googleapis.com/ai-sandbox-videofx/video/...).
+// Reads <video>/<source> src plus any video URL embedded in the page HTML.
+async function handleHarvestVideoUrls() {
+	const tabs = await chrome.tabs.query({
+		url: ["https://labs.google/fx/tools/flow*", "https://labs.google/fx/*/tools/flow*"],
+	});
+	if (!tabs.length) return { ok: false, urls: [], error: "NO_FLOW_TAB" };
+	try {
+		const res = await chrome.scripting.executeScript({
+			target: { tabId: tabs[0].id },
+			func: () => {
+				const out = new Set();
+				const videoIds = new Set();
+				const imageIds = new Set();
+				const grab = (s) => {
+					const m = s && s.match(/[?&]name=([0-9a-f-]{36})/);
+					return m ? m[1] : null;
+				};
+				document.querySelectorAll("video, source").forEach((v) => {
+					const s = v.src || v.currentSrc || "";
+					if (s.indexOf("ai-sandbox-videofx") !== -1) out.add(s);
+					const id = grab(s);
+					if (id) videoIds.add(id);
+				});
+				document.querySelectorAll("img").forEach((im) => {
+					const id = grab(im.src || im.currentSrc || "");
+					if (id) imageIds.add(id);
+				});
+				const pm = location.href.match(/project\/([0-9a-f-]{36})/);
+				return {
+					urls: Array.from(out),
+					videoIds: Array.from(videoIds),
+					imageIds: Array.from(imageIds),
+					mediaIds: Array.from(videoIds), // back-compat
+					projectId: pm ? pm[1] : null,
+					videoCount: document.querySelectorAll("video").length,
+					imgCount: document.querySelectorAll("img").length,
+				};
+			},
+		});
+		const out = (res && res[0] && res[0].result) || {};
+		return { ok: true, urls: out.urls || [], diag: out };
+	} catch (e) {
+		return { ok: false, urls: [], error: String((e && e.message) || e) };
+	}
+}
+
 function normalizeChromeMessageError(rawError) {
 	const message = String(rawError?.message || rawError || "").trim();
 	if (!message) {
@@ -4210,6 +4306,11 @@ function connectToAgent() {
 					handleReloadFlowTab(),
 				);
 				replyToAgent(msg, result);
+			} else if (msg.method === "HARVEST_VIDEO_URLS") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleHarvestVideoUrls(),
+				);
+				replyToAgent(msg, result);
 			} else if (msg.method === "OPEN_TARGET_FLOW_PROJECT") {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleOpenTargetFlowProject(msg.params?.flow_project_url),
@@ -4656,6 +4757,10 @@ async function handleApiRequest(msg) {
 			finalBody = JSON.parse(JSON.stringify(finalBody)); // deep clone
 			if (finalBody.clientContext?.recaptchaContext) {
 				finalBody.clientContext.recaptchaContext.token = captchaToken;
+			}
+			// flowCreationAgent streamChat carries the token under agentClientContext.
+			if (finalBody.agentClientContext?.recaptchaContext) {
+				finalBody.agentClientContext.recaptchaContext.token = captchaToken;
 			}
 			if (finalBody.requests && Array.isArray(finalBody.requests)) {
 				for (const req of finalBody.requests) {

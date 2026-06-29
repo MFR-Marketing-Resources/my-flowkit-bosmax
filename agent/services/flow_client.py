@@ -20,6 +20,11 @@ from agent.services.headers import random_headers
 logger = logging.getLogger(__name__)
 
 
+# Raw media URLs captured from TRPC intercepts (any media, not just DB-matched scenes).
+# Keyed by media_id → {"url", "type"}. Used to retrieve agent-generated video URLs.
+_CAPTURED_MEDIA_URLS: dict = {}
+
+
 class FlowClient:
     """Sends commands to Chrome extension via WebSocket."""
 
@@ -224,6 +229,10 @@ class FlowClient:
                 continue
             if media_type not in ("image", "video"):
                 continue
+
+            # Stash ALL captured URLs (even ones with no matching scene) so agent-
+            # generated videos can be retrieved by media_id.
+            _CAPTURED_MEDIA_URLS[media_id] = {"url": url, "type": media_type}
 
             # Try matching against scenes (check both orientations)
             scenes = await crud.list_scenes_by_media_id(media_id)
@@ -719,6 +728,66 @@ class FlowClient:
             "method": "GET",
             "headers": random_headers(),
         }, timeout=15)
+
+    # ─── flowCreationAgent (current Omni/V2 video generation) ─────
+
+    async def create_agent_session(self, project_id: str) -> dict:
+        """Create a flowCreationAgent session (current Omni/V2 video path)."""
+        url = self._build_url("create_agent_session")
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": {"projectId": f"projects/{project_id}"},
+        }, timeout=30)
+
+    async def agent_stream_chat(self, session_id: str, project_id: str,
+                                turn_number: int, text: str,
+                                media_ids: Optional[list[str]] = None,
+                                permission_action: Optional[str] = None) -> dict:
+        """Send one conversational turn to the flowCreationAgent (video generation).
+
+        Turn 1 carries the prompt + mediaReferences. Later turns steer the agent
+        ("i want 1 video only", "veo 3.1 - lite only") or approve/reject via
+        permission_action. Returns the SSE stream as text.
+        """
+        url = self._build_url("agent_stream_chat")
+        body = {
+            "agentSessionId": session_id,
+            "agentClientContext": {
+                "projectId": f"projects/{project_id}",
+                "clientSessionId": f";{int(time.time() * 1000)}",
+                "recaptchaContext": {
+                    "token": "",  # extension injects the solved token
+                    "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB",
+                },
+                "turnNumber": turn_number,
+            },
+            "userMessage": {"userPrompt": {"parts": [{"text": text}]}},
+        }
+        if media_ids:
+            body["userMessage"]["mediaReferences"] = [{"mediaId": m} for m in media_ids]
+        if permission_action:
+            body["permissionAction"] = permission_action
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": body,
+            "captchaAction": "CHAT_GENERATION",  # captured from live UI (not VIDEO_GENERATION)
+        }, timeout=120)
+
+    async def harvest_video_urls(self) -> dict:
+        """Ask the extension to scan the Flow tab DOM for finished video URLs."""
+        return await self._send("HARVEST_VIDEO_URLS", {}, timeout=20)
+
+    async def open_target_flow_project(self, flow_project_url: str) -> dict:
+        """Navigate the controlled Flow tab to a specific project URL."""
+        return await self._send(
+            "OPEN_TARGET_FLOW_PROJECT",
+            {"flow_project_url": flow_project_url},
+            timeout=25,
+        )
 
     async def get_status(self, probe_timeout: float = 5) -> dict:
         """Query live extension runtime state over the WebSocket bridge."""

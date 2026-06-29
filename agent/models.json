@@ -16,16 +16,16 @@
     },
     "PAYGATE_TIER_ONE": {
       "frame_2_video": {
-        "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_i2v_s_fast",
-        "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_i2v_s_fast_portrait"
+        "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_lite",
+        "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_lite_portrait"
       },
       "start_end_frame_2_video": {
-        "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_i2v_s_fast_fl",
-        "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_i2v_s_fast_portrait_fl"
+        "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_lite_fl",
+        "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_lite_portrait_fl"
       },
       "reference_frame_2_video": {
-        "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_r2v_fast",
-        "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_r2v_fast_portrait"
+        "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_r2v_lite",
+        "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_r2v_lite_portrait"
       }
     }
   },

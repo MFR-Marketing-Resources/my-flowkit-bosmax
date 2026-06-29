@@ -36,55 +36,11 @@ import type {
 
 type OperatorNoticeTone = "idle" | "info" | "success" | "error";
 
-interface OperatorTelemetryResponse {
-	telemetry: {
-		request_id: string;
-		status: string;
-		google_flow_stage: string | null;
-		extension_stage: string | null;
-		worker_stage: string | null;
-		error_message: string | null;
-	};
-	stages: Array<{
-		id: string;
-		stage: string;
-		status: string;
-		message: string | null;
-		source: string;
-		timestamp: string;
-	}>;
-}
-
 interface OperatorNotice {
 	tone: OperatorNoticeTone;
 	title: string;
 	detail: string;
 	requestId: string | null;
-}
-
-const ACTIVE_TELEMETRY_STATUSES = new Set([
-	"QUEUED",
-	"PROCESSING",
-	"WAITING_FLOW",
-	"FLOW_RUNNING",
-]);
-
-function getNoticeTone(status: string | null | undefined): OperatorNoticeTone {
-	if (!status) return "info";
-	if (status === "COMPLETED") return "success";
-	if (status === "FAILED") return "error";
-	return "info";
-}
-
-function getLatestStageLabel(payload: OperatorTelemetryResponse | null) {
-	if (!payload) return "WAITING_FOR_TELEMETRY";
-	return (
-		payload.telemetry.google_flow_stage ||
-		payload.telemetry.extension_stage ||
-		payload.telemetry.worker_stage ||
-		payload.stages.at(-1)?.stage ||
-		"WAITING_FOR_TELEMETRY"
-	);
 }
 
 function humanizeWorkspaceMode(mode: WorkspaceMode) {
@@ -431,126 +387,101 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			requestId,
 		});
 
-		const pollTelemetry = async (targetRequestId: string) => {
+		const pollJob = async (jobId: string) => {
 			try {
-				const response = await fetch(
-					`/api/telemetry/requests/${targetRequestId}`,
-				);
-				if (response.status === 404) {
-					pollTimerRef.current = window.setTimeout(() => {
-						void pollTelemetry(targetRequestId);
-					}, 1200);
+				const response = await fetch(`/api/flow/generate-job/${jobId}`);
+				if (!response.ok) {
+					throw new Error(`Job HTTP ${response.status}`);
+				}
+				const job = await response.json();
+				const status = job.status as string;
+
+				if (status === "DONE") {
+					const mediaId = job.media_id ?? job.video_media_id ?? "";
+					setNotice({
+						tone: "info",
+						title: `${data.mode} done — saved`,
+						detail: `Saved ${job.size_mb ?? "?"}MB → ${job.local_path} (media ${mediaId})`,
+						requestId,
+					});
+					setIsExecuting(false);
+					executionInFlightRef.current = false;
 					return;
 				}
-
-				if (!response.ok) {
-					throw new Error(`Telemetry HTTP ${response.status}`);
+				if (status === "FAILED") {
+					setNotice({
+						tone: "error",
+						title: `${data.mode} failed`,
+						detail: job.error || "Generation failed.",
+						requestId,
+					});
+					setIsExecuting(false);
+					executionInFlightRef.current = false;
+					return;
 				}
-
-				const payload = (await response.json()) as OperatorTelemetryResponse;
-				const stageLabel = getLatestStageLabel(payload);
-				const status = payload.telemetry.status;
-				const errorMessage =
-					payload.telemetry.error_message ||
-					payload.stages.at(-1)?.message ||
-					null;
 
 				setNotice({
-					tone: getNoticeTone(status),
-					title:
-						status === "COMPLETED"
-							? "Generation started"
-							: status === "FAILED"
-								? "Generation failed"
-								: "Flow job running",
-					detail: errorMessage
-						? `${stageLabel}: ${errorMessage}`
-						: `Latest stage: ${stageLabel}`,
-					requestId: targetRequestId,
+					tone: "info",
+					title: `${data.mode} running`,
+					detail: `Stage: ${job.stage ?? status}`,
+					requestId,
 				});
-
-				if (status === "FAILED") {
-					setIsExecuting(false);
-					executionInFlightRef.current = false;
-					return;
-				}
-
-				if (status === "COMPLETED" || !ACTIVE_TELEMETRY_STATUSES.has(status)) {
-					setIsExecuting(false);
-					executionInFlightRef.current = false;
-					return;
-				}
-
 				pollTimerRef.current = window.setTimeout(() => {
-					void pollTelemetry(targetRequestId);
-				}, 1500);
+					void pollJob(jobId);
+				}, 3000);
 			} catch (error: unknown) {
 				const message =
 					error instanceof Error
 						? error.message
-						: "Failed to read live Flow telemetry.";
+						: "Failed to read job status.";
 				setNotice({
 					tone: "error",
-					title: "Telemetry unavailable",
+					title: "Job status unavailable",
 					detail: message,
-					requestId: targetRequestId,
+					requestId,
 				});
 				setIsExecuting(false);
 				executionInFlightRef.current = false;
 			}
 		};
 
+		const refs = [
+			data.refs?.subjectAsset?.mediaId,
+			data.refs?.sceneAsset?.mediaId,
+			data.refs?.styleAsset?.mediaId,
+		].filter(Boolean) as string[];
+		const aspect = data.aspectRatio === "16:9" ? "16:9" : "9:16";
+
 		try {
-			const response = await fetch("/api/flow/execute-flow-job", {
+			// Unified one-door pipeline: agent → render → save (replaces the dead
+			// execute-flow-job DOM automation against the retired Video/Frames UI).
+			const response = await fetch("/api/flow/generate", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
-					...data,
-					request_id: requestId,
-					product_id: workspacePackage?.product_id ?? data.product_id ?? null,
-					prompt_package_snapshot_id:
-						workspacePackage?.prompt_package_snapshot_id ??
-						data.prompt_package_snapshot_id ??
-						null,
-					workspace_execution_package_id:
-						workspacePackage?.workspace_execution_package_id ??
-						data.workspace_execution_package_id ??
-						null,
-					prompt_fingerprint:
-						workspacePackage?.prompt_fingerprint ??
-						data.prompt_fingerprint ??
-						null,
-					asset_fingerprints:
-						workspacePackage?.request_lineage_payload?.asset_fingerprints ??
-						data.asset_fingerprints ??
-						[],
-					request_lineage_payload:
-						workspacePackage?.request_lineage_payload ??
-						data.request_lineage_payload ??
-						{},
+					mode: data.mode,
+					prompt: data.prompt,
+					image_media_ids: refs,
+					aspect,
 				}),
 			});
 
 			if (!response.ok) {
-				const err = await response.json();
-				throw new Error(err.detail || "Execution failed");
+				const err = await response.json().catch(() => ({}));
+				throw new Error(err.detail || `HTTP ${response.status}`);
 			}
 
 			const result = await response.json();
-			console.log(
-				"[BOSMAX_DEBUG] EXECUTE_FLOW_JOB_RESPONSE",
-				"http_status=" + response.status,
-				"request_id=" + requestId,
-				JSON.stringify(result, null, 2),
-			);
+			if (!result.job_id) {
+				throw new Error("no job_id returned");
+			}
 			setNotice({
 				tone: "info",
-				title: "Flow job accepted",
-				detail:
-					"Automation bridge accepted the request. Tracking stage updates now.",
+				title: `${data.mode} accepted`,
+				detail: `Job ${result.job_id} started — agent → render → save.`,
 				requestId,
 			});
-			void pollTelemetry(requestId);
+			void pollJob(result.job_id);
 		} catch (error: unknown) {
 			const message =
 				error instanceof Error ? error.message : "Execution failed.";
@@ -561,7 +492,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				detail: message,
 				requestId,
 			});
-			alert(`Execution Error: ${message}`);
 			setIsExecuting(false);
 			executionInFlightRef.current = false;
 		}

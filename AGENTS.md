@@ -42,6 +42,16 @@ This repository is under an architecture reset. All agents must inherit the same
   - `node scripts/test-f2v-asset-picker-modal.js`
 - Do not rewrite proven mode/config logic unless the harness proves a regression there.
 
+### 2026-06-29 API-first pivot (read `docs/UNIFIED_GENERATE_PIPELINE.md`)
+- The live Flow UI is now Omni/V2 (a conversational "Agent" box). The Video/Frames TAB automation
+  is RETIRED, not broken — do not fix or resurrect `f2v-flow-queue-runner.js`, the tab SOP in
+  `content-flow-dom.js`, or `execute-flow-job` as a generation path.
+- PROVEN + FROZEN: the API-first one door `POST /api/flow/generate {mode: IMG|T2V|I2V|F2V}` →
+  job (`agent/services/make_video.py`), the `agent_video.py` negotiation brain (requires
+  `num_videos>=1`, Veo 3.1 Lite, approve once), and `get_media`→`encodedVideo`→mp4 retrieval.
+  Real 2.0 MB mp4 (`e7871bde`) saved from a user upload (I2V). Surgical patches only.
+- Verify-before-claim: never report a generation done without the saved file on disk.
+
 ## Unstable Or Rebuild Paths
 - Runtime and build handshake.
 - Telemetry schema and build-proof enforcement.

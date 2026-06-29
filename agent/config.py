@@ -71,6 +71,9 @@ ENDPOINTS = {
     "check_video_status": "/v1/video:batchCheckAsyncVideoGenerationStatus",
     "get_credits": "/v1/credits",
     "get_media": "/v1/media/{media_id}",
+    # flowCreationAgent (current Omni/V2 video generation — conversational agent)
+    "create_agent_session": "/v1/flowCreationAgent/sessions",
+    "agent_stream_chat": "/v1/flowCreationAgent:streamChat?alt=sse",
 }
 
 # ─── Output Directories ─────────────────────────────────────

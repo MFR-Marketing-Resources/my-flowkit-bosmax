@@ -1,4 +1,11 @@
 /**
+ * ⚠️ DEPRECATED / RETIRED 2026-06-29 — DO NOT FIX OR EXTEND.
+ * This runner clicks the Video/Frames/9:16/1x/Veo TABS of the OLD Flow UI, which no longer
+ * exists (the live UI is Omni/V2's conversational "Agent" box). It is intentionally frozen,
+ * NOT broken. Video/F2V generation now goes through the API-first one door:
+ *   POST /api/flow/generate {mode}  (agent/services/make_video.py)
+ * See docs/UNIFIED_GENERATE_PIPELINE.md. Do not resurrect tab-clicking automation.
+ *
  * extension/f2v-flow-queue-runner.js
  *
  * Lightweight F2V runner inspired by flow-queue v0.4.0-beta.

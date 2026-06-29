@@ -428,6 +428,276 @@ async def generate_image_oneshot(body: GenerateImageOneshotRequest):
     return {"project_id": project_id, "images": images, "mode": "blend" if refs else "text"}
 
 
+def _deep_find(obj, *keys):
+    stack = [obj]
+    while stack:
+        o = stack.pop()
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k in keys and v:
+                    return v
+                stack.append(v)
+        elif isinstance(o, list):
+            stack.extend(o)
+    return None
+
+
+class AgentDebugRequest(BaseModel):
+    prompt: str = "Vertical 9:16 handheld. Slow push-in on the product, soft natural light, subtle motion."
+    image_prompt: str = "A premium product on a clean surface, soft studio light, vertical 9:16. No text, no labels."
+
+
+@router.post("/agent-debug-turn1")
+async def agent_debug_turn1(body: AgentDebugRequest):
+    """DEBUG: drive flowCreationAgent turn 1 and return raw responses to learn the SSE format."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    proj = await client.create_project("agent-debug")
+    project_id = _extract_project_id(proj)
+    if not project_id:
+        raise HTTPException(502, f"no project: {json.dumps(proj)[:200]}")
+    img = await _generate_image_with_recovery(
+        client, body.image_prompt, project_id, "IMAGE_ASPECT_RATIO_PORTRAIT", "PAYGATE_TIER_ONE", [])
+    media_id = _deep_find(img.get("data", img) if isinstance(img, dict) else {}, "name", "mediaId")
+    sess = await client.create_agent_session(project_id)
+    session_data = sess.get("data", sess) if isinstance(sess, dict) else sess
+    session_id = _deep_find(session_data, "agentSessionId", "sessionId") or _deep_find(session_data, "name")
+    chat_raw = None
+    if session_id:
+        chat = await client.agent_stream_chat(session_id, project_id, 1, body.prompt,
+                                              media_ids=[media_id] if media_id else None)
+        chat_raw = chat.get("data", chat) if isinstance(chat, dict) else chat
+    return {
+        "project_id": project_id,
+        "media_id": media_id,
+        "session_response": session_data,
+        "session_id": session_id,
+        "chat_response": chat_raw,
+    }
+
+
+class AgentNegotiateRequest(BaseModel):
+    prompt: str = "Vertical 9:16 handheld. Slow push-in on the product, soft natural light, subtle motion."
+    image_prompt: str = "A premium product on a clean surface, soft studio light, vertical 9:16. No text, no labels."
+    dry: bool = True
+
+
+@router.post("/agent-negotiate")
+async def agent_negotiate(body: AgentNegotiateRequest):
+    """Drive the full flowCreationAgent negotiation (AI start frame for now).
+
+    dry=True  → negotiate to the correct config WITHOUT approving (no credits).
+    dry=False → approve → the agent generates the video (~10 credits, Veo 3.1 Lite).
+    """
+    from agent.services import agent_video
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    proj = await client.create_project("agent-negotiate")
+    project_id = _extract_project_id(proj)
+    if not project_id:
+        raise HTTPException(502, "no project")
+    img = await _generate_image_with_recovery(
+        client, body.image_prompt, project_id, "IMAGE_ASPECT_RATIO_PORTRAIT", "PAYGATE_TIER_ONE", [])
+    media_id = _deep_find(img.get("data", img) if isinstance(img, dict) else {}, "name", "mediaId")
+    if not media_id:
+        raise HTTPException(502, "no start-frame media")
+    sess = await client.create_agent_session(project_id)
+    session_id = _deep_find(sess.get("data", sess) if isinstance(sess, dict) else sess, "agentSessionId")
+    if not session_id:
+        raise HTTPException(502, "no agent session")
+    result = await agent_video.negotiate_and_generate(
+        client, project_id, session_id, body.prompt, [media_id], approve=not body.dry)
+    result["project_id"] = project_id
+    result["media_id"] = media_id
+    return result
+
+
+@router.get("/captured-media")
+async def captured_media():
+    """Media URLs harvested from the Flow UI's TRPC responses (video retrieval)."""
+    from agent.services.flow_client import _CAPTURED_MEDIA_URLS
+    vids = {k: v for k, v in _CAPTURED_MEDIA_URLS.items() if v.get("type") == "video"}
+    return {"videos": vids, "video_count": len(vids), "all_count": len(_CAPTURED_MEDIA_URLS)}
+
+
+@router.get("/harvest-video")
+async def harvest_video():
+    """Scan the Flow tab DOM for the finished video URL and download it into the system."""
+    from agent.config import OUTPUT_DIR
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    res = await client.harvest_video_urls()
+    inner = res.get("result", res) if isinstance(res, dict) else {}
+    def _find_gcs_url(obj):
+        stack = [obj]
+        while stack:
+            o = stack.pop()
+            if isinstance(o, str) and ("ai-sandbox-videofx" in o or
+                                       ("storage.googleapis.com" in o and "/video/" in o)):
+                return o.replace("\\u0026", "&").replace("\\", "")
+            if isinstance(o, dict):
+                stack.extend(o.values())
+            elif isinstance(o, list):
+                stack.extend(o)
+        return None
+
+    data = inner.get("diag", inner) if isinstance(inner, dict) else {}
+    urls = (data.get("urls") if isinstance(data, dict) else None) or inner.get("urls") or []
+    media_ids = (data.get("mediaIds") if isinstance(data, dict) else None) or inner.get("mediaIds") or []
+    url = urls[0] if urls else None
+    mid = None
+    if not url and media_ids:
+        mid = media_ids[0]
+        media = await client.get_media(mid)
+        mdata = media.get("data", media) if isinstance(media, dict) else media
+        enc = _deep_find(mdata, "encodedVideo")
+        if enc:
+            import base64
+            vbytes = base64.b64decode(enc)
+            outdir = OUTPUT_DIR / "retrieved"
+            outdir.mkdir(parents=True, exist_ok=True)
+            vpath = outdir / f"{mid}.mp4"
+            vpath.write_bytes(vbytes)
+            return {"ok": True, "media_id": mid, "via": "get_media.encodedVideo",
+                    "local_path": str(vpath), "size_mb": round(len(vbytes) / 1024 / 1024, 2)}
+        url = _find_gcs_url(mdata)
+    if not url:
+        return {"ok": False, "urls": [], "media_ids": media_ids, "diag": inner,
+                "note": "no video URL resolved (try get_media or play the video)"}
+    if not mid:
+        m = re.search(r"/video/([0-9a-f-]{36})", url)
+        mid = m.group(1) if m else "video"
+    outdir = OUTPUT_DIR / "retrieved"
+    outdir.mkdir(parents=True, exist_ok=True)
+    path = outdir / f"{mid}.mp4"
+    timeout = aiohttp.ClientTimeout(total=180)
+    async with aiohttp.ClientSession(timeout=timeout) as s:
+        async with s.get(url) as r:
+            if r.status != 200:
+                raise HTTPException(502, f"download failed HTTP {r.status}")
+            data = await r.read()
+    path.write_bytes(data)
+    return {"ok": True, "media_id": mid, "url": url,
+            "local_path": str(path), "size_mb": round(len(data) / 1024 / 1024, 2),
+            "found": len(urls)}
+
+
+class MakeVideoRequest(BaseModel):
+    prompt: str = "Vertical 9:16 handheld. Slow push-in on the product, soft natural light, subtle motion, premium feel."
+    image_prompt: str = "A premium product on a clean surface, soft studio light, vertical 9:16. No text, no labels, no watermark."
+
+
+@router.post("/make-video")
+async def make_video(body: MakeVideoRequest):
+    """Full auto pipeline (negotiate → approve → render → harvest → download). → job_id."""
+    from agent.services import make_video as _mv
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    cred = await client.get_credits()
+    tier = (cred.get("data", cred) or {}).get("userPaygateTier", "") if isinstance(cred, dict) else ""
+    if tier not in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
+        raise HTTPException(500, f"Account tier '{tier}' cannot generate video — needs Pro/Ultra")
+    return await _mv.start(body.prompt, body.image_prompt)
+
+
+@router.get("/video-job/{job_id}")
+async def video_job(job_id: str):
+    from agent.services import make_video as _mv
+    j = _mv.get_job(job_id)
+    if not j:
+        raise HTTPException(404, "job not found")
+    return j
+
+
+class MakeVideoExistingRequest(BaseModel):
+    project_id: str
+    image_media_id: str
+    prompt: str = "Cinematic vertical 9:16 product video. Slow push-in on the product, soft natural light, gentle motion, premium feel. Make 1 video."
+
+
+@router.post("/make-video-existing")
+async def make_video_existing(body: MakeVideoExistingRequest):
+    """Generate a video in an EXISTING project from an EXISTING image, then save it.
+    Poll GET /api/flow/video-job/{id}."""
+    from agent.services import make_video as _mv
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    return await _mv.start_on_existing(body.project_id, body.image_media_id, body.prompt)
+
+
+class GenerateRequest(BaseModel):
+    mode: str                                  # IMG | T2V | I2V | F2V
+    prompt: str
+    project_id: Optional[str] = None
+    image_media_ids: Optional[list] = None     # existing/uploaded refs (I2V/F2V)
+    image_prompt: Optional[str] = None         # auto start-frame if no refs (I2V/F2V)
+    aspect: str = "9:16"
+
+
+@router.post("/generate")
+async def generate(body: GenerateRequest):
+    """THE one door for all four modes. mode = IMG | T2V | I2V | F2V → job_id.
+    Poll GET /api/flow/generate-job/{id}."""
+    from agent.services import make_video as _mv
+    mode = (body.mode or "").upper()
+    if mode not in ("IMG", "T2V", "I2V", "F2V"):
+        raise HTTPException(422, f"unknown mode '{body.mode}' (use IMG/T2V/I2V/F2V)")
+    if not body.prompt.strip():
+        raise HTTPException(422, "prompt is required")
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    tier = "PAYGATE_TIER_ONE"
+    if mode in ("T2V", "I2V", "F2V"):  # video modes need Pro/Ultra
+        cred = await client.get_credits()
+        tier = (cred.get("data", cred) or {}).get("userPaygateTier", "") if isinstance(cred, dict) else ""
+        if tier not in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
+            raise HTTPException(500, f"Account tier '{tier}' cannot generate video — needs Pro/Ultra")
+    return await _mv.start_generate(
+        mode, body.prompt, project_id=body.project_id,
+        image_media_ids=body.image_media_ids, image_prompt=body.image_prompt,
+        aspect=body.aspect, tier=tier)
+
+
+@router.get("/generate-job/{job_id}")
+async def generate_job(job_id: str):
+    from agent.services import make_video as _mv
+    j = _mv.get_job(job_id)
+    if not j:
+        raise HTTPException(404, "job not found")
+    return j
+
+
+class NegotiateJobRequest(BaseModel):
+    prompt: str = "Vertical 9:16 cinematic product video. Slow push-in on the product, soft light, subtle motion. Make 1 video."
+    image_prompt: str = "A premium product on a clean surface, soft studio light, vertical 9:16. No text, no labels, no watermark."
+    dry: bool = True
+
+
+@router.post("/negotiate-job")
+async def negotiate_job(body: NegotiateJobRequest):
+    """Async negotiation (captures full transcript). dry=True → 0 video credits."""
+    from agent.services import make_video as _mv
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    return await _mv.start_negotiate(body.prompt, body.image_prompt, body.dry)
+
+
+@router.get("/negotiate-job/{job_id}")
+async def negotiate_job_status(job_id: str):
+    from agent.services import make_video as _mv
+    j = _mv.get_job(job_id)
+    if not j:
+        raise HTTPException(404, "job not found")
+    return j
+
+
 @router.post("/create-project-raw")
 async def create_project_raw(body: CreateProjectRawRequest):
     """Debug helper: return raw Google Flow createProject response."""
