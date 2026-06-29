@@ -51,6 +51,28 @@ def test_video_models_shape():
     assert omni["default_cost"] == 30 and omni["default_duration_s"] == 10
 
 
+def _expect_422_mve(body, needle=None):
+    try:
+        _run(flow.make_video_existing(body))
+        assert False, "expected HTTPException 422"
+    except HTTPException as e:
+        assert e.status_code == 422, f"got {e.status_code}: {e.detail}"
+        if needle:
+            assert needle.lower() in str(e.detail).lower(), e.detail
+
+
+def test_make_video_existing_duration_without_model_422():
+    # Legacy lane must fail-closed the same way /generate does (patch I5).
+    _expect_422_mve(flow.MakeVideoExistingRequest(
+        project_id="p", image_media_id="m", prompt="x", duration_s=10), "10s")
+
+
+def test_make_video_existing_unknown_model_422():
+    _expect_422_mve(flow.MakeVideoExistingRequest(
+        project_id="p", image_media_id="m", prompt="x", model="Nano Banana 2"),
+        "unknown video model")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

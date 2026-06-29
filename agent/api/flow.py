@@ -626,6 +626,13 @@ async def make_video_existing(body: MakeVideoExistingRequest):
     """Generate a video in an EXISTING project from an EXISTING image, then save it.
     Poll GET /api/flow/video-job/{id}."""
     from agent.services import make_video as _mv
+    from agent.services import video_models as _vm
+    # Same fail-closed model+duration validation as /generate (patch I2a/I5), BEFORE the
+    # connectivity check so 422 stays deterministic on this legacy lane too.
+    try:
+        _vm.expected_cost(body.model or _vm.DEFAULT_MODEL, body.duration_s)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
