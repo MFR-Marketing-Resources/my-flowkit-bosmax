@@ -41,6 +41,12 @@ export default function T2VModule({
 		setIsManualOverride(false);
 	}, [workspacePackage]);
 
+	// Re-normalize once the SSOT registry arrives — a package may hydrate first, so an
+	// unknown/retired model would otherwise stay ghosted and 422 on execute (patch I3b).
+	useEffect(() => {
+		setModel((m) => normalizeModel(m, videoModels));
+	}, [videoModels]);
+
 	// --- Handlers ---
 	const handleExecute = () => {
 		onExecute({

@@ -68,6 +68,12 @@ export default function F2VModule({
 	const [startAsset, setStartAsset] = useState<UploadedAsset | null>(null);
 	const [endAsset, setEndAsset] = useState<UploadedAsset | null>(null);
 
+	// Re-normalize once the SSOT registry arrives — a package may hydrate first, so an
+	// unknown/retired model would otherwise stay ghosted and 422 on execute (patch I3b).
+	useEffect(() => {
+		setModel((m) => normalizeModel(m, videoModels));
+	}, [videoModels]);
+
 	useEffect(() => {
 		if (!workspacePackage || workspacePackage.mode !== "F2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
