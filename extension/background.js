@@ -151,26 +151,55 @@ try {
 				const chunks = [];
 				let total = 0;
 				for (const part of raw) {
-					if (part.bytes) { const u = new Uint8Array(part.bytes); chunks.push(u); total += u.length; }
+					if (part.bytes) {
+						const u = new Uint8Array(part.bytes);
+						chunks.push(u);
+						total += u.length;
+					}
 				}
 				const merged = new Uint8Array(total);
 				let off = 0;
-				for (const c of chunks) { merged.set(c, off); off += c.length; }
+				for (const c of chunks) {
+					merged.set(c, off);
+					off += c.length;
+				}
 				const body = new TextDecoder("utf-8").decode(merged);
-				const _url = details.url, _method = details.method;
+				const _url = details.url,
+					_method = details.method;
 				if (details.tabId >= 0 && chrome.scripting) {
-					chrome.scripting.executeScript({
-						target: { tabId: details.tabId },
-						func: () => document.documentElement.dataset.flowkitActions || "",
-					}).then((res) => {
-						_postCapture({ url: _url, method: _method, body, grecaptchaActions: (res && res[0] && res[0].result) || "", ts: Date.now() });
-					}).catch(() => _postCapture({ url: _url, method: _method, body, ts: Date.now() }));
+					chrome.scripting
+						.executeScript({
+							target: { tabId: details.tabId },
+							func: () => document.documentElement.dataset.flowkitActions || "",
+						})
+						.then((res) => {
+							_postCapture({
+								url: _url,
+								method: _method,
+								body,
+								grecaptchaActions: (res && res[0] && res[0].result) || "",
+								ts: Date.now(),
+							});
+						})
+						.catch(() =>
+							_postCapture({
+								url: _url,
+								method: _method,
+								body,
+								ts: Date.now(),
+							}),
+						);
 				} else {
 					_postCapture({ url: _url, method: _method, body, ts: Date.now() });
 				}
 			} catch (_) {}
 		},
-		{ urls: ["https://aisandbox-pa.googleapis.com/*", "https://labs.google/fx/api/*"] },
+		{
+			urls: [
+				"https://aisandbox-pa.googleapis.com/*",
+				"https://labs.google/fx/api/*",
+			],
+		},
 		["requestBody"],
 	);
 } catch (_) {}
@@ -181,13 +210,20 @@ async function handleHarvestVideoUrls(targetTabId) {
 	let tab;
 	if (targetTabId != null) {
 		// Patch A/G: read the EXACT bound editor tab — never silently fall back to tabs[0].
-		try { tab = await chrome.tabs.get(targetTabId); } catch (e) { tab = null; }
+		try {
+			tab = await chrome.tabs.get(targetTabId);
+		} catch (e) {
+			tab = null;
+		}
 		if (!tab || !/labs\.google\/fx\/.*tools\/flow/.test(tab.url || "")) {
 			return { ok: false, urls: [], error: "BOUND_TAB_GONE" };
 		}
 	} else {
 		const tabs = await chrome.tabs.query({
-			url: ["https://labs.google/fx/tools/flow*", "https://labs.google/fx/*/tools/flow*"],
+			url: [
+				"https://labs.google/fx/tools/flow*",
+				"https://labs.google/fx/*/tools/flow*",
+			],
 		});
 		if (!tabs.length) return { ok: false, urls: [], error: "NO_FLOW_TAB" };
 		// Prefer the active project-editor tab (reusing the existing editor-aware selector)
@@ -680,7 +716,8 @@ async function tryDirectFileInputFeed(debuggee, filePath) {
 			{ nodeId: rootNodeId, selector: "input[type=file], input[type='file']" },
 		);
 		const nodeIds = Array.isArray(found?.nodeIds) ? found.nodeIds : [];
-		if (nodeIds.length === 0) return { ok: false, error: "ERR_CDP_NO_FILE_INPUT" };
+		if (nodeIds.length === 0)
+			return { ok: false, error: "ERR_CDP_NO_FILE_INPUT" };
 		// Most-recently-attached input is usually the live upload target — try last first.
 		let lastErr = null;
 		for (let i = nodeIds.length - 1; i >= 0; i -= 1) {
@@ -694,7 +731,11 @@ async function tryDirectFileInputFeed(debuggee, filePath) {
 				lastErr = String(error?.message || error);
 			}
 		}
-		return { ok: false, error: "ERR_CDP_SET_FILE_INPUT_FAILED", detail: lastErr };
+		return {
+			ok: false,
+			error: "ERR_CDP_SET_FILE_INPUT_FAILED",
+			detail: lastErr,
+		};
 	} catch (error) {
 		return {
 			ok: false,
@@ -799,8 +840,7 @@ async function materializeAssetToDiskPath(assetRef, slotLabel) {
 		let remoteFileName = `${slot}.png`;
 		try {
 			const remoteUrl = new URL(ref);
-			remoteFileName =
-				remoteUrl.pathname.split("/").pop() || remoteFileName;
+			remoteFileName = remoteUrl.pathname.split("/").pop() || remoteFileName;
 		} catch (_) {}
 		try {
 			const resp = await fetch(
@@ -1028,14 +1068,23 @@ function gfv2ClassifyAssetSource(job) {
 		const base = v.split("?")[0].split(/[\\/]/).pop() || null;
 		return base ? base.slice(0, 80) : null;
 	};
-	if (!job) return { ok: false, error: "GFV2_ASSET_SOURCE_NOT_FOUND", reason: "no_job" };
+	if (!job)
+		return {
+			ok: false,
+			error: "GFV2_ASSET_SOURCE_NOT_FOUND",
+			reason: "no_job",
+		};
 
 	// ref_flowkit / image_ref are not wired into the actual CDP upload resolver yet.
 	// Reject them explicitly so the lane cannot report a deterministic source it will
 	// never hand to DOM.setFileInputFiles.
-	const refFlowkit = job.ref_flowkit || job.refFlowkit || job.image_ref || job.imageRef || null;
+	const refFlowkit =
+		job.ref_flowkit || job.refFlowkit || job.image_ref || job.imageRef || null;
 	if (refFlowkit) {
-		const v = typeof refFlowkit === "string" ? refFlowkit : refFlowkit.fileName || refFlowkit.downloadUrl || refFlowkit.mediaId;
+		const v =
+			typeof refFlowkit === "string"
+				? refFlowkit
+				: refFlowkit.fileName || refFlowkit.downloadUrl || refFlowkit.mediaId;
 		return {
 			ok: false,
 			error: "GFV2_ASSET_SOURCE_UNWIRED",
@@ -1049,35 +1098,84 @@ function gfv2ClassifyAssetSource(job) {
 		const localPath = a.localFilePath || a.local_file_path || null;
 		// 2. Backend-materialized controlled temp file (the canonical GFV2 path).
 		if (localPath && /flowkit-upload-staging/i.test(String(localPath))) {
-			return { ok: true, source_type: "materialized_temp_file", safe_name: safeName(localPath), materialized: true };
+			return {
+				ok: true,
+				source_type: "materialized_temp_file",
+				safe_name: safeName(localPath),
+				materialized: true,
+			};
 		}
 		// 3. Existing Google Flow media (id present) — prefer selecting the card.
 		const mediaId = a.mediaId || a.media_id || a.assetId || a.asset_id || null;
 		if (mediaId) {
-			return { ok: true, source_type: "existing_flow_media", safe_name: safeName(a.fileName || a.file_name) || String(mediaId).slice(0, 80), materialized: false };
+			return {
+				ok: true,
+				source_type: "existing_flow_media",
+				safe_name:
+					safeName(a.fileName || a.file_name) || String(mediaId).slice(0, 80),
+				materialized: false,
+			};
 		}
 		// 4. Workspace package Start asset (remote URL the backend materializes).
-		const url = a.downloadUrl || a.download_url || a.previewUrl || a.preview_url || null;
+		const url =
+			a.downloadUrl || a.download_url || a.previewUrl || a.preview_url || null;
 		if (url) {
-			const isWorkspace = Boolean(job.workspace_execution_package_id || job.prompt_package_snapshot_id);
-			return { ok: true, source_type: isWorkspace ? "workspace_package_start" : "start_asset", safe_name: safeName(a.fileName || a.file_name || url), materialized: false };
+			const isWorkspace = Boolean(
+				job.workspace_execution_package_id || job.prompt_package_snapshot_id,
+			);
+			return {
+				ok: true,
+				source_type: isWorkspace ? "workspace_package_start" : "start_asset",
+				safe_name: safeName(a.fileName || a.file_name || url),
+				materialized: false,
+			};
 		}
 		if (localPath) {
 			// An absolute local path that is NOT under the controlled staging dir is not
 			// trusted as a system asset (could be a Desktop pick) — fail closed.
-			return { ok: false, error: "GFV2_ASSET_SOURCE_NOT_FOUND", reason: "untrusted_local_path_not_in_staging" };
+			return {
+				ok: false,
+				error: "GFV2_ASSET_SOURCE_NOT_FOUND",
+				reason: "untrusted_local_path_not_in_staging",
+			};
 		}
 	} else if (typeof a === "string" && a) {
-		if (/^https?:/i.test(a)) return { ok: true, source_type: "start_asset", safe_name: safeName(a), materialized: false };
-		if (/flowkit-upload-staging/i.test(a)) return { ok: true, source_type: "materialized_temp_file", safe_name: safeName(a), materialized: true };
-		return { ok: false, error: "GFV2_ASSET_SOURCE_NOT_FOUND", reason: "untrusted_local_string" };
+		if (/^https?:/i.test(a))
+			return {
+				ok: true,
+				source_type: "start_asset",
+				safe_name: safeName(a),
+				materialized: false,
+			};
+		if (/flowkit-upload-staging/i.test(a))
+			return {
+				ok: true,
+				source_type: "materialized_temp_file",
+				safe_name: safeName(a),
+				materialized: true,
+			};
+		return {
+			ok: false,
+			error: "GFV2_ASSET_SOURCE_NOT_FOUND",
+			reason: "untrusted_local_string",
+		};
 	}
 
 	// 5. Product / existing-media id fallback.
 	const pid = job.product_id || job.productId || job.startImageMediaId || null;
-	if (pid) return { ok: true, source_type: "existing_flow_media", safe_name: String(pid).slice(0, 80), materialized: false };
+	if (pid)
+		return {
+			ok: true,
+			source_type: "existing_flow_media",
+			safe_name: String(pid).slice(0, 80),
+			materialized: false,
+		};
 
-	return { ok: false, error: "GFV2_ASSET_SOURCE_NOT_FOUND", reason: "no_system_asset_in_job" };
+	return {
+		ok: false,
+		error: "GFV2_ASSET_SOURCE_NOT_FOUND",
+		reason: "no_system_asset_in_job",
+	};
 }
 
 function resolveF2VDomFallbackAssetSource(job) {
@@ -1117,9 +1215,7 @@ function resolveF2VDomFallbackAssetSource(job) {
 // only and uploads the package Start asset via the existing CDP file chooser.
 function isF2VPackageUploadOnly(job) {
 	if (!job) return false;
-	return (
-		job.lane === "F2V_PACKAGE_UPLOAD_ONLY" || job.upload_only === true
-	);
+	return job.lane === "F2V_PACKAGE_UPLOAD_ONLY" || job.upload_only === true;
 }
 
 // Validate the BOSMAX workspace execution package is the source of truth before
@@ -1129,7 +1225,11 @@ function validateF2VPackageUploadOnlyJob(job) {
 		return { ok: false, error: "ERR_PACKAGE_REQUIRED", detail: "job missing" };
 	}
 	if (!job.request_id) {
-		return { ok: false, error: "ERR_PACKAGE_REQUIRED", detail: "request_id missing" };
+		return {
+			ok: false,
+			error: "ERR_PACKAGE_REQUIRED",
+			detail: "request_id missing",
+		};
 	}
 	if (!job.workspace_execution_package_id) {
 		return {
@@ -1138,23 +1238,44 @@ function validateF2VPackageUploadOnlyJob(job) {
 			detail: "workspace_execution_package_id missing",
 		};
 	}
-	if (String(job.mode || "").trim().toUpperCase() !== "F2V") {
-		return { ok: false, error: "ERR_PACKAGE_REQUIRED", detail: "mode must be F2V" };
+	if (
+		String(job.mode || "")
+			.trim()
+			.toUpperCase() !== "F2V"
+	) {
+		return {
+			ok: false,
+			error: "ERR_PACKAGE_REQUIRED",
+			detail: "mode must be F2V",
+		};
 	}
 	if (!job.prompt || String(job.prompt).trim().length === 0) {
-		return { ok: false, error: "ERR_PACKAGE_REQUIRED", detail: "prompt missing" };
+		return {
+			ok: false,
+			error: "ERR_PACKAGE_REQUIRED",
+			detail: "prompt missing",
+		};
 	}
 	const startAsset = job.startAsset;
 	if (!startAsset) {
-		return { ok: false, error: "ERR_PACKAGE_REQUIRED", detail: "start asset missing" };
+		return {
+			ok: false,
+			error: "ERR_PACKAGE_REQUIRED",
+			detail: "start asset missing",
+		};
 	}
 	const localFilePath =
-		(startAsset && typeof startAsset === "object" &&
+		(startAsset &&
+			typeof startAsset === "object" &&
 			(startAsset.localFilePath || startAsset.local_file_path)) ||
 		job.local_file_path ||
 		job.localFilePath ||
 		null;
-	if (!localFilePath || typeof localFilePath !== "string" || !localFilePath.trim()) {
+	if (
+		!localFilePath ||
+		typeof localFilePath !== "string" ||
+		!localFilePath.trim()
+	) {
 		return {
 			ok: false,
 			error: "ERR_PACKAGE_START_LOCAL_FILE_REQUIRED",
@@ -1395,7 +1516,9 @@ async function resolveLiveFlowEditorTab(preferredUrl = null, mode = null) {
 	);
 	const ranked = buildUniqueFlowProbeCandidates(
 		editorTabs.length ? editorTabs : tabs,
-		selected && isProjectEditorUrl(selected?.url) && !isRootFlowUrl(selected?.url)
+		selected &&
+			isProjectEditorUrl(selected?.url) &&
+			!isRootFlowUrl(selected?.url)
 			? selected
 			: null,
 	);
@@ -1458,7 +1581,8 @@ function findFocusedActiveFlowEditorTab(tabs, focusedActiveTab = null) {
 	const focusedTabId = Number(focusedActiveTab?.id || 0);
 	if (focusedTabId > 0) {
 		const focusedMatch =
-			tabs.find((tab) => Number(tab?.id || 0) === focusedTabId) || focusedActiveTab;
+			tabs.find((tab) => Number(tab?.id || 0) === focusedTabId) ||
+			focusedActiveTab;
 		if (
 			focusedMatch?.id &&
 			focusedMatch?.active &&
@@ -1471,9 +1595,7 @@ function findFocusedActiveFlowEditorTab(tabs, focusedActiveTab = null) {
 	return (
 		tabs.find(
 			(tab) =>
-				tab?.active &&
-				isProjectEditorUrl(tab?.url) &&
-				!isRootFlowUrl(tab?.url),
+				tab?.active && isProjectEditorUrl(tab?.url) && !isRootFlowUrl(tab?.url),
 		) || null
 	);
 }
@@ -1487,7 +1609,10 @@ function buildFlowTabSelectionBinding(
 	const list = Array.isArray(tabs) ? tabs.filter(Boolean) : [];
 	const initialSelectedTab =
 		selectedTabOverride || selectBestFlowTab(list, preferredUrl);
-	const activeEditorTab = findFocusedActiveFlowEditorTab(list, focusedActiveTab);
+	const activeEditorTab = findFocusedActiveFlowEditorTab(
+		list,
+		focusedActiveTab,
+	);
 	const normalizedPreferredUrl = normalizeFlowProjectUrl(preferredUrl);
 	const activeEditorMatchesPreferred = normalizedPreferredUrl
 		? isSameFlowProjectUrl(activeEditorTab?.url, normalizedPreferredUrl)
@@ -1503,7 +1628,10 @@ function buildFlowTabSelectionBinding(
 
 	if (!activeEditorTab?.id) {
 		error = "FLOW_ACTIVE_EDITOR_TAB_NOT_FOUND";
-	} else if (selectedTab?.id && Number(selectedTab.id) !== Number(activeEditorTab.id)) {
+	} else if (
+		selectedTab?.id &&
+		Number(selectedTab.id) !== Number(activeEditorTab.id)
+	) {
 		if (sameProjectUrl) {
 			selectedTab = activeEditorTab;
 			reboundToActiveEditorTab = true;
@@ -1555,7 +1683,10 @@ function classifyAuthStateFromDiagnostic(flowUrl, pageDiagnostic = null) {
 	const loginMarkers = Array.isArray(pageDiagnostic?.visible_login_markers)
 		? pageDiagnostic.visible_login_markers
 		: [];
-	if (/^https:\/\/accounts\.google\.com\//i.test(value) || loginMarkers.length) {
+	if (
+		/^https:\/\/accounts\.google\.com\//i.test(value) ||
+		loginMarkers.length
+	) {
 		return "AUTH_REQUIRED";
 	}
 	if (/^https:\/\/labs\.google\/fx\//i.test(value)) {
@@ -1578,7 +1709,9 @@ function buildRuntimeDiagnosticPayload({
 	const title = String(
 		pageDiagnostic?.document_title || selectedTab?.title || "",
 	).toLowerCase();
-	const visibleErrorMarkers = Array.isArray(pageDiagnostic?.visible_error_markers)
+	const visibleErrorMarkers = Array.isArray(
+		pageDiagnostic?.visible_error_markers,
+	)
 		? pageDiagnostic.visible_error_markers
 		: [];
 	const flowPathState = classifyFlowPathState(normalizedFlowUrl);
@@ -1616,7 +1749,8 @@ function buildRuntimeDiagnosticPayload({
 		diagnosticDetail = runtimeDetail;
 	} else if (authState === "AUTH_REQUIRED") {
 		runtimeReason = "FLOW_AUTH_REQUIRED";
-		runtimeDetail = "Google authentication is required before Flow editor can open.";
+		runtimeDetail =
+			"Google authentication is required before Flow editor can open.";
 		targetProjectState = "AUTH_REQUIRED";
 		diagnosticCode = "FLOW_AUTH_REQUIRED";
 		diagnosticDetail = runtimeDetail;
@@ -1651,9 +1785,13 @@ function buildRuntimeDiagnosticPayload({
 			? "Flow project editor URL is active."
 			: "Flow project editor URL is active, but the WebSocket bridge is offline.";
 		targetProjectState = "EDITOR_URL_ACTIVE";
-		diagnosticCode = agentConnected ? "FLOW_EDITOR_READY" : "AUTH_OK_BUT_EXTENSION_OFF";
+		diagnosticCode = agentConnected
+			? "FLOW_EDITOR_READY"
+			: "AUTH_OK_BUT_EXTENSION_OFF";
 		diagnosticDetail = runtimeDetail;
-	} else if (/FLOW_PROJECT_EDITOR_NOT_OPEN/i.test(String(openFlowResult?.error || ""))) {
+	} else if (
+		/FLOW_PROJECT_EDITOR_NOT_OPEN/i.test(String(openFlowResult?.error || ""))
+	) {
 		runtimeReason = "FLOW_PROJECT_EDITOR_NOT_OPEN";
 		runtimeDetail =
 			"Preferred Flow project did not settle on an editor URL after navigation.";
@@ -1707,7 +1845,11 @@ function shouldAdoptSelectedFlowProjectUrl(
 			)
 		: false;
 
-	return Boolean(selectedTab?.active) || flowTabs.length === 1 || !exactPreferredTabOpen;
+	return (
+		Boolean(selectedTab?.active) ||
+		flowTabs.length === 1 ||
+		!exactPreferredTabOpen
+	);
 }
 
 async function adoptSelectedFlowProjectUrlIfNeeded(
@@ -1729,12 +1871,15 @@ async function adoptSelectedFlowProjectUrlIfNeeded(
 		};
 	}
 
-	const syncResult = await syncStoredFlowProjectUrlToActiveEditor(selectedTab?.url, {
-		currentStoredUrl: normalizedPreferredUrl,
-		openedViaRecovery: true,
-		allowWhenMissing: true,
-		force: true,
-	});
+	const syncResult = await syncStoredFlowProjectUrlToActiveEditor(
+		selectedTab?.url,
+		{
+			currentStoredUrl: normalizedPreferredUrl,
+			openedViaRecovery: true,
+			allowWhenMissing: true,
+			force: true,
+		},
+	);
 
 	return {
 		preferred_flow_project_url:
@@ -1865,7 +2010,8 @@ function buildUniqueFlowProbeCandidates(tabs, preferredTab = null) {
 		const existingTab = unique[existingIndex];
 		const shouldReplace =
 			(Boolean(tab?.active) && !existingTab?.active) ||
-			(Boolean(tab?.status === "complete") && existingTab?.status !== "complete");
+			(Boolean(tab?.status === "complete") &&
+				existingTab?.status !== "complete");
 		if (shouldReplace) {
 			unique[existingIndex] = tab;
 		}
@@ -1926,13 +2072,19 @@ function extractFlowProjectId(url) {
 	return match?.[1] || null;
 }
 
-function determineFlowBootstrapStartState(flowTabs = [], focusedActiveTab = null) {
+function determineFlowBootstrapStartState(
+	flowTabs = [],
+	focusedActiveTab = null,
+) {
 	const tabs = Array.isArray(flowTabs) ? flowTabs.filter(Boolean) : [];
 	const editorTabs = tabs.filter(
 		(tab) => isProjectEditorUrl(tab?.url) && !isRootFlowUrl(tab?.url),
 	);
 	const rootTabs = tabs.filter((tab) => isRootFlowUrl(tab?.url));
-	const activeEditorTab = findFocusedActiveFlowEditorTab(editorTabs, focusedActiveTab);
+	const activeEditorTab = findFocusedActiveFlowEditorTab(
+		editorTabs,
+		focusedActiveTab,
+	);
 	if (editorTabs.length) {
 		return {
 			startedFrom: "EXISTING_PROJECT_EDITOR",
@@ -1940,7 +2092,9 @@ function determineFlowBootstrapStartState(flowTabs = [], focusedActiveTab = null
 				activeEditorTab ||
 				editorTabs
 					.slice()
-					.sort((left, right) => Number(right?.id || 0) - Number(left?.id || 0))[0] ||
+					.sort(
+						(left, right) => Number(right?.id || 0) - Number(left?.id || 0),
+					)[0] ||
 				null,
 			editorTabs,
 			rootTabs,
@@ -1973,20 +2127,28 @@ function determineFlowBootstrapStartState(flowTabs = [], focusedActiveTab = null
 	};
 }
 
-function rankFlowBootstrapEditorCandidates(editorTabs = [], focusedActiveTab = null) {
-	const activeEditorTab = findFocusedActiveFlowEditorTab(editorTabs, focusedActiveTab);
-	return [...(Array.isArray(editorTabs) ? editorTabs : [])].sort((left, right) => {
-		if (Number(left?.id || 0) === Number(activeEditorTab?.id || 0)) return -1;
-		if (Number(right?.id || 0) === Number(activeEditorTab?.id || 0)) return 1;
-		if (Boolean(left?.active) !== Boolean(right?.active)) {
-			return left?.active ? -1 : 1;
-		}
-		if (String(left?.status || "") !== String(right?.status || "")) {
-			if (left?.status === "complete") return -1;
-			if (right?.status === "complete") return 1;
-		}
-		return Number(right?.id || 0) - Number(left?.id || 0);
-	});
+function rankFlowBootstrapEditorCandidates(
+	editorTabs = [],
+	focusedActiveTab = null,
+) {
+	const activeEditorTab = findFocusedActiveFlowEditorTab(
+		editorTabs,
+		focusedActiveTab,
+	);
+	return [...(Array.isArray(editorTabs) ? editorTabs : [])].sort(
+		(left, right) => {
+			if (Number(left?.id || 0) === Number(activeEditorTab?.id || 0)) return -1;
+			if (Number(right?.id || 0) === Number(activeEditorTab?.id || 0)) return 1;
+			if (Boolean(left?.active) !== Boolean(right?.active)) {
+				return left?.active ? -1 : 1;
+			}
+			if (String(left?.status || "") !== String(right?.status || "")) {
+				if (left?.status === "complete") return -1;
+				if (right?.status === "complete") return 1;
+			}
+			return Number(right?.id || 0) - Number(left?.id || 0);
+		},
+	);
 }
 
 function mapFlowBootstrapBindingFailureCode(preflightError) {
@@ -2082,7 +2244,11 @@ function isActiveTabAddMediaLauncherReady(mode, diagnostic) {
 	if (diagnostic?.blocking_modal_detected) {
 		return false;
 	}
-	if (String(mode || "").trim().toUpperCase() !== "F2V") {
+	if (
+		String(mode || "")
+			.trim()
+			.toUpperCase() !== "F2V"
+	) {
 		return editorCapabilityReady;
 	}
 	// F2V: accept editorCapabilityReady OR strict_composer_ok (strong signals),
@@ -2121,13 +2287,16 @@ function evaluateActiveFlowTabPreflight(
 					...composerDiagnostic,
 				}
 			: mergedContentDiagnostic;
-	const contentScriptAliveOnActiveTab =
-		isFlowContentScriptReadyForActiveTab(mergedContentDiagnostic);
+	const contentScriptAliveOnActiveTab = isFlowContentScriptReadyForActiveTab(
+		mergedContentDiagnostic,
+	);
 	// Reject a broken editor page as runtime authority. Real page-level evidence
 	// (visible "Something went wrong"/error markers) means the bound project is a
 	// dead Flow error surface even though its URL/title look like a valid editor.
 	// Such a target must not keep winning just because it is the active/stored tab.
-	const brokenErrorMarkers = Array.isArray(pageDiagnostic?.visible_error_markers)
+	const brokenErrorMarkers = Array.isArray(
+		pageDiagnostic?.visible_error_markers,
+	)
 		? pageDiagnostic.visible_error_markers.map((value) => String(value))
 		: [];
 	const activeEditorBroken = Boolean(
@@ -2160,7 +2329,10 @@ function evaluateActiveFlowTabPreflight(
 		error = "FLOW_ACTIVE_EDITOR_TAB_NOT_FOUND";
 	} else if (binding?.error === "FLOW_TARGET_TAB_MISMATCH") {
 		error = "FLOW_TARGET_TAB_MISMATCH";
-	} else if (!selectedTab?.id || Number(selectedTab.id) !== Number(activeEditorTab.id)) {
+	} else if (
+		!selectedTab?.id ||
+		Number(selectedTab.id) !== Number(activeEditorTab.id)
+	) {
 		error = "FLOW_REBOUND_TO_ACTIVE_TAB_FAILED";
 	} else if (!contentScriptAliveOnActiveTab) {
 		error = "FLOW_ACTIVE_TAB_CONTENT_SCRIPT_NOT_READY";
@@ -2219,7 +2391,9 @@ async function buildActiveFlowTabPreflight(mode = "F2V", options = {}) {
 	);
 	const duplicateTabInventory = buildDuplicateFlowEditorInventory(tabs);
 	const targetTab =
-		(await getTabSafe(binding?.selectedTab?.id || binding?.activeEditorTab?.id)) ||
+		(await getTabSafe(
+			binding?.selectedTab?.id || binding?.activeEditorTab?.id,
+		)) ||
 		binding?.selectedTab ||
 		binding?.activeEditorTab ||
 		null;
@@ -2240,7 +2414,8 @@ async function buildActiveFlowTabPreflight(mode = "F2V", options = {}) {
 				12000,
 			);
 			if (canUsePageDiagnosticForComposerReadiness(pageDiagnostic)) {
-				composerDiagnostic = buildComposerReadinessFromPageDiagnostic(pageDiagnostic);
+				composerDiagnostic =
+					buildComposerReadinessFromPageDiagnostic(pageDiagnostic);
 			} else {
 				composerDiagnostic = await sendTabMessageSafe(
 					targetTab.id,
@@ -2270,7 +2445,8 @@ async function buildActiveFlowTabPreflight(mode = "F2V", options = {}) {
 		content_diagnostic: contentDiagnostic,
 		page_diagnostic: pageDiagnostic,
 		composer_diagnostic:
-			composerDiagnostic || (canUsePageDiagnosticForComposerReadiness(pageDiagnostic)
+			composerDiagnostic ||
+			(canUsePageDiagnosticForComposerReadiness(pageDiagnostic)
 				? buildComposerReadinessFromPageDiagnostic(pageDiagnostic)
 				: null),
 	};
@@ -2294,6 +2470,8 @@ async function recoverStrictActiveFlowTabTarget(
 			deps.openFlowProjectFn || openPreferredFlowProjectOrNewProject,
 		settleFlowProjectAfterOpen:
 			deps.settleFlowProjectAfterOpen || settleFlowProjectAfterOpen,
+		setStoredFlowProjectUrl:
+			deps.setStoredFlowProjectUrl || setStoredFlowProjectUrl,
 	};
 	const preferredUrl =
 		options?.preferredUrl !== undefined ? options.preferredUrl : null;
@@ -2321,7 +2499,9 @@ async function recoverStrictActiveFlowTabTarget(
 		};
 	}
 
-	if (String(initialPreflight?.error || "") !== "FLOW_ACTIVE_EDITOR_TAB_NOT_FOUND") {
+	if (
+		String(initialPreflight?.error || "") !== "FLOW_ACTIVE_EDITOR_TAB_NOT_FOUND"
+	) {
 		return {
 			ok: false,
 			activeTabPreflight: initialPreflight,
@@ -2374,7 +2554,8 @@ async function recoverStrictActiveFlowTabTarget(
 			focusedTab = (await api.focusTab(focusedTab)) || focusedTab;
 		} catch (_) {}
 		try {
-			focusedTab = (await api.waitForTabComplete(focusedTab.id, 20000)) || focusedTab;
+			focusedTab =
+				(await api.waitForTabComplete(focusedTab.id, 20000)) || focusedTab;
 		} catch (_) {
 			focusedTab = (await api.getTabSafe(focusedTab.id)) || focusedTab;
 		}
@@ -2452,8 +2633,14 @@ async function recoverStrictActiveFlowTabTarget(
 	// or it would re-navigate to the same broken project — open a fresh project
 	// instead by dropping the broken preferred URL.
 	const brokenPreferredUrl = Boolean(
-		initialPreflight?.brokenTargetRejected || lastRecoveredPreflight?.brokenTargetRejected,
+		initialPreflight?.brokenTargetRejected ||
+			lastRecoveredPreflight?.brokenTargetRejected,
 	);
+	if (brokenPreferredUrl) {
+		try {
+			await api.setStoredFlowProjectUrl(null);
+		} catch (_) {}
+	}
 	const bootstrapPreferredUrl = brokenPreferredUrl ? null : preferredUrl;
 	let openFlowResult = null;
 	let settledTab = null;
@@ -2505,7 +2692,8 @@ async function recoverStrictActiveFlowTabTarget(
 
 async function bootstrapFlowProjectEditorForB2A0(mode = "F2V", deps = {}) {
 	const api = {
-		getStoredFlowProjectUrl: deps.getStoredFlowProjectUrl || getStoredFlowProjectUrl,
+		getStoredFlowProjectUrl:
+			deps.getStoredFlowProjectUrl || getStoredFlowProjectUrl,
 		getFlowTabs: deps.getFlowTabs || getFlowTabs,
 		getFocusedActiveBrowserTab:
 			deps.getFocusedActiveBrowserTab || getFocusedActiveBrowserTab,
@@ -2521,7 +2709,8 @@ async function bootstrapFlowProjectEditorForB2A0(mode = "F2V", deps = {}) {
 			deps.buildActiveFlowTabPreflight || buildActiveFlowTabPreflight,
 		probeFlowEditorCandidate:
 			deps.probeFlowEditorCandidate || probeFlowEditorCandidate,
-		handleOpenFlowNewProject: deps.handleOpenFlowNewProject || handleOpenFlowNewProject,
+		handleOpenFlowNewProject:
+			deps.handleOpenFlowNewProject || handleOpenFlowNewProject,
 		settleFlowProjectAfterOpen:
 			deps.settleFlowProjectAfterOpen || settleFlowProjectAfterOpen,
 		classifyAuthStateFromDiagnostic:
@@ -2559,7 +2748,8 @@ async function bootstrapFlowProjectEditorForB2A0(mode = "F2V", deps = {}) {
 		};
 	};
 	const finalizeBoundEditor = async (projectTab, startedFrom, extra = {}) => {
-		let focusedTab = (await api.getTabSafe(projectTab?.id)) || projectTab || null;
+		let focusedTab =
+			(await api.getTabSafe(projectTab?.id)) || projectTab || null;
 		if (!focusedTab?.id) {
 			return buildFailure(
 				"FLOW_PROJECT_EDITOR_TAB_BIND_FAILED",
@@ -2571,7 +2761,8 @@ async function bootstrapFlowProjectEditorForB2A0(mode = "F2V", deps = {}) {
 			focusedTab = (await api.focusTab(focusedTab)) || focusedTab;
 		} catch (_) {}
 		try {
-			focusedTab = (await api.waitForTabComplete(focusedTab.id, 20000)) || focusedTab;
+			focusedTab =
+				(await api.waitForTabComplete(focusedTab.id, 20000)) || focusedTab;
 		} catch (_) {
 			focusedTab = (await api.getTabSafe(focusedTab.id)) || focusedTab;
 		}
@@ -2587,7 +2778,11 @@ async function bootstrapFlowProjectEditorForB2A0(mode = "F2V", deps = {}) {
 					: mappedError === "FLOW_PROJECT_EDITOR_SURFACE_NOT_READY"
 						? "F2V_V2A0_EDITOR_SURFACE_READY"
 						: "F2V_V2A0_PROJECT_EDITOR_TAB_BOUND";
-			return buildFailure(mappedError, failStage, preflight?.error || mappedError);
+			return buildFailure(
+				mappedError,
+				failStage,
+				preflight?.error || mappedError,
+			);
 		}
 		proof.started_from = startedFrom;
 		proof.selected_tab_id_after = Number(
@@ -2651,11 +2846,14 @@ async function bootstrapFlowProjectEditorForB2A0(mode = "F2V", deps = {}) {
 	};
 
 	const preferredUrl = await api.getStoredFlowProjectUrl();
-	let flowTabs = await api.getFlowTabs();
+	const flowTabs = await api.getFlowTabs();
 	const focusedActiveTab = await api.getFocusedActiveBrowserTab();
 	const selectedBeforeTab = await api.getFlowTab();
 	proof.selected_tab_id_before = Number(selectedBeforeTab?.id || 0);
-	const startState = determineFlowBootstrapStartState(flowTabs, focusedActiveTab);
+	const startState = determineFlowBootstrapStartState(
+		flowTabs,
+		focusedActiveTab,
+	);
 	proof.started_from = startState.startedFrom;
 	proof.flow_entry_url = String(startState.entryTab?.url || rootUrl);
 
@@ -2664,7 +2862,9 @@ async function bootstrapFlowProjectEditorForB2A0(mode = "F2V", deps = {}) {
 			"F2V_V2A0_EXISTING_PROJECT_EDITOR_FOUND",
 			"PASS",
 			JSON.stringify({
-				editor_tab_ids: startState.editorTabs.map((tab) => Number(tab?.id || 0)),
+				editor_tab_ids: startState.editorTabs.map((tab) =>
+					Number(tab?.id || 0),
+				),
 				active_editor_tab_id: Number(startState.activeEditorTab?.id || 0),
 			}),
 		);
@@ -2843,7 +3043,9 @@ function isActualFlowEditorProbe(result, mode = null) {
 	const visibleUploadSlots = Array.isArray(result?.observed?.visibleUploadSlots)
 		? result.observed.visibleUploadSlots.map((value) => String(value))
 		: [];
-	const normalizedMode = String(mode || "").trim().toUpperCase();
+	const normalizedMode = String(mode || "")
+		.trim()
+		.toUpperCase();
 	if (normalizedMode === "F2V") {
 		const looksLikeFramesEditor =
 			modeVisible.includes("Video/Frames") ||
@@ -2944,7 +3146,9 @@ async function resolveExistingProjectEditorAuthority(tab, mode) {
 			12000,
 		);
 	} catch (_) {}
-	const brokenErrorMarkers = Array.isArray(pageDiagnostic?.visible_error_markers)
+	const brokenErrorMarkers = Array.isArray(
+		pageDiagnostic?.visible_error_markers,
+	)
 		? pageDiagnostic.visible_error_markers.map((value) => String(value))
 		: [];
 	if (brokenErrorMarkers.length) {
@@ -3012,14 +3216,17 @@ async function getLocalRuntimeDiagnosticSnapshot() {
 	);
 	const effectivePreferredUrl =
 		adoptedTarget?.preferred_flow_project_url || preferredUrl;
-	const badRedirectTabs = await chrome.tabs.query({ url: ["http://0.0.0.43/*"] });
+	const badRedirectTabs = await chrome.tabs.query({
+		url: ["http://0.0.0.43/*"],
+	});
 	const badRedirectTab = badRedirectTabs.length ? badRedirectTabs[0] : null;
 	const diagnostics = buildRuntimeDiagnosticPayload({
 		flowUrl: selectedTab?.url || badRedirectTab?.url || null,
 		preferredUrl: effectivePreferredUrl,
 		selectedTab: selectedTab || badRedirectTab,
 	});
-	diagnostics.selected_tab_id = activeTabPreflight?.preflight?.selected_tab_id || null;
+	diagnostics.selected_tab_id =
+		activeTabPreflight?.preflight?.selected_tab_id || null;
 	diagnostics.active_editor_tab_id =
 		activeTabPreflight?.preflight?.active_editor_tab_id || null;
 	diagnostics.selected_tab_active = Boolean(
@@ -3054,7 +3261,9 @@ async function getLocalRuntimeDiagnosticSnapshot() {
 					tab_kind: classifyFlowTabKind(selectedTab),
 				}
 			: null,
-		last_bad_redirect_tab: badRedirectTab ? summarizeFlowTab(badRedirectTab) : null,
+		last_bad_redirect_tab: badRedirectTab
+			? summarizeFlowTab(badRedirectTab)
+			: null,
 		preferred_flow_project_url: effectivePreferredUrl,
 		target_auto_sync: adoptedTarget?.sync_result || null,
 		active_tab_preflight: activeTabPreflight?.preflight || null,
@@ -3064,12 +3273,14 @@ async function getLocalRuntimeDiagnosticSnapshot() {
 					selected_tab_id: activeTabPreflight.preflight?.selected_tab_id || 0,
 					active_editor_tab_id:
 						activeTabPreflight.preflight?.active_editor_tab_id || 0,
-					selected_tab_active:
-						Boolean(activeTabPreflight.preflight?.selected_tab_active),
+					selected_tab_active: Boolean(
+						activeTabPreflight.preflight?.selected_tab_active,
+					),
 					selected_tab_url: activeTabPreflight.selectedTabUrl || null,
 					active_editor_tab_url: activeTabPreflight.activeEditorTabUrl || null,
-					rebound_to_active_editor_tab:
-						Boolean(activeTabPreflight.reboundToActiveEditorTab),
+					rebound_to_active_editor_tab: Boolean(
+						activeTabPreflight.reboundToActiveEditorTab,
+					),
 				}
 			: null,
 		duplicate_editor_tabs: activeTabPreflight?.duplicate_tab_inventory || [],
@@ -3092,7 +3303,9 @@ async function resolveFlowExecutionTarget(job = null) {
 	}
 
 	const strictActiveBinding =
-		String(job?.mode || "").trim().toUpperCase() === "F2V";
+		String(job?.mode || "")
+			.trim()
+			.toUpperCase() === "F2V";
 	let activeTabPreflight = null;
 	if (strictActiveBinding) {
 		const strictRecovery = await recoverStrictActiveFlowTabTarget(
@@ -3116,10 +3329,12 @@ async function resolveFlowExecutionTarget(job = null) {
 					selected_tab_id: activeTabPreflight?.preflight?.selected_tab_id || 0,
 					active_editor_tab_id:
 						activeTabPreflight?.preflight?.active_editor_tab_id || 0,
-					selected_tab_active:
-						Boolean(activeTabPreflight?.preflight?.selected_tab_active),
-					same_project_url:
-						Boolean(activeTabPreflight?.preflight?.same_project_url),
+					selected_tab_active: Boolean(
+						activeTabPreflight?.preflight?.selected_tab_active,
+					),
+					same_project_url: Boolean(
+						activeTabPreflight?.preflight?.same_project_url,
+					),
 					content_script_alive_on_active_tab: Boolean(
 						activeTabPreflight?.preflight?.content_script_alive_on_active_tab,
 					),
@@ -3137,16 +3352,18 @@ async function resolveFlowExecutionTarget(job = null) {
 					focus_recovery_succeeded: Boolean(
 						strictRecovery?.focus_recovery_succeeded,
 					),
-					focused_editor_tab_id:
-						Number(strictRecovery?.focused_editor_tab_id || 0),
+					focused_editor_tab_id: Number(
+						strictRecovery?.focused_editor_tab_id || 0,
+					),
 					bootstrap_recovery_attempted: Boolean(
 						strictRecovery?.bootstrap_recovery_attempted,
 					),
 					bootstrap_recovery_succeeded: Boolean(
 						strictRecovery?.bootstrap_recovery_succeeded,
 					),
-					bootstrapped_editor_tab_id:
-						Number(strictRecovery?.bootstrapped_editor_tab_id || 0),
+					bootstrapped_editor_tab_id: Number(
+						strictRecovery?.bootstrapped_editor_tab_id || 0,
+					),
 					reopen_suppressed: Boolean(strictRecovery?.reopen_suppressed),
 					reopen_suppressed_reason: strictRecovery?.reopen_suppressed
 						? strictRecovery?.error || "FLOW_PROJECT_REOPEN_LOOP"
@@ -3348,7 +3565,10 @@ async function syncStoredFlowProjectUrlToActiveEditor(
 	options = {},
 ) {
 	const normalizedActiveUrl = String(activeEditorUrl || "").trim();
-	if (!isProjectEditorUrl(normalizedActiveUrl) || isRootFlowUrl(normalizedActiveUrl)) {
+	if (
+		!isProjectEditorUrl(normalizedActiveUrl) ||
+		isRootFlowUrl(normalizedActiveUrl)
+	) {
 		return {
 			ok: false,
 			synced: false,
@@ -3566,7 +3786,8 @@ function buildComposerReadinessFromPageDiagnostic(pageDiagnostic) {
 		ok: strictComposerOk,
 		flow_tab_found: Boolean(pageDiagnostic?.flow_url),
 		flow_url: pageDiagnostic?.flow_url || null,
-		location_href: pageDiagnostic?.location_href || pageDiagnostic?.flow_url || null,
+		location_href:
+			pageDiagnostic?.location_href || pageDiagnostic?.flow_url || null,
 		document_title: pageDiagnostic?.document_title || null,
 		document_ready_state: pageDiagnostic?.document_ready_state || null,
 		signed_in_likely: Boolean(pageDiagnostic?.signed_in_likely),
@@ -3983,7 +4204,8 @@ async function handleOpenFlowNewProject(mode) {
 		editor_ready: Boolean(result?.editor_ready),
 		error: result?.error || null,
 		detail: result?.detail || null,
-		flow_tab_id: effectiveFlowTab?.id ?? refreshedTab?.id ?? targetTab?.id ?? null,
+		flow_tab_id:
+			effectiveFlowTab?.id ?? refreshedTab?.id ?? targetTab?.id ?? null,
 		flow_url_before: rootUrl,
 		flow_url_after: effectiveFlowUrl,
 		flow_url: effectiveFlowUrl,
@@ -4287,9 +4509,8 @@ function connectToAgent() {
 			} else if (msg.method === "solve_captcha") {
 				await handleSolveCaptcha(msg);
 			} else if (msg.method === "get_status") {
-				const result = await executeWsMethodAndReply(
-					msg,
-					async () => getLocalRuntimeDiagnosticSnapshot(),
+				const result = await executeWsMethodAndReply(msg, async () =>
+					getLocalRuntimeDiagnosticSnapshot(),
 				);
 				replyToAgent(msg, result);
 			} else if (msg.method === "GET_RUNTIME_SELF_TEST") {
@@ -4350,20 +4571,28 @@ function connectToAgent() {
 
 				// Run job asynchronously — post terminal telemetry when done so
 				// the dashboard poll loop can exit (WAITING_FLOW otherwise stays forever).
-				handleExecuteFlowJob(msg.params?.job).then((result) => {
-					const requestId = msg.params?.job?.request_id;
-					if (requestId) {
-						postStageTelemetry({
-							request_id: requestId,
-							stage: result?.ok ? "COMPLETED" : "FAILED",
-							status: result?.ok ? "PASS" : "FAIL",
-							message: result?.error || result?.detail || (result?.ok ? "Job completed" : "Job failed"),
-							source: "extension",
-						}, null);
-					}
-				}).catch((err) => {
-					console.error("[EXECUTE_FLOW_JOB] Async execution error:", err);
-				});
+				handleExecuteFlowJob(msg.params?.job)
+					.then((result) => {
+						const requestId = msg.params?.job?.request_id;
+						if (requestId) {
+							postStageTelemetry(
+								{
+									request_id: requestId,
+									stage: result?.ok ? "COMPLETED" : "FAILED",
+									status: result?.ok ? "PASS" : "FAIL",
+									message:
+										result?.error ||
+										result?.detail ||
+										(result?.ok ? "Job completed" : "Job failed"),
+									source: "extension",
+								},
+								null,
+							);
+						}
+					})
+					.catch((err) => {
+						console.error("[EXECUTE_FLOW_JOB] Async execution error:", err);
+					});
 			} else if (msg.method === "DEBUG_FLOW_DOM_EXECUTION") {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleDebugFlowDomExecution(msg.params?.mode, msg.params?.job),
@@ -5370,7 +5599,9 @@ async function handleF2VPackageUploadOnlyJob(job) {
 				reason: "no_healthy_current_editor_for_upload_only_lane",
 				runtime_binding_error: activeTabPreflight?.error || null,
 				selected_tab_url: selectedUrl || null,
-				broken_target_rejected: Boolean(activeTabPreflight?.brokenTargetRejected),
+				broken_target_rejected: Boolean(
+					activeTabPreflight?.brokenTargetRejected,
+				),
 			},
 		};
 	}
@@ -5378,7 +5609,11 @@ async function handleF2VPackageUploadOnlyJob(job) {
 
 	// Route to the content-script strict path — never the broad SOP runner.
 	await ensureFlowDomScript(selectedTab.id);
-	const laneJob = { ...job, lane: "F2V_PACKAGE_UPLOAD_ONLY", upload_only: true };
+	const laneJob = {
+		...job,
+		lane: "F2V_PACKAGE_UPLOAD_ONLY",
+		upload_only: true,
+	};
 	const result = await sendTabMessageSafe(
 		selectedTab.id,
 		{ type: "EXECUTE_FLOW_JOB", job: laneJob },
@@ -5386,7 +5621,11 @@ async function handleF2VPackageUploadOnlyJob(job) {
 	);
 	if (result?.raw_error) {
 		emit("FAILED", "FAIL", result.raw_error);
-		return { ok: false, error: result.raw_error, detail: result.detail || null };
+		return {
+			ok: false,
+			error: result.raw_error,
+			detail: result.detail || null,
+		};
 	}
 	return result;
 }
@@ -5401,7 +5640,8 @@ const GFV2_FLOW_ROOT_URL = "https://labs.google/fx/tools/flow";
 function isGfv2Lane(job) {
 	return Boolean(
 		job &&
-			(job.lane === "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE" || job.gfv2 === true),
+			(job.lane === "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE" ||
+				job.gfv2 === true),
 	);
 }
 
@@ -5442,47 +5682,106 @@ function gfv2DecideSettingsProof(proof, observedModel, opts) {
 		model_canonical: p.model_canonical || observedModel || null,
 	};
 	const emissions = [];
-	const push = (stage, status, message) => emissions.push({ stage, status, message });
+	const push = (stage, status, message) =>
+		emissions.push({ stage, status, message });
 
 	if (panelOpened || (ratioOk && countOk)) {
-		push("GFV2_SETTINGS_OPENED", "PASS", `source=${panelOpened ? "settings_panel_dom" : "composer_pill_confirmed"}`);
+		push(
+			"GFV2_SETTINGS_OPENED",
+			"PASS",
+			`source=${panelOpened ? "settings_panel_dom" : "composer_pill_confirmed"}`,
+		);
 	} else {
 		push("GFV2_SETTINGS_PANEL_NOT_FOUND", "FAIL", JSON.stringify(detail));
-		return { emissions, proceed: false, error: "GFV2_SETTINGS_PANEL_NOT_FOUND", detail };
+		return {
+			emissions,
+			proceed: false,
+			error: "GFV2_SETTINGS_PANEL_NOT_FOUND",
+			detail,
+		};
 	}
 	if (wrongModel) {
-		push("GFV2_VISIBLE_WRONG_MODEL", "FAIL", `model=${detail.model_canonical || "?"}`);
-		return { emissions, proceed: false, error: "GFV2_VISIBLE_WRONG_MODEL", detail };
+		push(
+			"GFV2_VISIBLE_WRONG_MODEL",
+			"FAIL",
+			`model=${detail.model_canonical || "?"}`,
+		);
+		return {
+			emissions,
+			proceed: false,
+			error: "GFV2_VISIBLE_WRONG_MODEL",
+			detail,
+		};
 	}
 	if (ratioOk) {
 		push("GFV2_RATIO_9_16_CONFIRMED", "PASS", "source=composer");
 	} else {
 		push("GFV2_RATIO_9_16_NOT_CONFIRMED", "FAIL", JSON.stringify(detail));
-		return { emissions, proceed: false, error: "GFV2_RATIO_9_16_NOT_CONFIRMED", detail };
+		return {
+			emissions,
+			proceed: false,
+			error: "GFV2_RATIO_9_16_NOT_CONFIRMED",
+			detail,
+		};
 	}
 	if (countOk) {
 		push("GFV2_COUNT_1X_CONFIRMED", "PASS", "source=composer");
 	} else {
 		push("GFV2_COUNT_1X_NOT_CONFIRMED", "FAIL", JSON.stringify(detail));
-		return { emissions, proceed: false, error: "GFV2_COUNT_1X_NOT_CONFIRMED", detail };
+		return {
+			emissions,
+			proceed: false,
+			error: "GFV2_COUNT_1X_NOT_CONFIRMED",
+			detail,
+		};
 	}
 	if (veoOk) {
-		push("GFV2_MODEL_VEO_LITE_CONFIRMED", "PASS", `model=${detail.model_canonical || "veo lite"}`);
+		push(
+			"GFV2_MODEL_VEO_LITE_CONFIRMED",
+			"PASS",
+			`model=${detail.model_canonical || "veo lite"}`,
+		);
 	} else if (requireVisibleVeo) {
 		// Video lane: the target Veo 3.1 - Lite must be confirmed (no soft-pass when a
 		// concrete video model dropdown exists but Veo Lite could not be selected).
-		push("GFV2_MODEL_VEO_LITE_NOT_FOUND", "FAIL", `model_state=${modelState} model=${detail.model_canonical || "?"}`);
-		return { emissions, proceed: false, error: "GFV2_MODEL_VEO_LITE_NOT_FOUND", detail };
+		push(
+			"GFV2_MODEL_VEO_LITE_NOT_FOUND",
+			"FAIL",
+			`model_state=${modelState} model=${detail.model_canonical || "?"}`,
+		);
+		return {
+			emissions,
+			proceed: false,
+			error: "GFV2_MODEL_VEO_LITE_NOT_FOUND",
+			detail,
+		};
 	} else {
-		push("GFV2_MODEL_HIDDEN_SOFT_PASS", "PASS", `model_state=${modelState} ratio_count_confirmed=true no_visible_wrong_model=true`);
+		push(
+			"GFV2_MODEL_HIDDEN_SOFT_PASS",
+			"PASS",
+			`model_state=${modelState} ratio_count_confirmed=true no_visible_wrong_model=true`,
+		);
 	}
 	// Persistence: an explicit false from the interactive primitive is a hard fail;
 	// undefined (pure-logic tests / observe path) is treated as composer-reflected.
 	if (p.settings_persisted === false) {
-		push("GFV2_SETTINGS_NOT_PERSISTED", "FAIL", `ratio=${ratioOk} count=${countOk} veo=${veoOk}`);
-		return { emissions, proceed: false, error: "GFV2_SETTINGS_NOT_PERSISTED", detail };
+		push(
+			"GFV2_SETTINGS_NOT_PERSISTED",
+			"FAIL",
+			`ratio=${ratioOk} count=${countOk} veo=${veoOk}`,
+		);
+		return {
+			emissions,
+			proceed: false,
+			error: "GFV2_SETTINGS_NOT_PERSISTED",
+			detail,
+		};
 	}
-	push("GFV2_SETTINGS_SAVED_OR_PERSISTED", "PASS", `persistence=${p.settings_persisted === undefined ? "composer_reflected" : "video_section_verified"} save_button_found=${Boolean(p.save_button_found)}`);
+	push(
+		"GFV2_SETTINGS_SAVED_OR_PERSISTED",
+		"PASS",
+		`persistence=${p.settings_persisted === undefined ? "composer_reflected" : "video_section_verified"} save_button_found=${Boolean(p.save_button_found)}`,
+	);
 	return { emissions, proceed: true, detail };
 }
 
@@ -5507,24 +5806,58 @@ async function gfv2DriveSettingsVerify(flowTab, emit) {
 		].includes(res?.error)
 	) {
 		await ensureFlowDomScript(flowTab.id);
-		res = await sendTabMessageSafe(flowTab.id, { type: "GFV2_APPLY_SETTINGS", options: {} }, 35000);
+		res = await sendTabMessageSafe(
+			flowTab.id,
+			{ type: "GFV2_APPLY_SETTINGS", options: {} },
+			35000,
+		);
 	}
 	res = res || {};
 	// Surface the real V2 controls + launcher candidates for forensics.
 	if (Array.isArray(res.launcher_candidates)) {
-		emit("GFV2_SETTINGS_LAUNCHERS", "WAITING_FLOW", JSON.stringify(res.launcher_candidates).slice(0, 1000));
+		emit(
+			"GFV2_SETTINGS_LAUNCHERS",
+			"WAITING_FLOW",
+			JSON.stringify(res.launcher_candidates).slice(0, 1000),
+		);
 	}
 	if (Array.isArray(res.controls_seen) && res.controls_seen.length) {
 		const json = JSON.stringify(res.controls_seen);
 		for (let i = 0; i < json.length && i < 9000; i += 1800) {
-			emit("GFV2_SETTINGS_DISCOVERY", "WAITING_FLOW", `part${Math.floor(i / 1800)} ${json.slice(i, i + 1800)}`);
+			emit(
+				"GFV2_SETTINGS_DISCOVERY",
+				"WAITING_FLOW",
+				`part${Math.floor(i / 1800)} ${json.slice(i, i + 1800)}`,
+			);
 		}
 	}
-	emit("GFV2_SETTINGS_VIDEO_BAND", "WAITING_FLOW", JSON.stringify({ band: res.video_band || null, model_before: res.model_before || null, model_after: res.model_after || null, model_dropdown_options: res.model_dropdown_options || null, veo_lite_option_text: res.veo_lite_option_text || null, actions: res.actions || [] }).slice(0, 800));
+	emit(
+		"GFV2_SETTINGS_VIDEO_BAND",
+		"WAITING_FLOW",
+		JSON.stringify({
+			band: res.video_band || null,
+			model_before: res.model_before || null,
+			model_after: res.model_after || null,
+			model_dropdown_options: res.model_dropdown_options || null,
+			veo_lite_option_text: res.veo_lite_option_text || null,
+			actions: res.actions || [],
+		}).slice(0, 800),
+	);
 	// The primitive could not even locate the Video generation default section.
-	if (res.error === "GFV2_SETTINGS_PANEL_NOT_FOUND" && !res.settings_panel_opened) {
-		emit("GFV2_SETTINGS_PANEL_NOT_FOUND", "FAIL", res.detail || "video_section_not_found");
-		return { proceed: false, error: "GFV2_SETTINGS_PANEL_NOT_FOUND", detail: res };
+	if (
+		res.error === "GFV2_SETTINGS_PANEL_NOT_FOUND" &&
+		!res.settings_panel_opened
+	) {
+		emit(
+			"GFV2_SETTINGS_PANEL_NOT_FOUND",
+			"FAIL",
+			res.detail || "video_section_not_found",
+		);
+		return {
+			proceed: false,
+			error: "GFV2_SETTINGS_PANEL_NOT_FOUND",
+			detail: res,
+		};
 	}
 	const proof = {
 		settings_panel_opened: Boolean(res.settings_panel_opened),
@@ -5532,23 +5865,34 @@ async function gfv2DriveSettingsVerify(flowTab, emit) {
 		count_1x_confirmed: Boolean(res.count_1x_confirmed),
 		model_visible_wrong: Boolean(res.model_visible_wrong),
 		model_veo_lite_confirmed: Boolean(res.model_veo_lite_confirmed),
-		model_state: res.model_visible_wrong ? "wrong" : res.model_veo_lite_confirmed ? "correct" : "unknown",
+		model_state: res.model_visible_wrong
+			? "wrong"
+			: res.model_veo_lite_confirmed
+				? "correct"
+				: "unknown",
 		model_canonical: res.model_canonical || null,
 		save_button_found: Boolean(res.save_button_found),
 		settings_persisted: Boolean(res.settings_saved_or_persisted),
 	};
 	// Video lane: require Veo 3.1 - Lite to be confirmed inside the Video section (no
 	// hidden soft-pass when a real video model dropdown exists).
-	const decision = gfv2DecideSettingsProof(proof, proof.model_canonical, { requireVisibleVeo: true });
+	const decision = gfv2DecideSettingsProof(proof, proof.model_canonical, {
+		requireVisibleVeo: true,
+	});
 	for (const e of decision.emissions) emit(e.stage, e.status, e.message);
 	// Post-upload, the V2 generation settings DO render — these are real live gates.
 	if (!decision.proceed) {
 		// surface the primitive's more specific Veo-not-found cause if applicable
 		const err =
-			res.error === "GFV2_MODEL_VEO_LITE_NOT_FOUND" && decision.error === "GFV2_MODEL_VEO_LITE_NOT_FOUND"
+			res.error === "GFV2_MODEL_VEO_LITE_NOT_FOUND" &&
+			decision.error === "GFV2_MODEL_VEO_LITE_NOT_FOUND"
 				? res.error
 				: decision.error;
-		return { proceed: false, error: err, detail: { decision: decision.detail, applied: res } };
+		return {
+			proceed: false,
+			error: err,
+			detail: { decision: decision.detail, applied: res },
+		};
 	}
 	return { proceed: true, detail: decision.detail };
 }
@@ -5566,7 +5910,9 @@ function gfv2ClassifySurface(tab, capture) {
 		return { healthy: false, reason: "stale_stored_project" };
 	}
 	const diag = capture?.diagnostic || {};
-	const editorOk = Boolean(capture?.ok && capture?.evaluation?.proofs?.editor?.ok);
+	const editorOk = Boolean(
+		capture?.ok && capture?.evaluation?.proofs?.editor?.ok,
+	);
 	const buttons = (Array.isArray(diag.button_texts) ? diag.button_texts : [])
 		.join(" ")
 		.toLowerCase();
@@ -5576,10 +5922,13 @@ function gfv2ClassifySurface(tab, capture) {
 	if (wentWrong) {
 		return { healthy: false, reason: "something_went_wrong" };
 	}
-	if (Boolean(diag.login_or_access_blocker)) {
+	if (diag.login_or_access_blocker) {
 		return { healthy: false, reason: "login_or_access_blocker" };
 	}
-	return { healthy: Boolean(editorOk), reason: editorOk ? "ok" : "no_editor_surface" };
+	return {
+		healthy: Boolean(editorOk),
+		reason: editorOk ? "ok" : "no_editor_surface",
+	};
 }
 
 // GFV2_ENSURE_SURFACE: acquire a healthy Google Flow V2 surface automatically.
@@ -5594,15 +5943,26 @@ async function gfv2EnsureSurface(mode, emit) {
 		const cap = await captureGoogleFlowV2Readiness(tab);
 		const cls = gfv2ClassifySurface(tab, cap);
 		if (!cls.healthy) {
-			if (cls.reason === "stale_stored_project" || cls.reason === "something_went_wrong") {
-				emit("GFV2_STALE_FLOW_TAB_IGNORED", "WAITING_FLOW", `url=${tab.url} reason=${cls.reason}`);
+			if (
+				cls.reason === "stale_stored_project" ||
+				cls.reason === "something_went_wrong"
+			) {
+				emit(
+					"GFV2_STALE_FLOW_TAB_IGNORED",
+					"WAITING_FLOW",
+					`url=${tab.url} reason=${cls.reason}`,
+				);
 			}
 			continue;
 		}
 		try {
 			await focusTab(tab);
 		} catch (_) {}
-		emit("GFV2_SURFACE_READY", "PASS", `tab=${tab.id} url=${String(tab.url).slice(0, 80)} strategy=existing_healthy`);
+		emit(
+			"GFV2_SURFACE_READY",
+			"PASS",
+			`tab=${tab.id} url=${String(tab.url).slice(0, 80)} strategy=existing_healthy`,
+		);
 		return { ok: true, tab: (await getTabSafe(tab.id)) || tab };
 	}
 
@@ -5614,8 +5974,16 @@ async function gfv2EnsureSurface(mode, emit) {
 	try {
 		rootTab = await openTabInNormalWindow(GFV2_FLOW_ROOT_URL);
 	} catch (err) {
-		emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `open_error=${String(err?.message || err)}`);
-		return { ok: false, error: "GFV2_ROOT_LOAD_TIMEOUT", detail: { open_error: String(err?.message || err) } };
+		emit(
+			"GFV2_ENSURE_SURFACE_FAILED",
+			"FAIL",
+			`open_error=${String(err?.message || err)}`,
+		);
+		return {
+			ok: false,
+			error: "GFV2_ROOT_LOAD_TIMEOUT",
+			detail: { open_error: String(err?.message || err) },
+		};
 	}
 	try {
 		rootTab = await waitForTabComplete(rootTab.id, 30000);
@@ -5626,9 +5994,17 @@ async function gfv2EnsureSurface(mode, emit) {
 	}
 	if (!rootTab?.id) {
 		emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", "root_tab_load_timeout");
-		return { ok: false, error: "GFV2_ROOT_LOAD_TIMEOUT", detail: { reason: "no_root_tab" } };
+		return {
+			ok: false,
+			error: "GFV2_ROOT_LOAD_TIMEOUT",
+			detail: { reason: "no_root_tab" },
+		};
 	}
-	emit("GFV2_FLOW_ROOT_OPENED", "WAITING_FLOW", `tab=${rootTab.id} url=${String(rootTab.url || "").slice(0, 80)} strategy=new_root_tab`);
+	emit(
+		"GFV2_FLOW_ROOT_OPENED",
+		"WAITING_FLOW",
+		`tab=${rootTab.id} url=${String(rootTab.url || "").slice(0, 80)} strategy=new_root_tab`,
+	);
 
 	// 3. Classify the fresh root tab.
 	await ensureFlowDomScript(rootTab.id);
@@ -5636,10 +6012,18 @@ async function gfv2EnsureSurface(mode, emit) {
 	let cls = gfv2ClassifySurface(rootTab, cap);
 	if (cap?.diagnostic?.login_or_access_blocker) {
 		emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", "login_or_access_blocker");
-		return { ok: false, error: "GFV2_LOGIN_REQUIRED", detail: { url: rootTab.url || null } };
+		return {
+			ok: false,
+			error: "GFV2_LOGIN_REQUIRED",
+			detail: { url: rootTab.url || null },
+		};
 	}
 	if (cls.healthy) {
-		emit("GFV2_SURFACE_READY", "PASS", `tab=${rootTab.id} strategy=root_composer`);
+		emit(
+			"GFV2_SURFACE_READY",
+			"PASS",
+			`tab=${rootTab.id} strategy=root_composer`,
+		);
 		return { ok: true, tab: rootTab };
 	}
 
@@ -5672,8 +6056,16 @@ async function gfv2EnsureSurface(mode, emit) {
 				createResult.editor_ready),
 	);
 	if (!createDidAct) {
-		emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `create_error=${createResult?.error || "no_create_action"}`);
-		return { ok: false, error: "GFV2_CREATE_SESSION_NOT_FOUND", detail: { create_error: createResult?.error || null } };
+		emit(
+			"GFV2_ENSURE_SURFACE_FAILED",
+			"FAIL",
+			`create_error=${createResult?.error || "no_create_action"}`,
+		);
+		return {
+			ok: false,
+			error: "GFV2_CREATE_SESSION_NOT_FOUND",
+			detail: { create_error: createResult?.error || null },
+		};
 	}
 
 	// 5. Wait for the editor to settle on the SAME tab, then re-classify.
@@ -5688,11 +6080,23 @@ async function gfv2EnsureSurface(mode, emit) {
 	cap = await captureGoogleFlowV2Readiness(rootTab);
 	cls = gfv2ClassifySurface(rootTab, cap);
 	if (cls.healthy) {
-		emit("GFV2_SURFACE_READY", "PASS", `tab=${rootTab.id} strategy=created_session`);
+		emit(
+			"GFV2_SURFACE_READY",
+			"PASS",
+			`tab=${rootTab.id} strategy=created_session`,
+		);
 		return { ok: true, tab: rootTab };
 	}
-	emit("GFV2_ENSURE_SURFACE_FAILED", "FAIL", `reason=${cls.reason} url=${rootTab?.url || "?"}`);
-	return { ok: false, error: "GFV2_SURFACE_NOT_READY", detail: { reason: cls.reason, url: rootTab?.url || null } };
+	emit(
+		"GFV2_ENSURE_SURFACE_FAILED",
+		"FAIL",
+		`reason=${cls.reason} url=${rootTab?.url || "?"}`,
+	);
+	return {
+		ok: false,
+		error: "GFV2_SURFACE_NOT_READY",
+		detail: { reason: cls.reason, url: rootTab?.url || null },
+	};
 }
 
 async function handleGfv2Job(job) {
@@ -5717,7 +6121,11 @@ async function handleGfv2Job(job) {
 			(!f2vUploadAssetSource
 				? "GFV2_ASSET_SOURCE_NOT_FOUND"
 				: "GFV2_ASSET_SOURCE_UNWIRED");
-		emit(sourceError, "FAIL", `reason=${assetSrc.reason || "resolver_disagreed"}`);
+		emit(
+			sourceError,
+			"FAIL",
+			`reason=${assetSrc.reason || "resolver_disagreed"}`,
+		);
 		emit("FAILED", "FAIL", sourceError);
 		return {
 			ok: false,
@@ -5731,7 +6139,11 @@ async function handleGfv2Job(job) {
 			},
 		};
 	}
-	emit("GFV2_ASSET_SOURCE_RESOLVED", "PASS", `source_type=${assetSrc.source_type} name=${assetSrc.safe_name || "?"}`);
+	emit(
+		"GFV2_ASSET_SOURCE_RESOLVED",
+		"PASS",
+		`source_type=${assetSrc.source_type} name=${assetSrc.safe_name || "?"}`,
+	);
 
 	const surface = await gfv2EnsureSurface(job?.mode || "F2V", emit);
 	if (!surface.ok) {
@@ -5739,11 +6151,18 @@ async function handleGfv2Job(job) {
 		return { ok: false, error: surface.error, detail: surface.detail || null };
 	}
 	const flowTab = surface.tab;
-	emit("GFV2_EDITOR_READY", "PASS", `tab=${flowTab.id} url=${String(flowTab.url || "").slice(0, 80)}`);
+	emit(
+		"GFV2_EDITOR_READY",
+		"PASS",
+		`tab=${flowTab.id} url=${String(flowTab.url || "").slice(0, 80)}`,
+	);
 
 	const runnerApi =
 		typeof self !== "undefined" ? self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__ : null;
-	if (!runnerApi || typeof runnerApi.executeF2VVisibleSopRunner !== "function") {
+	if (
+		!runnerApi ||
+		typeof runnerApi.executeF2VVisibleSopRunner !== "function"
+	) {
 		emit("FAILED", "FAIL", "GFV2_RUNNER_NOT_LOADED");
 		return { ok: false, error: "GFV2_RUNNER_NOT_LOADED" };
 	}
@@ -5796,31 +6215,40 @@ async function handleGfv2Job(job) {
 
 	let runnerResult;
 	try {
-		runnerResult = await runnerApi.executeF2VVisibleSopRunner(deps, flowTab.id, job, {
-			settleMs: 300,
-			uploadWaitMs: 10000,
-			skipUpload: false,
-			skipGenerate: true, // GFV2 UAT stops BEFORE Generate.
-			// NB: gfv2ForceDomSettings / gfv2SkipModeSteps are deliberately NOT passed.
-			// The legacy DOM settings path is incompatible with the V2 surface (it
-			// clicks non-existent Video/Frames mode options and cannot open the V2
-			// settings panel — ERR_F2V_OPTION_VIDEO_NOT_FOUND / no_settings_launcher).
-			// Until a V2 settings read/interaction layer exists, the lane keeps the
-			// authority shortcut and emits the granular proof it CAN observe.
-			// NB: settings are NOT verified pre-upload. Live discovery proved the V2
-			// generation settings (tune panel: 9:16/1x/model) only render in the composer
-			// AFTER media is added — matching the original V2 SOP
-			// (Upload -> Add to Prompt -> Settings). Settings proof runs post-upload below.
-			// GFV2 upload-menu contract telemetry: launcher click is NOT a file chooser;
-			// the in-menu "Upload media"/"Upload from computer" item is clicked first.
-			gfv2Stage: (stage, status, message) => emit(stage, status, message),
-			cdpCoordinateClick: async (params) =>
-				await cdpClickCoordinate(params.tabId, params.x, params.y),
-			...cdpOpt,
-		});
+		runnerResult = await runnerApi.executeF2VVisibleSopRunner(
+			deps,
+			flowTab.id,
+			job,
+			{
+				settleMs: 300,
+				uploadWaitMs: 10000,
+				skipUpload: false,
+				skipGenerate: true, // GFV2 UAT stops BEFORE Generate.
+				// NB: gfv2ForceDomSettings / gfv2SkipModeSteps are deliberately NOT passed.
+				// The legacy DOM settings path is incompatible with the V2 surface (it
+				// clicks non-existent Video/Frames mode options and cannot open the V2
+				// settings panel — ERR_F2V_OPTION_VIDEO_NOT_FOUND / no_settings_launcher).
+				// Until a V2 settings read/interaction layer exists, the lane keeps the
+				// authority shortcut and emits the granular proof it CAN observe.
+				// NB: settings are NOT verified pre-upload. Live discovery proved the V2
+				// generation settings (tune panel: 9:16/1x/model) only render in the composer
+				// AFTER media is added — matching the original V2 SOP
+				// (Upload -> Add to Prompt -> Settings). Settings proof runs post-upload below.
+				// GFV2 upload-menu contract telemetry: launcher click is NOT a file chooser;
+				// the in-menu "Upload media"/"Upload from computer" item is clicked first.
+				gfv2Stage: (stage, status, message) => emit(stage, status, message),
+				cdpCoordinateClick: async (params) =>
+					await cdpClickCoordinate(params.tabId, params.x, params.y),
+				...cdpOpt,
+			},
+		);
 	} catch (err) {
 		emit("FAILED", "FAIL", "GFV2_RUNNER_THREW");
-		return { ok: false, error: "GFV2_RUNNER_THREW", detail: String(err?.message || err) };
+		return {
+			ok: false,
+			error: "GFV2_RUNNER_THREW",
+			detail: String(err?.message || err),
+		};
 	}
 
 	if (!runnerResult?.ok) {
@@ -5830,8 +6258,16 @@ async function handleGfv2Job(job) {
 	}
 
 	// Runner completed upload + add-to-prompt + prompt with skipGenerate.
-	emit("GFV2_ASSET_UPLOADED_OR_SELECTED", "PASS", `via=${runnerResult?.stage_results?.upload_proof?.via || "cdp_file_chooser"} source=system_job_asset`);
-	emit("GFV2_ASSET_BOUND_TO_PROMPT", "PASS", `media_attached=${Boolean(runnerResult?.stage_results?.media_attached)}`);
+	emit(
+		"GFV2_ASSET_UPLOADED_OR_SELECTED",
+		"PASS",
+		`via=${runnerResult?.stage_results?.upload_proof?.via || "cdp_file_chooser"} source=system_job_asset`,
+	);
+	emit(
+		"GFV2_ASSET_BOUND_TO_PROMPT",
+		"PASS",
+		`media_attached=${Boolean(runnerResult?.stage_results?.media_attached)}`,
+	);
 
 	// GRANULAR SETTINGS PROOF (post-upload, V2 SOP order). Opens the tune-settings
 	// panel, confirms/selects 9:16 + 1x, classifies the model (Veo / hidden-soft-pass
@@ -5839,12 +6275,24 @@ async function handleGfv2Job(job) {
 	const settings = await gfv2DriveSettingsVerify(flowTab, emit);
 	if (!settings.proceed) {
 		emit("FAILED", "FAIL", settings.error || "GFV2_SETTINGS_NOT_VERIFIED");
-		return { ok: false, error: settings.error || "GFV2_SETTINGS_NOT_VERIFIED", detail: settings.detail || null };
+		return {
+			ok: false,
+			error: settings.error || "GFV2_SETTINGS_NOT_VERIFIED",
+			detail: settings.detail || null,
+		};
 	}
 
-	emit("GFV2_PROMPT_ACCEPTED", "PASS", `prompt_inserted=${Boolean(runnerResult?.stage_results?.prompt_inserted)}`);
+	emit(
+		"GFV2_PROMPT_ACCEPTED",
+		"PASS",
+		`prompt_inserted=${Boolean(runnerResult?.stage_results?.prompt_inserted)}`,
+	);
 	emit("GFV2_GENERATE_ENABLED", "PASS", "verified_enabled_not_clicked");
-	emit("GFV2_STOP_BEFORE_GENERATE", "PASS", "gfv2_ready_stopped_before_generate");
+	emit(
+		"GFV2_STOP_BEFORE_GENERATE",
+		"PASS",
+		"gfv2_ready_stopped_before_generate",
+	);
 	return {
 		ok: true,
 		gfv2_stopped_before_generate: true,
@@ -5868,13 +6316,16 @@ async function handleExecuteFlowJob(job) {
 		// Without this the dashboard poll loop never terminates.
 		const requestId = job?.request_id;
 		if (requestId) {
-			postStageTelemetry({
-				request_id: requestId,
-				stage: "FAILED",
-				status: "FAIL",
-				message: targetResolution.error || "FLOW_EXECUTION_TARGET_FAILED",
-				source: "extension",
-			}, null);
+			postStageTelemetry(
+				{
+					request_id: requestId,
+					stage: "FAILED",
+					status: "FAIL",
+					message: targetResolution.error || "FLOW_EXECUTION_TARGET_FAILED",
+					source: "extension",
+				},
+				null,
+			);
 		}
 		return {
 			ok: false,
@@ -5901,9 +6352,9 @@ async function handleExecuteFlowJob(job) {
 					if (currentTab?.id && isProjectEditorUrl(currentTab.url)) {
 						const existingAuthority =
 							await resolveExistingProjectEditorAuthority(
-							currentTab,
-							runnerJob?.mode || job?.mode,
-						);
+								currentTab,
+								runnerJob?.mode || job?.mode,
+							);
 						if (existingAuthority.ok) {
 							return {
 								ok: true,
@@ -6125,7 +6576,10 @@ async function handleConfigureF2VSettings(job, tabId) {
 			const settledTab = await settleFlowProjectAfterOpen(openFlowResult);
 			const settledProbe =
 				settledTab?.id && isProjectEditorUrl(settledTab?.url)
-					? await probeFlowEditorCandidate(settledTab, runnerJob?.mode || job?.mode)
+					? await probeFlowEditorCandidate(
+							settledTab,
+							runnerJob?.mode || job?.mode,
+						)
 					: null;
 			return {
 				...openFlowResult,
@@ -6412,6 +6866,7 @@ async function handleFlowPageStateDiagnostic(mode, options = {}) {
 		Array.isArray(response?.visible_error_markers) &&
 		response.visible_error_markers.length > 0;
 	if (shouldRetryFreshProject && allowFreshProjectRecovery) {
+		await setStoredFlowProjectUrl(null);
 		openFlowResult = await handleOpenFlowNewProject(mode);
 		flowTab = await settleFlowProjectAfterOpen(openFlowResult);
 		base = buildFlowReadinessBase(flowTab);
@@ -6511,11 +6966,14 @@ async function handleFlowPageStateDiagnostic(mode, options = {}) {
 					finalFlowUrl !== normalizedPreferredUrl)),
 	);
 	if (finalFlowUrl) {
-		const syncResult = await syncStoredFlowProjectUrlToActiveEditor(finalFlowUrl, {
-			currentStoredUrl: normalizedPreferredUrl,
-			openedViaRecovery,
-			allowWhenMissing: true,
-		});
+		const syncResult = await syncStoredFlowProjectUrlToActiveEditor(
+			finalFlowUrl,
+			{
+				currentStoredUrl: normalizedPreferredUrl,
+				openedViaRecovery,
+				allowWhenMissing: true,
+			},
+		);
 		finalResult.stored_flow_project_url =
 			syncResult.stored_flow_project_url || normalizedPreferredUrl || null;
 	}
@@ -6572,10 +7030,14 @@ function isPreselectionEditorReadyDiagnostic(diagnostic) {
 // gfv2-readiness proof model. Emits diagnostic-only telemetry/logs. Returns
 // { ok, diagnostic, evaluation } or a structured error — never throws.
 async function captureGoogleFlowV2Readiness(selectedTab) {
-	const gfv2Api =
-		typeof self !== "undefined" ? self.__GFV2_READINESS__ : null;
+	const gfv2Api = typeof self !== "undefined" ? self.__GFV2_READINESS__ : null;
 	if (!selectedTab?.id) {
-		return { ok: false, error: "GFV2_NO_FLOW_TAB", diagnostic: null, evaluation: null };
+		return {
+			ok: false,
+			error: "GFV2_NO_FLOW_TAB",
+			diagnostic: null,
+			evaluation: null,
+		};
 	}
 	try {
 		await ensureFlowDomScript(selectedTab.id);
@@ -6599,7 +7061,10 @@ async function captureGoogleFlowV2Readiness(selectedTab) {
 			tab: selectedTab.id,
 		});
 		let evaluation = null;
-		if (gfv2Api && typeof gfv2Api.evaluateGoogleFlowV2Readiness === "function") {
+		if (
+			gfv2Api &&
+			typeof gfv2Api.evaluateGoogleFlowV2Readiness === "function"
+		) {
 			evaluation = gfv2Api.evaluateGoogleFlowV2Readiness(diagnostic);
 			console.log("[GFV2] GFV2_READINESS_EVALUATED", {
 				ready: evaluation.ready,
@@ -6690,7 +7155,8 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 
 	// The single recovery allowance goes to whichever runs first (the direct open above OR the
 	// page diagnostic). Consuming it here keeps the composer diagnostic strictly read-only.
-	const allowDiagRecovery = attemptOpenProject === true && !projectOpenRecoveryUsed;
+	const allowDiagRecovery =
+		attemptOpenProject === true && !projectOpenRecoveryUsed;
 	if (allowDiagRecovery) projectOpenRecoveryUsed = true;
 	const pageDiagnostic = await handleFlowPageStateDiagnostic(mode, {
 		allowProjectOpenRecovery: allowDiagRecovery,
@@ -6821,12 +7287,14 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 					selected_tab_id: activeTabPreflight.preflight?.selected_tab_id || 0,
 					active_editor_tab_id:
 						activeTabPreflight.preflight?.active_editor_tab_id || 0,
-					selected_tab_active:
-						Boolean(activeTabPreflight.preflight?.selected_tab_active),
+					selected_tab_active: Boolean(
+						activeTabPreflight.preflight?.selected_tab_active,
+					),
 					selected_tab_url: activeTabPreflight.selectedTabUrl || null,
 					active_editor_tab_url: activeTabPreflight.activeEditorTabUrl || null,
-					rebound_to_active_editor_tab:
-						Boolean(activeTabPreflight.reboundToActiveEditorTab),
+					rebound_to_active_editor_tab: Boolean(
+						activeTabPreflight.reboundToActiveEditorTab,
+					),
 				}
 			: null,
 		duplicate_editor_tabs: activeTabPreflight?.duplicate_tab_inventory || [],

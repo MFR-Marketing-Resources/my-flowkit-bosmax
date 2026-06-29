@@ -123,6 +123,7 @@ function loadHelpers() {
 		waitForTabComplete: async (_tabId) => null,
 		probeFlowEditorCandidate: async () => ({ ok: false }),
 		buildActiveFlowTabPreflight: async () => ({ ok: false }),
+		setStoredFlowProjectUrl: async () => null,
 	};
 	vm.createContext(sandbox);
 	vm.runInContext(
@@ -455,7 +456,8 @@ function testStaticDispatchWiring(source) {
 	);
 	assert(
 		source.includes('const strictActiveBinding =') &&
-			source.includes('String(job?.mode || "").trim().toUpperCase() === "F2V"'),
+			source.includes('String(job?.mode || "")') &&
+			source.includes('.toUpperCase() === "F2V"'),
 		"F2V execution must enable strict active-tab binding",
 	);
 	assert(
@@ -468,8 +470,12 @@ function testStaticDispatchWiring(source) {
 		"diagnostic gates must keep project-open recovery opt-in instead of auto-opening by default",
 	);
 	assert(
-		source.includes("allowProjectOpenRecovery: attemptOpenProject === true") &&
-			source.includes("allowFreshProjectRecovery: attemptOpenProject === true"),
+		source.includes("const allowDiagRecovery =") &&
+			source.includes(
+				"attemptOpenProject === true && !projectOpenRecoveryUsed;",
+			) &&
+			source.includes("allowProjectOpenRecovery: allowDiagRecovery") &&
+			source.includes("allowFreshProjectRecovery: allowDiagRecovery"),
 		"runtime self-test must be the only path that explicitly opts diagnostic recovery back in",
 	);
 	assert(
@@ -1820,6 +1826,140 @@ async function testStrictRecoveryBootstrapsEditorFromRootPage(
 	);
 }
 
+async function testStrictRecoveryClearsBrokenStoredProjectBeforeBootstrap(
+	recoverStrictActiveFlowTabTarget,
+) {
+	const brokenUrl =
+		"https://labs.google/fx/tools/flow/project/broken-stored-editor";
+	const freshUrl =
+		"https://labs.google/fx/tools/flow/project/fresh-editor-after-broken";
+	const state = {
+		flowTabs: [
+			{
+				id: 932,
+				windowId: 11,
+				active: true,
+				status: "complete",
+				url: brokenUrl,
+				title: "Broken Stored Editor",
+			},
+		],
+	};
+	const clearedStoredValues = [];
+	const bootstrapPreferredArgs = [];
+	let preflightCalls = 0;
+	const deps = {
+		getFlowTabs: async () => state.flowTabs.map((tab) => ({ ...tab })),
+		getTabSafe: async (tabId) =>
+			state.flowTabs.find((tab) => Number(tab.id) === Number(tabId)) || null,
+		focusTab: async (tab) => {
+			state.flowTabs = state.flowTabs.map((item) => ({
+				...item,
+				active: Number(item.id) === Number(tab.id),
+			}));
+			return state.flowTabs.find((item) => Number(item.id) === Number(tab.id)) || tab;
+		},
+		waitForTabComplete: async (tabId) =>
+			state.flowTabs.find((tab) => Number(tab.id) === Number(tabId)) || null,
+		probeFlowEditorCandidate: async () => ({
+			ok: false,
+			readiness: { ok: false },
+			diagnostic: { raw_error: "ERR_NO_RECEIVER" },
+		}),
+		setStoredFlowProjectUrl: async (value) => {
+			clearedStoredValues.push(value);
+			return null;
+		},
+		openFlowProjectFn: async (_mode, preferredUrl) => {
+			bootstrapPreferredArgs.push(preferredUrl);
+			const freshTab = {
+				id: 933,
+				windowId: 11,
+				active: true,
+				status: "complete",
+				url: freshUrl,
+				title: "Fresh Editor",
+			};
+			state.flowTabs = [freshTab];
+			return {
+				ok: true,
+				flow_tab_id: freshTab.id,
+				flow_url: freshTab.url,
+				flow_url_after: freshTab.url,
+			};
+		},
+		settleFlowProjectAfterOpen: async () => state.flowTabs[0] || null,
+	};
+	deps.buildActiveFlowTabPreflight = async (_mode, options = {}) => {
+		const selected =
+			options.selectedTabOverride || state.flowTabs.find((tab) => tab.active) || null;
+		preflightCalls += 1;
+		if (preflightCalls === 1) {
+			return {
+				ok: false,
+				error: "FLOW_ACTIVE_EDITOR_TAB_NOT_FOUND",
+				brokenTargetRejected: true,
+				preflight: {
+					selected_tab_id: 932,
+					active_editor_tab_id: 0,
+					selected_tab_active: true,
+					same_project_url: true,
+					content_script_alive_on_active_tab: true,
+					safe_to_click_active_tab: false,
+				},
+				selectedTab: {
+					id: 932,
+					active: true,
+					url: brokenUrl,
+				},
+				selectedTabUrl: brokenUrl,
+				activeEditorTab: null,
+				activeEditorTabUrl: null,
+				reboundToActiveEditorTab: false,
+			};
+		}
+		return {
+			ok: true,
+			preflight: {
+				selected_tab_id: selected?.id || 0,
+				active_editor_tab_id: selected?.id || 0,
+				selected_tab_active: Boolean(selected?.active),
+				same_project_url: true,
+				content_script_alive_on_active_tab: true,
+				safe_to_click_active_tab: true,
+			},
+			selectedTab: selected || null,
+			selectedTabUrl: selected?.url || null,
+			activeEditorTab: selected || null,
+			activeEditorTabUrl: selected?.url || null,
+			reboundToActiveEditorTab: false,
+		};
+	};
+	const result = await recoverStrictActiveFlowTabTarget(
+		"F2V",
+		{
+			preferredUrl: brokenUrl,
+			tabs: await deps.getFlowTabs(),
+		},
+		deps,
+	);
+	assert(
+		clearedStoredValues.length === 1 && clearedStoredValues[0] == null,
+		"strict recovery must clear the stale stored project URL before bootstrapping a fresh editor",
+	);
+	assert(
+		bootstrapPreferredArgs.length === 1 && bootstrapPreferredArgs[0] == null,
+		"strict recovery must not pass the broken preferred URL back into the open fallback",
+	);
+	assert(
+		result.ok === true &&
+			result.bootstrap_recovery_attempted === true &&
+			result.bootstrap_recovery_succeeded === true &&
+			result.bootstrapped_editor_tab_id === 933,
+		"strict recovery must recover onto the fresh editor after clearing the broken stored project URL",
+	);
+}
+
 async function testStrictRecoverySuppressesReopenWhenEditorIsAlive(
 	recoverStrictActiveFlowTabTarget,
 ) {
@@ -2058,6 +2198,9 @@ async function main() {
 		recoverStrictActiveFlowTabTarget,
 	);
 	await testStrictRecoveryBootstrapsEditorFromRootPage(
+		recoverStrictActiveFlowTabTarget,
+	);
+	await testStrictRecoveryClearsBrokenStoredProjectBeforeBootstrap(
 		recoverStrictActiveFlowTabTarget,
 	);
 	await testStrictRecoverySuppressesReopenWhenEditorIsAlive(

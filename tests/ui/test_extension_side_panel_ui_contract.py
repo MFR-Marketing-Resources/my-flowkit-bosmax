@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -198,6 +199,24 @@ def test_flow_dom_and_background_publish_runtime_build_handshake_markers():
 	assert "content_build_id:" in telemetry_section
 	assert "checkpoint: message.checkpoint || message.stage" in telemetry_section
 	assert "build_match:" in telemetry_section
+
+
+def test_flow_dom_build_id_matches_background_build_id():
+	dom_source = _read("extension/content-flow-dom.js")
+	background_source = _read("extension/background.js")
+
+	dom_match = re.search(
+		r"const FLOW_KIT_DOM_BUILD_ID = ['\"]([^'\"]+)['\"]",
+		dom_source,
+	)
+	background_match = re.search(
+		r'const BUILD_ID = "([^"]+)"',
+		background_source,
+	)
+
+	assert dom_match, "content-flow-dom build id marker missing"
+	assert background_match, "background build id marker missing"
+	assert dom_match.group(1) == background_match.group(1)
 
 
 def test_background_flow_blocker_classifier_fail_closes_on_runtime_or_build_mismatch():
