@@ -627,7 +627,15 @@ async def make_video_existing(body: MakeVideoExistingRequest):
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
-    return await _mv.start_on_existing(body.project_id, body.image_media_id, body.prompt)
+    # Route the legacy endpoint through the guarded one door (patch #3): inherits the
+    # single-flight lane, bound-editor session, and drift/loss invariants instead of the
+    # unguarded start_on_existing path.
+    result = await _mv.start_generate(
+        "I2V", body.prompt, project_id=body.project_id,
+        image_media_ids=[body.image_media_id])
+    if isinstance(result, dict) and result.get("status") == "REJECTED":
+        raise HTTPException(409, result.get("error") or "rejected")
+    return result
 
 
 class GenerateRequest(BaseModel):
@@ -675,6 +683,30 @@ async def generate_job(job_id: str):
     if not j:
         raise HTTPException(404, "job not found")
     return j
+
+
+@router.get("/bind-check")
+async def bind_check():
+    """0-credit diagnostic: does the live harvest expose the bind inputs, and does
+    _bind_editor_session() succeed? Settles whether the binder matches the real bridge shape."""
+    from agent.services import make_video as _mv
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    raw = await client.harvest_video_urls()
+    inner = raw.get("result", raw) if isinstance(raw, dict) else {}
+    shape = {
+        "top_keys": list(raw.keys()) if isinstance(raw, dict) else None,
+        "inner_keys": list(inner.keys()) if isinstance(inner, dict) else None,
+        "has_flow_url": bool(isinstance(inner, dict) and inner.get("flow_url")),
+        "has_flow_tab_id": isinstance(inner, dict) and inner.get("flow_tab_id") is not None,
+        "flow_tab_found": isinstance(inner, dict) and inner.get("flow_tab_found"),
+    }
+    try:
+        binding = await _mv._bind_editor_session(client)
+        return {"bound": True, "binding": binding, "shape": shape}
+    except Exception as e:  # noqa: BLE001
+        return {"bound": False, "error": str(e), "shape": shape}
 
 
 class NegotiateJobRequest(BaseModel):

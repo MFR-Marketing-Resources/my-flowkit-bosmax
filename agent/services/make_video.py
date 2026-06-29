@@ -319,6 +319,11 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             if seen_pid and seen_pid != project_id:
                 raise RuntimeError(
                     f"PROJECT_DRIFT: tab moved to {seen_pid}, expected {project_id}")
+            bound_tab = (job.get("binding") or {}).get("flow_tab_id")
+            seen_tab = inner.get("flow_tab_id")
+            if bound_tab is not None and seen_tab is not None and seen_tab != bound_tab:
+                raise RuntimeError(
+                    f"TAB_DRIFT: harvest tab {seen_tab} != bound {bound_tab}")
             cands = []
             for k in ("videoIds", "imageIds", "mediaIds"):
                 cands += (diag.get(k) or []) if isinstance(diag, dict) else []
