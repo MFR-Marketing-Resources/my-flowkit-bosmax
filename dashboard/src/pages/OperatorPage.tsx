@@ -383,7 +383,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			tone: "info",
 			title: "Submitting to Flow",
 			detail:
-				"Bridge request accepted locally. Waiting for telemetry from the extension.",
+				"Request accepted. This lane is pollJob-driven — tracking the job status.",
 			requestId,
 		});
 

@@ -658,10 +658,14 @@ async def generate(body: GenerateRequest):
         tier = (cred.get("data", cred) or {}).get("userPaygateTier", "") if isinstance(cred, dict) else ""
         if tier not in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
             raise HTTPException(500, f"Account tier '{tier}' cannot generate video — needs Pro/Ultra")
-    return await _mv.start_generate(
+    result = await _mv.start_generate(
         mode, body.prompt, project_id=body.project_id,
         image_media_ids=body.image_media_ids, image_prompt=body.image_prompt,
         aspect=body.aspect, tier=tier)
+    if isinstance(result, dict) and result.get("status") == "REJECTED":
+        # single-flight video lane busy (patch H)
+        raise HTTPException(409, result.get("error") or "rejected")
+    return result
 
 
 @router.get("/generate-job/{job_id}")

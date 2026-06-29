@@ -9,6 +9,7 @@ import asyncio
 import base64
 import json
 import re
+import time
 from uuid import uuid4
 
 from agent.config import OUTPUT_DIR
@@ -16,6 +17,45 @@ from agent.services.flow_client import get_flow_client
 from agent.services import agent_video
 
 _JOBS: dict = {}
+
+# Single-flight video lane: the extension drives ONE Flow tab, so at most one video
+# job may be in flight at a time. IMG is exempt. (Locked patch H.)
+_VIDEO_LANE_JOB = None
+_JOB_TTL = 1800  # seconds — GC finished jobs after this.
+
+
+def _job_active(job_id) -> bool:
+    j = _JOBS.get(job_id)
+    return bool(j) and j.get("status") not in ("DONE", "FAILED", "REJECTED")
+
+
+def _gc_jobs():
+    now = time.time()
+    for jid in [k for k, v in _JOBS.items()
+                if v.get("status") in ("DONE", "FAILED", "REJECTED")
+                and (now - v.get("created", now)) > _JOB_TTL]:
+        _JOBS.pop(jid, None)
+
+
+async def _bind_editor_session(client, requested_project_id=None) -> dict:
+    """Bind a video job to the OPEN Flow editor → {project_id, flow_tab_id, flow_project_url}.
+    Fail-closed (locked patch A/G): raise if no editor project is open, or if the open editor
+    differs from a requested project_id. Never mint a hidden project; never use the wrong tab."""
+    h = await client.harvest_video_urls()
+    inner = h.get("result", h) if isinstance(h, dict) else {}
+    if (not isinstance(inner, dict) or inner.get("error") == "NO_FLOW_TAB"
+            or inner.get("flow_tab_found") is False):
+        raise RuntimeError("NO_OPEN_EDITOR: open the target Flow project in the controlled tab first")
+    flow_url = inner.get("flow_url") or ""
+    flow_tab_id = inner.get("flow_tab_id")
+    diag = inner.get("diag", inner) if isinstance(inner, dict) else {}
+    project_id = diag.get("projectId") if isinstance(diag, dict) else None
+    if not project_id or "/project/" not in str(flow_url):
+        raise RuntimeError("NO_OPEN_EDITOR: the Flow tab is not on a project editor — open the project first")
+    if requested_project_id and requested_project_id != project_id:
+        raise RuntimeError(
+            f"PROJECT_TAB_MISMATCH: requested {requested_project_id} but the open editor is {project_id}")
+    return {"project_id": project_id, "flow_tab_id": flow_tab_id, "flow_project_url": flow_url}
 
 
 def get_job(job_id: str):
@@ -145,12 +185,21 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          image_media_ids: list = None, image_prompt: str = None,
                          aspect: str = "9:16", tier: str = "PAYGATE_TIER_ONE") -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job."""
+    global _VIDEO_LANE_JOB
+    _gc_jobs()
     mode = (mode or "").upper()
+    # Single-flight (patch H): one video job at a time on the shared Flow tab. IMG exempt.
+    if mode in _VIDEO_MODES and _VIDEO_LANE_JOB and _job_active(_VIDEO_LANE_JOB):
+        return {"status": "REJECTED", "error": "VIDEO_JOB_IN_FLIGHT",
+                "active_job": _VIDEO_LANE_JOB}
     job_id = "g_" + uuid4().hex[:12]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "mode": mode,
                      "stage": "queued", "project_id": project_id, "local_path": None,
                      "media_id": None, "size_mb": None, "artifact": None,
-                     "approved": None, "error": None}
+                     "approved": None, "binding": None, "error": None,
+                     "created": time.time()}
+    if mode in _VIDEO_MODES:
+        _VIDEO_LANE_JOB = job_id  # claim the lane synchronously to avoid a race
     _JOBS[job_id]["_task"] = asyncio.create_task(
         _run_generate(job_id, mode, prompt, project_id, image_media_ids, image_prompt, aspect, tier))
     return {"job_id": job_id, "status": "SUBMITTED", "mode": mode}
@@ -181,6 +230,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
     from agent.api.flow import (_generate_image_with_recovery, _extract_images,
                                  _extract_project_id, _IMG_ASPECT_MAP)
     import aiohttp
+    global _VIDEO_LANE_JOB
     job = _JOBS[job_id]
     client = get_flow_client()
     try:
@@ -188,13 +238,20 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             raise RuntimeError(f"unknown mode '{mode}' (use IMG/T2V/I2V/F2V)")
         aspect_key = _IMG_ASPECT_MAP.get(aspect, "IMAGE_ASPECT_RATIO_PORTRAIT")
 
-        # 1) ensure a project
-        if not project_id:
-            job["status"], job["stage"] = "SETUP", "creating project"
-            proj = await client.create_project(f"{mode.lower()} auto")
-            project_id = _extract_project_id(proj)
+        # 1) project: IMG may mint a fresh project; video modes BIND to the OPEN editor
+        #    (patch A/G — never mint a hidden project; fail-closed if no editor is open).
+        if mode == "IMG":
             if not project_id:
-                raise RuntimeError("create_project returned no projectId")
+                job["status"], job["stage"] = "SETUP", "creating project"
+                proj = await client.create_project(f"{mode.lower()} auto")
+                project_id = _extract_project_id(proj)
+                if not project_id:
+                    raise RuntimeError("create_project returned no projectId")
+        else:
+            job["status"], job["stage"] = "SETUP", "binding to open Flow editor"
+            binding = await _bind_editor_session(client, project_id)
+            project_id = binding["project_id"]
+            job["binding"] = binding
         job["project_id"] = project_id
 
         # 2) IMG — direct image API, no agent, no video credits
@@ -252,7 +309,16 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             job["stage"] = f"checking for finished video (try {i + 1})"
             h = await client.harvest_video_urls()
             inner = h.get("result", h) if isinstance(h, dict) else {}
+            # Fail-closed harvest (patch A/G): abort on a lost tab or a drifted project
+            # instead of polling into a generic late timeout.
+            if (not isinstance(inner, dict) or inner.get("error") == "NO_FLOW_TAB"
+                    or inner.get("flow_tab_found") is False):
+                raise RuntimeError("EDITOR_TAB_LOST: the Flow tab/editor closed mid-render")
             diag = inner.get("diag", inner) if isinstance(inner, dict) else {}
+            seen_pid = diag.get("projectId") if isinstance(diag, dict) else None
+            if seen_pid and seen_pid != project_id:
+                raise RuntimeError(
+                    f"PROJECT_DRIFT: tab moved to {seen_pid}, expected {project_id}")
             cands = []
             for k in ("videoIds", "imageIds", "mediaIds"):
                 cands += (diag.get(k) or []) if isinstance(diag, dict) else []
@@ -265,6 +331,10 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job.update(status="FAILED", error="video not found/retrieved in time")
     except Exception as e:  # noqa: BLE001
         job.update(status="FAILED", error=str(e), stage="failed")
+    finally:
+        # Release the single-flight video lane (patch H).
+        if _VIDEO_LANE_JOB == job_id:
+            _VIDEO_LANE_JOB = None
 
 
 async def _run_negotiate(job_id: str, prompt: str, image_prompt: str, dry: bool):
