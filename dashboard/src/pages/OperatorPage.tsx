@@ -305,74 +305,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		return () => window.clearInterval(timer);
 	}, [isPortalMode, mode]);
 
-	// IMG mode goes through the proven aisandbox API path (create project ->
-	// generate image), NOT the DOM-automation execute-flow-job lane. Works two ways:
-	// free text (no refs) and image-to-image blend (uploaded refs by media_id).
-	const handleGenerateImageApi = async (data: WorkspaceExecutePayload) => {
-		if (executionInFlightRef.current) return;
-		executionInFlightRef.current = true;
-		setIsExecuting(true);
-		const requestId = `img_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
-		const refs = [
-			data.refs?.subjectAsset?.mediaId,
-			data.refs?.sceneAsset?.mediaId,
-			data.refs?.styleAsset?.mediaId,
-		].filter(Boolean) as string[];
-		setNotice({
-			tone: "info",
-			title: refs.length ? "Generating image (blend)…" : "Generating image…",
-			detail: "Calling Google Flow via the API path (create project → generate).",
-			requestId,
-		});
-		try {
-			const response = await fetch("/api/flow/generate-image-oneshot", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					prompt: data.prompt,
-					aspect_ratio: data.aspectRatio,
-					reference_media_ids: refs,
-				}),
-			});
-			if (!response.ok) {
-				const err = await response.json().catch(() => ({}));
-				throw new Error(err.detail || `HTTP ${response.status}`);
-			}
-			const result = await response.json();
-			const imgs: { media_id: string; url: string }[] = result.images ?? [];
-			for (const img of imgs) {
-				if (img.url) window.open(img.url, "_blank", "noopener");
-			}
-			setNotice({
-				tone: "info",
-				title: `Image generated (${result.mode ?? "text"})`,
-				detail: imgs[0]?.url
-					? "Opened in a new tab."
-					: "Done, but no image URL was returned.",
-				requestId,
-			});
-		} catch (error: unknown) {
-			const message =
-				error instanceof Error ? error.message : "Image generation failed.";
-			setNotice({
-				tone: "error",
-				title: "Image generation failed",
-				detail: message,
-				requestId,
-			});
-		} finally {
-			setIsExecuting(false);
-			executionInFlightRef.current = false;
-		}
-	};
-
+	// IMG now flows through the SAME unified one-door /generate (mode:"IMG") + pollJob as the
+	// video lanes — it saves to disk and returns a job (the legacy /generate-image-oneshot
+	// endpoint is kept server-side but no longer called from the dashboard).
 	const handleExecute = async (data: WorkspaceExecutePayload) => {
 		if (executionInFlightRef.current) {
 			console.log("[BOSMAX_DEBUG] DUPLICATE_EXECUTION_BLOCKED");
-			return;
-		}
-		if (data.mode === "IMG") {
-			await handleGenerateImageApi(data);
 			return;
 		}
 		executionInFlightRef.current = true;
@@ -406,10 +344,27 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 				if (status === "DONE") {
 					const mediaId = job.media_id ?? job.video_media_id ?? "";
+					// Surface the post-approve verification truth (Layer A). Handle BOTH result
+					// shapes surgically: the generate-job lane carries the flags on top-level
+					// job fields; the negotiate-job dry lane carries them under job.result.*.
+					const r = job.result ?? {};
+					const unverified = Boolean(
+						job.model_unverified || job.duration_unverified ||
+						r.model_unverified || r.duration_unverified ||
+						job.model_ok === false || job.duration_ok === false ||
+						r.model_ok === false || r.duration_ok === false,
+					);
+					const verifyNote = unverified
+						? " — ⚠ verification: model/duration UNVERIFIED"
+						: "";
+					// IMG artifacts open in a new tab for a quick preview (one-door save still happens).
+					if (job.artifact === "image" && job.url) {
+						window.open(job.url, "_blank", "noopener");
+					}
 					setNotice({
 						tone: "info",
 						title: `${data.mode} done — saved`,
-						detail: `Saved ${job.size_mb ?? "?"}MB → ${job.local_path} (media ${mediaId})`,
+						detail: `Saved ${job.size_mb ?? "?"}MB → ${job.local_path} (media ${mediaId})${verifyNote}`,
 						requestId,
 					});
 					setIsExecuting(false);

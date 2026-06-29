@@ -287,7 +287,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                     data = await r.read()
             path.write_bytes(data)
             job.update(status="DONE", stage="done", media_id=mid, local_path=str(path),
-                       size_mb=round(len(data) / 1024 / 1024, 2), artifact="image")
+                       size_mb=round(len(data) / 1024 / 1024, 2), artifact="image", url=url)
             return
 
         # 3) T2V / I2V / F2V — agent video
