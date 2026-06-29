@@ -7,7 +7,10 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
-import ModelSelect, { type VideoModel } from "./ModelSelect";
+import ModelSelect, {
+	type VideoModel,
+	normalizeModel,
+} from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface F2VModuleProps {
@@ -19,10 +22,6 @@ interface F2VModuleProps {
 }
 
 const F2V_DEFAULT_MODEL = "Veo 3.1 - Lite";
-
-function normalizeF2VModel(value: string | null | undefined): string {
-	return value || F2V_DEFAULT_MODEL;
-}
 
 function toUploadedAsset(
 	asset:
@@ -72,7 +71,7 @@ export default function F2VModule({
 	useEffect(() => {
 		if (!workspacePackage || workspacePackage.mode !== "F2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
-		setModel(normalizeF2VModel(workspacePackage.model));
+		setModel(normalizeModel(workspacePackage.model, videoModels));
 		setOrientation(
 			workspacePackage.aspect_ratio === "16:9" ? "HORIZONTAL" : "VERTICAL",
 		);

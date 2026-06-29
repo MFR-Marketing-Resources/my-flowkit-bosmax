@@ -41,7 +41,7 @@ def test_operator_authoring_pages_keep_workspace_controls_and_modules():
         "Character Presence",
         "Creator Persona",
         "Language Policy",
-        "Load F2V Package + Generate Final Prompt",
+        "Generate Final Prompt",
         "Regenerate Final Prompt",
         "Package Eligibility",
     ]:
@@ -49,7 +49,7 @@ def test_operator_authoring_pages_keep_workspace_controls_and_modules():
 
     for token in [
         "Start Frame",
-        "End Frame (Optional)",
+        "End Frame (Optional Reference)",
         "Prompt Injection",
         "Flow Mirror Settings",
     ]:
@@ -78,10 +78,15 @@ def test_workspace_modules_use_page_scroll_and_clear_auto_vs_manual_sections():
         assert "xl:sticky xl:top-4" in source
 
     assert "Auto Asset Baseline" in f2v_source
-    assert "F2V stays locked to Veo 3.1 - Lite" in f2v_source
+    # Patch I3: F2V is no longer locked to Lite — all video modules use the shared SSOT
+    # model dropdown (4 real Flow models), and the retired ghost options are gone.
+    assert "<ModelSelect" in f2v_source
+    assert "<ModelSelect" in t2v_source
+    assert "<ModelSelect" in i2v_source
     assert "<option>Veo 3.1 - Pro</option>" not in f2v_source
+    assert "<option>Veo 3.1 - Pro</option>" not in t2v_source
     assert "<option>Nano Banana 2</option>" not in f2v_source
-    assert "Product Reference" in i2v_source
+    assert "Select Character / Creator" in i2v_source
     assert "Auto Asset Baseline" in img_source
     assert "Manual Asset Upload" in f2v_source
     assert "Manual Override" in i2v_source

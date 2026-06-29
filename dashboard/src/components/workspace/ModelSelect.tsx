@@ -16,6 +16,20 @@ interface ModelSelectProps {
 	onChange: (uiLabel: string) => void;
 }
 
+// Retired/ghost models that legacy workspace packages may still carry. The backend now
+// rejects these, so normalize any incoming package model against the SSOT before use.
+const GHOST_MODELS = ["Veo 3.1 - Pro", "Nano Banana 2"];
+
+export function normalizeModel(
+	model: string | null | undefined,
+	models: VideoModel[],
+	fallback = "Veo 3.1 - Lite",
+): string {
+	if (!model || GHOST_MODELS.includes(model)) return fallback;
+	if (models.length === 0) return model; // registry not loaded yet — don't clobber
+	return models.some((m) => m.ui_label === model) ? model : fallback;
+}
+
 export default function ModelSelect({ models, value, onChange }: ModelSelectProps) {
 	return (
 		<div className="space-y-3">

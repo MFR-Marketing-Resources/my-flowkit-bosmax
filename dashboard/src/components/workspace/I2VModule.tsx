@@ -333,7 +333,7 @@ export default function I2VModule({
 					mode: "I2V",
 					duration_seconds: workspacePackage.duration_seconds,
 					aspect_ratio: workspacePackage.aspect_ratio,
-					model: workspacePackage.model,
+					model, // current dropdown selection, not the stale package model
 					manual_override: isManualOverride,
 					recipe_id: selectedRecipeId,
 					character_reference_asset_id: selectedCharacterAssetId || null,
@@ -740,7 +740,7 @@ export default function I2VModule({
 										onClick={() => setOrientation(o as Orientation)}
 										className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${orientation === o ? "bg-blue-600/20 border-blue-500 text-blue-400" : "bg-slate-950 border-slate-800 text-slate-500"}`}
 									>
-										{o === "VERTICAL" ? "9:16" : "16:9"}
+										{o === "VERTICAL" ? "9:16 (Vertical)" : "16:9 (Horizontal)"}
 									</button>
 								))}
 							</div>

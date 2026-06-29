@@ -249,9 +249,9 @@ function PackageDetailPanel({
 	const promptStep = imageStepStart + allDisplayAssets.length;
 	const generateStep = promptStep + (isExtend ? blocks.length : 1);
 	const modeModelHint: Record<string, string> = {
-		T2V: "Veo 3.1 - Pro (or match your Workspace setting)",
-		F2V: "Veo 3.1 - Lite (locked for F2V lane)",
-		I2V: "Veo 3.1 - Pro (or match your Workspace setting)",
+		T2V: "Pick a model in the module (Veo 3.1 Lite/Fast/Quality or Omni Flash)",
+		F2V: "Pick a model in the module (Veo 3.1 Lite/Fast/Quality or Omni Flash)",
+		I2V: "Pick a model in the module (Veo 3.1 Lite/Fast/Quality or Omni Flash)",
 		IMG: "Nano Banana 2 (Image Generation)",
 	};
 	const scaffoldSettings = (domScaffold?.settings ?? {}) as Record<string, unknown>;

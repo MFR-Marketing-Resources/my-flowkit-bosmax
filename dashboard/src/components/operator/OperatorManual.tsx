@@ -169,7 +169,7 @@ export default function OperatorManual({
           <h3 className="text-sm font-bold" style={{ color: 'var(--text)' }}>Google Flow Evidence Notes</h3>
           <div className="flex flex-col gap-3">
             <EvidenceSubsection title="Images Evidence">
-              <div><Badge type="info">SOURCE EVIDENCE</Badge> Workspace uses Nano Banana 2 / Pro.</div>
+              <div><Badge type="info">SOURCE EVIDENCE</Badge> Workspace image generation uses Nano Banana 2. Video uses the selectable Veo 3.1 (Lite/Fast/Quality) + Omni Flash models.</div>
               <div>Ratios: 16:9, 9:16, 1:1, 3:4, 4:3. Tools: Doodle, Box, Lasso, Annotation, Crop.</div>
               <div style={{ color: 'var(--muted)' }}><Badge type="warn">LIVE TEST REQUIRED</Badge> Exact DOM selectors for toggle, prompt, and generate buttons.</div>
             </EvidenceSubsection>

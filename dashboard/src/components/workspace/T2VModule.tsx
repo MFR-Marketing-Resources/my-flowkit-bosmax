@@ -5,7 +5,7 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
-import ModelSelect, { type VideoModel } from "./ModelSelect";
+import ModelSelect, { type VideoModel, normalizeModel } from "./ModelSelect";
 
 interface T2VModuleProps {
 	onExecute: (data: WorkspaceExecutePayload) => void;
@@ -34,7 +34,7 @@ export default function T2VModule({
 	useEffect(() => {
 		if (!workspacePackage || workspacePackage.mode !== "T2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
-		setModel(workspacePackage.model || "Veo 3.1 - Lite");
+		setModel(normalizeModel(workspacePackage.model, videoModels));
 		setOrientation(
 			workspacePackage.aspect_ratio === "16:9" ? "HORIZONTAL" : "VERTICAL",
 		);

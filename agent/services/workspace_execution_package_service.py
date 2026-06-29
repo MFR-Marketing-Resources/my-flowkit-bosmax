@@ -100,9 +100,8 @@ def _merge_i2v_resolved_assets(
 
 def _default_model_for_mode(mode: str) -> str:
     if mode == "IMG":
-        return "Nano Banana 2"
-    if mode == "T2V":
-        return "Veo 3.1 - Pro"
+        return "Nano Banana 2"  # IMG uses the image lane, not the video model SSOT
+    # Video modes default to a real Flow model (Veo 3.1 - Pro is retired/ghost).
     return "Veo 3.1 - Lite"
 
 
