@@ -348,11 +348,25 @@ def _extract_images(data) -> list[dict]:
     return out
 
 
-async def _generate_image_with_recovery(client, prompt, project_id, aspect, tier, refs, max_tries=6):
-    """Generate, retrying reCAPTCHA cold-start and reloading the Flow tab on the
-    stale-tab host-access failure class (matches the proven manual recovery)."""
+async def _generate_image_with_recovery(client, prompt, project_id, aspect, tier, refs, max_tries=8):
+    """Generate an image with the proven recovery recipe.
+
+    The Flow tab is often stale after idle / a backend restart, so reload it ONCE up
+    front and let it settle, then retry. A reCAPTCHA cold-start timeout after that is a
+    warm-up — just retry (do NOT reload again, which resets the warm-up). Reload a
+    second time only for the host-access failure class.
+    """
     import asyncio
+
+    # Proactive single reload + settle (matches the manual recipe that works).
+    try:
+        await client.reload_flow_tab()
+        await asyncio.sleep(7)
+    except Exception:
+        pass
+
     last = None
+    did_host_reload = False
     for _ in range(max_tries):
         result = await client.generate_images(
             prompt=prompt, project_id=project_id, aspect_ratio=aspect,
@@ -363,17 +377,16 @@ async def _generate_image_with_recovery(client, prompt, project_id, aspect, tier
         blob = str(result.get("error") or result.get("data") or "")
         if "CAPTCHA_FAILED" not in blob:
             return result  # non-recoverable error → stop
-        stale = any(s in blob for s in (
-            "Cannot access contents", "must request permission",
-            "ERR_MESSAGE_RESPONSE_TIMEOUT", "ERR_RUNTIME_LASTERROR"))
-        if stale:
+        host_access = "Cannot access contents" in blob or "must request permission" in blob
+        if host_access and not did_host_reload:
             try:
                 await client.reload_flow_tab()
             except Exception:
                 pass
-            await asyncio.sleep(7)
+            did_host_reload = True
+            await asyncio.sleep(8)
         else:
-            await asyncio.sleep(2)
+            await asyncio.sleep(2)  # cold-start warm-up → just retry
     return last
 
 
