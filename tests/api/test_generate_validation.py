@@ -73,6 +73,27 @@ def test_make_video_existing_unknown_model_422():
         "unknown video model")
 
 
+def _expect_422_nego(body, needle=None):
+    try:
+        _run(flow.negotiate_job(body))
+        assert False, "expected HTTPException 422"
+    except HTTPException as e:
+        assert e.status_code == 422, f"got {e.status_code}: {e.detail}"
+        if needle:
+            assert needle.lower() in str(e.detail).lower(), e.detail
+
+
+def test_negotiate_job_quality_4s_returns_422():
+    # /negotiate-job must fail-closed before spawning a job + junk project (patch I4a).
+    _expect_422_nego(flow.NegotiateJobRequest(
+        prompt="x", model="Veo 3.1 - Quality", duration_s=4))
+
+
+def test_negotiate_job_unknown_model_returns_422():
+    _expect_422_nego(flow.NegotiateJobRequest(prompt="x", model="Nano Banana 2"),
+                     "unknown video model")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

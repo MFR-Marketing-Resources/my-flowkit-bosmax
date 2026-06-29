@@ -762,6 +762,13 @@ class NegotiateJobRequest(BaseModel):
 async def negotiate_job(body: NegotiateJobRequest):
     """Async negotiation (captures full transcript). dry=True → 0 video credits."""
     from agent.services import make_video as _mv
+    from agent.services import video_models as _vm
+    # Fail-closed model+duration validation BEFORE start (matches /generate + /make-video-
+    # existing) so an invalid request 422s instead of spawning a job + a junk project.
+    try:
+        _vm.expected_cost(body.model or _vm.DEFAULT_MODEL, body.duration_s)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")

@@ -102,6 +102,49 @@ def test_gc_drops_old_finished_jobs():
     mv._JOBS.clear()
 
 
+def test_run_negotiate_image_prompt_branching():
+    """image_prompt=None -> pure T2V dry (no start frame, media=None);
+    image_prompt=<text> -> start frame generated (media=[id]). (patch I4a contract)"""
+    import agent.api.flow as flowmod
+    cap = {}
+
+    async def fake_negotiate(client, pid, sid, prompt, media, **kw):
+        cap["media"] = media
+        return {"transcript": [], "approved": False}
+
+    async def fake_img(*a, **k):
+        cap["img_called"] = True
+        return {"media": [{"name": "img-123"}]}
+
+    class _C:
+        async def create_project(self, *a):
+            return {"projectId": "p1"}
+
+        async def create_agent_session(self, *a):
+            return {"sessionInfo": {"agentSessionId": "s1"}}
+
+    orig = (mv.agent_video.negotiate_and_generate,
+            flowmod._generate_image_with_recovery, mv.get_flow_client)
+    mv.agent_video.negotiate_and_generate = fake_negotiate
+    flowmod._generate_image_with_recovery = fake_img
+    mv.get_flow_client = lambda: _C()
+    try:
+        mv._JOBS.clear()
+        mv._JOBS["jn"] = {"status": "SUBMITTED"}
+        cap.clear()
+        _run(mv._run_negotiate("jn", "p", None, True, None, None, "p1"))
+        assert cap.get("media") is None and "img_called" not in cap
+
+        mv._JOBS["jt"] = {"status": "SUBMITTED"}
+        cap.clear()
+        _run(mv._run_negotiate("jt", "p", "make image", True, None, None, "p1"))
+        assert cap.get("img_called") is True and cap.get("media") == ["img-123"]
+    finally:
+        (mv.agent_video.negotiate_and_generate,
+         flowmod._generate_image_with_recovery, mv.get_flow_client) = orig
+        mv._JOBS.clear()
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
