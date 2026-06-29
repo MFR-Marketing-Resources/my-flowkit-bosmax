@@ -375,9 +375,7 @@ export default function IMGModule({
 					<button
 						type="button"
 						onClick={handleExecute}
-						disabled={
-							isExecuting || isUploading || !manualPrompt || !subjectAsset
-						}
+						disabled={isExecuting || isUploading || !manualPrompt}
 						className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
 					>
 						{isUploading
