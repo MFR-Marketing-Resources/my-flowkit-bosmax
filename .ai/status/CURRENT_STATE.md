@@ -15,8 +15,16 @@ the backend is the brain, the UI is thin buttons.
 - **Operating principles (locked):** don't fix what isn't broken · don't reinvent the wheel ·
   surgical patches only (no full rewrite without architecture-change approval) · verify-before-claim
   (no success without the saved file) · one entry point (`/generate`) · ask before credits.
+- **Layer A negotiation (current):** the agent negotiation is a **cap-gate** — approve only
+  `num_videos==1` + `num_images==0` + `cost <= ceiling(model,duration)` (credits are
+  promo-variable; no exact-cost gate, no credit target in the steer). Model AND duration are
+  verified POST-approve (`FAILED_WRONG_MODEL` / `FAILED_WRONG_DURATION`; absent evidence →
+  `model_unverified` / `duration_unverified`, surfaced in the dashboard `pollJob` notice). The dry
+  `/negotiate-job` lane only short-circuits on a real generation `toolInvocation`, never soft text
+  (protects the 0-credit `would_approve` capture). IMG now runs through the one-door `/generate`.
 - **TODO:** live-verify each mode once from the button (IMG cheap; T2V/I2V/F2V ~10 credits each —
-  ask the owner first); then documentation handoff to Codex/sibling.
+  ask the owner first); **I4a 0-credit dry re-capture is pending the extension connection** (not
+  yet live-verified post cap-gate / dry-lane fix); then documentation handoff to Codex/sibling.
 
 Everything below is the historical architecture-reset record. Where it conflicts with this pivot,
 **this pivot wins.**

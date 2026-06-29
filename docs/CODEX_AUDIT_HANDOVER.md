@@ -43,15 +43,20 @@ I will counter yours. We converge on findings before Faris live-tests the 4 mode
   timing, tab focus, and drift all break it. `_STALE_VIDEO_IDS = {b267d480}` is a hardcoded hack — a
   robust design snapshots existing media_ids BEFORE generation and accepts only NEW ones. Is there a
   project-media LIST API we missed (`refresh_project_urls` is a no-op)?
-- **[HIGH] `agent_video.decide()` strictness.** It rejects any proposal with `num_images` set and
-  requires `num_videos==1, cost<=10`. Does a legitimate Veo-Lite proposal ever include a first-frame
-  `num_images>0` (→ wrongly rejected → max_turns fail)? Does `cost<=10` actually guarantee Veo 3.1
-  Lite vs another 10-credit model? Verify against real agent SSE.
-- **[HIGH] Only I2V is live-proven.** T2V (no ref), F2V, and IMG via the unified door are untested.
-  IMG via the dashboard still uses the OLD `generate-image-oneshot` (opens a browser tab, does NOT
-  save to the system) — inconsistent with `/generate` IMG (saves to disk). Two IMG paths; reconcile.
-- **[MEDIUM] No tests** for `parse_agent_sse` / `decide` / the retrieval loop. Zero CI coverage on
-  the new brain + pipeline.
+- **[HIGH → RESOLVED (cap-gate)] `agent_video.decide()` strictness.** The exact-cost proxy
+  (`cost<=10` as a model guarantee) is gone: `decide()` now approves on `num_videos==1` AND
+  `num_images==0` AND `cost <= ceiling(model, duration)` (credits are promo-variable, so the
+  registry cost is a CEILING, not exact). Cost no longer needs to "guarantee" the model — the
+  actual model AND duration are verified POST-approve (`FAILED_WRONG_MODEL` / `FAILED_WRONG_DURATION`;
+  absent evidence → `*_unverified`). Covered by `tests/unit/test_agent_video.py`.
+- **[HIGH] Only I2V is live-proven.** T2V (no ref), F2V, and IMG via the unified door remain
+  **untested live** (live-verify still TODO — needs the extension connected; not claimed proven).
+  **[RESOLVED — patch D]** the two IMG paths are reconciled: the dashboard IMG button now routes
+  through the one-door `/generate` (saves to disk + opens a preview tab); the legacy
+  `/generate-image-oneshot` endpoint is kept server-side but no longer called from the dashboard.
+- **[MEDIUM → RESOLVED] Tests** now cover `parse_agent_sse` / `decide` / cap-gate / duration
+  verification / the dry-lane short-circuit: `tests/unit/test_agent_video.py`,
+  `test_video_models.py`, `test_make_video_binding.py`.
 - **[MEDIUM] Redundant scaffolding** in `make_video.py`: `start`/`start_on_existing`/`start_negotiate`
   predate the unified `start_generate`. `/generate` is canonical; `make-video*` / `negotiate-job`
   endpoints are legacy. Consolidate or mark (left in place per the surgical rule — your call).

@@ -75,10 +75,17 @@ engine (no agent, no video credits).
   door's worker). Also `_save_video_by_get_media()` (robust retrieval).
 - **Endpoint:** `agent/api/flow.py` → `POST /generate`, `GET /generate-job/{id}`.
 - **Negotiation brain:** `agent/services/agent_video.py` — drives the conversational agent:
-  - `parse_agent_sse()` → reads the SSE; `started` = `beginRendering` or a generate_video tool.
-  - `decide()` — **REQUIRES `num_videos >= 1`**. Rejects image-only / `num_images` proposals
-    (this bug once produced "only images"). Omni (15) → reject → steer to **Veo 3.1 Lite (10)** →
-    **approve exactly once** (no double-charge).
+  - `parse_agent_sse()` → reads the SSE; `started_tool` (a real generation `toolInvocation`) is
+    the HARD pre-approve signal; soft text phrases are secondary, post-approve only (the
+    `beginRendering` text false-positive was removed so it can't short-circuit the dry lane).
+  - `decide()` — **CAP-GATE**: approve only when `num_videos == 1` AND `num_images == 0` AND
+    `cost <= ceiling(model, duration)`. Credits are promo-variable, so the registry cost is a
+    CEILING, not an exact value — a promo price below the ceiling still approves; multi-video
+    (even within the cap) and image-only proposals are rejected. The steer names model + duration
+    + "1 video, no images" but **no credit target**. **Approve exactly once** (no double-charge).
+  - **Post-approve verification:** the fired generate tool's `model_used` + `duration_used` are
+    checked — a confirmed mismatch hard-fails (`FAILED_WRONG_MODEL` / `FAILED_WRONG_DURATION`);
+    absent evidence is flagged `model_unverified` / `duration_unverified`, never silently verified.
 - **Transport (extension):** `extension/background.js`
   - `handleApiRequest` solves reCAPTCHA (**action `CHAT_GENERATION`**) + injects token into
     `agentClientContext.recaptchaContext.token`.
@@ -89,8 +96,11 @@ engine (no agent, no video credits).
   the video BYTES as base64 `video.encodedVideo`** — accept ONLY if `encodedVideo` is present
   (real video), **excluding** the reference image id and `_STALE_VIDEO_IDS`. Save `.mp4`, verify.
 - **Dashboard:** `dashboard/src/pages/OperatorPage.tsx` → `handleExecute` posts to `/generate` +
-  `pollJob` (T2V/I2V/F2V); `handleGenerateImageApi` → `/generate-image-oneshot` (IMG). `npm run
-  build` passes.
+  `pollJob` for **ALL** modes including IMG (`mode:"IMG"` → one-door save to disk; the image also
+  opens in a tab for preview). The `pollJob` DONE notice surfaces `model_unverified` /
+  `duration_unverified`. Build command: **`npm --prefix dashboard run build`** (the repo root has
+  no `build` script). The legacy `/generate-image-oneshot` endpoint is kept server-side but is no
+  longer called from the dashboard.
 
 ---
 
