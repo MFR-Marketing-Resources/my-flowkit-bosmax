@@ -187,7 +187,8 @@ _ALL_MODES = ("IMG",) + _VIDEO_MODES
 
 async def start_generate(mode: str, prompt: str, project_id: str = None,
                          image_media_ids: list = None, image_prompt: str = None,
-                         aspect: str = "9:16", tier: str = "PAYGATE_TIER_ONE") -> dict:
+                         aspect: str = "9:16", tier: str = "PAYGATE_TIER_ONE",
+                         model: str = None, duration_s: int = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job."""
     global _VIDEO_LANE_JOB
     _gc_jobs()
@@ -200,12 +201,13 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "mode": mode,
                      "stage": "queued", "project_id": project_id, "local_path": None,
                      "media_id": None, "size_mb": None, "artifact": None,
-                     "approved": None, "binding": None, "error": None,
-                     "created": time.time()}
+                     "approved": None, "binding": None, "model": model,
+                     "error": None, "created": time.time()}
     if mode in _VIDEO_MODES:
         _VIDEO_LANE_JOB = job_id  # claim the lane synchronously to avoid a race
     _JOBS[job_id]["_task"] = asyncio.create_task(
-        _run_generate(job_id, mode, prompt, project_id, image_media_ids, image_prompt, aspect, tier))
+        _run_generate(job_id, mode, prompt, project_id, image_media_ids, image_prompt,
+                      aspect, tier, model, duration_s))
     return {"job_id": job_id, "status": "SUBMITTED", "mode": mode}
 
 
@@ -230,7 +232,7 @@ async def _save_video_by_get_media(client, candidates, exclude) -> tuple:
 
 
 async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
-                        image_prompt, aspect, tier):
+                        image_prompt, aspect, tier, model=None, duration_s=None):
     from agent.api.flow import (_generate_image_with_recovery, _extract_images,
                                  _extract_project_id, _IMG_ASPECT_MAP)
     import aiohttp
@@ -301,13 +303,16 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         if not sid:
             raise RuntimeError("no agent session")
         job["stage"] = "negotiating (approve 1 video, Veo Lite)"
-        nres = await agent_video.negotiate_and_generate(client, project_id, sid, prompt, refs)
+        nres = await agent_video.negotiate_and_generate(
+            client, project_id, sid, prompt, refs,
+            target_model=model, target_duration_s=duration_s)
         job["approved"] = nres.get("approved")
         job["model_used"] = nres.get("model_used")
-        # Post-approve model verification (patch B): the model is absent from the proposal,
-        # so cost is the pre-approve Lite proxy; flag if the fired model isn't Lite.
-        if nres.get("model_used") and "lite" not in str(nres["model_used"]).lower():
-            job["model_warning"] = f"approved model is not Lite: {nres['model_used']}"
+        # I3: post-approve model verification — a CONFIRMED mismatch is a hard failure
+        # (FAILED_WRONG_MODEL), not a silent warning.
+        if nres.get("model_ok") is False:
+            raise RuntimeError(
+                f"FAILED_WRONG_MODEL: expected {model or 'default'}, got {nres.get('model_used')}")
         if not nres.get("approved"):
             raise RuntimeError("agent did not approve a video: " + str(nres.get("error") or nres))
 

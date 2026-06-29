@@ -11,7 +11,9 @@ generating (e.g. "generating", "in the queue"). Every turn's raw agent reply is 
 """
 import json
 
-VEO_LITE_COST = 10  # one Veo 3.1 Lite video; Omni is 15 → steer to Lite
+from agent.services import video_models
+
+VEO_LITE_COST = 10  # legacy default; pricing now lives in video_models (cost = f(model, duration))
 DENIED = "PERMISSION_ACTION_DENIED"
 APPROVED = "PERMISSION_ACTION_APPROVED"
 
@@ -80,35 +82,38 @@ def parse_agent_sse(text) -> dict:
             "error": error, "text": joined[:600], "model": model}
 
 
-def decide(permission: dict, desired_num=1, max_cost=VEO_LITE_COST):
-    """Given the agent's proposal, decide the next move.
+def decide(permission, target_model=None, target_duration_s=None, desired_num=1):
+    """Steer the agent to the USER-SELECTED model+duration and approve ONLY an exact match
+    (patch I2): num_videos==1, num_images==0, and cost == expected_cost(model, duration).
 
-    NEVER approve unless the proposal is explicitly for a VIDEO (num_videos >= 1).
-    An image-only proposal (num_images set, num_videos absent/0) is rejected and
-    steered to video — this is the bug that produced 'only images' before.
+    The model is absent from the proposal pre-approve (verified post-approve), so the exact
+    per-duration cost is the model proxy. NEVER approve an image-only proposal.
     """
+    spec = video_models.resolve(target_model)
+    dur = target_duration_s if target_duration_s is not None else spec["default_duration_s"]
+    exp_cost = video_models.expected_cost(spec["key"], dur)
+    steer = f"{spec['agent_label']}, {dur} second video, 1 video only, no images"
     if not permission:
-        return ("wait", "i want 1 video, not images. veo 3.1 - lite, vertical 9:16", None)
+        return ("wait", steer, None)
     nv = permission.get("num_videos")
     if nv is None:
         nv = permission.get("num_total")
     ni = permission.get("num_images")
     cost = permission.get("total_cost")
-    # Must be a VIDEO proposal — refuse image-only / unclear proposals outright.
-    if not nv:  # None or 0
-        return ("reject", "i don't want images. i want 1 video, veo 3.1 - lite", DENIED)
+    if not nv:  # None or 0 — image-only / unclear
+        return ("reject", f"no images. {steer}", DENIED)
     if nv != desired_num:
-        return ("reject", "i want 1 video only", DENIED)
-    if ni:  # a real video proposal must not also be generating images
-        return ("reject", "no images. just 1 video, veo 3.1 - lite", DENIED)
-    if cost is not None and cost > max_cost:
-        return ("reject", "veo 3.1 - lite only", DENIED)
+        return ("reject", f"i want {desired_num} video only. {steer}", DENIED)
+    if ni:  # a real video proposal must not also generate images
+        return ("reject", f"no images. {steer}", DENIED)
+    if cost is not None and cost != exp_cost:  # EXACT per-duration cost (model proxy)
+        return ("reject", f"{steer}. it must be exactly {exp_cost} credits", DENIED)
     return ("approve", "Approve", APPROVED)
 
 
 async def negotiate_and_generate(client, project_id, session_id, prompt, media_ids,
-                                 desired_num=1, max_cost=VEO_LITE_COST, max_turns=16,
-                                 approve=True) -> dict:
+                                 target_model=None, target_duration_s=None,
+                                 desired_num=1, max_turns=16, approve=True) -> dict:
     """Drive the agent until generation STARTS (verified by its own reply) or it fails.
 
     approve=False stops just before sending the first APPROVE (no credits) and reports
@@ -140,7 +145,8 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
                     "model_used": state.get("model"),
                     "agent_text": state["text"], "transcript": transcript}
 
-        kind, msg, perm_action = decide(state["permission"], desired_num, max_cost)
+        kind, msg, perm_action = decide(state["permission"], target_model,
+                                        target_duration_s, desired_num)
         if kind == "approve":
             if not approve:
                 return {"ok": True, "dry": True, "would_approve": state["permission"],
@@ -148,9 +154,11 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             # Approve EXACTLY ONCE — the generation is triggered server-side; never
             # re-approve (that would double-charge).
             state = await send(msg, perm=perm_action)
+            mu = state.get("model")
             return {"ok": True, "approved": True,
                     "generation_started": state["started"],
-                    "model_used": state.get("model"),
+                    "model_used": mu,
+                    "model_ok": (video_models.model_matches(mu, target_model) if mu else None),
                     "agent_text": state["text"], "transcript": transcript}
         if kind == "reject":
             await send("Reject", perm=perm_action)   # decline the wrong proposal

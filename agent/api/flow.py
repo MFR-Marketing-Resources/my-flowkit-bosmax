@@ -617,6 +617,8 @@ class MakeVideoExistingRequest(BaseModel):
     project_id: str
     image_media_id: str
     prompt: str = "Cinematic vertical 9:16 product video. Slow push-in on the product, soft natural light, gentle motion, premium feel. Make 1 video."
+    model: Optional[str] = None
+    duration_s: Optional[int] = None
 
 
 @router.post("/make-video-existing")
@@ -632,7 +634,7 @@ async def make_video_existing(body: MakeVideoExistingRequest):
     # unguarded start_on_existing path.
     result = await _mv.start_generate(
         "I2V", body.prompt, project_id=body.project_id,
-        image_media_ids=[body.image_media_id])
+        image_media_ids=[body.image_media_id], model=body.model, duration_s=body.duration_s)
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         raise HTTPException(409, result.get("error") or "rejected")
     return result
@@ -645,6 +647,15 @@ class GenerateRequest(BaseModel):
     image_media_ids: Optional[list] = None     # existing/uploaded refs (I2V/F2V)
     image_prompt: Optional[str] = None         # auto start-frame if no refs (I2V/F2V)
     aspect: str = "9:16"
+    model: Optional[str] = None                # video model (ui_label or key); default Veo 3.1 - Lite
+    duration_s: Optional[int] = None           # default = the model's default duration
+
+
+@router.get("/video-models")
+async def video_models_list():
+    """SSOT video-model registry for the dashboard dropdown (patch I3)."""
+    from agent.services import video_models as _vm
+    return {"models": _vm.public_list(), "default": _vm.DEFAULT_MODEL}
 
 
 @router.post("/generate")
@@ -662,6 +673,12 @@ async def generate(body: GenerateRequest):
         raise HTTPException(503, "Extension not connected")
     tier = "PAYGATE_TIER_ONE"
     if mode in ("T2V", "I2V", "F2V"):  # video modes need Pro/Ultra
+        if body.model:  # validate the selected model up front (patch I2)
+            from agent.services import video_models as _vm
+            try:
+                _vm.expected_cost(body.model, body.duration_s)
+            except ValueError as e:
+                raise HTTPException(422, str(e))
         cred = await client.get_credits()
         tier = (cred.get("data", cred) or {}).get("userPaygateTier", "") if isinstance(cred, dict) else ""
         if tier not in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
@@ -669,7 +686,7 @@ async def generate(body: GenerateRequest):
     result = await _mv.start_generate(
         mode, body.prompt, project_id=body.project_id,
         image_media_ids=body.image_media_ids, image_prompt=body.image_prompt,
-        aspect=body.aspect, tier=tier)
+        aspect=body.aspect, tier=tier, model=body.model, duration_s=body.duration_s)
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
         raise HTTPException(409, result.get("error") or "rejected")

@@ -37,36 +37,50 @@ def test_parse_post_approve_extracts_model_and_started():
     assert st["model"] == "veo_3_1_r2v_lite"
 
 
-def test_decide_rejects_omni_cost15():
-    perm = {"num_images": 0, "total_cost": 15, "num_total": 1, "num_videos": 1}
-    kind, _m, action = av.decide(perm)
-    assert kind == "reject" and action == av.DENIED
+def _perm(cost, nv=1, ni=0):
+    return {"num_images": ni, "total_cost": cost, "num_total": nv, "num_videos": nv}
 
 
-def test_decide_approves_lite_cost10():
-    perm = {"num_images": 0, "total_cost": 10, "num_total": 1, "num_videos": 1}
-    kind, _m, action = av.decide(perm)
-    assert kind == "approve" and action == av.APPROVED
+def test_decide_approve_lite_exact_10():
+    k, _m, a = av.decide(_perm(10), "veo_3_1_lite", 8)
+    assert k == "approve" and a == av.APPROVED
+
+
+def test_decide_reject_lite_wrong_cost():
+    # a 15-cost proposal is NOT Lite (Lite is exactly 10)
+    assert av.decide(_perm(15), "veo_3_1_lite", 8)[0] == "reject"
+
+
+def test_decide_omni_10s_needs_30_not_15_I6():
+    # I6 at decide level: targeting Omni 10s, a 15-cost (4s) proposal MUST be rejected;
+    # only the exact 30-cost proposal approves.
+    assert av.decide(_perm(15), "omni_flash", 10)[0] == "reject"
+    assert av.decide(_perm(30), "omni_flash", 10)[0] == "approve"
+
+
+def test_decide_fast_exact_20():
+    assert av.decide(_perm(20), "veo_3_1_fast", 8)[0] == "approve"
+
+
+def test_decide_quality_exact_100():
+    assert av.decide(_perm(100), "veo_3_1_quality", 8)[0] == "approve"
 
 
 def test_decide_rejects_image_only():
-    perm = {"num_images": 4, "total_cost": 8, "num_total": 4, "num_videos": 0}
-    assert av.decide(perm)[0] == "reject"
+    assert av.decide(_perm(8, nv=0, ni=4), "veo_3_1_lite")[0] == "reject"
 
 
 def test_decide_rejects_two_videos():
-    perm = {"num_images": 0, "total_cost": 10, "num_total": 2, "num_videos": 2}
-    assert av.decide(perm)[0] == "reject"
+    assert av.decide(_perm(10, nv=2), "veo_3_1_lite")[0] == "reject"
 
 
 def test_decide_rejects_video_plus_images():
-    perm = {"num_images": 1, "total_cost": 10, "num_total": 1, "num_videos": 1}
-    assert av.decide(perm)[0] == "reject"
+    assert av.decide(_perm(10, ni=1), "veo_3_1_lite")[0] == "reject"
 
 
 def test_decide_waits_on_empty():
-    kind, _m, action = av.decide(None)
-    assert kind == "wait" and action is None
+    k, _m, a = av.decide(None, "veo_3_1_lite")
+    assert k == "wait" and a is None
 
 
 if __name__ == "__main__":
