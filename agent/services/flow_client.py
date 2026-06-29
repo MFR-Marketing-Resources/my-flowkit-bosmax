@@ -781,14 +781,6 @@ class FlowClient:
         """Ask the extension to scan the Flow tab DOM for finished video URLs."""
         return await self._send("HARVEST_VIDEO_URLS", {}, timeout=20)
 
-    async def open_target_flow_project(self, flow_project_url: str) -> dict:
-        """Navigate the controlled Flow tab to a specific project URL."""
-        return await self._send(
-            "OPEN_TARGET_FLOW_PROJECT",
-            {"flow_project_url": flow_project_url},
-            timeout=25,
-        )
-
     async def get_status(self, probe_timeout: float = 5) -> dict:
         """Query live extension runtime state over the WebSocket bridge."""
         if not self.connected:
