@@ -312,6 +312,109 @@ async def generate_image(body: GenerateImageRequest):
     return result.get("data", result)
 
 
+# ── Image one-shot: text-to-image OR image-to-image blend, via the API path ──
+
+_IMG_ASPECT_MAP = {
+    "9:16": "IMAGE_ASPECT_RATIO_PORTRAIT",
+    "3:4": "IMAGE_ASPECT_RATIO_PORTRAIT",
+    "16:9": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+    "4:3": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+    "1:1": "IMAGE_ASPECT_RATIO_SQUARE",
+}
+
+
+class GenerateImageOneshotRequest(BaseModel):
+    prompt: str
+    aspect_ratio: str = "9:16"            # UI format; mapped to the API enum
+    user_paygate_tier: str = "PAYGATE_TIER_TWO"
+    reference_media_ids: list[str] = []   # blend refs (from /upload-image-base64)
+    project_id: str = ""                  # minted if empty
+
+
+def _extract_project_id(obj) -> str:
+    m = re.search(r'"projectId"\s*:\s*"([^"]+)"', json.dumps(obj))
+    return m.group(1) if m else ""
+
+
+def _extract_images(data) -> list[dict]:
+    out = []
+    media = data.get("media") if isinstance(data, dict) else None
+    if isinstance(media, list):
+        for m in media:
+            mid = m.get("name")
+            gi = (m.get("image") or {}).get("generatedImage") or {}
+            if mid:
+                out.append({"media_id": mid, "url": gi.get("fifeUrl")})
+    return out
+
+
+async def _generate_image_with_recovery(client, prompt, project_id, aspect, tier, refs, max_tries=6):
+    """Generate, retrying reCAPTCHA cold-start and reloading the Flow tab on the
+    stale-tab host-access failure class (matches the proven manual recovery)."""
+    import asyncio
+    last = None
+    for _ in range(max_tries):
+        result = await client.generate_images(
+            prompt=prompt, project_id=project_id, aspect_ratio=aspect,
+            user_paygate_tier=tier, character_media_ids=refs or None)
+        if not (result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400)):
+            return result
+        last = result
+        blob = str(result.get("error") or result.get("data") or "")
+        if "CAPTCHA_FAILED" not in blob:
+            return result  # non-recoverable error → stop
+        stale = any(s in blob for s in (
+            "Cannot access contents", "must request permission",
+            "ERR_MESSAGE_RESPONSE_TIMEOUT", "ERR_RUNTIME_LASTERROR"))
+        if stale:
+            try:
+                await client.reload_flow_tab()
+            except Exception:
+                pass
+            await asyncio.sleep(7)
+        else:
+            await asyncio.sleep(2)
+    return last
+
+
+@router.post("/generate-image-oneshot")
+async def generate_image_oneshot(body: GenerateImageOneshotRequest):
+    """Generate an image via the proven aisandbox API path (NOT DOM automation).
+
+    Two-way:
+      - text-to-image  : prompt only, no reference (button works with free text)
+      - image-to-image : pass reference_media_ids to blend uploaded references
+    Mints a project if none supplied; self-heals reCAPTCHA cold-start / stale tab.
+    """
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    if not body.prompt.strip():
+        raise HTTPException(422, "prompt is required")
+
+    aspect = _IMG_ASPECT_MAP.get(body.aspect_ratio, "IMAGE_ASPECT_RATIO_PORTRAIT")
+    project_id = body.project_id
+    if not project_id:
+        proj = await client.create_project("img " + time.strftime("%Y%m%d-%H%M%S"))
+        if proj.get("error"):
+            raise HTTPException(502, proj["error"])
+        project_id = _extract_project_id(proj)
+        if not project_id:
+            raise HTTPException(502, "create_project returned no projectId")
+
+    refs = [m for m in (body.reference_media_ids or []) if m]
+    result = await _generate_image_with_recovery(
+        client, body.prompt, project_id, aspect, body.user_paygate_tier, refs)
+    if result is None or result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
+        r = result or {}
+        code = r.get("status") if isinstance(r.get("status"), int) else 502
+        raise HTTPException(code, r.get("error") or r.get("data") or "image generation failed")
+    images = _extract_images(result.get("data", result))
+    if not images:
+        raise HTTPException(502, "no image returned")
+    return {"project_id": project_id, "images": images, "mode": "blend" if refs else "text"}
+
+
 @router.post("/create-project-raw")
 async def create_project_raw(body: CreateProjectRawRequest):
     """Debug helper: return raw Google Flow createProject response."""
