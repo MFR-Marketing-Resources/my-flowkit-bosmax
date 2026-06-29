@@ -94,15 +94,20 @@ async def start(prompt: str, image_prompt: str) -> dict:
     return {"job_id": job_id, "status": "SUBMITTED"}
 
 
-async def start_negotiate(prompt: str, image_prompt: str, dry: bool = True) -> dict:
-    """Async negotiation job — captures the FULL transcript (so a client timeout
-    never loses it). dry=True stops before approving (0 video credits)."""
+async def start_negotiate(prompt: str, image_prompt: str = None, dry: bool = True,
+                          model: str = None, duration_s: int = None,
+                          project_id: str = None) -> dict:
+    """Async negotiation job — captures the FULL transcript (so a client timeout never
+    loses it). dry=True stops before approving (0 video credits). model/duration steer the
+    agent (patch I4a); project_id reuses an existing project (minimise junk); image_prompt=None
+    skips the start frame (pure T2V dry capture)."""
     job_id = "n_" + uuid4().hex[:12]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "stage": "queued",
-                     "project_id": None, "dry": dry, "result": None,
-                     "transcript": None, "error": None}
+                     "project_id": project_id, "dry": dry, "model": model,
+                     "result": None, "transcript": None, "error": None,
+                     "created": time.time()}
     _JOBS[job_id]["_task"] = asyncio.create_task(
-        _run_negotiate(job_id, prompt, image_prompt, dry))
+        _run_negotiate(job_id, prompt, image_prompt, dry, model, duration_s, project_id))
     return {"job_id": job_id, "status": "SUBMITTED"}
 
 
@@ -358,31 +363,36 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             _VIDEO_LANE_JOB = None
 
 
-async def _run_negotiate(job_id: str, prompt: str, image_prompt: str, dry: bool):
+async def _run_negotiate(job_id, prompt, image_prompt=None, dry=True,
+                         model=None, duration_s=None, project_id=None):
     from agent.api.flow import _generate_image_with_recovery  # lazy
     job = _JOBS[job_id]
     client = get_flow_client()
     try:
-        job["status"], job["stage"] = "SETUP", "creating project"
-        proj = await client.create_project("nego-test")
-        pid = _pid(proj)
-        if not pid:
-            raise RuntimeError("no project")
-        job["project_id"] = pid
-        job["stage"] = "start frame"
-        img = await _generate_image_with_recovery(
-            client, image_prompt, pid, "IMAGE_ASPECT_RATIO_PORTRAIT", "PAYGATE_TIER_ONE", [])
-        media_id = _deep(img.get("data", img) if isinstance(img, dict) else {}, "name", "mediaId")
-        if not media_id:
-            raise RuntimeError("no start frame")
+        if not project_id:
+            job["status"], job["stage"] = "SETUP", "creating project"
+            proj = await client.create_project("nego-test")
+            project_id = _pid(proj)
+            if not project_id:
+                raise RuntimeError("no project")
+        job["project_id"] = project_id
+        media = None
+        if image_prompt:  # optional start frame (skip for a pure T2V dry capture)
+            job["stage"] = "start frame"
+            img = await _generate_image_with_recovery(
+                client, image_prompt, project_id, "IMAGE_ASPECT_RATIO_PORTRAIT", "PAYGATE_TIER_ONE", [])
+            mid = _deep(img.get("data", img) if isinstance(img, dict) else {}, "name", "mediaId")
+            if mid:
+                media = [mid]
         job["stage"] = "session"
-        sess = await client.create_agent_session(pid)
+        sess = await client.create_agent_session(project_id)
         sid = _deep(sess.get("data", sess) if isinstance(sess, dict) else {}, "agentSessionId")
         if not sid:
             raise RuntimeError("no agent session")
         job["status"], job["stage"] = "NEGOTIATING", "negotiating"
         res = await agent_video.negotiate_and_generate(
-            client, pid, sid, prompt, [media_id], approve=not dry)
+            client, project_id, sid, prompt, media,
+            target_model=model, target_duration_s=duration_s, approve=not dry)
         job["transcript"] = res.get("transcript")
         job["result"] = {k: v for k, v in res.items() if k != "transcript"}
         job["status"], job["stage"] = "DONE", "done"
