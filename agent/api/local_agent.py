@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -10,11 +11,11 @@ from hashlib import sha1
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from agent.config import BASE_DIR
+from agent.config import BASE_DIR, DEBUG_ENDPOINTS_ENABLED
 
 router = APIRouter(prefix="/api/local-agent", tags=["local-agent"])
 
@@ -410,23 +411,59 @@ async def get_reload_extension():
 
 _CAPTURED_VIDEO_PAYLOAD: dict = {"marker": None, "list": []}
 
+# Secret scrubbing for the debug capture surface — these payloads are raw Flow request bodies
+# (bearer tokens, reCAPTCHA tokens, cookies, API keys in URLs). Redact on BOTH store and return.
+_SECRET_KEY_RE = re.compile(
+    r"(authorization|cookie|set-cookie|token|secret|bearer|recaptcha|grecaptcha|api[-_]?key|x-goog)", re.I)
+_URL_KEY_RE = re.compile(r"([?&]key=)[^&\s\"']+", re.I)
+_BEARER_RE = re.compile(r"\bya29\.[A-Za-z0-9._\-]+")
+_LONG_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_\-]{40,}\b")  # bearer/reCAPTCHA/session-token-like blobs
+
+
+def _mask_str(s: str) -> str:
+    s = _URL_KEY_RE.sub(r"\1<redacted>", s)
+    s = _BEARER_RE.sub("<redacted-bearer>", s)
+    s = _LONG_TOKEN_RE.sub("<redacted-token>", s)
+    return s
+
+
+def _redact(obj):
+    """Recursively redact auth/token-like material by key name and by value pattern."""
+    if isinstance(obj, dict):
+        return {k: ("<redacted>" if isinstance(k, str) and _SECRET_KEY_RE.search(k)
+                    else _redact(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact(v) for v in obj]
+    if isinstance(obj, str):
+        return _mask_str(obj)
+    return obj
+
+
+def _debug_gate():
+    if not DEBUG_ENDPOINTS_ENABLED:
+        raise HTTPException(403, "debug endpoints disabled (set DEBUG_ENDPOINTS_ENABLED=true)")
+
 
 @router.post("/capture-video-payload")
 async def post_capture_video_payload(body: dict):
-    """Debug: receive POST request bodies captured from the Flow UI (find the video one)."""
-    if body.get("marker"):
-        _CAPTURED_VIDEO_PAYLOAD["marker"] = body
+    """Debug (gated): receive POST request bodies captured from the Flow UI. Stored REDACTED."""
+    _debug_gate()
+    safe = _redact(body)
+    if safe.get("marker"):
+        _CAPTURED_VIDEO_PAYLOAD["marker"] = safe
         return {"ok": True}
     lst = _CAPTURED_VIDEO_PAYLOAD["list"]
-    lst.append(body)
+    lst.append(safe)
     del lst[:-150]  # keep last 150 (a full flow from scratch generates many POSTs)
     return {"ok": True}
 
 
 @router.get("/capture-video-payload")
 async def get_capture_video_payload():
-    """Debug: read captured POST bodies + the load marker."""
-    return {"marker": _CAPTURED_VIDEO_PAYLOAD.get("marker"), "captures": _CAPTURED_VIDEO_PAYLOAD["list"]}
+    """Debug (gated): read captured POST bodies + the load marker. Re-redacted on return."""
+    _debug_gate()
+    return _redact({"marker": _CAPTURED_VIDEO_PAYLOAD.get("marker"),
+                    "captures": _CAPTURED_VIDEO_PAYLOAD["list"]})
 
 
 @router.get("/diagnostic-inputs")

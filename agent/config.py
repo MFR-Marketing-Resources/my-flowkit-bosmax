@@ -36,6 +36,11 @@ API_PORT = int(os.environ.get("API_PORT", "8100"))
 WS_HOST = os.environ.get("WS_HOST", "127.0.0.1")
 WS_PORT = int(os.environ.get("WS_PORT", "8101"))
 
+# ─── Debug Endpoints ─────────────────────────────────────────
+# OFF by default so raw request-capture surfaces (e.g. /capture-video-payload) are NOT
+# always-on in a production flow. Set DEBUG_ENDPOINTS_ENABLED=true to open them locally.
+DEBUG_ENDPOINTS_ENABLED = os.environ.get("DEBUG_ENDPOINTS_ENABLED", "false").lower() == "true"
+
 # ─── Google Flow API ────────────────────────────────────────
 GOOGLE_FLOW_API = "https://aisandbox-pa.googleapis.com"
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY")
