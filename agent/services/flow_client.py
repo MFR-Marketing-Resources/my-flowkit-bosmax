@@ -777,9 +777,11 @@ class FlowClient:
             "captchaAction": "CHAT_GENERATION",  # captured from live UI (not VIDEO_GENERATION)
         }, timeout=120)
 
-    async def harvest_video_urls(self) -> dict:
-        """Ask the extension to scan the Flow tab DOM for finished video URLs."""
-        return await self._send("HARVEST_VIDEO_URLS", {}, timeout=20)
+    async def harvest_video_urls(self, tab_id=None) -> dict:
+        """Scan the Flow tab DOM for finished video URLs. If tab_id is given, target that
+        EXACT tab (the bound editor); otherwise the current Flow tab."""
+        params = {"tab_id": tab_id} if tab_id is not None else {}
+        return await self._send("HARVEST_VIDEO_URLS", params, timeout=20)
 
     async def get_status(self, probe_timeout: float = 5) -> dict:
         """Query live extension runtime state over the WebSocket bridge."""

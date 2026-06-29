@@ -177,14 +177,24 @@ try {
 
 // Scan the Flow tab's DOM for finished video URLs (storage.googleapis.com/ai-sandbox-videofx/video/...).
 // Reads <video>/<source> src plus any video URL embedded in the page HTML.
-async function handleHarvestVideoUrls() {
-	const tabs = await chrome.tabs.query({
-		url: ["https://labs.google/fx/tools/flow*", "https://labs.google/fx/*/tools/flow*"],
-	});
-	if (!tabs.length) return { ok: false, urls: [], error: "NO_FLOW_TAB" };
+async function handleHarvestVideoUrls(targetTabId) {
+	let tab;
+	if (targetTabId != null) {
+		// Patch A/G: read the EXACT bound editor tab — never silently fall back to tabs[0].
+		try { tab = await chrome.tabs.get(targetTabId); } catch (e) { tab = null; }
+		if (!tab || !/labs\.google\/fx\/.*tools\/flow/.test(tab.url || "")) {
+			return { ok: false, urls: [], error: "BOUND_TAB_GONE" };
+		}
+	} else {
+		const tabs = await chrome.tabs.query({
+			url: ["https://labs.google/fx/tools/flow*", "https://labs.google/fx/*/tools/flow*"],
+		});
+		if (!tabs.length) return { ok: false, urls: [], error: "NO_FLOW_TAB" };
+		tab = tabs[0];
+	}
 	try {
 		const res = await chrome.scripting.executeScript({
-			target: { tabId: tabs[0].id },
+			target: { tabId: tab.id },
 			func: () => {
 				const out = new Set();
 				const videoIds = new Set();
@@ -4308,7 +4318,7 @@ function connectToAgent() {
 				replyToAgent(msg, result);
 			} else if (msg.method === "HARVEST_VIDEO_URLS") {
 				const result = await executeWsMethodAndReply(msg, () =>
-					handleHarvestVideoUrls(),
+					handleHarvestVideoUrls(msg.params?.tab_id),
 				);
 				replyToAgent(msg, result);
 			} else if (msg.method === "OPEN_TARGET_FLOW_PROJECT") {

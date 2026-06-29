@@ -12,7 +12,7 @@ class _FakeClient:
     def __init__(self, harvest):
         self._harvest = harvest
 
-    async def harvest_video_urls(self):
+    async def harvest_video_urls(self, tab_id=None):
         return self._harvest
 
 

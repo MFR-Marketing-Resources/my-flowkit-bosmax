@@ -704,7 +704,20 @@ async def bind_check():
     }
     try:
         binding = await _mv._bind_editor_session(client)
-        return {"bound": True, "binding": binding, "shape": shape}
+        # Verify the tab-targeted harvest reads the SAME bound tab (patch #2).
+        h2 = await client.harvest_video_urls(tab_id=binding["flow_tab_id"])
+        i2 = h2.get("result", h2) if isinstance(h2, dict) else {}
+        d2 = i2.get("diag", i2) if isinstance(i2, dict) else {}
+        targeted = {
+            "error": i2.get("error"),
+            "flow_tab_id": i2.get("flow_tab_id"),
+            "projectId": d2.get("projectId") if isinstance(d2, dict) else None,
+        }
+        targeted["matches_bound"] = (
+            i2.get("flow_tab_id") == binding["flow_tab_id"]
+            and targeted["projectId"] == binding["project_id"])
+        return {"bound": True, "binding": binding, "shape": shape,
+                "targeted_harvest": targeted}
     except Exception as e:  # noqa: BLE001
         return {"bound": False, "error": str(e), "shape": shape}
 

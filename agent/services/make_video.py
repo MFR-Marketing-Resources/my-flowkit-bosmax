@@ -110,7 +110,11 @@ _STALE_VIDEO_IDS = {"b267d480-a516-4d00-a7a4-ac39bdae479d"}
 
 
 async def start_on_existing(project_id: str, image_media_id: str, prompt: str) -> dict:
-    """Generate a video in an EXISTING project using an EXISTING (user-uploaded) image,
+    """DEPRECATED — superseded by start_generate("I2V", ...). The /make-video-existing
+    endpoint now routes through the guarded one door; this legacy path has NO single-flight
+    lane, bound-session, or drift invariants. Do not call it for new work.
+
+    Generate a video in an EXISTING project using an EXISTING (user-uploaded) image,
     then retrieve the real new video and save it. The Flow tab must be on this project."""
     job_id = "x_" + uuid4().hex[:12]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "stage": "queued",
@@ -307,19 +311,20 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         await asyncio.sleep(120)
         for i in range(36):
             job["stage"] = f"checking for finished video (try {i + 1})"
-            h = await client.harvest_video_urls()
+            bound_tab = (job.get("binding") or {}).get("flow_tab_id")
+            h = await client.harvest_video_urls(tab_id=bound_tab)
             inner = h.get("result", h) if isinstance(h, dict) else {}
-            # Fail-closed harvest (patch A/G): abort on a lost tab or a drifted project
-            # instead of polling into a generic late timeout.
-            if (not isinstance(inner, dict) or inner.get("error") == "NO_FLOW_TAB"
+            # Fail-closed harvest (patch A/G): abort on a lost/bound-gone tab or a drifted
+            # project instead of polling into a generic late timeout.
+            if (not isinstance(inner, dict)
+                    or inner.get("error") in ("NO_FLOW_TAB", "BOUND_TAB_GONE")
                     or inner.get("flow_tab_found") is False):
-                raise RuntimeError("EDITOR_TAB_LOST: the Flow tab/editor closed mid-render")
+                raise RuntimeError("EDITOR_TAB_LOST: the bound Flow tab/editor is gone")
             diag = inner.get("diag", inner) if isinstance(inner, dict) else {}
             seen_pid = diag.get("projectId") if isinstance(diag, dict) else None
             if seen_pid and seen_pid != project_id:
                 raise RuntimeError(
                     f"PROJECT_DRIFT: tab moved to {seen_pid}, expected {project_id}")
-            bound_tab = (job.get("binding") or {}).get("flow_tab_id")
             seen_tab = inner.get("flow_tab_id")
             if bound_tab is not None and seen_tab is not None and seen_tab != bound_tab:
                 raise RuntimeError(
