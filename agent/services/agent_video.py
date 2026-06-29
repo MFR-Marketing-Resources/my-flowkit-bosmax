@@ -46,7 +46,7 @@ def parse_agent_sse(text) -> dict:
             return {"permission": None, "tools": [], "started": False,
                     "error": text["error"], "text": ""}
         text = json.dumps(text)
-    permission, tools, error, texts = None, [], None, []
+    permission, tools, error, texts, model = None, [], None, [], None
     for line in (text or "").splitlines():
         line = line.strip()
         if not line.startswith("data:"):
@@ -67,12 +67,17 @@ def parse_agent_sse(text) -> dict:
             tools.append(name)
             if name == "ask_for_permission":
                 permission = ti.get("toolArguments", {}) or {}
+            elif name in _GEN_TOOLS:
+                # Model only appears POST-approve in the generate_video tool args
+                # (the ask_for_permission proposal carries no model — confirmed by fixture).
+                ta = ti.get("toolArguments", {}) or {}
+                model = ta.get("model_usage_key") or ta.get("model_display_name") or model
     joined = " ".join(texts)
     low = joined.lower()
     started = (any(p in low for p in _STARTED_PHRASES)
                or any(t in _GEN_TOOLS for t in tools))
     return {"permission": permission, "tools": tools, "started": started,
-            "error": error, "text": joined[:600]}
+            "error": error, "text": joined[:600], "model": model}
 
 
 def decide(permission: dict, desired_num=1, max_cost=VEO_LITE_COST):
@@ -119,9 +124,11 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             session_id, project_id, turn, text, media_ids=media, permission_action=perm)
         data = resp.get("data", resp) if isinstance(resp, dict) else resp
         st = parse_agent_sse(data)
+        raw = data if isinstance(data, str) else json.dumps(data)
         transcript.append({"turn": turn, "sent": text[:50], "perm_sent": perm,
                            "agent_text": st["text"], "permission": st["permission"],
-                           "started": st["started"], "error": st["error"]})
+                           "started": st["started"], "error": st["error"],
+                           "raw_sse": raw[:40000]})
         return st
 
     state = await send(prompt, media=media_ids)
@@ -130,6 +137,7 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             return {"ok": False, "stage": "error", "error": state["error"], "transcript": transcript}
         if state["started"]:
             return {"ok": True, "generation_started": True,
+                    "model_used": state.get("model"),
                     "agent_text": state["text"], "transcript": transcript}
 
         kind, msg, perm_action = decide(state["permission"], desired_num, max_cost)
@@ -142,6 +150,7 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             state = await send(msg, perm=perm_action)
             return {"ok": True, "approved": True,
                     "generation_started": state["started"],
+                    "model_used": state.get("model"),
                     "agent_text": state["text"], "transcript": transcript}
         if kind == "reject":
             await send("Reject", perm=perm_action)   # decline the wrong proposal

@@ -303,6 +303,11 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["stage"] = "negotiating (approve 1 video, Veo Lite)"
         nres = await agent_video.negotiate_and_generate(client, project_id, sid, prompt, refs)
         job["approved"] = nres.get("approved")
+        job["model_used"] = nres.get("model_used")
+        # Post-approve model verification (patch B): the model is absent from the proposal,
+        # so cost is the pre-approve Lite proxy; flag if the fired model isn't Lite.
+        if nres.get("model_used") and "lite" not in str(nres["model_used"]).lower():
+            job["model_warning"] = f"approved model is not Lite: {nres['model_used']}"
         if not nres.get("approved"):
             raise RuntimeError("agent did not approve a video: " + str(nres.get("error") or nres))
 

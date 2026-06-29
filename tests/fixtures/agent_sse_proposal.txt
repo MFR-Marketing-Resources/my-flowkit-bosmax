@@ -1,0 +1,10 @@
+data: {"agentMessage": {"agentEvents": [{"eventId": "3d379050-082d-44cd-9ea2-e6169f6b60ee","thinkingEvent": {"thought": "**Analyzing the Image Request**\n\nI'm focusing on dissecting the user's intent within the image request. The goal is a vertical product video with a cinematic feel, emphasizing a slow push-in, soft warm lighting, and a 9:16 aspect ratio. I'm noting the clear specifications for the final video output and the desired aesthetic. The number of videos is noted as one.\n\n\n"}}],"responseId": "3d379050-082d-44cd-9ea2-e6169f6b60ee"},"partial": true}
+
+data: {"agentMessage": {"responseId": "6ed75326-bbfe-4fb2-9f28-85963e3d216c"}}
+
+data: {"agentMessage": {"responseId": "1fdd5c78-8052-4ec2-a9c7-6cdcf0af129d"},"partial": true}
+
+data: {"agentMessage": {"agentEvents": [{"eventId": "cde513d3-0804-47db-bb37-27d5d9c41bd1","thinkingEvent": {"thought": "**Analyzing the Image Request**\n\nI'm focusing on dissecting the user's intent within the image request. The goal is a vertical product video with a cinematic feel, emphasizing a slow push-in, soft warm lighting, and a 9:16 aspect ratio. I'm noting the clear specifications for the final video output and the desired aesthetic. The number of videos is noted as one.\n\n\n"}}],"responseId": "cde513d3-0804-47db-bb37-27d5d9c41bd1"}}
+
+data: {"agentMessage": {"agentEvents": [{"eventId": "9072e2f9-45da-4eca-b605-416107076120","toolInvocation": {"toolCallId": "open_chat_panel","toolName": "open_chat_panel","toolArguments": {"_synthetic": true}}},{"eventId": "9072e2f9-45da-4eca-b605-416107076120","toolInvocation": {"toolCallId": "ask_for_permission","toolName": "ask_for_permission","toolArguments": {"num_images": 0,"total_cost": 15,"num_total": 1,"num_videos": 1}}}],"responseId": "9072e2f9-45da-4eca-b605-416107076120"},"isFinalResponse": true}
+
