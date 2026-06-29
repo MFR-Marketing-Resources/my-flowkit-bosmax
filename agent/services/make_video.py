@@ -15,6 +15,7 @@ from uuid import uuid4
 from agent.config import OUTPUT_DIR
 from agent.services.flow_client import get_flow_client
 from agent.services import agent_video
+from agent.services import video_models
 
 _JOBS: dict = {}
 
@@ -302,7 +303,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         sid = _deep(sess.get("data", sess) if isinstance(sess, dict) else {}, "agentSessionId")
         if not sid:
             raise RuntimeError("no agent session")
-        job["stage"] = "negotiating (approve 1 video, Veo Lite)"
+        job["stage"] = f"negotiating (approve 1 video, {video_models.resolve(model)['ui_label']})"
         nres = await agent_video.negotiate_and_generate(
             client, project_id, sid, prompt, refs,
             target_model=model, target_duration_s=duration_s)

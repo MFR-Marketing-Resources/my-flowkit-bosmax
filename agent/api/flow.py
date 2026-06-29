@@ -668,17 +668,20 @@ async def generate(body: GenerateRequest):
         raise HTTPException(422, f"unknown mode '{body.mode}' (use IMG/T2V/I2V/F2V)")
     if not body.prompt.strip():
         raise HTTPException(422, "prompt is required")
+    # Validate model+duration BEFORE connectivity so 422 stays deterministic (patch I2a);
+    # always resolve against the EFFECTIVE model (defaults to Lite) so a bad duration_s with
+    # no model (e.g. 10s on default Lite) is caught here, not late inside the job.
+    if mode in ("T2V", "I2V", "F2V"):
+        from agent.services import video_models as _vm
+        try:
+            _vm.expected_cost(body.model or _vm.DEFAULT_MODEL, body.duration_s)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
     tier = "PAYGATE_TIER_ONE"
     if mode in ("T2V", "I2V", "F2V"):  # video modes need Pro/Ultra
-        if body.model:  # validate the selected model up front (patch I2)
-            from agent.services import video_models as _vm
-            try:
-                _vm.expected_cost(body.model, body.duration_s)
-            except ValueError as e:
-                raise HTTPException(422, str(e))
         cred = await client.get_credits()
         tier = (cred.get("data", cred) or {}).get("userPaygateTier", "") if isinstance(cred, dict) else ""
         if tier not in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
