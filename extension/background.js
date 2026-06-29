@@ -190,7 +190,10 @@ async function handleHarvestVideoUrls(targetTabId) {
 			url: ["https://labs.google/fx/tools/flow*", "https://labs.google/fx/*/tools/flow*"],
 		});
 		if (!tabs.length) return { ok: false, urls: [], error: "NO_FLOW_TAB" };
-		tab = tabs[0];
+		// Prefer the active project-editor tab (reusing the existing editor-aware selector)
+		// instead of a blind tabs[0] — otherwise a second Flow tab on the home/shell can make
+		// the unbound harvest read the wrong tab and report a false NO_OPEN_EDITOR.
+		tab = selectBestFlowTab(tabs) || tabs[0];
 	}
 	try {
 		const res = await chrome.scripting.executeScript({
