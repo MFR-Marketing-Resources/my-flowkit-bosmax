@@ -216,7 +216,8 @@ def test_duration_match_completes():  # DUR-2
                       "model_used": "veo_3_1_lite", "duration_used": 8})
     assert job["status"] == "DONE"
     assert job.get("duration_used") == 8
-    assert "duration_unverified" not in job
+    assert job.get("model_ok") is True and job.get("duration_ok") is True   # fully exposed
+    assert "duration_unverified" not in job and "model_unverified" not in job
 
 
 def test_duration_absent_marks_unverified_not_fail():  # DUR-4
@@ -224,6 +225,17 @@ def test_duration_absent_marks_unverified_not_fail():  # DUR-4
                       "model_used": "veo_3_1_lite", "duration_used": None})
     assert job["status"] == "DONE"               # absent duration is NOT a hard fail
     assert job.get("duration_unverified") is True
+    assert "model_unverified" not in job         # model WAS verified, only duration absent
+
+
+def test_unrecognized_tool_marks_both_unverified():
+    # An unrecognized generation tool → model AND duration both unknown (None). NOT a hard fail,
+    # but both flags are set + model_ok/duration_ok exposed, so it is never reported as verified.
+    job = _gen("jx", {"approved": True, "model_ok": None, "duration_ok": None,
+                      "model_used": None, "duration_used": None})
+    assert job["status"] == "DONE"
+    assert job.get("model_unverified") is True and job.get("duration_unverified") is True
+    assert job.get("model_ok") is None and job.get("duration_ok") is None
 
 
 def test_wrong_model_still_hard_fails():  # regression: FAILED_WRONG_MODEL preserved

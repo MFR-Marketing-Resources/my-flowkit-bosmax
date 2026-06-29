@@ -313,8 +313,12 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             client, project_id, sid, prompt, refs,
             target_model=model, target_duration_s=duration_s)
         job["approved"] = nres.get("approved")
+        # Expose the FULL post-approve verification status on the job (the API returns the job
+        # dict verbatim), so an unverified generation is NEVER presented as fully verified.
         job["model_used"] = nres.get("model_used")
+        job["model_ok"] = nres.get("model_ok")
         job["duration_used"] = nres.get("duration_used")
+        job["duration_ok"] = nres.get("duration_ok")
         # Post-approve verification (Layer A): a CONFIRMED model OR duration mismatch hard-fails.
         if nres.get("model_ok") is False:
             raise RuntimeError(
@@ -322,9 +326,14 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         if nres.get("duration_ok") is False:
             raise RuntimeError(
                 f"FAILED_WRONG_DURATION: expected {duration_s or 'default'}s, got {nres.get('duration_used')}s")
-        # duration absent from the approved SSE → unknown, NOT a hard fail (recorded as a flag).
-        if nres.get("duration_ok") is None and nres.get("approved"):
-            job["duration_unverified"] = True
+        # Evidence ABSENT from the approved SSE (e.g. an unrecognized generation tool) → unknown,
+        # NOT a hard fail, but FLAGGED so it is never reported as verified. A None model_used means
+        # the fired tool was unrecognized, in which case duration is absent too (both flags set).
+        if nres.get("approved"):
+            if nres.get("model_ok") is None:
+                job["model_unverified"] = True
+            if nres.get("duration_ok") is None:
+                job["duration_unverified"] = True
         if not nres.get("approved"):
             raise RuntimeError("agent did not approve a video: " + str(nres.get("error") or nres))
 
