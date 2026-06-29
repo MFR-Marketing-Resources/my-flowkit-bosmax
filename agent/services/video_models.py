@@ -1,12 +1,14 @@
 """SSOT registry of Google Flow video models (patch I1).
 
-Pricing authority: Google Flow credits help (verified 30 Jun 2026)
+Pricing: Google Flow credits help (verified 30 Jun 2026), taken as the REGULAR/CEILING price.
 https://support.google.com/flow/answer/16526234?hl=en
-Corroborated by captured SSE proposals (Omni 4s=15, Lite=10).
 
-Cost = f(model, duration). NEVER gate on a single flat cost — use
-expected_cost_by_duration. The default duration per model encodes our use case
-(Omni Flash = 10s, the Veo 3.1 family = 8s).
+IMPORTANT (Layer A — cap-gate): expected_cost_by_duration values are a CEILING / typical price,
+NOT an exact value. Google Flow credits are PROMO-VARIABLE — live capture shows Omni Flash 10s
+is currently 15 credits (promo) vs the 30 ceiling — and the agent proposes by credits (often
+multi-video). So the negotiation gate uses these as a `cost <= ceiling` CAP, never `cost == exact`.
+The selected duration (8s Veo / 10s Omni) is verified POST-approve from the fired tool args,
+not inferred from cost. `public_list().default_cost` is therefore the ceiling/typical figure.
 """
 
 VIDEO_MODELS = {
@@ -82,13 +84,15 @@ def model_matches(model_used, model) -> bool:
 
 
 def public_list() -> list:
-    """Registry shape for the dashboard dropdown (SSOT)."""
+    """Registry shape for the dashboard dropdown (SSOT). `default_cost` is the CEILING/typical
+    price (promo-variable), kept under this name for UI/test compatibility — NOT an exact value."""
     return [
         {
             "key": s["key"],
             "ui_label": s["ui_label"],
             "default_duration_s": s["default_duration_s"],
             "allowed_durations_s": s["allowed_durations_s"],
+            # ceiling/typical price (promo may be lower); kept as `default_cost` for compatibility
             "default_cost": s["expected_cost_by_duration"][s["default_duration_s"]],
         }
         for s in VIDEO_MODELS.values()

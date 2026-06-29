@@ -145,6 +145,94 @@ def test_run_negotiate_image_prompt_branching():
         mv._JOBS.clear()
 
 
+class _ShimAsyncio:
+    """Delegates to real asyncio but makes sleep() instant — skips the 120s render wait."""
+    def __init__(self, real):
+        self._real = real
+
+    async def sleep(self, *a, **k):
+        return None
+
+    def __getattr__(self, n):
+        return getattr(self._real, n)
+
+
+def _setup_generate_mocks(nres):
+    """Patch make_video deps so _run_generate reaches the post-approve verification without
+    network or the render wait. negotiate returns `nres`; retrieval finds a video instantly."""
+    class _C:
+        async def create_agent_session(self, *a):
+            return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
+
+        async def harvest_video_urls(self, tab_id=None):
+            return {"result": {"flow_tab_found": True, "flow_tab_id": 1,
+                               "diag": {"projectId": "p1", "videoIds": ["vid-1"]}}}
+
+    async def fake_bind(client, pid=None):
+        return {"project_id": "p1", "flow_tab_id": 1, "flow_project_url": "u"}
+
+    async def fake_negotiate(*a, **k):
+        return nres
+
+    async def fake_save(client, cands, exclude):
+        return ("vid-1", "/out/vid-1.mp4", 1.0)
+
+    orig = (mv.get_flow_client, mv._bind_editor_session,
+            mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio)
+    mv.get_flow_client = lambda: _C()
+    mv._bind_editor_session = fake_bind
+    mv.agent_video.negotiate_and_generate = fake_negotiate
+    mv._save_video_by_get_media = fake_save
+    mv.asyncio = _ShimAsyncio(mv.asyncio)
+
+    def restore():
+        (mv.get_flow_client, mv._bind_editor_session,
+         mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio) = orig
+    return restore
+
+
+def _gen(job_id, nres):
+    mv._JOBS.clear()
+    mv._JOBS[job_id] = {"status": "SUBMITTED"}
+    restore = _setup_generate_mocks(nres)
+    try:
+        _run(mv._run_generate(job_id, "T2V", "p", "p1", None, None, "9:16", None,
+                              model="veo_3_1_lite", duration_s=8))
+        return dict(mv._JOBS[job_id])
+    finally:
+        restore()
+        mv._JOBS.clear()
+
+
+def test_duration_mismatch_hard_fails():  # DUR-3
+    job = _gen("jd", {"approved": True, "model_ok": True, "duration_ok": False,
+                      "model_used": "veo_3_1_lite", "duration_used": 4})
+    assert job["status"] == "FAILED"
+    assert "FAILED_WRONG_DURATION" in job["error"]
+
+
+def test_duration_match_completes():  # DUR-2
+    job = _gen("jm", {"approved": True, "model_ok": True, "duration_ok": True,
+                      "model_used": "veo_3_1_lite", "duration_used": 8})
+    assert job["status"] == "DONE"
+    assert job.get("duration_used") == 8
+    assert "duration_unverified" not in job
+
+
+def test_duration_absent_marks_unverified_not_fail():  # DUR-4
+    job = _gen("ju", {"approved": True, "model_ok": True, "duration_ok": None,
+                      "model_used": "veo_3_1_lite", "duration_used": None})
+    assert job["status"] == "DONE"               # absent duration is NOT a hard fail
+    assert job.get("duration_unverified") is True
+
+
+def test_wrong_model_still_hard_fails():  # regression: FAILED_WRONG_MODEL preserved
+    job = _gen("jw", {"approved": True, "model_ok": False, "duration_ok": True,
+                      "model_used": "omni", "duration_used": 8})
+    assert job["status"] == "FAILED"
+    assert "FAILED_WRONG_MODEL" in job["error"]
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

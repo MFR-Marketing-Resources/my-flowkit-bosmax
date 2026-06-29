@@ -1,6 +1,7 @@
 // Shared video-model dropdown — SSOT from GET /api/flow/video-models (patch I3).
-// Shows "Veo 3.1 - Quality (100 credits, 8s default)" so the operator sees the cost
-// before generating. Value is the model's ui_label (the backend resolves it).
+// Shows "Veo 3.1 - Quality (up to 100 credits, 8s; promo may vary)" — the cost is a
+// ceiling/typical figure (credits are promo-variable), not a fixed price. Value is the
+// model's ui_label (the backend resolves it).
 
 export interface VideoModel {
 	key: string;
@@ -45,7 +46,7 @@ export default function ModelSelect({ models, value, onChange }: ModelSelectProp
 				) : (
 					models.map((m) => (
 						<option key={m.key} value={m.ui_label}>
-							{m.ui_label} ({m.default_cost} credits, {m.default_duration_s}s default)
+							{m.ui_label} (up to {m.default_cost} credits, {m.default_duration_s}s; promo may vary)
 						</option>
 					))
 				)}

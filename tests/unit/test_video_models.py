@@ -21,10 +21,11 @@ def test_quality_8s_only():
 
 
 def test_omni_cost_by_duration_I6():
-    # I6 regression: Omni Flash 10s MUST be 30, NOT 15 (15 is the 4s price).
+    # I6 registry: Omni Flash 10s CEILING is 30 (the 4s ceiling is 15). Cap-gate treats these
+    # as ceilings, not exact values — a promo proposal below the ceiling still approves.
     assert vm.expected_cost("omni_flash", 10) == 30
     assert vm.expected_cost("omni_flash", 4) == 15
-    assert vm.expected_cost("Omni Flash") == 30  # default 10s -> 30
+    assert vm.expected_cost("Omni Flash") == 30  # default 10s -> 30 ceiling
 
 
 def test_resolve_by_labels():
@@ -53,6 +54,14 @@ def test_public_list_shape():
     assert len(lst) == 4
     omni = [m for m in lst if m["key"] == "omni_flash"][0]
     assert omni["default_cost"] == 30 and omni["default_duration_s"] == 10
+
+
+def test_default_cost_field_compat():
+    # Compatibility lock: `default_cost` must NOT be renamed (UI dropdown + tests read it).
+    # Its SEMANTICS are now ceiling/typical (promo-variable), but the field name stays.
+    for m in vm.public_list():
+        assert "default_cost" in m, f"{m['key']} lost the default_cost field"
+        assert isinstance(m["default_cost"], int)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,21 @@ _POST_APPROVE = (
     'data: {"text": "beginRendering"}\n'
 )
 
+# A genuine generation toolInvocation WITHOUT any "beginRendering" text — proves the HARD
+# started signal is the fired tool, not the text.
+_GEN_TOOL_NO_TEXT = (
+    'data: {"agentMessage": {"agentEvents": [{"eventId": "x","toolInvocation": '
+    '{"toolName": "generate_video_with_references","toolArguments": '
+    '{"model_usage_key": "veo_3_1_r2v_lite","duration": 8.0}}}],"responseId": "x"}}\n'
+)
+
+# "beginRendering" appearing in a plain UI surface render with NO generation tool — must NOT
+# mark started (the live false-positive that motivated removing it from _STARTED_PHRASES).
+_BEGINRENDER_ONLY = (
+    'data: {"text": "beginRendering"}\n'
+    'data: {"text": "With your current plan you can keep generating."}\n'
+)
+
 
 def test_parse_real_proposal_fixture():
     with open(_FIXT, encoding="utf-8") as f:
@@ -33,29 +48,55 @@ def test_parse_real_proposal_fixture():
 
 def test_parse_post_approve_extracts_model_and_started():
     st = av.parse_agent_sse(_POST_APPROVE)
-    assert st["started"] is True          # beginRendering + a generate tool
+    assert st["started"] is True          # a generate tool fired
     assert st["model"] == "veo_3_1_r2v_lite"
+    assert st["duration_used"] == 8       # DUR-1: duration extracted from tool args (8.0 → 8)
+
+
+def test_parse_beginrendering_text_only_not_started():
+    # (A) beginRendering text alone — with NO generation toolInvocation — must NOT start.
+    st = av.parse_agent_sse(_BEGINRENDER_ONLY)
+    assert st["started"] is False
+    assert st["model"] is None
+
+
+def test_parse_gen_tool_without_beginrendering_started():
+    # (B) a proven generation toolInvocation, no "beginRendering" text → still started.
+    st = av.parse_agent_sse(_GEN_TOOL_NO_TEXT)
+    assert st["started"] is True
+    assert st["model"] == "veo_3_1_r2v_lite"
+    assert st["duration_used"] == 8
 
 
 def _perm(cost, nv=1, ni=0):
     return {"num_images": ni, "total_cost": cost, "num_total": nv, "num_videos": nv}
 
 
-def test_decide_approve_lite_exact_10():
+def test_decide_approve_lite_at_ceiling_10():
     k, _m, a = av.decide(_perm(10), "veo_3_1_lite", 8)
     assert k == "approve" and a == av.APPROVED
 
 
-def test_decide_reject_lite_wrong_cost():
-    # a 15-cost proposal is NOT Lite (Lite is exactly 10)
+def test_decide_promo_below_ceiling_approves():
+    # cap-gate: a promo price BELOW the ceiling for 1 video approves (was rejected by exact-cost)
+    assert av.decide(_perm(8), "veo_3_1_lite", 8)[0] == "approve"
+
+
+def test_decide_reject_cost_over_ceiling():
+    # 15 > the Lite ceiling of 10 → too expensive for 1 video → reject
     assert av.decide(_perm(15), "veo_3_1_lite", 8)[0] == "reject"
 
 
-def test_decide_omni_10s_needs_30_not_15_I6():
-    # I6 at decide level: targeting Omni 10s, a 15-cost (4s) proposal MUST be rejected;
-    # only the exact 30-cost proposal approves.
-    assert av.decide(_perm(15), "omni_flash", 10)[0] == "reject"
-    assert av.decide(_perm(30), "omni_flash", 10)[0] == "approve"
+def test_decide_omni_10s_promo_15_approves_I6_inverted():
+    # I6 INVERTED under cap-gate: Omni credits are promo-variable. A 1-video / 15-credit promo
+    # proposal now APPROVES (15 <= 30 ceiling); the duration is verified POST-approve, not by cost.
+    assert av.decide(_perm(15), "omni_flash", 10)[0] == "approve"
+    assert av.decide(_perm(30), "omni_flash", 10)[0] == "approve"   # at ceiling, 1 video
+
+
+def test_decide_omni_reject_two_videos_within_cap():
+    # the multi-video trap: 2 videos at 30 credits is within the ceiling but MUST reject (num_videos)
+    assert av.decide(_perm(30, nv=2), "omni_flash", 10)[0] == "reject"
 
 
 def test_decide_fast_exact_20():
