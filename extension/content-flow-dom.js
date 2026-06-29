@@ -4238,7 +4238,7 @@ function isSettingsScopedModelSource(source) {
       ingredients_button_present: has('ingredients'),
       // buttons / upload
       button_texts: buttonTexts,
-      upload_media_available: has('upload media') || has('upload'),
+      upload_media_available: has('add media') || has('upload media') || has('upload'),
       add_to_prompt_found: has('add to prompt'),
       // strong upload proof is action-confirmed by the runner; passive observe
       // can only assert preview/chip presence, not Add-to-Prompt completion.

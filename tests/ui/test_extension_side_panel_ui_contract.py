@@ -247,6 +247,34 @@ def test_flow_dom_softens_known_preselection_mode_probe_mismatch_and_yields_capt
 		assert token in dom_source
 
 
+def test_background_canonicalizes_gfv2_raw_signals_before_readiness_evaluation():
+	background_source = _read("extension/background.js")
+	capture_section = _section(
+		background_source,
+		"async function captureGoogleFlowV2Readiness(selectedTab) {",
+		"async function handleRuntimeSelfTest(mode = \"F2V\", attemptOpenProject = false) {",
+	)
+
+	for token in [
+		"const rawDiagnostic = resp?.diagnostic || null;",
+		"typeof gfv2Api.buildGoogleFlowV2Diagnostic === \"function\"",
+		"? gfv2Api.buildGoogleFlowV2Diagnostic(rawDiagnostic)",
+		"...rawDiagnostic,",
+		"...canonicalDiagnostic,",
+		"evaluation = gfv2Api.evaluateGoogleFlowV2Readiness(diagnostic);",
+	]:
+		assert token in capture_section
+
+
+def test_flow_dom_gfv2_observer_treats_add_media_as_valid_upload_availability_signal():
+	dom_source = _read("extension/content-flow-dom.js")
+
+	assert (
+		"upload_media_available: has('add media') || has('upload media') || has('upload'),"
+		in dom_source
+	)
+
+
 def test_flow_dom_ui_contract_v2_uses_split_readiness_and_scoped_media_model_proof():
 	dom_source = _read("extension/content-flow-dom.js")
 

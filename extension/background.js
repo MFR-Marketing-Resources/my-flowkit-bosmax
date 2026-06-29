@@ -7046,16 +7046,27 @@ async function captureGoogleFlowV2Readiness(selectedTab) {
 			{ type: "GFV2_OBSERVE_STATE" },
 			12000,
 		);
-		const diagnostic = resp?.diagnostic || null;
-		if (!resp?.ok || !diagnostic) {
+		const rawDiagnostic = resp?.diagnostic || null;
+		if (!resp?.ok || !rawDiagnostic) {
 			return {
 				ok: false,
 				error: resp?.error || "GFV2_OBSERVE_FAILED",
 				detail: resp?.detail || resp?.raw_error || null,
-				diagnostic: diagnostic || null,
+				diagnostic: rawDiagnostic || null,
 				evaluation: null,
 			};
 		}
+		const canonicalDiagnostic =
+			gfv2Api &&
+			typeof gfv2Api.buildGoogleFlowV2Diagnostic === "function"
+				? gfv2Api.buildGoogleFlowV2Diagnostic(rawDiagnostic)
+				: null;
+		const diagnostic = canonicalDiagnostic
+			? {
+					...rawDiagnostic,
+					...canonicalDiagnostic,
+				}
+			: rawDiagnostic;
 		console.log("[GFV2] GFV2_DIAGNOSTIC_CAPTURED", {
 			contract: diagnostic.google_flow_ui_contract,
 			tab: selectedTab.id,
