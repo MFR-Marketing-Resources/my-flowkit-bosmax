@@ -326,6 +326,94 @@ def test_wrong_model_still_hard_fails():  # regression: FAILED_WRONG_MODEL prese
     assert "FAILED_WRONG_MODEL" in job["error"]
 
 
+# --- GENERATED_BUT_UNRETRIEVED false-negative fix ---------------------------------------------
+
+def _setup_generate_mocks_custom(nres, harvest_result, save_result=(None, None, None)):
+    """Like _setup_generate_mocks but with a CUSTOM harvest result and save outcome, so we can
+    drive the retrieval phase into a lost-tab (EDITOR_TAB_LOST) vs a successful harvest."""
+    class _C:
+        async def create_agent_session(self, *a):
+            return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
+
+        async def harvest_video_urls(self, tab_id=None):
+            return harvest_result
+
+    async def fake_bind(client, pid=None):
+        return {"project_id": "p1", "flow_tab_id": 1, "flow_project_url": "u"}
+
+    async def fake_negotiate(*a, **k):
+        return nres
+
+    async def fake_save(client, cands, exclude):
+        return save_result
+
+    orig = (mv.get_flow_client, mv._bind_editor_session,
+            mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio)
+    mv.get_flow_client = lambda: _C()
+    mv._bind_editor_session = fake_bind
+    mv.agent_video.negotiate_and_generate = fake_negotiate
+    mv._save_video_by_get_media = fake_save
+    mv.asyncio = _ShimAsyncio(mv.asyncio)
+
+    def restore():
+        (mv.get_flow_client, mv._bind_editor_session,
+         mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio) = orig
+    return restore
+
+
+def _gen2(job_id, nres, harvest_result, save_result=(None, None, None)):
+    mv._JOBS.clear()
+    mv._JOBS[job_id] = {"status": "SUBMITTED"}
+    restore = _setup_generate_mocks_custom(nres, harvest_result, save_result)
+    try:
+        _run(mv._run_generate(job_id, "T2V", "p", "p1", None, None, "9:16", None,
+                              model="veo_3_1_lite", duration_s=8))
+        return dict(mv._JOBS[job_id])
+    finally:
+        restore()
+        mv._JOBS.clear()
+
+
+def test_generate_marks_generated_but_unretrieved_on_editor_tab_lost_after_approval():
+    # approved + reached GENERATING, then harvest reports the bound tab is gone → the video was
+    # likely generated (credits likely spent) but unretrieved. Must NOT be a plain FAILED.
+    nres = {"approved": True, "model_ok": True, "duration_ok": True,
+            "model_used": "veo_3_1_lite", "duration_used": 8}
+    job = _gen2("jg", nres, {"result": {"error": "BOUND_TAB_GONE"}})
+    assert job["status"] == "GENERATED_BUT_UNRETRIEVED"
+    assert job.get("media_id") is None
+    assert job.get("local_path") is None
+    assert job.get("artifact") is None
+    assert job.get("credit_spent_likely") is True
+    assert job.get("recovery_required") is True
+    assert job.get("recovery_hint")
+    assert "EDITOR_TAB_LOST" in (job.get("original_error") or "")
+
+
+def test_generate_keeps_failed_for_preapproval_error():
+    # The agent did not approve → failure happens BEFORE rendering. Stays plain FAILED.
+    nres = {"approved": False, "error": "agent declined"}
+    job = _gen2("jf", nres,
+                {"result": {"flow_tab_found": True, "flow_tab_id": 1, "diag": {"projectId": "p1"}}})
+    assert job["status"] == "FAILED"
+    assert job["status"] != "GENERATED_BUT_UNRETRIEVED"
+    assert job.get("credit_spent_likely") is None  # not flagged for a pre-approval failure
+    assert "approve" in (job.get("error") or "").lower()
+
+
+def test_generate_done_when_video_retrieved():
+    # Successful harvest + saved mp4 → DONE preserved with real media_id / local_path.
+    nres = {"approved": True, "model_ok": True, "duration_ok": True,
+            "model_used": "veo_3_1_lite", "duration_used": 8}
+    harvest = {"result": {"flow_tab_found": True, "flow_tab_id": 1,
+                          "diag": {"projectId": "p1", "videoIds": ["vid-1"]}}}
+    job = _gen2("jd2", nres, harvest, save_result=("vid-1", "/out/vid-1.mp4", 1.0))
+    assert job["status"] == "DONE"
+    assert job.get("media_id") == "vid-1"
+    assert job.get("local_path") == "/out/vid-1.mp4"
+    assert job.get("artifact") == "video"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

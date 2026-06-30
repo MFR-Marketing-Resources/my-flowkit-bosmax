@@ -289,6 +289,18 @@ async def _save_video_by_get_media(client, candidates, exclude) -> tuple:
     return None, None, None
 
 
+# Retrieval-phase failure markers (false-negative fix). A failure carrying one of these AFTER the
+# agent approved a video and rendering started is a RETRIEVAL/harvest failure: the video was
+# likely generated (credits likely spent) but could not be fetched locally. Such a job must be
+# reported as GENERATED_BUT_UNRETRIEVED, never as a plain generation FAILED.
+_RETRIEVAL_PHASE_MARKERS = (
+    "EDITOR_TAB_LOST", "TAB_DRIFT", "PROJECT_DRIFT", "video not found/retrieved in time")
+
+
+def _is_retrieval_phase_error(msg) -> bool:
+    return any(m in (msg or "") for m in _RETRIEVAL_PHASE_MARKERS)
+
+
 async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                         image_prompt, aspect, tier, model=None, duration_s=None):
     from agent.api.flow import (_generate_image_with_recovery, _extract_images,
@@ -297,6 +309,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
     global _VIDEO_LANE_JOB
     job = _JOBS[job_id]
     client = get_flow_client()
+    generating = False  # set True once we pass approval into the render/retrieve phase
     try:
         if mode not in _ALL_MODES:
             raise RuntimeError(f"unknown mode '{mode}' (use IMG/T2V/I2V/F2V)")
@@ -390,6 +403,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             raise RuntimeError("agent did not approve a video: " + str(nres.get("error") or nres))
 
         job["status"], job["stage"] = "GENERATING", "rendering + retrieving"
+        generating = True  # past approval: any failure below is RETRIEVAL-phase, not generation
         exclude = set(_STALE_VIDEO_IDS) | set(refs)
         await asyncio.sleep(120)
         for i in range(36):
@@ -421,9 +435,23 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                            size_mb=size, artifact="video")
                 return
             await asyncio.sleep(18)
-        job.update(status="FAILED", error="video not found/retrieved in time")
+        # Render started but no mp4 harvested in the polling window — treat as a retrieval-phase
+        # failure (classified below as GENERATED_BUT_UNRETRIEVED), not a generation failure.
+        raise RuntimeError("video not found/retrieved in time")
     except Exception as e:  # noqa: BLE001
-        job.update(status="FAILED", error=str(e), stage="failed")
+        msg = str(e)
+        # False-negative fix: a retrieval-phase failure AFTER approval + render start means the
+        # video was likely generated (credits likely spent) but could not be harvested locally.
+        # Report GENERATED_BUT_UNRETRIEVED (never plain FAILED) so a paid, completed video is not
+        # presented as "no video". Pre-approval / pre-render errors stay FAILED.
+        if job.get("approved") is True and generating and _is_retrieval_phase_error(msg):
+            job.update(status="GENERATED_BUT_UNRETRIEVED", stage="generated_but_unretrieved",
+                       artifact=None, media_id=None, local_path=None,
+                       credit_spent_likely=True, recovery_required=True,
+                       recovery_hint="open Flow project and harvest/download existing video",
+                       original_error=msg, error=msg)
+        else:
+            job.update(status="FAILED", error=msg, stage="failed")
     finally:
         # Release the single-flight video lane (patch H).
         if _VIDEO_LANE_JOB == job_id:

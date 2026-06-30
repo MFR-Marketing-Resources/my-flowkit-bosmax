@@ -35,7 +35,7 @@ import type {
 	WorkspacePromptPreviewResult,
 } from "../types";
 
-type OperatorNoticeTone = "idle" | "info" | "success" | "error";
+type OperatorNoticeTone = "idle" | "info" | "success" | "warning" | "error";
 
 interface OperatorNotice {
 	tone: OperatorNoticeTone;
@@ -382,6 +382,24 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						tone: "error",
 						title: `${data.mode} failed`,
 						detail: job.error || "Generation failed.",
+						requestId,
+					});
+					setIsExecuting(false);
+					executionInFlightRef.current = false;
+					return;
+				}
+				// Terminal: the video was generated in Flow but the local harvest failed. NOT a
+				// clean success (no local file) and NOT a plain generation failure — and it must
+				// NOT auto-retry. Surface the recovery fields so the user can recover manually.
+				if (status === "GENERATED_BUT_UNRETRIEVED") {
+					setNotice({
+						tone: "warning",
+						title: `${data.mode} generated in Flow — local retrieval failed`,
+						detail:
+							"Generated in Flow, but local retrieval failed. Manual recovery/download required." +
+							(job.credit_spent_likely ? " A credit was likely spent." : "") +
+							(job.recovery_hint ? ` ${job.recovery_hint}.` : "") +
+							(job.original_error ? ` [${job.original_error}]` : ""),
 						requestId,
 					});
 					setIsExecuting(false);
@@ -1362,7 +1380,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			)}
 
 			<div
-				className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${notice.tone === "error" ? "border-red-500/40 bg-red-500/10 text-red-200" : notice.tone === "success" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : notice.tone === "info" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : "border-slate-800 bg-slate-900/40 text-slate-300"}`}
+				className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${notice.tone === "error" ? "border-red-500/40 bg-red-500/10 text-red-200" : notice.tone === "success" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : notice.tone === "info" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : notice.tone === "warning" ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : "border-slate-800 bg-slate-900/40 text-slate-300"}`}
 			>
 				<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 					<div>
