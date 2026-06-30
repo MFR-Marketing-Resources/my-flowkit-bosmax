@@ -105,3 +105,31 @@ This repository is under an architecture reset. All agents must inherit the same
 ## Conflict Rule
 - If `AGENTS.md`, `.ai/status/CURRENT_STATE.md`, or a phase contract conflicts with the task request, stop and resolve the conflict before coding.
 - If a secondary instruction surface disagrees with these contracts, this file and the `.ai/contracts/*` pack win.
+
+## Engineering Lockdown
+
+All agents must follow the engineering lockdown rules in:
+
+```text
+.ai/ENGINEERING_LOCKDOWN.md
+```
+
+These rules are mandatory and additive to this BOSMAX Flow Kit Agent Contract.
+
+If there is any conflict:
+
+1. Preserve existing proven BOSMAX Flow Kit contract behavior.
+2. Apply the stricter surgical engineering rule.
+3. Stop and ask before broad changes.
+
+Non-negotiable summary:
+
+- Do not fix what is not broken.
+- Do not reinvent the wheel.
+- Surgical patch only.
+- No unrelated files.
+- No formatter noise.
+- No broad rewrites.
+- No runtime claims without runtime evidence.
+- No credit-spending generation without explicit user approval.
+- Stop if scope expands.
