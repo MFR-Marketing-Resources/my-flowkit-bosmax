@@ -5,12 +5,14 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
+import ModelSelect, { type VideoModel, normalizeModel } from "./ModelSelect";
 
 interface T2VModuleProps {
 	onExecute: (data: WorkspaceExecutePayload) => void;
 	isExecuting: boolean;
 	compact?: boolean;
 	workspacePackage?: WorkspaceExecutionPackage | null;
+	videoModels: VideoModel[];
 }
 
 export default function T2VModule({
@@ -18,6 +20,7 @@ export default function T2VModule({
 	isExecuting,
 	compact = false,
 	workspacePackage = null,
+	videoModels,
 }: T2VModuleProps) {
 	// --- States ---
 	const [manualPrompt, setManualPrompt] = useState("");
@@ -25,18 +28,24 @@ export default function T2VModule({
 
 	// Mirror States
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
-	const [model, setModel] = useState("Veo 3.1 - Pro");
+	const [model, setModel] = useState("Veo 3.1 - Lite");
 	const [count, setCount] = useState(1);
 
 	useEffect(() => {
 		if (!workspacePackage || workspacePackage.mode !== "T2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
-		setModel(workspacePackage.model || "Veo 3.1 - Pro");
+		setModel(normalizeModel(workspacePackage.model, videoModels));
 		setOrientation(
 			workspacePackage.aspect_ratio === "16:9" ? "HORIZONTAL" : "VERTICAL",
 		);
 		setIsManualOverride(false);
 	}, [workspacePackage]);
+
+	// Re-normalize once the SSOT registry arrives — a package may hydrate first, so an
+	// unknown/retired model would otherwise stay ghosted and 422 on execute (patch I3b).
+	useEffect(() => {
+		setModel((m) => normalizeModel(m, videoModels));
+	}, [videoModels]);
 
 	// --- Handlers ---
 	const handleExecute = () => {
@@ -204,21 +213,11 @@ export default function T2VModule({
 							</div>
 						</div>
 
-						<div className="space-y-3">
-							<p className="text-xs font-bold text-slate-400">
-								Generation Model
-							</p>
-							<select
-								title="Select generation model"
-								value={model}
-								onChange={(e) => setModel(e.target.value)}
-								className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] font-bold text-slate-300 outline-none"
-							>
-								<option>Veo 3.1 - Pro</option>
-								<option>Veo 3.1 - Lite</option>
-								<option>Nano Banana 2</option>
-							</select>
-						</div>
+						<ModelSelect
+							models={videoModels}
+							value={model}
+							onChange={setModel}
+						/>
 
 						<div className="space-y-3">
 							<p className="text-xs font-bold text-slate-400">Count</p>
@@ -243,12 +242,22 @@ export default function T2VModule({
 						T2V — No Reference Images
 					</h4>
 					<p className="text-[10px] text-blue-300/70 leading-relaxed">
-						No images are uploaded. Google Flow has <strong className="text-blue-300">nothing to look at</strong> — every visual detail must come from the prompt text.
+						No images are uploaded. Google Flow has{" "}
+						<strong className="text-blue-300">nothing to look at</strong> —
+						every visual detail must come from the prompt text.
 					</p>
-					<p className="text-[10px] font-bold text-blue-300/80 uppercase tracking-[0.12em]">Prompt must include:</p>
+					<p className="text-[10px] font-bold text-blue-300/80 uppercase tracking-[0.12em]">
+						Prompt must include:
+					</p>
 					<ul className="text-[10px] text-blue-300/55 leading-relaxed space-y-1 list-disc list-inside">
-						<li>Character — appearance, skin tone, body type, posture, wardrobe (detailed)</li>
-						<li>Product — name, size &amp; scale description (e.g. "lip balm, palm-sized, fits between two fingers")</li>
+						<li>
+							Character — appearance, skin tone, body type, posture, wardrobe
+							(detailed)
+						</li>
+						<li>
+							Product — name, size &amp; scale description (e.g. "lip balm,
+							palm-sized, fits between two fingers")
+						</li>
 						<li>Action — what character does with the product</li>
 						<li>Camera — shot type, angle, movement</li>
 						<li>Audio — dialogue or voiceover script</li>

@@ -16,6 +16,7 @@ import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import F2VModule from "../components/workspace/F2VModule";
 import I2VModule from "../components/workspace/I2VModule";
 import IMGModule from "../components/workspace/IMGModule";
+import type { VideoModel } from "../components/workspace/ModelSelect";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import T2VModule from "../components/workspace/T2VModule";
 import type {
@@ -34,57 +35,13 @@ import type {
 	WorkspacePromptPreviewResult,
 } from "../types";
 
-type OperatorNoticeTone = "idle" | "info" | "success" | "error";
-
-interface OperatorTelemetryResponse {
-	telemetry: {
-		request_id: string;
-		status: string;
-		google_flow_stage: string | null;
-		extension_stage: string | null;
-		worker_stage: string | null;
-		error_message: string | null;
-	};
-	stages: Array<{
-		id: string;
-		stage: string;
-		status: string;
-		message: string | null;
-		source: string;
-		timestamp: string;
-	}>;
-}
+type OperatorNoticeTone = "idle" | "info" | "success" | "warning" | "error";
 
 interface OperatorNotice {
 	tone: OperatorNoticeTone;
 	title: string;
 	detail: string;
 	requestId: string | null;
-}
-
-const ACTIVE_TELEMETRY_STATUSES = new Set([
-	"QUEUED",
-	"PROCESSING",
-	"WAITING_FLOW",
-	"FLOW_RUNNING",
-]);
-
-function getNoticeTone(status: string | null | undefined): OperatorNoticeTone {
-	if (!status) return "info";
-	if (status === "COMPLETED") return "success";
-	if (status === "FAILED") return "error";
-	return "info";
-}
-
-function getLatestStageLabel(payload: OperatorTelemetryResponse | null) {
-	if (!payload) return "WAITING_FOR_TELEMETRY";
-	return (
-		payload.telemetry.google_flow_stage ||
-		payload.telemetry.extension_stage ||
-		payload.telemetry.worker_stage ||
-		payload.stages.at(-1)?.stage ||
-		"WAITING_FOR_TELEMETRY"
-	);
 }
 
 function humanizeWorkspaceMode(mode: WorkspaceMode) {
@@ -173,6 +130,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [creatorPersona, setCreatorPersona] = useState("DEFAULT_CREATOR");
 	const [block1Duration, setBlock1Duration] = useState(8);
 	const [block2Duration, setBlock2Duration] = useState(8);
+	// WPS chaining opt-in (default OFF). When an engine vendor is selected the
+	// preview/generate payload sends engine_duration_target +
+	// requested_total_duration_seconds so the backend enforces the WPS Blocking
+	// Template. Empty vendor = existing behavior, byte-identical payload.
+	const [engineDurationTarget, setEngineDurationTarget] = useState<
+		"" | "GROK" | "GOOGLE_FLOW"
+	>("");
+	const [requestedTotalDuration, setRequestedTotalDuration] = useState<
+		number | ""
+	>("");
 	const [notice, setNotice] = useState<OperatorNotice>({
 		tone: "idle",
 		title: "Idle",
@@ -180,6 +147,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		requestId: null,
 	});
 	const pollTimerRef = useRef<number | null>(null);
+	// In-flight guard: block a second START GENERATION while one execution is
+	// still pending (the button re-enables on fast failures, so without this a
+	// quick re-click dispatches a duplicate job to the same editor).
+	const executionInFlightRef = useRef(false);
 
 	const pathMode = location.pathname.split("/").pop()?.toUpperCase();
 	const mode =
@@ -304,6 +275,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		};
 	}, []);
 
+	const [videoModels, setVideoModels] = useState<VideoModel[]>([]);
+	useEffect(() => {
+		fetchAPI<{ models: VideoModel[]; default: string }>(
+			"/api/flow/video-models",
+		)
+			.then((r) => setVideoModels(r.models || []))
+			.catch(() => {});
+	}, []);
+
 	useEffect(() => {
 		if (!isPortalMode) {
 			setModeRequests([]);
@@ -340,9 +320,20 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		};
 	}, [isPortalMode, mode]);
 
+	// IMG now flows through the SAME unified one-door /generate (mode:"IMG") + pollJob as the
+	// video lanes — it saves to disk and returns a job (the legacy /generate-image-oneshot
+	// endpoint is kept server-side but no longer called from the dashboard).
 	const handleExecute = async (data: WorkspaceExecutePayload) => {
+		if (executionInFlightRef.current) {
+			console.log("[BOSMAX_DEBUG] DUPLICATE_EXECUTION_BLOCKED");
+			return;
+		}
+		executionInFlightRef.current = true;
 		setIsExecuting(true);
-		console.log("Operator executing:", data);
+		console.log(
+			"[BOSMAX_DEBUG] OPERATOR_EXECUTE_PAYLOAD",
+			JSON.stringify(data, null, 2),
+		);
 		if (pollTimerRef.current != null) {
 			window.clearTimeout(pollTimerRef.current);
 			pollTimerRef.current = null;
@@ -353,122 +344,157 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			tone: "info",
 			title: "Submitting to Flow",
 			detail:
-				"Bridge request accepted locally. Waiting for telemetry from the extension.",
+				"Request accepted. This lane is pollJob-driven — tracking the job status.",
 			requestId,
 		});
 
-		const pollTelemetry = async (targetRequestId: string) => {
+		const pollJob = async (jobId: string) => {
 			try {
-				const response = await fetch(
-					`/api/telemetry/requests/${targetRequestId}`,
-				);
-				if (response.status === 404) {
-					pollTimerRef.current = window.setTimeout(() => {
-						void pollTelemetry(targetRequestId);
-					}, 1200);
+				const response = await fetch(`/api/flow/generate-job/${jobId}`);
+				if (!response.ok) {
+					throw new Error(`Job HTTP ${response.status}`);
+				}
+				const job = await response.json();
+				const status = job.status as string;
+
+				if (status === "DONE") {
+					const mediaId = job.media_id ?? job.video_media_id ?? "";
+					// Surface the post-approve verification truth (Layer A). Handle BOTH result
+					// shapes surgically: the generate-job lane carries the flags on top-level
+					// job fields; the negotiate-job dry lane carries them under job.result.*.
+					const r = job.result ?? {};
+					const unverified = Boolean(
+						job.model_unverified ||
+							job.duration_unverified ||
+							r.model_unverified ||
+							r.duration_unverified ||
+							job.model_ok === false ||
+							job.duration_ok === false ||
+							r.model_ok === false ||
+							r.duration_ok === false,
+					);
+					const verifyNote = unverified
+						? " — ⚠ verification: model/duration UNVERIFIED"
+						: "";
+					// IMG artifacts open in a new tab for a quick preview (one-door save still happens).
+					if (job.artifact === "image" && job.url) {
+						window.open(job.url, "_blank", "noopener");
+					}
+					setNotice({
+						tone: "info",
+						title: `${data.mode} done — saved`,
+						detail: `Saved ${job.size_mb ?? "?"}MB → ${job.local_path} (media ${mediaId})${verifyNote}`,
+						requestId,
+					});
+					setIsExecuting(false);
+					executionInFlightRef.current = false;
 					return;
 				}
-
-				if (!response.ok) {
-					throw new Error(`Telemetry HTTP ${response.status}`);
+				if (status === "FAILED") {
+					setNotice({
+						tone: "error",
+						title: `${data.mode} failed`,
+						detail: job.error || "Generation failed.",
+						requestId,
+					});
+					setIsExecuting(false);
+					executionInFlightRef.current = false;
+					return;
 				}
-
-				const payload = (await response.json()) as OperatorTelemetryResponse;
-				const stageLabel = getLatestStageLabel(payload);
-				const status = payload.telemetry.status;
-				const errorMessage =
-					payload.telemetry.error_message ||
-					payload.stages.at(-1)?.message ||
-					null;
+				// Terminal: the video was generated in Flow but the local harvest failed. NOT a
+				// clean success (no local file) and NOT a plain generation failure — and it must
+				// NOT auto-retry. Surface the recovery fields so the user can recover manually.
+				if (status === "GENERATED_BUT_UNRETRIEVED") {
+					setNotice({
+						tone: "warning",
+						title: `${data.mode} generated in Flow — local retrieval failed`,
+						detail:
+							"Generated in Flow, but local retrieval failed. Manual recovery/download required." +
+							(job.credit_spent_likely ? " A credit was likely spent." : "") +
+							(job.recovery_hint ? ` ${job.recovery_hint}.` : "") +
+							(job.original_error ? ` [${job.original_error}]` : ""),
+						requestId,
+					});
+					setIsExecuting(false);
+					executionInFlightRef.current = false;
+					return;
+				}
 
 				setNotice({
-					tone: getNoticeTone(status),
-					title:
-						status === "COMPLETED"
-							? "Generation started"
-							: status === "FAILED"
-								? "Generation failed"
-								: "Flow job running",
-					detail: errorMessage
-						? `${stageLabel}: ${errorMessage}`
-						: `Latest stage: ${stageLabel}`,
-					requestId: targetRequestId,
+					tone: "info",
+					title: `${data.mode} running`,
+					detail: `Stage: ${job.stage ?? status}`,
+					requestId,
 				});
-
-				if (status === "FAILED") {
-					setIsExecuting(false);
-					return;
-				}
-
-				if (status === "COMPLETED" || !ACTIVE_TELEMETRY_STATUSES.has(status)) {
-					setIsExecuting(false);
-					return;
-				}
-
 				pollTimerRef.current = window.setTimeout(() => {
-					void pollTelemetry(targetRequestId);
-				}, 1500);
+					void pollJob(jobId);
+				}, 3000);
 			} catch (error: unknown) {
 				const message =
-					error instanceof Error
-						? error.message
-						: "Failed to read live Flow telemetry.";
+					error instanceof Error ? error.message : "Failed to read job status.";
 				setNotice({
 					tone: "error",
-					title: "Telemetry unavailable",
+					title: "Job status unavailable",
 					detail: message,
-					requestId: targetRequestId,
+					requestId,
 				});
 				setIsExecuting(false);
+				executionInFlightRef.current = false;
 			}
 		};
 
+		// F2V sends the Start/End frame as startAsset/endAsset; I2V/T2V use refs.*. Include ALL
+		// of them so the one-door /generate always receives the reference image as
+		// image_media_ids — otherwise F2V submits with an empty image and the backend rejects it
+		// ("F2V needs a reference image").
+		const refs = [
+			data.startAsset?.mediaId,
+			data.endAsset?.mediaId,
+			data.refs?.subjectAsset?.mediaId,
+			data.refs?.sceneAsset?.mediaId,
+			data.refs?.styleAsset?.mediaId,
+		].filter(Boolean) as string[];
+		// The modules send `orientation` (VERTICAL/HORIZONTAL), not `aspectRatio`. Honour
+		// aspectRatio if present, else fall back to orientation — otherwise HORIZONTAL was
+		// silently dropped and every video came out 9:16.
+		const aspect =
+			data.aspectRatio === "16:9" || data.orientation === "HORIZONTAL"
+				? "16:9"
+				: "9:16";
+
 		try {
-			const response = await fetch("/api/flow/execute-flow-job", {
+			// Unified one-door pipeline: agent → render → save (replaces the dead
+			// execute-flow-job DOM automation against the retired Video/Frames UI).
+			const response = await fetch("/api/flow/generate", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
-					...data,
-					request_id: requestId,
-					product_id: workspacePackage?.product_id ?? data.product_id ?? null,
-					prompt_package_snapshot_id:
-						workspacePackage?.prompt_package_snapshot_id ??
-						data.prompt_package_snapshot_id ??
-						null,
-					workspace_execution_package_id:
-						workspacePackage?.workspace_execution_package_id ??
-						data.workspace_execution_package_id ??
-						null,
-					prompt_fingerprint:
-						workspacePackage?.prompt_fingerprint ??
-						data.prompt_fingerprint ??
-						null,
-					asset_fingerprints:
-						workspacePackage?.request_lineage_payload?.asset_fingerprints ??
-						data.asset_fingerprints ??
-						[],
-					request_lineage_payload:
-						workspacePackage?.request_lineage_payload ??
-						data.request_lineage_payload ??
-						{},
+					mode: data.mode,
+					prompt: data.prompt,
+					image_media_ids: refs,
+					aspect,
+					model: data.model,
+					duration_s: videoModels.find((m) => m.ui_label === data.model)
+						?.default_duration_s,
 				}),
 			});
 
 			if (!response.ok) {
-				const err = await response.json();
-				throw new Error(err.detail || "Execution failed");
+				const err = await response.json().catch(() => ({}));
+				throw new Error(err.detail || `HTTP ${response.status}`);
 			}
 
 			const result = await response.json();
-			console.log("Execution result:", result);
+			if (!result.job_id) {
+				throw new Error("no job_id returned");
+			}
 			setNotice({
 				tone: "info",
-				title: "Flow job accepted",
-				detail:
-					"Automation bridge accepted the request. Tracking stage updates now.",
+				title: `${data.mode} accepted`,
+				detail: `Job ${result.job_id} started — agent → render → save.`,
 				requestId,
 			});
-			void pollTelemetry(requestId);
+			void pollJob(result.job_id);
 		} catch (error: unknown) {
 			const message =
 				error instanceof Error ? error.message : "Execution failed.";
@@ -479,8 +505,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				detail: message,
 				requestId,
 			});
-			alert(`Execution Error: ${message}`);
 			setIsExecuting(false);
+			executionInFlightRef.current = false;
 		}
 	};
 
@@ -586,6 +612,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								{ block_index: 2, duration_seconds: block2Duration },
 							]
 						: [],
+				...(engineDurationTarget
+					? {
+							engine_duration_target: engineDurationTarget,
+							...(requestedTotalDuration !== ""
+								? {
+										requested_total_duration_seconds: requestedTotalDuration,
+									}
+								: {}),
+						}
+					: {}),
 			});
 			setPreviewPackage(preview);
 			setNotice({
@@ -633,6 +669,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								{ block_index: 2, duration_seconds: block2Duration },
 							]
 						: [],
+				...(engineDurationTarget
+					? {
+							engine_duration_target: engineDurationTarget,
+							...(requestedTotalDuration !== ""
+								? {
+										requested_total_duration_seconds: requestedTotalDuration,
+									}
+								: {}),
+						}
+					: {}),
 			});
 			setWorkspacePackage(pkg);
 			setPreviewPackage(null);
@@ -699,6 +745,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						isExecuting={isExecuting}
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
+						videoModels={videoModels}
 					/>
 				);
 			case "T2V":
@@ -708,6 +755,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						isExecuting={isExecuting}
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
+						videoModels={videoModels}
 					/>
 				);
 			case "I2V":
@@ -718,6 +766,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
 						onWorkspacePackageUpdated={setWorkspacePackage}
+						videoModels={videoModels}
 					/>
 				);
 			case "IMG":
@@ -948,6 +997,56 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									</option>
 								))}
 							</select>
+						</div>
+					</div>
+					<div className="mt-4 grid gap-3 md:grid-cols-2">
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								WPS Engine Vendor (optional)
+							</div>
+							<select
+								title="WPS engine vendor"
+								value={engineDurationTarget}
+								onChange={(e) =>
+									setEngineDurationTarget(
+										e.target.value as "" | "GROK" | "GOOGLE_FLOW",
+									)
+								}
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+							>
+								<option value="">None (no WPS chaining)</option>
+								<option value="GROK">Grok</option>
+								<option value="GOOGLE_FLOW">Google Flow</option>
+							</select>
+							<div className="text-[11px] text-slate-400">
+								Select a vendor to enforce the WPS Blocking Template.
+							</div>
+						</div>
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								WPS Total Duration (s)
+							</div>
+							<input
+								type="number"
+								min={1}
+								title="WPS requested total duration seconds"
+								value={
+									requestedTotalDuration === ""
+										? ""
+										: String(requestedTotalDuration)
+								}
+								onChange={(e) =>
+									setRequestedTotalDuration(
+										e.target.value === "" ? "" : Number(e.target.value),
+									)
+								}
+								disabled={engineDurationTarget === ""}
+								placeholder="e.g. 24"
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 disabled:opacity-40"
+							/>
+							<div className="text-[11px] text-slate-400">
+								Total video seconds; backend resolves the block chain.
+							</div>
 						</div>
 					</div>
 					<div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -1196,6 +1295,28 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									{previewPackage.warnings.join(" · ")}
 								</div>
 							) : null}
+							{previewPackage.wps_chaining_enforced ? (
+								<div className="rounded-xl border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-[11px] text-sky-200">
+									<div className="font-semibold">
+										WPS enforced ·{" "}
+										{previewPackage.engine_duration_target ?? "—"}
+									</div>
+									<div className="mt-1">
+										Chain: [
+										{(previewPackage.resolved_block_chain ?? []).join(", ")}] ·
+										Budget: [
+										{previewPackage.dialogue_word_budget_per_block.join(", ")}]
+									</div>
+									<div className="mt-1">
+										Actual: [
+										{(
+											previewPackage.actual_dialogue_word_count_per_block ?? []
+										).join(", ")}
+										] · Status: [
+										{(previewPackage.wps_status_per_block ?? []).join(", ")}]
+									</div>
+								</div>
+							) : null}
 							<div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
 								Package loaded. Review above then press Generate Final Prompt to
 								save.
@@ -1303,7 +1424,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			)}
 
 			<div
-				className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${notice.tone === "error" ? "border-red-500/40 bg-red-500/10 text-red-200" : notice.tone === "success" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : notice.tone === "info" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : "border-slate-800 bg-slate-900/40 text-slate-300"}`}
+				className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${notice.tone === "error" ? "border-red-500/40 bg-red-500/10 text-red-200" : notice.tone === "success" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : notice.tone === "info" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : notice.tone === "warning" ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : "border-slate-800 bg-slate-900/40 text-slate-300"}`}
 			>
 				<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 					<div>

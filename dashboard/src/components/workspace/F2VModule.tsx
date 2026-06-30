@@ -7,6 +7,10 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
+import ModelSelect, {
+	type VideoModel,
+	normalizeModel,
+} from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface F2VModuleProps {
@@ -14,13 +18,10 @@ interface F2VModuleProps {
 	isExecuting: boolean;
 	compact?: boolean;
 	workspacePackage?: WorkspaceExecutionPackage | null;
+	videoModels: VideoModel[];
 }
 
-const F2V_LOCKED_MODEL = "Veo 3.1 - Lite";
-
-function normalizeF2VModel(_value: string | null | undefined): string {
-	return F2V_LOCKED_MODEL;
-}
+const F2V_DEFAULT_MODEL = "Veo 3.1 - Lite";
 
 function toUploadedAsset(
 	asset:
@@ -52,12 +53,13 @@ export default function F2VModule({
 	isExecuting,
 	compact = false,
 	workspacePackage = null,
+	videoModels,
 }: F2VModuleProps) {
 	// --- States ---
 	const [manualPrompt, setManualPrompt] = useState("");
 	const [isManualOverride, setIsManualOverride] = useState(false);
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
-	const [model, setModel] = useState(F2V_LOCKED_MODEL);
+	const [model, setModel] = useState(F2V_DEFAULT_MODEL);
 	const [count, setCount] = useState(1);
 	const [isUploading, setIsUploading] = useState(false);
 	const [startPreviewFailed, setStartPreviewFailed] = useState(false);
@@ -66,10 +68,16 @@ export default function F2VModule({
 	const [startAsset, setStartAsset] = useState<UploadedAsset | null>(null);
 	const [endAsset, setEndAsset] = useState<UploadedAsset | null>(null);
 
+	// Re-normalize once the SSOT registry arrives — a package may hydrate first, so an
+	// unknown/retired model would otherwise stay ghosted and 422 on execute (patch I3b).
+	useEffect(() => {
+		setModel((m) => normalizeModel(m, videoModels));
+	}, [videoModels]);
+
 	useEffect(() => {
 		if (!workspacePackage || workspacePackage.mode !== "F2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
-		setModel(normalizeF2VModel(workspacePackage.model));
+		setModel(normalizeModel(workspacePackage.model, videoModels));
 		setOrientation(
 			workspacePackage.aspect_ratio === "16:9" ? "HORIZONTAL" : "VERTICAL",
 		);
@@ -120,7 +128,14 @@ export default function F2VModule({
 	};
 
 	const handleExecute = () => {
+		// Dispatch through the Google Flow V2 runtime lane
+		// (GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE): auto-acquire a healthy V2 surface,
+		// then Upload media -> Add to Prompt -> Settings -> Prompt and STOP before
+		// Generate. The backend still materializes the remote Start image to a local
+		// file for the CDP file chooser (lane recognised by flow.py).
 		onExecute({
+			lane: "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE",
+			gfv2: true,
 			prompt: manualPrompt,
 			orientation,
 			model,
@@ -384,25 +399,11 @@ export default function F2VModule({
 								))}
 							</div>
 						</div>
-						<div className="space-y-3">
-							<p className="text-xs font-bold text-slate-400">
-								Generation Model
-							</p>
-							<select
-								id="f2v-generation-model"
-								name="f2v_generation_model"
-								title="Select generation model"
-								value={model}
-								onChange={(e) => setModel(normalizeF2VModel(e.target.value))}
-								className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] font-bold text-slate-300 outline-none"
-							>
-								<option>{F2V_LOCKED_MODEL}</option>
-							</select>
-							<p className="text-[10px] text-slate-500">
-								F2V stays locked to Veo 3.1 - Lite to match the verified
-								Video/Frames execution lane.
-							</p>
-						</div>
+						<ModelSelect
+							models={videoModels}
+							value={model}
+							onChange={setModel}
+						/>
 						<div className="space-y-3">
 							<p className="text-xs font-bold text-slate-400">Count</p>
 							<div className="grid grid-cols-4 gap-2">
