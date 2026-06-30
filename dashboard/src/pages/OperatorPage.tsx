@@ -423,7 +423,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			data.refs?.sceneAsset?.mediaId,
 			data.refs?.styleAsset?.mediaId,
 		].filter(Boolean) as string[];
-		const aspect = data.aspectRatio === "16:9" ? "16:9" : "9:16";
+		// The modules send `orientation` (VERTICAL/HORIZONTAL), not `aspectRatio`. Honour
+		// aspectRatio if present, else fall back to orientation — otherwise HORIZONTAL was
+		// silently dropped and every video came out 9:16.
+		const aspect =
+			data.aspectRatio === "16:9" || data.orientation === "HORIZONTAL"
+				? "16:9"
+				: "9:16";
 
 		try {
 			// Unified one-door pipeline: agent → render → save (replaces the dead
