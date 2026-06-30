@@ -1,0 +1,14 @@
+data: {"agentMessage": {"agentEvents": [{"eventId": "fffb799f-95bc-4bd2-814f-af6bd53a531e","thinkingEvent": {"thought": "**Generating Video Details**\n\nOkay, I'm now focusing on the specifics for video generation. I'm locked into `Veo 3.1 - Fast`, aiming for an 8-second video, and I need a single clip only. The input is definitely text-based, no images, and I'm sticking with the \"Vertical 9:16 cinematic product video. Slow push-in\" prompt from before.\n\n\n"}}],"responseId": "fffb799f-95bc-4bd2-814f-af6bd53a531e"},"partial": true}
+
+data: {"agentMessage": {"response": {"text": "I'm going to generate one 8-second video using Ve"},"responseId": "652b8643-b4f6-4166-a0f6-bd02928363a9"},"partial": true}
+
+data: {"agentMessage": {"response": {"text": "o 3.1 - Fast.\n\n"},"responseId": "288835dc-0f8c-4195-8e38-a001dfd6cda6"},"partial": true}
+
+data: {"agentMessage": {"responseId": "8f35d9a3-4aae-46cc-9c56-c09c2cac7af9"}}
+
+data: {"agentMessage": {"responseId": "7733b158-438b-4e41-9d8e-09b1f23ab296"},"partial": true}
+
+data: {"agentMessage": {"response": {"text": "I'm going to generate one 8-second video using Veo 3.1 - Fast.\n\n"},"agentEvents": [{"eventId": "f0eb0336-3426-4e10-8465-9877cd857c5e","thinkingEvent": {"thought": "**Generating Video Details**\n\nOkay, I'm now focusing on the specifics for video generation. I'm locked into `Veo 3.1 - Fast`, aiming for an 8-second video, and I need a single clip only. The input is definitely text-based, no images, and I'm sticking with the \"Vertical 9:16 cinematic product video. Slow push-in\" prompt from before.\n\n\n"}}],"responseId": "f0eb0336-3426-4e10-8465-9877cd857c5e"}}
+
+data: {"agentMessage": {"agentEvents": [{"eventId": "935407de-6038-4ac5-ae52-6450baa100f0","toolInvocation": {"toolCallId": "open_chat_panel","toolName": "open_chat_panel","toolArguments": {"_synthetic": true}}},{"eventId": "935407de-6038-4ac5-ae52-6450baa100f0","toolInvocation": {"toolCallId": "ask_for_permission","toolName": "ask_for_permission","toolArguments": {"num_videos": 1,"total_cost": 20,"num_total": 1,"num_images": 0}}}],"responseId": "935407de-6038-4ac5-ae52-6450baa100f0"},"isFinalResponse": true}
+

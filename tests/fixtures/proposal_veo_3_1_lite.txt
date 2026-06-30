@@ -1,0 +1,16 @@
+data: {"agentMessage": {"agentEvents": [{"eventId": "502c3b97-056a-4952-86f6-038cd9b970cc","thinkingEvent": {"thought": "**Defining Video Parameters**\n\nI've established the key parameters: `Veo 3.1 - Lite` model, an 8-second duration, and I'm targeting a single video. The input will be text-based, and my budget is exactly 10 credits. Now I'm preparing to specify the prompt to meet the user's need.\n\n\n"}}],"responseId": "502c3b97-056a-4952-86f6-038cd9b970cc"},"partial": true}
+
+data: {"agentMessage": {"agentEvents": [{"eventId": "8631cf62-f070-45c1-9f39-2020add43657","thinkingEvent": {"thought": "**Validating Configuration Settings**\n\nI've verified that the user's settings, including the 8-second duration and 9:16 aspect ratio, are valid for the \"Veo 3.1 - Lite\" model within the Pro/Plus tier. T2V is supported, the cost is 10 credits, and the aspect ratios align. Now I intend to generate a single video using the most recent prompt. The goal is to call `generate_video_from_text` with the specified parameters to fulfill the user's intent.\n\n\n"}}],"responseId": "8631cf62-f070-45c1-9f39-2020add43657"},"partial": true}
+
+data: {"agentMessage": {"response": {"text": "I'm going to generate 1 video using Veo 3.1 - Lite."},"responseId": "f8ea4a63-3240-4ea5-9875-2013ce567479"},"partial": true}
+
+data: {"agentMessage": {"response": {"text": "\n\n"},"responseId": "5e9cbcfe-1b7f-4036-b88c-1c90adae48ad"},"partial": true}
+
+data: {"agentMessage": {"responseId": "8b8c8acb-c285-40d7-a7b1-6e6d19082f21"}}
+
+data: {"agentMessage": {"responseId": "d33ce3a9-6f7b-4355-8740-976b562966c2"},"partial": true}
+
+data: {"agentMessage": {"response": {"text": "I'm going to generate 1 video using Veo 3.1 - Lite.\n\n"},"agentEvents": [{"eventId": "437eb076-2305-4fa2-a594-8dbea33ecf18","thinkingEvent": {"thought": "**Defining Video Parameters**\n\nI've established the key parameters: `Veo 3.1 - Lite` model, an 8-second duration, and I'm targeting a single video. The input will be text-based, and my budget is exactly 10 credits. Now I'm preparing to specify the prompt to meet the user's need.\n\n\n**Validating Configuration Settings**\n\nI've verified that the user's settings, including the 8-second duration and 9:16 aspect ratio, are valid for the \"Veo 3.1 - Lite\" model within the Pro/Plus tier. T2V is supported, the cost is 10 credits, and the aspect ratios align. Now I intend to generate a single video using the most recent prompt. The goal is to call `generate_video_from_text` with the specified parameters to fulfill the user's intent.\n\n\n"}}],"responseId": "437eb076-2305-4fa2-a594-8dbea33ecf18"}}
+
+data: {"agentMessage": {"agentEvents": [{"eventId": "c650da17-98b9-435e-8938-d5a97e9d17da","toolInvocation": {"toolCallId": "open_chat_panel","toolName": "open_chat_panel","toolArguments": {"_synthetic": true}}},{"eventId": "c650da17-98b9-435e-8938-d5a97e9d17da","toolInvocation": {"toolCallId": "ask_for_permission","toolName": "ask_for_permission","toolArguments": {"total_cost": 10,"num_videos": 1,"num_images": 0,"num_total": 1}}}],"responseId": "c650da17-98b9-435e-8938-d5a97e9d17da"},"isFinalResponse": true}
+

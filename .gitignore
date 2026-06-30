@@ -42,3 +42,7 @@ data/products/images/*.jpg
 data/fastmoss/imports/
 data/product_knowledge/imports/
 data/product_registration/drafts/
+
+# Local tooling / debug artifacts (machine-specific; do not commit)
+.mcp.json
+.playwright-mcp/
