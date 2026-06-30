@@ -1856,8 +1856,31 @@ async function adoptSelectedFlowProjectUrlIfNeeded(
 	selectedTab,
 	flowTabs = [],
 	preferredUrl = null,
+	options = {},
 ) {
 	const normalizedPreferredUrl = String(preferredUrl || "").trim() || null;
+	const brokenSelectedTarget = hasBrokenFlowProjectEvidence(selectedTab?.url, {
+		...options,
+		currentStoredUrl: normalizedPreferredUrl,
+	}).broken;
+	if (brokenSelectedTarget) {
+		const syncResult = await syncStoredFlowProjectUrlToActiveEditor(
+			selectedTab?.url,
+			{
+				currentStoredUrl: normalizedPreferredUrl,
+				openedViaRecovery: true,
+				allowWhenMissing: true,
+				force: true,
+				...options,
+			},
+		);
+		return {
+			preferred_flow_project_url: syncResult
+				? syncResult.stored_flow_project_url
+				: normalizedPreferredUrl,
+			sync_result: syncResult,
+		};
+	}
 	if (
 		!shouldAdoptSelectedFlowProjectUrl(
 			selectedTab,
@@ -1878,14 +1901,14 @@ async function adoptSelectedFlowProjectUrlIfNeeded(
 			openedViaRecovery: true,
 			allowWhenMissing: true,
 			force: true,
+			...options,
 		},
 	);
 
 	return {
-		preferred_flow_project_url:
-			syncResult?.stored_flow_project_url ||
-			String(selectedTab?.url || "").trim() ||
-			normalizedPreferredUrl,
+		preferred_flow_project_url: syncResult
+			? syncResult.stored_flow_project_url
+			: String(selectedTab?.url || "").trim() || normalizedPreferredUrl,
 		sync_result: syncResult,
 	};
 }
@@ -3213,9 +3236,11 @@ async function getLocalRuntimeDiagnosticSnapshot() {
 		selectedTab,
 		flowTabs,
 		preferredUrl,
+		{ activeTabPreflight },
 	);
-	const effectivePreferredUrl =
-		adoptedTarget?.preferred_flow_project_url || preferredUrl;
+	const effectivePreferredUrl = adoptedTarget
+		? adoptedTarget.preferred_flow_project_url
+		: preferredUrl;
 	const badRedirectTabs = await chrome.tabs.query({
 		url: ["http://0.0.0.43/*"],
 	});
@@ -3560,6 +3585,49 @@ async function setStoredFlowProjectUrl(flowProjectUrl) {
 	return normalized;
 }
 
+function hasBrokenFlowProjectEvidence(activeEditorUrl, options = {}) {
+	const normalizedActiveUrl = String(activeEditorUrl || "").trim();
+	const currentStoredUrl = String(options.currentStoredUrl || "").trim();
+	const pageDiagnostic =
+		options.pageDiagnostic && typeof options.pageDiagnostic === "object"
+			? options.pageDiagnostic
+			: {};
+	const visibleErrorMarkers = Array.isArray(pageDiagnostic.visible_error_markers)
+		? pageDiagnostic.visible_error_markers.map((value) => String(value))
+		: [];
+	const diagnosticCode = String(
+		options.diagnosticCode || pageDiagnostic.diagnostic_code || "",
+	).trim();
+	const runtimeReason = String(
+		options.runtimeReason || pageDiagnostic.runtime_reason || "",
+	).trim();
+	const strictComposerError = String(
+		options.strictComposerError || pageDiagnostic.strict_composer_error || "",
+	).trim();
+	const bindError = String(
+		options.bindError || options.targetBindingError || "",
+	).trim();
+	const brokenTargetRejected = Boolean(
+		options.brokenTargetRejected ||
+			options.activeTabPreflight?.brokenTargetRejected,
+	);
+	const sameStoredUrl =
+		Boolean(currentStoredUrl) &&
+		isSameFlowProjectUrl(currentStoredUrl, normalizedActiveUrl);
+	return {
+		broken: Boolean(
+			brokenTargetRejected ||
+				visibleErrorMarkers.length > 0 ||
+				diagnosticCode === "TARGET_PROJECT_BROKEN" ||
+				runtimeReason === "TARGET_PROJECT_BROKEN" ||
+				strictComposerError === "ABORT_FLOW_COMPOSER_NOT_READY" ||
+				bindError.startsWith("BROKEN_EDITOR_PAGE"),
+		),
+		sameStoredUrl,
+		visible_error_markers: visibleErrorMarkers,
+	};
+}
+
 async function syncStoredFlowProjectUrlToActiveEditor(
 	activeEditorUrl,
 	options = {},
@@ -3580,6 +3648,25 @@ async function syncStoredFlowProjectUrlToActiveEditor(
 	const currentStoredUrl = String(
 		options.currentStoredUrl || (await getStoredFlowProjectUrl()) || "",
 	).trim();
+	const brokenEvidence = hasBrokenFlowProjectEvidence(normalizedActiveUrl, {
+		...options,
+		currentStoredUrl,
+	});
+	if (brokenEvidence.broken) {
+		if (brokenEvidence.sameStoredUrl) {
+			await setStoredFlowProjectUrl(null);
+		}
+		return {
+			ok: false,
+			synced: false,
+			reason: "BROKEN_TARGET_REJECTED",
+			stored_flow_project_url: brokenEvidence.sameStoredUrl
+				? null
+				: currentStoredUrl || null,
+			active_flow_project_url: normalizedActiveUrl,
+			visible_error_markers: brokenEvidence.visible_error_markers,
+		};
+	}
 	const openedViaRecovery = Boolean(options.openedViaRecovery);
 	const allowWhenMissing = options.allowWhenMissing !== false;
 	const force = options.force === true;
@@ -3954,8 +4041,6 @@ async function handleOpenTargetFlowProject(flowProjectUrl, mode = null) {
 		};
 	}
 
-	await setStoredFlowProjectUrl(normalizedUrl);
-
 	const flowTabBefore = await getFlowTab();
 	const flowUrlBefore = flowTabBefore?.url || null;
 
@@ -4020,6 +4105,10 @@ async function handleOpenTargetFlowProject(flowProjectUrl, mode = null) {
 
 	const probe = await probeFlowEditorCandidate(targetTab, mode);
 	if (!probe.ok) {
+		// Never poison the remembered project binding with a target that opened
+		// but failed the editor-readiness probe. A broken preferred URL must be
+		// eligible for fresh-project fallback on the next recovery attempt.
+		await setStoredFlowProjectUrl(null);
 		updateRuntimeDiagnostics({
 			...buildRuntimeDiagnosticPayload({
 				flowUrl: flowUrlAfter,
@@ -4053,6 +4142,7 @@ async function handleOpenTargetFlowProject(flowProjectUrl, mode = null) {
 		};
 	}
 
+	await setStoredFlowProjectUrl(normalizedUrl);
 	updateRuntimeDiagnostics(
 		buildRuntimeDiagnosticPayload({
 			flowUrl: flowUrlAfter,
@@ -4086,8 +4176,31 @@ async function openPreferredFlowProjectOrNewProject(mode, preferredUrl = null) {
 				open_strategy: "preferred_project_url",
 			};
 		}
-		// Fail CLOSED: a preferred project URL was set but opening it failed. Do NOT cascade
-		// into new-project creation — that mints blank projects and pollutes the session.
+		const brokenPreferredTarget =
+			[
+				"FLOW_PROJECT_EDITOR_NOT_READY",
+				"FLOW_PROJECT_EDITOR_NOT_OPEN",
+				"BROKEN_EDITOR_PAGE",
+			].includes(String(preferredResult?.error || "").trim()) ||
+			[
+				"TARGET_PROJECT_BROKEN",
+				"FLOW_PROJECT_EDITOR_NOT_READY",
+			].includes(String(preferredResult?.diagnostic_code || "").trim()) ||
+			Array.isArray(
+				preferredResult?.target_probe_diagnostic?.visible_error_markers,
+			) &&
+				preferredResult.target_probe_diagnostic.visible_error_markers.length > 0;
+		if (brokenPreferredTarget) {
+			await setStoredFlowProjectUrl(null);
+			const freshProjectResult = await handleOpenFlowNewProject(mode);
+			return {
+				...freshProjectResult,
+				open_strategy: "fresh_project_after_broken_preferred",
+				recovered_from_preferred_project_url: normalizedPreferredUrl,
+			};
+		}
+		// Fail CLOSED for non-broken preferred targets. This prevents the runtime
+		// from minting new blank projects for transient/noise failures.
 		return {
 			...(preferredResult || {}),
 			ok: false,
@@ -6972,10 +7085,12 @@ async function handleFlowPageStateDiagnostic(mode, options = {}) {
 				currentStoredUrl: normalizedPreferredUrl,
 				openedViaRecovery,
 				allowWhenMissing: true,
+				pageDiagnostic: finalResult,
 			},
 		);
-		finalResult.stored_flow_project_url =
-			syncResult.stored_flow_project_url || normalizedPreferredUrl || null;
+		finalResult.stored_flow_project_url = syncResult
+			? syncResult.stored_flow_project_url
+			: normalizedPreferredUrl || null;
 	}
 	return finalResult;
 }
@@ -7128,8 +7243,11 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 		selectedTab,
 		flowTabs,
 		preferredUrl,
+		{ activeTabPreflight },
 	);
-	preferredUrl = adoptedTarget?.preferred_flow_project_url || preferredUrl;
+	preferredUrl = adoptedTarget
+		? adoptedTarget.preferred_flow_project_url
+		: preferredUrl;
 	let openFlowResult = null;
 	// A single self-test call performs project-open recovery AT MOST ONCE (was: the direct open
 	// here PLUS the page + composer diagnostics could each re-open → blank project/tab fan-out).
@@ -7159,9 +7277,11 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 			selectedTab,
 			flowTabs,
 			settledTab?.url || openFlowResult?.flow_url || preferredUrl,
+			{ activeTabPreflight },
 		);
-		preferredUrl =
-			adoptedSettledTarget?.preferred_flow_project_url || preferredUrl;
+		preferredUrl = adoptedSettledTarget
+			? adoptedSettledTarget.preferred_flow_project_url
+			: preferredUrl;
 	}
 
 	// The single recovery allowance goes to whichever runs first (the direct open above OR the
