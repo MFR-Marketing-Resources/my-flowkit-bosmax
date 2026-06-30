@@ -14,9 +14,9 @@ import {
 } from "../api/workspacePackages";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import F2VModule from "../components/workspace/F2VModule";
-import type { VideoModel } from "../components/workspace/ModelSelect";
 import I2VModule from "../components/workspace/I2VModule";
 import IMGModule from "../components/workspace/IMGModule";
+import type { VideoModel } from "../components/workspace/ModelSelect";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import T2VModule from "../components/workspace/T2VModule";
 import type {
@@ -277,7 +277,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 	const [videoModels, setVideoModels] = useState<VideoModel[]>([]);
 	useEffect(() => {
-		fetchAPI<{ models: VideoModel[]; default: string }>("/api/flow/video-models")
+		fetchAPI<{ models: VideoModel[]; default: string }>(
+			"/api/flow/video-models",
+		)
 			.then((r) => setVideoModels(r.models || []))
 			.catch(() => {});
 	}, []);
@@ -349,10 +351,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					// job fields; the negotiate-job dry lane carries them under job.result.*.
 					const r = job.result ?? {};
 					const unverified = Boolean(
-						job.model_unverified || job.duration_unverified ||
-						r.model_unverified || r.duration_unverified ||
-						job.model_ok === false || job.duration_ok === false ||
-						r.model_ok === false || r.duration_ok === false,
+						job.model_unverified ||
+							job.duration_unverified ||
+							r.model_unverified ||
+							r.duration_unverified ||
+							job.model_ok === false ||
+							job.duration_ok === false ||
+							r.model_ok === false ||
+							r.duration_ok === false,
 					);
 					const verifyNote = unverified
 						? " — ⚠ verification: model/duration UNVERIFIED"
@@ -394,9 +400,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				}, 3000);
 			} catch (error: unknown) {
 				const message =
-					error instanceof Error
-						? error.message
-						: "Failed to read job status.";
+					error instanceof Error ? error.message : "Failed to read job status.";
 				setNotice({
 					tone: "error",
 					title: "Job status unavailable",
@@ -408,7 +412,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			}
 		};
 
+		// F2V sends the Start/End frame as startAsset/endAsset; I2V/T2V use refs.*. Include ALL
+		// of them so the one-door /generate always receives the reference image as
+		// image_media_ids — otherwise F2V submits with an empty image and the backend rejects it
+		// ("F2V needs a reference image").
 		const refs = [
+			data.startAsset?.mediaId,
+			data.endAsset?.mediaId,
 			data.refs?.subjectAsset?.mediaId,
 			data.refs?.sceneAsset?.mediaId,
 			data.refs?.styleAsset?.mediaId,
@@ -570,8 +580,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							engine_duration_target: engineDurationTarget,
 							...(requestedTotalDuration !== ""
 								? {
-										requested_total_duration_seconds:
-											requestedTotalDuration,
+										requested_total_duration_seconds: requestedTotalDuration,
 									}
 								: {}),
 						}
@@ -628,8 +637,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							engine_duration_target: engineDurationTarget,
 							...(requestedTotalDuration !== ""
 								? {
-										requested_total_duration_seconds:
-											requestedTotalDuration,
+										requested_total_duration_seconds: requestedTotalDuration,
 									}
 								: {}),
 						}
