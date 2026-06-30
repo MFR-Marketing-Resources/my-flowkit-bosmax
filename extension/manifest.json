@@ -34,8 +34,17 @@
         "http://127.0.0.1:5173/*",
         "http://localhost:5173/*"
       ],
-      "js": ["content.js", "selector-registry.js", "content-flow-dom.js"],
+      "js": ["content.js", "selector-registry.js", "gfv2-readiness.js", "content-flow-dom.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://labs.google/fx/tools/flow*",
+        "https://labs.google/fx/*/tools/flow*"
+      ],
+      "js": ["injected.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ],
   "web_accessible_resources": [
