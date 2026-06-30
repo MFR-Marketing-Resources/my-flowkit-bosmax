@@ -1,0 +1,12 @@
+data: {"agentMessage": {"agentEvents": [{"eventId": "5f317dd5-f78c-4eb2-b00c-873b47fbb485","thinkingEvent": {"thought": "**Considering Video Generation**\n\nOkay, I am focusing on generating a video based on the user's explicit model request: \"Veo 3.1 - Quality\". My immediate priority is to satisfy the 8-second duration and vertical 9:16 aspect ratio requirements for a single video. I need to ensure these parameters are correctly implemented during generation. I must also confirm the \"Count\" parameter is set for one video only, which I have done.\n\n\n"}}],"responseId": "5f317dd5-f78c-4eb2-b00c-873b47fbb485"},"partial": true}
+
+data: {"agentMessage": {"response": {"text": "I'm going to generate one 8-second video using Veo 3.1 - Quality.\n\n"},"responseId": "ab15efcf-73d4-47f1-9036-af7c35c603d3"},"partial": true}
+
+data: {"agentMessage": {"responseId": "eda647e2-8068-4d4a-881e-23fbab7f44ba"}}
+
+data: {"agentMessage": {"responseId": "b9e5bee8-08ec-440f-baaf-38ade97eee14"},"partial": true}
+
+data: {"agentMessage": {"response": {"text": "I'm going to generate one 8-second video using Veo 3.1 - Quality.\n\n"},"agentEvents": [{"eventId": "88226b74-8182-426a-963c-a7089714d9e8","thinkingEvent": {"thought": "**Considering Video Generation**\n\nOkay, I am focusing on generating a video based on the user's explicit model request: \"Veo 3.1 - Quality\". My immediate priority is to satisfy the 8-second duration and vertical 9:16 aspect ratio requirements for a single video. I need to ensure these parameters are correctly implemented during generation. I must also confirm the \"Count\" parameter is set for one video only, which I have done.\n\n\n"}}],"responseId": "88226b74-8182-426a-963c-a7089714d9e8"}}
+
+data: {"agentMessage": {"agentEvents": [{"eventId": "db212004-201e-4f2a-94c1-9b91d7eb6e9b","toolInvocation": {"toolCallId": "open_chat_panel","toolName": "open_chat_panel","toolArguments": {"_synthetic": true}}},{"eventId": "db212004-201e-4f2a-94c1-9b91d7eb6e9b","toolInvocation": {"toolCallId": "ask_for_permission","toolName": "ask_for_permission","toolArguments": {"num_videos": 1,"num_total": 1,"total_cost": 100,"num_images": 0}}}],"responseId": "db212004-201e-4f2a-94c1-9b91d7eb6e9b"},"isFinalResponse": true}
+
