@@ -319,11 +319,21 @@ export default function I2VModule({
 	const executionBlocked =
 		Boolean(workspacePackage) && resolverBlockers.length > 0;
 
+	// I2V business rule (BOSMAX): at least 2 reference/ingredient images, 3rd optional.
+	const i2vImageCount = [subjectAsset, sceneAsset, styleAsset].filter(
+		Boolean,
+	).length;
+
 	const resolverStatusTone = executionBlocked
 		? "border-amber-500/30 bg-amber-500/10 text-amber-100"
 		: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100";
 
 	const handleExecute = async () => {
+		// Block a partial I2V LOCALLY before /generate — never submit fewer than 2 images.
+		if (i2vImageCount < 2) {
+			alert("I2V requires at least 2 reference images.");
+			return;
+		}
 		let effectivePackage = workspacePackage;
 		if (workspacePackage?.product_id) {
 			setIsRefreshingPackage(true);
@@ -695,6 +705,12 @@ export default function I2VModule({
 				</section>
 
 				<div className="pt-4">
+					{i2vImageCount < 2 && (
+						<p className="mb-2 text-[11px] font-bold text-amber-300/80">
+							I2V requires at least 2 reference images ({i2vImageCount}/2). Add a
+							Scene or Style ingredient — the 3rd is optional.
+						</p>
+					)}
 					<button
 						type="button"
 						onClick={() => void handleExecute()}
@@ -703,7 +719,7 @@ export default function I2VModule({
 							isUploading ||
 							isRefreshingPackage ||
 							!manualPrompt ||
-							!subjectAsset ||
+							i2vImageCount < 2 ||
 							executionBlocked
 						}
 						className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
@@ -747,11 +763,11 @@ export default function I2VModule({
 						</div>
 						<div className="space-y-3">
 							<ModelSelect
-									models={videoModels}
-									value={model}
-									onChange={setModel}
-								/>
-								<p className="text-xs font-bold text-slate-400">Count</p>
+								models={videoModels}
+								value={model}
+								onChange={setModel}
+							/>
+							<p className="text-xs font-bold text-slate-400">Count</p>
 							<div className="grid grid-cols-4 gap-2">
 								{[1, 2, 3, 4].map((v) => (
 									<button
