@@ -16,6 +16,7 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
+import ModelSelect, { type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface I2VModuleProps {
@@ -24,6 +25,7 @@ interface I2VModuleProps {
 	compact?: boolean;
 	workspacePackage?: WorkspaceExecutionPackage | null;
 	onWorkspacePackageUpdated?: (pkg: WorkspaceExecutionPackage) => void;
+	videoModels: VideoModel[];
 }
 
 const RECIPE_OPTIONS: Array<{
@@ -116,11 +118,12 @@ export default function I2VModule({
 	compact = false,
 	workspacePackage = null,
 	onWorkspacePackageUpdated,
+	videoModels,
 }: I2VModuleProps) {
 	const [manualPrompt, setManualPrompt] = useState("");
 	const [isManualOverride, setIsManualOverride] = useState(false);
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
-	const [model] = useState("Veo 3.1 - Pro");
+	const [model, setModel] = useState("Veo 3.1 - Lite");
 	const [count, setCount] = useState(1);
 	const [isUploading, setIsUploading] = useState(false);
 	const [isRefreshingPackage, setIsRefreshingPackage] = useState(false);
@@ -316,11 +319,21 @@ export default function I2VModule({
 	const executionBlocked =
 		Boolean(workspacePackage) && resolverBlockers.length > 0;
 
+	// I2V business rule (BOSMAX): at least 2 reference/ingredient images, 3rd optional.
+	const i2vImageCount = [subjectAsset, sceneAsset, styleAsset].filter(
+		Boolean,
+	).length;
+
 	const resolverStatusTone = executionBlocked
 		? "border-amber-500/30 bg-amber-500/10 text-amber-100"
 		: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100";
 
 	const handleExecute = async () => {
+		// Block a partial I2V LOCALLY before /generate — never submit fewer than 2 images.
+		if (i2vImageCount < 2) {
+			alert("I2V requires at least 2 reference images.");
+			return;
+		}
 		let effectivePackage = workspacePackage;
 		if (workspacePackage?.product_id) {
 			setIsRefreshingPackage(true);
@@ -330,7 +343,7 @@ export default function I2VModule({
 					mode: "I2V",
 					duration_seconds: workspacePackage.duration_seconds,
 					aspect_ratio: workspacePackage.aspect_ratio,
-					model: workspacePackage.model,
+					model, // current dropdown selection, not the stale package model
 					manual_override: isManualOverride,
 					recipe_id: selectedRecipeId,
 					character_reference_asset_id: selectedCharacterAssetId || null,
@@ -693,6 +706,12 @@ export default function I2VModule({
 				</section>
 
 				<div className="pt-4">
+					{i2vImageCount < 2 && (
+						<p className="mb-2 text-[11px] font-bold text-amber-300/80">
+							I2V requires at least 2 reference images ({i2vImageCount}/2). Add a
+							Scene or Style ingredient — the 3rd is optional.
+						</p>
+					)}
 					<button
 						type="button"
 						onClick={() => void handleExecute()}
@@ -701,7 +720,7 @@ export default function I2VModule({
 							isUploading ||
 							isRefreshingPackage ||
 							!manualPrompt ||
-							!subjectAsset ||
+							i2vImageCount < 2 ||
 							executionBlocked
 						}
 						className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
@@ -738,12 +757,17 @@ export default function I2VModule({
 										onClick={() => setOrientation(o as Orientation)}
 										className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${orientation === o ? "bg-blue-600/20 border-blue-500 text-blue-400" : "bg-slate-950 border-slate-800 text-slate-500"}`}
 									>
-										{o === "VERTICAL" ? "9:16" : "16:9"}
+										{o === "VERTICAL" ? "9:16 (Vertical)" : "16:9 (Horizontal)"}
 									</button>
 								))}
 							</div>
 						</div>
 						<div className="space-y-3">
+							<ModelSelect
+								models={videoModels}
+								value={model}
+								onChange={setModel}
+							/>
 							<p className="text-xs font-bold text-slate-400">Count</p>
 							<div className="grid grid-cols-4 gap-2">
 								{[1, 2, 3, 4].map((v) => (
