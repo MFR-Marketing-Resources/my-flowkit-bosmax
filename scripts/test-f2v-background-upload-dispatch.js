@@ -115,6 +115,7 @@ function loadHelpers() {
 		console,
 		URL,
 		BUILD_ID: "test-build-id",
+		getStoredFlowProjectUrl: async () => null,
 		openPreferredFlowProjectOrNewProject: async () => ({ ok: false }),
 		settleFlowProjectAfterOpen: async () => null,
 		focusTab: async (tab) => tab,
@@ -138,6 +139,8 @@ function loadHelpers() {
 			extractFunctionSource(source, "isRootFlowUrl"),
 			extractFunctionSource(source, "normalizeFlowProjectUrl"),
 			extractFunctionSource(source, "isSameFlowProjectUrl"),
+			extractFunctionSource(source, "hasBrokenFlowProjectEvidence"),
+			extractFunctionSource(source, "syncStoredFlowProjectUrlToActiveEditor"),
 			extractFunctionSource(source, "flowTabLooksBroken"),
 			extractFunctionSource(source, "findFocusedActiveFlowEditorTab"),
 			extractFunctionSource(source, "summarizeFlowTab"),
@@ -148,6 +151,8 @@ function loadHelpers() {
 			extractFunctionSource(source, "mapOpenFlowNewProjectFailureCode"),
 			extractFunctionSource(source, "selectBestFlowTab"),
 			extractFunctionSource(source, "buildFlowTabSelectionBinding"),
+			extractFunctionSource(source, "shouldAdoptSelectedFlowProjectUrl"),
+			extractFunctionSource(source, "adoptSelectedFlowProjectUrlIfNeeded"),
 			extractFunctionSource(source, "isActualFlowEditorProbe"),
 			extractFunctionSource(source, "buildUniqueFlowProbeCandidates"),
 			extractFunctionSource(source, "isFlowContentScriptReadyForActiveTab"),
@@ -156,7 +161,7 @@ function loadHelpers() {
 			extractFunctionSource(source, "resolveExistingProjectEditorAuthority"),
 			extractFunctionSource(source, "recoverStrictActiveFlowTabTarget"),
 			extractFunctionSource(source, "bootstrapFlowProjectEditorForB2A0"),
-			"this.__helpers = { resolveF2VUploadAssetSource, gfv2ClassifyAssetSource, resolveF2VDomFallbackAssetSource, shouldUseF2VCdpUpload, isF2VPackageUploadOnly, validateF2VPackageUploadOnlyJob, normalizeFlowProjectUrl, extractFlowProjectId, determineFlowBootstrapStartState, rankFlowBootstrapEditorCandidates, mapFlowBootstrapBindingFailureCode, mapOpenFlowNewProjectFailureCode, selectBestFlowTab, buildFlowTabSelectionBinding, isActualFlowEditorProbe, buildUniqueFlowProbeCandidates, isFlowContentScriptReadyForActiveTab, isActiveTabAddMediaLauncherReady, evaluateActiveFlowTabPreflight, resolveExistingProjectEditorAuthority, recoverStrictActiveFlowTabTarget, bootstrapFlowProjectEditorForB2A0 };",
+			"this.__helpers = { resolveF2VUploadAssetSource, gfv2ClassifyAssetSource, resolveF2VDomFallbackAssetSource, shouldUseF2VCdpUpload, isF2VPackageUploadOnly, validateF2VPackageUploadOnlyJob, normalizeFlowProjectUrl, extractFlowProjectId, determineFlowBootstrapStartState, rankFlowBootstrapEditorCandidates, mapFlowBootstrapBindingFailureCode, mapOpenFlowNewProjectFailureCode, selectBestFlowTab, buildFlowTabSelectionBinding, syncStoredFlowProjectUrlToActiveEditor, adoptSelectedFlowProjectUrlIfNeeded, isActualFlowEditorProbe, buildUniqueFlowProbeCandidates, isFlowContentScriptReadyForActiveTab, isActiveTabAddMediaLauncherReady, evaluateActiveFlowTabPreflight, resolveExistingProjectEditorAuthority, recoverStrictActiveFlowTabTarget, bootstrapFlowProjectEditorForB2A0 };",
 		].join("\n"),
 		sandbox,
 	);
@@ -1960,6 +1965,101 @@ async function testStrictRecoveryClearsBrokenStoredProjectBeforeBootstrap(
 	);
 }
 
+async function testBrokenTargetSyncDoesNotRePoisonStorage(
+	syncStoredFlowProjectUrlToActiveEditor,
+	adoptSelectedFlowProjectUrlIfNeeded,
+	__sandbox,
+) {
+	const brokenUrl =
+		"https://labs.google/fx/tools/flow/project/44b92a35-3a8b-42fc-9e53-6755b5035b5d";
+	const writes = [];
+	__sandbox.getStoredFlowProjectUrl = async () => brokenUrl;
+	__sandbox.setStoredFlowProjectUrl = async (value) => {
+		writes.push(value);
+		return value == null ? null : String(value);
+	};
+
+	const syncResult = await syncStoredFlowProjectUrlToActiveEditor(brokenUrl, {
+		currentStoredUrl: brokenUrl,
+		openedViaRecovery: true,
+		activeTabPreflight: { brokenTargetRejected: true },
+		pageDiagnostic: {
+			diagnostic_code: "TARGET_PROJECT_BROKEN",
+			strict_composer_error: "ABORT_FLOW_COMPOSER_NOT_READY",
+			visible_error_markers: ["Something went wrong"],
+		},
+	});
+	assert(
+		syncResult.reason === "BROKEN_TARGET_REJECTED" &&
+			syncResult.stored_flow_project_url == null,
+		"broken target sync must reject and leave storage cleared",
+	);
+	assert(
+		writes.length === 1 && writes[0] == null,
+		"broken target sync must clear the poisoned stored URL once",
+	);
+
+	const adoptResult = await adoptSelectedFlowProjectUrlIfNeeded(
+		{ id: 321, active: true, url: brokenUrl },
+		[{ id: 321, active: true, url: brokenUrl }],
+		brokenUrl,
+		{
+			activeTabPreflight: { brokenTargetRejected: true },
+			pageDiagnostic: {
+				diagnostic_code: "TARGET_PROJECT_BROKEN",
+				strict_composer_error: "ABORT_FLOW_COMPOSER_NOT_READY",
+				visible_error_markers: ["Something went wrong"],
+			},
+		},
+	);
+	assert(
+		adoptResult.preferred_flow_project_url == null,
+		"adoption must not revive the broken preferred URL after sync rejection",
+	);
+}
+
+async function testHealthyTargetSyncStillPersistsValidEditor(
+	syncStoredFlowProjectUrlToActiveEditor,
+	adoptSelectedFlowProjectUrlIfNeeded,
+	__sandbox,
+) {
+	const freshUrl =
+		"https://labs.google/fx/tools/flow/project/fresh-healthy-editor";
+	const writes = [];
+	__sandbox.getStoredFlowProjectUrl = async () => null;
+	__sandbox.setStoredFlowProjectUrl = async (value) => {
+		writes.push(value);
+		return value == null ? null : String(value);
+	};
+
+	const syncResult = await syncStoredFlowProjectUrlToActiveEditor(freshUrl, {
+		currentStoredUrl: null,
+		openedViaRecovery: true,
+		activeTabPreflight: { brokenTargetRejected: false },
+		pageDiagnostic: { visible_error_markers: [] },
+	});
+	assert(
+		syncResult.synced === true &&
+			syncResult.stored_flow_project_url === freshUrl,
+		"healthy target sync must still persist the fresh valid editor URL",
+	);
+	assert(
+		writes.length === 1 && writes[0] === freshUrl,
+		"healthy target sync must write the fresh editor URL once",
+	);
+
+	const adoptResult = await adoptSelectedFlowProjectUrlIfNeeded(
+		{ id: 654, active: true, url: freshUrl },
+		[{ id: 654, active: true, url: freshUrl }],
+		null,
+		{ activeTabPreflight: { brokenTargetRejected: false } },
+	);
+	assert(
+		adoptResult.preferred_flow_project_url === freshUrl,
+		"healthy adoption must still carry forward the fresh editor URL",
+	);
+}
+
 async function testStrictRecoverySuppressesReopenWhenEditorIsAlive(
 	recoverStrictActiveFlowTabTarget,
 ) {
@@ -2141,6 +2241,8 @@ async function main() {
 		normalizeFlowProjectUrl,
 		selectBestFlowTab,
 		buildFlowTabSelectionBinding,
+		syncStoredFlowProjectUrlToActiveEditor,
+		adoptSelectedFlowProjectUrlIfNeeded,
 		isActualFlowEditorProbe,
 		buildUniqueFlowProbeCandidates,
 		evaluateActiveFlowTabPreflight,
@@ -2202,6 +2304,16 @@ async function main() {
 	);
 	await testStrictRecoveryClearsBrokenStoredProjectBeforeBootstrap(
 		recoverStrictActiveFlowTabTarget,
+	);
+	await testBrokenTargetSyncDoesNotRePoisonStorage(
+		syncStoredFlowProjectUrlToActiveEditor,
+		adoptSelectedFlowProjectUrlIfNeeded,
+		__sandbox,
+	);
+	await testHealthyTargetSyncStillPersistsValidEditor(
+		syncStoredFlowProjectUrlToActiveEditor,
+		adoptSelectedFlowProjectUrlIfNeeded,
+		__sandbox,
 	);
 	await testStrictRecoverySuppressesReopenWhenEditorIsAlive(
 		recoverStrictActiveFlowTabTarget,
