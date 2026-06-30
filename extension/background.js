@@ -5794,10 +5794,6 @@ async function handleMessage(msg, sender) {
 		return await waitForCdpFileChooserProof(sender?.tab?.id || null);
 	}
 
-	if (msg.type === "RESOLVE_LOCAL_ASSET") {
-		return await resolveLocalAssetViaBackgroundProxy(msg);
-	}
-
 	return {
 		ok: false,
 		error: "ERR_UNKNOWN_MESSAGE_TYPE",

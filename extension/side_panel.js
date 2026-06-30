@@ -2,7 +2,7 @@ const LOCAL_AGENT_BASE_URL = "http://127.0.0.1:8100";
 const LOCAL_AGENT_HEALTH_URL = `${LOCAL_AGENT_BASE_URL}/health`;
 const LOCAL_AGENT_STATUS_URL = `${LOCAL_AGENT_BASE_URL}/api/local-agent/status`;
 const DASHBOARD_STATIC_READY = "BACKEND_SERVED_STATIC";
-const HEALTH_REQUEST_TIMEOUT_MS = 6500;
+const HEALTH_REQUEST_TIMEOUT_MS = 2000;
 const IFRAME_LOAD_TIMEOUT_MS = 12000;
 const AUTO_RUNTIME_RETRY_MS = 5000;
 const LAST_KNOWN_RUNTIME_GRACE_MS = 60000;
@@ -306,6 +306,15 @@ function getServingMode(snapshot) {
 }
 
 function canEmbedDashboard(snapshot) {
+	if (
+		snapshot?.errorCode === "LOCAL_AGENT_OFFLINE" ||
+		snapshot?.errorCode === "PARTIAL_AGENT_DIAGNOSTIC_FAILURE" ||
+		snapshot?.errorCode === "HEALTH_ENDPOINT_FAILED"
+	) {
+		// Do not let a synthesized fallback snapshot (status<->health filled in for
+		// the side that actually failed) masquerade as fully healthy.
+		return false;
+	}
 	return (
 		snapshot?.health?.status === "ok" &&
 		getServingMode(snapshot) === DASHBOARD_STATIC_READY
@@ -578,19 +587,29 @@ async function fetchRuntimeSnapshot() {
 	if (statusOk) snapshot.status = statusResult.value;
 	if (healthOk) snapshot.health = healthResult.value;
 
-	if (statusOk && !healthOk) {
-		snapshot.health = buildHealthSnapshotFromStatus(snapshot.status);
-	}
-	if (!statusOk && healthOk) {
-		snapshot.status = buildStatusSnapshotFromHealth(snapshot.health);
-	}
-
 	if (!statusOk && !healthOk) {
 		const cachedSnapshot = getLastKnownRuntimeSnapshot();
 		if (cachedSnapshot) {
 			return cachedSnapshot;
 		}
 		snapshot.errorCode = "LOCAL_AGENT_OFFLINE";
+		return snapshot;
+	}
+
+	if (healthOk && !statusOk) {
+		// Health reachable but the richer local-agent status endpoint failed — surface
+		// this distinctly instead of silently synthesizing a fully-ok status and
+		// proceeding as if nothing were wrong.
+		snapshot.status = buildStatusSnapshotFromHealth(snapshot.health);
+		snapshot.errorCode = "PARTIAL_AGENT_DIAGNOSTIC_FAILURE";
+		return snapshot;
+	}
+
+	if (!healthOk && statusOk) {
+		// Status reachable but /health failed — do not synthesize a fake "ok" health
+		// snapshot and proceed silently; surface the health-endpoint failure explicitly.
+		snapshot.health = buildHealthSnapshotFromStatus(snapshot.status);
+		snapshot.errorCode = "HEALTH_ENDPOINT_FAILED";
 		return snapshot;
 	}
 
