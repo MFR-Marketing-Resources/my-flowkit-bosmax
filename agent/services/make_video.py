@@ -76,6 +76,41 @@ async def _bind_editor_session(client, requested_project_id=None) -> dict:
     return {"project_id": project_id, "flow_tab_id": flow_tab_id, "flow_project_url": flow_url}
 
 
+async def _bind_with_recovery(client, requested_project_id=None, job=None) -> dict:
+    """Bind to the OPEN Flow editor, self-healing ONCE if Google Flow has drifted the controlled
+    tab back to the home shell (NO_OPEN_EDITOR — observed: Flow navigates the editor tab to home
+    on its own). Recovery RE-OPENS the project the user was working in — the explicitly requested
+    project, else the last stored editor URL — and NEVER mints a new project, then re-binds once.
+    A BROKEN_EDITOR_PAGE / CONTENT_BUILD_MISMATCH / PROJECT_TAB_MISMATCH still fails closed."""
+    try:
+        return await _bind_editor_session(client, requested_project_id)
+    except RuntimeError as e:
+        if "NO_OPEN_EDITOR" not in str(e):
+            raise
+        target = (f"https://labs.google/fx/tools/flow/project/{requested_project_id}"
+                  if requested_project_id else None)
+        if not target:
+            diag_fn = getattr(client, "flow_page_state_diagnostic", None)
+            if callable(diag_fn):
+                try:
+                    pd = await diag_fn("F2V")
+                    target = pd.get("stored_flow_project_url") if isinstance(pd, dict) else None
+                except Exception:  # noqa: BLE001
+                    target = None
+        if not target:
+            raise  # no known project to restore → stay fail-closed
+        if job is not None:
+            job["stage"] = "editor drifted to home — re-opening the project"
+        opener = getattr(client, "open_target_flow_project", None)
+        if callable(opener):
+            try:
+                await opener(target)  # navigate; ignore its readiness false-negative
+            except Exception:  # noqa: BLE001
+                pass
+        await asyncio.sleep(3)  # let the editor settle, then re-bind exactly once
+        return await _bind_editor_session(client, requested_project_id)
+
+
 def get_job(job_id: str):
     j = _JOBS.get(job_id)
     if not j:
@@ -278,7 +313,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                     raise RuntimeError("create_project returned no projectId")
         else:
             job["status"], job["stage"] = "SETUP", "binding to open Flow editor"
-            binding = await _bind_editor_session(client, project_id)
+            binding = await _bind_with_recovery(client, project_id, job)
             project_id = binding["project_id"]
             job["binding"] = binding
         job["project_id"] = project_id

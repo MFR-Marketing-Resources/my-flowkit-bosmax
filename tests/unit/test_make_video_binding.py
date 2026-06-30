@@ -92,6 +92,57 @@ def test_bind_content_build_mismatch_raises():
         assert "CONTENT_BUILD_MISMATCH" in str(e)
 
 
+def test_bind_with_recovery_reopens_stored_project_on_drift():
+    # Flow drifted the tab to home (NO_OPEN_EDITOR). Recovery re-opens the STORED project the
+    # user was working in, then re-binds successfully — it must NOT mint a new project.
+    url = "https://labs.google/fx/tools/flow/project/heal-1"
+    state = {"opened": False}
+
+    class _DriftClient:
+        async def harvest_video_urls(self, tab_id=None):
+            if state["opened"]:
+                return _harvest("heal-1", url, 7)
+            return _harvest(None, "https://labs.google/fx/tools/flow", 7)  # root → NO_OPEN_EDITOR
+
+        async def flow_page_state_diagnostic(self, mode=None):
+            return {"stored_flow_project_url": url, "visible_error_markers": [], "build_match": True}
+
+        async def open_target_flow_project(self, flow_project_url):
+            assert flow_project_url == url
+            state["opened"] = True  # the tab navigates back to the project
+            return {"ok": False, "error": "FLOW_PROJECT_EDITOR_NOT_READY"}  # false-negative, ignored
+
+    orig = mv.asyncio
+    mv.asyncio = _ShimAsyncio(mv.asyncio)
+    try:
+        b = _run(mv._bind_with_recovery(_DriftClient()))
+        assert b["project_id"] == "heal-1" and b["flow_project_url"] == url
+        assert state["opened"] is True
+    finally:
+        mv.asyncio = orig
+
+
+def test_bind_with_recovery_fails_closed_on_broken_editor():
+    # A broken editor (not a drift) must NOT trigger re-open recovery — fail closed.
+    url = "https://labs.google/fx/tools/flow/project/abc"
+    client = _FakeClient(
+        _harvest("abc", url, 1),
+        page_diag={"visible_error_markers": ["Something went wrong"], "build_match": True},
+    )
+    try:
+        _run(mv._bind_with_recovery(client))
+        assert False, "expected BROKEN_EDITOR_PAGE (no recovery)"
+    except RuntimeError as e:
+        assert "BROKEN_EDITOR_PAGE" in str(e)
+
+
+def test_bind_with_recovery_passthrough_when_already_bound():
+    # Already on a healthy editor → bind succeeds first try, no recovery needed.
+    url = "https://labs.google/fx/tools/flow/project/ok-1"
+    b = _run(mv._bind_with_recovery(_FakeClient(_harvest("ok-1", url, 5))))
+    assert b == {"project_id": "ok-1", "flow_tab_id": 5, "flow_project_url": url}
+
+
 def test_single_flight_rejects_second_video_job():
     mv._JOBS.clear()
     mv._JOBS["g_active"] = {"status": "GENERATING", "created": mv.time.time()}
