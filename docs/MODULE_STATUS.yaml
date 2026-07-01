@@ -40,6 +40,7 @@ domains:
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py
       - agent/services/workspace_execution_package_service.py
+      - agent/services/flow_client.py
       - agent/services/batch_planner.py
       - agent/models/product_registration.py
       - agent/services/product_knowledge_service.py
@@ -131,6 +132,8 @@ domains:
       - tests/ui/test_workspace_authoring_layout_ui_contract.py
       - tests/ui/test_workspace_jobs_page_ui_contract.py
       - tests/ui/test_workspace_package_bridge_ui_contract.py
+      - tests/ui/test_product_catalog_selector_loading_ui_contract.py
+      - tests/ui/test_reference_only_workspace_blockers_ui_contract.py
       - tests/ui/test_product_registration_ui_contract.py
       - tests/ui/test_products_sales_analyzer_ui_contract.py
       - tests/unit/test_product_registration_commit_service.py

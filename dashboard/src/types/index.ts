@@ -316,6 +316,7 @@ export interface WorkspaceExecutePayload {
 	aspectRatio?: string;
 	model?: string;
 	count?: number;
+	stop_after_stage?: string;
 	startAsset?: UploadedAsset | null;
 	endAsset?: UploadedAsset | null;
 	refs?: {

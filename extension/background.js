@@ -146,8 +146,8 @@ try {
 		(details) => {
 			try {
 				if (details.method !== "POST") return; // generate calls are POST
-				const raw = details.requestBody && details.requestBody.raw;
-				if (!raw || !raw.length) return;
+				const raw = details.requestBody?.raw;
+				if (!raw?.length) return;
 				const chunks = [];
 				let total = 0;
 				for (const part of raw) {
@@ -177,7 +177,7 @@ try {
 								url: _url,
 								method: _method,
 								body,
-								grecaptchaActions: (res && res[0] && res[0].result) || "",
+								grecaptchaActions: res?.[0]?.result || "",
 								ts: Date.now(),
 							});
 						})
@@ -212,7 +212,7 @@ async function handleHarvestVideoUrls(targetTabId) {
 		// Patch A/G: read the EXACT bound editor tab — never silently fall back to tabs[0].
 		try {
 			tab = await chrome.tabs.get(targetTabId);
-		} catch (e) {
+		} catch (_e) {
 			tab = null;
 		}
 		if (!tab || !/labs\.google\/fx\/.*tools\/flow/.test(tab.url || "")) {
@@ -239,7 +239,7 @@ async function handleHarvestVideoUrls(targetTabId) {
 				const videoIds = new Set();
 				const imageIds = new Set();
 				const grab = (s) => {
-					const m = s && s.match(/[?&]name=([0-9a-f-]{36})/);
+					const m = s?.match(/[?&]name=([0-9a-f-]{36})/);
 					return m ? m[1] : null;
 				};
 				document.querySelectorAll("video, source").forEach((v) => {
@@ -264,10 +264,10 @@ async function handleHarvestVideoUrls(targetTabId) {
 				};
 			},
 		});
-		const out = (res && res[0] && res[0].result) || {};
+		const out = res?.[0]?.result || {};
 		return { ok: true, urls: out.urls || [], diag: out };
 	} catch (e) {
-		return { ok: false, urls: [], error: String((e && e.message) || e) };
+		return { ok: false, urls: [], error: String(e?.message || e) };
 	}
 }
 
@@ -1003,9 +1003,7 @@ async function cdpFileChooserUploadForJob(tabId, req) {
 			...armed,
 			materialized: true,
 			materializedName:
-				(mat.filePath && mat.filePath.split(/[\\/]/).pop()) ||
-				mat.fileName ||
-				null,
+				mat.filePath?.split(/[\\/]/).pop() || mat.fileName || null,
 			materializedDirLabel: /flowkit-upload-staging/i.test(
 				String(mat.filePath || ""),
 			)
@@ -2902,7 +2900,6 @@ async function bootstrapFlowProjectEditorForB2A0(mode = "F2V", deps = {}) {
 		};
 	};
 
-	const preferredUrl = await api.getStoredFlowProjectUrl();
 	const flowTabs = await api.getFlowTabs();
 	const focusedActiveTab = await api.getFocusedActiveBrowserTab();
 	const selectedBeforeTab = await api.getFlowTab();
@@ -3626,7 +3623,9 @@ function hasBrokenFlowProjectEvidence(activeEditorUrl, options = {}) {
 		options.pageDiagnostic && typeof options.pageDiagnostic === "object"
 			? options.pageDiagnostic
 			: {};
-	const visibleErrorMarkers = Array.isArray(pageDiagnostic.visible_error_markers)
+	const visibleErrorMarkers = Array.isArray(
+		pageDiagnostic.visible_error_markers,
+	)
 		? pageDiagnostic.visible_error_markers.map((value) => String(value))
 		: [];
 	const diagnosticCode = String(
@@ -4299,14 +4298,14 @@ async function openPreferredFlowProjectOrNewProject(mode, preferredUrl = null) {
 				"FLOW_PROJECT_EDITOR_NOT_OPEN",
 				"BROKEN_EDITOR_PAGE",
 			].includes(String(preferredResult?.error || "").trim()) ||
-			[
-				"TARGET_PROJECT_BROKEN",
-				"FLOW_PROJECT_EDITOR_NOT_READY",
-			].includes(String(preferredResult?.diagnostic_code || "").trim()) ||
-			Array.isArray(
+			["TARGET_PROJECT_BROKEN", "FLOW_PROJECT_EDITOR_NOT_READY"].includes(
+				String(preferredResult?.diagnostic_code || "").trim(),
+			) ||
+			(Array.isArray(
 				preferredResult?.target_probe_diagnostic?.visible_error_markers,
 			) &&
-				preferredResult.target_probe_diagnostic.visible_error_markers.length > 0;
+				preferredResult.target_probe_diagnostic.visible_error_markers.length >
+					0);
 		if (brokenPreferredTarget) {
 			await setStoredFlowProjectUrl(null);
 			const freshProjectResult = await handleOpenFlowNewProject(mode);
@@ -4321,9 +4320,7 @@ async function openPreferredFlowProjectOrNewProject(mode, preferredUrl = null) {
 		return {
 			...(preferredResult || {}),
 			ok: false,
-			error:
-				(preferredResult && preferredResult.error) ||
-				"ERR_PREFERRED_PROJECT_OPEN_FAILED",
+			error: preferredResult?.error || "ERR_PREFERRED_PROJECT_OPEN_FAILED",
 			open_strategy: "preferred_failed_no_fallback",
 		};
 	}
@@ -4860,9 +4857,18 @@ function connectToAgent() {
 			} else if (msg.method === "solve_captcha") {
 				await handleSolveCaptcha(msg);
 			} else if (msg.method === "get_status") {
-				const result = await executeWsMethodAndReply(msg, async () =>
-					getLocalRuntimeDiagnosticSnapshot(),
-				);
+				// Status heartbeat must stay lightweight and never hang: the agent
+				// only waits 5s for get_status and polls it frequently. Reply from
+				// the synchronous cached snapshot (same source as the internal STATUS
+				// message) instead of getLocalRuntimeDiagnosticSnapshot(), which runs
+				// live active-tab content-script probes (FLOW_PAGE_STATE_DIAGNOSTIC /
+				// CHECK_FLOW_COMPOSER_READY, up to 12s each) and was overrunning the
+				// 5s window — surfacing as ERR_EXTENSION_SELF_TEST_TIMEOUT. The deep
+				// probe remains available via the LOCAL_RUNTIME_DIAGNOSTIC message.
+				const result = await executeWsMethodAndReply(msg, () => ({
+					ok: true,
+					...buildBackgroundStatusResponse(),
+				}));
 				replyToAgent(msg, result);
 			} else if (msg.method === "GET_RUNTIME_SELF_TEST") {
 				const result = await executeWsMethodAndReply(msg, () =>
@@ -6054,7 +6060,7 @@ const GFV2_STAGE_MAP = Object.freeze({
 //   5. visible Veo Lite confirmed OR hidden soft-pass (only with 9:16+1x and no wrong model)
 //   6. persistence (V2 has no Save button -> live composer reflection is the proof)
 function gfv2DecideSettingsProof(proof, observedModel, opts) {
-	const requireVisibleVeo = Boolean(opts && opts.requireVisibleVeo);
+	const requireVisibleVeo = Boolean(opts?.requireVisibleVeo);
 	const p = proof || {};
 	const panelOpened = Boolean(p.settings_panel_opened);
 	const ratioOk = Boolean(p.ratio_9_16_confirmed);
@@ -6733,7 +6739,7 @@ async function handleExecuteFlowJob(job) {
 			candidate_tabs: targetResolution.candidate_tabs || [],
 		};
 	}
-	const flowTab = targetResolution.targetTab;
+	let flowTab = targetResolution.targetTab;
 
 	if (job && job.mode === "F2V") {
 		const runnerApi =
@@ -7126,7 +7132,7 @@ async function handleCheckFlowComposerReady(mode, options = {}) {
 		"HANDLE_CHECK_FLOW_COMPOSER_READY",
 	);
 	const activeFlowTab = freshContext.flow_tab || flowTab;
-	const diagnostic =
+	let diagnostic =
 		freshContext.diagnostic || getKnownContentScriptHealth(activeFlowTab.id);
 	if (!freshContext.ok) {
 		return finalizeFlowReadiness({
@@ -7146,7 +7152,7 @@ async function handleCheckFlowComposerReady(mode, options = {}) {
 		});
 	}
 
-	const response = await sendTabMessageSafe(activeFlowTab.id, {
+	let response = await sendTabMessageSafe(activeFlowTab.id, {
 		type: "CHECK_FLOW_COMPOSER_READY",
 		mode,
 	});
@@ -7517,8 +7523,7 @@ async function captureGoogleFlowV2Readiness(selectedTab) {
 			};
 		}
 		const canonicalDiagnostic =
-			gfv2Api &&
-			typeof gfv2Api.buildGoogleFlowV2Diagnostic === "function"
+			gfv2Api && typeof gfv2Api.buildGoogleFlowV2Diagnostic === "function"
 				? gfv2Api.buildGoogleFlowV2Diagnostic(rawDiagnostic)
 				: null;
 		const diagnostic = canonicalDiagnostic

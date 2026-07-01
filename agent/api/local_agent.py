@@ -22,6 +22,7 @@ LOCAL_AGENT_REPAIR_COMMAND = r".\scripts\install-local-agent.ps1"
 LOCAL_AGENT_DASHBOARD_URL = "http://127.0.0.1:8100/operator"
 LOCAL_AGENT_HEALTH_URL = "http://127.0.0.1:8100/health"
 LOCAL_AGENT_CONTENT_PACK_URL = "http://127.0.0.1:8100/api/operator/content-pack"
+LOCAL_AGENT_EXTENSION_STATUS_TIMEOUT_SECONDS = 1.0
 LOCAL_AGENT_START_SCRIPT = str((BASE_DIR / "scripts" / "start-local-agent.ps1").resolve())
 LOCAL_AGENT_STARTUP_SHORTCUT = Path.home() / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/BOSMAX Flow Kit Local Agent.lnk"
 
@@ -212,7 +213,9 @@ async def get_local_agent_status():
     from agent.services.flow_client import get_flow_client
     client = get_flow_client()
     registration = load_registration()
-    extension_status = await client.get_status()
+    extension_status = await client.get_status(
+        timeout=LOCAL_AGENT_EXTENSION_STATUS_TIMEOUT_SECONDS,
+    )
     autostart = _inspect_autostart_metadata()
 
     offline_reason = None

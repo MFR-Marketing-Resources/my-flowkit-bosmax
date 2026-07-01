@@ -7,10 +7,7 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
-import ModelSelect, {
-	type VideoModel,
-	normalizeModel,
-} from "./ModelSelect";
+import ModelSelect, { normalizeModel, type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface F2VModuleProps {
@@ -75,7 +72,7 @@ export default function F2VModule({
 	}, [videoModels]);
 
 	useEffect(() => {
-		if (!workspacePackage || workspacePackage.mode !== "F2V") return;
+		if (workspacePackage?.mode !== "F2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
 		setModel(normalizeModel(workspacePackage.model, videoModels));
 		setOrientation(
@@ -97,7 +94,7 @@ export default function F2VModule({
 		);
 		setIsManualOverride(false);
 		setStartPreviewFailed(false);
-	}, [workspacePackage]);
+	}, [videoModels, workspacePackage]);
 
 	// --- Handlers ---
 	const handleFileChange = async (

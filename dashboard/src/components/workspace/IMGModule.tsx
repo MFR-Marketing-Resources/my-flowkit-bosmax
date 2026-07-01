@@ -101,7 +101,7 @@ export default function IMGModule({
 	const [styleAsset, setStyleAsset] = useState<UploadedAsset | null>(null);
 
 	useEffect(() => {
-		if (!workspacePackage || workspacePackage.mode !== "IMG") return;
+		if (workspacePackage?.mode !== "IMG") return;
 		setManualPrompt(workspacePackage.prompt_text);
 		setAspectRatio(workspacePackage.aspect_ratio || "9:16");
 		setSubjectAsset(
@@ -163,6 +163,8 @@ export default function IMGModule({
 
 	const handleExecute = () => {
 		onExecute({
+			lane: "WORKSPACE_FLOW_EDITOR_RUNTIME",
+			stop_after_stage: "PROMPT_EDITABLE_AFTER_INSERT",
 			prompt: manualPrompt,
 			aspectRatio,
 			model,
@@ -200,8 +202,19 @@ export default function IMGModule({
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300/80">
 								IMG — Uploaded Images Are Reference Images
 							</div>
-							<p>Every image uploaded here is a <strong className="text-amber-200">reference image</strong>. The model sees it — your prompt describes <strong className="text-amber-200">what to create or transform</strong>, not what the image looks like.</p>
-							<p className="text-amber-300/45 text-[9px]">E.g. "Using this avatar as reference, show them wearing a baju kurung kedah in a garden setting."</p>
+							<p>
+								Every image uploaded here is a{" "}
+								<strong className="text-amber-200">reference image</strong>. The
+								model sees it — your prompt describes{" "}
+								<strong className="text-amber-200">
+									what to create or transform
+								</strong>
+								, not what the image looks like.
+							</p>
+							<p className="text-amber-300/45 text-[9px]">
+								E.g. "Using this avatar as reference, show them wearing a baju
+								kurung kedah in a garden setting."
+							</p>
 						</div>
 						{hasApprovedPackage ? (
 							<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-[11px] text-emerald-100">
@@ -209,7 +222,8 @@ export default function IMGModule({
 									Auto Asset Baseline
 								</div>
 								<div className="mt-1">
-									Resolved product image is the default subject reference. Scene and Style are additional optional references.
+									Resolved product image is the default subject reference. Scene
+									and Style are additional optional references.
 								</div>
 							</div>
 						) : (
@@ -218,7 +232,8 @@ export default function IMGModule({
 									Manual Asset Upload
 								</div>
 								<div className="mt-1">
-									Upload your reference image(s). Subject is the main reference — Scene and Style add further visual context.
+									Upload your reference image(s). Subject is the main reference
+									— Scene and Style add further visual context.
 								</div>
 							</div>
 						)}
@@ -423,10 +438,29 @@ export default function IMGModule({
 						IMG — Prompt Guide
 					</h4>
 					<div className="text-[10px] text-amber-300/55 leading-relaxed space-y-2">
-						<p><strong className="text-amber-300/80">Image uploaded = reference.</strong> Model sees it. Describe what you want to <em>create or change</em>, not what the image shows.</p>
-						<p><strong className="text-amber-300/80">Transformation prompt:</strong> "Using this avatar as reference, show them wearing [outfit] in [setting]."</p>
-						<p><strong className="text-amber-300/80">Product image:</strong> "Using this product as reference, show it being held by a hand in a clean flat-lay setup, white background."</p>
-						<p><strong className="text-amber-300/80">No image uploaded</strong> → describe the subject fully (appearance, clothing, environment).</p>
+						<p>
+							<strong className="text-amber-300/80">
+								Image uploaded = reference.
+							</strong>{" "}
+							Model sees it. Describe what you want to <em>create or change</em>
+							, not what the image shows.
+						</p>
+						<p>
+							<strong className="text-amber-300/80">
+								Transformation prompt:
+							</strong>{" "}
+							"Using this avatar as reference, show them wearing [outfit] in
+							[setting]."
+						</p>
+						<p>
+							<strong className="text-amber-300/80">Product image:</strong>{" "}
+							"Using this product as reference, show it being held by a hand in
+							a clean flat-lay setup, white background."
+						</p>
+						<p>
+							<strong className="text-amber-300/80">No image uploaded</strong> →
+							describe the subject fully (appearance, clothing, environment).
+						</p>
 					</div>
 				</section>
 			</div>

@@ -185,7 +185,7 @@ export default function I2VModule({
 	}, []);
 
 	useEffect(() => {
-		if (!workspacePackage || workspacePackage.mode !== "I2V") return;
+		if (workspacePackage?.mode !== "I2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
 		setSubjectAsset(
 			toUploadedAsset(
@@ -364,6 +364,8 @@ export default function I2VModule({
 		}
 
 		onExecute({
+			lane: "WORKSPACE_FLOW_EDITOR_RUNTIME",
+			stop_after_stage: "PROMPT_EDITABLE_AFTER_INSERT",
 			prompt: manualPrompt,
 			orientation,
 			model,
@@ -708,8 +710,8 @@ export default function I2VModule({
 				<div className="pt-4">
 					{i2vImageCount < 2 && (
 						<p className="mb-2 text-[11px] font-bold text-amber-300/80">
-							I2V requires at least 2 reference images ({i2vImageCount}/2). Add a
-							Scene or Style ingredient — the 3rd is optional.
+							I2V requires at least 2 reference images ({i2vImageCount}/2). Add
+							a Scene or Style ingredient — the 3rd is optional.
 						</p>
 					)}
 					<button

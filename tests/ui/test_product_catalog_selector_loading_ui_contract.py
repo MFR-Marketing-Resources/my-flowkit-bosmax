@@ -120,7 +120,13 @@ def test_api_products_calls_fetch_api():
 
 def test_operator_passes_is_loading_readiness_to_selector():
     src = _read("dashboard/src/pages/OperatorPage.tsx")
-    assert "isLoadingReadiness={isLoadingReadiness}" in src
+    assert "isLoadingReadiness={isLoadingAnyReadiness}" in src
+
+
+def test_operator_fetches_selected_product_readiness_independently():
+    src = _read("dashboard/src/pages/OperatorPage.tsx")
+    assert "selectedReadinessLoading" in src
+    assert "product_ids: [selectedProduct.id]" in src
 
 
 def test_searchable_product_select_accepts_is_loading_readiness():

@@ -27,6 +27,7 @@ from agent.api.models import router as models_router
 from agent.api.active_project import router as active_project_router
 from agent.api.local_agent import (
     LOCAL_AGENT_DASHBOARD_URL,
+    LOCAL_AGENT_EXTENSION_STATUS_TIMEOUT_SECONDS,
     LOCAL_AGENT_REPAIR_COMMAND,
     get_dashboard_serving_mode,
     load_registration,
@@ -241,7 +242,9 @@ async def ext_callback(request: Request):
 @app.get("/health")
 async def health():
     client = get_flow_client()
-    extension_status = await client.get_status()
+    extension_status = await client.get_status(
+        timeout=LOCAL_AGENT_EXTENSION_STATUS_TIMEOUT_SECONDS,
+    )
     registration = load_registration()
     return {
         "status": "ok",

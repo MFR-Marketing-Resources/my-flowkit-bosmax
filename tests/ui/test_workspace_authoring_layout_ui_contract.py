@@ -78,7 +78,7 @@ def test_workspace_modules_use_page_scroll_and_clear_auto_vs_manual_sections():
         assert "xl:sticky xl:top-4" in source
 
     assert "Auto Asset Baseline" in f2v_source
-    assert "F2V stays locked to Veo 3.1 - Lite" in f2v_source
+    assert 'const F2V_DEFAULT_MODEL = "Veo 3.1 - Lite";' in f2v_source
     assert "<option>Veo 3.1 - Pro</option>" not in f2v_source
     assert "<option>Nano Banana 2</option>" not in f2v_source
     assert "Product Reference" in i2v_source
@@ -86,3 +86,15 @@ def test_workspace_modules_use_page_scroll_and_clear_auto_vs_manual_sections():
     assert "Manual Asset Upload" in f2v_source
     assert "Manual Override" in i2v_source
     assert "Manual Asset Upload" in img_source
+
+
+def test_workspace_runtime_lane_wires_t2v_i2v_img_through_flow_editor_runtime():
+    operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
+    t2v_source = _read("dashboard/src/components/workspace/T2VModule.tsx")
+    i2v_source = _read("dashboard/src/components/workspace/I2VModule.tsx")
+    img_source = _read("dashboard/src/components/workspace/IMGModule.tsx")
+
+    assert 'data.lane === "WORKSPACE_FLOW_EDITOR_RUNTIME"' in operator_source
+    for source in [t2v_source, i2v_source, img_source]:
+        assert 'lane: "WORKSPACE_FLOW_EDITOR_RUNTIME"' in source
+        assert 'stop_after_stage: "PROMPT_EDITABLE_AFTER_INSERT"' in source
