@@ -84,6 +84,7 @@ domains:
       - dashboard/src/components/workspace/IMGModule.tsx
       - dashboard/src/components/workspace/WorkspaceImageAssetSlot.tsx
       - extension/background.js
+      - extension/f2v-flow-queue-runner.js
       - extension/selector-registry.js
       - extension/content-flow-dom.js
       - extension/manifest.json

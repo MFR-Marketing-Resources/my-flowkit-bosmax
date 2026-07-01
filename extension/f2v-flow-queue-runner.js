@@ -154,7 +154,11 @@ const ERR = Object.freeze({
   FLOW_TAB_NOT_TARGETED: 'ERR_FLOW_TAB_NOT_TARGETED',
   SETTINGS_PANEL_NOT_OPEN: 'ERR_F2V_SETTINGS_PANEL_NOT_OPEN',
   SETTINGS_NOT_CONFIGURED_BEFORE_UPLOAD: 'ERR_F2V_SETTINGS_NOT_CONFIGURED_BEFORE_UPLOAD',
+  SURFACE_DRIFT_AFTER_START: 'ERR_F2V_SURFACE_DRIFT_AFTER_START',
   GENERATE_PRECONDITION_FAILED: 'ERR_F2V_GENERATE_PRECONDITION_FAILED',
+  AGENT_NEGOTIATION_NOT_READY: 'ERR_F2V_AGENT_NEGOTIATION_NOT_READY',
+  PROMPT_MISMATCH_BEFORE_SUBMIT: 'ERR_F2V_PROMPT_MISMATCH_BEFORE_SUBMIT',
+  WRONG_QA_ROUTE: 'ERR_F2V_WRONG_QA_ROUTE',
   MAIN_WORLD_SUBMIT_HANDLER_NOT_FOUND: 'ERR_MAIN_WORLD_SUBMIT_HANDLER_NOT_FOUND',
   PROMPT_FIELD_NOT_FOUND: 'ERR_F2V_PROMPT_FIELD_NOT_FOUND',
   START_BUTTON_NOT_FOUND: 'ERR_F2V_START_BUTTON_NOT_FOUND',
@@ -1887,7 +1891,53 @@ function MAIN_stampGenerateButton(stampAttr) {
   function normalize(s) {
     return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
   }
-  function findCreateButtonByArrowIcon(root) {
+  function distanceToComposer(target, composer) {
+    if (!target || !composer || !target.getBoundingClientRect || !composer.getBoundingClientRect) return Number.MAX_SAFE_INTEGER;
+    var a = target.getBoundingClientRect();
+    var b = composer.getBoundingClientRect();
+    var ax = a.left + (a.width / 2);
+    var ay = a.top + (a.height / 2);
+    var bx = b.left + (b.width / 2);
+    var by = b.top + (b.height / 2);
+    return Math.round(Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2)));
+  }
+  function isNearComposerDock(target, composer) {
+    if (!target || !composer || !target.getBoundingClientRect || !composer.getBoundingClientRect) return false;
+    var t = target.getBoundingClientRect();
+    var c = composer.getBoundingClientRect();
+    var horizontal = t.left >= (c.left - 80) && t.right <= (c.right + 240);
+    var vertical = Math.abs((t.top + t.height / 2) - (c.top + c.height / 2)) <= Math.max(180, c.height * 2.5);
+    return horizontal && vertical;
+  }
+  function pickBest(candidates, composer, strategy) {
+    if (!candidates.length) return null;
+    var scored = [];
+    for (var i = 0; i < candidates.length; i++) {
+      var btn = candidates[i];
+      if (!btn || !isVisible(btn)) continue;
+      var lower = normalize(btn.textContent || btn.getAttribute('aria-label') || '').toLowerCase();
+      if (lower.indexOf('add media') >= 0 || lower.indexOf('upload media') >= 0) continue;
+      var rect = btn.getBoundingClientRect();
+      var nearComposer = composer ? isNearComposerDock(btn, composer) : false;
+      var score = 0;
+      if (nearComposer) score += 120;
+      if (composer && composer.closest && composer.closest('form, [role="form"], div') && composer.closest('form, [role="form"], div').contains(btn)) score += 60;
+      if (rect.bottom >= (window.innerHeight * 0.55)) score += 20;
+      score -= Math.min(2000, distanceToComposer(btn, composer));
+      scored.push({ btn: btn, score: score, strategy: strategy });
+    }
+    if (!scored.length) return null;
+    scored.sort(function (a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      return b.btn.getBoundingClientRect().bottom - a.btn.getBoundingClientRect().bottom;
+    });
+    var best = scored[0];
+    if (composer && !isNearComposerDock(best.btn, composer) && distanceToComposer(best.btn, composer) > 520) {
+      return null;
+    }
+    return best.btn;
+  }
+  function findCreateButtonByArrowIcon(root, composer) {
     var buttons = root.querySelectorAll('button');
     var hits = [];
     for (var i = 0; i < buttons.length; i++) {
@@ -1897,31 +1947,34 @@ function MAIN_stampGenerateButton(stampAttr) {
       var text = normalize(icon && icon.textContent || btn.textContent || '');
       if (text.indexOf('arrow_forward') >= 0) hits.push(btn);
     }
-    if (!hits.length) return null;
-    hits.sort(function (a, b) { return b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom; });
-    return hits[0];
+    return pickBest(hits, composer, 'arrow_forward_icon');
   }
-  function findCreateButtonByHiddenLabel(root) {
+  function findCreateButtonByHiddenLabel(root, composer) {
     var buttons = root.querySelectorAll('button');
+    var hits = [];
     for (var i = 0; i < buttons.length; i++) {
       var btn = buttons[i];
       if (!isVisible(btn)) continue;
       var spans = btn.querySelectorAll('span');
       for (var j = 0; j < spans.length; j++) {
-        if (normalize(spans[j].textContent).toLowerCase() === 'create') return btn;
+        if (normalize(spans[j].textContent).toLowerCase() === 'create') {
+          hits.push(btn);
+          break;
+        }
       }
     }
-    return null;
+    return pickBest(hits, composer, 'hidden_create_label');
   }
-  function findByTextScan(root) {
+  function findByTextScan(root, composer) {
     var buttons = root.querySelectorAll('button, [role="button"]');
+    var hits = [];
     for (var i = 0; i < buttons.length; i++) {
       var btn = buttons[i];
       if (!isVisible(btn)) continue;
       var lower = normalize((btn.textContent || btn.getAttribute('aria-label') || '')).toLowerCase();
-      if (lower.indexOf('create') >= 0 || lower.indexOf('generate') >= 0 || lower.indexOf('create video') >= 0) return btn;
+      if (lower.indexOf('create') >= 0 || lower.indexOf('generate') >= 0 || lower.indexOf('create video') >= 0) hits.push(btn);
     }
-    return null;
+    return pickBest(hits, composer, 'text_scan');
   }
   var composer = document.querySelector('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea[placeholder*="What do you want"], textarea, [contenteditable="true"]');
   var roots = [];
@@ -1939,7 +1992,7 @@ function MAIN_stampGenerateButton(stampAttr) {
       { name: 'text_scan', fn: findByTextScan },
     ];
     for (var j = 0; j < strategies.length; j++) {
-      var b = strategies[j].fn(root);
+      var b = strategies[j].fn(root, composer);
       if (!b || seen.has(b)) continue;
       seen.add(b);
       var id = String(stampAttr || 'data-bosmax-submit-target') + '-' + Date.now();
@@ -1955,6 +2008,47 @@ function MAIN_stampGenerateButton(stampAttr) {
     }
   }
   return { ok: false, reason: 'no_generate_button_visible' };
+}
+
+function MAIN_verifyExpectedComposerPrompt(expectedPromptText) {
+  function normalize(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
+  }
+  var prompts = document.querySelectorAll('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea, [contenteditable="true"], input[type="text"]');
+  var composer = null;
+  for (var i = 0; i < prompts.length; i++) {
+    if (!isVisible(prompts[i])) continue;
+    composer = prompts[i];
+    break;
+  }
+  if (!composer) {
+    return { ok: false, reason: 'composer_not_visible', prompt_present: false };
+  }
+  var rawValue = typeof composer.value === 'string' ? composer.value : (composer.innerText || composer.textContent || '');
+  var actual = normalize(rawValue);
+  var expected = normalize(expectedPromptText || '');
+  var expectedPrefix = expected.slice(0, Math.min(expected.length, 120));
+  var promptPresent = Boolean(
+    expected &&
+    (
+      actual.indexOf(expected) >= 0 ||
+      (expectedPrefix && actual.indexOf(expectedPrefix) >= 0)
+    )
+  );
+  return {
+    ok: promptPresent,
+    prompt_present: promptPresent,
+    actual_length: actual.length,
+    actual_excerpt: actual.slice(0, 220) || null,
+    expected_prefix: expectedPrefix || null,
+  };
 }
 
 /**
@@ -3237,7 +3331,7 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
     if (!text) return false;
     if (needleText === 'start') {
       return text.indexOf('start creating') >= 0
-        || text.indexOf('drop media') >= 0
+        || text.indexOf('add start frame') >= 0
         || /^start\b/.test(text)
         || text.indexOf('start frame') >= 0;
     }
@@ -3269,6 +3363,41 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
       || el.hasAttribute('data-state')
       || el.hasAttribute('tabindex')
     ));
+  }
+  function findComposer() {
+    var prompts = collectAll(document, '[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"][contenteditable="true"], textarea, [contenteditable="true"], input[type="text"]');
+    var best = null;
+    var bestScore = -1;
+    for (var i0 = 0; i0 < prompts.length; i0++) {
+      var node = prompts[i0];
+      if (!isVisible(node)) continue;
+      var probe = lower([
+        node.getAttribute && (node.getAttribute('placeholder') || node.getAttribute('aria-label') || node.getAttribute('data-placeholder') || ''),
+        node.textContent || '',
+      ].join(' '));
+      var rect = node.getBoundingClientRect();
+      var score = 0;
+      if (probe.indexOf('what do you want to create') >= 0) score += 120;
+      if (probe.indexOf('editable text') >= 0) score += 100;
+      if (node.getAttribute && node.getAttribute('role') === 'textbox') score += 35;
+      if (rect.bottom >= (window.innerHeight * 0.55)) score += 20;
+      if (score > bestScore) {
+        best = node;
+        bestScore = score;
+      }
+    }
+    return best || prompts[0] || null;
+  }
+  function distanceToComposer(el) {
+    var composer = findComposer();
+    if (!composer || !composer.getBoundingClientRect || !el || !el.getBoundingClientRect) return Number.MAX_SAFE_INTEGER;
+    var a = composer.getBoundingClientRect();
+    var b = el.getBoundingClientRect();
+    var ax = a.left + (a.width / 2);
+    var ay = a.top + (a.height / 2);
+    var bx = b.left + (b.width / 2);
+    var by = b.top + (b.height / 2);
+    return Math.round(Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2)));
   }
   function nextParent(node) {
     if (!node) return null;
@@ -3318,6 +3447,14 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
     var targetText = normalize(target.el.textContent || target.el.getAttribute && target.el.getAttribute('aria-label') || '');
     var targetLower = targetText.toLowerCase();
     if (looksLikeOpposingSlot(targetLower, needleText)) return null;
+    var targetLooksLikeNeedle = looksLikeNeedle(targetLower, needleText);
+    if (
+      needleText === 'start' &&
+      !targetLooksLikeNeedle &&
+      /\bingredients\b|\bimage\b|\bscene\b|\bsubject\b|\bstyle\b/.test(targetLower)
+    ) {
+      return null;
+    }
     var rect = target.el.getBoundingClientRect();
     var score = 0;
     if (labelLower.indexOf('start creating') >= 0) score += 120;
@@ -3325,13 +3462,20 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
     if (/^start\b/.test(labelLower)) score += 70;
     if (labelText === 'Start') score += 40;
     if (target.source === 'label_closest_button') score += 80;
+    if (target.source === 'label_closest_interactive') score += 75;
     if (target.source === 'container_button') score += 50;
+    if (target.source === 'container_interactive') score += 45;
     if (target.source === 'container') score += 40;
     if (target.source === 'label_node') score += 25;
     if (looksLikeNeedle(targetLower, needleText)) score += 35;
     if (targetLower.indexOf('upload') >= 0 || targetLower.indexOf('add media') >= 0) score += 20;
     if (rect.width >= 160 && rect.height >= 40) score += 15;
     if (rect.width >= 220 && rect.height >= 48) score += 10;
+    var distance = distanceToComposer(target.el);
+    if (distance <= 280) score += 45;
+    else if (distance <= 460) score += 30;
+    else if (distance <= 680) score += 15;
+    else if (distance >= 1200) score -= 35;
     if (rect.width >= 500) score -= 40;
     if (rect.width >= 800) score -= 80;
     if (rect.height >= 100) score -= 25;
@@ -3340,6 +3484,7 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
       el: target.el,
       source: target.source,
       depth: Number(target.depth || 0),
+      distance_to_composer: distance,
       score: score,
     };
   }
@@ -3351,13 +3496,21 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
       targets.push({ el: el, source: source, depth: depth });
     }
     push(labelNode && labelNode.closest && labelNode.closest('button, [role="button"]'), 'label_closest_button');
+    push(labelNode && labelNode.closest && labelNode.closest('button, [role="button"], label, a, [tabindex]'), 'label_closest_interactive');
     push(labelNode, 'label_node');
     push(container && container.querySelector && container.querySelector('button, [role="button"]'), 'container_button');
+    push(container && container.querySelector && container.querySelector('button, [role="button"], label, a, [tabindex]'), 'container_interactive');
     push(container, 'container');
     return targets;
   }
 
   var needle = lower(slotLabel || '');
+  var interactiveStartSources = {
+    label_closest_button: true,
+    label_closest_interactive: true,
+    container_button: true,
+    container_interactive: true,
+  };
   var labelCandidates = collectAll(document, 'label, span, div, p, button, [role="button"], a');
   var resolvedCandidates = [];
   for (var i = 0; i < labelCandidates.length; i++) {
@@ -3381,6 +3534,9 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
         if ((hasUploadMarker || isClickableContainer || current === labelNode) && currentMatchesNeedle) {
           var targets = buildTargets(labelNode, current, depth);
           for (var t = 0; t < targets.length; t++) {
+            if (needle === 'start' && !interactiveStartSources[targets[t].source]) {
+              continue;
+            }
             var scored = scoreCandidate(targets[t], labelLower, labelText, needle);
             if (scored) resolvedCandidates.push(scored);
           }
@@ -3392,6 +3548,7 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
   if (!resolvedCandidates.length) return null;
   resolvedCandidates.sort(function (a, b) {
     if (b.score !== a.score) return b.score - a.score;
+    if (a.distance_to_composer !== b.distance_to_composer) return a.distance_to_composer - b.distance_to_composer;
     var aRect = a.el.getBoundingClientRect();
     var bRect = b.el.getBoundingClientRect();
     if (aRect.top !== bRect.top) return aRect.top - bRect.top;
@@ -3405,6 +3562,34 @@ function MAIN_findUploadSlotByLabel(slotLabel, stampAttr) {
     return stamped;
   }
   return null;
+}
+
+function MAIN_assertF2VStartSurface() {
+  var state = MAIN_getBottomComposerState();
+  var startProbe = MAIN_findUploadSlotByLabel('Start', 'data-bosmax-start-surface-probe');
+  var startText = String(startProbe && startProbe.text || '').replace(/\s+/g, ' ').trim();
+  var startLower = startText.toLowerCase();
+  // Fail closed on ANY non-Frames sub-surface. The old check only rejected an
+  // explicit 'Ingredients' drift, so the live degrade to UNKNOWN/None (editor
+  // torn down into the ghost negotiation Q&A surface while lingering
+  // Start/End/Frames body text still reads topMode='Video') slipped through and
+  // let the SOP walk into upload -> prompt injection on the wrong composer.
+  // A healthy F2V editor always resolves subMode==='Frames' (Start/End slots
+  // present), so a positive Frames requirement does not false-fail good runs.
+  var subModeDrift = String(state && state.subMode || '') !== 'Frames';
+  var foreignSlotDrift = Boolean(
+    startLower &&
+    !/^start\b/.test(startLower) &&
+    /ingredients|image|scene|subject|style/.test(startLower)
+  );
+  return {
+    ok: Boolean(state && state.topMode === 'Video' && !subModeDrift && !foreignSlotDrift),
+    topMode: state && state.topMode || 'UNKNOWN',
+    subMode: state && state.subMode || 'UNKNOWN',
+    start_probe_text: startText || null,
+    foreign_slot_drift: foreignSlotDrift,
+    sub_mode_drift: subModeDrift,
+  };
 }
 
 /**
@@ -5118,6 +5303,12 @@ async function _clickStartEntryPoint(scripting, tabId, opts) {
   if (startSlot.ok) {
     return startSlot;
   }
+  // GFV2 F2V must fail closed here. Falling through to the generic composer-side
+  // launcher can drift the editor onto Image/Ingredients surfaces, which then
+  // makes the later settings verification report a false missing-panel blocker.
+  if (opts?.gfv2ForceDomSettings === true) {
+    return startSlot;
+  }
 
   const stampAttr = opts?.stampAttr || 'data-bosmax-option';
   const launcher = await _runMainWorld(
@@ -5528,6 +5719,294 @@ async function _invokeGenerate(scripting, tabId, opts) {
   };
 }
 
+/**
+ * MAIN-world: wait until the prompt submission transitions the V2 composer into
+ * the agent/Q&A negotiation surface. This must stop BEFORE any approve/render
+ * action, so the detector keys on a post-submit surface shift rather than any
+ * generation-complete marker.
+ */
+async function MAIN_waitForPromptNegotiationSurface(expectedPromptText, timeoutMs, pollMs) {
+  function normalize(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  }
+  function lower(value) {
+    return normalize(value).toLowerCase();
+  }
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    var style = window.getComputedStyle(el);
+    return Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0);
+  }
+  function collectAll(selector) {
+    var out = [];
+    var queue = [document];
+    var seen = new Set();
+    while (queue.length > 0) {
+      var curr = queue.shift();
+      if (!curr || seen.has(curr)) continue;
+      seen.add(curr);
+      if (curr.querySelectorAll) {
+        var direct = curr.querySelectorAll(selector);
+        for (var i = 0; i < direct.length; i++) out.push(direct[i]);
+        var nested = curr.querySelectorAll('*');
+        for (var j = 0; j < nested.length; j++) {
+          if (nested[j].shadowRoot && !seen.has(nested[j].shadowRoot)) queue.push(nested[j].shadowRoot);
+        }
+      }
+    }
+    return out;
+  }
+  function getComposer() {
+    var prompts = collectAll('[aria-label="Editable text"], [role="textbox"], [data-slate-editor="true"], textarea, [contenteditable="true"], input[type="text"]');
+    var best = null;
+    var bestScore = -1;
+    for (var i = 0; i < prompts.length; i++) {
+      var el = prompts[i];
+      if (!isVisible(el)) continue;
+      var label = lower([
+        el.getAttribute && (el.getAttribute('placeholder') || el.getAttribute('aria-label') || el.getAttribute('data-placeholder') || ''),
+        el.textContent || '',
+      ].join(' '));
+      var rect = el.getBoundingClientRect();
+      var score = 0;
+      if (label.indexOf('what do you want to create') >= 0) score += 120;
+      if (label.indexOf('editable text') >= 0) score += 100;
+      if (el.getAttribute && el.getAttribute('role') === 'textbox') score += 35;
+      if (rect.bottom >= (window.innerHeight * 0.55)) score += 20;
+      if (score > bestScore) {
+        best = el;
+        bestScore = score;
+      }
+    }
+    return best || prompts[0] || null;
+  }
+  function getComposerValue(el) {
+    if (!el) return '';
+    if (typeof el.value === 'string') return normalize(el.value);
+    return normalize(el.innerText || el.textContent || '');
+  }
+  function getComposerPlaceholder(el) {
+    if (!el || !el.getAttribute) return '';
+    return normalize(
+      el.getAttribute('placeholder')
+      || el.getAttribute('aria-label')
+      || el.getAttribute('data-placeholder')
+      || '',
+    );
+  }
+  function getGenerateButton() {
+    var buttons = collectAll('button, [role="button"]');
+    var best = null;
+    var bestBottom = -1;
+    for (var i = 0; i < buttons.length; i++) {
+      var btn = buttons[i];
+      if (!isVisible(btn)) continue;
+      var text = lower((btn.textContent || '') + ' ' + ((btn.getAttribute && btn.getAttribute('aria-label')) || ''));
+      if (
+        text.indexOf('arrow_forward') === -1 &&
+        text.indexOf('generate') === -1 &&
+        text.indexOf('create') === -1
+      ) {
+        continue;
+      }
+      if (text.indexOf('add media') >= 0 || text.indexOf('upload media') >= 0) continue;
+      var rect = btn.getBoundingClientRect();
+      if (rect.bottom > bestBottom) {
+        best = btn;
+        bestBottom = rect.bottom;
+      }
+    }
+    return best;
+  }
+  function collectMarkerHits() {
+    var markerDefs = [
+      'double check it',
+      'go back',
+      'edit prompt',
+      'revise prompt',
+      'try again',
+      'approve',
+      'reject',
+      'more options',
+      'agent instructions',
+    ];
+    var nodes = collectAll('button, [role="button"], [role="menuitem"], [role="option"], [aria-label], p, span, div, h1, h2, h3');
+    var hits = [];
+    var seen = new Set();
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (!isVisible(node)) continue;
+      var blob = lower([
+        node.textContent || '',
+        node.getAttribute && node.getAttribute('aria-label') || '',
+        node.getAttribute && node.getAttribute('title') || '',
+      ].join(' '));
+      if (!blob) continue;
+      for (var j = 0; j < markerDefs.length; j++) {
+        var marker = markerDefs[j];
+        if (blob.indexOf(marker) === -1 || seen.has(marker)) continue;
+        seen.add(marker);
+        hits.push(marker);
+      }
+    }
+    return hits;
+  }
+  function detectWrongRoute() {
+    var body = lower(document.body && document.body.innerText || '');
+    var wrongRoute =
+      body.indexOf('edit a video with omni') >= 0 ||
+      body.indexOf("couldn't find any videos in your project to edit") >= 0 ||
+      body.indexOf('generate a new video') >= 0 ||
+      body.indexOf("i'll upload a video") >= 0;
+    return wrongRoute;
+  }
+  function buildSnapshot() {
+    var composer = getComposer();
+    var composerValue = getComposerValue(composer);
+    var composerPlaceholder = getComposerPlaceholder(composer);
+    var generateButton = getGenerateButton();
+    var generateDisabled = Boolean(
+      generateButton &&
+      (
+        generateButton.disabled === true ||
+        (generateButton.getAttribute && generateButton.getAttribute('aria-disabled') === 'true')
+      )
+    );
+    var expected = normalize(expectedPromptText || '');
+    var expectedPrefix = expected.slice(0, Math.min(expected.length, 96));
+    var promptStillPresent = Boolean(
+      expected &&
+      (
+        composerValue.indexOf(expected) >= 0 ||
+        (expectedPrefix && composerValue.indexOf(expectedPrefix) >= 0)
+      )
+    );
+    var placeholderRestored = lower(composerPlaceholder).indexOf('what do you want') >= 0;
+    var composerMutated = !promptStillPresent && (composerValue.length === 0 || placeholderRestored);
+    var matchedMarkers = collectMarkerHits();
+    var wrongRouteDetected = detectWrongRoute();
+    var negotiationReady = Boolean(
+      (matchedMarkers.length > 0 && (composerMutated || generateDisabled || !generateButton)) ||
+      (composerMutated && (generateDisabled || !generateButton))
+    );
+    return {
+      ok: negotiationReady && !wrongRouteDetected,
+      error: wrongRouteDetected ? 'ERR_F2V_WRONG_QA_ROUTE' : null,
+      matched_markers: matchedMarkers,
+      composer_found: Boolean(composer),
+      composer_value_length: composerValue.length,
+      composer_value_excerpt: composerValue.slice(0, 140) || null,
+      composer_placeholder: composerPlaceholder || null,
+      prompt_still_present: promptStillPresent,
+      composer_mutated: composerMutated,
+      generate_button_found: Boolean(generateButton),
+      generate_button_disabled: generateDisabled,
+      wrong_route_detected: wrongRouteDetected,
+      current_url: String(window.location && window.location.href || ''),
+      document_title: String(document && document.title || ''),
+    };
+  }
+
+  var waitMs = Math.max(1000, Number(timeoutMs || 12000));
+  var everyMs = Math.max(100, Number(pollMs || 300));
+  var deadline = Date.now() + waitMs;
+  var lastSnapshot = buildSnapshot();
+  if (lastSnapshot.error) {
+    return {
+      ok: false,
+      error: lastSnapshot.error,
+      detail: lastSnapshot,
+    };
+  }
+  if (lastSnapshot.ok) {
+    return lastSnapshot;
+  }
+  while (Date.now() < deadline) {
+    await new Promise(function (resolve) { setTimeout(resolve, everyMs); });
+    lastSnapshot = buildSnapshot();
+    if (lastSnapshot.error) {
+      return {
+        ok: false,
+        error: lastSnapshot.error,
+        detail: lastSnapshot,
+      };
+    }
+    if (lastSnapshot.ok) {
+      return lastSnapshot;
+    }
+  }
+  return {
+    ok: false,
+    error: 'ERR_F2V_AGENT_NEGOTIATION_NOT_READY',
+    detail: lastSnapshot,
+  };
+}
+
+async function _submitPromptAndWaitForNegotiationSurface(scripting, tabId, promptText, opts = {}) {
+  const preSubmitSettleMs = Math.max(0, Number(opts?.preSubmitSettleMs ?? opts?.preGenerateSettleMs ?? 1200));
+  if (preSubmitSettleMs > 0) {
+    await _sleep(preSubmitSettleMs);
+  }
+  const promptCheck = await _runMainWorld(
+    scripting,
+    tabId,
+    MAIN_verifyExpectedComposerPrompt,
+    [String(promptText || '')],
+  );
+  if (!promptCheck || promptCheck.ok !== true) {
+    return {
+      ok: false,
+      error: ERR.PROMPT_MISMATCH_BEFORE_SUBMIT,
+      detail: promptCheck || null,
+    };
+  }
+  await _runMainWorld(scripting, tabId, MAIN_dismissPromoOverlays, []);
+  let submit = await _invokeGenerate(scripting, tabId, { ...opts, allowFallbackClick: true });
+  if (!submit.ok && submit.detail === 'generate_button_not_visible') {
+    await _sleep(Math.max(500, Number(opts?.retrySubmitSettleMs ?? opts?.retryGenerateSettleMs ?? 1000)));
+    await _runMainWorld(scripting, tabId, MAIN_dismissPromoOverlays, []);
+    submit = await _invokeGenerate(scripting, tabId, { ...opts, allowFallbackClick: true });
+  }
+  if (!submit.ok) {
+    return {
+      ok: false,
+      error: submit.error,
+      detail: submit.detail,
+      button_text: submit.button_text || null,
+      fiber_visited: submit.fiber_visited || 0,
+    };
+  }
+  const negotiation = await _runMainWorld(
+    scripting,
+    tabId,
+    MAIN_waitForPromptNegotiationSurface,
+    [
+      String(promptText || ''),
+      Math.max(1000, Number(opts?.negotiationWaitMs ?? 12000)),
+      Math.max(100, Number(opts?.negotiationPollMs ?? 300)),
+    ],
+  );
+  if (!negotiation || negotiation.ok !== true) {
+    return {
+      ok: false,
+      error: negotiation?.error || ERR.AGENT_NEGOTIATION_NOT_READY,
+      detail: negotiation?.detail || negotiation || null,
+      submit_strategy: submit.strategy,
+      button_text: submit.button_text || null,
+      fiber_visited: submit.fiber_visited || 0,
+    };
+  }
+  return {
+    ok: true,
+    submit_strategy: submit.strategy,
+    button_text: submit.button_text || null,
+    fiber_visited: submit.fiber_visited || 0,
+    negotiation,
+  };
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // Public orchestrator
 // ───────────────────────────────────────────────────────────────────────
@@ -5712,7 +6191,33 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
     // GFV2 demands granular DOM-confirmed settings proof, so the GFV2 lane forces
     // the DOM settings path (opts.gfv2ForceDomSettings) instead of trusting package
     // defaults — the authority shortcut applies/proves nothing granularly.
-    if (_shouldTrustWorkspacePackageSettings(job) && opts?.gfv2ForceDomSettings !== true) {
+    if (opts?.gfv2ForceDomSettings === true) {
+      const gfv2DeferredSettingsSummary = {
+        authority: 'gfv2_post_upload_verify',
+        orientation: job?.orientation || null,
+        model: desiredModel ? desiredModel.canon : (job?.model || null),
+        count: Number(job?.count || 0) || null,
+        workspace_execution_package_id: job?.workspace_execution_package_id || null,
+        start_asset_present: Boolean(job?.startAsset),
+      };
+      recordStage(
+        'F2V_SOP_SETTINGS_EXPLORER_STARTED',
+        'PASS',
+        `source=gfv2_post_upload_verify summary=${JSON.stringify(gfv2DeferredSettingsSummary)}`,
+      );
+      stageResults.settings_proof = {
+        ok: true,
+        authority: 'gfv2_post_upload_verify',
+        bypassed: true,
+        summary: gfv2DeferredSettingsSummary,
+      };
+      stageResults.settings_configured = true;
+      recordStage(
+        'F2V_SOP_SETTINGS_CONFIGURED',
+        'PASS',
+        `source=gfv2_post_upload_verify summary=${JSON.stringify(gfv2DeferredSettingsSummary)}`,
+      );
+    } else if (_shouldTrustWorkspacePackageSettings(job) && opts?.gfv2ForceDomSettings !== true) {
       const packageSettingSummary = {
         authority: 'workspace_package',
         orientation: job?.orientation || null,
@@ -5884,8 +6389,52 @@ async function executeF2VVisibleSopRunner(deps, tabId, job, opts = {}) {
       recordStage('F2V_SOP_START_CLICKED', 'FAIL', `${startResult.error} ${startResult.detail}`);
       return { ok: false, error: startResult.error, detail: startResult.detail, stages, stage_results: stageResults };
     }
+    // Sample the post-Start surface across a short settle window. Flow's SPA
+    // re-render after the Start click settles a beat later, so a single snapshot
+    // can pass in the pre-drift window and then the editor drifts (UNKNOWN /
+    // Ingredients / ghost Q&A). Fail closed if ANY sample is not F2V/Frames-good.
+    const startSurfaceSamples = Math.max(1, Number(opts?.startSurfaceSamples ?? 2));
+    const startSurfaceSampleGapMs = Math.max(0, Number(opts?.startSurfaceSampleGapMs ?? 450));
+    // Read-only forensic capture across the settle window: records WHICH resolver
+    // path clicked Start (start_slot vs slot_fallback vs launcher fallback — the
+    // wrong-click signal) and the topMode/subMode/probe trajectory, so a single
+    // authorized live run proves post-Start drift (C) vs wrong-target (B) at this
+    // authority seam. No behaviour change; detail is telemetry only.
+    let startSurface = null;
+    const startSurfaceTrajectory = [];
+    for (let sSample = 0; sSample < startSurfaceSamples; sSample++) {
+      if (sSample > 0) await _sleep(startSurfaceSampleGapMs);
+      startSurface = await _runMainWorld(scripting, tabId, MAIN_assertF2VStartSurface, []);
+      startSurfaceTrajectory.push({
+        i: sSample,
+        top: startSurface?.topMode || 'UNKNOWN',
+        sub: startSurface?.subMode || 'UNKNOWN',
+        probe: startSurface?.start_probe_text || null,
+        ok: Boolean(startSurface?.ok),
+      });
+      if (!startSurface || startSurface.ok !== true) break;
+    }
+    if (!startSurface || startSurface.ok !== true) {
+      const startSurfaceDetail = JSON.stringify({
+        top_mode: startSurface?.topMode || 'UNKNOWN',
+        sub_mode: startSurface?.subMode || 'UNKNOWN',
+        start_probe_text: startSurface?.start_probe_text || null,
+        foreign_slot_drift: Boolean(startSurface?.foreign_slot_drift),
+        sub_mode_drift: Boolean(startSurface?.sub_mode_drift),
+        clicked_start_role: startResult?.role || null,
+        surface_trajectory: startSurfaceTrajectory,
+      });
+      recordStage('F2V_SOP_START_CLICKED', 'FAIL', `${ERR.SURFACE_DRIFT_AFTER_START} ${startSurfaceDetail}`);
+      return {
+        ok: false,
+        error: ERR.SURFACE_DRIFT_AFTER_START,
+        detail: startSurfaceDetail,
+        stages,
+        stage_results: stageResults,
+      };
+    }
     stageResults.start_clicked = true;
-    recordStage('F2V_SOP_START_CLICKED', 'PASS', `role=${startResult.role}`);
+    recordStage('F2V_SOP_START_CLICKED', 'PASS', `role=${startResult.role} surface_trajectory=${JSON.stringify(startSurfaceTrajectory)}`);
     opts?.gfv2Stage?.('GFV2_UPLOAD_LAUNCHER_CLICKED', 'PASS', `role=${startResult.role}`);
 
     // HARD GATE before upload — operator-specified.
@@ -6199,6 +6748,8 @@ const _api = {
   MAIN_insertComposerPrompt,
   MAIN_invokeReactFiberSubmit,
   MAIN_stampGenerateButton,
+  MAIN_verifyExpectedComposerPrompt,
+  MAIN_waitForPromptNegotiationSurface,
   MAIN_stampAssetPickerLauncher,
   MAIN_findComposerAddMediaLauncher,
   MAIN_getUploadPickerStateForB2A,
@@ -6207,6 +6758,7 @@ const _api = {
   MAIN_dismissPromoOverlays,
   MAIN_findVisibleModelByKeyword,
   MAIN_findUploadSlotByLabel,
+  MAIN_assertF2VStartSurface,
   MAIN_findUploadBySymbol,
   MAIN_findAddToPromptButton,
   MAIN_selectAssetPickerCandidate,
@@ -6223,6 +6775,7 @@ const _api = {
   _clickUploadMedia,
   _clickAddToPrompt,
   _invokeGenerate,
+  _submitPromptAndWaitForNegotiationSurface,
   _runB2AUploadPickerOpenOnly,
   // Constants
   F2V_FLOW_QUEUE_RUNNER_BUILD_ID,

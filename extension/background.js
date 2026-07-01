@@ -405,6 +405,8 @@ function _sendRuntimeMessageSafe(payload) {
 }
 
 function sendRuntimeMessageNoThrow(payload) {
+	// Contract (frozen harness: "One-way runtime telemetry omits callback lane"):
+	// telemetry beacons are strictly fire-and-forget — no callback, no response port.
 	try {
 		chrome.runtime.sendMessage(payload);
 	} catch (error) {
@@ -3097,14 +3099,21 @@ function isActualFlowEditorProbe(result, mode = null) {
 	const visibleUploadSlots = Array.isArray(result?.observed?.visibleUploadSlots)
 		? result.observed.visibleUploadSlots.map((value) => String(value))
 		: [];
+	const hasBottomComposerState = Boolean(
+		result?.bottom_composer_config_pill_visible ||
+		String(result?.bottom_composer_config_pill_text || "").trim() ||
+		String(result?.observed?.aspectRatio || "").trim() === "9:16" ||
+		String(result?.observed?.count || "").trim() === "1x",
+	);
 	const normalizedMode = String(mode || "")
 		.trim()
 		.toUpperCase();
 	if (normalizedMode === "F2V") {
 		const looksLikeFramesEditor =
-			modeVisible.includes("Video/Frames") ||
-			visibleUploadSlots.includes("Start") ||
-			visibleUploadSlots.includes("End");
+			((visibleUploadSlots.includes("Start") ||
+				visibleUploadSlots.includes("End")) &&
+				hasBottomComposerState) ||
+			modeVisible.includes("Video/Frames");
 		return Boolean(
 			result.flow_tab_found &&
 				result.signed_in_likely &&
@@ -3214,11 +3223,33 @@ async function resolveExistingProjectEditorAuthority(tab, mode) {
 			page_diagnostic: pageDiagnostic,
 		};
 	}
+	let readiness = null;
+	try {
+		readiness = await sendTabMessageSafe(
+			safeTab.id,
+			{
+				type: "CHECK_FLOW_COMPOSER_READY",
+				mode,
+			},
+			12000,
+		);
+	} catch (_) {}
+	if (!isActualFlowEditorProbe(readiness, mode)) {
+		return {
+			ok: false,
+			error: "FLOW_EDITOR_AUTHORITY_SURFACE_UNHEALTHY",
+			tab: summarizeFlowTab(safeTab),
+			diagnostic,
+			page_diagnostic: pageDiagnostic,
+			readiness,
+		};
+	}
 	return {
 		ok: true,
 		tab: summarizeFlowTab(safeTab),
 		diagnostic,
 		page_diagnostic: pageDiagnostic,
+		readiness,
 	};
 }
 
@@ -4414,20 +4445,30 @@ async function handleOpenFlowNewProject(mode) {
 	const effectiveFlowUrl = String(
 		settledEditorTab?.url || resolvedFlowUrl || rootUrl,
 	).trim();
+	const settledOnEditor = isProjectEditorUrl(effectiveFlowUrl);
+	const editorReady = Boolean(result?.editor_ready) && settledOnEditor;
+	const normalizedError =
+		result?.error ||
+		(result?.ok && !editorReady ? "FLOW_PROJECT_EDITOR_NOT_OPEN" : null);
+	const normalizedDetail =
+		result?.detail ||
+		(result?.ok && !editorReady
+			? "Flow root/landing stayed open instead of a project editor after New project flow."
+			: null);
 	if (isProjectEditorUrl(effectiveFlowUrl)) {
 		await setStoredFlowProjectUrl(effectiveFlowUrl);
 	}
 
 	return {
-		ok: Boolean(result?.ok),
+		ok: Boolean(result?.ok && editorReady),
 		open_flow_root: Boolean(result?.open_flow_root),
 		project_list_or_landing_detected: Boolean(
 			result?.project_list_or_landing_detected,
 		),
 		new_project_clicked: result?.new_project_clicked || false,
-		editor_ready: Boolean(result?.editor_ready),
-		error: result?.error || null,
-		detail: result?.detail || null,
+		editor_ready: editorReady,
+		error: normalizedError,
+		detail: normalizedDetail,
 		flow_tab_id:
 			effectiveFlowTab?.id ?? refreshedTab?.id ?? targetTab?.id ?? null,
 		flow_url_before: rootUrl,
@@ -4467,7 +4508,7 @@ async function waitForFlowProjectCreationSurface(
 		if (
 			diagnostic?.project_list_or_landing_detected ||
 			diagnostic?.new_project_control_found ||
-			String(diagnostic?.current_mode_visible || "").includes("Video/Frames") ||
+			looksLikeF2VEditorSurfaceFromDiagnostic(diagnostic) ||
 			isProjectEditorUrl(tab.url)
 		) {
 			return diagnostic;
@@ -4520,9 +4561,8 @@ async function waitForFramesProjectEditorReady(
 		};
 
 		const onEditorUrl = isProjectEditorUrl(tab.url);
-		const videoFramesVisible = String(
-			diagnostic?.current_mode_visible || "",
-		).includes("Video/Frames");
+		const videoFramesVisible =
+			looksLikeF2VEditorSurfaceFromDiagnostic(diagnostic);
 
 		if (onEditorUrl || videoFramesVisible) {
 			const readiness = await sendTabMessageSafe(
@@ -6028,7 +6068,9 @@ async function handleF2VPackageUploadOnlyJob(job) {
 
 // ---- Google Flow V2 runtime lane: GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE ----
 // V2 contract: Upload media -> Add to Prompt -> Settings -> Prompt -> Generate.
-// Does NOT require Frames/Ingredients buttons, /project/ URL, or Start-slot proof.
+// Does NOT require Frames/Ingredients buttons or Start-slot proof, but DOES
+// require a /project/ editor URL: the root/home composer passes the editor
+// proof yet has no Start/upload slot (live fail: manual_5353152e).
 // Reuses the proven SOP runner (skipGenerate) and stops BEFORE Generate.
 
 const GFV2_FLOW_ROOT_URL = "https://labs.google/fx/tools/flow";
@@ -6321,6 +6363,15 @@ function gfv2ClassifySurface(tab, capture) {
 	if (diag.login_or_access_blocker) {
 		return { healthy: false, reason: "login_or_access_blocker" };
 	}
+	// The Flow root/home composer passes the editor proof (it renders a prompt
+	// surface) but has NO Start/upload slot — granting it authority leaks the lane
+	// into ERR_F2V_START_BUTTON_NOT_FOUND (proven live: manual_5353152e failed the
+	// Start click on url=https://labs.google/fx/tools/flow). Only a /project/
+	// editor URL is a usable GFV2 surface; root tabs must go through the
+	// New/Create step in gfv2EnsureSurface instead of being reused as-is.
+	if (!url.includes("/project/")) {
+		return { healthy: false, reason: "root_shell_no_project" };
+	}
 	return {
 		healthy: Boolean(editorOk),
 		reason: editorOk ? "ok" : "no_editor_surface",
@@ -6452,10 +6503,11 @@ async function gfv2EnsureSurface(mode, emit) {
 				createResult.editor_ready),
 	);
 	if (!createDidAct) {
+		const createStack = String(createResult?.error_stack || "").slice(0, 900);
 		emit(
 			"GFV2_ENSURE_SURFACE_FAILED",
 			"FAIL",
-			`create_error=${createResult?.error || "no_create_action"}`,
+			`create_error=${createResult?.error || "no_create_action"}${createStack ? ` stack=${createStack}` : ""}`,
 		);
 		return {
 			ok: false,
@@ -6620,12 +6672,10 @@ async function handleGfv2Job(job) {
 				uploadWaitMs: 10000,
 				skipUpload: false,
 				skipGenerate: true, // GFV2 UAT stops BEFORE Generate.
-				// NB: gfv2ForceDomSettings / gfv2SkipModeSteps are deliberately NOT passed.
-				// The legacy DOM settings path is incompatible with the V2 surface (it
-				// clicks non-existent Video/Frames mode options and cannot open the V2
-				// settings panel — ERR_F2V_OPTION_VIDEO_NOT_FOUND / no_settings_launcher).
-				// Until a V2 settings read/interaction layer exists, the lane keeps the
-				// authority shortcut and emits the granular proof it CAN observe.
+				// GFV2 must skip BOSMAX-internal Video/Frames mode pills and drive the
+				// post-upload settings panel directly on the V2 composer surface.
+				gfv2ForceDomSettings: true,
+				gfv2SkipModeSteps: true,
 				// NB: settings are NOT verified pre-upload. Live discovery proved the V2
 				// generation settings (tune panel: 9:16/1x/model) only render in the composer
 				// AFTER media is added — matching the original V2 SOP
@@ -6649,11 +6699,20 @@ async function handleGfv2Job(job) {
 
 	if (!runnerResult?.ok) {
 		const code = runnerResult?.error || "GFV2_RUNNER_FAILED";
+		const detail = { runner: runnerResult || null };
+		if (
+			code === "ERR_F2V_OPTION_VIDEO_NOT_FOUND" ||
+			code === "ERR_F2V_OPTION_FRAMES_NOT_FOUND" ||
+			code === "ERR_F2V_NO_SETTINGS_LAUNCHER"
+		) {
+			detail.gfv2_readiness = await captureGoogleFlowV2Readiness(flowTab);
+		}
 		emit("FAILED", "FAIL", code);
-		return { ok: false, error: code, detail: runnerResult || null };
+		return { ok: false, error: code, detail };
 	}
 
-	// Runner completed upload + add-to-prompt + prompt with skipGenerate.
+	// Runner completed upload + add-to-prompt + prompt insert without touching the
+	// conversational submit arrow yet.
 	emit(
 		"GFV2_ASSET_UPLOADED_OR_SELECTED",
 		"PASS",
@@ -6683,17 +6742,54 @@ async function handleGfv2Job(job) {
 		"PASS",
 		`prompt_inserted=${Boolean(runnerResult?.stage_results?.prompt_inserted)}`,
 	);
-	emit("GFV2_GENERATE_ENABLED", "PASS", "verified_enabled_not_clicked");
+
+	const promptSubmitResult =
+		await runnerApi._submitPromptAndWaitForNegotiationSurface(
+			deps,
+			flowTab.id,
+			job?.prompt || "",
+			{
+				preSubmitSettleMs: 1200,
+				retrySubmitSettleMs: 1000,
+				negotiationWaitMs: 12000,
+				negotiationPollMs: 300,
+			},
+		);
+	if (!promptSubmitResult?.ok) {
+		emit(
+			"FAILED",
+			"FAIL",
+			promptSubmitResult?.error || "GFV2_PROMPT_SUBMIT_FAILED",
+		);
+		return {
+			ok: false,
+			error: promptSubmitResult?.error || "GFV2_PROMPT_SUBMIT_FAILED",
+			detail: promptSubmitResult?.detail || null,
+		};
+	}
+
+	emit(
+		"GFV2_PROMPT_SUBMITTED",
+		"PASS",
+		`strategy=${promptSubmitResult?.submit_strategy || "unknown"} fiber_visited=${promptSubmitResult?.fiber_visited || 0}`,
+	);
+	emit(
+		"GFV2_QA_SURFACE_READY",
+		"PASS",
+		`markers=${JSON.stringify(promptSubmitResult?.negotiation?.matched_markers || [])}`,
+	);
 	emit(
 		"GFV2_STOP_BEFORE_GENERATE",
 		"PASS",
-		"gfv2_ready_stopped_before_generate",
+		"gfv2_qna_ready_stopped_before_generate",
 	);
 	return {
 		ok: true,
 		gfv2_stopped_before_generate: true,
+		gfv2_stopped_at_qa: true,
 		flow_tab_id: flowTab.id,
 		runner: runnerResult,
+		prompt_submit: promptSubmitResult,
 	};
 }
 
@@ -7472,13 +7568,8 @@ function isPreselectionEditorReadyDiagnostic(diagnostic) {
 	if (!diagnostic || typeof diagnostic !== "object") {
 		return false;
 	}
-	const markers = Array.isArray(diagnostic.visible_project_editor_markers)
-		? diagnostic.visible_project_editor_markers.map((value) => String(value))
-		: [];
-	const modeVisible = String(diagnostic.current_mode_visible || "");
 	const showsVideoFrames =
-		modeVisible.includes("Video/Frames") ||
-		(markers.includes("Video") && markers.includes("Frames"));
+		looksLikeF2VEditorSurfaceFromDiagnostic(diagnostic);
 	return Boolean(
 		diagnostic.runtime_ready &&
 			diagnostic.content_script_loaded &&
@@ -7488,6 +7579,47 @@ function isPreselectionEditorReadyDiagnostic(diagnostic) {
 			diagnostic.generate_button_found &&
 			diagnostic.prompt_field_found &&
 			showsVideoFrames,
+	);
+}
+
+function looksLikeF2VEditorSurfaceFromDiagnostic(diagnostic) {
+	if (!diagnostic || typeof diagnostic !== "object") {
+		return false;
+	}
+	if (
+		diagnostic.project_list_or_landing_detected === true ||
+		diagnostic.new_project_control_found === true
+	) {
+		return false;
+	}
+	const markers = Array.isArray(diagnostic.visible_project_editor_markers)
+		? diagnostic.visible_project_editor_markers.map((value) => String(value))
+		: [];
+	const visibleUploadSlots = Array.isArray(diagnostic?.observed?.visibleUploadSlots)
+		? diagnostic.observed.visibleUploadSlots.map((value) => String(value))
+		: [];
+	const hasSlotSurface =
+		visibleUploadSlots.includes("Start") || visibleUploadSlots.includes("End");
+	const hasBottomComposerState = Boolean(
+		diagnostic.bottom_composer_config_pill_visible ||
+			String(diagnostic.bottom_composer_config_pill_text || "").trim() ||
+			String(diagnostic?.observed?.aspectRatio || "").trim() === "9:16" ||
+			String(diagnostic?.observed?.count || "").trim() === "1x",
+	);
+	const editorCapabilityReady =
+		diagnostic.editor_capability_ready === true ||
+		diagnostic.ui_contract_v2?.editor_capability_ready === true;
+	const promptAndGenerateReady = Boolean(
+		diagnostic.prompt_field_found && diagnostic.generate_button_found,
+	);
+	if (!editorCapabilityReady && !promptAndGenerateReady) {
+		return false;
+	}
+	const modeVisible = String(diagnostic.current_mode_visible || "");
+	return Boolean(
+		(hasSlotSurface && hasBottomComposerState) ||
+		modeVisible.includes("Video/Frames") ||
+		(markers.includes("Video") && markers.includes("Frames")),
 	);
 }
 
