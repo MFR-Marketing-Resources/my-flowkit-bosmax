@@ -3710,6 +3710,42 @@ function isSettingsScopedModelSource(source) {
     }
     console.log(`[FlowAgent] Detected slots: ${observed.visibleUploadSlots.join(', ')}`);
 
+    // 6a. If the explicit tab labels are collapsed or renamed, recover mode/submode
+    // from the upload slot surface itself. This keeps readiness and telemetry aligned
+    // with the actual editor even when the visible top controls ghost to UNKNOWN.
+    if (observed.topMode === 'UNKNOWN') {
+      if (observed.visibleUploadSlots.includes('Start') || observed.visibleUploadSlots.includes('End')) {
+        observed.topMode = 'Video';
+        if (observed.subMode === 'UNKNOWN' || observed.subMode === 'None') {
+          observed.subMode = 'Frames';
+        }
+      } else if (
+        observed.visibleUploadSlots.includes('Ingredients')
+        || observed.visibleUploadSlots.includes('Subject')
+        || observed.visibleUploadSlots.includes('Scene')
+        || observed.visibleUploadSlots.includes('Style')
+      ) {
+        observed.topMode = 'Video';
+        observed.subMode = 'Ingredients';
+      } else if (observed.visibleUploadSlots.includes('Image')) {
+        observed.topMode = 'Image';
+      }
+    } else if (
+      observed.topMode === 'Video'
+      && (observed.subMode === 'UNKNOWN' || observed.subMode === 'None')
+    ) {
+      if (observed.visibleUploadSlots.includes('Start') || observed.visibleUploadSlots.includes('End')) {
+        observed.subMode = 'Frames';
+      } else if (
+        observed.visibleUploadSlots.includes('Ingredients')
+        || observed.visibleUploadSlots.includes('Subject')
+        || observed.visibleUploadSlots.includes('Scene')
+        || observed.visibleUploadSlots.includes('Style')
+      ) {
+        observed.subMode = 'Ingredients';
+      }
+    }
+
     // 6b. F2V (Video/Frames) only ever exposes Start/End upload slots. Strip any
     // slot labels that leaked in from mode toggles or unrelated text so the F2V
     // surface is not misreported with bogus slots (e.g. "Image", "Scene").

@@ -203,6 +203,23 @@ def test_ensure_f2v_workspace_waits_for_root_landing_before_new_project_scan():
         assert token in dom_source
 
 
+def test_observe_flow_state_recovers_mode_from_visible_upload_slots():
+    dom_source = _read("extension/content-flow-dom.js")
+
+    for token in [
+        "if (observed.topMode === 'UNKNOWN') {",
+        "observed.visibleUploadSlots.includes('Start') || observed.visibleUploadSlots.includes('End')",
+        "observed.topMode = 'Video';",
+        "observed.subMode = 'Frames';",
+        "observed.visibleUploadSlots.includes('Subject')",
+        "observed.visibleUploadSlots.includes('Scene')",
+        "observed.visibleUploadSlots.includes('Style')",
+        "observed.subMode = 'Ingredients';",
+        "observed.topMode = 'Image';",
+    ]:
+        assert token in dom_source
+
+
 def test_open_flow_config_panel_has_view_settings_and_f2v_menu_fallback():
     dom_source = _read("extension/content-flow-dom.js")
 
