@@ -404,11 +404,35 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
 
         job["status"], job["stage"] = "GENERATING", "rendering + retrieving"
         generating = True  # past approval: any failure below is RETRIEVAL-phase, not generation
-        exclude = set(_STALE_VIDEO_IDS) | set(refs)
+        # False-DONE fix (live: g_745e95ede679 claimed the PREVIOUS run's mp4 at try 1):
+        # snapshot every media id already visible in the project BEFORE polling, so
+        # retrieval can only ever accept media that appears AFTER this job's render.
+        preexisting = set()
+        try:
+            h0 = await client.harvest_video_urls(
+                tab_id=(job.get("binding") or {}).get("flow_tab_id"))
+            inner0 = h0.get("result", h0) if isinstance(h0, dict) else {}
+            diag0 = inner0.get("diag", inner0) if isinstance(inner0, dict) else {}
+            for k in ("videoIds", "imageIds", "mediaIds"):
+                preexisting |= set((diag0.get(k) or []) if isinstance(diag0, dict) else [])
+        except Exception:  # noqa: BLE001 — snapshot is best-effort; stale/ref excludes still apply
+            pass
+        job["preexisting_media_excluded"] = len(preexisting)
+        exclude = set(_STALE_VIDEO_IDS) | set(refs) | preexisting
         await asyncio.sleep(120)
         for i in range(36):
             job["stage"] = f"checking for finished video (try {i + 1})"
             bound_tab = (job.get("binding") or {}).get("flow_tab_id")
+            # Omni/V2 editor DOM does NOT live-update: a finished video never becomes
+            # harvestable until the tab reloads (live proof g_01b041b563dc — the mp4 only
+            # appeared, filed under imageIds, after a manual reload). Refresh the bound
+            # tab every 6 polls so harvest can see newly finished media.
+            if i and i % 6 == 0:
+                try:
+                    await client.reload_flow_tab()
+                    await asyncio.sleep(8)
+                except Exception:  # noqa: BLE001 — refresh is best-effort, harvest re-checks
+                    pass
             h = await client.harvest_video_urls(tab_id=bound_tab)
             inner = h.get("result", h) if isinstance(h, dict) else {}
             # Fail-closed harvest (patch A/G): abort on a lost/bound-gone tab or a drifted
