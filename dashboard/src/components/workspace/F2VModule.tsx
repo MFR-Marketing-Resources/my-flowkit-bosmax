@@ -7,10 +7,7 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
-import ModelSelect, {
-	type VideoModel,
-	normalizeModel,
-} from "./ModelSelect";
+import ModelSelect, { normalizeModel, type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface F2VModuleProps {
@@ -75,7 +72,7 @@ export default function F2VModule({
 	}, [videoModels]);
 
 	useEffect(() => {
-		if (!workspacePackage || workspacePackage.mode !== "F2V") return;
+		if (workspacePackage?.mode !== "F2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
 		setModel(normalizeModel(workspacePackage.model, videoModels));
 		setOrientation(
@@ -97,7 +94,7 @@ export default function F2VModule({
 		);
 		setIsManualOverride(false);
 		setStartPreviewFailed(false);
-	}, [workspacePackage]);
+	}, [videoModels, workspacePackage]);
 
 	// --- Handlers ---
 	const handleFileChange = async (
@@ -369,10 +366,14 @@ export default function F2VModule({
 						{isUploading
 							? "Preparing Assets..."
 							: isExecuting
-								? "Executing Sequence..."
-								: "START GENERATION"}
+								? "Sending to Flow Editor..."
+								: "SEND TO FLOW EDITOR"}
 						{!isExecuting && !isUploading && <ArrowRight size={18} />}
 					</button>
+					<p className="mt-2 text-center text-xs text-slate-400">
+						Uploads the start frame and inserts the prompt in the Flow editor,
+						then stops before Generate — does not auto-generate.
+					</p>
 				</div>
 			</div>
 
@@ -403,6 +404,14 @@ export default function F2VModule({
 							models={videoModels}
 							value={model}
 							onChange={setModel}
+						/>
+						{/* Stable autofill/test identifier mirroring the selected model. */}
+						<input
+							type="hidden"
+							id="f2v-generation-model"
+							name="f2v_generation_model"
+							value={model}
+							readOnly
 						/>
 						<div className="space-y-3">
 							<p className="text-xs font-bold text-slate-400">Count</p>

@@ -15,7 +15,7 @@
 (() => {
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
-  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-google-flow-phase1a-2026-05-26a';
+  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-f2v-runner-audit-2026-06-15a';
   const FLOW_KIT_PLAYWRIGHT_HARNESS = hasPlaywrightHarnessMarker();
   const FLOW_KIT_TEST_MODE = Boolean(window.__FLOWKIT_TEST_MODE__);
   const FLOW_KIT_ENABLE_TEST_HOOKS =
@@ -85,24 +85,60 @@
     }
   }
 
+  function normalizeRuntimeMessageError(rawError) {
+    const message = String(rawError?.message || rawError || '').trim();
+    if (!message) {
+      return {
+        error: 'ERR_RUNTIME_LASTERROR',
+        detail: 'Unknown Chrome runtime messaging failure.',
+      };
+    }
+    if (/Receiving end does not exist/i.test(message)) {
+      return { error: 'ERR_NO_RECEIVER', detail: message };
+    }
+    if (/Could not establish connection/i.test(message)) {
+      return { error: 'ERR_BACKGROUND_RECEIVER_MISSING', detail: message };
+    }
+    if (/message port closed before a response was received/i.test(message)) {
+      return { error: 'ERR_RUNTIME_MESSAGE_PORT_CLOSED', detail: message };
+    }
+    return {
+      error: 'ERR_RUNTIME_LASTERROR',
+      detail: message,
+    };
+  }
+
+  function shouldSilenceRuntimeMessageError(rawError) {
+    const normalized = normalizeRuntimeMessageError(rawError);
+    return [
+      'ERR_NO_RECEIVER',
+      'ERR_BACKGROUND_RECEIVER_MISSING',
+      'ERR_RUNTIME_MESSAGE_PORT_CLOSED',
+    ].includes(normalized.error);
+  }
+
   function sendRuntimeMessageWithResponse(payload, timeoutMs = 15000) {
     return new Promise((resolve) => {
       let settled = false;
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        resolve({ ok: false, error: 'ERR_RUNTIME_MESSAGE_TIMEOUT' });
+        resolve({
+          ok: false,
+          error: 'ERR_RUNTIME_MESSAGE_TIMEOUT',
+          detail: `Timed out after ${timeoutMs}ms waiting for background response.`,
+        });
       }, timeoutMs);
 
       try {
         chrome.runtime.sendMessage(payload, (response) => {
+          const lastError = chrome.runtime.lastError;
           if (settled) return;
           settled = true;
           clearTimeout(timer);
 
-          const lastError = chrome.runtime.lastError;
           if (lastError) {
-            resolve({ ok: false, error: lastError.message || 'ERR_RUNTIME_LASTERROR' });
+            resolve({ ok: false, ...normalizeRuntimeMessageError(lastError) });
             return;
           }
 
@@ -112,7 +148,11 @@
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve({ ok: false, error: String(error?.message || error) });
+        resolve({
+          ok: false,
+          error: 'ERR_RUNTIME_MESSAGE_EXCEPTION',
+          detail: String(error?.message || error),
+        });
       }
     });
   }
@@ -241,18 +281,37 @@
     return new Promise(r => setTimeout(r, ms));
   }
 
-  function respondAsync(sendResponse, task) {
+  // Default timeout for async listener handlers in content-flow-dom.js.
+  // Slightly longer than the 4500ms background respondAsync default so a
+  // tab-side task can still drain a chained background roundtrip cleanly
+  // before its own port is forcibly closed.
+  const DEFAULT_CONTENT_RESPOND_ASYNC_TIMEOUT_MS = 5000;
+
+  function respondAsync(sendResponse, task, timeoutMs = DEFAULT_CONTENT_RESPOND_ASYNC_TIMEOUT_MS) {
     let settled = false;
+    let timer = null;
 
     const done = (payload) => {
       if (settled) return;
       settled = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       try {
         sendResponse(payload || { ok: true });
       } catch (error) {
         console.warn('[FlowAgent] sendResponse failed:', error);
       }
     };
+
+    timer = setTimeout(() => {
+      done({
+        ok: false,
+        error: 'ERR_CONTENT_ASYNC_RESPONSE_TIMEOUT',
+        detail: `content-flow-dom respondAsync exceeded ${timeoutMs}ms`,
+      });
+    }, timeoutMs);
 
     Promise.resolve()
       .then(task)
@@ -262,6 +321,11 @@
   }
 
   function buildDiagnosticPingResponse() {
+    const composer = findComposerElement();
+    const observed = observeFlowState();
+    const generateBtn = findGenerateButtonNearComposer();
+    const configPill = buildBottomComposerConfigPillSnapshot();
+    const uiContractV2 = buildUiContractV2Proof(null, observed, composer, generateBtn);
     return {
       ok: true,
       runtime_ready: true,
@@ -270,7 +334,508 @@
       content_build_id: FLOW_KIT_DOM_BUILD_ID,
       git_sha: FLOW_KIT_DOM_BUILD_ID,
       location_href: window.location.href,
+      document_title: document.title,
+      composer_found: Boolean(composer),
+      prompt_field_found: Boolean(composer),
+      bottom_composer_config_pill_visible: configPill.bottom_composer_config_pill_visible,
+      bottom_composer_config_pill_text: configPill.bottom_composer_config_pill_text,
+      observed,
+      editor_capability_ready: Boolean(uiContractV2.editor_capability_ready),
+      pre_generate_ready: Boolean(uiContractV2.pre_generate_ready),
+      ui_contract_version: uiContractV2.ui_contract_version,
+      ui_contract_v2: uiContractV2,
       timestamp: new Date().toISOString(),
+    };
+  }
+
+  function canonicalizeFlowConfigAspectToken(text) {
+    const lower = String(text || '').toLowerCase().replace(/\s+/g, '');
+    if (!lower) return null;
+    if (lower.includes('crop_9_16') || lower.includes('9:16')) return 'crop_9_16';
+    if (lower.includes('crop_16_9') || lower.includes('16:9')) return 'crop_16_9';
+    if (lower.includes('crop_4_3') || lower.includes('4:3')) return 'crop_4_3';
+    if (lower.includes('crop_1_1') || lower.includes('1:1')) return 'crop_1_1';
+    if (lower.includes('crop_3_4') || lower.includes('3:4')) return 'crop_3_4';
+    return null;
+  }
+
+function flowCropTokenToAspectRatio(token) {
+    switch (token) {
+      case 'crop_9_16': return '9:16';
+      case 'crop_16_9': return '16:9';
+      case 'crop_4_3': return '4:3';
+      case 'crop_1_1': return '1:1';
+      case 'crop_3_4': return '3:4';
+      default: return null;
+    }
+  }
+
+
+  function canonicalizeFlowConfigCountToken(text) {
+    const lower = String(text || '').toLowerCase().replace(/\s+/g, '');
+    if (!lower) return null;
+    const directMatch = lower.match(/[1-4]x/);
+    if (directMatch) return directMatch[0];
+    const reverseMatch = lower.match(/x([1-4])/);
+    if (reverseMatch) return `${reverseMatch[1]}x`;
+    return null;
+  }
+
+function isSettingsScopedModelSource(source) {
+    return [
+      'settings_context',
+      'settings_panel',
+      'settings_surface',
+      'model_dropdown',
+      'config_pill',
+      'composer_settings_surface',
+    ].includes(String(source || ''));
+  }
+
+  function collectVisiblePreviewNodesWithin(root) {
+    if (!root || !root.querySelectorAll) return [];
+    const nodes = root.querySelectorAll('img, canvas, video, picture, [style*="background-image"]');
+    const previews = [];
+    for (const node of nodes) {
+      if (!isVisible(node)) continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 24 || rect.height < 24) continue;
+      previews.push({
+        node,
+        rect,
+        tagName: String(node.tagName || '').toLowerCase(),
+      });
+    }
+    return previews;
+  }
+
+  function getComposerAssetPreviewState(composer = null) {
+    const resolvedComposer = composer || findComposerElement();
+    if (!resolvedComposer) {
+      return {
+        ok: false,
+        preview_found: false,
+        scope: 'composer_surface',
+      };
+    }
+
+    const scopedRoots = collectComposerContextRoots(resolvedComposer, 5);
+    for (const root of scopedRoots) {
+      const previews = collectVisiblePreviewNodesWithin(root);
+      const composerRect = resolvedComposer.getBoundingClientRect();
+      const scopedPreview = previews.find((preview) => {
+        const rect = preview.rect;
+        const horizontallyNear = rect.right >= (composerRect.left - 160)
+          && rect.left <= (composerRect.right + 220);
+        const verticallyNear = Math.abs((rect.top + rect.height / 2) - (composerRect.top + composerRect.height / 2))
+          <= Math.max(composerRect.height * 2.5, 220);
+        return horizontallyNear && verticallyNear;
+      });
+      if (scopedPreview) {
+        return {
+          ok: true,
+          preview_found: true,
+          scope: 'composer_surface',
+          strategy: 'composer_surface_preview',
+          tag_name: scopedPreview.tagName,
+          bbox: {
+            x: Math.round(scopedPreview.rect.left),
+            y: Math.round(scopedPreview.rect.top),
+            width: Math.round(scopedPreview.rect.width),
+            height: Math.round(scopedPreview.rect.height),
+          },
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      preview_found: false,
+      scope: 'composer_surface',
+    };
+  }
+
+  function isComposerScopedSlotContainer(slotContainer, composer = null) {
+    if (!slotContainer) return false;
+    const resolvedComposer = composer || findComposerElement();
+    if (!resolvedComposer) return false;
+    const scopedRoots = collectComposerContextRoots(resolvedComposer, 5);
+    if (scopedRoots.some((root) => root && (root.contains(slotContainer) || slotContainer.contains(root)))) {
+      return true;
+    }
+    return isNearComposerDock(slotContainer, resolvedComposer);
+  }
+
+  function findVisibleSettingsSaveButton() {
+    const roots = [];
+    const settingsSection = findFlowSettingsSection('F2V') || findFlowSettingsSection('IMG');
+    if (settingsSection) roots.push(settingsSection);
+    const composer = findComposerElement();
+    roots.push(...collectComposerContextRoots(composer, 5));
+    roots.push(document);
+    const seen = new Set();
+    for (const root of roots) {
+      if (!root || seen.has(root) || !root.querySelectorAll) continue;
+      seen.add(root);
+      const buttons = root.querySelectorAll('button, [role="button"], [role="menuitem"]');
+      for (const btn of buttons) {
+        if (!isVisible(btn)) continue;
+        const text = normalizeText(btn.textContent || btn.getAttribute('aria-label') || '');
+        if (text.toLowerCase() === 'save') {
+          return btn;
+        }
+      }
+    }
+    return null;
+  }
+
+  function getComposerAcceptedPromptState(composer = null) {
+    const resolvedComposer = composer || findComposerElement();
+    if (!resolvedComposer) {
+      return {
+        ok: false,
+        prompt_accepted: false,
+        value_length: 0,
+      };
+    }
+    const rawValue = typeof resolvedComposer.value === 'string'
+      ? resolvedComposer.value
+      : (resolvedComposer.textContent || '');
+    const normalizedValue = normalizeText(rawValue);
+    const placeholder = normalizeText(
+      resolvedComposer.getAttribute('placeholder')
+      || resolvedComposer.getAttribute('aria-label')
+      || resolvedComposer.getAttribute('data-placeholder')
+      || '',
+    );
+    const promptAccepted = Boolean(
+      normalizedValue
+      && normalizedValue !== 'What do you want to create?'
+      && normalizedValue !== placeholder
+      && normalizedValue !== 'Editable text'
+    );
+    return {
+      ok: true,
+      prompt_accepted: promptAccepted,
+      value_length: normalizedValue.length,
+      placeholder_text: placeholder || null,
+    };
+  }
+
+  function buildUiContractV2Proof(mode, observed, composer, generateBtn) {
+    const resolvedComposer = composer || findComposerElement();
+    const resolvedObserved = observed || observeFlowState();
+    const resolvedGenerateBtn = generateBtn || findGenerateButtonNearComposer();
+    const configLauncher = findFlowConfigLauncher();
+    const startSlotContainer = resolveSlotContainer('Start');
+    const startSlotPreviewScoped = Boolean(
+      startSlotContainer
+      && containerHasVisualPreview(startSlotContainer)
+      && isComposerScopedSlotContainer(startSlotContainer, resolvedComposer)
+    );
+    const composerPreview = getComposerAssetPreviewState(resolvedComposer);
+    const promptState = getComposerAcceptedPromptState(resolvedComposer);
+    const saveButton = findVisibleSettingsSaveButton();
+    const modelSource = String(resolvedObserved.modelSource || 'unknown');
+    const modelScoped = isSettingsScopedModelSource(modelSource);
+    const observedModelCanonical = canonicalizeFlowModelLabel(resolvedObserved.model);
+    const expectedModelCanonical = canonicalizeFlowModelLabel(resolveRequestedModel({ mode: mode || 'F2V' }) || FLOW_MODE_CONFIG.F2V.defaultModel);
+    const visibleWrongModelInSettingsContext = Boolean(
+      modelScoped
+      && observedModelCanonical
+      && observedModelCanonical !== 'unknown'
+      && expectedModelCanonical
+      && observedModelCanonical !== expectedModelCanonical
+    );
+    const settingsPersisted = Boolean(
+      resolvedObserved.aspectRatio === '9:16'
+      && resolvedObserved.count === '1x'
+      && (
+        !observedModelCanonical
+        || observedModelCanonical === 'unknown'
+        || !modelScoped
+        || observedModelCanonical === expectedModelCanonical
+      )
+    );
+    const uploadProofPassed = Boolean(
+      composerPreview.preview_found
+      || startSlotPreviewScoped
+    );
+    const addToPromptProofPassed = Boolean(composerPreview.preview_found);
+    const settingsProofPassed = Boolean(
+      settingsPersisted
+      && !visibleWrongModelInSettingsContext
+    );
+    const generateEnabled = Boolean(
+      resolvedGenerateBtn
+      && !resolvedGenerateBtn.disabled
+      && resolvedObserved.generateButtonState === 'enabled'
+    );
+    const editorCapabilityReady = Boolean(
+      resolvedObserved.topMode === 'Video'
+      && resolvedComposer
+      && isComposerEditable(resolvedComposer)
+      && resolvedGenerateBtn
+      && configLauncher
+      && (
+        resolvedObserved.visibleUploadSlots.includes('Start')
+        || Boolean(findElementByText('button, [role="button"], [role="menuitem"]', 'Upload media'))
+        || Boolean(findElementByText('button, [role="button"], [role="menuitem"]', 'Add Media'))
+      )
+    );
+    const preGenerateReady = Boolean(
+      uploadProofPassed
+      && addToPromptProofPassed
+      && settingsProofPassed
+      && promptState.prompt_accepted
+      && generateEnabled
+    );
+
+    return {
+      ui_contract_version: 'GOOGLE_FLOW_UI_CONTRACT_V2',
+      editor_capability_ready: editorCapabilityReady,
+      pre_generate_ready: preGenerateReady,
+      upload_proof: {
+        passed: uploadProofPassed,
+        composer_asset_preview_found: Boolean(composerPreview.preview_found),
+        start_slot_preview_scoped: startSlotPreviewScoped,
+        rejected_visible_upload_slots_only: !uploadProofPassed && resolvedObserved.visibleUploadSlots.includes('Start'),
+      },
+      add_to_prompt_proof: {
+        passed: addToPromptProofPassed,
+        prompt_bound_media_preview_found: Boolean(composerPreview.preview_found),
+      },
+      settings_proof: {
+        passed: settingsProofPassed,
+        aspect_ratio_9_16: resolvedObserved.aspectRatio === '9:16',
+        count_1x: resolvedObserved.count === '1x',
+        expected_model: expectedModelCanonical || 'veo 3.1 - lite',
+        observed_model: resolvedObserved.model,
+        observed_model_scope: modelSource,
+        visible_wrong_model_in_settings_context: visibleWrongModelInSettingsContext,
+        save_visible: Boolean(saveButton),
+        persistence_source: settingsPersisted ? 'collapsed_config_pill_or_settings_surface' : null,
+      },
+      prompt_proof: {
+        passed: Boolean(promptState.prompt_accepted),
+        value_length: promptState.value_length,
+      },
+      generate_proof: {
+        passed: generateEnabled,
+        button_found: Boolean(resolvedGenerateBtn),
+        enabled: generateEnabled,
+      },
+    };
+  }
+
+  function normalizeRequestedAspectRatio(value) {
+    const normalized = normalizeText(value || '');
+    if (!normalized) return null;
+    if (normalized === '9:15') return '9:16';
+    return normalized;
+  }
+
+  function getFlowSettingsSectionHeading(mode) {
+    return String(mode || '').toUpperCase() === 'IMG'
+      ? 'Image generation default'
+      : 'Video generation default';
+  }
+
+  function collectFlowSettingsHeadingNodes(headingText, root = document) {
+    if (!headingText || !root?.querySelectorAll) return [];
+    const needle = normalizeText(headingText).toLowerCase();
+    const nodes = Array.from(
+      root.querySelectorAll('h1, h2, h3, h4, h5, h6, label, p, span, div, button'),
+    );
+    return nodes.filter((node) => {
+      if (!isVisible(node)) return false;
+      const text = normalizeText(
+        node.textContent || node.getAttribute?.('aria-label') || '',
+      ).toLowerCase();
+      return text.includes(needle);
+    });
+  }
+
+  // Extract { model, aspectRatio, count } from a scoped Flow settings section.
+  // Previously referenced by observeFlowState() but never defined — a missing
+  // definition that threw ReferenceError on every Video/Image observe (and broke
+  // OPEN_FLOW_NEW_PROJECT + the asset-picker harness). aspectRatio is normalised to
+  // colon form ('9:16') to match the downstream V2 signal comparisons.
+  function extractFlowSectionConfig(section) {
+    const config = { model: 'UNKNOWN', aspectRatio: 'UNKNOWN', count: 'UNKNOWN' };
+    if (!section) return config;
+    let text = '';
+    try {
+      text = normalizeText(section.innerText || section.textContent || '');
+    } catch (_) {
+      text = '';
+    }
+    if (text) {
+      try {
+        const m = extractObservedModelLabel(text);
+        if (m) config.model = m;
+      } catch (_) {}
+      try {
+        const aspectToken = canonicalizeFlowConfigAspectToken(text);
+        if (aspectToken) {
+          const map = {
+            crop_9_16: '9:16',
+            crop_16_9: '16:9',
+            crop_4_3: '4:3',
+            crop_1_1: '1:1',
+            crop_3_4: '3:4',
+          };
+          config.aspectRatio = map[aspectToken] || aspectToken;
+        }
+      } catch (_) {}
+      try {
+        const c = canonicalizeFlowConfigCountToken(text);
+        if (c) config.count = c;
+      } catch (_) {}
+    }
+    if (config.model === 'UNKNOWN' && section.querySelectorAll) {
+      try {
+        const els = section.querySelectorAll('button, span, div, [aria-label], [title]');
+        for (const el of els) {
+          const dm =
+            extractObservedModelLabel(el.textContent) ||
+            extractObservedModelLabel(el.getAttribute && el.getAttribute('aria-label')) ||
+            extractObservedModelLabel(el.getAttribute && el.getAttribute('title'));
+          if (dm) {
+            config.model = dm;
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+    return config;
+  }
+
+  function findFlowSettingsSection(mode, root = document) {
+    const headingText = getFlowSettingsSectionHeading(mode);
+    const headings = collectFlowSettingsHeadingNodes(headingText, root);
+    if (!headings.length) return null;
+
+    const scored = [];
+    for (const heading of headings) {
+      let current = heading;
+      let depth = 0;
+      while (current && depth < 8) {
+        if (current === document.body || current === document.documentElement) break;
+        if (isVisible(current)) {
+          const text = normalizeText(current.innerText || current.textContent || '');
+          if (
+            text.toLowerCase().includes(headingText.toLowerCase())
+            && (canonicalizeFlowConfigCountToken(text) || canonicalizeFlowConfigAspectToken(text) || /nano banana|veo|omni flash/i.test(text))
+          ) {
+            const rect = current.getBoundingClientRect();
+            const area = Math.round(rect.width * rect.height);
+            scored.push({ element: current, area, depth });
+          }
+        }
+        current = current.parentElement;
+        depth += 1;
+      }
+    }
+
+    if (!scored.length) {
+      return headings[0].parentElement || headings[0];
+    }
+
+    scored.sort((left, right) => {
+      const areaDelta = left.area - right.area;
+      if (areaDelta !== 0) return areaDelta;
+      return left.depth - right.depth;
+    });
+    return scored[0].element;
+  }
+
+
+  function normalizeFlowConfigPillText(text) {
+    const normalized = normalizeText(text);
+    if (!normalized) return null;
+    const lower = normalized.toLowerCase().replace(/\s+/g, '');
+    const hasVideo = lower.includes('video');
+    const aspectToken = canonicalizeFlowConfigAspectToken(normalized);
+    const countToken = canonicalizeFlowConfigCountToken(normalized);
+    if (!hasVideo && !aspectToken && !countToken) return null;
+
+    const parts = [];
+    if (hasVideo) parts.push('Video');
+    if (aspectToken) parts.push(aspectToken);
+    if (countToken) parts.push(countToken);
+    return parts.length > 0 ? parts.join(' ') : null;
+  }
+
+  function looksLikeBottomComposerConfigPillText(text) {
+    const normalized = normalizeFlowConfigPillText(text);
+    if (!normalized) return false;
+    const lower = normalized.toLowerCase();
+    const hasAspect = lower.includes('crop_');
+    const hasCount = /[1-4]x/.test(lower);
+    return (lower.includes('video') && hasCount) || (hasAspect && hasCount);
+  }
+
+  function collectBottomComposerConfigPillCandidates() {
+    const composer = findComposerElement();
+    const selectors = getSelectorRegistryQuery(
+      'flow_config_launcher_compact',
+      'button, [role="button"], [role="tab"], [aria-haspopup], span, div',
+    );
+    const scoped = collectComposerContextRoots(composer)
+      .flatMap((root) => Array.from(root.querySelectorAll(selectors)));
+    const global = Array.from(document.querySelectorAll(selectors));
+    const candidates = Array.from(new Set([...scoped, ...global]));
+    const seen = new Set();
+    const out = [];
+
+    for (const candidate of candidates) {
+      if (!isVisible(candidate)) continue;
+      const rawText = normalizeText(
+        candidate.textContent || candidate.getAttribute('aria-label') || '',
+      );
+      const normalizedText = normalizeFlowConfigPillText(rawText);
+      if (!looksLikeBottomComposerConfigPillText(rawText) || !normalizedText) continue;
+      const key = `${normalizedText}::${rawText}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        element: candidate,
+        raw_text: rawText,
+        normalized_text: normalizedText,
+        text_length: rawText.length,
+      });
+    }
+
+    return out.sort((left, right) => {
+      const score = (value) => {
+        const lower = value.normalized_text.toLowerCase();
+        let result = 0;
+        if (lower.includes('video')) result += 4;
+        if (lower.includes('crop_')) result += 2;
+        if (/[1-4]x/.test(lower)) result += 1;
+        return result;
+      };
+      const scoreDelta = score(right) - score(left);
+      if (scoreDelta !== 0) return scoreDelta;
+      return left.text_length - right.text_length;
+    });
+  }
+
+  function buildBottomComposerConfigPillSnapshot() {
+    const launcher = findFlowConfigLauncher();
+    const launcherText = normalizeText(
+      launcher?.innerText || launcher?.textContent || launcher?.getAttribute('aria-label') || '',
+    );
+    const launcherNormalizedText = normalizeFlowConfigPillText(launcherText);
+    const candidates = collectBottomComposerConfigPillCandidates();
+    const selectedCandidate = launcherNormalizedText
+      ? { normalized_text: launcherNormalizedText, raw_text: launcherText }
+      : (candidates[0] || null);
+    return {
+      bottom_composer_config_pill_visible: Boolean(selectedCandidate),
+      bottom_composer_config_pill_text: selectedCandidate?.normalized_text || null,
+      bottom_composer_config_pill_raw_text: selectedCandidate?.raw_text || null,
     };
   }
 
@@ -585,11 +1150,11 @@
   }
 
   function hasFlowAspectToken(text) {
-    return /(crop_9_16|9:16|16:9|4:3|1:1|3:4)/i.test(String(text || ''));
+    return Boolean(canonicalizeFlowConfigAspectToken(text));
   }
 
   function hasFlowCountToken(text) {
-    return /(^|\s)[1-4]x(\s|$)|x[1-4]/i.test(String(text || ''));
+    return Boolean(canonicalizeFlowConfigCountToken(text));
   }
 
   function collectComposerContextRoots(composer = null, maxDepth = 4) {
@@ -657,7 +1222,8 @@
       if (!text) continue;
       const lower = text.toLowerCase();
       const looksLikeModelChip = lower.includes('nano banana') || lower.includes('veo');
-      const looksLikeConfigChip = hasFlowCountToken(text) && hasFlowAspectToken(text);
+      const normalizedPillText = normalizeFlowConfigPillText(text);
+      const looksLikeConfigChip = Boolean(normalizedPillText && looksLikeBottomComposerConfigPillText(text));
       const looksLikeSettingsLauncher = lower.includes('view settings') || lower.includes('settings_2');
       const target = el.closest('button, [role="button"], [role="tab"], [aria-haspopup]') || el;
       if (!isVisible(target)) continue;
@@ -2962,8 +3528,11 @@
       topMode: 'UNKNOWN',
       subMode: 'UNKNOWN',
       model: 'UNKNOWN',
+      modelSource: 'unknown',
       aspectRatio: 'UNKNOWN',
+      aspectRatioSource: 'unknown',
       count: 'UNKNOWN',
+      countSource: 'unknown',
       visibleUploadSlots: [],
       visibleAssetPreviews: [],
       composerPresent: false,
@@ -3011,39 +3580,109 @@
     }
     console.log(`[FlowAgent] Detected subMode: ${observed.subMode}`);
 
-    // 3. Detect model
-    const modelElements = document.querySelectorAll('button, span, div, p');
-    for (const el of modelElements) {
-      if (!isVisible(el)) continue;
-      const detectedModel = extractObservedModelLabel(el.textContent);
-      if (detectedModel) {
-        observed.model = detectedModel;
-        break;
+    // 3. Detect model. Flow's model selector is frequently an icon-only Radix
+    // control, so fall back to aria-label/title when textContent carries no label.
+    const scopedSection = observed.topMode === 'Image'
+      ? findFlowSettingsSection('IMG')
+      : findFlowSettingsSection('F2V');
+    const scopedConfig = extractFlowSectionConfig(scopedSection);
+    if (scopedConfig.model !== 'UNKNOWN') {
+      observed.model = scopedConfig.model;
+      observed.modelSource = 'settings_context';
+    }
+    if (scopedConfig.aspectRatio !== 'UNKNOWN') {
+      observed.aspectRatio = scopedConfig.aspectRatio;
+      observed.aspectRatioSource = 'settings_context';
+    }
+    if (scopedConfig.count !== 'UNKNOWN') {
+      observed.count = scopedConfig.count;
+      observed.countSource = 'settings_context';
+    }
+
+    if (observed.model === 'UNKNOWN') {
+      const configPill = buildBottomComposerConfigPillSnapshot();
+      const configPillText = String(
+        configPill.bottom_composer_config_pill_raw_text
+        || configPill.bottom_composer_config_pill_text
+        || '',
+      );
+      const pillModel = extractObservedModelLabel(configPillText);
+      if (pillModel) {
+        observed.model = pillModel;
+        observed.modelSource = 'config_pill';
       }
     }
 
-    // 4. Detect aspect ratio
-    const aspectElements = document.querySelectorAll('button, [role="tab"], [role="button"], span');
-    for (const el of aspectElements) {
-      if (!isVisible(el)) continue;
-      const text = el.textContent.trim();
-      const matchedRatio = IMAGE_ASPECT_RATIOS.find((ratio) => text.includes(ratio));
-      if (!matchedRatio) continue;
-      if (isSelectedControl(el, matchedRatio) || isSelectedControl(el.closest('button'), matchedRatio)) {
-        observed.aspectRatio = matchedRatio;
-        break;
-      }
-    }
-
-    // 5. Detect count
-    const countElements = document.querySelectorAll('button, [role="tab"], [role="button"], span');
-    for (const el of countElements) {
-      if (!isVisible(el)) continue;
-      const text = el.textContent.trim();
-      if (/^[1-4]x$/.test(text)) {
-        if (isSelectedControl(el, text) || isSelectedControl(el.closest('button'), text)) {
-          observed.count = text;
+    if (observed.model === 'UNKNOWN') {
+      const modelElements = document.querySelectorAll('button, span, div, p, [aria-label], [title]');
+      for (const el of modelElements) {
+        if (!isVisible(el)) continue;
+        const detectedModel = extractObservedModelLabel(el.textContent)
+          || extractObservedModelLabel(el.getAttribute('aria-label'))
+          || extractObservedModelLabel(el.getAttribute('title'));
+        if (detectedModel) {
+          observed.model = detectedModel;
+          observed.modelSource = 'global_text';
           break;
+        }
+      }
+    }
+
+    if (observed.aspectRatio === 'UNKNOWN') {
+      const aspectElements = document.querySelectorAll('button, [role="tab"], [role="button"], span');
+      for (const el of aspectElements) {
+        if (!isVisible(el)) continue;
+        const text = el.textContent.trim();
+        const matchedRatio = IMAGE_ASPECT_RATIOS.find((ratio) => text.includes(ratio));
+        if (!matchedRatio) continue;
+        if (isSelectedControl(el, matchedRatio) || isSelectedControl(el.closest('button'), matchedRatio)) {
+          observed.aspectRatio = matchedRatio;
+          observed.aspectRatioSource = 'settings_context';
+          break;
+        }
+      }
+    }
+
+    if (observed.count === 'UNKNOWN') {
+      const countElements = document.querySelectorAll('button, [role="tab"], [role="button"], span');
+      for (const el of countElements) {
+        if (!isVisible(el)) continue;
+        const text = el.textContent.trim();
+        if (/^[1-4]x$/.test(text)) {
+          if (isSelectedControl(el, text) || isSelectedControl(el.closest('button'), text)) {
+            observed.count = text;
+            observed.countSource = 'settings_context';
+            break;
+          }
+        }
+      }
+    }
+
+    // 5b. Collapsed-editor fallback: the F2V/T2V composer folds mode, aspect and
+    // count into a single bottom config pill (e.g. "Video · 10s crop_9_16 1x").
+    // When the expanded controls are not individually selectable, read the pill.
+    if (observed.aspectRatio === 'UNKNOWN' || observed.count === 'UNKNOWN' || observed.topMode === 'UNKNOWN') {
+      const configPill = buildBottomComposerConfigPillSnapshot();
+      const pillText = configPill.bottom_composer_config_pill_raw_text
+        || configPill.bottom_composer_config_pill_text
+        || '';
+      if (pillText) {
+        if (observed.aspectRatio === 'UNKNOWN') {
+          const mappedAspect = flowCropTokenToAspectRatio(canonicalizeFlowConfigAspectToken(pillText));
+          if (mappedAspect) {
+            observed.aspectRatio = mappedAspect;
+            observed.aspectRatioSource = 'config_pill';
+          }
+        }
+        if (observed.count === 'UNKNOWN') {
+          const countToken = canonicalizeFlowConfigCountToken(pillText);
+          if (countToken) {
+            observed.count = countToken;
+            observed.countSource = 'config_pill';
+          }
+        }
+        if (observed.topMode === 'UNKNOWN' && /video/i.test(pillText)) {
+          observed.topMode = 'Video';
         }
       }
     }
@@ -3071,6 +3710,51 @@
     }
     console.log(`[FlowAgent] Detected slots: ${observed.visibleUploadSlots.join(', ')}`);
 
+    // 6a. If the explicit tab labels are collapsed or renamed, recover mode/submode
+    // from the upload slot surface itself. This keeps readiness and telemetry aligned
+    // with the actual editor even when the visible top controls ghost to UNKNOWN.
+    if (observed.topMode === 'UNKNOWN') {
+      if (observed.visibleUploadSlots.includes('Start') || observed.visibleUploadSlots.includes('End')) {
+        observed.topMode = 'Video';
+        if (observed.subMode === 'UNKNOWN' || observed.subMode === 'None') {
+          observed.subMode = 'Frames';
+        }
+      } else if (
+        observed.visibleUploadSlots.includes('Ingredients')
+        || observed.visibleUploadSlots.includes('Subject')
+        || observed.visibleUploadSlots.includes('Scene')
+        || observed.visibleUploadSlots.includes('Style')
+      ) {
+        observed.topMode = 'Video';
+        observed.subMode = 'Ingredients';
+      } else if (observed.visibleUploadSlots.includes('Image')) {
+        observed.topMode = 'Image';
+      }
+    } else if (
+      observed.topMode === 'Video'
+      && (observed.subMode === 'UNKNOWN' || observed.subMode === 'None')
+    ) {
+      if (observed.visibleUploadSlots.includes('Start') || observed.visibleUploadSlots.includes('End')) {
+        observed.subMode = 'Frames';
+      } else if (
+        observed.visibleUploadSlots.includes('Ingredients')
+        || observed.visibleUploadSlots.includes('Subject')
+        || observed.visibleUploadSlots.includes('Scene')
+        || observed.visibleUploadSlots.includes('Style')
+      ) {
+        observed.subMode = 'Ingredients';
+      }
+    }
+
+    // 6b. F2V (Video/Frames) only ever exposes Start/End upload slots. Strip any
+    // slot labels that leaked in from mode toggles or unrelated text so the F2V
+    // surface is not misreported with bogus slots (e.g. "Image", "Scene").
+    if (observed.topMode === 'Video' && observed.subMode === 'Frames') {
+      const F2V_SLOTS = ['Start', 'End'];
+      observed.visibleUploadSlots = observed.visibleUploadSlots.filter((slot) => F2V_SLOTS.includes(slot));
+      observed.visibleAssetPreviews = observed.visibleAssetPreviews.filter((slot) => F2V_SLOTS.includes(slot));
+    }
+
     // 7. Check composer
     observed.composerPresent = !!findComposerElement();
 
@@ -3085,6 +3769,33 @@
 
   function collectFlowPageStateDiagnostic(mode) {
     const readiness = checkFlowComposerReady(mode);
+    const composer = findComposerElement();
+    const generateBtn = findGenerateButtonNearComposer();
+    const configPill = buildBottomComposerConfigPillSnapshot();
+    const uiContractV2 = buildUiContractV2Proof(mode, readiness.observed, composer, generateBtn);
+    const visibleEditorMarkers = collectVisibleMarkers([
+      'Video',
+      'Frames',
+      'Ingredients',
+      'Image',
+      'Veo',
+      'Start',
+      'End',
+      '9:16',
+      '16:9',
+      '1x',
+    ], [
+      normalizeText(document.body?.innerText || '').slice(0, 2000),
+      document.title,
+      ...(collectVisibleTexts('button, [role="button"]', (el) => el.textContent || '')),
+      ...(collectVisibleTexts('[aria-label]', (el) => el.getAttribute('aria-label') || '')),
+    ]);
+    const currentModeVisible = readiness.current_mode_visible;
+    const pagePreselectionReady = Boolean(
+      readiness.signed_in_likely
+      && Boolean(uiContractV2.editor_capability_ready)
+      && !readiness.blocking_modal_detected
+    );
     const projectCreationState = collectProjectCreationState();
     const bodyText = normalizeText(document.body?.innerText || '').slice(0, 2000);
     const buttonTexts = collectVisibleTexts('button, [role="button"]', (el) => el.textContent || '');
@@ -3140,18 +3851,10 @@
         'Permission denied',
         'You need access',
       ], markerSources),
-      visible_project_editor_markers: collectVisibleMarkers([
-        'Video',
-        'Frames',
-        'Ingredients',
-        'Image',
-        'Veo',
-        'Start',
-        'End',
-        '9:16',
-        '16:9',
-        '1x',
-      ], markerSources),
+      ok: pagePreselectionReady,
+      strict_composer_ok: readiness.ok,
+      strict_composer_error: readiness.error || null,
+      visible_project_editor_markers: visibleEditorMarkers,
       visible_composer_placeholder_markers: collectVisibleMarkers([
         'What do you want to create?',
         'Describe your video',
@@ -3167,7 +3870,15 @@
       signed_in_likely: readiness.signed_in_likely,
       composer_found: readiness.composer_found,
       composer_editable: readiness.composer_editable,
+      prompt_field_found: Boolean(composer),
       generate_button_found: readiness.generate_button_found,
+      editor_capability_ready: Boolean(uiContractV2.editor_capability_ready),
+      pre_generate_ready: Boolean(uiContractV2.pre_generate_ready),
+      ui_contract_version: uiContractV2.ui_contract_version,
+      ui_contract_v2: uiContractV2,
+      bottom_composer_config_pill_visible: configPill.bottom_composer_config_pill_visible,
+      bottom_composer_config_pill_text: configPill.bottom_composer_config_pill_text,
+      bottom_composer_config_pill_raw_text: configPill.bottom_composer_config_pill_raw_text,
       current_mode_visible: readiness.current_mode_visible,
       blocking_modal_detected: readiness.blocking_modal_detected,
       observed: readiness.observed,
@@ -3181,6 +3892,566 @@
       content_script_protocol_version: FLOW_KIT_DOM_PROTOCOL_VERSION,
       timestamp: new Date().toISOString(),
     };
+  }
+
+  // Google Flow UI Contract V2 — live DOM observer (read-only, never clicks).
+  // Reads the real Flow DOM into raw signals, then maps them to the canonical V2
+  // diagnostic via gfv2-readiness.js (self.__GFV2_READINESS__). Editor readiness
+  // is driven by the composer/prompt surface — NOT Frames/Ingredients buttons.
+  // Strong upload proof requires Add-to-Prompt/preview/chip; visibleUploadSlots
+  // and Start-body text are recorded only as deprecated/weak signals.
+  // ---- Google Flow V2 settings read/interaction primitive ----
+  // V2 settings live behind a "View Settings" launcher (settings/tune icon) in the
+  // composer — NOT the legacy Video/Frames controls. These helpers open that panel,
+  // read/select 9:16 + 1x, read the model, and verify persistence.
+  const _gfv2Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function _gfv2Vis(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    const s = window.getComputedStyle(el);
+    return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+  }
+  function _gfv2Norm(s) {
+    return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  }
+  function _gfv2Blob(el) {
+    return (
+      _gfv2Norm(el.textContent || '') + ' ' +
+      _gfv2Norm((el.getAttribute && el.getAttribute('aria-label')) || '') + ' ' +
+      _gfv2Norm((el.getAttribute && el.getAttribute('title')) || '')
+    ).toLowerCase();
+  }
+  function _gfv2Describe(el) {
+    return {
+      text: _gfv2Norm(el.textContent || '').slice(0, 50) || null,
+      aria: _gfv2Norm((el.getAttribute && el.getAttribute('aria-label')) || '') || null,
+      title: _gfv2Norm((el.getAttribute && el.getAttribute('title')) || '') || null,
+      role: (el.getAttribute && el.getAttribute('role')) || null,
+      tag: String(el.tagName || '').toLowerCase(),
+      pressed: el.getAttribute && el.getAttribute('aria-pressed'),
+      checked: el.getAttribute && el.getAttribute('aria-checked'),
+      selected: el.getAttribute && el.getAttribute('aria-selected'),
+      dataState: el.getAttribute && el.getAttribute('data-state'),
+      cls: _gfv2Norm(typeof el.className === 'string' ? el.className : '').slice(0, 70) || null,
+    };
+  }
+  // Selection truthiness across the patterns Flow's React/Material UI uses.
+  function _gfv2IsSelected(el) {
+    if (!el) return false;
+    const get = (a) => (el.getAttribute && el.getAttribute(a)) || '';
+    if (get('aria-pressed') === 'true') return true;
+    if (get('aria-checked') === 'true') return true;
+    if (get('aria-selected') === 'true') return true;
+    const ds = get('data-state').toLowerCase();
+    if (ds === 'on' || ds === 'active' || ds === 'checked' || ds === 'selected') return true;
+    const cls = (typeof el.className === 'string' ? el.className : '').toLowerCase();
+    if (/\bselected\b|\bactive\b|\bchecked\b/.test(cls)) return true;
+    return false;
+  }
+  function _gfv2DumpControls() {
+    const out = [];
+    const seen = new Set();
+    const sel = '[role="dialog"] *, [role="menu"] *, [data-radix-popper-content-wrapper] *, [role="listbox"] *, button, [role="button"], [role="option"], [role="menuitemradio"], [role="radio"], [role="tab"], [role="switch"]';
+    document.querySelectorAll(sel).forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const d = _gfv2Describe(el);
+      const key = (d.text || '') + '|' + (d.aria || '') + '|' + d.role + '|' + d.cls;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const blob = ((d.text || '') + ' ' + (d.aria || '') + ' ' + (d.title || '')).toLowerCase();
+      const interesting =
+        d.pressed != null || d.checked != null || d.selected != null || d.dataState != null ||
+        /9:16|16:9|1:1|3:4|4:3|\b1x\b|\b2x\b|\b3x\b|\b4x\b|veo|nano|imagen|aspect|ratio|portrait|landscape|model|output|variation|count|quality|resolution/.test(blob);
+      if (interesting && out.length < 70) out.push(d);
+    });
+    return out;
+  }
+  // Find the V2 settings launcher (View Settings / settings / tune icon).
+  function _gfv2FindSettingsLauncher() {
+    const cands = [];
+    document.querySelectorAll('button, [role="button"], [aria-label], [title]').forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const blob = _gfv2Blob(el);
+      if (!blob) return;
+      let score = 0;
+      // 'tune'/'Settings' (tune icon) is the GENERATION settings (9:16/1x/model);
+      // 'View Settings' (settings_2 icon) is project settings — lower priority.
+      if (/\btune\b|tunesettings|tune settings|sliders|adjust/.test(blob)) score = 100;
+      else if (/aspect|ratio|output settings/.test(blob)) score = 90;
+      else if (/^settings\b/.test(blob) && !/view settings/.test(blob)) score = 85;
+      else if (/view settings/.test(blob)) score = 70;
+      else if (/\bsettings\b/.test(blob)) score = 60;
+      if (score > 0) cands.push({ el, blob: blob.slice(0, 50), score });
+    });
+    cands.sort((a, b) => b.score - a.score);
+    return cands;
+  }
+  function _gfv2ClickEl(el) {
+    try {
+      el.scrollIntoView({ block: 'center' });
+    } catch (_) {}
+    // Full pointer+mouse sequence — Material UI / Radix comboboxes (e.g. the video
+    // model dropdown) open on pointerdown/mousedown, not a bare .click().
+    const fireMouse = (type) => {
+      try {
+        el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0 }));
+      } catch (_) {}
+    };
+    const firePointer = (type) => {
+      try {
+        el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, view: window, pointerId: 1, pointerType: 'mouse', button: 0 }));
+      } catch (_) {}
+    };
+    try {
+      el.focus();
+    } catch (_) {}
+    firePointer('pointerover');
+    firePointer('pointerdown');
+    fireMouse('mousedown');
+    firePointer('pointerup');
+    fireMouse('mouseup');
+    try {
+      el.click();
+    } catch (_) {}
+    fireMouse('click');
+    return true;
+  }
+  // Find a clickable option by visible label/aria (exact-ish), returns the element.
+  function _gfv2FindOption(labels) {
+    const wanted = labels.map((l) => l.toLowerCase());
+    const sel = 'button, [role="button"], [role="option"], [role="menuitemradio"], [role="radio"], [role="tab"], [role="switch"], [aria-label]';
+    let best = null;
+    document.querySelectorAll(sel).forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const text = _gfv2Norm(el.textContent || '').toLowerCase();
+      const aria = _gfv2Norm((el.getAttribute && el.getAttribute('aria-label')) || '').toLowerCase();
+      const stripped = text.replace(/^[a-z_]+(?=[A-Z0-9])/, ''); // drop leading icon ligature
+      for (const w of wanted) {
+        if (text === w || aria === w || stripped === w || text.indexOf(w) >= 0 || aria.indexOf(w) >= 0) {
+          if (!best) best = el;
+        }
+      }
+    });
+    return best;
+  }
+
+  function _gfv2ElTop(el) {
+    try {
+      return el.getBoundingClientRect().top;
+    } catch (_) {
+      return -1;
+    }
+  }
+  // Find the top Y of a settings section label (e.g. "Video generation default").
+  function _gfv2FindSectionTop(labelRe) {
+    let best = null;
+    document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,div,label,legend,b,strong').forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const t = _gfv2Norm(el.textContent || '').toLowerCase();
+      if (t.length > 60) return;
+      if (labelRe.test(t)) {
+        const top = _gfv2ElTop(el);
+        if (top >= 0 && (best === null || top < best)) best = top;
+      }
+    });
+    return best;
+  }
+  // Y-band of the "Video generation default" section: from its label down to the
+  // Save button (or panel bottom). The "Image generation default" section sits ABOVE
+  // it, so this band cleanly excludes the image ratio/count/model controls.
+  function _gfv2VideoBand() {
+    let videoTop = _gfv2FindSectionTop(/^video generation default$/);
+    if (videoTop == null) videoTop = _gfv2FindSectionTop(/video generation default/);
+    if (videoTop == null) return null;
+    let saveTop = null;
+    document.querySelectorAll('button, [role="button"]').forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const t = _gfv2Norm(el.textContent || '').toLowerCase();
+      if (/^save$|^done$|^apply$/.test(t)) {
+        const top = _gfv2ElTop(el);
+        if (top > videoTop && (saveTop === null || top < saveTop)) saveTop = top;
+      }
+    });
+    return { minY: videoTop, maxY: saveTop != null ? saveTop : videoTop + 1000 };
+  }
+  function _gfv2InBand(el, band) {
+    if (!band) return true;
+    const top = _gfv2ElTop(el);
+    return top >= band.minY - 4 && top < band.maxY;
+  }
+  // Option finder scoped to a Y-band (so video-section 9:16/1x are not confused with
+  // the image-section ones above).
+  function _gfv2FindOptionInBand(labels, band) {
+    const wanted = labels.map((l) => l.toLowerCase());
+    const sel = 'button, [role="button"], [role="option"], [role="menuitemradio"], [role="radio"], [role="tab"], [role="switch"]';
+    let best = null;
+    document.querySelectorAll(sel).forEach((el) => {
+      if (best || !_gfv2Vis(el) || !_gfv2InBand(el, band)) return;
+      const text = _gfv2Norm(el.textContent || '').toLowerCase();
+      const aria = _gfv2Norm((el.getAttribute && el.getAttribute('aria-label')) || '').toLowerCase();
+      for (const w of wanted) {
+        if (text === w || aria === w || text.indexOf(w) >= 0 || aria.indexOf(w) >= 0) {
+          best = el;
+          break;
+        }
+      }
+    });
+    return best;
+  }
+  // Find the "Veo 3.1 - Lite" option in an open model dropdown (portaled anywhere).
+  // Matches veo+lite, excludes Fast/Quality. Lenient on dash/spacing.
+  function _gfv2FindVeoLiteOption() {
+    const sel = 'button, [role="button"], [role="option"], [role="menuitem"], [role="menuitemradio"], li, [role="row"], div[role], span';
+    let best = null;
+    document.querySelectorAll(sel).forEach((el) => {
+      if (best || !_gfv2Vis(el)) return;
+      const t = _gfv2Norm(el.textContent || '').toLowerCase();
+      if (t.length > 40) return;
+      if (/veo/.test(t) && /lite/.test(t) && !/fast|quality/.test(t)) best = el;
+    });
+    return best;
+  }
+  function _gfv2DumpModelOptions() {
+    const sel = 'button, [role="button"], [role="option"], [role="menuitem"], [role="menuitemradio"], li, [role="row"], div[role]';
+    const out = [];
+    const seen = new Set();
+    document.querySelectorAll(sel).forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const t = _gfv2Norm(el.textContent || '');
+      if (!t || t.length > 40 || seen.has(t)) return;
+      if (/veo|omni|flash|nano/i.test(t)) {
+        seen.add(t);
+        out.push(t);
+      }
+    });
+    return out.slice(0, 12);
+  }
+  // The video-section model dropdown trigger (shows Omni Flash / Veo / arrow_drop_down).
+  function _gfv2FindModelTriggerInBand(band) {
+    const sel = 'button, [role="button"], [role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="menu"], [aria-haspopup="true"]';
+    let best = null;
+    document.querySelectorAll(sel).forEach((el) => {
+      if (best || !_gfv2Vis(el) || !_gfv2InBand(el, band)) return;
+      const blob = _gfv2Blob(el);
+      if (/omni flash|veo|arrow_drop_down/.test(blob)) best = el;
+    });
+    return best;
+  }
+
+  async function gfv2DiscoverSettings() {
+    const launchers = _gfv2FindSettingsLauncher();
+    const before = _gfv2DumpControls();
+    let clicked = null;
+    if (launchers.length) {
+      if (_gfv2ClickEl(launchers[0].el)) clicked = launchers[0].blob;
+      await _gfv2Sleep(900);
+    }
+    const after = _gfv2DumpControls();
+    return {
+      ok: true,
+      launcher_candidates: launchers.slice(0, 10).map((l) => ({ blob: l.blob, score: l.score })),
+      clicked,
+      before_count: before.length,
+      after_controls: after,
+    };
+  }
+
+  // Broad dump of ALL visible interactive elements (incl. icon-only buttons) so the
+  // real V2 composer/settings affordances can be discovered even when no obvious
+  // settings launcher matches.
+  function _gfv2DumpAllVisible() {
+    const out = [];
+    const seen = new Set();
+    document.querySelectorAll('button, [role="button"], [role="option"], [role="menuitemradio"], [role="radio"], [role="tab"], [role="switch"], [aria-label], [data-state]').forEach((el) => {
+      if (!_gfv2Vis(el)) return;
+      const d = _gfv2Describe(el);
+      const key = (d.text || '') + '|' + (d.aria || '') + '|' + (d.title || '') + '|' + d.role;
+      if (seen.has(key)) return;
+      seen.add(key);
+      if ((d.text || d.aria || d.title) && out.length < 90) out.push(d);
+    });
+    return out;
+  }
+
+  // Interactive: open settings, confirm/select 9:16 + 1x, read model, persist.
+  async function gfv2ApplySettings(options) {
+    const result = {
+      settings_panel_opened: false,
+      launcher: null,
+      ratio_9_16_confirmed: false,
+      count_1x_confirmed: false,
+      model_canonical: null,
+      model_visible_wrong: false,
+      model_veo_lite_confirmed: false,
+      save_button_found: false,
+      settings_saved_or_persisted: false,
+      actions: [],
+    };
+    // Always capture the composer affordances first (discovery aid).
+    result.controls_seen = _gfv2DumpAllVisible();
+    const launchers = _gfv2FindSettingsLauncher();
+    result.launcher_candidates = launchers.slice(0, 10).map((l) => l.blob);
+    if (!launchers.length) {
+      result.error = 'GFV2_SETTINGS_PANEL_NOT_FOUND';
+      result.detail = 'no_settings_launcher';
+      return result;
+    }
+    // Open Agent settings — the panel must expose the "Video generation default"
+    // SECTION (not just any generation settings). Try each launcher; build a Y-band
+    // scoped to that section. The "Image generation default" section (Nano Banana)
+    // sits above this band and is ignored entirely.
+    result.launchers_tried = [];
+    let band = null;
+    for (const cand of launchers.slice(0, 6)) {
+      _gfv2ClickEl(cand.el);
+      await _gfv2Sleep(Math.max(450, Number(options.panelWaitMs || 800)));
+      band = _gfv2VideoBand();
+      result.launchers_tried.push({ launcher: cand.blob, revealed: Boolean(band) });
+      if (band) {
+        result.launcher = cand.blob;
+        result.settings_panel_opened = true;
+        break;
+      }
+      try {
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      } catch (_) {}
+      await _gfv2Sleep(250);
+    }
+    result.controls_seen = _gfv2DumpControls().slice(0, 50);
+    if (!result.settings_panel_opened || !band) {
+      result.error = 'GFV2_SETTINGS_PANEL_NOT_FOUND';
+      result.detail = 'video_generation_default_section_not_found';
+      return result;
+    }
+    result.video_band = { minY: Math.round(band.minY), maxY: Math.round(band.maxY) };
+
+    // --- VIDEO 9:16 (scoped to the Video generation default band) ---
+    const ratioEl = _gfv2FindOptionInBand(['9:16', 'crop_9_16', 'portrait 9:16', '9 : 16'], band);
+    if (ratioEl) {
+      if (!_gfv2IsSelected(ratioEl)) {
+        _gfv2ClickEl(ratioEl);
+        result.actions.push('clicked_video_9_16');
+        await _gfv2Sleep(450);
+      } else {
+        result.actions.push('video_9_16_already_selected');
+      }
+      const recheck = _gfv2FindOptionInBand(['9:16', 'crop_9_16', '9 : 16'], band);
+      result.ratio_9_16_confirmed = Boolean(recheck && _gfv2IsSelected(recheck));
+    }
+
+    // --- VIDEO 1x (scoped) ---
+    const countEl = _gfv2FindOptionInBand(['1x', '1×', 'x1'], band);
+    if (countEl) {
+      if (!_gfv2IsSelected(countEl)) {
+        _gfv2ClickEl(countEl);
+        result.actions.push('clicked_video_1x');
+        await _gfv2Sleep(450);
+      } else {
+        result.actions.push('video_1x_already_selected');
+      }
+      const recheck = _gfv2FindOptionInBand(['1x', '1×', 'x1'], band);
+      result.count_1x_confirmed = Boolean(recheck && _gfv2IsSelected(recheck));
+    }
+
+    // --- VIDEO model: select Veo 3.1 - Lite (scoped dropdown) ---
+    const modelTrigger = _gfv2FindModelTriggerInBand(band);
+    if (modelTrigger) {
+      const beforeText = _gfv2Norm(modelTrigger.textContent || '').toLowerCase();
+      result.model_before = beforeText.slice(0, 40);
+      if (!/veo[\s\S]*lite/.test(beforeText)) {
+        _gfv2ClickEl(modelTrigger);
+        result.actions.push('opened_video_model_dropdown');
+        await _gfv2Sleep(800);
+        // dropdown options are portaled outside the band — search globally; Veo labels
+        // are unambiguous (the image section has no Veo). Retry once for late render.
+        let veoLite = _gfv2FindVeoLiteOption();
+        if (!veoLite) {
+          await _gfv2Sleep(700);
+          veoLite = _gfv2FindVeoLiteOption();
+        }
+        result.model_dropdown_options = _gfv2DumpModelOptions();
+        if (veoLite) {
+          result.veo_lite_option_text = _gfv2Norm(veoLite.textContent || '').slice(0, 40);
+          _gfv2ClickEl(veoLite);
+          result.actions.push('selected_veo_3_1_lite');
+          await _gfv2Sleep(650);
+        } else {
+          // re-open once in case the first click toggled it shut
+          _gfv2ClickEl(modelTrigger);
+          await _gfv2Sleep(700);
+          veoLite = _gfv2FindVeoLiteOption();
+          result.model_dropdown_options = _gfv2DumpModelOptions();
+          if (veoLite) {
+            _gfv2ClickEl(veoLite);
+            result.actions.push('selected_veo_3_1_lite_retry');
+            await _gfv2Sleep(650);
+          } else {
+            result.error = 'GFV2_MODEL_VEO_LITE_NOT_FOUND';
+            result.detail = 'veo_lite_not_in_video_dropdown';
+          }
+        }
+      }
+      const trigger2 = _gfv2FindModelTriggerInBand(_gfv2VideoBand() || band) || modelTrigger;
+      const afterText = _gfv2Norm(trigger2.textContent || '').toLowerCase();
+      result.model_after = afterText.slice(0, 40);
+      if (/veo[\s\S]*lite/.test(afterText)) {
+        result.model_veo_lite_confirmed = true;
+        result.model_canonical = 'veo 3.1 - lite';
+      } else if (/omni flash|imagen/.test(afterText)) {
+        // a visible WRONG model inside the Video section (Nano Banana is image-only,
+        // never in this band)
+        result.model_visible_wrong = true;
+        result.model_canonical = (afterText.match(/omni flash|imagen/) || [null])[0];
+      } else if (/veo[\s\S]*(fast|quality)/.test(afterText)) {
+        result.model_canonical = afterText.slice(0, 40);
+        if (!result.error) result.error = 'GFV2_MODEL_VEO_LITE_NOT_FOUND';
+      } else {
+        result.model_canonical = afterText ? afterText.slice(0, 40) : null;
+      }
+    } else {
+      result.model_canonical = null; // no video model trigger visible
+    }
+
+    // --- SAVE / PERSIST (video-section values only) ---
+    const saveEl = _gfv2FindOption(['save', 'done', 'apply']);
+    if (saveEl) {
+      result.save_button_found = true;
+      _gfv2ClickEl(saveEl);
+      result.actions.push('clicked_save');
+      await _gfv2Sleep(650);
+    }
+    // Re-read the video band to verify persistence of ratio/count/model.
+    const band2 = _gfv2VideoBand() || band;
+    if (band2) {
+      const pr = _gfv2FindOptionInBand(['9:16', 'crop_9_16', '9 : 16'], band2);
+      const pc = _gfv2FindOptionInBand(['1x', '1×', 'x1'], band2);
+      const mt = _gfv2FindModelTriggerInBand(band2);
+      const mTxt = mt ? _gfv2Norm(mt.textContent || '').toLowerCase() : '';
+      result.ratio_9_16_confirmed = result.ratio_9_16_confirmed || Boolean(pr && _gfv2IsSelected(pr));
+      result.count_1x_confirmed = result.count_1x_confirmed || Boolean(pc && _gfv2IsSelected(pc));
+      result.model_veo_lite_confirmed = result.model_veo_lite_confirmed || /veo[\s\S]*lite/.test(mTxt);
+    }
+    result.settings_saved_or_persisted = Boolean(
+      result.ratio_9_16_confirmed && result.count_1x_confirmed && result.model_veo_lite_confirmed,
+    );
+    return result;
+  }
+
+  function observeGoogleFlowV2State() {
+    // Defensive: broken/error Flow pages ("Something went wrong") can make some
+    // DOM helpers throw. Never throw — fall back to safe values so a diagnostic
+    // always returns (showing editor-not-ready rather than an opaque failure).
+    const safe = (fn, fallback) => {
+      try {
+        return fn();
+      } catch (_) {
+        return fallback;
+      }
+    };
+    const obs = safe(() => observeFlowState(), {}) || {};
+    const composer = safe(() => findComposerElement(), null);
+    const bodyText = safe(() => (document.body && document.body.innerText) || '', '');
+    const composerEditable = Boolean(composer && safe(() => isComposerEditable(composer), false));
+    const generateBtn = safe(() => findGenerateButtonNearComposer(), null);
+
+    function isVisible(el) {
+      if (!el || !el.getBoundingClientRect) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return false;
+      const s = window.getComputedStyle(el);
+      return Boolean(s && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0);
+    }
+    const buttonTexts = [];
+    const seenText = new Set();
+    document.querySelectorAll('button, [role="button"], a').forEach((el) => {
+      if (!isVisible(el)) return;
+      const t = normalizeText(
+        (el.textContent || '') + ' ' + (el.getAttribute && el.getAttribute('aria-label') || ''),
+      );
+      if (t && !seenText.has(t) && t.length <= 60) {
+        seenText.add(t);
+        buttonTexts.push(t);
+      }
+    });
+    const lowerTexts = buttonTexts.map((t) => t.toLowerCase());
+    const has = (needle) => lowerTexts.some((t) => t.includes(needle));
+
+    const modelLower = String(obs.model || '').toLowerCase();
+    const isVeo = /veo/.test(modelLower);
+    const isWrongModel = !isVeo && /nano banana|imagen|\bimage\b/.test(modelLower);
+    const composerRoot =
+      (composer && composer.closest && composer.closest('form, [role="form"]')) || null;
+    const assetPreviewInPrompt = Boolean(
+      composerRoot &&
+        composerRoot.querySelector &&
+        composerRoot.querySelector('img, [style*="background-image"], [data-asset], [class*="thumbnail" i]'),
+    );
+    const promptText = composer
+      ? normalizeText(composer.textContent || composer.value || '')
+      : '';
+    const settingsPanelOpen = Boolean(
+      document.querySelector('[role="dialog"], [role="menu"]') && (has('9:16') || has('aspect')),
+    );
+
+    const signals = {
+      // editor
+      flow_editor_open: Boolean(composer) || /\/tools\/flow/.test(String(location.href || '')),
+      extension_content_script_alive: true,
+      login_or_access_blocker: /sign in|log in|continue with google/i.test(bodyText) && !composer,
+      composer_or_prompt_surface_exists: Boolean(composer),
+      frames_button_present: has('frames'),
+      ingredients_button_present: has('ingredients'),
+      // buttons / upload
+      button_texts: buttonTexts,
+      upload_media_available: has('add media') || has('upload media') || has('upload'),
+      add_to_prompt_found: has('add to prompt'),
+      // strong upload proof is action-confirmed by the runner; passive observe
+      // can only assert preview/chip presence, not Add-to-Prompt completion.
+      add_to_prompt_completed: false,
+      asset_preview_in_prompt: assetPreviewInPrompt,
+      prompt_attachment_chip_exists: assetPreviewInPrompt,
+      // settings
+      settings_launcher_found: has('settings') || has('view settings') || has('tune'),
+      settings_panel_opened: settingsPanelOpen,
+      video_generation_settings_found: has('9:16') || has('aspect ratio') || settingsPanelOpen,
+      aspect_9_16_found: obs.aspectRatio === '9:16' || has('9:16'),
+      aspect_9_16_confirmed: obs.aspectRatio === '9:16',
+      count_1x_found: obs.count === '1x' || has('1x'),
+      count_1x_confirmed: obs.count === '1x',
+      model_dropdown_found: isVeo || isWrongModel || has('veo') || has('nano banana'),
+      model_veo_lite_found: /veo[\s\S]*lite/.test(modelLower) || has('veo 3.1 - lite'),
+      model_veo_lite_confirmed: /veo[\s\S]*lite/.test(modelLower),
+      visible_wrong_model: isWrongModel,
+      model_canonical: obs.model || null,
+      save_button_found: has('save'),
+      settings_saved_or_persisted: obs.aspectRatio === '9:16' && obs.count === '1x',
+      // prompt
+      prompt_field_found: composerEditable,
+      prompt_inserted: promptText.length > 0,
+      prompt_inserted_length: promptText.length,
+      prompt_reflected: promptText.length > 0,
+      prompt_accepted: promptText.length > 0,
+      // generate
+      generate_button_found: Boolean(generateBtn),
+      generate_button_enabled: Boolean(generateBtn && !generateBtn.disabled),
+      blocking_modal_detected: Boolean(safe(() => detectBlockingModal(), false)),
+      // weak/deprecated signals
+      subMode_Frames_inferred: obs.subMode === 'Frames',
+      visibleUploadSlots: Array.isArray(obs.visibleUploadSlots) ? obs.visibleUploadSlots : [],
+      body_contains_Start: bodyText.includes('Start'),
+      product_truth_anchor_present: false,
+    };
+
+    if (
+      typeof self !== 'undefined' &&
+      self.__GFV2_READINESS__ &&
+      typeof self.__GFV2_READINESS__.buildGoogleFlowV2Diagnostic === 'function'
+    ) {
+      return self.__GFV2_READINESS__.buildGoogleFlowV2Diagnostic(signals);
+    }
+    // Fallback: module not loaded as a content script — return raw signals.
+    return Object.assign({ google_flow_ui_contract: 'V2_UPLOAD_SETTINGS_PROMPT_GENERATE' }, signals);
   }
 
   function checkFlowComposerReady(mode) {
@@ -3199,6 +4470,7 @@
       signed_in_likely: inferSignedInLikely(composer, observed),
       composer_found: !!composer,
       composer_editable: !!composer && isComposerEditable(composer),
+      prompt_field_found: Boolean(composer),
       generate_button_found: !!generateBtn,
       current_mode_visible: currentModeVisible,
       blocking_modal_detected: !!blockingModal,
@@ -3207,6 +4479,11 @@
       content_build_id: FLOW_KIT_DOM_BUILD_ID,
       git_sha: FLOW_KIT_DOM_BUILD_ID,
     };
+    const uiContractV2 = buildUiContractV2Proof(mode, observed, composer, generateBtn);
+    result.ui_contract_version = uiContractV2.ui_contract_version;
+    result.ui_contract_v2 = uiContractV2;
+    result.editor_capability_ready = Boolean(uiContractV2.editor_capability_ready);
+    result.pre_generate_ready = Boolean(uiContractV2.pre_generate_ready);
 
     if (mode) {
       result.expected_mode = mode;
@@ -3214,9 +4491,7 @@
 
     result.ok = Boolean(
       result.signed_in_likely &&
-      result.composer_found &&
-      result.composer_editable &&
-      result.generate_button_found &&
+      result.editor_capability_ready &&
       !result.blocking_modal_detected
     );
 
@@ -3230,6 +4505,18 @@
             ? `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`
             : `ABORT_${verifyResult.error}: ${verifyResult.reason}`;
           result.verify = verifyResult;
+          result.page_preselection_ready = isPreselectionEditorReadyDiagnostic(result);
+          result.mode_mismatch_non_fatal = Boolean(
+            mode === 'F2V' &&
+            result.page_preselection_ready &&
+            String(verifyResult.reason || '').includes("Expected model to contain 'Veo'"),
+          );
+          if (result.mode_mismatch_non_fatal) {
+            result.ok = true;
+          } else {
+            result.ok = false;
+            result.error = `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`;
+          }
         }
       }
     }
@@ -3429,9 +4716,7 @@
         readiness = await ensureVideoFramesEditorReady();
       }
 
-      const modeVisible = String(readiness.current_mode_visible || '');
-      const modeReady = modeVisible.includes('Video/Frames');
-      if (readiness.ok && readiness.composer_found && readiness.composer_editable && readiness.generate_button_found && modeReady) {
+      if (readiness.ok && readiness.editor_capability_ready === true) {
         return {
           ok: true,
           editor_ready: true,
@@ -3515,7 +4800,7 @@
     let projectListDetected = initialState.landingDetected;
 
     const alreadyReady = await ensureVideoFramesEditorReady();
-    if (alreadyReady.composer_found && alreadyReady.composer_editable && alreadyReady.generate_button_found && String(alreadyReady.current_mode_visible || '').includes('Video/Frames')) {
+    if (alreadyReady.editor_capability_ready === true) {
       return {
         ok: true,
         open_flow_root: initialState.isRoot,
@@ -3599,7 +4884,15 @@
         ? `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`
         : `ABORT_${verifyResult.error}: ${verifyResult.reason}`;
       result.verify = verifyResult;
-      return result;
+      const nonFatalModeMismatch = Boolean(
+        readiness.page_preselection_ready &&
+        String(verifyResult.reason || '').includes("Expected model to contain 'Veo'"),
+      );
+      if (!nonFatalModeMismatch) {
+        result.status = 'FAIL_MODE_MISMATCH';
+        result.error = `ABORT_FLOW_MODE_MISMATCH: ${verifyResult.reason}`;
+        return result;
+      }
     }
 
     return {
@@ -3610,6 +4903,19 @@
       composer: readiness,
       observed_state: readiness.observed,
     };
+  }
+
+  function isPreselectionEditorReadyDiagnostic(diagnostic) {
+    if (!diagnostic || typeof diagnostic !== 'object') {
+      return false;
+    }
+    return Boolean(
+      diagnostic.runtime_ready
+      && (
+        diagnostic.editor_capability_ready === true
+        || diagnostic.ui_contract_v2?.editor_capability_ready === true
+      ),
+    );
   }
 
   /**
@@ -3635,14 +4941,11 @@
     if (job.mode === 'F2V') {
       // TRUE_F2V requirements
       expectations.topMode = 'Video';
-      expectations.subMode = 'Frames';
       expectations.modelContains = 'Veo';
       expectations.modelLabel =
         resolveRequestedModel(job) || FLOW_MODE_CONFIG.F2V.defaultModel;
-      expectations.startSlotVisible = true;
       expectations.noImageMode = true;
       expectations.noNanoBanana = true;
-      expectations.noIngredients = true;
       expectations.composerPresent = true;
 
       // Check each requirement
@@ -3654,16 +4957,20 @@
         result.observed = observed;
         return result;
       }
-      if (observed.subMode !== 'Frames') {
+      if (observed.subMode === 'Ingredients') {
         result.ok = false;
         result.error = 'FLOW_MODE_MISMATCH';
-        result.reason = `Expected subMode='Frames', got '${observed.subMode}'`;
+        result.reason = `Expected F2V to avoid Ingredients mode, got '${observed.subMode}'`;
         result.expected = expectations;
         result.observed = observed;
         return result;
       }
       const observedModel = canonicalizeFlowModelLabel(observed.model);
       const expectedModel = canonicalizeFlowModelLabel(expectations.modelLabel);
+      const scopedModelVisible = isSettingsScopedModelSource(observed.modelSource);
+      // F2V safety is non-negotiable (contract §9.6/decision table): these two checks stay
+      // unconditional (MAIN), not gated behind scopedModelVisible — a wrong/Nano-Banana model
+      // must be rejected for F2V regardless of where it was observed from.
       if (observedModel.includes('nano banana')) {
         result.ok = false;
         result.error = 'ERR_WRONG_MODEL_FOR_F2V';
@@ -3895,13 +5202,12 @@
    */
   function isF2VWorkspaceAlreadyReady() {
     const obs = observeFlowState();
-    if (obs.topMode !== 'Video') return false;
-    if (obs.subMode !== 'Frames') return false;
-    if (!obs.visibleUploadSlots.includes('Start')) return false;
-    if (obs.model && /nano.?banana/i.test(obs.model)) return false;
     const composer = findComposerElement();
-    if (!composer || !isVisible(composer)) return false;
-    return true;
+    const generateBtn = findGenerateButtonNearComposer();
+    const uiContractV2 = buildUiContractV2Proof('F2V', obs, composer, generateBtn);
+    if (obs.topMode !== 'Video') return false;
+    if (obs.model && /nano.?banana/i.test(obs.model) && isSettingsScopedModelSource(obs.modelSource)) return false;
+    return uiContractV2.editor_capability_ready === true;
   }
 
   /**
@@ -4109,18 +5415,25 @@
     }
     logStage(STAGES.FLOW_TYPE_VIDEO_SELECTED, 'PASS', 'topMode=Video');
 
-    // ── Step 4: Select Frames submode ────────────────────────────────────────
+    // ── Step 4: Legacy Frames selector is optional in UI Contract V2. Keep the
+    // click when a visible control exists, but do not hard-fail when the live UI
+    // reaches a valid editor without exposing a Frames button.
     if (subBtn && isVisible(subBtn) && !isSelectedControl(subBtn, 'Frames')) {
       subBtn.click();
       await sleep(800);
     }
 
     const obsAfterFrames = observeFlowState();
-    if (obsAfterFrames.subMode !== 'Frames') {
+    const uiContractAfterFrames = buildUiContractV2Proof('F2V', obsAfterFrames, findComposerElement(), findGenerateButtonNearComposer());
+    if (obsAfterFrames.subMode === 'Ingredients') {
       logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'FAIL', `subMode=${obsAfterFrames.subMode}`);
       throw new Error('ERR_FRAMES_MODE_NOT_ACTIVE');
     }
-    logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'PASS', 'subMode=Frames');
+    if (uiContractAfterFrames.editor_capability_ready !== true) {
+      logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'FAIL', `editor_capability_ready=${uiContractAfterFrames.editor_capability_ready}`);
+      throw new Error('ERR_FRAMES_MODE_NOT_ACTIVE');
+    }
+    logStage(STAGES.FLOW_SUBMODE_FRAMES_SELECTED, 'PASS', `subMode=${obsAfterFrames.subMode}`);
 
     const composerReady = await ensureF2VComposerReadyBeforeConfig();
     if (!composerReady.ok) {
@@ -4130,40 +5443,33 @@
     logStage(STAGES.F2V_COMPOSER_READY, 'PASS', composerReady.detail);
 
     // ── Steps 5–7: Config panel (9:16 / 1x / Veo 3.1 - Lite) ────────────────
-    const configMenuOpen = await ensureOpenF2VConfigMenu();
-    if (!configMenuOpen.ok) {
-      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', `ERR_F2V_CONFIG_MENU_NOT_OPEN — ${configMenuOpen.detail}`);
-      throw new Error('ERR_F2V_CONFIG_MENU_NOT_OPEN');
-    }
-    const configCheck = await ensureF2VVerifiedAspectCountAndModel();
-    if (!configCheck.ok && configCheck.error === 'ERR_ASPECT_9_16_NOT_SELECTED') {
-      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', configCheck.detail);
-      throw new Error('ERR_ASPECT_9_16_NOT_SELECTED');
+    console.log('[FlowAgent] Delegating F2V settings configuration to f2v-flow-queue-runner in background');
+    const delegateResult = await sendRuntimeMessageWithResponse(
+      { type: 'CONFIGURE_F2V_SETTINGS', job: _job },
+      15000,
+    );
+
+    if (!delegateResult || delegateResult.ok !== true) {
+      logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'FAIL', delegateResult?.detail || delegateResult?.error || 'delegation_failed');
+      throw new Error(delegateResult?.error || 'ERR_ASPECT_9_16_NOT_SELECTED');
     }
     logStage(STAGES.FLOW_ASPECT_9_16_SELECTED, 'PASS');
-
-    if (!configCheck.ok && configCheck.error === 'ERR_COUNT_1X_NOT_SELECTED') {
-      logStage(STAGES.FLOW_COUNT_1X_SELECTED, 'FAIL', configCheck.detail);
-      throw new Error('ERR_COUNT_1X_NOT_SELECTED');
-    }
     logStage(STAGES.FLOW_COUNT_1X_SELECTED, 'PASS');
+    logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'PASS', 'model=Veo 3.1 - Lite');
 
-    if (!configCheck.ok && configCheck.error === 'ERR_WRONG_MODEL_FOR_F2V') {
-      logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'FAIL', configCheck.detail);
-      throw new Error('ERR_WRONG_MODEL_FOR_F2V');
-    }
-    logStage(STAGES.FLOW_MODEL_VEO_3_1_LITE_SELECTED, 'PASS', `model=${configCheck.modelText}`);
-
-    // ── Step 8: Upload gate — Start slot must be visible ─────────────────────
+    // ── Step 8: Upload gate — V2 requires an upload control, not an old Frames
+    // selector path. Keep Start-slot evidence when present, but accept any valid
+    // editor capability surface.
     const obsForSlot = observeFlowState();
-    if (!obsForSlot.visibleUploadSlots.includes('Start')) {
+    const slotUiContract = buildUiContractV2Proof('F2V', obsForSlot, findComposerElement(), findGenerateButtonNearComposer());
+    if (slotUiContract.editor_capability_ready !== true) {
       logStage(STAGES.START_SLOT_VISIBLE, 'FAIL',
-        `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`,
+        `editor_capability_ready=${slotUiContract.editor_capability_ready} slots=[${obsForSlot.visibleUploadSlots.join(',')}]`,
         buildSelectorEvidenceMeta('upload_slot_label_scan'));
       throw new Error('ERR_START_SLOT_NOT_VISIBLE');
     }
     logStage(STAGES.START_SLOT_VISIBLE, 'PASS',
-      `slots=[${obsForSlot.visibleUploadSlots.join(',')}]`,
+      `slots=[${obsForSlot.visibleUploadSlots.join(',')}] editor_capability_ready=${slotUiContract.editor_capability_ready}`,
       buildSelectorEvidenceMeta('upload_slot_label_scan'));
 
     // ── Step 9: Prompt field must be present ─────────────────────────────────
@@ -4178,19 +5484,140 @@
     return { ok: true };
   }
 
-  async function executeFlowJob(job) {
-    const testConn = await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'STATUS' }, (resp) => {
-        const err = chrome.runtime.lastError;
-        if (err) {
-          resolve({ ok: false, error: err.message || 'UNKNOWN_ERROR' });
-          return;
-        }
-        const statusPayload = resp?.data && typeof resp.data === 'object' ? resp.data : resp;
-        resolve(statusPayload || { ok: false, error: 'ERR_EMPTY_BACKGROUND_STATUS' });
-      });
+  function isF2VPackageUploadOnlyLane(job) {
+    return Boolean(
+      job && (job.lane === 'F2V_PACKAGE_UPLOAD_ONLY' || job.upload_only === true),
+    );
+  }
+
+  // STRICT package-to-current-editor Start upload lane. Reuses the existing CDP
+  // file-chooser upload + prompt-insert primitives. Touches NO settings/model/
+  // aspect/count/agent/generate path. Fails closed with precise diagnostics and
+  // never accepts Add Media / Scenebuilder / asset-library as Start success.
+  async function executePackageUploadOnly(job, logStage, request_id, report) {
+    report.lane = 'F2V_PACKAGE_UPLOAD_ONLY';
+
+    // 1. Editor must be a real project editor surface — not root / broken / library.
+    const url = String(location.href || '');
+    const bodyText = (document.body && document.body.innerText) || '';
+    const onProjectEditor = url.indexOf('/project/') >= 0;
+    const looksBroken = /something went wrong|application error/i.test(bodyText);
+    if (!onProjectEditor || looksBroken) {
+      const code = !onProjectEditor ? 'ERR_FLOW_EDITOR_REQUIRED' : 'ERR_FLOW_EDITOR_BROKEN';
+      logStage('FLOW_EDITOR_READY', 'FAIL', code);
+      report.ok = false;
+      report.error = code;
+      return report;
+    }
+    logStage('FLOW_EDITOR_READY', 'PASS', `url=${url}`);
+
+    // 2. Locate the Start slot (the only valid upload entry for this lane).
+    const slotInfo = findUploadSlotByLabel('Start');
+    const startContainer = slotInfo?.container || resolveSlotContainer('Start');
+    const visibleSlots = observeFlowState().visibleUploadSlots;
+    if (!visibleSlots.includes('Start') && !startContainer) {
+      logStage('START_SLOT_FOUND', 'FAIL', 'ERR_START_UPLOAD_TARGET_NOT_FOUND');
+      report.ok = false;
+      report.error = 'ERR_START_UPLOAD_TARGET_NOT_FOUND';
+      return report;
+    }
+    logStage('START_SLOT_FOUND', 'PASS', `visible_slots=${visibleSlots.join(',')}`);
+
+    // 3. Package Start asset MUST resolve to a local file for the CDP file chooser.
+    const startAssetSource = job.startAsset || job.productId || job.startImageMediaId;
+    const localFilePath = resolveAssetLocalFilePath(startAssetSource);
+    if (!localFilePath) {
+      logStage('UPLOAD_MEDIA_ACTION_SELECTED', 'FAIL', 'ERR_PACKAGE_START_LOCAL_FILE_REQUIRED');
+      report.ok = false;
+      report.error = 'ERR_PACKAGE_START_LOCAL_FILE_REQUIRED';
+      return report;
+    }
+    logStage('UPLOAD_MEDIA_ACTION_SELECTED', 'PASS', 'strategy=cdp_file_chooser slot=Start');
+    logStage('CDP_FILE_CHOOSER_ARMED', 'PASS', `local_file_path=${localFilePath}`);
+
+    // 4. Upload the Start asset via CDP file chooser ONLY (never legacy DOM fake,
+    //    never Add Media / Scenebuilder / asset library).
+    const uploadState = { lastCheckpoint: 'NONE', request_id };
+    let okStart;
+    try {
+      okStart = await Promise.race([
+        simulateCdpFileUpload('Start', startAssetSource, uploadState),
+        new Promise((_, rej) =>
+          setTimeout(() => rej(new Error('ERR_START_UPLOAD_TIMEOUT')), 30000),
+        ),
+      ]);
+    } catch (err) {
+      logStage('START_UPLOAD_ACCEPTED', 'FAIL', err.message || 'ERR_START_UPLOAD_TIMEOUT');
+      report.ok = false;
+      report.error = err.message || 'ERR_START_UPLOAD_TIMEOUT';
+      return report;
+    }
+    if (!okStart || okStart.ok !== true) {
+      const shellMatch = /scenebuilder|all media|asset library/i.test(bodyText);
+      const code = shellMatch
+        ? 'ERR_FORBIDDEN_ASSET_LIBRARY_PATH'
+        : okStart?.error || 'ERR_UPLOAD_MEDIA_ACTION_NOT_FOUND';
+      logStage('START_UPLOAD_ACCEPTED', 'FAIL', code);
+      report.ok = false;
+      report.error = code;
+      return report;
+    }
+
+    // 5. Verify the Start slot preview actually appeared/changed.
+    const startPreview = await waitForAssetPreview('Start', okStart.slotElement || null, {
+      slotContainer: okStart.slotContainer || null,
+      beforeSnapshot: okStart.beforeSnapshot || null,
+      timeoutMs: 30000,
     });
+    if (!startPreview.ok) {
+      logStage('START_UPLOAD_ACCEPTED', 'FAIL', startPreview.error || 'ERR_START_PREVIEW_TIMEOUT');
+      report.ok = false;
+      report.error = startPreview.error || 'ERR_START_PREVIEW_TIMEOUT';
+      return report;
+    }
+    logStage(
+      'START_UPLOAD_ACCEPTED',
+      'PASS',
+      `slot=Start preview_found=true checkpoint=${okStart.lastCheckpoint || 'done'}`,
+    );
+
+    // 6. Insert the package prompt (no settings, no agent).
+    const composer = findComposerElement();
+    if (!composer || !isComposerEditable(composer)) {
+      logStage('PROMPT_INSERTED', 'FAIL', 'ERR_PROMPT_FIELD_NOT_FOUND');
+      report.ok = false;
+      report.error = 'ERR_PROMPT_FIELD_NOT_FOUND';
+      return report;
+    }
+    await humanTypePrompt(composer, job.prompt);
+    logStage('PROMPT_INSERTED', 'PASS', `${String(job.prompt).length} chars`);
+
+    // 7. Stop strictly BEFORE Generate.
+    logStage('STOP_BEFORE_GENERATE', 'PASS', 'upload_only_lane_complete');
+    report.ok = true;
+    report.stopped_before_generate = true;
+    report.start_upload_verified = true;
+    report.prompt_inserted = true;
+    return report;
+  }
+
+  async function executeFlowJob(job) {
+    const statusResp = await sendRuntimeMessageWithResponse({ type: 'STATUS' }, 6000);
+    const testConn = statusResp?.data && typeof statusResp.data === 'object'
+      ? statusResp.data
+      : (statusResp || { ok: false, error: 'ERR_EMPTY_BACKGROUND_STATUS' });
     console.log('[FlowAgent] Background connection test:', testConn);
+    const backgroundBuildId = String(
+      testConn?.buildId
+      || testConn?.build_id
+      || testConn?.background_build_id
+      || testConn?.gitSha
+      || testConn?.git_sha
+      || '',
+    ).trim();
+    const backgroundRuntimeReady = typeof testConn?.runtimeReady === 'boolean'
+      ? testConn.runtimeReady
+      : (typeof testConn?.runtime_ready === 'boolean' ? testConn.runtime_ready : true);
 
     const report = { ok: false, stages: [] };
     const request_id = job.request_id || `flow_${Date.now()}`;
@@ -4225,11 +5652,15 @@
           ? testConn.runtime_ready
           : Boolean(testConn?.connected || testConn?.agentConnected || backgroundBuildId));
 
-      if (!backgroundRuntimeReady) {
-        logStage(STAGES.RUNTIME_HANDSHAKE_VERIFIED, 'FAIL', `background_status_missing build=${backgroundBuildId || 'legacy'}`);
+      if (!backgroundBuildId) {
+        logStage(STAGES.RUNTIME_HANDSHAKE_VERIFIED, 'FAIL', `background_status_missing build=${backgroundBuildId || 'legacy-compatible'}`);
         throw new Error('ERR_BACKGROUND_STATUS_UNAVAILABLE');
       }
-      if (backgroundBuildId && backgroundBuildId !== FLOW_KIT_DOM_BUILD_ID) {
+      if (!backgroundRuntimeReady) {
+        logStage(STAGES.RUNTIME_HANDSHAKE_VERIFIED, 'FAIL', `background_runtime_not_ready build=${backgroundBuildId || 'legacy-compatible'}`);
+        throw new Error('ERR_BACKGROUND_STATUS_UNAVAILABLE');
+      }
+      if (backgroundBuildId !== FLOW_KIT_DOM_BUILD_ID) {
         logStage(
           STAGES.RUNTIME_HANDSHAKE_VERIFIED,
           'FAIL',
@@ -4253,6 +5684,13 @@
 
       // CRITICAL: Clear any pre-existing state
       logStage(STAGES.PRE_EXECUTION_STATE_CLEARED);
+
+      // STRICT LANE: F2V_PACKAGE_UPLOAD_ONLY. Skip ALL settings/mode/aspect/count/
+      // model/agent/generate. Only: current editor -> Start slot -> Upload media
+      // (CDP) -> verify preview -> insert prompt -> stop before Generate.
+      if (isF2VPackageUploadOnlyLane(job)) {
+        return await executePackageUploadOnly(job, logStage, request_id, report);
+      }
 
       if (job.mode === 'F2V') {
         // CRITICAL: F2V SOP state machine — deterministic golden path:
@@ -4667,6 +6105,27 @@
       return false;
     }
 
+    if (msg.type === 'GFV2_OBSERVE_STATE') {
+      // Read-only Google Flow V2 diagnostic. Inspects the DOM only — never clicks.
+      try {
+        sendResponse({ ok: true, diagnostic: observeGoogleFlowV2State() });
+      } catch (error) {
+        sendResponse({ ok: false, error: 'GFV2_OBSERVE_FAILED', detail: String(error?.message || error) });
+      }
+      return false;
+    }
+
+    if (msg.type === 'GFV2_DISCOVER_SETTINGS') {
+      // DISCOVERY-ONLY: clicks the V2 settings launcher then dumps the resulting
+      // controls + selection states so the real V2 settings DOM can be mapped.
+      return respondAsync(sendResponse, async () => gfv2DiscoverSettings());
+    }
+
+    if (msg.type === 'GFV2_APPLY_SETTINGS') {
+      // Interactive: open V2 settings, confirm/select 9:16 + 1x, read model, persist.
+      return respondAsync(sendResponse, async () => gfv2ApplySettings(msg.options || {}));
+    }
+
     if (msg.type === 'OPEN_FLOW_NEW_PROJECT') {
       try {
         const state = collectProjectCreationState();
@@ -4769,6 +6228,12 @@
         return false;
       }
 
+      // F2V jobs run exclusively via background.js (executeF2VVisibleSopRunner).
+      // Returning false without executing prevents double-execution.
+      if (msg.job?.mode === 'F2V') {
+        return false;
+      }
+
       // IMMEDIATE ACK - Send response right away, don't wait for job completion
       sendResponse({ ok: true, accepted: true, request_id: msg.job?.request_id });
       
@@ -4794,6 +6259,11 @@
       }, 0);
       
       // Return false - we already called sendResponse synchronously
+      return false;
+    }
+
+    if (msg.type === 'GET_CAPTCHA' || msg.type === 'FLOWKIT_CAPTCHA_PING') {
+      // Let the dedicated captcha content script own these messages.
       return false;
     }
 

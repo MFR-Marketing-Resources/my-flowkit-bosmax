@@ -159,9 +159,16 @@ def test_background_status_contract_exposes_compatibility_build_fields():
     ]:
         assert token in background_source
 
+    # Contract note: the STATUS read was migrated from a bespoke raw
+    # chrome.runtime.sendMessage Promise (statusPayload/resolve) to the hardened
+    # shared sendRuntimeMessageWithResponse helper (commit 1c7bd51, "land API-first
+    # runtime unit"). The compatibility-build-field contract is unchanged — nested
+    # `.data` extraction, ERR_EMPTY_BACKGROUND_STATUS fallback, and the build-id /
+    # runtime-ready derivation below all persist against the retained testConn payload.
     for token in [
-        "const statusPayload = resp?.data && typeof resp.data === 'object' ? resp.data : resp;",
-        "resolve(statusPayload || { ok: false, error: 'ERR_EMPTY_BACKGROUND_STATUS' });",
+        "const statusResp = await sendRuntimeMessageWithResponse({ type: 'STATUS' }, 6000);",
+        "? statusResp.data",
+        ": (statusResp || { ok: false, error: 'ERR_EMPTY_BACKGROUND_STATUS' });",
         "const backgroundBuildId = String(",
         "testConn?.build_id",
         "testConn?.background_build_id",
@@ -199,6 +206,23 @@ def test_ensure_f2v_workspace_waits_for_root_landing_before_new_project_scan():
         "const state = collectProjectCreationState();",
         "if (state.landingDetected || state.newProjectControlFound) return true;",
         "const snapObs = observeFlowState();",
+    ]:
+        assert token in dom_source
+
+
+def test_observe_flow_state_recovers_mode_from_visible_upload_slots():
+    dom_source = _read("extension/content-flow-dom.js")
+
+    for token in [
+        "if (observed.topMode === 'UNKNOWN') {",
+        "observed.visibleUploadSlots.includes('Start') || observed.visibleUploadSlots.includes('End')",
+        "observed.topMode = 'Video';",
+        "observed.subMode = 'Frames';",
+        "observed.visibleUploadSlots.includes('Subject')",
+        "observed.visibleUploadSlots.includes('Scene')",
+        "observed.visibleUploadSlots.includes('Style')",
+        "observed.subMode = 'Ingredients';",
+        "observed.topMode = 'Image';",
     ]:
         assert token in dom_source
 

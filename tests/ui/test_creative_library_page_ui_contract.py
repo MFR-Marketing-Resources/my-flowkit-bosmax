@@ -9,10 +9,17 @@ def _read(relative_path: str) -> str:
 
 
 def test_creative_library_route_nav_and_page_contract_exist():
+    # Contract migration (commit d3add97, PR #120 "Creative Library split"):
+    # the upload/metadata FORM moved out of CreativeLibraryPage.tsx (which is now a
+    # read-only gallery/table surface) into CreativeLibraryWorkspacePage.tsx (the
+    # detail/edit surface at /assets/creative-library/workspace). This test now asserts
+    # the split contract: gallery tokens on the gallery page, form tokens on the
+    # workspace page, and the nav/route/link invariants that tie them together.
     app_source = _read("dashboard/src/App.tsx")
     registry_source = _read("dashboard/src/pages/AssetRegistryPage.tsx")
     generator_source = _read("dashboard/src/pages/ProductAssetGeneratorPage.tsx")
-    page_source = _read("dashboard/src/pages/CreativeLibraryPage.tsx")
+    gallery_source = _read("dashboard/src/pages/CreativeLibraryPage.tsx")
+    workspace_source = _read("dashboard/src/pages/CreativeLibraryWorkspacePage.tsx")
     api_source = _read("dashboard/src/api/creativeAssets.ts")
 
     for token in [
@@ -24,32 +31,41 @@ def test_creative_library_route_nav_and_page_contract_exist():
     ]:
         assert token in app_source
 
+    # Gallery page: list/table surface that filters assets and links to the editor.
     for token in [
-        "Upload and store reusable creative images for workspace use:",
-        "Character",
-        "/ Creator",
-        "Scene Context / Environment",
-        "Style / Mood",
-        "Composite",
-        "Frame references",
-        "Upload New Asset",
-        "Detail Panel",
-        "Archive Asset",
-        "Unarchive Asset",
+        "Semantic Role",
+        "All Roles",
+        "All Modes",
+        "Search assets",
+        "/assets/creative-library/workspace",
+    ]:
+        assert token in gallery_source
+
+    # Workspace editor page: the upload + semantic-metadata form (moved here in the split).
+    for token in [
+        "Upload Image",
+        "Asset Details",
         "Allowed Modes",
         "Engine Slot Eligibility",
-        "Mode A metadata handoff",
+        "Archive Asset",
+        "Unarchive Asset",
+        "Mode A Metadata Handoff",
+        "Character DNA",
+        "Scene Context DNA",
+        "Style / Mood DNA",
     ]:
-        assert token in page_source
+        assert token in workspace_source
 
-    # Preset card launchers must NOT appear on Creative Library (input-first UX refactor)
+    # Preset card launchers must NOT appear on either Creative Library surface
+    # (input-first UX refactor).
     for token in [
         "Preset Library",
         "Launch Preset",
         "DATABASE PRODUCT REQUIRED",
         "Product-holding presets force database product truth",
     ]:
-        assert token not in page_source
+        assert token not in gallery_source
+        assert token not in workspace_source
 
     for token in [
         "/api/creative-assets?",
@@ -77,17 +93,21 @@ def test_creative_library_route_nav_and_page_contract_exist():
     ]:
         assert token in presets_source
 
+    # Product Asset Generator stays preview-only and points users to Creative Library.
     for token in [
-        "This page is preview-only.",
-        "reusable generated/external",
+        "Preview-only",
+        "No Flow execution",
         "/assets/creative-library",
-        "Open Creative Library",
+        "Creative Library",
     ]:
         assert token in generator_source
 
 
 def test_creative_library_form_covers_required_semantic_categories():
-    page_source = _read("dashboard/src/pages/CreativeLibraryPage.tsx")
+    # Contract migration (commit d3add97, PR #120 "Creative Library split"): the
+    # semantic-category form + DNA metadata fields now live on the workspace editor
+    # page (CreativeLibraryWorkspacePage.tsx), not the read-only gallery page.
+    page_source = _read("dashboard/src/pages/CreativeLibraryWorkspacePage.tsx")
 
     for token in [
         "PRODUCT_REFERENCE",

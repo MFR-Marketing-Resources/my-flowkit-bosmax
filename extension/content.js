@@ -10,18 +10,36 @@ if (!window._flowKitInjected) {
   console.log('[FlowAgent] Content script injected');
   const CAPTCHA_PROTOCOL_VERSION = 'FLOWKIT_CAPTCHA_V1';
 
-  function respondAsync(sendResponse, task) {
+  // Default timeout for async listener handlers in content.js (captcha path).
+  // reCAPTCHA Enterprise can normally resolve well under 5s; if grecaptcha
+  // hangs we surface a structured timeout instead of leaking the port.
+  const DEFAULT_CAPTCHA_RESPOND_ASYNC_TIMEOUT_MS = 20000;
+
+  function respondAsync(sendResponse, task, timeoutMs = DEFAULT_CAPTCHA_RESPOND_ASYNC_TIMEOUT_MS) {
     let settled = false;
+    let timer = null;
 
     const done = (payload) => {
       if (settled) return;
       settled = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       try {
         sendResponse(payload || { ok: true });
       } catch (error) {
         console.warn('[FlowAgent] sendResponse failed:', error);
       }
     };
+
+    timer = setTimeout(() => {
+      done({
+        ok: false,
+        error: 'ERR_CONTENT_ASYNC_RESPONSE_TIMEOUT',
+        detail: `content.js respondAsync exceeded ${timeoutMs}ms`,
+      });
+    }, timeoutMs);
 
     Promise.resolve()
       .then(task)
@@ -93,16 +111,85 @@ if (!window._flowKitInjected) {
     return new Promise((resolve, reject) => {
       // reCAPTCHA Enterprise is usually available on window.grecaptcha.enterprise
       const grecaptcha = window.grecaptcha?.enterprise || window.grecaptcha;
+      const siteKey = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 
-      if (!grecaptcha?.execute) {
-        // Try to find it in the main world if not in isolated world
-        // (This extension uses standard injection, so we might need to proxy to main world)
-        reject(new Error('reCAPTCHA not found in content script context'));
-        return;
+      function ensureInjectedBridge() {
+        const root = document.documentElement || document.head || document.body;
+        if (!root) return;
+        if (document.documentElement?.dataset?.flowkitCaptchaBridgeInjected === 'true') {
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = chrome.runtime.getURL('injected.js');
+        script.async = false;
+        script.onload = () => {
+          if (document.documentElement) {
+            document.documentElement.dataset.flowkitCaptchaBridgeInjected = 'true';
+          }
+          script.remove();
+        };
+        script.onerror = () => {
+          script.remove();
+        };
+        root.appendChild(script);
       }
 
-      // Site key from Google Flow
-      const siteKey = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
+      function proxyToMainWorld() {
+        const requestId = `flowkit-captcha-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        let settled = false;
+        let timeoutId = null;
+        let onCaptchaResult = null;
+
+        const cleanup = () => {
+          window.removeEventListener('message', onMessage);
+          if (onCaptchaResult) {
+            window.removeEventListener('CAPTCHA_RESULT', onCaptchaResult);
+          }
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+        };
+
+        const finish = (err, token) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (err) reject(new Error(err));
+          else resolve(token);
+        };
+
+        const onMessage = (event) => {
+          if (event.source !== window) return;
+          const data = event.data || {};
+          if (data.source !== 'flowkit-captcha-main' || data.requestId !== requestId) return;
+          if (data.ok && data.token) finish(null, data.token);
+          else finish(data.error || 'reCAPTCHA main-world proxy failed');
+        };
+
+        onCaptchaResult = (event) => {
+          const detail = event?.detail || {};
+          if (detail.requestId !== requestId) return;
+          if (detail.token) finish(null, detail.token);
+          else finish(detail.error || 'reCAPTCHA main-world proxy failed');
+        };
+
+        window.addEventListener('message', onMessage);
+        window.addEventListener('CAPTCHA_RESULT', onCaptchaResult);
+        timeoutId = setTimeout(() => finish('reCAPTCHA main-world proxy timeout'), 20000);
+        ensureInjectedBridge();
+        window.dispatchEvent(new CustomEvent('GET_CAPTCHA', {
+          detail: {
+            requestId,
+            pageAction: action,
+          },
+        }));
+      }
+
+      if (!grecaptcha?.execute) {
+        proxyToMainWorld();
+        return;
+      }
 
       grecaptcha.ready(async () => {
         try {

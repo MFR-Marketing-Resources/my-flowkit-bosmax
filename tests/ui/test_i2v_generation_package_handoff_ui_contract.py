@@ -54,6 +54,9 @@ def test_i2v_operator_resolver_output_persisted():
 
 def test_i2v_manual_handoff_page_shows_subject_scene_style_labels():
     page_source = _read("dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx")
-    # ImageSlotRow renders labels from image_assets_json including Subject/Scene/Style
-    assert "ImageSlotRow" in page_source
+    # Contract migration: per-slot image rows are rendered by the AssetCard component
+    # (there was never an "ImageSlotRow"). AssetCard renders each slot's label / slot_key
+    # sourced from image_assets_json. Assert the real component + the slot data fields.
+    assert "AssetCard" in page_source
     assert "slot_key" in page_source
+    assert "image_assets_json" in page_source

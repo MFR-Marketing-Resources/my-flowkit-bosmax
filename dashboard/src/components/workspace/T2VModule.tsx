@@ -5,7 +5,7 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
-import ModelSelect, { type VideoModel, normalizeModel } from "./ModelSelect";
+import ModelSelect, { normalizeModel, type VideoModel } from "./ModelSelect";
 
 interface T2VModuleProps {
 	onExecute: (data: WorkspaceExecutePayload) => void;
@@ -32,14 +32,14 @@ export default function T2VModule({
 	const [count, setCount] = useState(1);
 
 	useEffect(() => {
-		if (!workspacePackage || workspacePackage.mode !== "T2V") return;
+		if (workspacePackage?.mode !== "T2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
 		setModel(normalizeModel(workspacePackage.model, videoModels));
 		setOrientation(
 			workspacePackage.aspect_ratio === "16:9" ? "HORIZONTAL" : "VERTICAL",
 		);
 		setIsManualOverride(false);
-	}, [workspacePackage]);
+	}, [videoModels, workspacePackage]);
 
 	// Re-normalize once the SSOT registry arrives — a package may hydrate first, so an
 	// unknown/retired model would otherwise stay ghosted and 422 on execute (patch I3b).
@@ -50,6 +50,8 @@ export default function T2VModule({
 	// --- Handlers ---
 	const handleExecute = () => {
 		onExecute({
+			lane: "WORKSPACE_FLOW_EDITOR_RUNTIME",
+			stop_after_stage: "PROMPT_EDITABLE_AFTER_INSERT",
 			prompt: manualPrompt,
 			orientation,
 			model,
@@ -179,9 +181,13 @@ export default function T2VModule({
 						disabled={isExecuting || !manualPrompt}
 						className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
 					>
-						{isExecuting ? "Executing T2V Sequence..." : "START GENERATION"}
+						{isExecuting ? "Sending to Flow Editor..." : "SEND TO FLOW EDITOR"}
 						{!isExecuting && <ArrowRight size={18} />}
 					</button>
+					<p className="mt-2 text-center text-xs text-slate-400">
+						Inserts the prompt into the Flow editor and stops — does not
+						auto-generate, poll, or download.
+					</p>
 				</div>
 			</div>
 

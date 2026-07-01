@@ -26,7 +26,9 @@ def test_background_implements_cdp_file_chooser_interception_flow():
 
     for token in [
         'const CDP_DEBUGGER_PROTOCOL_VERSION = "1.3";',
-        'const CDP_FILE_CHOOSER_TIMEOUT_MS = 10000;',
+        # Contract migration (commit 1c7bd51, "land API-first runtime unit"): the CDP
+        # file-chooser timeout was intentionally tuned up from 10000ms to 15000ms.
+        'const CDP_FILE_CHOOSER_TIMEOUT_MS = 15000;',
         'FLOWKIT_CDP_BEGIN_FILE_CHOOSER_POC',
         'FLOWKIT_CDP_WAIT_FILE_CHOOSER_POC',
         'Page.setInterceptFileChooserDialog',

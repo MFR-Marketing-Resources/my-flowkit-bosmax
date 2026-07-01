@@ -27,6 +27,7 @@ import type {
 	PromptGenerationMode,
 	PromptTargetLanguage,
 	TelemetryRequest,
+	TelemetryRequestDetail,
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 	WorkspaceGenerationPackage,
@@ -117,6 +118,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 	const [isLoadingPackage, setIsLoadingPackage] = useState(false);
 	const [isLoadingReadiness, setIsLoadingReadiness] = useState(false);
+	const [isLoadingSelectedReadiness, setIsLoadingSelectedReadiness] =
+		useState(false);
 	const [promptConfig, setPromptConfig] =
 		useState<PromptCompilerRuntimeConfig | null>(null);
 	const [generationMode, setGenerationMode] =
@@ -164,6 +167,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const selectedReadiness = selectedProduct
 		? (packageReadiness[selectedProduct.id] ?? null)
 		: null;
+	const selectedReadinessLoading = Boolean(
+		selectedProduct &&
+			!selectedProduct.reference_only &&
+			!selectedReadiness &&
+			(isLoadingReadiness || isLoadingSelectedReadiness),
+	);
+	const isLoadingAnyReadiness =
+		isLoadingReadiness || isLoadingSelectedReadiness;
 
 	useEffect(() => {
 		setIsLoadingProducts(true);
@@ -198,6 +209,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			setPackageReadiness({});
 			return;
 		}
+		setPackageReadiness({});
 		setIsLoadingReadiness(true);
 		void fetchWorkspacePackageReadiness({
 			mode: mode as WorkspaceMode,
@@ -207,13 +219,46 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				const mapped = Object.fromEntries(
 					response.items.map((item) => [item.product_id, item]),
 				);
-				setPackageReadiness(mapped);
+				setPackageReadiness((current) => ({ ...current, ...mapped }));
 			})
-			.catch(() => {
-				setPackageReadiness({});
-			})
+			.catch(() => {})
 			.finally(() => setIsLoadingReadiness(false));
 	}, [mode, products]);
+
+	useEffect(() => {
+		if (
+			!selectedProduct ||
+			selectedProduct.reference_only ||
+			packageReadiness[selectedProduct.id]
+		) {
+			setIsLoadingSelectedReadiness(false);
+			return;
+		}
+		let isActive = true;
+		setIsLoadingSelectedReadiness(true);
+		void fetchWorkspacePackageReadiness({
+			mode: mode as WorkspaceMode,
+			product_ids: [selectedProduct.id],
+		})
+			.then((response) => {
+				if (!isActive) return;
+				const item = response.items[0];
+				if (!item) return;
+				setPackageReadiness((current) => ({
+					...current,
+					[item.product_id]: item,
+				}));
+			})
+			.catch(() => {})
+			.finally(() => {
+				if (isActive) {
+					setIsLoadingSelectedReadiness(false);
+				}
+			});
+		return () => {
+			isActive = false;
+		};
+	}, [mode, packageReadiness, selectedProduct]);
 
 	useEffect(() => {
 		if (!statePackage || statePackage.mode !== mode) return;
@@ -343,8 +388,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		setNotice({
 			tone: "info",
 			title: "Submitting to Flow",
-			detail:
-				"Request accepted. This lane is pollJob-driven — tracking the job status.",
+			detail: "Request accepted. Runtime lane selection in progress.",
 			requestId,
 		});
 
@@ -443,6 +487,89 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			}
 		};
 
+		const pollManualFlowRequest = async (manualRequestId: string) => {
+			try {
+				const response = await fetch(
+					`/api/telemetry/requests/${encodeURIComponent(manualRequestId)}`,
+				);
+				if (response.status === 404) {
+					pollTimerRef.current = window.setTimeout(() => {
+						void pollManualFlowRequest(manualRequestId);
+					}, 1500);
+					return;
+				}
+				if (!response.ok) {
+					throw new Error(`Telemetry HTTP ${response.status}`);
+				}
+				const detail = (await response.json()) as TelemetryRequestDetail;
+				const telemetry = detail.telemetry;
+				const stages = Array.isArray(detail.stages) ? detail.stages : [];
+				const latestStage = stages.length ? stages[stages.length - 1] : null;
+				const status = String(
+					telemetry?.status || "WAITING_FLOW",
+				).toUpperCase();
+				const stageLabel =
+					latestStage?.stage ||
+					telemetry?.extension_stage ||
+					telemetry?.google_flow_stage ||
+					status;
+				const stageMessage =
+					latestStage?.message ||
+					telemetry?.error_message ||
+					"Waiting for extension telemetry.";
+
+				if (status === "COMPLETED") {
+					setNotice({
+						tone: "success",
+						title: `${data.mode} ready — system lane complete`,
+						detail: `${stageLabel}${stageMessage ? ` — ${stageMessage}` : ""}`,
+						requestId: manualRequestId,
+					});
+					setIsExecuting(false);
+					executionInFlightRef.current = false;
+					return;
+				}
+
+				if (status === "FAILED") {
+					setNotice({
+						tone: "error",
+						title: `${data.mode} failed`,
+						detail:
+							telemetry?.error_message ||
+							stageMessage ||
+							"Manual Flow job failed.",
+						requestId: manualRequestId,
+					});
+					setIsExecuting(false);
+					executionInFlightRef.current = false;
+					return;
+				}
+
+				setNotice({
+					tone: "info",
+					title: `${data.mode} running`,
+					detail: `Stage: ${stageLabel}${stageMessage ? ` — ${stageMessage}` : ""}`,
+					requestId: manualRequestId,
+				});
+				pollTimerRef.current = window.setTimeout(() => {
+					void pollManualFlowRequest(manualRequestId);
+				}, 3000);
+			} catch (error: unknown) {
+				const message =
+					error instanceof Error
+						? error.message
+						: "Failed to read manual Flow job status.";
+				setNotice({
+					tone: "error",
+					title: "Manual Flow status unavailable",
+					detail: message,
+					requestId: manualRequestId,
+				});
+				setIsExecuting(false);
+				executionInFlightRef.current = false;
+			}
+		};
+
 		// F2V sends the Start/End frame as startAsset/endAsset; I2V/T2V use refs.*. Include ALL
 		// of them so the one-door /generate always receives the reference image as
 		// image_media_ids — otherwise F2V submits with an empty image and the backend rejects it
@@ -461,8 +588,43 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			data.aspectRatio === "16:9" || data.orientation === "HORIZONTAL"
 				? "16:9"
 				: "9:16";
+		const isGfv2RuntimeLane =
+			data.mode === "F2V" &&
+			(data.gfv2 === true ||
+				data.lane === "GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE" ||
+				data.upload_only === true);
+		const isWorkspaceRuntimeLane =
+			data.lane === "WORKSPACE_FLOW_EDITOR_RUNTIME";
 
 		try {
+			if (isGfv2RuntimeLane || isWorkspaceRuntimeLane) {
+				const response = await fetch("/api/flow/execute-flow-job", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						...data,
+						request_id: requestId,
+						aspectRatio: data.aspectRatio || aspect,
+					}),
+				});
+
+				if (!response.ok) {
+					const err = await response.json().catch(() => ({}));
+					throw new Error(err.detail || `HTTP ${response.status}`);
+				}
+
+				await response.json();
+				setNotice({
+					tone: "info",
+					title: `${data.mode} accepted`,
+					detail: isGfv2RuntimeLane
+						? `Manual Flow job ${requestId} submitted via GFV2 runtime lane.`
+						: `Manual Flow job ${requestId} submitted via workspace runtime lane.`,
+					requestId,
+				});
+				void pollManualFlowRequest(requestId);
+				return;
+			}
 			// Unified one-door pipeline: agent → render → save (replaces the dead
 			// execute-flow-job DOM automation against the retired Video/Frames UI).
 			const response = await fetch("/api/flow/generate", {
@@ -1116,7 +1278,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					selectedProduct={selectedProduct}
 					onSelect={setSelectedProduct}
 					readinessByProductId={packageReadiness}
-					isLoadingReadiness={isLoadingReadiness}
+					isLoadingReadiness={isLoadingAnyReadiness}
 				/>
 				{/* Reference-only product blocker */}
 				{selectedProduct?.reference_only && !selectedReadiness ? (
@@ -1226,7 +1388,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				) : null}
 				{!selectedProduct?.reference_only &&
 				!selectedReadiness &&
-				!isLoadingReadiness ? (
+				!selectedReadinessLoading ? (
 					<div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-xs text-slate-400">
 						No {humanizeWorkspaceMode(mode as WorkspaceMode)}-ready products are
 						auto-selected. Choose a product and review its readiness checklist
@@ -1252,7 +1414,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						disabled={
 							!selectedProduct ||
 							isLoadingPreview ||
-							isLoadingReadiness ||
+							selectedReadinessLoading ||
 							selectedReadiness?.readiness_status !== "READY"
 						}
 						className="w-full rounded-xl border border-slate-600/40 bg-slate-700/30 px-4 py-3 text-sm font-bold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50 disabled:grayscale transition-all"

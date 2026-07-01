@@ -205,6 +205,35 @@ def _build_materialized_stage_message(
     )
 
 
+def _asset_payload_has_local_file(asset: object) -> bool:
+    return bool(
+        isinstance(asset, dict)
+        and (asset.get("localFilePath") or asset.get("local_file_path"))
+    )
+
+
+def _asset_payload_remote_url(asset: object) -> str | None:
+    if not isinstance(asset, dict):
+        return None
+    return (
+        asset.get("downloadUrl")
+        or asset.get("download_url")
+        or asset.get("previewUrl")
+        or asset.get("preview_url")
+    )
+
+
+def _asset_payload_file_name(asset: object, fallback_name: str) -> str:
+    if not isinstance(asset, dict):
+        return fallback_name
+    return (
+        asset.get("fileName")
+        or asset.get("file_name")
+        or asset.get("label")
+        or fallback_name
+    )
+
+
 async def _build_manual_flow_failure_report(request_id: str, result: dict) -> dict:
     stages = await crud.get_stage_history(request_id)
     latest_extension_fail = next(
@@ -1111,6 +1140,7 @@ async def execute_flow_job(body: dict):
     # so a missing F2V_PACKAGE_UPLOAD_ONLY flag is visible in telemetry rather
     # than silently falling back to the broad F2V SOP path.
     _start_asset = body.get("startAsset") or {}
+    _start_asset_present = isinstance(body.get("startAsset"), dict)
     _has_local_start = bool(
         isinstance(_start_asset, dict)
         and (_start_asset.get("localFilePath") or _start_asset.get("local_file_path"))
@@ -1130,6 +1160,77 @@ async def execute_flow_job(body: dict):
         "backend",
     )
 
+    async def _fail_closed_materialize(
+        stage_name: str,
+        stage_message: str,
+        error_code: str,
+    ):
+        await crud.add_stage_event(
+            body["request_id"],
+            stage_name,
+            "FAIL",
+            stage_message,
+            "backend",
+        )
+        await crud.upsert_request_telemetry(
+            body["request_id"],
+            status="FAILED",
+            failed_at=crud._now(),
+            error_message=error_code,
+            error_code=error_code,
+            last_heartbeat_at=crud._now(),
+        )
+        await crud.add_stage_event(
+            body["request_id"],
+            "FAILED",
+            "FAILED",
+            error_code,
+            "backend",
+            fail_code=error_code,
+            first_fail_stage=stage_name,
+        )
+        raise HTTPException(422, error_code)
+
+    async def _materialize_slot_asset(
+        asset: object,
+        *,
+        slot_label: str,
+        source_type: str,
+        missing_error_code: str,
+        failed_error_code: str,
+    ) -> None:
+        if not isinstance(asset, dict) or _asset_payload_has_local_file(asset):
+            return
+        remote_url = _asset_payload_remote_url(asset)
+        stage_token = re.sub(r"[^A-Z0-9]+", "_", slot_label.upper()).strip("_")
+        if not remote_url:
+            await _fail_closed_materialize(
+                f"BACKEND_{stage_token}_ASSET_MATERIALIZE_FAILED",
+                f"{slot_label} asset is remote-only with no usable URL to materialize",
+                missing_error_code,
+            )
+        try:
+            materialized = await _materialize_remote_url_to_staging(
+                str(remote_url),
+                _asset_payload_file_name(asset, f"{slot_label}.png"),
+            )
+        except Exception as exc:
+            await _fail_closed_materialize(
+                f"BACKEND_{stage_token}_ASSET_MATERIALIZE_FAILED",
+                str(exc),
+                failed_error_code,
+            )
+        local_path = materialized["local_file_path"]
+        asset["localFilePath"] = local_path
+        asset["local_file_path"] = local_path
+        await crud.add_stage_event(
+            body["request_id"],
+            f"BACKEND_{stage_token}_ASSET_MATERIALIZED",
+            "WAITING_FLOW",
+            _build_materialized_stage_message(local_path, source_type),
+            "backend",
+        )
+
     # Strict upload-only lane needs a real local file for the CDP file chooser.
     # When the package Start asset is remote-only (no localFilePath/local_file_path),
     # materialize it to a local staging file BEFORE dispatching to the extension.
@@ -1141,69 +1242,60 @@ async def execute_flow_job(body: dict):
         or body.get("upload_only") is True
         or body.get("gfv2") is True
     )
-    if _is_upload_only_lane and isinstance(_start_asset, dict) and not _has_local_start:
-
-        async def _fail_closed_materialize(stage_message: str, error_code: str):
-            await crud.add_stage_event(
-                body["request_id"],
-                "BACKEND_START_ASSET_MATERIALIZE_FAILED",
-                "FAIL",
-                stage_message,
-                "backend",
-            )
-            await crud.upsert_request_telemetry(
-                body["request_id"],
-                status="FAILED",
-                failed_at=crud._now(),
-                error_message=error_code,
-                error_code=error_code,
-                last_heartbeat_at=crud._now(),
-            )
-            await crud.add_stage_event(
-                body["request_id"], "FAILED", "FAILED", error_code, "backend",
-                fail_code=error_code, first_fail_stage="BACKEND_START_ASSET_MATERIALIZE_FAILED",
-            )
-            raise HTTPException(422, error_code)
-
-        _remote_url = (
-            _start_asset.get("downloadUrl")
-            or _start_asset.get("download_url")
-            or _start_asset.get("previewUrl")
-            or _start_asset.get("preview_url")
+    if _start_asset_present and isinstance(_start_asset, dict) and not _has_local_start:
+        await _materialize_slot_asset(
+            _start_asset,
+            slot_label="Start",
+            source_type=(
+                "workspace_package_start"
+                if body.get("workspace_execution_package_id")
+                or body.get("prompt_package_snapshot_id")
+                else "start_asset"
+            ),
+            missing_error_code=(
+                "ERR_PACKAGE_START_LOCAL_FILE_REQUIRED"
+                if _is_upload_only_lane
+                else "ERR_START_LOCAL_FILE_REQUIRED"
+            ),
+            failed_error_code=(
+                "ERR_PACKAGE_START_MATERIALIZE_FAILED"
+                if _is_upload_only_lane
+                else "ERR_START_MATERIALIZE_FAILED"
+            ),
         )
-        if not _remote_url:
-            await _fail_closed_materialize(
-                "startAsset is remote-only with no usable URL to materialize",
-                "ERR_PACKAGE_START_LOCAL_FILE_REQUIRED",
-            )
-        try:
-            _materialized = await _materialize_remote_url_to_staging(
-                str(_remote_url),
-                _start_asset.get("fileName") or _start_asset.get("file_name") or "Start.png",
-            )
-        except Exception as exc:
-            await _fail_closed_materialize(
-                str(exc), "ERR_PACKAGE_START_MATERIALIZE_FAILED"
-            )
-        _local_path = _materialized["local_file_path"]
-        # Set both camelCase and snake_case; preserve all other startAsset fields
-        # (fileName / mediaId / previewUrl / downloadUrl) by mutating in place.
-        _start_asset["localFilePath"] = _local_path
-        _start_asset["local_file_path"] = _local_path
         body["startAsset"] = _start_asset
-        _source_type = (
-            "workspace_package_start"
-            if body.get("workspace_execution_package_id")
-            or body.get("prompt_package_snapshot_id")
-            else "start_asset"
+
+    _end_asset = body.get("endAsset")
+    if isinstance(_end_asset, dict):
+        await _materialize_slot_asset(
+            _end_asset,
+            slot_label="End",
+            source_type="end_asset",
+            missing_error_code="ERR_END_LOCAL_FILE_REQUIRED",
+            failed_error_code="ERR_END_MATERIALIZE_FAILED",
         )
-        await crud.add_stage_event(
-            body["request_id"],
-            "BACKEND_START_ASSET_MATERIALIZED",
-            "WAITING_FLOW",
-            _build_materialized_stage_message(_local_path, _source_type),
-            "backend",
-        )
+        body["endAsset"] = _end_asset
+
+    _refs = body.get("refs")
+    if isinstance(_refs, dict):
+        for ref_key, slot_label in (
+            ("subjectAsset", "Subject"),
+            ("sceneAsset", "Scene"),
+            ("styleAsset", "Style"),
+            ("imageAsset", "Image"),
+        ):
+            ref_asset = _refs.get(ref_key)
+            if not isinstance(ref_asset, dict):
+                continue
+            await _materialize_slot_asset(
+                ref_asset,
+                slot_label=slot_label,
+                source_type="workspace_ref_asset",
+                missing_error_code=f"ERR_{slot_label.upper()}_LOCAL_FILE_REQUIRED",
+                failed_error_code=f"ERR_{slot_label.upper()}_MATERIALIZE_FAILED",
+            )
+            _refs[ref_key] = ref_asset
+        body["refs"] = _refs
 
     result = await client.execute_flow_job(body)
     if result.get("error"):

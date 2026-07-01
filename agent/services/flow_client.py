@@ -613,7 +613,7 @@ class FlowClient:
             "headers": random_headers(),
         }, timeout=15)
 
-    async def get_status(self) -> dict:
+    async def get_status(self, timeout: float = 5) -> dict:
         """Query live extension runtime state over the WebSocket bridge."""
         if not self.connected:
             return {
@@ -624,7 +624,7 @@ class FlowClient:
                 "metrics": {},
             }
 
-        result = await self._send("get_status", {}, timeout=5)
+        result = await self._send("get_status", {}, timeout=timeout)
         if result.get("error"):
             return {
                 "connected": True,

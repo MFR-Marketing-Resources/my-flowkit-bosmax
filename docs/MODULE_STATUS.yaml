@@ -4,6 +4,7 @@ domains:
     status: IN_PROGRESS
     owned_paths:
       - docs/MODULE_STATUS.yaml
+      - docs/authority/working/WORKSPACE_GENERATION_PACKAGE_AND_HANDOFF_BANK_PLAN_v0_1.md
       - package.json
       - package-lock.json
       - biome.json
@@ -40,6 +41,7 @@ domains:
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py
       - agent/services/workspace_execution_package_service.py
+      - agent/services/flow_client.py
       - agent/services/batch_planner.py
       - agent/models/product_registration.py
       - agent/services/product_knowledge_service.py
@@ -70,6 +72,7 @@ domains:
       - dashboard/src/components/product-asset-generator/presets.ts
       - dashboard/src/pages/ProductsSalesAnalyzerPage.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
+      - dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx
       - dashboard/src/pages/ProductRegistrationPage.tsx
       - dashboard/src/components/product-registration/ProductKnowledgeIntakeForm.tsx
       - dashboard/src/components/product-registration/RegistrationReviewDraftPanel.tsx
@@ -127,10 +130,15 @@ domains:
       - tests/ui/test_f2v_ugc_prompt_compiler_ui_contract.py
       - tests/ui/test_fastmoss_product_visibility_ui_contract.py
       - tests/ui/test_i2v_creative_asset_resolver_ui_contract.py
+      - tests/ui/test_i2v_generation_package_handoff_ui_contract.py
       - tests/ui/test_workspace_image_preview_ui_contract.py
       - tests/ui/test_workspace_authoring_layout_ui_contract.py
       - tests/ui/test_workspace_jobs_page_ui_contract.py
       - tests/ui/test_workspace_package_bridge_ui_contract.py
+      - tests/ui/test_product_catalog_selector_loading_ui_contract.py
+      - tests/ui/test_reference_only_workspace_blockers_ui_contract.py
+      - tests/ui/test_product_lifecycle_confirmation_ui_contract.py
+      - tests/ui/test_product_readiness_profile_ui_contract.py
       - tests/ui/test_product_registration_ui_contract.py
       - tests/ui/test_products_sales_analyzer_ui_contract.py
       - tests/unit/test_product_registration_commit_service.py

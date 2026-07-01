@@ -377,6 +377,19 @@ The stored scaffold should use the following shape:
 - Storing the scaffold does not authorize DOM execution.
 - DOM handoff is blocked until a later approved implementation wave.
 
+> **PR #155 authority reconciliation (branch `feat/extension-runtime-unit`).**
+> The three bullets above describe the *original first implementation wave* and are **stale for
+> current branch truth**. They are retained as history; the current authority is:
+>
+> - As of PR #155, **T2V / I2V / IMG DOM authoring handoff is enabled**, but only up to
+>   `PROMPT_EDITABLE_AFTER_INSERT` (lane `WORKSPACE_FLOW_EDITOR_RUNTIME`).
+> - That means the prompt (and, where applicable, assets) are **sent into the Flow editor and
+>   execution stops at the editable prompt**. It does **NOT** auto-click Generate, does **NOT**
+>   poll generation, and does **NOT** download results.
+> - **F2V** remains on `GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE` and **still stops before Generate**.
+> - Full generate / poll / download remains a **later approved wave** unless separately implemented
+>   and runtime-verified. Runtime generate-video / generate-image is **NOT proven** by PR #155.
+
 ## 12. Frontend UX Model
 
 ### Recommended Route

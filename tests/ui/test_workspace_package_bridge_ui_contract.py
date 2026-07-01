@@ -26,7 +26,6 @@ def test_workspace_package_bridge_surfaces_approved_package_history_and_manual_f
 
     for token in [
         "Approved Package Bridge",
-        "prompt_package_snapshot_id",
         "workspace_execution_package_id",
         "Package Eligibility",
         "Open Smart Registration / Complete Evidence",
@@ -34,6 +33,14 @@ def test_workspace_package_bridge_surfaces_approved_package_history_and_manual_f
         "Only READY products",
     ]:
         assert token in operator_source
+
+    # Contract migration: the prompt_package_snapshot_id lineage was moved out of
+    # OperatorPage's inline payload (removed in commit 16cefa7 "wire API-first generation
+    # controls") into the workspace-module approved-package payloads. OperatorPage still
+    # surfaces the Approved Package Bridge + workspace_execution_package_id (above);
+    # assert the snapshot lineage where it now lives.
+    i2v_module_source = _read("dashboard/src/components/workspace/I2VModule.tsx")
+    assert "prompt_package_snapshot_id" in i2v_module_source
 
     for token in [
         "Search and select product",

@@ -12,11 +12,19 @@ def test_product_lifecycle_confirmation_ux_contract():
     
     # 2. Copy Phrase button
     assert "Copy Phrase" in content
-    assert "navigator.clipboard.writeText(lifecycleExpectedPhrase(lifecycleModal.action))" in content
+    # Contract migration: the clipboard call was line-wrapped by the formatter; assert
+    # the two stable substrings instead of the old single-line form. Invariant preserved:
+    # Copy Phrase writes the expected lifecycle phrase to the clipboard.
+    assert "navigator.clipboard.writeText(" in content
+    assert "lifecycleExpectedPhrase(lifecycleModal.action)" in content
     
     # 3. Use Required Phrase button
     assert "Use Expected Phrase" in content
-    assert "lifecycleModal.confirmationPhrase: lifecycleExpectedPhrase(current.action)" in content or "confirmationPhrase: lifecycleExpectedPhrase(current.action)" in content
+    # Contract migration: the confirmationPhrase assignment was line-wrapped by the
+    # formatter. Assert the two stable substrings instead of the old single-line form.
+    # Invariant preserved: Use Expected Phrase sets confirmationPhrase to the expected phrase.
+    assert "confirmationPhrase: lifecycleExpectedPhrase(" in content
+    assert "current.action," in content
     
     # 4 & 5. Inline validation and disabled submit logic
     assert "exactly to continue" in content
@@ -39,4 +47,5 @@ def test_fastmoss_lifecycle_contract():
     
     # 11. FASTMOSS hard delete/purge forbidden
     # The logic must prevent deleting FASTMOSS test rows, leaving no path to hard delete it
-    assert "product.source !== 'FASTMOSS'" in content
+    # Contract migration: formatter normalized the string literal to double quotes.
+    assert 'product.source !== "FASTMOSS"' in content

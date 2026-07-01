@@ -68,7 +68,7 @@ def test_selector_readiness_tone_class_handles_reference_only():
 
 def test_operator_passes_is_loading_readiness_to_selector():
     source = _read("dashboard/src/pages/OperatorPage.tsx")
-    assert "isLoadingReadiness={isLoadingReadiness}" in source
+    assert "isLoadingReadiness={isLoadingAnyReadiness}" in source
 
 
 def test_operator_shows_reference_only_blocker_panel_early():
