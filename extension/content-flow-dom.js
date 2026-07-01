@@ -78,6 +78,8 @@
   }
 
   function sendRuntimeMessageNoThrow(payload) {
+    // Contract (frozen harness: "One-way runtime telemetry omits callback lane"):
+    // telemetry beacons are strictly fire-and-forget — no callback, no response port.
     try {
       chrome.runtime.sendMessage(payload);
     } catch (error) {
@@ -3556,7 +3558,6 @@ function isSettingsScopedModelSource(source) {
         observed.topMode = 'Image';
       }
     }
-    console.log(`[FlowAgent] Detected topMode: ${observed.topMode}`);
 
     // 2. Detect submode (Frames vs Ingredients)
     if (observed.topMode === 'Video') {
@@ -3578,7 +3579,6 @@ function isSettingsScopedModelSource(source) {
         }
       }
     }
-    console.log(`[FlowAgent] Detected subMode: ${observed.subMode}`);
 
     // 3. Detect model. Flow's model selector is frequently an icon-only Radix
     // control, so fall back to aria-label/title when textContent carries no label.
@@ -3708,8 +3708,6 @@ function isSettingsScopedModelSource(source) {
         observed.visibleAssetPreviews.push(label);
       }
     }
-    console.log(`[FlowAgent] Detected slots: ${observed.visibleUploadSlots.join(', ')}`);
-
     // 6a. If the explicit tab labels are collapsed or renamed, recover mode/submode
     // from the upload slot surface itself. This keeps readiness and telemetry aligned
     // with the actual editor even when the visible top controls ghost to UNKNOWN.
@@ -3755,6 +3753,10 @@ function isSettingsScopedModelSource(source) {
       observed.visibleAssetPreviews = observed.visibleAssetPreviews.filter((slot) => F2V_SLOTS.includes(slot));
     }
 
+    console.log(`[FlowAgent] Detected topMode: ${observed.topMode}`);
+    console.log(`[FlowAgent] Detected subMode: ${observed.subMode}`);
+    console.log(`[FlowAgent] Detected slots: ${observed.visibleUploadSlots.join(', ')}`);
+
     // 7. Check composer
     observed.composerPresent = !!findComposerElement();
 
@@ -3765,6 +3767,28 @@ function isSettingsScopedModelSource(source) {
     }
 
     return observed;
+  }
+
+  function hasF2VEditorSurfaceSignals(readinessObserved = null) {
+    const observed = readinessObserved || observeFlowState();
+    const visibleSlots = Array.isArray(observed?.visibleUploadSlots)
+      ? observed.visibleUploadSlots.map((value) => String(value))
+      : [];
+    const hasStartSlot = visibleSlots.includes('Start');
+    const hasEndSlot = visibleSlots.includes('End');
+    const configPill = buildBottomComposerConfigPillSnapshot();
+    const hasBottomComposerState = Boolean(
+      configPill.bottom_composer_config_pill_visible
+      || observed?.aspectRatio === '9:16'
+      || observed?.count === '1x'
+      || String(observed?.modelSource || '') === 'config_pill'
+    );
+    return {
+      hasStartSlot,
+      hasEndSlot,
+      hasBottomComposerState,
+      ready: Boolean((hasStartSlot || hasEndSlot) && hasBottomComposerState),
+    };
   }
 
   function collectFlowPageStateDiagnostic(mode) {
@@ -3796,7 +3820,6 @@ function isSettingsScopedModelSource(source) {
       && Boolean(uiContractV2.editor_capability_ready)
       && !readiness.blocking_modal_detected
     );
-    const projectCreationState = collectProjectCreationState();
     const bodyText = normalizeText(document.body?.innerText || '').slice(0, 2000);
     const buttonTexts = collectVisibleTexts('button, [role="button"]', (el) => el.textContent || '');
     const textareaPlaceholders = collectVisibleTexts('textarea', (el) => el.getAttribute('placeholder') || el.getAttribute('aria-label') || '');
@@ -3815,6 +3838,22 @@ function isSettingsScopedModelSource(source) {
       ...contenteditableTexts,
       ...ariaLabels,
     ];
+
+    // Landing/root detection is computed inline from the marker sources above.
+    // The project-creation-state collector must NOT be called from here: it
+    // calls this diagnostic itself, so the pair mutually recursed without a
+    // termination condition until the renderer died with "Maximum call stack
+    // size exceeded" (live: manual_efad2bb1 create error, manual_8fa93d98
+    // frozen tab after GFV2_FLOW_ROOT_OPENED).
+    const landingMarkersInline = collectVisibleMarkers([
+      'Create with Flow',
+      'Projects',
+      'Recent',
+      'New project',
+      'Create new',
+      'Back to projects',
+    ], markerSources);
+    const newProjectControlInline = findNewProjectControl();
 
     return {
       ok: true,
@@ -3882,9 +3921,9 @@ function isSettingsScopedModelSource(source) {
       current_mode_visible: readiness.current_mode_visible,
       blocking_modal_detected: readiness.blocking_modal_detected,
       observed: readiness.observed,
-      is_root_flow_url: projectCreationState.isRoot,
-      project_list_or_landing_detected: projectCreationState.landingDetected,
-      new_project_control_found: projectCreationState.newProjectControlFound,
+      is_root_flow_url: isRootFlowUrl(window.location.href),
+      project_list_or_landing_detected: landingMarkersInline.length > 0 || !!newProjectControlInline,
+      new_project_control_found: !!newProjectControlInline,
       runtime_ready: true,
       content_build_id: FLOW_KIT_DOM_BUILD_ID,
       git_sha: FLOW_KIT_DOM_BUILD_ID,
@@ -3969,11 +4008,26 @@ function isSettingsScopedModelSource(source) {
   }
   // Find the V2 settings launcher (View Settings / settings / tune icon).
   function _gfv2FindSettingsLauncher() {
+    const composer = findComposerElement();
+    const selectors = 'button, [role="button"], [role="tab"], [aria-haspopup], [aria-label], [title], span, div';
+    const scopedCandidates = collectComposerContextRoots(composer)
+      .flatMap((root) => Array.from(root.querySelectorAll(selectors)));
+    const globalCandidates = Array.from(document.querySelectorAll(selectors));
+    const candidates = Array.from(new Set([...scopedCandidates, ...globalCandidates]));
     const cands = [];
-    document.querySelectorAll('button, [role="button"], [aria-label], [title]').forEach((el) => {
-      if (!_gfv2Vis(el)) return;
-      const blob = _gfv2Blob(el);
+    candidates.forEach((el) => {
+      const target = el.closest('button, [role="button"], [role="tab"], [aria-haspopup]') || el;
+      if (!_gfv2Vis(target)) return;
+      const blob = _gfv2Blob(target);
       if (!blob) return;
+      const targetText = normalizeText(
+        target.textContent || target.getAttribute('aria-label') || target.getAttribute('title') || '',
+      );
+      const targetLower = targetText.toLowerCase();
+      const rect = target.getBoundingClientRect();
+      const targetTooLarge = rect.width > 520 || rect.height > 120 || targetText.length > 120;
+      const targetLooksLikePageShell = /(what do you want to create|double check it|go back|search|sort & filter|add media|all media|characters|scenes|tools|trash|collapse)/i.test(targetText);
+      if (!targetText || targetTooLarge || targetLooksLikePageShell) return;
       let score = 0;
       // 'tune'/'Settings' (tune icon) is the GENERATION settings (9:16/1x/model);
       // 'View Settings' (settings_2 icon) is project settings — lower priority.
@@ -3982,10 +4036,20 @@ function isSettingsScopedModelSource(source) {
       else if (/^settings\b/.test(blob) && !/view settings/.test(blob)) score = 85;
       else if (/view settings/.test(blob)) score = 70;
       else if (/\bsettings\b/.test(blob)) score = 60;
-      if (score > 0) cands.push({ el, blob: blob.slice(0, 50), score });
+      else if (looksLikeBottomComposerConfigPillText(targetText)) score = isNearComposerDock(target, composer) ? 95 : 80;
+      else if (targetLower.includes('video') && hasFlowCountToken(targetText) && hasFlowAspectToken(targetText)) score = 78;
+      if (score > 0) cands.push({ el: target, blob: blob.slice(0, 50), score });
     });
+    const genericLauncher = findFlowConfigLauncher();
+    if (genericLauncher && _gfv2Vis(genericLauncher)) {
+      cands.push({
+        el: genericLauncher,
+        blob: _gfv2Blob(genericLauncher).slice(0, 50),
+        score: isNearComposerDock(genericLauncher, composer) ? 97 : 88,
+      });
+    }
     cands.sort((a, b) => b.score - a.score);
-    return cands;
+    return cands.filter((cand, idx, arr) => arr.findIndex((other) => other.el === cand.el) === idx);
   }
   function _gfv2ClickEl(el) {
     try {
@@ -4139,6 +4203,18 @@ function isSettingsScopedModelSource(source) {
     return best;
   }
 
+  function _gfv2ReadComposerPersistence() {
+    const observed = observeFlowState();
+    const modelLower = _gfv2Norm(observed.model || '').toLowerCase();
+    return {
+      aspectRatio: observed.aspectRatio || 'UNKNOWN',
+      count: observed.count || 'UNKNOWN',
+      model: observed.model || null,
+      model_veo_lite_confirmed: /veo[\s\S]*lite/.test(modelLower),
+      model_visible_wrong: /omni flash|imagen|nano banana/.test(modelLower),
+    };
+  }
+
   async function gfv2DiscoverSettings() {
     const launchers = _gfv2FindSettingsLauncher();
     const before = _gfv2DumpControls();
@@ -4193,6 +4269,14 @@ function isSettingsScopedModelSource(source) {
     const launchers = _gfv2FindSettingsLauncher();
     result.launcher_candidates = launchers.slice(0, 10).map((l) => l.blob);
     if (!launchers.length) {
+      const surfaced = await openFlowConfigPanel();
+      if (surfaced) {
+        result.actions.push('fallback_open_flow_config_panel');
+        launchers.push(..._gfv2FindSettingsLauncher());
+        result.launcher_candidates = launchers.slice(0, 10).map((l) => l.blob);
+      }
+    }
+    if (!launchers.length) {
       result.error = 'GFV2_SETTINGS_PANEL_NOT_FOUND';
       result.detail = 'no_settings_launcher';
       return result;
@@ -4219,6 +4303,17 @@ function isSettingsScopedModelSource(source) {
       await _gfv2Sleep(250);
     }
     result.controls_seen = _gfv2DumpControls().slice(0, 50);
+    if (!result.settings_panel_opened || !band) {
+      const surfaced = await openFlowConfigPanel();
+      if (surfaced) {
+        band = _gfv2VideoBand();
+        if (band) {
+          result.settings_panel_opened = true;
+          result.actions.push('fallback_open_flow_config_panel_after_launcher_scan');
+        }
+      }
+      result.controls_seen = _gfv2DumpControls().slice(0, 50);
+    }
     if (!result.settings_panel_opened || !band) {
       result.error = 'GFV2_SETTINGS_PANEL_NOT_FOUND';
       result.detail = 'video_generation_default_section_not_found';
@@ -4320,6 +4415,10 @@ function isSettingsScopedModelSource(source) {
       _gfv2ClickEl(saveEl);
       result.actions.push('clicked_save');
       await _gfv2Sleep(650);
+      const panelClosed = await waitForCondition(() => !_gfv2VideoBand(), 2500, 100);
+      if (panelClosed) {
+        result.actions.push('save_closed_settings_panel');
+      }
     }
     // Re-read the video band to verify persistence of ratio/count/model.
     const band2 = _gfv2VideoBand() || band;
@@ -4331,6 +4430,15 @@ function isSettingsScopedModelSource(source) {
       result.ratio_9_16_confirmed = result.ratio_9_16_confirmed || Boolean(pr && _gfv2IsSelected(pr));
       result.count_1x_confirmed = result.count_1x_confirmed || Boolean(pc && _gfv2IsSelected(pc));
       result.model_veo_lite_confirmed = result.model_veo_lite_confirmed || /veo[\s\S]*lite/.test(mTxt);
+    }
+    const persistedComposer = _gfv2ReadComposerPersistence();
+    result.persisted_composer = persistedComposer;
+    result.ratio_9_16_confirmed = result.ratio_9_16_confirmed || persistedComposer.aspectRatio === '9:16';
+    result.count_1x_confirmed = result.count_1x_confirmed || persistedComposer.count === '1x';
+    result.model_veo_lite_confirmed = result.model_veo_lite_confirmed || persistedComposer.model_veo_lite_confirmed;
+    result.model_visible_wrong = result.model_visible_wrong || persistedComposer.model_visible_wrong;
+    if (!result.model_canonical && persistedComposer.model) {
+      result.model_canonical = _gfv2Norm(persistedComposer.model).toLowerCase();
     }
     result.settings_saved_or_persisted = Boolean(
       result.ratio_9_16_confirmed && result.count_1x_confirmed && result.model_veo_lite_confirmed,
@@ -4534,28 +4642,65 @@ function isSettingsScopedModelSource(source) {
   }
 
   function findNewProjectControl() {
-    const selectors = 'button, [role="button"], a, div[role="button"], span';
+    // The Flow home/landing DOM (banner carousel) is large, and the previous
+    // implementation ran up to 7 findElementByText full-document scans with a
+    // forced-reflow isVisible() on EVERY matching 'span' BEFORE text matching —
+    // and this function is called several times per OPEN_FLOW_NEW_PROJECT
+    // message. Live proof manual_efad2bb1 / manual_stkdiag1: the handler
+    // blocked the page main thread past the 70s message timeout
+    // (GFV2_CREATE_SESSION_NOT_FOUND) and once died with "Maximum call stack
+    // size exceeded". Match text FIRST (cheap string work), verify visibility
+    // only on the few text matches, and stop at a hard deadline so a
+    // pathological DOM fails closed (null -> FLOW_PROJECT_CREATION_PATH_MISSING)
+    // instead of hanging the tab.
+    const deadline = Date.now() + 5000;
     const candidates = [
-      'Create with Flow',
-      'Create new project',
-      'Create new',
-      'New project',
-      'Start creating',
-      'Create project',
-      'New video',
+      'create with flow',
+      'create new project',
+      'create new',
+      'new project',
+      'start creating',
+      'create project',
+      'new video',
     ];
-
-    for (const candidate of candidates) {
-      const match = findElementByText(selectors, candidate);
-      if (match && isVisible(match)) return match;
+    const matches = [];
+    for (const el of document.querySelectorAll('button, [role="button"], a, div[role="button"], span')) {
+      if (Date.now() > deadline) break;
+      const label = normalizeText(
+        el.textContent || el.getAttribute('aria-label') || ''
+      ).toLowerCase();
+      // Long labels are page/section containers, never the control itself.
+      if (!label || label.length > 120) continue;
+      let rank = Number.MAX_SAFE_INTEGER;
+      for (let i = 0; i < candidates.length; i += 1) {
+        const needle = candidates[i];
+        let quality = -1;
+        if (label === needle) quality = 0;
+        else if (label.startsWith(needle)) quality = 1;
+        else if (label.includes(needle)) quality = 2;
+        if (quality !== -1) rank = Math.min(rank, i * 3 + quality);
+      }
+      if (rank === Number.MAX_SAFE_INTEGER) {
+        // Legacy fuzzy fallback tier: interactive elements only, same as the
+        // old 'button, [role="button"], a' broad-scan behaviour.
+        const fuzzy =
+          el.matches?.('button, [role="button"], a')
+          && (label.includes('create') || label.includes('new project') || label.includes('new video'));
+        if (!fuzzy) continue;
+        rank = 1000;
+      }
+      matches.push({ el, label, rank });
+      if (matches.length >= 200) break;
     }
-
-    const buttonCandidates = Array.from(document.querySelectorAll('button, [role="button"], a'));
-    return buttonCandidates.find((el) => {
-      if (!isVisible(el)) return false;
-      const text = normalizeText(el.textContent || el.getAttribute('aria-label') || '').toLowerCase();
-      return text.includes('create') || text.includes('new project') || text.includes('new video');
-    }) || null;
+    matches.sort((a, b) => a.rank - b.rank);
+    for (const item of matches) {
+      if (Date.now() > deadline) break;
+      if (!isVisible(item.el)) continue;
+      if (item.rank >= 1000) return item.el;
+      const target = resolveInteractiveControlTarget(item.el, item.label);
+      if (target && isVisible(target)) return target;
+    }
+    return null;
   }
 
   function collectProjectCreationState() {
@@ -4578,12 +4723,13 @@ function isSettingsScopedModelSource(source) {
       'Back to projects',
     ], markerSources);
 
+    const newProjectControl = findNewProjectControl();
     return {
       diagnostic,
       isRoot: isRootFlowUrl(window.location.href),
       hasErrorPage: diagnostic.visible_error_markers.length > 0,
-      landingDetected: landingMarkers.length > 0 || !!findNewProjectControl(),
-      newProjectControlFound: !!findNewProjectControl(),
+      landingDetected: landingMarkers.length > 0 || !!newProjectControl,
+      newProjectControlFound: !!newProjectControl,
       landingMarkers,
     };
   }
@@ -4656,7 +4802,8 @@ function isSettingsScopedModelSource(source) {
         : readinessObserved.topMode);
     const readinessModel = canonicalizeFlowModelLabel(readinessObserved.model);
     const contradictoryImageModel = readinessModel.includes('nano banana');
-    const modeReady = readinessModeVisible.includes('Video/Frames');
+    const f2vSurface = hasF2VEditorSurfaceSignals(readinessObserved);
+    const modeReady = f2vSurface.ready;
     const slotReady = readinessObserved.visibleUploadSlots.includes('Start');
     const softUnknownModelPass = !readinessModel || readinessModel === 'unknown';
     const veoVisiblePass = readinessModel.includes('veo');
@@ -4693,6 +4840,7 @@ function isSettingsScopedModelSource(source) {
         contradictory_count_visible: contradictoryCountVisible,
         contradictory_model_visible: contradictoryModelVisible,
         soft_unknown_model_pass: softUnknownModelPass,
+        f2v_surface: f2vSurface,
       },
     };
   }
@@ -4843,7 +4991,7 @@ function isSettingsScopedModelSource(source) {
     // background worker must own the post-click wait/reinject sequence.
     queueMicrotask(() => {
       try {
-        createControl.click();
+        _gfv2ClickEl(createControl);
       } catch (error) {
         console.warn('[FlowAgent] New project control click failed:', error);
       }
@@ -5265,7 +5413,7 @@ function isSettingsScopedModelSource(source) {
       // (already in an editor but wrong workspace type).
       const newProjectBtn = findNewProjectControl();
       if (newProjectBtn && isVisible(newProjectBtn)) {
-        newProjectBtn.click();
+        _gfv2ClickEl(newProjectBtn);
         logStage(STAGES.NEW_PROJECT_CLICKED, 'PASS', snapMsg);
       } else {
         const chooserOpened = await openCreateTypeChooser();
@@ -5290,7 +5438,7 @@ function isSettingsScopedModelSource(source) {
             const goBackBtn = findElementByText('button, [role="button"], span, div', 'Go Back');
             if (goBackBtn && isVisible(goBackBtn)) {
               console.log('[FlowAgent] Shell detected, clicking Go Back');
-              goBackBtn.click();
+              _gfv2ClickEl(goBackBtn);
               goBackClicked = true;
             }
           }
@@ -6127,15 +6275,25 @@ function isSettingsScopedModelSource(source) {
     }
 
     if (msg.type === 'OPEN_FLOW_NEW_PROJECT') {
+      // Progress beacons: one-way stage events escape the renderer even if a
+      // later synchronous step blocks the main thread, so telemetry shows the
+      // exact step a hung OPEN_FLOW_NEW_PROJECT died in (manual_hangfix1).
+      const onpRid = msg.request_id || 'onp_probe';
+      const onpT0 = Date.now();
+      const onpBeacon = (stage) =>
+        _sendStageEvent(onpRid, stage, 'WAITING_FLOW', { elapsed_ms: Date.now() - onpT0 });
       try {
+        onpBeacon('ONP_HANDLER_ENTERED');
         const state = collectProjectCreationState();
+        onpBeacon('ONP_STATE_COLLECTED');
         const ready = checkFlowComposerReady(msg.mode);
+        onpBeacon('ONP_COMPOSER_CHECKED');
 
         if (
           ready.composer_found
           && ready.composer_editable
           && ready.generate_button_found
-          && String(ready.current_mode_visible || '').includes('Video/Frames')
+          && hasF2VEditorSurfaceSignals(ready.observed).ready
         ) {
           sendResponse({
             ok: true,
@@ -6152,6 +6310,7 @@ function isSettingsScopedModelSource(source) {
         }
 
         const createControl = findNewProjectControl();
+        onpBeacon('ONP_CONTROL_SEARCHED');
         if (!createControl) {
           sendResponse({
             ok: false,
@@ -6183,7 +6342,7 @@ function isSettingsScopedModelSource(source) {
 
         setTimeout(() => {
           try {
-            createControl.click();
+            _gfv2ClickEl(createControl);
           } catch (error) {
             console.warn('[FlowAgent] New project control click failed:', error);
           }
@@ -6192,6 +6351,7 @@ function isSettingsScopedModelSource(source) {
         sendResponse({
           ok: false,
           error: String(err?.message || err),
+          error_stack: String(err?.stack || '').slice(0, 1500),
         });
       }
       return false;
@@ -6294,6 +6454,16 @@ function isSettingsScopedModelSource(source) {
   }
 
   if (!FLOW_KIT_TEST_MODE) {
+    // Re-injection guard: ensureFlowDomScript() re-injects this file on every
+    // stale-script retry within the same extension instance. Without removing
+    // the previous copy's listener, copies stack up and every message runs N
+    // scan storms serially on the tab main thread (manual_hangfix1 hang
+    // amplification). Last injection wins.
+    if (window._flowKitDomListener) {
+      try {
+        chrome.runtime.onMessage.removeListener(window._flowKitDomListener);
+      } catch (_) {}
+    }
     window._flowKitDomListener = flowDomMessageListener;
     chrome.runtime.onMessage.addListener(flowDomMessageListener);
   }

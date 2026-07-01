@@ -584,6 +584,18 @@ async def reload_flow_tab(_: ReloadFlowTabRequest):
     }
 
 
+@router.post("/reload-extension")
+async def reload_extension(_: ReloadFlowTabRequest):
+    # One-way runtime reload: the extension replies ok then calls
+    # chrome.runtime.reload() ~100ms later, so the WS connection drops and
+    # re-registers. Callers must poll /api/local-agent/status for reconnect.
+    result = await get_flow_client().reload_extension()
+    return {
+        **result,
+        "last_checked_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    }
+
+
 @router.post("/open-target-flow-project")
 async def open_target_flow_project(body: OpenTargetFlowProjectRequest):
     result = await get_flow_client().open_target_flow_project(body.flow_project_url)

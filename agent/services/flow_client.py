@@ -285,6 +285,76 @@ class FlowClient:
 
         return {"ok": False, "error": "invalid reload flow tab payload"}
 
+    async def reload_extension(self) -> dict:
+        """Reload the extension runtime (chrome.runtime.reload) so on-disk JS changes take effect."""
+        result = await self._send("RELOAD_EXTENSION", {}, timeout=15)
+        if result.get("error"):
+            return {"ok": False, "error": result["error"]}
+
+        payload = result.get("result")
+        if isinstance(payload, dict):
+            return payload
+
+        return {"ok": False, "error": "invalid reload extension payload"}
+
+    async def create_agent_session(self, project_id: str) -> dict:
+        """Create a flowCreationAgent session (current Omni/V2 video path)."""
+        url = self._build_url("create_agent_session")
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": {"projectId": f"projects/{project_id}"},
+        }, timeout=30)
+
+    async def agent_stream_chat(self, session_id: str, project_id: str,
+                                turn_number: int, text: str,
+                                media_ids: Optional[list[str]] = None,
+                                permission_action: Optional[str] = None) -> dict:
+        """Send one conversational turn to the flowCreationAgent (video generation).
+
+        Turn 1 carries the prompt + mediaReferences. Later turns steer the agent
+        ("i want 1 video only", "veo 3.1 - lite only") or approve/reject via
+        permission_action. Returns the SSE stream as text.
+        """
+        url = self._build_url("agent_stream_chat")
+        body = {
+            "agentSessionId": session_id,
+            "agentClientContext": {
+                "projectId": f"projects/{project_id}",
+                "clientSessionId": f";{int(time.time() * 1000)}",
+                "recaptchaContext": {
+                    "token": "",  # extension injects the solved token
+                    "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB",
+                },
+                "turnNumber": turn_number,
+            },
+            "userMessage": {"userPrompt": {"parts": [{"text": text}]}},
+        }
+        if media_ids:
+            body["userMessage"]["mediaReferences"] = [{"mediaId": m} for m in media_ids]
+        if permission_action:
+            body["permissionAction"] = permission_action
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": body,
+            "captchaAction": "CHAT_GENERATION",  # captured from live UI (not VIDEO_GENERATION)
+        }, timeout=120)
+
+    async def harvest_video_urls(self, tab_id: int | None = None) -> dict:
+        """Scan the (bound) Flow editor tab for finished media: video/image/media ids
+        and GCS urls. Maps to the extension's HARVEST_VIDEO_URLS WS method.
+
+        Returns the raw WS envelope — callers unwrap .get("result", ...) themselves
+        (make_video patch A/G expects flow_tab_found/flow_tab_id/diag inside it and
+        fail-closes on NO_FLOW_TAB / BOUND_TAB_GONE)."""
+        params: dict = {}
+        if tab_id is not None:
+            params["tab_id"] = tab_id
+        return await self._send("HARVEST_VIDEO_URLS", params, timeout=30)
+
     async def open_target_flow_project(self, flow_project_url: str) -> dict:
         """Open or focus an exact Google Flow project editor URL before readiness checks."""
         result = await self._send("OPEN_TARGET_FLOW_PROJECT", {"flow_project_url": flow_project_url}, timeout=45)

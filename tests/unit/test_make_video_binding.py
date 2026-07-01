@@ -414,6 +414,73 @@ def test_generate_done_when_video_retrieved():
     assert job.get("artifact") == "video"
 
 
+def test_retrieval_reloads_stale_tab_and_never_claims_preexisting_video():
+    # Two live-proven retrieval invariants in one flow:
+    # 1. Omni/V2 editor DOM does not live-update (g_01b041b563dc): the finished video
+    #    only becomes harvestable after a tab reload — filed under imageIds — so the
+    #    loop must reload the bound tab periodically.
+    # 2. A video that ALREADY existed in the project before this job (g_745e95ede679
+    #    false-DONE: claimed the previous run's mp4 at try 1) must NEVER be accepted —
+    #    the pre-poll snapshot puts it in the exclude set.
+    state = {"reloads": 0}
+
+    class _C:
+        async def create_agent_session(self, *a):
+            return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
+
+        async def reload_flow_tab(self):
+            state["reloads"] += 1
+            return {"ok": True}
+
+        async def harvest_video_urls(self, tab_id=None):
+            # 'old-video' is visible from the very first (snapshot) harvest; the fresh
+            # render only surfaces after a reload — and lands in imageIds, not videoIds.
+            diag = {"projectId": "p1", "videoIds": [], "mediaIds": [],
+                    "imageIds": ["old-video"]}
+            if state["reloads"]:
+                diag["imageIds"] = ["old-video", "fresh-video"]
+            return {"result": {"flow_tab_found": True, "flow_tab_id": 1, "diag": diag}}
+
+    async def fake_bind(client, pid=None):
+        return {"project_id": "p1", "flow_tab_id": 1, "flow_project_url": "u"}
+
+    async def fake_negotiate(*a, **k):
+        return {"approved": True, "model_ok": True, "duration_ok": True,
+                "model_used": "veo_3_1_lite", "duration_used": 8}
+
+    async def fake_save(client, cands, exclude):
+        usable = [m for m in cands if m not in exclude]
+        assert "old-video" not in usable, "pre-existing video must be excluded from retrieval"
+        if "fresh-video" in usable:
+            return ("fresh-video", "/out/v.mp4", 1.9)
+        return (None, None, None)
+
+    orig = (mv.get_flow_client, mv._bind_editor_session,
+            mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio)
+    mv.get_flow_client = lambda: _C()
+    mv._bind_editor_session = fake_bind
+    mv.agent_video.negotiate_and_generate = fake_negotiate
+    mv._save_video_by_get_media = fake_save
+    mv.asyncio = _ShimAsyncio(mv.asyncio)
+    mv._JOBS.clear()
+    mv._JOBS["jr"] = {"status": "SUBMITTED"}
+    try:
+        _run(mv._run_generate("jr", "T2V", "p", "p1", None, None, "9:16", None,
+                              model="veo_3_1_lite", duration_s=8))
+        job = dict(mv._JOBS["jr"])
+    finally:
+        (mv.get_flow_client, mv._bind_editor_session,
+         mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio) = orig
+        mv._JOBS.clear()
+
+    assert state["reloads"] >= 1          # the loop refreshed the stale tab
+    assert job["status"] == "DONE"        # and retrieved the video that surfaced after it
+    assert job.get("media_id") == "fresh-video"
+    assert job.get("media_id") != "old-video"   # never the pre-existing one
+    assert job.get("preexisting_media_excluded") == 1
+    assert job.get("artifact") == "video"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
