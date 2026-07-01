@@ -4,6 +4,7 @@ domains:
     status: IN_PROGRESS
     owned_paths:
       - docs/MODULE_STATUS.yaml
+      - docs/authority/working/WORKSPACE_GENERATION_PACKAGE_AND_HANDOFF_BANK_PLAN_v0_1.md
       - package.json
       - package-lock.json
       - biome.json
