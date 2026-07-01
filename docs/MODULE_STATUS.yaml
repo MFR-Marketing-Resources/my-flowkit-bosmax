@@ -129,6 +129,7 @@ domains:
       - tests/ui/test_f2v_ugc_prompt_compiler_ui_contract.py
       - tests/ui/test_fastmoss_product_visibility_ui_contract.py
       - tests/ui/test_i2v_creative_asset_resolver_ui_contract.py
+      - tests/ui/test_i2v_generation_package_handoff_ui_contract.py
       - tests/ui/test_workspace_image_preview_ui_contract.py
       - tests/ui/test_workspace_authoring_layout_ui_contract.py
       - tests/ui/test_workspace_jobs_page_ui_contract.py
