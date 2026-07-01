@@ -385,10 +385,14 @@ export default function IMGModule({
 						{isUploading
 							? "Uploading Assets..."
 							: isExecuting
-								? "Generating Images..."
-								: "GENERATE IMAGES"}
+								? "Sending to Flow Editor..."
+								: "SEND TO FLOW EDITOR"}
 						{!isExecuting && !isUploading && <ArrowRight size={18} />}
 					</button>
+					<p className="mt-2 text-center text-xs text-slate-400">
+						Uploads assets and inserts the prompt into the Flow editor, then
+						stops — does not auto-generate, poll, or download.
+					</p>
 				</div>
 			</div>
 

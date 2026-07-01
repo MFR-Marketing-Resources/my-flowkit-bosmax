@@ -43,7 +43,7 @@ def test_i2v_module_keeps_prompt_and_manual_upload_fallback_surfaces():
         "Prompt Injection",
         "Auto Package Baseline",
         "Manual Override",
-        "START GENERATION",
+        "SEND TO FLOW EDITOR",
         "Upload subject override",
         "Upload scene override",
         "Upload style override",

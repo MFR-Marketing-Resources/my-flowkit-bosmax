@@ -732,12 +732,16 @@ export default function I2VModule({
 							: isRefreshingPackage
 								? "Refreshing Semantic Package..."
 								: isExecuting
-									? "Executing Ingredients Sequence..."
-									: "START GENERATION"}
+									? "Sending to Flow Editor..."
+									: "SEND TO FLOW EDITOR"}
 						{!isExecuting && !isUploading && !isRefreshingPackage && (
 							<ArrowRight size={18} />
 						)}
 					</button>
+					<p className="mt-2 text-center text-xs text-slate-400">
+						Uploads assets and inserts the prompt into the Flow editor, then
+						stops — does not auto-generate, poll, or download.
+					</p>
 				</div>
 			</div>
 

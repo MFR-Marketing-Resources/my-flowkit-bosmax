@@ -366,10 +366,14 @@ export default function F2VModule({
 						{isUploading
 							? "Preparing Assets..."
 							: isExecuting
-								? "Executing Sequence..."
-								: "START GENERATION"}
+								? "Sending to Flow Editor..."
+								: "SEND TO FLOW EDITOR"}
 						{!isExecuting && !isUploading && <ArrowRight size={18} />}
 					</button>
+					<p className="mt-2 text-center text-xs text-slate-400">
+						Uploads the start frame and inserts the prompt in the Flow editor,
+						then stops before Generate — does not auto-generate.
+					</p>
 				</div>
 			</div>
 

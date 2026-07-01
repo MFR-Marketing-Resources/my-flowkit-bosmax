@@ -181,9 +181,13 @@ export default function T2VModule({
 						disabled={isExecuting || !manualPrompt}
 						className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
 					>
-						{isExecuting ? "Executing T2V Sequence..." : "START GENERATION"}
+						{isExecuting ? "Sending to Flow Editor..." : "SEND TO FLOW EDITOR"}
 						{!isExecuting && <ArrowRight size={18} />}
 					</button>
+					<p className="mt-2 text-center text-xs text-slate-400">
+						Inserts the prompt into the Flow editor and stops — does not
+						auto-generate, poll, or download.
+					</p>
 				</div>
 			</div>
 
