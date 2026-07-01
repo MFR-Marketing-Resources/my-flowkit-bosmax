@@ -149,7 +149,14 @@ def test_flow_dom_f2v_config_launcher_accepts_preselection_counts_before_panel_o
 	assert "hasFlowCountToken(text)" in launcher_section
 	assert "hasFlowAspectToken(text)" in launcher_section
 	assert "text.includes('1x')" not in launcher_section
-	assert "hasFlowCountToken(text) && hasFlowAspectToken(text)" in generic_launcher_section
+	# Contract note: the strict `count && aspect` rule stays frozen in the
+	# F2V-specific findCollapsedF2VConfigLauncher (asserted above via launcher_section).
+	# The generic findFlowConfigLauncher was intentionally broadened by the slot-based
+	# flow mode inference recovery (commit 1c7bd51 / ae37733) to detect slot pills such
+	# as "Video 1x" via looksLikeBottomComposerConfigPillText(), which itself resolves
+	# canonical count/aspect tokens through normalizeFlowConfigPillText — so the
+	# no-hardcoded-token guarantee is preserved without pinning the old boolean.
+	assert "looksLikeBottomComposerConfigPillText(text)" in generic_launcher_section
 	assert "collectComposerContextRoots(composer)" in generic_launcher_section
 
 

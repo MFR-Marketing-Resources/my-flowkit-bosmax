@@ -159,9 +159,16 @@ def test_background_status_contract_exposes_compatibility_build_fields():
     ]:
         assert token in background_source
 
+    # Contract note: the STATUS read was migrated from a bespoke raw
+    # chrome.runtime.sendMessage Promise (statusPayload/resolve) to the hardened
+    # shared sendRuntimeMessageWithResponse helper (commit 1c7bd51, "land API-first
+    # runtime unit"). The compatibility-build-field contract is unchanged — nested
+    # `.data` extraction, ERR_EMPTY_BACKGROUND_STATUS fallback, and the build-id /
+    # runtime-ready derivation below all persist against the retained testConn payload.
     for token in [
-        "const statusPayload = resp?.data && typeof resp.data === 'object' ? resp.data : resp;",
-        "resolve(statusPayload || { ok: false, error: 'ERR_EMPTY_BACKGROUND_STATUS' });",
+        "const statusResp = await sendRuntimeMessageWithResponse({ type: 'STATUS' }, 6000);",
+        "? statusResp.data",
+        ": (statusResp || { ok: false, error: 'ERR_EMPTY_BACKGROUND_STATUS' });",
         "const backgroundBuildId = String(",
         "testConn?.build_id",
         "testConn?.background_build_id",
