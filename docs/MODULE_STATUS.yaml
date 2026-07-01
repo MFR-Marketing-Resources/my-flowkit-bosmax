@@ -72,6 +72,7 @@ domains:
       - dashboard/src/components/product-asset-generator/presets.ts
       - dashboard/src/pages/ProductsSalesAnalyzerPage.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
+      - dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx
       - dashboard/src/pages/ProductRegistrationPage.tsx
       - dashboard/src/components/product-registration/ProductKnowledgeIntakeForm.tsx
       - dashboard/src/components/product-registration/RegistrationReviewDraftPanel.tsx
@@ -137,6 +138,7 @@ domains:
       - tests/ui/test_product_catalog_selector_loading_ui_contract.py
       - tests/ui/test_reference_only_workspace_blockers_ui_contract.py
       - tests/ui/test_product_lifecycle_confirmation_ui_contract.py
+      - tests/ui/test_product_readiness_profile_ui_contract.py
       - tests/ui/test_product_registration_ui_contract.py
       - tests/ui/test_products_sales_analyzer_ui_contract.py
       - tests/unit/test_product_registration_commit_service.py

@@ -405,6 +405,14 @@ export default function F2VModule({
 							value={model}
 							onChange={setModel}
 						/>
+						{/* Stable autofill/test identifier mirroring the selected model. */}
+						<input
+							type="hidden"
+							id="f2v-generation-model"
+							name="f2v_generation_model"
+							value={model}
+							readOnly
+						/>
 						<div className="space-y-3">
 							<p className="text-xs font-bold text-slate-400">Count</p>
 							<div className="grid grid-cols-4 gap-2">

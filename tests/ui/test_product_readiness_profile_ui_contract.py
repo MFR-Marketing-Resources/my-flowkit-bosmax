@@ -14,7 +14,10 @@ def test_product_readiness_profile_primary_workflow_exists():
     )
 
     assert "Product Readiness Profile" in form_source
-    assert "Product Selector" in form_source
+    # Contract migration: the product-selection step is the "Database Product" FieldShell
+    # with a "Select a product" control (product_id-authority selector), not a heading
+    # literally named "Product Selector". Assert the real selector control.
+    assert "Select a product" in form_source
     assert "Analyze Product" in form_source
     assert "Readiness Status" in form_source
     assert "Profile Source Status" in form_source
@@ -80,7 +83,10 @@ def test_product_readiness_profile_supports_prompt_preview_handoff():
     )
     preview_page_source = _read("dashboard/src/pages/PromptPreviewPage.tsx")
 
-    assert "Use this profile in Prompt Preview" in form_source
+    # Contract migration: the handoff button label is "Use in Prompt Preview" (the full
+    # feature — navigate + productReadinessProfile payload + PromptPreviewPage consumption
+    # — is otherwise unchanged and still asserted below).
+    assert "Use in Prompt Preview" in form_source
     assert 'navigate("/prompt-preview"' in form_source
     assert "productReadinessProfile" in form_source
     assert "product_scale_prompt" in form_source
@@ -97,8 +103,11 @@ def test_product_readiness_profile_selector_flow_uses_backend_authority_not_stal
         "dashboard/src/components/prompt-tool/usePromptToolHydration.ts"
     )
 
-    assert "Selecting a product uses product_id preview authority." in form_source
-    assert "Inline payload JSON is cleared" in form_source
+    # Contract migration: helper copy was expanded and the word "preview" dropped.
+    # The old "Inline payload JSON is cleared" narration was removed, but the meaningful
+    # invariant (selecting a product clears the stale inline payload and uses backend
+    # authority) is still asserted below via product_payload_text: "" + mergeHydratedProduct.
+    assert "Selecting a product uses product_id authority" in form_source
     assert 'product_payload_text: ""' in form_source
     assert "mergeHydratedProduct" in hydration_source
 
