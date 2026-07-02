@@ -114,3 +114,28 @@ def test_generation_package_compile_call_is_wired_correctly():
     assert "await compile_ugc_video_prompt" not in src
     assert "product_id=product_id,\n        mode=mode" not in src
     assert "[I2V Semantic Context]" not in src  # no post-compile mutation
+
+def test_explicit_source_mode_hybrid_first_class():
+    # The /operator/hybrid surface sends job mode F2V + source_mode HYBRID:
+    # product-image anchor + ONE concrete registry presenter, end-to-end.
+    result = compile_ugc_video_prompt(
+        product=PRODUCT, approved_package={}, mode="F2V",
+        target_language="BM_MS", generation_mode="SINGLE", duration_seconds=8,
+        source_mode="HYBRID",
+    )
+    text = result["final_compiled_prompt_text"]
+    assert "uploaded product image" in text
+    assert "The presenter is a Malaysian adult" in text
+    assert "one visible creator" not in text.lower()
+
+
+def test_generation_package_request_models_default_no_overlay():
+    # Residual gap from the Codex counter era: the pydantic request models in
+    # agent/models/workspace_generation_package.py still defaulted True.
+    import inspect
+    from agent.models import workspace_generation_package as m
+    for _name, cls in inspect.getmembers(m, inspect.isclass):
+        if hasattr(cls, "model_fields") and "overlay_enabled" in getattr(cls, "model_fields", {}):
+            default = cls.model_fields["overlay_enabled"].default
+            assert default is False, f"{cls.__name__}.overlay_enabled must default False (NO_OVERLAY law)"
+

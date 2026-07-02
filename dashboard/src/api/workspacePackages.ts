@@ -116,6 +116,10 @@ export async function compileWorkspacePromptPreview(input: {
 	creator_persona?: string;
 	overlay_enabled?: boolean;
 	dialogue_enabled?: boolean;
+	// Canonical source-mode passthrough (ADR-008)
+	source_mode?: "T2V" | "HYBRID" | "FRAMES" | "INGREDIENTS" | "IMAGES";
+	engine_duration_target?: "GROK" | "GOOGLE_FLOW";
+	requested_total_duration_seconds?: number;
 	blocks?: Array<{
 		block_index: number;
 		duration_seconds: number;

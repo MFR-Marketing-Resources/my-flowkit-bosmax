@@ -60,6 +60,7 @@ domains:
       - agent/api/creative_brief.py
       - agent/services/workspace_generation_package_service.py
       - agent/api/workspace_generation_packages.py
+      - agent/models/workspace_generation_package.py
       - requirements.txt
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py

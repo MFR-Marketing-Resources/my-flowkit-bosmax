@@ -14,7 +14,7 @@ class F2VGenerationPackageRequest(BaseModel):
     camera_style: str = "UGC_IPHONE_RAW"
     character_presence: str = "VISIBLE_CREATOR"
     creator_persona: str = "DEFAULT_CREATOR"
-    overlay_enabled: bool = True
+    overlay_enabled: bool = False  # NO_OVERLAY law (ADR-008): default off
     dialogue_enabled: bool = True
     blocks: list[dict[str, Any]] = Field(default_factory=list)
     start_frame_asset_id: str | None = None
@@ -35,7 +35,7 @@ class I2VGenerationPackageRequest(BaseModel):
     camera_style: str = "UGC_IPHONE_RAW"
     character_presence: str = "VISIBLE_CREATOR"
     creator_persona: str = "DEFAULT_CREATOR"
-    overlay_enabled: bool = True
+    overlay_enabled: bool = False  # NO_OVERLAY law (ADR-008): default off
     dialogue_enabled: bool = True
     product_reference_asset_id: str | None = None
     character_reference_asset_id: str | None = None
