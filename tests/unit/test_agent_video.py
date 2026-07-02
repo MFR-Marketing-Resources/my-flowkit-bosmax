@@ -175,6 +175,26 @@ def test_real_gen_tool_preapprove_still_bails():
     assert "would_approve" not in res
 
 
+def test_classify_agent_failure_reference_missing_phrases():
+    # Exact live replies (Faris' screenshots, 2026-07-02) after a dead start media:
+    assert av.classify_agent_failure(
+        "I'm having trouble accessing the reference image you provided. It seems to "
+        "be missing from the project right now. Could you please try selecting or "
+        "attaching the product image again?") == "REFERENCE_IMAGE_MISSING"
+    assert av.classify_agent_failure(
+        "I wasn't able to find the reference image you provided. Could you try "
+        "re-attaching the product photo, or let me know which image I should use "
+        "as the starting frame?") == "REFERENCE_IMAGE_MISSING"
+
+
+def test_classify_agent_failure_generic_and_none():
+    assert av.classify_agent_failure(
+        "Failed. Something went wrong. Please try again.") == "RENDER_FAILED"
+    assert av.classify_agent_failure("I'm generating your video now!") is None
+    assert av.classify_agent_failure("") is None
+    assert av.classify_agent_failure(None) is None
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

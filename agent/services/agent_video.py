@@ -32,6 +32,67 @@ _STARTED_PHRASES = ("started generating", "i'm generating",
 _GEN_TOOLS = ("generate_video", "generate_videos", "start_generation", "submit_generation",
               "generate_video_with_references", "generate_video_with_first_frame")
 
+# Post-approve failure knowledge (captured live 2026-07-02, Faris' screenshots):
+# when the render dies server-side the agent posts a "Failed / Something went
+# wrong" toast and then EXPLAINS itself in chat. The most common cause is a
+# reference image the agent can no longer access (stale/deleted media). These
+# phrases classify that reply so the pipeline fails FAST with the true cause
+# instead of polling an empty project for 12 minutes. Typing "regenerate" is
+# WRONG for the reference case — it refires the same dead reference and burns
+# credits again; the correct recovery is re-attach/re-upload the image.
+_REFERENCE_MISSING_PHRASES = (
+    "trouble accessing the reference image",
+    "wasn't able to find the reference image",
+    "unable to find the reference image",
+    "couldn't find the reference image",
+    "it seems to be missing from the project",
+    "missing from the project right now",
+    "attaching the product image again",
+    "re-attaching the product photo",
+    "which image i should use as the starting frame",
+)
+_RENDER_FAILED_PHRASES = (
+    "something went wrong. please try again",
+    "generation failed",
+    "failed to generate",
+    "video generation was unsuccessful",
+)
+
+
+def classify_agent_failure(text) -> str | None:
+    """Classify an agent reply into a failure kind, or None if it is not a failure.
+    'REFERENCE_IMAGE_MISSING' → re-attach/re-upload the start image (NEVER just
+    'regenerate'); 'RENDER_FAILED' → generic server-side render failure."""
+    low = str(text or "").lower()
+    if not low:
+        return None
+    if any(p in low for p in _REFERENCE_MISSING_PHRASES):
+        return "REFERENCE_IMAGE_MISSING"
+    if any(p in low for p in _RENDER_FAILED_PHRASES):
+        return "RENDER_FAILED"
+    return None
+
+
+async def probe_render_failure(client, project_id, session_id, turn_number) -> dict:
+    """Cheap in-session status probe (no media, no permission → zero credits):
+    ask the agent whether the last generation finished, and classify its reply.
+    Returns {classification, agent_text, turn_number(next)}. Never raises."""
+    try:
+        resp = await client.agent_stream_chat(
+            session_id, project_id, turn_number,
+            "Quick status check: did the last video generation finish successfully, "
+            "or did it fail? Answer briefly, do not generate anything new.")
+        data = resp.get("data", resp) if isinstance(resp, dict) else resp
+        st = parse_agent_sse(data)
+        return {
+            "classification": classify_agent_failure(st.get("text")),
+            "agent_text": (st.get("text") or "")[:400],
+            "turn_number": turn_number + 1,
+        }
+    except Exception as e:  # noqa: BLE001 — the probe must never kill retrieval
+        return {"classification": None, "agent_text": f"probe_error: {e}",
+                "turn_number": turn_number + 1}
+
 
 def _collect_text(obj, out):
     if isinstance(obj, dict):
@@ -190,6 +251,10 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             return {"ok": True, "approved": True,
                     "generation_started": state["started"],
                     **_verdict(state),
+                    # The render can die INSIDE the approve stream (e.g. missing
+                    # reference image) — surface it so the caller fails fast.
+                    "failure_classification": classify_agent_failure(state["text"]),
+                    "turns_used": turn,
                     "agent_text": state["text"], "transcript": transcript}
         if kind == "reject":
             await send("Reject", perm=perm_action)   # decline the wrong proposal
