@@ -85,6 +85,33 @@ def test_dialogue_lands_on_complete_clause_not_mid_sentence():
     assert not dialogue.endswith("cepat")
 
 
+def test_section6_uses_trigger_angle_and_cta_type_clause_bank_for_thin_copy():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-frag-cta",
+            "name": "SZINDORE PERFUME",
+            "category": "Fragrance",
+            "trigger_id": "CONFIDENCE_01",
+            "copywriting_angle": "Confidence-led scent appeal and everyday freshness",
+        },
+        copy={
+            "hook": "Weh, aku baru try ni.",
+            "subhook": "Mula-mula nampak biasa je.",
+            "cta": "Cuba tengok dulu.",
+            "cta_type": "save_for_later",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    first, final = result["blocks"][0]["dialogue"], result["blocks"][-1]["dialogue"]
+    assert "naik rasa yakin" in first.lower()
+    assert "simpan dulu" in final.lower()
+
+
 def test_cta_lands_only_in_final_block():
     result = _compile(duration_seconds=16)
     first, final = result["blocks"][0], result["blocks"][-1]
@@ -130,6 +157,19 @@ def test_mode_specific_visual_story_differs_between_hybrid_frames_and_ingredient
     assert "new reveal" in frames.lower()
     assert "reference-led opening beat" in ingredients.lower()
     assert "creator-led opening beat" in hybrid.lower()
+
+
+def test_fragrance_family_injects_scent_specific_visual_focus():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=8,
+        product={"id": "prod-frag", "name": "SZINDORE PERFUME", "category": "Fragrance"},
+        copy=COPY,
+        target_language="BM_MS",
+    )
+    text = result["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"]
+    assert "scent-led confidence" in text.lower() or "scent-confidence" in text.lower()
 
 
 def test_ingredients_requires_role_map_and_normalizes_missing_style():
@@ -193,6 +233,8 @@ def test_images_mode_single_still_under_same_authority():
     assert "single still image" in block["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower() \
         or "single commercial product image" in block["sections"]["SECTION 1 - ROLE & OBJECTIVE"].lower()
     assert block["dialogue"] == ""
+    assert "static 9:16" in block["sections"]["SECTION 5 - SHOT & CAMERA RULES"].lower()
+    assert "micro-jitter" not in block["sections"]["SECTION 5 - SHOT & CAMERA RULES"].lower()
 
 
 def test_avatar_registry_explicit_id_and_prose():

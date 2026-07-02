@@ -122,27 +122,36 @@ def _clean(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def normalize_copy_intelligence(copy: dict[str, Any] | None) -> dict:
+def normalize_copy_intelligence(
+    copy: dict[str, Any] | None, *, product: dict[str, Any] | None = None,
+) -> dict:
     """Structured copywriting fields (angle/hook/subhook/usp/cta/formula).
     The copy bank is a SECONDARY reference that keeps dialogue from going mute —
     missing fields degrade gracefully, they never fail the compile."""
     copy = copy or {}
+    product = product or {}
     formula = _clean(copy.get("formula_family") or copy.get("formula")).upper() or "HSO"
     if formula not in _FORMULA_FAMILIES:
         formula = "HSO"
+    angle = _clean(copy.get("angle") or copy.get("copywriting_angle") or product.get("copywriting_angle"))
+    cta = _clean(copy.get("cta"))
     usps = [
         _clean(u) for u in (
             copy.get("usps")
             or [copy.get("usp1"), copy.get("usp2"), copy.get("usp3"), copy.get("usp")]
         ) if _clean(u)
     ]
+    family = _infer_product_family(product, {"angle": angle})
     return {
-        "angle": _clean(copy.get("angle")),
+        "angle": angle,
         "hook": _clean(copy.get("hook")),
         "subhook": _clean(copy.get("subhook")),
         "usps": usps,
-        "cta": _clean(copy.get("cta")),
+        "cta": cta,
         "formula_family": formula,
+        "copywriting_angle": _clean(copy.get("copywriting_angle") or product.get("copywriting_angle")),
+        "trigger_id": _infer_trigger_id(product, copy, family=family, angle=angle),
+        "cta_type": _infer_cta_type(copy, cta),
     }
 
 
@@ -175,6 +184,318 @@ def _product_category(product: dict[str, Any]) -> str:
 
 def _humanize_label(value: str) -> str:
     return _clean(value).replace("_", " ")
+
+
+def _infer_product_family(product: dict[str, Any], copy: dict | None = None) -> str:
+    haystack = " ".join(
+        [
+            _clean(product.get("category")),
+            _clean(product.get("product_category")),
+            _clean(product.get("group")),
+            _clean(product.get("sub_group")),
+            _clean(product.get("type")),
+            _product_name(product),
+            _clean((copy or {}).get("angle")),
+        ]
+    ).lower()
+    if any(token in haystack for token in ("perfume", "fragrance", "body mist", "body spray", "aroma")):
+        return "fragrance"
+    if any(token in haystack for token in ("beauty", "skincare", "serum", "cosmetic", "body care", "personal care")):
+        return "beauty_personal_care"
+    if any(token in haystack for token in ("detergent", "laundry", "softener", "refill")):
+        return "laundry_care"
+    if any(token in haystack for token in ("cleaner", "household", "kitchen", "storage", "organizer")):
+        return "household_care"
+    if any(token in haystack for token in ("baby", "diaper", "wipes", "newborn", "parent")):
+        return "baby_care"
+    if any(token in haystack for token in ("food", "snack", "drink", "coffee", "tea", "sauce", "cookie")):
+        return "food_beverage"
+    if any(token in haystack for token in ("shirt", "baju", "telekung", "pajamas", "fashion", "wear", "garment", "apparel")):
+        return "fashion_apparel"
+    if any(token in haystack for token in ("watch", "device", "gadget", "earbud", "electronics", "screen")):
+        return "electronics"
+    if any(token in haystack for token in ("supplement", "wellness", "vitamin", "health")):
+        return "wellness"
+    return "general"
+
+
+def _family_focus_terms(family: str) -> dict[str, str]:
+    table = {
+        "fragrance": {
+            "context": "scent-led confidence and first-impression freshness",
+            "detail": "nozzle, bottle finish, and premium scent ritual cues",
+            "closing": "a soft but memorable scent-confidence payoff",
+        },
+        "beauty_personal_care": {
+            "context": "routine-upgrade beauty handling and polished self-care",
+            "detail": "texture-adjacent handling, packaging finish, and neat routine context",
+            "closing": "a polished beauty-routine payoff",
+        },
+        "laundry_care": {
+            "context": "practical routine utility and clean-results framing",
+            "detail": "pour-ready grip, cap detail, and label-forward function clarity",
+            "closing": "a useful routine CTA with practical confidence",
+        },
+        "household_care": {
+            "context": "practical home utility and easy-use clarity",
+            "detail": "functional surfaces, grip logic, and believable household context",
+            "closing": "a clean utility payoff",
+        },
+        "baby_care": {
+            "context": "gentle parent-trust reassurance and everyday ease",
+            "detail": "soft handling, parent-safe trust cues, and calm domestic context",
+            "closing": "a trust-led parenting payoff",
+        },
+        "food_beverage": {
+            "context": "appetite, convenience, and everyday craving pull",
+            "detail": "sealed-pack truth, serving temptation, and appetite-led framing",
+            "closing": "a crave-and-try payoff",
+        },
+        "fashion_apparel": {
+            "context": "fit, drape, texture, and wearable confidence",
+            "detail": "fabric fall, seam detail, and styling movement",
+            "closing": "a wear-it confidence payoff",
+        },
+        "electronics": {
+            "context": "feature clarity and daily-use usefulness",
+            "detail": "screen, controls, ports, or tactile feature reveal",
+            "closing": "a feature-led close with credible utility",
+        },
+        "wellness": {
+            "context": "careful routine support and trust-led presentation",
+            "detail": "clean bottle truth, measured handling, and non-claim routine context",
+            "closing": "a careful trust-led routine payoff",
+        },
+        "general": {
+            "context": "credible product-first commercial framing",
+            "detail": "honest product truth, readable packaging, and native social pacing",
+            "closing": "a clear product-first payoff",
+        },
+    }
+    return table[family]
+
+
+def _infer_trigger_id(
+    product: dict[str, Any], copy: dict[str, Any], *, family: str, angle: str,
+) -> str:
+    explicit = _clean(
+        copy.get("trigger_id")
+        or product.get("trigger_id")
+        or product.get("suggested_trigger_id")
+        or ((product.get("product_intelligence") or {}).get("trigger_id") if isinstance(product.get("product_intelligence"), dict) else "")
+    ).upper()
+    if explicit:
+        return explicit
+    haystack = " ".join(
+        [
+            angle,
+            _clean(copy.get("copywriting_angle")),
+            _clean(product.get("copywriting_angle")),
+            _product_name(product),
+            _product_category(product),
+        ]
+    ).lower()
+    if any(token in haystack for token in ("gift", "gifting", "festive", "raya", "present")):
+        return "GIFTING_01"
+    if any(token in haystack for token in ("authority", "feature", "tech", "screen", "wearable")):
+        return "AUTHORITY_01"
+    if any(token in haystack for token in ("comfort", "soft", "cozy", "selesa", "home")):
+        return "COMFORT_01"
+    if any(token in haystack for token in ("ego", "masculine", "alpha", "presence", "padu")):
+        return "EGO_01"
+    if any(token in haystack for token in ("female", "feminine", "wanita", "muslimah", "girly")):
+        return "FEMALE_01"
+    if any(token in haystack for token in ("confidence", "style", "fit", "premium", "scent", "beauty", "fashion")):
+        return "CONFIDENCE_01"
+    if any(token in haystack for token in ("trust", "gentle", "baby", "routine support", "safe")):
+        return "TRUST_01"
+    return {
+        "fragrance": "CONFIDENCE_01",
+        "beauty_personal_care": "CONFIDENCE_01",
+        "fashion_apparel": "CONFIDENCE_01",
+        "electronics": "AUTHORITY_01",
+        "food_beverage": "COMFORT_01",
+        "wellness": "TRUST_01",
+        "baby_care": "TRUST_01",
+        "laundry_care": "TRUST_01",
+        "household_care": "TRUST_01",
+        "general": "TRUST_01",
+    }.get(family, "TRUST_01")
+
+
+def _infer_cta_type(copy: dict[str, Any], cta_text: str) -> str:
+    allowed = {
+        "direct_checkout",
+        "standby_now",
+        "add_to_kit",
+        "save_for_later",
+        "comment_signal",
+        "private_action",
+    }
+    explicit = _clean(copy.get("cta_type")).lower()
+    if explicit in allowed:
+        return explicit
+    cta = cta_text.lower()
+    if any(token in cta for token in ("dm", "pm", "inbox", "ws", "whatsapp")):
+        return "private_action"
+    if any(token in cta for token in ("comment", "komen", "reply", "drop", "nak link")):
+        return "comment_signal"
+    if any(token in cta for token in ("save", "simpan", "bookmark")):
+        return "save_for_later"
+    if any(token in cta for token in ("kit", "routine", "stash", "cart", "troli")):
+        return "add_to_kit"
+    if any(token in cta for token in ("checkout", "check out", "grab", "beg kuning", "buy now", "order now")):
+        return "direct_checkout"
+    if any(token in cta for token in ("jangan tunggu", "before habis", "promo habis", "sekarang", "today only", "stok")):
+        return "standby_now"
+    return "direct_checkout" if cta_text else ""
+
+
+def _infer_angle_signal(copy: dict[str, Any], family: str) -> str:
+    haystack = " ".join(
+        [
+            _clean(copy.get("angle")),
+            _clean(copy.get("copywriting_angle")),
+            " ".join(_clean(usp) for usp in (copy.get("usps") or [])),
+        ]
+    ).lower()
+    if any(token in haystack for token in ("gift", "gifting", "festive", "present")):
+        return "gifting"
+    if any(token in haystack for token in ("authority", "feature", "tech", "screen", "precision")):
+        return "authority"
+    if any(token in haystack for token in ("comfort", "soft", "selesa", "cozy", "home")):
+        return "comfort"
+    if any(token in haystack for token in ("trust", "gentle", "parent", "baby", "reassur")):
+        return "trust"
+    if any(token in haystack for token in ("confidence", "style", "fit", "premium", "scent", "freshness", "beauty")):
+        return "confidence"
+    if any(token in haystack for token in ("routine", "daily", "harian", "self-care", "self care")):
+        return "routine"
+    if any(token in haystack for token in ("utility", "practical", "clean", "refill", "organize")):
+        return "utility"
+    if any(token in haystack for token in ("taste", "appetite", "sedap", "pedas", "snack", "drink")):
+        return "taste"
+    if any(token in haystack for token in ("ego", "presence", "masculine", "alpha", "padu")):
+        return "ego"
+    if any(token in haystack for token in ("female", "feminine", "wanita", "muslimah", "lady")):
+        return "female"
+    return {
+        "fragrance": "confidence",
+        "beauty_personal_care": "routine",
+        "laundry_care": "utility",
+        "household_care": "utility",
+        "baby_care": "trust",
+        "food_beverage": "taste",
+        "fashion_apparel": "confidence",
+        "electronics": "authority",
+        "wellness": "trust",
+        "general": "trust",
+    }.get(family, "trust")
+
+
+def _strategic_opening_clause(trigger_id: str, target_language: str) -> str:
+    bm = {
+        "TRUST_01": "Aku memang cepat percaya.",
+        "CONFIDENCE_01": "Terus naik rasa yakin.",
+        "AUTHORITY_01": "Terus nampak point dia.",
+        "COMFORT_01": "Paling penting, rasa selesa.",
+        "EGO_01": "Aura dia terus naik.",
+        "GIFTING_01": "Memang nampak presentable.",
+        "FEMALE_01": "Terus nampak manis.",
+    }
+    en = {
+        "TRUST_01": "This feels easy to trust.",
+        "CONFIDENCE_01": "It lifts the confidence fast.",
+        "AUTHORITY_01": "The value shows immediately.",
+        "COMFORT_01": "Most importantly, it feels comfortable.",
+        "EGO_01": "It gives a stronger presence.",
+        "GIFTING_01": "It looks gift-ready instantly.",
+        "FEMALE_01": "It reads soft and feminine.",
+    }
+    bank = bm if language_name(target_language) == "Malay" else en
+    return bank.get(trigger_id, bank["TRUST_01"])
+
+
+def _strategic_middle_clause(angle_signal: str, target_language: str) -> str:
+    bm = {
+        "routine": "Memang senang masuk routine harian.",
+        "confidence": "Terus nampak lebih kemas dan yakin.",
+        "trust": "Nampak kemas dan senang percaya.",
+        "utility": "Terus nampak practical untuk guna hari-hari.",
+        "comfort": "Rasa lebih selesa dan tak serabut.",
+        "taste": "Terus nampak sedap dan senang nak cuba.",
+        "authority": "Detail dia terus nampak jelas dan masuk akal.",
+        "gifting": "Nampak presentable kalau nak bagi orang.",
+        "ego": "Vibe dia terus rasa lebih padu.",
+        "female": "Nampak manis, kemas, dan feminine.",
+    }
+    en = {
+        "routine": "It drops into a daily routine easily.",
+        "confidence": "It reads cleaner and more confident instantly.",
+        "trust": "It looks grounded and easy to trust.",
+        "utility": "It feels practical for everyday use.",
+        "comfort": "It feels easier and more comfortable to keep using.",
+        "taste": "It looks tempting and easy to try.",
+        "authority": "The details read clearly and credibly.",
+        "gifting": "It already looks presentable enough to gift.",
+        "ego": "The vibe feels sharper without trying too hard.",
+        "female": "It reads neat, soft, and feminine.",
+    }
+    bank = bm if language_name(target_language) == "Malay" else en
+    return bank.get(angle_signal, bank["trust"])
+
+
+def _cta_has_native_signal(cta_text: str, cta_type: str) -> bool:
+    cta = cta_text.lower()
+    checks = {
+        "direct_checkout": ("checkout", "grab", "beg kuning", "buy", "order"),
+        "standby_now": ("jangan tunggu", "promo", "stok", "today", "sekarang"),
+        "add_to_kit": ("cart", "troli", "kit", "routine", "stash"),
+        "save_for_later": ("save", "simpan", "bookmark"),
+        "comment_signal": ("comment", "komen", "reply", "drop"),
+        "private_action": ("dm", "pm", "inbox", "whatsapp", "ws"),
+    }
+    return any(token in cta for token in checks.get(cta_type, ()))
+
+
+def _strategic_cta_bridge(cta_type: str, cta_text: str, target_language: str) -> str:
+    if not cta_type or _cta_has_native_signal(cta_text, cta_type):
+        return ""
+    bm = {
+        "direct_checkout": "Kalau dah suka, terus grab.",
+        "standby_now": "Kalau tengah fikir, jangan tunggu.",
+        "add_to_kit": "Memang senang masuk routine.",
+        "save_for_later": "Kalau belum grab, simpan dulu.",
+        "comment_signal": "Kalau nak detail, komen je.",
+        "private_action": "Kalau nak link, DM terus.",
+    }
+    en = {
+        "direct_checkout": "If you already like it, just check out.",
+        "standby_now": "If you are still thinking, do not wait.",
+        "add_to_kit": "This slips into the routine easily.",
+        "save_for_later": "If you are not grabbing it yet, save it first.",
+        "comment_signal": "If you want the details, just comment.",
+        "private_action": "If you want the link, DM directly.",
+    }
+    bank = bm if language_name(target_language) == "Malay" else en
+    return bank.get(cta_type, "")
+
+
+def _merge_unique_clauses(*clause_groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in clause_groups:
+        for clause in group:
+            cleaned = _clean(clause)
+            if not cleaned:
+                continue
+            if cleaned[-1] not in ".!?":
+                cleaned = f"{cleaned}."
+            key = re.sub(r"[^a-z0-9]+", "", cleaned.lower())
+            if key and key not in seen:
+                seen.add(key)
+                merged.append(cleaned)
+    return merged
 
 
 def _trim_to_budget(text: str, budget: int) -> str:
@@ -259,53 +580,61 @@ def _usp_slice(usps: list[str], block_index: int, total_blocks: int) -> list[str
     return usps[pointer:pointer + 1]
 
 
-def _formula_dialogue_clauses(copy: dict, block_index: int, total_blocks: int) -> list[str]:
+def _formula_dialogue_clauses(
+    copy: dict, block_index: int, total_blocks: int, *, target_language: str, family: str,
+) -> list[str]:
     formula = copy.get("formula_family") or "HSO"
     hooks = _split_clauses(copy.get("hook"))
     subhooks = _split_clauses(copy.get("subhook"))
     angle = _split_clauses(copy.get("angle"))
     usps = [clause for usp in (copy.get("usps") or []) for clause in _split_clauses(usp)]
     ctas = _split_clauses(copy.get("cta"))
+    opening = [_strategic_opening_clause(copy.get("trigger_id", ""), target_language)]
+    middle = [_strategic_middle_clause(_infer_angle_signal(copy, family), target_language)]
+    cta_bridge = [_strategic_cta_bridge(copy.get("cta_type", ""), copy.get("cta", ""), target_language)]
     chosen_usps = _usp_slice(usps, block_index, total_blocks)
     if total_blocks <= 1:
         single_block_map = {
-            "PAS": hooks + subhooks[:1] + chosen_usps[:1] + ctas[:1],
-            "AIDA": hooks + chosen_usps[:2] + ctas[:1],
-            "HSO": hooks + subhooks[:1] + chosen_usps[:1] + ctas[:1],
-            "BAB": subhooks[:1] + chosen_usps[:2] + ctas[:1],
-            "PESTA": hooks + angle[:1] + chosen_usps[:1] + ctas[:1],
-            "PASTOR": hooks + subhooks[:1] + angle[:1] + ctas[:1],
+            "PAS": _merge_unique_clauses(hooks, opening, subhooks[:1], chosen_usps[:1], middle, cta_bridge, ctas[:1]),
+            "AIDA": _merge_unique_clauses(hooks, opening, chosen_usps[:2], middle, cta_bridge, ctas[:1]),
+            "HSO": _merge_unique_clauses(hooks, opening, subhooks[:1], chosen_usps[:1], middle, cta_bridge, ctas[:1]),
+            "BAB": _merge_unique_clauses(subhooks[:1], opening, chosen_usps[:2], middle, cta_bridge, ctas[:1]),
+            "PESTA": _merge_unique_clauses(hooks, opening, angle[:1], chosen_usps[:1], middle, cta_bridge, ctas[:1]),
+            "PASTOR": _merge_unique_clauses(hooks, opening, subhooks[:1], angle[:1], middle, cta_bridge, ctas[:1]),
         }
-        return single_block_map.get(formula, hooks + subhooks[:1] + chosen_usps[:1] + ctas[:1])
+        return single_block_map.get(
+            formula,
+            _merge_unique_clauses(hooks, opening, subhooks[:1], chosen_usps[:1], middle, cta_bridge, ctas[:1]),
+        )
     if block_index == 1:
         opening_map = {
-            "PAS": hooks + subhooks[:1],
-            "AIDA": hooks + chosen_usps[:1],
-            "HSO": hooks + subhooks[:1],
-            "BAB": subhooks[:1] + hooks[:1],
-            "PESTA": hooks + angle[:1],
-            "PASTOR": hooks + subhooks[:1],
+            "PAS": _merge_unique_clauses(hooks, opening, subhooks[:1]),
+            "AIDA": _merge_unique_clauses(hooks, opening, chosen_usps[:1]),
+            "HSO": _merge_unique_clauses(hooks, opening, subhooks[:1]),
+            "BAB": _merge_unique_clauses(subhooks[:1], opening, hooks[:1]),
+            "PESTA": _merge_unique_clauses(hooks, opening, angle[:1]),
+            "PASTOR": _merge_unique_clauses(hooks, opening, subhooks[:1]),
         }
-        return opening_map.get(formula, hooks + subhooks[:1]) or hooks or subhooks
+        return opening_map.get(formula, _merge_unique_clauses(hooks, opening, subhooks[:1])) or hooks or subhooks
     if block_index == total_blocks:
         closing_map = {
-            "PAS": chosen_usps[:1] + ctas[:1],
-            "AIDA": chosen_usps[:1] + ctas[:1],
-            "HSO": chosen_usps[:1] + ctas[:1],
-            "BAB": chosen_usps[:1] + ctas[:1],
-            "PESTA": chosen_usps[:1] + ctas[:1],
-            "PASTOR": angle[:1] + ctas[:1],
+            "PAS": _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1]),
+            "AIDA": _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1]),
+            "HSO": _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1]),
+            "BAB": _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1]),
+            "PESTA": _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1]),
+            "PASTOR": _merge_unique_clauses(angle[:1], middle, cta_bridge, ctas[:1]),
         }
-        return closing_map.get(formula, chosen_usps[:1] + ctas[:1]) or ctas or chosen_usps
+        return closing_map.get(formula, _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1])) or ctas or chosen_usps
     middle_map = {
-        "PAS": subhooks[:1] + chosen_usps[:1],
-        "AIDA": chosen_usps[:2] or angle[:1],
-        "HSO": subhooks[:1] + chosen_usps[:1],
-        "BAB": chosen_usps[:1] + angle[:1],
-        "PESTA": angle[:1] + chosen_usps[:1],
-        "PASTOR": subhooks[:1] + chosen_usps[:1],
+        "PAS": _merge_unique_clauses(subhooks[:1], chosen_usps[:1], middle),
+        "AIDA": _merge_unique_clauses(chosen_usps[:2] or angle[:1], middle),
+        "HSO": _merge_unique_clauses(subhooks[:1], chosen_usps[:1], middle),
+        "BAB": _merge_unique_clauses(chosen_usps[:1], angle[:1], middle),
+        "PESTA": _merge_unique_clauses(angle[:1], chosen_usps[:1], middle),
+        "PASTOR": _merge_unique_clauses(subhooks[:1], chosen_usps[:1], middle),
     }
-    return middle_map.get(formula, chosen_usps[:1] + angle[:1]) or chosen_usps or subhooks or angle
+    return middle_map.get(formula, _merge_unique_clauses(chosen_usps[:1], angle[:1], middle)) or chosen_usps or subhooks or angle
 
 
 def build_block_dialogue(
@@ -314,6 +643,8 @@ def build_block_dialogue(
     block_index: int,
     total_blocks: int,
     budget: int,
+    target_language: str,
+    family: str,
     approved_dialogue: str | None = None,
 ) -> str:
     """Per-block target-language dialogue from the structured copy fields.
@@ -330,7 +661,9 @@ def build_block_dialogue(
             chunk = sentences[start:start + per_block] if block_index < total_blocks else sentences[start:]
             if chunk:
                 return _pack_dialogue_clauses(_split_clauses(" ".join(chunk)), budget)
-    clauses = _formula_dialogue_clauses(copy, block_index, total_blocks)
+    clauses = _formula_dialogue_clauses(
+        copy, block_index, total_blocks, target_language=target_language, family=family,
+    )
     if not clauses:
         clauses = _split_clauses(copy.get("hook") or copy.get("cta") or "")
     return _pack_dialogue_clauses(clauses, budget)
@@ -349,46 +682,47 @@ def _default_shot_plan(
     shot_count: int,
     block_index: int,
     total_blocks: int,
-    formula_family: str,
+    family: str,
+    angle_hint: str,
 ) -> list[str]:
     pname = _product_name(product)
-    formula_hint = _humanize_label(formula_family).lower()
+    focus = _family_focus_terms(family)
     is_final = block_index == total_blocks
     if source_mode == "HYBRID":
         templates = [
-            f"Creator-led opening beat with {pname} already in hand, matching the uploaded product image exactly while the first spoken hook lands.",
-            f"Tight handling close-up of {pname} with the label readable, controlled reflections, and tactile movement that supports the {formula_hint} angle.",
-            f"Reaction or routine beat that keeps the same presenter and lets {pname} stay visible in-frame while the main benefit is spoken naturally.",
-            f"Steady closing beat with {pname} held at chest level, eye contact to camera, and enough stillness for the final CTA line to land cleanly.",
+            f"Creator-led opening beat with {pname} already in hand, matching the uploaded product image exactly while the first spoken hook lands inside a {focus['context']} setup.",
+            f"Tight handling close-up of {pname} with the label readable, controlled reflections, and {focus['detail']} that supports the {angle_hint or 'core commercial angle'}.",
+            f"Reaction or routine beat that keeps the same presenter and lets {pname} stay visible in-frame while the main benefit is spoken naturally through {focus['context']}.",
+            f"Steady closing beat with {pname} held at chest level, eye contact to camera, and enough stillness for {focus['closing']} to land cleanly.",
         ]
     elif source_mode == "FRAMES":
         templates = [
             "Continue from the exact pose, grip, and camera distance already visible in the uploaded finished frame. The first beat is motion continuation only, not a new reveal.",
-            f"Ease into one believable motion-delta beat that keeps {pname} in the same position family, with no restyle, no jump cut, and no scene rebuild.",
-            f"Add a subtle expression or hand adjustment while keeping {pname} readable and the finished-frame lighting unchanged.",
-            f"Let the motion settle into a clean held frame with {pname} still truthful to the uploaded frame, ready for the closing CTA line or a seam-safe stop.",
+            f"Ease into one believable motion-delta beat that keeps {pname} in the same position family, with no restyle, no jump cut, and no scene rebuild, while preserving {focus['detail']}.",
+            f"Add a subtle expression or hand adjustment while keeping {pname} readable, the finished-frame lighting unchanged, and the {angle_hint or 'commercial'} tension alive.",
+            f"Let the motion settle into a clean held frame with {pname} still truthful to the uploaded frame, ready for {focus['closing']} or a seam-safe stop.",
         ]
     elif source_mode == "INGREDIENTS":
         templates = [
             f"Reference-led opening beat: the presenter must match the avatar reference while introducing {pname} exactly as shown by the product reference.",
-            f"Product truth beat: move closer to {pname} for readable packaging, honest scale, and natural hand-object interaction without overpowering the presenter reference.",
-            "Environment beat: preserve the supplied scene or style direction only at the background and mood level while the product remains the visual authority.",
-            f"Final hold beat with presenter and {pname} in the same frame, balanced and believable, so the CTA can land without any fake demonstration.",
+            f"Product truth beat: move closer to {pname} for readable packaging, honest scale, natural hand-object interaction, and {focus['detail']} without overpowering the presenter reference.",
+            f"Environment beat: preserve the supplied scene or style direction only at the background and mood level while the product remains the visual authority inside a {focus['context']} mood.",
+            f"Final hold beat with presenter and {pname} in the same frame, balanced and believable, so {focus['closing']} can land without any fake demonstration.",
         ]
     elif source_mode == "IMAGES":
         templates = [
-            f"One polished commercial still of {pname} with honest scale, clean packaging readability, and a premium but believable composition."
+            f"One polished commercial still of {pname} with honest scale, clean packaging readability, {focus['detail']}, and a premium but believable composition."
         ]
     else:  # T2V
         templates = [
-            f"Open inside the lived-in scene first, then let the presenter bring {pname} into the frame naturally so the hook feels native, not staged.",
-            f"Routine-context beat that shows why {pname} belongs in the moment, with the packaging readable and the action grounded in normal human behaviour.",
-            f"Confidence or payoff beat where the presenter stays on camera, keeps {pname} visible, and sells the main benefit through expression and handling rather than hard claims.",
-            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for the final CTA line to feel intentional.",
+            f"Open inside the lived-in scene first, then let the presenter bring {pname} into the frame naturally so the hook feels native, not staged, with {focus['context']} already visible.",
+            f"Routine-context beat that shows why {pname} belongs in the moment, with the packaging readable, the action grounded in normal human behaviour, and {focus['detail']} carrying the middle beat.",
+            f"Confidence or payoff beat where the presenter stays on camera, keeps {pname} visible, and sells the main benefit through expression and handling rather than hard claims, aligned to {angle_hint or 'the commercial promise'}.",
+            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {focus['closing']} to feel intentional.",
         ]
     if block_index > 1 and source_mode != "IMAGES":
         templates[0] = (
-            f"Continue immediately from the previous block with the same presenter, same grip on {pname}, same lighting, and the same camera path already in progress."
+            f"Continue immediately from the previous block with the same presenter, same grip on {pname}, same lighting, and the same camera path already in progress while preserving {focus['context']}."
         )
     selected = templates[: max(1, shot_count)]
     if is_final and source_mode != "IMAGES":
@@ -509,9 +843,10 @@ def render_block(
     budget = 0 if mode == "IMAGES" else dialogue_word_budget(
         block_seconds, target_language, wps_mode=wps_mode,
     )
-    norm_copy = normalize_copy_intelligence(copy)
+    norm_copy = normalize_copy_intelligence(copy, product=product)
     presenter = None
     presenter_text = None
+    family = _infer_product_family(product, norm_copy)
     if mode in ("HYBRID", "T2V") or (mode == "IMAGES" and presenter_profile):
         presenter = presenter_profile or avatar_registry.resolve_presenter(
             seed=_clean(product.get("id") or product.get("name") or "bosmax"),
@@ -520,6 +855,7 @@ def render_block(
     pname = _product_line(product)
     category = _product_category(product)
     angle_hint = _humanize_label(norm_copy.get("angle", "")).lower()
+    focus = _family_focus_terms(family)
 
     s1 = (
         f"You are generating {'a single commercial product image' if mode == 'IMAGES' else f'an {block_seconds}-second vertical commercial video block'} "
@@ -554,14 +890,28 @@ def render_block(
             shot_count=shot_count,
             block_index=block_index,
             total_blocks=total_blocks,
-            formula_family=norm_copy.get("formula_family", "HSO"),
+            family=family,
+            angle_hint=angle_hint,
         )
     s4 = "\n".join(f"Shot {i + 1}: {s}" for i, s in enumerate(shots))
-    s5_lines = [
-        "Handheld vertical 9:16 framing with natural micro-jitter and organic human sway."
-        if mode != "IMAGES" else "Clean commercial framing with the product sharply in focus.",
-        camera_notes or "Eye-level medium close-up to close-up range; soft natural light; no flash, no hard fill.",
-    ]
+    if mode == "IMAGES":
+        still_camera_note = (
+            "Build a static 9:16 commercial still with crisp subject separation, controlled lighting, and no implied motion blur."
+            if "CINEMATIC" in camera_notes.upper()
+            else "Build a static 9:16 native-commercial still with believable natural light, crisp packaging readability, and no implied motion blur."
+        )
+        lens_note = (
+            "Use a still-photography mindset: balanced composition, premium edge control, and product-first depth separation."
+        )
+        s5_lines = [
+            "Clean commercial framing with the product sharply in focus.",
+            f"{still_camera_note} {lens_note}",
+        ]
+    else:
+        s5_lines = [
+            "Handheld vertical 9:16 framing with natural micro-jitter and organic human sway.",
+            camera_notes or "Eye-level medium close-up to close-up range; soft natural light; no flash, no hard fill.",
+        ]
     if is_continuation:
         s5_lines.append(
             "For the first half second, continue the exact motion already in progress. For the "
@@ -572,7 +922,8 @@ def render_block(
     s5 = "\n".join(s5_lines)
     dialogue = "" if mode == "IMAGES" else build_block_dialogue(
         copy=norm_copy, block_index=block_index, total_blocks=total_blocks,
-        budget=budget, approved_dialogue=approved_dialogue,
+        budget=budget, target_language=target_language, family=family,
+        approved_dialogue=approved_dialogue,
     )
     s6 = dialogue if dialogue else "(No spoken dialogue in this block.)"
     s7 = (
@@ -581,7 +932,7 @@ def render_block(
         "No voice-over. No narration. No off-camera speech. No audio-only dialogue."
     ) if mode != "IMAGES" else "Not applicable — still image output."
     if mode == "IMAGES":
-        s8 = f"The final composition holds {pname} clearly readable as the visual anchor."
+        s8 = f"The final composition holds {pname} clearly readable as the visual anchor, with {focus['closing']} expressed through the still image alone."
     elif mode == "FRAMES" and is_final:
         s8 = (
             f"End by easing the existing motion into a clean held frame: {pname} stays truthful to the uploaded finished frame, "
