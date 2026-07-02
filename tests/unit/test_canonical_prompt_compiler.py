@@ -146,6 +146,22 @@ def test_frames_is_motion_delta_only_no_rebuild():
     assert "The presenter is a Malaysian adult" not in text
 
 
+def test_hybrid_mode_polish_keeps_creator_as_persuasion_engine():
+    result = _compile(mode="HYBRID", duration_seconds=16)
+    text = result["blocks"][-1]["engine_prompt_text"].lower()
+    assert "persuasion engine" in text
+    assert "face, hand, and product" in text
+    assert "detached product-only montage" in text
+
+
+def test_frames_mode_polish_preserves_continuation_tension():
+    result = _compile(mode="FRAMES", duration_seconds=16)
+    text = result["blocks"][-1]["engine_prompt_text"].lower()
+    assert "mid-thought continuation point" in text
+    assert "existing tension" in text
+    assert "newly performed cta tableau" in text or "fresh hero re-block" in text
+
+
 def test_mode_specific_visual_story_differs_between_hybrid_frames_and_ingredients():
     hybrid = _compile(mode="HYBRID")["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"]
     frames = _compile(mode="FRAMES")["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"]

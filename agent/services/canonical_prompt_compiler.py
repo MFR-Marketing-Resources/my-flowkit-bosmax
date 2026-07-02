@@ -908,6 +908,35 @@ def _product_line(product: dict[str, Any]) -> str:
     return _product_name(product)
 
 
+def _mode_story_polish(source_mode: str) -> dict[str, str]:
+    table = {
+        "HYBRID": {
+            "continuity": (
+                "The presenter is the persuasion engine: whenever dialogue lands, keep face, hand, and product inside the same selling moment. "
+                "Do not drift into a detached product-only montage while the creator is still selling."
+            ),
+            "opening": "the creator must do the selling on-camera from the first beat, not hand off to product montage language",
+            "middle": "keep creator-to-product persuasion alive so the benefit feels socially sold, not merely demonstrated",
+            "closing": "the close must feel label-safe, eye-contact-led, and natively sellable without becoming a hard ad tableau",
+        },
+        "FRAMES": {
+            "continuity": (
+                "Treat the uploaded finished frame as a mid-thought continuation point, not a reset. "
+                "All persuasion must feel inherited from that frame's existing tension, never freshly staged."
+            ),
+            "opening": "the first beat must preserve inherited continuation tension instead of acting like a new hook setup",
+            "middle": "every motion change should feel like micro-resolution of existing frame energy, not a fresh commercial restaging",
+            "closing": "the close must feel like continuation pressure resolving inside the same frame world, not a newly performed CTA tableau",
+        },
+    }
+    return table.get(source_mode, {
+        "continuity": "",
+        "opening": "",
+        "middle": "",
+        "closing": "",
+    })
+
+
 def _default_shot_plan(
     source_mode: str,
     *,
@@ -924,20 +953,21 @@ def _default_shot_plan(
     pname = _product_name(product)
     focus = _family_focus_terms(family)
     story = _visual_story_terms(family, angle_signal, trigger_id, cta_type)
+    mode_polish = _mode_story_polish(source_mode)
     is_final = block_index == total_blocks
     if source_mode == "HYBRID":
         templates = [
-            f"Creator-led opening beat with {pname} already in hand, matching the uploaded product image exactly while the first spoken hook lands inside a {focus['context']} setup driven by {story['opening']}.",
-            f"Tight handling close-up of {pname} with the label readable, controlled reflections, and {focus['detail']} that supports the {angle_hint or 'core commercial angle'} while the frame continues to {story['middle']}.",
-            f"Reaction or routine beat that keeps the same presenter and lets {pname} stay visible in-frame while the main benefit is spoken naturally through {story['middle']}.",
-            f"Steady closing beat with {pname} held at chest level, eye contact to camera, and enough stillness for {story['closing']} plus {focus['closing']} to land cleanly while the shot still helps {story['middle']}.",
+            f"Creator-led opening beat with {pname} already in hand, matching the uploaded product image exactly while the first spoken hook lands inside a {focus['context']} setup driven by {story['opening']}; {mode_polish['opening']}.",
+            f"Tight handling close-up of {pname} with the label readable, controlled reflections, and {focus['detail']} that supports the {angle_hint or 'core commercial angle'} while the frame continues to {story['middle']}; {mode_polish['middle']}.",
+            f"Reaction or routine beat that keeps the same presenter and lets {pname} stay visible in-frame while the main benefit is spoken naturally through {story['middle']}, with face-product co-presence preserved while dialogue is landing.",
+            f"Steady closing beat with {pname} held at chest level, eye contact to camera, and enough stillness for {story['closing']} plus {focus['closing']} to land cleanly while the shot still helps {story['middle']}; {mode_polish['closing']}.",
         ]
     elif source_mode == "FRAMES":
         templates = [
-            f"Continue from the exact pose, grip, and camera distance already visible in the uploaded finished frame. The first beat is motion continuation only, not a new reveal, and it should carry {story['opening']}.",
-            f"Ease into one believable motion-delta beat that keeps {pname} in the same position family, with no restyle, no jump cut, and no scene rebuild, while preserving {focus['detail']} and helping {story['middle']}.",
-            f"Add a subtle expression or hand adjustment while keeping {pname} readable, the finished-frame lighting unchanged, and the {angle_hint or 'commercial'} tension alive through {story['middle']}.",
-            f"Let the motion settle into a clean held frame with {pname} still truthful to the uploaded frame, ready for {story['closing']} and {focus['closing']} or a seam-safe stop while still helping {story['middle']}.",
+            f"Continue from the exact pose, grip, and camera distance already visible in the uploaded finished frame. The first beat is motion continuation only, not a new reveal, and it should carry {story['opening']}; {mode_polish['opening']}.",
+            f"Ease into one believable motion-delta beat that keeps {pname} in the same position family, with no restyle, no jump cut, and no scene rebuild, while preserving {focus['detail']} and helping {story['middle']}; {mode_polish['middle']}.",
+            f"Add a subtle expression or hand adjustment while keeping {pname} readable, the finished-frame lighting unchanged, and the {angle_hint or 'commercial'} tension alive through {story['middle']}, with no fresh hero re-block or new reveal logic.",
+            f"Let the motion settle into a clean held frame with {pname} still truthful to the uploaded frame, ready for {story['closing']} and {focus['closing']} or a seam-safe stop while still helping {story['middle']}; {mode_polish['closing']}.",
         ]
     elif source_mode == "INGREDIENTS":
         templates = [
@@ -985,6 +1015,7 @@ def _section_3_continuity(
             f"Use the uploaded product image as the exact visual reference for {pname}: "
             "match its colour, label, cap, shape, material, and scale precisely in every shot."
         )
+        lines.append(_mode_story_polish(source_mode)["continuity"])
         if presenter_prose:
             lines.append(presenter_prose)
     elif source_mode == "FRAMES":
@@ -994,6 +1025,7 @@ def _section_3_continuity(
             "same environment, and the same lighting. Animate forward with motion only — do "
             "not rebuild, restyle, or reintroduce the subject, the product, or the scene."
         )
+        lines.append(_mode_story_polish(source_mode)["continuity"])
     elif source_mode == "INGREDIENTS":
         lines.append(
             "Use the uploaded reference images exactly as provided: the product reference "
@@ -1056,7 +1088,7 @@ def _section_8_end_frame(
     if mode == "FRAMES":
         return (
             f"End by easing the existing motion into a clean held frame: {pname} stays truthful to the uploaded finished frame, "
-            f"the presenter remains in the same scene state, and {story['closing']} guides how the closing CTA line lands without any new reveal."
+            f"the presenter remains in the same scene state, and {story['closing']} guides how the closing CTA line lands without any new reveal. {_mode_story_polish(mode)['closing']}"
         )
     if mode == "INGREDIENTS":
         return (
@@ -1065,7 +1097,7 @@ def _section_8_end_frame(
         )
     if mode == "HYBRID":
         return (
-            f"End on a confident creator-to-camera hold with {pname} upright, label readable, and the exact uploaded-product packaging still matching perfectly while {story['closing']} carries the CTA landing."
+            f"End on a confident creator-to-camera hold with {pname} upright, label readable, and the exact uploaded-product packaging still matching perfectly while {story['closing']} carries the CTA landing. {_mode_story_polish(mode)['closing']}"
         )
     return (
         f"End on a steady hold: the presenter keeps {pname} at chest level with the label readable to camera while {story['closing']} carries the closing line, then a beat of calm confidence."
