@@ -1090,6 +1090,176 @@ async def _materialize_remote_url_to_staging(
     return {"local_file_path": str(temp_file_path), "file_name": file_name, "mime_type": mime_type}
 
 
+async def _fail_manual_request(request_id: str, stage: str, message: str, error_code: str):
+    """Fail-closed telemetry writer for the manual lane (mirrors _fail_closed_materialize)."""
+    await crud.add_stage_event(request_id, stage, "FAIL", message, "backend")
+    await crud.upsert_request_telemetry(
+        request_id, status="FAILED", failed_at=crud._now(),
+        error_message=error_code, error_code=error_code,
+        last_heartbeat_at=crud._now(),
+    )
+    await crud.add_stage_event(
+        request_id, "FAILED", "FAILED", error_code, "backend",
+        fail_code=error_code, first_fail_stage=stage,
+    )
+    raise HTTPException(422, error_code)
+
+
+async def _bridge_generate_job_telemetry(request_id: str, job_id: str):
+    """Mirror a make_video job's progress into request telemetry so the dashboard
+    poll loop (which watches the request row) resolves to COMPLETED/FAILED."""
+    import asyncio
+    from agent.services import make_video as _mv
+    last_stage = None
+    for _ in range(240):  # up to ~40 min
+        job = _mv.get_job(job_id) or {}
+        stage = str(job.get("stage") or "")
+        status = str(job.get("status") or "")
+        if stage and stage != last_stage:
+            last_stage = stage
+            await crud.add_stage_event(
+                request_id, "API_GENERATE_PROGRESS", "WAITING_FLOW",
+                f"job={job_id} status={status} stage={stage}", "backend",
+            )
+            await crud.upsert_request_telemetry(request_id, last_heartbeat_at=crud._now())
+        if status == "DONE":
+            await crud.add_stage_event(
+                request_id, "COMPLETED", "PASS",
+                f"job={job_id} media_id={job.get('media_id')} size_mb={job.get('size_mb')} "
+                f"local_path={job.get('local_path')}", "backend",
+            )
+            await crud.upsert_request_telemetry(
+                request_id, status="COMPLETED", completed_at=crud._now(),
+                last_heartbeat_at=crud._now(),
+            )
+            await crud.update_request(request_id, status="COMPLETED", updated_at=crud._now())
+            return
+        if status in ("FAILED", "GENERATED_BUT_UNRETRIEVED"):
+            code = str(job.get("error") or status)
+            await crud.upsert_request_telemetry(
+                request_id, status="FAILED", failed_at=crud._now(),
+                error_message=code, error_code=code, last_heartbeat_at=crud._now(),
+            )
+            await crud.add_stage_event(
+                request_id, "FAILED", "FAIL", f"job={job_id} {code}", "backend",
+                fail_code=code, first_fail_stage="API_GENERATE_PROGRESS",
+            )
+            await crud.update_request(
+                request_id, status="FAILED", error_message=code, updated_at=crud._now(),
+            )
+            return
+        await asyncio.sleep(10)
+
+
+async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
+    """ADR-007 API-first lane for manual workspace jobs: resolve the start asset to a
+    Flow media id (existing id, or API upload of the materialized local file), then run
+    the proven unified pipeline (make_video.start_generate). No DOM automation."""
+    import asyncio
+    import mimetypes
+    import os
+    from agent.services import make_video as _mv
+    client = get_flow_client()
+    request_id = body["request_id"]
+    prompt = str(body.get("prompt") or "").strip()
+    if not prompt:
+        await _fail_manual_request(
+            request_id, "API_LANE_REJECTED", "manual job has no prompt", "ERR_PROMPT_REQUIRED")
+
+    refs = []
+    if isinstance(start_asset, dict):
+        media_id = (start_asset.get("mediaId") or start_asset.get("media_id")
+                    or start_asset.get("assetId") or start_asset.get("asset_id"))
+        local_path = start_asset.get("localFilePath") or start_asset.get("local_file_path")
+        if media_id:
+            # Validate BEFORE burning credits: a stale package media id (deleted
+            # project) still gets APPROVED by the Flow agent but the render dies
+            # server-side with no output (live: manual_8ea932a1 / manual_af279591
+            # both fired on 404 media dcf0b2a3 — 2×10 credits, zero video).
+            check = await client.get_media(str(media_id))
+            check_status = check.get("status") if isinstance(check, dict) else None
+            media_alive = bool(
+                isinstance(check, dict) and not check.get("error")
+                and (check_status is None or (isinstance(check_status, int) and check_status < 400)))
+            if media_alive:
+                refs = [str(media_id)]
+                await crud.add_stage_event(
+                    request_id, "API_START_ASSET_RESOLVED", "WAITING_FLOW",
+                    f"source_type=existing_flow_media media_id={media_id}", "backend")
+            elif local_path:
+                await crud.add_stage_event(
+                    request_id, "API_START_ASSET_STALE", "WAITING_FLOW",
+                    f"media_id={media_id} is dead (status={check_status}); "
+                    f"self-healing via API re-upload of local file", "backend")
+                media_id = None  # fall through to the local-file upload below
+            else:
+                await _fail_manual_request(
+                    request_id, "API_START_ASSET_STALE",
+                    f"start media {media_id} no longer exists on Flow (status={check_status}) "
+                    f"and no local file is available — re-upload the product image",
+                    "ERR_START_MEDIA_NOT_FOUND")
+        if not refs:
+            if local_path:
+                try:
+                    with open(local_path, "rb") as f:
+                        image_bytes = f.read()
+                except OSError as exc:
+                    await _fail_manual_request(
+                        request_id, "API_START_ASSET_UPLOAD_FAILED",
+                        f"cannot read start asset: {exc}", "ERR_START_UPLOAD_API_FAILED")
+                b64 = base64.b64encode(image_bytes).decode()
+                mime = mimetypes.guess_type(str(local_path))[0] or "image/png"
+                up = await client.upload_image(
+                    b64, mime_type=mime, project_id="",
+                    file_name=os.path.basename(str(local_path)))
+                media_id = up.get("_mediaId") if isinstance(up, dict) else None
+                if not media_id:
+                    await _fail_manual_request(
+                        request_id, "API_START_ASSET_UPLOAD_FAILED",
+                        f"upload_image returned no media id: {str(up)[:300]}",
+                        "ERR_START_UPLOAD_API_FAILED")
+                refs = [str(media_id)]
+                await crud.add_stage_event(
+                    request_id, "API_START_ASSET_UPLOADED", "WAITING_FLOW",
+                    f"source_type=api_upload media_id={media_id}", "backend")
+
+    if mode in ("I2V", "F2V") and not refs:
+        await _fail_manual_request(
+            request_id, "API_LANE_REJECTED",
+            f"{mode} needs a start/reference image", "ERR_START_ASSET_REQUIRED")
+
+    tier = "PAYGATE_TIER_ONE"
+    if mode in ("T2V", "I2V", "F2V"):
+        cred = await client.get_credits()
+        tier = (cred.get("data", cred) or {}).get("userPaygateTier", "") if isinstance(cred, dict) else ""
+        if tier not in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
+            await _fail_manual_request(
+                request_id, "API_LANE_REJECTED",
+                f"account tier '{tier}' cannot generate video", "ERR_ACCOUNT_TIER_NO_VIDEO")
+
+    res = await _mv.start_generate(
+        mode, prompt, image_media_ids=refs or None,
+        aspect=str(body.get("aspect") or "9:16"), tier=tier)
+    if not isinstance(res, dict) or not res.get("job_id"):
+        code = str((res or {}).get("error") or "VIDEO_JOB_IN_FLIGHT")
+        await _fail_manual_request(
+            request_id, "API_LANE_REJECTED", f"start_generate rejected: {code}", code)
+    job_id = res["job_id"]
+    await crud.add_stage_event(
+        request_id, "API_LANE_ACCEPTED", "WAITING_FLOW",
+        f"lane=API_FIRST_GENERATE job={job_id} mode={mode} refs={len(refs)}", "backend")
+    asyncio.create_task(_bridge_generate_job_telemetry(request_id, job_id))
+    return {
+        "ok": True,
+        "accepted": True,
+        "lane": "API_FIRST_GENERATE",
+        "request_id": request_id,
+        "job_id": job_id,
+        "mode": mode,
+        "status": "SUBMITTED",
+    }
+
+
 @router.post("/execute-flow-job")
 async def execute_flow_job(body: dict):
     """Trigger manual DOM automation in the extension for a generation job."""
@@ -1242,7 +1412,16 @@ async def execute_flow_job(body: dict):
         or body.get("upload_only") is True
         or body.get("gfv2") is True
     )
-    if _start_asset_present and isinstance(_start_asset, dict) and not _has_local_start:
+    # An asset that already carries a Flow media id needs NO local materialization:
+    # the API-first lane references it directly (only the dead CDP/DOM upload path
+    # ever needed a local file for an existing_flow_media asset).
+    _has_flow_media_id = bool(
+        isinstance(_start_asset, dict)
+        and (_start_asset.get("mediaId") or _start_asset.get("media_id")
+             or _start_asset.get("assetId") or _start_asset.get("asset_id"))
+    )
+    if (_start_asset_present and isinstance(_start_asset, dict)
+            and not _has_local_start and not _has_flow_media_id):
         await _materialize_slot_asset(
             _start_asset,
             slot_label="Start",
@@ -1296,6 +1475,17 @@ async def execute_flow_job(body: dict):
             )
             _refs[ref_key] = ref_asset
         body["refs"] = _refs
+
+    # ── ADR-007 API-first reroute ─────────────────────────────────────────────
+    # The GFV2/F2V DOM-clicking lane is DEAD (fail-closed root_shell_no_project,
+    # live: manual_c2560a76). Manual workspace jobs for the four canonical modes
+    # now run through the proven unified pipeline (make_video.start_generate);
+    # the extension stays transport-only. The DOM dispatch below survives only
+    # for any legacy non-mode payloads and will be deleted with the frozen lane.
+    _api_mode = str(body.get("mode") or "").upper()
+    if _api_mode in ("IMG", "T2V", "I2V", "F2V"):
+        return await _run_manual_job_via_generate(
+            body, _api_mode, _start_asset if _start_asset_present else None)
 
     result = await client.execute_flow_job(body)
     if result.get("error"):

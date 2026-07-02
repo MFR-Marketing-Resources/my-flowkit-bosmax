@@ -62,10 +62,20 @@ async def _bind_editor_session(client, requested_project_id=None) -> dict:
             if str(item).strip()
         ] if isinstance(page_diag, dict) else []
         if error_markers:
-            raise RuntimeError(
-                "BROKEN_EDITOR_PAGE: the bound Flow editor shows error markers — "
-                + ", ".join(error_markers)
+            # A marker on an otherwise-healthy editor is a failed media TILE or a
+            # stale toast, not a broken page (live: d80e72fd listed every artifact
+            # plus one errored tile, and binding was wrongly refused). Only fail
+            # closed when the editor surface itself is not usable.
+            editor_usable = bool(
+                isinstance(page_diag, dict)
+                and (page_diag.get("editor_capability_ready")
+                     or (page_diag.get("composer_found") and page_diag.get("composer_editable")))
             )
+            if not editor_usable:
+                raise RuntimeError(
+                    "BROKEN_EDITOR_PAGE: the bound Flow editor shows error markers — "
+                    + ", ".join(error_markers)
+                )
         if isinstance(page_diag, dict) and page_diag.get("build_match") is False:
             raise RuntimeError(
                 "CONTENT_BUILD_MISMATCH: reload the Flow tab so the content script matches the background build"
@@ -446,10 +456,13 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             if seen_pid and seen_pid != project_id:
                 raise RuntimeError(
                     f"PROJECT_DRIFT: tab moved to {seen_pid}, expected {project_id}")
-            seen_tab = inner.get("flow_tab_id")
-            if bound_tab is not None and seen_tab is not None and seen_tab != bound_tab:
-                raise RuntimeError(
-                    f"TAB_DRIFT: harvest tab {seen_tab} != bound {bound_tab}")
+            # NOTE: inner["flow_tab_id"] is GLOBAL envelope metadata (the WS wrapper's
+            # best-flow-tab snapshot), NOT the tab the harvest actually read. With a
+            # second Flow tab open it differs from bound_tab and used to raise a FALSE
+            # "TAB_DRIFT" (live: g_b9fce39bbc46). The exact-tab guarantee already comes
+            # from the extension (chrome.tabs.get(bound) -> BOUND_TAB_GONE fail-close)
+            # plus the PROJECT_DRIFT check on diag.projectId below — so no envelope
+            # tab comparison here.
             cands = []
             for k in ("videoIds", "imageIds", "mediaIds"):
                 cands += (diag.get(k) or []) if isinstance(diag, dict) else []
