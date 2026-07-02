@@ -165,7 +165,7 @@ async def create_f2v_generation_package(
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
     creator_persona: str = "DEFAULT_CREATOR",
-    overlay_enabled: bool = True,
+    overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
     blocks: list[dict] | None = None,
     start_frame_asset_id: str | None = None,
@@ -344,7 +344,7 @@ async def create_i2v_generation_package(
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
     creator_persona: str = "DEFAULT_CREATOR",
-    overlay_enabled: bool = True,
+    overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
     product_reference_asset_id: str | None = None,
     character_reference_asset_id: str | None = None,
@@ -603,7 +603,7 @@ async def create_t2v_generation_package(
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
     creator_persona: str = "DEFAULT_CREATOR",
-    overlay_enabled: bool = True,
+    overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
     blocks: list[dict] | None = None,
     operator_notes: str | None = None,
@@ -736,7 +736,7 @@ async def create_img_generation_package(
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
     creator_persona: str = "DEFAULT_CREATOR",
-    overlay_enabled: bool = True,
+    overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
     subject_asset_id: str | None = None,
     subject_preview_url: str | None = None,

@@ -73,7 +73,7 @@ class T2VGenerationPackageRequest(_BaseModel):
     camera_style: str = "UGC_IPHONE_RAW"
     character_presence: str = "VISIBLE_CREATOR"
     creator_persona: str = "DEFAULT_CREATOR"
-    overlay_enabled: bool = True
+    overlay_enabled: bool = False  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True
     blocks: list = []
     operator_notes: str | None = None
@@ -87,7 +87,7 @@ class IMGGenerationPackageRequest(_BaseModel):
     camera_style: str = "UGC_IPHONE_RAW"
     character_presence: str = "VISIBLE_CREATOR"
     creator_persona: str = "DEFAULT_CREATOR"
-    overlay_enabled: bool = True
+    overlay_enabled: bool = False  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True
     subject_asset_id: str | None = None
     subject_preview_url: str | None = None
@@ -176,7 +176,7 @@ async def create_i2v_package(request: I2VGenerationPackageRequest):
             camera_style=request.camera_style,
             character_presence=request.character_presence,
             creator_persona=request.creator_persona,
-            overlay_enabled=overlay_enabled if (overlay_enabled := request.overlay_enabled) is not None else True,
+            overlay_enabled=overlay_enabled if (overlay_enabled := request.overlay_enabled) is not None else False,  # NO_OVERLAY law
             dialogue_enabled=request.dialogue_enabled,
             product_reference_asset_id=request.product_reference_asset_id,
             character_reference_asset_id=request.character_reference_asset_id,

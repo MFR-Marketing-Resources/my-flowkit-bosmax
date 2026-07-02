@@ -37,6 +37,10 @@ export async function createWorkspaceExecutionPackage(input: {
 	creator_persona?: string;
 	overlay_enabled?: boolean;
 	dialogue_enabled?: boolean;
+	// Canonical source-mode language (ADR-008): T2V | HYBRID | FRAMES | INGREDIENTS | IMAGES
+	source_mode?: "T2V" | "HYBRID" | "FRAMES" | "INGREDIENTS" | "IMAGES";
+	engine_duration_target?: "GROK" | "GOOGLE_FLOW";
+	requested_total_duration_seconds?: number;
 	recipe_id?: I2VRecipeId;
 	product_reference_asset_id?: string | null;
 	character_reference_asset_id?: string | null;
@@ -58,7 +62,7 @@ export async function createWorkspaceExecutionPackage(input: {
 			camera_style: "UGC_IPHONE_RAW",
 			character_presence: "VISIBLE_CREATOR",
 			creator_persona: "DEFAULT_CREATOR",
-			overlay_enabled: true,
+			overlay_enabled: false, // NO_OVERLAY law (ADR-008): default off
 			dialogue_enabled: true,
 			recipe_id: "PRODUCT_HELD_BY_CHARACTER_IN_SCENE",
 			product_reference_asset_id: null,
@@ -126,7 +130,7 @@ export async function compileWorkspacePromptPreview(input: {
 			camera_style: "UGC_IPHONE_RAW",
 			character_presence: "VISIBLE_CREATOR",
 			creator_persona: "DEFAULT_CREATOR",
-			overlay_enabled: true,
+			overlay_enabled: false, // NO_OVERLAY law (ADR-008): default off
 			dialogue_enabled: true,
 			blocks: [],
 			...input,

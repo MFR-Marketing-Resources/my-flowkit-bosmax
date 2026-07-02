@@ -140,6 +140,19 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [engineDurationTarget, setEngineDurationTarget] = useState<
 		"" | "GROK" | "GOOGLE_FLOW"
 	>("");
+	// Canonical source-mode (ADR-008). Auto per mode; F2V exposes the explicit
+	// HYBRID (product-image anchor) vs FRAMES (ready-frame, motion-delta) choice.
+	const [f2vSourceMode, setF2vSourceMode] = useState<"HYBRID" | "FRAMES">(
+		"HYBRID",
+	);
+	const resolveSourceMode = (
+		m: string,
+	): "T2V" | "HYBRID" | "FRAMES" | "INGREDIENTS" | "IMAGES" => {
+		if (m === "F2V") return f2vSourceMode;
+		if (m === "I2V") return "INGREDIENTS";
+		if (m === "IMG") return "IMAGES";
+		return "T2V";
+	};
 	const [requestedTotalDuration, setRequestedTotalDuration] = useState<
 		number | ""
 	>("");
@@ -756,7 +769,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					camera_style: cameraStyle,
 					character_presence: characterPresence,
 					creator_persona: creatorPersona,
-					overlay_enabled: true,
+					overlay_enabled: false, // NO_OVERLAY law (ADR-008): default off
 					dialogue_enabled: true,
 					blocks: [
 						{ block_index: 1, duration_seconds: block1Duration },
@@ -879,6 +892,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			const pkg = await createWorkspaceExecutionPackage({
 				product_id: selectedProduct.id,
 				mode,
+				source_mode: resolveSourceMode(mode),
 				duration_seconds: block1Duration,
 				generation_mode: generationMode,
 				target_language: targetLanguage,
@@ -1223,6 +1237,36 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</div>
 					</div>
 					<div className="mt-4 grid gap-3 md:grid-cols-2">
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								Source Mode (canonical)
+							</div>
+							<select
+								title="Canonical source mode"
+								value={resolveSourceMode(mode)}
+								disabled={mode !== "F2V"}
+								onChange={(e) =>
+									setF2vSourceMode(e.target.value as "HYBRID" | "FRAMES")
+								}
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 disabled:opacity-60"
+							>
+								<option value="HYBRID">
+									HYBRID — product image anchor + AI presenter
+								</option>
+								<option value="FRAMES">
+									FRAMES — ready frame, motion-delta only
+								</option>
+								<option value="T2V">T2V — text-driven</option>
+								<option value="INGREDIENTS">
+									INGREDIENTS — asset role map
+								</option>
+								<option value="IMAGES">IMAGES — still image</option>
+							</select>
+							<div className="text-[11px] text-slate-400">
+								F2V picks HYBRID or FRAMES; other modes are fixed by the
+								canonical compiler contract.
+							</div>
+						</div>
 						<div className="space-y-2">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
 								WPS Engine Vendor (optional)
