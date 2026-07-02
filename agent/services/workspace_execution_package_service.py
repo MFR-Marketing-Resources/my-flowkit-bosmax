@@ -185,7 +185,7 @@ async def create_workspace_execution_package(
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
     creator_persona: str = "DEFAULT_CREATOR",
-    overlay_enabled: bool = True,
+    overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
     recipe_id: str = "PRODUCT_HELD_BY_CHARACTER_IN_SCENE",
     product_reference_asset_id: str | None = None,
@@ -401,7 +401,7 @@ async def compile_workspace_prompt_preview(
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
     creator_persona: str = "DEFAULT_CREATOR",
-    overlay_enabled: bool = True,
+    overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
     blocks: list[dict[str, Any]] | None = None,
     approved_package: dict[str, Any] | None = None,

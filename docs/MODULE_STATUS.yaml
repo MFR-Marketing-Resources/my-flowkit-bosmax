@@ -59,6 +59,8 @@ domains:
       - agent/api/prompt_preview.py
       - agent/api/creative_brief.py
       - agent/services/workspace_generation_package_service.py
+      - agent/api/workspace_generation_packages.py
+      - requirements.txt
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py
       - agent/services/workspace_execution_package_service.py
