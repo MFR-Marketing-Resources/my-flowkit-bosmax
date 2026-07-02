@@ -73,11 +73,29 @@ const MODE_TAB_HINT: Record<string, string> = {
 };
 
 const MODE_OPERATOR_ROUTE: Record<string, string> = {
+	HYBRID: "/operator/hybrid",
 	T2V: "/operator/t2v",
 	F2V: "/operator/f2v",
 	I2V: "/operator/i2v",
 	IMG: "/operator/img",
 };
+
+function getOperatorSurfaceMode(pkg: WorkspaceGenerationPackage): string {
+	if (pkg.mode === "F2V" && pkg.source_lane === "HYBRID") {
+		return "HYBRID";
+	}
+	return pkg.mode ?? "F2V";
+}
+
+function getOperatorSurfaceLabel(pkg: WorkspaceGenerationPackage): string {
+	const surfaceMode = getOperatorSurfaceMode(pkg);
+	if (surfaceMode === "HYBRID") return "Hybrid (Product + AI Presenter)";
+	return MODE_LABELS[surfaceMode] ?? surfaceMode;
+}
+
+function getOperatorSurfaceRoute(pkg: WorkspaceGenerationPackage): string | null {
+	return MODE_OPERATOR_ROUTE[getOperatorSurfaceMode(pkg)] ?? null;
+}
 
 interface PromptBlock {
 	block_index: number;
@@ -243,6 +261,7 @@ function PackageDetailPanel({
 	const allDisplayAssets = [...orderedAssets, ...extraAssets];
 
 	const mode = pkg.mode ?? "F2V";
+	const surfaceMode = getOperatorSurfaceMode(pkg);
 	const isExtend = pkg.generation_mode === "EXTEND";
 	const blocks = (pkg.prompt_blocks_json ?? []) as PromptBlock[];
 	const imageStepStart = 2;
@@ -358,7 +377,7 @@ function PackageDetailPanel({
 			<div className={`rounded-2xl border p-4 space-y-4 ${MODE_COLORS[mode] ?? "border-slate-700 bg-slate-900/40"}`}>
 				<div>
 					<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-1">Google Flow Setup Guide</div>
-					<div className="text-base font-bold text-slate-100">{MODE_LABELS[mode] ?? mode}</div>
+					<div className="text-base font-bold text-slate-100">{getOperatorSurfaceLabel(pkg)}</div>
 					{durationSec && (
 						<div className="text-xs text-slate-400 mt-0.5">Duration: {durationSec}s · Mode: {pkg.generation_mode}</div>
 					)}
@@ -434,7 +453,8 @@ function PackageDetailPanel({
 						<div className="bg-slate-950 rounded-lg p-3 space-y-1 text-[10px] font-mono text-slate-500">
 							<div><span className="text-slate-600">package_id:</span> {pkg.workspace_generation_package_id}</div>
 							<div><span className="text-slate-600">product_id:</span> {pkg.product_id}</div>
-							<div><span className="text-slate-600">mode:</span> {pkg.mode} / {pkg.source_lane}</div>
+							<div><span className="text-slate-600">surface:</span> {surfaceMode}</div>
+							<div><span className="text-slate-600">job mode:</span> {pkg.mode} / {pkg.source_lane}</div>
 							<div><span className="text-slate-600">generation_mode:</span> {pkg.generation_mode}</div>
 							<div><span className="text-slate-600">snapshot_id:</span> {pkg.prompt_package_snapshot_id || "—"}</div>
 							<div><span className="text-slate-600">execution_pkg_id:</span> {pkg.workspace_execution_package_id || "—"}</div>
@@ -513,7 +533,7 @@ function PackageRow({
 				{pkg.workspace_generation_package_id}
 			</td>
 			<td className="py-2 px-3 text-xs font-bold text-slate-200">
-				{pkg.mode}
+				{getOperatorSurfaceMode(pkg)}
 			</td>
 			<td className="py-2 px-3 text-xs text-slate-300 max-w-[150px] truncate">
 				{pkg.product_name_snapshot || pkg.product_id}
@@ -683,7 +703,7 @@ export default function WorkspaceGenerationPackagesPage() {
 	const safePage = Math.min(currentPage, totalPages);
 	const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-	const activeMode = detailPkg?.mode ?? "";
+	const activeSurfaceMode = detailPkg ? getOperatorSurfaceMode(detailPkg) : "";
 
 	// P5B: Bulk handlers (defined after filtered so toggleSelectAll can reference it)
 	const toggleSelectAll = () => {
@@ -765,13 +785,13 @@ export default function WorkspaceGenerationPackagesPage() {
 							{loading ? "Loading…" : `${filtered.length} package${filtered.length !== 1 ? "s" : ""}`}
 						</div>
 					</div>
-					{activeMode && MODE_OPERATOR_ROUTE[activeMode] && (
+					{detailPkg && getOperatorSurfaceRoute(detailPkg) && (
 						<button
 							type="button"
-							onClick={() => navigate(MODE_OPERATOR_ROUTE[activeMode])}
+							onClick={() => navigate(getOperatorSurfaceRoute(detailPkg) ?? "/operator/f2v")}
 							className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 text-sm font-semibold text-blue-100 hover:bg-blue-500/20"
 						>
-							→ Open {activeMode} Workspace
+							→ Open {activeSurfaceMode} Workspace
 						</button>
 					)}
 				</div>
@@ -782,7 +802,7 @@ export default function WorkspaceGenerationPackagesPage() {
 					>
 						Prompt Handoff Bank
 					</button>
-					{(["T2V", "F2V", "I2V", "IMG"] as const).map((m) => (
+					{(["T2V", "HYBRID", "F2V", "I2V", "IMG"] as const).map((m) => (
 						<button
 							key={m}
 							type="button"
@@ -874,7 +894,7 @@ export default function WorkspaceGenerationPackagesPage() {
 						</div>
 					) : filtered.length === 0 ? (
 						<div className="rounded-2xl border border-slate-800 bg-slate-900/40 py-12 text-center text-sm text-slate-500">
-							No packages found. Generate a package from the Workspace (F2V, I2V, T2V or IMG tab).
+							No packages found. Generate a package from the Workspace (HYBRID, FRAMES, I2V, T2V or IMG tab).
 						</div>
 					) : (
 						<div className="rounded-2xl border border-slate-800 bg-slate-950/80 overflow-hidden">

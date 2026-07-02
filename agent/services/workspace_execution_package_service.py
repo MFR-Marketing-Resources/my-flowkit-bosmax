@@ -267,6 +267,7 @@ async def create_workspace_execution_package(
         "asset_fingerprints": asset_fingerprints,
         "compiler": {
             "compiler_version": compiler_result["compiler_version"],
+            "source_mode": compiler_result.get("source_mode"),
             "generation_mode": compiler_result["generation_mode"],
             "total_duration_seconds": compiler_result["total_duration_seconds"],
             "camera_style": compiler_result["camera_style"],
@@ -371,6 +372,7 @@ async def create_workspace_execution_package(
         ],
         "semantic_slot_resolver": semantic_slot_resolver,
         "compiler_version": compiler_result["compiler_version"],
+        "source_mode": compiler_result.get("source_mode"),
         "generation_mode": compiler_result["generation_mode"],
         "total_duration_seconds": compiler_result["total_duration_seconds"],
         "camera_style": compiler_result["camera_style"],
@@ -471,11 +473,14 @@ async def list_workspace_execution_packages(
     rows = await crud.list_workspace_execution_packages(product_id=product_id, mode=normalize_mode(mode) if mode else None, limit=limit)
     items: list[dict[str, Any]] = []
     for row in rows:
+        request_lineage_payload = json.loads(row.get("request_lineage_payload") or "{}")
+        compiler_lineage = request_lineage_payload.get("compiler") or {}
         items.append(
             {
                 "workspace_execution_package_id": row["workspace_execution_package_id"],
                 "product_id": row["product_id"],
                 "mode": row["mode"],
+                "source_mode": compiler_lineage.get("source_mode"),
                 "prompt_package_snapshot_id": row.get("prompt_package_snapshot_id"),
                 "prompt_fingerprint": row.get("prompt_fingerprint"),
                 "readiness": row.get("readiness"),
@@ -487,7 +492,7 @@ async def list_workspace_execution_packages(
                 "resolved_assets": json.loads(row.get("resolved_assets") or "[]"),
                 "manual_fallback": json.loads(row.get("manual_fallback") or "{}"),
                 "blockers": json.loads(row.get("blockers") or "[]"),
-                "request_lineage_payload": json.loads(row.get("request_lineage_payload") or "{}"),
+                "request_lineage_payload": request_lineage_payload,
                 "source_of_truth_notes": json.loads(row.get("source_of_truth_notes") or "[]"),
                 "prompt_preview": str(row.get("prompt_text") or "")[:240],
                 "prompt_text": row.get("prompt_text") or "",

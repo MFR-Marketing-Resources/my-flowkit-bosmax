@@ -24,6 +24,17 @@ import type {
 
 const MODES: WorkspaceMode[] = ["T2V", "F2V", "I2V", "IMG"];
 
+function workspaceRouteForSurface(mode: WorkspaceMode): string {
+	if (mode === "HYBRID") return "/operator/hybrid";
+	return `/operator/${mode.toLowerCase()}`;
+}
+
+function historySurfaceLabel(item: WorkspaceExecutionPackage): string {
+	if (item.source_mode === "HYBRID") return "HYBRID";
+	if (item.source_mode === "FRAMES") return "FRAMES";
+	return item.mode;
+}
+
 export default function ApprovedPackagesPage() {
 	const navigate = useNavigate();
 	const [products, setProducts] = useState<Product[]>([]);
@@ -105,13 +116,18 @@ export default function ApprovedPackagesPage() {
 		setNotice(`Copied approved ${pkg.mode} prompt.`);
 	};
 
-	const handleOpenWorkspace = async (mode: WorkspaceMode) => {
+	const handleOpenWorkspace = async (
+		mode: WorkspaceMode,
+		sourceMode?: "HYBRID" | "FRAMES",
+	) => {
 		if (!selectedProduct) return;
+		const jobMode = mode === "HYBRID" ? "F2V" : mode;
 		const executionPackage = await createWorkspaceExecutionPackage({
 			product_id: selectedProduct.id,
-			mode,
+			mode: jobMode,
+			...(sourceMode ? { source_mode: sourceMode } : {}),
 		});
-		navigate(`/operator/${mode.toLowerCase()}`, {
+		navigate(workspaceRouteForSurface(mode), {
 			state: { workspaceExecutionPackage: executionPackage },
 		});
 	};
@@ -207,7 +223,7 @@ export default function ApprovedPackagesPage() {
 										className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3"
 									>
 										<div className="text-xs font-semibold text-white">
-											{item.mode}
+											{historySurfaceLabel(item)}
 										</div>
 										<div className="mt-1 text-[11px] text-slate-400">
 											{item.workspace_execution_package_id}
@@ -252,14 +268,35 @@ export default function ApprovedPackagesPage() {
 											<Clipboard size={14} />
 											Copy Approved Prompt
 										</button>
-										<button
-											type="button"
-											onClick={() => void handleOpenWorkspace(activeMode)}
-											className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-semibold text-blue-100 hover:border-blue-400/60"
-										>
-											<FolderOpen size={14} />
-											Open in Workspace
-										</button>
+										{activeMode === "F2V" ? (
+											<>
+												<button
+													type="button"
+													onClick={() => void handleOpenWorkspace("HYBRID", "HYBRID")}
+													className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-semibold text-blue-100 hover:border-blue-400/60"
+												>
+													<FolderOpen size={14} />
+													Open Hybrid Workspace
+												</button>
+												<button
+													type="button"
+													onClick={() => void handleOpenWorkspace("F2V", "FRAMES")}
+													className="inline-flex items-center gap-2 rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:border-violet-400/60"
+												>
+													<FolderOpen size={14} />
+													Open Frames Workspace
+												</button>
+											</>
+										) : (
+											<button
+												type="button"
+												onClick={() => void handleOpenWorkspace(activeMode)}
+												className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-semibold text-blue-100 hover:border-blue-400/60"
+											>
+												<FolderOpen size={14} />
+												Open in Workspace
+											</button>
+										)}
 									</div>
 								</div>
 							</div>

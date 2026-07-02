@@ -764,11 +764,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		setSavedGenPackage(null);
 		try {
 			let pkg: WorkspaceGenerationPackage;
-			if (mode === "F2V") {
+			if (mode === "HYBRID" || mode === "F2V") {
 				pkg = await createF2VGenerationPackage({
 					product_id: selectedProduct.id,
 					workspace_execution_package_id:
 						workspacePackage.workspace_execution_package_id,
+					source_mode: resolveSourceMode(mode) as "HYBRID" | "FRAMES",
 					generation_mode: generationMode,
 					target_language: targetLanguage,
 					camera_style: cameraStyle,
@@ -1617,7 +1618,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						{isLoadingPackage ? "Generating…" : generatePromptLabel}
 					</button>
 					{workspacePackage ? (
-						<div className="mt-4 grid gap-3 md:grid-cols-3">
+					<div className="mt-4 grid gap-3 md:grid-cols-3">
 							<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
 								<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
 									Execution Package
@@ -1648,7 +1649,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					) : null}
 					{/* Generate / Save Package — F2V and I2V */}
 					{workspacePackage &&
-					(mode === "F2V" || mode === "I2V") &&
+					(mode === "HYBRID" || mode === "F2V" || mode === "I2V") &&
 					!selectedProduct?.reference_only ? (
 						<div className="mt-4 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4">
 							<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-indigo-400 mb-3">

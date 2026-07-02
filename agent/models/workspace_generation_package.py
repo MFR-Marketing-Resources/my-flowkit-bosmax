@@ -16,6 +16,7 @@ class F2VGenerationPackageRequest(BaseModel):
     creator_persona: str = "DEFAULT_CREATOR"
     overlay_enabled: bool = False  # NO_OVERLAY law (ADR-008): default off
     dialogue_enabled: bool = True
+    source_mode: str | None = None
     blocks: list[dict[str, Any]] = Field(default_factory=list)
     start_frame_asset_id: str | None = None
     start_frame_preview_url: str | None = None

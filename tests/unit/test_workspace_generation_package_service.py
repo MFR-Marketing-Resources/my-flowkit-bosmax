@@ -260,6 +260,34 @@ async def test_f2v_package_creation_ready_manual(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_f2v_package_preserves_hybrid_source_lane(monkeypatch):
+    async def fake_approved(product_id, mode): return FAKE_APPROVED_PKG
+    captured_compile = {}
+    def fake_compile(**kwargs):
+        captured_compile.update(kwargs)
+        return FAKE_COMPILE_RESULT
+    monkeypatch.setattr("agent.services.workspace_generation_package_service.get_approved_product_package", fake_approved)
+    monkeypatch.setattr("agent.services.workspace_generation_package_service.compile_ugc_video_prompt", fake_compile)
+
+    async def fake_create(wgp_id, *, source_lane, dom_handoff_payload_json, **kw):
+        dom = json.loads(dom_handoff_payload_json)
+        assert source_lane == "HYBRID"
+        assert dom["settings"]["source_mode"] == "HYBRID"
+        return {
+            **FAKE_WGP_ROW,
+            "workspace_generation_package_id": wgp_id,
+            "source_lane": source_lane,
+            "dom_handoff_payload_json": dom_handoff_payload_json,
+        }
+
+    monkeypatch.setattr("agent.services.workspace_generation_package_service.crud.create_workspace_generation_package", fake_create)
+
+    result = await create_f2v_generation_package(product_id="prod-001", source_mode="HYBRID")
+    assert captured_compile["source_mode"] == "HYBRID"
+    assert result["source_lane"] == "HYBRID"
+
+
+@pytest.mark.asyncio
 async def test_f2v_package_blocked_when_no_prompt(monkeypatch):
     async def fake_approved(product_id, mode): return FAKE_APPROVED_PKG
     def fake_compile(**kwargs): return {"final_compiled_prompt_text": "", "prompt_blocks": [], "prompt_fingerprint": "fp_empty"}
@@ -393,7 +421,7 @@ async def test_i2v_blocked_when_resolver_has_blockers(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_list_workspace_generation_packages(monkeypatch):
-    async def fake_list(mode=None, status=None, product_id=None, limit=50):
+    async def fake_list(mode=None, status=None, product_id=None, batch_run_id=None, limit=50):
         return [FAKE_WGP_ROW]
 
     monkeypatch.setattr("agent.services.workspace_generation_package_service.crud.list_workspace_generation_packages", fake_list)

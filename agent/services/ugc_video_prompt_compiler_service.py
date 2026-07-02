@@ -858,6 +858,7 @@ def compile_ugc_video_prompt(
         "final_compiled_prompt_text": final_compiled_prompt_text,
         "prompt_blocks": compiled_blocks,
         "compiler_version": COMPILER_VERSION,
+        "source_mode": resolved_source_mode,
         "generation_mode": resolved_generation_mode,
         "total_duration_seconds": sum(block["duration_seconds"] for block in compiled_blocks),
         "camera_style": resolved_camera_style,

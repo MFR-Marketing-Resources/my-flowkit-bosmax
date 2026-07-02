@@ -69,6 +69,7 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
                 }
             ],
             "compiler_version": "ugc_video_prompt_compiler_v1",
+            "source_mode": "HYBRID",
             "generation_mode": "SINGLE",
             "total_duration_seconds": 8,
             "camera_style": "UGC_IPHONE_RAW",
@@ -99,6 +100,7 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
     assert result["resolved_assets"][0]["asset_source"] == "PRODUCT_IMAGE_CACHE"
     assert result["prompt_text"].startswith("Block 1")
     assert result["generation_mode"] == "SINGLE"
+    assert result["source_mode"] == "HYBRID"
     assert result["camera_style"] == "UGC_IPHONE_RAW"
     assert result["request_lineage_payload"]["prompt_package_snapshot_id"] == "pkg_123"
     assert captured["workspace_execution_package_id"].startswith("wep_")
@@ -122,7 +124,7 @@ async def test_workspace_execution_package_history_parses_snapshot_rows(monkeypa
                 "resolved_assets": '[{"slot_key":"subject","asset_source":"PRODUCT_IMAGE_CACHE"}]',
                 "manual_fallback": '{"copy_prompt_available": true}',
                 "blockers": '[]',
-                "request_lineage_payload": '{"product_id":"prod-001"}',
+                "request_lineage_payload": '{"product_id":"prod-001","compiler":{"source_mode":"HYBRID"}}',
                 "source_of_truth_notes": '["note"]',
                 "prompt_text": "Prompt preview",
                 "created_at": "2026-05-17T00:00:00Z",
@@ -135,6 +137,7 @@ async def test_workspace_execution_package_history_parses_snapshot_rows(monkeypa
     items = await list_workspace_execution_packages(product_id="prod-001", mode="IMG")
 
     assert items[0]["workspace_execution_package_id"] == "wep_123"
+    assert items[0]["source_mode"] == "HYBRID"
     assert items[0]["resolved_assets"][0]["asset_source"] == "PRODUCT_IMAGE_CACHE"
     assert items[0]["prompt_preview"] == "Prompt preview"
 

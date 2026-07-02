@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
+import json
 
 # Known blocker codes that map to 409 Conflict (not 500 Internal Error).
 _BLOCKER_409 = frozenset({
@@ -149,6 +150,7 @@ async def create_f2v_package(request: F2VGenerationPackageRequest):
             creator_persona=request.creator_persona,
             overlay_enabled=request.overlay_enabled,
             dialogue_enabled=request.dialogue_enabled,
+            source_mode=request.source_mode,
             blocks=request.blocks,
             start_frame_asset_id=request.start_frame_asset_id,
             start_frame_preview_url=request.start_frame_preview_url,
@@ -196,7 +198,6 @@ async def create_from_execution_package(
 ):
     """Convenience: look up an execution package and seed a generation package from it."""
     from agent.db import crud as _crud
-    import json
 
     try:
         wep = await _crud.get_workspace_generation_package(workspace_execution_package_id)
@@ -216,11 +217,20 @@ async def create_from_execution_package(
 
         product_id = wep.get("product_id", "")
         wep_mode = mode or wep.get("mode", "F2V")
+        lineage = wep.get("request_lineage_payload") or {}
+        if isinstance(lineage, str):
+            try:
+                lineage = json.loads(lineage or "{}")
+            except json.JSONDecodeError:
+                lineage = {}
+        compiler = lineage.get("compiler") or {}
+        source_mode = compiler.get("source_mode")
 
         if wep_mode == "F2V":
             package = await create_f2v_generation_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
+                source_mode=source_mode,
             )
         elif wep_mode == "I2V":
             package = await create_i2v_generation_package(

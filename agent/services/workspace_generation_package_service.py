@@ -58,6 +58,13 @@ def _wgp_id(product_id: str, mode: str, source_lane: str, prompt_fp: str) -> str
     return f"wgp_{digest[:16]}"
 
 
+def _normalize_f2v_source_lane(source_mode: str | None) -> str:
+    candidate = str(source_mode or "").strip().upper()
+    if candidate == "FRAMES":
+        return "FRAMES"
+    return "HYBRID"
+
+
 def _build_dom_scaffold(
     *,
     mode: str,
@@ -167,6 +174,7 @@ async def create_f2v_generation_package(
     creator_persona: str = "DEFAULT_CREATOR",
     overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
+    source_mode: str | None = None,
     blocks: list[dict] | None = None,
     start_frame_asset_id: str | None = None,
     start_frame_preview_url: str | None = None,
@@ -178,6 +186,7 @@ async def create_f2v_generation_package(
 ) -> dict:
     """Create a durable F2V workspace generation package."""
     mode = "F2V"
+    resolved_source_lane = _normalize_f2v_source_lane(source_mode)
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
@@ -202,6 +211,7 @@ async def create_f2v_generation_package(
         creator_persona=creator_persona,
         overlay_enabled=overlay_enabled,
         dialogue_enabled=dialogue_enabled,
+        source_mode=resolved_source_lane,
         blocks=blocks or [],
     )
 
@@ -274,9 +284,10 @@ async def create_f2v_generation_package(
         "creator_persona": creator_persona,
         "overlay_enabled": overlay_enabled,
         "dialogue_enabled": dialogue_enabled,
+        "source_mode": resolved_source_lane,
     }
 
-    wgp_id = _wgp_id(product_id, mode, "F2V", prompt_fingerprint)
+    wgp_id = _wgp_id(product_id, mode, resolved_source_lane, prompt_fingerprint)
 
     manual_handoff = _build_manual_handoff(
         mode=mode,
@@ -311,7 +322,7 @@ async def create_f2v_generation_package(
         mode=mode,
         product_id=product_id,
         product_name_snapshot=product_name_snapshot,
-        source_lane="F2V",
+        source_lane=resolved_source_lane,
         prompt_package_snapshot_id=prompt_package_snapshot_id,
         workspace_execution_package_id=workspace_execution_package_id,
         generation_mode=generation_mode,

@@ -78,7 +78,7 @@ def test_list_packages_returns_empty_list(monkeypatch):
 def test_list_packages_filters_by_mode(monkeypatch):
     captured_filter = {}
 
-    async def fake_list(mode=None, status=None, product_id=None, limit=50):
+    async def fake_list(mode=None, status=None, product_id=None, batch_run_id=None, limit=50):
         captured_filter["mode"] = mode
         return [FAKE_PKG]
 
@@ -94,7 +94,7 @@ def test_list_packages_filters_by_mode(monkeypatch):
 def test_list_packages_filters_by_status(monkeypatch):
     captured_filter = {}
 
-    async def fake_list(mode=None, status=None, product_id=None, limit=50):
+    async def fake_list(mode=None, status=None, product_id=None, batch_run_id=None, limit=50):
         captured_filter["status"] = status
         return []
 
@@ -108,7 +108,7 @@ def test_list_packages_filters_by_status(monkeypatch):
 def test_list_packages_filters_by_product_id(monkeypatch):
     captured = {}
 
-    async def fake_list(mode=None, status=None, product_id=None, limit=50):
+    async def fake_list(mode=None, status=None, product_id=None, batch_run_id=None, limit=50):
         captured["product_id"] = product_id
         return []
 
@@ -138,6 +138,24 @@ def test_create_f2v_package(monkeypatch):
     data = response.json()
     assert data["mode"] == "F2V"
     assert data["workspace_generation_package_id"] == "wgp_test_001"
+
+
+def test_create_f2v_package_forwards_source_mode(monkeypatch):
+    captured = {}
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        return {**FAKE_PKG, "mode": "F2V", "source_lane": "HYBRID"}
+
+    monkeypatch.setattr("agent.api.workspace_generation_packages.create_f2v_generation_package", fake_create)
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/workspace/generation-packages/f2v",
+        json={"product_id": "prod-001", "source_mode": "HYBRID"},
+    )
+    assert response.status_code == 200
+    assert captured["source_mode"] == "HYBRID"
 
 
 def test_create_f2v_package_with_start_frame(monkeypatch):

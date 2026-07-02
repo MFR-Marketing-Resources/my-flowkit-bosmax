@@ -482,6 +482,7 @@ export interface WorkspaceExecutionPackage {
 	product_id: string;
 	product_name: string;
 	mode: WorkspaceMode;
+	source_mode?: "T2V" | "HYBRID" | "FRAMES" | "INGREDIENTS" | "IMAGES";
 	duration_seconds: number;
 	total_duration_seconds?: number;
 	aspect_ratio: string;
@@ -1909,6 +1910,7 @@ export interface F2VGenerationPackageRequest {
 	creator_persona?: string;
 	overlay_enabled?: boolean;
 	dialogue_enabled?: boolean;
+	source_mode?: "HYBRID" | "FRAMES";
 	blocks?: Array<{ block_index: number; duration_seconds: number }>;
 	start_frame_asset_id?: string | null;
 	start_frame_preview_url?: string | null;
