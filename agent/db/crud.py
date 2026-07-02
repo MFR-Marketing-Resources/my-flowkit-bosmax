@@ -1172,16 +1172,23 @@ async def insert_generated_artifact(media_id: str, job_id: str = None, mode: str
         await db.commit()
 
 
-async def list_generated_artifacts(limit: int = 50, mode: str = None) -> list:
+async def list_generated_artifacts(limit: int = 50, mode: str = None,
+                                    kind: str = None) -> list:
     """Newest-first library listing for the dashboard gallery."""
     db = await get_db()
     query = """SELECT media_id, job_id, mode, artifact_kind, local_path, size_mb,
                       project_id, model_used, duration_used, created_at
                FROM generated_artifact"""
+    clauses = []
     params: tuple = ()
     if mode:
-        query += " WHERE mode = ?"
-        params = (str(mode).upper(),)
+        clauses.append("mode = ?")
+        params += (str(mode).upper(),)
+    if kind:
+        clauses.append("artifact_kind = ?")
+        params += (str(kind).lower(),)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY created_at DESC LIMIT ?"
     params += (int(limit),)
     cursor = await db.execute(query, params)
@@ -1189,3 +1196,35 @@ async def list_generated_artifacts(limit: int = 50, mode: str = None) -> list:
     keys = ("media_id", "job_id", "mode", "artifact_kind", "local_path", "size_mb",
             "project_id", "model_used", "duration_used", "created_at")
     return [dict(zip(keys, row)) for row in rows]
+
+
+async def purge_expired_artifacts(retention_hours: int = 48) -> dict:
+    """Retention law: finished artifacts live 48 hours, then the FILE and the
+    library row are deleted. Runs lazily on every library listing (no scheduler
+    needed) and is safe to call repeatedly."""
+    import os
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=retention_hours)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT media_id, local_path FROM generated_artifact WHERE created_at < ?",
+        (cutoff,),
+    )
+    rows = await cursor.fetchall()
+    removed_files = 0
+    for _media_id, local_path in rows:
+        if local_path:
+            try:
+                os.remove(local_path)
+                removed_files += 1
+            except OSError:
+                pass  # already gone — row cleanup below still applies
+    if rows:
+        async with _db_lock:
+            await db.execute(
+                "DELETE FROM generated_artifact WHERE created_at < ?", (cutoff,))
+            await db.commit()
+    return {"purged_rows": len(rows), "purged_files": removed_files,
+            "retention_hours": retention_hours, "cutoff": cutoff}
+
