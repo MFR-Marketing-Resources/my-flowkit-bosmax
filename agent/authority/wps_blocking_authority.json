@@ -1,0 +1,323 @@
+{
+ "_authority": "WPS_Blocking_Template_REPAIRED.xlsx (retained pack 2026-06-21) — extracted verbatim; DO NOT hand-edit numbers",
+ "block_plans": [
+  {
+   "engine": "GROK",
+   "duration_seconds": 6,
+   "blocks": [
+    6
+   ],
+   "preferred_lane": "N/A",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GROK",
+   "duration_seconds": 10,
+   "blocks": [
+    10
+   ],
+   "preferred_lane": "N/A",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GROK",
+   "duration_seconds": 12,
+   "blocks": [
+    6,
+    6
+   ],
+   "preferred_lane": "N/A",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GROK",
+   "duration_seconds": 16,
+   "blocks": [
+    10,
+    6
+   ],
+   "preferred_lane": "N/A",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GROK",
+   "duration_seconds": 18,
+   "blocks": [
+    6,
+    6,
+    6
+   ],
+   "preferred_lane": "N/A",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GROK",
+   "duration_seconds": 20,
+   "blocks": [
+    10,
+    10
+   ],
+   "preferred_lane": "N/A",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GROK",
+   "duration_seconds": 30,
+   "blocks": [
+    10,
+    10,
+    10
+   ],
+   "preferred_lane": "N/A",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 8,
+   "blocks": [
+    8
+   ],
+   "preferred_lane": "8s",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 10,
+   "blocks": [
+    10
+   ],
+   "preferred_lane": "10s",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 16,
+   "blocks": [
+    8,
+    8
+   ],
+   "preferred_lane": "8s",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 20,
+   "blocks": [
+    10,
+    10
+   ],
+   "preferred_lane": "10s",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 24,
+   "blocks": [
+    8,
+    8,
+    8
+   ],
+   "preferred_lane": "8s",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 30,
+   "blocks": [
+    10,
+    10,
+    10
+   ],
+   "preferred_lane": "10s",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 32,
+   "blocks": [
+    8,
+    8,
+    8,
+    8
+   ],
+   "preferred_lane": "8s",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 40,
+   "blocks": [
+    10,
+    10,
+    10,
+    10
+   ],
+   "preferred_lane": "Lane A",
+   "requires_preferred_lane": true
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 40,
+   "blocks": [
+    8,
+    8,
+    8,
+    8,
+    8
+   ],
+   "preferred_lane": "Lane B",
+   "requires_preferred_lane": true
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 48,
+   "blocks": [
+    8,
+    8,
+    8,
+    8,
+    8,
+    8
+   ],
+   "preferred_lane": "8s",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 50,
+   "blocks": [
+    10,
+    10,
+    10,
+    10,
+    10
+   ],
+   "preferred_lane": "10s",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 56,
+   "blocks": [
+    8,
+    8,
+    8,
+    8,
+    8,
+    8,
+    8
+   ],
+   "preferred_lane": "8s",
+   "requires_preferred_lane": false
+  },
+  {
+   "engine": "GOOGLE_FLOW",
+   "duration_seconds": 60,
+   "blocks": [
+    10,
+    10,
+    10,
+    10,
+    10,
+    10
+   ],
+   "preferred_lane": "10s",
+   "requires_preferred_lane": false
+  }
+ ],
+ "language_wps": {
+  "Malay": {
+   "min_wps": 1.8,
+   "safe_wps": 2.4,
+   "max_wps": 2.8,
+   "sweet_wps": 2.7,
+   "ceiling_wps": 3
+  },
+  "English": {
+   "min_wps": 1.7,
+   "safe_wps": 2.3,
+   "max_wps": 2.6,
+   "sweet_wps": 2.45,
+   "ceiling_wps": 3
+  },
+  "Mandarin": {
+   "min_wps": 1.8,
+   "safe_wps": 2.5,
+   "max_wps": 2.8,
+   "sweet_wps": 2.65,
+   "ceiling_wps": 3
+  },
+  "Hindustani": {
+   "min_wps": 1.8,
+   "safe_wps": 2.3,
+   "max_wps": 2.7,
+   "sweet_wps": 2.5,
+   "ceiling_wps": 3
+  },
+  "Tamil": {
+   "min_wps": 1.7,
+   "safe_wps": 2.2,
+   "max_wps": 2.6,
+   "sweet_wps": 2.4,
+   "ceiling_wps": 3
+  },
+  "Bengali": {
+   "min_wps": 1.7,
+   "safe_wps": 2.2,
+   "max_wps": 2.6,
+   "sweet_wps": 2.4,
+   "ceiling_wps": 3
+  },
+  "Indonesian": {
+   "min_wps": 1.8,
+   "safe_wps": 2.4,
+   "max_wps": 2.8,
+   "sweet_wps": 2.6,
+   "ceiling_wps": 3
+  },
+  "Burmese": {
+   "min_wps": 1.5,
+   "safe_wps": 2,
+   "max_wps": 2.4,
+   "sweet_wps": 2.2,
+   "ceiling_wps": 3
+  },
+  "Thai": {
+   "min_wps": 1.6,
+   "safe_wps": 2.1,
+   "max_wps": 2.5,
+   "sweet_wps": 2.3,
+   "ceiling_wps": 3
+  }
+ },
+ "continuation_timing": [
+  {
+   "Engine": "GROK",
+   "BlockDurationSec": 6,
+   "Language": "Malay",
+   "BaseMinWords": 11,
+   "BaseSafeWords": 14,
+   "BaseMaxWords": 17,
+   "LipSyncTargetMin": 11,
+   "LipSyncTargetMax": 13,
+   "FaceVisibleFirstSeconds": "1-2s",
+   "DialogueStartTarget": "first 0.2-0.5s",
+   "NoCutawayUntilLipSyncEstablished": true,
+   "Notes": "Soft continuation target only. Keep retained base WPS authority unchanged and do not approve 8-10-word Malay continuation clips."
+  },
+  {
+   "Engine": "Google Flow",
+   "BlockDurationSec": 8,
+   "Language": "Malay",
+   "BaseMinWords": 14,
+   "BaseSafeWords": 19,
+   "BaseMaxWords": 22,
+   "LipSyncTargetMin": 14,
+   "LipSyncTargetMax": 18,
+   "FaceVisibleFirstSeconds": "1-2s",
+   "DialogueStartTarget": "first 0.2-0.5s",
+   "NoCutawayUntilLipSyncEstablished": true,
+   "Notes": "Continuation target stays inside retained Malay WPS authority while biasing faster visible lipsync startup."
+  }
+ ]
+}

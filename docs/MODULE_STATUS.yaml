@@ -4,6 +4,8 @@ domains:
     status: IN_PROGRESS
     owned_paths:
       - docs/MODULE_STATUS.yaml
+      - .gitignore
+      - .ai/decisions/ADR-008-canonical-prompt-compiler-authority.md
       - docs/authority/working/WORKSPACE_GENERATION_PACKAGE_AND_HANDOFF_BANK_PLAN_v0_1.md
       - package.json
       - package-lock.json
@@ -38,6 +40,19 @@ domains:
       - agent/services/i2v_slot_recipe_config.py
       - agent/services/i2v_semantic_slot_resolver_service.py
       - agent/services/prompt_compiler_runtime_config_service.py
+      - agent/services/canonical_prompt_compiler.py
+      - agent/services/avatar_registry.py
+      - agent/services/copy_landbank_service.py
+      - agent/services/prompt_compiler_9_section.py
+      - agent/services/prompt_output_composer.py
+      - agent/services/prompt_preview_pipeline.py
+      - agent/authority/AVATAR_POOL_NORMALIZED.csv
+      - agent/authority/BOSMAX_CUSTOM_INSTRUCTION.txt
+      - agent/authority/COPYWRITING_FRAMEWORK_UNIVERSAL.yaml
+      - agent/authority/UNIVERSAL_PRODUCT_SCHEMA.json
+      - agent/authority/VIDEO_PROMPT_COMPILER_TEMPLATES.yaml
+      - agent/authority/wps_blocking_authority.json
+      - tests/unit/test_canonical_prompt_compiler.py
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py
       - agent/services/workspace_execution_package_service.py

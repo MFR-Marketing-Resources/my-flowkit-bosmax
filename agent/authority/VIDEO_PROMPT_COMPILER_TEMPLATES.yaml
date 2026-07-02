@@ -1,0 +1,86 @@
+schema_version: 1
+retained_files_only: true
+authority_stack:
+  custom_instruction: Bosmax Custom Instruction.txt
+  wps_authority: WPS_Blocking_Template_REPAIRED.xlsx
+  product_truth: UNIVERSAL_PRODUCT_SCHEMA.json
+  avatar_pool: AVATAR_POOL_NORMALIZED.csv
+  copy_framework: COPYWRITING_FRAMEWORK_UNIVERSAL.yaml
+canonical_sections:
+  - SECTION 1 - ROLE & OBJECTIVE
+  - SECTION 2 - PRODUCT TRUTH LOCK
+  - SECTION 3 - CONTINUITY & STATE LOCK
+  - SECTION 4 - VISUAL STORY
+  - SECTION 5 - SHOT & CAMERA RULES
+  - SECTION 6 - SPOKEN DIALOGUE
+  - SECTION 7 - VOICE & DELIVERY
+  - SECTION 8 - CTA & END FRAME
+  - SECTION 9 - NO_OVERLAY
+rules:
+  block_plan_authority:
+    - Derived block plans come from EngineBlockMap only.
+    - Never accept manual block_plan from the operator raw prompt.
+  engine_rules:
+    - GROK 16s = [10,6].
+    - GROK uses 6s or 10s blocks only.
+    - Google Flow 16s = [8,8].
+    - "Google Flow must use a single lane only: 8s-only or 10s-only."
+    - Google Flow 40s is blocked until preferred_lane is chosen.
+    - CTA lands only in the final block.
+  source_mode_rules:
+    - HYBRID uses the uploaded product image as anchor and must resolve avatar_id to the full approved presenter description before final output.
+    - If no avatar_id is provided for HYBRID, resolve one concrete approved Malaysian adult presenter description from AVATAR_POOL_NORMALIZED.csv before final output.
+    - FRAMES uses one completed frame as the single visual truth and motion-delta only.
+    - INGREDIENTS requires explicit asset_role_map.
+    - INGREDIENTS minimum valid asset_role_map is PRODUCT_REFERENCE plus AVATAR_REFERENCE.
+    - "STYLE_SCENE_REFERENCE is optional in INGREDIENTS; if absent, require style_scene_source: SCENE_CONTEXT_ONLY and derive environment only from SCENE_CONTEXT."
+    - "If STYLE_SCENE_REFERENCE is declared but image_3 is absent or NOT PROVIDED, auto-normalize to the 2-image path: drop the style role and set style_scene_source: SCENE_CONTEXT_ONLY."
+    - Product truth outranks avatar and style in all modes.
+  continuation_lipsync_contract:
+    applies_to:
+      - continuation blocks
+      - SET_2
+      - block_index > 1
+    required_fields:
+      - part1_final_frame_state
+      - part2_first_frame_state
+      - part2_first_0_5s_action
+      - part2_first_1s_lipsync_lock
+      - part2_no_voiceover_lock
+      - part2_no_product_cutaway_until_lipsync_established
+      - part2_dialogue_word_target
+    forbidden_phrases:
+      - voice-over
+      - voiceover
+      - narration
+      - audio says
+      - CTA is heard
+      - product hero shot while line plays
+      - product close-up while speaker says
+      - off-camera speech
+      - background narration
+      - audio-only dialogue
+  output_rules:
+    - Every block exports one complete 9-section prompt set.
+    - Sections 1, 2, 3, 4, 5, 7, 8, and 9 must be written in English instruction prose only.
+    - Section 6 preserves approved spoken dialogue in the selected target language only.
+    - Never rewrite approved dialogue wording except to place it inside Section 6.
+    - Convert internal continuity labels such as INTRO, ANCHOR, and CTA into natural English continuity instructions.
+    - Convert internal source-mode labels into natural engine-facing instructions; do not write Hybrid intake, Frames mode, Ingredients mode, or source mode inside final prompt sections.
+    - HYBRID final prompts must say the uploaded product image is the exact reference and must embed one resolved concrete presenter description directly.
+    - FRAMES final prompts must say to use the uploaded finished frame as the single visual reference and continue only from the visible frame state.
+    - INGREDIENTS final prompts must say to use the uploaded references according to the asset role map, with product reference controlling product truth and avatar reference controlling identity.
+    - If style_scene_source is SCENE_CONTEXT_ONLY, INGREDIENTS final prompts must say environment comes from SCENE_CONTEXT only.
+    - If STYLE_SCENE_REFERENCE is provided, INGREDIENTS final prompts must say the style reference controls environment only.
+    - Section 4 or 5 for continuation blocks must define the first 0.5 seconds of action and the first 1-2 seconds of face/mouth visibility when lipsync is required.
+    - Section 6 for continuation blocks must say the presenter speaks directly to camera with visible mouth, lips, jaw, and facial muscles synchronized to every spoken Malay word from the first moment.
+    - Continuation blocks must explicitly say No voice-over. No narration. No off-camera speech. No audio-only dialogue. No product cutaway narration. No unseen speaker.
+    - Continuation blocks must keep the presenter face and mouth clearly visible for the first 1-2 seconds; the product may stay near chest level, but there is no product-only shot during the opening spoken line.
+    - Section 8 must describe a concrete end frame, either as a non-final continuity hold or a final CTA product hold.
+    - NO_OVERLAY is default unless explicitly overridden by authority.
+    - Do not leak block_plan, WPS numbers, debug JSON, prompt_set_count, runtime metadata, avatar pool references, unresolved selection instructions, or internal labels into engine-facing prompt text.
+    - "Remove generic placeholder text such as 'Visual cues: [camera, background, action]'."
+  qa_fail_conditions:
+    - Fail final output if any engine-facing prompt body contains unresolved avatar source references, source-mode taxonomy, WPS values, block_plan, prompt_set_count, debug JSON, or runtime metadata.
+    - Fail final output if any HYBRID engine-facing prompt body lacks one resolved concrete presenter description.
+    - Fail INGREDIENTS compilation only for ambiguous or conflicting asset roles, not for an optional missing style image that can be normalized to SCENE_CONTEXT_ONLY.

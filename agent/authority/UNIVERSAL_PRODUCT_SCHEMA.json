@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "fields": [
+    "product_id",
+    "product_name",
+    "product_lane",
+    "product_truth_ref",
+    "images",
+    "scale_lock",
+    "label_lock",
+    "allowed_variants",
+    "safety_notes",
+    "pack_size_ml",
+    "cta_text_default",
+    "on_the_fly_flags"
+  ],
+  "field_notes": {
+    "images": "Array of {url, role}.",
+    "scale_lock": "Literal product scale and silhouette lock for prompt/runtime enforcement.",
+    "label_lock": "Literal label and readable identity preservation rule.",
+    "on_the_fly_flags": "Operator-controlled runtime overrides that cannot violate product truth."
+  },
+  "products": {
+    "BOSMAX_SERUM_5ML": {
+      "product_id": "BOSMAX_SERUM_5ML",
+      "product_name": "BOSMAX Serum 5ML / BOSMAX HERBS Herbal Oil Roll On",
+      "product_lane": "PRODUCT_ONLY",
+      "product_truth_ref": "Tiny slim matte-black cylindrical roll-on bottle, glossy black cap, white BOSMAX HERBS wordmark, leaf icon, and Herbal Oil Roll On label.",
+      "images": [
+        {
+          "url": "https://example.invalid/bosmax-serum-front.png",
+          "role": "product_front"
+        },
+        {
+          "url": "https://example.invalid/bosmax-serum-angle.png",
+          "role": "product_angle"
+        }
+      ],
+      "scale_lock": "Bottle must remain at exact 5ml lip balm or chapstick scale; never drift into perfume, spray, supplement, skincare, or oversized bottle form.",
+      "label_lock": "Keep BOSMAX HERBS wordmark, leaf icon, and Herbal Oil Roll On label readable and unchanged.",
+      "allowed_variants": [
+        "product_only",
+        "studio_closeup",
+        "ugc_handheld",
+        "bathroom_shelf",
+        "desk_side"
+      ],
+      "safety_notes": [
+        "No cure claims.",
+        "No guarantee claims.",
+        "No unsafe content.",
+        "No perfume, spray, supplement, or skincare bottle drift."
+      ],
+      "pack_size_ml": 5,
+      "cta_text_default": "Tap to add one to your daily kit.",
+      "on_the_fly_flags": {
+        "allow_overlay": false,
+        "allow_fast_vo_override": false
+      }
+    },
+    "MWTCB_25ML_CAP_BURUNG": {
+      "product_id": "MWTCB_25ML_CAP_BURUNG",
+      "product_name": "Minyak Warisan Tok Cap Burung 25ml",
+      "product_lane": "PRODUCT_ONLY",
+      "product_truth_ref": "Short compact transparent green glass bottle, green herbal oil inside, red ribbed screw cap, cream label panel, teal to deep green border, gold ornamental border, bird illustration, and traditional heritage label identity with readable Cap Burung text preserved where visible.",
+      "images": [],
+      "scale_lock": "Compact 25ml bottle, pocket, travel, or household standby size; never enlarge into tall perfume, supplement, skincare, syrup, spray, or cosmetic bottle.",
+      "label_lock": "Preserve Minyak Warisan Tok Cap Burung and Cap Burung heritage label identity, bird illustration, cream label panel, teal to deep green border, gold ornamental border, traditional typography, and all readable label text.",
+      "allowed_variants": [
+        "product_only",
+        "ugc_handheld",
+        "family_home",
+        "bedside_standby",
+        "drawer_standby",
+        "warm_wood_surface",
+        "nursery_cue_without_baby_exposure"
+      ],
+      "safety_notes": [
+        "No cure claims.",
+        "No guaranteed result claims.",
+        "No medical certainty.",
+        "No clinically proven claim unless source-proven.",
+        "No unsafe baby treatment scene.",
+        "No direct medical treatment scene.",
+        "No before-after medical proof.",
+        "No claim that product is universally safe for babies unless legally or source verified."
+      ],
+      "pack_size_ml": 25,
+      "cta_text_default": "Tap beg kuning sekarang",
+      "on_the_fly_flags": {
+        "allow_overlay": false,
+        "allow_fast_vo_override": false
+      }
+    }
+  }
+}

@@ -1,3 +1,13 @@
+"""DE-AUTHORIZED FOR FINAL ENGINE OUTPUT (ADR-008, 2026-07-02).
+
+This module is a FROZEN legacy prompt surface. Its section taxonomy conflicts
+with the retained canonical 9-section authority. THE only sanctioned final
+engine-facing prompt renderer is agent/services/canonical_prompt_compiler.py
+(reached via ugc_video_prompt_compiler_service.compile_ugc_video_prompt).
+
+Kept temporarily for preview/back-compat surfaces only. Do NOT wire it into any
+final output path; do NOT repair it; delete it once parity proof exists.
+"""
 from __future__ import annotations
 
 from typing import Any

@@ -44,11 +44,14 @@ def test_compiler_generates_single_block_final_prompt():
     assert result["target_language"] == "BM_MS"
     assert len(result["prompt_blocks"]) == 1
     assert result["prompt_blocks"][0]["shot_count"] == 2
-    assert "visible creator" in result["final_compiled_prompt_text"].lower()
-    # Engine prompt uses concrete camera directives (not vague iPhone-style prose)
-    assert "Vertical 9:16 handheld" in result["final_compiled_prompt_text"]
-    # Engine prompt has CHARACTER section, ANCHOR, and shot breakdown
-    assert "ANCHOR:" in result["final_compiled_prompt_text"]
+    # ADR-008 canonical: a CONCRETE presenter from the avatar registry, never
+    # the generic "visible creator" placeholder.
+    assert "The presenter is a Malaysian adult" in result["final_compiled_prompt_text"]
+    assert "one visible creator" not in result["final_compiled_prompt_text"].lower()
+    # Canonical 9-section structure with camera-style differentiation preserved
+    assert result["final_compiled_prompt_text"].startswith("SECTION 1 - ROLE & OBJECTIVE")
+    assert "SECTION 9 - NO_OVERLAY" in result["final_compiled_prompt_text"]
+    assert "9:16 handheld" in result["final_compiled_prompt_text"]
     assert "Shot 1:" in result["final_compiled_prompt_text"]
     assert "Shot 2:" in result["final_compiled_prompt_text"]
     assert "Create a premium frames-to-video sequence" not in result["final_compiled_prompt_text"]
@@ -85,10 +88,13 @@ def test_compiler_generates_extend_continuation_lineage():
     assert result["prompt_blocks"][1]["shot_count"] == 1
     assert result["prompt_blocks"][1]["continuation_from_block_id"] == "block_1"
     assert result["continuation_lineage"][0]["continuation_from_block_id"] == "block_1"
-    # Engine prompt uses CONTINUATION section (not internal directive form)
-    assert "CONTINUATION:" in result["final_compiled_prompt_text"]
-    # Engine prompt uses concrete cinematic directives
-    assert "Vertical 9:16 cinematic" in result["final_compiled_prompt_text"]
+    # ADR-008 canonical: continuation is naturalized prose inside SECTION 3/5,
+    # never an internal "CONTINUATION:" label (scrub law).
+    block2 = result["prompt_blocks"][1]["engine_prompt_text"]
+    assert "continues the previous clip" in block2
+    assert "exact final visible state" in block2
+    # Cinematic camera style stays differentiated in SECTION 5
+    assert "cinematic commercial look" in result["final_compiled_prompt_text"]
 
 
 # ── Fix regression: internal process leakage ──────────────────────────────────
@@ -148,12 +154,13 @@ def test_overlay_is_compact_not_verbatim_cta():
         safe_cta_angles=[long_cta],
     )
     final = result["final_compiled_prompt_text"]
-    assert "OVERLAY TEXT:" in final, "Expected overlay to be emitted for a long CTA"
-    for line in final.splitlines():
-        if line.startswith("OVERLAY TEXT:"):
-            overlay_value = line[len("OVERLAY TEXT:"):].strip()
-            assert overlay_value != long_cta, "Overlay must not be verbatim CTA"
-            assert len(overlay_value.split()) <= 6, "Overlay must be compact (≤6 words)"
+    # ADR-008 canonical: overlay lives inside SECTION 9 as permitted on-screen
+    # text, still compact, never the verbatim CTA sentence.
+    assert "On-screen text is permitted" in final, "Expected overlay permission for a long CTA"
+    assert long_cta not in final.split("SECTION 9")[-1], "Overlay must not be verbatim CTA"
+    import re as _re
+    quoted = _re.search(r"permitted for this block only: '([^']+)'", final)
+    assert quoted and len(quoted.group(1).split()) <= 6, "Overlay must be compact (≤6 words)"
 
 
 def test_overlay_omitted_when_cta_too_short_to_truncate():
@@ -232,11 +239,11 @@ def test_camera_directives_ugc_are_specific():
         camera_style="UGC_IPHONE_RAW",
     )
     final = result["final_compiled_prompt_text"]
-    assert "Vertical 9:16 handheld" in final
-    assert "MCU" in final
+    # ADR-008 canonical: UGC camera language stays concrete inside SECTION 5.
+    assert "9:16 handheld" in final
     assert "micro-jitter" in final
-    assert "24–26mm" in final
-    assert any(term in final for term in ("ambient", "window light"))
+    assert any(term in final for term in ("24mm", "26mm", "wide-equivalent"))
+    assert any(term in final for term in ("natural indoor light", "natural light", "window light"))
 
 
 def test_camera_directives_cinematic_are_specific():
@@ -250,9 +257,13 @@ def test_camera_directives_cinematic_are_specific():
         camera_style="CINEMATIC_PRO",
     )
     final = result["final_compiled_prompt_text"]
-    assert "Vertical 9:16 cinematic" in final
-    assert any(term in final for term in ("Minimal camera drift", "stable"))
-    assert "studio lighting" in final
+    # ADR-008 canonical: cinematic style stays differentiated inside SECTION 5.
+    assert "cinematic commercial look" in final
+    assert any(term in final for term in ("stabilized", "controlled lighting", "premium"))
+    assert "cinematic commercial look" not in compile_ugc_video_prompt(
+        product=_product(), approved_package=_approved_package(), mode="T2V",
+        generation_mode="SINGLE", duration_seconds=8, camera_style="UGC_IPHONE_RAW",
+    )["final_compiled_prompt_text"], "UGC and cinematic must render differently"
 
 
 # ── Fix regression: parenthesis variant tags stripped from product name ───────

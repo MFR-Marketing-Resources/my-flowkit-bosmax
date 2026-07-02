@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from agent.services.prompt_compiler_runtime_config_service import (
@@ -162,3 +162,34 @@ async def post_i2v_semantic_slot_resolver(
         message = str(exc)
         status_code = 404 if message in {"PRODUCT_NOT_FOUND", "CREATIVE_ASSET_NOT_FOUND"} else 409
         raise HTTPException(status_code=status_code, detail=message) from exc
+
+
+# ── Copywriting landbank (ADR-008): operator-uploaded COPY_MASTER rows.
+# SECONDARY reference for the canonical compiler — helps dialogue quality,
+# never overrides explicit operator copy, never fails a compile when absent.
+
+@router.post("/copywriting-landbank/{product_id}")
+async def upload_copywriting_landbank(product_id: str, request: Request):
+    csv_bytes = await request.body()
+    if not csv_bytes:
+        raise HTTPException(422, "CSV body required")
+    from agent.services import copy_landbank_service
+    try:
+        return copy_landbank_service.save_csv(product_id, csv_bytes)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/copywriting-landbank")
+async def list_copywriting_landbank():
+    from agent.services import copy_landbank_service
+    return {"products": copy_landbank_service.list_products()}
+
+
+@router.get("/copywriting-landbank/{product_id}")
+async def get_copywriting_landbank(product_id: str, angle: str = None):
+    from agent.services import copy_landbank_service
+    row = copy_landbank_service.lookup(product_id, angle=angle)
+    if row is None:
+        raise HTTPException(404, "LANDBANK_NOT_FOUND")
+    return row
