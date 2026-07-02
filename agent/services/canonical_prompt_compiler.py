@@ -946,6 +946,15 @@ def _mode_story_polish(source_mode: str) -> dict[str, str]:
             "middle": "every composition choice must increase static sellability, packaging read, and believable premium hierarchy",
             "closing": "the final read must feel commerce-ready through composition alone, not through implied motion or narration logic",
         },
+        "T2V": {
+            "continuity": (
+                "Scene-first persuasion only: the world, timing, and lived-in behaviour must make the product feel native before any sales intent becomes obvious. "
+                "Do not let this lane drift into creator-studio pitch language or continuation-frame logic borrowed from other workflows."
+            ),
+            "opening": "the first beat must feel like a real moment already happening before the product enters the selling conversation",
+            "middle": "every benefit beat must feel discovered inside the scene, not announced like a detached ad script",
+            "closing": "the close must resolve as a believable social moment with product payoff, not as a creator-led hard sell tableau",
+        },
     }
     return table.get(source_mode, {
         "continuity": "",
@@ -1000,10 +1009,10 @@ def _default_shot_plan(
         ]
     else:  # T2V
         templates = [
-            f"Open inside the lived-in scene first, then let the presenter bring {pname} into the frame naturally so the hook feels native, not staged, with {focus['context']} already visible and powered by {story['opening']}.",
-            f"Routine-context beat that shows why {pname} belongs in the moment, with the packaging readable, the action grounded in normal human behaviour, and {focus['detail']} carrying a middle beat that helps {story['middle']}.",
-            f"Confidence or payoff beat where the presenter stays on camera, keeps {pname} visible, and sells the main benefit through expression and handling rather than hard claims, aligned to {angle_hint or 'the commercial promise'} while continuing to {story['middle']}.",
-            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {story['closing']} plus {focus['closing']} to feel intentional while the shot still helps {story['middle']}.",
+            f"Open inside the lived-in scene first, then let the presenter bring {pname} into the frame naturally so the hook feels native, not staged, with {focus['context']} already visible and powered by {story['opening']}; {mode_polish['opening']}.",
+            f"Routine-context beat that shows why {pname} belongs in the moment, with the packaging readable, the action grounded in normal human behaviour, and {focus['detail']} carrying a middle beat that helps {story['middle']}; {mode_polish['middle']}.",
+            f"Confidence or payoff beat where the presenter stays on camera, keeps {pname} visible, and sells the main benefit through expression and handling rather than hard claims, aligned to {angle_hint or 'the commercial promise'} while continuing to {story['middle']}, with the scene still doing persuasion work around the product.",
+            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {story['closing']} plus {focus['closing']} to feel intentional while the shot still helps {story['middle']}; {mode_polish['closing']}.",
         ]
     if block_index > 1 and source_mode != "IMAGES":
         templates[0] = (
@@ -1064,6 +1073,9 @@ def _section_3_continuity(
             f"Build the scene from this description: {scene_context or 'a bright, believable everyday setting'}. "
             f"Keep {pname} visually consistent in every shot."
         )
+        lines.append(_mode_story_polish(source_mode)["continuity"])
+        lines.append("The first beat must feel like a real moment already happening before the product enters the selling conversation.")
+        lines.append("Every benefit beat must feel discovered inside the scene, not announced like a detached ad script.")
     else:  # IMAGES
         lines.append(
             f"Compose a single still image. Keep {pname} exactly true to its real packaging, "
@@ -1120,7 +1132,7 @@ def _section_8_end_frame(
             f"End on a confident creator-to-camera hold with {pname} upright, label readable, and the exact uploaded-product packaging still matching perfectly while {story['closing']} carries the CTA landing. {_mode_story_polish(mode)['closing']}"
         )
     return (
-        f"End on a steady hold: the presenter keeps {pname} at chest level with the label readable to camera while {story['closing']} carries the closing line, then a beat of calm confidence."
+        f"End on a steady hold: the presenter keeps {pname} at chest level with the label readable to camera while {story['closing']} carries the closing line, then a beat of calm confidence. {_mode_story_polish(mode)['closing']}"
     )
 
 

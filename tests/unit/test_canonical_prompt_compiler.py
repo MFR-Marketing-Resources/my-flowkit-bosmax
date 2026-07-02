@@ -350,6 +350,15 @@ def test_images_mode_polish_enforces_static_sellability_only():
     assert "composition alone" in text
 
 
+def test_t2v_mode_polish_enforces_scene_first_native_persuasion():
+    result = _compile(mode="T2V", duration_seconds=16, scene_context="a bright lived-in bathroom counter at home")
+    text = result["blocks"][-1]["engine_prompt_text"].lower()
+    assert "scene-first persuasion only" in text
+    assert "real moment already happening" in text
+    assert "discovered inside the scene" in text
+    assert "believable social moment with product payoff" in text
+
+
 def test_avatar_registry_explicit_id_and_prose():
     profile = avatar_registry.resolve_presenter("BOS_F_ALYA_01")
     assert profile["character_name"] == "Alya"
