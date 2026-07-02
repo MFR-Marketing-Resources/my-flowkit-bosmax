@@ -53,6 +53,12 @@ domains:
       - agent/authority/VIDEO_PROMPT_COMPILER_TEMPLATES.yaml
       - agent/authority/wps_blocking_authority.json
       - tests/unit/test_canonical_prompt_compiler.py
+      - tests/unit/test_prompt_authority_sovereignty.py
+      - tests/unit/test_prompt_compiler_9_section.py
+      - tests/unit/test_workspace_generation_package_service.py
+      - agent/api/prompt_preview.py
+      - agent/api/creative_brief.py
+      - agent/services/workspace_generation_package_service.py
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py
       - agent/services/workspace_execution_package_service.py

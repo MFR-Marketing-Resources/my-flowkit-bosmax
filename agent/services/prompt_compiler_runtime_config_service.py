@@ -25,18 +25,28 @@ SHOT_COUNT_POLICY = {
     25: {"recommended": 6, "max": 6},
 }
 
+# ADR-008: values come from the RETAINED WORKBOOK AUTHORITY
+# (agent/authority/wps_blocking_authority.json), not ad-hoc estimates.
+# body_wps == SafeWPS (default budget), hook_wps == SweetWPS (deliberate
+# dialogue-targeting mode), ceiling == workbook CeilingWPS. The canonical
+# compiler reads the authority file directly; this mirror exists ONLY so the
+# operator UI displays the same law the compiler enforces.
 LANGUAGE_WPS_POLICY = {
     "BM_MS": {
-        "hook_wps": 2.4,
-        "body_wps": 1.7,
-        "cta_wps": 2.2,
+        "hook_wps": 2.7,   # Malay SweetWPS (workbook)
+        "body_wps": 2.4,   # Malay SafeWPS (workbook)
+        "cta_wps": 2.4,
+        "safe_wps": 2.4,
+        "sweet_wps": 2.7,
         "absolute_ceiling_wps": 3.0,
     },
     "EN_US": {
-        "hook_wps": 2.7,
-        "body_wps": 2.0,
-        "cta_wps": 2.5,
-        "absolute_ceiling_wps": 3.2,
+        "hook_wps": 2.45,  # English SweetWPS (workbook)
+        "body_wps": 2.3,   # English SafeWPS (workbook)
+        "cta_wps": 2.3,
+        "safe_wps": 2.3,
+        "sweet_wps": 2.45,
+        "absolute_ceiling_wps": 3.0,
     },
 }
 

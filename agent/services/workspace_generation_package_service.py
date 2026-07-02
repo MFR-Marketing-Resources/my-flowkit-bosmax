@@ -186,8 +186,13 @@ async def create_f2v_generation_package(
     prompt_package_snapshot_id = approved.get("prompt_package_snapshot_id", "")
 
     # Compile final prompt via existing UGC compiler (reused — not rewritten)
-    compiler_result = await compile_ugc_video_prompt(
-        product_id=product_id,
+    compiler_result = compile_ugc_video_prompt(
+        product={
+            "id": product_id,
+            "name": product_name_snapshot or (product_row or {}).get("name", ""),
+            "category": (product_row or {}).get("category", ""),
+        },
+        approved_package=approved,
         mode=mode,
         duration_seconds=duration_seconds,
         generation_mode=generation_mode,
@@ -371,9 +376,19 @@ async def create_i2v_generation_package(
     resolver_warnings: list = resolver_output.get("warnings", [])
     resolver_blockers: list = resolver_output.get("blockers", [])
 
-    # Build I2V handoff prompt (thin layer on top of compiler/resolver — not a second compiler stack)
-    compiler_result = await compile_ugc_video_prompt(
-        product_id=product_id,
+    # ADR-008 sovereignty: the resolver's semantic context flows INTO the canonical
+    # compile (scene_context) — never appended onto final output after compile.
+    _i2v_context = str(resolver_output.get("compiler_context_summary", "") or "")
+    if _i2v_context:
+        approved = {**approved, "scene_context": " ".join(
+            x for x in (str(approved.get("scene_context", "") or ""), _i2v_context) if x)}
+    compiler_result = compile_ugc_video_prompt(
+        product={
+            "id": product_id,
+            "name": product_name_snapshot or (product_row or {}).get("name", ""),
+            "category": (product_row or {}).get("category", ""),
+        },
+        approved_package=approved,
         mode=mode,
         duration_seconds=8,
         generation_mode=generation_mode,
@@ -389,11 +404,8 @@ async def create_i2v_generation_package(
     base_prompt: str = compiler_result.get("final_compiled_prompt_text", "")
     prompt_blocks: list = compiler_result.get("prompt_blocks", [])
 
-    # Inject resolver context into final I2V blended prompt
-    compiler_context: str = resolver_output.get("compiler_context_summary", "")
+    # ADR-008: no post-compile prompt mutation — the canonical output IS final.
     final_prompt_text = base_prompt
-    if compiler_context:
-        final_prompt_text = f"{base_prompt}\n\n[I2V Semantic Context]\n{compiler_context}"
 
     prompt_fingerprint: str = compiler_result.get("prompt_fingerprint", _fingerprint(final_prompt_text))
 
@@ -606,8 +618,13 @@ async def create_t2v_generation_package(
     product_name_snapshot = approved.get("product_name", "")
     prompt_package_snapshot_id = approved.get("prompt_package_snapshot_id", "")
 
-    compiler_result = await compile_ugc_video_prompt(
-        product_id=product_id,
+    compiler_result = compile_ugc_video_prompt(
+        product={
+            "id": product_id,
+            "name": product_name_snapshot or (product_row or {}).get("name", ""),
+            "category": (product_row or {}).get("category", ""),
+        },
+        approved_package=approved,
         mode=mode,
         duration_seconds=duration_seconds,
         generation_mode=generation_mode,
@@ -743,8 +760,13 @@ async def create_img_generation_package(
     product_name_snapshot = approved.get("product_name", "")
     prompt_package_snapshot_id = approved.get("prompt_package_snapshot_id", "")
 
-    compiler_result = await compile_ugc_video_prompt(
-        product_id=product_id,
+    compiler_result = compile_ugc_video_prompt(
+        product={
+            "id": product_id,
+            "name": product_name_snapshot or (product_row or {}).get("name", ""),
+            "category": (product_row or {}).get("category", ""),
+        },
+        approved_package=approved,
         mode=mode,
         duration_seconds=8,
         generation_mode=generation_mode,

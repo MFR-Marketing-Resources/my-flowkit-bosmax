@@ -19,11 +19,48 @@ from pathlib import Path
 
 _AUTHORITY_DIR = Path(__file__).resolve().parent.parent / "authority"
 _POOL_FILE = _AUTHORITY_DIR / "AVATAR_POOL_NORMALIZED.csv"
+# Normalized bridge target (ADR-008 avatar law): the LIVE Notion registry is not
+# safe as a runtime dependency (auth/latency/availability), so growth arrives as
+# an explicit, validated CSV sync into this file. When present it OVERRIDES the
+# repo seed; when absent the vendored retained pool is authoritative.
+_BRIDGE_FILE = (
+    Path(__file__).resolve().parent.parent.parent
+    / "data" / "avatar_registry" / "AVATAR_POOL_NORMALIZED.csv"
+)
+
+REQUIRED_COLUMNS = {"CharacterName", "AvatarCode", "SkinTone", "HairStyle",
+                    "Wardrobe", "Expression"}
+
+
+def _active_pool_file() -> Path:
+    return _BRIDGE_FILE if _BRIDGE_FILE.exists() else _POOL_FILE
+
+
+def sync_pool_csv(csv_bytes: bytes) -> dict:
+    """Fail-closed registry sync: validate the uploaded normalized CSV, then
+    install it as the runtime bridge override and reload the cache."""
+    import io
+    text = csv_bytes.decode("utf-8-sig")
+    rows = list(csv.DictReader(io.StringIO(text)))
+    if not rows:
+        raise ValueError("AVATAR_REGISTRY_EMPTY")
+    missing = REQUIRED_COLUMNS - set(rows[0].keys())
+    if missing:
+        raise ValueError(f"AVATAR_REGISTRY_COLUMNS_MISSING:{sorted(missing)}")
+    codes = [str(r.get("AvatarCode") or "").strip() for r in rows]
+    if not all(codes):
+        raise ValueError("AVATAR_REGISTRY_BLANK_AVATAR_CODE")
+    if len(set(codes)) != len(codes):
+        raise ValueError("AVATAR_REGISTRY_DUPLICATE_AVATAR_CODE")
+    _BRIDGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _BRIDGE_FILE.write_text(text, encoding="utf-8")
+    count = reload_pool()
+    return {"rows": len(rows), "approved_loaded": count, "bridge_path": str(_BRIDGE_FILE)}
 
 
 @lru_cache(maxsize=1)
 def _load_pool() -> tuple[dict, ...]:
-    with open(_POOL_FILE, encoding="utf-8-sig", newline="") as f:
+    with open(_active_pool_file(), encoding="utf-8-sig", newline="") as f:
         rows = tuple(
             row for row in csv.DictReader(f)
             if str(row.get("approved_flag", "")).strip().lower() in ("true", "1", "yes", "approved", "")

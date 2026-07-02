@@ -193,6 +193,9 @@ async def create_workspace_execution_package(
     scene_context_reference_asset_id: str | None = None,
     style_reference_asset_id: str | None = None,
     blocks: list[dict[str, Any]] | None = None,
+    source_mode: str | None = None,
+    engine_duration_target: str | None = None,
+    requested_total_duration_seconds: int | None = None,
 ) -> dict[str, Any]:
     package = await get_approved_product_package(product_id, mode)
     normalized_mode = normalize_mode(mode)
@@ -210,6 +213,9 @@ async def create_workspace_execution_package(
         dialogue_enabled=dialogue_enabled,
         blocks=blocks or [],
         approved_package=package,
+        source_mode=source_mode,
+        engine_duration_target=engine_duration_target,
+        requested_total_duration_seconds=requested_total_duration_seconds,
     )
     prompt_fingerprint = compiler_result["prompt_fingerprint"]
     total_duration_seconds = int(compiler_result["total_duration_seconds"])
@@ -399,6 +405,9 @@ async def compile_workspace_prompt_preview(
     dialogue_enabled: bool = True,
     blocks: list[dict[str, Any]] | None = None,
     approved_package: dict[str, Any] | None = None,
+    source_mode: str | None = None,
+    engine_duration_target: str | None = None,
+    requested_total_duration_seconds: int | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
     product = await crud.get_product(product_id)
@@ -437,6 +446,9 @@ async def compile_workspace_prompt_preview(
             claim_safe_rewrite=package.get("claim_safe_rewrite"),
             safe_hook_angles=list(safe_package.get("safe_hook_angles") or []),
             safe_cta_angles=list(safe_package.get("safe_cta_angles") or []),
+            source_mode=source_mode,
+            engine_duration_target=engine_duration_target,
+            requested_total_duration_seconds=requested_total_duration_seconds,
         )
     prompt_scan = scan_prompt_text(
         compiler_result["final_compiled_prompt_text"],

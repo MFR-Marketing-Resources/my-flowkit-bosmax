@@ -234,7 +234,7 @@ def test_manual_handoff_i2v_upload_order():
 @pytest.mark.asyncio
 async def test_f2v_package_creation_ready_manual(monkeypatch):
     async def fake_approved(product_id, mode): return FAKE_APPROVED_PKG
-    async def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
+    def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
     monkeypatch.setattr("agent.services.workspace_generation_package_service.get_approved_product_package", fake_approved)
     monkeypatch.setattr("agent.services.workspace_generation_package_service.compile_ugc_video_prompt", fake_compile)
 
@@ -262,7 +262,7 @@ async def test_f2v_package_creation_ready_manual(monkeypatch):
 @pytest.mark.asyncio
 async def test_f2v_package_blocked_when_no_prompt(monkeypatch):
     async def fake_approved(product_id, mode): return FAKE_APPROVED_PKG
-    async def fake_compile(**kwargs): return {"final_compiled_prompt_text": "", "prompt_blocks": [], "prompt_fingerprint": "fp_empty"}
+    def fake_compile(**kwargs): return {"final_compiled_prompt_text": "", "prompt_blocks": [], "prompt_fingerprint": "fp_empty"}
     monkeypatch.setattr("agent.services.workspace_generation_package_service.get_approved_product_package", fake_approved)
     monkeypatch.setattr("agent.services.workspace_generation_package_service.compile_ugc_video_prompt", fake_compile)
 
@@ -279,7 +279,7 @@ async def test_f2v_package_blocked_when_no_prompt(monkeypatch):
 @pytest.mark.asyncio
 async def test_f2v_start_frame_auto_seeded_from_product_image(monkeypatch):
     async def fake_approved(product_id, mode): return FAKE_APPROVED_PKG
-    async def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
+    def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
     monkeypatch.setattr("agent.services.workspace_generation_package_service.get_approved_product_package", fake_approved)
     monkeypatch.setattr("agent.services.workspace_generation_package_service.compile_ugc_video_prompt", fake_compile)
 
@@ -300,7 +300,7 @@ async def test_f2v_start_frame_auto_seeded_from_product_image(monkeypatch):
 @pytest.mark.asyncio
 async def test_f2v_operator_selected_start_frame_persists(monkeypatch):
     async def fake_approved(product_id, mode): return FAKE_APPROVED_PKG
-    async def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
+    def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
     monkeypatch.setattr("agent.services.workspace_generation_package_service.get_approved_product_package", fake_approved)
     monkeypatch.setattr("agent.services.workspace_generation_package_service.compile_ugc_video_prompt", fake_compile)
 
@@ -328,7 +328,7 @@ async def test_f2v_operator_selected_start_frame_persists(monkeypatch):
 @pytest.mark.asyncio
 async def test_i2v_package_creation_ready_manual(monkeypatch):
     async def fake_approved(product_id, mode): return FAKE_APPROVED_PKG
-    async def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
+    def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
     async def fake_resolver(req): return FAKE_RESOLVER_RESULT
     monkeypatch.setattr("agent.services.workspace_generation_package_service.get_approved_product_package", fake_approved)
     monkeypatch.setattr("agent.services.workspace_generation_package_service.compile_ugc_video_prompt", fake_compile)
@@ -351,7 +351,7 @@ async def test_i2v_package_creation_ready_manual(monkeypatch):
 @pytest.mark.asyncio
 async def test_i2v_package_includes_semantic_asset_selections(monkeypatch):
     async def fake_approved(product_id, mode): return FAKE_APPROVED_PKG
-    async def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
+    def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
     async def fake_resolver(req): return FAKE_RESOLVER_RESULT
     monkeypatch.setattr("agent.services.workspace_generation_package_service.get_approved_product_package", fake_approved)
     monkeypatch.setattr("agent.services.workspace_generation_package_service.compile_ugc_video_prompt", fake_compile)
@@ -374,7 +374,7 @@ async def test_i2v_package_includes_semantic_asset_selections(monkeypatch):
 @pytest.mark.asyncio
 async def test_i2v_blocked_when_resolver_has_blockers(monkeypatch):
     async def fake_approved(product_id, mode): return FAKE_APPROVED_PKG
-    async def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
+    def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
     async def fake_resolver(req): return {**FAKE_RESOLVER_RESULT, "blockers": ["required_slot_missing: character_reference"]}
     monkeypatch.setattr("agent.services.workspace_generation_package_service.get_approved_product_package", fake_approved)
     monkeypatch.setattr("agent.services.workspace_generation_package_service.compile_ugc_video_prompt", fake_compile)
