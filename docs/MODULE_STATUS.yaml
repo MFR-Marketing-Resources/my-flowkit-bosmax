@@ -93,6 +93,7 @@ domains:
       - dashboard/src/api/workspacePackages.ts
       - dashboard/src/pages/ApprovedPackagesPage.tsx
       - dashboard/src/pages/AssetRegistryPage.tsx
+      - dashboard/src/pages/AvatarRegistryPage.tsx
       - dashboard/src/pages/BatchesPage.tsx
       - dashboard/src/pages/CreativeLibraryPage.tsx
       - dashboard/src/pages/CreativeLibraryWorkspacePage.tsx

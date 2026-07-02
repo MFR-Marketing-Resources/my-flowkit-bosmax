@@ -143,6 +143,13 @@ export default function CreativeLibraryPage() {
 					>
 						Workspace — Create / Edit
 					</button>
+					<button
+						type="button"
+						onClick={() => navigate("/assets/avatar-registry")}
+						className="flex-1 rounded-lg py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 hover:bg-slate-800/60 hover:text-slate-200 transition-colors"
+					>
+						Avatar Registry
+					</button>
 				</div>
 				{error && (
 					<div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">

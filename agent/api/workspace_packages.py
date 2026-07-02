@@ -222,6 +222,18 @@ async def sync_avatar_registry(request: Request):
         raise HTTPException(422, str(exc)) from exc
 
 
+@router.get("/avatar-registry/pool")
+async def avatar_registry_pool():
+    from agent.services import avatar_registry
+    profiles = avatar_registry.list_pool()
+    return {
+        "avatars": profiles,
+        "count": len(profiles),
+        "source": str(avatar_registry._active_pool_file()),
+        "bridge_active": avatar_registry._BRIDGE_FILE.exists(),
+    }
+
+
 @router.get("/avatar-registry/status")
 async def avatar_registry_status():
     from agent.services import avatar_registry
