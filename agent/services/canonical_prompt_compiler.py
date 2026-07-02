@@ -452,6 +452,14 @@ def _family_dialogue_clause(family: str, stage: str, target_language: str) -> st
 def _family_voice_clause(family: str, target_language: str) -> str:
     lang = language_name(target_language)
     bank = {
+        "laundry_care": {
+            "Malay": "Bunyi macam tengah urus basuh baju betul-betul dan nampak apa yang memudahkan, bukan macam demo refill yang terlalu tersusun.",
+            "English": "Sound like someone genuinely handling laundry and noticing what makes it easier, not like an overly staged refill demo.",
+        },
+        "fashion_apparel": {
+            "Malay": "Bunyi macam tengah siap keluar dan baru perasan potongan dia memang jadi, bukan macam fashion shoot yang terlalu sedar kamera.",
+            "English": "Sound like someone genuinely getting ready to head out and noticing the fit works, not like a camera-aware fashion shoot.",
+        },
         "electronics": {
             "Malay": "Bunyi macam tunjuk benda yang memang membantu dalam rutin harian, bukan macam baca spec sheet depan kamera.",
             "English": "Sound like showing something that genuinely helps in daily life, not like reading a spec sheet to camera.",
@@ -485,6 +493,18 @@ def _family_voice_clause(family: str, target_language: str) -> str:
 
 def _family_t2v_scene_clause(family: str) -> dict[str, str]:
     bank = {
+        "laundry_care": {
+            "continuity": "Let the product appear inside a believable laundry beat such as sorting clothes, reaching for detergent before a wash cycle, checking the refill near the machine, or resetting laundry supplies, never as a posed refill showcase.",
+            "opening": "Start with the presenter already mid-laundry task so the product enters as part of a real wash routine, not as a staged reveal.",
+            "middle": "Use one practical laundry habit such as lifting a basket, checking the load, or reaching toward the machine so the refill value feels discovered in context.",
+            "closing": "Resolve like the refill naturally stays in the laundry corner ready for the next cycle, not like a showroom-perfect household end frame.",
+        },
+        "fashion_apparel": {
+            "continuity": "Let the product appear inside a believable getting-dressed beat such as adjusting sleeves, checking the mirror, smoothing the fabric, or grabbing a bag before leaving, never as a posed fashion-editorial reveal.",
+            "opening": "Start with the presenter already mid-adjustment so the outfit feels worn for a real reason before it becomes the spoken subject.",
+            "middle": "Use one dressing habit such as turning slightly at the mirror, fixing the cuff, or taking a step toward the door so the fit and drape prove themselves through movement.",
+            "closing": "Resolve like the outfit is already chosen and the presenter is about to walk out feeling put together, not like a frozen runway ending.",
+        },
         "electronics": {
             "continuity": "Let the product appear inside a believable everyday-use beat such as checking time at the door, glancing at a notification while walking, adjusting a strap before leaving, or reacting to a quick alert, never as a scripted gadget demo.",
             "opening": "Start with the presenter already mid-task and using the device for a real reason before the product becomes the spoken focus.",

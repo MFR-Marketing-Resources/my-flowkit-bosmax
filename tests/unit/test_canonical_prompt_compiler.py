@@ -420,6 +420,48 @@ def test_household_voice_clause_avoids_staged_product_showcase_language():
     assert "bukan macam product showcase yang dibuat-buat" in s7
 
 
+def test_laundry_voice_clause_avoids_staged_refill_demo_language():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-laundry", "name": "SUMIKKO DETERGENT REFILL", "category": "Laundry"},
+        copy={
+            "hook": "Weh, besar juga refill ni.",
+            "subhook": "Sekali tengok terus nampak guna lama.",
+            "usp1": "Saiz refill nampak berbaloi, senang tuang, dan tak serabut simpan.",
+            "usp2": "Memang jenis stok rumah yang terus masuk rutin basuh baju.",
+            "cta": "Grab dulu kalau sesuai.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s7 = result["blocks"][-1]["sections"]["SECTION 7 - VOICE & DELIVERY"].lower()
+    assert "bukan macam demo refill yang terlalu tersusun" in s7
+
+
+def test_fashion_voice_clause_avoids_camera_aware_fashion_shoot_language():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-fashion", "name": "KURUNG AIRA", "category": "Fashion"},
+        copy={
+            "hook": "Sekali pakai terus nampak kemas.",
+            "subhook": "Jatuh kain dia memang nampak jadi bila bergerak.",
+            "usp1": "Potongan dia buat badan nampak tersusun tanpa usaha lebih.",
+            "usp2": "Memang jenis pakai terus rasa lengkap bila keluar rumah.",
+            "cta": "Grab dulu kalau nak pakai terus rasa lengkap.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s7 = result["blocks"][-1]["sections"]["SECTION 7 - VOICE & DELIVERY"].lower()
+    assert "bukan macam fashion shoot yang terlalu sedar kamera" in s7
+
+
 def test_electronics_family_clause_bank_strengthens_visual_proof_and_end_payoff():
     result = cpc.compile_prompt_set(
         source_mode="HYBRID",
@@ -691,6 +733,54 @@ def test_t2v_household_scene_injects_cleanup_native_cues():
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
     assert "wiping a spill" in s3
     assert "goes back within easy reach for the next cleanup" in s4
+
+
+def test_t2v_laundry_scene_injects_wash_cycle_native_cues():
+    result = cpc.compile_prompt_set(
+        source_mode="T2V",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-laundry", "name": "SUMIKKO DETERGENT REFILL", "category": "Laundry"},
+        copy={
+            "hook": "Weh, besar juga refill ni.",
+            "subhook": "Sekali tengok terus nampak guna lama.",
+            "usp1": "Saiz refill nampak berbaloi, senang tuang, dan tak serabut simpan.",
+            "usp2": "Memang jenis stok rumah yang terus masuk rutin basuh baju.",
+            "cta": "Grab dulu kalau sesuai.",
+            "formula_family": "HSO",
+        },
+        scene_context="a real laundry corner while sorting clothes before a wash cycle",
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "sorting clothes" in s3
+    assert "ready for the next cycle" in s4
+
+
+def test_t2v_fashion_scene_injects_getting_dressed_native_cues():
+    result = cpc.compile_prompt_set(
+        source_mode="T2V",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-fashion", "name": "KURUNG AIRA", "category": "Fashion"},
+        copy={
+            "hook": "Sekali pakai terus nampak kemas.",
+            "subhook": "Jatuh kain dia memang nampak jadi bila bergerak.",
+            "usp1": "Potongan dia buat badan nampak tersusun tanpa usaha lebih.",
+            "usp2": "Memang jenis pakai terus rasa lengkap bila keluar rumah.",
+            "cta": "Grab dulu kalau nak pakai terus rasa lengkap.",
+            "formula_family": "HSO",
+        },
+        scene_context="a real doorway mirror moment while adjusting outfit before heading out",
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "adjusting sleeves" in s3
+    assert "about to walk out feeling put together" in s4
 
 
 def test_fashion_family_cta_lands_cleanly_without_awkward_fragment():
