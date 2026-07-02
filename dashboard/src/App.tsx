@@ -54,6 +54,7 @@ const NAV_GROUPS = [
 		label: "WORKSPACE",
 		items: [
 			{ to: "/operator/t2v", icon: Video, label: "Text to Video" },
+			{ to: "/operator/hybrid", icon: Sparkles, label: "Hybrid (Product + AI Presenter)" },
 			{ to: "/operator/f2v", icon: Sparkles, label: "Frames (F2V)" },
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
@@ -245,7 +246,8 @@ function Layout() {
 	const portalQuickLinks = [
 		{ to: "/", label: "Ops" },
 		{ to: "/operator/t2v", label: "T2V" },
-		{ to: "/operator/f2v", label: "F2V" },
+		{ to: "/operator/hybrid", label: "HYBRID" },
+		{ to: "/operator/f2v", label: "FRAMES" },
 		{ to: "/operator/i2v", label: "I2V" },
 		{ to: "/operator/img", label: "IMG" },
 		{ to: "/assets/creative-library", label: "Creative" },
@@ -416,6 +418,10 @@ function Layout() {
 							}
 						/>
 						<Route path="/operator/t2v" element={<OperatorPage mode="T2V" />} />
+						<Route
+							path="/operator/hybrid"
+							element={<OperatorPage mode="HYBRID" />}
+						/>
 						<Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
 						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
 						<Route path="/operator/img" element={<OperatorPage mode="IMG" />} />

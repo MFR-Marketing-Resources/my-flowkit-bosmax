@@ -267,7 +267,10 @@ export interface UploadedAsset {
 	remoteImageUrlPresent?: boolean;
 }
 
-export type WorkspaceMode = "T2V" | "F2V" | "I2V" | "IMG";
+// HYBRID is a first-class OPERATOR surface (product-image anchor + AI presenter).
+// At the API/job boundary it maps to job mode "F2V" with source_mode="HYBRID"
+// (ADR-007 naming contract: job modes stay IMG/T2V/I2V/F2V at the API edge).
+export type WorkspaceMode = "T2V" | "HYBRID" | "F2V" | "I2V" | "IMG";
 export type CreativeAssetSemanticRole =
 	| "PRODUCT_REFERENCE"
 	| "CHARACTER_REFERENCE"

@@ -46,6 +46,7 @@ interface OperatorNotice {
 }
 
 function humanizeWorkspaceMode(mode: WorkspaceMode) {
+	if (mode === "HYBRID") return "Hybrid";
 	if (mode === "F2V") return "Frames";
 	if (mode === "I2V") return "Ingredients";
 	if (mode === "IMG") return "Image";
@@ -82,7 +83,7 @@ function blockerMessage(blocker: string | null, mode: WorkspaceMode) {
 }
 
 interface OperatorPageProps {
-	mode?: "T2V" | "F2V" | "I2V" | "IMG";
+	mode?: "T2V" | "HYBRID" | "F2V" | "I2V" | "IMG";
 }
 
 export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
@@ -140,15 +141,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [engineDurationTarget, setEngineDurationTarget] = useState<
 		"" | "GROK" | "GOOGLE_FLOW"
 	>("");
-	// Canonical source-mode (ADR-008). Auto per mode; F2V exposes the explicit
-	// HYBRID (product-image anchor) vs FRAMES (ready-frame, motion-delta) choice.
-	const [f2vSourceMode, setF2vSourceMode] = useState<"HYBRID" | "FRAMES">(
-		"HYBRID",
-	);
+	// Canonical source-mode (ADR-008): PINNED by the operator surface — HYBRID
+	// and FRAMES are separate first-class pages, never an ambiguous toggle.
 	const resolveSourceMode = (
 		m: string,
 	): "T2V" | "HYBRID" | "FRAMES" | "INGREDIENTS" | "IMAGES" => {
-		if (m === "F2V") return f2vSourceMode;
+		if (m === "HYBRID") return "HYBRID";
+		if (m === "F2V") return "FRAMES";
 		if (m === "I2V") return "INGREDIENTS";
 		if (m === "IMG") return "IMAGES";
 		return "T2V";
@@ -204,11 +203,17 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const mode =
 		propMode ||
 		(pathMode === "T2V" ||
+		pathMode === "HYBRID" ||
 		pathMode === "F2V" ||
 		pathMode === "I2V" ||
 		pathMode === "IMG"
 			? pathMode
 			: "F2V");
+	// API/job boundary mapping (ADR-007): the HYBRID operator surface runs F2V
+	// jobs/packages with source_mode="HYBRID". Everything backend-bound uses
+	// jobMode; the surface identity stays HYBRID.
+	const jobMode: "T2V" | "F2V" | "I2V" | "IMG" =
+		mode === "HYBRID" ? "F2V" : mode;
 	const selectedReadiness = selectedProduct
 		? (packageReadiness[selectedProduct.id] ?? null)
 		: null;
@@ -257,7 +262,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		setPackageReadiness({});
 		setIsLoadingReadiness(true);
 		void fetchWorkspacePackageReadiness({
-			mode: mode as WorkspaceMode,
+			mode: jobMode as WorkspaceMode,
 			product_ids: products.map((item) => item.id),
 		})
 			.then((response) => {
@@ -282,7 +287,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		let isActive = true;
 		setIsLoadingSelectedReadiness(true);
 		void fetchWorkspacePackageReadiness({
-			mode: mode as WorkspaceMode,
+			mode: jobMode as WorkspaceMode,
 			product_ids: [selectedProduct.id],
 		})
 			.then((response) => {
@@ -387,7 +392,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			}
 			inFlight = true;
 			void fetchAPI<TelemetryRequest[]>(
-				`/api/telemetry/requests?limit=60&request_type=MANUAL_FLOW_JOB&mode=${encodeURIComponent(mode)}`,
+				`/api/telemetry/requests?limit=60&request_type=MANUAL_FLOW_JOB&mode=${encodeURIComponent(jobMode)}`,
 			)
 				.then(setModeRequests)
 				.catch(() => {})
@@ -834,7 +839,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		try {
 			const preview = await compileWorkspacePromptPreview({
 				product_id: selectedProduct.id,
-				mode,
+				mode: jobMode,
+				source_mode: resolveSourceMode(mode),
 				duration_seconds: block1Duration,
 				generation_mode: generationMode,
 				target_language: targetLanguage,
@@ -891,7 +897,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		try {
 			const pkg = await createWorkspaceExecutionPackage({
 				product_id: selectedProduct.id,
-				mode,
+				mode: jobMode,
 				source_mode: resolveSourceMode(mode),
 				duration_seconds: block1Duration,
 				generation_mode: generationMode,
@@ -962,7 +968,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const isExtendMode = generationMode === "EXTEND";
 	const packageBridgeFlowLabelByMode: Record<WorkspaceMode, string> = {
 		T2V: "Load T2V Package + Generate Final Prompt",
-		F2V: "Load F2V Package + Generate Final Prompt",
+		HYBRID: "Load HYBRID Package + Generate Final Prompt",
+		F2V: "Load FRAMES Package + Generate Final Prompt",
 		I2V: "Load I2V Package + Generate Final Prompt",
 		IMG: "Load IMG Package + Generate Final Prompt",
 	};
@@ -975,6 +982,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 	const renderModule = () => {
 		switch (mode) {
+			case "HYBRID": // product-image anchor + AI presenter — same module shape as F2V
 			case "F2V":
 				return (
 					<F2VModule
@@ -1242,12 +1250,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								Source Mode (canonical)
 							</div>
 							<select
-								title="Canonical source mode"
+								title="Canonical source mode (fixed by this operator surface)"
 								value={resolveSourceMode(mode)}
-								disabled={mode !== "F2V"}
-								onChange={(e) =>
-									setF2vSourceMode(e.target.value as "HYBRID" | "FRAMES")
-								}
+								disabled
 								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 disabled:opacity-60"
 							>
 								<option value="HYBRID">
@@ -1263,8 +1268,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								<option value="IMAGES">IMAGES — still image</option>
 							</select>
 							<div className="text-[11px] text-slate-400">
-								F2V picks HYBRID or FRAMES; other modes are fixed by the
-								canonical compiler contract.
+								Fixed by this operator surface: HYBRID and FRAMES are separate
+								pages under the canonical compiler contract.
 							</div>
 						</div>
 						<div className="space-y-2">
