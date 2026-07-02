@@ -614,6 +614,69 @@ def test_soft_try_cta_does_not_get_harder_bridge_prepended():
     assert "try dulu kalau ngam" in final_dialogue
 
 
+def test_explicit_female_health_sensitive_fashion_item_stays_fashion_family():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-fashion-sensitive",
+            "name": "OFVOGUE Seluar Panjang Wanita Bootcut",
+            "category": "Fashion",
+            "type": "Pants",
+            "bosmax_product_family": "FEMALE_HEALTH_SENSITIVE",
+        },
+        copy={"hook": "Jatuh dia terus nampak kemas.", "cta": "Grab kalau suka.", "formula_family": "HSO"},
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s4 = result["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "fit, drape, texture" in s4
+    assert "careful routine support" not in s4
+
+
+def test_explicit_household_storage_hijab_item_routes_to_fashion_family():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-hijab-drift",
+            "name": "PANDA QUEENIE TUDUNG BAWAL PRINTED HIJAB",
+            "category": "Muslim Fashion",
+            "type": "Square Hijabs",
+            "bosmax_product_family": "HOUSEHOLD_STORAGE_ORGANIZER",
+        },
+        copy={"hook": "Sekali bentang terus nampak jatuh dia.", "cta": "Save dulu kalau suka style ni.", "formula_family": "HSO"},
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s4 = result["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "fit, drape, texture" in s4
+    assert "practical home utility" not in s4
+
+
+def test_accessory_small_item_phone_holder_routes_to_electronics_family():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-phone-holder",
+            "name": "HOTOP 360 Rotatable Car Phone Holder",
+            "category": "Automotive & Motorcycle",
+            "type": "Mounts & Holders",
+            "bosmax_product_family": "ACCESSORY_SMALL_ITEM",
+        },
+        copy={"hook": "Sekali tengok terus nampak function dia.", "cta": "Check dulu spec dia.", "formula_family": "HSO"},
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s4 = result["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "feature clarity and daily-use usefulness" in s4
+    assert "practical home utility" not in s4
+
+
 def test_explicit_baby_family_beats_fragrance_free_keyword_drift():
     result = cpc.compile_prompt_set(
         source_mode="T2V",

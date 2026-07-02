@@ -287,6 +287,20 @@ def _humanize_label(value: str) -> str:
     return _clean(value).replace("_", " ")
 
 
+def _product_family_haystack(product: dict[str, Any], copy: dict | None = None) -> str:
+    return " ".join(
+        [
+            _clean(product.get("category")),
+            _clean(product.get("product_category")),
+            _clean(product.get("group")),
+            _clean(product.get("sub_group")),
+            _clean(product.get("type")),
+            _product_name(product),
+            _clean((copy or {}).get("angle")),
+        ]
+    ).lower()
+
+
 def _normalize_explicit_family(product: dict[str, Any]) -> str:
     raw = _clean(
         product.get("bosmax_product_family")
@@ -296,6 +310,20 @@ def _normalize_explicit_family(product: dict[str, Any]) -> str:
     if not raw:
         return ""
     normalized = raw.replace("-", "_").replace(" ", "_")
+    haystack = _product_family_haystack(product)
+    fashion_terms = (
+        "fashion", "womenswear", "menswear", "muslim fashion", "hijab", "tudung", "shawl", "bawal",
+        "telekung", "seluar", "trousers", "pants", "skirt", "dress", "jersey", "shirt", "blouse", "apparel",
+    )
+    electronics_terms = (
+        "phone", "mobile", "iphone", "android", "usb", "charger", "cable", "mount", "holder", "magsafe", "tripod", "adapter",
+    )
+    if "female_health_sensitive" in normalized and _contains_any_term(haystack, fashion_terms):
+        return "fashion_apparel"
+    if "household_storage_organizer" in normalized and _contains_any_term(haystack, fashion_terms):
+        return "fashion_apparel"
+    if any(token in normalized for token in ("accessory_small_item", "auto_tool_general")) and _contains_any_term(haystack, electronics_terms):
+        return "electronics"
     if any(token in normalized for token in ("baby", "wipes", "newborn", "diaper")):
         return "baby_care"
     if any(token in normalized for token in ("fragrance", "perfume", "body_mist", "body_spray", "aroma")):
@@ -321,17 +349,7 @@ def _infer_product_family(product: dict[str, Any], copy: dict | None = None) -> 
     explicit = _normalize_explicit_family(product)
     if explicit:
         return explicit
-    haystack = " ".join(
-        [
-            _clean(product.get("category")),
-            _clean(product.get("product_category")),
-            _clean(product.get("group")),
-            _clean(product.get("sub_group")),
-            _clean(product.get("type")),
-            _product_name(product),
-            _clean((copy or {}).get("angle")),
-        ]
-    ).lower()
+    haystack = _product_family_haystack(product, copy)
     if any(token in haystack for token in ("baby", "diaper", "wipes", "newborn", "parent")):
         return "baby_care"
     if any(token in haystack for token in ("supplement", "wellness", "vitamin", "health")):
@@ -346,9 +364,9 @@ def _infer_product_family(product: dict[str, Any], copy: dict | None = None) -> 
         return "household_care"
     if any(token in haystack for token in ("food", "snack", "drink", "coffee", "tea", "sauce", "cookie")):
         return "food_beverage"
-    if any(token in haystack for token in ("shirt", "baju", "telekung", "pajamas", "fashion", "wear", "garment", "apparel")):
+    if any(token in haystack for token in ("shirt", "baju", "telekung", "pajamas", "fashion", "wear", "garment", "apparel", "hijab", "tudung", "shawl", "bawal", "seluar", "trousers", "pants", "dress", "skirt", "jersey")):
         return "fashion_apparel"
-    if any(token in haystack for token in ("watch", "device", "gadget", "earbud", "electronics", "screen")):
+    if any(token in haystack for token in ("watch", "device", "gadget", "earbud", "electronics", "screen", "phone", "mobile", "usb", "charger", "cable", "mount", "holder", "magsafe", "adapter")):
         return "electronics"
     return "general"
 
