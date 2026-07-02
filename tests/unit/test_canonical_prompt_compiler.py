@@ -359,6 +359,17 @@ def test_t2v_mode_polish_enforces_scene_first_native_persuasion():
     assert "believable social moment with product payoff" in text
 
 
+def test_sunscreen_does_not_false_positive_into_authority_trigger():
+    norm = cpc.normalize_copy_intelligence(COPY, product=PRODUCT)
+    assert norm["trigger_id"] != "AUTHORITY_01"
+
+
+def test_t2v_continuation_keeps_scene_native_not_generic_reset():
+    result = _compile(mode="T2V", duration_seconds=16, scene_context="a bright lived-in bathroom counter at home")
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "lived-in, scene-native, and socially believable" in s4
+
+
 def test_avatar_registry_explicit_id_and_prose():
     profile = avatar_registry.resolve_presenter("BOS_F_ALYA_01")
     assert profile["character_name"] == "Alya"

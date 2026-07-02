@@ -449,6 +449,20 @@ def _family_dialogue_clause(family: str, stage: str, target_language: str) -> st
     return _clean(phrase_bank.get(lang) or phrase_bank.get("Malay") or "")
 
 
+def _contains_term(text: str, term: str) -> bool:
+    normalized = _clean(text).lower()
+    if not normalized:
+        return False
+    escaped = re.escape(term.lower())
+    escaped = escaped.replace(r"\ ", r"[\s_-]+")
+    pattern = rf"\b{escaped}\b"
+    return re.search(pattern, normalized) is not None
+
+
+def _contains_any_term(text: str, terms: tuple[str, ...]) -> bool:
+    return any(_contains_term(text, term) for term in terms)
+
+
 def _infer_trigger_id(
     product: dict[str, Any], copy: dict[str, Any], *, family: str, angle: str,
 ) -> str:
@@ -469,19 +483,19 @@ def _infer_trigger_id(
             _product_category(product),
         ]
     ).lower()
-    if any(token in haystack for token in ("gift", "gifting", "festive", "raya", "present")):
+    if _contains_any_term(haystack, ("gift", "gifting", "festive", "raya", "present")):
         return "GIFTING_01"
-    if any(token in haystack for token in ("authority", "feature", "tech", "screen", "wearable")):
+    if _contains_any_term(haystack, ("authority", "feature", "tech", "screen", "wearable")):
         return "AUTHORITY_01"
-    if any(token in haystack for token in ("comfort", "soft", "cozy", "selesa", "home")):
+    if _contains_any_term(haystack, ("comfort", "soft", "cozy", "selesa", "home")):
         return "COMFORT_01"
-    if any(token in haystack for token in ("ego", "masculine", "alpha", "presence", "padu")):
+    if _contains_any_term(haystack, ("ego", "masculine", "alpha", "presence", "padu")):
         return "EGO_01"
-    if any(token in haystack for token in ("female", "feminine", "wanita", "muslimah", "girly")):
+    if _contains_any_term(haystack, ("female", "feminine", "wanita", "muslimah", "girly")):
         return "FEMALE_01"
-    if any(token in haystack for token in ("confidence", "style", "fit", "premium", "scent", "beauty", "fashion")):
+    if _contains_any_term(haystack, ("confidence", "style", "fit", "premium", "scent", "beauty", "fashion")):
         return "CONFIDENCE_01"
-    if any(token in haystack for token in ("trust", "gentle", "baby", "routine support", "safe")):
+    if _contains_any_term(haystack, ("trust", "gentle", "baby", "routine support", "safe")):
         return "TRUST_01"
     return {
         "fragrance": "CONFIDENCE_01",
@@ -1015,8 +1029,27 @@ def _default_shot_plan(
             f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {story['closing']} plus {focus['closing']} to feel intentional while the shot still helps {story['middle']}; {mode_polish['closing']}.",
         ]
     if block_index > 1 and source_mode != "IMAGES":
-        templates[0] = (
-            f"Continue immediately from the previous block with the same presenter, same grip on {pname}, same lighting, and the same camera path already in progress while preserving {focus['context']}."
+        continuation_overrides = {
+            "HYBRID": (
+                f"Continue immediately from the previous block with the same presenter, same grip on {pname}, same lighting, and the same camera path already in progress while preserving {focus['context']}; "
+                "keep the creator visibly selling, with face-product co-presence still doing persuasion work."
+            ),
+            "FRAMES": (
+                f"Continue immediately from the previous block with the same visible frame logic around {pname}, the same lighting, and the same camera path already in progress while preserving {focus['context']}; "
+                "the continuation must inherit tension from the finished frame rather than restart the commercial."
+            ),
+            "INGREDIENTS": (
+                f"Continue immediately from the previous block with the same presenter, same grip on {pname}, same lighting, and the same camera path already in progress while preserving {focus['context']}; "
+                "product truth and avatar truth must remain locked above all style cues."
+            ),
+            "T2V": (
+                f"Continue immediately from the previous block with the same presenter, same grip on {pname}, same lighting, and the same camera path already in progress while preserving {focus['context']}; "
+                "the moment must still feel lived-in, scene-native, and socially believable rather than like a reset into ad mode."
+            ),
+        }
+        templates[0] = continuation_overrides.get(
+            source_mode,
+            f"Continue immediately from the previous block with the same presenter, same grip on {pname}, same lighting, and the same camera path already in progress while preserving {focus['context']}.",
         )
     selected = templates[: max(1, shot_count)]
     if is_final and source_mode != "IMAGES":
