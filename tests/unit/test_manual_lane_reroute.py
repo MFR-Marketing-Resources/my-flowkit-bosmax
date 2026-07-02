@@ -144,6 +144,79 @@ def test_manual_lane_materializes_remote_url_only_package_asset(monkeypatch):
     assert "API_START_ASSET_UPLOADED" in calls["stages"]
 
 
+def test_manual_lane_resolves_i2v_refs_aspect_and_model(monkeypatch):
+    # I2V/IMG modules send refs.{subjectAsset,sceneAsset,styleAsset} (NOT startAsset),
+    # plus orientation (not aspect) and the model ui_label. Previously refs were
+    # DROPPED (I2V died ERR_START_ASSET_REQUIRED), orientation was ignored (always
+    # 9:16) and model was ignored. All three must flow through.
+    calls = {"uploaded": [], "start_generate": None}
+
+    class _C:
+        connected = True
+
+        async def get_media(self, media_id):
+            return {"status": 200, "data": {"name": media_id}}
+
+        async def get_credits(self):
+            return {"data": {"userPaygateTier": "PAYGATE_TIER_ONE"}}
+
+        async def harvest_video_urls(self, tab_id=None):
+            return {"result": {"flow_tab_found": True, "flow_tab_id": 1,
+                               "flow_url": "https://labs.google/fx/tools/flow/project/open-2",
+                               "diag": {"projectId": "open-2"}}}
+
+        async def upload_image(self, b64, mime_type="image/png", project_id="", file_name=""):
+            calls["uploaded"].append(file_name)
+            return {"_mediaId": "fresh-upload-1", "data": {}}
+
+    async def fake_materialize(url, file_name):
+        import pathlib, tempfile
+        p = pathlib.Path(tempfile.gettempdir()) / "bosmax_test_ref.png"
+        p.write_bytes(b"\x89PNG_fake")
+        return {"local_file_path": str(p), "file_name": file_name, "mime_type": "image/png"}
+
+    async def fake_start_generate(mode, prompt, project_id=None, image_media_ids=None,
+                                  aspect="9:16", tier="PAYGATE_TIER_ONE", model=None, **kw):
+        calls["start_generate"] = {"mode": mode, "image_media_ids": image_media_ids,
+                                   "aspect": aspect, "model": model}
+        return {"job_id": "g_test4", "status": "SUBMITTED", "mode": mode}
+
+    async def fake_stage(*a, **kw):
+        return None
+
+    async def fake_upsert(request_id, **kw):
+        return None
+
+    monkeypatch.setattr(flow_api, "get_flow_client", lambda: _C())
+    monkeypatch.setattr(flow_api, "_materialize_remote_url_to_staging", fake_materialize)
+    monkeypatch.setattr(flow_api.crud, "add_stage_event", fake_stage)
+    monkeypatch.setattr(flow_api.crud, "upsert_request_telemetry", fake_upsert)
+    import agent.services.make_video as mv
+    monkeypatch.setattr(mv, "start_generate", fake_start_generate)
+
+    body = {
+        "request_id": "manual_test4",
+        "prompt": "make it",
+        "orientation": "HORIZONTAL",
+        "model": "Veo 3.1 - Lite",
+        "refs": {
+            "subjectAsset": {"mediaId": "aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb"},
+            "sceneAsset": {"mediaId": None, "localFilePath": "",
+                           "downloadUrl": "https://s.500fd.com/tt_product/scene.webp",
+                           "assetId": "product-image:x:scene"},
+            "styleAsset": None,
+        },
+    }
+    result = _run(flow_api._run_manual_job_via_generate(body, "I2V", None))
+
+    assert result["ok"] is True
+    sg = calls["start_generate"]
+    assert sg["image_media_ids"] == ["aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb", "fresh-upload-1"]
+    assert sg["aspect"] == "16:9"                      # orientation HORIZONTAL honoured
+    from agent.services import video_models as _vm
+    assert sg["model"] == _vm.resolve("Veo 3.1 - Lite")["key"]  # ui_label resolved
+
+
 def test_extract_flow_media_id_rejects_composite_bosmax_ids():
     assert flow_api._extract_flow_media_id(
         {"assetId": "product-image:82c54d11-8de3-47a9-bbc6-297056ed0fab:start_frame"}) is None
