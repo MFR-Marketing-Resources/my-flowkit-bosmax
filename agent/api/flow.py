@@ -212,6 +212,26 @@ def _asset_payload_has_local_file(asset: object) -> bool:
     )
 
 
+# A REAL Flow media id is a bare UUID. The dashboard also sends composite BOSMAX
+# asset ids like "product-image:<uuid>:start_frame" in assetId — those are NOT
+# Flow media ids and must never short-circuit materialization/upload (live:
+# manual_259f0ab1 failed ERR_START_MEDIA_NOT_FOUND because the composite id was
+# mistaken for a media id and the remote downloadUrl was never materialized).
+_FLOW_MEDIA_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def _extract_flow_media_id(asset: object) -> str | None:
+    """Return the asset's Flow media id ONLY if it is a real bare UUID."""
+    if not isinstance(asset, dict):
+        return None
+    for key in ("mediaId", "media_id", "assetId", "asset_id"):
+        value = str(asset.get(key) or "").strip()
+        if value and _FLOW_MEDIA_UUID_RE.match(value):
+            return value
+    return None
+
+
 def _asset_payload_remote_url(asset: object) -> str | None:
     if not isinstance(asset, dict):
         return None
@@ -1168,9 +1188,30 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
 
     refs = []
     if isinstance(start_asset, dict):
-        media_id = (start_asset.get("mediaId") or start_asset.get("media_id")
-                    or start_asset.get("assetId") or start_asset.get("asset_id"))
+        # Only a REAL Flow media id (bare UUID) may be referenced directly; composite
+        # BOSMAX asset ids (product-image:<uuid>:start_frame) are ignored here and the
+        # asset flows through the local-file upload path instead.
+        media_id = _extract_flow_media_id(start_asset)
         local_path = start_asset.get("localFilePath") or start_asset.get("local_file_path")
+        if not media_id and not local_path:
+            # Remote-URL-only package asset (the REAL frontend default: mediaId null,
+            # localFilePath "", only downloadUrl) — materialize it now so the API
+            # upload below has a file (live: manual_259f0ab1 fail-closed here).
+            remote_url = _asset_payload_remote_url(start_asset)
+            if remote_url:
+                try:
+                    materialized = await _materialize_remote_url_to_staging(
+                        str(remote_url),
+                        _asset_payload_file_name(start_asset, "start.png"))
+                    local_path = materialized["local_file_path"]
+                    await crud.add_stage_event(
+                        request_id, "API_START_ASSET_MATERIALIZED", "WAITING_FLOW",
+                        f"source_type=remote_url local={local_path}", "backend")
+                except Exception as exc:  # noqa: BLE001 — fail closed with the true cause
+                    await _fail_manual_request(
+                        request_id, "API_START_ASSET_MATERIALIZE_FAILED",
+                        f"cannot download start asset url: {exc}",
+                        "ERR_START_MATERIALIZE_FAILED")
         if media_id:
             # Validate BEFORE burning credits: a stale package media id (deleted
             # project) still gets APPROVED by the Flow agent but the render dies
@@ -1445,14 +1486,11 @@ async def execute_flow_job(body: dict):
         or body.get("upload_only") is True
         or body.get("gfv2") is True
     )
-    # An asset that already carries a Flow media id needs NO local materialization:
-    # the API-first lane references it directly (only the dead CDP/DOM upload path
-    # ever needed a local file for an existing_flow_media asset).
-    _has_flow_media_id = bool(
-        isinstance(_start_asset, dict)
-        and (_start_asset.get("mediaId") or _start_asset.get("media_id")
-             or _start_asset.get("assetId") or _start_asset.get("asset_id"))
-    )
+    # An asset that already carries a REAL Flow media id (bare UUID) needs no local
+    # materialization: the API-first lane references it directly. Composite BOSMAX
+    # asset ids (product-image:<uuid>:start_frame) do NOT count — those assets are
+    # remote-URL-only and MUST be materialized so the API lane can upload them.
+    _has_flow_media_id = bool(_extract_flow_media_id(_start_asset))
     if (_start_asset_present and isinstance(_start_asset, dict)
             and not _has_local_start and not _has_flow_media_id):
         await _materialize_slot_asset(
