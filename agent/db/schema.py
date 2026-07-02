@@ -516,6 +516,22 @@ CREATE TABLE IF NOT EXISTS batch_generation_run (
     created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+
+-- System library of finished generations (ADR-007 production): every completed
+-- video/image retrieved from Google Flow is registered here so artifacts survive
+-- restarts and are listable/downloadable from the dashboard gallery.
+CREATE TABLE IF NOT EXISTS generated_artifact (
+    media_id       TEXT PRIMARY KEY,
+    job_id         TEXT,
+    mode           TEXT,
+    artifact_kind  TEXT NOT NULL DEFAULT 'video' CHECK(artifact_kind IN ('video','image')),
+    local_path     TEXT,
+    size_mb        REAL,
+    project_id     TEXT,
+    model_used     TEXT,
+    duration_used  INTEGER,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
 """
 
 

@@ -705,6 +705,7 @@ class GenerateRequest(BaseModel):
     aspect: str = "9:16"
     model: Optional[str] = None                # video model (ui_label or key); default Veo 3.1 - Lite
     duration_s: Optional[int] = None           # default = the model's default duration
+    count: int = 1                             # USER count setting (1-4): negotiate AND retrieve N videos
 
 
 @router.get("/video-models")
@@ -745,7 +746,8 @@ async def generate(body: GenerateRequest):
     result = await _mv.start_generate(
         mode, body.prompt, project_id=body.project_id,
         image_media_ids=body.image_media_ids, image_prompt=body.image_prompt,
-        aspect=body.aspect, tier=tier, model=body.model, duration_s=body.duration_s)
+        aspect=body.aspect, tier=tier, model=body.model, duration_s=body.duration_s,
+        num_videos=body.count)
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
         raise HTTPException(409, result.get("error") or "rejected")
@@ -759,6 +761,14 @@ async def generate_job(job_id: str):
     if not j:
         raise HTTPException(404, "job not found")
     return j
+
+
+@router.get("/artifacts")
+async def list_artifacts(limit: int = 50, mode: str = None):
+    """System library of finished generations — newest first, for the dashboard
+    gallery. Each entry is playable/downloadable via /api/flow/retrieved/{media_id}."""
+    items = await crud.list_generated_artifacts(limit=limit, mode=mode)
+    return {"artifacts": items, "count": len(items)}
 
 
 @router.get("/retrieved/{media_id}")
@@ -1159,9 +1169,12 @@ async def _bridge_generate_job_telemetry(request_id: str, job_id: str):
             )
             await crud.upsert_request_telemetry(request_id, last_heartbeat_at=crud._now())
         if status == "DONE":
+            all_ids = [a.get("media_id") for a in (job.get("artifacts") or []) if a.get("media_id")]
             await crud.add_stage_event(
                 request_id, "COMPLETED", "PASS",
                 f"job={job_id} media_id={job.get('media_id')} size_mb={job.get('size_mb')} "
+                f"artifacts={len(all_ids) or 1} all_media_ids={','.join(all_ids)} "
+                f"{'PARTIAL: ' + str(job.get('partial_detail')) if job.get('partial') else ''} "
                 f"local_path={job.get('local_path')}", "backend",
             )
             await crud.upsert_request_telemetry(
@@ -1337,26 +1350,56 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 pass
             await asyncio.sleep(5)
 
+    # ── USER SETTINGS ARE LAW (production contract): whatever the operator set in
+    # BOSMAX — aspect, count, model, duration — is EXACTLY what reaches Google Flow.
     # The dashboard modules send `aspectRatio` (IMG) or `orientation` (T2V/I2V/F2V),
     # not `aspect` — honour all three (previously everything silently became 9:16).
     aspect = str(body.get("aspect") or body.get("aspectRatio") or "").strip()
     if aspect not in ("9:16", "16:9"):
         aspect = ("16:9" if str(body.get("orientation") or "").strip().upper() == "HORIZONTAL"
                   else "9:16")
-    # Model passthrough: the dashboard sends the ui_label ("Veo 3.1 - Lite");
-    # resolve() accepts it. An unknown label falls back to the default (Lite).
-    model_key = None
-    if body.get("model"):
+    # Count: x2 means TWO videos negotiated AND retrieved (clamped to Flow's 1–4).
+    try:
+        count = max(1, min(4, int(body.get("count") or 1)))
+    except (TypeError, ValueError):
+        count = 1
+    # Duration: honour an explicit setting; None → the model's default.
+    duration_s = None
+    raw_duration = body.get("duration_s") or body.get("duration_seconds")
+    if raw_duration:
         try:
-            from agent.services import video_models as _vm
+            duration_s = int(raw_duration)
+        except (TypeError, ValueError):
+            duration_s = None
+    # Model: the dashboard sends the ui_label ("Omni Flash", "Veo 3.1 - Lite").
+    # An unknown model FAILS CLOSED — never silently downgrade the user's choice.
+    model_key = None
+    if mode in ("T2V", "I2V", "F2V") and body.get("model"):
+        from agent.services import video_models as _vm
+        try:
             model_key = _vm.resolve(body["model"])["key"]
         except ValueError:
-            model_key = None
+            valid = ", ".join(s["ui_label"] for s in _vm.VIDEO_MODELS.values())
+            await _fail_manual_request(
+                request_id, "API_LANE_REJECTED",
+                f"unknown model '{body.get('model')}' — valid: {valid}",
+                "ERR_UNKNOWN_MODEL")
+        if duration_s is not None:
+            try:
+                _vm.expected_cost(model_key, duration_s)
+            except ValueError as exc:
+                await _fail_manual_request(
+                    request_id, "API_LANE_REJECTED", str(exc), "ERR_UNSUPPORTED_DURATION")
+    await crud.add_stage_event(
+        request_id, "API_USER_SETTINGS_APPLIED", "WAITING_FLOW",
+        f"aspect={aspect} count={count} model={model_key or 'default'} "
+        f"duration_s={duration_s or 'default'}", "backend")
 
     res = await _mv.start_generate(
         mode, prompt, project_id=created_project_id,
         image_media_ids=refs or None,
-        aspect=aspect, tier=tier, model=model_key)
+        aspect=aspect, tier=tier, model=model_key,
+        duration_s=duration_s, num_videos=count)
     if not isinstance(res, dict) or not res.get("job_id"):
         code = str((res or {}).get("error") or "VIDEO_JOB_IN_FLIGHT")
         await _fail_manual_request(

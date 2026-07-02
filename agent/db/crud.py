@@ -1150,3 +1150,42 @@ async def get_bulk_queue_stats() -> dict:
         "by_status": {row[0]: row[1] for row in status_rows},
         "by_risk": {row[0]: row[1] for row in risk_rows},
     }
+
+
+# ─── Generated Artifact Library (ADR-007 production) ─────────
+
+async def insert_generated_artifact(media_id: str, job_id: str = None, mode: str = None,
+                                    artifact_kind: str = "video", local_path: str = None,
+                                    size_mb: float = None, project_id: str = None,
+                                    model_used: str = None, duration_used: int = None) -> None:
+    """Register a finished generation in the system library (idempotent on media_id)."""
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            """INSERT OR REPLACE INTO generated_artifact
+               (media_id, job_id, mode, artifact_kind, local_path, size_mb,
+                project_id, model_used, duration_used, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (media_id, job_id, mode, artifact_kind, local_path, size_mb,
+             project_id, model_used, duration_used, _now()),
+        )
+        await db.commit()
+
+
+async def list_generated_artifacts(limit: int = 50, mode: str = None) -> list:
+    """Newest-first library listing for the dashboard gallery."""
+    db = await get_db()
+    query = """SELECT media_id, job_id, mode, artifact_kind, local_path, size_mb,
+                      project_id, model_used, duration_used, created_at
+               FROM generated_artifact"""
+    params: tuple = ()
+    if mode:
+        query += " WHERE mode = ?"
+        params = (str(mode).upper(),)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params += (int(limit),)
+    cursor = await db.execute(query, params)
+    rows = await cursor.fetchall()
+    keys = ("media_id", "job_id", "mode", "artifact_kind", "local_path", "size_mb",
+            "project_id", "model_used", "duration_used", "created_at")
+    return [dict(zip(keys, row)) for row in rows]

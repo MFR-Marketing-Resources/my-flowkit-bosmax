@@ -253,14 +253,40 @@ _VIDEO_MODES = ("T2V", "I2V", "F2V")
 _ALL_MODES = ("IMG",) + _VIDEO_MODES
 
 
+async def _record_artifacts(job, mode, artifacts):
+    """Persist every finished artifact into the system library (generated_artifact
+    table) so completed videos/images survive restarts and are listable/downloadable
+    from the dashboard. Best-effort: a DB hiccup must never fail a finished job."""
+    try:
+        from agent.db import crud
+        for art in artifacts:
+            await crud.insert_generated_artifact(
+                media_id=art["media_id"],
+                job_id=job.get("job_id"),
+                mode=mode,
+                artifact_kind=("image" if mode == "IMG" else "video"),
+                local_path=art.get("local_path"),
+                size_mb=art.get("size_mb"),
+                project_id=job.get("project_id"),
+                model_used=job.get("model_used"),
+                duration_used=job.get("duration_used"),
+            )
+    except Exception as e:  # noqa: BLE001
+        job["artifact_record_error"] = str(e)
+
+
 async def start_generate(mode: str, prompt: str, project_id: str = None,
                          image_media_ids: list = None, image_prompt: str = None,
                          aspect: str = "9:16", tier: str = "PAYGATE_TIER_ONE",
-                         model: str = None, duration_s: int = None) -> dict:
-    """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job."""
+                         model: str = None, duration_s: int = None,
+                         num_videos: int = 1) -> dict:
+    """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
+    num_videos is the USER's count setting (1–4) — honoured end-to-end: the
+    negotiation demands exactly that many and retrieval collects them all."""
     global _VIDEO_LANE_JOB
     _gc_jobs()
     mode = (mode or "").upper()
+    num_videos = max(1, min(4, int(num_videos or 1)))
     # Single-flight (patch H): one video job at a time on the shared Flow tab. IMG exempt.
     if mode in _VIDEO_MODES and _VIDEO_LANE_JOB and _job_active(_VIDEO_LANE_JOB):
         return {"status": "REJECTED", "error": "VIDEO_JOB_IN_FLIGHT",
@@ -270,12 +296,13 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "stage": "queued", "project_id": project_id, "local_path": None,
                      "media_id": None, "size_mb": None, "artifact": None,
                      "approved": None, "binding": None, "model": model,
+                     "num_videos": num_videos, "artifacts": [],
                      "error": None, "created": time.time()}
     if mode in _VIDEO_MODES:
         _VIDEO_LANE_JOB = job_id  # claim the lane synchronously to avoid a race
     _JOBS[job_id]["_task"] = asyncio.create_task(
         _run_generate(job_id, mode, prompt, project_id, image_media_ids, image_prompt,
-                      aspect, tier, model, duration_s))
+                      aspect, tier, model, duration_s, num_videos))
     return {"job_id": job_id, "status": "SUBMITTED", "mode": mode}
 
 
@@ -312,7 +339,8 @@ def _is_retrieval_phase_error(msg) -> bool:
 
 
 async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
-                        image_prompt, aspect, tier, model=None, duration_s=None):
+                        image_prompt, aspect, tier, model=None, duration_s=None,
+                        num_videos=1):
     from agent.api.flow import (_generate_image_with_recovery, _extract_images,
                                  _extract_project_id, _IMG_ASPECT_MAP)
     import aiohttp
@@ -363,6 +391,9 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             path.write_bytes(data)
             job.update(status="DONE", stage="done", media_id=mid, local_path=str(path),
                        size_mb=round(len(data) / 1024 / 1024, 2), artifact="image", url=url)
+            await _record_artifacts(job, mode, [{
+                "media_id": mid, "local_path": str(path),
+                "size_mb": job["size_mb"]}])
             return
 
         # 3) T2V / I2V / F2V — agent video
@@ -383,10 +414,13 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         sid = _deep(sess.get("data", sess) if isinstance(sess, dict) else {}, "agentSessionId")
         if not sid:
             raise RuntimeError("no agent session")
-        job["stage"] = f"negotiating (approve 1 video, {video_models.resolve(model)['ui_label']})"
+        job["stage"] = (f"negotiating (approve {num_videos} video"
+                        f"{'s' if num_videos > 1 else ''}, "
+                        f"{video_models.resolve(model)['ui_label']})")
         nres = await agent_video.negotiate_and_generate(
             client, project_id, sid, prompt, refs,
-            target_model=model, target_duration_s=duration_s)
+            target_model=model, target_duration_s=duration_s,
+            desired_num=num_videos)
         job["approved"] = nres.get("approved")
         # Expose the FULL post-approve verification status on the job (the API returns the job
         # dict verbatim), so an unverified generation is NEVER presented as fully verified.
@@ -436,6 +470,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             pass
         job["preexisting_media_excluded"] = len(preexisting)
         exclude = set(_STALE_VIDEO_IDS) | set(refs) | preexisting
+        collected = []  # user's count setting: retrieval collects num_videos artifacts
         await asyncio.sleep(120)
         for i in range(36):
             job["stage"] = f"checking for finished video (try {i + 1})"
@@ -473,16 +508,31 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             cands = []
             for k in ("videoIds", "imageIds", "mediaIds"):
                 cands += (diag.get(k) or []) if isinstance(diag, dict) else []
-            mid, path, size = await _save_video_by_get_media(client, cands, exclude)
-            if mid:
-                job.update(status="DONE", stage="done", media_id=mid, local_path=path,
-                           size_mb=size, artifact="video")
+            # Collect up to num_videos fresh artifacts (user count setting = x2 means
+            # TWO videos must come home, not just the first one found).
+            while True:
+                mid, path, size = await _save_video_by_get_media(client, cands, exclude)
+                if not mid:
+                    break
+                exclude.add(mid)
+                collected.append({"media_id": mid, "local_path": path, "size_mb": size})
+                job["artifacts"] = list(collected)
+                job["stage"] = (f"retrieved {len(collected)}/{num_videos} video(s)"
+                                f" (try {i + 1})")
+                if len(collected) >= num_videos:
+                    break
+            if len(collected) >= num_videos:
+                first = collected[0]
+                job.update(status="DONE", stage="done", media_id=first["media_id"],
+                           local_path=first["local_path"], size_mb=first["size_mb"],
+                           artifact="video", artifacts=list(collected))
+                await _record_artifacts(job, mode, collected)
                 return
             # Empty project after minutes of polling can mean the render died
             # server-side (agent posts "Failed / missing reference image" in chat,
             # invisible to harvest). Ask the agent directly — a zero-credit turn —
             # instead of blind-polling to a 12-minute timeout.
-            if i in (8, 20):
+            if i in (8, 20) and not collected:
                 probe = await agent_video.probe_render_failure(
                     client, project_id, sid, probe_turn)
                 probe_turn = probe.get("turn_number", probe_turn + 1)
@@ -497,6 +547,17 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                         "FAILED_RENDER_REPORTED_BY_AGENT: the Flow agent reports the "
                         "generation failed server-side — safe to resubmit")
             await asyncio.sleep(18)
+        # Timeout with SOME videos home but fewer than requested → honest partial DONE
+        # (the user gets what exists; the shortfall is flagged, never hidden).
+        if collected:
+            first = collected[0]
+            job.update(status="DONE", stage="done_partial", media_id=first["media_id"],
+                       local_path=first["local_path"], size_mb=first["size_mb"],
+                       artifact="video", artifacts=list(collected),
+                       partial=True,
+                       partial_detail=f"retrieved {len(collected)}/{num_videos} requested videos")
+            await _record_artifacts(job, mode, collected)
+            return
         # Render started but no mp4 harvested in the polling window — treat as a retrieval-phase
         # failure (classified below as GENERATED_BUT_UNRETRIEVED), not a generation failure.
         raise RuntimeError("video not found/retrieved in time")
