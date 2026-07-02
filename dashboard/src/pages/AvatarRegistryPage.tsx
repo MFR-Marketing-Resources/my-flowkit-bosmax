@@ -108,8 +108,9 @@ export default function AvatarRegistryPage() {
 	const handleGenerateImage = async (avatar: AvatarProfile) => {
 		const confirmed = window.confirm(
 			`Generate imej untuk ${avatar.character_name} (${avatar.avatar_code})?\n\n` +
-				"Ini akan hantar 1 job IMG ke Google Flow dan MENGGUNAKAN KREDIT akaun anda. " +
-				"Imej siap akan disimpan kekal dalam Creative Library sebagai CHARACTER_REFERENCE.",
+				"Ini akan hantar 1 job IMG ke Google Flow (imej PERCUMA — hanya video " +
+				"yang dicaj kredit). Imej siap akan disimpan kekal dalam Creative " +
+				"Library sebagai CHARACTER_REFERENCE.",
 		);
 		if (!confirmed) return;
 		setError(null);
