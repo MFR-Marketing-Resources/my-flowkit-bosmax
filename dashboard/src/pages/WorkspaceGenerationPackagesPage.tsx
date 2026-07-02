@@ -117,6 +117,49 @@ interface PromptBlock {
 	engine_prompt_text: string;
 }
 
+const CANONICAL_PROMPT_SECTIONS = [
+	"SECTION 1 - ROLE & OBJECTIVE",
+	"SECTION 2 - PRODUCT TRUTH LOCK",
+	"SECTION 3 - CONTINUITY & STATE LOCK",
+	"SECTION 4 - VISUAL STORY",
+	"SECTION 5 - SHOT & CAMERA RULES",
+	"SECTION 6 - SPOKEN DIALOGUE",
+	"SECTION 7 - VOICE & DELIVERY",
+	"SECTION 8 - CTA & END FRAME",
+	"SECTION 9 - NO_OVERLAY",
+] as const;
+
+interface PromptSection {
+	heading: string;
+	sectionNumber: number | null;
+	title: string;
+	body: string;
+}
+
+function parsePromptSections(text: string): PromptSection[] {
+	const normalized = (text ?? "").replace(/\r\n/g, "\n");
+	const matches = [...normalized.matchAll(/^SECTION [1-9] - .+$/gm)];
+	if (matches.length === 0) {
+		return [];
+	}
+
+	return matches.map((match, index) => {
+		const heading = match[0].trim();
+		const start = (match.index ?? 0) + match[0].length;
+		const end =
+			index + 1 < matches.length
+				? (matches[index + 1].index ?? normalized.length)
+				: normalized.length;
+		const sectionNumberMatch = heading.match(/^SECTION (\d+)/);
+		return {
+			heading,
+			sectionNumber: sectionNumberMatch ? Number(sectionNumberMatch[1]) : null,
+			title: heading.replace(/^SECTION \d+ - /, ""),
+			body: normalized.slice(start, end).trim(),
+		};
+	});
+}
+
 // ─── Asset card ───────────────────────────────────────────────
 
 function AssetCard({
@@ -197,6 +240,11 @@ function PromptCopyBox({
 	stepNumber: number;
 }) {
 	const [copied, setCopied] = useState(false);
+	const sections = parsePromptSections(text);
+	const presentHeadings = new Set(sections.map((section) => section.heading));
+	const missingSections = CANONICAL_PROMPT_SECTIONS.filter(
+		(heading) => !presentHeadings.has(heading),
+	);
 	const handleCopy = useCallback(() => {
 		navigator.clipboard.writeText(text || "").then(() => {
 			setCopied(true);
@@ -224,9 +272,60 @@ function PromptCopyBox({
 					{copied ? "Copied!" : "Copy Final Prompt"}
 				</button>
 			</div>
-			<pre className="p-3 text-xs text-slate-300 font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto bg-slate-950/80">
-				{text || "(no prompt text)"}
-			</pre>
+			<div className="border-b border-slate-700/50 bg-slate-950/40 px-3 py-3">
+				<div className="flex flex-wrap gap-2">
+					<span className="rounded-full border border-slate-700 bg-slate-950 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">
+						{sections.length}/9 sections detected
+					</span>
+					{missingSections.length === 0 ? (
+						<span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
+							Canonical 9-section structure
+						</span>
+					) : (
+						<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200">
+							Missing {missingSections.map((heading) => heading.replace("SECTION ", "S")).join(", ")}
+						</span>
+					)}
+				</div>
+			</div>
+			{sections.length > 0 ? (
+				<div className="divide-y divide-slate-800 bg-slate-950/80">
+					{sections.map((section) => (
+						<details
+							key={section.heading}
+							open={
+								section.sectionNumber === 4 ||
+								section.sectionNumber === 6 ||
+								section.sectionNumber === 8
+							}
+							className="group"
+						>
+							<summary className="cursor-pointer list-none px-3 py-2.5">
+								<div className="flex items-center justify-between gap-3">
+									<div className="flex items-center gap-2">
+										<span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">
+											S{section.sectionNumber ?? "?"}
+										</span>
+										<span className="text-xs font-semibold text-slate-100">
+											{section.title}
+										</span>
+									</div>
+									<span className="text-[10px] uppercase tracking-[0.16em] text-slate-500 group-open:text-slate-300">
+										Expand
+									</span>
+								</div>
+							</summary>
+							<pre className="border-t border-slate-800 px-3 py-3 text-xs text-slate-300 font-mono whitespace-pre-wrap leading-relaxed">
+								{section.body || "(empty section)"}
+							</pre>
+						</details>
+					))}
+				</div>
+			) : (
+				<pre className="p-3 text-xs text-slate-300 font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto bg-slate-950/80">
+					{text || "(no prompt text)"}
+				</pre>
+			)}
 		</div>
 	);
 }
