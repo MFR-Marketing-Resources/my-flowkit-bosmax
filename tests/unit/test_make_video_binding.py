@@ -79,6 +79,21 @@ def test_bind_broken_editor_page_raises():
         assert "BROKEN_EDITOR_PAGE" in str(e)
 
 
+def test_bind_tolerates_error_marker_on_usable_editor():
+    # Live d80e72fd: one failed media TILE renders "Something went wrong" inside an
+    # otherwise fully usable editor (composer present + editable). Binding must
+    # proceed — only an UNUSABLE surface with markers is a broken page.
+    url = "https://labs.google/fx/tools/flow/project/abc-123"
+    client = _FakeClient(
+        _harvest("abc-123", url, 42),
+        page_diag={"visible_error_markers": ["Something went wrong"], "build_match": True,
+                   "editor_capability_ready": True,
+                   "composer_found": True, "composer_editable": True},
+    )
+    b = _run(mv._bind_editor_session(client))
+    assert b["project_id"] == "abc-123"
+
+
 def test_bind_content_build_mismatch_raises():
     url = "https://labs.google/fx/tools/flow/project/abc-123"
     client = _FakeClient(
