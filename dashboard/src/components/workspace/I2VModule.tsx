@@ -28,6 +28,166 @@ interface I2VModuleProps {
 	videoModels: VideoModel[];
 }
 
+const CANONICAL_PROMPT_SECTIONS = [
+	"SECTION 1 - ROLE & OBJECTIVE",
+	"SECTION 2 - PRODUCT TRUTH LOCK",
+	"SECTION 3 - CONTINUITY & STATE LOCK",
+	"SECTION 4 - VISUAL STORY",
+	"SECTION 5 - SHOT & CAMERA RULES",
+	"SECTION 6 - SPOKEN DIALOGUE",
+	"SECTION 7 - VOICE & DELIVERY",
+	"SECTION 8 - CTA & END FRAME",
+	"SECTION 9 - NO_OVERLAY",
+] as const;
+
+type PromptAuditBlock = NonNullable<
+	WorkspaceExecutionPackage["prompt_blocks"]
+>[number];
+
+interface PromptAuditSection {
+	heading: string;
+	sectionNumber: number | null;
+	title: string;
+	body: string;
+}
+
+function parsePromptSections(text: string): PromptAuditSection[] {
+	const normalized = (text ?? "").replace(/\r\n/g, "\n");
+	const matches = [...normalized.matchAll(/^SECTION [1-9] - .+$/gm)];
+	if (matches.length === 0) {
+		return [];
+	}
+
+	return matches.map((match, index) => {
+		const heading = match[0].trim();
+		const start = (match.index ?? 0) + match[0].length;
+		const end =
+			index + 1 < matches.length
+				? (matches[index + 1].index ?? normalized.length)
+				: normalized.length;
+		const sectionNumberMatch = heading.match(/^SECTION (\d+)/);
+		return {
+			heading,
+			sectionNumber: sectionNumberMatch ? Number(sectionNumberMatch[1]) : null,
+			title: heading.replace(/^SECTION \d+ - /, ""),
+			body: normalized.slice(start, end).trim(),
+		};
+	});
+}
+
+function PromptAuditCard({
+	label,
+	text,
+	block,
+}: {
+	label: string;
+	text: string;
+	block?: PromptAuditBlock;
+}) {
+	const [copied, setCopied] = useState(false);
+	const sections = parsePromptSections(text);
+	const presentHeadings = new Set(sections.map((section) => section.heading));
+	const missingSections = CANONICAL_PROMPT_SECTIONS.filter(
+		(heading) => !presentHeadings.has(heading),
+	);
+	const metaChips = [
+		block?.block_role ? `Role ${block.block_role}` : null,
+		block?.duration_seconds ? `${block.duration_seconds}s` : null,
+		block?.shot_count
+			? `${block.shot_count} shot${block.shot_count > 1 ? "s" : ""}`
+			: null,
+	].filter(Boolean) as string[];
+
+	const handleCopy = () => {
+		navigator.clipboard.writeText(text || "").then(() => {
+			setCopied(true);
+			window.setTimeout(() => setCopied(false), 2200);
+		});
+	};
+
+	return (
+		<div className="rounded-xl border border-slate-800 bg-slate-950/70 overflow-hidden">
+			<div className="flex flex-col gap-3 border-b border-slate-800 px-4 py-3 md:flex-row md:items-start md:justify-between">
+				<div className="space-y-2">
+					<div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-200">
+						{label}
+					</div>
+					<div className="flex flex-wrap gap-2">
+						<span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">
+							{sections.length}/9 sections
+						</span>
+						{metaChips.map((chip) => (
+							<span
+								key={chip}
+								className="rounded-full border border-slate-800 bg-slate-900/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400"
+							>
+								{chip}
+							</span>
+						))}
+						{missingSections.length === 0 ? (
+							<span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
+								Canonical 9-section structure
+							</span>
+						) : (
+							<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200">
+								Missing{" "}
+								{missingSections
+									.map((heading) => heading.replace("SECTION ", "S"))
+									.join(", ")}
+							</span>
+						)}
+					</div>
+				</div>
+				<button
+					type="button"
+					onClick={handleCopy}
+					className={`rounded-lg border px-3 py-2 text-[11px] font-semibold transition-colors ${copied ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-blue-500/30 bg-blue-500/10 text-blue-100 hover:bg-blue-500/20"}`}
+				>
+					{copied ? "Copied" : "Copy Prompt"}
+				</button>
+			</div>
+			{sections.length > 0 ? (
+				<div className="divide-y divide-slate-800">
+					{sections.map((section) => (
+						<details
+							key={section.heading}
+							open={
+								section.sectionNumber === 4 ||
+								section.sectionNumber === 6 ||
+								section.sectionNumber === 8
+							}
+							className="group"
+						>
+							<summary className="cursor-pointer list-none px-4 py-3">
+								<div className="flex items-center justify-between gap-3">
+									<div className="flex items-center gap-2">
+										<span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">
+											S{section.sectionNumber ?? "?"}
+										</span>
+										<span className="text-xs font-semibold text-slate-100">
+											{section.title}
+										</span>
+									</div>
+									<span className="text-[10px] uppercase tracking-[0.16em] text-slate-500 group-open:text-slate-300">
+										Expand
+									</span>
+								</div>
+							</summary>
+							<pre className="border-t border-slate-800 px-4 py-3 text-xs text-slate-300 font-mono whitespace-pre-wrap leading-relaxed">
+								{section.body || "(empty section)"}
+							</pre>
+						</details>
+					))}
+				</div>
+			) : (
+				<pre className="px-4 py-3 text-xs text-slate-300 font-mono whitespace-pre-wrap leading-relaxed">
+					{text || "(no prompt text)"}
+				</pre>
+			)}
+		</div>
+	);
+}
+
 const RECIPE_OPTIONS: Array<{
 	id: I2VRecipeId;
 	label: string;
@@ -157,6 +317,10 @@ export default function I2VModule({
 	const [resolverPreview, setResolverPreview] =
 		useState<I2VSemanticSlotResolverResponse | null>(null);
 	const [resolverError, setResolverError] = useState<string | null>(null);
+	const packagePromptText =
+		workspacePackage?.prompt_blocks?.[0]?.engine_prompt_text ??
+		workspacePackage?.prompt_text ??
+		"";
 
 	useEffect(() => {
 		void Promise.all([
@@ -665,24 +829,12 @@ export default function I2VModule({
 						workspacePackage.prompt_blocks.length > 1 ? (
 							<div className="space-y-4">
 								{workspacePackage.prompt_blocks.map((block) => (
-									<div key={block.block_index} className="space-y-1">
-										<div className="flex items-center gap-2">
-											<span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
-												Block {block.block_index} — {block.block_role}
-											</span>
-											<span className="text-[10px] text-slate-500">
-												{block.duration_seconds}s · {block.shot_count} shot(s)
-											</span>
-										</div>
-										<textarea
-											className="w-full h-48 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-300 font-mono outline-none transition-all resize-none"
-											readOnly
-											value={block.engine_prompt_text}
-											onClick={(e) =>
-												(e.target as HTMLTextAreaElement).select()
-											}
-										/>
-									</div>
+									<PromptAuditCard
+										key={block.block_index}
+										label={`Block ${block.block_index} Audit`}
+										text={block.engine_prompt_text}
+										block={block}
+									/>
 								))}
 								<div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
 									EXTEND mode — copy each block separately into the video
@@ -690,19 +842,27 @@ export default function I2VModule({
 								</div>
 							</div>
 						) : (
-							<textarea
-								className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
-								placeholder="All 3 slots are reference images — the model sees them. Describe WHAT HAPPENS: e.g. 'The character picks up the product, holds it at eye level, smiles at camera. Product is clearly visible in her grip. Scene is the background environment.' Include product size anchor if needed."
-								value={manualPrompt}
-								onChange={(e) => {
-									const next = e.target.value;
-									setManualPrompt(next);
-									setIsManualOverride(
-										Boolean(workspacePackage?.prompt_text) &&
-											next !== workspacePackage?.prompt_text,
-									);
-								}}
-							/>
+							<div className="space-y-3">
+								{workspacePackage && packagePromptText ? (
+									<PromptAuditCard
+										label="Approved Package Baseline"
+										text={packagePromptText}
+									/>
+								) : null}
+								<textarea
+									className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-300 font-mono focus:border-blue-500 outline-none transition-all resize-none"
+									placeholder="All 3 slots are reference images — the model sees them. Describe WHAT HAPPENS: e.g. 'The character picks up the product, holds it at eye level, smiles at camera. Product is clearly visible in her grip. Scene is the background environment.' Include product size anchor if needed."
+									value={manualPrompt}
+									onChange={(e) => {
+										const next = e.target.value;
+										setManualPrompt(next);
+										setIsManualOverride(
+											Boolean(workspacePackage?.prompt_text) &&
+												next !== workspacePackage?.prompt_text,
+										);
+									}}
+								/>
+							</div>
 						)}
 					</div>
 				</section>
