@@ -928,6 +928,24 @@ def _mode_story_polish(source_mode: str) -> dict[str, str]:
             "middle": "every motion change should feel like micro-resolution of existing frame energy, not a fresh commercial restaging",
             "closing": "the close must feel like continuation pressure resolving inside the same frame world, not a newly performed CTA tableau",
         },
+        "INGREDIENTS": {
+            "continuity": (
+                "Authority hierarchy is strict: product reference outranks everything for packaging truth, avatar reference outranks everything for face and identity, "
+                "and style or scene guidance may decorate the world only after product and avatar truth are already satisfied."
+            ),
+            "opening": "the first beat must prove reference hierarchy immediately instead of blending all references into one mushy reveal",
+            "middle": "every environment or style cue must stay subordinate to product truth and avatar truth while persuasion is happening",
+            "closing": "the close must feel reference-faithful and balanced, never like style mood has overridden the product or the presenter",
+        },
+        "IMAGES": {
+            "continuity": (
+                "Still-image persuasion only: no implied video sequencing, no cinematic continuation language, and no fake motion logic. "
+                "Everything must sell through hierarchy, packaging read, composition, and static credibility."
+            ),
+            "opening": "the still must establish product hierarchy instantly before atmosphere starts competing for attention",
+            "middle": "every composition choice must increase static sellability, packaging read, and believable premium hierarchy",
+            "closing": "the final read must feel commerce-ready through composition alone, not through implied motion or narration logic",
+        },
     }
     return table.get(source_mode, {
         "continuity": "",
@@ -971,14 +989,14 @@ def _default_shot_plan(
         ]
     elif source_mode == "INGREDIENTS":
         templates = [
-            f"Reference-led opening beat: the presenter must match the avatar reference while introducing {pname} exactly as shown by the product reference, with {story['opening']}.",
-            f"Product truth beat: move closer to {pname} for readable packaging, honest scale, natural hand-object interaction, and {focus['detail']} without overpowering the presenter reference, while the scene helps {story['middle']}.",
-            f"Environment beat: preserve the supplied scene or style direction only at the background and mood level while the product remains the visual authority and continues to {story['middle']}.",
-            f"Final hold beat with presenter and {pname} in the same frame, balanced and believable, so {story['closing']} and {focus['closing']} can land without any fake demonstration while the image still helps {story['middle']}.",
+            f"Reference-led opening beat: the presenter must match the avatar reference while introducing {pname} exactly as shown by the product reference, with {story['opening']}; {mode_polish['opening']}.",
+            f"Product truth beat: move closer to {pname} for readable packaging, honest scale, natural hand-object interaction, and {focus['detail']} without overpowering the presenter reference, while the scene helps {story['middle']}; {mode_polish['middle']}.",
+            f"Environment beat: preserve the supplied scene or style direction only at the background and mood level while the product remains the visual authority and continues to {story['middle']}, with no style cue allowed to outrank product or avatar truth.",
+            f"Final hold beat with presenter and {pname} in the same frame, balanced and believable, so {story['closing']} and {focus['closing']} can land without any fake demonstration while the image still helps {story['middle']}; {mode_polish['closing']}.",
         ]
     elif source_mode == "IMAGES":
         templates = [
-            f"One polished commercial still of {pname} with honest scale, clean packaging readability, {focus['detail']}, {story['opening']}, and a premium but believable composition that supports {story['closing']}."
+            f"One polished commercial still of {pname} with honest scale, clean packaging readability, {focus['detail']}, {story['opening']}, and a premium but believable composition that supports {story['closing']}; {mode_polish['opening']}; {mode_polish['middle']}."
         ]
     else:  # T2V
         templates = [
@@ -1032,6 +1050,7 @@ def _section_3_continuity(
             "controls the product's true appearance, and the person reference controls the "
             "presenter's identity, face, and styling."
         )
+        lines.append(_mode_story_polish(source_mode)["continuity"])
         if style_scene_source == "SCENE_CONTEXT_ONLY" or not (asset_role_map or {}).get("STYLE_SCENE_REFERENCE"):
             env = scene_context or "a clean, believable everyday setting"
             lines.append(f"The environment comes from this description only: {env}.")
@@ -1050,6 +1069,7 @@ def _section_3_continuity(
             f"Compose a single still image. Keep {pname} exactly true to its real packaging, "
             "label, and proportions."
         )
+        lines.append(_mode_story_polish(source_mode)["continuity"])
         if presenter_prose:
             lines.append(presenter_prose)
     if is_continuation:
@@ -1077,7 +1097,7 @@ def _section_8_end_frame(
     if mode == "IMAGES":
         return (
             f"The final composition holds {pname} clearly readable as the visual anchor, with "
-            f"{focus['closing']} expressed through the still image alone and {story['closing']} baked into the final read."
+            f"{focus['closing']} expressed through the still image alone and {story['closing']} baked into the final read. {_mode_story_polish(mode)['closing']}"
         )
     if not is_final:
         return (
@@ -1093,7 +1113,7 @@ def _section_8_end_frame(
     if mode == "INGREDIENTS":
         return (
             f"End on a balanced two-subject hold: the presenter stays faithful to the avatar reference while {pname} remains clearly readable and dominant as the product truth anchor, "
-            f"with {story['closing']} shaping the last commercial impression."
+            f"with {story['closing']} shaping the last commercial impression. {_mode_story_polish(mode)['closing']}"
         )
     if mode == "HYBRID":
         return (

@@ -289,6 +289,19 @@ def test_ingredients_style_reference_controls_environment_only():
     assert "style reference controls the environment and mood only" in text
 
 
+def test_ingredients_mode_polish_enforces_reference_hierarchy():
+    result = _compile(
+        mode="INGREDIENTS",
+        duration_seconds=16,
+        asset_role_map={"PRODUCT_REFERENCE": "img1", "AVATAR_REFERENCE": "img2",
+                        "STYLE_SCENE_REFERENCE": "img3"},
+    )
+    text = result["blocks"][-1]["engine_prompt_text"].lower()
+    assert "authority hierarchy is strict" in text
+    assert "style or scene guidance may decorate the world only after product and avatar truth are already satisfied" in text
+    assert "reference-faithful and balanced" in text
+
+
 def test_no_overlay_default_and_explicit_allowance():
     result = _compile()
     s9 = result["blocks"][0]["sections"]["SECTION 9 - NO_OVERLAY"]
@@ -327,6 +340,14 @@ def test_images_mode_single_still_under_same_authority():
     assert block["dialogue"] == ""
     assert "static 9:16" in block["sections"]["SECTION 5 - SHOT & CAMERA RULES"].lower()
     assert "micro-jitter" not in block["sections"]["SECTION 5 - SHOT & CAMERA RULES"].lower()
+
+
+def test_images_mode_polish_enforces_static_sellability_only():
+    result = _compile(mode="IMAGES")
+    text = result["blocks"][0]["engine_prompt_text"].lower()
+    assert "still-image persuasion only" in text
+    assert "static sellability" in text
+    assert "composition alone" in text
 
 
 def test_avatar_registry_explicit_id_and_prose():
