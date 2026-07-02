@@ -761,6 +761,22 @@ async def generate_job(job_id: str):
     return j
 
 
+@router.get("/retrieved/{media_id}")
+async def get_retrieved_artifact(media_id: str):
+    """Serve a retrieved artifact (mp4/jpg/png) so the dashboard can preview the
+    result inline the moment a job completes — no back-button/reload hunting."""
+    from fastapi.responses import FileResponse
+    from agent.config import OUTPUT_DIR
+    if not _FLOW_MEDIA_UUID_RE.match(str(media_id or "")):
+        raise HTTPException(422, "media_id must be a bare UUID")
+    base = OUTPUT_DIR / "retrieved"
+    for ext, mime in ((".mp4", "video/mp4"), (".jpg", "image/jpeg"), (".png", "image/png")):
+        candidate = base / f"{media_id}{ext}"
+        if candidate.exists():
+            return FileResponse(candidate, media_type=mime)
+    raise HTTPException(404, "artifact not found")
+
+
 @router.get("/bind-check")
 async def bind_check():
     """0-credit diagnostic: does the live harvest expose the bind inputs, and does
