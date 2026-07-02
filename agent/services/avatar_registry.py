@@ -130,6 +130,24 @@ def presenter_prose(profile: dict) -> str:
     )
 
 
+def get_generation_prompt(avatar_code: str) -> dict:
+    """Server-side only: the avatar's PromptV1 (full image-generation prompt)
+    plus identity fields, for the IMG-lane avatar image factory. Raw prompt
+    text never reaches the dashboard — only the job it feeds."""
+    wanted = str(avatar_code or "").strip().upper()
+    for row in _load_pool():
+        if str(row.get("AvatarCode", "")).strip().upper() == wanted:
+            prompt = str(row.get("PromptV1") or "").strip()
+            if not prompt:
+                raise ValueError(f"AVATAR_PROMPT_EMPTY:{avatar_code}")
+            return {
+                "avatar_code": str(row.get("AvatarCode")).strip(),
+                "character_name": str(row.get("CharacterName") or "").strip(),
+                "prompt": prompt,
+            }
+    raise ValueError(f"AVATAR_NOT_FOUND:{avatar_code}")
+
+
 def list_pool() -> list[dict]:
     """Read-only view of every approved avatar profile (dashboard registry tab).
 

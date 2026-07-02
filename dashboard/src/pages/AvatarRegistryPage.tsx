@@ -19,6 +19,13 @@ interface AvatarProfile {
 	camera: string;
 	expression: string;
 	usage_tags: string[];
+	image_generated: boolean;
+	generated_asset_id: string | null;
+}
+
+interface AvatarGenerationState {
+	jobId: string;
+	stage: string;
 }
 
 interface AvatarPoolResponse {
@@ -40,6 +47,9 @@ export default function AvatarRegistryPage() {
 	const [isLoading, setIsLoading] = useState(false);
 	const [isSyncing, setIsSyncing] = useState(false);
 	const [currentPage, setCurrentPage] = useState(1);
+	const [generating, setGenerating] = useState<
+		Record<string, AvatarGenerationState>
+	>({});
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const refresh = useCallback(async () => {
@@ -95,6 +105,112 @@ export default function AvatarRegistryPage() {
 		}
 	};
 
+	const handleGenerateImage = async (avatar: AvatarProfile) => {
+		const confirmed = window.confirm(
+			`Generate imej untuk ${avatar.character_name} (${avatar.avatar_code})?\n\n` +
+				"Ini akan hantar 1 job IMG ke Google Flow dan MENGGUNAKAN KREDIT akaun anda. " +
+				"Imej siap akan disimpan kekal dalam Creative Library sebagai CHARACTER_REFERENCE.",
+		);
+		if (!confirmed) return;
+		setError(null);
+		setSuccessMsg(null);
+		try {
+			const response = await fetch(
+				"/api/workspace/avatar-registry/generate-image",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						avatar_code: avatar.avatar_code,
+						confirm_credit_burn: true,
+					}),
+				},
+			);
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data?.detail || `HTTP ${response.status}`);
+			}
+			setGenerating((prev) => ({
+				...prev,
+				[avatar.avatar_code]: { jobId: data.job_id, stage: "SUBMITTED" },
+			}));
+			void pollGenerationJob(avatar.avatar_code, data.job_id);
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : "Avatar image generation failed.",
+			);
+		}
+	};
+
+	const pollGenerationJob = async (avatarCode: string, jobId: string) => {
+		for (let attempt = 0; attempt < 150; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 4000));
+			try {
+				const response = await fetch(`/api/flow/generate-job/${jobId}`);
+				if (!response.ok) continue;
+				const job = await response.json();
+				setGenerating((prev) =>
+					prev[avatarCode]
+						? {
+								...prev,
+								[avatarCode]: { jobId, stage: job.stage || job.status },
+							}
+						: prev,
+				);
+				if (job.status === "DONE" && job.media_id) {
+					const registerResponse = await fetch(
+						"/api/workspace/avatar-registry/register-generated",
+						{
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({
+								avatar_code: avatarCode,
+								media_id: job.media_id,
+							}),
+						},
+					);
+					const registerData = await registerResponse.json();
+					if (!registerResponse.ok) {
+						throw new Error(
+							registerData?.detail || `HTTP ${registerResponse.status}`,
+						);
+					}
+					setSuccessMsg(
+						`${avatarCode}: imej siap dan didaftarkan dalam Creative Library (${registerData.asset_id}).`,
+					);
+					setGenerating((prev) => {
+						const next = { ...prev };
+						delete next[avatarCode];
+						return next;
+					});
+					await refresh();
+					return;
+				}
+				if (job.status === "FAILED" || job.status === "REJECTED") {
+					throw new Error(
+						`${avatarCode}: generation ${job.status} — ${job.error || "unknown"}`,
+					);
+				}
+			} catch (err) {
+				setError(
+					err instanceof Error ? err.message : "Avatar generation polling failed.",
+				);
+				setGenerating((prev) => {
+					const next = { ...prev };
+					delete next[avatarCode];
+					return next;
+				});
+				return;
+			}
+		}
+		setError(`${avatarCode}: generation timed out — semak Video Jobs / Library.`);
+		setGenerating((prev) => {
+			const next = { ...prev };
+			delete next[avatarCode];
+			return next;
+		});
+	};
+
 	const query = search.trim().toLowerCase();
 	const displayed = query
 		? avatars.filter((a) =>
@@ -130,7 +246,7 @@ export default function AvatarRegistryPage() {
 						<div className="mt-1 text-xs text-slate-400">
 							{isLoading
 								? "Loading..."
-								: `${displayed.length} approved avatar${displayed.length !== 1 ? "s" : ""} · source: ${bridgeActive ? "synced bridge CSV" : "repo seed"}`}
+								: `${displayed.length} approved avatar${displayed.length !== 1 ? "s" : ""} · ${avatars.filter((a) => a.image_generated).length} generated · source: ${bridgeActive ? "synced bridge CSV" : "repo seed"}`}
 						</div>
 					</div>
 					<div>
@@ -211,13 +327,14 @@ export default function AvatarRegistryPage() {
 								<th className="px-4 py-3 text-left">Appearance</th>
 								<th className="px-4 py-3 text-left">Scene</th>
 								<th className="px-4 py-3 text-left">Usage Tags</th>
+								<th className="px-4 py-3 text-left">Image</th>
 							</tr>
 						</thead>
 						<tbody className="divide-y divide-slate-800 bg-slate-950/40 text-slate-200">
 							{displayed.length === 0 ? (
 								<tr>
 									<td
-										colSpan={5}
+										colSpan={6}
 										className="px-4 py-8 text-center text-xs text-slate-500"
 									>
 										{isLoading ? "Loading avatars..." : "No avatars found."}
@@ -247,6 +364,30 @@ export default function AvatarRegistryPage() {
 										</td>
 										<td className="px-4 py-3 text-xs text-slate-400">
 											{a.usage_tags.join(", ") || "—"}
+										</td>
+										<td className="px-4 py-3">
+											{a.image_generated && a.generated_asset_id ? (
+												<a
+													href={`/api/creative-assets/${a.generated_asset_id}/preview`}
+													target="_blank"
+													rel="noopener noreferrer"
+													className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
+												>
+													✓ Generated
+												</a>
+											) : generating[a.avatar_code] ? (
+												<span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold text-blue-200">
+													⏳ {generating[a.avatar_code].stage}
+												</span>
+											) : (
+												<button
+													type="button"
+													onClick={() => void handleGenerateImage(a)}
+													className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
+												>
+													Generate
+												</button>
+											)}
 										</td>
 									</tr>
 								))
