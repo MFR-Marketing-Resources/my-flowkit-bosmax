@@ -33,7 +33,7 @@ import {
 import ApprovedPackagesPage from "./pages/ApprovedPackagesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
 import AvatarRegistryPage from "./pages/AvatarRegistryPage";
-import BatchesPage from "./pages/BatchesPage";
+import BatchPromptBuilderPage from "./pages/BatchPromptBuilderPage";
 import CreativeLibraryPage from "./pages/CreativeLibraryPage";
 import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
 import DashboardPage from "./pages/DashboardPage";
@@ -41,6 +41,7 @@ import GalleryPage from "./pages/GalleryPage";
 import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
 import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
+import ProductionQueuePage from "./pages/ProductionQueuePage";
 import ProductRegistrationPage from "./pages/ProductRegistrationPage";
 import ProductsSalesAnalyzerPage from "./pages/ProductsSalesAnalyzerPage";
 import ProjectsPage from "./pages/ProjectsPage";
@@ -74,7 +75,8 @@ const NAV_GROUPS = [
 				icon: PackageSearch,
 				label: "Approved Packages",
 			},
-			{ to: "/batches", icon: Briefcase, label: "Batch Manager" },
+			{ to: "/batches", icon: Briefcase, label: "Batch Prompt Builder" },
+			{ to: "/production-queue", icon: Film, label: "Production Queue" },
 		],
 	},
 	{
@@ -455,7 +457,11 @@ function Layout() {
 							element={<ApprovedPackagesPage />}
 						/>
 
-						<Route path="/batches" element={<BatchesPage />} />
+						<Route path="/batches" element={<BatchPromptBuilderPage />} />
+						<Route
+							path="/production-queue"
+							element={<ProductionQueuePage />}
+						/>
 						<Route path="/asset-registry" element={<AssetRegistryPage />} />
 						<Route
 							path="/assets/creative-library/workspace"

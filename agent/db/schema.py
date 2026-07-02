@@ -1584,6 +1584,81 @@ CREATE TABLE IF NOT EXISTS scheduled_batch_run (
             logger.info("Migrated: added config_json column to batch_generation_run")
         await db.commit()
 
+        # ── Batch Prompt / Production split ──────────────────────────────
+        # Prompt-item variation + production lifecycle columns on
+        # workspace_generation_package. All additive; the prompt-side status
+        # CHECK stays untouched — production lifecycle lives in its own column:
+        # NONE → APPROVED → QUEUED → RUNNING → GENERATED → DOWNLOADED /
+        # FAILED / CANCELLED.
+        cursor = await db.execute("PRAGMA table_info(workspace_generation_package)")
+        wgp_cols3 = {row[1] for row in await cursor.fetchall()}
+        _wgp_split_cols = (
+            ("logical_mode", "TEXT"),
+            ("variation_strategy", "TEXT"),
+            ("prompt_fingerprint", "TEXT"),
+            ("variation_fingerprints_json", "TEXT DEFAULT '{}'"),
+            ("anti_redundancy_json", "TEXT DEFAULT '[]'"),
+            ("production_status", "TEXT DEFAULT 'NONE'"),
+            ("production_run_id", "TEXT"),
+            ("production_job_id", "TEXT"),
+            ("production_error", "TEXT"),
+            ("artifact_media_ids_json", "TEXT DEFAULT '[]'"),
+            ("approved_at", "TEXT"),
+            ("sent_to_production_at", "TEXT"),
+        )
+        for _col, _decl in _wgp_split_cols:
+            if _col not in wgp_cols3:
+                await db.execute(
+                    f"ALTER TABLE workspace_generation_package ADD COLUMN {_col} {_decl}"
+                )
+                logger.info("Migrated: added %s column to workspace_generation_package table", _col)
+        await db.commit()
+
+        # Migration: single-mode law metadata on batch_generation_run
+        cursor = await db.execute("PRAGMA table_info(batch_generation_run)")
+        bgr_cols2 = {row[1] for row in await cursor.fetchall()}
+        if "logical_mode" not in bgr_cols2:
+            await db.execute("ALTER TABLE batch_generation_run ADD COLUMN logical_mode TEXT")
+            logger.info("Migrated: added logical_mode column to batch_generation_run")
+        if "variation_strategy" not in bgr_cols2:
+            await db.execute("ALTER TABLE batch_generation_run ADD COLUMN variation_strategy TEXT")
+            logger.info("Migrated: added variation_strategy column to batch_generation_run")
+        await db.commit()
+
+        # Migration: link generated artifacts back to their source prompt package
+        cursor = await db.execute("PRAGMA table_info(generated_artifact)")
+        ga_cols = {row[1] for row in await cursor.fetchall()}
+        if "workspace_generation_package_id" not in ga_cols:
+            await db.execute(
+                "ALTER TABLE generated_artifact ADD COLUMN workspace_generation_package_id TEXT"
+            )
+            logger.info("Migrated: added workspace_generation_package_id column to generated_artifact")
+        await db.commit()
+
+        # Production queue run table: executes APPROVED prompt packages through
+        # the one hardened generate lane with interval + cooldown throttling.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS production_run (
+    production_run_id     TEXT PRIMARY KEY,
+    status                TEXT NOT NULL DEFAULT 'PENDING'
+                          CHECK(status IN ('PENDING','RUNNING','PAUSED','COMPLETED','FAILED','CANCELLED')),
+    dry_run               INTEGER NOT NULL DEFAULT 1,
+    max_parallel_jobs     INTEGER NOT NULL DEFAULT 1,
+    interval_min_seconds  INTEGER NOT NULL DEFAULT 45,
+    interval_max_seconds  INTEGER NOT NULL DEFAULT 120,
+    cooldown_after_n_jobs INTEGER NOT NULL DEFAULT 5,
+    cooldown_seconds      INTEGER NOT NULL DEFAULT 300,
+    total_expected        INTEGER NOT NULL DEFAULT 0,
+    total_completed       INTEGER NOT NULL DEFAULT 0,
+    total_failed          INTEGER NOT NULL DEFAULT 0,
+    error_log_json        TEXT NOT NULL DEFAULT '[]',
+    config_json           TEXT NOT NULL DEFAULT '{}',
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+""")
+        await db.commit()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 

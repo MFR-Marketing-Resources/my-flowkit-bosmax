@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run"})
 
 
 def _validate_table(table: str) -> None:
@@ -37,7 +37,8 @@ _COLUMNS = {
     "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
     "creative_asset": {"semantic_role", "display_name", "description", "source_type", "storage_kind", "preview_url", "download_url", "media_id", "local_file_path", "remote_source_url", "product_id", "category", "silo", "product_type", "allowed_modes", "engine_slot_eligibility", "mode_a_metadata_handoff", "visual_dna_summary", "character_dna", "scene_context_dna", "style_mood_dna", "source_prompt_fingerprint", "source_workspace_execution_package_id", "source_prompt_package_snapshot_id", "status", "updated_at"},
     "fastmoss_bulk_draft_status": {"raw_product_title", "source_url", "tiktok_product_url", "image_url", "category", "claim_risk_level", "mapping_confidence", "image_readiness", "copy_route", "sold_count", "commission_rate", "promotion_status", "draft_id", "committed_product_id", "suspected_existing_product_id", "suspected_existing_product_title", "suspected_existing_product_source", "suspected_existing_product_mapping_source", "duplicate_match_reason", "linked_product_id", "linked_product_title", "duplicate_resolution", "duplicate_resolved_at", "duplicate_resolution_note", "duplicate_ignore_product_id", "error_message", "batch_provenance", "recomputed_at", "recompute_previous_status", "recompute_previous_error", "updated_at"},
-    "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "operator_notes", "updated_at"},
+    "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "operator_notes", "batch_run_id", "logical_mode", "variation_strategy", "prompt_fingerprint", "variation_fingerprints_json", "anti_redundancy_json", "production_status", "production_run_id", "production_job_id", "production_error", "artifact_media_ids_json", "approved_at", "sent_to_production_at", "updated_at"},
+    "production_run": {"status", "dry_run", "max_parallel_jobs", "interval_min_seconds", "interval_max_seconds", "cooldown_after_n_jobs", "cooldown_seconds", "total_expected", "total_completed", "total_failed", "error_log_json", "config_json", "updated_at"},
 }
 
 
@@ -927,6 +928,112 @@ async def update_batch_generation_run(
     async with _db_lock:
         await db.execute(f"UPDATE batch_generation_run SET {', '.join(parts)} WHERE batch_run_id=?", params)
         await db.commit()
+
+
+# ── Production queue (prompt/production split) ───────────────────────────
+
+
+async def create_production_run(
+    production_run_id: str,
+    *,
+    dry_run: bool = True,
+    max_parallel_jobs: int = 1,
+    interval_min_seconds: int = 45,
+    interval_max_seconds: int = 120,
+    cooldown_after_n_jobs: int = 5,
+    cooldown_seconds: int = 300,
+    total_expected: int = 0,
+    config_json: str = "{}",
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO production_run
+               (production_run_id, status, dry_run, max_parallel_jobs,
+                interval_min_seconds, interval_max_seconds, cooldown_after_n_jobs,
+                cooldown_seconds, total_expected, total_completed, total_failed,
+                error_log_json, config_json, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,0,0,'[]',?,?,?)""",
+            (production_run_id, "PENDING", 1 if dry_run else 0, max_parallel_jobs,
+             interval_min_seconds, interval_max_seconds, cooldown_after_n_jobs,
+             cooldown_seconds, total_expected, config_json, now, now),
+        )
+        await db.commit()
+    return await _get_with_db(db, "production_run", "production_run_id", production_run_id)
+
+
+async def get_production_run(production_run_id: str):
+    return await _get("production_run", "production_run_id", production_run_id)
+
+
+async def update_production_run(production_run_id: str, **kw):
+    return await _update("production_run", "production_run_id", production_run_id, **kw)
+
+
+async def list_production_runs(limit: int = 50) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM production_run ORDER BY created_at DESC LIMIT ?", (limit,)
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def list_production_queue_packages(
+    production_run_id: str | None = None,
+    production_status: str | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    """Prompt packages viewed through their production lifecycle."""
+    db = await get_db()
+    q, params = "SELECT * FROM workspace_generation_package WHERE 1=1", []
+    if production_run_id:
+        q += " AND production_run_id=?"; params.append(production_run_id)
+    if production_status:
+        q += " AND production_status=?"; params.append(production_status)
+    else:
+        q += " AND production_status IS NOT NULL AND production_status NOT IN ('', 'NONE')"
+    q += " ORDER BY sent_to_production_at ASC, created_at ASC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def link_artifacts_to_generation_package(job_id: str, wgp_id: str) -> int:
+    """Post-hoc link: stamp artifacts registered by a generate job with their
+    source prompt package. Leaves make_video untouched (locked lane)."""
+    if not job_id or not wgp_id:
+        return 0
+    db = await get_db()
+    async with _db_lock:
+        cur = await db.execute(
+            "UPDATE generated_artifact SET workspace_generation_package_id=? WHERE job_id=?",
+            (wgp_id, job_id),
+        )
+        await db.commit()
+    return cur.rowcount
+
+
+async def list_recent_prompt_fingerprints(
+    product_id: str,
+    logical_mode: str,
+    limit: int = 500,
+) -> list[dict]:
+    """Recent redundancy history for a product+mode: fingerprints only."""
+    db = await get_db()
+    cur = await db.execute(
+        """SELECT workspace_generation_package_id, prompt_fingerprint,
+                  variation_fingerprints_json, created_at
+           FROM workspace_generation_package
+           WHERE product_id=? AND (logical_mode=? OR (logical_mode IS NULL AND mode=?))
+             AND status != 'ARCHIVED'
+           ORDER BY created_at DESC LIMIT ?""",
+        (product_id, logical_mode, logical_mode, limit),
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 async def get_batch_generation_run(batch_run_id: str) -> dict | None:

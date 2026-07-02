@@ -53,6 +53,7 @@ from agent.services.workspace_generation_package_service import (
     get_workspace_generation_package,
     list_workspace_generation_packages,
     start_batch_generation,
+    start_batch_prompt_run,
     get_batch_generation_run_status,
     list_batch_generation_runs,
     cancel_batch_generation_run,
@@ -389,6 +390,98 @@ async def retry_batch_run(batch_run_id: str):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Batch Prompt Builder (prompt/production split) ──────────────────────
+
+
+class BatchPromptRequest(_BaseModel):
+    """One batch prompt = ONE logical mode (mode law). Prompt generation only —
+    no Google Flow execution, no credits."""
+    product_id: str
+    logical_mode: str  # T2V | HYBRID | F2V | I2V
+    quantity: int = 10
+    variation_strategy: str = "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS"
+    interval_seconds: int = 5
+    generation_mode: str = "SINGLE"
+    duration_seconds: int = 8
+    target_language: str = "BM_MS"
+    avatar_codes: _List[str] = []
+    character_asset_ids: _List[str] = []
+    scene_asset_ids: _List[str] = []
+    style_asset_ids: _List[str] = []
+    scene_contexts: _List[str] = []
+    hook_angles: _List[str] = []
+    finished_frame_asset_id: str | None = None
+    # Legacy guard: old clients sending a modes list are rejected on mixes.
+    modes: _List[str] | None = None
+
+
+@router.post("/batch-prompts")
+async def start_batch_prompts(request: BatchPromptRequest):
+    """Generate a batch prompt set into the Prompt Queue (Batch Prompt Builder)."""
+    from agent.services import batch_prompt_planner as _planner
+
+    if request.modes and len({m.strip().upper() for m in request.modes if m}) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail="MIXED_MODES_FORBIDDEN: one batch prompt uses exactly one mode",
+        )
+    logical_mode = (request.logical_mode or "").strip().upper()
+    if logical_mode not in _planner.LOGICAL_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"UNSUPPORTED_LOGICAL_MODE:{request.logical_mode} (use {'/'.join(_planner.LOGICAL_MODES)})",
+        )
+    if request.interval_seconds < 0 or request.interval_seconds > 60:
+        raise HTTPException(status_code=400, detail="interval_seconds must be 0–60")
+    try:
+        run = await start_batch_prompt_run(
+            product_id=request.product_id,
+            logical_mode=logical_mode,
+            quantity=request.quantity,
+            variation_strategy=request.variation_strategy,
+            interval_seconds=request.interval_seconds,
+            generation_mode=request.generation_mode,
+            duration_seconds=request.duration_seconds,
+            target_language=request.target_language,
+            avatar_codes=request.avatar_codes or None,
+            character_asset_ids=request.character_asset_ids or None,
+            scene_asset_ids=request.scene_asset_ids or None,
+            style_asset_ids=request.style_asset_ids or None,
+            scene_contexts=request.scene_contexts or None,
+            hook_angles=request.hook_angles or None,
+            finished_frame_asset_id=request.finished_frame_asset_id,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message.startswith("MODE_CONTRACT_VIOLATION:"):
+            raise HTTPException(status_code=422, detail=message)
+        raise _http_exc_for(exc)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {
+        "ok": True,
+        "batch_run_id": run.get("batch_run_id"),
+        "logical_mode": run.get("logical_mode"),
+        "variation_strategy": run.get("variation_strategy"),
+        "total_expected": run.get("total_expected"),
+        "status": run.get("status"),
+    }
+
+
+class ApprovePackagesRequest(_BaseModel):
+    package_ids: _List[str]
+
+
+@router.post("/approve")
+async def approve_packages_endpoint(request: ApprovePackagesRequest):
+    """Approve reviewed prompt packages for production (no execution yet)."""
+    from agent.services.production_queue_service import approve_packages
+
+    if not request.package_ids:
+        raise HTTPException(status_code=422, detail="package_ids is required")
+    return await approve_packages(request.package_ids)
 
 
 # ── Scheduled batch runs ─────────────────────────────────────────────────────
