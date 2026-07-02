@@ -498,6 +498,55 @@ def _merge_unique_clauses(*clause_groups: list[str]) -> list[str]:
     return merged
 
 
+def _visual_story_terms(family: str, angle_signal: str, trigger_id: str, cta_type: str) -> dict[str, str]:
+    opening_bank = {
+        "TRUST_01": "reassuring, easy-to-believe commercial energy",
+        "CONFIDENCE_01": "self-assured desirability and social-confidence energy",
+        "AUTHORITY_01": "proof-led credibility and feature-first energy",
+        "COMFORT_01": "ease-first, pressure-free commercial energy",
+        "EGO_01": "status-aware, high-presence commercial energy",
+        "GIFTING_01": "gift-worthy presentation and occasion-readiness energy",
+        "FEMALE_01": "soft feminine polish with neat desirability energy",
+    }
+    middle_bank = {
+        "routine": "show the product sliding naturally into a repeatable everyday routine",
+        "confidence": "show why the product makes the presenter look or feel more put-together",
+        "trust": "show believable handling that makes the benefit easy to trust",
+        "utility": "show why the format, grip, or packaging logic makes practical sense immediately",
+        "comfort": "show how the product reduces friction and feels easy to keep using",
+        "taste": "show appetite or temptation through believable serving or craving cues",
+        "authority": "show one concrete proof cue so the value reads clearly on camera",
+        "gifting": "show why the presentation already feels neat enough to give to someone",
+        "ego": "show a presence-upgrade beat without turning theatrical or fake",
+        "female": "show neat feminine polish through details, poise, and finish",
+    }
+    closing_bank = {
+        "direct_checkout": "a decision-ready end hold that feels checkout-primed without shouting",
+        "standby_now": "a light-urgency end hold that feels timely, not desperate",
+        "add_to_kit": "a routine-slotting end hold that makes the product feel easy to keep around",
+        "save_for_later": "a bookmark-worthy end hold that stays memorable even if the buyer does not act yet",
+        "comment_signal": "a response-inviting end hold that naturally opens a comment or reply impulse",
+        "private_action": "a quiet insider end hold that feels DM-worthy rather than loud",
+    }
+    fallback_middle = {
+        "fragrance": "show scent-confidence through elegant handling and believable first-impression cues",
+        "beauty_personal_care": "show how the product upgrades a neat self-care routine",
+        "laundry_care": "show routine utility through believable household use logic",
+        "household_care": "show practical use-value through clean domestic context",
+        "baby_care": "show calm trust cues that feel parent-safe and believable",
+        "food_beverage": "show appetite pull and everyday try-now temptation",
+        "fashion_apparel": "show fit, drape, or styling payoff through natural movement",
+        "electronics": "show one clear feature-led proof moment with credible handling",
+        "wellness": "show careful routine support without overclaiming performance",
+        "general": "show the product's value through believable usage context",
+    }
+    return {
+        "opening": opening_bank.get(trigger_id, "credible, native-commercial energy"),
+        "middle": middle_bank.get(angle_signal, fallback_middle.get(family, fallback_middle["general"])),
+        "closing": closing_bank.get(cta_type, "a clean memorable end hold with clear commercial intent"),
+    }
+
+
 def _trim_to_budget(text: str, budget: int) -> str:
     words = _clean(text).split()
     if len(words) <= budget:
@@ -684,41 +733,45 @@ def _default_shot_plan(
     total_blocks: int,
     family: str,
     angle_hint: str,
+    angle_signal: str,
+    trigger_id: str,
+    cta_type: str,
 ) -> list[str]:
     pname = _product_name(product)
     focus = _family_focus_terms(family)
+    story = _visual_story_terms(family, angle_signal, trigger_id, cta_type)
     is_final = block_index == total_blocks
     if source_mode == "HYBRID":
         templates = [
-            f"Creator-led opening beat with {pname} already in hand, matching the uploaded product image exactly while the first spoken hook lands inside a {focus['context']} setup.",
-            f"Tight handling close-up of {pname} with the label readable, controlled reflections, and {focus['detail']} that supports the {angle_hint or 'core commercial angle'}.",
-            f"Reaction or routine beat that keeps the same presenter and lets {pname} stay visible in-frame while the main benefit is spoken naturally through {focus['context']}.",
-            f"Steady closing beat with {pname} held at chest level, eye contact to camera, and enough stillness for {focus['closing']} to land cleanly.",
+            f"Creator-led opening beat with {pname} already in hand, matching the uploaded product image exactly while the first spoken hook lands inside a {focus['context']} setup driven by {story['opening']}.",
+            f"Tight handling close-up of {pname} with the label readable, controlled reflections, and {focus['detail']} that supports the {angle_hint or 'core commercial angle'} while the frame continues to {story['middle']}.",
+            f"Reaction or routine beat that keeps the same presenter and lets {pname} stay visible in-frame while the main benefit is spoken naturally through {story['middle']}.",
+            f"Steady closing beat with {pname} held at chest level, eye contact to camera, and enough stillness for {story['closing']} plus {focus['closing']} to land cleanly.",
         ]
     elif source_mode == "FRAMES":
         templates = [
-            "Continue from the exact pose, grip, and camera distance already visible in the uploaded finished frame. The first beat is motion continuation only, not a new reveal.",
-            f"Ease into one believable motion-delta beat that keeps {pname} in the same position family, with no restyle, no jump cut, and no scene rebuild, while preserving {focus['detail']}.",
-            f"Add a subtle expression or hand adjustment while keeping {pname} readable, the finished-frame lighting unchanged, and the {angle_hint or 'commercial'} tension alive.",
-            f"Let the motion settle into a clean held frame with {pname} still truthful to the uploaded frame, ready for {focus['closing']} or a seam-safe stop.",
+            f"Continue from the exact pose, grip, and camera distance already visible in the uploaded finished frame. The first beat is motion continuation only, not a new reveal, and it should carry {story['opening']}.",
+            f"Ease into one believable motion-delta beat that keeps {pname} in the same position family, with no restyle, no jump cut, and no scene rebuild, while preserving {focus['detail']} and helping {story['middle']}.",
+            f"Add a subtle expression or hand adjustment while keeping {pname} readable, the finished-frame lighting unchanged, and the {angle_hint or 'commercial'} tension alive through {story['middle']}.",
+            f"Let the motion settle into a clean held frame with {pname} still truthful to the uploaded frame, ready for {story['closing']} and {focus['closing']} or a seam-safe stop.",
         ]
     elif source_mode == "INGREDIENTS":
         templates = [
-            f"Reference-led opening beat: the presenter must match the avatar reference while introducing {pname} exactly as shown by the product reference.",
-            f"Product truth beat: move closer to {pname} for readable packaging, honest scale, natural hand-object interaction, and {focus['detail']} without overpowering the presenter reference.",
-            f"Environment beat: preserve the supplied scene or style direction only at the background and mood level while the product remains the visual authority inside a {focus['context']} mood.",
-            f"Final hold beat with presenter and {pname} in the same frame, balanced and believable, so {focus['closing']} can land without any fake demonstration.",
+            f"Reference-led opening beat: the presenter must match the avatar reference while introducing {pname} exactly as shown by the product reference, with {story['opening']}.",
+            f"Product truth beat: move closer to {pname} for readable packaging, honest scale, natural hand-object interaction, and {focus['detail']} without overpowering the presenter reference, while the scene helps {story['middle']}.",
+            f"Environment beat: preserve the supplied scene or style direction only at the background and mood level while the product remains the visual authority and continues to {story['middle']}.",
+            f"Final hold beat with presenter and {pname} in the same frame, balanced and believable, so {story['closing']} and {focus['closing']} can land without any fake demonstration.",
         ]
     elif source_mode == "IMAGES":
         templates = [
-            f"One polished commercial still of {pname} with honest scale, clean packaging readability, {focus['detail']}, and a premium but believable composition."
+            f"One polished commercial still of {pname} with honest scale, clean packaging readability, {focus['detail']}, {story['opening']}, and a premium but believable composition that supports {story['closing']}."
         ]
     else:  # T2V
         templates = [
-            f"Open inside the lived-in scene first, then let the presenter bring {pname} into the frame naturally so the hook feels native, not staged, with {focus['context']} already visible.",
-            f"Routine-context beat that shows why {pname} belongs in the moment, with the packaging readable, the action grounded in normal human behaviour, and {focus['detail']} carrying the middle beat.",
-            f"Confidence or payoff beat where the presenter stays on camera, keeps {pname} visible, and sells the main benefit through expression and handling rather than hard claims, aligned to {angle_hint or 'the commercial promise'}.",
-            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {focus['closing']} to feel intentional.",
+            f"Open inside the lived-in scene first, then let the presenter bring {pname} into the frame naturally so the hook feels native, not staged, with {focus['context']} already visible and powered by {story['opening']}.",
+            f"Routine-context beat that shows why {pname} belongs in the moment, with the packaging readable, the action grounded in normal human behaviour, and {focus['detail']} carrying a middle beat that helps {story['middle']}.",
+            f"Confidence or payoff beat where the presenter stays on camera, keeps {pname} visible, and sells the main benefit through expression and handling rather than hard claims, aligned to {angle_hint or 'the commercial promise'} while continuing to {story['middle']}.",
+            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {story['closing']} plus {focus['closing']} to feel intentional.",
         ]
     if block_index > 1 and source_mode != "IMAGES":
         templates[0] = (
@@ -793,6 +846,48 @@ def _section_3_continuity(
     return "\n".join(lines)
 
 
+def _section_8_end_frame(
+    *,
+    mode: str,
+    pname: str,
+    is_final: bool,
+    focus: dict[str, str],
+    family: str,
+    angle_signal: str,
+    trigger_id: str,
+    cta_type: str,
+) -> str:
+    story = _visual_story_terms(family, angle_signal, trigger_id, cta_type)
+    if mode == "IMAGES":
+        return (
+            f"The final composition holds {pname} clearly readable as the visual anchor, with "
+            f"{focus['closing']} expressed through the still image alone and {story['closing']} baked into the final read."
+        )
+    if not is_final:
+        return (
+            "End on a seam-ready hold: the presenter mid-gesture with the product in grip, face "
+            "toward camera, motion direction preserved so the next block can continue exactly "
+            "from this state. Do not close the commercial arc yet."
+        )
+    if mode == "FRAMES":
+        return (
+            f"End by easing the existing motion into a clean held frame: {pname} stays truthful to the uploaded finished frame, "
+            f"the presenter remains in the same scene state, and {story['closing']} guides how the closing CTA line lands without any new reveal."
+        )
+    if mode == "INGREDIENTS":
+        return (
+            f"End on a balanced two-subject hold: the presenter stays faithful to the avatar reference while {pname} remains clearly readable and dominant as the product truth anchor, "
+            f"with {story['closing']} shaping the last commercial impression."
+        )
+    if mode == "HYBRID":
+        return (
+            f"End on a confident creator-to-camera hold with {pname} upright, label readable, and the exact uploaded-product packaging still matching perfectly while {story['closing']} carries the CTA landing."
+        )
+    return (
+        f"End on a steady hold: the presenter keeps {pname} at chest level with the label readable to camera while {story['closing']} carries the closing line, then a beat of calm confidence."
+    )
+
+
 _LEAK_PATTERNS = (
     r"\bHYBRID\b", r"\bFRAMES MODE\b", r"\bINGREDIENTS\b", r"\bT2V\b", r"\bI2V\b", r"\bF2V\b",
     r"\bWPS\b", r"\bblock_plan\b", r"\bprompt_set_count\b", r"\bavatar pool\b",
@@ -855,6 +950,9 @@ def render_block(
     pname = _product_line(product)
     category = _product_category(product)
     angle_hint = _humanize_label(norm_copy.get("angle", "")).lower()
+    angle_signal = _infer_angle_signal(norm_copy, family)
+    trigger_id = norm_copy.get("trigger_id", "")
+    cta_type = norm_copy.get("cta_type", "")
     focus = _family_focus_terms(family)
 
     s1 = (
@@ -892,6 +990,9 @@ def render_block(
             total_blocks=total_blocks,
             family=family,
             angle_hint=angle_hint,
+            angle_signal=angle_signal,
+            trigger_id=trigger_id,
+            cta_type=cta_type,
         )
     s4 = "\n".join(f"Shot {i + 1}: {s}" for i, s in enumerate(shots))
     if mode == "IMAGES":
@@ -931,32 +1032,16 @@ def render_block(
         "conversational tone with short, punchy, speakable phrasing — a real person recommending something they use, not a narrator. "
         "No voice-over. No narration. No off-camera speech. No audio-only dialogue."
     ) if mode != "IMAGES" else "Not applicable — still image output."
-    if mode == "IMAGES":
-        s8 = f"The final composition holds {pname} clearly readable as the visual anchor, with {focus['closing']} expressed through the still image alone."
-    elif mode == "FRAMES" and is_final:
-        s8 = (
-            f"End by easing the existing motion into a clean held frame: {pname} stays truthful to the uploaded finished frame, "
-            "the presenter remains in the same scene state, and the closing CTA line lands without any new reveal."
-        )
-    elif mode == "INGREDIENTS" and is_final:
-        s8 = (
-            f"End on a balanced two-subject hold: the presenter stays faithful to the avatar reference while {pname} remains clearly readable and dominant as the product truth anchor."
-        )
-    elif mode == "HYBRID" and is_final:
-        s8 = (
-            f"End on a confident creator-to-camera hold with {pname} upright, label readable, and the exact uploaded-product packaging still matching perfectly as the CTA lands."
-        )
-    elif is_final:
-        s8 = (
-            f"End on a steady hold: the presenter keeps {pname} at chest level with the label "
-            "readable to camera while the closing line lands, then a beat of calm confidence."
-        )
-    else:
-        s8 = (
-            "End on a seam-ready hold: the presenter mid-gesture with the product in grip, face "
-            "toward camera, motion direction preserved so the next block can continue exactly "
-            "from this state. Do not close the commercial arc yet."
-        )
+    s8 = _section_8_end_frame(
+        mode=mode,
+        pname=pname,
+        is_final=is_final,
+        focus=focus,
+        family=family,
+        angle_signal=angle_signal,
+        trigger_id=trigger_id,
+        cta_type=cta_type,
+    )
     if overlay_allowed and overlay_text:
         s9 = f"On-screen text is permitted for this block only: '{_clean(overlay_text)}'. No other captions, subtitles, price text, or sticker text."
     else:

@@ -172,6 +172,34 @@ def test_fragrance_family_injects_scent_specific_visual_focus():
     assert "scent-led confidence" in text.lower() or "scent-confidence" in text.lower()
 
 
+def test_section4_and_section8_follow_cta_payoff_logic():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-frag-cta-visual",
+            "name": "SZINDORE PERFUME",
+            "category": "Fragrance",
+            "trigger_id": "CONFIDENCE_01",
+            "copywriting_angle": "Confidence-led scent appeal and everyday freshness",
+        },
+        copy={
+            "hook": "Weh, bau dia terus sedap.",
+            "subhook": "Sekali pandang dah nampak premium.",
+            "cta": "Save dulu kalau belum grab.",
+            "cta_type": "save_for_later",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
+    assert "bookmark-worthy end hold" in s4
+    assert "bookmark-worthy end hold" in s8
+
+
 def test_ingredients_requires_role_map_and_normalizes_missing_style():
     with pytest.raises(ValueError, match="INGREDIENTS_ASSET_ROLE_MAP_INCOMPLETE"):
         _compile(mode="INGREDIENTS")
