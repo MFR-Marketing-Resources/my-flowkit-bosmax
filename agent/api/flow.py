@@ -1202,83 +1202,94 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         await _fail_manual_request(
             request_id, "API_LANE_REJECTED", "manual job has no prompt", "ERR_PROMPT_REQUIRED")
 
-    refs = []
-    if isinstance(start_asset, dict):
-        # Only a REAL Flow media id (bare UUID) may be referenced directly; composite
-        # BOSMAX asset ids (product-image:<uuid>:start_frame) are ignored here and the
-        # asset flows through the local-file upload path instead.
-        media_id = _extract_flow_media_id(start_asset)
-        local_path = start_asset.get("localFilePath") or start_asset.get("local_file_path")
-        if not media_id and not local_path:
-            # Remote-URL-only package asset (the REAL frontend default: mediaId null,
-            # localFilePath "", only downloadUrl) — materialize it now so the API
-            # upload below has a file (live: manual_259f0ab1 fail-closed here).
-            remote_url = _asset_payload_remote_url(start_asset)
-            if remote_url:
-                try:
-                    materialized = await _materialize_remote_url_to_staging(
-                        str(remote_url),
-                        _asset_payload_file_name(start_asset, "start.png"))
-                    local_path = materialized["local_file_path"]
-                    await crud.add_stage_event(
-                        request_id, "API_START_ASSET_MATERIALIZED", "WAITING_FLOW",
-                        f"source_type=remote_url local={local_path}", "backend")
-                except Exception as exc:  # noqa: BLE001 — fail closed with the true cause
-                    await _fail_manual_request(
-                        request_id, "API_START_ASSET_MATERIALIZE_FAILED",
-                        f"cannot download start asset url: {exc}",
-                        "ERR_START_MATERIALIZE_FAILED")
+    async def _resolve_asset(asset: dict, slot: str):
+        """Resolve ONE dashboard asset (startAsset or refs.*) to a LIVE Flow media id.
+        Priority: valid UUID media id (validated pre-credits, self-heals if stale) →
+        local file upload → remote downloadUrl materialize + upload. Fails closed with
+        a slot-specific honest code; the I2V/IMG refs get the exact same guarantees the
+        F2V start asset earned live (manual_259f0ab1 / manual_8ea932a1)."""
+        token = re.sub(r"[^A-Z0-9]+", "_", slot.upper()).strip("_")
+        media_id = _extract_flow_media_id(asset)
+        local_path = asset.get("localFilePath") or asset.get("local_file_path")
         if media_id:
-            # Validate BEFORE burning credits: a stale package media id (deleted
-            # project) still gets APPROVED by the Flow agent but the render dies
-            # server-side with no output (live: manual_8ea932a1 / manual_af279591
-            # both fired on 404 media dcf0b2a3 — 2×10 credits, zero video).
             check = await client.get_media(str(media_id))
             check_status = check.get("status") if isinstance(check, dict) else None
             media_alive = bool(
                 isinstance(check, dict) and not check.get("error")
                 and (check_status is None or (isinstance(check_status, int) and check_status < 400)))
             if media_alive:
-                refs = [str(media_id)]
                 await crud.add_stage_event(
-                    request_id, "API_START_ASSET_RESOLVED", "WAITING_FLOW",
+                    request_id, f"API_{token}_ASSET_RESOLVED", "WAITING_FLOW",
                     f"source_type=existing_flow_media media_id={media_id}", "backend")
-            elif local_path:
-                await crud.add_stage_event(
-                    request_id, "API_START_ASSET_STALE", "WAITING_FLOW",
-                    f"media_id={media_id} is dead (status={check_status}); "
-                    f"self-healing via API re-upload of local file", "backend")
-                media_id = None  # fall through to the local-file upload below
-            else:
-                await _fail_manual_request(
-                    request_id, "API_START_ASSET_STALE",
-                    f"start media {media_id} no longer exists on Flow (status={check_status}) "
-                    f"and no local file is available — re-upload the product image",
-                    "ERR_START_MEDIA_NOT_FOUND")
-        if not refs:
-            if local_path:
+                return str(media_id)
+            await crud.add_stage_event(
+                request_id, f"API_{token}_ASSET_STALE", "WAITING_FLOW",
+                f"media_id={media_id} is dead (status={check_status}); "
+                f"self-healing via re-upload", "backend")
+        if not local_path:
+            remote_url = _asset_payload_remote_url(asset)
+            if remote_url:
                 try:
-                    with open(local_path, "rb") as f:
-                        image_bytes = f.read()
-                except OSError as exc:
+                    materialized = await _materialize_remote_url_to_staging(
+                        str(remote_url), _asset_payload_file_name(asset, f"{slot}.png"))
+                    local_path = materialized["local_file_path"]
+                    await crud.add_stage_event(
+                        request_id, f"API_{token}_ASSET_MATERIALIZED", "WAITING_FLOW",
+                        f"source_type=remote_url local={local_path}", "backend")
+                except Exception as exc:  # noqa: BLE001 — fail closed with the true cause
                     await _fail_manual_request(
-                        request_id, "API_START_ASSET_UPLOAD_FAILED",
-                        f"cannot read start asset: {exc}", "ERR_START_UPLOAD_API_FAILED")
-                b64 = base64.b64encode(image_bytes).decode()
-                mime = mimetypes.guess_type(str(local_path))[0] or "image/png"
-                up = await client.upload_image(
-                    b64, mime_type=mime, project_id="",
-                    file_name=os.path.basename(str(local_path)))
-                media_id = up.get("_mediaId") if isinstance(up, dict) else None
-                if not media_id:
-                    await _fail_manual_request(
-                        request_id, "API_START_ASSET_UPLOAD_FAILED",
-                        f"upload_image returned no media id: {str(up)[:300]}",
-                        "ERR_START_UPLOAD_API_FAILED")
-                refs = [str(media_id)]
-                await crud.add_stage_event(
-                    request_id, "API_START_ASSET_UPLOADED", "WAITING_FLOW",
-                    f"source_type=api_upload media_id={media_id}", "backend")
+                        request_id, f"API_{token}_ASSET_MATERIALIZE_FAILED",
+                        f"cannot download {slot} asset url: {exc}",
+                        f"ERR_{token}_MATERIALIZE_FAILED")
+        if not local_path:
+            await _fail_manual_request(
+                request_id, f"API_{token}_ASSET_STALE",
+                f"{slot} asset has no live media id, no local file and no remote url — "
+                f"re-attach the image",
+                f"ERR_{token}_MEDIA_NOT_FOUND")
+        try:
+            with open(local_path, "rb") as f:
+                image_bytes = f.read()
+        except OSError as exc:
+            await _fail_manual_request(
+                request_id, f"API_{token}_ASSET_UPLOAD_FAILED",
+                f"cannot read {slot} asset: {exc}", f"ERR_{token}_UPLOAD_API_FAILED")
+        b64 = base64.b64encode(image_bytes).decode()
+        mime = mimetypes.guess_type(str(local_path))[0] or "image/png"
+        up = await client.upload_image(
+            b64, mime_type=mime, project_id="",
+            file_name=os.path.basename(str(local_path)))
+        uploaded_id = up.get("_mediaId") if isinstance(up, dict) else None
+        if not uploaded_id:
+            await _fail_manual_request(
+                request_id, f"API_{token}_ASSET_UPLOAD_FAILED",
+                f"upload_image returned no media id: {str(up)[:300]}",
+                f"ERR_{token}_UPLOAD_API_FAILED")
+        await crud.add_stage_event(
+            request_id, f"API_{token}_ASSET_UPLOADED", "WAITING_FLOW",
+            f"source_type=api_upload media_id={uploaded_id}", "backend")
+        return str(uploaded_id)
+
+    # Collect EVERY image the dashboard sent: F2V uses startAsset; I2V/IMG send
+    # refs.{subjectAsset,sceneAsset,styleAsset} (previously DROPPED here — I2V died
+    # ERR_START_ASSET_REQUIRED and IMG silently ignored its reference images).
+    slot_assets = []
+    if isinstance(start_asset, dict) and start_asset:
+        slot_assets.append(("Start", start_asset))
+    refs_payload = body.get("refs")
+    if isinstance(refs_payload, dict):
+        for ref_key, slot_label in (
+            ("subjectAsset", "Subject"), ("sceneAsset", "Scene"),
+            ("styleAsset", "Style"), ("imageAsset", "Image"),
+        ):
+            ref_asset = refs_payload.get(ref_key)
+            if isinstance(ref_asset, dict) and ref_asset:
+                slot_assets.append((slot_label, ref_asset))
+    refs = []
+    for slot_label, asset in slot_assets:
+        resolved = await _resolve_asset(asset, slot_label)
+        if resolved and resolved not in refs:
+            refs.append(resolved)
 
     if mode in ("I2V", "F2V") and not refs:
         await _fail_manual_request(
@@ -1326,10 +1337,26 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 pass
             await asyncio.sleep(5)
 
+    # The dashboard modules send `aspectRatio` (IMG) or `orientation` (T2V/I2V/F2V),
+    # not `aspect` — honour all three (previously everything silently became 9:16).
+    aspect = str(body.get("aspect") or body.get("aspectRatio") or "").strip()
+    if aspect not in ("9:16", "16:9"):
+        aspect = ("16:9" if str(body.get("orientation") or "").strip().upper() == "HORIZONTAL"
+                  else "9:16")
+    # Model passthrough: the dashboard sends the ui_label ("Veo 3.1 - Lite");
+    # resolve() accepts it. An unknown label falls back to the default (Lite).
+    model_key = None
+    if body.get("model"):
+        try:
+            from agent.services import video_models as _vm
+            model_key = _vm.resolve(body["model"])["key"]
+        except ValueError:
+            model_key = None
+
     res = await _mv.start_generate(
         mode, prompt, project_id=created_project_id,
         image_media_ids=refs or None,
-        aspect=str(body.get("aspect") or "9:16"), tier=tier)
+        aspect=aspect, tier=tier, model=model_key)
     if not isinstance(res, dict) or not res.get("job_id"):
         code = str((res or {}).get("error") or "VIDEO_JOB_IN_FLIGHT")
         await _fail_manual_request(
