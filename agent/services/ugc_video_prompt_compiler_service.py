@@ -25,6 +25,15 @@ COMPILER_VERSION = "ugc_video_prompt_compiler_v1"
 SUPPORTED_MODES = {"T2V", "F2V", "I2V", "IMG"}
 
 
+from agent.services import canonical_prompt_compiler as _canonical
+from agent.services import copy_landbank_service as _landbank
+
+
+# mode → canonical source mode (ADR-008). F2V's live intake is product-only
+# anchor = HYBRID; explicit FRAMES/INGREDIENTS may be passed via source_mode.
+_SOURCE_MODE_BY_MODE = {"F2V": "HYBRID", "T2V": "T2V", "I2V": "INGREDIENTS", "IMG": "IMAGES"}
+
+
 def _clean(value: Any) -> str:
     return str(value or "").strip()
 
@@ -729,7 +738,7 @@ def _normalize_blocks(
             }
         ]
     normalized: list[dict[str, Any]] = []
-    source_blocks = list(blocks or [])[:2]
+    source_blocks = list(blocks or [])  # ADR-008: workbook allows 1-7 blocks; no artificial cap
     if not source_blocks:
         source_blocks = [
             {"block_index": 1, "duration_seconds": duration_seconds},
@@ -753,7 +762,7 @@ def _normalize_blocks(
                 "duration_seconds": validate_duration_seconds(duration_seconds),
             }
         )
-    return normalized[:2]
+    return normalized
 
 
 def compile_ugc_video_prompt(
@@ -769,11 +778,15 @@ def compile_ugc_video_prompt(
     duration_seconds: int = 8,
     blocks: list[dict[str, Any]] | None = None,
     engine_target: str | None = None,
-    overlay_enabled: bool = True,
+    overlay_enabled: bool = False,  # NO_OVERLAY law (retained authority) — default off
     dialogue_enabled: bool = True,
     claim_safe_rewrite: str | None = None,
     safe_hook_angles: list[str] | None = None,
     safe_cta_angles: list[str] | None = None,
+    source_mode: str | None = None,
+    avatar_id: str | None = None,
+    copy_intelligence: dict[str, Any] | None = None,
+    wps_mode: str = "SAFE",
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "").strip().upper()
     if normalized_mode not in SUPPORTED_MODES:
@@ -803,31 +816,99 @@ def compile_ugc_video_prompt(
         duration_seconds=duration_seconds,
         blocks=blocks,
     )
+    # ── ADR-008: THE canonical compiler renders every final engine-facing block.
+    resolved_source_mode = (
+        str(source_mode).strip().upper() if source_mode
+        else _SOURCE_MODE_BY_MODE.get(normalized_mode, "T2V")
+    )
+    # Copy intelligence resolution order: explicit > product landbank (secondary
+    # reference) > claim-safe package angles. Instruction-prose fallbacks from
+    # safe_hook/safe_cta must NEVER become spoken dialogue.
+    resolved_copy = dict(copy_intelligence or {})
+    if not resolved_copy:
+        resolved_copy = _landbank.lookup(str(product.get("id") or "")) or {}
+    if not resolved_copy.get("hook") and safe_hook_angles:
+        resolved_copy["hook"] = _clean(safe_hook_angles[0])
+    if not resolved_copy.get("cta") and safe_cta_angles:
+        resolved_copy["cta"] = _clean(safe_cta_angles[0])
+    if not resolved_copy.get("usps") and resolved_claim_safe_rewrite:
+        import re as _re
+        sentences = [x.strip() for x in _re.split(r"(?<=[.!?])\s+", resolved_claim_safe_rewrite) if x.strip()]
+        resolved_copy["usps"] = sentences[:3]
+    resolved_presenter = None
+    if resolved_source_mode in ("HYBRID", "T2V"):
+        from agent.services import avatar_registry as _avatars
+        resolved_presenter = _avatars.resolve_presenter(
+            avatar_id,
+            usage_context=_clean(product.get("category")),
+            seed=_clean(product.get("id") or product.get("name") or "bosmax"),
+        )
+    _ingredient_roles = (
+        {"PRODUCT_REFERENCE": True, "AVATAR_REFERENCE": True}
+        if resolved_source_mode == "INGREDIENTS" else None
+    )
     compiled_blocks: list[dict[str, Any]] = []
     continuation_lineage: list[dict[str, Any]] = []
+    total_blocks = len(normalized_blocks)
     for block in normalized_blocks:
         previous_block_id = (
             compiled_blocks[-1]["block_id"]
             if block["block_role"] == "CONTINUATION" and compiled_blocks
             else None
         )
-        compiled = _compile_block(
-            product=product,
-            mode=normalized_mode,
+        _shot_policy = get_shot_policy(block["duration_seconds"])
+        _product_title = _title(product)
+        _blueprint = [
+            line.split(": ", 1)[-1].replace("visible creator", "presenter")
+            for line in _shot_blueprint(
+                _shot_policy["recommended"],
+                mode=normalized_mode,
+                block_role=block["block_role"],
+                product_name=_product_title,
+                product_name_clean=_clean_name_for_dialog(_product_title),
+            )
+        ]
+        _camera = _camera_profile(resolved_camera_style)
+        rendered = _canonical.render_block(
+            source_mode=resolved_source_mode,
+            engine="GOOGLE_FLOW",
             block_index=block["block_index"],
-            block_role=block["block_role"],
-            duration_seconds=block["duration_seconds"],
-            camera_style=resolved_camera_style,
-            character_presence=resolved_character_presence,
-            creator_persona=resolved_creator_persona,
+            total_blocks=total_blocks,
+            block_seconds=block["duration_seconds"],
+            product=product,
+            scene_context=_clean(approved_package.get("scene_context")),
+            copy=resolved_copy,
+            presenter_profile=resolved_presenter,
+            asset_role_map=_ingredient_roles,
             target_language=resolved_target_language,
-            claim_safe_rewrite=resolved_claim_safe_rewrite,
-            safe_hook=safe_hook,
-            safe_cta=safe_cta,
-            dialogue_enabled=dialogue_enabled,
-            overlay_enabled=overlay_enabled,
-            continuation_from_block_id=previous_block_id,
+            wps_mode=wps_mode,
+            overlay_allowed=bool(overlay_enabled),
+            overlay_text=_compact_overlay(resolved_copy.get("cta") or "") if overlay_enabled else None,
+            camera_notes=f"{_camera['style_line']} {_camera['lens_line']}",
+            handling_notes=_handling_line(product, normalized_mode),
+            shot_plan=_blueprint,
         )
+        shots = [
+            x.split(": ", 1)[-1]
+            for x in rendered["sections"]["SECTION 4 - VISUAL STORY"].splitlines()
+            if x.strip()
+        ]
+        compiled = {
+            "block_id": f"block_{block['block_index']}",
+            "block_index": block["block_index"],
+            "block_role": block["block_role"],
+            "duration_seconds": block["duration_seconds"],
+            "shot_count": len(shots),
+            "dialogue_word_budget": rendered["dialogue_word_budget"] if dialogue_enabled else 0,
+            "continuation_from_block_id": previous_block_id,
+            "compiled_prompt_text": (
+                f"[canonical:{resolved_source_mode} block {block['block_index']}/{total_blocks} "
+                f"budget={rendered['dialogue_word_budget']} words]\n"
+                + rendered["engine_prompt_text"]
+            ),
+            "engine_prompt_text": rendered["engine_prompt_text"],
+            "shot_plan": shots,
+        }
         compiled_blocks.append(compiled)
         if previous_block_id:
             continuation_lineage.append(

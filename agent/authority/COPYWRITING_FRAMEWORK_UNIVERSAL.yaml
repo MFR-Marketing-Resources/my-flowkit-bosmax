@@ -1,0 +1,520 @@
+metadata:
+  file_id: COPYWRITING_FRAMEWORK_UNIVERSAL
+  schema_version: 1
+  role: universal_copywriting_generation_framework
+  purpose: >
+    Fail-closed framework for generating standardized copywriting authority rows
+    when a product does not yet have a dedicated retained workbook library.
+  output_target: COPY_MASTER_authority_shape
+  canonical_workbook_shape_reference: COPYWRITING_MASTER_MWTCB_REPAIRED.xlsx
+  retained_authority_note: >
+    This file is the universal generation brain, not a product-specific copy bank.
+  supported_formulas:
+    - PAS
+    - AIDA
+    - HSO
+    - BAB
+    - PASTOR
+    - PESTA
+
+runtime_resolution_order:
+  authority_path:
+    - product_specific_copy_master
+    - universal_copywriting_framework
+  product_specific_sources:
+    - COPYWRITING_MASTER_BOSMAX.xlsx
+    - COPYWRITING_MASTER_MWTCB_REPAIRED.xlsx
+  fail_closed_rules:
+    - If product_id exists in a retained copy master, use that workbook first.
+    - If product_id does not exist in any retained copy master, switch to framework generation mode.
+    - Do not hallucinate a product-specific workbook that does not exist.
+    - Do not mix two product copy banks into one output.
+
+video_continuation_copy_rules:
+  continuation_law:
+    - Part 2 closes the existing idea, not a new sales angle.
+    - Part 2 CTA must be short, speakable, and direct on-camera Malay.
+    - Avoid long multi-clause CTA.
+    - No new concept in Part 2.
+    - Dialogue must not require product-only cutaway.
+    - Dialogue must not be framed as voice-over, narration, audio-only line, or off-camera speech.
+  target_ranges:
+    - engine: GROK
+      duration_seconds: 6
+      language: Malay
+      target_words: 11-13
+      note: Soft continuation target only; retained WPS minimums still govern pass/fail.
+    - engine: GOOGLE_FLOW
+      duration_seconds: 8
+      language: Malay
+      target_words: 14-18
+      note: Continuation target stays inside retained WPS minimums.
+  banned_vo_trigger_phrases:
+    - voice-over
+    - voiceover
+    - narration
+    - audio says
+    - CTA is heard
+    - off-camera speech
+    - audio-only dialogue
+
+framework_generation_mode:
+  trigger_conditions:
+    - unknown_product_id
+    - missing_product_copy_bank
+    - explicit_operator_request_to_generate_new_copy_bank
+  operator_minimum_questions:
+    - What is the product and category?
+    - Who is the primary buyer?
+    - What is the main pain point?
+    - What is the main benefit or USP?
+    - What language and tone are required?
+    - Is the product sensitive, stealth-sensitive, or non-sensitive?
+  minimum_input_contract:
+    required_fields:
+      - product_name
+      - product_category
+      - target_language
+      - primary_buyer
+      - core_problem
+      - primary_usp
+    optional_fields:
+      - secondary_usp
+      - tertiary_usp
+      - price_anchor
+      - packaging_notes
+      - scene_context
+      - tone_preference
+      - compliance_notes
+      - customer_objections
+
+product_classification_engine:
+  top_level_classes:
+    - direct_non_sensitive
+    - wrapped_sensitive
+    - stealth_sensitive
+    - regulated_health_adjacent
+    - beauty_personal_care
+    - fragrance
+    - home_living
+    - food_beverage
+    - fashion_accessories
+  sensitive_routing_rules:
+    - If the buyer language depends on innuendo, ego pressure, maruah, or wrapped metaphor, route to stealth_sensitive.
+    - If the product can be sold directly without metaphor or wrapped language, route to direct_non_sensitive.
+    - If the product has medical-risk or outcome-risk wording, route to regulated_health_adjacent and enforce harder validation.
+    - Male perfume example normally routes to fragrance unless the operator explicitly wants a stealth seduction lane.
+
+customer_avatar_builder:
+  dimensions:
+    - age_band
+    - life_stage
+    - gender_context
+    - spending_style
+    - urgency_level
+    - self_image_driver
+    - embarrassment_risk
+    - purchase_context
+  buyer_modes:
+    value_hunter:
+      pain_bias:
+        - price_sensitive
+        - wants_fast_justification
+    appearance_optimizer:
+      pain_bias:
+        - self_image
+        - confidence
+        - presentation
+    practical_standby_buyer:
+      pain_bias:
+        - convenience
+        - compactness
+        - easy_access
+    stealth_problem_solver:
+      pain_bias:
+        - privacy
+        - wrapped_language
+        - ego_protection
+  output_fields:
+    - avatar_summary
+    - pain_stack
+    - trigger_stack
+    - buying_context
+
+pain_point_mining_engine:
+  discovery_order:
+    - functional_problem
+    - emotional_problem
+    - social_problem
+    - situational_problem
+    - urgency_problem
+  prompting_logic:
+    - Ask what goes wrong if the buyer does nothing.
+    - Ask what frustration repeats in daily life.
+    - Ask what embarrassment, inconvenience, or lost opportunity exists.
+    - Ask what the buyer wants to feel after using the product.
+  pain_output_fields:
+    - pain_point_primary
+    - pain_point_secondary
+    - emotional_trigger
+    - situational_trigger
+
+trigger_library:
+  non_sensitive_triggers:
+    - convenience
+    - speed
+    - compactness
+    - premium_look
+    - giftability
+    - ease_of_use
+    - habit_fit
+    - price_value
+  stealth_sensitive_triggers:
+    - ego
+    - maruah
+    - self_image
+    - readiness
+    - comparison_pressure
+    - secrecy
+    - dominance_fantasy
+    - confidence_recovery
+  regulated_health_adjacent_triggers:
+    - comfort
+    - routine_support
+    - practical_relief_language_without_certainty
+
+angle_generation_engine:
+  mandatory_angle_dimensions:
+    - pain_angle
+    - aspiration_angle
+    - context_angle
+    - objection_angle
+    - urgency_angle
+  category_examples:
+    fragrance:
+      angle_families:
+        - first_impression
+        - lasting_presence
+        - premium_aura
+        - office_clean_confidence
+        - date_night_presence
+        - giftable_signature
+    beauty_personal_care:
+      angle_families:
+        - routine_upgrade
+        - polished_finish
+        - portable_touch_up
+        - confidence_boost
+    wrapped_sensitive:
+      angle_families:
+        - subtle_readiness
+        - private_confidence
+        - ego_recovery
+        - maruah_pressure
+    stealth_sensitive:
+      angle_families:
+        - stealth_masculinity
+        - wrapped_readiness
+        - maruah_and_ego
+        - compact_standby
+        - symbolic_power
+  generation_rules:
+    - Build at least one angle from each relevant dimension.
+    - Do not generate duplicate angles with different labels but identical logic.
+    - Angle names must be human-readable and workbook-safe.
+
+formula_library:
+  PAS:
+    structure:
+      - problem
+      - agitate
+      - solution
+    best_for:
+      - frustration
+      - urgency
+      - pain_relief_positioning
+  AIDA:
+    structure:
+      - attention
+      - interest
+      - desire
+      - action
+    best_for:
+      - product_discovery
+      - clean_conversion
+      - broad_market_entries
+  HSO:
+    structure:
+      - hook
+      - story
+      - offer
+    best_for:
+      - UGC
+      - short_video_dialogue
+      - emotional_openers
+  BAB:
+    structure:
+      - before
+      - after
+      - bridge
+    best_for:
+      - transformation
+      - routine_shift
+  PASTOR:
+    structure:
+      - problem
+      - amplify
+      - story
+      - transformation
+      - offer
+      - response
+    best_for:
+      - more persuasive long-form variants
+  PESTA:
+    structure:
+      - pain
+      - emotion
+      - solution
+      - transformation
+      - action
+    best_for:
+      - high-emotion social copy
+      - stealth pressure lanes
+  selection_rules:
+    - Use PAS, HSO, or AIDA first for short-form video copy.
+    - Use BAB, PASTOR, or PESTA when the operator wants more dramatic narrative lift.
+    - Hook-first surfaces still require formula discipline after the hook.
+
+hook_engine:
+  first_three_seconds_law:
+    - If the hook does not seize attention immediately, the whole short-form ad can fail.
+    - Hooks must be treated as the highest-priority conversion surface.
+  hook_types:
+    - pain_shock
+    - identity_challenge
+    - curiosity_gap
+    - awkward_truth
+    - convenience_snap
+    - premium_signal
+    - social_comparison
+  build_rules:
+    - Keep hook short and fast to decode.
+    - Hook must match buyer pain or aspiration, not random cleverness.
+    - If the product is stealth-sensitive, the hook may pressure ego or maruah through wrapped metaphor.
+    - If the product is non-sensitive, prefer direct practical tension, clean benefit intrigue, or premium signal.
+  fail_conditions:
+    - generic_hook
+    - no_pain_or_desire_signal
+    - overlong_hook
+    - internal_marker_leak
+
+subhook_engine:
+  job_to_be_done:
+    - contextualize the hook
+    - deepen the scenario
+    - prepare the USP transition
+  rules:
+    - Subhook should support the hook, not repeat it.
+    - It should clarify the buyer situation, not become a second CTA.
+    - In stealth-sensitive lanes, subhook may continue the wrapped metaphor or hidden pressure line.
+
+usp_engine:
+  required_outputs:
+    - usp1
+    - usp2
+    - usp3
+  usp_dimensions:
+    - functional_benefit
+    - emotional_benefit
+    - practical_usage_benefit
+    - visual_or_packaging_benefit
+    - convenience_or_price_benefit
+  build_rules:
+    - USP lines must stay product-relevant.
+    - Do not invent medical certainty or impossible outcomes.
+    - At least one USP should connect directly to buyer context.
+
+cta_engine:
+  CTA_types:
+    - direct_checkout
+    - standby_now
+    - add_to_kit
+    - save_for_later
+    - comment_signal
+    - private_action
+  rules:
+    - CTA must match the tone of the angle.
+    - Soft products can use gentle CTA.
+    - Ego-pressure or stealth-sensitive lanes may use firmer CTA, but keep it workbook-safe.
+    - CTA must not introduce banned claims.
+
+sensitive_product_mode:
+  direct_mode:
+    allowed_character:
+      - practical
+      - premium
+      - benefit_led
+  stealth_mode:
+    allowed_character:
+      - wrapped
+      - suggestive
+      - metaphorical
+      - ego_aware
+      - masculine_teasing_when_relevant
+    forbidden_character:
+      - explicit_sexual_language
+      - anatomical_directness
+      - raw_pornographic_phrasing
+  regulated_health_adjacent_mode:
+    allowed_character:
+      - comfort
+      - routine_support
+      - careful_non_certainty_language
+    banned_patterns:
+      - cure
+      - guaranteed_result
+      - clinically_proven_without_source
+      - no_side_effects
+
+metaphor_silo_generation:
+  purpose: >
+    Generate wrapped vocab clusters for sensitive or stealth-sensitive products
+    without exposing direct banned wording.
+  silo_types:
+    - agri_kebun
+    - mekanikal_enjin
+    - tiang_struktur
+    - tenaga_stamina
+    - premium_presence
+  rules:
+    - A silo is a wrapped metaphor clothing system, not random slang.
+    - Each silo must have grouped vocabulary, emotional logic, and angle suitability.
+    - Do not mix silo labels carelessly.
+    - If two silos are intentionally mixed, mark that explicitly in angle naming or usage tags.
+  example_vocab:
+    agri_kebun:
+      - cangkul
+      - lubang
+      - pokok
+      - hentak
+      - baja
+      - kebun
+      - subur
+      - pacak
+    mekanikal_enjin:
+      - piston
+      - gearbox
+      - semput
+      - overhaul
+      - tork
+      - mounting
+      - pickup
+    tiang_struktur:
+      - tiang
+      - tegak
+      - patah
+      - kukuh
+      - pacak
+
+validation_rules:
+  banned_claims:
+    - cure
+    - guarantee
+    - 100%
+    - miracle
+    - clinically proven
+    - doctor recommended
+    - no side effects
+    - instant cure
+    - instant relief
+  explicit_sensitive_bans:
+    - zakar
+    - penis
+    - seks
+    - seksual
+    - ereksi
+    - mati pucuk
+  structural_bans:
+    - unresolved_placeholders
+    - internal_registry_tokens
+    - bracketed_performance_tags
+    - raw_system_markers
+  quality_gates:
+    - no_duplicate_copy_id
+    - no_empty_hook
+    - no_empty_cta
+    - no_formula_placeholder_leak
+    - no_silo_label_mismatch
+  fail_closed:
+    - If hook is weak, generic, or contextless, regenerate.
+    - If copy line fails compliance, downgrade to review or regenerate.
+    - If product data is too thin, ask the operator for more inputs instead of hallucinating.
+
+scoring_rules:
+  score_dimensions:
+    - hook_strength
+    - pain_relevance
+    - buyer_fit
+    - usp_clarity
+    - cta_force
+    - compliance_safety
+    - metaphor_coherence
+  preferred_export_policy:
+    - approved if high relevance and no compliance flags
+    - review if metaphor is strong but compliance or coherence needs manual check
+    - reject if banned claims or explicit wording appear
+
+output_mapping_to_copy_master:
+  workbook_sheet: COPY_MASTER
+  required_columns:
+    - copy_id
+    - product
+    - product_id
+    - angle_id
+    - angle
+    - hook_id
+    - hook
+    - subhook
+    - usp1
+    - usp2
+    - usp3
+    - cta
+    - status
+    - notes
+    - language
+    - usage_tags
+  id_rules:
+    angle_id_pattern: PRODUCTCODE_ANG_###
+    hook_id_pattern: PRODUCTCODE_HOOK_###
+    copy_id_pattern: PRODUCTCODE__ANG###__HOOK###
+  status_policy:
+    approved:
+      - no_validation_flags
+      - hook_strength_good
+      - formula_complete
+    review:
+      - metaphor_needs_human_check
+      - regulated_claim_risk
+      - unusual_silo_mix
+    reject:
+      - banned_phrase_detected
+      - explicit_sensitive_wording
+      - broken_structure
+
+operator_handoff_policy:
+  if_product_not_in_library:
+    - Ask category and buyer context first.
+    - Build angles before building rows.
+    - Build hook candidates before full dialogue.
+    - Present or save copy rows in standard workbook authority shape.
+  if_product_is_sensitive:
+    - Ask whether the lane should be direct or stealth-wrapped.
+    - Activate metaphor_silo_generation before hook generation.
+  if_product_is_perfume:
+    suggested_starting_angles:
+      - first_impression
+      - premium_presence
+      - office_confidence
+      - date_night_presence
+      - compact_carry
+      - signature_aura

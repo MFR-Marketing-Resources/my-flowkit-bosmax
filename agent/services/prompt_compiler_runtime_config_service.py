@@ -148,7 +148,7 @@ def get_runtime_config() -> dict[str, Any]:
             "character_presence": DEFAULT_CHARACTER_PRESENCE,
             "target_language": DEFAULT_TARGET_LANGUAGE,
             "creator_persona": DEFAULT_CREATOR_PERSONA,
-            "overlay_enabled": True,
+            "overlay_enabled": False,  # NO_OVERLAY law (retained authority, ADR-008): default OFF
             "dialogue_enabled": True,
             "block_2_duration_seconds": DEFAULT_BLOCK_DURATION_SECONDS,
         },

@@ -28,7 +28,9 @@ def test_single_mode_uses_one_block_and_deterministic_shot_policy():
 
     assert len(result["prompt_blocks"]) == 1
     assert result["prompt_blocks"][0]["shot_count"] == 3
-    assert result["dialogue_word_budget_per_block"] == [20]
+    # ADR-008: dialogue budget comes from the retained WPS workbook (Malay
+    # SafeWPS 2.4 x 12s = 29 words), not the legacy body_wps=1.7 policy.
+    assert result["dialogue_word_budget_per_block"] == [29]
 
 
 def test_extend_mode_allows_different_durations_per_block():

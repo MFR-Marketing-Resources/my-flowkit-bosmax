@@ -46,3 +46,6 @@ data/product_registration/drafts/
 # Local tooling / debug artifacts (machine-specific; do not commit)
 .mcp.json
 .playwright-mcp/
+
+# Copywriting landbank uploads (runtime content, ADR-008)
+data/copywriting_landbank/*.csv
