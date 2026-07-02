@@ -22,3 +22,10 @@ This document outlines the step-by-step workflow for the operator to approve man
 
 5. **Resolve Image Blockers**
    - Place valid real product images for the manual products under `data/products/images/` before triggering production prompt approvals.
+
+## Group-Based Review Strategy
+
+To reduce mapping and copywriting errors, operators should review products group-by-group:
+1. Prioritize safer categories (Accessories, Stationery) to establish baseline workflows.
+2. Group-level context helps identify inconsistent copywriting rewrites (e.g. comparing similar fashion or home products).
+3. Keep sensitive/health groups separated to ensure close inspection of each claim rewrite.
