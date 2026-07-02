@@ -346,10 +346,21 @@ def _normalize_explicit_family(product: dict[str, Any]) -> str:
 
 
 def _infer_product_family(product: dict[str, Any], copy: dict | None = None) -> str:
+    haystack = _product_family_haystack(product, copy)
+    
+    # 1. Medicated / traditional oils override -> must map to wellness
+    if any(token in haystack for token in ("minyak", "herbal oil", "medicated oil", "traditional oil", "minyak angin", "minyak urut", "medicated")):
+        return "wellness"
+        
+    # 2. Milk / Milk powder override -> must map to food_beverage (unless skincare milk bath etc.)
+    if ("milk" in haystack or "susu" in haystack) and not any(
+        token in haystack for token in ("lotion", "cream", "wash", "soap", "bath", "shampoo", "cleanser", "moisturizer", "oil")
+    ):
+        return "food_beverage"
+
     explicit = _normalize_explicit_family(product)
     if explicit:
         return explicit
-    haystack = _product_family_haystack(product, copy)
     if any(token in haystack for token in ("baby", "diaper", "wipes", "newborn", "parent")):
         return "baby_care"
     if any(token in haystack for token in ("supplement", "wellness", "vitamin", "health")):
@@ -369,6 +380,7 @@ def _infer_product_family(product: dict[str, Any], copy: dict | None = None) -> 
     if any(token in haystack for token in ("watch", "device", "gadget", "earbud", "electronics", "screen", "phone", "mobile", "usb", "charger", "cable", "mount", "holder", "magsafe", "adapter")):
         return "electronics"
     return "general"
+
 
 
 def _family_focus_terms(family: str) -> dict[str, str]:
@@ -443,7 +455,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "It lands like the kind of scent people remember.",
             },
             "visual_proof": "make the bottle, nozzle, and reflective finish read expensive before any spoken benefit lands",
-            "end_payoff": "a remembered-scent payoff rather than a generic beauty close",
+            "end_payoff": "a clean shot of the bottle showing the nozzle detail clearly centered with elegant perfume aesthetic",
         },
         "beauty_personal_care": {
             "dialogue_opening": {
@@ -459,7 +471,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "It feels like the kind of product people will repeat naturally.",
             },
             "visual_proof": "make the packaging and handling feel routine-ready, polished, and easy to repeat",
-            "end_payoff": "a repeatable beauty-routine payoff instead of a generic cosmetic ending",
+            "end_payoff": "a neat sink-side placement showing the brand name clearly with clean skincare context",
         },
         "laundry_care": {
             "dialogue_opening": {
@@ -475,7 +487,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "It feels like practical home stock that gets repurchased easily.",
             },
             "visual_proof": "make refill scale, cap logic, and pakaian-wangi utility read clearly before any claim wording tries to help",
-            "end_payoff": "a practical repeat-buy household payoff rather than a generic product close",
+            "end_payoff": "a clear pack shot of the refill showing the cap and wash benefits clearly with utility laundry context",
         },
         "household_care": {
             "dialogue_opening": {
@@ -491,7 +503,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "The home-use value reads clearly by the end.",
             },
             "visual_proof": "make grip logic, opening direction, and home-use practicality obvious in-frame",
-            "end_payoff": "a tidy household-utility payoff rather than a generic benefit ending",
+            "end_payoff": "a clean household shot showing the spray or storage container centered and organized in the domestic space",
         },
         "baby_care": {
             "dialogue_opening": {
@@ -507,7 +519,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "It feels like the kind of item parents keep on standby.",
             },
             "visual_proof": "make softness, pack integrity, and calm parent-trust handling read before any spoken reassurance",
-            "end_payoff": "a calm parent-confidence payoff rather than a generic soft-product ending",
+            "end_payoff": "a clean pack shot showing the brand label clearly with gentle parenting nursery context",
         },
         "food_beverage": {
             "dialogue_opening": {
@@ -523,7 +535,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "It feels like the kind of product people keep craving after seeing it.",
             },
             "visual_proof": "make appetite, serving temptation, and sealed-pack truth work together instead of relying on copy alone",
-            "end_payoff": "a crave-and-try payoff rather than a generic convenience ending",
+            "end_payoff": "a tempting serving presentation showing the texture and fresh food details clearly",
         },
         "fashion_apparel": {
             "dialogue_opening": {
@@ -539,7 +551,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "It lands like the kind of piece that makes the wearer feel put together.",
             },
             "visual_proof": "make fit, drape, and seam finish prove themselves through movement and silhouette",
-            "end_payoff": "a wear-it-right-now confidence payoff instead of a generic style ending",
+            "end_payoff": "a clear visual detail of the fabric fall and drape with styling movement in clean light",
         },
         "electronics": {
             "dialogue_opening": {
@@ -555,7 +567,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "It becomes obvious why the device is useful.",
             },
             "visual_proof": "make screen, controls, and profile shape create a feature-proof read instead of a generic gadget beauty shot",
-            "end_payoff": "a credible feature-utility payoff rather than a generic tech close",
+            "end_payoff": "a close-up detail of the device screen or ports showing utility features clearly",
         },
         "wellness": {
             "dialogue_opening": {
@@ -571,7 +583,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "It feels like something people can keep in a routine comfortably.",
             },
             "visual_proof": "make the bottle, dosage logic, and routine fit feel careful and measured rather than loud",
-            "end_payoff": "a careful trust-led routine payoff rather than a generic wellness promise",
+            "end_payoff": "a clean bottle shot showing dosage instructions clearly with measured wellness context",
         },
         "general": {
             "dialogue_opening": {
@@ -587,7 +599,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "It becomes easy to see why someone would try it.",
             },
             "visual_proof": "make product truth and usage context do the convincing work first",
-            "end_payoff": "a clear product-first payoff rather than a vague commercial ending",
+            "end_payoff": "a clean product shot centered, label readable, with balanced native-commercial context",
         },
     }
     return table.get(family, table["general"])
@@ -885,13 +897,13 @@ def _hook_needs_strategic_opening(copy: dict[str, Any], family: str) -> bool:
     strong_terms = {
         "fragrance": ("bau", "wangi", "spray", "perasan"),
         "beauty_personal_care": ("sinki", "routine", "pagi", "kemas", "sapuan"),
-        "baby_care": ("bayi", "parent", "wipes", "lampin", "tenang", "lembut"),
+        "baby_care": ("bayi", "parent", "wipes", "lampin", "tenang", "lembut", "diaper", "pants", "susu", "milk", "powder", "infant", "toddler", "anak"),
         "electronics": ("function", "spec", "screen", "charger", "port", "cable", "battery"),
         "fashion_apparel": ("fit", "jatuh", "pakai", "jadi", "drape", "kain"),
-        "wellness": ("routine", "percaya", "botol", "hype", "supplement"),
+        "wellness": ("routine", "percaya", "botol", "hype", "supplement", "minyak", "angin", "urut", "herba", "lenguh", "sakit", "kejang", "perut", "standby", "anak", "selesa", "leher", "dapur", "pinggang", "sendi", "bisa", "kebas", "sejuk", "kembung"),
         "laundry_care": ("refill", "detergent", "baju", "stok rumah", "basuh"),
         "household_care": ("praktical", "lipat", "susun", "ruang", "storage", "kotak"),
-        "food_beverage": ("lapar", "pedas", "sedap", "sambal", "rangup", "makan", "minum"),
+        "food_beverage": ("lapar", "pedas", "sedap", "sambal", "rangup", "makan", "minum", "susu", "milk", "powder", "kopi", "coffee", "teh", "tea", "cuba"),
     }
     if any(term in hook_text for term in strong_terms.get(family, ())):
         return False
@@ -1187,7 +1199,11 @@ def _formula_dialogue_clauses(
     )
     middle = [_strategic_middle_clause(_infer_angle_signal(copy, family), target_language)]
     cta_bridge = [_strategic_cta_bridge(copy.get("cta_type", ""), copy.get("cta", ""), target_language)]
-    family_opening = [_family_dialogue_clause(family, "opening", target_language)]
+    family_opening = (
+        [_family_dialogue_clause(family, "opening", target_language)]
+        if _hook_needs_strategic_opening(copy, family)
+        else []
+    )
     family_middle = [_family_dialogue_clause(family, "middle", target_language)]
     family_cta = [_family_dialogue_clause(family, "cta", target_language)]
     chosen_usps = _usp_slice(usps, block_index, total_blocks)
@@ -1531,7 +1547,7 @@ def _section_8_end_frame(
         return (
             f"{_family_end_frame_hold_phrase(family, visual_name)} while {story['closing']} carries the CTA landing. {_sentence_case(_mode_story_polish(mode)['closing'])}"
         )
-    t2v_mode_close = "The close must resolve as a believable social moment with product payoff, not as a creator-led hard sell tableau."
+    t2v_mode_close = "The close must resolve as a believable social moment with the product centered and the label readable, not as a creator-led hard sell tableau."
     if scene_native["closing"]:
         return (
             f"{_family_end_frame_hold_phrase(family, visual_name)} while {story['closing']} carries the closing line. "

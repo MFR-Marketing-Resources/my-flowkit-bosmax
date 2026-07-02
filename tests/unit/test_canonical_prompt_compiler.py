@@ -484,7 +484,7 @@ def test_electronics_family_clause_bank_strengthens_visual_proof_and_end_payoff(
     s4 = result["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"].lower()
     s8 = result["blocks"][0]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
     assert "feature-proof read" in s4
-    assert "credible feature-utility payoff" in s8
+    assert "close-up detail of the device screen" in s8
 
 
 def test_visual_story_and_end_frame_use_compressed_alias_for_long_product_names():
@@ -839,7 +839,7 @@ def test_t2v_section8_has_no_lowercase_sentence_stitching():
     result = _compile(mode="T2V", duration_seconds=16, scene_context="a bright lived-in bathroom counter at home")
     s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"]
     assert ". The close" in s8
-    assert "The close must resolve as a believable social moment with product payoff" in s8
+    assert "The close must resolve as a believable social moment with the product centered and the label readable" in s8
 
 
 def test_images_mode_single_still_under_same_authority():
@@ -867,7 +867,7 @@ def test_t2v_mode_polish_enforces_scene_first_native_persuasion():
     assert "scene-first persuasion only" in text
     assert "real moment already happening" in text
     assert "discovered inside the scene" in text
-    assert "believable social moment with product payoff" in text
+    assert "believable social moment with the product centered and the label readable" in text
 
 
 def test_sunscreen_does_not_false_positive_into_authority_trigger():
@@ -1141,3 +1141,71 @@ def test_legacy_entrypoint_delegates_and_uncaps_blocks():
         blocks=[{"duration_seconds": 8}] * 4,
     )
     assert len(multi["prompt_blocks"]) == 4, "the 2-block cap must be gone"
+
+
+def test_prompt_intel_audit_minyak_warisan_maps_to_wellness_not_beauty():
+    product = {
+        "id": "prod-minyak",
+        "name": "Minyak Warisan Tok Cap Burung",
+        "category": "Health & Personal Care",
+        "subcategory": "Traditional Herbal Oil",
+        "type": "Minyak Angin",
+        "bosmax_product_family": "BEAUTY_PERSONAL_CARE"
+    }
+    family = cpc._infer_product_family(product)
+    assert family == "wellness"
+
+
+def test_prompt_intel_audit_baby_milk_powder_maps_to_food_beverage_not_baby_care():
+    product = {
+        "id": "prod-milk",
+        "name": "Organic Baby Milk Powder Step 1 900g",
+        "category": "Baby Care",
+        "subcategory": "Diaper",
+        "type": "Pants",
+        "bosmax_product_family": "BABY_CARE"
+    }
+    family = cpc._infer_product_family(product)
+    assert family == "food_beverage"
+
+
+def test_prompt_intel_audit_strong_hook_omits_generic_filler():
+    product = {
+        "id": "prod-minyak",
+        "name": "Minyak Warisan Tok Cap Burung",
+        "category": "Health & Personal Care"
+    }
+    copy = {
+        "hook": "Anak melalak pukul 2 pagi baru kau kalut nak cari minyak?",
+        "subhook": "Minyak hijau cap merah ni simpan siap-siap dalam laci bilik tidur.",
+        "cta": "Tap beg kuning sekarang untuk standby.",
+        "formula_family": "HSO",
+    }
+    # Compile prompt set for a single block
+    res = cpc.compile_prompt_set(
+        source_mode="T2V",
+        engine="GOOGLE_FLOW",
+        duration_seconds=8,
+        product=product,
+        copy=copy,
+        target_language="BM_MS"
+    )
+    dialogue = res["blocks"][0]["dialogue"]
+    # Verify it does not contain generic filler like "Terus naik rasa yakin" or "Terus rasa routine tu lebih kemas"
+    assert "Terus naik rasa yakin" not in dialogue
+    assert "Terus rasa routine tu lebih kemas" not in dialogue
+    assert "Anak melalak" in dialogue
+
+
+def test_prompt_intel_audit_section8_payoff_contains_no_meta_wording():
+    # Test all family visual end payoffs do not contain abstract meta phrasings
+    families = ["fragrance", "beauty_personal_care", "laundry_care", "household_care", "baby_care", "food_beverage", "fashion_apparel", "electronics", "wellness", "general"]
+    for fam in families:
+        bank = cpc._family_clause_bank(fam)
+        payoff = bank["end_payoff"]
+        assert "payoff" not in payoff
+        assert "rather than a generic" not in payoff
+        assert "instead of a generic" not in payoff
+        assert "rather than a vague" not in payoff
+        assert "ending" not in payoff
+
