@@ -222,16 +222,120 @@ async def sync_avatar_registry(request: Request):
         raise HTTPException(422, str(exc)) from exc
 
 
+_AVATAR_ASSET_MARKER = "AVATAR_CODE:"
+
+
+async def _generated_avatar_asset_ids() -> dict[str, str]:
+    """Map avatar_code -> creative asset_id for every ACTIVE CHARACTER_REFERENCE
+    asset carrying the AVATAR_CODE marker in its description."""
+    from agent.services.creative_asset_service import list_creative_assets
+    assets = await list_creative_assets(
+        semantic_role="CHARACTER_REFERENCE", status="ACTIVE", limit=1000)
+    mapping: dict[str, str] = {}
+    for asset in assets:
+        description = str(getattr(asset, "description", "") or "")
+        if _AVATAR_ASSET_MARKER in description:
+            code = description.split(_AVATAR_ASSET_MARKER, 1)[1].split()[0].strip()
+            if code:
+                mapping[code.upper()] = asset.asset_id
+    return mapping
+
+
 @router.get("/avatar-registry/pool")
 async def avatar_registry_pool():
     from agent.services import avatar_registry
     profiles = avatar_registry.list_pool()
+    generated = await _generated_avatar_asset_ids()
+    for profile in profiles:
+        asset_id = generated.get(str(profile.get("avatar_code", "")).upper())
+        profile["generated_asset_id"] = asset_id
+        profile["image_generated"] = bool(asset_id)
     return {
         "avatars": profiles,
         "count": len(profiles),
+        "generated_count": sum(1 for p in profiles if p["image_generated"]),
         "source": str(avatar_registry._active_pool_file()),
         "bridge_active": avatar_registry._BRIDGE_FILE.exists(),
     }
+
+
+class AvatarGenerateImageRequest(BaseModel):
+    avatar_code: str
+    confirm_credit_burn: bool = False
+    aspect: str = "9:16"
+
+
+@router.post("/avatar-registry/generate-image")
+async def avatar_registry_generate_image(request: AvatarGenerateImageRequest):
+    """Avatar image factory: fire ONE IMG job on the proven one-door lane using
+    the avatar's registry PromptV1. Fail-closed: explicit credit confirmation
+    required (engineering lockdown — no credit spend without user approval)."""
+    if not request.confirm_credit_burn:
+        raise HTTPException(422, "CONFIRM_CREDIT_BURN_REQUIRED")
+    from agent.services import avatar_registry
+    from agent.services import make_video
+    try:
+        identity = avatar_registry.get_generation_prompt(request.avatar_code)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    result = await make_video.start_generate(
+        "IMG", identity["prompt"], aspect=request.aspect, num_videos=1)
+    return {
+        "job_id": result.get("job_id"),
+        "status": result.get("status"),
+        "avatar_code": identity["avatar_code"],
+        "character_name": identity["character_name"],
+        "poll": f"/api/flow/generate-job/{result.get('job_id')}",
+    }
+
+
+class AvatarRegisterGeneratedRequest(BaseModel):
+    avatar_code: str
+    media_id: str
+
+
+@router.post("/avatar-registry/register-generated")
+async def avatar_registry_register_generated(request: AvatarRegisterGeneratedRequest):
+    """Register a finished IMG-lane artifact as the avatar's CHARACTER_REFERENCE
+    asset in the Creative Library, tagged with the AVATAR_CODE marker so the
+    registry shows it as generated and Frames/Ingredients can pick it up."""
+    from agent.db import crud
+    from agent.models.creative_asset import CreativeAssetCreateRequest
+    from agent.services import avatar_registry
+    from agent.services.creative_asset_service import create_creative_asset
+    try:
+        identity = avatar_registry.get_generation_prompt(request.avatar_code)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    artifacts = await crud.list_generated_artifacts(limit=200, kind="image")
+    artifact = next(
+        (a for a in artifacts if a.get("media_id") == request.media_id), None)
+    if artifact is None:
+        raise HTTPException(404, "GENERATED_ARTIFACT_NOT_FOUND")
+    existing = await _generated_avatar_asset_ids()
+    if identity["avatar_code"].upper() in existing:
+        raise HTTPException(409, f"AVATAR_ALREADY_REGISTERED:{existing[identity['avatar_code'].upper()]}")
+    # Copy the image OUT of the 48h-retention artifact library into permanent
+    # creative-asset storage (the base64 path handles file placement + URLs).
+    import base64
+    from pathlib import Path
+    artifact_path = Path(str(artifact.get("local_path") or ""))
+    if not artifact_path.is_file():
+        raise HTTPException(404, "GENERATED_ARTIFACT_FILE_MISSING")
+    image_base64 = base64.b64encode(artifact_path.read_bytes()).decode("ascii")
+    record = await create_creative_asset(CreativeAssetCreateRequest(
+        semantic_role="CHARACTER_REFERENCE",
+        display_name=f"{identity['character_name']} — {identity['avatar_code']}",
+        description=(
+            f"{_AVATAR_ASSET_MARKER}{identity['avatar_code']} — generated from "
+            "avatar registry PromptV1 via IMG lane"),
+        source_type="GENERATED_IMAGE",
+        storage_kind="LOCAL_FILE",
+        media_id=request.media_id,
+        image_base64=image_base64,
+        file_name=artifact_path.name,
+    ))
+    return {"asset_id": record.asset_id, "avatar_code": identity["avatar_code"]}
 
 
 @router.get("/avatar-registry/status")
