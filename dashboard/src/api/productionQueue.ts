@@ -59,6 +59,18 @@ export interface BatchRunStatus {
 
 const GEN_BASE = "/api/workspace/generation-packages";
 
+// ─── Duration authority (WPS workbook) ───────────────────────
+
+export interface DurationAuthorityResponse {
+	engine: string;
+	allowed_durations: number[];
+	source: string;
+}
+
+export async function fetchDurationAuthority(): Promise<DurationAuthorityResponse> {
+	return getAPI<DurationAuthorityResponse>(`${GEN_BASE}/duration-authority`);
+}
+
 export async function startBatchPrompts(
 	input: BatchPromptsRequest,
 ): Promise<BatchPromptsResponse> {
@@ -118,6 +130,7 @@ export interface ProductionRun {
 	aspect?: string;
 	model?: string | null;
 	count?: number;
+	config_json?: string | null;
 	created_at?: string;
 	[key: string]: unknown;
 }
@@ -160,6 +173,8 @@ export interface ProductionDryRunReportItem {
 	blocked?: boolean;
 	reason?: string;
 	error?: string;
+	model?: string | null;
+	duration_s?: number | null;
 	[key: string]: unknown;
 }
 
@@ -176,6 +191,27 @@ export interface ProductionStartResponse {
 	dry_run: boolean;
 	status?: string;
 	report?: ProductionDryRunReport;
+}
+
+// ─── Video model standard ────────────────────────────────────
+
+export interface VideoModelInfo {
+	key: string;
+	ui_label: string;
+	default_duration_s?: number;
+	allowed_durations_s?: number[];
+	cost?: unknown;
+	[key: string]: unknown;
+}
+
+export interface VideoModelsResponse {
+	default: string;
+	models: VideoModelInfo[];
+	[key: string]: unknown;
+}
+
+export async function fetchVideoModels(): Promise<VideoModelsResponse> {
+	return getAPI<VideoModelsResponse>("/api/flow/video-models");
 }
 
 const PROD_BASE = "/api/workspace/production-queue";

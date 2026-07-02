@@ -61,6 +61,8 @@ domains:
       - agent/services/workspace_generation_package_service.py
       - agent/services/batch_prompt_planner.py
       - agent/services/production_queue_service.py
+      - tests/ui/test_batch_prompt_builder_ui_contract.py
+      - dashboard/src/pages/BatchesPage.tsx
       - agent/api/workspace_generation_packages.py
       - agent/api/production_queue.py
       - agent/models/workspace_generation_package.py
@@ -97,7 +99,6 @@ domains:
       - dashboard/src/pages/ApprovedPackagesPage.tsx
       - dashboard/src/pages/AssetRegistryPage.tsx
       - dashboard/src/pages/AvatarRegistryPage.tsx
-      - dashboard/src/pages/BatchesPage.tsx
       - dashboard/src/pages/CreativeLibraryPage.tsx
       - dashboard/src/pages/CreativeLibraryWorkspacePage.tsx
       - dashboard/src/pages/OperatorPage.tsx

@@ -86,7 +86,30 @@ async def test_package_already_in_production_cannot_be_reapproved():
 async def test_send_to_production_requires_approval():
     await _seed_package("wgp_d1")  # READY_MANUAL but not APPROVED
     with pytest.raises(ValueError, match="NO_APPROVED_PACKAGES"):
-        await pq.send_to_production(["wgp_d1"])
+        await pq.send_to_production(["wgp_d1"], model="Veo 3.1 - Lite")
+
+
+async def test_send_to_production_requires_a_model():
+    await _seed_package("wgp_d2")
+    await pq.approve_packages(["wgp_d2"])
+    with pytest.raises(ValueError, match="MODEL_REQUIRED"):
+        await pq.send_to_production(["wgp_d2"])
+
+
+async def test_send_to_production_rejects_unknown_model_fail_closed():
+    await _seed_package("wgp_d3")
+    await pq.approve_packages(["wgp_d3"])
+    with pytest.raises(ValueError, match="ERR_UNKNOWN_MODEL:Veo 3.1 Pro"):
+        await pq.send_to_production(["wgp_d3"], model="Veo 3.1 Pro")
+
+
+async def test_send_to_production_stores_selected_model_on_run():
+    await _seed_package("wgp_d4")
+    await pq.approve_packages(["wgp_d4"])
+    run = await pq.send_to_production(["wgp_d4"], model="Omni Flash")
+    cfg = json.loads(run["config_json"])
+    assert cfg["model"] == "Omni Flash"
+    assert cfg["model_key"] == "omni_flash"
 
 
 async def test_send_to_production_queues_items_and_creates_dry_run():
@@ -97,6 +120,7 @@ async def test_send_to_production_queues_items_and_creates_dry_run():
         ["wgp_e1", "wgp_e2"],
         interval_min_seconds=10, interval_max_seconds=20,
         cooldown_after_n_jobs=2, cooldown_seconds=60,
+        model="Veo 3.1 - Lite",
     )
     assert run["status"] == "PENDING"
     assert run["dry_run"] == 1  # fail-closed default
@@ -116,6 +140,7 @@ async def test_send_to_production_rejects_bad_interval_range():
     with pytest.raises(ValueError, match="INVALID_INTERVAL_RANGE"):
         await pq.send_to_production(
             ["wgp_f1"], interval_min_seconds=60, interval_max_seconds=30,
+            model="Veo 3.1 - Lite",
         )
 
 
@@ -126,7 +151,9 @@ async def test_t2v_payload_needs_no_media_ids():
     row = await _seed_package("wgp_g1")
     await crud.update_workspace_generation_package("wgp_g1", logical_mode="T2V")
     row = await crud.get_workspace_generation_package("wgp_g1")
-    payload, blockers = await pq.build_execution_payload(row, {"aspect": "9:16"})
+    payload, blockers = await pq.build_execution_payload(
+        row, {"aspect": "9:16", "model": "Veo 3.1 - Lite"},
+    )
     assert blockers == []
     assert payload["mode"] == "T2V"
     assert payload["logical_mode"] == "T2V"
@@ -141,7 +168,7 @@ async def test_hybrid_payload_maps_to_f2v_engine_but_keeps_logical_mode():
     )
     await crud.update_workspace_generation_package("wgp_h1", logical_mode="HYBRID")
     row = await crud.get_workspace_generation_package("wgp_h1")
-    payload, blockers = await pq.build_execution_payload(row, {})
+    payload, blockers = await pq.build_execution_payload(row, {"model": "Veo 3.1 - Lite"})
     assert blockers == []
     assert payload["mode"] == "F2V"  # engine lane
     assert payload["logical_mode"] == "HYBRID"  # never relabelled
@@ -183,11 +210,13 @@ async def test_dry_run_reports_without_firing_or_mutating_items():
     await _seed_package("wgp_k1")
     await crud.update_workspace_generation_package("wgp_k1", logical_mode="T2V")
     await pq.approve_packages(["wgp_k1"])
-    run = await pq.send_to_production(["wgp_k1"])
+    run = await pq.send_to_production(["wgp_k1"], model="Omni Flash")
     result = await pq.run_production_queue(run["production_run_id"])
     assert result["dry_run"] is True
     assert result["report"]["checked"] == 1
     assert result["report"]["ready"] == 1
+    # Selected model propagates into the dry-run payload report.
+    assert result["report"]["items"][0]["model"] == "Omni Flash"
     # Items untouched, run not started, nothing fired.
     row = await crud.get_workspace_generation_package("wgp_k1")
     assert row["production_status"] == "QUEUED"
@@ -225,7 +254,7 @@ async def test_fire_and_wait_marks_downloaded_and_links_artifacts():
     await crud.update_workspace_generation_package("wgp_l1", logical_mode="T2V")
     fake = _FakeMakeVideo("DONE")
     row = await crud.get_workspace_generation_package("wgp_l1")
-    payload, blockers = await pq.build_execution_payload(row, {})
+    payload, blockers = await pq.build_execution_payload(row, {"model": "Veo 3.1 - Lite"})
     assert not blockers
     outcome = await pq._fire_and_wait(fake, payload, "wgp_l1")
     assert outcome["ok"] is True
@@ -241,7 +270,7 @@ async def test_fire_and_wait_marks_failed_on_engine_failure():
     await crud.update_workspace_generation_package("wgp_m1", logical_mode="T2V")
     fake = _FakeMakeVideo("FAILED")
     row = await crud.get_workspace_generation_package("wgp_m1")
-    payload, _ = await pq.build_execution_payload(row, {})
+    payload, _ = await pq.build_execution_payload(row, {"model": "Veo 3.1 - Lite"})
     outcome = await pq._fire_and_wait(fake, payload, "wgp_m1")
     assert outcome["ok"] is False
     row = await crud.get_workspace_generation_package("wgp_m1")
@@ -254,7 +283,7 @@ async def test_generated_but_unretrieved_is_never_reported_as_plain_failure():
     await crud.update_workspace_generation_package("wgp_n1", logical_mode="T2V")
     fake = _FakeMakeVideo("GENERATED_BUT_UNRETRIEVED")
     row = await crud.get_workspace_generation_package("wgp_n1")
-    payload, _ = await pq.build_execution_payload(row, {})
+    payload, _ = await pq.build_execution_payload(row, {"model": "Veo 3.1 - Lite"})
     outcome = await pq._fire_and_wait(fake, payload, "wgp_n1")
     assert outcome["ok"] is True  # credits were spent; the video exists in Flow
     row = await crud.get_workspace_generation_package("wgp_n1")
@@ -268,7 +297,7 @@ async def test_generated_but_unretrieved_is_never_reported_as_plain_failure():
 async def test_retry_failed_items_requeues_them():
     await _seed_package("wgp_o1")
     await pq.approve_packages(["wgp_o1"])
-    run = await pq.send_to_production(["wgp_o1"])
+    run = await pq.send_to_production(["wgp_o1"], model="Veo 3.1 - Lite")
     run_id = run["production_run_id"]
     await crud.update_workspace_generation_package(
         "wgp_o1", production_status="FAILED", production_error="X",
@@ -286,7 +315,7 @@ async def test_retry_failed_items_requeues_them():
 async def test_cancel_remaining_marks_queued_items_cancelled():
     await _seed_package("wgp_p1")
     await pq.approve_packages(["wgp_p1"])
-    run = await pq.send_to_production(["wgp_p1"])
+    run = await pq.send_to_production(["wgp_p1"], model="Veo 3.1 - Lite")
     await pq._cancel_remaining(run["production_run_id"])
     row = await crud.get_workspace_generation_package("wgp_p1")
     assert row["production_status"] == "CANCELLED"

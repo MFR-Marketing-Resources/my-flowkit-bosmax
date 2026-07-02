@@ -73,7 +73,7 @@ async def test_approve_requires_package_ids():
 
 
 async def test_send_to_production_with_unapproved_ids_is_422():
-    body = pq_api.SendToProductionRequest(package_ids=["nope"])
+    body = pq_api.SendToProductionRequest(package_ids=["nope"], model="Veo 3.1 - Lite")
     await _expect_http(pq_api.send_to_production(body), 422, "no_approved_packages")
 
 
@@ -85,3 +85,31 @@ async def test_unknown_run_is_404_on_get_start_pause_cancel_retry():
     await _expect_http(pq_api.pause_run("prun_missing"), 404)
     await _expect_http(pq_api.cancel_run("prun_missing"), 404)
     await _expect_http(pq_api.retry_run("prun_missing"), 404)
+
+
+# ── Duration authority endpoint ───────────────────────────────────────────
+
+
+async def test_duration_authority_serves_the_workbook_durations():
+    result = await wgp_api.duration_authority(engine="GOOGLE_FLOW")
+    assert result["engine"] == "GOOGLE_FLOW"
+    assert 8 in result["allowed_durations"]
+    assert 7 not in result["allowed_durations"]
+    assert result["source"].endswith("wps_blocking_authority.json")
+
+
+async def test_duration_authority_unknown_engine_is_404():
+    await _expect_http(wgp_api.duration_authority(engine="NO_SUCH_ENGINE"), 404)
+
+
+# ── Model law at the API surface ──────────────────────────────────────────
+
+
+async def test_send_to_production_without_model_is_422_model_required():
+    body = pq_api.SendToProductionRequest(package_ids=["x"], model=None)
+    await _expect_http(pq_api.send_to_production(body), 422, "model_required")
+
+
+async def test_send_to_production_with_stale_model_is_422_unknown_model():
+    body = pq_api.SendToProductionRequest(package_ids=["x"], model="Veo 3.1 Pro")
+    await _expect_http(pq_api.send_to_production(body), 422, "err_unknown_model")

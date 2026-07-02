@@ -1364,6 +1364,19 @@ async def _run_batch_prompt_plan_task(
     )
 
 
+def allowed_batch_durations(engine: str = "GOOGLE_FLOW") -> list[int]:
+    """Authoritative total durations for batch prompts — sourced from the WPS
+    workbook (agent/authority/wps_blocking_authority.json, ADR-008). The UI
+    duration selector and the server-side gate both read THIS list."""
+    from agent.services import canonical_prompt_compiler as _canonical
+
+    plans = _canonical._wps_authority().get("block_plans", [])
+    return sorted({
+        int(p["duration_seconds"]) for p in plans
+        if p.get("engine") == engine and p.get("duration_seconds")
+    })
+
+
 async def start_batch_prompt_run(
     *,
     product_id: str,
@@ -1407,6 +1420,17 @@ async def start_batch_prompt_run(
     )
     if contract_errors:
         raise ValueError("MODE_CONTRACT_VIOLATION:" + ",".join(contract_errors))
+
+    # Duration authority (ADR-008): total durations come from the WPS workbook
+    # only — arbitrary values fail closed, never silently coerced.
+    if logical_mode in ("T2V", "HYBRID", "F2V"):
+        from agent.services import canonical_prompt_compiler as _canonical
+        try:
+            _canonical.resolve_block_plan("GOOGLE_FLOW", int(duration_seconds))
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"MODE_CONTRACT_VIOLATION:DURATION_NOT_IN_AUTHORITY:{duration_seconds}"
+            )
 
     # Avatar rotation pool: explicit subset, else the full approved registry.
     resolved_avatars = [a for a in (avatar_codes or []) if a]

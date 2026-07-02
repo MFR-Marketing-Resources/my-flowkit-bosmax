@@ -173,3 +173,37 @@ async def test_identical_compiles_are_hard_blocked_not_duplicated(monkeypatch):
     for pkg in blocked:
         anti = json.loads(pkg["anti_redundancy_json"])
         assert "DUPLICATE_PROMPT_FINGERPRINT_IN_BATCH" in anti["hard_blocks"]
+
+
+# ── Duration authority (WPS workbook) ─────────────────────────────────────
+
+
+async def test_arbitrary_duration_is_rejected_fail_closed():
+    await _seed_product()
+    with pytest.raises(ValueError, match="DURATION_NOT_IN_AUTHORITY:7"):
+        await svc.start_batch_prompt_run(
+            product_id="prod-bp", logical_mode="T2V", quantity=1,
+            duration_seconds=7,
+        )
+
+
+async def test_workbook_duration_is_accepted(monkeypatch):
+    await _seed_product()
+    stub = _stub_creator(
+        lambda kwargs, n: f"SECTION 6 - SPOKEN DIALOGUE\nayat berbeza nombor {n}"
+    )
+    monkeypatch.setitem(svc._MODE_CREATORS, "T2V", stub)
+    run = await svc.start_batch_prompt_run(
+        product_id="prod-bp", logical_mode="T2V", quantity=1,
+        duration_seconds=16, interval_seconds=0,
+        hook_angles=["hook a"],
+    )
+    final = await _wait_for_run(run["batch_run_id"])
+    assert final["total_completed"] == 1
+
+
+def test_allowed_batch_durations_come_from_the_workbook():
+    durations = svc.allowed_batch_durations("GOOGLE_FLOW")
+    assert 8 in durations and 16 in durations
+    assert 7 not in durations and 9 not in durations
+    assert durations == sorted(durations)

@@ -15,7 +15,11 @@ import type {
 	BatchRunStatus,
 	BatchVariationStrategy,
 } from "../api/productionQueue";
-import { getBatchRun, startBatchPrompts } from "../api/productionQueue";
+import {
+	fetchDurationAuthority,
+	getBatchRun,
+	startBatchPrompts,
+} from "../api/productionQueue";
 import { ProductPicker } from "../components/batches/ProductPicker";
 import type { CreativeAsset, Product } from "../types";
 
@@ -211,6 +215,7 @@ export default function BatchPromptBuilderPage() {
 	const [sceneContextsText, setSceneContextsText] = useState("");
 	const [hookAnglesText, setHookAnglesText] = useState("");
 	const [durationSeconds, setDurationSeconds] = useState(8);
+	const [allowedDurations, setAllowedDurations] = useState<number[]>([8]);
 	const [targetLanguage, setTargetLanguage] = useState("BM_MS");
 
 	// HYBRID — avatar codes
@@ -251,6 +256,23 @@ export default function BatchPromptBuilderPage() {
 			.finally(() => {
 				if (!cancelled) setProductsLoading(false);
 			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	// Duration authority — allowed durations come from the WPS workbook
+	useEffect(() => {
+		let cancelled = false;
+		fetchDurationAuthority()
+			.then((resp) => {
+				if (cancelled) return;
+				const list = (resp.allowed_durations ?? []).filter(
+					(d) => typeof d === "number" && d > 0,
+				);
+				if (list.length > 0) setAllowedDurations(list);
+			})
+			.catch(() => {});
 		return () => {
 			cancelled = true;
 		};
@@ -371,12 +393,27 @@ export default function BatchPromptBuilderPage() {
 
 	const selectedProduct = products.find((p) => p.id === productId);
 
+	// Product anchor — the product image that anchors HYBRID and fills
+	// the I2V PRODUCT_REFERENCE role. Anchor exists when the product has
+	// image_url, media_id, or local_image_path.
+	const productHasAnchor = Boolean(
+		selectedProduct &&
+			(selectedProduct.image_url ||
+				selectedProduct.media_id ||
+				selectedProduct.local_image_path),
+	);
+	const productAnchorSrc = selectedProduct
+		? selectedProduct.image_url ||
+			`/api/products/${encodeURIComponent(selectedProduct.id)}/image`
+		: null;
+
 	const canSubmit =
 		Boolean(productId) &&
 		Boolean(mode) &&
 		!submitting &&
 		(mode !== "F2V" || Boolean(finishedFrameAssetId)) &&
-		(mode !== "I2V" || characterAssetIds.length > 0);
+		(mode !== "HYBRID" || productHasAnchor) &&
+		(mode !== "I2V" || (characterAssetIds.length > 0 && productHasAnchor));
 
 	const handleSubmit = async () => {
 		if (!productId || !mode) return;
@@ -482,6 +519,54 @@ export default function BatchPromptBuilderPage() {
 						</div>
 					)}
 
+					{/* HYBRID — product truth anchor preview / blocker */}
+					{mode === "HYBRID" &&
+						selectedProduct &&
+						(productHasAnchor ? (
+							<div className="rounded-xl border border-cyan-500/40 bg-slate-900/60 p-3">
+								<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-300 mb-2">
+									PRODUCT TRUTH ANCHOR
+								</div>
+								<div className="flex items-center gap-3">
+									{productAnchorSrc && (
+										<img
+											src={productAnchorSrc}
+											alt={
+												selectedProduct.product_short_name ||
+												selectedProduct.product_display_name ||
+												selectedProduct.id
+											}
+											className="w-20 h-20 rounded-lg object-contain bg-slate-950 border border-slate-800 flex-shrink-0"
+										/>
+									)}
+									<div className="min-w-0">
+										<div className="text-xs font-semibold text-slate-200 truncate">
+											{selectedProduct.product_short_name ||
+												selectedProduct.product_display_name ||
+												selectedProduct.id}
+										</div>
+										<div className="text-[10px] text-slate-500 mt-0.5">
+											This image is the single visual truth for the product in
+											every HYBRID prompt.
+										</div>
+									</div>
+								</div>
+							</div>
+						) : (
+							<div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3">
+								<div className="flex items-center gap-2 mb-1">
+									<AlertTriangle size={13} className="text-red-400" />
+									<span className="text-xs font-bold text-red-300 uppercase tracking-widest">
+										HYBRID blocked
+									</span>
+								</div>
+								<div className="text-xs text-red-200">
+									No product image anchor — HYBRID blocked. Register a product
+									image first.
+								</div>
+							</div>
+						))}
+
 					<div className="grid grid-cols-2 md:grid-cols-4 gap-3">
 						<div>
 							<FieldLabel text="Quantity (1–100)" />
@@ -502,15 +587,22 @@ export default function BatchPromptBuilderPage() {
 							<>
 								<div>
 									<FieldLabel text="Duration (seconds)" />
-									<input
-										type="number"
-										min={1}
+									<select
 										value={durationSeconds}
 										onChange={(e) =>
 											setDurationSeconds(Number(e.target.value) || 8)
 										}
 										className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-400/50"
-									/>
+									>
+										{allowedDurations.map((d) => (
+											<option key={d} value={d}>
+												{d}s
+											</option>
+										))}
+									</select>
+									<div className="mt-1 text-[10px] text-slate-500">
+										Durations come from the WPS workbook authority
+									</div>
 								</div>
 								<div>
 									<FieldLabel text="Target Language" />
@@ -640,11 +732,53 @@ export default function BatchPromptBuilderPage() {
 						/>
 					)}
 
-					{/* I2V — ingredient selectors + role map */}
+					{/* I2V — role-law selectors + validation summary */}
 					{mode === "I2V" && (
 						<div className="space-y-4">
+							{/* PRODUCT_REFERENCE — read-only, from product anchor */}
+							<div>
+								<FieldLabel text="PRODUCT_REFERENCE" />
+								{selectedProduct ? (
+									productHasAnchor ? (
+										<div className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2">
+											{productAnchorSrc && (
+												<img
+													src={productAnchorSrc}
+													alt={
+														selectedProduct.product_short_name ||
+														selectedProduct.product_display_name ||
+														selectedProduct.id
+													}
+													className="w-10 h-10 rounded object-contain bg-slate-900 border border-slate-800 flex-shrink-0"
+												/>
+											)}
+											<div className="min-w-0">
+												<div className="text-xs text-slate-200 truncate">
+													{selectedProduct.product_short_name ||
+														selectedProduct.product_display_name ||
+														selectedProduct.id}
+												</div>
+												<div className="text-[10px] text-slate-500">
+													from selected product anchor
+												</div>
+											</div>
+										</div>
+									) : (
+										<div className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+											Product anchor missing — register a product image first.
+										</div>
+									)
+								) : (
+									<div className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-500 italic">
+										Select a product in Step 1 — its anchor image fills this
+										role.
+									</div>
+								)}
+							</div>
+
+							{/* AVATAR_REFERENCE — required */}
 							<AssetSelectList
-								label="Character References"
+								label="AVATAR_REFERENCE (required)"
 								assets={characterAssets}
 								loading={i2vAssetsLoading}
 								selectedIds={characterAssetIds}
@@ -652,46 +786,77 @@ export default function BatchPromptBuilderPage() {
 									toggleInList(setCharacterAssetIds, assetId)
 								}
 							/>
-							<AssetSelectList
-								label="Scene Context References"
-								assets={sceneAssets}
-								loading={i2vAssetsLoading}
-								selectedIds={sceneAssetIds}
-								optional
-								onToggle={(assetId) => toggleInList(setSceneAssetIds, assetId)}
-							/>
-							<AssetSelectList
-								label="Style References"
-								assets={styleAssets}
-								loading={i2vAssetsLoading}
-								selectedIds={styleAssetIds}
-								optional
-								onToggle={(assetId) => toggleInList(setStyleAssetIds, assetId)}
-							/>
+
+							{/* STYLE_SCENE_REFERENCE — optional, scene context only */}
+							<div>
+								<FieldLabel text="STYLE_SCENE_REFERENCE (optional / scene context only)" />
+								<div className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/30 p-3">
+									<AssetSelectList
+										label="Scene Context References"
+										assets={sceneAssets}
+										loading={i2vAssetsLoading}
+										selectedIds={sceneAssetIds}
+										optional
+										onToggle={(assetId) =>
+											toggleInList(setSceneAssetIds, assetId)
+										}
+									/>
+									<AssetSelectList
+										label="Style References"
+										assets={styleAssets}
+										loading={i2vAssetsLoading}
+										selectedIds={styleAssetIds}
+										optional
+										onToggle={(assetId) =>
+											toggleInList(setStyleAssetIds, assetId)
+										}
+									/>
+								</div>
+							</div>
+
+							{/* Role Map Validation — deterministic pre-submit summary */}
 							<div className="rounded-xl border border-amber-500/30 bg-amber-500/8 p-3">
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300 mb-2">
-									Role Map Preview
+									Role Map Validation
 								</div>
-								<ul className="space-y-1 text-[11px] text-amber-100 font-mono">
-									<li>
-										PRODUCT_REFERENCE →{" "}
-										{selectedProduct
-											? selectedProduct.product_short_name || selectedProduct.id
-											: "(auto from selected product)"}
+								<ul className="space-y-1 text-[11px] font-mono">
+									<li
+										className={
+											productHasAnchor ? "text-emerald-300" : "text-red-300"
+										}
+									>
+										{productHasAnchor ? "✓" : "✗"} PRODUCT_REFERENCE —{" "}
+										{productHasAnchor
+											? selectedProduct?.product_short_name ||
+												selectedProduct?.id
+											: selectedProduct
+												? "product anchor missing"
+												: "no product selected"}
 									</li>
-									<li>
-										AVATAR_REFERENCE →{" "}
+									<li
+										className={
+											characterAssetIds.length > 0
+												? "text-emerald-300"
+												: "text-red-300"
+										}
+									>
+										{characterAssetIds.length > 0 ? "✓" : "✗"} AVATAR_REFERENCE
+										—{" "}
 										{characterAssetIds.length > 0
 											? `${characterAssetIds.length} character reference(s)`
-											: "(none selected)"}
+											: "required — none selected"}
 									</li>
-									<li>
-										STYLE_SCENE_REFERENCE →{" "}
+									<li className="text-amber-100">
 										{sceneAssetIds.length + styleAssetIds.length > 0
-											? `${sceneAssetIds.length} scene + ${styleAssetIds.length} style reference(s)`
-											: "(none — optional)"}
+											? `✓ STYLE_SCENE_REFERENCE — ${sceneAssetIds.length} scene + ${styleAssetIds.length} style reference(s)`
+											: "STYLE_SCENE_REFERENCE — optional — none selected"}
 									</li>
 								</ul>
+								{(!productHasAnchor || characterAssetIds.length === 0) && (
+									<div className="mt-2 text-[10px] text-red-300">
+										Submit is disabled until every required role is satisfied.
+									</div>
+								)}
 							</div>
 						</div>
 					)}

@@ -65,6 +65,22 @@ function RunStatusBadge({
 	);
 }
 
+// Resolve the run's engine model ui_label — prefer the flat `model`
+// field, then fall back to parsing the run's config_json string.
+function getRunModel(run: ProductionRun): string | null {
+	if (typeof run.model === "string" && run.model) return run.model;
+	const raw = run.config_json;
+	if (typeof raw !== "string" || !raw) return null;
+	try {
+		const parsed = JSON.parse(raw) as { model?: unknown };
+		return typeof parsed.model === "string" && parsed.model
+			? parsed.model
+			: null;
+	} catch {
+		return null;
+	}
+}
+
 const LOGICAL_MODE_COLORS: Record<string, string> = {
 	T2V: "border-blue-500/40 bg-blue-500/10 text-blue-300",
 	HYBRID: "border-cyan-500/40 bg-cyan-500/10 text-cyan-300",
@@ -402,6 +418,14 @@ export default function ProductionQueuePage() {
 							<div className="text-sm font-bold text-slate-100 font-mono">
 								{selectedRunId}
 							</div>
+							{detail && (
+								<div className="mt-1 text-xs text-slate-400">
+									Model:{" "}
+									<span className="font-mono text-slate-200">
+										{getRunModel(detail) ?? "—"}
+									</span>
+								</div>
+							)}
 						</div>
 						{detail && (
 							<RunStatusBadge
@@ -439,6 +463,18 @@ export default function ProductionQueuePage() {
 											<span>{blocked ? "✗" : "✓"}</span>
 											<span className="min-w-0">
 												{item.package_id ?? `item ${i + 1}`}
+												{item.model != null && (
+													<span className="text-slate-400">
+														{" "}
+														· model={String(item.model)}
+													</span>
+												)}
+												{item.duration_s != null && (
+													<span className="text-slate-400">
+														{" "}
+														· duration_s={String(item.duration_s)}
+													</span>
+												)}
 												{blocked && (
 													<span className="text-red-200/80">
 														{" "}

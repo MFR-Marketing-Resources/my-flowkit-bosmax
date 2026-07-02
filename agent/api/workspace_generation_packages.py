@@ -484,6 +484,24 @@ async def approve_packages_endpoint(request: ApprovePackagesRequest):
     return await approve_packages(request.package_ids)
 
 
+@router.get("/duration-authority")
+async def duration_authority(engine: str = Query("GOOGLE_FLOW")):
+    """Authoritative batch-prompt durations from the WPS workbook (ADR-008).
+
+    The Batch Prompt Builder duration selector reads THIS list; arbitrary
+    durations are rejected server-side by start_batch_prompt_run."""
+    from agent.services.workspace_generation_package_service import allowed_batch_durations
+
+    durations = allowed_batch_durations(engine=engine)
+    if not durations:
+        raise HTTPException(status_code=404, detail=f"NO_DURATION_AUTHORITY_FOR_ENGINE:{engine}")
+    return {
+        "engine": engine,
+        "allowed_durations": durations,
+        "source": "agent/authority/wps_blocking_authority.json",
+    }
+
+
 # ── Scheduled batch runs ─────────────────────────────────────────────────────
 
 

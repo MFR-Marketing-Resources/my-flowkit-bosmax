@@ -123,6 +123,17 @@ async def send_to_production(
     if interval_min_seconds < 0 or interval_max_seconds < interval_min_seconds:
         raise ValueError("INVALID_INTERVAL_RANGE")
 
+    # Engine/model law: the operator must pick a model from the standard
+    # registry (Omni Flash / Veo 3.1 Lite / Fast / Quality). No silent
+    # defaulting, unknown model FAILS CLOSED (mirrors the generate lane).
+    from agent.services import video_models as _vm
+    if not str(model or "").strip():
+        raise ValueError("MODEL_REQUIRED")
+    try:
+        resolved_model = _vm.resolve(model)
+    except ValueError:
+        raise ValueError(f"ERR_UNKNOWN_MODEL:{model}")
+
     eligible: list[dict] = []
     refused: list[dict] = []
     for wgp_id in package_ids:
@@ -144,7 +155,8 @@ async def send_to_production(
     config = {
         "package_ids": [r["workspace_generation_package_id"] for r in eligible],
         "aspect": aspect,
-        "model": model,
+        "model": resolved_model["ui_label"],
+        "model_key": resolved_model["key"],
         "count": max(1, min(4, int(count or 1))),
     }
     run = await crud.create_production_run(
@@ -220,6 +232,19 @@ async def build_execution_payload(pkg: dict, run_config: dict | None = None) -> 
             duration_s = int(settings["duration_seconds"])
         except (TypeError, ValueError):
             duration_s = None
+
+    # Model law at fire time: no silent Lite default, unknown model or a
+    # duration the engine can't do in one shot FAILS CLOSED as a blocker
+    # (mirrors the generate-door validation; USER SETTINGS ARE LAW).
+    model = str(cfg.get("model") or "").strip()
+    if not model:
+        blockers.append("MODEL_REQUIRED")
+    elif engine_mode in ("T2V", "I2V", "F2V"):
+        from agent.services import video_models as _vm
+        try:
+            _vm.expected_cost(model, duration_s)
+        except ValueError as exc:
+            blockers.append(f"ENGINE_VALIDATION:{exc}")
 
     payload = {
         "mode": engine_mode,
@@ -335,6 +360,8 @@ async def _dry_run_report(run: dict) -> dict:
             "logical_mode": payload.get("logical_mode"),
             "engine_mode": payload.get("mode"),
             "execution_lane": payload.get("execution_lane"),
+            "model": payload.get("model"),
+            "duration_s": payload.get("duration_s"),
             "image_media_ids": payload.get("image_media_ids") or [],
             "ok": ok,
             "blockers": blockers,

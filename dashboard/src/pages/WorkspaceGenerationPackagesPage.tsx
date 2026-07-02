@@ -20,9 +20,11 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import type { VideoModelInfo } from "../api/productionQueue";
 import {
 	approvePackages,
 	createProductionRun,
+	fetchVideoModels,
 } from "../api/productionQueue";
 import {
 	deleteWorkspaceGenerationPackage,
@@ -794,7 +796,24 @@ export default function WorkspaceGenerationPackagesPage() {
 		interval_max_seconds: 120,
 		cooldown_after_n_jobs: 5,
 		cooldown_seconds: 300,
+		// REQUIRED — no preselected engine model; operator must choose.
+		model: "",
 	});
+	const [videoModels, setVideoModels] = useState<VideoModelInfo[]>([]);
+
+	// Load the engine model standard when the send-to-production config opens
+	useEffect(() => {
+		if (!sendConfigOpen || videoModels.length > 0) return;
+		let cancelled = false;
+		fetchVideoModels()
+			.then((resp) => {
+				if (!cancelled) setVideoModels(resp.models ?? []);
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [sendConfigOpen, videoModels.length]);
 
 	const [modeFilter, setModeFilter] = useState("");
 	const [statusFilter, setStatusFilter] = useState("");
@@ -994,6 +1013,10 @@ export default function WorkspaceGenerationPackagesPage() {
 			);
 			return;
 		}
+		if (!sendConfig.model) {
+			setError("Select an engine model before queueing the production run.");
+			return;
+		}
 		setBulkLoading(true);
 		setError(null);
 		try {
@@ -1003,6 +1026,7 @@ export default function WorkspaceGenerationPackagesPage() {
 				interval_max_seconds: sendConfig.interval_max_seconds,
 				cooldown_after_n_jobs: sendConfig.cooldown_after_n_jobs,
 				cooldown_seconds: sendConfig.cooldown_seconds,
+				model: sendConfig.model,
 			});
 			navigate("/production-queue");
 		} catch (e) {
@@ -1285,9 +1309,28 @@ export default function WorkspaceGenerationPackagesPage() {
 													className="w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-400/50"
 												/>
 											</label>
+											<label className="flex flex-col gap-1 text-[10px] text-slate-400">
+												Engine model (required)
+												<select
+													value={sendConfig.model}
+													onChange={(e) =>
+														setSendConfig((c) => ({ ...c, model: e.target.value }))
+													}
+													className="w-52 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-400/50"
+												>
+													<option value="" disabled>
+														Select engine model
+													</option>
+													{videoModels.map((m) => (
+														<option key={m.key} value={m.ui_label}>
+															{m.ui_label}
+														</option>
+													))}
+												</select>
+											</label>
 											<button
 												type="button"
-												disabled={bulkLoading}
+												disabled={bulkLoading || !sendConfig.model}
 												onClick={() => void handleSendToProduction()}
 												className="flex items-center gap-1 px-4 py-2 rounded-lg border border-indigo-500/40 bg-indigo-500/15 text-indigo-200 text-[11px] font-bold hover:bg-indigo-500/25 transition-colors disabled:opacity-40"
 											>
