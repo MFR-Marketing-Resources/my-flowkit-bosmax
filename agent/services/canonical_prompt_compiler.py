@@ -1256,6 +1256,7 @@ def _section_8_end_frame(
     cta_type: str,
 ) -> str:
     story = _visual_story_terms(family, angle_signal, trigger_id, cta_type)
+    scene_native = _family_t2v_scene_clause(family)
     if mode == "IMAGES":
         return (
             f"The final composition holds {pname} clearly readable as the visual anchor, with "
@@ -1281,9 +1282,13 @@ def _section_8_end_frame(
         return (
             f"End on a confident creator-to-camera hold with {pname} upright, label readable, and the exact uploaded-product packaging still matching perfectly while {story['closing']} carries the CTA landing. {_mode_story_polish(mode)['closing']}"
         )
-    return (
-        f"End on a steady hold: the presenter keeps {pname} at chest level with the label readable to camera while {story['closing']} carries the closing line, then a beat of calm confidence. {_mode_story_polish(mode)['closing']}"
-    )
+    t2v_mode_close = "The close must resolve as a believable social moment with product payoff, not as a creator-led hard sell tableau."
+    if scene_native["closing"]:
+        return (
+            f"End on a steady hold: the presenter keeps {pname} at chest level with the label readable to camera while {story['closing']} carries the closing line. "
+            f"{scene_native['closing']} {t2v_mode_close}"
+        )
+    return f"End on a steady hold: the presenter keeps {pname} at chest level with the label readable to camera while {story['closing']} carries the closing line. {t2v_mode_close}"
 
 
 _LEAK_PATTERNS = (
@@ -1425,11 +1430,11 @@ def render_block(
         approved_dialogue=approved_dialogue,
     )
     s6 = dialogue if dialogue else "(No spoken dialogue in this block.)"
+    family_voice = _family_voice_clause(family, target_language)
     s7 = (
-        f"The presenter speaks {lang} only, direct to camera, in a warm, confident, "
-        "conversational tone with short, punchy, speakable phrasing — a real person recommending something they use, not a narrator. "
-        f"{_family_voice_clause(family, target_language) + ' ' if _family_voice_clause(family, target_language) else ''}"
-        "No voice-over. No narration. No off-camera speech. No audio-only dialogue."
+        f"The presenter speaks {lang} only, direct to camera, in short, natural, conversational phrasing — present in the moment, never narrating from outside it. "
+        f"{family_voice + ' ' if family_voice else ''}"
+        "No voice-over. No off-camera speech. No audio-only dialogue."
     ) if mode != "IMAGES" else "Not applicable — still image output."
     s8 = _section_8_end_frame(
         mode=mode,

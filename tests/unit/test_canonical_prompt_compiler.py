@@ -552,6 +552,24 @@ def test_language_lock_section6_malay_others_english():
     for header in ("SECTION 1 - ROLE & OBJECTIVE", "SECTION 7 - VOICE & DELIVERY"):
         assert "Weh korang" not in sections[header]
     assert "Malay only" in sections["SECTION 7 - VOICE & DELIVERY"]
+    assert "No voice-over" in sections["SECTION 7 - VOICE & DELIVERY"]
+    assert "No off-camera speech" in sections["SECTION 7 - VOICE & DELIVERY"]
+
+
+def test_section7_is_shorter_but_keeps_behavior_lock():
+    result = _compile(duration_seconds=8)
+    s7 = result["blocks"][0]["sections"]["SECTION 7 - VOICE & DELIVERY"]
+    assert "present in the moment" in s7
+    assert "No voice-over" in s7
+    assert "No audio-only dialogue" in s7
+    assert "not a narrator" not in s7.lower()
+
+
+def test_t2v_section8_has_no_lowercase_sentence_stitching():
+    result = _compile(mode="T2V", duration_seconds=16, scene_context="a bright lived-in bathroom counter at home")
+    s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"]
+    assert ". The close" in s8
+    assert "The close must resolve as a believable social moment with product payoff" in s8
 
 
 def test_images_mode_single_still_under_same_authority():
@@ -612,8 +630,10 @@ def test_t2v_baby_scene_injects_parent_routine_native_cues():
     )
     s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
     assert "after-bath lotion prep" in s3
     assert "stays within easy reach for the next routine" in s4
+    assert "stays within easy reach for the next routine" in s8
 
 
 def test_t2v_wellness_scene_injects_measured_routine_native_cues():
@@ -635,8 +655,10 @@ def test_t2v_wellness_scene_injects_measured_routine_native_cues():
     )
     s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
     assert "morning water prep" in s3
     assert "quietly deciding this stays in the routine" in s4
+    assert "quietly deciding this stays in the routine" in s8
 
 
 def test_t2v_beauty_scene_injects_getting_ready_native_cues():
@@ -659,8 +681,10 @@ def test_t2v_beauty_scene_injects_getting_ready_native_cues():
     )
     s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
     assert "rushed sink-side prep" in s3
     assert "stays within reach for the next rushed morning or touch-up" in s4
+    assert "stays within reach for the next rushed morning or touch-up" in s8
 
 
 def test_t2v_fragrance_scene_injects_social_ready_native_cues():
@@ -683,8 +707,10 @@ def test_t2v_fragrance_scene_injects_social_ready_native_cues():
     )
     s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
     assert "grabbing keys" in s3 or "grabbing keys" in s3.replace("grabing", "grabbing")
     assert "would be noticed by people nearby" in s4
+    assert "would be noticed by people nearby" in s8
 
 
 def test_t2v_electronics_scene_injects_everyday_use_native_cues():
@@ -707,8 +733,10 @@ def test_t2v_electronics_scene_injects_everyday_use_native_cues():
     )
     s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
     assert "checking time at the door" in s3
     assert "stays on the body for the next task" in s4
+    assert "stays on the body for the next task" in s8
 
 
 def test_t2v_household_scene_injects_cleanup_native_cues():
@@ -731,8 +759,10 @@ def test_t2v_household_scene_injects_cleanup_native_cues():
     )
     s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
     assert "wiping a spill" in s3
     assert "goes back within easy reach for the next cleanup" in s4
+    assert "goes back within easy reach for the next cleanup" in s8
 
 
 def test_t2v_laundry_scene_injects_wash_cycle_native_cues():
@@ -755,8 +785,10 @@ def test_t2v_laundry_scene_injects_wash_cycle_native_cues():
     )
     s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
     assert "sorting clothes" in s3
     assert "ready for the next cycle" in s4
+    assert "ready for the next cycle" in s8
 
 
 def test_t2v_fashion_scene_injects_getting_dressed_native_cues():
@@ -779,8 +811,10 @@ def test_t2v_fashion_scene_injects_getting_dressed_native_cues():
     )
     s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
     assert "adjusting sleeves" in s3
     assert "about to walk out feeling put together" in s4
+    assert "about to walk out feeling put together" in s8
 
 
 def test_fashion_family_cta_lands_cleanly_without_awkward_fragment():
