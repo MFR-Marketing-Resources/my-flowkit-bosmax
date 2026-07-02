@@ -134,6 +134,15 @@
       "type": "Male Health",
       "copywriting_angle": "Private confidence and discreet performance framing",
       "claim_risk_level": "HIGH"
+    },
+    {
+      "id": "traditional_herbal_oil_minyak",
+      "keywords": ["minyak angin", "minyak warisan", "cap burung", "minyak herba", "minyak urut", "herbal oil", "medicated oil"],
+      "category": "Health & Personal Care",
+      "subcategory": "Traditional Herbal Oil",
+      "type": "Minyak Angin",
+      "copywriting_angle": "Heritage family standby comfort",
+      "claim_risk_level": "MEDIUM"
     }
   ],
   "taxonomy_aliases": [
@@ -601,6 +610,19 @@
       "mode_recommendations": ["Images", "Frames"],
       "copywriting_angle": "Private confidence with careful claim handling",
       "claim_risk_level": "HIGH"
+    },
+    {
+      "match": {
+        "category": "Health & Personal Care",
+        "subcategory": "Traditional Herbal Oil"
+      },
+      "product_type": "TRADITIONAL_HERBAL_OIL",
+      "silo": "baby_care_universal_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Frames", "Ingredients"],
+      "copywriting_angle": "Heritage family standby comfort",
+      "claim_risk_level": "MEDIUM"
     }
   ]
 }
