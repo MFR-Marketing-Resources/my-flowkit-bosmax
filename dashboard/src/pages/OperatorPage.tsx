@@ -149,6 +149,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		detail: "Submit a job to start Google Flow automation.",
 		requestId: null,
 	});
+	// Finished artifact preview — rendered inline the moment a job completes so the
+	// operator never has to back-button/reload to find out the video is ready.
+	const [completedArtifact, setCompletedArtifact] = useState<{
+		mediaId: string;
+		url: string;
+		kind: "video" | "image";
+		sizeMb: string | null;
+	} | null>(null);
 	const pollTimerRef = useRef<number | null>(null);
 	// In-flight guard: block a second START GENERATION while one execution is
 	// still pending (the button re-enables on fast failures, so without this a
@@ -375,6 +383,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		}
 		executionInFlightRef.current = true;
 		setIsExecuting(true);
+		setCompletedArtifact(null);
 		console.log(
 			"[BOSMAX_DEBUG] OPERATOR_EXECUTE_PAYLOAD",
 			JSON.stringify(data, null, 2),
@@ -424,8 +433,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					if (job.artifact === "image" && job.url) {
 						window.open(job.url, "_blank", "noopener");
 					}
+					if (mediaId) {
+						setCompletedArtifact({
+							mediaId,
+							url: `/api/flow/retrieved/${mediaId}`,
+							kind: job.artifact === "image" ? "image" : "video",
+							sizeMb: job.size_mb != null ? String(job.size_mb) : null,
+						});
+					}
 					setNotice({
-						tone: "info",
+						tone: "success",
 						title: `${data.mode} done — saved`,
 						detail: `Saved ${job.size_mb ?? "?"}MB → ${job.local_path} (media ${mediaId})${verifyNote}`,
 						requestId,
@@ -519,9 +536,27 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					"Waiting for extension telemetry.";
 
 				if (status === "COMPLETED") {
+					// The API lane's COMPLETED stage carries "media_id=<uuid> size_mb=<n>" —
+					// surface the finished video inline so the operator sees it HERE, now.
+					const completedStage = stages.find(
+						(s) => String(s?.stage || "") === "COMPLETED",
+					);
+					const completedMsg = String(completedStage?.message || stageMessage || "");
+					const mediaMatch = completedMsg.match(
+						/media_id=([0-9a-fA-F]{8}-[0-9a-fA-F-]{27})/,
+					);
+					const sizeMatch = completedMsg.match(/size_mb=([\d.]+)/);
+					if (mediaMatch) {
+						setCompletedArtifact({
+							mediaId: mediaMatch[1],
+							url: `/api/flow/retrieved/${mediaMatch[1]}`,
+							kind: "video",
+							sizeMb: sizeMatch ? sizeMatch[1] : null,
+						});
+					}
 					setNotice({
 						tone: "success",
-						title: `${data.mode} ready — system lane complete`,
+						title: `${data.mode} SIAP ✓ — video ready`,
 						detail: `${stageLabel}${stageMessage ? ` — ${stageMessage}` : ""}`,
 						requestId: manualRequestId,
 					});
@@ -547,8 +582,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 				setNotice({
 					tone: "info",
-					title: `${data.mode} running`,
-					detail: `Stage: ${stageLabel}${stageMessage ? ` — ${stageMessage}` : ""}`,
+					title: `${data.mode} running — video sedang dijana (±3–8 min), biar page ini terbuka`,
+					detail: `Stage: ${stageLabel}${stageMessage ? ` — ${stageMessage}` : ""} · Nota: tiada apa akan bergerak dalam tab Google Flow — penjanaan berjalan melalui API dan video muncul di sini bila siap.`,
 					requestId: manualRequestId,
 				});
 				pollTimerRef.current = window.setTimeout(() => {
@@ -1598,6 +1633,50 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					</div>
 				</div>
 			</div>
+
+			{completedArtifact && (
+				<div className="mb-6 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4">
+					<div className="mb-3 flex items-center justify-between">
+						<div className="font-semibold tracking-wide text-emerald-200">
+							{completedArtifact.kind === "video" ? "🎬 Video siap" : "🖼 Imej siap"}
+							{completedArtifact.sizeMb ? ` — ${completedArtifact.sizeMb}MB` : ""}
+						</div>
+						<div className="flex items-center gap-3">
+							<a
+								href={completedArtifact.url}
+								download={`${completedArtifact.mediaId}.${completedArtifact.kind === "video" ? "mp4" : "jpg"}`}
+								className="rounded-lg border border-emerald-500/40 px-3 py-1 text-xs text-emerald-200 hover:bg-emerald-500/20"
+							>
+								Download
+							</a>
+							<button
+								type="button"
+								onClick={() => setCompletedArtifact(null)}
+								className="text-xs text-emerald-200/70 hover:text-emerald-200"
+							>
+								Tutup
+							</button>
+						</div>
+					</div>
+					{completedArtifact.kind === "video" ? (
+						<video
+							src={completedArtifact.url}
+							controls
+							playsInline
+							className="max-h-96 rounded-xl border border-emerald-500/20"
+						/>
+					) : (
+						<img
+							src={completedArtifact.url}
+							alt="Generated artifact"
+							className="max-h-96 rounded-xl border border-emerald-500/20"
+						/>
+					)}
+					<div className="mt-2 text-[10px] uppercase tracking-[0.2em] text-emerald-200/60">
+						media {completedArtifact.mediaId}
+					</div>
+				</div>
+			)}
 
 			<div className="flex flex-1 min-h-0 flex-col gap-6">
 				{(!isPortalMode || compactPane === "workspace") && (
