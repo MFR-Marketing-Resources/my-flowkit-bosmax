@@ -1,5 +1,5 @@
 import type { ChangeEvent, FormEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchAPI, patchAPI, postAPI, postMultipartAPI } from "../api/client";
 import type {
@@ -691,7 +691,13 @@ export default function ProductsSalesAnalyzerPage() {
 		fetchData();
 	}, [selectedId, activeTab, selectedProduct]);
 
+	// Stale-response guard: only the LATEST request may write state. Typing in
+	// the search box fires overlapping fetches; a slow broad-query response must
+	// never overwrite a newer narrow-query result.
+	const loadSequenceRef = useRef(0);
+
 	const loadProducts = useCallback(async () => {
+		const requestSeq = ++loadSequenceRef.current;
 		setLoading(true);
 		setError(null);
 		try {
@@ -714,6 +720,7 @@ export default function ProductsSalesAnalyzerPage() {
 			const res = await fetchAPI<{ items: Product[]; total_count: number }>(
 				`/api/products${query ? `?${query}` : ""}`,
 			);
+			if (requestSeq !== loadSequenceRef.current) return; // stale response — discard
 			// No more slice logic, it natively returns exactly what matches.
 			const rows = res.items || [];
 			setProducts(rows);
@@ -723,14 +730,20 @@ export default function ProductsSalesAnalyzerPage() {
 					: rows[0]?.id || null,
 			);
 		} catch (err) {
+			if (requestSeq !== loadSequenceRef.current) return;
 			setError(err instanceof Error ? err.message : "Failed to load products");
 		} finally {
-			setLoading(false);
+			if (requestSeq === loadSequenceRef.current) setLoading(false);
 		}
 	}, [lifecycleFilter, readinessFilter, search, sourceFilter]);
 
 	useEffect(() => {
-		loadProducts();
+		// Debounce: wait for typing to settle before fetching (search changes),
+		// while filter changes still load promptly through the same timer.
+		const timer = setTimeout(() => {
+			void loadProducts();
+		}, 300);
+		return () => clearTimeout(timer);
 	}, [loadProducts]);
 
 	useEffect(() => {
