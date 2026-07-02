@@ -12,6 +12,7 @@ import {
 	Settings as SettingsIcon,
 	Siren,
 	Sparkles,
+	Users,
 	Video,
 	X,
 } from "lucide-react";
@@ -31,6 +32,7 @@ import {
 } from "./contexts/WebSocketContext";
 import ApprovedPackagesPage from "./pages/ApprovedPackagesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
+import AvatarRegistryPage from "./pages/AvatarRegistryPage";
 import BatchesPage from "./pages/BatchesPage";
 import CreativeLibraryPage from "./pages/CreativeLibraryPage";
 import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
@@ -87,6 +89,11 @@ const NAV_GROUPS = [
 				to: "/assets/creative-library/workspace",
 				icon: Sparkles,
 				label: "Asset Workspace",
+			},
+			{
+				to: "/assets/avatar-registry",
+				icon: Users,
+				label: "Avatar Registry",
 			},
 			{ to: "/asset-registry", icon: Layers, label: "Asset Registry" },
 			{
@@ -453,6 +460,10 @@ function Layout() {
 						<Route
 							path="/assets/creative-library/workspace"
 							element={<CreativeLibraryWorkspacePage />}
+						/>
+						<Route
+							path="/assets/avatar-registry"
+							element={<AvatarRegistryPage />}
 						/>
 						<Route
 							path="/assets/creative-library"

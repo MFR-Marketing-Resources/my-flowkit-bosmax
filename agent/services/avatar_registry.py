@@ -130,6 +130,15 @@ def presenter_prose(profile: dict) -> str:
     )
 
 
+def list_pool() -> list[dict]:
+    """Read-only view of every approved avatar profile (dashboard registry tab).
+
+    Returns normalized profiles only — the raw pool rows (PromptV1 etc.) stay
+    internal; identity enters prompts solely via presenter_prose().
+    """
+    return [_normalize_profile(row) for row in _load_pool()]
+
+
 def resolve_presenter(
     avatar_id: str | None = None,
     *,
