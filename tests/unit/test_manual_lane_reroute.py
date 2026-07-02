@@ -176,9 +176,11 @@ def test_manual_lane_resolves_i2v_refs_aspect_and_model(monkeypatch):
         return {"local_file_path": str(p), "file_name": file_name, "mime_type": "image/png"}
 
     async def fake_start_generate(mode, prompt, project_id=None, image_media_ids=None,
-                                  aspect="9:16", tier="PAYGATE_TIER_ONE", model=None, **kw):
+                                  aspect="9:16", tier="PAYGATE_TIER_ONE", model=None,
+                                  duration_s=None, num_videos=1, **kw):
         calls["start_generate"] = {"mode": mode, "image_media_ids": image_media_ids,
-                                   "aspect": aspect, "model": model}
+                                   "aspect": aspect, "model": model,
+                                   "duration_s": duration_s, "num_videos": num_videos}
         return {"job_id": "g_test4", "status": "SUBMITTED", "mode": mode}
 
     async def fake_stage(*a, **kw):
@@ -199,6 +201,8 @@ def test_manual_lane_resolves_i2v_refs_aspect_and_model(monkeypatch):
         "prompt": "make it",
         "orientation": "HORIZONTAL",
         "model": "Veo 3.1 - Lite",
+        "count": 2,
+        "duration_s": 8,
         "refs": {
             "subjectAsset": {"mediaId": "aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb"},
             "sceneAsset": {"mediaId": None, "localFilePath": "",
@@ -215,6 +219,8 @@ def test_manual_lane_resolves_i2v_refs_aspect_and_model(monkeypatch):
     assert sg["aspect"] == "16:9"                      # orientation HORIZONTAL honoured
     from agent.services import video_models as _vm
     assert sg["model"] == _vm.resolve("Veo 3.1 - Lite")["key"]  # ui_label resolved
+    assert sg["num_videos"] == 2                       # count x2 honoured
+    assert sg["duration_s"] == 8                       # duration honoured
 
 
 def test_extract_flow_media_id_rejects_composite_bosmax_ids():

@@ -175,6 +175,24 @@ def test_real_gen_tool_preapprove_still_bails():
     assert "would_approve" not in res
 
 
+def test_decide_honours_user_count_setting():
+    # USER SETTINGS ARE LAW: count=2 means a 2-video proposal is the CORRECT one
+    # (approve, ceiling scales 2x) and a 1-video proposal must be rejected.
+    kind, _msg, _p = av.decide({"num_videos": 2, "num_images": 0, "total_cost": 20},
+                               "veo_3_1_lite", 8, desired_num=2)
+    assert kind == "approve"
+    kind, msg, _p = av.decide({"num_videos": 1, "num_images": 0, "total_cost": 10},
+                              "veo_3_1_lite", 8, desired_num=2)
+    assert kind == "reject" and "exactly 2" in msg
+    # Cost cap scales with count: 2x Omni Flash 10s ceiling = 60.
+    kind, _msg, _p = av.decide({"num_videos": 2, "num_images": 0, "total_cost": 30},
+                               "Omni Flash", 10, desired_num=2)
+    assert kind == "approve"
+    kind, _msg, _p = av.decide({"num_videos": 2, "num_images": 0, "total_cost": 61},
+                               "Omni Flash", 10, desired_num=2)
+    assert kind == "reject"
+
+
 def test_classify_agent_failure_reference_missing_phrases():
     # Exact live replies (Faris' screenshots, 2026-07-02) after a dead start media:
     assert av.classify_agent_failure(

@@ -157,6 +157,30 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		kind: "video" | "image";
 		sizeMb: string | null;
 	} | null>(null);
+	// System library (generated_artifact table): every finished video/image, persisted —
+	// the "tapak simpan video siap" so results survive restarts and are always findable.
+	const [libraryArtifacts, setLibraryArtifacts] = useState<
+		Array<{
+			media_id: string;
+			mode: string | null;
+			artifact_kind: "video" | "image";
+			size_mb: number | null;
+			created_at: string;
+		}>
+	>([]);
+	const refreshLibrary = useCallback(async () => {
+		try {
+			const response = await fetch("/api/flow/artifacts?limit=24");
+			if (!response.ok) return;
+			const data = await response.json();
+			setLibraryArtifacts(Array.isArray(data.artifacts) ? data.artifacts : []);
+		} catch {
+			/* library listing is best-effort */
+		}
+	}, []);
+	useEffect(() => {
+		void refreshLibrary();
+	}, [refreshLibrary]);
 	const pollTimerRef = useRef<number | null>(null);
 	// In-flight guard: block a second START GENERATION while one execution is
 	// still pending (the button re-enables on fast failures, so without this a
@@ -441,6 +465,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							sizeMb: job.size_mb != null ? String(job.size_mb) : null,
 						});
 					}
+					void refreshLibrary();
 					setNotice({
 						tone: "success",
 						title: `${data.mode} done — saved`,
@@ -554,6 +579,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							sizeMb: sizeMatch ? sizeMatch[1] : null,
 						});
 					}
+					void refreshLibrary();
 					setNotice({
 						tone: "success",
 						title: `${data.mode} SIAP ✓ — video ready`,
@@ -1674,6 +1700,60 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					)}
 					<div className="mt-2 text-[10px] uppercase tracking-[0.2em] text-emerald-200/60">
 						media {completedArtifact.mediaId}
+					</div>
+				</div>
+			)}
+
+			{libraryArtifacts.length > 0 && (
+				<div className="mb-6 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+					<div className="mb-3 flex items-center justify-between">
+						<div className="text-sm font-bold uppercase tracking-widest text-slate-400">
+							📚 Library — hasil siap ({libraryArtifacts.length})
+						</div>
+						<button
+							type="button"
+							onClick={() => void refreshLibrary()}
+							className="rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:bg-slate-800"
+						>
+							Refresh
+						</button>
+					</div>
+					<div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
+						{libraryArtifacts.map((item) => (
+							<a
+								key={item.media_id}
+								href={`/api/flow/retrieved/${item.media_id}`}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="group rounded-xl border border-slate-800 bg-slate-950/60 p-2 hover:border-slate-600"
+							>
+								{item.artifact_kind === "video" ? (
+									<video
+										src={`/api/flow/retrieved/${item.media_id}`}
+										muted
+										playsInline
+										preload="metadata"
+										className="aspect-[9/16] w-full rounded-lg object-cover"
+									/>
+								) : (
+									<img
+										src={`/api/flow/retrieved/${item.media_id}`}
+										alt={item.mode ?? "artifact"}
+										loading="lazy"
+										className="aspect-[9/16] w-full rounded-lg object-cover"
+									/>
+								)}
+								<div className="mt-1 flex items-center justify-between text-[10px] text-slate-400">
+									<span className="font-semibold">{item.mode ?? "?"}</span>
+									<span>
+										{item.size_mb != null ? `${item.size_mb}MB` : ""}
+									</span>
+								</div>
+								<div className="text-[9px] text-slate-500">
+									{item.created_at?.replace("T", " ").replace("Z", "")}
+								</div>
+							</a>
+						))}
 					</div>
 				</div>
 			)}

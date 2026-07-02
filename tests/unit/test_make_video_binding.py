@@ -559,6 +559,72 @@ def test_retrieval_probe_fails_fast_on_reference_image_missing():
     assert "re-upload" in (job.get("error") or "")
 
 
+def test_retrieval_collects_user_count_videos():
+    # count=2: retrieval must bring home BOTH videos, expose them on job.artifacts,
+    # and only then report DONE. Artifact records must be written for each.
+    recorded = []
+
+    state = {"reloads": 0}
+
+    class _C:
+        async def create_agent_session(self, *a):
+            return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
+
+        async def reload_flow_tab(self):
+            state["reloads"] += 1
+            return {"ok": True}
+
+        async def harvest_video_urls(self, tab_id=None):
+            # Empty at snapshot time; both fresh renders surface after a reload.
+            ids = ["vid-A", "vid-B"] if state["reloads"] else []
+            diag = {"projectId": "p1", "videoIds": ids, "imageIds": [], "mediaIds": []}
+            return {"result": {"flow_tab_found": True, "flow_tab_id": 1, "diag": diag}}
+
+    async def fake_bind(client, pid=None):
+        return {"project_id": "p1", "flow_tab_id": 1, "flow_project_url": "u"}
+
+    async def fake_negotiate(*a, **k):
+        assert k.get("desired_num") == 2, "user count must reach the negotiation"
+        return {"approved": True, "model_ok": True, "duration_ok": True,
+                "model_used": "veo_3_1_lite", "duration_used": 8}
+
+    async def fake_save(client, cands, exclude):
+        usable = [m for m in cands if m not in exclude]
+        if usable:
+            return (usable[0], f"/out/{usable[0]}.mp4", 1.5)
+        return (None, None, None)
+
+    async def fake_record(job, mode, artifacts):
+        recorded.extend(a["media_id"] for a in artifacts)
+
+    orig = (mv.get_flow_client, mv._bind_editor_session,
+            mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media,
+            mv._record_artifacts, mv.asyncio)
+    mv.get_flow_client = lambda: _C()
+    mv._bind_editor_session = fake_bind
+    mv.agent_video.negotiate_and_generate = fake_negotiate
+    mv._save_video_by_get_media = fake_save
+    mv._record_artifacts = fake_record
+    mv.asyncio = _ShimAsyncio(mv.asyncio)
+    mv._JOBS.clear()
+    mv._JOBS["jc"] = {"status": "SUBMITTED"}
+    try:
+        _run(mv._run_generate("jc", "F2V", "p", "p1", ["ref-1"], None, "16:9", None,
+                              model="veo_3_1_lite", duration_s=8, num_videos=2))
+        job = dict(mv._JOBS["jc"])
+    finally:
+        (mv.get_flow_client, mv._bind_editor_session,
+         mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media,
+         mv._record_artifacts, mv.asyncio) = orig
+        mv._JOBS.clear()
+
+    assert job["status"] == "DONE"
+    ids = [a["media_id"] for a in job.get("artifacts") or []]
+    assert ids == ["vid-A", "vid-B"]          # BOTH videos retrieved
+    assert recorded == ["vid-A", "vid-B"]     # and registered in the system library
+    assert job.get("partial") is not True
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

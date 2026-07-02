@@ -170,8 +170,12 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1)
     """
     spec = video_models.resolve(target_model)
     dur = target_duration_s if target_duration_s is not None else spec["default_duration_s"]
-    ceiling = video_models.expected_cost(spec["key"], dur)
-    steer = f"{spec['agent_label']}, {dur} second video, 1 video only, no images"
+    # The ceiling scales with the USER-SELECTED count (production setting fidelity):
+    # count=2 means a 2-video proposal is the CORRECT one and costs ~2× the unit cap.
+    ceiling = video_models.expected_cost(spec["key"], dur) * max(1, int(desired_num or 1))
+    video_word = "video" if desired_num == 1 else "videos"
+    steer = (f"{spec['agent_label']}, {dur} second {video_word}, "
+             f"{desired_num} {video_word} only, no images")
     if not permission:
         return ("wait", steer, None)
     nv = permission.get("num_videos")
@@ -181,12 +185,14 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1)
     cost = permission.get("total_cost")
     if not nv:  # None or 0 — image-only / unclear
         return ("reject", f"no images. {steer}", DENIED)
-    if nv != desired_num:  # reject multi-video even if total cost is within the cap
-        return ("reject", f"i want exactly {desired_num} video, not {nv}. {steer}", DENIED)
+    if nv != desired_num:  # reject any count that differs from the USER's setting
+        return ("reject", f"i want exactly {desired_num} {video_word}, not {nv}. {steer}", DENIED)
     if ni:  # a real video proposal must not also generate images
         return ("reject", f"no images. {steer}", DENIED)
     if cost is not None and cost > ceiling:  # CAP, not exact — promos may be cheaper
-        return ("reject", f"too expensive for 1 video — i want 1 {spec['ui_label']} only", DENIED)
+        return ("reject",
+                f"too expensive for {desired_num} {video_word} — "
+                f"i want {desired_num} {spec['ui_label']} only", DENIED)
     return ("approve", "Approve", APPROVED)
 
 

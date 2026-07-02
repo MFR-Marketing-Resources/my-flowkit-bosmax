@@ -46,7 +46,11 @@ VIDEO_MODELS = {
         "default_duration_s": 10,
         "allowed_durations_s": [4, 6, 8, 10],
         "expected_cost_by_duration": {4: 15, 6: 20, 8: 25, 10: 30},
-        "model_usage_aliases": ["omni"],
+        # "abra" = Omni Flash's INTERNAL engine name in the fired tool args —
+        # captured live 2026-07-02 (job g_385ad916534f fired abra_r2v_10s for an
+        # approved 2x Omni Flash proposal; without it post-approve verify
+        # false-failed FAILED_WRONG_MODEL).
+        "model_usage_aliases": ["omni", "abra"],
     },
 }
 
