@@ -58,6 +58,23 @@ def test_compiler_generates_single_block_final_prompt():
     # Internal directive keys must NOT leak into the engine-ready prompt
     assert "Claim-safe copy anchor" not in result["final_compiled_prompt_text"]
     assert "Block 1 (ANCHOR)" not in result["final_compiled_prompt_text"]
+    assert result["prompt_blocks"][0]["dialogue_word_budget"] == 22
+
+
+def test_workspace_entrypoint_uses_sweet_wps_by_default():
+    result = compile_ugc_video_prompt(
+        product=_product(),
+        approved_package=_approved_package(),
+        mode="F2V",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        target_language="BM_MS",
+        safe_hook_angles=["Weh korang, ini memang ngam kalau nak bau rasa lagi kemas."],
+        safe_cta_angles=["Kalau korang suka jenis yang senang masuk rutin harian, cuba yang ni dulu."],
+    )
+    block = result["prompt_blocks"][0]
+    assert block["dialogue_word_budget"] == 22
+    assert block["engine_prompt_text"].count("SECTION 6 - SPOKEN DIALOGUE") == 1
 
 
 def test_compiler_generates_extend_continuation_lineage():

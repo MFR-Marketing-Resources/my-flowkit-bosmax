@@ -302,12 +302,15 @@ def _rewrite_physics_for_engine(raw: str) -> str:
         avoid_notes = m.group(1).strip().rstrip(".")
 
     parts: list[str] = []
+    size_hint = ""
     if physics_type in _PHYSICS_TYPE_SIZE_HINT:
-        parts.append(_PHYSICS_TYPE_SIZE_HINT[physics_type])
+        size_hint = _PHYSICS_TYPE_SIZE_HINT[physics_type]
+        parts.append(size_hint)
     elif scale in _SCALE_SIZE_MAP:
-        parts.append(f"Product size: {_SCALE_SIZE_MAP[scale]}")
+        size_hint = f"Product size: {_SCALE_SIZE_MAP[scale]}"
+        parts.append(size_hint)
 
-    if camera_notes:
+    if camera_notes and camera_notes.lower() not in size_hint.lower():
         parts.append(camera_notes + ".")
 
     if avoid_notes:
@@ -697,7 +700,7 @@ def compile_ugc_video_prompt(
     source_mode: str | None = None,
     avatar_id: str | None = None,
     copy_intelligence: dict[str, Any] | None = None,
-    wps_mode: str = "SAFE",
+    wps_mode: str = "SWEET",
     engine_duration_target: str | None = None,
     requested_total_duration_seconds: int | None = None,
 ) -> dict[str, Any]:
@@ -783,17 +786,6 @@ def compile_ugc_video_prompt(
             else None
         )
         _shot_policy = get_shot_policy(block["duration_seconds"])
-        _product_title = _title(product)
-        _blueprint = [
-            line.split(": ", 1)[-1].replace("visible creator", "presenter")
-            for line in _shot_blueprint(
-                _shot_policy["recommended"],
-                mode=normalized_mode,
-                block_role=block["block_role"],
-                product_name=_product_title,
-                product_name_clean=_clean_name_for_dialog(_product_title),
-            )
-        ]
         _camera = _camera_profile(resolved_camera_style)
         rendered = _canonical.render_block(
             source_mode=resolved_source_mode,
@@ -812,7 +804,7 @@ def compile_ugc_video_prompt(
             overlay_text=_compact_overlay(resolved_copy.get("cta") or "") if overlay_enabled else None,
             camera_notes=f"{_camera['style_line']} {_camera['lens_line']}",
             handling_notes=_handling_line(product, normalized_mode),
-            shot_plan=_blueprint,
+            shot_count_hint=_shot_policy["recommended"],
         )
         shots = [
             x.split(": ", 1)[-1]

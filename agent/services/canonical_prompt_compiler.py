@@ -146,12 +146,166 @@ def normalize_copy_intelligence(copy: dict[str, Any] | None) -> dict:
     }
 
 
+def _product_name(product: dict[str, Any]) -> str:
+    raw = (
+        _clean(
+            product.get("name")
+            or product.get("product_name")
+            or product.get("product_display_name")
+            or product.get("raw_product_title")
+            or product.get("product_short_name")
+        )
+        or "the product"
+    )
+    cleaned = re.sub(r"\s*\[[^\]]*\]\s*", " ", raw)
+    cleaned = re.sub(r"\s*\([^)]*\)\s*", " ", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    cleaned = re.sub(r"\s+-\s+", " - ", cleaned).strip(" -")
+    return cleaned or raw
+
+
+def _product_category(product: dict[str, Any]) -> str:
+    return _clean(
+        product.get("category")
+        or product.get("product_category")
+        or product.get("subcategory")
+        or product.get("type")
+    )
+
+
+def _humanize_label(value: str) -> str:
+    return _clean(value).replace("_", " ")
+
+
 def _trim_to_budget(text: str, budget: int) -> str:
     words = _clean(text).split()
     if len(words) <= budget:
         return " ".join(words)
     trimmed = " ".join(words[:budget])
     return re.sub(r"[,;:\-]+$", "", trimmed).strip()
+
+
+def _split_clauses(text: str) -> list[str]:
+    cleaned = _clean(text)
+    if not cleaned:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+|\s*[;:]\s+|\s+[—-]\s+", cleaned)
+    clauses: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        clause = _clean(part).strip(" ,;:")
+        if not clause:
+            continue
+        if clause[-1] not in ".!?":
+            clause = f"{clause}."
+        key = re.sub(r"[^a-z0-9]+", "", clause.lower())
+        if key and key not in seen:
+            seen.add(key)
+            clauses.append(clause)
+    return clauses
+
+
+def _finalize_dialogue_text(text: str) -> str:
+    cleaned = _clean(text).strip(" ,;:-")
+    terminal_punct = cleaned[-1] if cleaned and cleaned[-1] in ".!?" else "."
+    cleaned = cleaned.rstrip(".!?").strip(" ,;:-")
+    cleaned = re.sub(
+        r"\b(and|or|dan|atau|sebab|because|kalau|if|bila|when|supaya|untuk|rasa|tak|yang|pun|je|memang)\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip(" ,;:-")
+    if cleaned and cleaned[-1] not in ".!?":
+        cleaned = f"{cleaned}{terminal_punct}"
+    return cleaned
+
+
+def _pack_dialogue_clauses(clauses: list[str], budget: int) -> str:
+    if budget <= 0:
+        return ""
+    chosen: list[str] = []
+    used_words = 0
+    for clause in clauses:
+        words = clause.split()
+        if not words:
+            continue
+        if not chosen and len(words) > budget:
+            return _finalize_dialogue_text(_trim_to_budget(clause, budget))
+        if used_words + len(words) <= budget:
+            chosen.append(clause)
+            used_words += len(words)
+            continue
+        remaining = budget - used_words
+        if chosen and remaining >= 5:
+            chosen.append(_finalize_dialogue_text(_trim_to_budget(clause, remaining)))
+            used_words = budget
+            break
+    if not chosen and clauses:
+        return _finalize_dialogue_text(_trim_to_budget(clauses[0], budget))
+    return _finalize_dialogue_text(" ".join(chosen))
+
+
+def _usp_slice(usps: list[str], block_index: int, total_blocks: int) -> list[str]:
+    if not usps:
+        return []
+    if total_blocks <= 1:
+        return usps[:2]
+    if block_index == 1:
+        return usps[:1]
+    if block_index == total_blocks:
+        return usps[-1:]
+    middle_slots = max(1, total_blocks - 2)
+    pointer = min(len(usps) - 1, ((block_index - 2) * len(usps)) // middle_slots)
+    return usps[pointer:pointer + 1]
+
+
+def _formula_dialogue_clauses(copy: dict, block_index: int, total_blocks: int) -> list[str]:
+    formula = copy.get("formula_family") or "HSO"
+    hooks = _split_clauses(copy.get("hook"))
+    subhooks = _split_clauses(copy.get("subhook"))
+    angle = _split_clauses(copy.get("angle"))
+    usps = [clause for usp in (copy.get("usps") or []) for clause in _split_clauses(usp)]
+    ctas = _split_clauses(copy.get("cta"))
+    chosen_usps = _usp_slice(usps, block_index, total_blocks)
+    if total_blocks <= 1:
+        single_block_map = {
+            "PAS": hooks + subhooks[:1] + chosen_usps[:1] + ctas[:1],
+            "AIDA": hooks + chosen_usps[:2] + ctas[:1],
+            "HSO": hooks + subhooks[:1] + chosen_usps[:1] + ctas[:1],
+            "BAB": subhooks[:1] + chosen_usps[:2] + ctas[:1],
+            "PESTA": hooks + angle[:1] + chosen_usps[:1] + ctas[:1],
+            "PASTOR": hooks + subhooks[:1] + angle[:1] + ctas[:1],
+        }
+        return single_block_map.get(formula, hooks + subhooks[:1] + chosen_usps[:1] + ctas[:1])
+    if block_index == 1:
+        opening_map = {
+            "PAS": hooks + subhooks[:1],
+            "AIDA": hooks + chosen_usps[:1],
+            "HSO": hooks + subhooks[:1],
+            "BAB": subhooks[:1] + hooks[:1],
+            "PESTA": hooks + angle[:1],
+            "PASTOR": hooks + subhooks[:1],
+        }
+        return opening_map.get(formula, hooks + subhooks[:1]) or hooks or subhooks
+    if block_index == total_blocks:
+        closing_map = {
+            "PAS": chosen_usps[:1] + ctas[:1],
+            "AIDA": chosen_usps[:1] + ctas[:1],
+            "HSO": chosen_usps[:1] + ctas[:1],
+            "BAB": chosen_usps[:1] + ctas[:1],
+            "PESTA": chosen_usps[:1] + ctas[:1],
+            "PASTOR": angle[:1] + ctas[:1],
+        }
+        return closing_map.get(formula, chosen_usps[:1] + ctas[:1]) or ctas or chosen_usps
+    middle_map = {
+        "PAS": subhooks[:1] + chosen_usps[:1],
+        "AIDA": chosen_usps[:2] or angle[:1],
+        "HSO": subhooks[:1] + chosen_usps[:1],
+        "BAB": chosen_usps[:1] + angle[:1],
+        "PESTA": angle[:1] + chosen_usps[:1],
+        "PASTOR": subhooks[:1] + chosen_usps[:1],
+    }
+    return middle_map.get(formula, chosen_usps[:1] + angle[:1]) or chosen_usps or subhooks or angle
 
 
 def build_block_dialogue(
@@ -175,34 +329,71 @@ def build_block_dialogue(
             start = (block_index - 1) * per_block
             chunk = sentences[start:start + per_block] if block_index < total_blocks else sentences[start:]
             if chunk:
-                return _trim_to_budget(" ".join(chunk), budget)
-    parts: list[str] = []
-    is_first = block_index == 1
-    is_final = block_index == total_blocks
-    usps = list(copy.get("usps") or [])
-    if is_first and copy.get("hook"):
-        parts.append(copy["hook"])
-        if copy.get("subhook"):
-            parts.append(copy["subhook"])
-    # distribute USPs across non-CTA space: block i takes its share
-    if usps:
-        share = max(1, len(usps) // max(1, total_blocks))
-        start = (block_index - 1) * share
-        parts.extend(usps[start:start + share] if not is_final else usps[start:])
-    if is_final and copy.get("cta"):
-        parts.append(copy["cta"])
-    if not parts:
-        parts = [copy.get("hook") or copy.get("cta") or ""]
-    return _trim_to_budget(" ".join(p for p in parts if p), budget)
+                return _pack_dialogue_clauses(_split_clauses(" ".join(chunk)), budget)
+    clauses = _formula_dialogue_clauses(copy, block_index, total_blocks)
+    if not clauses:
+        clauses = _split_clauses(copy.get("hook") or copy.get("cta") or "")
+    return _pack_dialogue_clauses(clauses, budget)
 
 
 # ── source-mode section renderers ─────────────────────────────────────────────
 
 def _product_line(product: dict[str, Any]) -> str:
-    name = _clean(product.get("name") or product.get("product_name")) or "the product"
-    category = _clean(product.get("category"))
-    tail = f" ({category})" if category else ""
-    return f"{name}{tail}"
+    return _product_name(product)
+
+
+def _default_shot_plan(
+    source_mode: str,
+    *,
+    product: dict[str, Any],
+    shot_count: int,
+    block_index: int,
+    total_blocks: int,
+    formula_family: str,
+) -> list[str]:
+    pname = _product_name(product)
+    formula_hint = _humanize_label(formula_family).lower()
+    is_final = block_index == total_blocks
+    if source_mode == "HYBRID":
+        templates = [
+            f"Creator-led opening beat with {pname} already in hand, matching the uploaded product image exactly while the first spoken hook lands.",
+            f"Tight handling close-up of {pname} with the label readable, controlled reflections, and tactile movement that supports the {formula_hint} angle.",
+            f"Reaction or routine beat that keeps the same presenter and lets {pname} stay visible in-frame while the main benefit is spoken naturally.",
+            f"Steady closing beat with {pname} held at chest level, eye contact to camera, and enough stillness for the final CTA line to land cleanly.",
+        ]
+    elif source_mode == "FRAMES":
+        templates = [
+            "Continue from the exact pose, grip, and camera distance already visible in the uploaded finished frame. The first beat is motion continuation only, not a new reveal.",
+            f"Ease into one believable motion-delta beat that keeps {pname} in the same position family, with no restyle, no jump cut, and no scene rebuild.",
+            f"Add a subtle expression or hand adjustment while keeping {pname} readable and the finished-frame lighting unchanged.",
+            f"Let the motion settle into a clean held frame with {pname} still truthful to the uploaded frame, ready for the closing CTA line or a seam-safe stop.",
+        ]
+    elif source_mode == "INGREDIENTS":
+        templates = [
+            f"Reference-led opening beat: the presenter must match the avatar reference while introducing {pname} exactly as shown by the product reference.",
+            f"Product truth beat: move closer to {pname} for readable packaging, honest scale, and natural hand-object interaction without overpowering the presenter reference.",
+            "Environment beat: preserve the supplied scene or style direction only at the background and mood level while the product remains the visual authority.",
+            f"Final hold beat with presenter and {pname} in the same frame, balanced and believable, so the CTA can land without any fake demonstration.",
+        ]
+    elif source_mode == "IMAGES":
+        templates = [
+            f"One polished commercial still of {pname} with honest scale, clean packaging readability, and a premium but believable composition."
+        ]
+    else:  # T2V
+        templates = [
+            f"Open inside the lived-in scene first, then let the presenter bring {pname} into the frame naturally so the hook feels native, not staged.",
+            f"Routine-context beat that shows why {pname} belongs in the moment, with the packaging readable and the action grounded in normal human behaviour.",
+            f"Confidence or payoff beat where the presenter stays on camera, keeps {pname} visible, and sells the main benefit through expression and handling rather than hard claims.",
+            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for the final CTA line to feel intentional.",
+        ]
+    if block_index > 1 and source_mode != "IMAGES":
+        templates[0] = (
+            f"Continue immediately from the previous block with the same presenter, same grip on {pname}, same lighting, and the same camera path already in progress."
+        )
+    selected = templates[: max(1, shot_count)]
+    if is_final and source_mode != "IMAGES":
+        selected[-1] = templates[-1]
+    return selected
 
 
 def _section_3_continuity(
@@ -306,6 +497,7 @@ def render_block(
     camera_notes: str = "",
     handling_notes: str = "",
     shot_plan: list[str] | None = None,
+    shot_count_hint: int | None = None,
 ) -> dict[str, Any]:
     """Render ONE complete canonical 9-section engine-facing prompt block."""
     mode = str(source_mode or "").strip().upper()
@@ -314,7 +506,9 @@ def render_block(
     lang = language_name(target_language)
     is_final = block_index == total_blocks
     is_continuation = block_index > 1
-    budget = dialogue_word_budget(block_seconds, target_language, wps_mode=wps_mode)
+    budget = 0 if mode == "IMAGES" else dialogue_word_budget(
+        block_seconds, target_language, wps_mode=wps_mode,
+    )
     norm_copy = normalize_copy_intelligence(copy)
     presenter = None
     presenter_text = None
@@ -324,6 +518,8 @@ def render_block(
         )
         presenter_text = avatar_registry.presenter_prose(presenter)
     pname = _product_line(product)
+    category = _product_category(product)
+    angle_hint = _humanize_label(norm_copy.get("angle", "")).lower()
 
     s1 = (
         f"You are generating {'a single commercial product image' if mode == 'IMAGES' else f'an {block_seconds}-second vertical commercial video block'} "
@@ -332,6 +528,10 @@ def render_block(
         f"The objective is a believable, native-feeling social commerce shot that keeps {pname} "
         "credible and desirable without exaggerated claims."
     )
+    if category:
+        s1 += f" Treat it as a real {category.lower()} product, not a generic prop."
+    if angle_hint:
+        s1 += f" The commercial angle is {angle_hint}."
     s2_lines = [
         f"Preserve the exact real-world appearance of {pname}: label, cap, shape, scale, "
         "material, colour, and any readable text must match the true product in every frame.",
@@ -347,18 +547,15 @@ def render_block(
     )
     shots = list(shot_plan or [])
     if not shots:
-        if mode == "IMAGES":
-            shots = [f"One clean commercial composition presenting {pname} with honest scale and readable label."]
-        elif is_continuation:
-            shots = [
-                "Continue the previous action seamlessly from its final visible state.",
-                f"Close-up beat that keeps {pname} readable while the presenter speaks on camera.",
-            ]
-        else:
-            shots = [
-                f"The presenter enters naturally and reveals {pname} with believable hand interaction.",
-                f"Close-up product beat with honest scale and label-safe framing of {pname}.",
-            ]
+        shot_count = shot_count_hint or (1 if mode == "IMAGES" else 2)
+        shots = _default_shot_plan(
+            mode,
+            product=product,
+            shot_count=shot_count,
+            block_index=block_index,
+            total_blocks=total_blocks,
+            formula_family=norm_copy.get("formula_family", "HSO"),
+        )
     s4 = "\n".join(f"Shot {i + 1}: {s}" for i, s in enumerate(shots))
     s5_lines = [
         "Handheld vertical 9:16 framing with natural micro-jitter and organic human sway."
@@ -380,11 +577,24 @@ def render_block(
     s6 = dialogue if dialogue else "(No spoken dialogue in this block.)"
     s7 = (
         f"The presenter speaks {lang} only, direct to camera, in a warm, confident, "
-        "conversational tone — a real person recommending something they use, not a narrator. "
+        "conversational tone with short, punchy, speakable phrasing — a real person recommending something they use, not a narrator. "
         "No voice-over. No narration. No off-camera speech. No audio-only dialogue."
     ) if mode != "IMAGES" else "Not applicable — still image output."
     if mode == "IMAGES":
         s8 = f"The final composition holds {pname} clearly readable as the visual anchor."
+    elif mode == "FRAMES" and is_final:
+        s8 = (
+            f"End by easing the existing motion into a clean held frame: {pname} stays truthful to the uploaded finished frame, "
+            "the presenter remains in the same scene state, and the closing CTA line lands without any new reveal."
+        )
+    elif mode == "INGREDIENTS" and is_final:
+        s8 = (
+            f"End on a balanced two-subject hold: the presenter stays faithful to the avatar reference while {pname} remains clearly readable and dominant as the product truth anchor."
+        )
+    elif mode == "HYBRID" and is_final:
+        s8 = (
+            f"End on a confident creator-to-camera hold with {pname} upright, label readable, and the exact uploaded-product packaging still matching perfectly as the CTA lands."
+        )
     elif is_final:
         s8 = (
             f"End on a steady hold: the presenter keeps {pname} at chest level with the label "
@@ -479,6 +689,7 @@ def compile_prompt_set(
             style_scene_source=style_scene_source, target_language=target_language,
             wps_mode=wps_mode, overlay_allowed=overlay_allowed, overlay_text=overlay_text,
             camera_notes=camera_notes, handling_notes=handling_notes,
+            shot_count_hint=1 if mode == "IMAGES" else min(4, max(2, round((seconds or duration_seconds) / 4))),
         ))
     all_violations = [v for b in blocks for v in b["scrub_violations"]]
     if all_violations:

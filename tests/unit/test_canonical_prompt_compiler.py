@@ -78,6 +78,13 @@ def test_dialogue_richer_than_legacy_and_within_budget():
     assert block["dialogue_word_count"] <= 22
 
 
+def test_dialogue_lands_on_complete_clause_not_mid_sentence():
+    result = _compile(duration_seconds=8, wps_mode="SWEET")
+    dialogue = result["blocks"][0]["dialogue"]
+    assert dialogue.endswith((".", "!", "?"))
+    assert not dialogue.endswith("cepat")
+
+
 def test_cta_lands_only_in_final_block():
     result = _compile(duration_seconds=16)
     first, final = result["blocks"][0], result["blocks"][-1]
@@ -110,6 +117,19 @@ def test_frames_is_motion_delta_only_no_rebuild():
     assert "do not rebuild" in text.lower()
     # FRAMES must not inject a registry presenter description (frame is truth).
     assert "The presenter is a Malaysian adult" not in text
+
+
+def test_mode_specific_visual_story_differs_between_hybrid_frames_and_ingredients():
+    hybrid = _compile(mode="HYBRID")["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"]
+    frames = _compile(mode="FRAMES")["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"]
+    ingredients = _compile(
+        mode="INGREDIENTS",
+        asset_role_map={"PRODUCT_REFERENCE": "img1", "AVATAR_REFERENCE": "img2"},
+    )["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"]
+    assert "uploaded finished frame" not in hybrid.lower()
+    assert "new reveal" in frames.lower()
+    assert "reference-led opening beat" in ingredients.lower()
+    assert "creator-led opening beat" in hybrid.lower()
 
 
 def test_ingredients_requires_role_map_and_normalizes_missing_style():
@@ -199,7 +219,7 @@ def test_legacy_entrypoint_delegates_and_uncaps_blocks():
     assert result["final_compiled_prompt_text"].count("SECTION 6 - SPOKEN DIALOGUE") == 1
     block = result["prompt_blocks"][0]
     assert block["engine_prompt_text"].startswith("SECTION 1 - ROLE & OBJECTIVE")
-    assert block["dialogue_word_budget"] == 19  # Malay SafeWPS 2.4 × 8s
+    assert block["dialogue_word_budget"] == 22  # Workspace entrypoint defaults to SweetWPS 2.7 × 8s
     assert "one visible creator" not in block["engine_prompt_text"].lower()
     # multi-block beyond 2 via explicit blocks
     multi = compile_ugc_video_prompt(
