@@ -142,17 +142,70 @@ def normalize_copy_intelligence(
         ) if _clean(u)
     ]
     family = _infer_product_family(product, {"angle": angle})
+    product_name = _product_name(product)
+    hook = _clean(copy.get("hook"))
+    subhook = _clean(copy.get("subhook"))
+    copy_angle = _clean(copy.get("copywriting_angle") or product.get("copywriting_angle"))
+    hook = "" if _is_low_signal_legacy_copy(hook, product_name=product_name) else hook
+    subhook = "" if _is_low_signal_legacy_copy(subhook, product_name=product_name) else subhook
+    cta = "" if _is_low_signal_legacy_copy(cta, product_name=product_name) else cta
+    copy_angle = "" if _is_low_signal_legacy_copy(copy_angle, product_name=product_name) else copy_angle
+    usps = [usp for usp in usps if not _is_low_signal_legacy_copy(usp, product_name=product_name)]
+    trigger_id = _guard_trigger_for_family(
+        _infer_trigger_id(product, copy, family=family, angle=angle),
+        family=family,
+    )
     return {
         "angle": angle,
-        "hook": _clean(copy.get("hook")),
-        "subhook": _clean(copy.get("subhook")),
+        "hook": hook,
+        "subhook": subhook,
         "usps": usps,
         "cta": cta,
         "formula_family": formula,
-        "copywriting_angle": _clean(copy.get("copywriting_angle") or product.get("copywriting_angle")),
-        "trigger_id": _infer_trigger_id(product, copy, family=family, angle=angle),
+        "copywriting_angle": copy_angle,
+        "trigger_id": trigger_id,
         "cta_type": _infer_cta_type(copy, cta),
     }
+
+
+def _is_low_signal_legacy_copy(text: str, *, product_name: str) -> bool:
+    clause = _clean(text)
+    if not clause:
+        return False
+    lowered = clause.lower()
+    product_lower = _clean(product_name).lower()
+    generic_markers = (
+        "rutin penjagaan diri yang lebih kemas",
+        "rutin penjagaan diri yang lebih kemas dan premium",
+        "presentation yang jelas",
+        "pilihan yang praktikal",
+        "manfaat utama dan penggunaan yang lebih jelas",
+        "rutin harian yang lebih teratur",
+        "lebih teratur dan mudah difahami",
+        "senang nak faham bila cerita pasal",
+        "okay je untuk masuk dalam rutin harian",
+        "self-care luaran",
+        "tone discreet",
+        "non-explicit",
+        "tanpa tuntutan perubatan atau prestasi",
+    )
+    if any(marker in lowered for marker in generic_markers):
+        return True
+    if len(clause.split()) >= 6 and lowered.startswith(
+        ("lihat bagaimana", "terokai", "semak bagaimana", "gunakan ", "fokus ")
+    ):
+        return True
+    if product_lower and lowered.startswith(product_lower):
+        tail = lowered[len(product_lower):].strip(" ,.-")
+        if len(clause.split()) >= 10 and any(
+            token in tail for token in ("menonjolkan", "letakkan", "angkat", "lihat bagaimana", "terokai", "semak bagaimana")
+        ):
+            return True
+        if len(clause.split()) >= 12 and any(
+            token in tail for token in ("support", "routine", "premium", "jelas", "praktikal", "mudah difahami")
+        ):
+            return True
+    return False
 
 
 def _product_name(product: dict[str, Any]) -> str:
@@ -173,6 +226,54 @@ def _product_name(product: dict[str, Any]) -> str:
     return cleaned or raw
 
 
+def _product_visual_alias(product: dict[str, Any], family: str) -> str:
+    explicit = _clean(
+        product.get("product_short_name")
+        or product.get("product_display_name_short")
+        or product.get("visual_display_name")
+    )
+    if explicit:
+        return explicit
+    full = _product_name(product)
+    alias = full
+    split_markers = (
+        " | ",
+        " serasi dengan ",
+        " suitable for ",
+        " ready stock",
+        " preorder ",
+        " buy ",
+        " free ",
+        " sku:",
+    )
+    lowered = alias.lower()
+    for marker in split_markers:
+        idx = lowered.find(marker)
+        if idx > 0:
+            alias = alias[:idx]
+            lowered = alias.lower()
+    alias = re.sub(r"\bsku\s*:\s*.*$", "", alias, flags=re.IGNORECASE).strip(" ,.-")
+    words = alias.split()
+    fallback_type = _clean(product.get("type"))
+    if family == "baby_care" and fallback_type and len(words) > 6:
+        return fallback_type
+    if family == "fashion_apparel" and fallback_type and len(words) > 8:
+        return fallback_type
+    max_words = {
+        "electronics": 8,
+        "wellness": 7,
+        "baby_care": 6,
+        "fashion_apparel": 7,
+    }.get(family, 8)
+    if len(words) > max_words:
+        alias = " ".join(words[:max_words]).strip(" ,.-")
+    alias_words = alias.split()
+    while alias_words and alias_words[-1].lower() in {"&", "dan", "with", "for", "or", "atau", "dengan"}:
+        alias_words.pop()
+    alias = " ".join(alias_words).strip(" ,.-")
+    return alias or full
+
+
 def _product_category(product: dict[str, Any]) -> str:
     return _clean(
         product.get("category")
@@ -186,7 +287,40 @@ def _humanize_label(value: str) -> str:
     return _clean(value).replace("_", " ")
 
 
+def _normalize_explicit_family(product: dict[str, Any]) -> str:
+    raw = _clean(
+        product.get("bosmax_product_family")
+        or product.get("product_family")
+        or product.get("family")
+    ).lower()
+    if not raw:
+        return ""
+    normalized = raw.replace("-", "_").replace(" ", "_")
+    if any(token in normalized for token in ("baby", "wipes", "newborn", "diaper")):
+        return "baby_care"
+    if any(token in normalized for token in ("fragrance", "perfume", "body_mist", "body_spray", "aroma")):
+        return "fragrance"
+    if any(token in normalized for token in ("beauty_personal_care", "beauty", "skincare", "cosmetic", "personal_care")):
+        return "beauty_personal_care"
+    if any(token in normalized for token in ("laundry", "detergent", "softener", "refill")):
+        return "laundry_care"
+    if any(token in normalized for token in ("household", "cleaner", "kitchen", "organizer", "storage")):
+        return "household_care"
+    if any(token in normalized for token in ("electronics", "wearable", "device", "gadget")):
+        return "electronics"
+    if any(token in normalized for token in ("food", "beverage", "drink", "snack")):
+        return "food_beverage"
+    if any(token in normalized for token in ("fashion", "apparel", "garment")):
+        return "fashion_apparel"
+    if any(token in normalized for token in ("wellness", "health", "supplement", "vitamin", "male_health")):
+        return "wellness"
+    return ""
+
+
 def _infer_product_family(product: dict[str, Any], copy: dict | None = None) -> str:
+    explicit = _normalize_explicit_family(product)
+    if explicit:
+        return explicit
     haystack = " ".join(
         [
             _clean(product.get("category")),
@@ -198,6 +332,10 @@ def _infer_product_family(product: dict[str, Any], copy: dict | None = None) -> 
             _clean((copy or {}).get("angle")),
         ]
     ).lower()
+    if any(token in haystack for token in ("baby", "diaper", "wipes", "newborn", "parent")):
+        return "baby_care"
+    if any(token in haystack for token in ("supplement", "wellness", "vitamin", "health")):
+        return "wellness"
     if any(token in haystack for token in ("perfume", "fragrance", "body mist", "body spray", "aroma")):
         return "fragrance"
     if any(token in haystack for token in ("beauty", "skincare", "serum", "cosmetic", "body care", "personal care")):
@@ -206,16 +344,12 @@ def _infer_product_family(product: dict[str, Any], copy: dict | None = None) -> 
         return "laundry_care"
     if any(token in haystack for token in ("cleaner", "household", "kitchen", "storage", "organizer")):
         return "household_care"
-    if any(token in haystack for token in ("baby", "diaper", "wipes", "newborn", "parent")):
-        return "baby_care"
     if any(token in haystack for token in ("food", "snack", "drink", "coffee", "tea", "sauce", "cookie")):
         return "food_beverage"
     if any(token in haystack for token in ("shirt", "baju", "telekung", "pajamas", "fashion", "wear", "garment", "apparel")):
         return "fashion_apparel"
     if any(token in haystack for token in ("watch", "device", "gadget", "earbud", "electronics", "screen")):
         return "electronics"
-    if any(token in haystack for token in ("supplement", "wellness", "vitamin", "health")):
-        return "wellness"
     return "general"
 
 
@@ -635,6 +769,16 @@ def _infer_cta_type(copy: dict[str, Any], cta_text: str) -> str:
     return "direct_checkout" if cta_text else ""
 
 
+def _guard_trigger_for_family(trigger_id: str, *, family: str) -> str:
+    guarded = {
+        "baby_care": {"TRUST_01", "COMFORT_01"},
+        "wellness": {"TRUST_01", "COMFORT_01", "AUTHORITY_01"},
+    }
+    if trigger_id and family in guarded and trigger_id not in guarded[family]:
+        return "TRUST_01"
+    return trigger_id
+
+
 def _infer_angle_signal(copy: dict[str, Any], family: str) -> str:
     haystack = " ".join(
         [
@@ -686,10 +830,10 @@ def _infer_angle_signal(copy: dict[str, Any], family: str) -> str:
 
 def _strategic_opening_clause(trigger_id: str, target_language: str) -> str:
     bm = {
-        "TRUST_01": "Aku memang cepat percaya.",
+        "TRUST_01": "Sekali tengok terus rasa boleh percaya.",
         "CONFIDENCE_01": "Terus naik rasa yakin.",
         "AUTHORITY_01": "Terus nampak point dia.",
-        "COMFORT_01": "Paling penting, rasa selesa.",
+        "COMFORT_01": "Terus rasa senang nak guna.",
         "EGO_01": "Aura dia terus naik.",
         "GIFTING_01": "Memang nampak presentable.",
         "FEMALE_01": "Terus nampak manis.",
@@ -705,6 +849,35 @@ def _strategic_opening_clause(trigger_id: str, target_language: str) -> str:
     }
     bank = bm if language_name(target_language) == "Malay" else en
     return bank.get(trigger_id, bank["TRUST_01"])
+
+
+def _hook_needs_strategic_opening(copy: dict[str, Any], family: str) -> bool:
+    hooks = _split_clauses(copy.get("hook"))
+    if not hooks:
+        return True
+    hook_text = " ".join(hooks).lower()
+    if len(hook_text.split()) <= 5:
+        return True
+    weak_markers = (
+        "baru try", "mula-mula", "nampak biasa", "okay je", "cuba tengok",
+        "tak serabut", "aku suka", "pada aku", "senang nak faham",
+    )
+    if any(marker in hook_text for marker in weak_markers):
+        return True
+    strong_terms = {
+        "fragrance": ("bau", "wangi", "spray", "perasan"),
+        "beauty_personal_care": ("sinki", "routine", "pagi", "kemas", "sapuan"),
+        "baby_care": ("bayi", "parent", "wipes", "lampin", "tenang", "lembut"),
+        "electronics": ("function", "spec", "screen", "charger", "port", "cable", "battery"),
+        "fashion_apparel": ("fit", "jatuh", "pakai", "jadi", "drape", "kain"),
+        "wellness": ("routine", "percaya", "botol", "hype", "supplement"),
+        "laundry_care": ("refill", "detergent", "baju", "stok rumah", "basuh"),
+        "household_care": ("praktical", "lipat", "susun", "ruang", "storage", "kotak"),
+        "food_beverage": ("lapar", "pedas", "sedap", "sambal", "rangup", "makan", "minum"),
+    }
+    if any(term in hook_text for term in strong_terms.get(family, ())):
+        return False
+    return len(hook_text.split()) <= 8
 
 
 def _strategic_middle_clause(angle_signal: str, target_language: str) -> str:
@@ -739,7 +912,7 @@ def _strategic_middle_clause(angle_signal: str, target_language: str) -> str:
 def _cta_has_native_signal(cta_text: str, cta_type: str) -> bool:
     cta = cta_text.lower()
     checks = {
-        "direct_checkout": ("checkout", "grab", "beg kuning", "buy", "order"),
+        "direct_checkout": ("checkout", "grab", "beg kuning", "buy", "order", "try", "cuba"),
         "standby_now": ("jangan tunggu", "promo", "stok", "today", "sekarang"),
         "add_to_kit": ("cart", "troli", "kit", "routine", "stash"),
         "save_for_later": ("save", "simpan", "bookmark"),
@@ -784,9 +957,39 @@ def _merge_unique_clauses(*clause_groups: list[str]) -> list[str]:
                 cleaned = f"{cleaned}."
             key = re.sub(r"[^a-z0-9]+", "", cleaned.lower())
             if key and key not in seen:
+                if any(_clauses_are_too_similar(cleaned, existing) for existing in merged):
+                    continue
                 seen.add(key)
                 merged.append(cleaned)
     return merged
+
+
+def _clauses_are_too_similar(left: str, right: str) -> bool:
+    left_prefix = re.findall(r"[a-z0-9]+", left.lower())[:4]
+    right_prefix = re.findall(r"[a-z0-9]+", right.lower())[:4]
+    if len(left_prefix) >= 4 and len(right_prefix) >= 4 and left_prefix == right_prefix:
+        return True
+    stopwords = {
+        "aku", "dia", "ni", "itu", "ini", "yang", "dan", "atau", "pun", "je",
+        "terus", "memang", "kalau", "dah", "lagi", "lebih", "untuk", "dengan",
+        "buat", "rasa", "nampak", "jenis", "produk", "benda", "orang", "suka",
+        "the", "and", "with", "that", "this", "just", "really", "very",
+    }
+    left_tokens = {
+        token for token in re.findall(r"[a-z0-9]+", left.lower())
+        if len(token) > 2 and token not in stopwords
+    }
+    right_tokens = {
+        token for token in re.findall(r"[a-z0-9]+", right.lower())
+        if len(token) > 2 and token not in stopwords
+    }
+    if not left_tokens or not right_tokens:
+        return False
+    overlap = left_tokens & right_tokens
+    if len(overlap) < 2:
+        return False
+    smaller = min(len(left_tokens), len(right_tokens))
+    return (len(overlap) / smaller) >= 0.6
 
 
 def _visual_story_terms(family: str, angle_signal: str, trigger_id: str, cta_type: str) -> dict[str, str]:
@@ -839,10 +1042,33 @@ def _visual_story_terms(family: str, angle_signal: str, trigger_id: str, cta_typ
             f"{family_bank['visual_proof']}"
         ),
         "closing": (
-            f"{closing_bank.get(cta_type, 'a clean memorable end hold with clear commercial intent')} with "
+            f"{closing_bank.get(cta_type, 'a clean memorable end hold with clear commercial intent')}, carrying "
             f"{family_bank['end_payoff']}"
         ),
     }
+
+
+def _sentence_case(text: str) -> str:
+    cleaned = _clean(text)
+    if not cleaned:
+        return ""
+    return cleaned[0].upper() + cleaned[1:]
+
+
+def _family_end_frame_hold_phrase(family: str, visual_name: str) -> str:
+    table = {
+        "fragrance": f"End on a confident last-look hold with {visual_name} upright, label readable, and the exact uploaded-product packaging still matching perfectly",
+        "beauty_personal_care": f"End on a routine-ready counter hold with {visual_name} upright, label readable, and the exact uploaded-product packaging still matching perfectly",
+        "baby_care": f"End on a calm standby hold with {visual_name} upright, label readable, and the exact uploaded-product packaging still matching perfectly",
+        "electronics": f"End on a proof-to-camera hold with {visual_name} upright, label readable, and the exact uploaded-product packaging still matching perfectly",
+        "fashion_apparel": f"End on a wear-ready hold with {visual_name} upright, label readable, and the exact uploaded-product packaging still matching perfectly",
+        "wellness": f"End on a measured routine-counter hold with {visual_name} upright, label readable, and the exact uploaded-product packaging still matching perfectly",
+        "laundry_care": f"End on a stock-up hold with {visual_name} upright, label readable, and the exact uploaded-product packaging still matching perfectly",
+        "household_care": f"End on a practical home-use hold with {visual_name} upright, label readable, and the exact uploaded-product packaging still matching perfectly",
+        "food_beverage": f"End on a craving-trigger hold with {visual_name} upright, label readable, and the exact uploaded-product packaging still matching perfectly",
+        "general": f"End on a confident creator-to-camera hold with {visual_name} upright, label readable, and the exact uploaded-product packaging still matching perfectly",
+    }
+    return table.get(family, table["general"])
 
 
 def _trim_to_budget(text: str, budget: int) -> str:
@@ -936,7 +1162,11 @@ def _formula_dialogue_clauses(
     angle = _split_clauses(copy.get("angle"))
     usps = [clause for usp in (copy.get("usps") or []) for clause in _split_clauses(usp)]
     ctas = _split_clauses(copy.get("cta"))
-    opening = [_strategic_opening_clause(copy.get("trigger_id", ""), target_language)]
+    opening = (
+        [_strategic_opening_clause(copy.get("trigger_id", ""), target_language)]
+        if _hook_needs_strategic_opening(copy, family)
+        else []
+    )
     middle = [_strategic_middle_clause(_infer_angle_signal(copy, family), target_language)]
     cta_bridge = [_strategic_cta_bridge(copy.get("cta_type", ""), copy.get("cta", ""), target_language)]
     family_opening = [_family_dialogue_clause(family, "opening", target_language)]
@@ -1104,7 +1334,7 @@ def _default_shot_plan(
     trigger_id: str,
     cta_type: str,
 ) -> list[str]:
-    pname = _product_name(product)
+    pname = _product_visual_alias(product, family)
     focus = _family_focus_terms(family)
     story = _visual_story_terms(family, angle_signal, trigger_id, cta_type)
     mode_polish = _mode_story_polish(source_mode)
@@ -1115,7 +1345,7 @@ def _default_shot_plan(
             f"Creator-led opening beat with {pname} already in hand, matching the uploaded product image exactly while the first spoken hook lands inside a {focus['context']} setup driven by {story['opening']}; {mode_polish['opening']}.",
             f"Tight handling close-up of {pname} with the label readable, controlled reflections, and {focus['detail']} that supports the {angle_hint or 'core commercial angle'} while the frame continues to {story['middle']}; {mode_polish['middle']}.",
             f"Reaction or routine beat that keeps the same presenter and lets {pname} stay visible in-frame while the main benefit is spoken naturally through {story['middle']}, with face-product co-presence preserved while dialogue is landing.",
-            f"Steady closing beat with {pname} held at chest level, eye contact to camera, and enough stillness for {story['closing']} plus {focus['closing']} to land cleanly while the shot still helps {story['middle']}; {mode_polish['closing']}.",
+            f"Steady closing beat with {pname} held at chest level, eye contact to camera, and enough stillness for {story['closing']} to land cleanly while the shot still helps {story['middle']}; {mode_polish['closing']}.",
         ]
     elif source_mode == "FRAMES":
         templates = [
@@ -1140,7 +1370,7 @@ def _default_shot_plan(
             f"Open inside the lived-in scene first, then let the presenter bring {pname} into the frame naturally so the hook feels native, not staged, with {focus['context']} already visible and powered by {story['opening']}; {mode_polish['opening']}. {_clean(scene_native['opening'])}",
             f"Routine-context beat that shows why {pname} belongs in the moment, with the packaging readable, the action grounded in normal human behaviour, and {focus['detail']} carrying a middle beat that helps {story['middle']}; {mode_polish['middle']}. {_clean(scene_native['middle'])}",
             f"Confidence or payoff beat where the presenter stays on camera, keeps {pname} visible, and sells the main benefit through expression and handling rather than hard claims, aligned to {angle_hint or 'the commercial promise'} while continuing to {story['middle']}, with the scene still doing persuasion work around the product.",
-            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {story['closing']} plus {focus['closing']} to feel intentional while the shot still helps {story['middle']}; {mode_polish['closing']}. {_clean(scene_native['closing'])}",
+            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {story['closing']} to feel intentional while the shot still helps {story['middle']}; {mode_polish['closing']}. {_clean(scene_native['closing'])}",
         ]
     if block_index > 1 and source_mode != "IMAGES":
         continuation_overrides = {
@@ -1248,6 +1478,7 @@ def _section_8_end_frame(
     *,
     mode: str,
     pname: str,
+    visual_name: str,
     is_final: bool,
     focus: dict[str, str],
     family: str,
@@ -1259,8 +1490,8 @@ def _section_8_end_frame(
     scene_native = _family_t2v_scene_clause(family)
     if mode == "IMAGES":
         return (
-            f"The final composition holds {pname} clearly readable as the visual anchor, with "
-            f"{focus['closing']} expressed through the still image alone and {story['closing']} baked into the final read. {_mode_story_polish(mode)['closing']}"
+            f"The final composition holds {visual_name} clearly readable as the visual anchor, with "
+            f"{focus['closing']} expressed through the still image alone and {story['closing']} baked into the final read. {_sentence_case(_mode_story_polish(mode)['closing'])}"
         )
     if not is_final:
         return (
@@ -1270,25 +1501,25 @@ def _section_8_end_frame(
         )
     if mode == "FRAMES":
         return (
-            f"End by easing the existing motion into a clean held frame: {pname} stays truthful to the uploaded finished frame, "
-            f"the presenter remains in the same scene state, and {story['closing']} guides how the closing CTA line lands without any new reveal. {_mode_story_polish(mode)['closing']}"
+            f"End by easing the existing motion into a clean held frame: {visual_name} stays truthful to the uploaded finished frame, "
+            f"the presenter remains in the same scene state, and {story['closing']} guides how the closing CTA line lands without any new reveal. {_sentence_case(_mode_story_polish(mode)['closing'])}"
         )
     if mode == "INGREDIENTS":
         return (
-            f"End on a balanced two-subject hold: the presenter stays faithful to the avatar reference while {pname} remains clearly readable and dominant as the product truth anchor, "
-            f"with {story['closing']} shaping the last commercial impression. {_mode_story_polish(mode)['closing']}"
+            f"End on a balanced two-subject hold: the presenter stays faithful to the avatar reference while {visual_name} remains clearly readable and dominant as the product truth anchor, "
+            f"with {story['closing']} shaping the last commercial impression. {_sentence_case(_mode_story_polish(mode)['closing'])}"
         )
     if mode == "HYBRID":
         return (
-            f"End on a confident creator-to-camera hold with {pname} upright, label readable, and the exact uploaded-product packaging still matching perfectly while {story['closing']} carries the CTA landing. {_mode_story_polish(mode)['closing']}"
+            f"{_family_end_frame_hold_phrase(family, visual_name)} while {story['closing']} carries the CTA landing. {_sentence_case(_mode_story_polish(mode)['closing'])}"
         )
     t2v_mode_close = "The close must resolve as a believable social moment with product payoff, not as a creator-led hard sell tableau."
     if scene_native["closing"]:
         return (
-            f"End on a steady hold: the presenter keeps {pname} at chest level with the label readable to camera while {story['closing']} carries the closing line. "
+            f"{_family_end_frame_hold_phrase(family, visual_name)} while {story['closing']} carries the closing line. "
             f"{scene_native['closing']} {t2v_mode_close}"
         )
-    return f"End on a steady hold: the presenter keeps {pname} at chest level with the label readable to camera while {story['closing']} carries the closing line. {t2v_mode_close}"
+    return f"{_family_end_frame_hold_phrase(family, visual_name)} while {story['closing']} carries the closing line. {t2v_mode_close}"
 
 
 _LEAK_PATTERNS = (
@@ -1351,6 +1582,7 @@ def render_block(
         )
         presenter_text = avatar_registry.presenter_prose(presenter)
     pname = _product_line(product)
+    visual_name = _product_visual_alias(product, family)
     category = _product_category(product)
     angle_hint = _humanize_label(norm_copy.get("angle", "")).lower()
     angle_signal = _infer_angle_signal(norm_copy, family)
@@ -1439,6 +1671,7 @@ def render_block(
     s8 = _section_8_end_frame(
         mode=mode,
         pname=pname,
+        visual_name=visual_name,
         is_final=is_final,
         focus=focus,
         family=family,

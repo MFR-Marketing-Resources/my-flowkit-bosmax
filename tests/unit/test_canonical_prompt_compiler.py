@@ -487,6 +487,213 @@ def test_electronics_family_clause_bank_strengthens_visual_proof_and_end_payoff(
     assert "credible feature-utility payoff" in s8
 
 
+def test_visual_story_and_end_frame_use_compressed_alias_for_long_product_names():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-electronics-alias",
+            "name": "(W)UGREEN PD20W Fast Charger Pengecas Pantas, Palam UK, dengan Set Kabel, Serasi dengan iPhone 8-16 Pro Max Samsung S25 Ultra Android Cellphone Mobile Phone Siri, SKU: 70297",
+            "category": "Phones & Electronics",
+            "bosmax_product_family": "electronics_wearable",
+        },
+        copy={
+            "hook": "Sekali tengok terus nampak function dia.",
+            "cta": "Check dulu spec dia.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s4 = result["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"]
+    s8 = result["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"]
+    assert "UGREEN PD20W Fast Charger Pengecas Pantas" in s4
+    assert "Samsung S25 Ultra Android Cellphone Mobile Phone Siri" not in s4
+    assert "SKU: 70297" not in s4
+    assert "UGREEN PD20W Fast Charger Pengecas Pantas" in s8
+    assert "Samsung S25 Ultra Android Cellphone Mobile Phone Siri" not in s8
+
+
+def test_strong_family_hook_skips_generic_strategic_opener():
+    laundry = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-laundry-hook",
+            "name": "SUMIKKO DETERGENT REFILL BESAR",
+            "category": "Laundry",
+            "bosmax_product_family": "laundry_care",
+        },
+        copy={
+            "hook": "Weh, refill dia nampak besar terus.",
+            "cta": "Kalau sesuai, terus stok rumah.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    food = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-food-hook",
+            "name": "SAMBAL IKAN BILIS PEDAS",
+            "category": "Food & Beverage",
+            "bosmax_product_family": "food_beverage",
+        },
+        copy={
+            "hook": "Packaging dia terus buat rasa lapar.",
+            "cta": "Kalau jenis suka pedas, simpan dulu.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    assert "aku memang cepat percaya" not in laundry["blocks"][0]["dialogue"].lower()
+    assert "paling penting, rasa selesa" not in food["blocks"][0]["dialogue"].lower()
+    assert food["blocks"][0]["dialogue"].lower().count("packaging dia terus buat") == 1
+
+
+def test_section8_end_frame_pose_varies_by_family():
+    electronics = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-end-electronics",
+            "name": "UGREEN FAST CHARGER",
+            "category": "Electronics",
+            "bosmax_product_family": "electronics_wearable",
+        },
+        copy={"hook": "Sekali tengok terus nampak function dia.", "cta": "Check dulu spec dia.", "formula_family": "HSO"},
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    baby = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-end-baby",
+            "name": "Baby Wipes Newborn",
+            "category": "Baby Care",
+            "bosmax_product_family": "BABY_WIPES",
+        },
+        copy={"hook": "Sekali tengok terus rasa tenang nak guna.", "cta": "Simpan dulu untuk standby rumah.", "formula_family": "HSO"},
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    assert "proof-to-camera hold" in electronics["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
+    assert "calm standby hold" in baby["blocks"][-1]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
+
+
+def test_soft_try_cta_does_not_get_harder_bridge_prepended():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-beauty-soft-cta",
+            "name": "Minyak Habbatus Sauda Al Khair 30ml",
+            "category": "Beauty & Personal Care",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+        },
+        copy={
+            "hook": "Terus rasa pagi tu lebih tersusun.",
+            "cta": "Try dulu kalau ngam.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    final_dialogue = result["blocks"][-1]["dialogue"].lower()
+    assert "kalau dah suka, terus grab" not in final_dialogue
+    assert "try dulu kalau ngam" in final_dialogue
+
+
+def test_explicit_baby_family_beats_fragrance_free_keyword_drift():
+    result = cpc.compile_prompt_set(
+        source_mode="T2V",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-baby-wipes",
+            "name": "Baby Wipes Newborn Fragrance-free",
+            "category": "Baby Care",
+            "bosmax_product_family": "BABY_WIPES",
+        },
+        copy={
+            "hook": "Baby Wipes Newborn Fragrance-free menonjolkan rutin penjagaan diri yang lebih kemas dan premium.",
+            "cta": "Lihat bagaimana Baby Wipes Newborn Fragrance-free menyokong rutin harian.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+        scene_context="a calm Malaysian nursery corner",
+    )
+    s4 = result["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    final_dialogue = result["blocks"][-1]["dialogue"].lower()
+    assert "parent-trust" in s4 or "routine bayi" in s4
+    assert "scent-led confidence" not in s4
+    assert "parent memang suka simpan benda ni dekat-dekat" in final_dialogue
+
+
+def test_legacy_generic_hook_is_discarded_so_family_dialogue_can_lead():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-electronics-long",
+            "name": "(W)UGREEN PD20W Fast Charger Pengecas Pantas, Palam UK, dengan Set Kabel, Serasi dengan iPhone 8-16 Pro Max Samsung S25 Ultra Android Cellphone Mobile Phone Siri, SKU: 70297",
+            "category": "Phones & Electronics",
+            "bosmax_product_family": "electronics_wearable",
+        },
+        copy={
+            "hook": "(W)UGREEN PD20W Fast Charger Pengecas Pantas, Palam UK, dengan Set Kabel, Serasi dengan iPhone 8-16 Pro Max Samsung S25 Ultra Android Cellphone Mobile Phone Siri, SKU: 70297 menonjolkan rutin penjagaan diri yang lebih kemas dan premium dengan presentation yang jelas dan meyakinkan.",
+            "cta": "Lihat bagaimana (W)UGREEN PD20W Fast Charger Pengecas Pantas, Palam UK, dengan Set Kabel, Serasi dengan iPhone 8-16 Pro Max Samsung S25 Ultra Android Cellphone Mobile Phone Siri, SKU: 70297 menyokong rutin harian yang lebih teratur dan mudah difahami.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    opening = result["blocks"][0]["dialogue"].lower()
+    final_dialogue = result["blocks"][-1]["dialogue"].lower()
+    assert "rutin penjagaan diri yang lebih kemas" not in opening
+    assert "sekali tengok terus nampak function dia" in opening
+    assert "kenapa benda ni berguna" in final_dialogue
+
+
+def test_health_supplement_explicit_family_routes_to_wellness_not_beauty():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-wellness",
+            "name": "Pentavite Multivitamin Lelaki",
+            "category": "Health",
+            "bosmax_product_family": "HEALTH_SUPPLEMENT",
+        },
+        copy={
+            "hook": "Pentavite Multivitamin Lelaki diposisikan sebagai rutin self-care luaran yang premium, discreet, dan kemas.",
+            "cta": "Semak bagaimana Pentavite Multivitamin Lelaki dibingkaikan sebagai self-care luaran tanpa tuntutan perubatan atau prestasi.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s4 = result["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    opening = result["blocks"][0]["dialogue"].lower()
+    assert "careful routine support" in s4
+    assert "non-claim routine context" in s4
+    assert "percaya" in opening
+    assert "aura dia terus naik" not in opening
+
+
 def test_ingredients_requires_role_map_and_normalizes_missing_style():
     with pytest.raises(ValueError, match="INGREDIENTS_ASSET_ROLE_MAP_INCOMPLETE"):
         _compile(mode="INGREDIENTS")
