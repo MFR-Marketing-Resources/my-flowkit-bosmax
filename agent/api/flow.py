@@ -1237,8 +1237,41 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 request_id, "API_LANE_REJECTED",
                 f"account tier '{tier}' cannot generate video", "ERR_ACCOUNT_TIER_NO_VIDEO")
 
+    # Ensure an editor project is OPEN before the video bind. The video lane itself
+    # fail-closes and never mints hidden projects (patch A/G) — correct for the
+    # automated queue, but a user-initiated dashboard job may legitimately start
+    # with NO project open (user cleaned up Flow; live: manual_1fb86ffd died
+    # NO_OPEN_EDITOR after the user deleted every project). Create + open one
+    # EXPLICITLY, with telemetry, and pin the bind to it.
+    created_project_id = None
+    if mode in ("T2V", "I2V", "F2V"):
+        h = await client.harvest_video_urls()
+        inner = h.get("result", h) if isinstance(h, dict) else {}
+        diag = inner.get("diag", inner) if isinstance(inner, dict) else {}
+        on_editor = bool(
+            isinstance(diag, dict) and diag.get("projectId")
+            and "/project/" in str((inner or {}).get("flow_url") or ""))
+        if not on_editor:
+            proj = await client.create_project(f"bosmax {mode.lower()} manual")
+            created_project_id = _extract_project_id(proj)
+            if not created_project_id:
+                await _fail_manual_request(
+                    request_id, "API_PROJECT_CREATE_FAILED",
+                    f"create_project returned no projectId: {str(proj)[:200]}",
+                    "ERR_PROJECT_CREATE_FAILED")
+            await crud.add_stage_event(
+                request_id, "API_PROJECT_CREATED", "WAITING_FLOW",
+                f"project_id={created_project_id} (no editor was open)", "backend")
+            try:
+                await client.open_target_flow_project(
+                    f"https://labs.google/fx/tools/flow/project/{created_project_id}")
+            except Exception:  # noqa: BLE001 — bind re-verifies; opener readiness is noisy
+                pass
+            await asyncio.sleep(5)
+
     res = await _mv.start_generate(
-        mode, prompt, image_media_ids=refs or None,
+        mode, prompt, project_id=created_project_id,
+        image_media_ids=refs or None,
         aspect=str(body.get("aspect") or "9:16"), tier=tier)
     if not isinstance(res, dict) or not res.get("job_id"):
         code = str((res or {}).get("error") or "VIDEO_JOB_IN_FLIGHT")
