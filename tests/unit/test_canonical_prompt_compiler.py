@@ -334,6 +334,50 @@ def test_wellness_final_dialogue_prefers_grounded_routine_language():
     assert "grounded dan tak hype" in s7
 
 
+def test_beauty_voice_and_dialogue_push_getting_ready_native_language():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-beauty", "name": "SKINTIFIC Matte Sunscreen", "category": "Beauty & Personal Care"},
+        copy={
+            "hook": "Weh korang, kulit muka aku tak berminyak dah sepanjang hari!",
+            "subhook": "Dulu setiap tengah hari mesti muka macam kilang minyak.",
+            "usp1": "Matte habis, tak melekit, terus jadi primer sebelum mekap.",
+            "usp2": "SPF50+ PA+++ lindung sepanjang hari walaupun panas terik.",
+            "cta": "Cepat grab sekarang, tekan beg kuning sebelum promo habis!",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s7 = result["blocks"][-1]["sections"]["SECTION 7 - VOICE & DELIVERY"].lower()
+    assert "siap-siap betul sebelum keluar" in s7
+
+
+def test_fragrance_voice_and_dialogue_push_real_social_notice_language():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-fragrance", "name": "SZINDORE PERFUME", "category": "Fragrance"},
+        copy={
+            "hook": "Weh, bau dia terus sedap.",
+            "subhook": "Sekali pandang dah nampak premium.",
+            "usp1": "Botol dia kemas, spray dia halus, terus rasa mahal.",
+            "usp2": "Jenis bau yang buat orang pusing kepala tanya pakai apa.",
+            "cta": "Save dulu kalau belum grab.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    final_dialogue = result["blocks"][-1]["dialogue"].lower()
+    s7 = result["blocks"][-1]["sections"]["SECTION 7 - VOICE & DELIVERY"].lower()
+    assert "orang perasan bila lalu" in final_dialogue
+    assert "orang memang akan perasan dekat dunia sebenar" in s7
+
+
 def test_electronics_family_clause_bank_strengthens_visual_proof_and_end_payoff():
     result = cpc.compile_prompt_set(
         source_mode="HYBRID",
@@ -509,6 +553,54 @@ def test_t2v_wellness_scene_injects_measured_routine_native_cues():
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
     assert "morning water prep" in s3
     assert "quietly deciding this stays in the routine" in s4
+
+
+def test_t2v_beauty_scene_injects_getting_ready_native_cues():
+    result = cpc.compile_prompt_set(
+        source_mode="T2V",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-beauty", "name": "SKINTIFIC Matte Sunscreen", "category": "Beauty & Personal Care"},
+        copy={
+            "hook": "Weh korang, kulit muka aku tak berminyak dah sepanjang hari!",
+            "subhook": "Dulu setiap tengah hari mesti muka macam kilang minyak.",
+            "usp1": "Matte habis, tak melekit, terus jadi primer sebelum mekap.",
+            "usp2": "SPF50+ PA+++ lindung sepanjang hari walaupun panas terik.",
+            "cta": "Cepat grab sekarang, tekan beg kuning sebelum promo habis!",
+            "formula_family": "HSO",
+        },
+        scene_context="a bright lived-in bathroom counter during a rushed weekday morning",
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "rushed sink-side prep" in s3
+    assert "stays within reach for the next rushed morning or touch-up" in s4
+
+
+def test_t2v_fragrance_scene_injects_social_ready_native_cues():
+    result = cpc.compile_prompt_set(
+        source_mode="T2V",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-fragrance", "name": "SZINDORE PERFUME", "category": "Fragrance"},
+        copy={
+            "hook": "Weh, bau dia terus sedap.",
+            "subhook": "Sekali pandang dah nampak premium.",
+            "usp1": "Botol dia kemas, spray dia halus, terus rasa mahal.",
+            "usp2": "Jenis bau yang buat orang pusing kepala tanya pakai apa.",
+            "cta": "Save dulu kalau belum grab.",
+            "formula_family": "HSO",
+        },
+        scene_context="a bright apartment doorway moment just before heading out",
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "grabbing keys" in s3 or "grabbing keys" in s3.replace("grabing", "grabbing")
+    assert "would be noticed by people nearby" in s4
 
 
 def test_fashion_family_cta_lands_cleanly_without_awkward_fragment():

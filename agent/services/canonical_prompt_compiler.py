@@ -287,7 +287,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "The bottle reads neat and premium in hand.",
             },
             "dialogue_cta": {
-                "Malay": "Memang jenis bau yang orang senang ingat.",
+                "Malay": "Memang jenis bau yang orang perasan bila lalu.",
                 "English": "It lands like the kind of scent people remember.",
             },
             "visual_proof": "make the bottle, nozzle, and reflective finish read expensive before any spoken benefit lands",
@@ -295,15 +295,15 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
         },
         "beauty_personal_care": {
             "dialogue_opening": {
-                "Malay": "Terus rasa routine tu lebih kemas.",
+                "Malay": "Terus rasa pagi tu lebih tersusun.",
                 "English": "It makes the routine feel cleaner immediately.",
             },
             "dialogue_middle": {
-                "Malay": "Packaging dia nampak senang masuk rutin harian.",
+                "Malay": "Packaging dia memang nampak senang capai masa siap-siap.",
                 "English": "The packaging reads easy to slot into a daily routine.",
             },
             "dialogue_cta": {
-                "Malay": "Jenis produk yang senang repeat pakai.",
+                "Malay": "Jenis benda yang memang tinggal dekat sinki sebab senang capai.",
                 "English": "It feels like the kind of product people will repeat naturally.",
             },
             "visual_proof": "make the packaging and handling feel routine-ready, polished, and easy to repeat",
@@ -452,6 +452,14 @@ def _family_dialogue_clause(family: str, stage: str, target_language: str) -> st
 def _family_voice_clause(family: str, target_language: str) -> str:
     lang = language_name(target_language)
     bank = {
+        "beauty_personal_care": {
+            "Malay": "Bunyi macam tengah siap-siap betul sebelum keluar, bukan macam pitch studio yang terlalu sedar kamera.",
+            "English": "Sound like someone genuinely getting ready before heading out, not like a camera-aware studio pitch.",
+        },
+        "fragrance": {
+            "Malay": "Bunyi macam kongsi bau yang orang memang akan perasan dekat dunia sebenar, bukan macam baca tagline mewah.",
+            "English": "Sound like sharing a scent people would genuinely notice in real life, not like reciting a luxury tagline.",
+        },
         "baby_care": {
             "Malay": "Bunyi macam parent kongsi benda yang betul-betul mudahkan routine, bukan macam tengah hard sell.",
             "English": "Sound like a parent sharing something that genuinely calms the routine, not like a hard sell.",
@@ -469,6 +477,18 @@ def _family_voice_clause(family: str, target_language: str) -> str:
 
 def _family_t2v_scene_clause(family: str) -> dict[str, str]:
     bank = {
+        "beauty_personal_care": {
+            "continuity": "Let the product appear inside a believable getting-ready beat such as rushed sink-side prep, mirror check, makeup-before-leaving flow, or a midday touch-up, never as a creator-studio demo.",
+            "opening": "Start with the presenter already fixing hair, checking skin, or reaching across the counter so the routine feels underway before the product becomes the subject.",
+            "middle": "Use one real prep habit such as checking shine in the mirror, setting the product beside makeup, or applying while multitasking so the value feels embedded in the routine.",
+            "closing": "Resolve like the product naturally stays within reach for the next rushed morning or touch-up, not like a staged beauty reveal for the camera.",
+        },
+        "fragrance": {
+            "continuity": "Let the product appear inside a believable social-ready beat such as stepping out the door, grabbing keys, a last mirror glance, or a quick bag check, never as a slow luxury tabletop reveal.",
+            "opening": "Start with the presenter already halfway out the door or mid-prep so the scent enters as part of the real moment, not as a posed introduction.",
+            "middle": "Use one social cue such as a last wrist spray, a collar adjustment, or a second glance before leaving so the confidence payoff feels lived rather than narrated.",
+            "closing": "Resolve like the scent is what lingers as the presenter heads out and would be noticed by people nearby, not like a frozen prestige-beauty end card.",
+        },
         "baby_care": {
             "continuity": "Let the product appear inside a believable parent-care beat such as after-bath lotion prep, diaper-bag packing, or a calm wind-down routine, never as a studio demo.",
             "opening": "Start with the presenter already mid-routine, settling a real caregiving moment before the product becomes the focus.",
@@ -883,7 +903,7 @@ def _formula_dialogue_clauses(
     family_middle = [_family_dialogue_clause(family, "middle", target_language)]
     family_cta = [_family_dialogue_clause(family, "cta", target_language)]
     chosen_usps = _usp_slice(usps, block_index, total_blocks)
-    native_cta_first = family in {"baby_care", "wellness"}
+    native_cta_first = family in {"baby_care", "wellness", "fragrance"}
     if total_blocks <= 1:
         single_block_map = {
             "PAS": _merge_unique_clauses(hooks, opening, family_opening, subhooks[:1], chosen_usps[:1], middle, family_middle, cta_bridge, ctas[:1], family_cta),
