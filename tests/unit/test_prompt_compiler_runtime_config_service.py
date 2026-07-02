@@ -29,7 +29,9 @@ def test_runtime_config_rejects_invalid_duration_and_generation_mode():
 
 
 def test_dialogue_word_budget_uses_language_policy():
-    assert dialogue_word_budget(8, "BM_MS", dialogue_enabled=True) == 13
-    assert dialogue_word_budget(10, "EN_US", dialogue_enabled=True) == 20
+    # ADR-008: policy mirrors the retained workbook (Malay SafeWPS 2.4,
+    # English SafeWPS 2.3) — never the legacy 1.7 estimate.
+    assert dialogue_word_budget(8, "BM_MS", dialogue_enabled=True) == 19
+    assert dialogue_word_budget(10, "EN_US", dialogue_enabled=True) == 23
     assert dialogue_word_budget(10, "EN_US", dialogue_enabled=False) == 0
     assert get_shot_policy(25)["recommended"] == 6

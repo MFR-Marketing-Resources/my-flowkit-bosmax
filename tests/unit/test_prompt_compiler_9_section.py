@@ -26,15 +26,15 @@ async def test_prompt_compiler_9_sections():
     }
     prompt = await compile_9_section_prompt(product_id, variant)
     
-    # Check for exactly 9 sections
-    lines = [l.strip() for l in prompt.split("\n") if l.strip()]
-    sections = [l for l in lines if any(l.startswith(f"{i}.") for i in range(1, 10))]
-    assert len(sections) == 9
-    
-    # Check content
-    assert "Physics DNA" in prompt # Section 5
-    assert "hook style" in prompt # Section 6
-    assert "soft trust overlay" in prompt # Section 9
+    # ADR-008: the shim now delegates to THE canonical compiler — exactly the
+    # nine retained canonical section headers, in order.
+    from agent.services.canonical_prompt_compiler import CANONICAL_SECTIONS
+    positions = [prompt.find(h) for h in CANONICAL_SECTIONS]
+    assert all(pos >= 0 for pos in positions)
+    assert positions == sorted(positions)
+    assert "Biometric Anchor" not in prompt          # old taxonomy is dead
+    assert "SECTION 9 - NO_OVERLAY" in prompt        # NO_OVERLAY law
+    assert "soft trust overlay" not in prompt        # overlay strategy no longer leaks
     
     # Metadata leak check
     assert "<" not in prompt

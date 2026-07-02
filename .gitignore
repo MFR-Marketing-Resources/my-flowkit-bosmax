@@ -49,3 +49,4 @@ data/product_registration/drafts/
 
 # Copywriting landbank uploads (runtime content, ADR-008)
 data/copywriting_landbank/*.csv
+data/avatar_registry/*.csv

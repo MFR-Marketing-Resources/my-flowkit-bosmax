@@ -8,7 +8,6 @@ from agent.services.prompt_compiler_runtime_config_service import (
     DEFAULT_CREATOR_PERSONA,
     DEFAULT_TARGET_LANGUAGE,
     PERSONA_REGISTRY,
-    dialogue_word_budget,
     get_engine_mode_capability,
     get_runtime_config,
     get_shot_policy,
@@ -630,97 +629,9 @@ def _shot_blueprint(
     return templates[:shot_count]
 
 
-def _compile_block(
-    *,
-    product: dict[str, Any],
-    mode: str,
-    block_index: int,
-    block_role: str,
-    duration_seconds: int,
-    camera_style: str,
-    character_presence: str,
-    creator_persona: str,
-    target_language: str,
-    claim_safe_rewrite: str,
-    safe_hook: str,
-    safe_cta: str,
-    dialogue_enabled: bool,
-    overlay_enabled: bool,
-    continuation_from_block_id: str | None,
-) -> dict[str, Any]:
-    shot_policy = get_shot_policy(duration_seconds)
-    shot_count = shot_policy["recommended"]
-    word_budget = dialogue_word_budget(
-        duration_seconds,
-        target_language,
-        dialogue_enabled=dialogue_enabled,
-    )
-    product_name = _title(product)
-    product_name_clean = _clean_name_for_dialog(product_name)
-    camera_profile = _camera_profile(camera_style)
-    shots = _shot_blueprint(
-        shot_count,
-        mode=mode,
-        block_role=block_role,
-        product_name=product_name,
-        product_name_clean=product_name_clean,
-    )
-    lines = [
-        f"Block {block_index} ({block_role})",
-        camera_profile["style_line"],
-        camera_profile["lens_line"],
-        _presence_line(character_presence, creator_persona),
-        _mode_anchor_line(mode, product),
-        f"Duration: {duration_seconds} seconds. Recommended shot count: {shot_count}.",
-        f"Safe hook direction: {safe_hook}",
-        f"Claim-safe copy anchor: {claim_safe_rewrite}",
-        _dialogue_instruction(
-            target_language,
-            word_budget,
-            dialogue_enabled=dialogue_enabled,
-        ),
-        _overlay_instruction(safe_cta, overlay_enabled=overlay_enabled),
-        _handling_line(product, mode),
-        "Keep the same creator identity, same product truth, same scene logic where possible, and no unsafe medical or sexual-performance claims.",
-        *shots,
-    ]
-    if continuation_from_block_id:
-        lines.insert(
-            5,
-            f"Continuation requirement: continue from {continuation_from_block_id} with the same narrative, dialogue, creator look, product state, and camera logic.",
-        )
-
-    # Engine-ready text: clean visual description only — no internal directives or metadata
-    engine_prompt_text = _build_engine_prompt_text(
-        product=product,
-        mode=mode,
-        block_role=block_role,
-        camera_style=camera_style,
-        character_presence=character_presence,
-        creator_persona=creator_persona,
-        target_language=target_language,
-        dialogue_enabled=dialogue_enabled,
-        overlay_enabled=overlay_enabled,
-        safe_hook=safe_hook,
-        claim_safe_rewrite=claim_safe_rewrite,
-        safe_cta=safe_cta,
-        shots=shots,
-        continuation_from_block_id=continuation_from_block_id,
-        word_budget=word_budget,
-    )
-
-    return {
-        "block_id": f"block_{block_index}",
-        "block_index": block_index,
-        "block_role": block_role,
-        "duration_seconds": duration_seconds,
-        "shot_count": shot_count,
-        "dialogue_word_budget": word_budget,
-        "continuation_from_block_id": continuation_from_block_id,
-        "compiled_prompt_text": "\n".join(lines),    # full internal directive view (debug/display)
-        "engine_prompt_text": engine_prompt_text,     # clean engine-ready text (sent to AI engine)
-        "shot_plan": shots,
-    }
+# _compile_block was the pre-ADR-008 competing renderer. DELETED during the
+# sovereignty repair: dead code that renders final prompt text is a
+# reassertion trap. The canonical compiler renders every block.
 
 
 def _normalize_blocks(
@@ -787,6 +698,8 @@ def compile_ugc_video_prompt(
     avatar_id: str | None = None,
     copy_intelligence: dict[str, Any] | None = None,
     wps_mode: str = "SAFE",
+    engine_duration_target: str | None = None,
+    requested_total_duration_seconds: int | None = None,
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "").strip().upper()
     if normalized_mode not in SUPPORTED_MODES:
@@ -811,6 +724,19 @@ def compile_ugc_video_prompt(
         list(safe_cta_angles or []),
         "Close with a calm, claim-safe CTA that stays product-first and commercially credible.",
     )
+    # ADR-008: an operator-requested TOTAL duration derives the block chain from
+    # WORKBOOK AUTHORITY only (1-7 blocks; e.g. Google Flow 56s = seven 8s blocks).
+    # Explicit blocks/manual plans are never accepted over the workbook.
+    if requested_total_duration_seconds and not blocks:
+        # Fail-closed per retained law: ambiguous durations (Google Flow 40s)
+        # raise PREFERRED_LANE_REQUIRED instead of silently picking a lane.
+        _plan = _canonical.resolve_block_plan(
+            engine_duration_target or "GOOGLE_FLOW",
+            int(requested_total_duration_seconds),
+        )
+        blocks = [{"block_index": i + 1, "duration_seconds": d} for i, d in enumerate(_plan)]
+        if len(_plan) > 1:
+            resolved_generation_mode = "EXTEND"
     normalized_blocks = _normalize_blocks(
         generation_mode=resolved_generation_mode,
         duration_seconds=duration_seconds,

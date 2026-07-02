@@ -43,7 +43,10 @@ class WorkspaceExecutionPackageRequest(BaseModel):
     camera_style: str = "UGC_IPHONE_RAW"
     character_presence: str = "VISIBLE_CREATOR"
     creator_persona: str = "DEFAULT_CREATOR"
-    overlay_enabled: bool = True
+    overlay_enabled: bool = False  # NO_OVERLAY law (ADR-008): default off
+    source_mode: str | None = None  # explicit T2V|HYBRID|FRAMES|INGREDIENTS|IMAGES
+    engine_duration_target: str | None = None  # GOOGLE_FLOW | GROK (workbook block plans)
+    requested_total_duration_seconds: int | None = None  # derive 1-7 block chain from workbook
     dialogue_enabled: bool = True
     recipe_id: str = "PRODUCT_HELD_BY_CHARACTER_IN_SCENE"
     product_reference_asset_id: str | None = None
@@ -62,7 +65,10 @@ class WorkspacePromptCompileRequest(BaseModel):
     camera_style: str = "UGC_IPHONE_RAW"
     character_presence: str = "VISIBLE_CREATOR"
     creator_persona: str = "DEFAULT_CREATOR"
-    overlay_enabled: bool = True
+    overlay_enabled: bool = False  # NO_OVERLAY law (ADR-008): default off
+    source_mode: str | None = None  # explicit T2V|HYBRID|FRAMES|INGREDIENTS|IMAGES
+    engine_duration_target: str | None = None  # GOOGLE_FLOW | GROK (workbook block plans)
+    requested_total_duration_seconds: int | None = None  # derive 1-7 block chain from workbook
     dialogue_enabled: bool = True
     blocks: list[WorkspacePromptBlockRequest] = Field(default_factory=list)
 
@@ -95,6 +101,9 @@ async def post_workspace_execution_package(request: WorkspaceExecutionPackageReq
             scene_context_reference_asset_id=request.scene_context_reference_asset_id,
             style_reference_asset_id=request.style_reference_asset_id,
             blocks=[block.model_dump() for block in request.blocks],
+            source_mode=request.source_mode,
+            engine_duration_target=request.engine_duration_target,
+            requested_total_duration_seconds=request.requested_total_duration_seconds,
         )
     except ValueError as exc:
         message = str(exc)
@@ -145,6 +154,9 @@ async def post_workspace_prompt_compile(request: WorkspacePromptCompileRequest):
             overlay_enabled=request.overlay_enabled,
             dialogue_enabled=request.dialogue_enabled,
             blocks=[block.model_dump() for block in request.blocks],
+            source_mode=request.source_mode,
+            engine_duration_target=request.engine_duration_target,
+            requested_total_duration_seconds=request.requested_total_duration_seconds,
         )
     except ValueError as exc:
         message = str(exc)
@@ -193,3 +205,29 @@ async def get_copywriting_landbank(product_id: str, angle: str = None):
     if row is None:
         raise HTTPException(404, "LANDBANK_NOT_FOUND")
     return row
+
+
+# ── Avatar registry bridge (ADR-008 avatar law): the live Notion registry is
+# authored upstream; runtime growth arrives as an explicit validated CSV sync.
+
+@router.post("/avatar-registry/sync")
+async def sync_avatar_registry(request: Request):
+    csv_bytes = await request.body()
+    if not csv_bytes:
+        raise HTTPException(422, "CSV body required")
+    from agent.services import avatar_registry
+    try:
+        return avatar_registry.sync_pool_csv(csv_bytes)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/avatar-registry/status")
+async def avatar_registry_status():
+    from agent.services import avatar_registry
+    pool = avatar_registry._load_pool()
+    return {
+        "approved_avatars": len(pool),
+        "source": str(avatar_registry._active_pool_file()),
+        "bridge_active": avatar_registry._BRIDGE_FILE.exists(),
+    }
