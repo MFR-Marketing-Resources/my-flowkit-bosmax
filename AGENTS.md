@@ -15,10 +15,15 @@ This repository is under an architecture reset. All agents must inherit the same
 10. The relevant `.ai/architecture/*.md` and `.ai/decisions/*.md` files for the current phase
 
 ## Current Strategic Decision
-- Architecture reset is confirmed.
+- **ADR-007 is in force (2026-07-02): generation is API-FIRST.** The Chrome
+  extension is authenticated transport only. The DOM-clicking generation lane
+  is DEAD and frozen — never repaired, only deleted.
+- All four modes (IMG/T2V/I2V/F2V) run through ONE hardened lane
+  (`/api/flow/execute-flow-job` -> `make_video.start_generate`) and were
+  live-proven end-to-end (PRs #160-#167). Read `.ai/status/CURRENT_STATE.md`
+  for the locked list and its validation gates BEFORE touching anything.
 - Local harness and preflight gates are mandatory before any live Google Flow work.
 - Antigravity is one-shot live UAT only after Codex reports a clean pushed SHA and the preflight gates pass.
-- `content-flow-dom.js` is not a tactical dumping ground. Proven mode/config logic stays frozen; unstable upload/runtime/telemetry lanes are rebuilt deliberately.
 
 ## Roles
 - Codex = implementation, local harness, repo cleanup, static validation, commits, push proof.
@@ -31,22 +36,34 @@ This repository is under an architecture reset. All agents must inherit the same
 - Gemini Deep Research = external research generator.
 
 ## Frozen And Proven Paths
-- Video mode selection.
-- Frames mode selection.
-- `9:16` aspect selection.
-- `1x` count selection.
-- Veo `3.1 Lite` verification.
-- The local static harness gates already accepted by the user:
+(Per ADR-007 the OLD frozen list — Video/Frames tab selection, 9:16/1x DOM
+clicking — described a UI Google deleted; those paths are archaeology, not
+protection targets. The CURRENT proven-and-locked list lives in
+`.ai/status/CURRENT_STATE.md` and includes:)
+- The API-first manual lane (`_run_manual_job_via_generate`) with asset
+  resolution, self-heal, project self-provision, and telemetry bridge.
+- USER SETTINGS ARE LAW: aspect/count/duration/model plumbed end-to-end;
+  unknown model FAILS CLOSED, never silently downgraded.
+- The negotiation brain (cap-gate xCount, approve-once, post-approve
+  model+duration verify, failure-reply knowledge). Omni Flash internal engine
+  alias = `abra` (load-bearing).
+- Retrieval: pre-existing-media exclusion, periodic tab reload, collect-all-N.
+- The `generated_artifact` library + `/api/flow/artifacts` +
+  `/api/flow/retrieved/{media_id}` + dashboard Library gallery.
+- The local gates accepted by the user:
   - `node --check extension/content-flow-dom.js`
   - `node scripts/test-f2v-asset-picker-modal.js`
-- Do not rewrite proven mode/config logic unless the harness proves a regression there.
+  - the 85-test pytest gate listed in CURRENT_STATE.md
+- Do not rewrite ANY locked path unless one of those gates proves a
+  regression there. Don't fix what is not broken.
 
 ## Unstable Or Rebuild Paths
-- Runtime and build handshake.
-- Telemetry schema and build-proof enforcement.
-- Selector registry and evidence registry.
-- Start-frame upload strategy.
-- `content-flow-dom.js` upload acceptance logic.
+- Frozen DOM-lane code awaiting DELETION (content-flow-dom DOM-driving lanes,
+  f2v-flow-queue-runner) — delete-only; never repair.
+- Pre-existing failing unit suites (batch_planner / result_handler /
+  product_catalog) — DB/fixture issues unrelated to generation.
+- T2V post-approve model verification (text-only generation tool name pending
+  one captured approved-SSE).
 - Live UAT report quality and rejection gates.
 
 ## Forbidden Work

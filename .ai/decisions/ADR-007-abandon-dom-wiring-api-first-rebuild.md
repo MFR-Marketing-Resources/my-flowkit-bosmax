@@ -1,6 +1,12 @@
 # ADR-007: Abandon Chrome→Flow DOM Wiring; API-First Rebuild (IMG → I2V → T2V → F2V)
 
-- Status: ACCEPTED (owner decision, 2026-07-02)
+- Status: ACCEPTED AND EXECUTED (owner decision, 2026-07-02)
+- Execution record: ALL FOUR PHASE GATES PASSED THE SAME NIGHT (PRs #160-#167
+  merged to main). IMG/I2V/T2V/F2V live-proven end-to-end through the API-first
+  lane, including the operator's own dashboard clicks. Production hardening
+  landed: settings fidelity (count/model/duration/aspect are LAW), stale-media
+  self-heal, project self-provision, artifact library + dashboard gallery.
+  See `.ai/status/CURRENT_STATE.md` for the locked list and validation gates.
 - Owner: Faris (final authority)
 - Decided after live incidents: manual_5353152e, manual_efad2bb1, manual_8fa93d98
   (root-shell authority leak; infinite mutual recursion / "Maximum call stack
