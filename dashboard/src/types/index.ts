@@ -1890,6 +1890,21 @@ export interface WorkspaceGenerationPackage {
 	status: WorkspaceGenerationPackageStatus;
 	operator_notes: string | null;
 	batch_run_id: string | null;
+	// Prompt Queue / Production Queue separation (additive backend fields)
+	logical_mode?: string | null;
+	variation_strategy?: string | null;
+	prompt_fingerprint?: string | null;
+	variation_fingerprints_json?: unknown;
+	anti_redundancy_json?:
+		| { hard_blocks?: string[]; warnings?: string[] }
+		| string
+		| null;
+	production_status?: string | null;
+	production_run_id?: string | null;
+	production_error?: string | null;
+	artifact_media_ids_json?: string[] | string | null;
+	approved_at?: string | null;
+	sent_to_production_at?: string | null;
 	created_at: string;
 	updated_at: string;
 }

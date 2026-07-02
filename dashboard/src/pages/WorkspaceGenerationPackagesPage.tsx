@@ -13,12 +13,17 @@ import {
 	Layers,
 	RefreshCw,
 	Search,
+	Send,
 	Square,
 	Trash2,
 	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+	approvePackages,
+	createProductionRun,
+} from "../api/productionQueue";
 import {
 	deleteWorkspaceGenerationPackage,
 	getWorkspaceGenerationPackage,
@@ -107,6 +112,59 @@ function getOperatorSurfaceLabel(pkg: WorkspaceGenerationPackage): string {
 
 function getOperatorSurfaceRoute(pkg: WorkspaceGenerationPackage): string | null {
 	return MODE_OPERATOR_ROUTE[getOperatorSurfaceMode(pkg)] ?? null;
+}
+
+// ─── Prompt Queue / Production separation helpers ─────────────
+
+function getLogicalModeBadge(pkg: WorkspaceGenerationPackage): string {
+	if (pkg.logical_mode) return pkg.logical_mode;
+	return getOperatorSurfaceMode(pkg);
+}
+
+function getAntiRedundancyCount(pkg: WorkspaceGenerationPackage): number {
+	const raw = pkg.anti_redundancy_json;
+	if (!raw) return 0;
+	let parsed: unknown = raw;
+	if (typeof raw === "string") {
+		try {
+			parsed = JSON.parse(raw);
+		} catch {
+			return 0;
+		}
+	}
+	if (typeof parsed !== "object" || parsed === null) return 0;
+	const obj = parsed as { hard_blocks?: unknown; warnings?: unknown };
+	const hard = Array.isArray(obj.hard_blocks) ? obj.hard_blocks.length : 0;
+	const warn = Array.isArray(obj.warnings) ? obj.warnings.length : 0;
+	return hard + warn;
+}
+
+const LOGICAL_MODE_BADGE_COLORS: Record<string, string> = {
+	T2V: "border-blue-500/40 bg-blue-500/10 text-blue-300",
+	HYBRID: "border-cyan-500/40 bg-cyan-500/10 text-cyan-300",
+	F2V: "border-purple-500/40 bg-purple-500/10 text-purple-300",
+	I2V: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+	IMG: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+};
+
+const PRODUCTION_STATUS_COLORS: Record<string, string> = {
+	APPROVED: "border-blue-500/40 bg-blue-500/15 text-blue-300",
+	QUEUED: "border-indigo-500/40 bg-indigo-500/15 text-indigo-300",
+	RUNNING: "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
+	GENERATED: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+	DOWNLOADED: "border-cyan-500/40 bg-cyan-500/15 text-cyan-300",
+	FAILED: "border-red-500/40 bg-red-500/15 text-red-300",
+	CANCELLED: "border-slate-600 bg-slate-800 text-slate-400",
+};
+
+function ProductionStatusBadge({ status }: { status: string }) {
+	return (
+		<span
+			className={`px-2 py-0.5 rounded border text-[10px] font-bold uppercase tracking-widest whitespace-nowrap ${PRODUCTION_STATUS_COLORS[status] ?? "border-slate-700 bg-slate-800 text-slate-400"}`}
+		>
+			{status}
+		</span>
+	);
 }
 
 interface PromptBlock {
@@ -545,17 +603,43 @@ function PackageRow({
 					<ChevronRight size={14} className="text-slate-500" />
 				)}
 			</td>
-			<td className="py-2 px-3 font-mono text-xs text-slate-400 max-w-[180px] truncate">
-				{pkg.workspace_generation_package_id}
+			<td className="py-2 px-3 font-mono text-xs text-slate-400 max-w-[180px]">
+				<div className="truncate">{pkg.workspace_generation_package_id}</div>
+				{pkg.prompt_fingerprint && (
+					<div className="text-[9px] text-slate-600 truncate">
+						fp:{pkg.prompt_fingerprint.slice(0, 8)}
+					</div>
+				)}
 			</td>
 			<td className="py-2 px-3 text-xs font-bold text-slate-200">
-				{getOperatorSurfaceLabel(pkg)}
+				<div className="flex flex-wrap items-center gap-1.5">
+					<span
+						className={`px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase tracking-widest ${LOGICAL_MODE_BADGE_COLORS[getLogicalModeBadge(pkg)] ?? "border-slate-700 bg-slate-800 text-slate-400"}`}
+					>
+						{getLogicalModeBadge(pkg)}
+					</span>
+					<span>{getOperatorSurfaceLabel(pkg)}</span>
+					{getAntiRedundancyCount(pkg) > 0 && (
+						<span
+							title="Anti-redundancy findings (hard blocks + warnings)"
+							className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 text-[9px] font-bold"
+						>
+							<AlertTriangle size={9} />
+							{getAntiRedundancyCount(pkg)}
+						</span>
+					)}
+				</div>
 			</td>
 			<td className="py-2 px-3 text-xs text-slate-300 max-w-[150px] truncate">
 				{pkg.product_name_snapshot || pkg.product_id}
 			</td>
 			<td className="py-2 px-3">
-				<StatusBadge status={pkg.status} />
+				<div className="flex flex-wrap items-center gap-1">
+					<StatusBadge status={pkg.status} />
+					{pkg.production_status && pkg.production_status !== "NONE" && (
+						<ProductionStatusBadge status={pkg.production_status} />
+					)}
+				</div>
 			</td>
 			<td className="py-2 px-3 text-xs text-slate-500">
 				{pkg.created_at?.slice(0, 16).replace("T", " ")}
@@ -603,6 +687,15 @@ export default function WorkspaceGenerationPackagesPage() {
 	// P5B: Bulk selection
 	const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
 	const [bulkLoading, setBulkLoading] = useState(false);
+
+	// Approve + send-to-production handoff
+	const [sendConfigOpen, setSendConfigOpen] = useState(false);
+	const [sendConfig, setSendConfig] = useState({
+		interval_min_seconds: 45,
+		interval_max_seconds: 120,
+		cooldown_after_n_jobs: 5,
+		cooldown_seconds: 300,
+	});
 
 	const [modeFilter, setModeFilter] = useState("");
 	const [statusFilter, setStatusFilter] = useState("");
@@ -754,6 +847,67 @@ export default function WorkspaceGenerationPackagesPage() {
 		} catch (e) {
 			setError(String(e));
 		} finally {
+			setBulkLoading(false);
+		}
+	};
+
+	const handleApproveSelected = async () => {
+		if (!checkedIds.size) return;
+		setBulkLoading(true);
+		setError(null);
+		try {
+			const resp = await approvePackages([...checkedIds]);
+			const byId = new Map(resp.results.map((r) => [r.package_id, r]));
+			setPackages((prev) =>
+				prev.map((p) => {
+					const r = byId.get(p.workspace_generation_package_id);
+					return r?.ok
+						? { ...p, production_status: r.production_status ?? "APPROVED" }
+						: p;
+				}),
+			);
+			const failed = resp.results.filter((r) => !r.ok);
+			if (failed.length) {
+				setError(
+					`Approved ${resp.approved}; ${failed.length} failed: ${failed
+						.map((f) => `${f.package_id}: ${f.error ?? "unknown error"}`)
+						.join("; ")}`,
+				);
+			}
+		} catch (e) {
+			setError(String(e));
+		} finally {
+			setBulkLoading(false);
+		}
+	};
+
+	const handleSendToProduction = async () => {
+		const approvedIds = packages
+			.filter(
+				(p) =>
+					checkedIds.has(p.workspace_generation_package_id) &&
+					p.production_status === "APPROVED",
+			)
+			.map((p) => p.workspace_generation_package_id);
+		if (!approvedIds.length) {
+			setError(
+				"No APPROVED packages in the selection — approve packages first, then send to production.",
+			);
+			return;
+		}
+		setBulkLoading(true);
+		setError(null);
+		try {
+			await createProductionRun({
+				package_ids: approvedIds,
+				interval_min_seconds: sendConfig.interval_min_seconds,
+				interval_max_seconds: sendConfig.interval_max_seconds,
+				cooldown_after_n_jobs: sendConfig.cooldown_after_n_jobs,
+				cooldown_seconds: sendConfig.cooldown_seconds,
+			});
+			navigate("/production-queue");
+		} catch (e) {
+			setError(String(e));
 			setBulkLoading(false);
 		}
 	};
@@ -921,10 +1075,29 @@ export default function WorkspaceGenerationPackagesPage() {
 						<div className="rounded-2xl border border-slate-800 bg-slate-950/80 overflow-hidden">
 							{/* P5B: Bulk action toolbar */}
 							{checkedIds.size > 0 && (
-								<div className="flex items-center gap-2 px-3 py-2.5 bg-blue-500/8 border-b border-blue-500/20">
+								<>
+								<div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-blue-500/8 border-b border-blue-500/20">
 									<span className="text-[11px] font-bold text-blue-300 flex-1">
 										{checkedIds.size} selected
 									</span>
+									<button
+										type="button"
+										disabled={bulkLoading}
+										onClick={() => void handleApproveSelected()}
+										className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[11px] font-semibold hover:bg-emerald-500/20 transition-colors disabled:opacity-40"
+									>
+										<CheckCircle size={12} />
+										Approve Selected ({checkedIds.size})
+									</button>
+									<button
+										type="button"
+										disabled={bulkLoading}
+										onClick={() => setSendConfigOpen((v) => !v)}
+										className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-[11px] font-semibold hover:bg-indigo-500/20 transition-colors disabled:opacity-40"
+									>
+										<Send size={12} />
+										Send Selected to Production
+									</button>
 									<button
 										type="button"
 										disabled={bulkLoading}
@@ -959,6 +1132,76 @@ export default function WorkspaceGenerationPackagesPage() {
 										Clear
 									</button>
 								</div>
+								{sendConfigOpen && (
+									<div className="px-3 py-3 bg-indigo-500/5 border-b border-indigo-500/20 space-y-2">
+										<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-300">
+											Production Run Config — only APPROVED packages in the selection are queued
+										</div>
+										<div className="flex flex-wrap items-end gap-3">
+											<label className="flex flex-col gap-1 text-[10px] text-slate-400">
+												Interval min (s)
+												<input
+													type="number"
+													min={0}
+													value={sendConfig.interval_min_seconds}
+													onChange={(e) =>
+														setSendConfig((c) => ({ ...c, interval_min_seconds: Number(e.target.value) || 0 }))
+													}
+													className="w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-400/50"
+												/>
+											</label>
+											<label className="flex flex-col gap-1 text-[10px] text-slate-400">
+												Interval max (s)
+												<input
+													type="number"
+													min={0}
+													value={sendConfig.interval_max_seconds}
+													onChange={(e) =>
+														setSendConfig((c) => ({ ...c, interval_max_seconds: Number(e.target.value) || 0 }))
+													}
+													className="w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-400/50"
+												/>
+											</label>
+											<label className="flex flex-col gap-1 text-[10px] text-slate-400">
+												Cooldown after N jobs
+												<input
+													type="number"
+													min={1}
+													value={sendConfig.cooldown_after_n_jobs}
+													onChange={(e) =>
+														setSendConfig((c) => ({ ...c, cooldown_after_n_jobs: Number(e.target.value) || 1 }))
+													}
+													className="w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-400/50"
+												/>
+											</label>
+											<label className="flex flex-col gap-1 text-[10px] text-slate-400">
+												Cooldown (s)
+												<input
+													type="number"
+													min={0}
+													value={sendConfig.cooldown_seconds}
+													onChange={(e) =>
+														setSendConfig((c) => ({ ...c, cooldown_seconds: Number(e.target.value) || 0 }))
+													}
+													className="w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-400/50"
+												/>
+											</label>
+											<button
+												type="button"
+												disabled={bulkLoading}
+												onClick={() => void handleSendToProduction()}
+												className="flex items-center gap-1 px-4 py-2 rounded-lg border border-indigo-500/40 bg-indigo-500/15 text-indigo-200 text-[11px] font-bold hover:bg-indigo-500/25 transition-colors disabled:opacity-40"
+											>
+												<Send size={12} />
+												Queue Production Run
+											</button>
+										</div>
+										<div className="text-[10px] text-slate-500">
+											Creating a run does NOT burn credits — execution starts fail-closed (dry-run) from the Production Queue page.
+										</div>
+									</div>
+								)}
+								</>
 							)}
 							<table className="w-full">
 								<thead className="border-b border-slate-800">
