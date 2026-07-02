@@ -452,6 +452,14 @@ def _family_dialogue_clause(family: str, stage: str, target_language: str) -> st
 def _family_voice_clause(family: str, target_language: str) -> str:
     lang = language_name(target_language)
     bank = {
+        "electronics": {
+            "Malay": "Bunyi macam tunjuk benda yang memang membantu dalam rutin harian, bukan macam baca spec sheet depan kamera.",
+            "English": "Sound like showing something that genuinely helps in daily life, not like reading a spec sheet to camera.",
+        },
+        "household_care": {
+            "Malay": "Bunyi macam tengah buat kerja rumah betul-betul dan terjumpa benda yang memudahkan, bukan macam product showcase yang dibuat-buat.",
+            "English": "Sound like someone genuinely doing housework and noticing what makes it easier, not like a staged product showcase.",
+        },
         "beauty_personal_care": {
             "Malay": "Bunyi macam tengah siap-siap betul sebelum keluar, bukan macam pitch studio yang terlalu sedar kamera.",
             "English": "Sound like someone genuinely getting ready before heading out, not like a camera-aware studio pitch.",
@@ -477,6 +485,18 @@ def _family_voice_clause(family: str, target_language: str) -> str:
 
 def _family_t2v_scene_clause(family: str) -> dict[str, str]:
     bank = {
+        "electronics": {
+            "continuity": "Let the product appear inside a believable everyday-use beat such as checking time at the door, glancing at a notification while walking, adjusting a strap before leaving, or reacting to a quick alert, never as a scripted gadget demo.",
+            "opening": "Start with the presenter already mid-task and using the device for a real reason before the product becomes the spoken focus.",
+            "middle": "Use one natural device habit such as waking the screen, dismissing a notification, or checking the time while moving so the feature proof feels discovered in use.",
+            "closing": "Resolve like the device quietly proves itself useful and stays on the body for the next task, not like a frozen tech-spec ending.",
+        },
+        "household_care": {
+            "continuity": "Let the product appear inside a believable housework beat such as wiping a spill, resetting a counter before guests arrive, or grabbing the bottle during a quick cleanup, never as a posed cleaning showcase.",
+            "opening": "Start with the presenter already mid-cleanup so the product enters as part of solving a small real mess, not as a staged reveal.",
+            "middle": "Use one practical cleanup habit such as reaching around clutter, spraying a real surface, or shifting an item aside so the utility reads from action rather than explanation.",
+            "closing": "Resolve like the area is quickly sorted and the bottle goes back within easy reach for the next cleanup, not like a showroom-perfect product tableau.",
+        },
         "beauty_personal_care": {
             "continuity": "Let the product appear inside a believable getting-ready beat such as rushed sink-side prep, mirror check, makeup-before-leaving flow, or a midday touch-up, never as a creator-studio demo.",
             "opening": "Start with the presenter already fixing hair, checking skin, or reaching across the counter so the routine feels underway before the product becomes the subject.",

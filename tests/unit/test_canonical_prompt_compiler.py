@@ -378,6 +378,48 @@ def test_fragrance_voice_and_dialogue_push_real_social_notice_language():
     assert "orang memang akan perasan dekat dunia sebenar" in s7
 
 
+def test_electronics_voice_clause_avoids_spec_sheet_demo_language():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-electronics", "name": "AEROFIT SMART WATCH", "category": "Electronics"},
+        copy={
+            "hook": "Sekali tengok terus nampak moden.",
+            "subhook": "Screen dia terus nampak jelas.",
+            "usp1": "Notifikasi senang nampak, strap nampak kemas, dan menu dia tak serabut.",
+            "usp2": "Jenis gadget yang terus nampak guna hari-hari, bukan syok sendiri.",
+            "cta": "Check dulu spec dia.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s7 = result["blocks"][-1]["sections"]["SECTION 7 - VOICE & DELIVERY"].lower()
+    assert "bukan macam baca spec sheet depan kamera" in s7
+
+
+def test_household_voice_clause_avoids_staged_product_showcase_language():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-household", "name": "LANTAIKILAT FLOOR SPRAY", "category": "Household Care"},
+        copy={
+            "hook": "Sekali tengok terus nampak practical untuk rumah.",
+            "subhook": "Jenis botol yang memang senang capai bila nak guna cepat.",
+            "usp1": "Grip sedap pegang, nozzle jelas, dan terus nampak cara guna dia.",
+            "usp2": "Memang jenis barang yang terus masuk rutin kemas rumah.",
+            "cta": "Check dulu kalau tengah cari barang rumah yang mudah pakai.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s7 = result["blocks"][-1]["sections"]["SECTION 7 - VOICE & DELIVERY"].lower()
+    assert "bukan macam product showcase yang dibuat-buat" in s7
+
+
 def test_electronics_family_clause_bank_strengthens_visual_proof_and_end_payoff():
     result = cpc.compile_prompt_set(
         source_mode="HYBRID",
@@ -601,6 +643,54 @@ def test_t2v_fragrance_scene_injects_social_ready_native_cues():
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
     assert "grabbing keys" in s3 or "grabbing keys" in s3.replace("grabing", "grabbing")
     assert "would be noticed by people nearby" in s4
+
+
+def test_t2v_electronics_scene_injects_everyday_use_native_cues():
+    result = cpc.compile_prompt_set(
+        source_mode="T2V",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-electronics", "name": "AEROFIT SMART WATCH", "category": "Electronics"},
+        copy={
+            "hook": "Sekali tengok terus nampak moden.",
+            "subhook": "Screen dia terus nampak jelas.",
+            "usp1": "Notifikasi senang nampak, strap nampak kemas, dan menu dia tak serabut.",
+            "usp2": "Jenis gadget yang terus nampak guna hari-hari, bukan syok sendiri.",
+            "cta": "Check dulu spec dia.",
+            "formula_family": "HSO",
+        },
+        scene_context="a real morning rush near the front door while checking time and notifications",
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "checking time at the door" in s3
+    assert "stays on the body for the next task" in s4
+
+
+def test_t2v_household_scene_injects_cleanup_native_cues():
+    result = cpc.compile_prompt_set(
+        source_mode="T2V",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-household", "name": "LANTAIKILAT FLOOR SPRAY", "category": "Household Care"},
+        copy={
+            "hook": "Sekali tengok terus nampak practical untuk rumah.",
+            "subhook": "Jenis botol yang memang senang capai bila nak guna cepat.",
+            "usp1": "Grip sedap pegang, nozzle jelas, dan terus nampak cara guna dia.",
+            "usp2": "Memang jenis barang yang terus masuk rutin kemas rumah.",
+            "cta": "Check dulu kalau tengah cari barang rumah yang mudah pakai.",
+            "formula_family": "HSO",
+        },
+        scene_context="a lived-in kitchen corner during a quick cleanup before guests arrive",
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "wiping a spill" in s3
+    assert "goes back within easy reach for the next cleanup" in s4
 
 
 def test_fashion_family_cta_lands_cleanly_without_awkward_fragment():
