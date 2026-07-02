@@ -275,6 +275,180 @@ def _family_focus_terms(family: str) -> dict[str, str]:
     return table[family]
 
 
+def _family_clause_bank(family: str) -> dict[str, Any]:
+    table: dict[str, dict[str, Any]] = {
+        "fragrance": {
+            "dialogue_opening": {
+                "Malay": "Bau dia terus bagi rasa lebih yakin.",
+                "English": "The scent reads confident immediately.",
+            },
+            "dialogue_middle": {
+                "Malay": "Botol dia pun nampak kemas dan mahal bila pegang.",
+                "English": "The bottle reads neat and premium in hand.",
+            },
+            "dialogue_cta": {
+                "Malay": "Memang jenis bau yang orang senang ingat.",
+                "English": "It lands like the kind of scent people remember.",
+            },
+            "visual_proof": "make the bottle, nozzle, and reflective finish read expensive before any spoken benefit lands",
+            "end_payoff": "a remembered-scent payoff rather than a generic beauty close",
+        },
+        "beauty_personal_care": {
+            "dialogue_opening": {
+                "Malay": "Terus rasa routine tu lebih kemas.",
+                "English": "It makes the routine feel cleaner immediately.",
+            },
+            "dialogue_middle": {
+                "Malay": "Packaging dia nampak senang masuk rutin harian.",
+                "English": "The packaging reads easy to slot into a daily routine.",
+            },
+            "dialogue_cta": {
+                "Malay": "Jenis produk yang senang repeat pakai.",
+                "English": "It feels like the kind of product people will repeat naturally.",
+            },
+            "visual_proof": "make the packaging and handling feel routine-ready, polished, and easy to repeat",
+            "end_payoff": "a repeatable beauty-routine payoff instead of a generic cosmetic ending",
+        },
+        "laundry_care": {
+            "dialogue_opening": {
+                "Malay": "Saiz refill dia terus nampak berbaloi.",
+                "English": "The refill size reads worth it immediately.",
+            },
+            "dialogue_middle": {
+                "Malay": "Terus boleh bayang rutin baju bersih dan wangi.",
+                "English": "It instantly maps to a clean, fresh laundry routine.",
+            },
+            "dialogue_cta": {
+                "Malay": "Memang jenis stok rumah yang senang nak ulang beli.",
+                "English": "It feels like practical home stock that gets repurchased easily.",
+            },
+            "visual_proof": "make refill scale, cap logic, and pakaian-wangi utility read clearly before any claim wording tries to help",
+            "end_payoff": "a practical repeat-buy household payoff rather than a generic product close",
+        },
+        "household_care": {
+            "dialogue_opening": {
+                "Malay": "Sekali tengok terus nampak practical.",
+                "English": "It looks practical at first glance.",
+            },
+            "dialogue_middle": {
+                "Malay": "Cara pegang dan guna dia terus masuk akal.",
+                "English": "The way it is held and used reads logical immediately.",
+            },
+            "dialogue_cta": {
+                "Malay": "Memang senang nampak value dia untuk rumah.",
+                "English": "The home-use value reads clearly by the end.",
+            },
+            "visual_proof": "make grip logic, opening direction, and home-use practicality obvious in-frame",
+            "end_payoff": "a tidy household-utility payoff rather than a generic benefit ending",
+        },
+        "baby_care": {
+            "dialogue_opening": {
+                "Malay": "Sekali tengok terus rasa lembut dan meyakinkan.",
+                "English": "It reads gentle and reassuring at first glance.",
+            },
+            "dialogue_middle": {
+                "Malay": "Packaging dia buat orang rasa senang percaya untuk routine bayi.",
+                "English": "The pack reads easy to trust for a baby-care routine.",
+            },
+            "dialogue_cta": {
+                "Malay": "Memang jenis barang yang parent nak simpan standby.",
+                "English": "It feels like the kind of item parents keep on standby.",
+            },
+            "visual_proof": "make softness, pack integrity, and calm parent-trust handling read before any spoken reassurance",
+            "end_payoff": "a calm parent-confidence payoff rather than a generic soft-product ending",
+        },
+        "food_beverage": {
+            "dialogue_opening": {
+                "Malay": "Packaging dia terus buat rasa nak cuba.",
+                "English": "The packaging makes it feel try-worthy instantly.",
+            },
+            "dialogue_middle": {
+                "Malay": "Terus nampak sedap dan senang bayang cara makan dia.",
+                "English": "It reads tasty fast and makes the serving moment easy to imagine.",
+            },
+            "dialogue_cta": {
+                "Malay": "Jenis produk yang buat orang simpan dalam kepala lepas tengok.",
+                "English": "It feels like the kind of product people keep craving after seeing it.",
+            },
+            "visual_proof": "make appetite, serving temptation, and sealed-pack truth work together instead of relying on copy alone",
+            "end_payoff": "a crave-and-try payoff rather than a generic convenience ending",
+        },
+        "fashion_apparel": {
+            "dialogue_opening": {
+                "Malay": "Jatuh dia terus nampak kemas.",
+                "English": "The drape reads neat immediately.",
+            },
+            "dialogue_middle": {
+                "Malay": "Bila gerak sikit, fit dia terus nampak jadi.",
+                "English": "A small movement makes the fit read correctly right away.",
+            },
+            "dialogue_cta": {
+                "Malay": "Memang jenis pakai terus rasa jadi orang.",
+                "English": "It lands like the kind of piece that makes the wearer feel put together.",
+            },
+            "visual_proof": "make fit, drape, and seam finish prove themselves through movement and silhouette",
+            "end_payoff": "a wear-it-right-now confidence payoff instead of a generic style ending",
+        },
+        "electronics": {
+            "dialogue_opening": {
+                "Malay": "Sekali tengok terus nampak function dia.",
+                "English": "The function reads clearly at first glance.",
+            },
+            "dialogue_middle": {
+                "Malay": "Screen dan detail dia terus buat orang faham point dia.",
+                "English": "The screen and details make the use-case read instantly.",
+            },
+            "dialogue_cta": {
+                "Malay": "Memang senang nampak kenapa benda ni berguna.",
+                "English": "It becomes obvious why the device is useful.",
+            },
+            "visual_proof": "make screen, controls, and profile shape create a feature-proof read instead of a generic gadget beauty shot",
+            "end_payoff": "a credible feature-utility payoff rather than a generic tech close",
+        },
+        "wellness": {
+            "dialogue_opening": {
+                "Malay": "Nampak kemas dan senang masuk routine.",
+                "English": "It looks easy to trust in a routine.",
+            },
+            "dialogue_middle": {
+                "Malay": "Packaging dia terus rasa tersusun dan tak overclaim.",
+                "English": "The packaging reads careful and non-hype immediately.",
+            },
+            "dialogue_cta": {
+                "Malay": "Jenis produk yang orang selesa keep dalam routine.",
+                "English": "It feels like something people can keep in a routine comfortably.",
+            },
+            "visual_proof": "make the bottle, dosage logic, and routine fit feel careful and measured rather than loud",
+            "end_payoff": "a careful trust-led routine payoff rather than a generic wellness promise",
+        },
+        "general": {
+            "dialogue_opening": {
+                "Malay": "Sekali tengok terus nampak kemas.",
+                "English": "It reads clean at first glance.",
+            },
+            "dialogue_middle": {
+                "Malay": "Cara pegang dan guna dia terus nampak masuk akal.",
+                "English": "The handling makes the value feel believable immediately.",
+            },
+            "dialogue_cta": {
+                "Malay": "Memang senang faham kenapa orang nak cuba.",
+                "English": "It becomes easy to see why someone would try it.",
+            },
+            "visual_proof": "make product truth and usage context do the convincing work first",
+            "end_payoff": "a clear product-first payoff rather than a vague commercial ending",
+        },
+    }
+    return table.get(family, table["general"])
+
+
+def _family_dialogue_clause(family: str, stage: str, target_language: str) -> str:
+    family_bank = _family_clause_bank(family)
+    lang = language_name(target_language)
+    key = f"dialogue_{stage}"
+    phrase_bank = family_bank.get(key) or family_bank["dialogue_middle"]
+    return _clean(phrase_bank.get(lang) or phrase_bank.get("Malay") or "")
+
+
 def _infer_trigger_id(
     product: dict[str, Any], copy: dict[str, Any], *, family: str, angle: str,
 ) -> str:
@@ -499,6 +673,7 @@ def _merge_unique_clauses(*clause_groups: list[str]) -> list[str]:
 
 
 def _visual_story_terms(family: str, angle_signal: str, trigger_id: str, cta_type: str) -> dict[str, str]:
+    family_bank = _family_clause_bank(family)
     opening_bank = {
         "TRUST_01": "reassuring, easy-to-believe commercial energy",
         "CONFIDENCE_01": "self-assured desirability and social-confidence energy",
@@ -542,8 +717,14 @@ def _visual_story_terms(family: str, angle_signal: str, trigger_id: str, cta_typ
     }
     return {
         "opening": opening_bank.get(trigger_id, "credible, native-commercial energy"),
-        "middle": middle_bank.get(angle_signal, fallback_middle.get(family, fallback_middle["general"])),
-        "closing": closing_bank.get(cta_type, "a clean memorable end hold with clear commercial intent"),
+        "middle": (
+            f"{middle_bank.get(angle_signal, fallback_middle.get(family, fallback_middle['general']))}; "
+            f"{family_bank['visual_proof']}"
+        ),
+        "closing": (
+            f"{closing_bank.get(cta_type, 'a clean memorable end hold with clear commercial intent')} with "
+            f"{family_bank['end_payoff']}"
+        ),
     }
 
 
@@ -641,49 +822,52 @@ def _formula_dialogue_clauses(
     opening = [_strategic_opening_clause(copy.get("trigger_id", ""), target_language)]
     middle = [_strategic_middle_clause(_infer_angle_signal(copy, family), target_language)]
     cta_bridge = [_strategic_cta_bridge(copy.get("cta_type", ""), copy.get("cta", ""), target_language)]
+    family_opening = [_family_dialogue_clause(family, "opening", target_language)]
+    family_middle = [_family_dialogue_clause(family, "middle", target_language)]
+    family_cta = [_family_dialogue_clause(family, "cta", target_language)]
     chosen_usps = _usp_slice(usps, block_index, total_blocks)
     if total_blocks <= 1:
         single_block_map = {
-            "PAS": _merge_unique_clauses(hooks, opening, subhooks[:1], chosen_usps[:1], middle, cta_bridge, ctas[:1]),
-            "AIDA": _merge_unique_clauses(hooks, opening, chosen_usps[:2], middle, cta_bridge, ctas[:1]),
-            "HSO": _merge_unique_clauses(hooks, opening, subhooks[:1], chosen_usps[:1], middle, cta_bridge, ctas[:1]),
-            "BAB": _merge_unique_clauses(subhooks[:1], opening, chosen_usps[:2], middle, cta_bridge, ctas[:1]),
-            "PESTA": _merge_unique_clauses(hooks, opening, angle[:1], chosen_usps[:1], middle, cta_bridge, ctas[:1]),
-            "PASTOR": _merge_unique_clauses(hooks, opening, subhooks[:1], angle[:1], middle, cta_bridge, ctas[:1]),
+            "PAS": _merge_unique_clauses(hooks, opening, family_opening, subhooks[:1], chosen_usps[:1], middle, family_middle, cta_bridge, ctas[:1], family_cta),
+            "AIDA": _merge_unique_clauses(hooks, opening, family_opening, chosen_usps[:2], middle, family_middle, cta_bridge, ctas[:1], family_cta),
+            "HSO": _merge_unique_clauses(hooks, opening, family_opening, subhooks[:1], chosen_usps[:1], middle, family_middle, cta_bridge, ctas[:1], family_cta),
+            "BAB": _merge_unique_clauses(subhooks[:1], opening, family_opening, chosen_usps[:2], middle, family_middle, cta_bridge, ctas[:1], family_cta),
+            "PESTA": _merge_unique_clauses(hooks, opening, family_opening, angle[:1], chosen_usps[:1], middle, family_middle, cta_bridge, ctas[:1], family_cta),
+            "PASTOR": _merge_unique_clauses(hooks, opening, family_opening, subhooks[:1], angle[:1], middle, family_middle, cta_bridge, ctas[:1], family_cta),
         }
         return single_block_map.get(
             formula,
-            _merge_unique_clauses(hooks, opening, subhooks[:1], chosen_usps[:1], middle, cta_bridge, ctas[:1]),
+            _merge_unique_clauses(hooks, opening, family_opening, subhooks[:1], chosen_usps[:1], middle, family_middle, cta_bridge, ctas[:1], family_cta),
         )
     if block_index == 1:
         opening_map = {
-            "PAS": _merge_unique_clauses(hooks, opening, subhooks[:1]),
-            "AIDA": _merge_unique_clauses(hooks, opening, chosen_usps[:1]),
-            "HSO": _merge_unique_clauses(hooks, opening, subhooks[:1]),
-            "BAB": _merge_unique_clauses(subhooks[:1], opening, hooks[:1]),
-            "PESTA": _merge_unique_clauses(hooks, opening, angle[:1]),
-            "PASTOR": _merge_unique_clauses(hooks, opening, subhooks[:1]),
+            "PAS": _merge_unique_clauses(hooks, opening, family_opening, subhooks[:1]),
+            "AIDA": _merge_unique_clauses(hooks, opening, family_opening, chosen_usps[:1]),
+            "HSO": _merge_unique_clauses(hooks, opening, family_opening, subhooks[:1]),
+            "BAB": _merge_unique_clauses(subhooks[:1], opening, family_opening, hooks[:1]),
+            "PESTA": _merge_unique_clauses(hooks, opening, family_opening, angle[:1]),
+            "PASTOR": _merge_unique_clauses(hooks, opening, family_opening, subhooks[:1]),
         }
-        return opening_map.get(formula, _merge_unique_clauses(hooks, opening, subhooks[:1])) or hooks or subhooks
+        return opening_map.get(formula, _merge_unique_clauses(hooks, opening, family_opening, subhooks[:1])) or hooks or subhooks
     if block_index == total_blocks:
         closing_map = {
-            "PAS": _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1]),
-            "AIDA": _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1]),
-            "HSO": _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1]),
-            "BAB": _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1]),
-            "PESTA": _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1]),
-            "PASTOR": _merge_unique_clauses(angle[:1], middle, cta_bridge, ctas[:1]),
+            "PAS": _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
+            "AIDA": _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
+            "HSO": _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
+            "BAB": _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
+            "PESTA": _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
+            "PASTOR": _merge_unique_clauses(angle[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
         }
-        return closing_map.get(formula, _merge_unique_clauses(chosen_usps[:1], middle, cta_bridge, ctas[:1])) or ctas or chosen_usps
+        return closing_map.get(formula, _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle)) or ctas or chosen_usps
     middle_map = {
-        "PAS": _merge_unique_clauses(subhooks[:1], chosen_usps[:1], middle),
-        "AIDA": _merge_unique_clauses(chosen_usps[:2] or angle[:1], middle),
-        "HSO": _merge_unique_clauses(subhooks[:1], chosen_usps[:1], middle),
-        "BAB": _merge_unique_clauses(chosen_usps[:1], angle[:1], middle),
-        "PESTA": _merge_unique_clauses(angle[:1], chosen_usps[:1], middle),
-        "PASTOR": _merge_unique_clauses(subhooks[:1], chosen_usps[:1], middle),
+        "PAS": _merge_unique_clauses(subhooks[:1], chosen_usps[:1], middle, family_middle),
+        "AIDA": _merge_unique_clauses(chosen_usps[:2] or angle[:1], middle, family_middle),
+        "HSO": _merge_unique_clauses(subhooks[:1], chosen_usps[:1], middle, family_middle),
+        "BAB": _merge_unique_clauses(chosen_usps[:1], angle[:1], middle, family_middle),
+        "PESTA": _merge_unique_clauses(angle[:1], chosen_usps[:1], middle, family_middle),
+        "PASTOR": _merge_unique_clauses(subhooks[:1], chosen_usps[:1], middle, family_middle),
     }
-    return middle_map.get(formula, _merge_unique_clauses(chosen_usps[:1], angle[:1], middle)) or chosen_usps or subhooks or angle
+    return middle_map.get(formula, _merge_unique_clauses(chosen_usps[:1], angle[:1], middle, family_middle)) or chosen_usps or subhooks or angle
 
 
 def build_block_dialogue(
@@ -746,21 +930,21 @@ def _default_shot_plan(
             f"Creator-led opening beat with {pname} already in hand, matching the uploaded product image exactly while the first spoken hook lands inside a {focus['context']} setup driven by {story['opening']}.",
             f"Tight handling close-up of {pname} with the label readable, controlled reflections, and {focus['detail']} that supports the {angle_hint or 'core commercial angle'} while the frame continues to {story['middle']}.",
             f"Reaction or routine beat that keeps the same presenter and lets {pname} stay visible in-frame while the main benefit is spoken naturally through {story['middle']}.",
-            f"Steady closing beat with {pname} held at chest level, eye contact to camera, and enough stillness for {story['closing']} plus {focus['closing']} to land cleanly.",
+            f"Steady closing beat with {pname} held at chest level, eye contact to camera, and enough stillness for {story['closing']} plus {focus['closing']} to land cleanly while the shot still helps {story['middle']}.",
         ]
     elif source_mode == "FRAMES":
         templates = [
             f"Continue from the exact pose, grip, and camera distance already visible in the uploaded finished frame. The first beat is motion continuation only, not a new reveal, and it should carry {story['opening']}.",
             f"Ease into one believable motion-delta beat that keeps {pname} in the same position family, with no restyle, no jump cut, and no scene rebuild, while preserving {focus['detail']} and helping {story['middle']}.",
             f"Add a subtle expression or hand adjustment while keeping {pname} readable, the finished-frame lighting unchanged, and the {angle_hint or 'commercial'} tension alive through {story['middle']}.",
-            f"Let the motion settle into a clean held frame with {pname} still truthful to the uploaded frame, ready for {story['closing']} and {focus['closing']} or a seam-safe stop.",
+            f"Let the motion settle into a clean held frame with {pname} still truthful to the uploaded frame, ready for {story['closing']} and {focus['closing']} or a seam-safe stop while still helping {story['middle']}.",
         ]
     elif source_mode == "INGREDIENTS":
         templates = [
             f"Reference-led opening beat: the presenter must match the avatar reference while introducing {pname} exactly as shown by the product reference, with {story['opening']}.",
             f"Product truth beat: move closer to {pname} for readable packaging, honest scale, natural hand-object interaction, and {focus['detail']} without overpowering the presenter reference, while the scene helps {story['middle']}.",
             f"Environment beat: preserve the supplied scene or style direction only at the background and mood level while the product remains the visual authority and continues to {story['middle']}.",
-            f"Final hold beat with presenter and {pname} in the same frame, balanced and believable, so {story['closing']} and {focus['closing']} can land without any fake demonstration.",
+            f"Final hold beat with presenter and {pname} in the same frame, balanced and believable, so {story['closing']} and {focus['closing']} can land without any fake demonstration while the image still helps {story['middle']}.",
         ]
     elif source_mode == "IMAGES":
         templates = [
@@ -771,7 +955,7 @@ def _default_shot_plan(
             f"Open inside the lived-in scene first, then let the presenter bring {pname} into the frame naturally so the hook feels native, not staged, with {focus['context']} already visible and powered by {story['opening']}.",
             f"Routine-context beat that shows why {pname} belongs in the moment, with the packaging readable, the action grounded in normal human behaviour, and {focus['detail']} carrying a middle beat that helps {story['middle']}.",
             f"Confidence or payoff beat where the presenter stays on camera, keeps {pname} visible, and sells the main benefit through expression and handling rather than hard claims, aligned to {angle_hint or 'the commercial promise'} while continuing to {story['middle']}.",
-            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {story['closing']} plus {focus['closing']} to feel intentional.",
+            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {story['closing']} plus {focus['closing']} to feel intentional while the shot still helps {story['middle']}.",
         ]
     if block_index > 1 and source_mode != "IMAGES":
         templates[0] = (

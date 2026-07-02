@@ -200,6 +200,54 @@ def test_section4_and_section8_follow_cta_payoff_logic():
     assert "bookmark-worthy end hold" in s8
 
 
+def test_laundry_family_clause_bank_injects_refill_and_repeat_buy_language():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-laundry",
+            "name": "SUMIKKO DETERGENT REFILL",
+            "category": "Laundry",
+        },
+        copy={
+            "hook": "Weh, besar juga refill ni.",
+            "subhook": "Sekali tengok terus nampak guna lama.",
+            "cta": "Grab dulu kalau sesuai.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    final_dialogue = result["blocks"][-1]["dialogue"].lower()
+    assert "stok rumah" in final_dialogue or "ulang beli" in final_dialogue
+
+
+def test_electronics_family_clause_bank_strengthens_visual_proof_and_end_payoff():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=8,
+        product={
+            "id": "prod-watch",
+            "name": "AEROFIT SMART WATCH",
+            "category": "Electronics",
+        },
+        copy={
+            "hook": "Sekali tengok terus nampak moden.",
+            "subhook": "Screen dia terus nampak jelas.",
+            "cta": "Check dulu spec dia.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s4 = result["blocks"][0]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    s8 = result["blocks"][0]["sections"]["SECTION 8 - CTA & END FRAME"].lower()
+    assert "feature-proof read" in s4
+    assert "credible feature-utility payoff" in s8
+
+
 def test_ingredients_requires_role_map_and_normalizes_missing_style():
     with pytest.raises(ValueError, match="INGREDIENTS_ASSET_ROLE_MAP_INCOMPLETE"):
         _compile(mode="INGREDIENTS")
