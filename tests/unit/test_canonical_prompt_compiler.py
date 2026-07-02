@@ -290,6 +290,50 @@ def test_food_family_keeps_taste_language_when_copy_is_actually_edible():
     assert "appetite or temptation" in s4
 
 
+def test_baby_care_final_dialogue_prefers_parent_native_closing_language():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-baby", "name": "COMFY BABY LOTION", "category": "Baby Care"},
+        copy={
+            "hook": "Weh, sekali sapu terus nampak tenang.",
+            "subhook": "Jenis routine yang buat parent rasa kurang serabut.",
+            "usp1": "Botol senang pegang, pump dia tak serabut, dan packaging nampak lembut.",
+            "cta": "Simpan dulu kalau tengah cari standby untuk rumah.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    final_dialogue = result["blocks"][-1]["dialogue"].lower()
+    s7 = result["blocks"][-1]["sections"]["SECTION 7 - VOICE & DELIVERY"].lower()
+    assert "parent memang suka simpan benda ni dekat-dekat" in final_dialogue
+    assert "parent kongsi" in s7
+
+
+def test_wellness_final_dialogue_prefers_grounded_routine_language():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-wellness", "name": "HERBA TOK AYAH", "category": "Wellness"},
+        copy={
+            "hook": "Packaging dia nampak kemas, tak over sangat.",
+            "subhook": "Terus rasa macam senang masuk routine harian.",
+            "usp1": "Botol dia jelas, senang simpan, dan tak nampak hype.",
+            "cta": "Save dulu kalau tengah survey routine support yang sesuai.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    final_dialogue = result["blocks"][-1]["dialogue"].lower()
+    s7 = result["blocks"][-1]["sections"]["SECTION 7 - VOICE & DELIVERY"].lower()
+    assert "senang kekal dalam routine" in final_dialogue
+    assert "grounded dan tak hype" in s7
+
+
 def test_electronics_family_clause_bank_strengthens_visual_proof_and_end_payoff():
     result = cpc.compile_prompt_set(
         source_mode="HYBRID",
@@ -419,6 +463,52 @@ def test_t2v_continuation_keeps_scene_native_not_generic_reset():
     result = _compile(mode="T2V", duration_seconds=16, scene_context="a bright lived-in bathroom counter at home")
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
     assert "lived-in, scene-native, and socially believable" in s4
+
+
+def test_t2v_baby_scene_injects_parent_routine_native_cues():
+    result = cpc.compile_prompt_set(
+        source_mode="T2V",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-baby", "name": "COMFY BABY LOTION", "category": "Baby Care"},
+        copy={
+            "hook": "Weh, sekali sapu terus nampak tenang.",
+            "subhook": "Jenis routine yang buat parent rasa kurang serabut.",
+            "usp1": "Botol senang pegang, pump dia tak serabut, dan packaging nampak lembut.",
+            "cta": "Simpan dulu kalau tengah cari standby untuk rumah.",
+            "formula_family": "HSO",
+        },
+        scene_context="a bright lived-in nursery corner after bath time",
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "after-bath lotion prep" in s3
+    assert "stays within easy reach for the next routine" in s4
+
+
+def test_t2v_wellness_scene_injects_measured_routine_native_cues():
+    result = cpc.compile_prompt_set(
+        source_mode="T2V",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-wellness", "name": "HERBA TOK AYAH", "category": "Wellness"},
+        copy={
+            "hook": "Packaging dia nampak kemas, tak over sangat.",
+            "subhook": "Terus rasa macam senang masuk routine harian.",
+            "usp1": "Botol dia jelas, senang simpan, dan tak nampak hype.",
+            "cta": "Save dulu kalau tengah survey routine support yang sesuai.",
+            "formula_family": "HSO",
+        },
+        scene_context="a quiet home kitchen counter during a real morning routine",
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s3 = result["blocks"][-1]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "morning water prep" in s3
+    assert "quietly deciding this stays in the routine" in s4
 
 
 def test_fashion_family_cta_lands_cleanly_without_awkward_fragment():

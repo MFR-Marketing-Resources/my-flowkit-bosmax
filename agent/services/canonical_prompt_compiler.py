@@ -343,15 +343,15 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
         },
         "baby_care": {
             "dialogue_opening": {
-                "Malay": "Sekali tengok terus rasa lembut dan meyakinkan.",
+                "Malay": "Sekali tengok terus rasa tenang nak guna.",
                 "English": "It reads gentle and reassuring at first glance.",
             },
             "dialogue_middle": {
-                "Malay": "Packaging dia buat orang rasa senang percaya untuk routine bayi.",
+                "Malay": "Pump dia senang, pegang pun tak kalut masa nak pakai.",
                 "English": "The pack reads easy to trust for a baby-care routine.",
             },
             "dialogue_cta": {
-                "Malay": "Parent memang senang simpan benda ni standby.",
+                "Malay": "Parent memang suka simpan benda ni dekat-dekat.",
                 "English": "It feels like the kind of item parents keep on standby.",
             },
             "visual_proof": "make softness, pack integrity, and calm parent-trust handling read before any spoken reassurance",
@@ -407,15 +407,15 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
         },
         "wellness": {
             "dialogue_opening": {
-                "Malay": "Nampak kemas dan tak over sangat.",
+                "Malay": "Nampak kemas, terus rasa boleh percaya.",
                 "English": "It looks easy to trust in a routine.",
             },
             "dialogue_middle": {
-                "Malay": "Packaging dia rasa tersusun, bukan hype.",
+                "Malay": "Botol dia tersusun, memang tak rasa hype.",
                 "English": "The packaging reads careful and non-hype immediately.",
             },
             "dialogue_cta": {
-                "Malay": "Jenis produk yang senang keep dalam routine.",
+                "Malay": "Memang jenis benda yang senang kekal dalam routine.",
                 "English": "It feels like something people can keep in a routine comfortably.",
             },
             "visual_proof": "make the bottle, dosage logic, and routine fit feel careful and measured rather than loud",
@@ -447,6 +447,42 @@ def _family_dialogue_clause(family: str, stage: str, target_language: str) -> st
     key = f"dialogue_{stage}"
     phrase_bank = family_bank.get(key) or family_bank["dialogue_middle"]
     return _clean(phrase_bank.get(lang) or phrase_bank.get("Malay") or "")
+
+
+def _family_voice_clause(family: str, target_language: str) -> str:
+    lang = language_name(target_language)
+    bank = {
+        "baby_care": {
+            "Malay": "Bunyi macam parent kongsi benda yang betul-betul mudahkan routine, bukan macam tengah hard sell.",
+            "English": "Sound like a parent sharing something that genuinely calms the routine, not like a hard sell.",
+        },
+        "wellness": {
+            "Malay": "Bunyi grounded dan tak hype, macam cadang benda yang memang kita keep dalam routine sendiri.",
+            "English": "Sound grounded and non-hype, like recommending something that genuinely stays in a personal routine.",
+        },
+    }
+    phrase_bank = bank.get(family)
+    if not phrase_bank:
+        return ""
+    return _clean(phrase_bank.get(lang) or phrase_bank.get("Malay") or "")
+
+
+def _family_t2v_scene_clause(family: str) -> dict[str, str]:
+    bank = {
+        "baby_care": {
+            "continuity": "Let the product appear inside a believable parent-care beat such as after-bath lotion prep, diaper-bag packing, or a calm wind-down routine, never as a studio demo.",
+            "opening": "Start with the presenter already mid-routine, settling a real caregiving moment before the product becomes the focus.",
+            "middle": "Use one gentle caregiving action or parent-check habit so the benefit feels observed inside the routine, not announced from outside it.",
+            "closing": "Resolve like a parent deciding this stays within easy reach for the next routine, not like a public-facing sales performance.",
+        },
+        "wellness": {
+            "continuity": "Let the product appear inside a measured self-maintenance beat such as morning water prep, a kitchen-counter check, or a quiet routine reset, never as a dramatic wellness reveal.",
+            "opening": "Start with the presenter already moving through a real routine moment before the product becomes the spoken subject.",
+            "middle": "Use one measured habit cue such as reaching for water, glancing at the label, or setting the bottle back with intention so the value feels routine-native.",
+            "closing": "Resolve like someone quietly deciding this stays in the routine, not like a loud health-claim finale.",
+        },
+    }
+    return bank.get(family, {"continuity": "", "opening": "", "middle": "", "closing": ""})
 
 
 def _contains_term(text: str, term: str) -> bool:
@@ -847,6 +883,7 @@ def _formula_dialogue_clauses(
     family_middle = [_family_dialogue_clause(family, "middle", target_language)]
     family_cta = [_family_dialogue_clause(family, "cta", target_language)]
     chosen_usps = _usp_slice(usps, block_index, total_blocks)
+    native_cta_first = family in {"baby_care", "wellness"}
     if total_blocks <= 1:
         single_block_map = {
             "PAS": _merge_unique_clauses(hooks, opening, family_opening, subhooks[:1], chosen_usps[:1], middle, family_middle, cta_bridge, ctas[:1], family_cta),
@@ -871,15 +908,24 @@ def _formula_dialogue_clauses(
         }
         return opening_map.get(formula, _merge_unique_clauses(hooks, opening, family_opening, subhooks[:1])) or hooks or subhooks
     if block_index == total_blocks:
+        closing_stack = (
+            _merge_unique_clauses(chosen_usps[:1], family_cta, cta_bridge, ctas[:1], middle, family_middle)
+            if native_cta_first
+            else _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle)
+        )
         closing_map = {
-            "PAS": _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
-            "AIDA": _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
-            "HSO": _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
-            "BAB": _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
-            "PESTA": _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
-            "PASTOR": _merge_unique_clauses(angle[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle),
+            "PAS": closing_stack,
+            "AIDA": closing_stack,
+            "HSO": closing_stack,
+            "BAB": closing_stack,
+            "PESTA": closing_stack,
+            "PASTOR": (
+                _merge_unique_clauses(angle[:1], family_cta, cta_bridge, ctas[:1], middle, family_middle)
+                if native_cta_first
+                else _merge_unique_clauses(angle[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle)
+            ),
         }
-        return closing_map.get(formula, _merge_unique_clauses(chosen_usps[:1], cta_bridge, ctas[:1], family_cta, middle, family_middle)) or ctas or chosen_usps
+        return closing_map.get(formula, closing_stack) or ctas or chosen_usps
     middle_map = {
         "PAS": _merge_unique_clauses(subhooks[:1], chosen_usps[:1], middle, family_middle),
         "AIDA": _merge_unique_clauses(chosen_usps[:2] or angle[:1], middle, family_middle),
@@ -1002,6 +1048,7 @@ def _default_shot_plan(
     focus = _family_focus_terms(family)
     story = _visual_story_terms(family, angle_signal, trigger_id, cta_type)
     mode_polish = _mode_story_polish(source_mode)
+    scene_native = _family_t2v_scene_clause(family)
     is_final = block_index == total_blocks
     if source_mode == "HYBRID":
         templates = [
@@ -1030,10 +1077,10 @@ def _default_shot_plan(
         ]
     else:  # T2V
         templates = [
-            f"Open inside the lived-in scene first, then let the presenter bring {pname} into the frame naturally so the hook feels native, not staged, with {focus['context']} already visible and powered by {story['opening']}; {mode_polish['opening']}.",
-            f"Routine-context beat that shows why {pname} belongs in the moment, with the packaging readable, the action grounded in normal human behaviour, and {focus['detail']} carrying a middle beat that helps {story['middle']}; {mode_polish['middle']}.",
+            f"Open inside the lived-in scene first, then let the presenter bring {pname} into the frame naturally so the hook feels native, not staged, with {focus['context']} already visible and powered by {story['opening']}; {mode_polish['opening']}. {_clean(scene_native['opening'])}",
+            f"Routine-context beat that shows why {pname} belongs in the moment, with the packaging readable, the action grounded in normal human behaviour, and {focus['detail']} carrying a middle beat that helps {story['middle']}; {mode_polish['middle']}. {_clean(scene_native['middle'])}",
             f"Confidence or payoff beat where the presenter stays on camera, keeps {pname} visible, and sells the main benefit through expression and handling rather than hard claims, aligned to {angle_hint or 'the commercial promise'} while continuing to {story['middle']}, with the scene still doing persuasion work around the product.",
-            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {story['closing']} plus {focus['closing']} to feel intentional while the shot still helps {story['middle']}; {mode_polish['closing']}.",
+            f"Clean closing beat with {pname} held clearly to camera, the presenter steady, and enough pause for {story['closing']} plus {focus['closing']} to feel intentional while the shot still helps {story['middle']}; {mode_polish['closing']}. {_clean(scene_native['closing'])}",
         ]
     if block_index > 1 and source_mode != "IMAGES":
         continuation_overrides = {
@@ -1107,6 +1154,7 @@ def _section_3_continuity(
             lines.append("The style reference controls the environment and mood only — never the product or the presenter.")
         lines.append("The product's true appearance outranks every other reference if they conflict.")
     elif source_mode == "T2V":
+        scene_native = _family_t2v_scene_clause(_infer_product_family(product))
         if presenter_prose:
             lines.append(presenter_prose)
         lines.append(
@@ -1114,6 +1162,8 @@ def _section_3_continuity(
             f"Keep {pname} visually consistent in every shot."
         )
         lines.append(_mode_story_polish(source_mode)["continuity"])
+        if scene_native["continuity"]:
+            lines.append(scene_native["continuity"])
         lines.append("The first beat must feel like a real moment already happening before the product enters the selling conversation.")
         lines.append("Every benefit beat must feel discovered inside the scene, not announced like a detached ad script.")
     else:  # IMAGES
@@ -1318,6 +1368,7 @@ def render_block(
     s7 = (
         f"The presenter speaks {lang} only, direct to camera, in a warm, confident, "
         "conversational tone with short, punchy, speakable phrasing — a real person recommending something they use, not a narrator. "
+        f"{_family_voice_clause(family, target_language) + ' ' if _family_voice_clause(family, target_language) else ''}"
         "No voice-over. No narration. No off-camera speech. No audio-only dialogue."
     ) if mode != "IMAGES" else "Not applicable — still image output."
     s8 = _section_8_end_frame(
