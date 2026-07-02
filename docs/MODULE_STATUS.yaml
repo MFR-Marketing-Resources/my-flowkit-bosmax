@@ -61,6 +61,12 @@ domains:
       - agent/services/workspace_generation_package_service.py
       - agent/api/workspace_generation_packages.py
       - agent/models/workspace_generation_package.py
+      - agent/db/crud.py
+      - agent/api/flow.py
+      - dashboard/src/pages/LibraryPage.tsx
+      - dashboard/src/App.tsx
+      - dashboard/src/pages/OperatorPage.tsx
+      - tests/unit/test_artifact_library_retention.py
       - requirements.txt
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py

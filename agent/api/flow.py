@@ -763,12 +763,31 @@ async def generate_job(job_id: str):
     return j
 
 
+ARTIFACT_RETENTION_HOURS = 48  # retention law: results auto-delete after 48h
+
+
 @router.get("/artifacts")
-async def list_artifacts(limit: int = 50, mode: str = None):
-    """System library of finished generations — newest first, for the dashboard
-    gallery. Each entry is playable/downloadable via /api/flow/retrieved/{media_id}."""
-    items = await crud.list_generated_artifacts(limit=limit, mode=mode)
-    return {"artifacts": items, "count": len(items)}
+async def list_artifacts(limit: int = 50, mode: str = None, kind: str = None):
+    """System library of finished generations — newest first, for the Library
+    pages. kind = video | image. Retention: 48h, enforced lazily on every
+    listing (expired files + rows are purged before results are returned).
+    Each entry is playable/downloadable via /api/flow/retrieved/{media_id}."""
+    from datetime import datetime, timedelta, timezone
+    purged = await crud.purge_expired_artifacts(ARTIFACT_RETENTION_HOURS)
+    items = await crud.list_generated_artifacts(limit=limit, mode=mode, kind=kind)
+    for item in items:
+        try:
+            created = datetime.strptime(item["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc)
+            expires = created + timedelta(hours=ARTIFACT_RETENTION_HOURS)
+            item["expires_at"] = expires.strftime("%Y-%m-%dT%H:%M:%SZ")
+            item["expires_in_hours"] = max(
+                0, round((expires - datetime.now(timezone.utc)).total_seconds() / 3600, 1))
+        except (ValueError, TypeError):
+            item["expires_at"] = None
+            item["expires_in_hours"] = None
+    return {"artifacts": items, "count": len(items),
+            "retention_hours": ARTIFACT_RETENTION_HOURS, "purged": purged}
 
 
 @router.get("/retrieved/{media_id}")

@@ -47,6 +47,7 @@ import SettingsPage from "./pages/SettingsPage";
 import TroubleshootPage from "./pages/TroubleshootPage";
 import WorkspaceGenerationPackagesPage from "./pages/WorkspaceGenerationPackagesPage";
 import WorkspaceJobsPage from "./pages/WorkspaceJobsPage";
+import LibraryPage from "./pages/LibraryPage";
 import type { TelemetrySummary } from "./types";
 
 const NAV_GROUPS = [
@@ -58,6 +59,8 @@ const NAV_GROUPS = [
 			{ to: "/operator/f2v", icon: Sparkles, label: "Frames (F2V)" },
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
+			{ to: "/library/videos", icon: Video, label: "Video Library (48j)" },
+			{ to: "/library/images", icon: ImageIcon, label: "Image Library (48j)" },
 			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
 			{
 				to: "/workspace/generation-packages",
@@ -248,6 +251,8 @@ function Layout() {
 		{ to: "/operator/t2v", label: "T2V" },
 		{ to: "/operator/hybrid", label: "HYBRID" },
 		{ to: "/operator/f2v", label: "FRAMES" },
+		{ to: "/library/videos", label: "VIDEOS" },
+		{ to: "/library/images", label: "IMAGES" },
 		{ to: "/operator/i2v", label: "I2V" },
 		{ to: "/operator/img", label: "IMG" },
 		{ to: "/assets/creative-library", label: "Creative" },
@@ -421,6 +426,14 @@ function Layout() {
 						<Route
 							path="/operator/hybrid"
 							element={<OperatorPage mode="HYBRID" />}
+						/>
+						<Route
+							path="/library/videos"
+							element={<LibraryPage kind="video" />}
+						/>
+						<Route
+							path="/library/images"
+							element={<LibraryPage kind="image" />}
 						/>
 						<Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
 						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
