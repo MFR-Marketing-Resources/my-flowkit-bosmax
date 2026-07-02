@@ -40,7 +40,7 @@ const PAGE_SIZE_JOBS = 20;
 const MODE_FILTERS: Array<{ id: ModeFilter; label: string }> = [
 	{ id: "ALL", label: "All" },
 	{ id: "T2V", label: "T2V" },
-	{ id: "F2V", label: "F2V" },
+	{ id: "F2V", label: "F2V / HYBRID" },
 	{ id: "I2V", label: "I2V" },
 	{ id: "IMG", label: "IMG" },
 ];
@@ -122,6 +122,12 @@ function resolveProductMeta(
 	const product = productById[trace.product_id];
 	if (!product) return `Product ID ${trace.product_id}`;
 	return `${product.source} • Product ID ${trace.product_id}`;
+}
+
+function getWorkspaceJobModeLabel(trace: TelemetryRequest) {
+	const mode = getTelemetryMode(trace);
+	if (mode === "F2V") return "F2V / HYBRID";
+	return getTelemetryModeLabel(trace);
 }
 
 export default function WorkspaceJobsPage() {
@@ -207,7 +213,7 @@ export default function WorkspaceJobsPage() {
 			const haystack = [
 				trace.request_id,
 				getTelemetryRequestLabel(trace),
-				getTelemetryModeLabel(trace),
+				getWorkspaceJobModeLabel(trace),
 				getTelemetryStage(trace),
 				getTelemetryPrimaryRemark(trace),
 				resolveProductLabel(trace, products),
@@ -441,6 +447,10 @@ export default function WorkspaceJobsPage() {
 						? ` — Page ${safePageJobs} of ${totalPagesJobs}`
 						: ""}
 				</div>
+				<div className="mt-1 text-[11px] text-slate-500">
+					Telemetry is still job-mode authoritative here, so HYBRID activity is
+					reported inside the F2V lineage.
+				</div>
 			</div>
 
 			<div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)]">
@@ -492,7 +502,7 @@ export default function WorkspaceJobsPage() {
 														<span>{getTelemetryRequestLabel(trace)}</span>
 													</div>
 													<div className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
-														{getTelemetryModeLabel(trace)}
+														{getWorkspaceJobModeLabel(trace)}
 													</div>
 												</td>
 												<td className="px-4 py-4 align-top">
@@ -592,7 +602,7 @@ export default function WorkspaceJobsPage() {
 										{getTelemetryRequestLabel(selectedTelemetry)}
 									</div>
 									<div className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
-										{getTelemetryModeLabel(selectedTelemetry)} •{" "}
+										{getWorkspaceJobModeLabel(selectedTelemetry)} •{" "}
 										{selectedTelemetry.request_id}
 									</div>
 								</div>

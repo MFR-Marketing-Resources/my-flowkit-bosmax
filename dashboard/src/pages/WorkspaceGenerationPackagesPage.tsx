@@ -53,13 +53,15 @@ function StatusBadge({ status }: { status: string }) {
 
 const MODE_LABELS: Record<string, string> = {
 	T2V: "Text to Video",
-	F2V: "Frames to Video",
+	HYBRID: "Hybrid (Product + AI Presenter)",
+	F2V: "Frames (Motion Delta)",
 	I2V: "Image to Video (Ingredients)",
 	IMG: "Image Generation",
 };
 
 const MODE_COLORS: Record<string, string> = {
 	T2V: "border-blue-500/40 bg-blue-500/5",
+	HYBRID: "border-cyan-500/40 bg-cyan-500/5",
 	F2V: "border-purple-500/40 bg-purple-500/5",
 	I2V: "border-amber-500/40 bg-amber-500/5",
 	IMG: "border-emerald-500/40 bg-emerald-500/5",
@@ -67,10 +69,20 @@ const MODE_COLORS: Record<string, string> = {
 
 const MODE_TAB_HINT: Record<string, string> = {
 	T2V: "Google Flow → Tab: Text to Video",
-	F2V: "Google Flow → Tab: Video / Frames",
+	HYBRID: "Google Flow → Tab: Video / Frames (HYBRID surface)",
+	F2V: "Google Flow → Tab: Video / Frames (FRAMES surface)",
 	I2V: "Google Flow → Tab: Ingredients (Image to Video)",
 	IMG: "Google Flow → Tab: Image Generation (Nano Banana 2)",
 };
+
+const SURFACE_FILTERS = [
+	{ id: "ALL", label: "ALL" },
+	{ id: "HYBRID", label: "HYBRID" },
+	{ id: "F2V", label: "FRAMES" },
+	{ id: "I2V", label: "I2V" },
+	{ id: "T2V", label: "T2V" },
+	{ id: "IMG", label: "IMG" },
+] as const;
 
 const MODE_OPERATOR_ROUTE: Record<string, string> = {
 	HYBRID: "/operator/hybrid",
@@ -269,6 +281,7 @@ function PackageDetailPanel({
 	const generateStep = promptStep + (isExtend ? blocks.length : 1);
 	const modeModelHint: Record<string, string> = {
 		T2V: "Veo 3.1 - Pro (or match your Workspace setting)",
+		HYBRID: "Veo 3.1 - Lite (locked for HYBRID / FRAMES lane)",
 		F2V: "Veo 3.1 - Lite (locked for F2V lane)",
 		I2V: "Veo 3.1 - Pro (or match your Workspace setting)",
 		IMG: "Nano Banana 2 (Image Generation)",
@@ -374,7 +387,7 @@ function PackageDetailPanel({
 			</div>
 
 			{/* Google Flow Setup Guide */}
-			<div className={`rounded-2xl border p-4 space-y-4 ${MODE_COLORS[mode] ?? "border-slate-700 bg-slate-900/40"}`}>
+			<div className={`rounded-2xl border p-4 space-y-4 ${MODE_COLORS[surfaceMode] ?? MODE_COLORS[mode] ?? "border-slate-700 bg-slate-900/40"}`}>
 				<div>
 					<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-1">Google Flow Setup Guide</div>
 					<div className="text-base font-bold text-slate-100">{getOperatorSurfaceLabel(pkg)}</div>
@@ -385,7 +398,10 @@ function PackageDetailPanel({
 
 				<div className="space-y-1">
 					<div className="rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2">
-						<StepLabel n={1} text={MODE_TAB_HINT[mode] ?? "Open Google Flow"} />
+						<StepLabel
+							n={1}
+							text={MODE_TAB_HINT[surfaceMode] ?? MODE_TAB_HINT[mode] ?? "Open Google Flow"}
+						/>
 					</div>
 
 					{uploadOrder.length > 0 && (
@@ -411,7 +427,7 @@ function PackageDetailPanel({
 
 					<div className="rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2 space-y-1">
 						<StepLabel n={imageStepStart + allDisplayAssets.length} text="Set orientation — match your Workspace setting (9:16 Vertical or 16:9 Horizontal)" />
-						<StepLabel n={imageStepStart + allDisplayAssets.length + 1} text={`Select model: ${modeModelHint[mode] ?? "match your Workspace setting"}`} />
+						<StepLabel n={imageStepStart + allDisplayAssets.length + 1} text={`Select model: ${modeModelHint[surfaceMode] ?? modeModelHint[mode] ?? "match your Workspace setting"}`} />
 					</div>
 
 					{isExtend && blocks.length > 0 ? (
@@ -533,7 +549,7 @@ function PackageRow({
 				{pkg.workspace_generation_package_id}
 			</td>
 			<td className="py-2 px-3 text-xs font-bold text-slate-200">
-				{getOperatorSurfaceMode(pkg)}
+				{getOperatorSurfaceLabel(pkg)}
 			</td>
 			<td className="py-2 px-3 text-xs text-slate-300 max-w-[150px] truncate">
 				{pkg.product_name_snapshot || pkg.product_id}
@@ -596,8 +612,12 @@ export default function WorkspaceGenerationPackagesPage() {
 		setLoading(true);
 		setError(null);
 		try {
+			const apiModeFilter =
+				modeFilter === "HYBRID" || modeFilter === "F2V"
+					? "F2V"
+					: modeFilter || undefined;
 			const resp = await listWorkspaceGenerationPackages({
-				mode: modeFilter || undefined,
+				mode: apiModeFilter,
 				status: statusFilter || undefined,
 				limit: 100,
 			});
@@ -690,6 +710,9 @@ export default function WorkspaceGenerationPackagesPage() {
 	}, []);
 
 	const filtered = packages.filter((p) => {
+		if (modeFilter && getOperatorSurfaceMode(p) !== modeFilter) {
+			return false;
+		}
 		if (!search) return true;
 		const q = search.toLowerCase();
 		return (
@@ -702,8 +725,6 @@ export default function WorkspaceGenerationPackagesPage() {
 	const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
 	const safePage = Math.min(currentPage, totalPages);
 	const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-
-	const activeSurfaceMode = detailPkg ? getOperatorSurfaceMode(detailPkg) : "";
 
 	// P5B: Bulk handlers (defined after filtered so toggleSelectAll can reference it)
 	const toggleSelectAll = () => {
@@ -791,7 +812,7 @@ export default function WorkspaceGenerationPackagesPage() {
 							onClick={() => navigate(getOperatorSurfaceRoute(detailPkg) ?? "/operator/f2v")}
 							className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 text-sm font-semibold text-blue-100 hover:bg-blue-500/20"
 						>
-							→ Open {activeSurfaceMode} Workspace
+							→ Open {getOperatorSurfaceLabel(detailPkg)} Workspace
 						</button>
 					)}
 				</div>
@@ -802,14 +823,14 @@ export default function WorkspaceGenerationPackagesPage() {
 					>
 						Prompt Handoff Bank
 					</button>
-					{(["T2V", "HYBRID", "F2V", "I2V", "IMG"] as const).map((m) => (
+						{(["T2V", "HYBRID", "F2V", "I2V", "IMG"] as const).map((m) => (
 						<button
 							key={m}
 							type="button"
 							onClick={() => navigate(MODE_OPERATOR_ROUTE[m])}
 							className="flex-1 rounded-lg py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 hover:bg-slate-800/60 hover:text-slate-200 transition-colors"
 						>
-							{m}
+							{m === "F2V" ? "FRAMES" : m}
 						</button>
 					))}
 				</div>
@@ -828,16 +849,16 @@ export default function WorkspaceGenerationPackagesPage() {
 						<span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Mode</span>
 					</div>
 					<div className="flex flex-wrap gap-1.5">
-						{["ALL", "F2V", "I2V", "T2V", "IMG"].map((m) => {
-							const active = (modeFilter || "ALL") === m;
+						{SURFACE_FILTERS.map((filter) => {
+							const active = (modeFilter || "ALL") === filter.id;
 							return (
 								<button
-									key={m}
+									key={filter.id}
 									type="button"
-									onClick={() => { setModeFilter(m === "ALL" ? "" : m); setCurrentPage(1); }}
+									onClick={() => { setModeFilter(filter.id === "ALL" ? "" : filter.id); setCurrentPage(1); }}
 									className={`px-3 py-1.5 rounded-full border text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${active ? "border-blue-400/60 bg-blue-500/10 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
 								>
-									{m}
+									{filter.label}
 								</button>
 							);
 						})}

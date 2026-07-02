@@ -89,6 +89,7 @@ domains:
       - dashboard/src/pages/AssetRegistryPage.tsx
       - dashboard/src/pages/BatchesPage.tsx
       - dashboard/src/pages/CreativeLibraryPage.tsx
+      - dashboard/src/pages/CreativeLibraryWorkspacePage.tsx
       - dashboard/src/pages/OperatorPage.tsx
       - dashboard/src/pages/ProductAssetGeneratorPage.tsx
       - dashboard/src/pages/SettingsPage.tsx

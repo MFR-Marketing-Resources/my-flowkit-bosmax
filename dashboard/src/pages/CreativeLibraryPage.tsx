@@ -25,7 +25,14 @@ const STATUS_OPTIONS: Array<CreativeAssetStatus | "ALL"> = [
 	"ACTIVE",
 	"ARCHIVED",
 ];
-const MODE_OPTIONS: WorkspaceMode[] = ["T2V", "F2V", "I2V", "IMG"];
+const MODE_OPTIONS: WorkspaceMode[] = ["T2V", "HYBRID", "F2V", "I2V", "IMG"];
+const MODE_LABELS: Record<WorkspaceMode, string> = {
+	T2V: "T2V",
+	HYBRID: "HYBRID",
+	F2V: "FRAMES",
+	I2V: "I2V",
+	IMG: "IMG",
+};
 
 export default function CreativeLibraryPage() {
 	const navigate = useNavigate();
@@ -183,7 +190,7 @@ export default function CreativeLibraryPage() {
 						<option value="ALL">All Modes</option>
 						{MODE_OPTIONS.map((mode) => (
 							<option key={mode} value={mode}>
-								{mode}
+								{MODE_LABELS[mode]}
 							</option>
 						))}
 					</select>
@@ -239,7 +246,9 @@ export default function CreativeLibraryPage() {
 											</span>
 										</td>
 										<td className="px-4 py-3 text-xs text-slate-400">
-											{item.allowed_modes.join(", ") || "ALL"}
+											{item.allowed_modes
+												.map((mode) => MODE_LABELS[mode] ?? mode)
+												.join(", ") || "ALL"}
 										</td>
 										<td className="px-4 py-3">
 											<button

@@ -21,7 +21,14 @@ const ROLE_OPTIONS: CreativeAssetSemanticRole[] = [
 	"STYLE_REFERENCE",
 	"COMPOSITE_FRAME_REFERENCE",
 ];
-const MODE_OPTIONS: WorkspaceMode[] = ["T2V", "F2V", "I2V", "IMG"];
+const MODE_OPTIONS: WorkspaceMode[] = ["T2V", "HYBRID", "F2V", "I2V", "IMG"];
+const MODE_LABELS: Record<WorkspaceMode, string> = {
+	T2V: "T2V",
+	HYBRID: "HYBRID",
+	F2V: "FRAMES",
+	I2V: "I2V",
+	IMG: "IMG",
+};
 const SLOT_OPTIONS: CreativeAssetEngineSlot[] = [
 	"subject",
 	"scene",
@@ -408,6 +415,9 @@ export default function CreativeLibraryWorkspacePage() {
 										<div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
 											Allowed Modes
 										</div>
+										<div className="mb-3 text-xs text-slate-500">
+											HYBRID and FRAMES are separate operator surfaces.
+										</div>
 										<div className="flex flex-wrap gap-2">
 											{MODE_OPTIONS.map((mode) => (
 												<button
@@ -428,7 +438,7 @@ export default function CreativeLibraryWorkspacePage() {
 															: "border-slate-700 bg-slate-950 text-slate-400"
 													}`}
 												>
-													{mode}
+													{MODE_LABELS[mode]}
 												</button>
 											))}
 										</div>

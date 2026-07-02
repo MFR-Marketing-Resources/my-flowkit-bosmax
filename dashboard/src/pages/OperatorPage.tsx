@@ -53,6 +53,14 @@ function humanizeWorkspaceMode(mode: WorkspaceMode) {
 	return "Text to Video";
 }
 
+function workspaceSurfaceLabel(mode: WorkspaceMode) {
+	if (mode === "HYBRID") return "Hybrid (Product + AI Presenter)";
+	if (mode === "F2V") return "Frames (Motion Delta)";
+	if (mode === "I2V") return "Ingredients";
+	if (mode === "IMG") return "Image Generation";
+	return "Text to Video";
+}
+
 function parseWorkspaceBlocker(error: unknown): string | null {
 	const message = error instanceof Error ? error.message : String(error || "");
 	const match = message.match(
@@ -143,15 +151,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	>("");
 	// Canonical source-mode (ADR-008): PINNED by the operator surface — HYBRID
 	// and FRAMES are separate first-class pages, never an ambiguous toggle.
-	const resolveSourceMode = (
-		m: string,
-	): "T2V" | "HYBRID" | "FRAMES" | "INGREDIENTS" | "IMAGES" => {
-		if (m === "HYBRID") return "HYBRID";
-		if (m === "F2V") return "FRAMES";
-		if (m === "I2V") return "INGREDIENTS";
-		if (m === "IMG") return "IMAGES";
-		return "T2V";
-	};
+	const resolveSourceMode = useCallback(
+		(m: string): "T2V" | "HYBRID" | "FRAMES" | "INGREDIENTS" | "IMAGES" => {
+			if (m === "HYBRID") return "HYBRID";
+			if (m === "F2V") return "FRAMES";
+			if (m === "I2V") return "INGREDIENTS";
+			if (m === "IMG") return "IMAGES";
+			return "T2V";
+		},
+		[],
+	);
 	const [requestedTotalDuration, setRequestedTotalDuration] = useState<
 		number | ""
 	>("");
@@ -273,7 +282,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			})
 			.catch(() => {})
 			.finally(() => setIsLoadingReadiness(false));
-	}, [mode, products]);
+	}, [jobMode, products]);
 
 	useEffect(() => {
 		if (
@@ -308,7 +317,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		return () => {
 			isActive = false;
 		};
-	}, [mode, packageReadiness, selectedProduct]);
+	}, [jobMode, packageReadiness, selectedProduct]);
 
 	useEffect(() => {
 		if (!statePackage || statePackage.mode !== mode) return;
@@ -413,7 +422,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			document.removeEventListener("visibilitychange", handleVisibilityChange);
 			window.clearInterval(timer);
 		};
-	}, [isPortalMode, mode]);
+	}, [isPortalMode, jobMode]);
 
 	// IMG now flows through the SAME unified one-door /generate (mode:"IMG") + pollJob as the
 	// video lanes — it saves to disk and returns a job (the legacy /generate-image-oneshot
@@ -584,7 +593,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					const completedStage = stages.find(
 						(s) => String(s?.stage || "") === "COMPLETED",
 					);
-					const completedMsg = String(completedStage?.message || stageMessage || "");
+					const completedMsg = String(
+						completedStage?.message || stageMessage || "",
+					);
 					const mediaMatch = completedMsg.match(
 						/media_id=([0-9a-fA-F]{8}-[0-9a-fA-F-]{27})/,
 					);
@@ -817,6 +828,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		creatorPersona,
 		block1Duration,
 		block2Duration,
+		resolveSourceMode,
 	]);
 
 	// Step 3 — Load Package Preview (compile only, no DB save)
@@ -1040,7 +1052,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			<div className="mb-6 flex flex-col gap-4 lg:mb-8 lg:flex-row lg:items-center lg:justify-between">
 				<div>
 					<h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">
-						{mode} Production Workspace
+						{humanizeWorkspaceMode(mode as WorkspaceMode)} Production Workspace
 					</h2>
 					<p className="text-sm italic text-slate-400">
 						Automating Google Flow with BOSMAX V4 precision.
@@ -1048,7 +1060,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				</div>
 				<div className="flex items-center gap-3">
 					<div className="px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-bold uppercase tracking-widest">
-						Mode: {mode === "F2V" ? "Frames to Video" : mode}
+						Mode: {workspaceSurfaceLabel(mode as WorkspaceMode)}
 					</div>
 				</div>
 			</div>
@@ -1618,7 +1630,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						{isLoadingPackage ? "Generating…" : generatePromptLabel}
 					</button>
 					{workspacePackage ? (
-					<div className="mt-4 grid gap-3 md:grid-cols-3">
+						<div className="mt-4 grid gap-3 md:grid-cols-3">
 							<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
 								<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
 									Execution Package
@@ -1714,8 +1726,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				<div className="mb-6 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4">
 					<div className="mb-3 flex items-center justify-between">
 						<div className="font-semibold tracking-wide text-emerald-200">
-							{completedArtifact.kind === "video" ? "🎬 Video siap" : "🖼 Imej siap"}
-							{completedArtifact.sizeMb ? ` — ${completedArtifact.sizeMb}MB` : ""}
+							{completedArtifact.kind === "video"
+								? "🎬 Video siap"
+								: "🖼 Imej siap"}
+							{completedArtifact.sizeMb
+								? ` — ${completedArtifact.sizeMb}MB`
+								: ""}
 						</div>
 						<div className="flex items-center gap-3">
 							<a
@@ -1735,12 +1751,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</div>
 					</div>
 					{completedArtifact.kind === "video" ? (
-						<video
-							src={completedArtifact.url}
-							controls
-							playsInline
-							className="max-h-96 rounded-xl border border-emerald-500/20"
-						/>
+						<>
+							{/* biome-ignore lint/a11y/useMediaCaption: generated artifact previews do not ship with caption tracks */}
+							<video
+								src={completedArtifact.url}
+								controls
+								playsInline
+								className="max-h-96 rounded-xl border border-emerald-500/20"
+							/>
+						</>
 					) : (
 						<img
 							src={completedArtifact.url}
@@ -1795,9 +1814,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								)}
 								<div className="mt-1 flex items-center justify-between text-[10px] text-slate-400">
 									<span className="font-semibold">{item.mode ?? "?"}</span>
-									<span>
-										{item.size_mb != null ? `${item.size_mb}MB` : ""}
-									</span>
+									<span>{item.size_mb != null ? `${item.size_mb}MB` : ""}</span>
 								</div>
 								<div className="text-[9px] text-slate-500">
 									{item.created_at?.replace("T", " ").replace("Z", "")}
