@@ -239,6 +239,57 @@ def test_laundry_family_clause_bank_injects_refill_and_repeat_buy_language():
     assert "stok rumah" in final_dialogue or "ulang beli" in final_dialogue
 
 
+def test_household_family_does_not_drift_into_food_taste_language():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-household",
+            "name": "LANTAIKILAT FLOOR SPRAY",
+            "category": "Household Care",
+        },
+        copy={
+            "hook": "Sekali tengok terus nampak practical.",
+            "subhook": "Jenis botol yang memang senang capai bila nak guna cepat.",
+            "usp1": "Grip dia sedap pegang dan nozzle nampak terus fungsinya.",
+            "cta": "Check dulu kalau tengah cari barang rumah yang mudah pakai.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    final_dialogue = result["blocks"][-1]["dialogue"].lower()
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "appetite" not in s4
+    assert "temptation" not in s4
+    assert "guna dia hari-hari" in final_dialogue
+
+
+def test_food_family_keeps_taste_language_when_copy_is_actually_edible():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={
+            "id": "prod-food",
+            "name": "KOPI PAK NGAH",
+            "category": "Food & Beverage",
+        },
+        copy={
+            "hook": "Packaging dia terus buat aku teringin nak cuba.",
+            "subhook": "Sekali tengok terus boleh bayang minum panas-panas.",
+            "usp1": "Pack dia nampak kemas, senang simpan, senang bancuh.",
+            "cta": "Grab dulu kalau jenis suka stok benda sedap kat rumah.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
+    assert "appetite or temptation" in s4
+
+
 def test_electronics_family_clause_bank_strengthens_visual_proof_and_end_payoff():
     result = cpc.compile_prompt_set(
         source_mode="HYBRID",
@@ -368,6 +419,27 @@ def test_t2v_continuation_keeps_scene_native_not_generic_reset():
     result = _compile(mode="T2V", duration_seconds=16, scene_context="a bright lived-in bathroom counter at home")
     s4 = result["blocks"][-1]["sections"]["SECTION 4 - VISUAL STORY"].lower()
     assert "lived-in, scene-native, and socially believable" in s4
+
+
+def test_fashion_family_cta_lands_cleanly_without_awkward_fragment():
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=16,
+        product={"id": "prod-fashion", "name": "KURUNG AIRA", "category": "Fashion"},
+        copy={
+            "hook": "Sekali pakai terus nampak kemas.",
+            "subhook": "Jatuh kain dia memang nampak jadi bila bergerak.",
+            "usp1": "Potongan dia buat badan nampak tersusun tanpa usaha lebih.",
+            "cta": "Grab dulu kalau nak pakai terus rasa lengkap.",
+            "formula_family": "HSO",
+        },
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    final_dialogue = result["blocks"][-1]["dialogue"].lower()
+    assert "pakai sekali terus nampak jadi" in final_dialogue
+    assert "jadi orang" not in final_dialogue
 
 
 def test_avatar_registry_explicit_id_and_prose():

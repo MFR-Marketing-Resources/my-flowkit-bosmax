@@ -327,15 +327,15 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
         },
         "household_care": {
             "dialogue_opening": {
-                "Malay": "Sekali tengok terus nampak practical.",
+                "Malay": "Sekali tengok terus nampak practical untuk rumah.",
                 "English": "It looks practical at first glance.",
             },
             "dialogue_middle": {
-                "Malay": "Cara pegang dan guna dia terus masuk akal.",
+                "Malay": "Grip, nozzle, dan cara guna dia terus masuk akal.",
                 "English": "The way it is held and used reads logical immediately.",
             },
             "dialogue_cta": {
-                "Malay": "Memang senang nampak value dia untuk rumah.",
+                "Malay": "Memang senang nampak guna dia hari-hari.",
                 "English": "The home-use value reads clearly by the end.",
             },
             "visual_proof": "make grip logic, opening direction, and home-use practicality obvious in-frame",
@@ -351,7 +351,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "The pack reads easy to trust for a baby-care routine.",
             },
             "dialogue_cta": {
-                "Malay": "Memang jenis barang yang parent nak simpan standby.",
+                "Malay": "Parent memang senang simpan benda ni standby.",
                 "English": "It feels like the kind of item parents keep on standby.",
             },
             "visual_proof": "make softness, pack integrity, and calm parent-trust handling read before any spoken reassurance",
@@ -383,7 +383,7 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "English": "A small movement makes the fit read correctly right away.",
             },
             "dialogue_cta": {
-                "Malay": "Memang jenis pakai terus rasa jadi orang.",
+                "Malay": "Pakai sekali terus nampak jadi.",
                 "English": "It lands like the kind of piece that makes the wearer feel put together.",
             },
             "visual_proof": "make fit, drape, and seam finish prove themselves through movement and silhouette",
@@ -407,15 +407,15 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
         },
         "wellness": {
             "dialogue_opening": {
-                "Malay": "Nampak kemas dan senang masuk routine.",
+                "Malay": "Nampak kemas dan tak over sangat.",
                 "English": "It looks easy to trust in a routine.",
             },
             "dialogue_middle": {
-                "Malay": "Packaging dia terus rasa tersusun dan tak overclaim.",
+                "Malay": "Packaging dia rasa tersusun, bukan hype.",
                 "English": "The packaging reads careful and non-hype immediately.",
             },
             "dialogue_cta": {
-                "Malay": "Jenis produk yang orang selesa keep dalam routine.",
+                "Malay": "Jenis produk yang senang keep dalam routine.",
                 "English": "It feels like something people can keep in a routine comfortably.",
             },
             "visual_proof": "make the bottle, dosage logic, and routine fit feel careful and measured rather than loud",
@@ -544,28 +544,35 @@ def _infer_angle_signal(copy: dict[str, Any], family: str) -> str:
         [
             _clean(copy.get("angle")),
             _clean(copy.get("copywriting_angle")),
+            _clean(copy.get("hook")),
+            _clean(copy.get("subhook")),
             " ".join(_clean(usp) for usp in (copy.get("usps") or [])),
+            _clean(copy.get("cta")),
         ]
     ).lower()
-    if any(token in haystack for token in ("gift", "gifting", "festive", "present")):
+    if _contains_any_term(haystack, ("gift", "gifting", "festive", "present")):
         return "gifting"
-    if any(token in haystack for token in ("authority", "feature", "tech", "screen", "precision")):
+    if _contains_any_term(haystack, ("authority", "feature", "tech", "screen", "precision")):
         return "authority"
-    if any(token in haystack for token in ("comfort", "soft", "selesa", "cozy", "home")):
+    if _contains_any_term(haystack, ("comfort", "soft", "selesa", "cozy", "home")):
         return "comfort"
-    if any(token in haystack for token in ("trust", "gentle", "parent", "baby", "reassur")):
+    if _contains_any_term(haystack, ("trust", "gentle", "parent", "baby", "reassur")):
         return "trust"
-    if any(token in haystack for token in ("confidence", "style", "fit", "premium", "scent", "freshness", "beauty")):
+    if _contains_any_term(haystack, ("confidence", "style", "fit", "premium", "scent", "freshness", "beauty")):
         return "confidence"
-    if any(token in haystack for token in ("routine", "daily", "harian", "self-care", "self care")):
+    if _contains_any_term(haystack, ("routine", "daily", "harian", "self-care", "self care")):
         return "routine"
-    if any(token in haystack for token in ("utility", "practical", "clean", "refill", "organize")):
+    if _contains_any_term(haystack, ("utility", "practical", "clean", "refill", "organize")):
         return "utility"
-    if any(token in haystack for token in ("taste", "appetite", "sedap", "pedas", "snack", "drink")):
+    if family == "food_beverage" and _contains_any_term(
+        haystack, ("taste", "appetite", "sedap", "pedas", "snack", "drink", "craving", "bancuh", "makan", "minum")
+    ):
         return "taste"
-    if any(token in haystack for token in ("ego", "presence", "masculine", "alpha", "padu")):
+    if _contains_any_term(haystack, ("taste", "appetite", "snack", "drink", "craving", "bancuh", "makan", "minum")):
+        return "taste"
+    if _contains_any_term(haystack, ("ego", "presence", "masculine", "alpha", "padu")):
         return "ego"
-    if any(token in haystack for token in ("female", "feminine", "wanita", "muslimah", "lady")):
+    if _contains_any_term(haystack, ("female", "feminine", "wanita", "muslimah", "lady")):
         return "female"
     return {
         "fragrance": "confidence",
@@ -801,7 +808,7 @@ def _pack_dialogue_clauses(clauses: list[str], budget: int) -> str:
             used_words += len(words)
             continue
         remaining = budget - used_words
-        if chosen and remaining >= 5:
+        if chosen and remaining >= 9:
             chosen.append(_finalize_dialogue_text(_trim_to_budget(clause, remaining)))
             used_words = budget
             break
