@@ -411,9 +411,16 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                 job["duration_unverified"] = True
         if not nres.get("approved"):
             raise RuntimeError("agent did not approve a video: " + str(nres.get("error") or nres))
+        # The render can die inside the approve stream itself (agent knowledge:
+        # "trouble accessing the reference image" → stale/deleted start media).
+        if nres.get("failure_classification") == "REFERENCE_IMAGE_MISSING":
+            raise RuntimeError(
+                "FAILED_REFERENCE_IMAGE_MISSING: the Flow agent cannot access the start "
+                "image — re-upload the product image and resubmit (do NOT just regenerate)")
 
         job["status"], job["stage"] = "GENERATING", "rendering + retrieving"
         generating = True  # past approval: any failure below is RETRIEVAL-phase, not generation
+        probe_turn = int(nres.get("turns_used") or 0) + 1  # next agent turn for status probes
         # False-DONE fix (live: g_745e95ede679 claimed the PREVIOUS run's mp4 at try 1):
         # snapshot every media id already visible in the project BEFORE polling, so
         # retrieval can only ever accept media that appears AFTER this job's render.
@@ -471,6 +478,24 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                 job.update(status="DONE", stage="done", media_id=mid, local_path=path,
                            size_mb=size, artifact="video")
                 return
+            # Empty project after minutes of polling can mean the render died
+            # server-side (agent posts "Failed / missing reference image" in chat,
+            # invisible to harvest). Ask the agent directly — a zero-credit turn —
+            # instead of blind-polling to a 12-minute timeout.
+            if i in (8, 20):
+                probe = await agent_video.probe_render_failure(
+                    client, project_id, sid, probe_turn)
+                probe_turn = probe.get("turn_number", probe_turn + 1)
+                job["render_probe"] = probe
+                if probe.get("classification") == "REFERENCE_IMAGE_MISSING":
+                    raise RuntimeError(
+                        "FAILED_REFERENCE_IMAGE_MISSING: the Flow agent cannot access the "
+                        "start image — re-upload the product image and resubmit "
+                        "(do NOT just regenerate)")
+                if probe.get("classification") == "RENDER_FAILED":
+                    raise RuntimeError(
+                        "FAILED_RENDER_REPORTED_BY_AGENT: the Flow agent reports the "
+                        "generation failed server-side — safe to resubmit")
             await asyncio.sleep(18)
         # Render started but no mp4 harvested in the polling window — treat as a retrieval-phase
         # failure (classified below as GENERATED_BUT_UNRETRIEVED), not a generation failure.

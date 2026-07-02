@@ -496,6 +496,69 @@ def test_retrieval_reloads_stale_tab_and_never_claims_preexisting_video():
     assert job.get("artifact") == "video"
 
 
+def test_retrieval_probe_fails_fast_on_reference_image_missing():
+    # A dead start media gets APPROVED but the render dies server-side; the project
+    # stays empty and the agent explains only in chat (live: Faris' screenshots).
+    # The retrieval loop must probe the agent session and fail FAST with the true
+    # cause instead of blind-polling to the 12-minute timeout.
+    probes = {"count": 0}
+
+    class _C:
+        async def create_agent_session(self, *a):
+            return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
+
+        async def reload_flow_tab(self):
+            return {"ok": True}
+
+        async def harvest_video_urls(self, tab_id=None):
+            return {"result": {"flow_tab_found": True, "flow_tab_id": 1,
+                               "diag": {"projectId": "p1", "videoIds": [],
+                                        "imageIds": [], "mediaIds": []}}}
+
+    async def fake_bind(client, pid=None):
+        return {"project_id": "p1", "flow_tab_id": 1, "flow_project_url": "u"}
+
+    async def fake_negotiate(*a, **k):
+        return {"approved": True, "model_ok": True, "duration_ok": True,
+                "model_used": "veo_3_1_lite", "duration_used": 8, "turns_used": 4}
+
+    async def fake_save(client, cands, exclude):
+        return (None, None, None)
+
+    async def fake_probe(client, project_id, session_id, turn_number):
+        probes["count"] += 1
+        assert session_id == "s1" and turn_number >= 5
+        return {"classification": "REFERENCE_IMAGE_MISSING",
+                "agent_text": "trouble accessing the reference image",
+                "turn_number": turn_number + 1}
+
+    orig = (mv.get_flow_client, mv._bind_editor_session,
+            mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media,
+            mv.agent_video.probe_render_failure, mv.asyncio)
+    mv.get_flow_client = lambda: _C()
+    mv._bind_editor_session = fake_bind
+    mv.agent_video.negotiate_and_generate = fake_negotiate
+    mv._save_video_by_get_media = fake_save
+    mv.agent_video.probe_render_failure = fake_probe
+    mv.asyncio = _ShimAsyncio(mv.asyncio)
+    mv._JOBS.clear()
+    mv._JOBS["jp"] = {"status": "SUBMITTED"}
+    try:
+        _run(mv._run_generate("jp", "F2V", "p", "p1", ["ref-1"], None, "9:16", None,
+                              model="veo_3_1_lite", duration_s=8))
+        job = dict(mv._JOBS["jp"])
+    finally:
+        (mv.get_flow_client, mv._bind_editor_session,
+         mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media,
+         mv.agent_video.probe_render_failure, mv.asyncio) = orig
+        mv._JOBS.clear()
+
+    assert probes["count"] == 1                       # probed at try 9, not after timeout
+    assert job["status"] == "FAILED"                  # honest fail-fast, not UNRETRIEVED
+    assert "FAILED_REFERENCE_IMAGE_MISSING" in (job.get("error") or "")
+    assert "re-upload" in (job.get("error") or "")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
