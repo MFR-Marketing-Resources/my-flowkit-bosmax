@@ -59,7 +59,12 @@ domains:
       - agent/api/prompt_preview.py
       - agent/api/creative_brief.py
       - agent/services/workspace_generation_package_service.py
+      - agent/services/batch_prompt_planner.py
+      - agent/services/production_queue_service.py
+      - tests/ui/test_batch_prompt_builder_ui_contract.py
+      - dashboard/src/pages/BatchesPage.tsx
       - agent/api/workspace_generation_packages.py
+      - agent/api/production_queue.py
       - agent/models/workspace_generation_package.py
       - agent/db/crud.py
       - agent/api/flow.py
@@ -94,7 +99,6 @@ domains:
       - dashboard/src/pages/ApprovedPackagesPage.tsx
       - dashboard/src/pages/AssetRegistryPage.tsx
       - dashboard/src/pages/AvatarRegistryPage.tsx
-      - dashboard/src/pages/BatchesPage.tsx
       - dashboard/src/pages/CreativeLibraryPage.tsx
       - dashboard/src/pages/CreativeLibraryWorkspacePage.tsx
       - dashboard/src/pages/OperatorPage.tsx
@@ -105,6 +109,13 @@ domains:
       - dashboard/src/pages/ProductsSalesAnalyzerPage.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
       - dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx
+      - dashboard/src/pages/BatchPromptBuilderPage.tsx
+      - dashboard/src/pages/ProductionQueuePage.tsx
+      - dashboard/src/api/productionQueue.ts
+      - tests/unit/test_batch_prompt_planner.py
+      - tests/unit/test_batch_prompt_run.py
+      - tests/unit/test_production_queue_service.py
+      - tests/api/test_batch_prompt_and_production_api.py
       - dashboard/src/pages/ProductRegistrationPage.tsx
       - dashboard/src/components/product-registration/ProductKnowledgeIntakeForm.tsx
       - dashboard/src/components/product-registration/RegistrationReviewDraftPanel.tsx

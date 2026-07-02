@@ -183,6 +183,10 @@ async def create_f2v_generation_package(
     end_frame_preview_url: str | None = None,
     end_frame_download_url: str | None = None,
     operator_notes: str | None = None,
+    batch_run_id: str | None = None,
+    avatar_id: str | None = None,
+    copy_intelligence: dict | None = None,
+    scene_context_override: str | None = None,
 ) -> dict:
     """Create a durable F2V workspace generation package."""
     mode = "F2V"
@@ -190,6 +194,8 @@ async def create_f2v_generation_package(
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
+    if scene_context_override:
+        approved = {**approved, "scene_context": scene_context_override}
 
     product_name_snapshot = approved.get("product_name", "")
     prompt_package_snapshot_id = approved.get("prompt_package_snapshot_id", "")
@@ -213,6 +219,8 @@ async def create_f2v_generation_package(
         dialogue_enabled=dialogue_enabled,
         source_mode=resolved_source_lane,
         blocks=blocks or [],
+        avatar_id=avatar_id,
+        copy_intelligence=copy_intelligence,
     )
 
     final_prompt_text: str = compiler_result.get("final_compiled_prompt_text", "")
@@ -337,6 +345,7 @@ async def create_f2v_generation_package(
         blockers_json=_json(blockers),
         warnings_json=_json(warnings),
         status=status,
+        batch_run_id=batch_run_id,
     )
 
     return _enrich_row(row)
@@ -362,12 +371,17 @@ async def create_i2v_generation_package(
     scene_context_reference_asset_id: str | None = None,
     style_reference_asset_id: str | None = None,
     operator_notes: str | None = None,
+    batch_run_id: str | None = None,
+    copy_intelligence: dict | None = None,
+    scene_context_override: str | None = None,
 ) -> dict:
     """Create a durable I2V workspace generation package."""
     mode = "I2V"
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
+    if scene_context_override:
+        approved = {**approved, "scene_context": scene_context_override}
 
     product_name_snapshot = approved.get("product_name", "")
     prompt_package_snapshot_id = approved.get("prompt_package_snapshot_id", "")
@@ -410,6 +424,7 @@ async def create_i2v_generation_package(
         overlay_enabled=overlay_enabled,
         dialogue_enabled=dialogue_enabled,
         blocks=[],
+        copy_intelligence=copy_intelligence,
     )
 
     base_prompt: str = compiler_result.get("final_compiled_prompt_text", "")
@@ -541,6 +556,7 @@ async def create_i2v_generation_package(
         blockers_json=_json(blockers),
         warnings_json=_json(warnings),
         status=status,
+        batch_run_id=batch_run_id,
     )
 
     return _enrich_row(row)
@@ -619,12 +635,17 @@ async def create_t2v_generation_package(
     blocks: list[dict] | None = None,
     operator_notes: str | None = None,
     batch_run_id: str | None = None,
+    avatar_id: str | None = None,
+    copy_intelligence: dict | None = None,
+    scene_context_override: str | None = None,
 ) -> dict:
     """Create a durable T2V workspace generation package (text-only, no frame uploads)."""
     mode = "T2V"
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
+    if scene_context_override:
+        approved = {**approved, "scene_context": scene_context_override}
 
     product_name_snapshot = approved.get("product_name", "")
     prompt_package_snapshot_id = approved.get("prompt_package_snapshot_id", "")
@@ -646,6 +667,8 @@ async def create_t2v_generation_package(
         overlay_enabled=overlay_enabled,
         dialogue_enabled=dialogue_enabled,
         blocks=blocks or [],
+        avatar_id=avatar_id,
+        copy_intelligence=copy_intelligence,
     )
 
     final_prompt_text: str = compiler_result.get("final_compiled_prompt_text", "")
@@ -927,8 +950,18 @@ import logging as _logging
 
 _batch_logger = _logging.getLogger(__name__)
 
+async def create_hybrid_generation_package(**kwargs) -> dict:
+    """HYBRID as a first-class logical mode: product image is the visual truth
+    anchor, the presenter comes from the avatar registry. Rides the F2V
+    creator with source_mode=HYBRID — source_lane stays HYBRID (never
+    relabelled as generic F2V/I2V in stored data or UI)."""
+    kwargs.setdefault("source_mode", "HYBRID")
+    return await create_f2v_generation_package(**kwargs)
+
+
 _MODE_CREATORS = {
     "F2V": create_f2v_generation_package,
+    "HYBRID": create_hybrid_generation_package,
     "I2V": create_i2v_generation_package,
     "T2V": create_t2v_generation_package,
     "IMG": create_img_generation_package,
@@ -1141,6 +1174,366 @@ async def _run_batch_generation_task(
         error_log_json=_json(errors[-50:]),
     )
     _batch_logger.info("Batch %s finished: %d completed, %d failed", batch_run_id, completed, failed)
+
+
+# ─── Batch Prompt Runner (prompt/production split) ───────────
+
+
+def _plan_creator_kwargs(plan: dict, asset_cache: dict) -> dict:
+    """Map one planner item plan to creator kwargs for its logical mode."""
+    mode = plan["logical_mode"]
+    kwargs: dict = {}
+    if plan.get("scene_context_override"):
+        kwargs["scene_context_override"] = plan["scene_context_override"]
+    if plan.get("hook_override"):
+        kwargs["copy_intelligence"] = {"hook": plan["hook_override"]}
+    if mode in ("T2V", "HYBRID") and plan.get("avatar_code"):
+        kwargs["avatar_id"] = plan["avatar_code"]
+    if mode == "F2V" and plan.get("finished_frame_asset_id"):
+        frame_id = plan["finished_frame_asset_id"]
+        kwargs["start_frame_asset_id"] = frame_id
+        row = asset_cache.get(frame_id, {})
+        if row.get("preview_url"):
+            kwargs["start_frame_preview_url"] = row["preview_url"]
+        if row.get("download_url"):
+            kwargs["start_frame_download_url"] = row["download_url"]
+    if mode == "I2V":
+        if plan.get("character_asset_id"):
+            kwargs["character_reference_asset_id"] = plan["character_asset_id"]
+        if plan.get("scene_asset_id"):
+            kwargs["scene_context_reference_asset_id"] = plan["scene_asset_id"]
+        if plan.get("style_asset_id"):
+            kwargs["style_reference_asset_id"] = plan["style_asset_id"]
+    return kwargs
+
+
+async def _annotate_batch_prompt_item(
+    row: dict,
+    plan: dict,
+    fingerprints: dict,
+    hard: list[str],
+    soft: list[str],
+) -> None:
+    """Persist variation + redundancy metadata on a freshly created package."""
+    from agent.services import batch_prompt_planner as _planner
+
+    wgp_id = row.get("workspace_generation_package_id")
+    if not wgp_id:
+        return
+    slots = row.get("resolved_engine_slots_json")
+    if isinstance(slots, str):
+        try:
+            slots = json.loads(slots)
+        except Exception:
+            slots = {}
+    update: dict = {
+        "logical_mode": plan["logical_mode"],
+        "variation_strategy": plan["variation_strategy"],
+        "prompt_fingerprint": fingerprints["prompt_fingerprint"],
+        "variation_fingerprints_json": _json(_planner.public_fingerprints(fingerprints)),
+        "anti_redundancy_json": _json({"hard_blocks": hard, "warnings": soft}),
+    }
+    if hard:
+        update["status"] = "BLOCKED"
+    await crud.update_workspace_generation_package(wgp_id, **update)
+
+
+async def _run_batch_prompt_plan_task(
+    batch_run_id: str,
+    *,
+    product_id: str,
+    logical_mode: str,
+    variation_strategy: str,
+    interval_seconds: int,
+    generation_mode: str,
+    item_plans: list[dict],
+    creator_base_kwargs: dict,
+    rotation_pool_size: int,
+) -> None:
+    """Background coroutine for the Batch Prompt Builder: one logical mode,
+    planner-driven variation, per-item anti-redundancy annotation.
+
+    Prompt generation ONLY — no Google Flow execution, no credits."""
+    from agent.services import batch_prompt_planner as _planner
+
+    creator = _MODE_CREATORS.get(logical_mode)
+    if creator is None:
+        await crud.update_batch_generation_run(
+            batch_run_id, status="FAILED",
+            error_log_json=_json([f"Unsupported logical mode: {logical_mode}"]),
+        )
+        return
+
+    history_rows = await crud.list_recent_prompt_fingerprints(product_id, logical_mode)
+    history_fps = {r["prompt_fingerprint"] for r in history_rows if r.get("prompt_fingerprint")}
+
+    asset_cache: dict = {}
+    frame_id = item_plans[0].get("finished_frame_asset_id") if item_plans else None
+    if frame_id:
+        try:
+            frame_row = await crud.get_creative_asset(frame_id)
+            if frame_row:
+                asset_cache[frame_id] = frame_row
+        except Exception:
+            pass
+
+    completed = 0
+    failed = 0
+    errors: list[str] = []
+    batch_seen: list[dict] = []
+    cancelled = False
+
+    await crud.update_batch_generation_run(batch_run_id, status="RUNNING")
+
+    total = len(item_plans)
+    for plan in item_plans:
+        if _batch_cancel_flags.get(batch_run_id):
+            cancelled = True
+            break
+        try:
+            row = await creator(
+                product_id=product_id,
+                generation_mode=generation_mode,
+                batch_run_id=batch_run_id,
+                **creator_base_kwargs,
+                **_plan_creator_kwargs(plan, asset_cache),
+            )
+            slots = row.get("resolved_engine_slots_json")
+            if isinstance(slots, str):
+                try:
+                    slots = json.loads(slots)
+                except Exception:
+                    slots = {}
+            fingerprints = _planner.compute_fingerprints(
+                final_prompt_text=row.get("final_prompt_text", ""),
+                item_plan=plan,
+                resolved_engine_slots=slots if isinstance(slots, dict) else {},
+            )
+            hard, soft = _planner.check_redundancy(
+                fingerprints=fingerprints,
+                batch_seen=batch_seen,
+                history_fingerprints=history_fps,
+                variation_strategy=variation_strategy,
+                quantity=total,
+                rotation_pool_size=rotation_pool_size,
+            )
+            await _annotate_batch_prompt_item(row, plan, fingerprints, hard, soft)
+            if hard:
+                failed += 1
+                errors.append(
+                    f"item#{plan['item_index'] + 1}: BLOCKED {','.join(hard)}"
+                )
+            else:
+                completed += 1
+                batch_seen.append(fingerprints)
+        except Exception as exc:
+            failed += 1
+            errors.append(f"item#{plan['item_index'] + 1}: {exc}")
+            _batch_logger.error(
+                "BatchPrompt %s: item #%d failed: %s",
+                batch_run_id, plan["item_index"] + 1, exc,
+            )
+
+        await crud.update_batch_generation_run(
+            batch_run_id,
+            total_completed=completed,
+            total_failed=failed,
+            error_log_json=_json(errors[-50:]),
+        )
+        remaining = total - (completed + failed)
+        if remaining > 0 and interval_seconds > 0:
+            await _asyncio.sleep(interval_seconds)
+
+    if cancelled:
+        _batch_cancel_flags.pop(batch_run_id, None)
+        await crud.update_batch_generation_run(
+            batch_run_id, status="CANCELLED",
+            total_completed=completed, total_failed=failed,
+            error_log_json=_json(errors[-50:]),
+        )
+        return
+
+    final_status = "FAILED" if completed == 0 and failed > 0 else "COMPLETED"
+    await crud.update_batch_generation_run(
+        batch_run_id, status=final_status,
+        total_completed=completed, total_failed=failed,
+        error_log_json=_json(errors[-50:]),
+    )
+    _batch_logger.info(
+        "BatchPrompt %s finished: %d completed, %d failed", batch_run_id, completed, failed
+    )
+
+
+def allowed_batch_durations(engine: str = "GOOGLE_FLOW") -> list[int]:
+    """Authoritative total durations for batch prompts — sourced from the WPS
+    workbook (agent/authority/wps_blocking_authority.json, ADR-008). The UI
+    duration selector and the server-side gate both read THIS list."""
+    from agent.services import canonical_prompt_compiler as _canonical
+
+    plans = _canonical._wps_authority().get("block_plans", [])
+    return sorted({
+        int(p["duration_seconds"]) for p in plans
+        if p.get("engine") == engine and p.get("duration_seconds")
+    })
+
+
+async def start_batch_prompt_run(
+    *,
+    product_id: str,
+    logical_mode: str,
+    quantity: int = 10,
+    variation_strategy: str | None = None,
+    interval_seconds: int = 5,
+    generation_mode: str = "SINGLE",
+    duration_seconds: int = 8,
+    target_language: str = "BM_MS",
+    avatar_codes: list[str] | None = None,
+    character_asset_ids: list[str] | None = None,
+    scene_asset_ids: list[str] | None = None,
+    style_asset_ids: list[str] | None = None,
+    scene_contexts: list[str] | None = None,
+    hook_angles: list[str] | None = None,
+    finished_frame_asset_id: str | None = None,
+) -> dict:
+    """Batch Prompt Builder entry point. ONE logical mode per batch (mode law).
+
+    Validates the mode input contract fail-closed, expands Qty N into a
+    deterministic variation plan, then generates N polished prompt packages
+    into the Prompt Queue. Raises ValueError("MODE_CONTRACT_VIOLATION:…")
+    on any contract breach.
+    """
+    from agent.services import batch_prompt_planner as _planner
+
+    logical_mode = str(logical_mode or "").strip().upper()
+    variation_strategy = variation_strategy or _planner.DEFAULT_VARIATION_STRATEGY
+    product_row = await crud.get_product(product_id)
+
+    contract_errors = _planner.validate_mode_inputs(
+        logical_mode,
+        quantity=quantity,
+        variation_strategy=variation_strategy,
+        finished_frame_asset_id=finished_frame_asset_id,
+        character_asset_ids=character_asset_ids,
+        scene_asset_ids=scene_asset_ids,
+        style_asset_ids=style_asset_ids,
+        product_row=product_row,
+    )
+    if contract_errors:
+        raise ValueError("MODE_CONTRACT_VIOLATION:" + ",".join(contract_errors))
+
+    # Duration authority (ADR-008): total durations come from the WPS workbook
+    # only — arbitrary values fail closed, never silently coerced.
+    if logical_mode in ("T2V", "HYBRID", "F2V"):
+        from agent.services import canonical_prompt_compiler as _canonical
+        try:
+            _canonical.resolve_block_plan("GOOGLE_FLOW", int(duration_seconds))
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"MODE_CONTRACT_VIOLATION:DURATION_NOT_IN_AUTHORITY:{duration_seconds}"
+            )
+
+    # Avatar rotation pool: explicit subset, else the full approved registry.
+    resolved_avatars = [a for a in (avatar_codes or []) if a]
+    if logical_mode in ("T2V", "HYBRID") and not resolved_avatars:
+        try:
+            from agent.services import avatar_registry as _avatars
+            resolved_avatars = [
+                p.get("avatar_code") for p in _avatars.list_pool() if p.get("avatar_code")
+            ]
+        except Exception:
+            resolved_avatars = []
+
+    # Hook rotation: explicit, else claim-safe hook angles from product truth.
+    resolved_hooks = [h for h in (hook_angles or []) if h]
+    if not resolved_hooks and product_row:
+        try:
+            payload = json.loads(product_row.get("claim_safe_copy_payload") or "{}")
+            resolved_hooks = [h for h in (payload.get("safe_hook_angles") or []) if h]
+        except Exception:
+            resolved_hooks = []
+
+    item_plans = _planner.plan_batch_items(
+        logical_mode=logical_mode,
+        variation_strategy=variation_strategy,
+        quantity=quantity,
+        product_id=product_id,
+        avatar_codes=resolved_avatars,
+        character_asset_ids=character_asset_ids,
+        scene_asset_ids=scene_asset_ids,
+        style_asset_ids=style_asset_ids,
+        scene_contexts=scene_contexts,
+        hook_angles=resolved_hooks,
+        finished_frame_asset_id=finished_frame_asset_id,
+    )
+
+    rotation_pool_size = max(
+        len(resolved_avatars) or 0,
+        len(character_asset_ids or []) or 0,
+        1,
+    )
+
+    creator_base_kwargs: dict = {
+        "target_language": target_language,
+    }
+    if logical_mode in ("T2V", "HYBRID", "F2V"):
+        creator_base_kwargs["duration_seconds"] = duration_seconds
+
+    batch_run_id = f"bgr_{_fingerprint(product_id, logical_mode, str(quantity), str(uuid.uuid4()))[:16]}"
+    config = {
+        "product_ids": [product_id],
+        "modes": [logical_mode],
+        "logical_mode": logical_mode,
+        "variation_strategy": variation_strategy,
+        "quantity_per_mode": quantity,
+        "interval_seconds": interval_seconds,
+        "generation_mode": generation_mode,
+        "duration_seconds": duration_seconds,
+        "target_language": target_language,
+        "avatar_codes": resolved_avatars,
+        "character_asset_ids": character_asset_ids or [],
+        "scene_asset_ids": scene_asset_ids or [],
+        "style_asset_ids": style_asset_ids or [],
+        "scene_contexts": scene_contexts or [],
+        "hook_angles": resolved_hooks,
+        "finished_frame_asset_id": finished_frame_asset_id,
+    }
+
+    run = await crud.create_batch_generation_run(
+        batch_run_id,
+        product_id=product_id,
+        modes_json=json.dumps([logical_mode]),
+        quantity_per_mode=quantity,
+        interval_seconds=interval_seconds,
+        generation_mode=generation_mode,
+        total_expected=quantity,
+        product_ids_json=json.dumps([product_id]),
+        config_json=json.dumps(config),
+    )
+    # Stamp mode-law metadata on the run row (additive columns).
+    from agent.db.schema import get_db as _get_db
+    _db = await _get_db()
+    await _db.execute(
+        "UPDATE batch_generation_run SET logical_mode=?, variation_strategy=? WHERE batch_run_id=?",
+        (logical_mode, variation_strategy, batch_run_id),
+    )
+    await _db.commit()
+    run["logical_mode"] = logical_mode
+    run["variation_strategy"] = variation_strategy
+
+    _asyncio.ensure_future(
+        _run_batch_prompt_plan_task(
+            batch_run_id,
+            product_id=product_id,
+            logical_mode=logical_mode,
+            variation_strategy=variation_strategy,
+            interval_seconds=interval_seconds,
+            generation_mode=generation_mode,
+            item_plans=item_plans,
+            creator_base_kwargs=creator_base_kwargs,
+            rotation_pool_size=rotation_pool_size,
+        )
+    )
+    return run
 
 
 async def start_batch_generation(
