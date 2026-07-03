@@ -14,16 +14,12 @@ from agent.services.product_intelligence import enrich_product
 
 
 VALID_MODES = {"T2V", "IMG"}
-REAL_ESTATE_KEYWORDS = (
+REAL_ESTATE_PRIMARY_KEYWORDS = (
     "condo",
     "kondo",
     "apartment",
-    "rumah",
     "property",
-    "interior",
-    "exterior",
     "real estate",
-    "office",
     "villa",
     "residence",
 )
@@ -77,13 +73,18 @@ def _infer_image_route(product: dict[str, Any]) -> str:
             ],
         )
     )
-    if _contains_any(text, REAL_ESTATE_KEYWORDS):
+    if _contains_any(text, REAL_ESTATE_PRIMARY_KEYWORDS):
         return "REAL_ESTATE_LISTING"
     if _contains_any(text, APPAREL_KEYWORDS):
         return "ECOMMERCE_FASHION_HERO"
     if _contains_any(text, PRODUCT_KEYWORDS) or _clean(product.get("source")):
         return "ECOMMERCE_PRODUCT_HERO"
     return "STATIC_PRODUCT"
+
+
+def _resolve_product_identity(product: dict[str, Any]) -> str | None:
+    name = _clean_name(product.get("product_display_name") or product.get("raw_product_title"))
+    return name or None
 
 
 def _is_micro_product(name: str) -> bool:
@@ -99,21 +100,21 @@ def _image_reference_line(product: dict[str, Any]) -> str:
     return "No verified image reference is available."
 
 
-def _t2v_prompt(product: dict[str, Any], package: dict[str, Any]) -> str:
-    name = _clean(product.get("product_display_name") or product.get("raw_product_title"))
-    overlay = package.get("safe_cta_angles", ["Rutin penjagaan diri lelaki yang premium dan discreet."])[0]
-    hook = package.get("safe_hook_angles", ["Rutin penjagaan diri lelaki yang premium dan discreet."])[0]
+def _t2v_prompt(product: dict[str, Any], package: dict[str, Any], *, product_name: str) -> str:
+    overlay = package.get("safe_cta_angles", ["Semak butiran produk dan tentukan sama ada ia sesuai untuk kegunaan anda."])[0]
+    hook = package.get("safe_hook_angles", ["Sorot produk dengan jelas menggunakan sudut komersial yang ringkas dan tepat."])[0]
     safe_rewrite = package.get("safe_claim_rewrite", "")
+    reference_line = _image_reference_line(product)
     return "\n\n".join(
         [
-            "1. Subject & Product Anchor: Feature Bosmax Herbs 5 ML as a small 5ML traditional herbal oil bottle. Keep the product scale realistic, premium, and discreet with no exaggerated body-detail or outcome cues.",
-            "2. Lighting & Scene Physics: Clean premium UGC lighting with soft studio contrast, realistic shadows, and a calm masculine wellness atmosphere.",
-            "3. Camera & Framing: Start with a controlled close-up of the bottle, then move into slow handheld premium product coverage with stable label-forward framing and no shaky gimmicks.",
-            f"4. Visual Action & Expansion: {hook} Show careful external-use self-care context only, with hands presenting the bottle naturally and respectfully.",
-            f"5. Product Physics & Handling: {product.get('section_5_product_physics_prompt') or 'Maintain believable small-bottle handling with label visibility and cap integrity.'}",
+            f"1. Subject & Product Anchor: Feature {product_name} as the exact product reference. Preserve packaging, label, color, silhouette, and scale truth. {reference_line}",
+            "2. Lighting & Scene Physics: Clean commercial lighting with coherent shadows, stable product geometry, and no exaggerated beauty, body, or outcome framing.",
+            f"3. Camera & Framing: Start with a clear hero view of {product_name}, then move into controlled product coverage with stable identity continuity and no shaky gimmicks.",
+            f"4. Visual Action & Expansion: {hook} Keep the scene commercially appropriate for the real product category and show only truthful handling or placement.",
+            f"5. Product Physics & Handling: {product.get('section_5_product_physics_prompt') or 'Maintain believable handling, readable label fidelity, and consistent product scale throughout the sequence.'}",
             f"6. Dialogue & Copy Safety: {safe_rewrite}",
-            "7. Audio & Tone: Calm, premium, confident, and non-explicit. No medical certainty, no guaranteed results, and no overclaiming.",
-            "8. Temporal Continuity: Keep motion smooth, product scale stable, and bottle identity consistent from shot to shot.",
+            "7. Audio & Tone: Calm, product-led, and commercially clear. No medical certainty, no guaranteed results, no fake testimonials, and no overclaiming.",
+            "8. Temporal Continuity: Keep motion smooth, preserve exact product identity from shot to shot, and avoid inventing extra accessories or packaging details.",
             f"9. Overlay & CTA: {overlay}",
         ]
     )
@@ -288,22 +289,32 @@ async def generate_prompt_dryrun(product_id: str, mode: str) -> dict[str, Any]:
             "errors": ["CLAIM_SAFE_COPY_REWRITE_REQUIRED"],
             "product_id": product_id,
         }
+    product_name = _resolve_product_identity(enriched)
+    if not product_name:
+        return {
+            "status": "PRODUCT_IDENTITY_REQUIRED",
+            "mode": normalized_mode,
+            "errors": ["PRODUCT_IDENTITY_REQUIRED"],
+            "product_id": product_id,
+        }
     img_contract = _compile_img_contract(enriched, package) if normalized_mode == "IMG" else None
-    prompt_preview = _t2v_prompt(enriched, package) if normalized_mode == "T2V" else img_contract["image_prompt"]
+    prompt_preview = (
+        _t2v_prompt(enriched, package, product_name=product_name)
+        if normalized_mode == "T2V"
+        else img_contract["image_prompt"]
+    )
     production_mode_approved = is_mode_production_approved(product, normalized_mode)
-    warnings = []
-    if not production_mode_approved and package.get("claim_safe_copy_status") == STATUS_REVIEW_READY:
-        warnings.append("PRODUCTION_CLAIM_REVIEW_STILL_REQUIRED")
     result = {
         "status": "PRODUCTION_READY" if production_mode_approved else "DRY_RUN_READY",
         "product_id": product_id,
+        "product_name": product_name,
         "mode": normalized_mode,
         "prompt_preview": prompt_preview,
         "prompt_length": len(prompt_preview),
         "claim_safe_copy_status": package.get("claim_safe_copy_status"),
         "dry_run_preview_allowed": True,
         "production_generation_allowed": production_mode_approved or package.get("claim_safe_copy_status") == STATUS_APPROVED,
-        "warnings": warnings,
+        "warnings": [],
         "provenance": [
             "prompt_package_dryrun_service:v1",
             f"claim_safe_copy_status:{package.get('claim_safe_copy_status')}",
