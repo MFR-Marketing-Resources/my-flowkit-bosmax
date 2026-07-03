@@ -1,0 +1,163 @@
+# Postiz — self-hosted social scheduler, run BESIDE BOSMAX (external service).
+# Isolated under infra/postiz/ on purpose: BOSMAX talks to it only through the
+# official Public API (agent/services/postiz_client.py), never shares a DB.
+#
+# Usage:
+#   cd infra/postiz
+#   copy .env.postiz.example .env   (then fill secrets — NEVER commit .env)
+#   docker compose up -d
+#   open http://localhost:5000 → register the operator account →
+#   Settings → API Keys → create a key → put it in BOSMAX .env as POSTIZ_API_KEY
+#
+# No secrets live in this file — everything sensitive comes from ./.env.
+
+services:
+  postiz:
+    image: ghcr.io/gitroomhq/postiz-app:latest
+    container_name: bosmax-postiz
+    restart: unless-stopped
+    environment:
+      MAIN_URL: ${MAIN_URL:-http://localhost:5000}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5000}
+      NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://localhost:5000/api}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in infra/postiz/.env}
+      DATABASE_URL: postgresql://postiz:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/postiz/.env}@postiz-postgres:5432/postiz
+      REDIS_URL: redis://postiz-redis:6379
+      BACKEND_INTERNAL_URL: http://localhost:3000
+      IS_GENERAL: "true"
+      # Current Postiz images require a Temporal workflow server (port 7233).
+      TEMPORAL_ADDRESS: postiz-temporal:7233
+      # Local uploads by default; switch to Cloudflare R2/S3 for a public CDN
+      # (required if BOSMAX uses POSTIZ_UPLOAD_MODE=url or for TikTok media domains).
+      STORAGE_PROVIDER: local
+      UPLOAD_DIRECTORY: /uploads
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: /uploads
+      # Provider OAuth apps (fill only what you use; keep in .env):
+      # TIKTOK_CLIENT_ID / TIKTOK_CLIENT_SECRET
+      # FACEBOOK_APP_ID / FACEBOOK_APP_SECRET
+      # YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET
+      # X_API_KEY / X_API_SECRET  … see Postiz provider docs
+    env_file:
+      - path: ./.env
+        required: false
+    volumes:
+      - postiz-config:/config
+      - postiz-uploads:/uploads
+    ports:
+      - "5000:5000"
+    depends_on:
+      postiz-postgres:
+        condition: service_healthy
+      postiz-redis:
+        condition: service_healthy
+      postiz-temporal:
+        condition: service_healthy
+
+  # Temporal stack — mirrors the official gitroomhq/postiz-docker-compose:
+  # Temporal 1.28.1 with Elasticsearch visibility (SQL visibility caps Text
+  # search attributes at 3, which Postiz exceeds) + its own postgres.
+  postiz-temporal-elasticsearch:
+    image: elasticsearch:7.17.27
+    container_name: bosmax-postiz-temporal-es
+    restart: unless-stopped
+    environment:
+      - cluster.routing.allocation.disk.threshold_enabled=true
+      - cluster.routing.allocation.disk.watermark.low=512mb
+      - cluster.routing.allocation.disk.watermark.high=256mb
+      - cluster.routing.allocation.disk.watermark.flood_stage=128mb
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+      - xpack.security.enabled=false
+    expose:
+      - 9200
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS \"http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s\" || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    volumes:
+      - postiz-temporal-es-data:/usr/share/elasticsearch/data
+
+  postiz-temporal-postgresql:
+    image: postgres:16
+    container_name: bosmax-postiz-temporal-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/postiz/.env}
+    expose:
+      - 5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - postiz-temporal-pg-data:/var/lib/postgresql/data
+
+  postiz-temporal:
+    image: temporalio/auto-setup:1.28.1
+    container_name: bosmax-postiz-temporal
+    restart: unless-stopped
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/postiz/.env}
+      - POSTGRES_SEEDS=postiz-temporal-postgresql
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      - ENABLE_ES=true
+      - ES_SEEDS=postiz-temporal-elasticsearch
+      - ES_VERSION=v7
+      - TEMPORAL_NAMESPACE=default
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "postiz-temporal:7233"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - ./dynamicconfig:/etc/temporal/config/dynamicconfig
+    depends_on:
+      postiz-temporal-postgresql:
+        condition: service_healthy
+      postiz-temporal-elasticsearch:
+        condition: service_healthy
+
+  postiz-postgres:
+    image: postgres:17-alpine
+    container_name: bosmax-postiz-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postiz
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/postiz/.env}
+      POSTGRES_DB: postiz
+    volumes:
+      - postiz-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postiz -d postiz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postiz-redis:
+    image: redis:7-alpine
+    container_name: bosmax-postiz-redis
+    restart: unless-stopped
+    volumes:
+      - postiz-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postiz-db:
+  postiz-redis-data:
+  postiz-config:
+  postiz-uploads:
+  postiz-temporal-es-data:
+  postiz-temporal-pg-data:

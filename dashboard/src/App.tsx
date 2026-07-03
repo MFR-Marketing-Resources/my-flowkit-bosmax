@@ -9,6 +9,7 @@ import {
 	Menu,
 	PackageSearch,
 	ScrollText,
+	Send,
 	Settings as SettingsIcon,
 	Siren,
 	Sparkles,
@@ -40,6 +41,7 @@ import DashboardPage from "./pages/DashboardPage";
 import GalleryPage from "./pages/GalleryPage";
 import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
+import PostizPublishPage from "./pages/PostizPublishPage";
 import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
 import ProductionQueuePage from "./pages/ProductionQueuePage";
 import ProductRegistrationPage from "./pages/ProductRegistrationPage";
@@ -77,6 +79,7 @@ const NAV_GROUPS = [
 			},
 			{ to: "/batches", icon: Briefcase, label: "Batch Prompt Builder" },
 			{ to: "/production-queue", icon: Film, label: "Production Queue" },
+			{ to: "/postiz", icon: Send, label: "Postiz Publish" },
 		],
 	},
 	{
@@ -462,6 +465,7 @@ function Layout() {
 							path="/production-queue"
 							element={<ProductionQueuePage />}
 						/>
+						<Route path="/postiz" element={<PostizPublishPage />} />
 						<Route path="/asset-registry" element={<AssetRegistryPage />} />
 						<Route
 							path="/assets/creative-library/workspace"

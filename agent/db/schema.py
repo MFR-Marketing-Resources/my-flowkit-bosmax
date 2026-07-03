@@ -1659,6 +1659,33 @@ CREATE TABLE IF NOT EXISTS production_run (
 """)
         await db.commit()
 
+        # Postiz publishing audit trail (feature-flagged Postiz adapter).
+        # Additive table — records every upload/post handoff so operators can
+        # trace a BOSMAX artifact to its Postiz media id + post ids.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS postiz_publish_record (
+    record_id             TEXT PRIMARY KEY,
+    artifact_media_id     TEXT,
+    source_local_path     TEXT,
+    source_public_url     TEXT,
+    upload_mode           TEXT NOT NULL DEFAULT 'file',
+    postiz_media_id       TEXT,
+    postiz_media_path     TEXT,
+    post_type             TEXT NOT NULL DEFAULT 'draft',
+    scheduled_at          TEXT,
+    content               TEXT,
+    integration_ids_json  TEXT NOT NULL DEFAULT '[]',
+    provider_settings_json TEXT NOT NULL DEFAULT '{}',
+    postiz_response_json  TEXT NOT NULL DEFAULT '{}',
+    status                TEXT NOT NULL DEFAULT 'PENDING'
+                          CHECK(status IN ('PENDING','UPLOADED','POST_CREATED','FAILED')),
+    error                 TEXT,
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+""")
+        await db.commit()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 
