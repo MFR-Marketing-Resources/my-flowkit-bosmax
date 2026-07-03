@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agent.db import crud
+from agent.services.product_mapping import resolve_product_mapping
 from agent.services.registration_draft_storage_service import (
     RegistrationDraftStorageService,
 )
@@ -30,6 +31,8 @@ RISKY_PATTERNS = [
     "tahan lama",
     "stamina",
     "kelelakian",
+    "eye protection",
+    "perlindungan mata",
 ]
 
 FORBIDDEN_PHRASES = [
@@ -102,6 +105,87 @@ LEGACY_CLAIM_SAFE_PHRASES = (
     "bina visual",
     "product-first",
 )
+FIRST_PERSON_COPY_PATTERNS = (
+    "aku dah try",
+    "aku dah guna",
+    "aku sendiri",
+    "pilihan aku",
+    "pengalaman aku",
+    "pada aku",
+    "bagi aku",
+    "weh korang",
+    "jujur cakap",
+    "saya dah cuba",
+    "saya dah try",
+    "saya sendiri guna",
+    "rutin harian saya",
+    "pengalaman saya",
+    "yang saya suka",
+    "saya suggest",
+    "pada saya",
+    "bagi saya",
+)
+INTERNAL_METADATA_PREFIXES = (
+    "product:",
+    "category:",
+    "subcategory:",
+    "type:",
+    "sold count:",
+    "commission:",
+    "price:",
+    "product id:",
+    "sku:",
+    "shop name:",
+    "seller:",
+    "source:",
+)
+INTERNAL_METADATA_MARKERS = (
+    "sold count",
+    "commission",
+    "category:",
+    "subcategory:",
+    "product id:",
+    "sku:",
+)
+SENSITIVE_DEVOTIONAL_KEYWORDS = (
+    "zikir",
+    "wirid",
+    "doa",
+    "rasulullah",
+    "quran",
+    "al-quran",
+    "hadith",
+    "solat",
+    "taubat",
+)
+REVIEW_DECISION_APPROVE_CANDIDATE = "APPROVE_CANDIDATE"
+REVIEW_DECISION_NEEDS_COPY_EDIT = "NEEDS_COPY_EDIT"
+REVIEW_DECISION_HOLD_SENSITIVE_REVIEW = "HOLD_SENSITIVE_REVIEW"
+REVIEW_DECISION_DO_NOT_APPROVE = "DO_NOT_APPROVE"
+REVIEW_DECISION_DATA_ISSUE = "DATA_ISSUE"
+MAPPING_MISMATCH_RULES = (
+    {
+        "id": "cookware_mapped_as_appliance",
+        "title_keywords": ("grill pan", "griddle", "kuali pemanggang", "bbq grill pan"),
+        "taxonomy_markers": ("electric grill", "electric grills", "kitchen appliances", "household appliances"),
+        "fallback_mapping": "Home & Living / Kitchenware / Grill Pan",
+        "reason": "Cookware title appears to be stored under an electric-appliance taxonomy.",
+    },
+    {
+        "id": "bowl_set_mapped_as_storage",
+        "title_keywords": ("bowl", "mangkuk", "ceramic bowl"),
+        "taxonomy_markers": ("storage boxes", "storage bins", "home organizers", "organizer"),
+        "fallback_mapping": "Home & Living / Kitchenware / Bowl Set",
+        "reason": "Kitchenware bowl set appears to be stored under a storage-organizer taxonomy.",
+    },
+    {
+        "id": "sewing_needles_mapped_as_party_gifts",
+        "title_keywords": ("jarum", "menjahit", "jahitan", "kuilt", "sewing"),
+        "taxonomy_markers": ("party bags", "party supplies", "gifts"),
+        "fallback_mapping": "Arts, Crafts & Sewing / Sewing Tools / Hand Needles",
+        "reason": "Sewing title appears to be stored under a party-gift taxonomy.",
+    },
+)
 
 
 def _now() -> str:
@@ -114,7 +198,9 @@ def _normalize(text: str | None) -> str:
 
 def _clean_title_for_dialog(title: str) -> str:
     cleaned = re.sub(r"\s*\[.*?\]\s*", " ", title).strip()
-    return re.sub(r"\s{2,}", " ", cleaned) or title
+    for phrase in RISKY_PATTERNS:
+        cleaned = re.sub(rf"\b{re.escape(phrase)}\b", " ", cleaned, flags=re.IGNORECASE)
+    return re.sub(r"\s{2,}", " ", cleaned).strip(" -|,") or title
 
 
 def _contains_bracket_tags(text: str) -> bool:
@@ -139,6 +225,38 @@ def _normalize_sentence(text: str) -> str:
     return re.sub(r"\s+", " ", _normalize(text)).strip(" .,!?:;")
 
 
+def _contains_first_person_copy(text: str) -> bool:
+    lowered = _normalize(text).casefold()
+    return any(pattern in lowered for pattern in FIRST_PERSON_COPY_PATTERNS)
+
+
+def _contains_internal_metadata(text: str) -> bool:
+    lowered = _normalize(text).casefold()
+    return any(marker in lowered for marker in INTERNAL_METADATA_MARKERS)
+
+
+def _split_source_segments(text: str) -> list[str]:
+    return [segment.strip() for segment in re.split(r"[|\n\r]+", text) if segment.strip()]
+
+
+def _sanitize_source_block(block: str) -> str:
+    safe_segments: list[str] = []
+    for segment in _split_source_segments(block):
+        segment = re.sub(r"\beye protection\b", "", segment, flags=re.IGNORECASE)
+        segment = re.sub(r"\bperlindungan mata\b", "", segment, flags=re.IGNORECASE)
+        lowered = _normalize(segment).casefold()
+        if any(lowered.startswith(prefix) for prefix in INTERNAL_METADATA_PREFIXES):
+            continue
+        if _starts_with_direction_prefix(segment):
+            continue
+        if _contains_first_person_copy(segment):
+            continue
+        cleaned = _normalize_sentence(segment)
+        if cleaned:
+            safe_segments.append(cleaned)
+    return ". ".join(safe_segments)
+
+
 def _sanitize_generated_line(line: str, fallback: str) -> str:
     normalized = _normalize_sentence(line) or _normalize_sentence(fallback)
     if (
@@ -146,6 +264,8 @@ def _sanitize_generated_line(line: str, fallback: str) -> str:
         or _contains_bracket_tags(normalized)
         or _starts_with_direction_prefix(normalized)
         or _contains_unsafe_language(normalized)
+        or _contains_first_person_copy(normalized)
+        or _contains_internal_metadata(normalized)
     ):
         normalized = _normalize_sentence(fallback)
     unsafe_claims, risky_claim_tokens, forbidden_removed = _detect_unsafe_claims([normalized], [])
@@ -243,6 +363,8 @@ def _extract_usable_benefit_sentences(text_blocks: list[str]) -> list[str]:
                 continue
             if _contains_bracket_tags(normalized) or _starts_with_direction_prefix(normalized):
                 continue
+            if _contains_first_person_copy(normalized) or _contains_internal_metadata(normalized):
+                continue
             if _contains_unsafe_language(normalized):
                 continue
             seen.add(lowered)
@@ -270,28 +392,32 @@ def _personalize_benefit_sentence(
     index: int,
     address_style: str = ADDRESS_AKU_KORANG,
 ) -> str:
-    normalized = _normalize_sentence(sentence)
-    if not normalized:
-        return normalized
-    lowered = normalized.casefold()
-    personal_prefixes = (
-        "aku ",
-        "pada aku",
-        "bagi aku",
-        "saya ",
-        "pada saya",
-        "bagi saya",
-        "jujur",
-        "serius",
-    )
-    if lowered.startswith(personal_prefixes):
-        return normalized
-    lead = normalized[0].lower() + normalized[1:] if len(normalized) > 1 else normalized.lower()
-    if address_style == ADDRESS_AKU_KORANG:
-        prefixes = ("Pada aku, ", "Aku suka sebab ", "Bagi aku, ")
-    else:
-        prefixes = ("Pada saya, ", "Saya suka sebab ", "Bagi saya, ")
-    return prefixes[min(index, len(prefixes) - 1)] + lead
+    return _normalize_sentence(sentence)
+
+
+def _build_unique_lines(candidates: list[str], fallbacks: list[str], *, count: int) -> list[str]:
+    results: list[str] = []
+    seen: set[str] = set()
+    all_candidates = [*candidates, *fallbacks]
+    for index, candidate in enumerate(all_candidates):
+        fallback = fallbacks[min(index, len(fallbacks) - 1)]
+        line = _sanitize_generated_line(candidate, fallback)
+        lowered = line.casefold()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        results.append(line)
+        if len(results) >= count:
+            return results
+    while len(results) < count:
+        fallback = _sanitize_generated_line(fallbacks[min(len(results), len(fallbacks) - 1)], fallbacks[-1])
+        lowered = fallback.casefold()
+        if lowered not in seen:
+            seen.add(lowered)
+            results.append(fallback)
+            continue
+        results.append(fallback)
+    return results
 
 
 def _build_dialog_copy(
@@ -299,7 +425,7 @@ def _build_dialog_copy(
     text_blocks: list[str],
     unsafe_claims: list[str],
     address_style: str | None = None,
-) -> tuple[str, list[str], list[str], list[str]]:
+) -> tuple[str, str, str, str, list[str], list[str], list[str]]:
     if address_style is None:
         address_style = _detect_address_style(title, text_blocks)
     clean_title = _clean_title_for_dialog(title)
@@ -311,72 +437,57 @@ def _build_dialog_copy(
     benefit_focus = _pick_benefit_focus(clean_title, text_blocks)
     benefit_focus_short = _trim_routine_prefix(benefit_focus)
 
-    if address_style == ADDRESS_SAYA_ABANG:
-        fallback_rewrite = f"{clean_title} ni saya sendiri guna - memang jadi rutin harian saya"
-        hook_fallback = f"Saya rasa {clean_title} ni okay je untuk rutin harian abang"
-        cta_fallback = f"{clean_title} ni saya suggest abang cuba kalau sesuai dengan rutin abang"
-        hooks = [
-            f"Abang, kalau tengah cari untuk {benefit_focus_short} - saya dah cuba {clean_title} ni dan memang okay",
-            f"Saya rasa {clean_title} ni sesuai je untuk abang yang nak jaga {benefit_focus_short} setiap hari",
-            f"Jujur cakap, saya sendiri guna {clean_title} ni untuk {benefit_focus_short} - abang boleh try tengok",
-        ]
-        ctas = [
-            f"Kalau abang tengah cari untuk {benefit_focus_short}, boleh la try {clean_title} ni dulu",
-            f"Saya suggest abang cuba {clean_title} ni - ikut je rutin {benefit_focus_short} biasa",
-            f"Abang boleh try {clean_title} ni dalam masa seminggu, tengok sendiri macam mana",
-        ]
-        usps = [
-            f"Yang saya suka pasal {clean_title} - nampak sesuai untuk rutin {benefit_focus_short} abang",
-            f"Saya rasa {clean_title} ni okay je untuk abang masukkan dalam rutin {benefit_focus_short}",
-            f"Dari pengalaman saya, {clean_title} ni boleh fit dalam rutin {benefit_focus_short} abang",
-        ]
-    elif address_style == ADDRESS_SAYA_AKAK:
-        fallback_rewrite = f"{clean_title} ni saya sendiri guna - memang jadi rutin harian saya"
-        hook_fallback = f"Saya rasa {clean_title} ni okay je untuk rutin harian akak"
-        cta_fallback = f"{clean_title} ni saya suggest akak cuba kalau sesuai dengan rutin akak"
-        hooks = [
-            f"Akak, kalau tengah cari untuk {benefit_focus_short} - saya dah cuba {clean_title} ni dan memang okay",
-            f"Saya rasa {clean_title} ni sesuai je untuk akak yang nak jaga {benefit_focus_short} setiap hari",
-            f"Jujur cakap, saya sendiri guna {clean_title} ni untuk {benefit_focus_short} - akak boleh try tengok",
-        ]
-        ctas = [
-            f"Kalau akak tengah cari untuk {benefit_focus_short}, boleh la try {clean_title} ni dulu",
-            f"Saya suggest akak cuba {clean_title} ni - ikut je rutin {benefit_focus_short} biasa",
-            f"Akak boleh try {clean_title} ni dalam masa seminggu, tengok sendiri macam mana",
-        ]
-        usps = [
-            f"Yang saya suka pasal {clean_title} - nampak sesuai untuk rutin {benefit_focus_short} akak",
-            f"Saya rasa {clean_title} ni okay je untuk akak masukkan dalam rutin {benefit_focus_short}",
-            f"Dari pengalaman saya, {clean_title} ni boleh fit dalam rutin {benefit_focus_short} akak",
-        ]
-    else:
-        fallback_rewrite = f"{clean_title} ni memang jadi pilihan aku untuk hari-hari"
-        hook_fallback = f"{clean_title} ni memang okay je untuk rutin harian aku"
-        cta_fallback = f"{clean_title} ni aku rasa okay je kalau nak masuk dalam rutin harian"
-        hooks = [
-            f"Weh korang, aku dah try {clean_title} ni untuk {benefit_focus} - memang okay lah",
-            f"Jujur cakap, aku tak sangka {clean_title} ni jadi pilihan aku untuk {benefit_focus}",
-            f"Serius, aku dah guna {clean_title} ni untuk {benefit_focus} aku - best je",
-        ]
-        ctas = [
-            f"Kalau korang tengah cari untuk {benefit_focus}, boleh la try {clean_title} ni",
-            f"Aku rasa okay je kalau korang nak cuba {clean_title} ni untuk {benefit_focus}",
-            f"{clean_title} ni aku pun dah buat rutin - kalau korang nak try pun boleh je",
-        ]
-        usps = [
-            f"Yang aku suka pasal {clean_title} - nampak praktikal untuk {benefit_focus} aku",
-            f"Aku rasa {clean_title} ni sesuai je masuk dalam rutin {benefit_focus_short}",
-            f"Dari pengalaman aku, {clean_title} ni okay untuk {benefit_focus} hari-hari",
-        ]
+    fallback_rewrite = f"{clean_title} dengan fokus pada fungsi asas dan penggunaan yang praktikal"
+    hook_fallbacks = [
+        f"{clean_title} untuk kegunaan harian yang ringkas dan praktikal",
+        f"{clean_title} dengan ciri utama yang mudah difahami",
+        f"{clean_title} sesuai dipilih berdasarkan fungsi produk dan keperluan sebenar",
+    ]
+    subhook_fallbacks = [
+        f"{clean_title} membantu kekalkan fokus copy pada ciri produk tanpa janji berlebihan",
+        f"Maklumat {clean_title} boleh disusun secara terus dan mudah difahami",
+        f"{clean_title} sesuai dipersembahkan melalui ciri yang jelas dan manfaat asas",
+    ]
+    usp_fallbacks = [
+        f"{clean_title} mengekalkan fokus pada fungsi produk yang jelas",
+        f"Penerangan {clean_title} boleh kekal ringkas tanpa testimoni atau janji sensitif",
+        f"{clean_title} sesuai disemak melalui ciri asas dan kegunaan sebenar",
+    ]
+    cta_fallbacks = [
+        f"Semak ciri utama {clean_title} sebelum membuat pilihan",
+        f"Pilih {clean_title} jika spesifikasinya sepadan dengan keperluan anda",
+        f"Lihat fungsi asas {clean_title} dan tentukan sama ada ia sesuai untuk kegunaan anda",
+    ]
 
-    safe_claim_rewrite = " ".join(
-        _sanitize_generated_line(_personalize_benefit_sentence(sentence, index, address_style), fallback_rewrite)
+    neutral_sentences = [
+        _personalize_benefit_sentence(sentence, index, address_style)
         for index, sentence in enumerate(rewrite_sentences[:3])
+    ]
+    safe_product_name = clean_title
+    safe_claim_rewrite = " ".join(
+        _sanitize_generated_line(sentence, fallback_rewrite)
+        for sentence in neutral_sentences[:2]
     ) or _sanitize_generated_line(fallback_rewrite, fallback_rewrite)
-    safe_hook_angles = [_sanitize_generated_line(line, hook_fallback) for line in hooks]
-    safe_cta_angles = [_sanitize_generated_line(line, cta_fallback) for line in ctas]
-    safe_usp_list = [_sanitize_generated_line(line, hook_fallback) for line in usps]
-    return safe_claim_rewrite, safe_hook_angles, safe_cta_angles, safe_usp_list
+    safe_hook = _sanitize_generated_line(
+        neutral_sentences[0] if neutral_sentences else hook_fallbacks[0],
+        hook_fallbacks[0],
+    )
+    safe_subhook = _sanitize_generated_line(
+        neutral_sentences[1] if len(neutral_sentences) > 1 else subhook_fallbacks[0],
+        subhook_fallbacks[0],
+    )
+    safe_hook_angles = _build_unique_lines(neutral_sentences, hook_fallbacks, count=3)
+    safe_cta_angles = _build_unique_lines(cta_fallbacks, cta_fallbacks, count=3)
+    safe_usp_list = _build_unique_lines(neutral_sentences, usp_fallbacks, count=3)
+    return (
+        safe_product_name,
+        safe_claim_rewrite,
+        safe_hook,
+        safe_subhook,
+        safe_hook_angles,
+        safe_cta_angles,
+        safe_usp_list,
+    )
 
 
 def _match_bosmax_draft(product: dict[str, Any]) -> dict[str, Any] | None:
@@ -419,14 +530,81 @@ def _extract_source_text(product: dict[str, Any], draft: dict[str, Any] | None) 
             "warnings_text",
             "paste_anything_about_product",
         ):
-            value = _normalize(evidence.get(key))
+            value = _sanitize_source_block(_normalize(evidence.get(key)))
             if value:
                 text_blocks.append(value)
     for key in ("section_6_copy_hint", "copywriting_angle", "raw_product_title", "product_display_name"):
-        value = _normalize(product.get(key))
+        value = _sanitize_source_block(_normalize(product.get(key)))
         if value:
             text_blocks.append(value)
     return text_blocks
+
+
+def _is_sensitive_devotional_product(title: str, text_blocks: list[str]) -> bool:
+    lowered = " ".join([title, *text_blocks]).casefold()
+    return any(keyword in lowered for keyword in SENSITIVE_DEVOTIONAL_KEYWORDS)
+
+
+def _detect_mapping_review(product: dict[str, Any], title: str) -> dict[str, Any] | None:
+    stored_taxonomy = " | ".join(
+        _normalize(product.get(field))
+        for field in ("category", "subcategory", "type")
+        if _normalize(product.get(field))
+    )
+    if not stored_taxonomy:
+        return None
+    normalized_title = _normalize(title).casefold()
+    normalized_taxonomy = stored_taxonomy.casefold()
+    for rule in MAPPING_MISMATCH_RULES:
+        if not any(keyword in normalized_title for keyword in rule["title_keywords"]):
+            continue
+        if not any(marker in normalized_taxonomy for marker in rule["taxonomy_markers"]):
+            continue
+        suggested = resolve_product_mapping(product_name=title, source_hint=_normalize(product.get("source")) or None)
+        suggested_taxonomy = " / ".join(
+            part for part in (suggested.get("category"), suggested.get("subcategory"), suggested.get("type")) if part
+        )
+        return {
+            "status": "MAPPING_REPAIR_REQUIRED",
+            "reason": rule["reason"],
+            "current_taxonomy": stored_taxonomy,
+            "proposed_taxonomy": suggested_taxonomy or rule["fallback_mapping"],
+            "rule_id": rule["id"],
+        }
+    return None
+
+
+def _build_review_summary(
+    product: dict[str, Any],
+    title: str,
+    text_blocks: list[str],
+    unsafe_claims_detected: list[str],
+    risky_claim_tokens: list[str],
+) -> tuple[str, bool, list[str], dict[str, Any] | None, dict[str, Any] | None]:
+    notes: list[str] = []
+    if not _normalize(title):
+        return (
+            REVIEW_DECISION_DATA_ISSUE,
+            False,
+            ["Product title is missing, so claim-safe preview cannot be trusted."],
+            None,
+            None,
+        )
+    if unsafe_claims_detected or risky_claim_tokens:
+        notes.append("Unsafe claim tokens were detected in the source evidence.")
+        return REVIEW_DECISION_DO_NOT_APPROVE, False, notes, None, None
+    if _is_sensitive_devotional_product(title, text_blocks):
+        sensitive_review = {
+            "status": "SENIOR_SENSITIVE_REVIEW_REQUIRED",
+            "reason": "Religious/devotional product requires respectful senior review before claim-safe approval.",
+            "safe_direction": "Use bibliographic, respectful product-led wording only. Avoid slang, testimony, or spiritual outcome promises.",
+        }
+        return REVIEW_DECISION_HOLD_SENSITIVE_REVIEW, False, notes, None, sensitive_review
+    mapping_review = _detect_mapping_review(product, title)
+    if mapping_review:
+        notes.append("Stored taxonomy appears unrelated to the product title and should be repaired first.")
+        return REVIEW_DECISION_DO_NOT_APPROVE, False, notes, mapping_review, None
+    return REVIEW_DECISION_APPROVE_CANDIDATE, True, notes, None, None
 
 
 def _detect_unsafe_claims(text_blocks: list[str], claim_tokens: list[str]) -> tuple[list[str], list[str], list[str]]:
@@ -467,17 +645,36 @@ def _build_safe_package(product: dict[str, Any], draft: dict[str, Any] | None) -
     )
     title = _normalize(product.get("product_display_name") or product.get("raw_product_title"))
     address_style = _detect_address_style(title, text_blocks)
-    safe_claim_rewrite, safe_hook_angles, safe_cta_angles, safe_usp_list = _build_dialog_copy(
+    (
+        safe_product_name,
+        safe_claim_rewrite,
+        safe_hook,
+        safe_subhook,
+        safe_hook_angles,
+        safe_cta_angles,
+        safe_usp_list,
+    ) = _build_dialog_copy(
         title,
         text_blocks,
         unsafe_claims_detected,
         address_style=address_style,
     )
+    review_decision, approval_after_operator_review, review_notes, mapping_review, sensitive_review = (
+        _build_review_summary(
+            product,
+            title,
+            text_blocks,
+            unsafe_claims_detected,
+            risky_claim_tokens,
+        )
+    )
     approval_phrase = APPROVAL_PHRASE
     audit_notes = [
         "Unsafe source claims preserved for audit only.",
+        "Safe copy removes fabricated first-person/testimonial framing and internal metadata.",
         "Safe copy removes explicit male-performance promises and medical certainty.",
         "Dry-run preview can proceed after review-ready approval, but production claim gate stays human-reviewed.",
+        *review_notes,
     ]
     provenance = [
         SAFE_PACKAGE_GENERATOR_VERSION,
@@ -487,9 +684,12 @@ def _build_safe_package(product: dict[str, Any], draft: dict[str, Any] | None) -
     return {
         "product_id": product.get("id") or product.get("product_id"),
         "product_name": title,
+        "safe_product_name": safe_product_name,
         "unsafe_claims_detected": unsafe_claims_detected,
         "risky_claim_tokens": risky_claim_tokens,
         "safe_claim_rewrite": safe_claim_rewrite,
+        "safe_hook": safe_hook,
+        "safe_subhook": safe_subhook,
         "safe_hook_angles": safe_hook_angles,
         "safe_usp_list": safe_usp_list,
         "safe_cta_angles": safe_cta_angles,
@@ -497,8 +697,12 @@ def _build_safe_package(product: dict[str, Any], draft: dict[str, Any] | None) -
         "forbidden_phrases_removed": forbidden_removed,
         "claim_safe_copy_status": STATUS_PREVIEW_ONLY,
         "approval_required": True,
+        "approval_after_operator_review": approval_after_operator_review,
         "approval_phrase": approval_phrase,
         "claim_gate": product.get("claim_gate") or "CLAIM_REVIEW_REQUIRED",
+        "review_decision": review_decision,
+        "mapping_review": mapping_review,
+        "sensitive_review": sensitive_review,
         "audit_notes": audit_notes,
         "provenance": provenance,
     }
@@ -536,6 +740,9 @@ def _payload_text_lines(payload: dict[str, Any]) -> list[str]:
 def _is_stale_claim_safe_payload(payload: dict[str, Any]) -> bool:
     provenance = payload.get("provenance") or []
     if SAFE_PACKAGE_GENERATOR_VERSION in provenance:
+        for line in _payload_text_lines(payload):
+            if _contains_first_person_copy(line) or _contains_internal_metadata(line):
+                return True
         return False
     if not _normalize(payload.get("address_style")):
         return True
@@ -544,6 +751,8 @@ def _is_stale_claim_safe_payload(payload: dict[str, Any]) -> bool:
     for line in _payload_text_lines(payload):
         lowered = line.casefold()
         if any(phrase in lowered for phrase in LEGACY_CLAIM_SAFE_PHRASES):
+            return True
+        if _contains_first_person_copy(line) or _contains_internal_metadata(line):
             return True
         if _contains_bracket_tags(line):
             return True
@@ -648,6 +857,8 @@ async def approve_claim_safe_rewrite(
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
     package = await preview_claim_safe_rewrite(product_id)
+    if not package.get("approval_after_operator_review"):
+        raise PermissionError(f"CLAIM_SAFE_REVIEW_BLOCKED:{package.get('review_decision') or 'UNKNOWN'}")
     package["claim_safe_copy_status"] = STATUS_REVIEW_READY
     package["approval_required"] = True
     package["approval_note"] = _normalize(approval_note) or "Claim-safe rewrite approved for dry-run preview only."
