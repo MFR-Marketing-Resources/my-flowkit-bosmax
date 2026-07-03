@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record", "social_copy_package"})
 
 
 def _validate_table(table: str) -> None:
@@ -40,6 +40,7 @@ _COLUMNS = {
     "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "operator_notes", "batch_run_id", "logical_mode", "variation_strategy", "prompt_fingerprint", "variation_fingerprints_json", "anti_redundancy_json", "production_status", "production_run_id", "production_job_id", "production_error", "artifact_media_ids_json", "approved_at", "sent_to_production_at", "updated_at"},
     "production_run": {"status", "dry_run", "max_parallel_jobs", "interval_min_seconds", "interval_max_seconds", "cooldown_after_n_jobs", "cooldown_seconds", "total_expected", "total_completed", "total_failed", "error_log_json", "config_json", "updated_at"},
     "postiz_publish_record": {"artifact_media_id", "source_local_path", "source_public_url", "upload_mode", "postiz_media_id", "postiz_media_path", "post_type", "scheduled_at", "content", "integration_ids_json", "provider_settings_json", "postiz_response_json", "status", "error", "updated_at"},
+    "social_copy_package": {"artifact_media_id", "source_mode", "platform", "caption", "first_comment", "hashtags_json", "call_to_action", "tone", "language", "status", "compliance_status", "blockers_json", "warnings_json", "approval_note", "approved_at", "postiz_record_id", "updated_at"},
 }
 
 
@@ -1086,6 +1087,78 @@ async def list_postiz_publish_records(limit: int = 50) -> list[dict]:
     cur = await db.execute(
         "SELECT * FROM postiz_publish_record ORDER BY created_at DESC LIMIT ?", (limit,)
     )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+# ─── Social Copy Packages ─────────────────────────────────────
+# Platform-specific caption/comment copy linked to a generated artifact
+# (artifact_media_id). Authored on the generator pages, approved, then
+# prefilled into Postiz Publish. No hard FK — copy outlives 48h artifacts.
+async def create_social_copy_package(
+    package_id: str,
+    *,
+    artifact_media_id: str,
+    platform: str,
+    source_mode: str | None = None,
+    caption: str = "",
+    first_comment: str = "",
+    hashtags_json: str = "[]",
+    call_to_action: str = "",
+    tone: str = "",
+    language: str = "ms",
+    status: str = "DRAFT",
+    compliance_status: str = "OK",
+    blockers_json: str = "[]",
+    warnings_json: str = "[]",
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO social_copy_package
+               (package_id, artifact_media_id, source_mode, platform, caption,
+                first_comment, hashtags_json, call_to_action, tone, language,
+                status, compliance_status, blockers_json, warnings_json,
+                created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (package_id, artifact_media_id, source_mode, platform, caption,
+             first_comment, hashtags_json, call_to_action, tone, language,
+             status, compliance_status, blockers_json, warnings_json, now, now),
+        )
+        await db.commit()
+    return await _get_with_db(db, "social_copy_package", "package_id", package_id)
+
+
+async def get_social_copy_package(package_id: str) -> dict | None:
+    return await _get("social_copy_package", "package_id", package_id)
+
+
+async def update_social_copy_package(package_id: str, **kwargs) -> dict | None:
+    return await _update("social_copy_package", "package_id", package_id, **kwargs)
+
+
+async def list_social_copy_packages(
+    artifact_media_id: str | None = None,
+    platform: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    db = await get_db()
+    query = "SELECT * FROM social_copy_package WHERE 1=1"
+    params: list = []
+    if artifact_media_id:
+        query += " AND artifact_media_id=?"
+        params.append(artifact_media_id)
+    if platform:
+        query += " AND platform=?"
+        params.append(platform)
+    if status:
+        query += " AND status=?"
+        params.append(status)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(query, params)
     rows = await cur.fetchall()
     return [dict(r) for r in rows]
 

@@ -1686,6 +1686,41 @@ CREATE TABLE IF NOT EXISTS postiz_publish_record (
 """)
         await db.commit()
 
+        # Social Copy Package — platform-specific caption/comment copy linked to
+        # a generated artifact (media_id). Authored on the generator pages,
+        # approved, then prefilled into Postiz Publish. Like postiz_publish_record
+        # this uses a plain artifact_media_id (no hard FK): generated_artifact rows
+        # self-purge at 48h while copy packages persist as publishing history.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS social_copy_package (
+    package_id            TEXT PRIMARY KEY,
+    artifact_media_id     TEXT NOT NULL,
+    source_mode           TEXT,
+    platform              TEXT NOT NULL
+                          CHECK(platform IN ('tiktok','facebook','instagram','threads','x')),
+    caption               TEXT NOT NULL DEFAULT '',
+    first_comment         TEXT NOT NULL DEFAULT '',
+    hashtags_json         TEXT NOT NULL DEFAULT '[]',
+    call_to_action        TEXT NOT NULL DEFAULT '',
+    tone                  TEXT NOT NULL DEFAULT '',
+    language              TEXT NOT NULL DEFAULT 'ms',
+    status                TEXT NOT NULL DEFAULT 'DRAFT'
+                          CHECK(status IN ('DRAFT','READY','APPROVED','REJECTED','PUBLISHED')),
+    compliance_status     TEXT NOT NULL DEFAULT 'OK'
+                          CHECK(compliance_status IN ('OK','WARN','BLOCKED')),
+    blockers_json         TEXT NOT NULL DEFAULT '[]',
+    warnings_json         TEXT NOT NULL DEFAULT '[]',
+    approval_note         TEXT,
+    approved_at           TEXT,
+    postiz_record_id      TEXT,
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_social_copy_media_id ON social_copy_package(artifact_media_id);
+CREATE INDEX IF NOT EXISTS idx_social_copy_status ON social_copy_package(status);
+""")
+        await db.commit()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 

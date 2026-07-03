@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
 import { fetchProductCatalog } from "../api/products";
+import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
 import {
 	createF2VGenerationPackage,
 	createI2VGenerationPackage,
@@ -1951,6 +1952,18 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					<div className="mt-2 text-[10px] uppercase tracking-[0.2em] text-emerald-200/60">
 						media {completedArtifact.mediaId}
 					</div>
+				</div>
+			)}
+
+			{/* Social Copy Package — author platform-specific caption/comment copy
+			    for the just-finished artifact; approved copy prefills Postiz. */}
+			{completedArtifact && (
+				<div className="mb-6">
+					<SocialCopyPackagePanel
+						mediaId={completedArtifact.mediaId}
+						sourceMode={mode}
+						productName={selectedProduct?.product_display_name ?? null}
+					/>
 				</div>
 			)}
 
