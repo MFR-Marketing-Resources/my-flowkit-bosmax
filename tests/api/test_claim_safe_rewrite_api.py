@@ -19,6 +19,7 @@ def test_claim_safe_preview_api(monkeypatch):
             "product_id": product_id,
             "claim_safe_copy_status": "CLAIM_SAFE_COPY_PREVIEW_ONLY",
             "approval_required": True,
+            "review_decision": "APPROVE_CANDIDATE",
         }
 
     monkeypatch.setattr("agent.api.products.crud.get_product", fake_get_product)
@@ -30,6 +31,7 @@ def test_claim_safe_preview_api(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["approval_required"] is True
+    assert response.json()["review_decision"] == "APPROVE_CANDIDATE"
 
 
 def test_claim_safe_approval_api_requires_phrase(monkeypatch):
@@ -53,6 +55,27 @@ def test_claim_safe_approval_api_requires_phrase(monkeypatch):
     assert response.json()["detail"]["approval_phrase"] == "APPROVE_CLAIM_SAFE_COPY_REVIEW"
 
 
+def test_claim_safe_approval_api_blocks_non_approvable_preview(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {"id": product_id, "lifecycle_status": "ACTIVE"}
+
+    async def fake_approve(product_id: str, confirmation_phrase: str, approval_note: str | None = None):
+        raise PermissionError("CLAIM_SAFE_REVIEW_BLOCKED:DO_NOT_APPROVE")
+
+    monkeypatch.setattr("agent.api.products.crud.get_product", fake_get_product)
+    monkeypatch.setattr("agent.api.products.approve_claim_safe_rewrite", fake_approve)
+    monkeypatch.setattr("agent.api.products.is_product_archived", lambda product: False)
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/products/prod-001/claim-safe-rewrite-approval",
+        json={"confirmation_phrase": "APPROVE_CLAIM_SAFE_COPY_REVIEW"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "CLAIM_SAFE_REVIEW_BLOCKED:DO_NOT_APPROVE"
+
+
 def test_get_product_refreshes_stale_claim_safe_payload(monkeypatch):
     stored_product = {
         "id": "prod-legacy",
@@ -67,12 +90,12 @@ def test_get_product_refreshes_stale_claim_safe_payload(monkeypatch):
     async def fake_refresh(product_id: str):
         return {
             "claim_safe_copy_status": "CLAIM_SAFE_COPY_APPROVED",
-            "safe_claim_rewrite": "Saya sendiri guna produk ni - memang jadi rutin harian saya.",
+            "safe_claim_rewrite": "Produk ini dengan fokus pada fungsi asas yang ringkas.",
         }
 
     async def fake_enrich(product, persist=False):
         updated = dict(product)
-        updated["claim_safe_copy_payload"] = '{"safe_claim_rewrite":"Saya sendiri guna produk ni - memang jadi rutin harian saya."}'
+        updated["claim_safe_copy_payload"] = '{"safe_claim_rewrite":"Produk ini dengan fokus pada fungsi asas yang ringkas."}'
         return updated
 
     monkeypatch.setattr("agent.api.products.crud.get_product", fake_get_product)
@@ -83,4 +106,4 @@ def test_get_product_refreshes_stale_claim_safe_payload(monkeypatch):
     response = client.get("/api/products/prod-legacy")
 
     assert response.status_code == 200
-    assert "Saya sendiri guna produk ni" in response.json()["claim_safe_copy_payload"]
+    assert "fungsi asas yang ringkas" in response.json()["claim_safe_copy_payload"]

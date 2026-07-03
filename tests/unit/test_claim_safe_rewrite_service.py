@@ -4,6 +4,9 @@ import pytest
 
 from agent.services.claim_safe_rewrite_service import (
     APPROVAL_PHRASE,
+    REVIEW_DECISION_APPROVE_CANDIDATE,
+    REVIEW_DECISION_DO_NOT_APPROVE,
+    REVIEW_DECISION_HOLD_SENSITIVE_REVIEW,
     STATUS_REVIEW_READY,
     _detect_address_style,
     approve_claim_safe_rewrite,
@@ -54,22 +57,83 @@ async def test_preview_claim_safe_rewrite_detects_risky_male_health_claims(monke
 
     assert preview["claim_safe_copy_status"] == "CLAIM_SAFE_COPY_PREVIEW_ONLY"
     assert preview["approval_required"] is True
+    assert preview["review_decision"] == REVIEW_DECISION_DO_NOT_APPROVE
+    assert preview["approval_after_operator_review"] is False
     assert "bahagian intim" in " ".join(preview["unsafe_claims_detected"]).casefold()
     assert "male_health_sensitive" in preview["risky_claim_tokens"]
     assert "ubat kuat" not in preview["safe_claim_rewrite"].casefold()
 
 
 @pytest.mark.asyncio
-async def test_approve_claim_safe_rewrite_persists_review_ready_package(monkeypatch):
+async def test_preview_claim_safe_rewrite_strips_metadata_and_first_person_framing(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {
+            "id": product_id,
+            "raw_product_title": "Mini USB LED Plug Lamp Mobile Power Charging USB Night Light Eye Protection Reading Bulb Indoor Bedroom Sleeping",
+            "product_display_name": "Mini USB LED Plug Lamp Mobile Power Charging USB Night Light Eye Protection Reading Bulb Indoor Bedroom Sleeping",
+            "claim_gate": "CLAIM_REVIEW_REQUIRED",
+            "claim_tokens": [],
+        }
+
+    class FakeDraft:
+        def model_dump(self):
+            return {
+                "review_draft_id": "draft-lamp-001",
+                "updated_at": "2026-05-17T00:00:00Z",
+                "declared_evidence_fields": {
+                    "benefits_text": "Lampu USB ringkas untuk bacaan meja dan kegunaan ruang tidur.",
+                    "paste_anything_about_product": "Product: Lamp USB | Category: Lighting | Sold count: 88 | Commission: 12%",
+                },
+                "canonical_candidate_fields": {"normalized_name": "Mini USB LED Plug Lamp"},
+            }
+
+        @property
+        def declared_evidence_fields(self):
+            return self.model_dump()["declared_evidence_fields"]
+
+        @property
+        def canonical_candidate_fields(self):
+            return self.model_dump()["canonical_candidate_fields"]
+
+    monkeypatch.setattr("agent.services.claim_safe_rewrite_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr(
+        "agent.services.claim_safe_rewrite_service.RegistrationDraftStorageService.list_drafts",
+        lambda: [FakeDraft()],
+    )
+
+    preview = await preview_claim_safe_rewrite("prod-lamp")
+    combined = " ".join(
+        [
+            preview["safe_claim_rewrite"],
+            preview["safe_hook"],
+            preview["safe_subhook"],
+            *preview["safe_hook_angles"],
+            *preview["safe_usp_list"],
+            *preview["safe_cta_angles"],
+        ]
+    ).casefold()
+
+    assert preview["review_decision"] == REVIEW_DECISION_APPROVE_CANDIDATE
+    assert preview["approval_after_operator_review"] is True
+    assert "category:" not in combined
+    assert "sold count" not in combined
+    assert "commission" not in combined
+    assert "eye protection" not in combined
+    assert "saya dah cuba" not in combined
+    assert "aku dah try" not in combined
+
+
+@pytest.mark.asyncio
+async def test_approve_claim_safe_rewrite_persists_review_ready_package_for_low_risk_preview(monkeypatch):
     stored_updates = {}
 
     async def fake_get_product(product_id: str):
         base = {
             "id": product_id,
-            "raw_product_title": "Bosmax Herbs 5 ML",
-            "product_display_name": "Bosmax Herbs 5 ML",
+            "raw_product_title": "Portable Handheld Fan USB Rechargeable Mini Cooling Fan",
+            "product_display_name": "Portable Handheld Fan USB Rechargeable Mini Cooling Fan",
             "claim_gate": "CLAIM_REVIEW_REQUIRED",
-            "claim_tokens": ["male_health_sensitive"],
+            "claim_tokens": [],
             "updated_at": "2026-05-17T04:00:00Z",
         }
         base.update(stored_updates)
@@ -83,13 +147,13 @@ async def test_approve_claim_safe_rewrite_persists_review_ready_package(monkeypa
     class FakeDraft:
         def model_dump(self):
             return {
-                "review_draft_id": "draft-bosmax-001",
+                "review_draft_id": "draft-fan-001",
                 "updated_at": "2026-05-17T00:00:00Z",
                 "declared_evidence_fields": {
-                    "product_name": "Bosmax Herbs",
-                    "benefits_text": "Meningkatkan stamina dan ketegangan.",
+                    "product_name": "Portable Handheld Fan",
+                    "benefits_text": "Kipas mudah dibawa untuk kegunaan meja, perjalanan, dan ruang kerja.",
                 },
-                "canonical_candidate_fields": {"normalized_name": "Bosmax Herbs 5 ML"},
+                "canonical_candidate_fields": {"normalized_name": "Portable Handheld Fan USB Rechargeable Mini Cooling Fan"},
             }
 
         @property
@@ -107,13 +171,58 @@ async def test_approve_claim_safe_rewrite_persists_review_ready_package(monkeypa
         lambda: [FakeDraft()],
     )
 
-    approved = await approve_claim_safe_rewrite("prod-bosmax", APPROVAL_PHRASE)
+    approved = await approve_claim_safe_rewrite("prod-fan", APPROVAL_PHRASE)
 
     assert approved["claim_safe_copy_status"] == STATUS_REVIEW_READY
+    assert approved["review_decision"] == REVIEW_DECISION_APPROVE_CANDIDATE
+    assert approved["approval_after_operator_review"] is True
     assert stored_updates["claim_safe_copy_status"] == STATUS_REVIEW_READY
     payload = json.loads(stored_updates["claim_safe_copy_payload"])
     assert payload["approval_required"] is True
     assert payload["production_generation_allowed"] is False
+    assert "saya sendiri guna" not in json.dumps(payload, ensure_ascii=False).casefold()
+
+
+@pytest.mark.asyncio
+async def test_approve_claim_safe_rewrite_blocks_non_approvable_preview(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {
+            "id": product_id,
+            "raw_product_title": "Bosmax Herbs 5 ML",
+            "product_display_name": "Bosmax Herbs 5 ML",
+            "claim_gate": "CLAIM_REVIEW_REQUIRED",
+            "claim_tokens": ["male_health_sensitive"],
+            "updated_at": "2026-05-17T04:00:00Z",
+        }
+
+    class FakeDraft:
+        def model_dump(self):
+            return {
+                "review_draft_id": "draft-bosmax-001",
+                "updated_at": "2026-05-17T00:00:00Z",
+                "declared_evidence_fields": {
+                    "product_name": "Bosmax Herbs",
+                    "benefits_text": "Meningkatkan stamina dan ketegangan di bahagian intim lelaki.",
+                },
+                "canonical_candidate_fields": {"normalized_name": "Bosmax Herbs 5 ML"},
+            }
+
+        @property
+        def declared_evidence_fields(self):
+            return self.model_dump()["declared_evidence_fields"]
+
+        @property
+        def canonical_candidate_fields(self):
+            return self.model_dump()["canonical_candidate_fields"]
+
+    monkeypatch.setattr("agent.services.claim_safe_rewrite_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr(
+        "agent.services.claim_safe_rewrite_service.RegistrationDraftStorageService.list_drafts",
+        lambda: [FakeDraft()],
+    )
+
+    with pytest.raises(PermissionError, match="CLAIM_SAFE_REVIEW_BLOCKED:DO_NOT_APPROVE"):
+        await approve_claim_safe_rewrite("prod-bosmax", APPROVAL_PHRASE)
 
 
 @pytest.mark.asyncio
@@ -189,18 +298,19 @@ async def test_get_stored_claim_safe_package_returns_current_payload_without_ref
     current_payload = {
         "product_id": "prod-current",
         "product_name": "Glad2Glow Brightening Lip Serum 7g",
-        "safe_claim_rewrite": "Pada saya, Glad2Glow Brightening Lip Serum 7g ni sesuai je untuk rutin serum harian.",
+        "safe_claim_rewrite": "Glad2Glow Brightening Lip Serum 7g dengan fokus pada penggunaan asas yang ringkas.",
         "safe_hook_angles": [
-            "Akak, kalau tengah cari untuk serum harian - saya dah cuba Glad2Glow Brightening Lip Serum 7g ni dan memang okay.",
+            "Glad2Glow Brightening Lip Serum 7g dengan ciri utama yang mudah difahami.",
         ],
         "safe_usp_list": [
-            "Yang saya suka pasal Glad2Glow Brightening Lip Serum 7g - nampak sesuai untuk rutin serum harian akak.",
+            "Penerangan produk kekal fokus pada ciri asas tanpa janji berlebihan.",
         ],
         "safe_cta_angles": [
-            "Kalau akak tengah cari untuk serum harian, boleh la try Glad2Glow Brightening Lip Serum 7g ni dulu.",
+            "Semak ciri utama Glad2Glow Brightening Lip Serum 7g sebelum membuat pilihan.",
         ],
         "address_style": "SAYA_AKAK",
         "claim_safe_copy_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+        "review_decision": REVIEW_DECISION_APPROVE_CANDIDATE,
         "provenance": [
             "claim_safe_rewrite_service:v3",
             "product_id:prod-current",
@@ -229,6 +339,59 @@ async def test_get_stored_claim_safe_package_returns_current_payload_without_ref
     assert payload["address_style"] == "SAYA_AKAK"
     assert payload["claim_safe_copy_updated_at"] == "2026-05-22T10:00:00Z"
     assert updates_called is False
+
+
+@pytest.mark.asyncio
+async def test_preview_claim_safe_rewrite_holds_sensitive_devotional_products(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {
+            "id": product_id,
+            "raw_product_title": "Buku Zikir & Wirid Harian Rasulullah by Ustaz Wadi Annuar",
+            "product_display_name": "Buku Zikir & Wirid Harian Rasulullah by Ustaz Wadi Annuar",
+            "claim_gate": "CLAIM_REVIEW_REQUIRED",
+            "claim_tokens": [],
+        }
+
+    monkeypatch.setattr("agent.services.claim_safe_rewrite_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr(
+        "agent.services.claim_safe_rewrite_service.RegistrationDraftStorageService.list_drafts",
+        lambda: [],
+    )
+
+    preview = await preview_claim_safe_rewrite("prod-zikir")
+
+    assert preview["review_decision"] == REVIEW_DECISION_HOLD_SENSITIVE_REVIEW
+    assert preview["approval_after_operator_review"] is False
+    assert preview["sensitive_review"]["status"] == "SENIOR_SENSITIVE_REVIEW_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_preview_claim_safe_rewrite_flags_obvious_mapping_mismatch(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {
+            "id": product_id,
+            "raw_product_title": "Set Jarum Keluli Hidung, Saiz Besar, 34 Keping, untuk Menjahit Pakaian dan Kuilt",
+            "product_display_name": "Set Jarum Keluli Hidung, Saiz Besar, 34 Keping, untuk Menjahit Pakaian dan Kuilt",
+            "category": "Home Supplies",
+            "subcategory": "Festive & Party Supplies",
+            "type": "Party Bags & Gifts",
+            "source": "MANUAL",
+            "claim_gate": "CLAIM_REVIEW_REQUIRED",
+            "claim_tokens": [],
+        }
+
+    monkeypatch.setattr("agent.services.claim_safe_rewrite_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr(
+        "agent.services.claim_safe_rewrite_service.RegistrationDraftStorageService.list_drafts",
+        lambda: [],
+    )
+
+    preview = await preview_claim_safe_rewrite("prod-needle")
+
+    assert preview["review_decision"] == REVIEW_DECISION_DO_NOT_APPROVE
+    assert preview["approval_after_operator_review"] is False
+    assert preview["mapping_review"]["status"] == "MAPPING_REPAIR_REQUIRED"
+    assert "party-gift taxonomy" in preview["mapping_review"]["reason"].casefold()
 
 
 # ---------------------------------------------------------------------------
