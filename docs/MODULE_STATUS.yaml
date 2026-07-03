@@ -69,6 +69,7 @@ domains:
       - agent/services/postiz_client.py
       - tests/unit/test_postiz_client.py
       - tests/unit/test_postiz_setup_doctor.py
+      - tests/unit/test_env_loading.py
       - tests/api/test_postiz_api.py
       - tests/ui/test_postiz_publish_ui_contract.py
       - infra/postiz/.env.postiz.example
