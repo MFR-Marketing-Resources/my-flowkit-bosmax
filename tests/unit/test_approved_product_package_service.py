@@ -124,6 +124,79 @@ async def test_approved_product_package_returns_img_contract(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("product_id", "product_name"),
+    [
+        ("90349f8c-9e14-4efe-988e-76ec60ea31f4", "Bosmax Herbs 5 ML"),
+        ("b460ffbd-7d9d-4f6b-a570-0e9b1056439a", "Bosmax Oil 10 ML"),
+        ("6483d624-a03d-4933-9bba-6ca2e5f7b6fd", "Minyak Warisan Tok Cap Burung 25ml"),
+    ],
+)
+async def test_approved_product_package_img_uses_prompt_subject_when_cache_missing(
+    monkeypatch,
+    product_id: str,
+    product_name: str,
+):
+    async def fake_get_product(requested_product_id: str):
+        return {
+            "id": requested_product_id,
+            "raw_product_title": product_name,
+            "product_display_name": product_name,
+            "production_prompt_approval_status": "PRODUCTION_PROMPT_APPROVED",
+            "production_prompt_approved_modes": '["T2V","IMG"]',
+            "local_image_path": rf"C:\missing\{requested_product_id}.png",
+        }
+
+    async def fake_enrich(product, persist=False):
+        return {
+            **product,
+            "lifecycle_status": "ACTIVE",
+            "image_readiness_status": "LOCAL_CACHE_MISSING",
+        }
+
+    async def fake_claim_safe(requested_product_id: str):
+        return {
+            "claim_safe_copy_status": "CLAIM_SAFE_COPY_APPROVED",
+            "safe_claim_rewrite": f"{product_name} safe rewrite",
+            "safe_hook_angles": ["Safe hook"],
+            "safe_cta_angles": ["Safe CTA"],
+        }
+
+    async def fake_dryrun(requested_product_id: str, mode: str):
+        return {
+            "status": "PRODUCTION_READY",
+            "prompt_preview": f"Subject: {product_name} premium ecommerce hero.",
+            "warnings": [],
+            "image_prompt": f"Subject: {product_name} premium ecommerce hero.",
+            "metadata_handoff": {"image_prompt_metadata_isolated": True, "route": "ECOMMERCE_PRODUCT_HERO"},
+            "overlay_spec": {"render_text_inside_image": False, "recommended_text": None},
+            "export_spec": {"recommended_aspect_ratio": "1:1", "color_profile": "sRGB"},
+            "route": "ECOMMERCE_PRODUCT_HERO",
+        }
+
+    monkeypatch.setattr("agent.services.approved_product_package_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr("agent.services.approved_product_package_service.enrich_product", fake_enrich)
+    monkeypatch.setattr("agent.services.approved_product_package_service.get_stored_claim_safe_package", fake_claim_safe)
+    monkeypatch.setattr("agent.services.approved_product_package_service.generate_prompt_dryrun", fake_dryrun)
+    monkeypatch.setattr("agent.services.approved_product_package_service.is_production_prompt_approved", lambda product: True)
+    monkeypatch.setattr("agent.services.approved_product_package_service.get_production_approved_modes", lambda product: ["T2V", "IMG"])
+    monkeypatch.setattr("agent.services.approved_product_package_service.scan_prompt_text", _scan_clean)
+
+    result = await get_approved_product_package(product_id, "IMG")
+
+    subject_slot = next(slot for slot in result["asset_slots"] if slot["slot_key"] == "subject")
+
+    assert result["blockers"] == []
+    assert result["product_name"] == product_name
+    assert product_name in result["prompt_text"]
+    assert result["image_reference_status"] == "LOCAL_CACHE_MISSING"
+    assert subject_slot["default_source"] == "PROMPT_TEXT_SUBJECT"
+    assert subject_slot["resolved_asset"] is None
+    assert "PROMPT_TEXT_SUBJECT" in subject_slot["allowed_sources"]
+    assert "Bosmax Herbs 5 ML" not in result["prompt_text"] or product_name == "Bosmax Herbs 5 ML"
+
+
+@pytest.mark.asyncio
 async def test_approved_product_package_returns_f2v_with_cached_start_frame(monkeypatch):
     async def fake_get_product(product_id: str):
         return {
@@ -278,6 +351,47 @@ async def test_approved_product_package_blocks_when_production_approval_missing(
 
 
 @pytest.mark.asyncio
+async def test_approved_product_package_img_propagates_product_identity_required(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {
+            "id": product_id,
+            "raw_product_title": "",
+            "product_display_name": "",
+        }
+
+    async def fake_enrich(product, persist=False):
+        return {
+            **product,
+            "lifecycle_status": "ACTIVE",
+            "image_readiness_status": "LOCAL_CACHE_MISSING",
+        }
+
+    async def fake_claim_safe(product_id: str):
+        return {
+            "claim_safe_copy_status": "CLAIM_SAFE_COPY_APPROVED",
+            "safe_claim_rewrite": "Safe rewrite",
+            "safe_hook_angles": ["Safe hook"],
+            "safe_cta_angles": ["Safe cta"],
+        }
+
+    async def fake_dryrun(product_id: str, mode: str):
+        return {
+            "status": "PRODUCT_IDENTITY_REQUIRED",
+            "errors": ["PRODUCT_IDENTITY_REQUIRED"],
+        }
+
+    monkeypatch.setattr("agent.services.approved_product_package_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr("agent.services.approved_product_package_service.enrich_product", fake_enrich)
+    monkeypatch.setattr("agent.services.approved_product_package_service.get_stored_claim_safe_package", fake_claim_safe)
+    monkeypatch.setattr("agent.services.approved_product_package_service.generate_prompt_dryrun", fake_dryrun)
+    monkeypatch.setattr("agent.services.approved_product_package_service.is_production_prompt_approved", lambda product: True)
+    monkeypatch.setattr("agent.services.approved_product_package_service.get_production_approved_modes", lambda product: ["T2V", "IMG"])
+
+    with pytest.raises(ValueError, match="PRODUCT_IDENTITY_REQUIRED"):
+        await get_approved_product_package("prod-missing-identity", "IMG")
+
+
+@pytest.mark.asyncio
 async def test_product_package_readiness_reports_claim_safe_blocker(monkeypatch):
     async def fake_get_product(product_id: str):
         return {
@@ -308,6 +422,41 @@ async def test_product_package_readiness_reports_claim_safe_blocker(monkeypatch)
     assert result["blocker"] == "CLAIM_SAFE_PACKAGE_NOT_READY"
     assert result["checklist"][0]["label"] == "Claim-safe package"
     assert result["checklist"][0]["ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_product_package_readiness_reports_ready_img_when_prompt_subject_exists(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {
+            "id": product_id,
+            "raw_product_title": "Bosmax Oil 10 ML",
+            "product_display_name": "Bosmax Oil 10 ML",
+        }
+
+    async def fake_enrich(product, persist=False):
+        return {
+            **product,
+            "lifecycle_status": "ACTIVE",
+            "image_readiness_status": "LOCAL_CACHE_MISSING",
+        }
+
+    async def fake_claim_safe(product_id: str):
+        return {
+            "claim_safe_copy_status": "CLAIM_SAFE_COPY_APPROVED",
+        }
+
+    monkeypatch.setattr("agent.services.approved_product_package_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr("agent.services.approved_product_package_service.enrich_product", fake_enrich)
+    monkeypatch.setattr("agent.services.approved_product_package_service.get_stored_claim_safe_package", fake_claim_safe)
+    monkeypatch.setattr("agent.services.approved_product_package_service.is_production_prompt_approved", lambda product: True)
+    monkeypatch.setattr("agent.services.approved_product_package_service.get_production_approved_modes", lambda product: ["T2V", "IMG"])
+
+    result = await get_product_package_readiness("prod-ready-img", "IMG")
+
+    assert result["readiness_status"] == "READY"
+    assert result["blocker"] is None
+    assert result["image_reference_status"] == "LOCAL_CACHE_MISSING"
+    assert result["checklist"][2]["ready"] is True
 
 
 @pytest.mark.asyncio
