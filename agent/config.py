@@ -11,27 +11,62 @@ from pathlib import Path
 # value is read — so the documented "edit .env and restart" operator workflow
 # actually takes effect on a bare ``python -m agent.main``. Rules:
 #   * Existing OS environment variables stay authoritative (override=False).
-#   * A missing ``.env`` or a missing python-dotenv is a silent no-op; startup
-#     must never fail here.
-#   * Values are never logged (python-dotenv does not print, and we don't echo
-#     anything) — keeps POSTIZ_API_KEY and other secrets out of logs.
+#   * A missing ``.env`` is a silent no-op; startup must never fail here.
+#   * python-dotenv is used WHEN AVAILABLE, but is NOT a hard dependency: the
+#     agent is sometimes launched by an external supervisor (uv/uvicorn) in an
+#     interpreter that has fastapi/uvicorn but not python-dotenv. In that case a
+#     built-in parser loads the same file, so durability never depends on which
+#     interpreter runs the agent.
+#   * Values are never logged — keeps POSTIZ_API_KEY and other secrets out of logs.
+def _parse_env_file(path, override=False):
+    """Dependency-free .env loader (KEY=VALUE, ``#`` comments, optional
+    ``export`` prefix, single/double quotes). OS env stays authoritative unless
+    ``override``. Never logs values. Returns True if any key was set."""
+    loaded = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, val = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        if not key:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        if override or key not in os.environ:
+            os.environ[key] = val
+            loaded = True
+    return loaded
+
+
 def _load_env_file(env_path=None, override=False):
     """Load a dotenv file into ``os.environ`` without leaking values.
 
     Returns True only when a file was actually loaded. ``override`` is False by
-    default so pre-existing OS env vars win over the file.
+    default so pre-existing OS env vars win over the file. Prefers python-dotenv
+    when importable, else falls back to a built-in parser so the load works in
+    any interpreter (a missing python-dotenv must NOT silently skip .env).
     """
-    try:
-        from dotenv import load_dotenv
-    except Exception:
-        return False
     path = Path(env_path) if env_path is not None else (Path(__file__).parent.parent / ".env")
     try:
         if not path.is_file():
             return False
-        return bool(load_dotenv(dotenv_path=str(path), override=override))
     except Exception:
         return False
+    try:
+        from dotenv import load_dotenv
+        return bool(load_dotenv(dotenv_path=str(path), override=override))
+    except Exception:
+        # python-dotenv absent (or errored) — use the built-in parser.
+        try:
+            return _parse_env_file(path, override=override)
+        except Exception:
+            return False
 
 
 # Auto-load at import time, except under pytest (keep the suite hermetic — the
