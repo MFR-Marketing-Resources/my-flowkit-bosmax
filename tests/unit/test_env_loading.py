@@ -6,9 +6,12 @@ agent/server" — these tests prove that instruction is real:
 * a repo-root ``.env`` populates POSTIZ_* variables when the OS env is empty,
 * pre-existing OS environment variables stay authoritative (override=False),
 * a missing ``.env`` is a silent no-op (startup must never fail),
+* the load works even when python-dotenv is NOT installed in the running
+  interpreter (durability must not depend on the launcher's interpreter),
 * POSTIZ_API_KEY never leaks into logs or the setup-status response,
 * fail-safe defaults survive: POSTIZ_ENABLED=false, POSTIZ_DEFAULT_POST_TYPE=draft.
 """
+import builtins
 import logging
 import os
 
@@ -43,6 +46,65 @@ def _write_env(tmp_path, **values):
     env_file = tmp_path / ".env"
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return env_file
+
+
+def _block_dotenv(monkeypatch):
+    """Force ``from dotenv import load_dotenv`` to raise ImportError, mimicking
+    the uv/uvicorn interpreter the external supervisor launches the agent in."""
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "dotenv" or name.startswith("dotenv."):
+            raise ImportError("simulated: python-dotenv not installed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+
+def test_env_loads_without_python_dotenv_installed(tmp_path, monkeypatch):
+    """The regression that kept resurfacing: when the launching interpreter has
+    no python-dotenv, .env MUST still load via the built-in parser (not a
+    silent no-op that leaves POSTIZ_* unset)."""
+    _block_dotenv(monkeypatch)
+    with pytest.raises(ImportError):
+        __import__("dotenv")  # guard: the block is actually in effect
+    env_file = _write_env(
+        tmp_path,
+        POSTIZ_ENABLED="true",
+        POSTIZ_BASE_URL="http://127.0.0.1:5000",
+        POSTIZ_API_KEY="file-key-not-a-real-secret",
+    )
+    assert config._load_env_file(env_file) is True
+    cfg = pz.postiz_config()
+    assert cfg["enabled"] is True
+    assert cfg["base_url"] == "http://127.0.0.1:5000"
+    assert cfg["api_key"] == "file-key-not-a-real-secret"
+
+
+def test_builtin_parser_handles_comments_quotes_export_and_os_precedence(tmp_path):
+    """The dependency-free fallback must match dotenv semantics for the cases
+    a real .env uses."""
+    os.environ["POSTIZ_BASE_URL"] = "http://os-wins:5000"
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "# a comment",
+                "",
+                "export POSTIZ_ENABLED=true",
+                'POSTIZ_API_KEY="quoted-key-value"',
+                "POSTIZ_UPLOAD_MODE='file'",
+                "POSTIZ_BASE_URL=http://file-loses:5000",  # OS already set -> ignored
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert config._parse_env_file(env_file) is True
+    assert os.environ["POSTIZ_ENABLED"] == "true"          # export stripped
+    assert os.environ["POSTIZ_API_KEY"] == "quoted-key-value"  # double quotes stripped
+    assert os.environ["POSTIZ_UPLOAD_MODE"] == "file"      # single quotes stripped
+    assert os.environ["POSTIZ_BASE_URL"] == "http://os-wins:5000"  # OS authoritative
 
 
 def test_env_file_populates_postiz_vars_when_os_env_missing(tmp_path):
