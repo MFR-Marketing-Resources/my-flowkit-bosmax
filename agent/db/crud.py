@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record"})
 
 
 def _validate_table(table: str) -> None:
@@ -39,6 +39,7 @@ _COLUMNS = {
     "fastmoss_bulk_draft_status": {"raw_product_title", "source_url", "tiktok_product_url", "image_url", "category", "claim_risk_level", "mapping_confidence", "image_readiness", "copy_route", "sold_count", "commission_rate", "promotion_status", "draft_id", "committed_product_id", "suspected_existing_product_id", "suspected_existing_product_title", "suspected_existing_product_source", "suspected_existing_product_mapping_source", "duplicate_match_reason", "linked_product_id", "linked_product_title", "duplicate_resolution", "duplicate_resolved_at", "duplicate_resolution_note", "duplicate_ignore_product_id", "error_message", "batch_provenance", "recomputed_at", "recompute_previous_status", "recompute_previous_error", "updated_at"},
     "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "operator_notes", "batch_run_id", "logical_mode", "variation_strategy", "prompt_fingerprint", "variation_fingerprints_json", "anti_redundancy_json", "production_status", "production_run_id", "production_job_id", "production_error", "artifact_media_ids_json", "approved_at", "sent_to_production_at", "updated_at"},
     "production_run": {"status", "dry_run", "max_parallel_jobs", "interval_min_seconds", "interval_max_seconds", "cooldown_after_n_jobs", "cooldown_seconds", "total_expected", "total_completed", "total_failed", "error_log_json", "config_json", "updated_at"},
+    "postiz_publish_record": {"artifact_media_id", "source_local_path", "source_public_url", "upload_mode", "postiz_media_id", "postiz_media_path", "post_type", "scheduled_at", "content", "integration_ids_json", "provider_settings_json", "postiz_response_json", "status", "error", "updated_at"},
 }
 
 
@@ -1043,6 +1044,52 @@ async def get_batch_generation_run(batch_run_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+# ── Postiz publishing audit trail ─────────────────────────────────────────
+
+
+async def create_postiz_publish_record(
+    record_id: str,
+    *,
+    artifact_media_id: str | None,
+    source_local_path: str | None,
+    source_public_url: str | None,
+    upload_mode: str,
+    post_type: str,
+    scheduled_at: str | None,
+    content: str | None,
+    integration_ids_json: str,
+    provider_settings_json: str,
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO postiz_publish_record
+               (record_id, artifact_media_id, source_local_path, source_public_url,
+                upload_mode, post_type, scheduled_at, content, integration_ids_json,
+                provider_settings_json, postiz_response_json, status, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,'{}','PENDING',?,?)""",
+            (record_id, artifact_media_id, source_local_path, source_public_url,
+             upload_mode, post_type, scheduled_at, content, integration_ids_json,
+             provider_settings_json, now, now),
+        )
+        await db.commit()
+    return await _get_with_db(db, "postiz_publish_record", "record_id", record_id)
+
+
+async def update_postiz_publish_record(record_id: str, **kw):
+    return await _update("postiz_publish_record", "record_id", record_id, **kw)
+
+
+async def list_postiz_publish_records(limit: int = 50) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM postiz_publish_record ORDER BY created_at DESC LIMIT ?", (limit,)
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
 # ─── Scheduled Batch Runs ─────────────────────────────────────
 
 async def create_scheduled_batch_run(
@@ -1277,6 +1324,16 @@ async def insert_generated_artifact(media_id: str, job_id: str = None, mode: str
              project_id, model_used, duration_used, _now()),
         )
         await db.commit()
+
+
+async def get_generated_artifact(media_id: str) -> dict | None:
+    """Single artifact row by Flow media id (Postiz handoff resolver)."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM generated_artifact WHERE media_id=?", (media_id,)
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
 
 
 async def list_generated_artifacts(limit: int = 50, mode: str = None,

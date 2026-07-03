@@ -1,0 +1,111 @@
+# Postiz Integration — Operator Guide
+
+BOSMAX-generated images/videos (the Library artifacts under
+`output/retrieved/`) can be handed to a self-hosted Postiz scheduler and
+turned into drafts/scheduled posts across connected social channels —
+**without manually re-uploading files**.
+
+The integration is feature-flagged and fail-closed: with `POSTIZ_ENABLED=false`
+(the default) nothing changes anywhere in BOSMAX.
+
+## 1. Run Postiz (external Docker service)
+
+```bash
+cd infra/postiz
+copy .env.postiz.example .env    # fill JWT_SECRET + POSTGRES_PASSWORD
+docker compose up -d
+```
+
+The stack includes Postiz + its postgres/redis **and the Temporal workflow
+stack** (Temporal 1.28.1 + Elasticsearch visibility + a dedicated postgres),
+mirroring the official `gitroomhq/postiz-docker-compose` — current Postiz
+images will not boot without Temporal. First boot takes a few minutes.
+
+Open <http://localhost:5000>, register the operator account, then
+**Settings → Public API → generate an API key**.
+
+Note: the self-hosted Public API lives under `/api/public/v1` (BOSMAX's
+default `POSTIZ_API_PREFIX`). Postiz Cloud uses
+`https://api.postiz.com` + `POSTIZ_API_PREFIX=/public/v1`.
+
+## 2. Configure BOSMAX
+
+Add to the BOSMAX `.env` (see `.env.example` at repo root):
+
+```
+POSTIZ_ENABLED=true
+POSTIZ_BASE_URL=http://localhost:5000
+POSTIZ_API_KEY=<your key>
+POSTIZ_UPLOAD_MODE=file          # multipart upload of the local file (default)
+POSTIZ_DEFAULT_POST_TYPE=draft   # nothing goes public unless you choose it
+```
+
+Restart the agent (it has no --reload). `GET /api/postiz/health` must return
+`ok: true`.
+
+`POSTIZ_UPLOAD_MODE=url` exists for CDN setups only: it requires
+`POSTIZ_PUBLIC_MEDIA_BASE_URL` (public **HTTPS**) — localhost/private URLs are
+rejected by design because the Postiz backend must fetch them.
+
+## 3. Connect social channels (in Postiz, not BOSMAX)
+
+Channels are connected in the Postiz UI via each provider's official OAuth.
+Self-hosted Postiz has **no channel cap** — one "channel" = one connected
+account, and you can connect **multiple accounts of the same provider**
+(e.g. several TikTok accounts or Facebook Pages). BOSMAX lists them all and
+lets you multi-select per publish.
+
+### TikTok (read before connecting)
+- Requires your own TikTok **developer app** with the **Content Posting API**
+  and **Direct Post** product enabled, an **HTTPS redirect URI**, and a
+  **verified media domain**.
+- Scopes: `user.info.basic`, `user.info.profile`, `video.create`,
+  `video.publish`, `video.upload`.
+- **Unaudited apps**: TikTok may force `SELF_ONLY` (private) visibility and
+  rate-limit posting until your app passes TikTok's audit. BOSMAX's TikTok
+  template therefore defaults to `privacy_level=SELF_ONLY` — widen it only
+  after your audit passes. Do **not** treat multi-account public TikTok
+  posting as production-ready before that.
+
+### Facebook / Instagram / Threads
+- Requires a Meta app in **LIVE mode** (development mode = no public
+  visibility), business permissions, and per-Page/account authorization.
+- Standalone Instagram posting requires a **professional** (business/creator)
+  account.
+
+### YouTube
+- OAuth app + quota; BOSMAX's template defaults uploads to `private`.
+
+## 4. Publish from BOSMAX
+
+Dashboard → **Postiz Publish** (SYSTEM/WORKSPACE nav):
+1. Pick a generated artifact (image/video from the Library).
+2. Pick one or more channels — multiple channels of the same provider is fine.
+3. Pick `draft` (default) / `schedule` (+ date-time) / `now`.
+4. Review the per-provider settings + warnings, submit.
+
+API equivalents:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/postiz/health` | config check (never returns the key) |
+| `GET /api/postiz/integrations` | connected channels |
+| `GET /api/postiz/provider-templates` | safe-default settings + warnings |
+| `POST /api/postiz/publish` | upload artifact + create draft/schedule/now post (`dry_run: true` = payload preview only) |
+| `GET /api/postiz/publish-records` | audit trail (media ids, post ids, errors) |
+
+Every publish writes a `postiz_publish_record` row (artifact → Postiz media id
+→ post response) so nothing is untraceable.
+
+## 5. Known limitations (do not skip)
+
+- **TikTok**: unaudited app ⇒ private-only posting; media/redirect domains
+  must be verified HTTPS. Public multi-account TikTok posting is **NOT
+  VERIFIED** until your app authorization + audit exist.
+- **Meta**: app must be Live; permissions are per-asset (Page/IG account).
+- **upload-from-url**: only public HTTPS; BOSMAX's local
+  `/api/flow/retrieved/...` URLs will NOT work for this mode.
+- No auto-retry on upload/post calls (duplicate-post hazard) — failed
+  publishes stay visible in the audit trail for manual retry.
+- BOSMAX never bypasses OAuth, never scrapes providers, and never invents
+  channels: everything comes from the official Postiz Public API.
