@@ -1,6 +1,7 @@
 import {
 	AlertTriangle,
 	CheckCircle2,
+	ExternalLink,
 	Film,
 	RefreshCw,
 	Send,
@@ -64,6 +65,39 @@ const FALLBACK_START_COMMANDS = [
 ];
 
 const EXPECTED_POSTIZ_URL = "http://localhost:5000";
+
+// Zero-channel onboarding. Postiz owns the social OAuth flow — BOSMAX only
+// links the operator out to Postiz's Add Channel UI and re-checks afterwards.
+const DEFAULT_POSTIZ_URL = "http://127.0.0.1:5000";
+
+const CHANNEL_ONBOARDING_STEPS = [
+	"Open Postiz",
+	"Login as the operator",
+	"Click Add Channel / Connect Channel",
+	"Connect Facebook/Instagram/X/TikTok/YouTube through official OAuth",
+	"Return to BOSMAX and click Refresh channels",
+];
+
+const CHANNEL_PROVIDER_CAVEATS: { provider: string; caveat: string }[] = [
+	{
+		provider: "Facebook/Instagram",
+		caveat:
+			"requires Meta permissions/Page access; Instagram needs professional/business/creator account.",
+	},
+	{
+		provider: "TikTok",
+		caveat:
+			"Direct Post/Content Posting API may require app approval/audit and verified HTTPS media domain; unaudited apps may be limited to private/SELF_ONLY.",
+	},
+	{
+		provider: "X/Twitter",
+		caveat: "availability depends on API/app tier and Postiz provider support.",
+	},
+	{
+		provider: "YouTube",
+		caveat: "Google OAuth; uploads may default private.",
+	},
+];
 
 const DOCTOR_PROVIDER_ORDER = ["tiktok", "facebook", "instagram"];
 
@@ -345,6 +379,120 @@ function SetupDoctor({
 	);
 }
 
+// Healthy-config-but-zero-channels state. Distinct from the Setup Doctor:
+// BOSMAX↔Postiz is already working; the only missing piece is social-account
+// OAuth, which lives inside Postiz. This panel makes that unmistakable.
+function ChannelOnboarding({
+	setup,
+	loading,
+	onRefresh,
+}: {
+	setup: PostizSetupStatus;
+	loading: boolean;
+	onRefresh: () => void;
+}) {
+	const postizUrl = setup.base_url || DEFAULT_POSTIZ_URL;
+	return (
+		<section className="rounded-2xl border border-blue-500/40 bg-slate-950/80 p-5 space-y-5">
+			{/* Reassure: the BOSMAX→Postiz half is done — only social OAuth remains */}
+			<div className="flex items-center gap-2">
+				<CheckCircle2 size={16} className="text-emerald-300" />
+				<span className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-200">
+					BOSMAX is connected to Postiz
+				</span>
+			</div>
+
+			<div className="space-y-2">
+				<h2 className="text-lg font-bold text-slate-100">
+					No Postiz channels connected yet
+				</h2>
+				<p className="text-xs leading-relaxed text-slate-400">
+					BOSMAX is connected to Postiz, but Postiz has no connected social
+					accounts yet. Connect accounts inside Postiz first, then return here
+					and click Refresh.
+				</p>
+			</div>
+
+			{/* Primary link-out (Postiz owns OAuth) + secondary refresh */}
+			<div className="flex flex-wrap items-center gap-2">
+				<a
+					href={postizUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/50 bg-blue-500/15 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-blue-100 hover:bg-blue-500/25 transition-colors"
+				>
+					<ExternalLink size={13} />
+					Open Postiz to Add Channel
+				</a>
+				<button
+					type="button"
+					onClick={onRefresh}
+					className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-300 hover:border-blue-400/50 hover:text-blue-200 transition-colors"
+				>
+					<RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+					Refresh channels
+				</button>
+			</div>
+
+			{/* Concise operator checklist */}
+			<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-2">
+				<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+					Connect a channel in Postiz
+				</div>
+				<ol className="list-decimal space-y-1 pl-5">
+					{CHANNEL_ONBOARDING_STEPS.map((step) => (
+						<li key={step} className="text-[11px] text-slate-300">
+							{step}
+						</li>
+					))}
+				</ol>
+			</div>
+
+			{/* Provider caveats — set expectations before the operator connects */}
+			<div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-2">
+				<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-amber-300">
+					Before you connect — provider notes
+				</div>
+				<ul className="space-y-1.5">
+					{CHANNEL_PROVIDER_CAVEATS.map(({ provider, caveat }) => (
+						<li
+							key={provider}
+							className="flex items-start gap-1.5 text-[11px] text-amber-200"
+						>
+							<AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
+							<span className="min-w-0">
+								<span className="font-bold">{provider}</span> — {caveat}
+							</span>
+						</li>
+					))}
+				</ul>
+			</div>
+
+			{/* Publishing stays blocked until at least one channel exists */}
+			<div className="space-y-2 border-t border-slate-800 pt-4">
+				<button
+					type="button"
+					disabled
+					className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-[11px] font-bold text-emerald-100 opacity-40"
+				>
+					<Send size={12} />
+					Send to Postiz
+				</button>
+				<div className="text-[11px] text-amber-200">
+					Connect at least one channel in Postiz before sending.
+				</div>
+			</div>
+
+			<div className="text-[11px] text-slate-500">
+				Full guide:{" "}
+				<span className="font-mono text-slate-400 underline decoration-slate-700 underline-offset-2">
+					{setup.docs_path || "docs/integrations/postiz/OPERATOR_GUIDE.md"}
+				</span>
+			</div>
+		</section>
+	);
+}
+
 function StatusBadge({ status }: { status: string }) {
 	return (
 		<span
@@ -552,6 +700,20 @@ export default function PostizPublishPage() {
 
 	const ready = setup?.ready === true;
 
+	// Healthy config + a successful (empty) integrations list = channel-
+	// onboarding state, NOT a setup error. Postiz owns social OAuth; BOSMAX
+	// only links out and re-checks. Real errors (disabled / *_MISSING /
+	// unreachable / key rejected) leave integrations_count null or a health
+	// flag false, so they fall through to the Setup Doctor below.
+	const healthyNoChannels =
+		setup != null &&
+		setup.postiz_enabled &&
+		setup.base_url_configured &&
+		setup.api_key_present &&
+		setup.health_ok &&
+		setup.postiz_reachable === true &&
+		setup.integrations_count === 0;
+
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
 			{/* Header */}
@@ -583,12 +745,23 @@ export default function PostizPublishPage() {
 				)}
 			</section>
 
-			{/* Setup Doctor — fail-closed: onboarding checklist only when not ready */}
-			{setup && !ready && (
+			{/* Setup Doctor — real setup errors only (disabled / misconfigured /
+			    unreachable / key rejected). Healthy-but-zero-channels is handled
+			    by ChannelOnboarding below, not this dead-end error copy. */}
+			{setup && !ready && !healthyNoChannels && (
 				<SetupDoctor
 					setup={setup}
 					loading={loading}
 					onRecheck={() => void loadAll()}
+				/>
+			)}
+
+			{/* Channel onboarding — healthy config, zero connected social channels */}
+			{healthyNoChannels && setup && (
+				<ChannelOnboarding
+					setup={setup}
+					loading={loading}
+					onRefresh={() => void loadAll()}
 				/>
 			)}
 
