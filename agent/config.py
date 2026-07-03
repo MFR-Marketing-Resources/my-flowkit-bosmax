@@ -5,6 +5,44 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+# ─── .env bootstrap ──────────────────────────────────────────
+# Load the repo-root ``.env`` into ``os.environ`` EARLY — before any config
+# value is read — so the documented "edit .env and restart" operator workflow
+# actually takes effect on a bare ``python -m agent.main``. Rules:
+#   * Existing OS environment variables stay authoritative (override=False).
+#   * A missing ``.env`` or a missing python-dotenv is a silent no-op; startup
+#     must never fail here.
+#   * Values are never logged (python-dotenv does not print, and we don't echo
+#     anything) — keeps POSTIZ_API_KEY and other secrets out of logs.
+def _load_env_file(env_path=None, override=False):
+    """Load a dotenv file into ``os.environ`` without leaking values.
+
+    Returns True only when a file was actually loaded. ``override`` is False by
+    default so pre-existing OS env vars win over the file.
+    """
+    try:
+        from dotenv import load_dotenv
+    except Exception:
+        return False
+    path = Path(env_path) if env_path is not None else (Path(__file__).parent.parent / ".env")
+    try:
+        if not path.is_file():
+            return False
+        return bool(load_dotenv(dotenv_path=str(path), override=override))
+    except Exception:
+        return False
+
+
+# Auto-load at import time, except under pytest (keep the suite hermetic — the
+# env-loading tests exercise ``_load_env_file`` explicitly with temp files).
+if not (
+    "pytest" in sys.modules
+    or "PYTEST_CURRENT_TEST" in os.environ
+    or "PYTEST_VERSION" in os.environ
+):
+    _load_env_file()
+
 # ─── Paths ───────────────────────────────────────────────────
 BASE_DIR = Path(os.environ.get("FLOW_AGENT_DIR", Path(__file__).parent.parent))
 

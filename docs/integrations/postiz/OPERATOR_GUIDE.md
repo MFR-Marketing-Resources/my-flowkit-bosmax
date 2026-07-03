@@ -40,14 +40,36 @@ Add to the BOSMAX `.env` (see `.env.example` at repo root):
 
 ```
 POSTIZ_ENABLED=true
-POSTIZ_BASE_URL=http://localhost:5000
+POSTIZ_BASE_URL=http://127.0.0.1:5000
 POSTIZ_API_KEY=<your key>
 POSTIZ_UPLOAD_MODE=file          # multipart upload of the local file (default)
 POSTIZ_DEFAULT_POST_TYPE=draft   # nothing goes public unless you choose it
 ```
 
+> **Windows note:** prefer `POSTIZ_BASE_URL=http://127.0.0.1:5000` over
+> `localhost` — on machines where `localhost` resolves to IPv6 (`::1`) first,
+> requests to the Docker port can hang. The Setup Doctor detects this trap
+> (`POSTIZ_LOCALHOST_RESOLVES_IPV6`) and prescribes the same fix.
+
+The agent **loads the repo-root `.env` automatically at startup**
+(`agent/config.py`, via `python-dotenv`), so "edit `.env` and restart" is the
+whole workflow — a bare `python -m agent.main` picks the values up. Variables
+already present in the OS environment stay authoritative; the file only fills
+in what's missing. A missing `.env` is harmless. `.env` is gitignored — never
+commit it.
+
 Restart the agent (it has no --reload). `GET /api/postiz/health` must return
 `ok: true`.
+
+**Two separate authentication layers** — don't conflate them:
+
+1. **BOSMAX → Postiz**: the `POSTIZ_API_KEY` above. It only lets BOSMAX call
+   the Postiz Public API (list channels, create drafts). It does **not**
+   connect any social account.
+2. **Postiz → social platforms**: done inside the Postiz UI via each
+   provider's official OAuth (**Add Channel**). Meta/Facebook/Instagram, X,
+   TikTok and YouTube only appear in BOSMAX after Postiz has connected them
+   (see section 3).
 
 `POSTIZ_UPLOAD_MODE=url` exists for CDN setups only: it requires
 `POSTIZ_PUBLIC_MEDIA_BASE_URL` (public **HTTPS**) — localhost/private URLs are
