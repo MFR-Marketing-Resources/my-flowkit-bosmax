@@ -1,5 +1,11 @@
 # Postiz Integration — Operator Guide
 
+> **Shortcut:** the dashboard's **Postiz Publish** page includes a built-in
+> **Setup Doctor** — open `/postiz` and it walks you through every step below
+> (service start, API key, `.env` values, restart, channel connection) with
+> live ✓/✗ status and a RE-CHECK button. This guide is the long-form
+> reference for the same flow.
+
 BOSMAX-generated images/videos (the Library artifacts under
 `output/retrieved/`) can be handed to a self-hosted Postiz scheduler and
 turned into drafts/scheduled posts across connected social channels —

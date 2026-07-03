@@ -30,3 +30,15 @@ def test_postiz_route_is_registered_without_touching_existing_nav():
     # Locked tokens from the side-panel contract must survive our nav edit.
     assert "function EmbeddedRouteReporter() {" in app
     assert 'type: "FLOWKIT_DASHBOARD_ROUTE_SYNC"' in app
+
+
+def test_setup_doctor_replaces_dead_end_error_screen():
+    """Disabled/misconfigured state must render an actionable checklist,
+    not raw POSTIZ_DISABLED / *_MISSING codes alone."""
+    src = _read("dashboard/src/pages/PostizPublishPage.tsx")
+    assert "POSTIZ SETUP DOCTOR" in src
+    assert "docker compose up -d" in src        # exact start command visible
+    assert "no social channels are connected yet" in src
+    assert "RE-CHECK" in src                     # operator can re-verify live
+    api = _read("dashboard/src/api/postiz.ts")
+    assert "/api/postiz/setup-status" in api
