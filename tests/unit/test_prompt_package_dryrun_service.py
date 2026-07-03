@@ -64,7 +64,9 @@ async def test_prompt_dryrun_generates_clean_t2v_and_img_previews(monkeypatch):
     assert t2v["status"] == "DRY_RUN_READY"
     assert "ubat kuat" not in t2v["prompt_preview"].casefold()
     assert "Bosmax Herbs 5 ML" in t2v["prompt_preview"]
+    assert t2v["warnings"] == []
     assert img["status"] == "DRY_RUN_READY"
+    assert img["warnings"] == []
     assert "No explicit adult cues" in img["prompt_preview"]
     assert img["image_prompt"] == img["prompt_preview"]
     assert img["metadata_handoff"]["image_prompt_metadata_isolated"] is True
@@ -148,3 +150,80 @@ async def test_prompt_dryrun_builds_real_estate_img_contract(monkeypatch):
     assert result["metadata_handoff"]["camera_profile"]["focal_length"] == "24mm lens"
     assert result["export_spec"]["recommended_aspect_ratio"] == "4:5"
     assert "vertical line correction" in result["image_prompt"].casefold()
+
+
+@pytest.mark.asyncio
+async def test_prompt_dryrun_uses_actual_non_bosmax_product_identity(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {
+            "id": product_id,
+            "source": "MANUAL",
+            "raw_product_title": "Portable Handheld Fan USB Rechargeable",
+            "product_display_name": "Portable Handheld Fan USB Rechargeable",
+            "image_url": "https://cdn.example.com/fan.jpg",
+        }
+
+    async def fake_enrich(product, persist=False):
+        return {
+            **product,
+            "image_readiness_status": "IMAGE_READY",
+            "section_5_product_physics_prompt": "Maintain believable fan scale and visible button layout.",
+        }
+
+    async def fake_package(product_id: str):
+        return {
+            "claim_safe_copy_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+            "safe_claim_rewrite": "Portable handheld fan for simple everyday cooling use.",
+            "safe_hook_angles": ["Highlight the compact handheld format clearly."],
+            "safe_cta_angles": ["Semak butiran kipas mudah alih ini."],
+        }
+
+    monkeypatch.setattr("agent.services.prompt_package_dryrun_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr("agent.services.prompt_package_dryrun_service.enrich_product", fake_enrich)
+    monkeypatch.setattr("agent.services.prompt_package_dryrun_service.get_stored_claim_safe_package", fake_package)
+
+    t2v = await generate_prompt_dryrun("fan-001", "T2V")
+    img = await generate_prompt_dryrun("fan-001", "IMG")
+
+    assert t2v["status"] == "DRY_RUN_READY"
+    assert "Portable Handheld Fan USB Rechargeable" in t2v["prompt_preview"]
+    assert "Bosmax Herbs 5 ML" not in t2v["prompt_preview"]
+    assert t2v["warnings"] == []
+    assert img["route"] == "ECOMMERCE_PRODUCT_HERO"
+    assert "Bosmax Herbs 5 ML" not in img["prompt_preview"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_dryrun_returns_identity_blocker_when_product_name_missing(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {
+            "id": product_id,
+            "raw_product_title": "",
+            "product_display_name": "",
+            "image_url": "https://cdn.example.com/unknown.jpg",
+        }
+
+    async def fake_enrich(product, persist=False):
+        return {
+            **product,
+            "product_display_name": "",
+            "raw_product_title": "",
+            "image_readiness_status": "IMAGE_READY",
+        }
+
+    async def fake_package(product_id: str):
+        return {
+            "claim_safe_copy_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+            "safe_claim_rewrite": "Clean rewrite.",
+            "safe_hook_angles": ["Clean hook."],
+            "safe_cta_angles": ["Clean CTA."],
+        }
+
+    monkeypatch.setattr("agent.services.prompt_package_dryrun_service.crud.get_product", fake_get_product)
+    monkeypatch.setattr("agent.services.prompt_package_dryrun_service.enrich_product", fake_enrich)
+    monkeypatch.setattr("agent.services.prompt_package_dryrun_service.get_stored_claim_safe_package", fake_package)
+
+    result = await generate_prompt_dryrun("unknown-001", "T2V")
+
+    assert result["status"] == "PRODUCT_IDENTITY_REQUIRED"
+    assert result["errors"] == ["PRODUCT_IDENTITY_REQUIRED"]
