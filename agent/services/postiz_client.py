@@ -170,6 +170,9 @@ async def setup_status() -> dict:
     cfg = postiz_config()
     problems: list[str] = []
     next_steps: list[str] = []
+    # Copied so the IPv6-trap branch can adjust POSTIZ_BASE_URL without the
+    # rendered .env block ever contradicting the "Do this next" instruction.
+    env_example = dict(SAFE_ENV_EXAMPLE)
 
     base_url_configured = bool(cfg["base_url"])
     api_key_present = bool(cfg["api_key"])
@@ -199,6 +202,8 @@ async def setup_status() -> dict:
                     "IPv6 resolution). Set POSTIZ_BASE_URL=http://127.0.0.1:5000 "
                     "in the BOSMAX .env, then restart the agent."
                 )
+                # Keep the rendered .env block consistent with that advice.
+                env_example["POSTIZ_BASE_URL"] = ipv4_url
             else:
                 problems.append("POSTIZ_UNREACHABLE")
                 next_steps.append(
@@ -271,7 +276,7 @@ async def setup_status() -> dict:
         "connect_channels_instruction": CONNECT_CHANNELS_INSTRUCTION,
         "provider_warnings": PROVIDER_WARNINGS,
         "docs_path": DOCS_PATH,
-        "safe_env_example": SAFE_ENV_EXAMPLE,
+        "safe_env_example": env_example,
     }
 
 

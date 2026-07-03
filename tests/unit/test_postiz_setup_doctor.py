@@ -47,6 +47,8 @@ async def test_disabled_default_state_returns_actionable_setup_steps(monkeypatch
     assert status["docs_path"] == "docs/integrations/postiz/OPERATOR_GUIDE.md"
     assert status["safe_env_example"]["POSTIZ_API_KEY"] == "<paste key>"
     assert status["safe_env_example"]["POSTIZ_ENABLED"] == "true"
+    # Fresh install (no IPv6 trap detected) keeps the localhost default.
+    assert status["safe_env_example"]["POSTIZ_BASE_URL"] == "http://localhost:5000"
 
 
 async def test_missing_base_url_is_called_out(monkeypatch):
@@ -114,6 +116,8 @@ async def test_ready_state_with_multiple_same_provider_channels(monkeypatch):
     status = await pz.setup_status()
     assert status["ready"] is True
     assert status["integrations_count"] == 3  # NOT collapsed per provider
+    # Normal reachable state keeps the localhost default in the env block.
+    assert status["safe_env_example"]["POSTIZ_BASE_URL"] == "http://localhost:5000"
 
 
 async def test_rejected_api_key_becomes_actionable_problem(monkeypatch):
@@ -163,3 +167,8 @@ async def test_localhost_ipv6_trap_is_detected_with_exact_fix(monkeypatch):
     status = await pz.setup_status()
     assert "POSTIZ_LOCALHOST_RESOLVES_IPV6" in status["problems"]
     assert any("POSTIZ_BASE_URL=http://127.0.0.1:5000" in s for s in status["next_steps"])
+    # The rendered .env block must match the advice — no localhost/127.0.0.1
+    # contradiction in the UI.
+    assert status["safe_env_example"]["POSTIZ_BASE_URL"] == "http://127.0.0.1:5000"
+    # The module-level template itself stays untouched.
+    assert pz.SAFE_ENV_EXAMPLE["POSTIZ_BASE_URL"] == "http://localhost:5000"
