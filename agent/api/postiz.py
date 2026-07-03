@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import uuid
 
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent.db import crud
 from agent.services import postiz_client as pz
@@ -71,7 +73,7 @@ class PublishRequest(BaseModel):
     schedule_at: str | None = None  # ISO datetime, required for schedule
     content: str = ""
     # integration_id → settings override; missing ids get the provider template
-    provider_settings: dict[str, dict] = {}
+    provider_settings: dict[str, dict] = Field(default_factory=dict)
     # validate + build payload without uploading or posting
     dry_run: bool = False
 
@@ -92,8 +94,15 @@ async def publish(request: PublishRequest):
     post_type = (request.post_type or cfg["default_post_type"]).strip().lower()
     if post_type not in pz.POST_TYPES:
         raise HTTPException(422, f"UNSUPPORTED_POST_TYPE:{request.post_type}")
-    if post_type == "schedule" and not request.schedule_at:
-        raise HTTPException(422, "SCHEDULE_AT_REQUIRED_FOR_SCHEDULE")
+    if post_type == "schedule":
+        if not request.schedule_at:
+            raise HTTPException(422, "SCHEDULE_AT_REQUIRED_FOR_SCHEDULE")
+        try:
+            datetime.fromisoformat(str(request.schedule_at).replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(
+                422, f"INVALID_SCHEDULE_AT_NOT_ISO_DATETIME:{request.schedule_at}",
+            )
     if not request.integration_ids:
         raise HTTPException(422, "NO_INTEGRATIONS_SELECTED")
 

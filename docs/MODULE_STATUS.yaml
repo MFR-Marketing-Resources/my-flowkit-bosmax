@@ -74,6 +74,7 @@ domains:
       - infra/postiz/docker-compose.yml
       - infra/postiz/dynamicconfig/development-sql.yaml
       - docs/integrations/postiz/OPERATOR_GUIDE.md
+      - docs/integrations/postiz/RUNTIME_PROOF.md
       - .env.example
       - dashboard/src/pages/PostizPublishPage.tsx
       - dashboard/src/api/postiz.ts

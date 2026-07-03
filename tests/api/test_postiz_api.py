@@ -222,3 +222,29 @@ async def test_provider_templates_endpoint_surfaces_warnings():
     result = await postiz_api.templates()
     assert "tiktok" in result["templates"]
     assert any("audit" in w.lower() for w in result["warnings"]["tiktok"])
+
+
+async def test_publish_schedule_rejects_non_iso_datetime(monkeypatch, tmp_path):
+    _enable(monkeypatch)
+    await _seed_artifact(tmp_path)
+    body = postiz_api.PublishRequest(
+        artifact_media_id=_UUID, integration_ids=["tt-1"],
+        post_type="schedule", schedule_at="tomorrow at noon",
+    )
+    await _expect_http(postiz_api.publish(body), 422, "invalid_schedule_at")
+
+
+async def test_publish_schedule_accepts_iso_z_datetime_in_dry_run(monkeypatch, tmp_path):
+    _enable(monkeypatch)
+    await _seed_artifact(tmp_path)
+
+    async def fake_list():
+        return list(_CHANNELS)
+
+    monkeypatch.setattr(pz, "list_integrations", fake_list)
+    body = postiz_api.PublishRequest(
+        artifact_media_id=_UUID, integration_ids=["tt-1"],
+        post_type="schedule", schedule_at="2026-08-01T10:00:00Z", dry_run=True,
+    )
+    result = await postiz_api.publish(body)
+    assert result["payload"]["date"] == "2026-08-01T10:00:00Z"
