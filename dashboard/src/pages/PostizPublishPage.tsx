@@ -7,26 +7,27 @@ import {
 	ShieldCheck,
 	XCircle,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
-	PostizHealth,
 	PostizIntegration,
 	PostizPostType,
 	PostizProviderTemplatesResponse,
 	PostizPublishRecord,
 	PostizPublishSuccess,
+	PostizSetupStatus,
 } from "../api/postiz";
 import {
-	getPostizHealth,
 	getPostizIntegrations,
 	getPostizProviderTemplates,
 	getPostizPublishRecords,
+	getPostizSetupStatus,
 	publishToPostiz,
 } from "../api/postiz";
 
 // POSTIZ PUBLISH — send a BOSMAX-generated artifact straight to Postiz
-// (no manual re-upload). Fail-closed UX: if the backend health check is
-// not OK, only the setup banner renders. Publishing defaults to draft —
+// (no manual re-upload). Fail-closed UX: if the backend setup-status is
+// not ready, only the Setup Doctor renders. Publishing defaults to draft —
 // nothing goes public unless the operator explicitly chooses otherwise.
 
 interface LibraryArtifact {
@@ -54,6 +55,296 @@ const TIKTOK_PRIVACY_OPTIONS = [
 
 const DEFAULT_TIKTOK_PRIVACY = "SELF_ONLY";
 
+// Fallback if the backend omits start_commands (contract: literal
+// "docker compose up -d" must always be renderable).
+const FALLBACK_START_COMMANDS = [
+	"cd infra/postiz",
+	"copy .env.postiz.example .env",
+	"docker compose up -d",
+];
+
+const EXPECTED_POSTIZ_URL = "http://localhost:5000";
+
+const DOCTOR_PROVIDER_ORDER = ["tiktok", "facebook", "instagram"];
+
+type DoctorStepState = "done" | "action" | "blocked";
+
+function DoctorStateIcon({ state }: { state: DoctorStepState }) {
+	if (state === "done") {
+		return (
+			<span className="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/10 text-[13px] font-bold text-emerald-300">
+				✓
+			</span>
+		);
+	}
+	if (state === "action") {
+		return (
+			<span className="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10 text-[13px] font-bold text-red-300">
+				✗
+			</span>
+		);
+	}
+	return (
+		<span className="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-slate-700 bg-slate-800/60 text-[13px] font-bold text-slate-500">
+			○
+		</span>
+	);
+}
+
+function DoctorStep({
+	step,
+	title,
+	state,
+	children,
+}: {
+	step: number;
+	title: string;
+	state: DoctorStepState;
+	children?: ReactNode;
+}) {
+	return (
+		<div className="flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+			<DoctorStateIcon state={state} />
+			<div className="min-w-0 flex-1 space-y-2">
+				<div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-200">
+					{step}. {title}
+				</div>
+				{children}
+			</div>
+		</div>
+	);
+}
+
+function StateBadge({ ok, label }: { ok: boolean; label: string }) {
+	return (
+		<span
+			className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${ok ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300" : "border-red-500/40 bg-red-500/15 text-red-300"}`}
+		>
+			{ok ? "✓" : "✗"} {label}
+		</span>
+	);
+}
+
+function SetupDoctor({
+	setup,
+	loading,
+	onRecheck,
+}: {
+	setup: PostizSetupStatus;
+	loading: boolean;
+	onRecheck: () => void;
+}) {
+	const serviceUp =
+		setup.base_url_configured && setup.postiz_reachable === true;
+	const keyOk = setup.api_key_present;
+	const envOk =
+		setup.postiz_enabled &&
+		setup.base_url_configured &&
+		setup.api_key_present;
+	const restartOk = setup.health_ok;
+	const channelsOk =
+		setup.health_ok &&
+		setup.postiz_reachable === true &&
+		(setup.integrations_count ?? 0) > 0;
+
+	// ✓ done / ✗ first unmet actionable step / ○ blocked by an earlier step
+	const conditions = [serviceUp, keyOk, envOk, restartOk, channelsOk];
+	const states: DoctorStepState[] = conditions.map((ok, i) =>
+		ok
+			? "done"
+			: conditions.slice(0, i).every(Boolean)
+				? "action"
+				: "blocked",
+	);
+
+	const startCommands =
+		setup.start_commands?.length > 0
+			? setup.start_commands
+			: FALLBACK_START_COMMANDS;
+
+	const noChannels =
+		setup.health_ok &&
+		setup.postiz_reachable === true &&
+		setup.integrations_count === 0;
+
+	const providerWarnings = DOCTOR_PROVIDER_ORDER.flatMap((provider) =>
+		(setup.provider_warnings?.[provider] ?? []).map((warning) => ({
+			provider,
+			warning,
+		})),
+	);
+
+	return (
+		<section className="rounded-2xl border border-amber-500/40 bg-slate-950/80 p-5 space-y-4">
+			<div className="flex items-center justify-between gap-3">
+				<div className="flex items-center gap-2">
+					<AlertTriangle size={16} className="text-amber-300" />
+					<span className="text-xs font-bold uppercase tracking-[0.18em] text-amber-200">
+						POSTIZ SETUP DOCTOR
+					</span>
+				</div>
+				<button
+					type="button"
+					onClick={onRecheck}
+					className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.16em] text-amber-200 hover:border-amber-300 hover:text-amber-100 transition-colors"
+				>
+					<RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+					RE-CHECK
+				</button>
+			</div>
+
+			<div className="space-y-2.5">
+				{/* STEP 1 — POSTIZ SERVICE */}
+				<DoctorStep step={1} title="Postiz service" state={states[0]}>
+					<div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+						<span>
+							Expected URL{" "}
+							<span className="font-mono text-slate-300">
+								{EXPECTED_POSTIZ_URL}
+							</span>
+						</span>
+						<StateBadge
+							ok={setup.base_url_configured}
+							label={
+								setup.base_url_configured
+									? `base URL: ${setup.base_url ?? "set"}`
+									: "base URL not configured"
+							}
+						/>
+						<StateBadge
+							ok={setup.postiz_reachable === true}
+							label={
+								setup.postiz_reachable === true
+									? "reachable"
+									: setup.postiz_reachable === false
+										? "unreachable"
+										: "not checked"
+							}
+						/>
+					</div>
+					{setup.postiz_reachable !== true && (
+						<div className="space-y-1">
+							<div className="text-[11px] text-slate-400">
+								Start the Postiz stack:
+							</div>
+							<pre className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-200">
+								{startCommands.join("\n")}
+							</pre>
+						</div>
+					)}
+				</DoctorStep>
+
+				{/* STEP 2 — API KEY (never render any key value) */}
+				<DoctorStep step={2} title="API key" state={states[1]}>
+					<div className="flex flex-wrap items-center gap-1.5">
+						<StateBadge
+							ok={setup.api_key_present}
+							label={
+								setup.api_key_present ? "API key present" : "API key missing"
+							}
+						/>
+					</div>
+					{setup.api_key_instructions && (
+						<div className="text-[11px] text-slate-400">
+							{setup.api_key_instructions}
+						</div>
+					)}
+				</DoctorStep>
+
+				{/* STEP 3 — BOSMAX .ENV */}
+				<DoctorStep step={3} title="BOSMAX .env" state={states[2]}>
+					<div className="text-[11px] text-slate-400">
+						Add these lines to the BOSMAX <code>.env</code>:
+					</div>
+					<pre className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-200">
+						{Object.entries(setup.safe_env_example ?? {})
+							.map(([key, value]) => `${key}=${value}`)
+							.join("\n")}
+					</pre>
+				</DoctorStep>
+
+				{/* STEP 4 — RESTART (env does NOT reload live) */}
+				<DoctorStep step={4} title="Restart" state={states[3]}>
+					<div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs font-semibold text-amber-200">
+						{setup.restart_instruction}
+					</div>
+				</DoctorStep>
+
+				{/* STEP 5 — CONNECT CHANNELS */}
+				<DoctorStep step={5} title="Connect channels" state={states[4]}>
+					{noChannels ? (
+						<div className="space-y-2">
+							<div className="text-[11px] font-semibold text-amber-200">
+								no social channels are connected yet
+							</div>
+							{setup.connect_channels_instruction && (
+								<div className="text-[11px] text-slate-400">
+									{setup.connect_channels_instruction}
+								</div>
+							)}
+							{providerWarnings.length > 0 && (
+								<ul className="space-y-1">
+									{providerWarnings.map(({ provider, warning }) => (
+										<li
+											key={`${provider}:${warning}`}
+											className="flex items-start gap-1.5 text-[11px] text-amber-200"
+										>
+											<AlertTriangle
+												size={11}
+												className="mt-0.5 flex-shrink-0"
+											/>
+											<span className="min-w-0">
+												<span className="font-bold uppercase">{provider}</span>{" "}
+												— {warning}
+											</span>
+										</li>
+									))}
+								</ul>
+							)}
+						</div>
+					) : (
+						<div className="text-[11px] text-slate-400">
+							{channelsOk
+								? `${setup.integrations_count} channel(s) connected in Postiz.`
+								: "Connect social accounts inside Postiz once the earlier steps pass."}
+						</div>
+					)}
+				</DoctorStep>
+			</div>
+
+			{/* DO THIS NEXT */}
+			{setup.next_steps?.length > 0 && (
+				<div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3 space-y-1.5">
+					<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-300">
+						Do this next
+					</div>
+					<ol className="list-decimal space-y-1 pl-5">
+						{setup.next_steps.map((step) => (
+							<li key={step} className="text-[11px] text-slate-300">
+								{step}
+							</li>
+						))}
+					</ol>
+				</div>
+			)}
+
+			{/* problem codes — small/dim, for support */}
+			{setup.problems?.length > 0 && (
+				<div className="font-mono text-[10px] text-slate-600 break-all">
+					problems: {setup.problems.join(" · ")}
+				</div>
+			)}
+
+			<div className="text-[11px] text-slate-500">
+				Full guide:{" "}
+				<span className="font-mono text-slate-400 underline decoration-slate-700 underline-offset-2">
+					{setup.docs_path || "docs/integrations/postiz/OPERATOR_GUIDE.md"}
+				</span>
+			</div>
+		</section>
+	);
+}
+
 function StatusBadge({ status }: { status: string }) {
 	return (
 		<span
@@ -78,8 +369,8 @@ function StepHeading({ step, title }: { step: string; title: string }) {
 }
 
 export default function PostizPublishPage() {
-	const [health, setHealth] = useState<PostizHealth | null>(null);
-	const [healthError, setHealthError] = useState<string | null>(null);
+	const [setup, setSetup] = useState<PostizSetupStatus | null>(null);
+	const [setupError, setSetupError] = useState<string | null>(null);
 	const [artifacts, setArtifacts] = useState<LibraryArtifact[]>([]);
 	const [integrations, setIntegrations] = useState<PostizIntegration[]>([]);
 	const [templates, setTemplates] =
@@ -118,11 +409,11 @@ export default function PostizPublishPage() {
 
 	const loadAll = useCallback(async () => {
 		setLoading(true);
-		setHealthError(null);
+		setSetupError(null);
 		try {
-			const h = await getPostizHealth();
-			setHealth(h);
-			if (h.ok) {
+			const s = await getPostizSetupStatus();
+			setSetup(s);
+			if (s.ready) {
 				const [artResp, intResp, tplResp] = await Promise.all([
 					fetch("/api/flow/artifacts?limit=50").then(async (r) => {
 						if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -139,7 +430,7 @@ export default function PostizPublishPage() {
 				await loadRecords();
 			}
 		} catch (e) {
-			setHealthError(String(e));
+			setSetupError(String(e));
 		} finally {
 			setLoading(false);
 		}
@@ -259,7 +550,7 @@ export default function PostizPublishPage() {
 		}
 	};
 
-	const healthOk = health?.ok === true;
+	const ready = setup?.ready === true;
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
@@ -285,46 +576,23 @@ export default function PostizPublishPage() {
 						Refresh
 					</button>
 				</div>
-				{healthError && (
+				{setupError && (
 					<div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
-						{healthError}
+						{setupError}
 					</div>
 				)}
 			</section>
 
-			{/* Health banner — fail-closed: setup box only when not OK */}
-			{health && !healthOk && (
-				<section className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-5 space-y-3">
-					<div className="flex items-center gap-2">
-						<AlertTriangle size={16} className="text-amber-300" />
-						<span className="text-xs font-bold uppercase tracking-[0.18em] text-amber-200">
-							Postiz is not ready — setup required
-						</span>
-					</div>
-					{health.problems?.length > 0 && (
-						<ul className="space-y-1">
-							{health.problems.map((p) => (
-								<li
-									key={p}
-									className="text-[11px] text-amber-200/90 font-mono flex items-start gap-2"
-								>
-									<span>•</span>
-									<span className="min-w-0">{p}</span>
-								</li>
-							))}
-						</ul>
-					)}
-					<div className="text-[11px] text-amber-200/80">
-						See{" "}
-						<span className="font-mono text-amber-100">
-							docs/integrations/postiz/OPERATOR_GUIDE.md
-						</span>{" "}
-						for setup instructions (enable the flag, base URL, API key).
-					</div>
-				</section>
+			{/* Setup Doctor — fail-closed: onboarding checklist only when not ready */}
+			{setup && !ready && (
+				<SetupDoctor
+					setup={setup}
+					loading={loading}
+					onRecheck={() => void loadAll()}
+				/>
 			)}
 
-			{healthOk && (
+			{ready && (
 				<>
 					{/* STEP 1 — ARTIFACT */}
 					<section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-5 space-y-4">

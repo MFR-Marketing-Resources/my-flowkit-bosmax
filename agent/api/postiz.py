@@ -38,6 +38,16 @@ async def health():
     return pz.health_summary()
 
 
+@router.get("/setup-status")
+async def setup_status():
+    """Setup Doctor: onboarding checklist state for the operator.
+
+    Deliberately NOT gated on POSTIZ_ENABLED — this endpoint exists exactly
+    to guide the operator out of the disabled/misconfigured states. Never
+    exposes the API key."""
+    return await pz.setup_status()
+
+
 @router.get("/integrations")
 async def integrations():
     """Connected Postiz channels (multiple per provider is normal)."""

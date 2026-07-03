@@ -86,8 +86,35 @@ export interface PostizPublishRecordsResponse {
 	count: number;
 }
 
+export interface PostizSetupStatus {
+	postiz_enabled: boolean;
+	base_url_configured: boolean;
+	base_url: string | null;
+	api_key_present: boolean;
+	upload_mode: string;
+	default_post_type: string;
+	api_prefix: string;
+	health_ok: boolean;
+	postiz_reachable: boolean | null;
+	integrations_count: number | null;
+	ready: boolean;
+	problems: string[];
+	next_steps: string[];
+	start_commands: string[];
+	restart_instruction: string;
+	api_key_instructions: string;
+	connect_channels_instruction: string;
+	provider_warnings: Record<string, string[]>;
+	docs_path: string;
+	safe_env_example: Record<string, string>;
+}
+
 export async function getPostizHealth(): Promise<PostizHealth> {
 	return getAPI<PostizHealth>("/api/postiz/health");
+}
+
+export async function getPostizSetupStatus(): Promise<PostizSetupStatus> {
+	return getAPI<PostizSetupStatus>("/api/postiz/setup-status");
 }
 
 export async function getPostizIntegrations(): Promise<PostizIntegrationsResponse> {

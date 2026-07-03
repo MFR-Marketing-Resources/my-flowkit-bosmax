@@ -122,6 +122,159 @@ def health_summary() -> dict:
     }
 
 
+# ── Setup Doctor (operator onboarding) ────────────────────────────────────
+
+# Exact env block the operator must put in the BOSMAX .env — placeholder only,
+# never a real key.
+SAFE_ENV_EXAMPLE = {
+    "POSTIZ_ENABLED": "true",
+    "POSTIZ_BASE_URL": "http://localhost:5000",
+    "POSTIZ_API_KEY": "<paste key>",
+    "POSTIZ_UPLOAD_MODE": "file",
+    "POSTIZ_DEFAULT_POST_TYPE": "draft",
+    "POSTIZ_API_PREFIX": "/api/public/v1",
+}
+
+START_POSTIZ_COMMANDS = [
+    "cd infra/postiz",
+    "copy .env.postiz.example .env",
+    "docker compose up -d",
+]
+
+API_KEY_INSTRUCTIONS = (
+    "Open http://localhost:5000 → Settings → Public API → generate API key."
+)
+
+RESTART_INSTRUCTION = "After editing `.env`, restart the BOSMAX agent/server."
+
+CONNECT_CHANNELS_INSTRUCTION = (
+    "Open Postiz → Add Channel → connect TikTok/Facebook/Instagram via official OAuth."
+)
+
+DOCS_PATH = "docs/integrations/postiz/OPERATOR_GUIDE.md"
+
+
+async def probe_reachable(base_url: str) -> bool:
+    """Safe reachability probe: any HTTP answer counts, no auth, no writes."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.get(base_url)
+        return True
+    except (httpx.TimeoutException, httpx.TransportError):
+        return False
+
+
+async def setup_status() -> dict:
+    """Operator onboarding checklist state — safe while DISABLED, never
+    exposes the API key. Drives the Setup Doctor panel in the dashboard."""
+    cfg = postiz_config()
+    problems: list[str] = []
+    next_steps: list[str] = []
+
+    base_url_configured = bool(cfg["base_url"])
+    api_key_present = bool(cfg["api_key"])
+    enabled = cfg["enabled"]
+
+    reachable: bool | None = None
+    if base_url_configured:
+        reachable = await probe_reachable(cfg["base_url"])
+
+    # Step 1 — Postiz service
+    if not base_url_configured:
+        problems.append("POSTIZ_BASE_URL_MISSING")
+        next_steps.append(
+            "Set POSTIZ_BASE_URL (expected: http://localhost:5000) in the BOSMAX .env."
+        )
+    if base_url_configured and reachable is False:
+        # Windows IPv6 trap: `localhost` can resolve to ::1 where Docker's
+        # proxy accepts but never answers, while 127.0.0.1 works. Detect it
+        # and give the exact fix instead of a generic "unreachable".
+        host = urlparse(cfg["base_url"]).hostname or ""
+        if host.lower() == "localhost":
+            ipv4_url = cfg["base_url"].replace("localhost", "127.0.0.1", 1)
+            if await probe_reachable(ipv4_url):
+                problems.append("POSTIZ_LOCALHOST_RESOLVES_IPV6")
+                next_steps.append(
+                    "Postiz answers on 127.0.0.1 but not on localhost (Windows "
+                    "IPv6 resolution). Set POSTIZ_BASE_URL=http://127.0.0.1:5000 "
+                    "in the BOSMAX .env, then restart the agent."
+                )
+            else:
+                problems.append("POSTIZ_UNREACHABLE")
+                next_steps.append(
+                    "Start the Postiz service: " + "  |  ".join(START_POSTIZ_COMMANDS)
+                )
+        else:
+            problems.append("POSTIZ_UNREACHABLE")
+            next_steps.append(
+                "Start the Postiz service: " + "  |  ".join(START_POSTIZ_COMMANDS)
+            )
+
+    # Step 2 — API key
+    if not api_key_present:
+        problems.append("POSTIZ_API_KEY_MISSING")
+        next_steps.append(API_KEY_INSTRUCTIONS)
+
+    # Step 3/4 — BOSMAX env + restart
+    if not enabled:
+        problems.append("POSTIZ_DISABLED")
+    if not enabled or not base_url_configured or not api_key_present:
+        next_steps.append(
+            "Put these values in the BOSMAX .env: "
+            + ", ".join(f"{k}={v}" for k, v in SAFE_ENV_EXAMPLE.items())
+        )
+        next_steps.append(RESTART_INSTRUCTION)
+
+    health_ok = enabled and base_url_configured and api_key_present
+
+    # Step 5 — channels (only checkable once fully configured + reachable)
+    integrations_count: int | None = None
+    if health_ok and reachable:
+        try:
+            integrations_count = len(await list_integrations())
+        except PostizApiError as exc:
+            if exc.status_code == 401:
+                problems.append("POSTIZ_API_KEY_REJECTED")
+                next_steps.append(
+                    "The configured API key was rejected — regenerate it: "
+                    + API_KEY_INSTRUCTIONS
+                )
+            else:
+                problems.append(f"POSTIZ_API_ERROR:{exc.status_code}")
+        except PostizConfigError as exc:
+            problems.append(str(exc))
+        if integrations_count == 0:
+            next_steps.append(
+                "Postiz is connected, but no social channels are connected yet."
+            )
+            next_steps.append(CONNECT_CHANNELS_INSTRUCTION)
+
+    ready = bool(health_ok and reachable and (integrations_count or 0) > 0)
+
+    return {
+        "postiz_enabled": enabled,
+        "base_url_configured": base_url_configured,
+        "base_url": cfg["base_url"] or None,
+        "api_key_present": api_key_present,
+        "upload_mode": cfg["upload_mode"],
+        "default_post_type": cfg["default_post_type"],
+        "api_prefix": cfg["api_prefix"],
+        "health_ok": health_ok,
+        "postiz_reachable": reachable,
+        "integrations_count": integrations_count,
+        "ready": ready,
+        "problems": problems,
+        "next_steps": next_steps,
+        "start_commands": START_POSTIZ_COMMANDS,
+        "restart_instruction": RESTART_INSTRUCTION,
+        "api_key_instructions": API_KEY_INSTRUCTIONS,
+        "connect_channels_instruction": CONNECT_CHANNELS_INSTRUCTION,
+        "provider_warnings": PROVIDER_WARNINGS,
+        "docs_path": DOCS_PATH,
+        "safe_env_example": SAFE_ENV_EXAMPLE,
+    }
+
+
 # ── Input validation (no network) ─────────────────────────────────────────
 
 
