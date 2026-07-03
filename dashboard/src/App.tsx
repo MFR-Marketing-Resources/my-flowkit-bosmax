@@ -35,6 +35,7 @@ import ApprovedPackagesPage from "./pages/ApprovedPackagesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
 import AvatarRegistryPage from "./pages/AvatarRegistryPage";
 import BatchPromptBuilderPage from "./pages/BatchPromptBuilderPage";
+import CopyStrategyStudioPage from "./pages/CopyStrategyStudioPage";
 import CreativeLibraryPage from "./pages/CreativeLibraryPage";
 import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
 import DashboardPage from "./pages/DashboardPage";
@@ -64,6 +65,7 @@ const NAV_GROUPS = [
 			{ to: "/operator/f2v", icon: Sparkles, label: "Frames (F2V)" },
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
+			{ to: "/copy-strategy", icon: ScrollText, label: "Copy Strategy Studio" },
 			{ to: "/library/videos", icon: Video, label: "Video Library (48j)" },
 			{ to: "/library/images", icon: ImageIcon, label: "Image Library (48j)" },
 			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
@@ -460,6 +462,10 @@ function Layout() {
 							element={<ApprovedPackagesPage />}
 						/>
 
+						<Route
+							path="/copy-strategy"
+							element={<CopyStrategyStudioPage />}
+						/>
 						<Route path="/batches" element={<BatchPromptBuilderPage />} />
 						<Route
 							path="/production-queue"
