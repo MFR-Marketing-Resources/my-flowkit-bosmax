@@ -128,6 +128,14 @@ def _preview_detail_for_source(product: dict[str, Any], *, uses_local_cache: boo
     return "ERROR", "Remote image URL is missing."
 
 
+def _product_identity(product: dict[str, Any]) -> str:
+    return _clean(product.get("product_display_name") or product.get("raw_product_title"))
+
+
+def _img_subject_ready(product: dict[str, Any]) -> bool:
+    return bool(_product_identity(product))
+
+
 def _product_image_asset(product: dict[str, Any], slot_key: str, label: str) -> dict[str, Any] | None:
     product_id = _clean(product.get("id") or product.get("product_id"))
     if not product_id or _clean(product.get("image_readiness_status")) not in IMAGE_READY_STATES:
@@ -160,6 +168,7 @@ def _product_image_asset(product: dict[str, Any], slot_key: str, label: str) -> 
 
 def _asset_slots_for_mode(product: dict[str, Any], mode: str) -> tuple[list[str], list[dict[str, Any]]]:
     has_image = _clean(product.get("image_readiness_status")) in IMAGE_READY_STATES
+    has_img_subject = _img_subject_ready(product)
     blockers: list[str] = []
     slots: list[dict[str, Any]] = []
     default_asset_source = (
@@ -235,15 +244,26 @@ def _asset_slots_for_mode(product: dict[str, Any], mode: str) -> tuple[list[str]
         return blockers, slots
 
     if mode == "IMG":
-        if not has_image:
+        if not has_img_subject:
             blockers.append("SUBJECT_REQUIRED")
         slots.extend(
             [
                 {
                     "slot_key": "subject",
                     "required": True,
-                    "default_source": default_asset_source if has_image else "NONE",
-                    "allowed_sources": ["PRODUCT_IMAGE_CACHE", "PRODUCT_IMAGE_URL", "USER_UPLOAD"],
+                    "default_source": (
+                        default_asset_source
+                        if has_image
+                        else "PROMPT_TEXT_SUBJECT"
+                        if has_img_subject
+                        else "NONE"
+                    ),
+                    "allowed_sources": [
+                        "PROMPT_TEXT_SUBJECT",
+                        "PRODUCT_IMAGE_CACHE",
+                        "PRODUCT_IMAGE_URL",
+                        "USER_UPLOAD",
+                    ],
                     "resolved_asset": _product_image_asset(product, "subject", "Product cached image"),
                 },
                 {
@@ -288,7 +308,7 @@ def _manual_fallback_payload(product: dict[str, Any], mode: str, asset_slots: li
     if mode == "I2V":
         checklist.insert(1, "Use the cached product image as the Subject. Scene and Style remain optional uploads.")
     if mode == "IMG":
-        checklist.insert(1, "Use the cached product image as the default Subject/Reference.")
+        checklist.insert(1, "Use the approved prompt text as the default Subject. Add a product image reference only when the workflow benefits from one.")
     if mode == "T2V":
         checklist.insert(1, "No image is required by default for T2V.")
     return {
@@ -416,13 +436,19 @@ async def get_product_package_readiness(product_id: str, mode: str) -> dict[str,
     production_modes = set(get_production_approved_modes(enriched))
     image_reference_status = _clean(enriched.get("image_readiness_status")) or "IMAGE_NOT_AVAILABLE"
     image_ready = image_reference_status in IMAGE_READY_STATES
+    img_subject_ready = _img_subject_ready(enriched)
     production_ready = (
         normalized_mode in production_modes
         if normalized_mode in {"T2V", "IMG"}
         else production_approved and {"T2V", "IMG"}.issubset(production_modes)
     )
     image_gate = _image_gate_for_mode(normalized_mode)
-    image_requirement_ready = normalized_mode not in IMAGE_REQUIRED_MODES or image_ready
+    image_requirement_ready = (
+        normalized_mode not in IMAGE_REQUIRED_MODES
+        or img_subject_ready
+        if normalized_mode == "IMG"
+        else image_ready
+    )
 
     blocker = "READY"
     if lifecycle_status == "ARCHIVED":
@@ -495,7 +521,8 @@ async def _approved_prompt_payload(product_id: str, mode: str) -> tuple[str, str
     if mode in {"T2V", "IMG"}:
         dryrun = await generate_prompt_dryrun(product_id, mode)
         if dryrun.get("status") != "PRODUCTION_READY":
-            raise ValueError("PRODUCTION_APPROVAL_REQUIRED")
+            blocker = _clean(dryrun.get("status")) or "PRODUCTION_APPROVAL_REQUIRED"
+            raise ValueError(blocker)
         prompt_text = _clean(dryrun.get("prompt_preview"))
         extras = {
             "image_prompt": dryrun.get("image_prompt"),
@@ -561,10 +588,10 @@ async def get_approved_product_package(product_id: str, mode: str) -> dict[str, 
 
     blockers, asset_slots = _asset_slots_for_mode(enriched, normalized_mode)
     image_reference_status = _clean(enriched.get("image_readiness_status")) or "IMAGE_NOT_AVAILABLE"
-    if normalized_mode in IMAGE_REQUIRED_MODES and image_reference_status not in IMAGE_READY_STATES:
+    if normalized_mode in {"F2V", "I2V"} and image_reference_status not in IMAGE_READY_STATES:
         if normalized_mode == "F2V" and "START_FRAME_REQUIRED" not in blockers:
             blockers.append("START_FRAME_REQUIRED")
-        if normalized_mode in {"I2V", "IMG"} and "SUBJECT_REQUIRED" not in blockers:
+        if normalized_mode == "I2V" and "SUBJECT_REQUIRED" not in blockers:
             blockers.append("SUBJECT_REQUIRED")
 
     prompt_fingerprint = _prompt_fingerprint(prompt_text)
