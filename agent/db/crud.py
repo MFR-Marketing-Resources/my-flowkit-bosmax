@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record", "social_copy_package"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record", "social_copy_package", "copy_set"})
 
 
 def _validate_table(table: str) -> None:
@@ -41,6 +41,7 @@ _COLUMNS = {
     "production_run": {"status", "dry_run", "max_parallel_jobs", "interval_min_seconds", "interval_max_seconds", "cooldown_after_n_jobs", "cooldown_seconds", "total_expected", "total_completed", "total_failed", "error_log_json", "config_json", "updated_at"},
     "postiz_publish_record": {"artifact_media_id", "source_local_path", "source_public_url", "upload_mode", "postiz_media_id", "postiz_media_path", "post_type", "scheduled_at", "content", "integration_ids_json", "provider_settings_json", "postiz_response_json", "status", "error", "updated_at"},
     "social_copy_package": {"artifact_media_id", "source_mode", "platform", "caption", "first_comment", "hashtags_json", "call_to_action", "tone", "language", "status", "compliance_status", "blockers_json", "warnings_json", "approval_note", "approved_at", "postiz_record_id", "updated_at"},
+    "copy_set": {"angle", "hook", "subhook", "usp_set_json", "cta", "platform", "language", "route_type", "formula_family", "status", "dedupe_key", "source", "provenance_json", "claim_review_json", "reviewer_note", "approved_at", "approved_by", "updated_at"},
 }
 
 
@@ -383,6 +384,51 @@ async def create_product(raw_product_title: str, source: str = "FASTMOSS", produ
 async def get_product(pid: str): return await _get("product", "id", pid)
 async def update_product(pid: str, **kw): return await _update("product", "id", pid, **kw)
 async def delete_product(pid: str): return await _delete("product", "id", pid)
+
+
+# ─── Copy Set (Copy Strategy Studio Phase 1) ────────────────
+
+async def create_copy_set(product_id: str, **kw) -> dict:
+    """Insert a Copy Set row for a product. product_id is immutable and set here;
+    all other columns come through the whitelist so unknown keys are ignored."""
+    db = await get_db()
+    csid, now = _uuid(), _now()
+    cols = ["copy_set_id", "product_id", "created_at", "updated_at"]
+    vals = [csid, product_id, now, now]
+    allowed = _COLUMNS["copy_set"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        await db.execute(f"INSERT INTO copy_set ({col_str}) VALUES ({placeholders})", vals)
+        await db.commit()
+    return await _get_with_db(db, "copy_set", "copy_set_id", csid)
+
+async def get_copy_set(copy_set_id: str): return await _get("copy_set", "copy_set_id", copy_set_id)
+async def update_copy_set(copy_set_id: str, **kw): return await _update("copy_set", "copy_set_id", copy_set_id, **kw)
+async def delete_copy_set(copy_set_id: str): return await _delete("copy_set", "copy_set_id", copy_set_id)
+
+async def list_copy_sets_for_product(product_id: str) -> list:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM copy_set WHERE product_id=? ORDER BY created_at DESC", (product_id,)
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+async def find_copy_set_by_dedupe_key(dedupe_key: str) -> Optional[dict]:
+    if not dedupe_key:
+        return None
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM copy_set WHERE dedupe_key=? ORDER BY created_at ASC LIMIT 1",
+        (dedupe_key,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
 
 async def count_products(source: str = None, query: str = None) -> int:
     db = await get_db()

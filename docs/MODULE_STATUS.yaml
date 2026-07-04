@@ -22,6 +22,11 @@ domains:
       - agent/api/creative_assets.py
       - agent/api/products.py
       - agent/api/workspace_packages.py
+      - agent/api/copy_sets.py
+      - agent/models/copy_set.py
+      - agent/services/copy_set_service.py
+      - tests/unit/test_copy_set_service.py
+      - tests/api/test_copy_sets_api.py
       - agent/api/product_registration.py
       - agent/api/fastmoss_bulk.py
       - agent/api/operator.py

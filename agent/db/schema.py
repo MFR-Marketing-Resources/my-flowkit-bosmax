@@ -1721,6 +1721,41 @@ CREATE INDEX IF NOT EXISTS idx_social_copy_status ON social_copy_package(status)
 """)
         await db.commit()
 
+        # Copy Set foundation (Copy Strategy Studio Phase 1). Additive table —
+        # persists an explicitly-approvable Copy Set (product → angle / hook /
+        # subhook / usp / cta) that later feeds the canonical prompt compiler as
+        # copy intelligence. It never rewrites the product or workspace tables;
+        # approval is explicit and fails closed on unsafe or incomplete copy.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS copy_set (
+    copy_set_id       TEXT PRIMARY KEY,
+    product_id        TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    angle             TEXT NOT NULL DEFAULT '',
+    hook              TEXT NOT NULL DEFAULT '',
+    subhook           TEXT NOT NULL DEFAULT '',
+    usp_set_json      TEXT NOT NULL DEFAULT '[]',
+    cta               TEXT NOT NULL DEFAULT '',
+    platform          TEXT NOT NULL DEFAULT 'TIKTOK',
+    language          TEXT NOT NULL DEFAULT 'BM_MS',
+    route_type        TEXT NOT NULL DEFAULT 'DIRECT',
+    formula_family    TEXT NOT NULL DEFAULT 'HSO',
+    status            TEXT NOT NULL DEFAULT 'DRAFT_COPY'
+                      CHECK(status IN ('DRAFT_COPY','COPY_REVIEW_REQUIRED','COPY_APPROVED','COPY_REJECTED')),
+    dedupe_key        TEXT NOT NULL DEFAULT '',
+    source            TEXT NOT NULL DEFAULT '',
+    provenance_json   TEXT NOT NULL DEFAULT '{}',
+    claim_review_json TEXT NOT NULL DEFAULT '{}',
+    reviewer_note     TEXT,
+    approved_at       TEXT,
+    approved_by       TEXT,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_copy_set_product ON copy_set(product_id, status);
+CREATE INDEX IF NOT EXISTS idx_copy_set_dedupe ON copy_set(dedupe_key);
+""")
+        await db.commit()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 
