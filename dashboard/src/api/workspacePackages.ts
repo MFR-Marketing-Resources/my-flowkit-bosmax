@@ -52,6 +52,9 @@ export async function createWorkspaceExecutionPackage(input: {
 	}>;
 	// Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
 	copy_set_id?: string | null;
+	// Explicit-Fallback-Confirmation V1: required-true for FINAL generation when
+	// no approved Copy Set is selected (backend fails closed otherwise).
+	copy_fallback_confirmed?: boolean;
 }): Promise<WorkspaceExecutionPackage> {
 	return postAPI<WorkspaceExecutionPackage>(
 		"/api/workspace/execution-package",

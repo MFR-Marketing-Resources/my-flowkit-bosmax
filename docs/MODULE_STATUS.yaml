@@ -46,6 +46,7 @@ domains:
       - dashboard/src/api/copySets.ts
       - dashboard/src/components/workspace/CopySelectionPanel.tsx
       - docs/COPY_SELECTION_AND_COMPILER_BINDING_FOUNDATION_V1.md
+      - docs/COPY_FALLBACK_EXPLICIT_CONFIRMATION_V1.md
       - agent/api/product_registration.py
       - agent/api/fastmoss_bulk.py
       - agent/api/operator.py

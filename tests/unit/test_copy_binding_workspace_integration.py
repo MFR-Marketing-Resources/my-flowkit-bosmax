@@ -292,3 +292,179 @@ async def test_execution_package_persists_copy_binding_lineage(monkeypatch):
     # Persisted request lineage carries the same safe binding metadata.
     stored_lineage = json.loads(captured["request_lineage_payload"])
     assert stored_lineage["copy_binding"]["copy_set_id"] == csid
+
+
+# ── Explicit-Fallback-Confirmation V1 ───────────────────────
+def _not_selected_compile_result():
+    return {
+        "final_compiled_prompt_text": "SECTION 1 - ROLE\nFallback prompt.",
+        "prompt_blocks": [],
+        "compiler_version": "ugc_video_prompt_compiler_v1",
+        "source_mode": "T2V",
+        "generation_mode": "SINGLE",
+        "total_duration_seconds": 8,
+        "camera_style": "UGC_IPHONE_RAW",
+        "character_presence": "VISIBLE_CREATOR",
+        "creator_persona": "DEFAULT_CREATOR",
+        "target_language": "BM_MS",
+        "shot_plan": [],
+        "dialogue_word_budget_per_block": [],
+        "prompt_fingerprint": "fp_fb",
+        "warnings": [binding.WARN_NOT_SELECTED],
+        "blockers": [],
+        "source_of_truth_notes": [],
+        "continuation_lineage": [],
+        "runtime_config_snapshot": {},
+        "copy_binding": binding.not_selected_lineage(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_final_without_copyset_without_confirmation_fails_closed():
+    # Gate is the FIRST thing in create — no product/package needed to trip it.
+    with pytest.raises(binding.CopyBindingError) as exc:
+        await wep.create_workspace_execution_package(
+            "prod-x", "T2V", 8, "9:16", "Veo 3.1 - Pro", False
+        )
+    assert exc.value.code == binding.ERR_FALLBACK_CONFIRMATION_REQUIRED
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_final_without_copyset_with_confirmation_succeeds_keeps_not_selected(monkeypatch):
+    captured = {}
+
+    async def fake_package(product_id, mode):
+        return _minimal_package(product_id, mode)
+
+    async def fake_compile(**kwargs):
+        assert kwargs.get("copy_set_id") is None  # preview compiled in fallback mode
+        return _not_selected_compile_result()
+
+    async def fake_store(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    monkeypatch.setattr(wep, "get_approved_product_package", fake_package)
+    monkeypatch.setattr(wep, "compile_workspace_prompt_preview", fake_compile)
+    monkeypatch.setattr(
+        "agent.services.workspace_execution_package_service.crud.create_or_replace_workspace_execution_package",
+        fake_store,
+    )
+
+    result = await wep.create_workspace_execution_package(
+        "prod-fb", "T2V", 8, "9:16", "Veo 3.1 - Pro", False, copy_fallback_confirmed=True
+    )
+
+    cb = result["copy_binding"]
+    # Fallback is still recorded as NOT_SELECTED / landbank_fallback / warning.
+    assert cb["copy_binding_status"] == binding.BINDING_NOT_SELECTED
+    assert cb["copy_source"] == binding.COPY_SOURCE_LANDBANK_FALLBACK
+    assert cb["warning"] == binding.WARN_NOT_SELECTED
+    # Confirmation stamped as SEPARATE audit metadata.
+    assert cb["copy_fallback_confirmed"] is True
+    assert cb["copy_fallback_confirmation_required"] is True
+    assert cb["copy_fallback_confirmation_source"] == binding.COPY_FALLBACK_CONFIRMATION_SOURCE
+    assert cb["copy_fallback_policy"] == binding.COPY_FALLBACK_POLICY
+    # Persisted lineage carries the same confirmation metadata.
+    stored = json.loads(captured["request_lineage_payload"])["copy_binding"]
+    assert stored["copy_fallback_confirmed"] is True
+    assert stored["copy_binding_status"] == binding.BINDING_NOT_SELECTED
+
+
+@pytest.mark.asyncio
+async def test_final_with_approved_copyset_needs_no_confirmation(monkeypatch):
+    captured = {}
+
+    async def fake_package(product_id, mode):
+        return _minimal_package(product_id, mode)
+
+    async def fake_compile(**kwargs):
+        return {
+            **_not_selected_compile_result(),
+            "copy_binding": {
+                "copy_source": binding.COPY_SOURCE_SELECTED,
+                "copy_binding_status": binding.BINDING_BOUND,
+                "copy_set_id": kwargs.get("copy_set_id"),
+                "copy_set_status": models.STATUS_COPY_APPROVED,
+                "copy_set_fingerprint": "cs_x",
+                "copy_set_angle": "A",
+                "copy_set_hook_preview": "H",
+                "warning": None,
+            },
+            "warnings": [],
+        }
+
+    async def fake_store(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    monkeypatch.setattr(wep, "get_approved_product_package", fake_package)
+    monkeypatch.setattr(wep, "compile_workspace_prompt_preview", fake_compile)
+    monkeypatch.setattr(
+        "agent.services.workspace_execution_package_service.crud.create_or_replace_workspace_execution_package",
+        fake_store,
+    )
+
+    # copy_set_id provided + NO confirmation -> gate passes, binds normally.
+    result = await wep.create_workspace_execution_package(
+        "prod-bound", "T2V", 8, "9:16", "Veo 3.1 - Pro", False, copy_set_id="cs-approved"
+    )
+    cb = result["copy_binding"]
+    assert cb["copy_binding_status"] == binding.BINDING_BOUND
+    # No confirmation metadata when a Copy Set is bound.
+    assert "copy_fallback_confirmed" not in cb
+
+
+@pytest.mark.asyncio
+async def test_invalid_copyset_fails_closed_even_with_confirmation(monkeypatch):
+    product = await _make_product()
+    pid = product["id"]
+    _patch_package_environment(monkeypatch, product, "T2V")
+
+    # An explicit (but invalid) copy_set_id must fail closed via the resolver —
+    # confirmation does NOT bypass it (the gate only applies to a missing id).
+    with pytest.raises(binding.CopyBindingError) as exc:
+        await wep.create_workspace_execution_package(
+            pid, "T2V", 8, "9:16", "Veo 3.1 - Pro", False,
+            copy_set_id="ghost-id", copy_fallback_confirmed=True,
+        )
+    assert exc.value.code == binding.ERR_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_confirmed_fallback_real_compile_no_metadata_leak(monkeypatch):
+    product = await _make_product(raw_product_title="Fallback Leakproof Serum")
+    pid = product["id"]
+    _patch_package_environment(monkeypatch, product, "T2V")
+
+    captured = {}
+
+    async def fake_store(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    monkeypatch.setattr(
+        "agent.services.workspace_execution_package_service.crud.create_or_replace_workspace_execution_package",
+        fake_store,
+    )
+
+    result = await wep.create_workspace_execution_package(
+        pid, "T2V", 8, "9:16", "Veo 3.1 - Pro", False, copy_fallback_confirmed=True
+    )
+
+    # Real deterministic compiler ran in fallback mode; the engine-facing prompt
+    # text must not carry confirmation/policy audit tokens or internal fields.
+    prompt_text = captured["prompt_text"]
+    for forbidden in (
+        "copy_fallback_confirmed",
+        "copy_fallback_confirmation",
+        binding.COPY_FALLBACK_POLICY,
+        "copy_binding",
+        binding.WARN_NOT_SELECTED,
+    ):
+        assert forbidden not in prompt_text
+    # Lineage still records the confirmed fallback (audit only).
+    stored = json.loads(captured["request_lineage_payload"])["copy_binding"]
+    assert stored["copy_binding_status"] == binding.BINDING_NOT_SELECTED
+    assert stored["copy_fallback_confirmed"] is True

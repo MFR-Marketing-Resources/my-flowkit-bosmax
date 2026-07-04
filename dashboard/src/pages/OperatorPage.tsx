@@ -302,6 +302,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [selectedCopySetId, setSelectedCopySetId] = useState<string | null>(
 		null,
 	);
+	// Explicit-Fallback-Confirmation V1: gate shown before Generate Final Prompt
+	// runs with no approved Copy Set selected.
+	const [showFallbackConfirm, setShowFallbackConfirm] = useState(false);
 	const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 	const [isLoadingPackage, setIsLoadingPackage] = useState(false);
 	const [isLoadingReadiness, setIsLoadingReadiness] = useState(false);
@@ -410,6 +413,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset keyed on product id only
 	useEffect(() => {
 		setSelectedCopySetId(null);
+		setShowFallbackConfirm(false);
 	}, [selectedProduct?.id]);
 
 	useEffect(() => {
@@ -1069,9 +1073,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		}
 	};
 
-	// Step 4 — Generate Final Prompt (compile + save to DB)
-	const handleGeneratePackage = async () => {
+	// Step 4 — Generate Final Prompt (compile + save to DB).
+	// runGeneratePackage does the actual save; fallbackConfirmed is forwarded to
+	// the backend which fails closed when no Copy Set is selected and fallback is
+	// not explicitly confirmed (Explicit-Fallback-Confirmation V1).
+	const runGeneratePackage = async (fallbackConfirmed: boolean) => {
 		if (!selectedProduct || !previewPackage) return;
+		setShowFallbackConfirm(false);
 		setIsLoadingPackage(true);
 		try {
 			const pkg = await createWorkspaceExecutionPackage({
@@ -1079,6 +1087,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				mode: jobMode,
 				source_mode: resolveSourceMode(mode),
 				copy_set_id: selectedCopySetId,
+				copy_fallback_confirmed: fallbackConfirmed,
 				duration_seconds: block1Duration,
 				generation_mode: generationMode,
 				target_language: targetLanguage,
@@ -1130,6 +1139,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		} finally {
 			setIsLoadingPackage(false);
 		}
+	};
+
+	// Click handler: an approved Copy Set generates immediately; NO selection
+	// opens the explicit fallback-confirmation gate first (backend also enforces).
+	const handleGeneratePackage = () => {
+		if (!selectedCopySetId) {
+			setShowFallbackConfirm(true);
+			return;
+		}
+		void runGeneratePackage(false);
 	};
 
 	const allowedDurations = promptConfig?.allowed_block_durations_seconds ?? [
@@ -1831,16 +1850,83 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						After loading the package above, press this button to compile and
 						save the final execution prompt to the workspace.
 					</div>
+					{/* Copy binding state (Explicit-Fallback-Confirmation V1) */}
+					{selectedCopySetId ? (
+						<div className="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
+							Approved Copy Set bound to final prompt generation.
+						</div>
+					) : (
+						<div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+							No approved Copy Set selected. Generate Final Prompt requires
+							fallback confirmation.
+						</div>
+					)}
 					<button
 						type="button"
 						onClick={() => void handleGeneratePackage()}
-						disabled={!previewPackage || isLoadingPackage}
+						disabled={!previewPackage || isLoadingPackage || showFallbackConfirm}
 						className="w-full rounded-xl border border-blue-500/40 bg-blue-500/15 px-4 py-3 text-sm font-bold text-blue-100 hover:bg-blue-500/25 disabled:opacity-50 disabled:grayscale transition-all"
 					>
 						{isLoadingPackage ? "Generating…" : generatePromptLabel}
 					</button>
+					{/* Explicit fallback confirmation gate — shown only when the operator
+					    presses Generate with NO approved Copy Set selected. Backend also
+					    enforces this (copy_fallback_confirmed); this UI is not the sole gate. */}
+					{showFallbackConfirm ? (
+						<div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-[12px] text-amber-100">
+							<div className="mb-2 font-bold uppercase tracking-[0.15em] text-amber-300">
+								Confirm fallback copy
+							</div>
+							<p className="mb-1">No approved Copy Set selected.</p>
+							<p className="mb-1">
+								Generate Final Prompt will use fallback copy from product
+								landbank / claim-safe angles.
+							</p>
+							<p className="mb-3 font-semibold">
+								This fallback is not approved Copy Set copy. Continue with
+								fallback?
+							</p>
+							<div className="flex flex-wrap gap-2">
+								<button
+									type="button"
+									onClick={() => void runGeneratePackage(true)}
+									disabled={isLoadingPackage}
+									className="rounded-lg border border-amber-500/50 bg-amber-500/20 px-3 py-2 text-[11px] font-semibold text-amber-100 hover:bg-amber-500/30 disabled:opacity-50 transition-colors"
+								>
+									{isLoadingPackage
+										? "Generating…"
+										: "Confirm fallback and continue"}
+								</button>
+								<button
+									type="button"
+									onClick={() => setShowFallbackConfirm(false)}
+									disabled={isLoadingPackage}
+									className="rounded-lg border border-slate-600/40 bg-slate-700/30 px-3 py-2 text-[11px] font-semibold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50 transition-colors"
+								>
+									Cancel and select / approve Copy Set
+								</button>
+							</div>
+						</div>
+					) : null}
 					{workspacePackage ? (
 						<div className="mt-4 space-y-3">
+							{workspacePackage.copy_binding ? (
+								<div
+									className={`rounded-xl border px-3 py-2 text-[11px] ${
+										workspacePackage.copy_binding.copy_binding_status ===
+										"BOUND"
+											? "border-emerald-500/30 bg-emerald-500/5 text-emerald-200"
+											: "border-amber-500/30 bg-amber-500/5 text-amber-200"
+									}`}
+								>
+									<span className="font-semibold">Copy binding: </span>
+									{workspacePackage.copy_binding.copy_binding_status === "BOUND"
+										? `Approved Copy Set bound (${workspacePackage.copy_binding.copy_set_angle ?? "selected"})`
+										: workspacePackage.copy_binding.copy_fallback_confirmed
+											? "Fallback copy — operator-confirmed (COPY_SET_NOT_SELECTED)"
+											: "Fallback copy (COPY_SET_NOT_SELECTED)"}
+								</div>
+							) : null}
 							<div className="grid gap-3 md:grid-cols-3">
 								<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
 									<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">

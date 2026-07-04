@@ -96,3 +96,62 @@ def test_preview_route_missing_copy_set_returns_404(monkeypatch):
     )
     assert response.status_code == 404
     assert response.json()["detail"]["error"] == "COPY_SET_NOT_FOUND"
+
+
+# ── Explicit-Fallback-Confirmation V1 ───────────────────────
+def test_execution_route_forwards_copy_fallback_confirmed(monkeypatch):
+    captured = {}
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        return {"workspace_execution_package_id": "wep_fb"}
+
+    monkeypatch.setattr(
+        "agent.api.workspace_packages.create_workspace_execution_package", fake_create
+    )
+    response = _client().post(
+        "/api/workspace/execution-package",
+        json={"product_id": "prod-1", "mode": "T2V", "copy_fallback_confirmed": True},
+    )
+    assert response.status_code == 200
+    assert captured["copy_fallback_confirmed"] is True
+    assert captured["copy_set_id"] is None
+
+
+def test_execution_route_defaults_copy_fallback_confirmed_false(monkeypatch):
+    captured = {}
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        return {"workspace_execution_package_id": "wep_fb"}
+
+    monkeypatch.setattr(
+        "agent.api.workspace_packages.create_workspace_execution_package", fake_create
+    )
+    # Field omitted entirely -> defaults to False (backend then fails closed for
+    # a real call with no copy_set_id; here create is mocked so we assert default).
+    response = _client().post(
+        "/api/workspace/execution-package",
+        json={"product_id": "prod-1", "mode": "T2V"},
+    )
+    assert response.status_code == 200
+    assert captured["copy_fallback_confirmed"] is False
+
+
+def test_execution_route_maps_fallback_confirmation_required(monkeypatch):
+    async def fake_create(**kwargs):
+        raise CopyBindingError(
+            "COPY_SET_FALLBACK_CONFIRMATION_REQUIRED",
+            status_code=409,
+            detail="Generate Final Prompt without an approved Copy Set requires explicit fallback confirmation.",
+        )
+
+    monkeypatch.setattr(
+        "agent.api.workspace_packages.create_workspace_execution_package", fake_create
+    )
+    response = _client().post(
+        "/api/workspace/execution-package",
+        json={"product_id": "prod-1", "mode": "T2V"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "COPY_SET_FALLBACK_CONFIRMATION_REQUIRED"

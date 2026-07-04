@@ -11,6 +11,10 @@ from agent.services.approved_product_package_service import (
     normalize_mode,
 )
 from agent.services.copy_binding_service import (
+    COPY_FALLBACK_CONFIRMATION_SOURCE,
+    COPY_FALLBACK_POLICY,
+    ERR_FALLBACK_CONFIRMATION_REQUIRED,
+    CopyBindingError,
     resolve_compiler_copy_intelligence,
 )
 from agent.services.claim_safe_rewrite_service import get_stored_claim_safe_package
@@ -200,7 +204,23 @@ async def create_workspace_execution_package(
     engine_duration_target: str | None = None,
     requested_total_duration_seconds: int | None = None,
     copy_set_id: str | None = None,
+    copy_fallback_confirmed: bool = False,
 ) -> dict[str, Any]:
+    # Explicit-Fallback-Confirmation V1 (FINAL generation only — preview stays
+    # warning-only): producing a saved execution package with NO approved Copy
+    # Set selected must be an intentional operator act. Fail closed BEFORE any
+    # work when neither a copy_set_id nor an explicit fallback confirmation is
+    # given. A provided copy_set_id (valid or not) never needs confirmation — it
+    # is validated fail-closed by the resolver instead.
+    if not copy_set_id and not copy_fallback_confirmed:
+        raise CopyBindingError(
+            ERR_FALLBACK_CONFIRMATION_REQUIRED,
+            status_code=409,
+            detail=(
+                "Generate Final Prompt without an approved Copy Set requires "
+                "explicit fallback confirmation."
+            ),
+        )
     package = await get_approved_product_package(product_id, mode)
     normalized_mode = normalize_mode(mode)
     resolved_model = model or _default_model_for_mode(normalized_mode)
@@ -223,6 +243,19 @@ async def create_workspace_execution_package(
         copy_set_id=copy_set_id,
     )
     copy_binding_lineage = compiler_result.get("copy_binding")
+    # Explicit-Fallback-Confirmation V1: when the operator confirmed fallback
+    # (no copy_set_id), stamp the confirmation onto the lineage as SEPARATE audit
+    # metadata. The fallback is still recorded as NOT_SELECTED / landbank_fallback
+    # with the COPY_SET_NOT_SELECTED warning — confirmation never relabels
+    # fallback copy as approved copy.
+    if copy_binding_lineage is not None and not copy_set_id and copy_fallback_confirmed:
+        copy_binding_lineage = {
+            **copy_binding_lineage,
+            "copy_fallback_confirmed": True,
+            "copy_fallback_confirmation_required": True,
+            "copy_fallback_confirmation_source": COPY_FALLBACK_CONFIRMATION_SOURCE,
+            "copy_fallback_policy": COPY_FALLBACK_POLICY,
+        }
     prompt_fingerprint = compiler_result["prompt_fingerprint"]
     total_duration_seconds = int(compiler_result["total_duration_seconds"])
     execution_package_id = _workspace_execution_package_id(
