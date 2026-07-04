@@ -10,6 +10,9 @@ from agent.services.approved_product_package_service import (
     get_approved_product_package,
     normalize_mode,
 )
+from agent.services.copy_binding_service import (
+    resolve_compiler_copy_intelligence,
+)
 from agent.services.claim_safe_rewrite_service import get_stored_claim_safe_package
 from agent.services.product_intelligence import enrich_product
 from agent.services.production_prompt_approval_service import scan_prompt_text
@@ -196,6 +199,7 @@ async def create_workspace_execution_package(
     source_mode: str | None = None,
     engine_duration_target: str | None = None,
     requested_total_duration_seconds: int | None = None,
+    copy_set_id: str | None = None,
 ) -> dict[str, Any]:
     package = await get_approved_product_package(product_id, mode)
     normalized_mode = normalize_mode(mode)
@@ -216,7 +220,9 @@ async def create_workspace_execution_package(
         source_mode=source_mode,
         engine_duration_target=engine_duration_target,
         requested_total_duration_seconds=requested_total_duration_seconds,
+        copy_set_id=copy_set_id,
     )
+    copy_binding_lineage = compiler_result.get("copy_binding")
     prompt_fingerprint = compiler_result["prompt_fingerprint"]
     total_duration_seconds = int(compiler_result["total_duration_seconds"])
     execution_package_id = _workspace_execution_package_id(
@@ -284,6 +290,11 @@ async def create_workspace_execution_package(
     for key in ("metadata_handoff", "overlay_spec", "export_spec", "image_route"):
         if compiler_result.get(key) is not None:
             request_lineage_payload["compiler"][key] = compiler_result.get(key)
+    # Copy Selection & Compiler Binding V1: record the selected-copy lineage at the
+    # top level of the request lineage payload (audit only — copy_set_id lives here,
+    # never in the engine-facing prompt text).
+    if copy_binding_lineage is not None:
+        request_lineage_payload["copy_binding"] = copy_binding_lineage
     if semantic_slot_resolver:
         request_lineage_payload.update(
             {
@@ -360,6 +371,7 @@ async def create_workspace_execution_package(
         "production_generation_allowed": package["production_generation_allowed"],
         "manual_fallback": package["manual_fallback"],
         "blockers": all_blockers,
+        "copy_binding": copy_binding_lineage,
         "request_lineage_payload": request_lineage_payload,
         "source_of_truth_notes": [
             *package["source_of_truth_notes"],
@@ -410,6 +422,7 @@ async def compile_workspace_prompt_preview(
     source_mode: str | None = None,
     engine_duration_target: str | None = None,
     requested_total_duration_seconds: int | None = None,
+    copy_set_id: str | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
     product = await crud.get_product(product_id)
@@ -417,6 +430,11 @@ async def compile_workspace_prompt_preview(
         raise ValueError("PRODUCT_NOT_FOUND")
     enriched_product = await enrich_product(product, persist=False)
     package = approved_package or await get_approved_product_package(product_id, normalized_mode)
+    # Copy Selection & Compiler Binding V1: resolve the operator-selected Copy Set
+    # (fail-closed if an explicit copy_set_id is invalid) into clean compiler copy.
+    # Only to_compiler_copy fields cross into the compiler; the lineage below is
+    # audit-only and never enters the engine-facing prompt text.
+    copy_binding = await resolve_compiler_copy_intelligence(product_id, copy_set_id)
     if normalized_mode == "IMG":
         compiler_result = _compile_img_workspace_prompt_preview(
             product_id=product_id,
@@ -451,6 +469,7 @@ async def compile_workspace_prompt_preview(
             source_mode=source_mode,
             engine_duration_target=engine_duration_target,
             requested_total_duration_seconds=requested_total_duration_seconds,
+            copy_intelligence=copy_binding["copy_intelligence"],
         )
     prompt_scan = scan_prompt_text(
         compiler_result["final_compiled_prompt_text"],
@@ -461,6 +480,14 @@ async def compile_workspace_prompt_preview(
     compiler_result["runtime_config_snapshot"] = get_runtime_config()
     compiler_result["product_id"] = product_id
     compiler_result["mode"] = normalized_mode
+    # Attach safe copy-binding lineage + surface a soft warning when no approved
+    # Copy Set was selected (degraded fallback mode). Never fails the compile.
+    compiler_result["copy_binding"] = copy_binding["lineage"]
+    if copy_binding["warning"]:
+        warnings = list(compiler_result.get("warnings") or [])
+        if copy_binding["warning"] not in warnings:
+            warnings.append(copy_binding["warning"])
+        compiler_result["warnings"] = warnings
     return compiler_result
 
 

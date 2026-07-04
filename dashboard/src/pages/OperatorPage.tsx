@@ -14,6 +14,7 @@ import {
 	fetchWorkspacePackageReadiness,
 } from "../api/workspacePackages";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
+import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
 import F2VModule from "../components/workspace/F2VModule";
 import I2VModule from "../components/workspace/I2VModule";
 import IMGModule from "../components/workspace/IMGModule";
@@ -296,6 +297,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		useState<WorkspaceExecutionPackage | null>(statePackage ?? null);
 	const [previewPackage, setPreviewPackage] =
 		useState<WorkspacePromptPreviewResult | null>(null);
+	// Copy Selection & Compiler Binding V1: operator-selected approved Copy Set
+	// bound into the preview/final prompt request payload for the selected product.
+	const [selectedCopySetId, setSelectedCopySetId] = useState<string | null>(
+		null,
+	);
 	const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 	const [isLoadingPackage, setIsLoadingPackage] = useState(false);
 	const [isLoadingReadiness, setIsLoadingReadiness] = useState(false);
@@ -398,6 +404,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			)
 			.finally(() => setIsLoadingProducts(false));
 	}, []);
+
+	// Clear any bound Copy Set when the product changes — a copy_set_id is only
+	// valid for the product it belongs to (backend fails closed on mismatch).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset keyed on product id only
+	useEffect(() => {
+		setSelectedCopySetId(null);
+	}, [selectedProduct?.id]);
 
 	useEffect(() => {
 		void fetchPromptCompilerRuntimeConfig()
@@ -1006,6 +1019,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				product_id: selectedProduct.id,
 				mode: jobMode,
 				source_mode: resolveSourceMode(mode),
+				copy_set_id: selectedCopySetId,
 				duration_seconds: block1Duration,
 				generation_mode: generationMode,
 				target_language: targetLanguage,
@@ -1064,6 +1078,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				product_id: selectedProduct.id,
 				mode: jobMode,
 				source_mode: resolveSourceMode(mode),
+				copy_set_id: selectedCopySetId,
 				duration_seconds: block1Duration,
 				generation_mode: generationMode,
 				target_language: targetLanguage,
@@ -1672,6 +1687,17 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				) : null}
 			</div>
 
+			{/* ── Copy Selection & Compiler Binding (video modes only) ─── */}
+			{mode !== "IMG" && (
+				<CopySelectionPanel
+					productId={selectedProduct?.id ?? null}
+					productName={selectedProduct?.product_display_name ?? null}
+					selectedCopySetId={selectedCopySetId}
+					onSelect={setSelectedCopySetId}
+					disabled={isLoadingPreview || isLoadingPackage}
+				/>
+			)}
+
 			{/* ── STEP 3: Load Package (video modes only) ──────────────── */}
 			{mode !== "IMG" && (
 				<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
@@ -1683,6 +1709,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						using your configured settings above. Review the prompt preview
 						before generating.
 					</div>
+					{!selectedCopySetId ? (
+						<div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+							No approved Copy Set selected. Compiler may use fallback copy
+							(product landbank / claim-safe angles).
+						</div>
+					) : null}
 					<button
 						type="button"
 						onClick={() => void handleLoadPreview()}
@@ -1727,6 +1759,20 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									</div>
 								</div>
 							</div>
+							{previewPackage.copy_binding ? (
+								<div
+									className={`rounded-xl border px-3 py-2 text-[11px] ${
+										previewPackage.copy_binding.copy_binding_status === "BOUND"
+											? "border-emerald-500/30 bg-emerald-500/5 text-emerald-200"
+											: "border-amber-500/30 bg-amber-500/5 text-amber-200"
+									}`}
+								>
+									<span className="font-semibold">Copy binding: </span>
+									{previewPackage.copy_binding.copy_binding_status === "BOUND"
+										? `Approved Copy Set bound (${previewPackage.copy_binding.copy_set_angle ?? "selected"})`
+										: "No Copy Set bound — fallback copy in use"}
+								</div>
+							) : null}
 							{previewPackage.warnings?.length ? (
 								<div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
 									{previewPackage.warnings.join(" · ")}

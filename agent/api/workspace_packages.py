@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from agent.services.prompt_compiler_runtime_config_service import (
     get_runtime_config,
 )
+from agent.services.copy_binding_service import CopyBindingError
 from agent.services.workspace_execution_package_service import (
     compile_workspace_prompt_preview,
     create_workspace_execution_package,
@@ -54,6 +55,9 @@ class WorkspaceExecutionPackageRequest(BaseModel):
     scene_context_reference_asset_id: str | None = None
     style_reference_asset_id: str | None = None
     blocks: list[WorkspacePromptBlockRequest] = Field(default_factory=list)
+    # Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
+    # Optional — when absent the compiler uses its existing fallback copy.
+    copy_set_id: str | None = None
 
 
 class WorkspacePromptCompileRequest(BaseModel):
@@ -71,6 +75,8 @@ class WorkspacePromptCompileRequest(BaseModel):
     requested_total_duration_seconds: int | None = None  # derive 1-7 block chain from workbook
     dialogue_enabled: bool = True
     blocks: list[WorkspacePromptBlockRequest] = Field(default_factory=list)
+    # Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
+    copy_set_id: str | None = None
 
 
 class WorkspacePackageReadinessRequest(BaseModel):
@@ -104,7 +110,13 @@ async def post_workspace_execution_package(request: WorkspaceExecutionPackageReq
             source_mode=request.source_mode,
             engine_duration_target=request.engine_duration_target,
             requested_total_duration_seconds=request.requested_total_duration_seconds,
+            copy_set_id=request.copy_set_id,
         )
+    except CopyBindingError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.detail},
+        ) from exc
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if message == "PRODUCT_NOT_FOUND" else 409
@@ -157,7 +169,13 @@ async def post_workspace_prompt_compile(request: WorkspacePromptCompileRequest):
             source_mode=request.source_mode,
             engine_duration_target=request.engine_duration_target,
             requested_total_duration_seconds=request.requested_total_duration_seconds,
+            copy_set_id=request.copy_set_id,
         )
+    except CopyBindingError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.detail},
+        ) from exc
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if message == "PRODUCT_NOT_FOUND" else 409
