@@ -122,7 +122,7 @@ export default function ProductAssetGeneratorPage() {
 							Product Asset Generator
 						</div>
 						<div className="mt-1 text-[11px] text-slate-400">
-							Preview-only · No image generation · No Flow execution
+							Preview is offline-only · No real image generation · No Google Flow execution · No Chrome extension execution
 							{activePreset ? (
 								<span className="ml-2 inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-emerald-200">
 									{activePreset.label}
@@ -137,6 +137,16 @@ export default function ProductAssetGeneratorPage() {
 						Creative Library →
 					</Link>
 				</div>
+			</section>
+
+			<section className="rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-[11px] text-slate-400">
+				<span className="font-semibold uppercase tracking-[0.16em] text-slate-300">
+					Preset Guided Workflow
+				</span>
+				{" — ACTIVE PRESET: "}
+				{activePreset ? activePreset.label : "(none / manual)"}. In every
+				preset, product truth remains the primary source for scale truth,
+				product physics, and label-safe framing.
 			</section>
 
 			<div className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,1fr)]">

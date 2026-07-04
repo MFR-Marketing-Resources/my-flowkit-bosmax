@@ -123,14 +123,45 @@ def _has_truthy_flag(raw_request: dict[str, Any], keys: set[str]) -> bool:
     return any(bool(raw_request.get(key)) for key in keys)
 
 
+# Product Truth Gateway lifecycle states this preview lane treats as
+# "exists in the pipeline but not yet a canonical product row" (mirrors
+# agent.services.product_catalog_read_model — kept as literals to avoid any
+# import-order coupling).
+_PRM_REFERENCE_ONLY = "REFERENCE_ONLY"
+_PRM_NOT_YET_CANONICAL_STATES = {
+    "READY_FOR_APPROVAL_PREVIEW_ONLY",
+    "PENDING_DRAFT",
+    "DUPLICATE_LINKED",
+    "BLOCKED_CLAIM_RISK",
+    "BLOCKED_MISSING_REQUIRED_FIELD",
+    "RUNTIME_STORAGE_UNVERIFIED",
+}
+
+
 async def _resolve_product_seed(
     request: ProductAssetGeneratorRequest,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if request.product_id:
         existing = await crud.get_product(request.product_id)
-        if not existing:
-            return None, "PRODUCT_NOT_FOUND"
-        return dict(existing), None
+        if existing:
+            return dict(existing), None
+        # Preview only resolves canonical product rows. When the id is not a
+        # canonical row, use the Product Truth Gateway to return a STATE-AWARE
+        # error instead of a generic PRODUCT_NOT_FOUND, so the operator learns
+        # *why* the selector option cannot preview (reference-only vs. not-yet
+        # canonical vs. truly unknown). Fail-closed: no seed is ever returned.
+        try:
+            from agent.services import product_catalog_read_model as _prm
+
+            state = await _prm.resolve_product_state(request.product_id)
+            product_state = state.get("product_state")
+        except Exception:
+            product_state = None
+        if product_state == _PRM_REFERENCE_ONLY:
+            return None, "REFERENCE_ONLY_PREVIEW_REQUIRES_REGISTRATION"
+        if product_state in _PRM_NOT_YET_CANONICAL_STATES:
+            return None, "PRODUCT_NOT_YET_CANONICAL"
+        return None, "PRODUCT_NOT_FOUND"
 
     if request.product_payload:
         return dict(request.product_payload), None
@@ -1075,24 +1106,36 @@ async def generate_product_asset_preview(
             _unique_append(errors, error)
 
     product_seed, lookup_error = await _resolve_product_seed(request)
-    if lookup_error == "PRODUCT_NOT_FOUND":
-        return _build_failure_response(
-            request,
-            errors=["PRODUCT_NOT_FOUND"],
-            warnings=[],
-            provenance={
-                "scope": "ROUND_10_PRODUCT_TO_ASSET_GENERATOR_PREVIEW_ONLY",
-                "product_lookup": "crud.get_product",
-            },
+    if lookup_error:
+        # State-aware, fail-closed failure: the error code itself tells the
+        # operator why (canonical-missing vs reference-only vs not-yet-canonical
+        # vs no product context supplied). Never a silent generic confusion.
+        _state_aware_warnings = {
+            "REFERENCE_ONLY_PREVIEW_REQUIRES_REGISTRATION": (
+                "Reference-only FastMoss row cannot preview: register/commit it "
+                "to a canonical product first."
+            ),
+            "PRODUCT_NOT_YET_CANONICAL": (
+                "Product exists in the registration pipeline but has no committed "
+                "canonical product row yet."
+            ),
+        }
+        warnings = (
+            [_state_aware_warnings[lookup_error]]
+            if lookup_error in _state_aware_warnings
+            else []
         )
-    if lookup_error == "PRODUCT_CONTEXT_REQUIRED":
         return _build_failure_response(
             request,
-            errors=["PRODUCT_CONTEXT_REQUIRED"],
-            warnings=[],
+            errors=[lookup_error],
+            warnings=warnings,
             provenance={
                 "scope": "ROUND_10_PRODUCT_TO_ASSET_GENERATOR_PREVIEW_ONLY",
-                "product_lookup": "none",
+                "product_lookup": (
+                    "crud.get_product+product_catalog_read_model"
+                    if request.product_id
+                    else "none"
+                ),
             },
         )
 

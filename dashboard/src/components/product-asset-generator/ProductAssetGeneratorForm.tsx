@@ -1549,7 +1549,7 @@ export default function ProductAssetGeneratorForm({
 										</div>
 										<FieldShell
 											label="Database Product"
-											helper="Selecting a product uses product_id authority — scale truth, product physics, and label-safe framing all come from the product row."
+											helper="Selecting a product uses product_id preview authority. Canonical products resolve through product_id; reference-only rows stay preview-only and cannot drive production. Scale truth, product physics, and label-safe framing all come from the product row."
 										>
 											<SelectField
 												value={draft.product_id || ""}
@@ -1844,7 +1844,13 @@ export default function ProductAssetGeneratorForm({
 								))}
 							</select>
 
-							{/* Active preset card */}
+							<p className="mt-2 text-[11px] text-slate-400">
+									If the preset carries a product in hand, pick a database
+									product in Step 1 first. Use this profile in Prompt Preview
+									after Analyze — the manual override payload mirrors what
+									Prompt Preview consumes; preview stays preview-only.
+								</p>
+								{/* Active preset card */}
 							{activePreset ? (
 								<div className="mt-2 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
 									<div className="flex flex-wrap gap-2">
@@ -1871,7 +1877,7 @@ export default function ProductAssetGeneratorForm({
 							{/* Blocker warnings */}
 							{presetRequiresProductButMissing ? (
 								<div className="mt-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
-									⚠ Preset ini memerlukan database product. Sila pilih produk di Step 1.
+									⚠ Preset ini memerlukan database product. Sila pilih produk di Step 1. This preset requires a database product.
 								</div>
 							) : null}
 							{activePreset?.requiresCharacterReference &&
