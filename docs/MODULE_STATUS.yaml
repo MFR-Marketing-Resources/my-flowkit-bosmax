@@ -43,6 +43,10 @@ domains:
       - agent/services/prompt_compiler_runtime_config_service.py
       - agent/services/canonical_prompt_compiler.py
       - agent/services/avatar_registry.py
+      - agent/services/avatar_csv_factory_service.py
+      - tests/unit/test_avatar_csv_factory_service.py
+      - tests/api/test_avatar_csv_factory_api.py
+      - tests/ui/test_avatar_registry_csv_factory_ui_contract.py
       - agent/services/copy_landbank_service.py
       - agent/services/prompt_compiler_9_section.py
       - agent/services/prompt_output_composer.py
