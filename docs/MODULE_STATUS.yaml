@@ -4,6 +4,7 @@ domains:
     status: IN_PROGRESS
     owned_paths:
       - docs/MODULE_STATUS.yaml
+      - .ai/audits/BOSMAX_PRODUCT_PIPELINE_WIRING_SCOUT_AUDIT_V1.md
       - docs/agent-instructions/BOSMAX_AVATAR_REGISTRY_AGENT_INSTRUCTION.md
       - .gitignore
       - .ai/decisions/ADR-008-canonical-prompt-compiler-authority.md
