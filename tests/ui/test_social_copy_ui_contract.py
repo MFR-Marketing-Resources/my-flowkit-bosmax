@@ -26,6 +26,12 @@ def test_social_copy_panel_has_platform_specific_fields():
     assert "Hashtags" in src
     assert "Call to action (CTA)" in src
     assert "Tone / style" in src
+    # Language is operator-selectable (backend already persists `language`).
+    assert "Language" in src
+    for lang in ("Malay", "Malay slang", "English", "Mixed"):
+        assert lang in src, f"missing language option {lang}"
+    # …and the chosen language is sent on both create and update.
+    assert "language: form.language" in src
     # Approval workflow + claim-safe surfacing.
     assert "Approve" in src
     assert "Suggest copy" in src
@@ -63,6 +69,21 @@ def test_postiz_prefills_caption_from_approved_copy_package():
     assert 'status: "APPROVED"' in src
     assert "applyCopyPackage" in src
     assert "contentTouched" in src
+
+
+def test_postiz_prefill_is_provider_aware():
+    """Selecting a channel should recommend the matching platform's copy, map
+    known providers to platforms, and never override a manual caption."""
+    src = _read("dashboard/src/pages/PostizPublishPage.tsx")
+    assert "providerToPlatform" in src
+    assert "recommendedPlatforms" in src
+    assert "Recommended" in src
+    # Provider→platform coverage for the required platforms.
+    for provider in ("tiktok", "instagram", "facebook", "threads"):
+        assert f"{provider}:" in src, f"missing provider mapping {provider}"
+    assert "twitter:" in src  # x/twitter → x
+    # Auto-suggest must bail out on a manually-edited caption.
+    assert "if (contentTouched) return;" in src
 
 
 def test_existing_postiz_onboarding_contract_survives():

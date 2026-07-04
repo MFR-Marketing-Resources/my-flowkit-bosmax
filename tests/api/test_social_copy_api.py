@@ -45,6 +45,21 @@ async def test_generate_clean_copy_is_ready_and_compliant():
     assert pkg["blockers_json"] == []
 
 
+async def test_language_is_persisted_through_generate_and_update():
+    await _seed_artifact()
+    pkg = await api.generate(
+        GenerateRequest(
+            artifact_media_id=_MEDIA, platform="x",
+            caption="Compact dan senang bawa.", language="en",
+        )
+    )
+    assert pkg["language"] == "en"
+    edited = await api.update_package(
+        pkg["package_id"], UpdateRequest(language="ms-slang")
+    )
+    assert edited["language"] == "ms-slang"
+
+
 async def test_generate_rejects_unknown_artifact():
     with pytest.raises(HTTPException) as exc:
         await api.generate(

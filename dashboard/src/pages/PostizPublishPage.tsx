@@ -751,8 +751,48 @@ export default function PostizPublishPage() {
 		)
 			return;
 		setContent(composeCopy(pkg));
-		setContentTouched(false);
+		// An explicit choice sticks — the provider auto-suggest must not override it.
+		setContentTouched(true);
 	};
+
+	// Postiz channel provider → social copy platform (provider-aware recommend).
+	const providerToPlatform: Record<string, string> = {
+		tiktok: "tiktok",
+		instagram: "instagram",
+		facebook: "facebook",
+		x: "x",
+		twitter: "x",
+		threads: "threads",
+	};
+
+	// Platforms recommended by the currently selected channels that actually have
+	// an approved copy package for this artifact.
+	const recommendedPlatforms = useMemo(() => {
+		const set = new Set<string>();
+		for (const id of selectedChannelIds) {
+			const ch = integrations.find((c) => c.id === id);
+			const plat = ch?.provider
+				? providerToPlatform[ch.provider.toLowerCase()]
+				: undefined;
+			if (plat && copyPackages.some((p) => p.platform === plat)) set.add(plat);
+		}
+		return set;
+		// providerToPlatform is a stable literal.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [selectedChannelIds, integrations, copyPackages]);
+
+	// Auto-suggest the approved copy when the selected channel's provider maps to
+	// exactly ONE platform with approved copy and the operator hasn't edited or
+	// explicitly chosen a caption yet. Manual edits (contentTouched) are never
+	// overridden; ambiguous multi-provider selections only get "Recommended" chips.
+	useEffect(() => {
+		if (contentTouched) return;
+		if (recommendedPlatforms.size !== 1) return;
+		const plat = [...recommendedPlatforms][0];
+		const pkg = copyPackages.find((p) => p.platform === plat);
+		if (pkg) setContent(composeCopy(pkg));
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [recommendedPlatforms, copyPackages, contentTouched]);
 
 	const ready = setup?.ready === true;
 
@@ -1044,16 +1084,26 @@ export default function PostizPublishPage() {
 										Approved social copy for this artifact
 									</div>
 									<div className="flex flex-wrap gap-1.5">
-										{copyPackages.map((pkg) => (
-											<button
-												type="button"
-												key={pkg.package_id}
-												onClick={() => applyCopyPackage(pkg)}
-												className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-[11px] font-semibold text-blue-100 hover:bg-blue-500/20"
-											>
-												Use {pkg.platform.toUpperCase()} copy
-											</button>
-										))}
+										{copyPackages.map((pkg) => {
+											const recommended = recommendedPlatforms.has(
+												pkg.platform,
+											);
+											return (
+												<button
+													type="button"
+													key={pkg.package_id}
+													onClick={() => applyCopyPackage(pkg)}
+													className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-semibold hover:bg-blue-500/20 ${recommended ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-100" : "border-blue-500/40 bg-blue-500/10 text-blue-100"}`}
+												>
+													Use {pkg.platform.toUpperCase()} copy
+													{recommended && (
+														<span className="rounded bg-emerald-500/30 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-emerald-200">
+															Recommended
+														</span>
+													)}
+												</button>
+											);
+										})}
 									</div>
 									<div className="text-[10px] text-slate-500">
 										Click a platform to prefill the caption below — you can still

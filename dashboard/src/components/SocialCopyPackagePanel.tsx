@@ -39,7 +39,19 @@ interface FormState {
 	hashtags: string;
 	cta: string;
 	tone: string;
+	language: string;
 }
+
+// Copy language options. Values are persisted as-is on the package's `language`
+// column (default "ms"); labels are operator-facing.
+const LANGUAGE_OPTIONS: { value: string; label: string }[] = [
+	{ value: "ms", label: "Malay" },
+	{ value: "ms-slang", label: "Malay slang" },
+	{ value: "en", label: "English" },
+	{ value: "mixed", label: "Mixed" },
+];
+
+const DEFAULT_LANGUAGE = "ms";
 
 const EMPTY_FORM: FormState = {
 	caption: "",
@@ -47,6 +59,7 @@ const EMPTY_FORM: FormState = {
 	hashtags: "",
 	cta: "",
 	tone: "",
+	language: DEFAULT_LANGUAGE,
 };
 
 function parseHashtags(raw: string): string[] {
@@ -115,6 +128,7 @@ export default function SocialCopyPackagePanel({
 				hashtags: (current.hashtags_json ?? []).join(" "),
 				cta: current.call_to_action,
 				tone: current.tone,
+				language: current.language || DEFAULT_LANGUAGE,
 			});
 		} else {
 			setForm(EMPTY_FORM);
@@ -130,13 +144,14 @@ export default function SocialCopyPackagePanel({
 				source_mode: sourceMode,
 				product_name: productName ?? null,
 			});
-			setForm({
+			setForm((prev) => ({
 				caption: s.caption,
 				firstComment: s.first_comment,
 				hashtags: s.hashtags.join(" "),
 				cta: s.call_to_action,
 				tone: s.tone,
-			});
+				language: prev.language,
+			}));
 		} catch (e) {
 			setError(String(e));
 		} finally {
@@ -155,6 +170,7 @@ export default function SocialCopyPackagePanel({
 					hashtags: parseHashtags(form.hashtags),
 					call_to_action: form.cta,
 					tone: form.tone,
+					language: form.language,
 				});
 			} else {
 				await generateSocialCopyPackage({
@@ -166,6 +182,7 @@ export default function SocialCopyPackagePanel({
 					hashtags: parseHashtags(form.hashtags),
 					call_to_action: form.cta,
 					tone: form.tone,
+					language: form.language,
 				});
 			}
 			await load();
@@ -269,6 +286,23 @@ export default function SocialCopyPackagePanel({
 						placeholder="e.g. punchy, hook-driven"
 						className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-600"
 					/>
+				</label>
+
+				<label className="block space-y-1">
+					<span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+						Language
+					</span>
+					<select
+						value={form.language}
+						onChange={(e) => setForm({ ...form, language: e.target.value })}
+						className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-slate-100"
+					>
+						{LANGUAGE_OPTIONS.map((opt) => (
+							<option key={opt.value} value={opt.value}>
+								{opt.label}
+							</option>
+						))}
+					</select>
 				</label>
 
 				<label className="block space-y-1">
