@@ -50,6 +50,8 @@ export async function createWorkspaceExecutionPackage(input: {
 		block_index: number;
 		duration_seconds: number;
 	}>;
+	// Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
+	copy_set_id?: string | null;
 }): Promise<WorkspaceExecutionPackage> {
 	return postAPI<WorkspaceExecutionPackage>(
 		"/api/workspace/execution-package",
@@ -124,6 +126,8 @@ export async function compileWorkspacePromptPreview(input: {
 		block_index: number;
 		duration_seconds: number;
 	}>;
+	// Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
+	copy_set_id?: string | null;
 }): Promise<WorkspacePromptPreviewResult> {
 	return postAPI<WorkspacePromptPreviewResult>(
 		"/api/workspace/ugc-video-prompt-compile",

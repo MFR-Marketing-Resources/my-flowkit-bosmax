@@ -477,6 +477,20 @@ export interface ApprovedProductPackage {
 	source_of_truth_notes: string[];
 }
 
+// Copy Selection & Compiler Binding V1 — safe audit lineage for the selected
+// (or fallback) Copy Set. Never carries prompt-leaking internal metadata.
+export type CopyBindingStatus = "BOUND" | "NOT_SELECTED" | "REJECTED";
+export interface CopyBindingLineage {
+	copy_source: "selected_copy_set" | "landbank_fallback" | "claim_safe_fallback";
+	copy_binding_status: CopyBindingStatus;
+	copy_set_id: string | null;
+	copy_set_status: string | null;
+	copy_set_fingerprint: string | null;
+	copy_set_angle: string | null;
+	copy_set_hook_preview: string | null;
+	warning: string | null;
+}
+
 export interface WorkspaceExecutionPackage {
 	workspace_execution_package_id: string;
 	product_id: string;
@@ -498,6 +512,7 @@ export interface WorkspaceExecutionPackage {
 	production_generation_allowed: boolean;
 	manual_fallback: ApprovedProductPackage["manual_fallback"];
 	blockers: string[];
+	copy_binding?: CopyBindingLineage | null;
 	request_lineage_payload: {
 		product_id: string;
 		mode: WorkspaceMode;
@@ -572,6 +587,7 @@ export interface WorkspacePromptPreviewResult {
 	warnings: string[];
 	blockers: string[];
 	source_of_truth_notes: string[];
+	copy_binding?: CopyBindingLineage | null;
 	// WPS chaining enforcement metadata (present when engine_duration_target is
 	// supplied; optional so legacy responses remain valid).
 	wps_chaining_enforced?: boolean;
@@ -582,6 +598,56 @@ export interface WorkspacePromptPreviewResult {
 	actual_dialogue_word_count_per_block?: number[];
 	wps_status_per_block?: string[];
 }
+
+// ── Copy Set (Copy Strategy Studio) — approvable copywriting bundle that binds
+// into the deterministic final prompt compiler as copy_intelligence.
+export type CopySetStatus =
+	| "DRAFT_COPY"
+	| "COPY_REVIEW_REQUIRED"
+	| "COPY_APPROVED"
+	| "COPY_REJECTED";
+
+export interface CopySet {
+	copy_set_id: string;
+	product_id: string;
+	angle: string;
+	hook: string;
+	subhook: string;
+	usp_set: string[];
+	cta: string;
+	platform: string;
+	language: string;
+	route_type: string;
+	formula_family: string;
+	status: CopySetStatus;
+	dedupe_key: string;
+	source: string;
+	provenance: Record<string, unknown>;
+	claim_review: {
+		completeness?: { complete: boolean; missing_fields: string[] };
+		safety?: { safe: boolean; violations: string[]; detail?: Record<string, string> };
+		route_type?: string;
+		approved?: boolean;
+	};
+	reviewer_note: string | null;
+	approved_at: string | null;
+	approved_by: string | null;
+	created_at: string | null;
+	updated_at: string | null;
+}
+
+export interface CopySetListResponse {
+	product_id: string;
+	items: CopySet[];
+}
+
+export interface CopySetGenerateResponse {
+	copy_set: CopySet;
+	created: boolean;
+	dedupe_match: boolean;
+}
+
+export const COPY_SET_APPROVAL_PHRASE = "APPROVE_COPY_SET";
 
 export interface PromptCompilerRuntimeConfig {
 	generation_modes: PromptGenerationMode[];

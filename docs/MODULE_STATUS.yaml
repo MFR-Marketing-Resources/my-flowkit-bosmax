@@ -38,8 +38,15 @@ domains:
       - agent/api/copy_sets.py
       - agent/models/copy_set.py
       - agent/services/copy_set_service.py
+      - agent/services/copy_binding_service.py
       - tests/unit/test_copy_set_service.py
       - tests/api/test_copy_sets_api.py
+      - tests/unit/test_copy_binding_service.py
+      - tests/unit/test_copy_binding_workspace_integration.py
+      - tests/api/test_workspace_copy_binding_api.py
+      - dashboard/src/api/copySets.ts
+      - dashboard/src/components/workspace/CopySelectionPanel.tsx
+      - docs/COPY_SELECTION_AND_COMPILER_BINDING_FOUNDATION_V1.md
       - agent/api/product_registration.py
       - agent/api/fastmoss_bulk.py
       - agent/api/operator.py
