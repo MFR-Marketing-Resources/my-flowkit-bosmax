@@ -119,6 +119,39 @@ async def run_ws_server():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # Runtime-storage banner: print WHICH database this process is bound to, with
+    # live counts + git context, so a wrong-worktree launch (the audit's empty
+    # :8100 backend) is obvious at boot instead of after operator confusion.
+    try:
+        from agent import config as _cfg
+        from agent.db import crud as _crud
+        import subprocess as _sp
+
+        def _git(*a):
+            try:
+                return _sp.check_output(
+                    ["git", *a], cwd=str(_cfg.BASE_DIR),
+                    stderr=_sp.DEVNULL, text=True,
+                ).strip()
+            except Exception:
+                return "unknown"
+
+        _pc = await _crud.count_products()
+        _qs = await _crud.get_bulk_queue_stats()
+        _qc = int(_qs.get("total", 0))
+        logger.info(
+            "RUNTIME_STORAGE base_dir=%s db=%s products=%d queue=%d branch=%s sha=%s",
+            _cfg.BASE_DIR, _cfg.DB_PATH, _pc, _qc,
+            _git("rev-parse", "--abbrev-ref", "HEAD"), _git("rev-parse", "--short", "HEAD"),
+        )
+        if _pc == 0 and _qc > 0:
+            logger.warning(
+                "RUNTIME_STORAGE_WARNING active DB has queue rows but ZERO products "
+                "(%s) — likely the WRONG worktree DB. Verify base_dir above.",
+                _cfg.DB_PATH,
+            )
+    except Exception as _e:  # pragma: no cover - never block startup
+        logger.warning("RUNTIME_STORAGE banner unavailable: %s", _e)
     apply_runtime_provider_environment()
     logger.info("AI provider runtime environment hydrated from registry state")
 

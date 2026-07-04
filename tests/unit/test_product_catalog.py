@@ -80,7 +80,9 @@ def test_catalog_default_hides_test_products_and_prioritizes_ready_fastmoss():
         },
     ]
 
-    filtered = _filter_products_for_catalog(items, source=None, readiness=None)
+    filtered = _filter_products_for_catalog(
+        items, query=None, source=None, source_lane=None, readiness=None
+    )
 
     assert [item["id"] for item in filtered] == ["real_fastmoss", "manual_prod"]
 
@@ -91,7 +93,9 @@ def test_catalog_test_filter_only_returns_test_products():
         {"id": "real_fastmoss", "source": "FASTMOSS", "is_test_product": False, "updated_at": "2026-05-09T09:00:00", "created_at": "2026-05-09T09:00:00"},
     ]
 
-    filtered = _filter_products_for_catalog(items, source="TEST", readiness=None)
+    filtered = _filter_products_for_catalog(
+        items, query=None, source="TEST", source_lane=None, readiness=None
+    )
 
     assert [item["id"] for item in filtered] == ["test_prod_1"]
 

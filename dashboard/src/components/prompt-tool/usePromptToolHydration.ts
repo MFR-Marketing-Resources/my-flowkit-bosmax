@@ -160,24 +160,40 @@ export function usePromptToolHydration() {
 
 	return useMemo(() => {
 		const authorityContexts = state.authority?.product.contexts || [];
-		const productById = Object.fromEntries(
-			authorityContexts.map((context) => {
-				const repoProduct = state.products.find(
-					(product) => product.id === context.product_id,
-				);
-				return [context.product_id, mergeHydratedProduct(repoProduct, context)];
-			}),
-		) as Record<string, Product>;
+		// Build productById from the UNION of catalog products AND authority
+		// contexts. Catalog rows seed it so a selected product still resolves when
+		// authority context is empty (no more null-silence); authority contexts
+		// then overlay/enrich the shared fields where present.
+		const productById: Record<string, Product> = {};
+		for (const product of state.products) {
+			productById[product.id] = product;
+		}
+		const authorityContextIds = new Set<string>();
+		for (const context of authorityContexts) {
+			authorityContextIds.add(context.product_id);
+			const repoProduct = state.products.find(
+				(product) => product.id === context.product_id,
+			);
+			productById[context.product_id] = mergeHydratedProduct(
+				repoProduct,
+				context,
+			);
+		}
 
+		// An EMPTY authority options array must still fall back to catalog products
+		// (an empty array is truthy in JS — the old `|| fallback` silently kept the
+		// selector empty whenever authority returned zero options).
+		const authorityOptions = state.authority?.product.options;
 		const productOptions =
-			state.authority?.product.options ||
-			state.products.map((product) => ({
-				value: product.id,
-				label: `${product.product_display_name} (${product.id})`,
-				source_status: "PRODUCT_DERIVED",
-				warnings: [],
-				metadata: {},
-			} as BosmaxAuthorityOption));
+			authorityOptions && authorityOptions.length > 0
+				? authorityOptions
+				: state.products.map((product) => ({
+						value: product.id,
+						label: `${product.product_display_name} (${product.id})`,
+						source_status: "PRODUCT_DERIVED",
+						warnings: [],
+						metadata: {},
+					} as BosmaxAuthorityOption));
 		const characterOptions = state.authority?.character.character_options || [];
 		const avatarOptions = state.authority?.character.avatar_options || [];
 		const headwearOptions = state.authority?.character.headwear_suggestions || [];
@@ -253,6 +269,9 @@ export function usePromptToolHydration() {
 			sourceMatrix,
 			provenanceWarnings,
 			copySignalProducts,
+			hasAuthorityContext(productId: string | null | undefined) {
+				return productId ? authorityContextIds.has(productId) : false;
+			},
 			getProductContext(productId: string | null | undefined) {
 				return productId
 					? authorityContexts.find((context) => context.product_id === productId) ||

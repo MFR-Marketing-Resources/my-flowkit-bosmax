@@ -23,6 +23,16 @@ domains:
       - agent/api/flow.py
       - agent/api/creative_assets.py
       - agent/api/products.py
+      - agent/services/product_catalog_read_model.py
+      - agent/services/product_asset_generator_service.py
+      - tests/unit/test_product_catalog_read_model.py
+      - tests/api/test_product_catalog_state_api.py
+      - tests/api/test_runtime_storage_diagnostic_api.py
+      - tests/unit/test_product_asset_generator_state_aware_preview.py
+      - scripts/doctor-runtime-storage.py
+      - dashboard/src/components/prompt-tool/usePromptToolHydration.ts
+      - tests/ui/test_prompt_tool_catalog_fallback_contract.py
+      - .ai/audits/evidence/pr-197-counter-audit-2.md
       - agent/api/workspace_packages.py
       - agent/api/copy_sets.py
       - agent/models/copy_set.py

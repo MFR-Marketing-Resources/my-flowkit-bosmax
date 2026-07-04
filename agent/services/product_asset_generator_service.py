@@ -123,14 +123,59 @@ def _has_truthy_flag(raw_request: dict[str, Any], keys: set[str]) -> bool:
     return any(bool(raw_request.get(key)) for key in keys)
 
 
+# Product Truth Gateway lifecycle states this preview lane treats as
+# "exists in the pipeline but not yet a canonical product row" (mirrors
+# agent.services.product_catalog_read_model — kept as literals to avoid any
+# import-order coupling).
+_PRM_REFERENCE_ONLY = "REFERENCE_ONLY"
+_PRM_NOT_YET_CANONICAL_STATES = {
+    "READY_FOR_APPROVAL_PREVIEW_ONLY",
+    "PENDING_DRAFT",
+    "DUPLICATE_LINKED",
+    "BLOCKED_CLAIM_RISK",
+    "BLOCKED_MISSING_REQUIRED_FIELD",
+    "RUNTIME_STORAGE_UNVERIFIED",
+}
+
+
 async def _resolve_product_seed(
     request: ProductAssetGeneratorRequest,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if request.product_id:
         existing = await crud.get_product(request.product_id)
-        if not existing:
-            return None, "PRODUCT_NOT_FOUND"
-        return dict(existing), None
+        if existing:
+            return dict(existing), None
+        # The id is not itself a canonical product row. Ask the Product Truth
+        # Gateway what it IS and act on the gateway's own resolution — so preview
+        # and read model can never disagree.
+        try:
+            from agent.services import product_catalog_read_model as _prm
+
+            state = await _prm.resolve_product_state(request.product_id)
+        except Exception:
+            state = {}
+        product_state = state.get("product_state")
+        # Any state the gateway resolves to canonical truth — DUPLICATE_LINKED
+        # linked to an existing product, or a reference_id whose committed
+        # canonical product exists — loads THAT canonical row as the seed.
+        if (
+            state.get("preview_resolvable")
+            and state.get("canonical_status") == "CANONICAL"
+            and state.get("product_id")
+        ):
+            linked = await crud.get_product(state["product_id"])
+            if linked:
+                return dict(linked), None
+            # Gateway said canonical but the row vanished — fail closed.
+            return None, "PRODUCT_NOT_YET_CANONICAL"
+        # Otherwise return a STATE-AWARE, fail-closed error (never a generic
+        # PRODUCT_NOT_FOUND for pipeline ids): reference-only rows, not-yet
+        # canonical queue rows (incl. unresolved/duplicate-link-missing), etc.
+        if product_state == _PRM_REFERENCE_ONLY:
+            return None, "REFERENCE_ONLY_PREVIEW_REQUIRES_REGISTRATION"
+        if product_state in _PRM_NOT_YET_CANONICAL_STATES:
+            return None, "PRODUCT_NOT_YET_CANONICAL"
+        return None, "PRODUCT_NOT_FOUND"
 
     if request.product_payload:
         return dict(request.product_payload), None
@@ -1075,24 +1120,36 @@ async def generate_product_asset_preview(
             _unique_append(errors, error)
 
     product_seed, lookup_error = await _resolve_product_seed(request)
-    if lookup_error == "PRODUCT_NOT_FOUND":
-        return _build_failure_response(
-            request,
-            errors=["PRODUCT_NOT_FOUND"],
-            warnings=[],
-            provenance={
-                "scope": "ROUND_10_PRODUCT_TO_ASSET_GENERATOR_PREVIEW_ONLY",
-                "product_lookup": "crud.get_product",
-            },
+    if lookup_error:
+        # State-aware, fail-closed failure: the error code itself tells the
+        # operator why (canonical-missing vs reference-only vs not-yet-canonical
+        # vs no product context supplied). Never a silent generic confusion.
+        _state_aware_warnings = {
+            "REFERENCE_ONLY_PREVIEW_REQUIRES_REGISTRATION": (
+                "Reference-only FastMoss row cannot preview: register/commit it "
+                "to a canonical product first."
+            ),
+            "PRODUCT_NOT_YET_CANONICAL": (
+                "Product exists in the registration pipeline but has no committed "
+                "canonical product row yet."
+            ),
+        }
+        warnings = (
+            [_state_aware_warnings[lookup_error]]
+            if lookup_error in _state_aware_warnings
+            else []
         )
-    if lookup_error == "PRODUCT_CONTEXT_REQUIRED":
         return _build_failure_response(
             request,
-            errors=["PRODUCT_CONTEXT_REQUIRED"],
-            warnings=[],
+            errors=[lookup_error],
+            warnings=warnings,
             provenance={
                 "scope": "ROUND_10_PRODUCT_TO_ASSET_GENERATOR_PREVIEW_ONLY",
-                "product_lookup": "none",
+                "product_lookup": (
+                    "crud.get_product+product_catalog_read_model"
+                    if request.product_id
+                    else "none"
+                ),
             },
         )
 

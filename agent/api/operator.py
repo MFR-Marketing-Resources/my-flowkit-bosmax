@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
@@ -11,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from openpyxl import load_workbook
 from pydantic import BaseModel
 
+from agent import config as agent_config
 from agent.config import OPERATOR_PACK_DIR
 from agent.db import crud
 from agent.db.schema import get_db
@@ -905,3 +907,102 @@ async def build_blueprint(body: BlueprintInput):
             "Direct single-step T2V is not exposed as a native queue type in this repo. Verified operator paths are prompt -> image -> video or ingredients/refs -> video.",
         ],
     )
+
+
+@router.get("/runtime-storage-status")
+async def runtime_storage_status(include_authority_context_count: bool = False):
+    """Operator-visible proof of WHICH storage the running backend is bound to.
+
+    The audit found runtime DB binding unproven: the live API reported zero
+    products while a repo-local ``flow_agent.db`` held hundreds. The cause is a
+    process launched from a different worktree, so ``config.DB_PATH`` resolves to
+    THAT worktree's database. This endpoint runs INSIDE the live process, so its
+    counts come from the ACTUAL bound storage (``crud`` -> ``get_db`` -> DB_PATH).
+    Compare ``effective_db_path`` against the checkout you expect the data in.
+
+    Secrets are never exposed — only paths and row counts.
+    """
+    config_db_path = Path(str(agent_config.DB_PATH))
+    try:
+        effective_db_path = str(config_db_path.resolve())
+    except Exception:
+        effective_db_path = str(config_db_path)
+    db_exists = False
+    db_size_bytes: int | None = None
+    try:
+        db_exists = config_db_path.exists()
+        if db_exists:
+            db_size_bytes = config_db_path.stat().st_size
+    except Exception:
+        pass
+
+    # Counts come from the LIVE bound connection — this is the binding proof.
+    product_count: int | None = None
+    manual_product_count: int | None = None
+    queue_count: int | None = None
+    read_error: str | None = None
+    try:
+        product_count = await crud.count_products()
+        manual_product_count = await crud.count_products(source="MANUAL")
+        queue_stats = await crud.get_bulk_queue_stats()
+        queue_count = int(queue_stats.get("total", 0))
+    except Exception as exc:  # pragma: no cover - defensive
+        read_error = str(exc)
+
+    # Honesty (audit HOLD item D): the canonical product count is only a CEILING
+    # on authority contexts, not the real authority context count. The real count
+    # is computed from the authority registry ONLY when explicitly requested,
+    # because that path enriches every product row and is expensive.
+    canonical_product_count = product_count
+    authority_context_count_ceiling = product_count
+    authority_context_count: int | None = None
+    authority_context_count_source = "NOT_COMPUTED"
+    if include_authority_context_count:
+        try:
+            from agent.services.bosmax_authority_registry import (
+                get_prompt_tool_context,
+            )
+
+            ctx = await get_prompt_tool_context()
+            authority_context_count = len(ctx.product.contexts)
+            authority_context_count_source = (
+                "bosmax_authority_registry.get_prompt_tool_context"
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            authority_context_count_source = f"UNAVAILABLE:{exc}"
+
+    warnings: list[str] = []
+    if read_error:
+        warnings.append(f"STORAGE_READ_FAILED:{read_error}")
+    if product_count == 0 and (queue_count or 0) > 0:
+        warnings.append("ACTIVE_STORAGE_HAS_QUEUE_BUT_ZERO_PRODUCTS")
+    if product_count == 0 and manual_product_count == 0:
+        warnings.append("ACTIVE_STORAGE_HAS_ZERO_MANUAL_PRODUCTS")
+    if os.environ.get("FLOW_AGENT_DIR"):
+        warnings.append("FLOW_AGENT_DIR_OVERRIDE_ACTIVE")
+    try:
+        cwd = os.getcwd()
+        if str(config_db_path.parent.resolve()) != str(Path(cwd).resolve()):
+            warnings.append("DB_PATH_PARENT_DIFFERS_FROM_CWD")
+    except Exception:
+        cwd = ""
+
+    return {
+        "status": "ok" if not read_error else "degraded",
+        "cwd": cwd,
+        "base_dir": str(agent_config.BASE_DIR),
+        "flow_agent_dir_override": os.environ.get("FLOW_AGENT_DIR") or None,
+        "config_db_path": str(agent_config.DB_PATH),
+        "effective_db_path": effective_db_path,
+        "db_exists": db_exists,
+        "db_size_bytes": db_size_bytes,
+        "product_count": product_count,
+        "manual_product_count": manual_product_count,
+        "queue_count": queue_count,
+        "canonical_product_count": canonical_product_count,
+        "authority_context_count_ceiling": authority_context_count_ceiling,
+        "authority_context_count": authority_context_count,
+        "authority_context_count_source": authority_context_count_source,
+        "warnings": warnings,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }

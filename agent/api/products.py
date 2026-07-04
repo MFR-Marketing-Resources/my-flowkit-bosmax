@@ -61,6 +61,27 @@ from agent.utils.paths import product_image_path
 router = APIRouter(prefix="/products", tags=["products"])
 
 
+@router.get("/catalog-state/{identifier:path}")
+async def get_product_catalog_state(identifier: str):
+    """Product Truth Gateway read-model endpoint.
+
+    Returns the ONE normalized, lifecycle-aware product-state view for any
+    identifier (canonical product UUID or ``fastmoss-ref:*``). Every consumer
+    surface can call this to agree on whether an id is REFERENCE_ONLY,
+    READY_FOR_APPROVAL_PREVIEW_ONLY, APPROVED_CANONICAL, blocked, or unknown —
+    instead of each lane re-deriving identity differently.
+
+    ``authority_ids`` is sourced from the same ``product`` table the BOSMAX
+    authority registry iterates, so ``authority_context_available`` reflects the
+    truth: within one bound storage the catalog and authority cannot silently
+    disagree, and a cross-worktree storage split surfaces as zero authority ids.
+    """
+    from agent.services import product_catalog_read_model as _prm
+
+    authority_ids = {p["id"] for p in await crud.list_products(limit=5000)}
+    return await _prm.resolve_product_state(identifier, authority_ids=authority_ids)
+
+
 class ProductMapRequest(BaseModel):
     product_id: str | None = None
     product_name: str | None = None
@@ -491,6 +512,13 @@ async def _list_products_response(
             enriched.append(product)
             continue
         enriched.append(await _enrich_product(refreshed_product))
+
+    # Annotate every row with the shared Product Truth Gateway lifecycle state so
+    # the catalog surface cannot silently disagree with the read model / preview.
+    from agent.services.product_catalog_read_model import derive_catalog_state
+
+    for item in enriched:
+        item["catalog_state"] = derive_catalog_state(item)
 
     return {
         "total_count": total,
