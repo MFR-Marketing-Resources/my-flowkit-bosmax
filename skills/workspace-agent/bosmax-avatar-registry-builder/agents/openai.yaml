@@ -1,0 +1,12 @@
+interface:
+  display_name: BOSMAX Avatar Registry Builder
+  short_description: Builds and validates BOSMAX avatar registry CSV source rows for Workspace Agent workflows.
+  icon: 🧩
+  accent_color: '#14532D'
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+    - chatgpt
+    - codex
+  allow_implicit_invocation: true

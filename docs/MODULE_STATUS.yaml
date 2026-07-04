@@ -4,6 +4,7 @@ domains:
     status: IN_PROGRESS
     owned_paths:
       - docs/MODULE_STATUS.yaml
+      - docs/agent-instructions/BOSMAX_AVATAR_REGISTRY_AGENT_INSTRUCTION.md
       - .gitignore
       - .ai/decisions/ADR-008-canonical-prompt-compiler-authority.md
       - docs/authority/working/WORKSPACE_GENERATION_PACKAGE_AND_HANDOFF_BANK_PLAN_v0_1.md
@@ -224,3 +225,17 @@ domains:
       - tests/ui/test_cdp_file_chooser_poc_contract.py
       - tests/ui/test_flow_selector_registry_ui_contract.py
       - tests/ui/test_playwright_persistent_context_harness_contract.py
+      - skills/README.md
+      - skills/workspace-agent/bosmax-avatar-registry-builder/**
+      - skills/workspace-agent/bosmax-avatar-registry-builder/SKILL.md
+      - skills/workspace-agent/bosmax-avatar-registry-builder/agents/openai.yaml
+      - skills/workspace-agent/bosmax-avatar-registry-builder/assets/avatar_registry_template.seed.csv
+      - skills/workspace-agent/bosmax-avatar-registry-builder/assets/chatgpt_avatar_csv_generation_prompt.md
+      - skills/workspace-agent/bosmax-avatar-registry-builder/assets/icon.svg
+      - skills/workspace-agent/bosmax-avatar-registry-builder/references/avatar_category_planner.md
+      - skills/workspace-agent/bosmax-avatar-registry-builder/references/avatar_csv_schema.md
+      - skills/workspace-agent/bosmax-avatar-registry-builder/references/avatar_id_rules.md
+      - skills/workspace-agent/bosmax-avatar-registry-builder/references/avatar_prompt_rules.md
+      - skills/workspace-agent/bosmax-avatar-registry-builder/references/seed_bridge_mapping.md
+      - skills/workspace-agent/bosmax-avatar-registry-builder/references/validation_checklist.md
+      - skills/workspace-agent/bosmax-avatar-registry-builder/scripts/validate_avatar_registry_csv.py
