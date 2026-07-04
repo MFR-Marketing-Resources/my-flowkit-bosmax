@@ -546,13 +546,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		}
 
 		let inFlight = false;
+		// Telemetry rows are keyed by the backend job boundary mode (the HYBRID
+		// surface runs F2V jobs), so the embedded-route sync reports that mode.
+		const mode = jobMode;
 		const loadModeRequests = () => {
 			if (document.hidden || inFlight) {
 				return;
 			}
 			inFlight = true;
 			void fetchAPI<TelemetryRequest[]>(
-				`/api/telemetry/requests?limit=60&request_type=MANUAL_FLOW_JOB&mode=${encodeURIComponent(jobMode)}`,
+				`/api/telemetry/requests?limit=60&request_type=MANUAL_FLOW_JOB&mode=${encodeURIComponent(mode)}`,
 			)
 				.then(setModeRequests)
 				.catch(() => {})

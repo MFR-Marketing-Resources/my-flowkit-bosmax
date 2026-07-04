@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from agent.services.prompt_compiler_runtime_config_service import (
@@ -347,3 +347,98 @@ async def avatar_registry_status():
         "source": str(avatar_registry._active_pool_file()),
         "bridge_active": avatar_registry._BRIDGE_FILE.exists(),
     }
+
+
+# ── Avatar Registry CSV Factory: seed-schema candidate CSVs go through
+# validate -> stage -> operator review -> export/sync. Candidates NEVER write
+# the runtime bridge directly; sync merges approved rows through the existing
+# fail-closed sync_pool_csv door.
+
+class AvatarCsvFactoryReviewDecision(BaseModel):
+    row_index: int
+    decision: str = Field(pattern="(?i)^(approve|reject)$")
+
+
+class AvatarCsvFactoryReviewRequest(BaseModel):
+    decisions: list[AvatarCsvFactoryReviewDecision] = Field(min_length=1)
+
+
+@router.post("/avatar-registry/csv-factory/validate")
+async def avatar_csv_factory_validate(request: Request):
+    csv_bytes = await request.body()
+    if not csv_bytes:
+        raise HTTPException(422, "CSV body required")
+    from agent.services import avatar_csv_factory_service
+    report, _rows = avatar_csv_factory_service.validate_seed_csv(csv_bytes)
+    return report
+
+
+@router.post("/avatar-registry/csv-factory/import")
+async def avatar_csv_factory_import(request: Request, filename: str | None = Query(None)):
+    csv_bytes = await request.body()
+    if not csv_bytes:
+        raise HTTPException(422, "CSV body required")
+    from agent.services import avatar_csv_factory_service
+    try:
+        return avatar_csv_factory_service.import_seed_csv(csv_bytes, source_filename=filename)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/avatar-registry/csv-factory/batches")
+async def avatar_csv_factory_batches():
+    from agent.services import avatar_csv_factory_service
+    return {"batches": avatar_csv_factory_service.list_batches()}
+
+
+@router.get("/avatar-registry/csv-factory/batches/{batch_id}")
+async def avatar_csv_factory_batch_detail(batch_id: str):
+    from agent.services import avatar_csv_factory_service
+    try:
+        return avatar_csv_factory_service.get_batch(batch_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/avatar-registry/csv-factory/batches/{batch_id}/review")
+async def avatar_csv_factory_review(batch_id: str, request: AvatarCsvFactoryReviewRequest):
+    from agent.services import avatar_csv_factory_service
+    decisions = [d.model_dump() for d in request.decisions]
+    try:
+        return avatar_csv_factory_service.review_rows(batch_id, decisions)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/avatar-registry/csv-factory/batches/{batch_id}/export")
+async def avatar_csv_factory_export(batch_id: str):
+    from agent.services import avatar_csv_factory_service
+    try:
+        csv_text = avatar_csv_factory_service.export_approved_csv(batch_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="{batch_id}.approved.seed.csv"',
+        },
+    )
+
+
+@router.post("/avatar-registry/csv-factory/batches/{batch_id}/sync")
+async def avatar_csv_factory_sync(batch_id: str):
+    from agent.services import avatar_csv_factory_service
+    try:
+        return avatar_csv_factory_service.sync_approved_to_bridge(batch_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
