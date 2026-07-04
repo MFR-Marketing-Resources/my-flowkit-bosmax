@@ -94,7 +94,12 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
     monkeypatch.setattr("agent.services.workspace_execution_package_service.compile_workspace_prompt_preview", fake_compile)
     monkeypatch.setattr("agent.services.workspace_execution_package_service.crud.create_or_replace_workspace_execution_package", fake_store)
 
-    result = await create_workspace_execution_package("prod-001", "F2V", 8, "9:16", "Veo 3.1 - Lite", False)
+    # copy_fallback_confirmed=True: this test exercises package mechanics, not the
+    # copy gate; no Copy Set is selected so fallback must be intentionally confirmed
+    # (Explicit-Fallback-Confirmation V1).
+    result = await create_workspace_execution_package(
+        "prod-001", "F2V", 8, "9:16", "Veo 3.1 - Lite", False, copy_fallback_confirmed=True
+    )
 
     assert result["readiness"] == "READY"
     assert result["resolved_assets"][0]["asset_source"] == "PRODUCT_IMAGE_CACHE"
@@ -235,6 +240,7 @@ async def test_workspace_execution_package_preserves_extend_lineage(monkeypatch)
             {"block_index": 1, "duration_seconds": 10},
             {"block_index": 2, "duration_seconds": 6},
         ],
+        copy_fallback_confirmed=True,  # no Copy Set selected — fallback confirmed
     )
 
     assert result["generation_mode"] == "EXTEND"

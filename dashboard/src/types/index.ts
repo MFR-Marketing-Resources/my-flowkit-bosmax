@@ -489,6 +489,12 @@ export interface CopyBindingLineage {
 	copy_set_angle: string | null;
 	copy_set_hook_preview: string | null;
 	warning: string | null;
+	// Explicit-Fallback-Confirmation V1 — present only when final generation ran
+	// with operator-confirmed fallback (no approved Copy Set selected).
+	copy_fallback_confirmed?: boolean;
+	copy_fallback_confirmation_required?: boolean;
+	copy_fallback_confirmation_source?: string;
+	copy_fallback_policy?: string;
 }
 
 export interface WorkspaceExecutionPackage {

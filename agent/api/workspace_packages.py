@@ -58,6 +58,10 @@ class WorkspaceExecutionPackageRequest(BaseModel):
     # Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
     # Optional — when absent the compiler uses its existing fallback copy.
     copy_set_id: str | None = None
+    # Explicit-Fallback-Confirmation V1: final generation with NO approved Copy
+    # Set requires the operator to intentionally confirm fallback usage. Preview
+    # never needs this (see WorkspacePromptCompileRequest — deliberately absent).
+    copy_fallback_confirmed: bool = False
 
 
 class WorkspacePromptCompileRequest(BaseModel):
@@ -111,6 +115,7 @@ async def post_workspace_execution_package(request: WorkspaceExecutionPackageReq
             engine_duration_target=request.engine_duration_target,
             requested_total_duration_seconds=request.requested_total_duration_seconds,
             copy_set_id=request.copy_set_id,
+            copy_fallback_confirmed=request.copy_fallback_confirmed,
         )
     except CopyBindingError as exc:
         raise HTTPException(

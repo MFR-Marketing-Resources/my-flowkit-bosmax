@@ -47,9 +47,16 @@ ERR_NOT_FOUND = "COPY_SET_NOT_FOUND"
 ERR_PRODUCT_MISMATCH = "COPY_SET_PRODUCT_MISMATCH"
 ERR_NOT_APPROVED = "COPY_SET_NOT_APPROVED"
 ERR_BINDING_FAILED = "COPY_SET_BINDING_FAILED"
+# Explicit-Fallback-Confirmation V1: final generation (not preview) with no
+# approved Copy Set selected must be intentionally confirmed by the operator.
+ERR_FALLBACK_CONFIRMATION_REQUIRED = "COPY_SET_FALLBACK_CONFIRMATION_REQUIRED"
 
 # ─── Degraded-mode warning (no explicit selection) ──────────
 WARN_NOT_SELECTED = "COPY_SET_NOT_SELECTED"
+
+# ─── Fallback confirmation policy (lineage audit) ───────────
+COPY_FALLBACK_POLICY = "explicit_confirmation_v1"
+COPY_FALLBACK_CONFIRMATION_SOURCE = "operator"
 
 
 class CopyBindingError(Exception):
