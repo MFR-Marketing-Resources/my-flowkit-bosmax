@@ -83,6 +83,51 @@ def test_catalog_state_reports_approved_canonical_with_authority(monkeypatch):
     assert body["authority_context_available"] is True
 
 
+def test_products_list_annotates_every_row_with_catalog_state(monkeypatch):
+    canonical = {
+        "id": "prod-canon-1",
+        "source": "MANUAL",
+        "reference_only": False,
+        "fastmoss_reference_id": "fastmoss-ref:link1",
+        "product_display_name": "Canon 1",
+        "raw_product_title": "Canon 1",
+        "updated_at": "2026-05-01T00:00:00Z",
+        "created_at": "2026-05-01T00:00:00Z",
+    }
+    reference = {
+        "id": "fastmoss-ref:ann1",
+        "source": "FASTMOSS",
+        "source_lane": "FASTMOSS_REFERENCE",
+        "reference_only": True,
+        "product_display_name": "Ref 1",
+        "raw_product_title": "Ref 1",
+        "updated_at": "2026-05-01T00:00:00Z",
+        "created_at": "2026-05-01T00:00:00Z",
+    }
+
+    async def fake_list_products(**kwargs):
+        return [canonical]
+
+    async def fake_enrich(product):
+        return product
+
+    async def fake_refs(limit=500):
+        return [reference]
+
+    monkeypatch.setattr("agent.api.products.crud.list_products", fake_list_products)
+    monkeypatch.setattr("agent.api.products._enrich_product", fake_enrich)
+    monkeypatch.setattr("agent.api.products.list_fastmoss_reference_products", fake_refs)
+
+    client = TestClient(_build_app())
+    body = client.get("/api/products?limit=50").json()
+    by_id = {item["id"]: item for item in body["items"]}
+
+    assert by_id["prod-canon-1"]["catalog_state"]["product_state"] == "APPROVED_CANONICAL"
+    assert by_id["prod-canon-1"]["catalog_state"]["production_allowed"] is True
+    assert by_id["fastmoss-ref:ann1"]["catalog_state"]["product_state"] == "REFERENCE_ONLY"
+    assert by_id["fastmoss-ref:ann1"]["catalog_state"]["production_allowed"] is False
+
+
 def test_catalog_state_unknown_id_fails_closed(monkeypatch):
     async def none_(*a, **k):
         return None

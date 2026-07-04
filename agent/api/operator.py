@@ -910,7 +910,7 @@ async def build_blueprint(body: BlueprintInput):
 
 
 @router.get("/runtime-storage-status")
-async def runtime_storage_status():
+async def runtime_storage_status(include_authority_context_count: bool = False):
     """Operator-visible proof of WHICH storage the running backend is bound to.
 
     The audit found runtime DB binding unproven: the live API reported zero
@@ -940,18 +940,36 @@ async def runtime_storage_status():
     product_count: int | None = None
     manual_product_count: int | None = None
     queue_count: int | None = None
-    authority_context_count: int | None = None
     read_error: str | None = None
     try:
         product_count = await crud.count_products()
         manual_product_count = await crud.count_products(source="MANUAL")
         queue_stats = await crud.get_bulk_queue_stats()
         queue_count = int(queue_stats.get("total", 0))
-        # Authority builds exactly one product context per canonical product row,
-        # so the canonical product count is the authority context ceiling.
-        authority_context_count = product_count
     except Exception as exc:  # pragma: no cover - defensive
         read_error = str(exc)
+
+    # Honesty (audit HOLD item D): the canonical product count is only a CEILING
+    # on authority contexts, not the real authority context count. The real count
+    # is computed from the authority registry ONLY when explicitly requested,
+    # because that path enriches every product row and is expensive.
+    canonical_product_count = product_count
+    authority_context_count_ceiling = product_count
+    authority_context_count: int | None = None
+    authority_context_count_source = "NOT_COMPUTED"
+    if include_authority_context_count:
+        try:
+            from agent.services.bosmax_authority_registry import (
+                get_prompt_tool_context,
+            )
+
+            ctx = await get_prompt_tool_context()
+            authority_context_count = len(ctx.product.contexts)
+            authority_context_count_source = (
+                "bosmax_authority_registry.get_prompt_tool_context"
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            authority_context_count_source = f"UNAVAILABLE:{exc}"
 
     warnings: list[str] = []
     if read_error:
@@ -981,8 +999,10 @@ async def runtime_storage_status():
         "product_count": product_count,
         "manual_product_count": manual_product_count,
         "queue_count": queue_count,
+        "canonical_product_count": canonical_product_count,
+        "authority_context_count_ceiling": authority_context_count_ceiling,
         "authority_context_count": authority_context_count,
-        "authority_context_count_source": "canonical_product_row_count",
+        "authority_context_count_source": authority_context_count_source,
         "warnings": warnings,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

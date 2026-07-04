@@ -45,7 +45,10 @@ def test_runtime_storage_status_reports_binding_fields(monkeypatch):
         "product_count",
         "manual_product_count",
         "queue_count",
+        "canonical_product_count",
+        "authority_context_count_ceiling",
         "authority_context_count",
+        "authority_context_count_source",
         "warnings",
         "timestamp",
     ):
@@ -53,8 +56,13 @@ def test_runtime_storage_status_reports_binding_fields(monkeypatch):
     assert body["product_count"] == 508
     assert body["manual_product_count"] == 210
     assert body["queue_count"] == 298
-    # Authority builds one context per canonical product row.
-    assert body["authority_context_count"] == 508
+    assert body["canonical_product_count"] == 508
+    # CEILING is honest (authority builds <= one context per product row).
+    assert body["authority_context_count_ceiling"] == 508
+    # The REAL authority count is NOT computed unless explicitly requested —
+    # it is not overstated as the product count.
+    assert body["authority_context_count"] is None
+    assert body["authority_context_count_source"] == "NOT_COMPUTED"
     assert isinstance(body["warnings"], list)
 
 

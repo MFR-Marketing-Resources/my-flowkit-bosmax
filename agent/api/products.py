@@ -513,6 +513,13 @@ async def _list_products_response(
             continue
         enriched.append(await _enrich_product(refreshed_product))
 
+    # Annotate every row with the shared Product Truth Gateway lifecycle state so
+    # the catalog surface cannot silently disagree with the read model / preview.
+    from agent.services.product_catalog_read_model import derive_catalog_state
+
+    for item in enriched:
+        item["catalog_state"] = derive_catalog_state(item)
+
     return {
         "total_count": total,
         "returned_count": len(enriched),

@@ -71,6 +71,7 @@ def _view(
     reference_id: str | None = None,
     draft_id: str | None = None,
     committed_product_id: str | None = None,
+    linked_product_id: str | None = None,
     source: str | None = None,
     source_lane: str | None = None,
     reference_only: bool = False,
@@ -93,6 +94,7 @@ def _view(
         "reference_id": reference_id,
         "draft_id": draft_id,
         "committed_product_id": committed_product_id,
+        "linked_product_id": linked_product_id,
         "source": source,
         "source_lane": source_lane,
         "reference_only": reference_only,
@@ -280,20 +282,34 @@ async def resolve_product_state(
             blocked_reason="EMPTY_IDENTIFIER",
         )
 
-    # 1) Canonical committed product row (authoritative truth).
+    # 1) Canonical committed product row looked up by its own id (truth).
     product = await crud.get_product(identifier)
     if product:
         return _canonical_view(
             product, identifier=identifier, authority_ids=authority_ids
         )
 
-    # 2) Bulk queue row keyed by reference_id (may point forward to a product).
     queue = await crud.get_bulk_queue_row(identifier)
+
+    # 2) reference_id -> canonical fallback. Even if the queue row is missing or
+    #    stale, a committed canonical product carrying this fastmoss_reference_id
+    #    IS canonical truth and must resolve (audit HOLD item C).
+    linked_by_reference = await crud.get_product_by_fastmoss_reference_id(identifier)
+    if linked_by_reference:
+        return _canonical_view(
+            linked_by_reference,
+            identifier=identifier,
+            authority_ids=authority_ids,
+            reference_id=identifier,
+            draft_id=(queue or {}).get("draft_id"),
+        )
+
     if reference_index is None:
         reference_index = await _load_reference_index()
     ref = reference_index.get(identifier)
 
     if queue:
+        status = (queue.get("promotion_status") or "").upper()
         committed_id = queue.get("committed_product_id")
         if committed_id:
             committed = await crud.get_product(committed_id)
@@ -312,6 +328,8 @@ async def resolve_product_state(
             view["committed_product_id"] = committed_id
             view["blocked_reason"] = "COMMITTED_PRODUCT_NOT_IN_ACTIVE_STORAGE"
             return view
+        if status == "DUPLICATE_LINKED":
+            return await _duplicate_linked_view(queue, ref, authority_ids)
         return _queue_view(queue, ref)
 
     # 3) Reference-only row (visible for review, not canonical).
@@ -324,6 +342,76 @@ async def resolve_product_state(
         identifier=identifier,
         blocked_reason="NO_LINEAGE_FOR_IDENTIFIER",
     )
+
+
+async def _duplicate_linked_view(
+    queue: dict[str, Any],
+    ref: dict[str, Any] | None,
+    authority_ids: set[str] | None,
+) -> dict[str, Any]:
+    """A DUPLICATE_LINKED queue row points at a pre-existing product via
+    ``linked_product_id`` (existing FastMoss policy: "use linked Product Truth
+    for content generation"). Resolve that link so the state matches policy."""
+    view = _queue_view(queue, ref)  # base: DUPLICATE_LINKED, non-canonical
+    linked_id = queue.get("linked_product_id")
+    view["linked_product_id"] = linked_id
+    if not linked_id:
+        view["blocked_reason"] = "DUPLICATE_LINK_UNRESOLVED"
+        return view
+    linked = await crud.get_product(linked_id)
+    if not linked:
+        # Linked id present but its product row is not in the active storage.
+        view["product_state"] = PRODUCT_STATE_RUNTIME_STORAGE_UNVERIFIED
+        view["blocked_reason"] = "LINKED_PRODUCT_NOT_IN_ACTIVE_STORAGE"
+        return view
+    # Linked to existing canonical product truth: production follows policy.
+    view["product_id"] = linked_id
+    view["reference_only"] = False
+    view["canonical_status"] = CANONICAL_STATUS_CANONICAL
+    view["preview_resolvable"] = True
+    view["production_allowed"] = True
+    view["authority_context_available"] = (
+        authority_ids is None or linked_id in authority_ids
+    )
+    view["blocked_reason"] = None
+    view["mapping_summary"] = _mapping_summary(linked)
+    view["claim_gate_summary"] = _claim_gate_summary(linked)
+    view["image_readiness_summary"] = _image_readiness_summary(linked)
+    return view
+
+
+def derive_catalog_state(row: dict[str, Any]) -> dict[str, Any]:
+    """Pure, DB-free classifier for a row already assembled by ``/api/products``
+    (a persisted product row or a merged FastMoss reference row). Lets that
+    endpoint annotate every item with the SAME lifecycle vocabulary the gateway
+    uses, so the catalog surface cannot silently disagree with the read model.
+
+    Only the two states a catalog row can be in are produced here (REFERENCE_ONLY
+    vs APPROVED_CANONICAL); queue-only states are resolved via
+    ``resolve_product_state`` on the Smart Registration side."""
+    if row.get("reference_only"):
+        return {
+            "product_state": PRODUCT_STATE_REFERENCE_ONLY,
+            "canonical_status": CANONICAL_STATUS_NOT_CANONICAL,
+            "reference_only": True,
+            "preview_allowed": True,
+            "preview_resolvable": False,
+            "production_allowed": False,
+            "product_id": None,
+            "reference_id": row.get("id") or row.get("reference_id"),
+            "blocked_reason": "REFERENCE_ONLY_REQUIRES_REGISTRATION",
+        }
+    return {
+        "product_state": PRODUCT_STATE_APPROVED_CANONICAL,
+        "canonical_status": CANONICAL_STATUS_CANONICAL,
+        "reference_only": False,
+        "preview_allowed": True,
+        "preview_resolvable": True,
+        "production_allowed": True,
+        "product_id": row.get("id"),
+        "reference_id": row.get("fastmoss_reference_id"),
+        "blocked_reason": None,
+    }
 
 
 async def resolve_product_states(

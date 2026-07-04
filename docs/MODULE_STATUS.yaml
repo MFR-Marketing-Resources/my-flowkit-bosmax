@@ -29,6 +29,9 @@ domains:
       - tests/api/test_product_catalog_state_api.py
       - tests/api/test_runtime_storage_diagnostic_api.py
       - tests/unit/test_product_asset_generator_state_aware_preview.py
+      - scripts/doctor-runtime-storage.py
+      - dashboard/src/components/prompt-tool/usePromptToolHydration.ts
+      - tests/ui/test_prompt_tool_catalog_fallback_contract.py
       - agent/api/workspace_packages.py
       - agent/api/copy_sets.py
       - agent/models/copy_set.py

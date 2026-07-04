@@ -382,6 +382,21 @@ async def create_product(raw_product_title: str, source: str = "FASTMOSS", produ
     return await _get_with_db(db, "product", "id", pid)
 
 async def get_product(pid: str): return await _get("product", "id", pid)
+async def get_product_by_fastmoss_reference_id(reference_id: str):
+    """Return the canonical product row committed from a FastMoss reference, if
+    any. Enables reference_id -> canonical fallback when a queue row is missing
+    or stale. Prefers an active (non-archived) row."""
+    if not reference_id:
+        return None
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product WHERE fastmoss_reference_id=? "
+        "ORDER BY CASE WHEN COALESCE(lifecycle_status,'ACTIVE')='ACTIVE' THEN 0 ELSE 1 END, "
+        "created_at DESC LIMIT 1",
+        (reference_id,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
 async def update_product(pid: str, **kw): return await _update("product", "id", pid, **kw)
 async def delete_product(pid: str): return await _delete("product", "id", pid)
 

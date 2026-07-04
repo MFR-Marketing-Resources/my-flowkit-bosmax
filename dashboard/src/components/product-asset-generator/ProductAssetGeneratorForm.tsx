@@ -1312,6 +1312,10 @@ export default function ProductAssetGeneratorForm({
 	const selectedFieldProvenance = hydration.getFieldProvenance(
 		selectedAuthorityContext,
 	);
+	// Explicit state, not null silence: a catalog product can be selected without
+	// a BOSMAX authority context — say so instead of silently degrading.
+	const selectedProductMissingAuthority =
+		!!selectedProduct && !hydration.hasAuthorityContext(draft.product_id);
 
 	useEffect(() => {
 		if (!draft.product_id) {
@@ -1560,6 +1564,14 @@ export default function ProductAssetGeneratorForm({
 										</FieldShell>
 									</div>
 
+									{selectedProductMissingAuthority ? (
+										<p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+											⚠ No BOSMAX authority context for this product — preview
+											uses product_id row truth only. Copy signals and
+											authority-derived fields may be incomplete until
+											authority is hydrated.
+										</p>
+									) : null}
 									{/* 1C: Scene Context (Optional — character consistency) */}
 									<div className="mt-3 rounded-2xl border border-slate-700 bg-slate-950 p-3">
 										<button

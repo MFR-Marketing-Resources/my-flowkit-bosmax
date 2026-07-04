@@ -167,6 +167,94 @@ async def test_unknown_identifier_fails_closed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_duplicate_linked_with_resolvable_linked_product():
+    linked = await crud.create_product(
+        "Existing Truth",
+        source="MANUAL",
+        product_display_name="Existing Truth",
+        product_short_name="Existing Truth",
+        claim_risk_level="LOW",
+    )
+    await _seed_queue(
+        "fastmoss-ref:dup111",
+        promotion_status="DUPLICATE_LINKED",
+        linked_product_id=linked["id"],
+    )
+    view = await prm.resolve_product_state(
+        "fastmoss-ref:dup111", authority_ids={linked["id"]}
+    )
+    assert view["product_state"] == prm.PRODUCT_STATE_DUPLICATE_LINKED
+    assert view["linked_product_id"] == linked["id"]
+    assert view["product_id"] == linked["id"]
+    assert view["canonical_status"] == prm.CANONICAL_STATUS_CANONICAL
+    assert view["production_allowed"] is True  # existing FastMoss policy: use linked truth
+    assert view["preview_resolvable"] is True
+    assert view["authority_context_available"] is True
+    assert view["blocked_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_duplicate_linked_with_missing_linked_product():
+    await _seed_queue(
+        "fastmoss-ref:dup222",
+        promotion_status="DUPLICATE_LINKED",
+        linked_product_id="ghost-linked-uuid",
+    )
+    view = await prm.resolve_product_state("fastmoss-ref:dup222")
+    assert view["product_state"] == prm.PRODUCT_STATE_RUNTIME_STORAGE_UNVERIFIED
+    assert view["linked_product_id"] == "ghost-linked-uuid"
+    assert view["blocked_reason"] == "LINKED_PRODUCT_NOT_IN_ACTIVE_STORAGE"
+    assert view["production_allowed"] is False
+
+
+@pytest.mark.asyncio
+async def test_duplicate_linked_without_linked_product_id():
+    await _seed_queue("fastmoss-ref:dup333", promotion_status="DUPLICATE_LINKED")
+    view = await prm.resolve_product_state("fastmoss-ref:dup333")
+    assert view["product_state"] == prm.PRODUCT_STATE_DUPLICATE_LINKED
+    assert view["blocked_reason"] == "DUPLICATE_LINK_UNRESOLVED"
+    assert view["production_allowed"] is False
+
+
+@pytest.mark.asyncio
+async def test_reference_id_resolves_to_canonical_when_queue_missing(monkeypatch):
+    # No queue row for this reference, but a committed canonical product carries
+    # its fastmoss_reference_id — the canonical row must win (audit HOLD item C).
+    _patch_reference(monkeypatch, [{"id": "fastmoss-ref:iii999", "reference_only": True}])
+    product = await crud.create_product(
+        "Committed Via Ref",
+        source="MANUAL",
+        product_display_name="Committed Via Ref",
+        product_short_name="Committed Via Ref",
+        fastmoss_reference_id="fastmoss-ref:iii999",
+    )
+    view = await prm.resolve_product_state("fastmoss-ref:iii999")
+    assert view["product_state"] == prm.PRODUCT_STATE_APPROVED_CANONICAL
+    assert view["product_id"] == product["id"]
+    assert view["reference_id"] == "fastmoss-ref:iii999"
+    assert view["canonical_status"] == prm.CANONICAL_STATUS_CANONICAL
+
+
+def test_derive_catalog_state_reference_row():
+    state = prm.derive_catalog_state(
+        {"id": "fastmoss-ref:x", "reference_only": True}
+    )
+    assert state["product_state"] == prm.PRODUCT_STATE_REFERENCE_ONLY
+    assert state["production_allowed"] is False
+    assert state["preview_resolvable"] is False
+
+
+def test_derive_catalog_state_canonical_row():
+    state = prm.derive_catalog_state(
+        {"id": "prod-1", "reference_only": False, "fastmoss_reference_id": "fastmoss-ref:y"}
+    )
+    assert state["product_state"] == prm.PRODUCT_STATE_APPROVED_CANONICAL
+    assert state["canonical_status"] == prm.CANONICAL_STATUS_CANONICAL
+    assert state["product_id"] == "prod-1"
+    assert state["reference_id"] == "fastmoss-ref:y"
+
+
+@pytest.mark.asyncio
 async def test_authority_context_available_tracks_authority_id_set():
     # Within one bound storage, authority (which iterates the product table) and
     # the read model cannot silently disagree: a canonical product present in the
