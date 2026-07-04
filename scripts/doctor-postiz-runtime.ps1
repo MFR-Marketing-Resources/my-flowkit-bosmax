@@ -91,7 +91,11 @@ function Test-EnvKey { param($m, $k) return ($m.Contains($k) -and -not [string]:
 $enabledVal = if ($m.Contains('POSTIZ_ENABLED')) { [string]$m['POSTIZ_ENABLED'] } else { '' }
 $enabledTrue = ($enabledVal.Trim().ToLower() -eq 'true')
 $baseUrlSet = (Test-EnvKey $m 'POSTIZ_BASE_URL')
-$keyPresent = ((Test-EnvKey $m 'POSTIZ_API_KEY') -and ([string]$m['POSTIZ_API_KEY'] -ne '<paste key>'))
+# Mirror the backend's _is_real_api_key: any `<...>` template (e.g. `<paste key>`,
+# `<paste-key>`) reads as MISSING, not present.
+$rawKey = if ($m.Contains('POSTIZ_API_KEY')) { ([string]$m['POSTIZ_API_KEY']).Trim() } else { '' }
+$keyIsPlaceholder = ($rawKey.StartsWith('<') -and $rawKey.EndsWith('>'))
+$keyPresent = ((Test-EnvKey $m 'POSTIZ_API_KEY') -and -not $keyIsPlaceholder)
 $prefixSet = (Test-EnvKey $m 'POSTIZ_API_PREFIX')
 
 Write-Host "POSTIZ_ENABLED_TRUE=$($enabledTrue.ToString().ToLower())"

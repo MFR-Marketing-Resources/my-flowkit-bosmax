@@ -194,7 +194,10 @@ It checks the runtime `.env` names, probes the Postiz base URL (with the same
 
 > **Reading the Setup Doctor:** `problems: []` together with `ready: false` and
 > `integrations_count: 0` is **healthy** — it means only the owner OAuth channel
-> connect is left. A red state always carries a `problems` code.
+> connect is left. A red state always carries a `problems` code. A `<paste key>`
+> placeholder (no real key pasted yet) reads as `POSTIZ_API_KEY_MISSING`
+> everywhere — a **config problem** (`CONFIG_PROBLEMS`), never mistaken for a
+> present key or the connect-a-channel state.
 
 **Security (non-negotiable):** never commit or upload `.env`, `.env.backup-*`,
 `.env.bak`, or the API key; never paste the key into logs, screenshots, or PRs.
