@@ -54,6 +54,24 @@ python setup.py clean     # Remove generated configs
 
 ---
 
+## Governance
+
+### `skills/fk:*.md`
+
+- Flow Kit slash-command skills.
+- Discovered by `setup.py`.
+- Used by Claude, Gemini, and Codex command surfaces.
+- Repo source files are the committed `skills/fk:*.md` documents that back the `fk:<name>` command namespace.
+
+### `skills/workspace-agent/*`
+
+- ChatGPT Workspace Agent Skill source packs.
+- Not discovered by `setup.py`.
+- Inert unless manually packaged and uploaded into a Workspace Agent surface.
+- Not runtime authority for Flow Kit execution, backend behavior, or extension behavior.
+
+---
+
 ## Full Example: "Luna the Space Cat" (3 scenes, vertical)
 
 This walkthrough shows exactly how an AI agent uses skills to go from idea to final video.
