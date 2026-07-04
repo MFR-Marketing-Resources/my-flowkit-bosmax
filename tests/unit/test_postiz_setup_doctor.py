@@ -172,3 +172,26 @@ async def test_localhost_ipv6_trap_is_detected_with_exact_fix(monkeypatch):
     assert status["safe_env_example"]["POSTIZ_BASE_URL"] == "http://127.0.0.1:5000"
     # The module-level template itself stays untouched.
     assert pz.SAFE_ENV_EXAMPLE["POSTIZ_BASE_URL"] == "http://localhost:5000"
+
+
+async def test_healthy_zero_channels_is_not_a_config_problem(monkeypatch):
+    """Contract the runtime doctor (scripts/doctor-postiz-runtime.ps1) classifies
+    on: fully configured + reachable + zero connected channels must report
+    `problems: []` with `ready: false`. That combination is
+    OWNER_CHANNEL_OAUTH_REQUIRED (connect a channel), NOT a config failure — so
+    the doctor must never flag it red."""
+    _env(monkeypatch, POSTIZ_ENABLED="true",
+         POSTIZ_BASE_URL="http://localhost:5000", POSTIZ_API_KEY="k")
+    _no_probe(monkeypatch, reachable=True)
+
+    async def fake_list():
+        return []
+
+    monkeypatch.setattr(pz, "list_integrations", fake_list)
+    status = await pz.setup_status()
+    assert status["health_ok"] is True
+    assert status["postiz_reachable"] is True
+    assert status["integrations_count"] == 0
+    assert status["ready"] is False
+    # The load-bearing assertion for the prevention tooling: NO problem codes.
+    assert status["problems"] == []
