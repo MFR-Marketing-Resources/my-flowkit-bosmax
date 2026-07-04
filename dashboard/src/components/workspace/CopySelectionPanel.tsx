@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
 	approveCopySet,
+	generateAICopyCandidate,
 	generateCopySet,
 	listCopySetsForProduct,
 } from "../../api/copySets";
@@ -65,6 +66,10 @@ export default function CopySelectionPanel({
 	const [error, setError] = useState<string | null>(null);
 	const [busyId, setBusyId] = useState<string | null>(null);
 	const [isGenerating, setIsGenerating] = useState(false);
+	// AI Copy Assist V1 — generates candidate Copy Sets (review-required).
+	const [isAiAssisting, setIsAiAssisting] = useState(false);
+	const [aiNotes, setAiNotes] = useState("");
+	const [aiNotice, setAiNotice] = useState<string | null>(null);
 
 	const load = useCallback(async () => {
 		if (!productId) {
@@ -113,6 +118,34 @@ export default function CopySelectionPanel({
 		}
 	};
 
+	const handleAiAssist = async () => {
+		if (!productId) return;
+		setIsAiAssisting(true);
+		setError(null);
+		setAiNotice(null);
+		try {
+			const res = await generateAICopyCandidate({
+				product_id: productId,
+				...(aiNotes.trim() ? { operator_notes: aiNotes.trim() } : {}),
+			});
+			await load();
+			const created = res.candidates.filter((c) => c.created).length;
+			const reused = res.candidates.length - created;
+			setAiNotice(
+				`AI-assisted draft — review required. ${created} new, ${reused} deduped. Not approved until you approve it.`,
+			);
+			setAiNotes("");
+		} catch (e) {
+			// Fail-closed provider states surface here (e.g.
+			// AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED).
+			setError(
+				e instanceof Error ? e.message : "AI Copy Assist failed.",
+			);
+		} finally {
+			setIsAiAssisting(false);
+		}
+	};
+
 	const handleApprove = async (copySetId: string) => {
 		setBusyId(copySetId);
 		setError(null);
@@ -153,15 +186,44 @@ export default function CopySelectionPanel({
 				<div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
 					Copy Selection — {productName ?? productId}
 				</div>
-				<button
-					type="button"
-					onClick={() => void handleGenerate()}
-					disabled={disabled || isGenerating}
-					className="rounded-lg border border-fuchsia-500/40 bg-fuchsia-500/15 px-3 py-1.5 text-[11px] font-semibold text-fuchsia-100 hover:bg-fuchsia-500/25 disabled:opacity-50 transition-colors"
-				>
-					{isGenerating ? "Generating…" : "Generate Copy Set"}
-				</button>
+				<div className="flex items-center gap-2">
+					<button
+						type="button"
+						onClick={() => void handleAiAssist()}
+						disabled={disabled || isAiAssisting}
+						title="Generate an AI-assisted draft candidate (review required — never auto-approved)"
+						className="rounded-lg border border-violet-500/40 bg-violet-500/15 px-3 py-1.5 text-[11px] font-semibold text-violet-100 hover:bg-violet-500/25 disabled:opacity-50 transition-colors"
+					>
+						{isAiAssisting ? "AI Drafting…" : "AI Assist Draft Copy Set"}
+					</button>
+					<button
+						type="button"
+						onClick={() => void handleGenerate()}
+						disabled={disabled || isGenerating}
+						className="rounded-lg border border-fuchsia-500/40 bg-fuchsia-500/15 px-3 py-1.5 text-[11px] font-semibold text-fuchsia-100 hover:bg-fuchsia-500/25 disabled:opacity-50 transition-colors"
+					>
+						{isGenerating ? "Generating…" : "Generate Copy Set"}
+					</button>
+				</div>
 			</div>
+
+			{/* AI Copy Assist V1 — optional brief note; output is a review-required
+			    candidate, never auto-approved and never bound until approved. */}
+			<div className="mb-3 flex items-center gap-2">
+				<input
+					type="text"
+					value={aiNotes}
+					onChange={(e) => setAiNotes(e.target.value)}
+					disabled={disabled || isAiAssisting}
+					placeholder="Optional AI brief — desired angle / hook direction / notes"
+					className="flex-1 rounded-lg border border-violet-500/30 bg-slate-950/60 px-3 py-1.5 text-[11px] text-slate-200 placeholder:text-slate-500 focus:border-violet-500/60 focus:outline-none disabled:opacity-50"
+				/>
+			</div>
+			{aiNotice ? (
+				<div className="mb-3 rounded-lg border border-violet-500/30 bg-violet-500/5 px-3 py-2 text-[11px] text-violet-200">
+					{aiNotice}
+				</div>
+			) : null}
 
 			{/* Deterministic-compiler note (mission H5) */}
 			<div className="mb-3 rounded-lg border border-slate-700/40 bg-slate-950/50 px-3 py-2 text-[10px] leading-relaxed text-slate-400">

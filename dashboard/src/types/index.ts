@@ -653,6 +653,20 @@ export interface CopySetGenerateResponse {
 	dedupe_match: boolean;
 }
 
+// AI Copy Assist V1 — candidate generator (never auto-approved).
+export interface AICopyCandidate {
+	copy_set: CopySet;
+	created: boolean;
+	dedupe_match: boolean;
+	safety: { safe: boolean; violations: string[]; detail?: Record<string, string> };
+	warnings: string[];
+}
+
+export interface AICopyAssistResponse {
+	provider: { lane: string; configured: boolean; provider_id: string | null };
+	candidates: AICopyCandidate[];
+}
+
 export const COPY_SET_APPROVAL_PHRASE = "APPROVE_COPY_SET";
 
 export interface PromptCompilerRuntimeConfig {

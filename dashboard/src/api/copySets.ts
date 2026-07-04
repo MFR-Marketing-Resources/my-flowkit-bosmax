@@ -1,4 +1,5 @@
 import type {
+	AICopyAssistResponse,
 	CopySet,
 	CopySetGenerateResponse,
 	CopySetListResponse,
@@ -31,6 +32,25 @@ export async function generateCopySet(input: {
 	formula_family?: string;
 }): Promise<CopySetGenerateResponse> {
 	return postAPI<CopySetGenerateResponse>("/api/copy-sets/generate", input);
+}
+
+// AI Copy Assist — generate reviewable candidate Copy Set(s). Candidates come
+// back as COPY_REVIEW_REQUIRED and must be approved before they can be selected.
+export async function generateAICopyCandidate(input: {
+	product_id: string;
+	angle?: string;
+	hook?: string;
+	subhook?: string;
+	usp_set?: string[];
+	cta?: string;
+	platform?: string;
+	language?: string;
+	route_type?: string;
+	formula_family?: string;
+	operator_notes?: string;
+	candidate_count?: number;
+}): Promise<AICopyAssistResponse> {
+	return postAPI<AICopyAssistResponse>("/api/copy-sets/ai-assist", input);
 }
 
 export async function regenerateCopySet(
