@@ -1115,6 +1115,22 @@ export type AIProviderId =
 	| "gemini"
 	| "deepseek";
 
+export type AIRoutingProviderId = AIProviderId | "deterministic";
+export type AIExecutionMode = "disabled" | "registry_only" | "live";
+export type AILaneId =
+	| "product_image_analysis"
+	| "copywriting_assist"
+	| "angle_hook_subhook_expansion"
+	| "claim_risk_qa"
+	| "product_truth_extraction"
+	| "video_review"
+	| "final_prompt_compiler";
+export type AIModelCatalogStatus =
+	| "available"
+	| "registry_only"
+	| "experimental"
+	| "deprecated";
+
 export interface AIProviderSummary {
 	provider_id: AIProviderId;
 	label: string;
@@ -1132,6 +1148,52 @@ export interface AIProviderSummary {
 export interface AIProviderRegistry {
 	active_provider: AIProviderId | null;
 	providers: AIProviderSummary[];
+}
+
+export interface AIModelCatalogEntry {
+	provider_id: AIRoutingProviderId;
+	model_id: string;
+	label: string;
+	capability_tags: string[];
+	recommended_lanes: AILaneId[];
+	status: AIModelCatalogStatus;
+	notes: string | null;
+	default_for_lanes: AILaneId[];
+	locked: boolean;
+}
+
+export interface AIModelCatalogProvider {
+	provider_id: AIRoutingProviderId;
+	label: string;
+	models: AIModelCatalogEntry[];
+}
+
+export interface AIModelCatalog {
+	providers: AIModelCatalogProvider[];
+}
+
+export interface AIRoutingLane {
+	lane_id: AILaneId;
+	label: string;
+	description: string;
+	provider_id: AIRoutingProviderId;
+	provider_label: string;
+	model_id: string;
+	model_label: string;
+	enabled: boolean;
+	execution_mode: AIExecutionMode;
+	locked: boolean;
+	updated_at: string | null;
+	source: string;
+	provider_has_key: boolean;
+	provider_key_status: "CONFIGURED" | "MISSING" | "NOT_REQUIRED";
+	live_supported: boolean;
+	is_executable_now: boolean;
+	warnings: string[];
+}
+
+export interface AIRoutingRegistry {
+	lanes: AIRoutingLane[];
 }
 
 export interface TelemetrySummary {

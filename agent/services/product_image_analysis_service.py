@@ -16,9 +16,9 @@ from agent.models.product_intelligence import (
     ProductIntelligenceImageAnalysis,
 )
 from agent.services.ai_provider_settings_service import (
+    get_ai_lane_model,
     get_lane_api_key,
     get_lane_provider,
-    get_provider_api_key,
     is_lane_execution_enabled,
 )
 
@@ -31,6 +31,7 @@ PRODUCT_IMAGE_ANALYSIS_MODEL = os.environ.get(
     "PRODUCT_IMAGE_ANALYSIS_MODEL",
     REVIEW_MODEL,
 )
+PRODUCT_IMAGE_ANALYSIS_LANE = "product_image_analysis"
 ALLOWED_PACKAGE_CLASSES = {
     "bottle",
     "refill_pouch",
@@ -177,6 +178,7 @@ def _normalize_text_list(value: Any, *, limit: int = 12) -> list[str]:
 
 def _normalize_provider_result(
     provider: str,
+    model_id: str,
     parsed: dict[str, Any],
 ) -> ProductIntelligenceImageAnalysis:
     detected_package = _normalize_text(parsed.get("detected_package"))
@@ -202,7 +204,7 @@ def _normalize_provider_result(
         visual_confidence=visual_confidence,
         evidence=[
             f"provider:{provider}",
-            f"provider:model:{PRODUCT_IMAGE_ANALYSIS_MODEL}",
+            f"provider:model:{model_id}",
         ],
         warnings=warnings,
         provider=provider,
@@ -222,35 +224,36 @@ def _extract_response_text(response: Any) -> str:
 def _analyze_with_anthropic(
     payload: dict[str, Any],
     metadata: dict[str, Any],
+    model_id: str,
 ) -> ProductIntelligenceImageAnalysis | None:
     try:
         import anthropic
 
         local_path = _coerce_local_path(_normalize_text(payload.get("local_image_path")))
         image_url = _normalize_text(payload.get("image_url"))
-        client = anthropic.Anthropic(api_key=get_lane_api_key("vision"))
+        client = anthropic.Anthropic(api_key=get_lane_api_key(PRODUCT_IMAGE_ANALYSIS_LANE))
         content = _build_anthropic_content(
             payload,
             local_path=local_path,
             image_url=image_url,
         )
         response = client.messages.create(
-            model=PRODUCT_IMAGE_ANALYSIS_MODEL,
+            model=model_id,
             max_tokens=400,
             messages=[{"role": "user", "content": content}],
         )
         parsed = _parse_json_response(_extract_response_text(response))
-        return _normalize_provider_result("anthropic", parsed)
+        return _normalize_provider_result("anthropic", model_id, parsed)
     except Exception as exc:  # fail closed; outer layer maps to ANALYSIS_FAILED
         logger.warning("Anthropic product image analysis failed: %s", exc)
         return None
 
 
 def _configured_provider_name() -> str | None:
-    provider = get_lane_provider("vision")
+    provider = get_lane_provider(PRODUCT_IMAGE_ANALYSIS_LANE)
     if not provider:
         return None
-    if get_lane_api_key("vision"):
+    if get_lane_api_key(PRODUCT_IMAGE_ANALYSIS_LANE):
         return provider
     return None
 
@@ -266,11 +269,12 @@ def _build_reference_payload(source: dict[str, Any]) -> dict[str, Any]:
 
 def _analyze_with_provider(
     provider: str,
+    model_id: str,
     payload: dict[str, Any],
     metadata: dict[str, Any],
 ) -> ProductIntelligenceImageAnalysis | None:
     if provider == "anthropic":
-        return _analyze_with_anthropic(payload, metadata)
+        return _analyze_with_anthropic(payload, metadata, model_id)
     # Tests may monkeypatch this function to simulate future providers.
     _ = (payload, metadata)
     return None
@@ -288,6 +292,7 @@ def analyze_product_image_payload(
     metadata: dict[str, Any] = {}
     evidence: list[str] = []
     warnings: list[str] = []
+    route_model_id = get_ai_lane_model(PRODUCT_IMAGE_ANALYSIS_LANE) or PRODUCT_IMAGE_ANALYSIS_MODEL
 
     if image_url:
         evidence.append("image_reference:image_url_present")
@@ -399,6 +404,7 @@ def analyze_product_image_payload(
         warnings.append(PROVIDER_EXECUTION_DISABLED_WARNING)
         evidence.append("provider_execution:disabled")
         metadata["configured_provider"] = provider
+        metadata["configured_model"] = route_model_id
         return ProductIntelligenceImageAnalysis(
             status="ANALYSIS_SKIPPED",
             image_url=image_url,
@@ -415,7 +421,7 @@ def analyze_product_image_payload(
             metadata=metadata,
         ).model_dump()
 
-    if not is_lane_execution_enabled("vision"):
+    if not is_lane_execution_enabled(PRODUCT_IMAGE_ANALYSIS_LANE):
         warnings.extend(
             warning
             for warning in [
@@ -426,6 +432,7 @@ def analyze_product_image_payload(
         )
         evidence.append("provider_execution:vision_lane_disabled")
         metadata["configured_provider"] = provider
+        metadata["configured_model"] = route_model_id
         return ProductIntelligenceImageAnalysis(
             status="ANALYSIS_SKIPPED",
             image_url=image_url,
@@ -442,7 +449,7 @@ def analyze_product_image_payload(
             metadata=metadata,
         ).model_dump()
 
-    analyzed = _analyze_with_provider(provider, payload, metadata)
+    analyzed = _analyze_with_provider(provider, route_model_id, payload, metadata)
     if analyzed is None:
         return ProductIntelligenceImageAnalysis(
             status="ANALYSIS_FAILED",

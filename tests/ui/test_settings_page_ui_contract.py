@@ -26,6 +26,16 @@ def test_settings_page_exposes_ai_provider_registry_controls():
         "OpenAI",
         "Gemini",
         "DeepSeek",
+        "AI Model Routing",
+        "/api/ai-model-catalog",
+        "/api/ai-routing",
+        "Update Route",
+        "Reset AI Routing",
+        "final_prompt_compiler",
+        "bosmax-canonical-compiler",
+        "product_image_analysis",
+        "copywriting_assist",
+        "video_review",
     ]:
         assert token in src
 

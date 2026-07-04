@@ -76,7 +76,7 @@ def test_configured_provider_returns_analyzed_payload_and_merges_metadata(monkey
     )
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service._analyze_with_provider",
-        lambda provider, payload, metadata: ProductIntelligenceImageAnalysis(
+        lambda provider, model_id, payload, metadata: ProductIntelligenceImageAnalysis(
             status="ANALYZED",
             image_url=None,
             local_image_path=None,
@@ -123,7 +123,7 @@ def test_configured_provider_failure_falls_closed_to_analysis_failed(monkeypatch
     )
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service._analyze_with_provider",
-        lambda provider, payload, metadata: None,
+        lambda provider, model_id, payload, metadata: None,
     )
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service.is_lane_execution_enabled",
@@ -152,7 +152,7 @@ def test_provider_execution_can_be_disabled_for_non_explicit_read_paths(monkeypa
     )
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service._analyze_with_provider",
-        lambda provider, payload, metadata: (_ for _ in ()).throw(
+        lambda provider, model_id, payload, metadata: (_ for _ in ()).throw(
             AssertionError("provider should not execute when disabled")
         ),
     )
@@ -185,7 +185,7 @@ def test_vision_lane_toggle_can_disable_provider_execution_even_for_explicit_ana
     )
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service._analyze_with_provider",
-        lambda provider, payload, metadata: (_ for _ in ()).throw(
+        lambda provider, model_id, payload, metadata: (_ for _ in ()).throw(
             AssertionError("provider should not execute when vision lane is disabled")
         ),
     )

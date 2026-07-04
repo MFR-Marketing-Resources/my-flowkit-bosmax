@@ -30,7 +30,12 @@ from agent.config import BASE_DIR
 from agent.services.registration_hook_cta_generation_service import (
     generate_registration_hook_cta,
 )
-from agent.services.ai_provider_settings_service import get_lane_api_key, get_provider_api_key, is_lane_execution_enabled
+from agent.services.ai_provider_settings_service import (
+	get_ai_lane_model,
+	get_lane_api_key,
+	get_lane_provider,
+	is_lane_execution_enabled,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -42,6 +47,7 @@ QWEN_FALLBACK_BASE_URLS = [
     "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
 ]
+COPYWRITING_ASSIST_LANE = "copywriting_assist"
 
 
 AI_FORM_ACCEPTED_FORMATS = [
@@ -386,15 +392,21 @@ def _extract_qwen_usp_suggestions(
     if not source_text:
         return []
 
-    api_key = get_lane_api_key("text_assist")
-    if not api_key:
-        return []
-    if not is_lane_execution_enabled("text_assist"):
-        LOGGER.info("Qwen USP extraction skipped: text_assist lane execution disabled")
+    provider_id = get_lane_provider(COPYWRITING_ASSIST_LANE)
+    if provider_id != "qwen":
         return []
 
+    api_key = get_lane_api_key(COPYWRITING_ASSIST_LANE)
+    if not api_key:
+        return []
+    if not is_lane_execution_enabled(COPYWRITING_ASSIST_LANE):
+        LOGGER.info("Qwen USP extraction skipped: copywriting_assist lane execution disabled")
+        return []
+
+    route_model_id = get_ai_lane_model(COPYWRITING_ASSIST_LANE) or QWEN_TEXT_MODEL
+
     payload = {
-        "model": QWEN_TEXT_MODEL,
+        "model": route_model_id,
         "temperature": 0.1,
         "messages": [
             {

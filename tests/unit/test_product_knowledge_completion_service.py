@@ -9,10 +9,6 @@ def _disable_live_providers(monkeypatch):
     Patches both the old get_provider_api_key (legacy callers) and the new
     lane-based get_lane_api_key in both consuming services."""
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_provider_api_key",
-        lambda provider_id: "",
-    )
-    monkeypatch.setattr(
         "agent.services.product_knowledge_service.get_lane_api_key",
         lambda lane: None,
     )
@@ -252,8 +248,12 @@ def test_complete_product_knowledge_qwen_enriches_usp_list_for_manual_lane(monke
             }
 
     monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_lane_provider",
+        lambda lane: "qwen" if lane == "copywriting_assist" else None,
+    )
+    monkeypatch.setattr(
         "agent.services.product_knowledge_service.get_lane_api_key",
-        lambda lane: "sk-qwen" if lane == "text_assist" else None,
+        lambda lane: "sk-qwen" if lane == "copywriting_assist" else None,
     )
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.httpx.post",
@@ -322,8 +322,12 @@ def test_complete_product_knowledge_qwen_falls_back_to_next_region(monkeypatch):
         )
 
     monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_lane_provider",
+        lambda lane: "qwen" if lane == "copywriting_assist" else None,
+    )
+    monkeypatch.setattr(
         "agent.services.product_knowledge_service.get_lane_api_key",
-        lambda lane: "sk-qwen" if lane == "text_assist" else None,
+        lambda lane: "sk-qwen" if lane == "copywriting_assist" else None,
     )
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.httpx.post",
@@ -369,8 +373,12 @@ def test_complete_product_knowledge_qwen_retries_next_region_after_request_error
         return _MockResponse()
 
     monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_lane_provider",
+        lambda lane: "qwen" if lane == "copywriting_assist" else None,
+    )
+    monkeypatch.setattr(
         "agent.services.product_knowledge_service.get_lane_api_key",
-        lambda lane: "sk-qwen" if lane == "text_assist" else None,
+        lambda lane: "sk-qwen" if lane == "copywriting_assist" else None,
     )
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.httpx.post",
@@ -391,8 +399,12 @@ def test_complete_product_knowledge_qwen_retries_next_region_after_request_error
 
 def test_complete_product_knowledge_qwen_fails_closed(monkeypatch):
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_provider_api_key",
-        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+        "agent.services.product_knowledge_service.get_lane_provider",
+        lambda lane: "qwen" if lane == "copywriting_assist" else None,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_lane_api_key",
+        lambda lane: "sk-qwen" if lane == "copywriting_assist" else None,
     )
 
     def _raise_http_error(*args, **kwargs):
@@ -422,8 +434,12 @@ def test_complete_product_knowledge_qwen_skips_affiliate_lane(monkeypatch):
         raise AssertionError("Qwen should not be called for FASTMOSS lane")
 
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_provider_api_key",
-        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+        "agent.services.product_knowledge_service.get_lane_provider",
+        lambda lane: "qwen" if lane == "copywriting_assist" else None,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_lane_api_key",
+        lambda lane: "sk-qwen" if lane == "copywriting_assist" else None,
     )
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.httpx.post",
@@ -449,8 +465,12 @@ def test_complete_product_knowledge_qwen_does_not_override_declared_benefits(mon
         raise AssertionError("Qwen should not be called when benefits_text already exists")
 
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_provider_api_key",
-        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+        "agent.services.product_knowledge_service.get_lane_provider",
+        lambda lane: "qwen" if lane == "copywriting_assist" else None,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_lane_api_key",
+        lambda lane: "sk-qwen" if lane == "copywriting_assist" else None,
     )
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.httpx.post",
@@ -472,17 +492,21 @@ def test_complete_product_knowledge_qwen_does_not_override_declared_benefits(mon
     assert "QWEN_USP_SUGGESTION_APPLIED" not in response.warnings
 
 
-def test_complete_product_knowledge_qwen_skips_when_text_assist_lane_disabled(monkeypatch):
+def test_complete_product_knowledge_qwen_skips_when_copywriting_assist_lane_disabled(monkeypatch):
     def _unexpected_http_call(*args, **kwargs):
-        raise AssertionError("Qwen should not be called when text_assist lane is disabled")
+        raise AssertionError("Qwen should not be called when copywriting_assist lane is disabled")
 
     monkeypatch.setattr(
+        "agent.services.product_knowledge_service.get_lane_provider",
+        lambda lane: "qwen" if lane == "copywriting_assist" else None,
+    )
+    monkeypatch.setattr(
         "agent.services.product_knowledge_service.get_lane_api_key",
-        lambda lane: "sk-qwen" if lane == "text_assist" else None,
+        lambda lane: "sk-qwen" if lane == "copywriting_assist" else None,
     )
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.is_lane_execution_enabled",
-        lambda lane: False if lane == "text_assist" else True,
+        lambda lane: False if lane == "copywriting_assist" else True,
     )
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.httpx.post",

@@ -17,8 +17,10 @@
 			"dashboard/src/pages/OperatorPage.tsx",
 			"dashboard/src/pages/ProductAssetGeneratorPage.tsx",
 			"dashboard/src/pages/ProductRegistrationPage.tsx",
+			"dashboard/src/pages/SettingsPage.tsx",
 			"dashboard/src/pages/ProductsSalesAnalyzerPage.tsx",
 			"dashboard/src/pages/WorkspaceJobsPage.tsx",
+			"dashboard/src/types/index.ts",
 			"extension/background.js",
 			"extension/popup.js",
 			"extension/side_panel.js"

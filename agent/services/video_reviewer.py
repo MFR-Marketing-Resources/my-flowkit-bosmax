@@ -22,16 +22,16 @@ from agent.config import REVIEW_MODEL, REVIEW_FPS_LIGHT, REVIEW_FPS_DEEP, REVIEW
 from agent.db.crud import list_scenes, get_project_characters
 from agent.models.review import DimensionScores, SceneReview, SegmentScore, VideoError, VideoReview
 from agent.services.ai_provider_settings_service import (
-    get_active_provider_id,
+    get_ai_lane_model,
     get_lane_api_key,
     get_lane_provider,
-    get_provider_api_key,
     is_lane_execution_enabled,
 )
 
 logger = logging.getLogger(__name__)
 
 VISION_PROVIDER_EXECUTION_DISABLED_ERROR = "VISION_PROVIDER_EXECUTION_DISABLED"
+VIDEO_REVIEW_LANE = "video_review"
 
 
 # ─── Scoring helpers ─────────────────────────────────────────
@@ -340,12 +340,13 @@ async def _analyze_sdk(
 ) -> dict:
     """Send individual frames to Claude Vision via Anthropic SDK."""
     import anthropic
-    api_key = get_lane_api_key("vision")
+    api_key = get_lane_api_key(VIDEO_REVIEW_LANE)
     if not api_key:
         raise RuntimeError("VISION_LANE_KEY_NOT_CONFIGURED")
     client = anthropic.AsyncAnthropic(api_key=api_key)
     character_names = _parse_character_names(scene)
     prompt_text = _build_prompt(len(frames), fps, scene)
+    route_model_id = get_ai_lane_model(VIDEO_REVIEW_LANE) or REVIEW_MODEL
 
     content = []
     for char in characters:
@@ -365,7 +366,7 @@ async def _analyze_sdk(
     content.append({"type": "text", "text": prompt_text})
 
     response = await client.messages.create(
-        model=REVIEW_MODEL, max_tokens=1024,
+        model=route_model_id, max_tokens=1024,
         messages=[{"role": "user", "content": content}],
     )
     return _parse_json_response(response.content[0].text)
@@ -388,7 +389,7 @@ async def review_scene_video(
 
     if not video_url:
         raise ValueError(f"No video URL found for scene {scene['id']} ({orientation})")
-    if get_lane_provider("vision") == "anthropic" and not is_lane_execution_enabled("vision"):
+    if get_lane_provider(VIDEO_REVIEW_LANE) == "anthropic" and not is_lane_execution_enabled(VIDEO_REVIEW_LANE):
         raise RuntimeError(VISION_PROVIDER_EXECUTION_DISABLED_ERROR)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -408,9 +409,9 @@ async def review_scene_video(
             await _download_via_get_media(media_id, video_path)
 
         if (
-            get_lane_provider("vision") == "anthropic"
-            and get_lane_api_key("vision")
-            and is_lane_execution_enabled("vision")
+            get_lane_provider(VIDEO_REVIEW_LANE) == "anthropic"
+            and get_lane_api_key(VIDEO_REVIEW_LANE)
+            and is_lane_execution_enabled(VIDEO_REVIEW_LANE)
         ):
             # SDK path: individual frames
             logger.info("Extracting frames at %sfps (SDK mode)", fps)
