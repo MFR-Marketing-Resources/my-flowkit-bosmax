@@ -145,11 +145,20 @@ API key ever appears.**
 
 ### Product Knowledge (`text_assist`)
 
-The Qwen USP-extraction path honors the operator-selected `text_assist` model
-**only when the lane provider is qwen** (that path is a qwen-specific transport).
-When the lane points at a non-qwen provider it keeps the env/default qwen model —
-documented limitation, not a silent wrong-model call. Default configuration
-(qwen / `qwen-plus`) is unchanged.
+Product Knowledge Qwen USP extraction is a **Qwen-specific enhancement**: it posts
+to the Qwen/DashScope `/chat/completions` endpoint. It is **fail-closed** at the
+provider boundary:
+
+- It runs **only when the `text_assist` lane provider is `qwen`**. In that case it
+  reads the Qwen lane key (`get_lane_api_key("text_assist")`) and uses the
+  operator-selected Qwen model (`get_lane_model`, e.g. `qwen-max`).
+- If the `text_assist` lane provider is **non-Qwen** (anthropic / openai / gemini /
+  deepseek), Qwen USP extraction is **skipped before any key is read** and returns
+  `[]` (logged: `Qwen USP extraction skipped: text_assist lane provider is not qwen`).
+  A non-Qwen key is **never** sent to the Qwen endpoint. This remains skipped until
+  a generalized non-Qwen transport is implemented and tested.
+
+Default configuration (qwen / `qwen-plus`) is unchanged.
 
 ### Environment overrides
 

@@ -407,6 +407,14 @@ def _extract_qwen_usp_suggestions(
     if not source_text:
         return []
 
+    # PROVIDER-BOUNDARY GUARD (fail closed): this is a Qwen-specific transport
+    # (posts to the Qwen/DashScope /chat/completions endpoint). It must NEVER read
+    # or send a non-Qwen lane key. If the operator has routed the text_assist lane
+    # to any non-Qwen provider, skip extraction entirely — before any key is read.
+    if get_lane_provider("text_assist") != "qwen":
+        LOGGER.info("Qwen USP extraction skipped: text_assist lane provider is not qwen")
+        return []
+
     api_key = get_lane_api_key("text_assist")
     if not api_key:
         return []
