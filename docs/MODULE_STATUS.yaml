@@ -80,6 +80,12 @@ domains:
       - .env.example
       - dashboard/src/pages/PostizPublishPage.tsx
       - dashboard/src/api/postiz.ts
+      - agent/api/social_copy_packages.py
+      - agent/services/social_copy_package_service.py
+      - dashboard/src/api/socialCopyPackages.ts
+      - dashboard/src/components/SocialCopyPackagePanel.tsx
+      - tests/api/test_social_copy_api.py
+      - tests/ui/test_social_copy_ui_contract.py
       - agent/models/workspace_generation_package.py
       - agent/db/crud.py
       - agent/api/flow.py

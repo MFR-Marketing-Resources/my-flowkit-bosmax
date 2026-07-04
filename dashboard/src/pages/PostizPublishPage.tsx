@@ -25,6 +25,10 @@ import {
 	getPostizSetupStatus,
 	publishToPostiz,
 } from "../api/postiz";
+import {
+	listSocialCopyPackages,
+	type SocialCopyPackage,
+} from "../api/socialCopyPackages";
 
 // POSTIZ PUBLISH — send a BOSMAX-generated artifact straight to Postiz
 // (no manual re-upload). Fail-closed UX: if the backend setup-status is
@@ -535,6 +539,10 @@ export default function PostizPublishPage() {
 		{},
 	);
 	const [content, setContent] = useState("");
+	// Track manual edits so prefilling approved copy never silently clobbers the
+	// operator's own caption without an explicit confirm.
+	const [contentTouched, setContentTouched] = useState(false);
+	const [copyPackages, setCopyPackages] = useState<SocialCopyPackage[]>([]);
 	const [postType, setPostType] = useState<PostizPostType>("draft");
 	const [scheduleAtLocal, setScheduleAtLocal] = useState("");
 
@@ -697,6 +705,94 @@ export default function PostizPublishPage() {
 			setBusy(false);
 		}
 	};
+
+	// Load APPROVED social copy packages for the selected artifact so the caption
+	// can be prefilled from upstream copy. BOSMAX only fills an existing field —
+	// no posting/OAuth happens here.
+	useEffect(() => {
+		// Caption is per-artifact: switching artifacts clears any prior draft so
+		// copy never bleeds across posts (and the overwrite-confirm stays honest).
+		setContent("");
+		setContentTouched(false);
+		if (!selectedArtifactId) {
+			setCopyPackages([]);
+			return;
+		}
+		let cancelled = false;
+		void (async () => {
+			try {
+				const resp = await listSocialCopyPackages({
+					artifact_media_id: selectedArtifactId,
+					status: "APPROVED",
+				});
+				if (!cancelled) setCopyPackages(resp.packages);
+			} catch {
+				if (!cancelled) setCopyPackages([]);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [selectedArtifactId]);
+
+	const composeCopy = (pkg: SocialCopyPackage): string => {
+		const parts = [pkg.caption];
+		if (pkg.call_to_action && !pkg.caption.includes(pkg.call_to_action))
+			parts.push(pkg.call_to_action);
+		if (pkg.hashtags_json?.length) parts.push(pkg.hashtags_json.join(" "));
+		return parts.filter(Boolean).join("\n\n");
+	};
+
+	const applyCopyPackage = (pkg: SocialCopyPackage) => {
+		if (
+			content.trim() &&
+			contentTouched &&
+			!window.confirm("Replace your edited caption with this approved copy?")
+		)
+			return;
+		setContent(composeCopy(pkg));
+		// An explicit choice sticks — the provider auto-suggest must not override it.
+		setContentTouched(true);
+	};
+
+	// Postiz channel provider → social copy platform (provider-aware recommend).
+	const providerToPlatform: Record<string, string> = {
+		tiktok: "tiktok",
+		instagram: "instagram",
+		facebook: "facebook",
+		x: "x",
+		twitter: "x",
+		threads: "threads",
+	};
+
+	// Platforms recommended by the currently selected channels that actually have
+	// an approved copy package for this artifact.
+	const recommendedPlatforms = useMemo(() => {
+		const set = new Set<string>();
+		for (const id of selectedChannelIds) {
+			const ch = integrations.find((c) => c.id === id);
+			const plat = ch?.provider
+				? providerToPlatform[ch.provider.toLowerCase()]
+				: undefined;
+			if (plat && copyPackages.some((p) => p.platform === plat)) set.add(plat);
+		}
+		return set;
+		// providerToPlatform is a stable literal.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [selectedChannelIds, integrations, copyPackages]);
+
+	// Auto-suggest the approved copy when the selected channel's provider maps to
+	// exactly ONE platform with approved copy and the operator hasn't edited or
+	// explicitly chosen a caption yet. Manual edits (contentTouched) are never
+	// overridden; ambiguous multi-provider selections only get "Recommended" chips.
+	useEffect(() => {
+		if (contentTouched) return;
+		if (recommendedPlatforms.size !== 1) return;
+		const plat = [...recommendedPlatforms][0];
+		const pkg = copyPackages.find((p) => p.platform === plat);
+		if (pkg) setContent(composeCopy(pkg));
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [recommendedPlatforms, copyPackages, contentTouched]);
 
 	const ready = setup?.ready === true;
 
@@ -979,13 +1075,58 @@ export default function PostizPublishPage() {
 					{/* STEP 3 — POST */}
 					<section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-5 space-y-4">
 						<StepHeading step="3" title="Post" />
+
+						{/* Approved Social Copy — prefill caption from upstream package */}
+						{selectedArtifactId &&
+							(copyPackages.length > 0 ? (
+								<div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3 space-y-2">
+									<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-300">
+										Approved social copy for this artifact
+									</div>
+									<div className="flex flex-wrap gap-1.5">
+										{copyPackages.map((pkg) => {
+											const recommended = recommendedPlatforms.has(
+												pkg.platform,
+											);
+											return (
+												<button
+													type="button"
+													key={pkg.package_id}
+													onClick={() => applyCopyPackage(pkg)}
+													className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-semibold hover:bg-blue-500/20 ${recommended ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-100" : "border-blue-500/40 bg-blue-500/10 text-blue-100"}`}
+												>
+													Use {pkg.platform.toUpperCase()} copy
+													{recommended && (
+														<span className="rounded bg-emerald-500/30 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-emerald-200">
+															Recommended
+														</span>
+													)}
+												</button>
+											);
+										})}
+									</div>
+									<div className="text-[10px] text-slate-500">
+										Click a platform to prefill the caption below — you can still
+										edit it before sending.
+									</div>
+								</div>
+							) : (
+								<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-500">
+									No saved copy package for this artifact — caption is manual.
+									Create and approve one on the generator page to prefill it here.
+								</div>
+							))}
+
 						<label className="block space-y-1.5">
 							<span className="text-[11px] font-semibold text-slate-300">
 								Caption / content
 							</span>
 							<textarea
 								value={content}
-								onChange={(e) => setContent(e.target.value)}
+								onChange={(e) => {
+									setContent(e.target.value);
+									setContentTouched(true);
+								}}
 								rows={4}
 								placeholder="Caption for the post (optional)…"
 								className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600"
