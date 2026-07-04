@@ -61,6 +61,50 @@ async def test_ready_for_approval_id_reports_not_yet_canonical(monkeypatch):
     assert "PRODUCT_NOT_YET_CANONICAL" in resp.errors
 
 
+async def _seed_dup_linked(reference_id, *, linked_product_id=None):
+    await crud.create_bulk_queue_row(reference_id, "Dup Row")
+    kw = {"promotion_status": "DUPLICATE_LINKED"}
+    if linked_product_id is not None:
+        kw["linked_product_id"] = linked_product_id
+    await crud.update_bulk_queue_row(reference_id, **kw)
+
+
+async def test_preview_duplicate_linked_resolves_linked_canonical_seed():
+    # DB-backed: DUPLICATE_LINKED + valid linked product must resolve the linked
+    # canonical product as the preview seed (agrees with the read model), NOT
+    # fail as PRODUCT_NOT_YET_CANONICAL.
+    linked = await crud.create_product(
+        "Linked Canonical Truth",
+        source="MANUAL",
+        product_display_name="Linked Canonical Truth",
+        product_short_name="Linked Canonical Truth",
+        claim_risk_level="LOW",
+    )
+    await _seed_dup_linked("fastmoss-ref:dupok", linked_product_id=linked["id"])
+
+    resp = await svc.generate_product_asset_preview(_req("fastmoss-ref:dupok"))
+
+    assert "PRODUCT_NOT_YET_CANONICAL" not in resp.errors
+    assert "PRODUCT_NOT_FOUND" not in resp.errors
+    assert "REFERENCE_ONLY_PREVIEW_REQUIRES_REGISTRATION" not in resp.errors
+    # seed came from the linked canonical product row
+    assert resp.product_context.get("product_id") == linked["id"]
+
+
+async def test_preview_duplicate_linked_missing_product_fails_closed():
+    await _seed_dup_linked("fastmoss-ref:dupmiss", linked_product_id="ghost-uuid")
+    resp = await svc.generate_product_asset_preview(_req("fastmoss-ref:dupmiss"))
+    assert resp.preview_status == "FAIL"
+    assert "PRODUCT_NOT_YET_CANONICAL" in resp.errors
+
+
+async def test_preview_duplicate_linked_without_link_fails_closed():
+    await _seed_dup_linked("fastmoss-ref:dupnone")
+    resp = await svc.generate_product_asset_preview(_req("fastmoss-ref:dupnone"))
+    assert resp.preview_status == "FAIL"
+    assert "PRODUCT_NOT_YET_CANONICAL" in resp.errors
+
+
 async def test_truly_unknown_id_still_reports_product_not_found(monkeypatch):
     async def none_(*a, **k):
         return None

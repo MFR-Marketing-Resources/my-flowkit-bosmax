@@ -145,18 +145,32 @@ async def _resolve_product_seed(
         existing = await crud.get_product(request.product_id)
         if existing:
             return dict(existing), None
-        # Preview only resolves canonical product rows. When the id is not a
-        # canonical row, use the Product Truth Gateway to return a STATE-AWARE
-        # error instead of a generic PRODUCT_NOT_FOUND, so the operator learns
-        # *why* the selector option cannot preview (reference-only vs. not-yet
-        # canonical vs. truly unknown). Fail-closed: no seed is ever returned.
+        # The id is not itself a canonical product row. Ask the Product Truth
+        # Gateway what it IS and act on the gateway's own resolution — so preview
+        # and read model can never disagree.
         try:
             from agent.services import product_catalog_read_model as _prm
 
             state = await _prm.resolve_product_state(request.product_id)
-            product_state = state.get("product_state")
         except Exception:
-            product_state = None
+            state = {}
+        product_state = state.get("product_state")
+        # Any state the gateway resolves to canonical truth — DUPLICATE_LINKED
+        # linked to an existing product, or a reference_id whose committed
+        # canonical product exists — loads THAT canonical row as the seed.
+        if (
+            state.get("preview_resolvable")
+            and state.get("canonical_status") == "CANONICAL"
+            and state.get("product_id")
+        ):
+            linked = await crud.get_product(state["product_id"])
+            if linked:
+                return dict(linked), None
+            # Gateway said canonical but the row vanished — fail closed.
+            return None, "PRODUCT_NOT_YET_CANONICAL"
+        # Otherwise return a STATE-AWARE, fail-closed error (never a generic
+        # PRODUCT_NOT_FOUND for pipeline ids): reference-only rows, not-yet
+        # canonical queue rows (incl. unresolved/duplicate-link-missing), etc.
         if product_state == _PRM_REFERENCE_ONLY:
             return None, "REFERENCE_ONLY_PREVIEW_REQUIRES_REGISTRATION"
         if product_state in _PRM_NOT_YET_CANONICAL_STATES:
