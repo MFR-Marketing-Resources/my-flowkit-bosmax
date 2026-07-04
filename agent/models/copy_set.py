@@ -36,6 +36,7 @@ APPROVAL_PHRASE = "APPROVE_COPY_SET"
 SOURCE_LANDBANK = "COPY_LANDBANK"
 SOURCE_SIGNAL_GENERATOR = "COPY_SIGNAL_GENERATOR"
 SOURCE_OPERATOR = "OPERATOR_EXPLICIT"
+SOURCE_AI_COPY_ASSIST = "AI_COPY_ASSIST"
 
 
 # ─── Request / response models ──────────────────────────────
@@ -59,6 +60,28 @@ class CopySetGenerateRequest(BaseModel):
     route_type: Optional[str] = None
     formula_family: Optional[str] = None
     content_style_mode: str = "UGC_IPHONE"
+
+
+class AICopyAssistRequest(BaseModel):
+    """AI Copy Assist — generate reviewable candidate Copy Set(s) for a product.
+    Optional fields steer the brief; explicit fields also override AI output for
+    that field. Candidates are NEVER auto-approved (see ai_copy_assist_service)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    product_id: str
+    angle: Optional[str] = None
+    hook: Optional[str] = None
+    subhook: Optional[str] = None
+    usp_set: Optional[list[str]] = None
+    cta: Optional[str] = None
+    platform: str = "TIKTOK"
+    language: str = "BM_MS"
+    route_type: Optional[str] = None
+    formula_family: Optional[str] = None
+    content_style_mode: str = "UGC_IPHONE"
+    operator_notes: Optional[str] = None
+    candidate_count: int = Field(default=1, ge=1, le=3)
 
 
 class CopySetPatchRequest(BaseModel):
