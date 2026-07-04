@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -76,6 +77,27 @@ def reload_pool() -> int:
     return len(_load_pool())
 
 
+def _parse_usage_tags(raw: str) -> list[str]:
+    """Parse a usage_tags cell into a clean tag list.
+
+    Accepts BOTH the legacy comma-delimited form (`UGC, desk, office`) and the
+    CSV-Factory pipe-delimited form (`UGC|desk|office`), plus any mix of the
+    two. Tags are stripped and de-duplicated case-insensitively while the
+    first-seen readable text is preserved.
+    """
+    seen: set[str] = set()
+    tags: list[str] = []
+    for part in re.split(r"[|,]", str(raw or "")):
+        tag = part.strip()
+        if not tag:
+            continue
+        key = tag.casefold()
+        if key not in seen:
+            seen.add(key)
+            tags.append(tag)
+    return tags
+
+
 def _normalize_profile(row: dict) -> dict:
     return {
         "avatar_code": str(row.get("AvatarCode") or "").strip(),
@@ -88,7 +110,7 @@ def _normalize_profile(row: dict) -> dict:
         "lighting": str(row.get("Lighting") or "").strip(),
         "camera": str(row.get("Camera") or "").strip(),
         "expression": str(row.get("Expression") or "").strip(),
-        "usage_tags": [t.strip() for t in str(row.get("usage_tags") or "").split(",") if t.strip()],
+        "usage_tags": _parse_usage_tags(row.get("usage_tags")),
     }
 
 

@@ -137,6 +137,15 @@ export default function AvatarRegistryPage() {
 	}, []);
 
 	const handleSyncUpload = async (file: File) => {
+		const confirmed = window.confirm(
+			"⚠️ Legacy Direct Sync — this BYPASSES the CSV Factory.\n\n" +
+				"It replaces the runtime avatar bridge through the legacy path " +
+				"WITHOUT staging, per-row review, seed-schema validation, PromptV1 " +
+				"leak checks, or approval gating.\n\n" +
+				"The recommended path is: Import Candidate CSV → review → Sync " +
+				"approved → pool.\n\nProceed with legacy direct sync anyway?",
+		);
+		if (!confirmed) return;
 		setIsSyncing(true);
 		setError(null);
 		setSuccessMsg(null);
@@ -473,10 +482,11 @@ export default function AvatarRegistryPage() {
 						<button
 							type="button"
 							disabled={isSyncing}
+							title="Advanced / Legacy — bypasses CSV Factory validation and staging"
 							onClick={() => fileInputRef.current?.click()}
-							className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 text-sm font-semibold text-blue-100 hover:bg-blue-500/20 disabled:opacity-50"
+							className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-[11px] font-semibold text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-50"
 						>
-							{isSyncing ? "Syncing..." : "⇪ Sync CSV"}
+							{isSyncing ? "Syncing..." : "⚠ Legacy Direct Sync"}
 						</button>
 					</div>
 				</div>

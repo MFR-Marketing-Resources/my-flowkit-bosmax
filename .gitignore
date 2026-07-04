@@ -50,3 +50,6 @@ data/product_registration/drafts/
 # Copywriting landbank uploads (runtime content, ADR-008)
 data/copywriting_landbank/*.csv
 data/avatar_registry/*.csv
+
+# Avatar Registry CSV Factory staging batches (runtime artifacts, ADR-008)
+data/avatar_registry/csv_factory/

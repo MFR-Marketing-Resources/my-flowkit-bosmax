@@ -45,6 +45,7 @@ domains:
       - agent/services/avatar_registry.py
       - agent/services/avatar_csv_factory_service.py
       - tests/unit/test_avatar_csv_factory_service.py
+      - tests/unit/test_avatar_registry_usage_tags.py
       - tests/api/test_avatar_csv_factory_api.py
       - tests/ui/test_avatar_registry_csv_factory_ui_contract.py
       - agent/services/copy_landbank_service.py

@@ -50,3 +50,19 @@ def test_csv_factory_surfaces_validation_report():
     assert "row.errors.join" in src
     # invalid rows can never be approved from the UI
     assert "disabled={isFactoryBusy || !row.valid}" in src
+
+
+def test_legacy_direct_sync_is_demoted_and_warned():
+    """The legacy /avatar-registry/sync path must be explicitly labelled as
+    legacy and warn that it bypasses the CSV Factory, so operators do not
+    accidentally skip staging/review."""
+    src = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
+    # Explicit legacy label instead of a plain primary "Sync CSV" action.
+    assert "Legacy Direct Sync" in src
+    # Bypass warning is surfaced on the legacy handler.
+    handler = src.split("const handleSyncUpload", 1)[1]
+    handler = handler.split("const handleGenerateImage", 1)[0]
+    assert "window.confirm" in handler
+    assert "BYPASSES" in handler or "bypass" in handler.lower()
+    # Legacy control still targets the legacy endpoint (not removed).
+    assert "/api/workspace/avatar-registry/sync" in src
