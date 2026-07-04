@@ -1,0 +1,2213 @@
+{
+  "captured_at_utc": "2026-07-04T08:43:05.762Z",
+  "samples": {
+    "queue_stats": {
+      "status": 200,
+      "body": {
+        "total": 5,
+        "by_status": {
+          "CLAIM_RISK": 1,
+          "MISSING_REQUIRED_FIELD": 1,
+          "READY_FOR_APPROVAL": 3
+        },
+        "by_risk": {
+          "HIGH": 1,
+          "LOW": 4
+        }
+      }
+    },
+    "manual_products": {
+      "status": 200,
+      "body": {
+        "total_count": 0,
+        "returned_count": 0,
+        "has_pagination": false,
+        "limit": 20,
+        "offset": 0,
+        "items": []
+      }
+    },
+    "authority_context": {
+      "status": 200,
+      "body": {
+        "product": {
+          "options": [],
+          "contexts": []
+        },
+        "creative": {
+          "trigger_options": [
+            {
+              "value": "EGO_01",
+              "label": "EGO_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "MARUAH_01",
+              "label": "MARUAH_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "AUTHORITY_01",
+              "label": "AUTHORITY_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "SCARCITY_01",
+              "label": "SCARCITY_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "FOMO_01",
+              "label": "FOMO_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "TRUST_01",
+              "label": "TRUST_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "CONFIDENCE_01",
+              "label": "CONFIDENCE_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "SOCIAL_PROOF_01",
+              "label": "SOCIAL_PROOF_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "RECIPROCITY_01",
+              "label": "RECIPROCITY_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "TRANSFORMATION_01",
+              "label": "TRANSFORMATION_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "COMFORT_01",
+              "label": "COMFORT_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "GIFTING_01",
+              "label": "GIFTING_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            }
+          ],
+          "silo_options": [
+            {
+              "value": "health_supp_stealth_01",
+              "label": "health_supp_stealth_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "digital_fin_stealth_01",
+              "label": "digital_fin_stealth_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "adult_wellness_stealth_01",
+              "label": "adult_wellness_stealth_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "male_health_vintage_car",
+              "label": "male_health_vintage_car",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "fashion_mass_01",
+              "label": "fashion_mass_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "perfume_mass_01",
+              "label": "perfume_mass_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "household_mass_01",
+              "label": "household_mass_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "petfood_mass_01",
+              "label": "petfood_mass_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "fnb_mass_01",
+              "label": "fnb_mass_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "agri_kebun_baja",
+              "label": "agri_kebun_baja",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "telco_internet_speed",
+              "label": "telco_internet_speed",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "baby_care_universal_01",
+              "label": "baby_care_universal_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "household_or_beauty_mass_01",
+              "label": "household_or_beauty_mass_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "electronics_mass_01",
+              "label": "electronics_mass_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "stationery_mass_01",
+              "label": "stationery_mass_01",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            }
+          ],
+          "formula_options": [
+            {
+              "value": "AIDA",
+              "label": "AIDA",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "data/products/product_mapping_rules.json",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=COPYWRITING_FORMULA",
+              "source_origin": null,
+              "warnings": [
+                "FORMULA_IS_RULE_SURFACE_NOT_CANONICAL_ASSET_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "formula:AIDA",
+                "asset_type": "COPYWRITING_FORMULA",
+                "silos": [
+                  "fashion_mass_01",
+                  "perfume_mass_01"
+                ],
+                "triggers": [
+                  "CONFIDENCE_01"
+                ]
+              }
+            },
+            {
+              "value": "FEATURE_BENEFIT",
+              "label": "FEATURE_BENEFIT",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "data/products/product_mapping_rules.json",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=COPYWRITING_FORMULA",
+              "source_origin": null,
+              "warnings": [
+                "FORMULA_IS_RULE_SURFACE_NOT_CANONICAL_ASSET_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "formula:FEATURE_BENEFIT",
+                "asset_type": "COPYWRITING_FORMULA",
+                "silos": [
+                  "electronics_mass_01",
+                  "household_mass_01"
+                ],
+                "triggers": [
+                  "AUTHORITY_01"
+                ]
+              }
+            },
+            {
+              "value": "PAS",
+              "label": "PAS",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "data/products/product_mapping_rules.json",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=COPYWRITING_FORMULA",
+              "source_origin": null,
+              "warnings": [
+                "FORMULA_IS_RULE_SURFACE_NOT_CANONICAL_ASSET_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "formula:PAS",
+                "asset_type": "COPYWRITING_FORMULA",
+                "silos": [
+                  "baby_care_universal_01",
+                  "fnb_mass_01",
+                  "health_supp_stealth_01",
+                  "household_mass_01",
+                  "household_or_beauty_mass_01",
+                  "stationery_mass_01"
+                ],
+                "triggers": [
+                  "COMFORT_01",
+                  "EGO_01",
+                  "GIFTING_01",
+                  "TRUST_01"
+                ]
+              }
+            },
+            {
+              "value": "HSO",
+              "label": "HSO",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "FAB",
+              "label": "FAB",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "SAVAGE_HPAS",
+              "label": "SAVAGE_HPAS",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "TRUST_STACK",
+              "label": "TRUST_STACK",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            }
+          ],
+          "products_with_copy_signals": []
+        },
+        "visual": {
+          "scene_context_options": [],
+          "camera_style_options": [],
+          "camera_behavior_options": [],
+          "style_reference_options": [
+            {
+              "value": "Photorealistic",
+              "label": "Photorealistic",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:realistic",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT 3D render, NOT CGI, NOT digital art, NOT illustration, NOT anime, NOT painting, NOT cartoon.",
+                "scene_prefix": "Real RAW photograph, shot on Canon EOS R5, 35mm lens, natural available light.",
+                "lighting": "Studio lighting, highly detailed"
+              }
+            },
+            {
+              "value": "3D Pixar",
+              "label": "3D Pixar",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:3d_pixar",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT photorealistic, NOT photograph, NOT live action, NOT anime, NOT flat 2D.",
+                "scene_prefix": "3D animated Pixar-quality rendering, vibrant colors, cinematic lighting.",
+                "lighting": "Studio lighting, global illumination, highly detailed"
+              }
+            },
+            {
+              "value": "Anime",
+              "label": "Anime",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:anime",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT photorealistic, NOT 3D render, NOT oil painting, NOT sketch, NOT watercolor, NOT Western cartoon.",
+                "scene_prefix": "Anime style, cel-shaded, vibrant colors, clean linework, dramatic anime lighting.",
+                "lighting": "Anime-style dramatic lighting, highly detailed"
+              }
+            },
+            {
+              "value": "Felt & Wood Stop Motion",
+              "label": "Felt & Wood Stop Motion",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:stop_motion",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT photorealistic, NOT 3D render, NOT digital, NOT anime, NOT smooth surfaces, NOT plastic.",
+                "scene_prefix": "Stop-motion style, handcrafted felt and wood puppets, miniature set, warm workshop lighting.",
+                "lighting": "Warm practical miniature lighting, macro photography detail"
+              }
+            },
+            {
+              "value": "Minecraft",
+              "label": "Minecraft",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:minecraft",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT smooth, NOT round, NOT photorealistic, NOT anime, NOT organic curves, NOT high-poly.",
+                "scene_prefix": "Minecraft style, blocky voxel world, pixel textures, cubic geometry, game screenshot aesthetic.",
+                "lighting": "Minecraft-style ambient lighting, block shadows"
+              }
+            },
+            {
+              "value": "Oil Painting",
+              "label": "Oil Painting",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:oil_painting",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT photorealistic, NOT digital art, NOT 3D render, NOT anime, NOT flat colors, NOT cartoon.",
+                "scene_prefix": "Oil painting style, visible brushstrokes, rich impasto texture, warm palette, dramatic chiaroscuro lighting.",
+                "lighting": "Dramatic chiaroscuro lighting, rich tonal depth"
+              }
+            },
+            {
+              "value": "Studio Ghibli",
+              "label": "Studio Ghibli",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:ghibli",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT photorealistic, NOT 3D render, NOT dark, NOT gritty, NOT sharp edges, NOT Western cartoon.",
+                "scene_prefix": "Studio Ghibli anime style, hand-painted watercolor backgrounds, soft pastel colors, gentle whimsical atmosphere.",
+                "lighting": "Soft natural Ghibli lighting, golden hour warmth, dappled sunlight"
+              }
+            },
+            {
+              "value": "Watercolor",
+              "label": "Watercolor",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:watercolor",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT photorealistic, NOT 3D render, NOT digital art, NOT anime, NOT sharp edges, NOT bold outlines.",
+                "scene_prefix": "Watercolor painting style, soft wet brushwork, translucent color washes, delicate ink outlines.",
+                "lighting": "Soft diffused natural light, watercolor wash"
+              }
+            },
+            {
+              "value": "Comic Book",
+              "label": "Comic Book",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:comic_book",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT photorealistic, NOT 3D render, NOT anime, NOT watercolor, NOT soft edges, NOT muted colors.",
+                "scene_prefix": "Comic book style, bold ink outlines, vibrant flat colors, halftone shading, dynamic composition.",
+                "lighting": "High contrast comic lighting, dramatic shadows, rim light"
+              }
+            },
+            {
+              "value": "Cyberpunk",
+              "label": "Cyberpunk",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:cyberpunk",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT natural environment, NOT bright daylight, NOT historical, NOT cartoon, NOT fantasy medieval.",
+                "scene_prefix": "Cyberpunk aesthetic, neon-lit dark urban, holographic displays, rain-slicked streets, purple and cyan neon.",
+                "lighting": "Neon rim lighting, volumetric fog, cyan and magenta"
+              }
+            },
+            {
+              "value": "Claymation",
+              "label": "Claymation",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:claymation",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT photorealistic, NOT digital, NOT anime, NOT smooth skin, NOT 3D render, NOT glass or metal surfaces.",
+                "scene_prefix": "Claymation style, clay puppet characters with fingerprint textures, miniature handmade sets, warm practical lighting.",
+                "lighting": "Warm miniature set lighting, soft shadows, macro detail"
+              }
+            },
+            {
+              "value": "LEGO",
+              "label": "LEGO",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:lego",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT photorealistic, NOT organic, NOT smooth, NOT anime, NOT round shapes, NOT natural materials.",
+                "scene_prefix": "LEGO style, minifigure characters, brick-built environments, visible studs, plastic ABS texture.",
+                "lighting": "Bright toy photography lighting, sharp focus, product shot quality"
+              }
+            },
+            {
+              "value": "Retro VHS",
+              "label": "Retro VHS",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/materials.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=STYLE_REFERENCE",
+              "source_origin": null,
+              "warnings": [
+                "STYLE_REFERENCE_IS_BUILTIN_MATERIAL_SURFACE"
+              ],
+              "metadata": {
+                "asset_id": "style:retro_vhs",
+                "asset_type": "STYLE_REFERENCE",
+                "negative_prompt": "NOT modern, NOT 4K, NOT clean, NOT digital, NOT anime, NOT sharp, NOT high-definition.",
+                "scene_prefix": "Retro VHS style, analog scan lines, warm washed-out colors, CRT curvature, nostalgic 80s grain.",
+                "lighting": "Warm tungsten lighting, CRT glow, analog video bloom"
+              }
+            }
+          ],
+          "overlay_hint_options": [],
+          "product_handling_options": [
+            {
+              "value": "Beauty Bottle Or Tube",
+              "label": "Beauty Bottle Or Tube",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:beauty_bottle_or_tube",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "light side pinch, cap-base hold, or palm-supported label-forward grip",
+                "camera_handling_notes": "Rotate slowly, control reflections, and frame the container so benefit cues come from packaging rather than fake usage claims.",
+                "unsafe_handling_rules": [
+                  "avoid messy product smears unless the format requires it",
+                  "avoid unsupported efficacy claims",
+                  "avoid obscuring the label with fingers"
+                ]
+              }
+            },
+            {
+              "value": "Electronics Small Box",
+              "label": "Electronics Small Box",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:electronics_small_box",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "balanced side grip, underside support, or connector-end hold depending on device form",
+                "camera_handling_notes": "Use measured product turns and stable grip transitions so ports, controls, and device function stay obvious without fake activation effects.",
+                "unsafe_handling_rules": [
+                  "avoid unrealistic floating cables",
+                  "avoid hiding ports or controls",
+                  "avoid unsupported performance claims"
+                ]
+              }
+            },
+            {
+              "value": "Fashion Accessory Small Object",
+              "label": "Fashion Accessory Small Object",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:fashion_accessory_small_object",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "light pinch at the edge or backing point with the decorative face visible",
+                "camera_handling_notes": "Use macro-friendly framing and slow controlled turns to avoid glitter glare or lost detail.",
+                "unsafe_handling_rules": [
+                  "avoid obscuring clasps or pin backs",
+                  "avoid harsh reflection blowout",
+                  "avoid unstable fingertip wobble"
+                ]
+              }
+            },
+            {
+              "value": "Fashion Apparel Textile",
+              "label": "Fashion Apparel Textile",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:fashion_apparel_textile",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "waistband hold, shoulder hold, hanger hold, or two-hand fabric spread",
+                "camera_handling_notes": "Keep fabric stretched only enough to show construction and avoid deformation that changes perceived fit.",
+                "unsafe_handling_rules": [
+                  "avoid over-stretching garments",
+                  "avoid body-shape exaggeration claims",
+                  "avoid cramped folds that hide cut details"
+                ]
+              }
+            },
+            {
+              "value": "Food Pack Or Jar",
+              "label": "Food Pack Or Jar",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:food_pack_or_jar",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "jar side hold, base support, or pack pinch with the front label visible",
+                "camera_handling_notes": "Use appetizing but tidy tabletop framing without spills unless the product format clearly calls for it.",
+                "unsafe_handling_rules": [
+                  "avoid unsupported health claims",
+                  "avoid broken seals",
+                  "avoid messy spills without food styling context"
+                ]
+              }
+            },
+            {
+              "value": "Footwear Pair",
+              "label": "Footwear Pair",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:footwear_pair",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "heel hold, strap hold, or under-sole support",
+                "camera_handling_notes": "Use clean profile turns and avoid collapsing the upper or hiding the sole shape.",
+                "unsafe_handling_rules": [
+                  "avoid impossible bending",
+                  "avoid flattening the upper unnaturally",
+                  "avoid hiding the outsole profile"
+                ]
+              }
+            },
+            {
+              "value": "Home Textile Soft Good",
+              "label": "Home Textile Soft Good",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:home_textile_soft_good",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "two-hand corner lift, hem hold, or broad palm support",
+                "camera_handling_notes": "Show textile thickness and drape with stable motions instead of abrupt shaking or bunched folds.",
+                "unsafe_handling_rules": [
+                  "avoid dragging on dirty surfaces",
+                  "avoid cramped bunching that hides texture",
+                  "avoid impossible floating folds"
+                ]
+              }
+            },
+            {
+              "value": "Household Packaged Goods",
+              "label": "Household Packaged Goods",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:household_packaged_goods",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "side carry grip, bottom support, or front-readable two-hand hold depending on pack size",
+                "camera_handling_notes": "Show utility cues through clean orientation and grip clarity rather than dramatic motion or fake usage effects.",
+                "unsafe_handling_rules": [
+                  "avoid leaking contents",
+                  "avoid upside-down handling that hides the label",
+                  "avoid unsupported safety claims"
+                ]
+              }
+            },
+            {
+              "value": "Kitchen Tool",
+              "label": "Kitchen Tool",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:kitchen_tool",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "handle grip, rim support, or balanced two-hand support depending on tool weight",
+                "camera_handling_notes": "Use stable tabletop or hand-held utility framing and avoid unsafe or misleading food-prep motions.",
+                "unsafe_handling_rules": [
+                  "avoid implying food is included unless visible",
+                  "avoid unsafe blade handling",
+                  "avoid unstable tilts that hide function"
+                ]
+              }
+            },
+            {
+              "value": "Medical Test Kit",
+              "label": "Medical Test Kit",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:medical_test_kit",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "mid-body pinch or base support with the test window and branding visible",
+                "camera_handling_notes": "Frame the device like a sealed or controlled-use product and keep the window, label, and cap visible.",
+                "unsafe_handling_rules": [
+                  "avoid medical claims or diagnoses",
+                  "avoid showing bodily fluid interaction",
+                  "avoid obscuring the test window"
+                ]
+              }
+            },
+            {
+              "value": "Modestwear Textile",
+              "label": "Modestwear Textile",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:modestwear_textile",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "two-hand fabric spread, edge pinch, or neckline hold with clean drape control",
+                "camera_handling_notes": "Show coverage, fall, and edge lines clearly while avoiding styling that distorts modestwear fit.",
+                "unsafe_handling_rules": [
+                  "avoid exaggerated body-shape styling",
+                  "avoid twisting the fabric into unnatural tension",
+                  "avoid cramped framing that hides silhouette cues"
+                ]
+              }
+            },
+            {
+              "value": "Skincare Jar Or Tube",
+              "label": "Skincare Jar Or Tube",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:skincare_jar_or_tube",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "base support, side pinch, or top-edge hold with the front face visible",
+                "camera_handling_notes": "Favor clean beauty close-ups, keep the label and seal readable, and avoid spilling, crushing, or over-squeezing the product container.",
+                "unsafe_handling_rules": [
+                  "avoid messy leakage",
+                  "avoid obscuring expiry or seal areas",
+                  "avoid unsupported before-after claims"
+                ]
+              }
+            },
+            {
+              "value": "Small Rigid Decor",
+              "label": "Small Rigid Decor",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:small_rigid_decor",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "light side pinch, back support, or base hold depending on the display surface",
+                "camera_handling_notes": "Use stable hero framing and slow turns that keep the object front-readable and intact.",
+                "unsafe_handling_rules": [
+                  "avoid chipped-edge presentation",
+                  "avoid hiding the decorative face",
+                  "avoid unstable spinning motions"
+                ]
+              }
+            },
+            {
+              "value": "Stationery Pack",
+              "label": "Stationery Pack",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:stationery_pack",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "edge pinch, corner support, or back support with the printed face unobstructed",
+                "camera_handling_notes": "Favor top-down or front-readable framing so the stationery format and design details stay clear.",
+                "unsafe_handling_rules": [
+                  "avoid torn corners",
+                  "avoid obscuring printed details",
+                  "avoid implying hidden contents that are not shown"
+                ]
+              }
+            },
+            {
+              "value": "Supplement Bottle",
+              "label": "Supplement Bottle",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:supplement_bottle",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "side grip with thumb behind label or base-supported bottle hold",
+                "camera_handling_notes": "Avoid medical theatrics; frame the bottle like a trustworthy daily product with cap and label clearly visible.",
+                "unsafe_handling_rules": [
+                  "avoid medical cure claims",
+                  "avoid loose pills unless explicitly shown",
+                  "avoid obscuring dosage-format cues"
+                ]
+              }
+            },
+            {
+              "value": "Toy Box Or Pack",
+              "label": "Toy Box Or Pack",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_HANDLING",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_HANDLING_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-handling:toy_box_or_pack",
+                "asset_type": "PRODUCT_HANDLING",
+                "recommended_grip": "light side pinch, bottom support, or two-hand pack hold",
+                "camera_handling_notes": "Favor cheerful, stable framing that shows the toy or craft contents cleanly and safely.",
+                "unsafe_handling_rules": [
+                  "avoid implying unsafe child use",
+                  "avoid crushing the pack",
+                  "avoid motion blur that hides parts"
+                ]
+              }
+            }
+          ],
+          "product_physics_options": [
+            {
+              "value": "Beauty Bottle Or Tube",
+              "label": "Beauty Bottle Or Tube",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:beauty_bottle_or_tube",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "BEAUTY_BOTTLE_OR_TUBE",
+                "product_scale": "SMALL_OBJECT",
+                "fragility_level": "MEDIUM",
+                "material_behavior": "rigid or semi-flexible cosmetic container with cap resistance, squeeze response, or applicator control",
+                "surface_behavior": "glossy or satin packaging with controlled highlights and readable branding surfaces"
+              }
+            },
+            {
+              "value": "Electronics Small Box",
+              "label": "Electronics Small Box",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:electronics_small_box",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "ELECTRONICS_SMALL_DEVICE",
+                "product_scale": "SMALL_TO_MEDIUM_OBJECT",
+                "fragility_level": "MEDIUM",
+                "material_behavior": "rigid electronic housing with weighted balance, hinge or button resistance, and cable or accessory articulation",
+                "surface_behavior": "plastic, coated metal, or screen surfaces with clean edge highlights and visible control geometry"
+              }
+            },
+            {
+              "value": "Fashion Accessory Small Object",
+              "label": "Fashion Accessory Small Object",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:fashion_accessory_small_object",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "FASHION_ACCESSORY_SMALL_OBJECT",
+                "product_scale": "SMALL_OBJECT",
+                "fragility_level": "MEDIUM",
+                "material_behavior": "small rigid accessory with clasp, pin, or decorative hardware resistance",
+                "surface_behavior": "metallic, enamel, or embellished surfaces with crisp highlights and visible ornament detail"
+              }
+            },
+            {
+              "value": "Fashion Apparel Textile",
+              "label": "Fashion Apparel Textile",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:fashion_apparel_textile",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "APPAREL_TEXTILE",
+                "product_scale": "GARMENT",
+                "fragility_level": "LOW",
+                "material_behavior": "woven or knit apparel textile with natural drape, fold recovery, and seam definition",
+                "surface_behavior": "soft textile face with visible stitching, hems, and natural crease response"
+              }
+            },
+            {
+              "value": "Food Pack Or Jar",
+              "label": "Food Pack Or Jar",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:food_pack_or_jar",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "FOOD_PACK_OR_JAR",
+                "product_scale": "SMALL_CONTAINER",
+                "fragility_level": "LOW",
+                "material_behavior": "sealed food container or flexible food pack with realistic fill weight and closure response",
+                "surface_behavior": "glossy labels, jar edges, or laminated packaging with appetizing but controlled reflections"
+              }
+            },
+            {
+              "value": "Footwear Pair",
+              "label": "Footwear Pair",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:footwear_pair",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "FOOTWEAR_PAIR",
+                "product_scale": "PAIR_OBJECT",
+                "fragility_level": "LOW",
+                "material_behavior": "structured footwear with flexible upper, shaped sole, and realistic bend at the forefoot",
+                "surface_behavior": "matte or semi-gloss upper with visible strap, stitch, and sole-edge detail"
+              }
+            },
+            {
+              "value": "Home Textile Soft Good",
+              "label": "Home Textile Soft Good",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:home_textile_soft_good",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "HOME_TEXTILE_SOFT_GOOD",
+                "product_scale": "LARGE_SOFT_GOOD",
+                "fragility_level": "LOW",
+                "material_behavior": "soft woven textile with fold memory, drape, compression, and recovery",
+                "surface_behavior": "textile face with weave, pile, or quilting detail and natural crease response"
+              }
+            },
+            {
+              "value": "Household Packaged Goods",
+              "label": "Household Packaged Goods",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:household_packaged_goods",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "HOUSEHOLD_PACKAGED_GOODS",
+                "product_scale": "MEDIUM_OBJECT",
+                "fragility_level": "LOW",
+                "material_behavior": "flexible pouch, rigid bottle, or lightweight boxed packaging with realistic carry weight and closure resistance",
+                "surface_behavior": "plastic, paper, or laminated household packaging with readable front panels and closure details"
+              }
+            },
+            {
+              "value": "Kitchen Tool",
+              "label": "Kitchen Tool",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:kitchen_tool",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "KITCHEN_TOOL",
+                "product_scale": "MEDIUM_OBJECT",
+                "fragility_level": "LOW",
+                "material_behavior": "rigid kitchenware in steel, plastic, or coated surfaces with realistic heft and handle balance",
+                "surface_behavior": "semi-gloss to polished surfaces with visible edges, handles, lids, or working teeth"
+              }
+            },
+            {
+              "value": "Medical Test Kit",
+              "label": "Medical Test Kit",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:medical_test_kit",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "MEDICAL_TEST_KIT",
+                "product_scale": "SMALL_OBJECT",
+                "fragility_level": "LOW",
+                "material_behavior": "light rigid plastic device or kit component with cap-fit resistance and stable straight profile",
+                "surface_behavior": "clean plastic body with readable test window or printed labeling"
+              }
+            },
+            {
+              "value": "Modestwear Textile",
+              "label": "Modestwear Textile",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:modestwear_textile",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "MODESTWEAR_TEXTILE",
+                "product_scale": "GARMENT",
+                "fragility_level": "LOW",
+                "material_behavior": "lightweight to medium-weight modestwear textile with soft fold memory, drape, and edge flutter",
+                "surface_behavior": "matte or satin textile finish with visible seam, hem, and layering detail"
+              }
+            },
+            {
+              "value": "Skincare Jar Or Tube",
+              "label": "Skincare Jar Or Tube",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:skincare_jar_or_tube",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "SKINCARE_JAR_OR_TUBE",
+                "product_scale": "SMALL_OBJECT",
+                "fragility_level": "LOW",
+                "material_behavior": "tube, sachet, jar, or mask packaging with gentle squeeze response and stable lid or seal behavior",
+                "surface_behavior": "clean cosmetic-grade packaging surfaces with satin or glossy reflections and visible seal edges"
+              }
+            },
+            {
+              "value": "Small Rigid Decor",
+              "label": "Small Rigid Decor",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:small_rigid_decor",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "SMALL_RIGID_DECOR",
+                "product_scale": "SMALL_OBJECT",
+                "fragility_level": "MEDIUM",
+                "material_behavior": "rigid decorative object in plastic, metal, resin, glass, or coated board with stable form",
+                "surface_behavior": "printed, metallic, glossy, or matte decor surfaces with visible detail and edge highlights"
+              }
+            },
+            {
+              "value": "Stationery Pack",
+              "label": "Stationery Pack",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:stationery_pack",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "STATIONERY_PACK",
+                "product_scale": "SMALL_FLAT_OBJECT",
+                "fragility_level": "LOW",
+                "material_behavior": "paper, card, sticker, or notebook materials with light bend, page stack resistance, and crisp edge response",
+                "surface_behavior": "matte or satin printed surfaces with visible cover, page, or label detail"
+              }
+            },
+            {
+              "value": "Supplement Bottle",
+              "label": "Supplement Bottle",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:supplement_bottle",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "SUPPLEMENT_BOTTLE",
+                "product_scale": "SMALL_OBJECT",
+                "fragility_level": "LOW",
+                "material_behavior": "rigid supplement bottle or canister with screw-cap resistance and audible closure expectation",
+                "surface_behavior": "matte or satin bottle body with readable print and clean cap transitions"
+              }
+            },
+            {
+              "value": "Toy Box Or Pack",
+              "label": "Toy Box Or Pack",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_physics.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PRODUCT_PHYSICS",
+              "source_origin": null,
+              "warnings": [
+                "PRODUCT_PHYSICS_RULE_SURFACE_NOT_CANONICAL_REGISTRY_TABLE"
+              ],
+              "metadata": {
+                "asset_id": "product-physics:toy_box_or_pack",
+                "asset_type": "PRODUCT_PHYSICS",
+                "physics_class": "TOY_BOX_OR_PACK",
+                "product_scale": "SMALL_TO_MEDIUM_OBJECT",
+                "fragility_level": "LOW",
+                "material_behavior": "lightweight toy or craft packaging with flexible pack edges or small-part rigidity",
+                "surface_behavior": "printed pack surfaces or tactile toy materials with visible color contrast and shape cues"
+              }
+            }
+          ]
+        },
+        "character": {
+          "character_options": [],
+          "avatar_options": [
+            {
+              "value": "NORA",
+              "label": "NORA",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "RIZAL",
+              "label": "RIZAL",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "JULIA",
+              "label": "JULIA",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "AZMAN",
+              "label": "AZMAN",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "SARA",
+              "label": "SARA",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "HAJI_MAN",
+              "label": "HAJI_MAN",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "BELLA",
+              "label": "BELLA",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "SOFIA_FIT",
+              "label": "SOFIA_FIT",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "MAK_TOK",
+              "label": "MAK_TOK",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "CHEF_DANIAL",
+              "label": "CHEF_DANIAL",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            }
+          ],
+          "headwear_suggestions": [
+            {
+              "value": "AUTO",
+              "label": "AUTO",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "HIJAB",
+              "label": "HIJAB",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "NON_HIJAB",
+              "label": "NON_HIJAB",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            }
+          ],
+          "wardrobe_fallback": {
+            "label": "Wardrobe manual fallback",
+            "reason": "Canonical wardrobe registry is not present in this checkout. Manual override remains available.",
+            "source_status": "NOT_FOUND",
+            "source_file": "agent/services/asset_registry_service.py",
+            "source_endpoint": "/api/asset-registry/assets?asset_type=WARDROBE",
+            "source_origin": null,
+            "warnings": [
+              "MANUAL_FALLBACK"
+            ]
+          }
+        },
+        "execution": {
+          "language_options": [
+            {
+              "value": "Malay",
+              "label": "Malay",
+              "source_status": "INPUT_SLOT_ONLY",
+              "source_file": "agent/api/operator.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=LANGUAGE",
+              "source_origin": null,
+              "warnings": [
+                "INPUT_SLOT_ONLY_NO_SOURCE_CONTROLLED_REGISTRY_DATASET"
+              ],
+              "metadata": {
+                "asset_id": "language:Malay",
+                "asset_type": "LANGUAGE",
+                "slot_type": "input_default"
+              }
+            },
+            {
+              "value": "English",
+              "label": "English",
+              "source_status": "INPUT_SLOT_ONLY",
+              "source_file": "agent/api/operator.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=LANGUAGE",
+              "source_origin": null,
+              "warnings": [
+                "INPUT_SLOT_ONLY_NO_SOURCE_CONTROLLED_REGISTRY_DATASET"
+              ],
+              "metadata": {
+                "asset_id": "language:English",
+                "asset_type": "LANGUAGE",
+                "slot_type": "input_default"
+              }
+            }
+          ],
+          "platform_options": [
+            {
+              "value": "TikTok",
+              "label": "TikTok",
+              "source_status": "INPUT_SLOT_ONLY",
+              "source_file": "agent/api/operator.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=PLATFORM",
+              "source_origin": null,
+              "warnings": [
+                "INPUT_SLOT_ONLY_NO_SOURCE_CONTROLLED_REGISTRY_DATASET"
+              ],
+              "metadata": {
+                "asset_id": "platform:TikTok",
+                "asset_type": "PLATFORM",
+                "slot_type": "input_default"
+              }
+            }
+          ],
+          "engine_options": [
+            {
+              "value": "VEO_3_1",
+              "label": "VEO_3_1",
+              "source_status": "INPUT_SLOT_ONLY",
+              "source_file": "agent/api/operator.py",
+              "source_endpoint": "/api/asset-registry/assets?asset_type=ENGINE_PROFILE",
+              "source_origin": null,
+              "warnings": [
+                "INPUT_SLOT_ONLY_NO_SOURCE_CONTROLLED_REGISTRY_DATASET"
+              ],
+              "metadata": {
+                "asset_id": "engine:VEO_3_1",
+                "asset_type": "ENGINE_PROFILE",
+                "slot_type": "input_default"
+              }
+            },
+            {
+              "value": "SORA_2",
+              "label": "SORA_2",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "KLING_3_0",
+              "label": "KLING_3_0",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "SEEDANCE_2_0",
+              "label": "SEEDANCE_2_0",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "GROK",
+              "label": "GROK",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            }
+          ],
+          "duration_options": [
+            {
+              "value": "8",
+              "label": "8",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "16",
+              "label": "16",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "24",
+              "label": "24",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "32",
+              "label": "32",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "40",
+              "label": "40",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "48",
+              "label": "48",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "56",
+              "label": "56",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "10",
+              "label": "10",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "15",
+              "label": "15",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "20",
+              "label": "20",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "25",
+              "label": "25",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "30",
+              "label": "30",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "45",
+              "label": "45",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "60",
+              "label": "60",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "5",
+              "label": "5",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            },
+            {
+              "value": "6",
+              "label": "6",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "metadata": {}
+            }
+          ],
+          "source_route_options": [
+            {
+              "value": "PRODUCT_DRIVEN_AUTO",
+              "label": "PRODUCT_DRIVEN_AUTO",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/offline_prompt_planner.py",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [],
+              "metadata": {}
+            },
+            {
+              "value": "REGISTRY_DRIVEN_MANUAL_ASSISTED",
+              "label": "REGISTRY_DRIVEN_MANUAL_ASSISTED",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/offline_prompt_planner.py",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [],
+              "metadata": {}
+            }
+          ],
+          "destination_mode_options": [
+            {
+              "value": "FRAMES",
+              "label": "FRAMES",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/offline_prompt_planner.py",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [],
+              "metadata": {}
+            },
+            {
+              "value": "IMAGE",
+              "label": "IMAGE",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/offline_prompt_planner.py",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [],
+              "metadata": {}
+            },
+            {
+              "value": "INGREDIENTS",
+              "label": "INGREDIENTS",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/offline_prompt_planner.py",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [],
+              "metadata": {}
+            },
+            {
+              "value": "TEXT_TO_VIDEO",
+              "label": "TEXT_TO_VIDEO",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/offline_prompt_planner.py",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [],
+              "metadata": {}
+            }
+          ],
+          "output_type_options": [
+            {
+              "value": "IMAGE_PROMPT",
+              "label": "IMAGE_PROMPT",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/offline_prompt_planner.py",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [],
+              "metadata": {}
+            },
+            {
+              "value": "PROMPT_BLOCK_PLAN",
+              "label": "PROMPT_BLOCK_PLAN",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/offline_prompt_planner.py",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [],
+              "metadata": {}
+            },
+            {
+              "value": "VIDEO_9_SECTION_PROMPT",
+              "label": "VIDEO_9_SECTION_PROMPT",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/offline_prompt_planner.py",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [],
+              "metadata": {}
+            }
+          ]
+        },
+        "provenance": {
+          "source_matrix": [
+            {
+              "key": "product_lane",
+              "label": "Repo-local product lane",
+              "source_status": "NOT_FOUND",
+              "source_file": "agent/api/products.py",
+              "source_endpoint": "/api/products",
+              "source_origin": null,
+              "warnings": [],
+              "details": {
+                "product_count": 0
+              }
+            },
+            {
+              "key": "product_mapping_rules",
+              "label": "Product mapping rules",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "data/products/product_mapping_rules.json",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [],
+              "details": {}
+            },
+            {
+              "key": "product_creative_brief",
+              "label": "Product creative brief service",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/services/product_creative_brief.py",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [],
+              "details": {}
+            },
+            {
+              "key": "asset_registry",
+              "label": "Asset registry",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "agent/api/asset_registry.py",
+              "source_endpoint": "/api/asset-registry/catalog",
+              "source_origin": null,
+              "warnings": [],
+              "details": {
+                "scene_options": 0,
+                "character_options": 0
+              }
+            },
+            {
+              "key": "character_database",
+              "label": "Character database",
+              "source_status": "NOT_FOUND",
+              "source_file": "agent/db/schema.py",
+              "source_endpoint": "/api/characters",
+              "source_origin": null,
+              "warnings": [],
+              "details": {
+                "character_options": 0
+              }
+            },
+            {
+              "key": "operator_content_pack",
+              "label": "Operator content pack",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "details": {
+                "available": true
+              }
+            },
+            {
+              "key": "master_ignition",
+              "label": "MASTER_IGNITION_TEMPLATE.yaml",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy\\MASTER_IGNITION_TEMPLATE.yaml",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "details": {}
+            },
+            {
+              "key": "script_registry",
+              "label": "SCRIPT_REGISTRY_UNIFIED.yaml",
+              "source_status": "OPERATOR_PACK",
+              "source_file": "C:\\Users\\USER\\Desktop\\The Real Avengers Bosmax - Copy\\SCRIPT_REGISTRY_UNIFIED.yaml",
+              "source_endpoint": "/api/operator/content-pack",
+              "source_origin": "EXTERNAL_OPERATOR_PACK",
+              "warnings": [
+                "EXTERNAL_OPERATOR_PACK"
+              ],
+              "details": {}
+            },
+            {
+              "key": "sales_analyzer",
+              "label": "Products / Sales Analyzer",
+              "source_status": "REPO_VERIFIED",
+              "source_file": "dashboard/src/pages/ProductsSalesAnalyzerPage.tsx",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [
+                "SALES_ANALYZER_NOT_WIRED_TO_PROMPT_TOOLS"
+              ],
+              "details": {}
+            }
+          ],
+          "missing_sources": [
+            {
+              "label": "visual_en",
+              "reason": "visual_en was not found in this checkout.",
+              "source_status": "NOT_FOUND",
+              "source_file": null,
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [
+                "NOT_FOUND"
+              ]
+            },
+            {
+              "label": "audio_en",
+              "reason": "audio_en was not found in this checkout.",
+              "source_status": "NOT_FOUND",
+              "source_file": null,
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [
+                "NOT_FOUND"
+              ]
+            },
+            {
+              "label": "canonical wardrobe registry",
+              "reason": "Wardrobe remains a manual fallback because no canonical repo-backed registry dataset exists in this checkout.",
+              "source_status": "NOT_FOUND",
+              "source_file": "agent/services/asset_registry_service.py",
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [
+                "MANUAL_FALLBACK"
+              ]
+            },
+            {
+              "label": "SATELLITE_03_VISUAL_DECK.yaml",
+              "reason": "SATELLITE_03_VISUAL_DECK.yaml is not present in source control in this checkout.",
+              "source_status": "NOT_FOUND",
+              "source_file": null,
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [
+                "NOT_FOUND"
+              ]
+            },
+            {
+              "label": "SATELLITE_04B_CAMERA_STYLE_COMPATIBILITY.yaml",
+              "reason": "SATELLITE_04B_CAMERA_STYLE_COMPATIBILITY.yaml is not present in source control in this checkout.",
+              "source_status": "NOT_FOUND",
+              "source_file": null,
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [
+                "NOT_FOUND"
+              ]
+            },
+            {
+              "label": "SATELLITE_04D_SCENE_CAMERA_ORCHESTRATION_FINAL.yaml",
+              "reason": "SATELLITE_04D_SCENE_CAMERA_ORCHESTRATION_FINAL.yaml is not present in source control in this checkout.",
+              "source_status": "NOT_FOUND",
+              "source_file": null,
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [
+                "NOT_FOUND"
+              ]
+            },
+            {
+              "label": "SATELLITE_04_MAPPING_MATRIX.yaml",
+              "reason": "SATELLITE_04_MAPPING_MATRIX.yaml is not present in source control in this checkout.",
+              "source_status": "NOT_FOUND",
+              "source_file": null,
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [
+                "NOT_FOUND"
+              ]
+            },
+            {
+              "label": "SOVEREIGN_01_MASTER_SCHEMA.yaml",
+              "reason": "SOVEREIGN_01_MASTER_SCHEMA.yaml is not present in source control in this checkout.",
+              "source_status": "NOT_FOUND",
+              "source_file": null,
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [
+                "NOT_FOUND"
+              ]
+            },
+            {
+              "label": "SOVEREIGN_03_CORE_LOGIC.yaml",
+              "reason": "SOVEREIGN_03_CORE_LOGIC.yaml is not present in source control in this checkout.",
+              "source_status": "NOT_FOUND",
+              "source_file": null,
+              "source_endpoint": null,
+              "source_origin": null,
+              "warnings": [
+                "NOT_FOUND"
+              ]
+            }
+          ],
+          "warnings": [
+            "BOSMAX_AUTHORITY_REGISTRY_ADAPTER",
+            "SALES_ANALYZER_NOT_WIRED_TO_PROMPT_TOOLS"
+          ],
+          "sales_analyzer_wired_to_prompt_tools": false
+        }
+      }
+    }
+  }
+}

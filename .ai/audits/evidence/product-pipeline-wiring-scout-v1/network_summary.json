@@ -1,0 +1,50 @@
+{
+  "captured_at_utc": "2026-07-04T08:43:05.791Z",
+  "responses": [
+    {
+      "page": "products_page",
+      "status": 404,
+      "url": "http://127.0.0.1:8100/api/fastmoss/import-batch/latest"
+    },
+    {
+      "page": "products_page",
+      "status": 200,
+      "url": "http://127.0.0.1:8100/api/products?source=FASTMOSS&limit=500"
+    },
+    {
+      "page": "smart_registration_bulk_queue",
+      "status": 200,
+      "url": "http://127.0.0.1:8100/api/product-registration/review-drafts"
+    },
+    {
+      "page": "smart_registration_bulk_queue",
+      "status": 200,
+      "url": "http://127.0.0.1:8100/api/fastmoss-bulk/queue?page=1&page_size=50"
+    },
+    {
+      "page": "smart_registration_bulk_queue",
+      "status": 200,
+      "url": "http://127.0.0.1:8100/api/fastmoss-bulk/queue/stats"
+    },
+    {
+      "page": "product_asset_generator",
+      "status": 200,
+      "url": "http://127.0.0.1:8100/api/products?limit=250&offset=0"
+    },
+    {
+      "page": "product_asset_generator",
+      "status": 200,
+      "url": "http://127.0.0.1:8100/api/creative-assets?semantic_role=CHARACTER_REFERENCE&status=ACTIVE&limit=100"
+    },
+    {
+      "page": "product_asset_generator",
+      "status": 200,
+      "url": "http://127.0.0.1:8100/api/creative-assets?semantic_role=SCENE_CONTEXT_REFERENCE&status=ACTIVE&limit=100"
+    },
+    {
+      "page": "product_asset_generator",
+      "status": 200,
+      "url": "http://127.0.0.1:8100/api/bosmax-authority/prompt-tool-context"
+    }
+  ]
+}

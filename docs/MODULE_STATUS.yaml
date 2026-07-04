@@ -5,6 +5,12 @@ domains:
     owned_paths:
       - docs/MODULE_STATUS.yaml
       - .ai/audits/BOSMAX_PRODUCT_PIPELINE_WIRING_SCOUT_AUDIT_V1.md
+      - .ai/audits/evidence/product-pipeline-wiring-scout-v1/products_page.png
+      - .ai/audits/evidence/product-pipeline-wiring-scout-v1/smart_registration_bulk_queue.png
+      - .ai/audits/evidence/product-pipeline-wiring-scout-v1/product_asset_generator.png
+      - .ai/audits/evidence/product-pipeline-wiring-scout-v1/browser_console.log
+      - .ai/audits/evidence/product-pipeline-wiring-scout-v1/network_summary.json
+      - .ai/audits/evidence/product-pipeline-wiring-scout-v1/api_samples.json
       - docs/agent-instructions/BOSMAX_AVATAR_REGISTRY_AGENT_INSTRUCTION.md
       - .gitignore
       - .ai/decisions/ADR-008-canonical-prompt-compiler-authority.md

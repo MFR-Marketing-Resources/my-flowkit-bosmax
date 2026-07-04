@@ -19,7 +19,7 @@ That split creates the observed failure pattern:
 - Products / Sales Analyzer can show only reference products or zero committed/manual products depending on runtime DB state.
 - Product Asset Generator can display selectable products from catalog fallback while still failing authority hydration and preview resolution.
 
-This is not a UI-only bug. It is a **cross-surface read-model split with ID-join failure and runtime storage drift**.
+This is not a UI-only bug. It is a **cross-surface read-model split with ID-join failure**. The runtime API and repo-local DB evidence also conflict, but the backend DB binding is **NOT PROVEN / ENVIRONMENT-CONTAMINATED**, so no confirmed storage-drift conclusion is claimed in this audit.
 
 ## 2. Current Data Flow Diagram
 
@@ -118,7 +118,7 @@ while the repo-local DB snapshot at `agent.config.DB_PATH` showed:
 - `bulk_queue_total=298`
 - `bulk_queue_approved=203`
 
-**Result:** commit linkage exists in data model, but trustworthy cross-surface visibility is blocked by runtime DB drift or stale runtime state.
+**Result:** commit linkage exists in the data model, but trustworthy cross-surface visibility remains **NOT PROVEN / ENVIRONMENT-CONTAMINATED** in the live runtime because the backend DB binding could not be closed.
 
 ## 4. Field Standardization Matrix
 
@@ -253,7 +253,7 @@ Failing tests:
 1. Rewiring any single surface without unifying the read model can orphan `reference_id -> draft_id -> committed_product_id -> product_id` lineage.
 2. Silent field normalization between `category/subcategory/type` and `group/sub_group/type_of_product` can destroy source auditability.
 3. If preview starts accepting non-canonical reference IDs without explicit provenance, downstream prompt/asset flows could treat review-only rows as committed truth.
-4. Runtime DB drift means any live repair done against the wrong process snapshot can create false proof and accidental overwrite risk.
+4. Any live repair done against the wrong runtime snapshot can create false proof and accidental overwrite risk; because runtime DB binding is not proven, this risk remains **NOT PROVEN / ENVIRONMENT-CONTAMINATED** rather than confirmed storage drift.
 
 ## 5A. Failed Tests — Full Forensic Trace
 
@@ -307,6 +307,38 @@ tests\\ui\\test_product_asset_generator_ui_contract.py:45: AssertionError
 ### Historical note
 
 An earlier local run before the governance patch recorded a second failure for a literal `"/api/products?limit="` expectation in `dashboard/src/api/products.ts`. That failure did **not** reproduce in the mandatory rerun above, so it is not treated as current authoritative failure evidence.
+
+## 5AB. Base-vs-PR Test Delta
+
+### Command
+
+```text
+python -m pytest tests/api/test_fastmoss_bulk_api.py tests/api/test_product_asset_generator_api.py tests/unit/test_fastmoss_bulk_promotion_service.py tests/unit/test_product_registration_commit_service.py tests/ui/test_product_registration_ui_contract.py tests/ui/test_products_sales_analyzer_ui_contract.py tests/ui/test_product_asset_generator_ui_contract.py tests/ui/test_prompt_tool_authority_hydration_contract.py -q
+```
+
+### Base result
+
+- Base SHA: `76e752711fbe40e6042a19a8bd32374d6047c786`
+- Result: `145 passed, 1 failed in 15.39s`
+- Exact failing test:
+  - `tests/ui/test_product_asset_generator_ui_contract.py::test_product_asset_generator_form_locks_dry_run_only_true_and_shows_truth_copy`
+
+### PR result
+
+- PR head SHA: `fee0ed3a3ebfdb85504441361a8c7794f0575905`
+- Result: `145 passed, 1 failed in 27.61s`
+- Exact failing test:
+  - `tests/ui/test_product_asset_generator_ui_contract.py::test_product_asset_generator_form_locks_dry_run_only_true_and_shows_truth_copy`
+
+### Delta verdict
+
+- Did the PR introduce the failing test: **No**
+- Whether it blocks audit merge: **No**
+- Recommended disposition: treat it as pre-existing UI contract drift and keep it out of this audit-only PR scope.
+
+Reasoning:
+
+The same command, the same test file, and the same assertion target failed on both base `main` and the PR head. This proves the audit PR did not introduce the failure.
 
 ## 5B. Runtime DB Binding Proof
 
@@ -426,17 +458,32 @@ Reason:
 2. Local config resolution points to `C:\Users\USER\Desktop\_ref_flowkit\flow_agent.db`.
 3. Direct SQL against that inferred DB path shows `queue_total=298` and `manual_total=210`.
 4. Live API responses from the running `127.0.0.1:8100` backend show `queue total=5` and `manual total=0`.
+5. No relevant `DB`, `FLOW`, `SQLITE`, or `PYTEST` override variables were visible in the current shell environment snapshot.
+6. The listener command line does not expose a DB override or a working directory, and the working directory could not be obtained from the Windows process-inspection tools used in this audit.
 
 Because the inferred DB path and the live API surface materially disagree, the audit cannot honestly claim that the backend is proven to be bound to the repo-local `flow_agent.db`.
 
+The correct forensic statement is:
+
+> runtime DB binding is not proven; runtime API and local DB evidence conflict; root cause may be different DB, stale process, different working directory, env override, or separate seeded runtime.
+
+All DB-derived cross-surface conclusions from the repo-local `flow_agent.db` must therefore be treated as **NOT PROVEN / ENVIRONMENT-CONTAMINATED** until the live backend binding is closed.
+
 ## 5C. Browser / UI Evidence
 
-Browser automation succeeded headlessly through Playwright. The screenshots were captured locally and are not part of the Git diff.
+Browser automation succeeded headlessly through Playwright, and the evidence files are now committed in this PR under:
+
+- `.ai/audits/evidence/product-pipeline-wiring-scout-v1/products_page.png`
+- `.ai/audits/evidence/product-pipeline-wiring-scout-v1/smart_registration_bulk_queue.png`
+- `.ai/audits/evidence/product-pipeline-wiring-scout-v1/product_asset_generator.png`
+- `.ai/audits/evidence/product-pipeline-wiring-scout-v1/browser_console.log`
+- `.ai/audits/evidence/product-pipeline-wiring-scout-v1/network_summary.json`
+- `.ai/audits/evidence/product-pipeline-wiring-scout-v1/api_samples.json`
 
 ### Products / Sales Analyzer
 
 - URL: `http://127.0.0.1:8100/products`
-- Screenshot: `C:\Users\USER\AppData\Local\Temp\bosmax-audit-ui-proof\products.png`
+- Screenshot artifact: `.ai/audits/evidence/product-pipeline-wiring-scout-v1/products_page.png`
 - Observed page state:
   - `READY: 300`
   - `CACHE_READY: 0`
@@ -454,8 +501,7 @@ Browser automation succeeded headlessly through Playwright. The screenshots were
 ### Smart Registration
 
 - URL: `http://127.0.0.1:8100/product-registration`
-- Single-product screenshot: `C:\Users\USER\AppData\Local\Temp\bosmax-audit-ui-proof\product-registration.png`
-- Bulk queue screenshot: `C:\Users\USER\AppData\Local\Temp\bosmax-audit-ui-proof\product-registration-bulk.png`
+- Bulk queue screenshot artifact: `.ai/audits/evidence/product-pipeline-wiring-scout-v1/smart_registration_bulk_queue.png`
 - Observed page state:
   - default page shows `Review Draft Queue`
   - bulk tab shows `QUEUE STATS`
@@ -471,7 +517,7 @@ Browser automation succeeded headlessly through Playwright. The screenshots were
 ### Product Asset Generator
 
 - URL: `http://127.0.0.1:8100/product-asset-generator`
-- Screenshot: `C:\Users\USER\AppData\Local\Temp\bosmax-audit-ui-proof\product-asset-generator.png`
+- Screenshot artifact: `.ai/audits/evidence/product-pipeline-wiring-scout-v1/product_asset_generator.png`
 - Observed page state:
   - header states `Preview-only · No image generation · No Flow execution`
   - badge states `DRY_RUN_ONLY=TRUE`
@@ -563,9 +609,9 @@ Queue approval updates queue state and commit linkage, but downstream visibility
 
 `READY_FOR_APPROVAL` does not encode mapping confidence, family validity, or category/family contradiction severity.
 
-### Rank 5: Runtime storage/process drift blocks trustworthy end-to-end proof
+### Rank 5: Runtime API vs local DB conflict blocks trustworthy end-to-end proof
 
-Until the live API and repo-local DB are proven to use the same state snapshot, every cross-surface conclusion remains partially contaminated by runtime environment mismatch.
+Until the live API and repo-local DB are proven to use the same state snapshot, every cross-surface conclusion that depends on repo-local SQL remains partially contaminated by runtime environment mismatch.
 
 ## 7. Repair Options With Risk
 
@@ -661,7 +707,7 @@ VALIDATION:
 
 1. Product truth is not yet single-source across queue, catalog, authority, and preview lanes.
 2. Product Asset Generator cannot currently rely on selector choice to produce authority-backed preview readiness.
-3. Runtime DB drift makes current live proof non-deterministic.
+3. Runtime DB binding is not proven, so current live proof remains environment-contaminated.
 4. Approval classification is not strong enough to protect taxonomy correctness.
 
 ### GO condition
@@ -674,11 +720,25 @@ Proceed to implementation only after the repair scope is framed as **Option B**:
 
 ### Remaining evidence gaps
 
-1. No browser-console capture or screenshot set was collected in this pass.
-2. The live backend DB path used by the running `127.0.0.1:8100` process was not proven from process-level telemetry in this audit.
-3. A full sample set of `/api/fastmoss-bulk/queue` rows from the live runtime was not archived in this report because the API/runtime contradiction was already proven by aggregate counts.
+1. The live backend DB path used by the running `127.0.0.1:8100` process was not proven from process-level telemetry in this audit.
+2. The backend working directory and process-level DB override environment could not be extracted with the Windows tooling used in this pass.
+3. The runtime API/local DB conflict remains **NOT PROVEN / ENVIRONMENT-CONTAMINATED** until a future pass closes the live binding.
 
 ## Audit Execution Notes
 
 - `graphify-out/` was not present in this checkout, so dependency mapping was performed by targeted source inspection and endpoint/service tracing.
 - This audit changed no production application code.
+
+## 10. Implementation Handoff Boundary
+
+No Claude Code repair should start from this PR alone.
+
+This PR is an audit evidence pack, not an implementation contract. The required next artifact is a dedicated implementation contract that defines:
+
+1. one canonical `Product Truth Gateway / ProductCatalogReadModel`
+2. the ID policy across `reference_id`, `draft_id`, `committed_product_id`, `fastmoss_reference_id`, and canonical product row `id`
+3. the `source_lane` policy
+4. the `reference_only` policy
+5. the Product Asset Generator authority policy
+
+Until that contract exists, this audit should be treated as diagnostic evidence only, not direct authorization for repair execution.
