@@ -22,29 +22,36 @@ from typing import Any
 
 from agent.services.ai_provider_settings_service import (
     get_lane_api_key,
+    get_lane_model,
     get_lane_provider,
     is_lane_execution_enabled,
 )
 
 LANE = "text_assist"
 
-# Env-overridable transport config (never a hardcoded key). Base URL / model may
-# be supplied per deployment; a small default map covers common OpenAI-compatible
-# providers. If unresolved when a key IS present, the call fails closed.
+# Env-overridable transport config (never a hardcoded key). The operator's
+# UI-selected lane model is PRIMARY; env vars remain only as an optional
+# deployment override; the default map is the last resort. If unresolved when a
+# key IS present, the call fails closed.
 _BASE_URL_ENV = "PRODUCT_TEXT_ASSIST_BASE_URL"
 _MODEL_ENV = "PRODUCT_TEXT_ASSIST_MODEL"
 _TIMEOUT_SECONDS = 30.0
+_ANTHROPIC_VERSION = "2023-06-01"
+_ANTHROPIC_MAX_TOKENS = 1024
 _DEFAULT_BASE_URLS = {
     "deepseek": "https://api.deepseek.com/v1",
     "openai": "https://api.openai.com/v1",
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+    # Anthropic uses its native /v1/messages transport (NOT OpenAI-compatible).
+    "anthropic": "https://api.anthropic.com",
 }
 _DEFAULT_MODELS = {
     "deepseek": "deepseek-chat",
     "openai": "gpt-4o-mini",
     "qwen": "qwen-plus",
     "gemini": "gemini-2.0-flash",
+    "anthropic": "claude-haiku-4-5-20251001",
 }
 
 ERR_NOT_CONFIGURED = "AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED"
@@ -77,14 +84,26 @@ def is_configured() -> bool:
 
 def provider_status() -> dict[str, Any]:
     provider_id = None
+    model_id = None
+    execution_enabled = False
     try:
         provider_id = get_lane_provider(LANE)
     except Exception:
         provider_id = None
+    try:
+        model_id = _resolve_model(provider_id)
+    except Exception:
+        model_id = None
+    try:
+        execution_enabled = bool(is_lane_execution_enabled(LANE))
+    except Exception:
+        execution_enabled = False
     return {
         "lane": LANE,
         "configured": is_configured(),
         "provider_id": provider_id,
+        "model_id": model_id,
+        "execution_enabled": execution_enabled,
     }
 
 
@@ -96,6 +115,13 @@ def _resolve_base_url(provider_id: str | None) -> str | None:
 
 
 def _resolve_model(provider_id: str | None) -> str | None:
+    # UI-selected lane model is primary and visible in the registry.
+    try:
+        lane_model = get_lane_model(LANE)
+    except Exception:
+        lane_model = None
+    if lane_model:
+        return lane_model
     env = str(os.environ.get(_MODEL_ENV, "")).strip()
     if env:
         return env
@@ -144,33 +170,94 @@ def build_messages(brief: str) -> list[dict[str, str]]:
     ]
 
 
-def _complete(messages: list[dict[str, str]]) -> str:
-    """Execute an OpenAI-compatible chat completion via the configured lane.
-    Mirrors the proven product_knowledge_service httpx pattern. Never reached in
-    tests (disabled by default)."""
+def _split_system_and_turns(
+    messages: list[dict[str, str]],
+) -> tuple[str, list[dict[str, str]]]:
+    """Anthropic /v1/messages takes `system` at the top level and only
+    user/assistant turns in `messages`."""
+    system_parts: list[str] = []
+    turns: list[dict[str, str]] = []
+    for message in messages:
+        role = str(message.get("role") or "")
+        content = str(message.get("content") or "")
+        if role == "system":
+            if content:
+                system_parts.append(content)
+        else:
+            turns.append({"role": role, "content": content})
+    return "\n\n".join(system_parts), turns
+
+
+def _complete_anthropic(
+    messages: list[dict[str, str]], api_key: str, base_url: str, model: str
+) -> str:
+    """Native Anthropic Messages transport (/v1/messages). Scoped to the
+    text_assist lane; disabled by default and exercised only via unit tests."""
     import httpx  # local import — only when actually executing a configured call
 
+    system, turns = _split_system_and_turns(messages)
+    response = httpx.post(
+        f"{base_url}/v1/messages",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": _ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "max_tokens": _ANTHROPIC_MAX_TOKENS,
+            "temperature": 0.5,
+            "system": system,
+            "messages": turns,
+        },
+        timeout=_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    data = response.json()
+    blocks = data.get("content") or []
+    for block in blocks:
+        if isinstance(block, dict) and str(block.get("type") or "") == "text":
+            return str(block.get("text") or "")
+    raise AICopyProviderError(ERR_RESPONSE_INVALID, detail="no text block in response")
+
+
+def _complete_openai_compatible(
+    messages: list[dict[str, str]], api_key: str, base_url: str, model: str
+) -> str:
+    """OpenAI-compatible /chat/completions transport (qwen/openai/gemini/deepseek).
+    Mirrors the proven product_knowledge_service httpx pattern."""
+    import httpx  # local import — only when actually executing a configured call
+
+    response = httpx.post(
+        f"{base_url}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={"model": model, "temperature": 0.5, "messages": messages},
+        timeout=_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return str(data["choices"][0]["message"]["content"])
+
+
+def _complete(messages: list[dict[str, str]]) -> str:
+    """Execute a chat completion via the configured text_assist lane. Anthropic
+    speaks its native /v1/messages shape; every other provider is OpenAI-compatible.
+    Never reached in tests (disabled by default)."""
     api_key = get_lane_api_key(LANE)
-    provider_id = get_lane_provider(LANE)
+    provider_id = str(get_lane_provider(LANE) or "").lower()
     base_url = _resolve_base_url(provider_id)
     model = _resolve_model(provider_id)
-    if not base_url or not model:
+    if not api_key or not base_url or not model:
         raise AICopyProviderError(
-            ERR_CALL_FAILED, detail="text_assist base_url/model unresolved"
+            ERR_CALL_FAILED, detail="text_assist key/base_url/model unresolved"
         )
     try:
-        response = httpx.post(
-            f"{base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={"model": model, "temperature": 0.5, "messages": messages},
-            timeout=_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        data = response.json()
-        return str(data["choices"][0]["message"]["content"])
+        if provider_id == "anthropic":
+            return _complete_anthropic(messages, api_key, base_url, model)
+        return _complete_openai_compatible(messages, api_key, base_url, model)
     except AICopyProviderError:
         raise
     except Exception as exc:  # network / shape / auth — fail closed

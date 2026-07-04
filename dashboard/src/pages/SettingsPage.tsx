@@ -3,6 +3,8 @@ import { fetchAPI } from "../api/client";
 import { useWebSocketContext } from "../contexts/WebSocketContext";
 import type {
 	AIProviderId,
+	AIProviderLaneSetting,
+	AIProviderModelOption,
 	AIProviderRegistry,
 	AIProviderSummary,
 	LocalAgentStatus,
@@ -185,7 +187,7 @@ export default function SettingsPage() {
 	};
 
 	const runProviderMutation = async (
-		providerId: AIProviderId | "GLOBAL",
+		providerId: string,
 		task: () => Promise<AIProviderRegistry>,
 		successMessage: string,
 	) => {
@@ -274,6 +276,109 @@ export default function SettingsPage() {
 				}),
 			"Active AI provider cleared. Stored keys remain available in the registry.",
 		);
+	};
+
+	const handleSaveModel = async (
+		providerId: AIProviderId,
+		modelId: string,
+	) => {
+		if (!modelId) return;
+		await runProviderMutation(
+			`model:${providerId}`,
+			async () =>
+				fetchAPI<AIProviderRegistry>(`/api/ai-providers/${providerId}/model`, {
+					method: "PUT",
+					body: JSON.stringify({ model_id: modelId }),
+				}),
+			`${providerId.toUpperCase()} default model set to ${modelId}.`,
+		);
+	};
+
+	const modelsForLane = (
+		providerId: AIProviderId | null,
+		lane: string,
+	): AIProviderModelOption[] => {
+		if (!providerId || !providerRegistry) return [];
+		return (providerRegistry.model_catalog[providerId] || []).filter((model) =>
+			model.lanes.includes(lane),
+		);
+	};
+
+	const providersForLane = (lane: string): AIProviderSummary[] => {
+		if (!providerRegistry) return [];
+		return providerRegistry.providers.filter((provider) =>
+			provider.supported_lanes.includes(lane),
+		);
+	};
+
+	const handleSaveLane = async (
+		lane: string,
+		providerId: AIProviderId,
+		modelId: string,
+		executionEnabled?: boolean,
+	) => {
+		await runProviderMutation(
+			`lane:${lane}`,
+			async () =>
+				fetchAPI<AIProviderRegistry>(`/api/ai-providers/lanes/${lane}`, {
+					method: "PUT",
+					body: JSON.stringify({
+						provider_id: providerId,
+						model_id: modelId,
+						execution_enabled:
+							executionEnabled === undefined ? null : executionEnabled,
+					}),
+				}),
+			`${lane} lane set to ${providerId} / ${modelId}.`,
+		);
+	};
+
+	const handleLaneProviderChange = async (
+		lane: string,
+		providerId: AIProviderId,
+	) => {
+		const models = modelsForLane(providerId, lane);
+		const firstModel = models[0]?.model_id;
+		if (!firstModel) {
+			setBannerError(
+				`${providerId.toUpperCase()} has no model that supports the ${lane} lane.`,
+			);
+			return;
+		}
+		await handleSaveLane(lane, providerId, firstModel);
+	};
+
+	const laneStatus = (setting: AIProviderLaneSetting) => {
+		if (!setting.provider_id) {
+			return {
+				label: "NO PROVIDER",
+				className: "border-slate-700 bg-slate-900 text-slate-400",
+			};
+		}
+		const hasKey = providerRegistry?.providers.find(
+			(provider) => provider.provider_id === setting.provider_id,
+		)?.has_key;
+		if (!hasKey) {
+			return {
+				label: "KEY MISSING",
+				className: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+			};
+		}
+		if (!setting.configured) {
+			return {
+				label: "MODEL INVALID",
+				className: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+			};
+		}
+		return setting.execution_enabled
+			? {
+					label: "ACTIVE",
+					className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+				}
+			: {
+					label: "READY (DISABLED)",
+					className: "border-slate-700 bg-slate-900 text-slate-400",
+				};
 	};
 
 	const activeProviderLabel =
@@ -439,6 +544,40 @@ export default function SettingsPage() {
 											</div>
 										</div>
 
+										{(providerRegistry?.model_catalog?.[provider.provider_id]
+											?.length ?? 0) > 0 ? (
+											<div className="space-y-2">
+												<label className="text-xs font-medium text-slate-400">
+													Default Model
+												</label>
+												<select
+													value={provider.default_model || ""}
+													onChange={(event) =>
+														void handleSaveModel(
+															provider.provider_id,
+															event.target.value,
+														)
+													}
+													disabled={isBusy}
+													className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none transition focus:border-blue-400/60 disabled:cursor-not-allowed disabled:opacity-60"
+												>
+													{providerRegistry?.model_catalog?.[
+														provider.provider_id
+													]?.map((model) => (
+														<option key={model.model_id} value={model.model_id}>
+															{model.label}
+														</option>
+													))}
+												</select>
+												<div className="text-[11px] text-slate-500">
+													Supported lanes:{" "}
+													{provider.supported_lanes.length
+														? provider.supported_lanes.join(", ")
+														: "—"}
+												</div>
+											</div>
+										) : null}
+
 										<div className="grid grid-cols-3 gap-2">
 											<button
 												type="button"
@@ -508,10 +647,148 @@ export default function SettingsPage() {
 				</section>
 			</div>
 
+			<section className="space-y-4">
+				<div className="flex items-center justify-between">
+					<h3 className="text-sm font-bold uppercase tracking-wider text-slate-500">
+						Lane Settings
+					</h3>
+					<div className="text-xs text-slate-500">
+						Route: <code>/api/ai-providers/lanes/&#123;lane&#125;</code>
+					</div>
+				</div>
+				<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-400">
+					The <span className="font-semibold text-slate-200">global active provider</span>{" "}
+					above is a legacy runtime-wide selector. Lane Settings are what decide
+					which provider/model each AI task actually uses. The{" "}
+					<span className="font-semibold text-slate-200">Text Assist</span> lane
+					powers <span className="font-semibold text-slate-200">AI Copy Assist</span>{" "}
+					(candidate copy only — never the final deterministic prompt). The{" "}
+					<span className="font-semibold text-slate-200">Vision</span> lane powers
+					product-image vision tasks. A lane runs only when it has a stored key and
+					its execution toggle is on.
+				</div>
+				<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+					{providerRegistry?.lanes?.length
+						? providerRegistry.lanes.map((setting) => {
+								const status = laneStatus(setting);
+								const laneBusy = mutatingProviderId === `lane:${setting.lane}`;
+								const laneProviders = providersForLane(setting.lane);
+								const laneModels = modelsForLane(
+									setting.provider_id,
+									setting.lane,
+								);
+								return (
+									<div
+										key={setting.lane}
+										className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900/40 p-5 shadow-lg"
+									>
+										<div className="mb-4 flex items-center justify-between gap-3">
+											<div>
+												<h4 className="text-base font-bold text-white">
+													{setting.label} Lane
+												</h4>
+												<div className="mt-1 text-[11px] uppercase tracking-wide text-slate-500">
+													Lane id: {setting.lane}
+												</div>
+											</div>
+											<span
+												className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${status.className}`}
+											>
+												{status.label}
+											</span>
+										</div>
+
+										<div className="space-y-3">
+											<div className="space-y-2">
+												<label className="text-xs font-medium text-slate-400">
+													Provider
+												</label>
+												<select
+													value={setting.provider_id || ""}
+													onChange={(event) =>
+														void handleLaneProviderChange(
+															setting.lane,
+															event.target.value as AIProviderId,
+														)
+													}
+													disabled={laneBusy}
+													className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none transition focus:border-blue-400/60 disabled:cursor-not-allowed disabled:opacity-60"
+												>
+													{laneProviders.map((provider) => (
+														<option
+															key={provider.provider_id}
+															value={provider.provider_id}
+														>
+															{provider.label}
+														</option>
+													))}
+												</select>
+											</div>
+
+											<div className="space-y-2">
+												<label className="text-xs font-medium text-slate-400">
+													Model
+												</label>
+												<select
+													value={setting.model_id || ""}
+													onChange={(event) =>
+														setting.provider_id
+															? void handleSaveLane(
+																	setting.lane,
+																	setting.provider_id,
+																	event.target.value,
+																)
+															: undefined
+													}
+													disabled={laneBusy || !setting.provider_id}
+													className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none transition focus:border-blue-400/60 disabled:cursor-not-allowed disabled:opacity-60"
+												>
+													{laneModels.map((model) => (
+														<option key={model.model_id} value={model.model_id}>
+															{model.label}
+														</option>
+													))}
+												</select>
+											</div>
+
+											<label className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-4 py-2 text-xs text-slate-300">
+												<span>Execution enabled</span>
+												<input
+													type="checkbox"
+													checked={setting.execution_enabled}
+													onChange={(event) =>
+														setting.provider_id && setting.model_id
+															? void handleSaveLane(
+																	setting.lane,
+																	setting.provider_id,
+																	setting.model_id,
+																	event.target.checked,
+																)
+															: undefined
+													}
+													disabled={laneBusy || !setting.configured}
+													className="h-4 w-4 cursor-pointer accent-emerald-500 disabled:cursor-not-allowed"
+												/>
+											</label>
+											<div className="text-[11px] text-slate-500">
+												{setting.lane === "text_assist"
+													? "Consumed by AI Copy Assist candidate generation."
+													: "Consumed by product-image vision tasks."}
+											</div>
+										</div>
+									</div>
+								);
+							})
+						: null}
+				</div>
+			</section>
+
 			<div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 text-xs text-blue-300">
 				Local secrets are persisted under the Flow Kit local-agent state
 				directory. No API key is written into tracked repo files. Activation is
-				fail-closed: a provider cannot become active until a key is stored.
+				fail-closed: a provider cannot become active until a key is stored, and a
+				lane cannot execute until its provider key + model are configured and its
+				execution toggle is on.
 			</div>
 		</div>
 	);
