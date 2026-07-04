@@ -137,3 +137,68 @@ Every publish writes a `postiz_publish_record` row (artifact → Postiz media id
   publishes stay visible in the audit trail for manual retry.
 - BOSMAX never bypasses OAuth, never scrapes providers, and never invents
   channels: everything comes from the official Postiz Public API.
+
+## 6. Runtime provisioning & recovery (prevent recurrence)
+
+**Why this keeps breaking.** The agent reads its configuration from the
+repo-root `.env` (`agent/config.py`). `.env` is **gitignored on purpose** — it
+holds the local `POSTIZ_API_KEY`, which must never be committed. But because Git
+does not track it, **`.env` does not travel when you create or reset a runtime
+worktree** (`git worktree add`, a fresh clone, a hard reset). A new runtime
+worktree therefore starts with **no `.env`**, the agent loads zero `POSTIZ_*`
+values, and the Setup Doctor regresses to `POSTIZ_DISABLED` /
+`POSTIZ_BASE_URL_MISSING` / `POSTIZ_API_KEY_MISSING`. Repo/PR cleanup can never
+fix this, because the missing piece is untracked local config — not code.
+
+**Fix it in one step (safe, repeatable, no secrets printed):**
+
+```powershell
+# Run against the runtime worktree that serves :8100.
+# Copies an existing key from another local .env if this worktree has none.
+scripts/setup-postiz-runtime.ps1 -RuntimeRoot C:\path\to\runtime_worktree `
+    -SourceEnv  C:\path\to\other\.env
+```
+
+The script:
+
+- writes only the `POSTIZ_*` keys, preserving every other line in an existing
+  `.env`, and backs up any file it changes to `.env.backup-YYYYMMDD-HHMMSS`;
+- **preserves** an existing `POSTIZ_API_KEY`, else **copies** one from
+  `-SourceEnv` **without printing it**, else writes the `<paste key>`
+  placeholder and tells you the owner step;
+- prints status only (`KEY_PRESENT`, `BASE_URL_SET`, `ENV_PATH`, `CHANGED`) —
+  never the key, never the whole file.
+
+Then **restart the agent** so the new values load (the agent has no `--reload`):
+
+```powershell
+scripts/start-local-agent.ps1 -ForceRestart
+```
+
+**Verify it (read-only, no secrets, no posting):**
+
+```powershell
+scripts/doctor-postiz-runtime.ps1 -RuntimeRoot C:\path\to\runtime_worktree
+```
+
+It checks the runtime `.env` names, probes the Postiz base URL (with the same
+`localhost`→`127.0.0.1` IPv6 fallback the agent uses), reads
+`GET /api/postiz/setup-status`, and prints a single `DOCTOR_VERDICT`:
+
+| Verdict | Meaning | Exit |
+|---|---|---|
+| `READY` | Configured and ≥1 channel connected. | 0 |
+| `OWNER_CHANNEL_OAUTH_REQUIRED` | **Config is correct** (`problems: []`) but `integrations_count: 0`. This is the normal "connect a channel" state, **not** a failure — do section 3's OAuth in the Postiz UI. | 0 |
+| `CONFIG_PROBLEMS` | Setup Doctor reported problem codes — re-run the setup script + restart. | 1 |
+| `AGENT_DOWN` | The BOSMAX agent isn't answering — start it. | 1 |
+
+> **Reading the Setup Doctor:** `problems: []` together with `ready: false` and
+> `integrations_count: 0` is **healthy** — it means only the owner OAuth channel
+> connect is left. A red state always carries a `problems` code. A `<paste key>`
+> placeholder (no real key pasted yet) reads as `POSTIZ_API_KEY_MISSING`
+> everywhere — a **config problem** (`CONFIG_PROBLEMS`), never mistaken for a
+> present key or the connect-a-channel state.
+
+**Security (non-negotiable):** never commit or upload `.env`, `.env.backup-*`,
+`.env.bak`, or the API key; never paste the key into logs, screenshots, or PRs.
+All of these are gitignored — keep them that way.

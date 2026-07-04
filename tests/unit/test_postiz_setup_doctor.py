@@ -172,3 +172,77 @@ async def test_localhost_ipv6_trap_is_detected_with_exact_fix(monkeypatch):
     assert status["safe_env_example"]["POSTIZ_BASE_URL"] == "http://127.0.0.1:5000"
     # The module-level template itself stays untouched.
     assert pz.SAFE_ENV_EXAMPLE["POSTIZ_BASE_URL"] == "http://localhost:5000"
+
+
+async def test_healthy_zero_channels_is_not_a_config_problem(monkeypatch):
+    """Contract the runtime doctor (scripts/doctor-postiz-runtime.ps1) classifies
+    on: fully configured + reachable + zero connected channels must report
+    `problems: []` with `ready: false`. That combination is
+    OWNER_CHANNEL_OAUTH_REQUIRED (connect a channel), NOT a config failure — so
+    the doctor must never flag it red."""
+    _env(monkeypatch, POSTIZ_ENABLED="true",
+         POSTIZ_BASE_URL="http://localhost:5000", POSTIZ_API_KEY="k")
+    _no_probe(monkeypatch, reachable=True)
+
+    async def fake_list():
+        return []
+
+    monkeypatch.setattr(pz, "list_integrations", fake_list)
+    status = await pz.setup_status()
+    assert status["health_ok"] is True
+    assert status["postiz_reachable"] is True
+    assert status["integrations_count"] == 0
+    assert status["ready"] is False
+    # The load-bearing assertion for the prevention tooling: NO problem codes.
+    assert status["problems"] == []
+
+
+@pytest.mark.parametrize("placeholder", ["<paste key>", "<paste-key>", "paste key"])
+async def test_placeholder_api_key_reads_as_missing(monkeypatch, placeholder):
+    """The provisioning script writes `<paste key>` when the operator has no real
+    key yet. The backend must treat that (and obvious variants) as MISSING — not
+    as a present key that later fails with POSTIZ_API_KEY_REJECTED."""
+    _env(monkeypatch, POSTIZ_ENABLED="true",
+         POSTIZ_BASE_URL="http://localhost:5000", POSTIZ_API_KEY=placeholder)
+    _no_probe(monkeypatch, reachable=True)
+    status = await pz.setup_status()
+    assert status["api_key_present"] is False
+    assert status["health_ok"] is False
+    assert status["ready"] is False
+    assert "POSTIZ_API_KEY_MISSING" in status["problems"]
+    assert any("Settings → Public API" in s for s in status["next_steps"])
+    # The doc template may still SHOW the placeholder — runtime logic must not
+    # treat it as a real key (documentation vs. runtime semantics).
+    assert status["safe_env_example"]["POSTIZ_API_KEY"] == "<paste key>"
+
+
+def test_ensure_configured_rejects_placeholder_api_key(monkeypatch):
+    _env(monkeypatch, POSTIZ_ENABLED="true",
+         POSTIZ_BASE_URL="http://localhost:5000", POSTIZ_API_KEY="<paste key>")
+    with pytest.raises(pz.PostizConfigError) as exc:
+        pz.ensure_enabled_and_configured()
+    assert str(exc.value) == "POSTIZ_API_KEY_MISSING"
+
+
+async def test_placeholder_api_key_never_calls_list_integrations(monkeypatch):
+    """A placeholder key must fail closed BEFORE any authenticated call —
+    list_integrations must never run (it would 401 on the placeholder)."""
+    _env(monkeypatch, POSTIZ_ENABLED="true",
+         POSTIZ_BASE_URL="http://localhost:5000", POSTIZ_API_KEY="<paste key>")
+    _no_probe(monkeypatch, reachable=True)
+
+    async def boom():
+        raise AssertionError("list_integrations must NOT be called for a placeholder key")
+
+    monkeypatch.setattr(pz, "list_integrations", boom)
+    status = await pz.setup_status()
+    assert status["integrations_count"] is None
+    assert status["api_key_present"] is False
+    assert "POSTIZ_API_KEY_MISSING" in status["problems"]
+
+
+def test_is_real_api_key_helper_rejects_placeholders_accepts_real():
+    for bad in ("", "   ", "<paste key>", "<paste-key>", "<your key>",
+                "paste key", "CHANGEME", "todo"):
+        assert pz._is_real_api_key(bad) is False, bad
+    assert pz._is_real_api_key("a-real-looking-64char-key-000000000000000000000000000000") is True

@@ -70,6 +70,33 @@ class PostizApiError(RuntimeError):
 # ── Config (read at call time so tests/operators can flip env live) ───────
 
 
+# Placeholder API-key values the provisioning script (or a hand-edited .env)
+# may leave behind. These must read as MISSING — never as a real key — so the
+# Setup Doctor prescribes the owner "generate a key" step instead of later
+# failing with POSTIZ_API_KEY_REJECTED. `scripts/setup-postiz-runtime.ps1`
+# writes `<paste key>` when no real key is available.
+_API_KEY_PLACEHOLDERS = frozenset({
+    "paste key", "paste-key", "your key", "your-key", "api key", "api-key",
+    "changeme", "todo",
+})
+
+
+def _is_real_api_key(value: str | None) -> bool:
+    """True only for a plausibly-real Postiz API key.
+
+    Empty, whitespace, any `<...>` angle-bracket template (e.g. `<paste key>`,
+    `<paste-key>`, `<your key>`), and known bare placeholders read as MISSING.
+    """
+    v = (value or "").strip()
+    if not v:
+        return False
+    if v.startswith("<") and v.endswith(">"):
+        return False
+    if v.lower() in _API_KEY_PLACEHOLDERS:
+        return False
+    return True
+
+
 def postiz_config() -> dict:
     return {
         "enabled": os.environ.get("POSTIZ_ENABLED", "false").strip().lower() == "true",
@@ -91,7 +118,7 @@ def ensure_enabled_and_configured() -> dict:
         raise PostizConfigError("POSTIZ_DISABLED")
     if not cfg["base_url"]:
         raise PostizConfigError("POSTIZ_BASE_URL_MISSING")
-    if not cfg["api_key"]:
+    if not _is_real_api_key(cfg["api_key"]):
         raise PostizConfigError("POSTIZ_API_KEY_MISSING")
     if cfg["upload_mode"] not in ("file", "url"):
         raise PostizConfigError(f"POSTIZ_UPLOAD_MODE_INVALID:{cfg['upload_mode']}")
@@ -108,12 +135,12 @@ def health_summary() -> dict:
         problems.append("POSTIZ_DISABLED")
     if not cfg["base_url"]:
         problems.append("POSTIZ_BASE_URL_MISSING")
-    if not cfg["api_key"]:
+    if not _is_real_api_key(cfg["api_key"]):
         problems.append("POSTIZ_API_KEY_MISSING")
     return {
         "enabled": cfg["enabled"],
         "base_url": cfg["base_url"] or None,
-        "api_key_present": bool(cfg["api_key"]),
+        "api_key_present": _is_real_api_key(cfg["api_key"]),
         "upload_mode": cfg["upload_mode"],
         "default_post_type": cfg["default_post_type"],
         "public_media_base_url": cfg["public_media_base_url"] or None,
@@ -175,7 +202,7 @@ async def setup_status() -> dict:
     env_example = dict(SAFE_ENV_EXAMPLE)
 
     base_url_configured = bool(cfg["base_url"])
-    api_key_present = bool(cfg["api_key"])
+    api_key_present = _is_real_api_key(cfg["api_key"])
     enabled = cfg["enabled"]
 
     reachable: bool | None = None

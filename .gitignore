@@ -8,6 +8,10 @@ __pycache__/
 agent_db.sqlite
 flow_agent.db
 .env
+# Local secret backups produced by scripts/setup-postiz-runtime.ps1 — never commit.
+.env.backup-*
+.env.bak
+.env.bak.*
 output/
 youtube
 agent/active_project.json
