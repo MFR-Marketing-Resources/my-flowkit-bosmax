@@ -961,6 +961,102 @@ export interface ProductCatalogResponse {
 	items: Product[];
 }
 
+export type ProductIntelligenceSnapshotStatus =
+	| "DRAFT"
+	| "APPROVED"
+	| "SUPERSEDED"
+	| "REJECTED"
+	| "ARCHIVED";
+
+export type ProductIntelligenceLatestStatus =
+	| "NO_APPROVED_SNAPSHOT"
+	| "APPROVED_SNAPSHOT_AVAILABLE";
+
+export interface ProductIntelligenceSnapshot {
+	snapshot_id: string;
+	product_id: string;
+	version: number;
+	status: ProductIntelligenceSnapshotStatus;
+	product_description: string | null;
+	benefits_json: string[];
+	usp_json: string[];
+	usage_text: string | null;
+	ingredients_text: string | null;
+	warnings_text: string | null;
+	target_customer_text: string | null;
+	paste_anything_summary: string | null;
+	source_urls_json: Record<string, unknown>;
+	image_evidence_json: Record<string, unknown>;
+	package_notes: string | null;
+	size_or_volume: string | null;
+	product_form_factor: string | null;
+	packaging_description: string | null;
+	product_truth_lock: string | null;
+	claim_gate: string | null;
+	claim_risk_level: string | null;
+	claim_tokens_json: string[];
+	allowed_claims_json: string[];
+	blocked_claims_json: string[];
+	buyer_persona_snapshot_json: Record<string, unknown>;
+	copy_strategy_summary_json: Record<string, unknown>;
+	confidence_score: number | null;
+	completeness_score: number | null;
+	readiness_status: string | null;
+	created_from_review_draft_id: string | null;
+	created_by: string | null;
+	approved_by: string | null;
+	approved_at: string | null;
+	supersedes_snapshot_id: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ProductIntelligenceFieldProvenance {
+	provenance_id: string;
+	snapshot_id: string;
+	product_id: string;
+	field_name: string;
+	declared_value: string | null;
+	normalized_value: string | null;
+	source_type: string;
+	source_url: string | null;
+	source_lane: string | null;
+	evidence_kind: string;
+	extraction_method: string;
+	confidence_score: number | null;
+	verification_status: string;
+	claim_risk_flag: string | null;
+	reviewer_decision: string | null;
+	reviewer_note: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ProductIntelligenceProvenanceSummary {
+	total_snapshots: number;
+	approved_snapshot_count: number;
+	latest_approved_snapshot_id: string | null;
+	latest_approved_version: number | null;
+}
+
+export interface ProductIntelligenceLatestSnapshotResponse {
+	product_id: string;
+	latest_snapshot: ProductIntelligenceSnapshot | null;
+	status: ProductIntelligenceLatestStatus;
+	provenance_summary: ProductIntelligenceProvenanceSummary;
+}
+
+export interface ProductIntelligenceSnapshotListResponse {
+	product_id: string;
+	items: ProductIntelligenceSnapshot[];
+}
+
+export interface ProductIntelligenceFieldProvenanceListResponse {
+	snapshot_id: string;
+	product_id: string;
+	items: ProductIntelligenceFieldProvenance[];
+}
+
 export interface FastMossSalesMetricScopeEntry {
 	file_type_id: string;
 	metric_name: string;
