@@ -224,7 +224,11 @@ def build_product_lock(
         scale_lock = (
             f"PRODUCT SCALE LOCK: {authored_scale} "
             "Keep it at true palm scale — small relative to an adult hand, fingers, and face. "
-            "Do not enlarge the product for camera visibility."
+            "The product's real size outranks label readability: never enlarge it so the label, "
+            "text, or artwork reads more clearly, and if it is turned or rotated toward the "
+            "camera its physical size stays exactly the same. Do not enlarge the product for "
+            "camera visibility, and do not add any separate comparison object, second product, "
+            "prop, ruler, or size marker to the scene."
         )
         matched_id = entry.get("product_id")
     else:

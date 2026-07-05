@@ -384,3 +384,60 @@ def test_locks_never_trip_engine_scrub(product, mode):
     result = _compile(product, mode)
     for block in result["blocks"]:
         assert block["scrub_violations"] == [], block["scrub_violations"]
+
+
+# ── 7. MWTCB object-class + relative-scale (post-#214/#215/#217 overscale) ──────
+# Remaining gap: the engine had the SHAPE description but no named OBJECT CLASS,
+# and the non-reference scale path (T2V + schema scale) never said physical scale
+# outranks label readability. Both added globally/per-product without numerics.
+
+def test_mwtcb_object_class_named_flat_traditional_medicated_oil():
+    lock = plb.build_product_lock(MW25, is_video=True, has_product_reference=True)
+    ident = lock["identity_lock"].lower()
+    for phrase in ["flat traditional medicated-oil", "flat-front glass herbal-oil",
+                   "minyak-angin", "pocket-size"]:
+        assert phrase in ident, f"object-class grounding missing: {phrase}"
+    # explicit anti-round / anti-tall / anti-wrong-container class
+    for forbidden in ["cylindrical", "round-bodied", "tall", "perfume", "syrup",
+                      "supplement", "cosmetic"]:
+        assert forbidden in ident, f"object-class negative missing: {forbidden}"
+
+
+def test_scale_outranks_label_readability_and_no_comparison_object():
+    scale = plb.build_product_lock(MW25, is_video=True, has_product_reference=False)["scale_lock"].lower()
+    assert "real size outranks label readability" in scale
+    assert "turned or rotated toward the" in scale and "physical size stays exactly the same" in scale
+    assert "do not add any separate comparison object" in scale
+    assert "ruler" in scale and "size marker" in scale        # anti-measurement-prop
+    for numeric in ["cm", "mm", "inch"]:
+        assert numeric not in scale
+
+
+@pytest.mark.parametrize("mode", ALL_MODES)
+def test_object_class_and_scale_precedence_reach_section2_every_mode(mode):
+    # Including T2V (no reference image) — the mode most prone to overscale.
+    s2 = _s2(MW25, mode)
+    assert "flat traditional medicated-oil" in s2       # object class
+    assert "real size outranks label readability" in s2  # readability precedence
+    assert "comparison object" in s2                     # anti-prop / anti-vape-insertion
+
+
+def test_no_vape_or_pod_object_named_in_mwtcb_locks():
+    # The real bottle is near small-pod height, but naming vape/pod risks the engine
+    # DRAWING one. Assert no such distractor object leaks into any MWTCB lock.
+    blob = " ".join(v for v in plb.build_product_lock(
+        MW25, is_video=True, has_product_reference=True).values() if isinstance(v, str)).lower()
+    for distractor in ["vape", "pod-device", "pod device", "e-cigarette", "soda can"]:
+        assert distractor not in blob, f"distractor object leaked into MWTCB lock: {distractor}"
+
+
+def test_bosmax_inherits_readability_precedence_without_mwtcb_contamination():
+    for prod, own_class in ((BOS5, "lip balm"), (BOS10, "10ml")):
+        scale = plb.build_product_lock(prod, is_video=True, has_product_reference=False)["scale_lock"].lower()
+        assert "real size outranks label readability" in scale   # global improvement reaches BOSMAX
+        assert own_class in scale                                # BOSMAX keeps its own scale class
+        ident = plb.build_product_lock(prod, is_video=True, has_product_reference=False)["identity_lock"].lower()
+        # MWTCB object-class must NOT bleed into BOSMAX identity
+        assert "medicated-oil" not in ident and "minyak-angin" not in ident
+    # 5ml<->10ml separation intact
+    assert "10ml" not in plb.build_product_lock(BOS5, is_video=True, has_product_reference=False)["scale_lock"].lower()
