@@ -20,6 +20,11 @@ import os
 import re
 from typing import Any
 
+from agent.services.ai_provider_model_catalog import (
+    TRANSPORT_ANTHROPIC_MESSAGES,
+    TRANSPORT_OPENAI_COMPATIBLE,
+    get_provider_transport,
+)
 from agent.services.ai_provider_settings_service import (
     get_lane_api_key,
     get_lane_model,
@@ -29,10 +34,10 @@ from agent.services.ai_provider_settings_service import (
 
 LANE = "text_assist"
 
-# Env-overridable transport config (never a hardcoded key). The operator's
-# UI-selected lane model is PRIMARY; env vars remain only as an optional
-# deployment override; the default map is the last resort. If unresolved when a
-# key IS present, the call fails closed.
+# The operator's UI-selected lane model is the ONLY model source (with an optional
+# deployment env override). There is NO hardcoded model fallback — an unconfigured
+# lane resolves to None and the call fails closed. Base URLs below are transport
+# endpoints (not model choices) and may be overridden per deployment.
 _BASE_URL_ENV = "PRODUCT_TEXT_ASSIST_BASE_URL"
 _MODEL_ENV = "PRODUCT_TEXT_ASSIST_MODEL"
 _TIMEOUT_SECONDS = 30.0
@@ -45,13 +50,6 @@ _DEFAULT_BASE_URLS = {
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
     # Anthropic uses its native /v1/messages transport (NOT OpenAI-compatible).
     "anthropic": "https://api.anthropic.com",
-}
-_DEFAULT_MODELS = {
-    "deepseek": "deepseek-chat",
-    "openai": "gpt-4o-mini",
-    "qwen": "qwen-plus",
-    "gemini": "gemini-2.0-flash",
-    "anthropic": "claude-haiku-4-5-20251001",
 }
 
 ERR_NOT_CONFIGURED = "AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED"
@@ -75,9 +73,14 @@ class AICopyProviderError(Exception):
 
 
 def is_configured() -> bool:
-    """True only when the text_assist lane has a key AND execution is enabled."""
+    """True only when the text_assist lane has a configured provider+model, a key,
+    AND execution is enabled. Fail closed everywhere else (no hidden default)."""
     try:
-        return bool(get_lane_api_key(LANE)) and bool(is_lane_execution_enabled(LANE))
+        return (
+            bool(get_lane_api_key(LANE))
+            and bool(get_lane_model(LANE))
+            and bool(is_lane_execution_enabled(LANE))
+        )
     except Exception:
         return False
 
@@ -115,7 +118,8 @@ def _resolve_base_url(provider_id: str | None) -> str | None:
 
 
 def _resolve_model(provider_id: str | None) -> str | None:
-    # UI-selected lane model is primary and visible in the registry.
+    # UI-selected lane model is the ONLY source (optional env override). No
+    # hardcoded per-provider default — unconfigured resolves to None (fail closed).
     try:
         lane_model = get_lane_model(LANE)
     except Exception:
@@ -123,9 +127,7 @@ def _resolve_model(provider_id: str | None) -> str | None:
     if lane_model:
         return lane_model
     env = str(os.environ.get(_MODEL_ENV, "")).strip()
-    if env:
-        return env
-    return _DEFAULT_MODELS.get(str(provider_id or "").lower())
+    return env or None
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -250,14 +252,20 @@ def _complete(messages: list[dict[str, str]]) -> str:
     provider_id = str(get_lane_provider(LANE) or "").lower()
     base_url = _resolve_base_url(provider_id)
     model = _resolve_model(provider_id)
+    transport = get_provider_transport(provider_id)
     if not api_key or not base_url or not model:
         raise AICopyProviderError(
             ERR_CALL_FAILED, detail="text_assist key/base_url/model unresolved"
         )
     try:
-        if provider_id == "anthropic":
+        if transport == TRANSPORT_ANTHROPIC_MESSAGES:
             return _complete_anthropic(messages, api_key, base_url, model)
-        return _complete_openai_compatible(messages, api_key, base_url, model)
+        if transport == TRANSPORT_OPENAI_COMPATIBLE:
+            return _complete_openai_compatible(messages, api_key, base_url, model)
+        # Unknown / unimplemented transport — fail closed, never guess.
+        raise AICopyProviderError(
+            ERR_CALL_FAILED, detail=f"unsupported transport for {provider_id}: {transport}"
+        )
     except AICopyProviderError:
         raise
     except Exception as exc:  # network / shape / auth — fail closed

@@ -1,26 +1,27 @@
-"""AI provider / model catalog + lane compatibility (AI Provider Model & Lane Settings V1).
+"""AI provider / model catalog — SEED + mutable local catalog + transport gating
+(Dynamic AI Model Catalog & Explicit Lane Configuration V1).
 
-Single source of truth for:
-- which models each provider exposes,
-- which lanes (`text_assist` / `vision`) each model may serve,
-- the safe default model per provider and per lane.
+Two layers:
+- **Seed catalog** (source-of-truth *reference* constants below): recommended known
+  models per provider. It is a bootstrap/reference layer only — it does NOT force
+  any runtime lane default.
+- **Mutable local catalog** (`.local-agent/ai-model-catalog.json`, untracked):
+  operator-owned. Seeded from the seed catalog on first run, then freely
+  add/edit/disable-able. New model IDs are added here WITHOUT a code change.
 
-This module is pure data + pure helpers. It holds NO secrets and performs NO
-network calls. It is imported by `ai_provider_settings_service` (state + API) and
-never sits on the deterministic compiler path.
+A model ID is treated as operator-provided runtime config, not a claim that the
+model exists. Transport compatibility is enforced: a model may serve a lane only
+if the provider's transport implements that lane. Unknown transport fails closed.
 
-Honesty note (V1 transport reality):
-- `text_assist` executes through `ai_copy_provider_adapter`, which speaks the
-  OpenAI-compatible `/chat/completions` shape for qwen/openai/gemini/deepseek AND
-  a native Anthropic `/v1/messages` shape for anthropic. Both are wired + tested.
-- `vision` is a *selection surface* only in V1: the registry lets an operator pick
-  the provider/model, but the actual vision execution lane is owned elsewhere and
-  is disabled-by-default. Do not assume enabling the vision toggle here starts a
-  new vision call path.
+This module holds NO secrets and performs NO network calls. It never sits on the
+deterministic compiler path.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
+
+from agent.config import BASE_DIR
 
 LANES: tuple[str, ...] = ("text_assist", "vision")
 
@@ -29,167 +30,388 @@ LANE_LABELS: dict[str, str] = {
     "vision": "Vision",
 }
 
-# Lane assignment defaults — used to seed V2 state and to fail-safe when stored
-# state is missing a lane. Kept in sync with the catalog `default_for` markers.
-LANE_PROVIDER_DEFAULTS: dict[str, str] = {
-    "text_assist": "qwen",
-    "vision": "anthropic",
-}
-LANE_MODEL_DEFAULTS: dict[str, str] = {
-    "text_assist": "qwen-plus",
-    "vision": "claude-sonnet-5",
+# --- transports -----------------------------------------------------------
+# A provider declares ONE transport. A lane is servable by a provider only if the
+# provider's transport is listed in LANE_TRANSPORT_SUPPORT[lane]. Unknown/unsupported
+# transports fail closed (never runnable).
+TRANSPORT_OPENAI_COMPATIBLE = "openai_compatible_chat"
+TRANSPORT_ANTHROPIC_MESSAGES = "anthropic_messages"
+SUPPORTED_TRANSPORTS: frozenset[str] = frozenset(
+    {TRANSPORT_OPENAI_COMPATIBLE, TRANSPORT_ANTHROPIC_MESSAGES}
+)
+
+# Which transports actually have a runtime implementation for each lane:
+# - text_assist: implemented in ai_copy_provider_adapter for BOTH transports.
+# - vision: only the anthropic_messages provider is wired (product_image_analysis).
+LANE_TRANSPORT_SUPPORT: dict[str, frozenset[str]] = {
+    "text_assist": frozenset({TRANSPORT_OPENAI_COMPATIBLE, TRANSPORT_ANTHROPIC_MESSAGES}),
+    "vision": frozenset({TRANSPORT_ANTHROPIC_MESSAGES}),
 }
 
-# provider_id -> { label, models: [ { model_id, label, lanes, default_for } ] }
-# `lanes`       = lanes this model is allowed to serve.
-# `default_for` = lanes for which this model is the catalog default (informational).
-PROVIDER_MODEL_CATALOG: dict[str, dict[str, Any]] = {
+# provider_id -> seed provider block. `models[].lanes` are the lanes the seed model
+# is intended for (still transport-gated at validation time).
+SEED_CATALOG: dict[str, dict[str, Any]] = {
     "anthropic": {
         "label": "Anthropic",
+        "transport": TRANSPORT_ANTHROPIC_MESSAGES,
         "models": [
-            {
-                "model_id": "claude-sonnet-5",
-                "label": "Claude Sonnet 5",
-                "lanes": ["text_assist", "vision"],
-                "default_for": ["vision"],
-            },
-            {
-                "model_id": "claude-haiku-4-5-20251001",
-                "label": "Claude Haiku 4.5",
-                "lanes": ["text_assist", "vision"],
-                "default_for": [],
-            },
-            {
-                "model_id": "claude-opus-4-8",
-                "label": "Claude Opus 4.8",
-                "lanes": ["text_assist", "vision"],
-                "default_for": [],
-            },
+            {"model_id": "claude-sonnet-5", "label": "Claude Sonnet 5", "lanes": ["text_assist", "vision"]},
+            {"model_id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5", "lanes": ["text_assist", "vision"]},
+            {"model_id": "claude-opus-4-8", "label": "Claude Opus 4.8", "lanes": ["text_assist", "vision"]},
         ],
     },
     "qwen": {
         "label": "Qwen",
+        "transport": TRANSPORT_OPENAI_COMPATIBLE,
         "models": [
-            {
-                "model_id": "qwen-plus",
-                "label": "Qwen Plus",
-                "lanes": ["text_assist"],
-                "default_for": ["text_assist"],
-            },
-            {
-                "model_id": "qwen-max",
-                "label": "Qwen Max",
-                "lanes": ["text_assist"],
-                "default_for": [],
-            },
+            {"model_id": "qwen-plus", "label": "Qwen Plus", "lanes": ["text_assist"]},
+            {"model_id": "qwen-max", "label": "Qwen Max", "lanes": ["text_assist"]},
         ],
     },
     "openai": {
         "label": "OpenAI",
+        "transport": TRANSPORT_OPENAI_COMPATIBLE,
         "models": [
-            {
-                "model_id": "gpt-4o-mini",
-                "label": "GPT-4o mini",
-                "lanes": ["text_assist"],
-                "default_for": [],
-            },
-            {
-                "model_id": "gpt-4o",
-                "label": "GPT-4o",
-                "lanes": ["text_assist"],
-                "default_for": [],
-            },
+            {"model_id": "gpt-4o-mini", "label": "GPT-4o mini", "lanes": ["text_assist"]},
+            {"model_id": "gpt-4o", "label": "GPT-4o", "lanes": ["text_assist"]},
         ],
     },
     "gemini": {
         "label": "Gemini",
+        "transport": TRANSPORT_OPENAI_COMPATIBLE,
         "models": [
-            {
-                "model_id": "gemini-2.0-flash",
-                "label": "Gemini 2.0 Flash",
-                "lanes": ["text_assist"],
-                "default_for": [],
-            },
+            {"model_id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash", "lanes": ["text_assist"]},
         ],
     },
     "deepseek": {
         "label": "DeepSeek",
+        "transport": TRANSPORT_OPENAI_COMPATIBLE,
         "models": [
-            {
-                "model_id": "deepseek-chat",
-                "label": "DeepSeek Chat",
-                "lanes": ["text_assist"],
-                "default_for": [],
-            },
+            {"model_id": "deepseek-chat", "label": "DeepSeek Chat", "lanes": ["text_assist"]},
         ],
     },
 }
 
+SEED_PROVIDER_IDS: tuple[str, ...] = tuple(SEED_CATALOG.keys())
+
+AI_MODEL_CATALOG_DIR = BASE_DIR / ".local-agent"
+AI_MODEL_CATALOG_FILE = AI_MODEL_CATALOG_DIR / "ai-model-catalog.json"
+AI_MODEL_CATALOG_VERSION = 1
+
+
+# --- pure helpers ---------------------------------------------------------
 
 def is_known_lane(lane: str) -> bool:
     return str(lane or "") in LANES
 
 
-def models_for_provider(provider_id: str) -> list[dict[str, Any]]:
-    entry = PROVIDER_MODEL_CATALOG.get(str(provider_id or "").lower())
-    if not entry:
+def _normalize_lanes(lanes: Any) -> list[str]:
+    if not isinstance(lanes, (list, tuple)):
         return []
-    return [dict(model) for model in entry.get("models", [])]
+    seen: list[str] = []
+    for lane in lanes:
+        lane = str(lane or "").strip()
+        if lane in LANES and lane not in seen:
+            seen.append(lane)
+    return [lane for lane in LANES if lane in seen]
 
 
-def model_ids_for_provider(provider_id: str) -> list[str]:
-    return [str(model["model_id"]) for model in models_for_provider(provider_id)]
+def _seed_model(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "model_id": str(entry["model_id"]),
+        "label": str(entry.get("label") or entry["model_id"]),
+        "enabled": True,
+        "lanes": _normalize_lanes(entry.get("lanes")),
+        "source": "seed",
+    }
+
+
+def _seed_provider(provider_id: str) -> dict[str, Any]:
+    seed = SEED_CATALOG[provider_id]
+    return {
+        "label": str(seed["label"]),
+        "transport": str(seed["transport"]),
+        "enabled": True,
+        "models": [_seed_model(model) for model in seed["models"]],
+    }
+
+
+def seed_catalog_payload() -> dict[str, Any]:
+    return {
+        "version": AI_MODEL_CATALOG_VERSION,
+        "providers": {pid: _seed_provider(pid) for pid in SEED_PROVIDER_IDS},
+    }
+
+
+# --- mutable catalog storage ---------------------------------------------
+
+def _ensure_dir() -> None:
+    AI_MODEL_CATALOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _normalize_model(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    model_id = str(raw.get("model_id") or "").strip()
+    if not model_id:
+        return None
+    source = str(raw.get("source") or "custom")
+    if source not in {"seed", "custom"}:
+        source = "custom"
+    return {
+        "model_id": model_id,
+        "label": str(raw.get("label") or model_id),
+        "enabled": bool(raw.get("enabled", True)),
+        "lanes": _normalize_lanes(raw.get("lanes")),
+        "source": source,
+    }
+
+
+def _normalize_provider(provider_id: str, raw: Any) -> dict[str, Any]:
+    raw = raw if isinstance(raw, dict) else {}
+    seed = SEED_CATALOG.get(provider_id)
+    transport = str(raw.get("transport") or (seed["transport"] if seed else "")).strip()
+    if transport not in SUPPORTED_TRANSPORTS:
+        transport = seed["transport"] if seed else ""
+    models: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_model in raw.get("models") if isinstance(raw.get("models"), list) else []:
+        model = _normalize_model(raw_model)
+        if model and model["model_id"] not in seen:
+            seen.add(model["model_id"])
+            models.append(model)
+    return {
+        "label": str(raw.get("label") or (seed["label"] if seed else provider_id)),
+        "transport": transport,
+        "enabled": bool(raw.get("enabled", True)),
+        "models": models,
+    }
+
+
+def _write_catalog(payload: dict[str, Any]) -> None:
+    _ensure_dir()
+    AI_MODEL_CATALOG_FILE.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _load_catalog() -> dict[str, Any]:
+    """Load the mutable catalog, seeding on first run. Non-destructive forward
+    merge: seed providers missing from the file are ADDED (never overwriting
+    operator-edited providers/models). Only (re)writes the file when it is
+    absent/corrupt/extended."""
+    _ensure_dir()
+    seed = seed_catalog_payload()
+    if not AI_MODEL_CATALOG_FILE.exists():
+        _write_catalog(seed)
+        return seed
+    try:
+        raw = json.loads(AI_MODEL_CATALOG_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        _write_catalog(seed)
+        return seed
+
+    raw_providers = raw.get("providers") if isinstance(raw.get("providers"), dict) else {}
+    providers: dict[str, Any] = {}
+    added_seed = False
+    for pid in raw_providers:
+        # Only keep providers we know a transport for; unknown providers are dropped
+        # (no unsupported-transport runtime). Seed providers get normalized.
+        if pid in SEED_CATALOG:
+            providers[pid] = _normalize_provider(pid, raw_providers.get(pid))
+    for pid in SEED_PROVIDER_IDS:
+        if pid not in providers:
+            providers[pid] = _seed_provider(pid)
+            added_seed = True
+
+    payload = {"version": AI_MODEL_CATALOG_VERSION, "providers": providers}
+    if added_seed:
+        _write_catalog(payload)
+    return payload
+
+
+# --- catalog queries ------------------------------------------------------
+
+def get_model_catalog() -> dict[str, Any]:
+    return _load_catalog()
+
+
+def summarize_model_catalog() -> dict[str, Any]:
+    """Serializable catalog for the registry response (no secrets)."""
+    catalog = _load_catalog()
+    providers: dict[str, Any] = {}
+    for pid, entry in catalog["providers"].items():
+        providers[pid] = {
+            "label": entry["label"],
+            "transport": entry["transport"],
+            "enabled": bool(entry["enabled"]),
+            "supported_lanes": _provider_supported_lanes(entry),
+            "models": [dict(model) for model in entry["models"]],
+        }
+    return {"version": catalog.get("version", AI_MODEL_CATALOG_VERSION), "providers": providers}
+
+
+def is_provider_in_catalog(provider_id: str) -> bool:
+    return str(provider_id or "").lower() in _load_catalog()["providers"]
+
+
+def get_provider_entry(provider_id: str) -> dict[str, Any] | None:
+    return _load_catalog()["providers"].get(str(provider_id or "").lower())
+
+
+def get_provider_transport(provider_id: str) -> str | None:
+    entry = get_provider_entry(provider_id)
+    return entry["transport"] if entry else None
+
+
+def _transport_supports_lane(transport: str, lane: str) -> bool:
+    return transport in LANE_TRANSPORT_SUPPORT.get(lane, frozenset())
+
+
+def _provider_supported_lanes(entry: dict[str, Any]) -> list[str]:
+    lanes: list[str] = []
+    if not entry.get("enabled"):
+        return lanes
+    transport = entry.get("transport") or ""
+    for lane in LANES:
+        if not _transport_supports_lane(transport, lane):
+            continue
+        if any(
+            model.get("enabled") and lane in (model.get("lanes") or [])
+            for model in entry.get("models", [])
+        ):
+            lanes.append(lane)
+    return lanes
+
+
+def supported_lanes_for_provider(provider_id: str) -> list[str]:
+    entry = get_provider_entry(provider_id)
+    return _provider_supported_lanes(entry) if entry else []
+
+
+def models_for_provider(provider_id: str) -> list[dict[str, Any]]:
+    entry = get_provider_entry(provider_id)
+    return [dict(m) for m in entry["models"]] if entry else []
 
 
 def get_model_entry(provider_id: str, model_id: str) -> dict[str, Any] | None:
     for model in models_for_provider(provider_id):
-        if str(model.get("model_id")) == str(model_id):
+        if model["model_id"] == str(model_id):
             return model
     return None
 
 
-def is_model_in_provider(provider_id: str, model_id: str) -> bool:
-    return get_model_entry(provider_id, model_id) is not None
+def models_for_lane(provider_id: str, lane: str) -> list[dict[str, Any]]:
+    entry = get_provider_entry(provider_id)
+    if not entry or not entry.get("enabled"):
+        return []
+    if not _transport_supports_lane(entry.get("transport") or "", lane):
+        return []
+    return [
+        dict(model)
+        for model in entry["models"]
+        if model.get("enabled") and lane in (model.get("lanes") or [])
+    ]
 
 
 def model_supports_lane(provider_id: str, model_id: str, lane: str) -> bool:
-    model = get_model_entry(provider_id, model_id)
-    if not model:
+    """True only when the model exists, is enabled, lists the lane, AND the
+    provider's transport implements the lane. Fail-closed everywhere else."""
+    if not is_known_lane(lane):
         return False
-    return str(lane) in list(model.get("lanes") or [])
+    entry = get_provider_entry(provider_id)
+    if not entry or not entry.get("enabled"):
+        return False
+    if not _transport_supports_lane(entry.get("transport") or "", lane):
+        return False
+    model = get_model_entry(provider_id, model_id)
+    if not model or not model.get("enabled"):
+        return False
+    return lane in (model.get("lanes") or [])
 
 
-def supported_lanes_for_provider(provider_id: str) -> list[str]:
-    lanes: list[str] = []
-    for model in models_for_provider(provider_id):
-        for lane in list(model.get("lanes") or []):
-            if lane not in lanes:
-                lanes.append(str(lane))
-    # keep canonical LANES ordering
-    return [lane for lane in LANES if lane in lanes]
+def validate_provider_model_for_lane(provider_id: str, model_id: str, lane: str) -> None:
+    """Raise ValueError (mapped to 422 by the API) for any impermissible combo."""
+    if not is_known_lane(lane):
+        raise ValueError(f"UNSUPPORTED_LANE:{lane}")
+    pid = str(provider_id or "").lower()
+    entry = get_provider_entry(pid)
+    if not entry:
+        raise ValueError(f"UNKNOWN_PROVIDER:{provider_id}")
+    if not entry.get("enabled"):
+        raise ValueError(f"PROVIDER_DISABLED:{pid}")
+    model = get_model_entry(pid, model_id)
+    if not model:
+        raise ValueError(f"MODEL_NOT_FOUND:{pid}:{model_id}")
+    if not model.get("enabled"):
+        raise ValueError(f"MODEL_DISABLED:{pid}:{model_id}")
+    if lane not in (model.get("lanes") or []):
+        raise ValueError(f"MODEL_NOT_SUPPORTED_FOR_LANE:{pid}:{model_id}:{lane}")
+    if not _transport_supports_lane(entry.get("transport") or "", lane):
+        raise ValueError(f"TRANSPORT_NOT_SUPPORTED_FOR_LANE:{pid}:{entry.get('transport')}:{lane}")
 
 
-def provider_supports_lane(provider_id: str, lane: str) -> bool:
-    return lane in supported_lanes_for_provider(provider_id)
+# --- catalog mutations ----------------------------------------------------
+
+def upsert_provider_model(
+    provider_id: str,
+    model_id: str,
+    label: str | None = None,
+    lanes: list[str] | None = None,
+    enabled: bool = True,
+) -> dict[str, Any]:
+    """Add or edit a model for a KNOWN provider. Custom model IDs are allowed
+    without a code change. Lanes are transport-gated: a lane the provider's
+    transport cannot serve is rejected (fail closed)."""
+    pid = str(provider_id or "").lower()
+    catalog = _load_catalog()
+    entry = catalog["providers"].get(pid)
+    if not entry:
+        raise ValueError(f"UNKNOWN_PROVIDER:{provider_id}")
+    clean_model_id = str(model_id or "").strip()
+    if not clean_model_id:
+        raise ValueError("MODEL_ID_REQUIRED")
+
+    requested_lanes = _normalize_lanes(lanes if lanes is not None else [])
+    transport = entry.get("transport") or ""
+    for lane in requested_lanes:
+        if not _transport_supports_lane(transport, lane):
+            raise ValueError(f"TRANSPORT_NOT_SUPPORTED_FOR_LANE:{pid}:{transport}:{lane}")
+
+    existing = next((m for m in entry["models"] if m["model_id"] == clean_model_id), None)
+    if existing is not None:
+        if label is not None:
+            existing["label"] = str(label) or clean_model_id
+        if lanes is not None:
+            existing["lanes"] = requested_lanes
+        existing["enabled"] = bool(enabled)
+    else:
+        entry["models"].append(
+            {
+                "model_id": clean_model_id,
+                "label": str(label) if label else clean_model_id,
+                "enabled": bool(enabled),
+                "lanes": requested_lanes,
+                "source": "custom",
+            }
+        )
+    _write_catalog(catalog)
+    return summarize_model_catalog()
 
 
-def default_model_for_provider(provider_id: str) -> str | None:
-    """The provider's pre-selected default model — first catalog entry."""
-    models = model_ids_for_provider(provider_id)
-    return models[0] if models else None
+def disable_provider_model(provider_id: str, model_id: str) -> dict[str, Any]:
+    pid = str(provider_id or "").lower()
+    catalog = _load_catalog()
+    entry = catalog["providers"].get(pid)
+    if not entry:
+        raise ValueError(f"UNKNOWN_PROVIDER:{provider_id}")
+    model = next((m for m in entry["models"] if m["model_id"] == str(model_id)), None)
+    if not model:
+        raise ValueError(f"MODEL_NOT_FOUND:{pid}:{model_id}")
+    model["enabled"] = False
+    _write_catalog(catalog)
+    return summarize_model_catalog()
 
 
-def lane_default_provider(lane: str) -> str | None:
-    return LANE_PROVIDER_DEFAULTS.get(str(lane or ""))
-
-
-def lane_default_model(lane: str) -> str | None:
-    return LANE_MODEL_DEFAULTS.get(str(lane or ""))
-
-
-def catalog_payload() -> dict[str, list[dict[str, Any]]]:
-    """Serializable model catalog keyed by provider_id (models only)."""
-    return {
-        provider_id: models_for_provider(provider_id)
-        for provider_id in PROVIDER_MODEL_CATALOG
-    }
+def reset_seed_catalog() -> dict[str, Any]:
+    """Overwrite the local catalog with the seed catalog (discarding edits)."""
+    _write_catalog(seed_catalog_payload())
+    return summarize_model_catalog()

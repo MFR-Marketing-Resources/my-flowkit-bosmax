@@ -3,22 +3,19 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Literal
 
 from agent.config import BASE_DIR
 from agent.services.ai_provider_model_catalog import (
     LANE_LABELS,
     LANES,
-    catalog_payload,
-    default_model_for_provider,
+    get_model_entry,
     is_known_lane,
-    is_model_in_provider,
-    lane_default_model,
-    lane_default_provider,
-    model_ids_for_provider,
+    is_provider_in_catalog,
     model_supports_lane,
+    summarize_model_catalog,
     supported_lanes_for_provider,
+    validate_provider_model_for_lane,
 )
 
 ProviderId = Literal["qwen", "anthropic", "openai", "gemini", "deepseek"]
@@ -65,10 +62,12 @@ PROVIDER_CAPABILITIES: dict[ProviderId, list[str]] = {
 
 AI_PROVIDER_STATE_DIR = BASE_DIR / ".local-agent"
 AI_PROVIDER_SETTINGS_FILE = AI_PROVIDER_STATE_DIR / "ai-provider-settings.json"
-# V2 introduces per-provider `default_model` + a `lanes` map (text_assist / vision
-# provider+model+execution_enabled). V1 files load transparently (migrated in
-# memory) and are only rewritten to V2 on the next explicit save — keys preserved.
-AI_PROVIDER_STATE_VERSION = 2
+# V3: lanes are EXPLICIT and default to NOT_CONFIGURED (no hidden provider/model
+# default). V1/V2 files migrate forward; keys are always preserved. A V2 lane that
+# was only the old hardcoded seed default AND has no stored key is downgraded to
+# NOT_CONFIGURED; a V2 lane the operator meaningfully set (non-default provider,
+# or a provider that has a stored key) is preserved as configured_by_user.
+AI_PROVIDER_STATE_VERSION = 3
 ACTIVE_PROVIDER_ENV_VAR = "BOSMAX_ACTIVE_AI_PROVIDER"
 VISION_PROVIDER_ENV_VAR = "PRODUCT_IMAGE_VISION_PROVIDER"
 TEXT_ASSIST_PROVIDER_ENV_VAR = "PRODUCT_TEXT_ASSIST_PROVIDER"
@@ -76,10 +75,26 @@ LANE_EXECUTION_ENV_VARS: dict[str, str] = {
     "vision": "BOSMAX_VISION_PROVIDER_EXECUTION_ENABLED",
     "text_assist": "BOSMAX_TEXT_ASSIST_EXECUTION_ENABLED",
 }
+# No lane auto-enables on a fresh install — both default OFF (fail closed).
 LANE_EXECUTION_DEFAULTS: dict[str, bool] = {
     "vision": False,
-    "text_assist": True,
+    "text_assist": False,
 }
+
+# The exact hardcoded seed defaults PR #202 (V2) baked in. Used ONLY to detect a
+# never-touched seeded V2 lane during migration (so it downgrades to NOT_CONFIGURED).
+_V2_SEED_LANE_DEFAULTS: dict[str, tuple[str, str]] = {
+    "text_assist": ("qwen", "qwen-plus"),
+    "vision": ("anthropic", "claude-sonnet-5"),
+}
+
+# Lane status codes surfaced to the UI.
+LANE_STATUS_NOT_CONFIGURED = "NOT_CONFIGURED"
+LANE_STATUS_MODEL_MISSING = "MODEL_MISSING"
+LANE_STATUS_MODEL_DISABLED = "MODEL_DISABLED"
+LANE_STATUS_KEY_MISSING = "KEY_MISSING"
+LANE_STATUS_EXECUTION_DISABLED = "EXECUTION_DISABLED"
+LANE_STATUS_READY = "READY"
 
 
 def _is_provider_runtime_enabled(provider_id: str) -> bool:
@@ -104,28 +119,12 @@ def _env_bool(name: str, default: bool) -> bool:
     return default
 
 
-def _safe_lane_model(provider_id: str, lane: str) -> str | None:
-    """Pick a catalog model that `provider_id` may serve on `lane`. Prefers the
-    lane default model, then the provider's first lane-capable model."""
-    default_m = lane_default_model(lane)
-    if (
-        default_m
-        and lane_default_provider(lane) == provider_id
-        and model_supports_lane(provider_id, default_m, lane)
-    ):
-        return default_m
-    for model_id in model_ids_for_provider(provider_id):
-        if model_supports_lane(provider_id, model_id, lane):
-            return model_id
-    return None
-
-
-def _default_lane_state(lane: str) -> dict:
-    provider_id = lane_default_provider(lane)
+def _not_configured_lane() -> dict:
     return {
-        "provider_id": provider_id,
-        "model_id": lane_default_model(lane) or _safe_lane_model(provider_id, lane),
-        "execution_enabled": LANE_EXECUTION_DEFAULTS.get(lane, False),
+        "provider_id": None,
+        "model_id": None,
+        "execution_enabled": False,
+        "configured_by_user": False,
     }
 
 
@@ -138,11 +137,11 @@ def _default_payload() -> dict:
                 "api_key": "",
                 "updated_at": None,
                 "activated_at": None,
-                "default_model": default_model_for_provider(provider_id),
+                "default_model": None,
             }
             for provider_id in PROVIDER_IDS
         },
-        "lanes": {lane: _default_lane_state(lane) for lane in LANES},
+        "lanes": {lane: _not_configured_lane() for lane in LANES},
     }
 
 
@@ -165,35 +164,62 @@ def _ensure_state_dir() -> None:
     AI_PROVIDER_STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _migrate_lane(raw_lanes: dict, lane: str) -> dict:
-    entry = raw_lanes.get(lane) if isinstance(raw_lanes.get(lane), dict) else {}
-    provider_id = str(entry.get("provider_id") or "").strip().lower()
-    if provider_id not in PROVIDER_IDS:
-        provider_id = lane_default_provider(lane)
+def _migrate_lanes(raw: dict, providers_payload: dict) -> dict:
+    """Deterministic lane migration → V3.
+    - V3 file: preserve explicit lane fields.
+    - V2 file: preserve a lane iff (its provider has a stored key) OR (it deviates
+      from the old hardcoded seed default). Otherwise → NOT_CONFIGURED.
+    - V1/absent lanes: NOT_CONFIGURED.
+    """
+    raw_version = raw.get("version")
+    raw_lanes = raw.get("lanes") if isinstance(raw.get("lanes"), dict) else {}
+    lanes: dict = {}
 
-    model_id = entry.get("model_id")
-    if not (
-        is_model_in_provider(provider_id, model_id)
-        and model_supports_lane(provider_id, model_id, lane)
-    ):
-        model_id = _safe_lane_model(provider_id, lane)
+    for lane in LANES:
+        entry = raw_lanes.get(lane) if isinstance(raw_lanes.get(lane), dict) else None
+        if entry is None:
+            lanes[lane] = _not_configured_lane()
+            continue
 
-    execution_enabled = entry.get("execution_enabled")
-    if not isinstance(execution_enabled, bool):
-        execution_enabled = LANE_EXECUTION_DEFAULTS.get(lane, False)
+        provider_id = str(entry.get("provider_id") or "").strip().lower() or None
+        model_id = entry.get("model_id")
+        execution_enabled = bool(entry.get("execution_enabled"))
 
-    return {
-        "provider_id": provider_id,
-        "model_id": model_id,
-        "execution_enabled": execution_enabled,
-    }
+        if raw_version and int(raw_version) >= 3:
+            # Already V3 — preserve explicit intent verbatim (normalized).
+            lanes[lane] = {
+                "provider_id": provider_id if provider_id in PROVIDER_IDS else None,
+                "model_id": str(model_id) if (provider_id in PROVIDER_IDS and model_id) else None,
+                "execution_enabled": execution_enabled,
+                "configured_by_user": bool(entry.get("configured_by_user")),
+            }
+            continue
+
+        # V2 heuristic.
+        if provider_id not in PROVIDER_IDS or not model_id:
+            lanes[lane] = _not_configured_lane()
+            continue
+        has_key = bool(
+            str(providers_payload.get(provider_id, {}).get("api_key") or "").strip()
+        )
+        is_seed_default = (provider_id, str(model_id)) == _V2_SEED_LANE_DEFAULTS.get(lane)
+        if has_key or not is_seed_default:
+            lanes[lane] = {
+                "provider_id": provider_id,
+                "model_id": str(model_id),
+                "execution_enabled": execution_enabled,
+                "configured_by_user": True,
+            }
+        else:
+            lanes[lane] = _not_configured_lane()
+
+    return lanes
 
 
 def _load_payload() -> dict:
-    """Load provider settings, migrating V1 → V2 IN MEMORY. Existing api_key /
-    updated_at / activated_at are always preserved. Missing new fields
-    (default_model, lanes) are backfilled with catalog-safe defaults. The file is
-    only (re)written when absent/corrupt; a plain read never rewrites a valid V1."""
+    """Load provider settings, migrating V1/V2 → V3 IN MEMORY. api_key / updated_at
+    / activated_at are always preserved. First-run/unconfigured lanes are explicit
+    NOT_CONFIGURED. A plain read never rewrites a valid existing file."""
     _ensure_state_dir()
     default_payload = _default_payload()
     if not AI_PROVIDER_SETTINGS_FILE.exists():
@@ -212,6 +238,7 @@ def _load_payload() -> dict:
         )
         return default_payload
 
+    raw_version = raw.get("version")
     payload = {
         "version": AI_PROVIDER_STATE_VERSION,
         "active_provider": raw.get("active_provider"),
@@ -221,19 +248,24 @@ def _load_payload() -> dict:
     raw_providers = raw.get("providers") if isinstance(raw.get("providers"), dict) else {}
     for provider_id in PROVIDER_IDS:
         entry = raw_providers.get(provider_id) if isinstance(raw_providers.get(provider_id), dict) else {}
+        api_key = str(entry.get("api_key") or "")
         raw_default_model = entry.get("default_model")
-        if raw_default_model not in model_ids_for_provider(provider_id):
-            raw_default_model = default_model_for_provider(provider_id)
+        # default_model is a provider-card convenience only (it does NOT drive any
+        # runtime lane, so it is not a "hidden default" risk). Preserve it whenever
+        # it is still a valid, enabled catalog model; otherwise drop to None.
+        default_model = None
+        if isinstance(raw_default_model, str) and raw_default_model.strip():
+            model_entry = get_model_entry(provider_id, raw_default_model)
+            if model_entry and model_entry.get("enabled"):
+                default_model = raw_default_model
         payload["providers"][provider_id] = {
-            "api_key": str(entry.get("api_key") or ""),
+            "api_key": api_key,
             "updated_at": entry.get("updated_at"),
             "activated_at": entry.get("activated_at"),
-            "default_model": raw_default_model,
+            "default_model": default_model,
         }
 
-    raw_lanes = raw.get("lanes") if isinstance(raw.get("lanes"), dict) else {}
-    for lane in LANES:
-        payload["lanes"][lane] = _migrate_lane(raw_lanes, lane)
+    payload["lanes"] = _migrate_lanes(raw, payload["providers"])
 
     if payload["active_provider"] not in PROVIDER_IDS:
         payload["active_provider"] = None
@@ -261,27 +293,28 @@ def get_provider_default_model(provider_id: str) -> str | None:
     normalized = _normalize_provider_id(provider_id)
     payload = _load_payload()
     stored = payload["providers"][normalized].get("default_model")
-    if stored in model_ids_for_provider(normalized):
-        return stored
-    return default_model_for_provider(normalized)
+    if isinstance(stored, str) and stored.strip():
+        model_entry = get_model_entry(normalized, stored)
+        if model_entry and model_entry.get("enabled"):
+            return stored
+    return None
 
 
 def get_lane_provider(lane: str) -> str | None:
-    """Return the provider ID assigned to a given lane. Reads operator-configured
-    lane state, falling back to the catalog lane default (never None for a known
-    lane); returns None only for an unknown lane."""
+    """Return the operator-configured provider for a lane, or None if the lane is
+    NOT_CONFIGURED. NO hidden default."""
     if not is_known_lane(lane):
         return None
     payload = _load_payload()
     lane_state = payload.get("lanes", {}).get(lane)
     if isinstance(lane_state, dict) and lane_state.get("provider_id") in PROVIDER_IDS:
         return lane_state["provider_id"]
-    return lane_default_provider(lane)
+    return None
 
 
 def get_lane_model(lane: str) -> str | None:
-    """Return the operator-selected model ID for a lane, validated against the
-    catalog. Falls back to the catalog lane default; None for an unknown lane."""
+    """Return the operator-configured model for a lane ONLY if it still validates
+    against the catalog (exists, enabled, supports the lane). Else None. NO default."""
     if not is_known_lane(lane):
         return None
     payload = _load_payload()
@@ -289,16 +322,16 @@ def get_lane_model(lane: str) -> str | None:
     if isinstance(lane_state, dict):
         provider_id = lane_state.get("provider_id")
         model_id = lane_state.get("model_id")
-        if is_model_in_provider(provider_id, model_id) and model_supports_lane(
+        if provider_id in PROVIDER_IDS and model_id and model_supports_lane(
             provider_id, model_id, lane
         ):
             return model_id
-    return lane_default_model(lane)
+    return None
 
 
 def get_lane_api_key(lane: str) -> str | None:
-    """Return the stored API key for the provider assigned to a given lane.
-    Fail-closed: returns None if lane unknown, provider unknown, or key not stored."""
+    """API key for the lane's configured provider. Fail-closed: None when the lane
+    is unconfigured or the provider has no key."""
     provider_id = get_lane_provider(lane)
     if not provider_id:
         return None
@@ -311,8 +344,7 @@ def get_lane_api_key(lane: str) -> str | None:
 
 def is_lane_execution_enabled(lane: str) -> bool:
     """Lane execution gate. An explicitly-set deployment env override wins;
-    otherwise the operator-stored `execution_enabled` flag decides; otherwise the
-    conservative lane default (vision=off, text_assist=on)."""
+    otherwise the operator-stored toggle; otherwise OFF (fail closed)."""
     env_var = LANE_EXECUTION_ENV_VARS.get(lane)
     if env_var and str(os.environ.get(env_var, "")).strip():
         return _env_bool(env_var, LANE_EXECUTION_DEFAULTS.get(lane, False))
@@ -343,18 +375,6 @@ def get_active_provider_id() -> ProviderId | None:
     return None
 
 
-def validate_provider_model_for_lane(provider_id: str, model_id: str, lane: str) -> None:
-    """Raise ValueError (mapped to 422 at the API) when a provider/model/lane combo
-    is not permitted by the catalog. Fail closed — never silently accept."""
-    if not is_known_lane(lane):
-        raise ValueError(f"UNSUPPORTED_LANE:{lane}")
-    normalized = _normalize_provider_id(provider_id)
-    if not is_model_in_provider(normalized, model_id):
-        raise ValueError(f"UNKNOWN_MODEL_FOR_PROVIDER:{normalized}:{model_id}")
-    if not model_supports_lane(normalized, model_id, lane):
-        raise ValueError(f"MODEL_NOT_SUPPORTED_FOR_LANE:{normalized}:{model_id}:{lane}")
-
-
 def apply_runtime_provider_environment(payload: dict | None = None) -> None:
     resolved = payload or _load_payload()
     active_provider = resolved.get("active_provider")
@@ -372,52 +392,62 @@ def apply_runtime_provider_environment(payload: dict | None = None) -> None:
     else:
         os.environ.pop(ACTIVE_PROVIDER_ENV_VAR, None)
 
-    # Vision lane — publish the resolved lane provider id when a key exists.
+    # Publish the resolved lane provider id ONLY when the lane is configured + keyed.
     vision_provider = get_lane_provider("vision")
-    vision_key = get_lane_api_key("vision")
-    if vision_provider and vision_key:
+    if vision_provider and get_lane_api_key("vision"):
         os.environ[VISION_PROVIDER_ENV_VAR] = vision_provider
     else:
         os.environ.pop(VISION_PROVIDER_ENV_VAR, None)
 
-    # Text-assist lane — publish the resolved lane provider id when a key exists.
     text_provider = get_lane_provider("text_assist")
-    text_key = get_lane_api_key("text_assist")
-    if text_provider and text_key:
+    if text_provider and get_lane_api_key("text_assist"):
         os.environ[TEXT_ASSIST_PROVIDER_ENV_VAR] = text_provider
     else:
         os.environ.pop(TEXT_ASSIST_PROVIDER_ENV_VAR, None)
 
 
+def _lane_status(lane: str, lane_state: dict) -> dict:
+    provider_id = lane_state.get("provider_id") if isinstance(lane_state, dict) else None
+    model_id = lane_state.get("model_id") if isinstance(lane_state, dict) else None
+    execution_enabled = bool(lane_state.get("execution_enabled")) if isinstance(lane_state, dict) else False
+    configured_by_user = bool(lane_state.get("configured_by_user")) if isinstance(lane_state, dict) else False
+
+    key_present = bool(get_lane_api_key(lane))
+    model_entry = get_model_entry(provider_id, model_id) if (provider_id and model_id) else None
+    model_valid = bool(provider_id and model_id and model_supports_lane(provider_id, model_id, lane))
+
+    if not provider_id or not model_id:
+        status = LANE_STATUS_NOT_CONFIGURED
+    elif model_entry is None:
+        status = LANE_STATUS_MODEL_MISSING
+    elif not model_entry.get("enabled"):
+        status = LANE_STATUS_MODEL_DISABLED
+    elif not model_valid:
+        status = LANE_STATUS_MODEL_MISSING
+    elif not key_present:
+        status = LANE_STATUS_KEY_MISSING
+    elif not execution_enabled:
+        status = LANE_STATUS_EXECUTION_DISABLED
+    else:
+        status = LANE_STATUS_READY
+
+    return {
+        "lane": lane,
+        "label": LANE_LABELS.get(lane, lane),
+        "provider_id": provider_id,
+        "model_id": model_id,
+        "execution_enabled": execution_enabled,
+        "configured_by_user": configured_by_user,
+        "key_present": key_present,
+        "model_valid": model_valid,
+        "status": status,
+        "configured": status == LANE_STATUS_READY,
+    }
+
+
 def _summarize_lanes(payload: dict) -> list[dict]:
-    lanes: list[dict] = []
-    for lane in LANES:
-        provider_id = get_lane_provider(lane)
-        model_id = get_lane_model(lane)
-        lane_state = payload.get("lanes", {}).get(lane) if isinstance(payload.get("lanes"), dict) else None
-        execution_enabled = bool(
-            lane_state.get("execution_enabled")
-        ) if isinstance(lane_state, dict) else LANE_EXECUTION_DEFAULTS.get(lane, False)
-        has_key = bool(get_lane_api_key(lane))
-        model_valid = bool(
-            provider_id
-            and model_id
-            and is_model_in_provider(provider_id, model_id)
-            and model_supports_lane(provider_id, model_id, lane)
-        )
-        lanes.append(
-            {
-                "lane": lane,
-                "label": LANE_LABELS.get(lane, lane),
-                "provider_id": provider_id,
-                "model_id": model_id,
-                "execution_enabled": execution_enabled,
-                # `configured` = credentials + a lane-valid model are in place
-                # (ready to run once execution_enabled is on).
-                "configured": has_key and model_valid,
-            }
-        )
-    return lanes
+    lanes_state = payload.get("lanes", {}) if isinstance(payload.get("lanes"), dict) else {}
+    return [_lane_status(lane, lanes_state.get(lane) or {}) for lane in LANES]
 
 
 def summarize_provider_settings() -> dict:
@@ -457,7 +487,7 @@ def summarize_provider_settings() -> dict:
     return {
         "active_provider": active_provider if active_provider in PROVIDER_IDS else None,
         "providers": providers,
-        "model_catalog": catalog_payload(),
+        "model_catalog": summarize_model_catalog()["providers"],
         "lanes": _summarize_lanes(payload),
     }
 
@@ -490,12 +520,15 @@ def clear_provider_key(provider_id: str) -> dict:
 
 
 def update_provider_default_model(provider_id: str, model_id: str) -> dict:
-    """Set a provider's default model. Fail closed if the model is not in the
-    provider's catalog (422 at the API)."""
+    """Set a provider's default model (provider-card convenience; does NOT drive
+    runtime lanes). Fail closed if the model is not a known, enabled model."""
     normalized = _normalize_provider_id(provider_id)
     cleaned_model = str(model_id or "").strip()
-    if not is_model_in_provider(normalized, cleaned_model):
-        raise ValueError(f"UNKNOWN_MODEL_FOR_PROVIDER:{normalized}:{cleaned_model}")
+    model_entry = get_model_entry(normalized, cleaned_model)
+    if not model_entry:
+        raise ValueError(f"MODEL_NOT_FOUND:{normalized}:{cleaned_model}")
+    if not model_entry.get("enabled"):
+        raise ValueError(f"MODEL_DISABLED:{normalized}:{cleaned_model}")
 
     payload = _load_payload()
     payload["providers"][normalized]["default_model"] = cleaned_model
@@ -511,8 +544,9 @@ def update_lane_settings(
     model_id: str,
     execution_enabled: bool | None = None,
 ) -> dict:
-    """Assign provider+model (and optionally the execution toggle) to a lane.
-    Validates the combo against the catalog and fails closed on any mismatch."""
+    """Explicitly configure a lane's provider+model (+ optional execution toggle).
+    Validated against the mutable catalog (existence, enabled, lane + transport).
+    Records configured_by_user=True. Fails closed on any mismatch."""
     validate_provider_model_for_lane(provider_id, model_id, lane)
     normalized = _normalize_provider_id(provider_id)
 
@@ -521,12 +555,25 @@ def update_lane_settings(
     lane_state = lanes.get(lane) if isinstance(lanes.get(lane), dict) else {}
     lane_state["provider_id"] = normalized
     lane_state["model_id"] = str(model_id).strip()
+    lane_state["configured_by_user"] = True
     if execution_enabled is not None:
         lane_state["execution_enabled"] = bool(execution_enabled)
     elif not isinstance(lane_state.get("execution_enabled"), bool):
-        lane_state["execution_enabled"] = LANE_EXECUTION_DEFAULTS.get(lane, False)
+        lane_state["execution_enabled"] = False
     lanes[lane] = lane_state
 
+    _save_payload(payload)
+    apply_runtime_provider_environment(payload)
+    return summarize_provider_settings()
+
+
+def clear_lane_settings(lane: str) -> dict:
+    """Reset a lane back to NOT_CONFIGURED (explicit operator clear)."""
+    if not is_known_lane(lane):
+        raise ValueError(f"UNSUPPORTED_LANE:{lane}")
+    payload = _load_payload()
+    lanes = payload.setdefault("lanes", {})
+    lanes[lane] = _not_configured_lane()
     _save_payload(payload)
     apply_runtime_provider_environment(payload)
     return summarize_provider_settings()

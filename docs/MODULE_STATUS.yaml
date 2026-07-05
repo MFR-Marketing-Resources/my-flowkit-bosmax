@@ -57,7 +57,9 @@ domains:
       - tests/api/test_ai_provider_model_lane_settings_api.py
       - tests/unit/test_ai_copy_provider_adapter_lane.py
       - tests/unit/test_product_knowledge_text_assist_lane_boundary.py
+      - tests/unit/test_dynamic_model_catalog_service.py
       - docs/AI_PROVIDER_MODEL_AND_LANE_SETTINGS_V1.md
+      - docs/DYNAMIC_AI_MODEL_CATALOG_AND_EXPLICIT_LANE_CONFIGURATION_V1.md
       - agent/api/product_registration.py
       - agent/api/fastmoss_bulk.py
       - agent/api/operator.py

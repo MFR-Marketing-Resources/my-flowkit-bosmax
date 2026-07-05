@@ -1,7 +1,8 @@
-"""API contract tests for AI Provider Model & Lane Settings V1 endpoints.
+"""API contract tests for AI Provider Model & Lane Settings V3 endpoints.
 
-Covers PUT /{provider_id}/model and PUT /lanes/{lane}: happy path, fail-closed
-422s for invalid model / lane / combo, and the no-raw-key guarantee in responses.
+Covers registry shape (catalog + lanes), provider default model, lane config,
+the mutable model-catalog CRUD endpoints (add custom / disable / reset-seed),
+fail-closed 422s, and the no-raw-key guarantee. Both state files are isolated.
 """
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -17,6 +18,13 @@ def _client(monkeypatch, tmp_path) -> TestClient:
         "agent.services.ai_provider_settings_service.AI_PROVIDER_SETTINGS_FILE",
         tmp_path / "ai-provider-settings.json",
     )
+    monkeypatch.setattr(
+        "agent.services.ai_provider_model_catalog.AI_MODEL_CATALOG_DIR", tmp_path
+    )
+    monkeypatch.setattr(
+        "agent.services.ai_provider_model_catalog.AI_MODEL_CATALOG_FILE",
+        tmp_path / "ai-model-catalog.json",
+    )
     monkeypatch.delenv("BOSMAX_TEXT_ASSIST_EXECUTION_ENABLED", raising=False)
     monkeypatch.delenv("BOSMAX_VISION_PROVIDER_EXECUTION_ENABLED", raising=False)
     app = FastAPI()
@@ -24,41 +32,77 @@ def _client(monkeypatch, tmp_path) -> TestClient:
     return TestClient(app)
 
 
-def test_get_registry_exposes_catalog_and_lanes(monkeypatch, tmp_path):
+def _lane(body, lane):
+    return next(l for l in body["lanes"] if l["lane"] == lane)
+
+
+def test_get_registry_fresh_lanes_not_configured(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     body = client.get("/api/ai-providers").json()
     assert "model_catalog" in body and "qwen" in body["model_catalog"]
-    assert {lane["lane"] for lane in body["lanes"]} == {"text_assist", "vision"}
+    assert body["model_catalog"]["qwen"]["transport"] == "openai_compatible_chat"
+    for lane_name in ("text_assist", "vision"):
+        assert _lane(body, lane_name)["status"] == "NOT_CONFIGURED"
 
 
-def test_put_provider_model_valid(monkeypatch, tmp_path):
+def test_get_model_catalog_endpoint(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
-    r = client.put("/api/ai-providers/qwen/model", json={"model_id": "qwen-max"})
+    body = client.get("/api/ai-providers/model-catalog").json()
+    assert body["version"] >= 1
+    assert "deepseek" in body["providers"]
+    assert any(m["model_id"] == "deepseek-chat" for m in body["providers"]["deepseek"]["models"])
+
+
+def test_add_custom_deepseek_model_and_select_for_lane(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    # Operator adds a custom DeepSeek model with no code change.
+    r = client.put(
+        "/api/ai-providers/model-catalog/deepseek/models/deepseek-reasoner",
+        json={"label": "DeepSeek Reasoner", "lanes": ["text_assist"], "enabled": True},
+    )
     assert r.status_code == 200
-    qwen = next(p for p in r.json()["providers"] if p["provider_id"] == "qwen")
-    assert qwen["default_model"] == "qwen-max"
+    models = r.json()["model_catalog"]["deepseek"]["models"]
+    custom = next(m for m in models if m["model_id"] == "deepseek-reasoner")
+    assert custom["source"] == "custom"
+    assert custom["enabled"] is True
+
+    client.put("/api/ai-providers/deepseek/key", json={"api_key": "sk-deepseek-live-abcdef"})
+    r2 = client.put(
+        "/api/ai-providers/lanes/text_assist",
+        json={"provider_id": "deepseek", "model_id": "deepseek-reasoner", "execution_enabled": True},
+    )
+    assert r2.status_code == 200
+    lane = _lane(r2.json(), "text_assist")
+    assert lane["provider_id"] == "deepseek"
+    assert lane["model_id"] == "deepseek-reasoner"
+    assert lane["status"] == "READY"
+
+
+def test_disable_model_then_lane_selection_rejected(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.patch("/api/ai-providers/model-catalog/qwen/models/qwen-max/disable")
+    r = client.put(
+        "/api/ai-providers/lanes/text_assist",
+        json={"provider_id": "qwen", "model_id": "qwen-max"},
+    )
+    assert r.status_code == 422
+    assert "MODEL_DISABLED" in r.json()["detail"]
+
+
+def test_reset_seed_restores_catalog(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.patch("/api/ai-providers/model-catalog/qwen/models/qwen-max/disable")
+    client.post("/api/ai-providers/model-catalog/reset-seed")
+    body = client.get("/api/ai-providers/model-catalog").json()
+    qwen_max = next(m for m in body["providers"]["qwen"]["models"] if m["model_id"] == "qwen-max")
+    assert qwen_max["enabled"] is True
 
 
 def test_put_provider_model_invalid_returns_422(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     r = client.put("/api/ai-providers/qwen/model", json={"model_id": "gpt-4o-mini"})
     assert r.status_code == 422
-    assert "UNKNOWN_MODEL_FOR_PROVIDER" in r.json()["detail"]
-
-
-def test_put_lane_valid_text_assist(monkeypatch, tmp_path):
-    client = _client(monkeypatch, tmp_path)
-    client.put("/api/ai-providers/qwen/key", json={"api_key": "sk-qwen-live-abcdef"})
-    r = client.put(
-        "/api/ai-providers/lanes/text_assist",
-        json={"provider_id": "qwen", "model_id": "qwen-max", "execution_enabled": True},
-    )
-    assert r.status_code == 200
-    lane = next(l for l in r.json()["lanes"] if l["lane"] == "text_assist")
-    assert lane["provider_id"] == "qwen"
-    assert lane["model_id"] == "qwen-max"
-    assert lane["execution_enabled"] is True
-    assert lane["configured"] is True
+    assert "MODEL_NOT_FOUND" in r.json()["detail"]
 
 
 def test_put_lane_model_not_supporting_lane_returns_422(monkeypatch, tmp_path):
@@ -71,14 +115,27 @@ def test_put_lane_model_not_supporting_lane_returns_422(monkeypatch, tmp_path):
     assert "MODEL_NOT_SUPPORTED_FOR_LANE" in r.json()["detail"]
 
 
-def test_put_lane_unknown_lane_returns_422(monkeypatch, tmp_path):
+def test_add_vision_lane_to_qwen_model_rejected_transport(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
-    # Unknown lane fails pydantic Literal validation before service is called.
+    # qwen transport (openai_compatible_chat) cannot serve the vision lane.
     r = client.put(
-        "/api/ai-providers/lanes/not_a_lane",
-        json={"provider_id": "qwen", "model_id": "qwen-plus"},
+        "/api/ai-providers/model-catalog/qwen/models/qwen-vision-x",
+        json={"label": "Q", "lanes": ["vision"], "enabled": True},
     )
     assert r.status_code == 422
+    assert "TRANSPORT_NOT_SUPPORTED_FOR_LANE" in r.json()["detail"]
+
+
+def test_clear_lane_endpoint(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.put("/api/ai-providers/qwen/key", json={"api_key": "sk-qwen-live-abcdef"})
+    client.put(
+        "/api/ai-providers/lanes/text_assist",
+        json={"provider_id": "qwen", "model_id": "qwen-max", "execution_enabled": True},
+    )
+    r = client.delete("/api/ai-providers/lanes/text_assist")
+    assert r.status_code == 200
+    assert _lane(r.json(), "text_assist")["status"] == "NOT_CONFIGURED"
 
 
 def test_registry_response_has_no_raw_key(monkeypatch, tmp_path):

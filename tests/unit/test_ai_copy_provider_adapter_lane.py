@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from agent.services import ai_copy_provider_adapter as adapter
+from agent.services import ai_provider_model_catalog as cat
 from agent.services import ai_provider_settings_service as svc
 
 
@@ -32,6 +33,8 @@ CANDIDATE_JSON = json.dumps(
 def state(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "AI_PROVIDER_STATE_DIR", tmp_path)
     monkeypatch.setattr(svc, "AI_PROVIDER_SETTINGS_FILE", tmp_path / "ai-provider-settings.json")
+    monkeypatch.setattr(cat, "AI_MODEL_CATALOG_DIR", tmp_path)
+    monkeypatch.setattr(cat, "AI_MODEL_CATALOG_FILE", tmp_path / "ai-model-catalog.json")
     monkeypatch.delenv("BOSMAX_TEXT_ASSIST_EXECUTION_ENABLED", raising=False)
     monkeypatch.delenv("PRODUCT_TEXT_ASSIST_MODEL", raising=False)
     monkeypatch.delenv("PRODUCT_TEXT_ASSIST_BASE_URL", raising=False)

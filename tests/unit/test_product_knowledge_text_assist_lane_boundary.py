@@ -10,6 +10,7 @@ import pytest
 
 from agent.models.product_knowledge import ProductKnowledgeCompleteRequest
 from agent.services import product_knowledge_service as pks
+from agent.services import ai_provider_model_catalog as cat
 from agent.services import ai_provider_settings_service as svc
 
 
@@ -17,6 +18,8 @@ from agent.services import ai_provider_settings_service as svc
 def lane_state(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "AI_PROVIDER_STATE_DIR", tmp_path)
     monkeypatch.setattr(svc, "AI_PROVIDER_SETTINGS_FILE", tmp_path / "ai-provider-settings.json")
+    monkeypatch.setattr(cat, "AI_MODEL_CATALOG_DIR", tmp_path)
+    monkeypatch.setattr(cat, "AI_MODEL_CATALOG_FILE", tmp_path / "ai-model-catalog.json")
     monkeypatch.delenv("BOSMAX_TEXT_ASSIST_EXECUTION_ENABLED", raising=False)
     monkeypatch.delenv("BOSMAX_VISION_PROVIDER_EXECUTION_ENABLED", raising=False)
     monkeypatch.delenv("PRODUCT_TEXT_ASSIST_MODEL", raising=False)
