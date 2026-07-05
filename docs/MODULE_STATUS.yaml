@@ -26,6 +26,7 @@ domains:
       - agent/services/product_catalog_read_model.py
       - agent/services/product_asset_generator_service.py
       - tests/unit/test_product_catalog_read_model.py
+      - tests/unit/test_product_catalog_enrich_cache.py
       - tests/api/test_product_catalog_state_api.py
       - tests/api/test_runtime_storage_diagnostic_api.py
       - tests/unit/test_product_asset_generator_state_aware_preview.py

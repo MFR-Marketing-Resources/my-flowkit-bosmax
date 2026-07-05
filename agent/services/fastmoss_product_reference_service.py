@@ -17,6 +17,10 @@ FASTMOSS_REFERENCE_REASON = (
 )
 _REFERENCE_CACHE_SIGNATURE: str | None = None
 _REFERENCE_CACHE_ITEMS: list[dict[str, Any]] = []
+# The row-count the cache was BUILT from (not len(items)). When the workbook
+# holds fewer rows than the requested limit, len(items) < limit would defeat a
+# len-based guard and re-enrich every call — this tracks the load cap instead.
+_REFERENCE_CACHE_LOADED_LIMIT: int = 0
 
 
 def is_fastmoss_reference_product_id(product_id: str | None) -> bool:
@@ -101,20 +105,24 @@ def _reference_seed(operator_product: Any) -> dict[str, Any]:
 
 
 async def list_fastmoss_reference_products(limit: int = 500) -> list[dict[str, Any]]:
-    global _REFERENCE_CACHE_ITEMS, _REFERENCE_CACHE_SIGNATURE
+    global _REFERENCE_CACHE_ITEMS, _REFERENCE_CACHE_SIGNATURE, _REFERENCE_CACHE_LOADED_LIMIT
     from agent.api.operator import _load_products, _pack_file
 
     workbook_path = Path(_pack_file("FASTMOSS_COMBINED_10_FILES_WORKBOOK.xlsx"))
     if not workbook_path.exists():
         _REFERENCE_CACHE_SIGNATURE = None
         _REFERENCE_CACHE_ITEMS = []
+        _REFERENCE_CACHE_LOADED_LIMIT = 0
         return []
 
     signature = f"{workbook_path.stat().st_mtime_ns}:{workbook_path.stat().st_size}"
-    if signature == _REFERENCE_CACHE_SIGNATURE and len(_REFERENCE_CACHE_ITEMS) >= limit:
+    # Hit on the load cap, not len(items): if the workbook has fewer rows than the
+    # requested limit, the cache already holds ALL of them and is still complete.
+    if signature == _REFERENCE_CACHE_SIGNATURE and _REFERENCE_CACHE_LOADED_LIMIT >= limit:
         return _REFERENCE_CACHE_ITEMS[:limit]
 
-    operator_products = _load_products(limit=max(limit, len(_REFERENCE_CACHE_ITEMS), 500))
+    load_cap = max(limit, len(_REFERENCE_CACHE_ITEMS), 500)
+    operator_products = _load_products(limit=load_cap)
     items: list[dict[str, Any]] = []
     for operator_product in operator_products:
         enriched = await enrich_product(_reference_seed(operator_product), persist=False)
@@ -126,6 +134,7 @@ async def list_fastmoss_reference_products(limit: int = 500) -> list[dict[str, A
         items.append(enriched)
     _REFERENCE_CACHE_SIGNATURE = signature
     _REFERENCE_CACHE_ITEMS = items
+    _REFERENCE_CACHE_LOADED_LIMIT = load_cap
     return items[:limit]
 
 
