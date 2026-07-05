@@ -2,10 +2,18 @@ import type { ChangeEvent, FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchAPI, patchAPI, postAPI, postMultipartAPI } from "../api/client";
+import {
+	fetchProductIntelligence,
+	fetchProductIntelligenceProvenance,
+	fetchProductIntelligenceSnapshots,
+} from "../api/products";
 import type {
 	FastMossImportBatchReport,
 	Product,
 	ProductCreativeBrief,
+	ProductIntelligenceFieldProvenance,
+	ProductIntelligenceLatestSnapshotResponse,
+	ProductIntelligenceSnapshot,
 	VariationPlan,
 } from "../types";
 import {
@@ -67,6 +75,23 @@ const FASTMOSS_IMPORT_FIELDS: Array<{
 	{ key: "most_promoted_products_rank", label: "Most Promoted Products Rank" },
 	{ key: "video_product_list", label: "Video Product List" },
 ];
+
+const PRODUCT_INTELLIGENCE_REQUIRED_FIELDS = [
+	"product_description",
+	"benefits_json",
+	"usp_json",
+	"usage_text",
+	"ingredients_text",
+	"warnings_text",
+	"target_customer_text",
+	"allowed_claims_json",
+	"buyer_persona_snapshot_json",
+	"copy_strategy_summary_json",
+	"source_urls_json",
+	"image_evidence_json",
+	"claim_gate",
+	"claim_risk_level",
+] as const;
 
 const PHYSICS_ENGINE_KEYWORD: Record<string, string> = {
 	BEAUTY_BOTTLE_OR_TUBE:
@@ -156,6 +181,108 @@ function fieldValue(value: string | number | null | undefined) {
 	if (value === null || value === undefined || value === "")
 		return "NOT_AVAILABLE";
 	return String(value);
+}
+
+function formatTimestamp(value: string | null | undefined) {
+	if (!value) return "NOT_AVAILABLE";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return date.toLocaleString("en-MY", {
+		year: "numeric",
+		month: "short",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+	});
+}
+
+function formatScore(value: number | null | undefined) {
+	if (value === null || value === undefined || Number.isNaN(value))
+		return "NOT_AVAILABLE";
+	return value.toFixed(2);
+}
+
+function getSnapshotStatusTone(
+	status: ProductIntelligenceSnapshot["status"] | null | undefined,
+) {
+	switch (status) {
+		case "APPROVED":
+			return "ready";
+		case "DRAFT":
+		case "SUPERSEDED":
+			return "warn";
+		case "REJECTED":
+		case "ARCHIVED":
+			return "risk";
+		default:
+			return "neutral";
+	}
+}
+
+function getLatestSnapshotStatusTone(
+	status:
+		| ProductIntelligenceLatestSnapshotResponse["status"]
+		| null
+		| undefined,
+) {
+	return status === "APPROVED_SNAPSHOT_AVAILABLE" ? "ready" : "warn";
+}
+
+function getClaimRiskTone(value: string | null | undefined) {
+	switch (value) {
+		case "LOW":
+			return "ready";
+		case "MEDIUM":
+			return "warn";
+		case "HIGH":
+			return "risk";
+		default:
+			return "neutral";
+	}
+}
+
+function hasSnapshotValue(value: unknown) {
+	if (value === null || value === undefined) return false;
+	if (typeof value === "string") return value.trim().length > 0;
+	if (Array.isArray(value)) return value.length > 0;
+	if (typeof value === "object") return Object.keys(value).length > 0;
+	return true;
+}
+
+function getSnapshotMissingFields(
+	snapshot: ProductIntelligenceSnapshot | null,
+) {
+	if (!snapshot) return [...PRODUCT_INTELLIGENCE_REQUIRED_FIELDS];
+	return PRODUCT_INTELLIGENCE_REQUIRED_FIELDS.filter((fieldName) => {
+		const value = snapshot[fieldName];
+		return !hasSnapshotValue(value);
+	});
+}
+
+function formatNormalizedText(value: unknown) {
+	if (value === null || value === undefined || value === "")
+		return "NOT_AVAILABLE";
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value, null, 2);
+	} catch {
+		return String(value);
+	}
+}
+
+function summarizeRecord(record: Record<string, unknown>) {
+	return Object.entries(record).filter(([, value]) => hasSnapshotValue(value));
+}
+
+function normalizeProductIntelligenceError(error: unknown) {
+	const message =
+		error instanceof Error
+			? error.message
+			: "Failed to load product intelligence snapshots";
+	if (message.includes("PRODUCT_NOT_FOUND")) {
+		return "PRODUCT_NOT_FOUND: selected product no longer exists in the catalog.";
+	}
+	return message;
 }
 
 function salesMetricScope(product: Product) {
@@ -459,12 +586,29 @@ export default function ProductsSalesAnalyzerPage() {
 		raw_product_title: "",
 	});
 	const [activeTab, setActiveTab] = useState<
-		"DETAILS" | "BRIEF" | "VARIATIONS" | "PREVIEW" | "EDIT"
+		"DETAILS" | "INTELLIGENCE" | "BRIEF" | "VARIATIONS" | "PREVIEW" | "EDIT"
 	>("DETAILS");
 	const [editForm, setEditForm] = useState<Record<string, string>>({});
 	const [editSaving, setEditSaving] = useState(false);
 	const [editSuccess, setEditSuccess] = useState<string | null>(null);
 	const [editError, setEditError] = useState<string | null>(null);
+	const [intelligenceSummary, setIntelligenceSummary] =
+		useState<ProductIntelligenceLatestSnapshotResponse | null>(null);
+	const [intelligenceSnapshots, setIntelligenceSnapshots] = useState<
+		ProductIntelligenceSnapshot[]
+	>([]);
+	const [intelligenceLoading, setIntelligenceLoading] = useState(false);
+	const [intelligenceError, setIntelligenceError] = useState<string | null>(
+		null,
+	);
+	const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(
+		null,
+	);
+	const [snapshotProvenance, setSnapshotProvenance] = useState<
+		ProductIntelligenceFieldProvenance[]
+	>([]);
+	const [provenanceLoading, setProvenanceLoading] = useState(false);
+	const [provenanceError, setProvenanceError] = useState<string | null>(null);
 	const [brief, setBrief] = useState<ProductCreativeBrief | null>(null);
 	const [variations, setVariations] = useState<VariationPlan[]>([]);
 	const [promptPreview, setPromptPreview] = useState<string | null>(null);
@@ -593,6 +737,35 @@ export default function ProductsSalesAnalyzerPage() {
 		() => filteredProducts.find((product) => product.id === selectedId) || null,
 		[filteredProducts, selectedId],
 	);
+	const selectedSnapshot = useMemo(() => {
+		if (selectedSnapshotId) {
+			const matched = intelligenceSnapshots.find(
+				(snapshot) => snapshot.snapshot_id === selectedSnapshotId,
+			);
+			if (matched) return matched;
+		}
+		return (
+			intelligenceSummary?.latest_snapshot || intelligenceSnapshots[0] || null
+		);
+	}, [intelligenceSnapshots, intelligenceSummary, selectedSnapshotId]);
+	const snapshotMissingFields = useMemo(
+		() => getSnapshotMissingFields(selectedSnapshot),
+		[selectedSnapshot],
+	);
+	const groupedProvenance = useMemo(() => {
+		const groups = new Map<string, ProductIntelligenceFieldProvenance[]>();
+		for (const item of snapshotProvenance) {
+			const existing = groups.get(item.field_name);
+			if (existing) {
+				existing.push(item);
+			} else {
+				groups.set(item.field_name, [item]);
+			}
+		}
+		return Array.from(groups.entries()).sort(([left], [right]) =>
+			left.localeCompare(right),
+		);
+	}, [snapshotProvenance]);
 	const imageReadinessSummary = useMemo(() => {
 		const summary = {
 			READY: 0,
@@ -637,6 +810,12 @@ export default function ProductsSalesAnalyzerPage() {
 		setBrief(null);
 		setVariations([]);
 		setPromptPreview(null);
+		setIntelligenceSummary(null);
+		setIntelligenceSnapshots([]);
+		setIntelligenceError(null);
+		setSelectedSnapshotId(null);
+		setSnapshotProvenance([]);
+		setProvenanceError(null);
 		setEditSuccess(null);
 		setEditError(null);
 		if (selectedProduct) {
@@ -690,6 +869,84 @@ export default function ProductsSalesAnalyzerPage() {
 		}
 		fetchData();
 	}, [selectedId, activeTab, selectedProduct]);
+
+	useEffect(() => {
+		if (activeTab !== "INTELLIGENCE" || !selectedId) return;
+		const productId = selectedId;
+		let cancelled = false;
+
+		async function loadProductIntelligence() {
+			setIntelligenceLoading(true);
+			setIntelligenceError(null);
+			try {
+				const [summary, snapshots] = await Promise.all([
+					fetchProductIntelligence(productId),
+					fetchProductIntelligenceSnapshots(productId),
+				]);
+				if (cancelled) return;
+				setIntelligenceSummary(summary);
+				setIntelligenceSnapshots(snapshots.items);
+				setSelectedSnapshotId((current) => {
+					if (
+						current &&
+						snapshots.items.some((snapshot) => snapshot.snapshot_id === current)
+					) {
+						return current;
+					}
+					return (
+						summary.latest_snapshot?.snapshot_id ||
+						snapshots.items[0]?.snapshot_id ||
+						null
+					);
+				});
+			} catch (err) {
+				if (cancelled) return;
+				setIntelligenceError(normalizeProductIntelligenceError(err));
+			} finally {
+				if (!cancelled) setIntelligenceLoading(false);
+			}
+		}
+
+		void loadProductIntelligence();
+		return () => {
+			cancelled = true;
+		};
+	}, [activeTab, selectedId]);
+
+	useEffect(() => {
+		if (activeTab !== "INTELLIGENCE") return;
+		if (!selectedSnapshotId) {
+			setSnapshotProvenance([]);
+			setProvenanceError(null);
+			return;
+		}
+		const snapshotId = selectedSnapshotId;
+		let cancelled = false;
+
+		async function loadSnapshotProvenance() {
+			setProvenanceLoading(true);
+			setProvenanceError(null);
+			try {
+				const response = await fetchProductIntelligenceProvenance(snapshotId);
+				if (cancelled) return;
+				setSnapshotProvenance(response.items);
+			} catch (err) {
+				if (cancelled) return;
+				setProvenanceError(
+					err instanceof Error
+						? err.message
+						: "Failed to load field provenance evidence",
+				);
+			} finally {
+				if (!cancelled) setProvenanceLoading(false);
+			}
+		}
+
+		void loadSnapshotProvenance();
+		return () => {
+			cancelled = true;
+		};
+	}, [activeTab, selectedSnapshotId]);
 
 	// Stale-response guard: only the LATEST request may write state. Typing in
 	// the search box fires overlapping fetches; a slow broad-query response must
@@ -1609,6 +1866,7 @@ export default function ProductsSalesAnalyzerPage() {
 									{(
 										[
 											"DETAILS",
+											"INTELLIGENCE",
 											"BRIEF",
 											"VARIATIONS",
 											"PREVIEW",
@@ -2266,6 +2524,967 @@ export default function ProductsSalesAnalyzerPage() {
 											</div>
 										</Panel>
 									</>
+								)}
+
+								{activeTab === "INTELLIGENCE" && (
+									<div className="space-y-6">
+										<Panel
+											title="Product Intelligence Snapshot Review"
+											subtitle="Read-only PR1 backend evidence surface. No UI writeback, no approval actions."
+										>
+											<div className="grid gap-4 lg:grid-cols-2">
+												<div className="space-y-1">
+													<KV
+														label="Snapshot Availability"
+														value={intelligenceSummary?.status || "LOADING"}
+													/>
+													<KV
+														label="Total Snapshots"
+														value={
+															intelligenceSummary?.provenance_summary
+																.total_snapshots
+														}
+													/>
+													<KV
+														label="Approved Snapshot Count"
+														value={
+															intelligenceSummary?.provenance_summary
+																.approved_snapshot_count
+														}
+													/>
+												</div>
+												<div className="space-y-1">
+													<KV
+														label="Latest Approved Snapshot ID"
+														value={
+															intelligenceSummary?.provenance_summary
+																.latest_approved_snapshot_id
+														}
+													/>
+													<KV
+														label="Latest Approved Version"
+														value={
+															intelligenceSummary?.provenance_summary
+																.latest_approved_version
+														}
+													/>
+													<KV
+														label="Selected Snapshot ID"
+														value={selectedSnapshot?.snapshot_id}
+													/>
+												</div>
+											</div>
+											<div className="mt-4 flex flex-wrap gap-2">
+												<StatBadge
+													label={
+														intelligenceSummary?.status ||
+														"NO_APPROVED_SNAPSHOT"
+													}
+													tone={getLatestSnapshotStatusTone(
+														intelligenceSummary?.status,
+													)}
+												/>
+												{selectedSnapshot ? (
+													<StatBadge
+														label={`Snapshot ${selectedSnapshot.version} • ${selectedSnapshot.status}`}
+														tone={getSnapshotStatusTone(
+															selectedSnapshot.status,
+														)}
+													/>
+												) : null}
+												{selectedSnapshot?.claim_risk_level ? (
+													<StatBadge
+														label={`Claim Risk: ${selectedSnapshot.claim_risk_level}`}
+														tone={getClaimRiskTone(
+															selectedSnapshot.claim_risk_level,
+														)}
+													/>
+												) : null}
+											</div>
+											<div className="mt-4 rounded border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-[11px] text-sky-100">
+												Operator Clarity: Product Intelligence is review-only in
+												this screen. No edit, no dual-write, no approval
+												workflow, and no bulk AI enrichment actions are exposed
+												here.
+											</div>
+										</Panel>
+
+										{intelligenceLoading ? (
+											<Panel
+												title="Product Intelligence Loading"
+												subtitle="Fetching latest snapshot, snapshot history, and evidence."
+											>
+												<div className="py-12 text-center text-xs text-slate-500">
+													Loading Product Intelligence snapshots...
+												</div>
+											</Panel>
+										) : intelligenceError ? (
+											<Panel
+												title={
+													intelligenceError.includes("PRODUCT_NOT_FOUND")
+														? "Product Not Found"
+														: "Product Intelligence Error"
+												}
+												subtitle={
+													intelligenceError.includes("PRODUCT_NOT_FOUND")
+														? "The selected product was removed or no longer resolves in the backend."
+														: "Snapshot read-only APIs returned an error."
+												}
+											>
+												<div className="rounded border border-red-500/30 bg-red-500/10 px-3 py-3 text-[11px] text-red-300">
+													{intelligenceError}
+												</div>
+											</Panel>
+										) : intelligenceSnapshots.length === 0 &&
+											!intelligenceSummary?.latest_snapshot ? (
+											<Panel
+												title="No Approved Snapshot"
+												subtitle="This product has no stored approved Product Intelligence snapshot yet."
+											>
+												<div className="rounded border border-amber-500/20 bg-amber-500/10 px-4 py-4 text-[11px] leading-relaxed text-amber-100">
+													No approved snapshot stored for this product yet.
+													Reviewers can see the product row, but the Product
+													table is still catalog/routing only. There is no
+													snapshot summary, field provenance, or evidence pack
+													to audit from the PR1 storage layer. Approve product
+													intelligence through the review/registration flow in a
+													future PR.
+												</div>
+											</Panel>
+										) : (
+											<>
+												{intelligenceSummary?.latest_snapshot ? (
+													<Panel
+														title="Latest Approved Snapshot Summary"
+														subtitle={`Approved snapshot ${intelligenceSummary.latest_snapshot.version} for product ${intelligenceSummary.product_id}`}
+													>
+														<div className="grid gap-4 lg:grid-cols-2">
+															<div className="space-y-1">
+																<KV
+																	label="Snapshot ID"
+																	value={
+																		intelligenceSummary.latest_snapshot
+																			.snapshot_id
+																	}
+																/>
+																<KV
+																	label="Approved At"
+																	value={formatTimestamp(
+																		intelligenceSummary.latest_snapshot
+																			.approved_at,
+																	)}
+																/>
+																<KV
+																	label="Approved By"
+																	value={
+																		intelligenceSummary.latest_snapshot
+																			.approved_by
+																	}
+																/>
+																<KV
+																	label="Readiness Status"
+																	value={
+																		intelligenceSummary.latest_snapshot
+																			.readiness_status
+																	}
+																/>
+																<KV
+																	label="Created From Review Draft"
+																	value={
+																		intelligenceSummary.latest_snapshot
+																			.created_from_review_draft_id
+																	}
+																/>
+															</div>
+															<div className="space-y-1">
+																<KV
+																	label="Confidence Score"
+																	value={formatScore(
+																		intelligenceSummary.latest_snapshot
+																			.confidence_score,
+																	)}
+																/>
+																<KV
+																	label="Completeness Score"
+																	value={formatScore(
+																		intelligenceSummary.latest_snapshot
+																			.completeness_score,
+																	)}
+																/>
+																<KV
+																	label="Claim Gate"
+																	value={
+																		intelligenceSummary.latest_snapshot
+																			.claim_gate
+																	}
+																/>
+																<KV
+																	label="Claim Risk Level"
+																	value={
+																		intelligenceSummary.latest_snapshot
+																			.claim_risk_level
+																	}
+																/>
+																<KV
+																	label="Product Truth Lock"
+																	value={
+																		intelligenceSummary.latest_snapshot
+																			.product_truth_lock
+																	}
+																/>
+															</div>
+														</div>
+														<div className="mt-4 grid gap-4 lg:grid-cols-2">
+															<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																	Benefits
+																</div>
+																<div className="flex flex-wrap gap-2">
+																	{intelligenceSummary.latest_snapshot
+																		.benefits_json.length > 0 ? (
+																		intelligenceSummary.latest_snapshot.benefits_json.map(
+																			(item) => (
+																				<StatBadge
+																					key={item}
+																					label={item}
+																					tone="neutral"
+																				/>
+																			),
+																		)
+																	) : (
+																		<span className="text-[11px] text-slate-500">
+																			NOT_AVAILABLE
+																		</span>
+																	)}
+																</div>
+															</div>
+															<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																	USP
+																</div>
+																<div className="flex flex-wrap gap-2">
+																	{intelligenceSummary.latest_snapshot.usp_json
+																		.length > 0 ? (
+																		intelligenceSummary.latest_snapshot.usp_json.map(
+																			(item) => (
+																				<StatBadge
+																					key={item}
+																					label={item}
+																					tone="neutral"
+																				/>
+																			),
+																		)
+																	) : (
+																		<span className="text-[11px] text-slate-500">
+																			NOT_AVAILABLE
+																		</span>
+																	)}
+																</div>
+															</div>
+														</div>
+														<div className="mt-4 grid gap-4 lg:grid-cols-2">
+															<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																	Summary Fields
+																</div>
+																<div className="space-y-1">
+																	<KV
+																		label="Size / Volume"
+																		value={
+																			intelligenceSummary.latest_snapshot
+																				.size_or_volume
+																		}
+																	/>
+																	<KV
+																		label="Product Form Factor"
+																		value={
+																			intelligenceSummary.latest_snapshot
+																				.product_form_factor
+																		}
+																	/>
+																	<KV
+																		label="Package Notes"
+																		value={
+																			intelligenceSummary.latest_snapshot
+																				.package_notes
+																		}
+																	/>
+																	<KV
+																		label="Packaging Description"
+																		value={
+																			intelligenceSummary.latest_snapshot
+																				.packaging_description
+																		}
+																	/>
+																</div>
+															</div>
+															<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																	Approved Truth Narrative
+																</div>
+																<div className="space-y-2 text-[11px] text-slate-300">
+																	<div className="bosmax-pre-wrap-safe rounded border border-slate-800 bg-slate-900/70 px-2 py-2">
+																		{fieldValue(
+																			intelligenceSummary.latest_snapshot
+																				.product_description,
+																		)}
+																	</div>
+																	<div className="bosmax-pre-wrap-safe rounded border border-slate-800 bg-slate-900/70 px-2 py-2">
+																		Usage:{" "}
+																		{fieldValue(
+																			intelligenceSummary.latest_snapshot
+																				.usage_text,
+																		)}
+																	</div>
+																	<div className="bosmax-pre-wrap-safe rounded border border-slate-800 bg-slate-900/70 px-2 py-2">
+																		Ingredients:{" "}
+																		{fieldValue(
+																			intelligenceSummary.latest_snapshot
+																				.ingredients_text,
+																		)}
+																	</div>
+																	<div className="bosmax-pre-wrap-safe rounded border border-slate-800 bg-slate-900/70 px-2 py-2">
+																		Warnings:{" "}
+																		{fieldValue(
+																			intelligenceSummary.latest_snapshot
+																				.warnings_text,
+																		)}
+																	</div>
+																	<div className="bosmax-pre-wrap-safe rounded border border-slate-800 bg-slate-900/70 px-2 py-2">
+																		Target Customer:{" "}
+																		{fieldValue(
+																			intelligenceSummary.latest_snapshot
+																				.target_customer_text,
+																		)}
+																	</div>
+																</div>
+															</div>
+														</div>
+														<div className="mt-4 grid gap-4 lg:grid-cols-2">
+															<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																	Buyer Persona Snapshot
+																</div>
+																<div className="bosmax-pre-wrap-safe rounded border border-slate-800 bg-slate-900/70 px-3 py-2 text-[11px] text-slate-300">
+																	{formatNormalizedText(
+																		intelligenceSummary.latest_snapshot
+																			.buyer_persona_snapshot_json,
+																	)}
+																</div>
+															</div>
+															<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																	Copy Strategy Summary
+																</div>
+																<div className="bosmax-pre-wrap-safe rounded border border-slate-800 bg-slate-900/70 px-3 py-2 text-[11px] text-slate-300">
+																	{formatNormalizedText(
+																		intelligenceSummary.latest_snapshot
+																			.copy_strategy_summary_json,
+																	)}
+																</div>
+															</div>
+														</div>
+													</Panel>
+												) : null}
+
+												<div className="grid gap-6 xl:grid-cols-[minmax(260px,0.85fr)_minmax(0,1.15fr)]">
+													<Panel
+														title="Snapshot History"
+														subtitle="Select a stored snapshot to inspect its evidence pack."
+													>
+														<div className="space-y-2">
+															{intelligenceSnapshots.map((snapshot) => (
+																<button
+																	type="button"
+																	key={snapshot.snapshot_id}
+																	onClick={() =>
+																		setSelectedSnapshotId(snapshot.snapshot_id)
+																	}
+																	className={`w-full rounded border px-3 py-3 text-left transition-colors ${
+																		selectedSnapshot?.snapshot_id ===
+																		snapshot.snapshot_id
+																			? "border-blue-500/40 bg-blue-500/10"
+																			: "border-slate-800 bg-slate-950/40 hover:border-slate-700 hover:bg-slate-900/70"
+																	}`}
+																>
+																	<div className="flex flex-wrap items-center justify-between gap-2">
+																		<div className="bosmax-wrap-safe text-[11px] font-semibold text-slate-100">
+																			Snapshot v{snapshot.version}
+																		</div>
+																		<StatBadge
+																			label={snapshot.status}
+																			tone={getSnapshotStatusTone(
+																				snapshot.status,
+																			)}
+																		/>
+																	</div>
+																	<div className="mt-1 text-[10px] text-slate-400">
+																		{snapshot.snapshot_id}
+																	</div>
+																	<div className="mt-2 flex flex-wrap gap-2">
+																		<StatBadge
+																			label={`Readiness: ${snapshot.readiness_status || "NOT_AVAILABLE"}`}
+																			tone="neutral"
+																		/>
+																		{intelligenceSummary?.latest_snapshot
+																			?.snapshot_id === snapshot.snapshot_id ? (
+																			<StatBadge
+																				label="LATEST APPROVED"
+																				tone="ready"
+																			/>
+																		) : null}
+																	</div>
+																	<div className="mt-2 grid gap-1 text-[10px] text-slate-500">
+																		<div>
+																			Created{" "}
+																			{formatTimestamp(snapshot.created_at)}
+																		</div>
+																		<div>
+																			Updated{" "}
+																			{formatTimestamp(snapshot.updated_at)}
+																		</div>
+																		<div>
+																			Approved{" "}
+																			{formatTimestamp(snapshot.approved_at)}
+																		</div>
+																		<div>
+																			Approved By{" "}
+																			{fieldValue(snapshot.approved_by)}
+																		</div>
+																		<div>
+																			Confidence{" "}
+																			{formatScore(snapshot.confidence_score)}
+																		</div>
+																		<div>
+																			Completeness{" "}
+																			{formatScore(snapshot.completeness_score)}
+																		</div>
+																	</div>
+																</button>
+															))}
+														</div>
+													</Panel>
+
+													<div className="space-y-6">
+														<Panel
+															title="Selected Snapshot Detail"
+															subtitle={
+																selectedSnapshot
+																	? `Snapshot ${selectedSnapshot.snapshot_id}`
+																	: "No snapshot selected."
+															}
+														>
+															{selectedSnapshot ? (
+																<div className="space-y-4">
+																	<div className="flex flex-wrap gap-2">
+																		<StatBadge
+																			label={selectedSnapshot.status}
+																			tone={getSnapshotStatusTone(
+																				selectedSnapshot.status,
+																			)}
+																		/>
+																		<StatBadge
+																			label={`Claim Gate: ${selectedSnapshot.claim_gate || "NOT_AVAILABLE"}`}
+																			tone="neutral"
+																		/>
+																		<StatBadge
+																			label={`Claim Risk: ${selectedSnapshot.claim_risk_level || "NOT_AVAILABLE"}`}
+																			tone={getClaimRiskTone(
+																				selectedSnapshot.claim_risk_level,
+																			)}
+																		/>
+																	</div>
+
+																	<div className="grid gap-4 lg:grid-cols-2">
+																		<div className="space-y-1">
+																			<KV
+																				label="Version"
+																				value={selectedSnapshot.version}
+																			/>
+																			<KV
+																				label="Created By"
+																				value={selectedSnapshot.created_by}
+																			/>
+																			<KV
+																				label="Created At"
+																				value={formatTimestamp(
+																					selectedSnapshot.created_at,
+																				)}
+																			/>
+																			<KV
+																				label="Approved At"
+																				value={formatTimestamp(
+																					selectedSnapshot.approved_at,
+																				)}
+																			/>
+																			<KV
+																				label="Approved By"
+																				value={selectedSnapshot.approved_by}
+																			/>
+																		</div>
+																		<div className="space-y-1">
+																			<KV
+																				label="Product Truth Lock"
+																				value={
+																					selectedSnapshot.product_truth_lock
+																				}
+																			/>
+																			<KV
+																				label="Confidence Score"
+																				value={formatScore(
+																					selectedSnapshot.confidence_score,
+																				)}
+																			/>
+																			<KV
+																				label="Completeness Score"
+																				value={formatScore(
+																					selectedSnapshot.completeness_score,
+																				)}
+																			/>
+																			<KV
+																				label="Size / Volume"
+																				value={selectedSnapshot.size_or_volume}
+																			/>
+																			<KV
+																				label="Product Form Factor"
+																				value={
+																					selectedSnapshot.product_form_factor
+																				}
+																			/>
+																		</div>
+																	</div>
+
+																	<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																		<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																			Missing Required Snapshot Fields
+																		</div>
+																		<div className="flex flex-wrap gap-2">
+																			{snapshotMissingFields.length > 0 ? (
+																				snapshotMissingFields.map(
+																					(fieldName) => (
+																						<StatBadge
+																							key={fieldName}
+																							label={fieldName}
+																							tone="warn"
+																						/>
+																					),
+																				)
+																			) : (
+																				<StatBadge
+																					label="All required snapshot fields present"
+																					tone="ready"
+																				/>
+																			)}
+																		</div>
+																	</div>
+
+																	<div className="grid gap-4 lg:grid-cols-2">
+																		<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																			<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																				Claim Safety Fields
+																			</div>
+																			<div className="space-y-1">
+																				<KV
+																					label="Claim Gate"
+																					value={selectedSnapshot.claim_gate}
+																				/>
+																				<KV
+																					label="Claim Risk Level"
+																					value={
+																						selectedSnapshot.claim_risk_level
+																					}
+																				/>
+																				<KV
+																					label="Package Notes"
+																					value={selectedSnapshot.package_notes}
+																				/>
+																				<KV
+																					label="Packaging Description"
+																					value={
+																						selectedSnapshot.packaging_description
+																					}
+																				/>
+																			</div>
+																			<div className="mt-3 flex flex-wrap gap-2">
+																				{selectedSnapshot.claim_tokens_json
+																					.length > 0 ? (
+																					selectedSnapshot.claim_tokens_json.map(
+																						(token) => (
+																							<StatBadge
+																								key={token}
+																								label={token}
+																								tone="neutral"
+																							/>
+																						),
+																					)
+																				) : (
+																					<span className="text-[11px] text-slate-500">
+																						No claim tokens.
+																					</span>
+																				)}
+																			</div>
+																		</div>
+
+																		<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																			<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																				Allowed / Blocked Claims
+																			</div>
+																			<div className="space-y-3">
+																				<div>
+																					<div className="mb-1 text-[10px] font-semibold text-emerald-300">
+																						Allowed Claims
+																					</div>
+																					<div className="flex flex-wrap gap-2">
+																						{selectedSnapshot
+																							.allowed_claims_json.length >
+																						0 ? (
+																							selectedSnapshot.allowed_claims_json.map(
+																								(item) => (
+																									<StatBadge
+																										key={item}
+																										label={item}
+																										tone="ready"
+																									/>
+																								),
+																							)
+																						) : (
+																							<span className="text-[11px] text-slate-500">
+																								NOT_AVAILABLE
+																							</span>
+																						)}
+																					</div>
+																				</div>
+																				<div>
+																					<div className="mb-1 text-[10px] font-semibold text-red-300">
+																						Blocked Claims
+																					</div>
+																					<div className="flex flex-wrap gap-2">
+																						{selectedSnapshot
+																							.blocked_claims_json.length >
+																						0 ? (
+																							selectedSnapshot.blocked_claims_json.map(
+																								(item) => (
+																									<StatBadge
+																										key={item}
+																										label={item}
+																										tone="risk"
+																									/>
+																								),
+																							)
+																						) : (
+																							<span className="text-[11px] text-slate-500">
+																								NOT_AVAILABLE
+																							</span>
+																						)}
+																					</div>
+																				</div>
+																			</div>
+																		</div>
+																	</div>
+
+																	<div className="grid gap-4 lg:grid-cols-2">
+																		<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																			<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																				Snapshot Narrative
+																			</div>
+																			<div className="space-y-3 text-[11px] text-slate-300">
+																				<div>
+																					<div className="mb-1 text-[10px] font-semibold text-slate-400">
+																						Product Description
+																					</div>
+																					<div className="bosmax-pre-wrap-safe">
+																						{fieldValue(
+																							selectedSnapshot.product_description,
+																						)}
+																					</div>
+																				</div>
+																				<div>
+																					<div className="mb-1 text-[10px] font-semibold text-slate-400">
+																						Usage Text
+																					</div>
+																					<div className="bosmax-pre-wrap-safe">
+																						{fieldValue(
+																							selectedSnapshot.usage_text,
+																						)}
+																					</div>
+																				</div>
+																				<div>
+																					<div className="mb-1 text-[10px] font-semibold text-slate-400">
+																						Warnings Text
+																					</div>
+																					<div className="bosmax-pre-wrap-safe">
+																						{fieldValue(
+																							selectedSnapshot.warnings_text,
+																						)}
+																					</div>
+																				</div>
+																				<div>
+																					<div className="mb-1 text-[10px] font-semibold text-slate-400">
+																						Ingredients Text
+																					</div>
+																					<div className="bosmax-pre-wrap-safe">
+																						{fieldValue(
+																							selectedSnapshot.ingredients_text,
+																						)}
+																					</div>
+																				</div>
+																				<div>
+																					<div className="mb-1 text-[10px] font-semibold text-slate-400">
+																						Target Customer Text
+																					</div>
+																					<div className="bosmax-pre-wrap-safe">
+																						{fieldValue(
+																							selectedSnapshot.target_customer_text,
+																						)}
+																					</div>
+																				</div>
+																				<div>
+																					<div className="mb-1 text-[10px] font-semibold text-slate-400">
+																						Paste Anything Summary
+																					</div>
+																					<div className="bosmax-pre-wrap-safe">
+																						{fieldValue(
+																							selectedSnapshot.paste_anything_summary,
+																						)}
+																					</div>
+																				</div>
+																			</div>
+																		</div>
+
+																		<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																			<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																				Evidence Summary
+																			</div>
+																			<div className="space-y-3 text-[11px] text-slate-300">
+																				<div>
+																					<div className="mb-1 text-[10px] font-semibold text-slate-400">
+																						Source URLs
+																					</div>
+																					<div className="space-y-1">
+																						{summarizeRecord(
+																							selectedSnapshot.source_urls_json,
+																						).length > 0 ? (
+																							summarizeRecord(
+																								selectedSnapshot.source_urls_json,
+																							).map(([key, value]) => (
+																								<div
+																									key={key}
+																									className="bosmax-wrap-safe rounded border border-slate-800 bg-slate-900/70 px-2 py-1"
+																								>
+																									<span className="font-semibold text-slate-400">
+																										{key}:
+																									</span>{" "}
+																									{formatNormalizedText(value)}
+																								</div>
+																							))
+																						) : (
+																							<div className="text-slate-500">
+																								NOT_AVAILABLE
+																							</div>
+																						)}
+																					</div>
+																				</div>
+																				<div>
+																					<div className="mb-1 text-[10px] font-semibold text-slate-400">
+																						Image Evidence
+																					</div>
+																					<div className="space-y-1">
+																						{summarizeRecord(
+																							selectedSnapshot.image_evidence_json,
+																						).length > 0 ? (
+																							summarizeRecord(
+																								selectedSnapshot.image_evidence_json,
+																							).map(([key, value]) => (
+																								<div
+																									key={key}
+																									className="bosmax-wrap-safe rounded border border-slate-800 bg-slate-900/70 px-2 py-1"
+																								>
+																									<span className="font-semibold text-slate-400">
+																										{key}:
+																									</span>{" "}
+																									{formatNormalizedText(value)}
+																								</div>
+																							))
+																						) : (
+																							<div className="text-slate-500">
+																								NOT_AVAILABLE
+																							</div>
+																						)}
+																					</div>
+																				</div>
+																			</div>
+																		</div>
+																	</div>
+
+																	<div className="grid gap-4 lg:grid-cols-2">
+																		<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																			<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																				Buyer Persona Snapshot
+																			</div>
+																			<div className="bosmax-pre-wrap-safe rounded border border-slate-800 bg-slate-900/70 px-3 py-2 text-[11px] text-slate-300">
+																				{formatNormalizedText(
+																					selectedSnapshot.buyer_persona_snapshot_json,
+																				)}
+																			</div>
+																		</div>
+
+																		<div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+																			<div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+																				Copy Strategy Summary
+																			</div>
+																			<div className="bosmax-pre-wrap-safe rounded border border-slate-800 bg-slate-900/70 px-3 py-2 text-[11px] text-slate-300">
+																				{formatNormalizedText(
+																					selectedSnapshot.copy_strategy_summary_json,
+																				)}
+																			</div>
+																		</div>
+																	</div>
+																</div>
+															) : (
+																<div className="py-8 text-center text-xs text-slate-500">
+																	No snapshot selected.
+																</div>
+															)}
+														</Panel>
+
+														<Panel
+															title="Snapshot Provenance Evidence"
+															subtitle="Field-level evidence from product_intelligence_field_provenance."
+														>
+															{provenanceLoading ? (
+																<div className="py-10 text-center text-xs text-slate-500">
+																	Loading snapshot provenance evidence...
+																</div>
+															) : provenanceError ? (
+																<div className="rounded border border-red-500/30 bg-red-500/10 px-3 py-3 text-[11px] text-red-300">
+																	{provenanceError}
+																</div>
+															) : groupedProvenance.length === 0 ? (
+																<div className="rounded border border-slate-800 bg-slate-950/60 px-4 py-4 text-[11px] text-slate-400">
+																	No field provenance evidence stored for this
+																	snapshot.
+																</div>
+															) : (
+																<div className="space-y-4">
+																	{groupedProvenance.map(
+																		([fieldName, items]) => (
+																			<div
+																				key={fieldName}
+																				className="rounded border border-slate-800 bg-slate-950/60 p-3"
+																			>
+																				<div className="flex flex-wrap items-center justify-between gap-2">
+																					<div className="bosmax-wrap-safe text-[11px] font-semibold text-slate-100">
+																						{fieldName}
+																					</div>
+																					<StatBadge
+																						label={`${items.length} evidence row${items.length === 1 ? "" : "s"}`}
+																						tone="neutral"
+																					/>
+																				</div>
+																				<div className="mt-3 space-y-3">
+																					{items.map((item) => (
+																						<div
+																							key={item.provenance_id}
+																							className="rounded border border-slate-800 bg-slate-900/70 p-3"
+																						>
+																							<div className="grid gap-3 lg:grid-cols-2">
+																								<div className="space-y-1">
+																									<KV
+																										label="Source Type"
+																										value={item.source_type}
+																									/>
+																									<KV
+																										label="Source Lane"
+																										value={item.source_lane}
+																									/>
+																									<KV
+																										label="Evidence Kind"
+																										value={item.evidence_kind}
+																									/>
+																									<KV
+																										label="Extraction Method"
+																										value={
+																											item.extraction_method
+																										}
+																									/>
+																								</div>
+																								<div className="space-y-1">
+																									<KV
+																										label="Verification Status"
+																										value={
+																											item.verification_status
+																										}
+																									/>
+																									<KV
+																										label="Claim Risk Flag"
+																										value={item.claim_risk_flag}
+																									/>
+																									<KV
+																										label="Reviewer Decision"
+																										value={
+																											item.reviewer_decision
+																										}
+																									/>
+																									<KV
+																										label="Confidence Score"
+																										value={formatScore(
+																											item.confidence_score,
+																										)}
+																									/>
+																								</div>
+																							</div>
+																							{item.source_url ? (
+																								<a
+																									href={item.source_url}
+																									target="_blank"
+																									rel="noreferrer"
+																									className="mt-3 inline-block text-[11px] text-sky-300 underline underline-offset-2"
+																								>
+																									Open Evidence Source
+																								</a>
+																							) : null}
+																							<div className="mt-3 grid gap-3 lg:grid-cols-2">
+																								<div>
+																									<div className="mb-1 text-[10px] font-semibold text-slate-400">
+																										Declared Value
+																									</div>
+																									<div className="bosmax-pre-wrap-safe rounded border border-slate-800 bg-slate-950 px-3 py-2 text-[11px] text-slate-300">
+																										{formatNormalizedText(
+																											item.declared_value,
+																										)}
+																									</div>
+																								</div>
+																								<div>
+																									<div className="mb-1 text-[10px] font-semibold text-slate-400">
+																										Normalized Value
+																									</div>
+																									<div className="bosmax-pre-wrap-safe rounded border border-slate-800 bg-slate-950 px-3 py-2 text-[11px] text-slate-300">
+																										{formatNormalizedText(
+																											item.normalized_value,
+																										)}
+																									</div>
+																								</div>
+																							</div>
+																							{item.reviewer_note ? (
+																								<div className="mt-3 rounded border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+																									Reviewer Note:{" "}
+																									{item.reviewer_note}
+																								</div>
+																							) : null}
+																						</div>
+																					))}
+																				</div>
+																			</div>
+																		),
+																	)}
+																</div>
+															)}
+														</Panel>
+													</div>
+												</div>
+											</>
+										)}
+									</div>
 								)}
 
 								{activeTab === "BRIEF" && brief && (

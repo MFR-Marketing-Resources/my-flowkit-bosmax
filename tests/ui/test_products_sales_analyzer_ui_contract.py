@@ -93,6 +93,21 @@ def test_products_sales_analyzer_uses_wrap_safe_layout_and_kv_structure():
         "maintenance-only and may bypass the full",
         "review workflow.",
         "Use Smart Registration TikTok Intake",
+        "INTELLIGENCE",
+        "Product Intelligence Snapshot Review",
+        "Latest Approved Snapshot Summary",
+        "Snapshot History",
+        "Selected Snapshot Detail",
+        "Snapshot Provenance Evidence",
+        "Missing Required Snapshot Fields",
+        "Claim Safety Fields",
+        "Allowed / Blocked Claims",
+        "Buyer Persona Snapshot",
+        "Copy Strategy Summary",
+        "No approved snapshot stored for this product yet.",
+        "Operator Clarity: Product Intelligence is review-only",
+        "Loading Product Intelligence snapshots...",
+        "Product Not Found",
     ]:
         assert token in source
 
@@ -106,6 +121,43 @@ def test_products_sales_analyzer_does_not_truncate_long_product_and_shop_text():
 
     assert "truncate text-slate-200" not in source
     assert "truncate mt-0.5" not in source
+
+
+def test_products_sales_analyzer_product_intelligence_wires_real_snapshot_apis():
+    page_source = _read("dashboard/src/pages/ProductsSalesAnalyzerPage.tsx")
+    api_source = _read("dashboard/src/api/products.ts")
+    types_source = _read("dashboard/src/types/index.ts")
+
+    for token in [
+        "fetchProductIntelligence(",
+        "fetchProductIntelligenceSnapshots(",
+        "fetchProductIntelligenceProvenance(",
+        "Failed to load product intelligence snapshots",
+        "Failed to load field provenance evidence",
+        "No approved snapshot stored for this product yet.",
+        "No field provenance evidence stored for this",
+        "Approve product",
+        "intelligence through the review/registration flow in a",
+        "future PR.",
+    ]:
+        assert token in page_source
+
+    for token in [
+        "/api/products/${encodeURIComponent(productId)}/intelligence",
+        "/api/products/${encodeURIComponent(productId)}/intelligence/snapshots",
+        "/api/product-intelligence/snapshots/${encodeURIComponent(snapshotId)}/provenance",
+        "field_name",
+    ]:
+        assert token in api_source
+
+    for token in [
+        "export interface ProductIntelligenceSnapshot",
+        "export interface ProductIntelligenceFieldProvenance",
+        "export interface ProductIntelligenceLatestSnapshotResponse",
+        "export interface ProductIntelligenceSnapshotListResponse",
+        "export interface ProductIntelligenceFieldProvenanceListResponse",
+    ]:
+        assert token in types_source
 
 
 def test_product_display_util_formats_currency_with_commas_and_two_decimals():
