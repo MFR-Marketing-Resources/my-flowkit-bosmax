@@ -274,6 +274,21 @@ async def _parse_image_map_upload(file: UploadFile) -> list[dict[str, str]]:
     return [{str(key): "" if value is None else str(value) for key, value in row.items()} for row in reader]
 
 
+def _detect_image_ext(data: bytes) -> str | None:
+    """Return a canonical extension if ``data`` starts with real image magic
+    bytes, else None. Guards the operator attach path so an empty or non-image
+    payload can never be persisted and then read back as IMAGE_CACHE_READY."""
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "gif"
+    if len(data) >= 12 and data[0:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
 async def _save_manual_image(product_id: str, image_base64: str | None, image_filename: str | None) -> tuple[str | None, str | None]:
     if not image_base64:
         return None, None
@@ -281,10 +296,18 @@ async def _save_manual_image(product_id: str, image_base64: str | None, image_fi
     try:
         data = base64.b64decode(payload)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid image_base64 payload: {exc}") from exc
-    ext = "jpg"
-    if image_filename and "." in image_filename:
-        ext = image_filename.rsplit(".", 1)[-1].lower() or "jpg"
+        raise HTTPException(status_code=422, detail=f"INVALID_IMAGE_BASE64: {exc}") from exc
+    if not data:
+        raise HTTPException(status_code=422, detail="EMPTY_IMAGE: decoded image payload is empty")
+    detected_ext = _detect_image_ext(data)
+    if detected_ext is None:
+        raise HTTPException(
+            status_code=422,
+            detail="UNSUPPORTED_IMAGE_TYPE: expected a real JPEG, PNG, GIF, or WEBP image",
+        )
+    # Prefer the detected type over a caller-supplied extension so the stored
+    # file's extension always matches its real bytes.
+    ext = detected_ext
     dest = product_image_path(product_id, ext=ext)
     dest.write_bytes(data)
     return str(dest), "DOWNLOADED"
