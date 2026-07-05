@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from agent.services import ai_copy_provider_adapter as adapter
+from agent.services import ai_provider_model_catalog as cat
 from agent.services import ai_provider_settings_service as svc
 
 
@@ -32,6 +33,8 @@ CANDIDATE_JSON = json.dumps(
 def state(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "AI_PROVIDER_STATE_DIR", tmp_path)
     monkeypatch.setattr(svc, "AI_PROVIDER_SETTINGS_FILE", tmp_path / "ai-provider-settings.json")
+    monkeypatch.setattr(cat, "AI_MODEL_CATALOG_DIR", tmp_path)
+    monkeypatch.setattr(cat, "AI_MODEL_CATALOG_FILE", tmp_path / "ai-model-catalog.json")
     monkeypatch.delenv("BOSMAX_TEXT_ASSIST_EXECUTION_ENABLED", raising=False)
     monkeypatch.delenv("PRODUCT_TEXT_ASSIST_MODEL", raising=False)
     monkeypatch.delenv("PRODUCT_TEXT_ASSIST_BASE_URL", raising=False)
@@ -49,6 +52,30 @@ class _FakeResp:
 
     def json(self):
         return self._data
+
+
+def test_migrated_seed_default_with_key_fails_closed(state):
+    # A V2 state with a qwen key + the OLD seeded text_assist default migrates to
+    # NOT_CONFIGURED, so AI Copy Assist must fail closed — never silently use
+    # qwen/qwen-plus.
+    (state / "ai-provider-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "active_provider": None,
+                "providers": {
+                    "qwen": {"api_key": "sk-qwen-existing-abcdef", "updated_at": None, "activated_at": None},
+                },
+                "lanes": {
+                    "text_assist": {"provider_id": "qwen", "model_id": "qwen-plus", "execution_enabled": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert adapter.is_configured() is False
+    with pytest.raises(adapter.AICopyProviderNotConfigured):
+        adapter.generate_candidate("brief text")
 
 
 def test_provider_status_reports_selected_model_and_execution(state):

@@ -1203,11 +1203,28 @@ export type AIProviderId =
 
 export type AIProviderLaneId = "text_assist" | "vision";
 
+export type AIProviderLaneStatus =
+	| "NOT_CONFIGURED"
+	| "MODEL_MISSING"
+	| "MODEL_DISABLED"
+	| "KEY_MISSING"
+	| "EXECUTION_DISABLED"
+	| "READY";
+
 export interface AIProviderModelOption {
 	model_id: string;
 	label: string;
 	lanes: string[];
-	default_for?: string[];
+	enabled: boolean;
+	source: string;
+}
+
+export interface AIProviderCatalogEntry {
+	label: string;
+	transport: string;
+	enabled: boolean;
+	supported_lanes: string[];
+	models: AIProviderModelOption[];
 }
 
 export interface AIProviderSummary {
@@ -1232,13 +1249,17 @@ export interface AIProviderLaneSetting {
 	provider_id: AIProviderId | null;
 	model_id: string | null;
 	execution_enabled: boolean;
+	configured_by_user: boolean;
+	key_present: boolean;
+	model_valid: boolean;
+	status: AIProviderLaneStatus;
 	configured: boolean;
 }
 
 export interface AIProviderRegistry {
 	active_provider: AIProviderId | null;
 	providers: AIProviderSummary[];
-	model_catalog: Record<string, AIProviderModelOption[]>;
+	model_catalog: Record<string, AIProviderCatalogEntry>;
 	lanes: AIProviderLaneSetting[];
 }
 

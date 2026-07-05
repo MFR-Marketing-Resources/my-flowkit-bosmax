@@ -2,8 +2,8 @@ import { startTransition, useEffect, useState } from "react";
 import { fetchAPI } from "../api/client";
 import { useWebSocketContext } from "../contexts/WebSocketContext";
 import type {
+	AIProviderCatalogEntry,
 	AIProviderId,
-	AIProviderLaneSetting,
 	AIProviderModelOption,
 	AIProviderRegistry,
 	AIProviderSummary,
@@ -146,6 +146,15 @@ export default function SettingsPage() {
 	);
 	const [bannerMessage, setBannerMessage] = useState<string | null>(null);
 	const [bannerError, setBannerError] = useState<string | null>(null);
+	// Pending (unsaved) lane provider selection: choosing a provider blanks the
+	// model until the operator explicitly picks one (nothing is persisted yet).
+	const [laneProviderDraft, setLaneProviderDraft] = useState<
+		Record<string, string>
+	>({});
+	// Per-provider "add custom model" form drafts.
+	const [customModelDraft, setCustomModelDraft] = useState<
+		Record<string, { model_id: string; label: string; lanes: string[] }>
+	>({});
 	const { isConnected } = useWebSocketContext();
 
 	const applyRegistry = (registry: AIProviderRegistry) => {
@@ -294,13 +303,23 @@ export default function SettingsPage() {
 		);
 	};
 
+	// --- mutable model catalog ------------------------------------------
+	const catalogEntry = (providerId: string): AIProviderCatalogEntry | null =>
+		providerRegistry?.model_catalog?.[providerId] ?? null;
+
+	const laneAllowedForProvider = (providerId: string, lane: string): boolean => {
+		const transport = catalogEntry(providerId)?.transport;
+		if (lane === "vision") return transport === "anthropic_messages";
+		return true; // text_assist supported by all implemented transports
+	};
+
 	const modelsForLane = (
 		providerId: AIProviderId | null,
 		lane: string,
 	): AIProviderModelOption[] => {
-		if (!providerId || !providerRegistry) return [];
-		return (providerRegistry.model_catalog[providerId] || []).filter((model) =>
-			model.lanes.includes(lane),
+		if (!providerId) return [];
+		return (catalogEntry(providerId)?.models ?? []).filter(
+			(model) => model.enabled && model.lanes.includes(lane),
 		);
 	};
 
@@ -311,6 +330,119 @@ export default function SettingsPage() {
 		);
 	};
 
+	const handleUpsertModel = async (
+		providerId: AIProviderId,
+		modelId: string,
+		label: string,
+		lanes: string[],
+		enabled: boolean,
+		successMessage: string,
+	) => {
+		await runProviderMutation(
+			`catalog:${providerId}:${modelId}`,
+			async () =>
+				fetchAPI<AIProviderRegistry>(
+					`/api/ai-providers/model-catalog/${providerId}/models/${encodeURIComponent(modelId)}`,
+					{
+						method: "PUT",
+						body: JSON.stringify({ label, lanes, enabled }),
+					},
+				),
+			successMessage,
+		);
+	};
+
+	const handleToggleModelEnabled = async (
+		providerId: AIProviderId,
+		model: AIProviderModelOption,
+	) => {
+		if (model.enabled) {
+			await runProviderMutation(
+				`catalog:${providerId}:${model.model_id}`,
+				async () =>
+					fetchAPI<AIProviderRegistry>(
+						`/api/ai-providers/model-catalog/${providerId}/models/${encodeURIComponent(model.model_id)}/disable`,
+						{ method: "PATCH", body: JSON.stringify({}) },
+					),
+				`${model.model_id} disabled.`,
+			);
+			return;
+		}
+		await handleUpsertModel(
+			providerId,
+			model.model_id,
+			model.label,
+			model.lanes,
+			true,
+			`${model.model_id} enabled.`,
+		);
+	};
+
+	const handleAddCustomModel = async (providerId: AIProviderId) => {
+		const draft = customModelDraft[providerId] || {
+			model_id: "",
+			label: "",
+			lanes: [],
+		};
+		const modelId = draft.model_id.trim();
+		if (!modelId) {
+			setBannerError("Enter a model ID to add a custom model.");
+			return;
+		}
+		const lanes = draft.lanes.length ? draft.lanes : ["text_assist"];
+		await handleUpsertModel(
+			providerId,
+			modelId,
+			draft.label.trim() || modelId,
+			lanes,
+			true,
+			`Custom model ${modelId} added to ${providerId.toUpperCase()}.`,
+		);
+		setCustomModelDraft((current) => ({
+			...current,
+			[providerId]: { model_id: "", label: "", lanes: [] },
+		}));
+	};
+
+	const handleResetSeedCatalog = async () => {
+		await runProviderMutation(
+			"catalog:reset",
+			async () =>
+				fetchAPI<AIProviderRegistry>("/api/ai-providers/model-catalog/reset-seed", {
+					method: "POST",
+					body: JSON.stringify({}),
+				}),
+			"Model catalog reset to built-in seed presets.",
+		);
+	};
+
+	const setCustomDraftField = (
+		providerId: string,
+		patch: Partial<{ model_id: string; label: string; lanes: string[] }>,
+	) =>
+		setCustomModelDraft((current) => {
+			const base = current[providerId] || {
+				model_id: "",
+				label: "",
+				lanes: [],
+			};
+			return { ...current, [providerId]: { ...base, ...patch } };
+		});
+
+	const toggleCustomLane = (providerId: string, lane: string) =>
+		setCustomModelDraft((current) => {
+			const draft = current[providerId] || {
+				model_id: "",
+				label: "",
+				lanes: [],
+			};
+			const lanes = draft.lanes.includes(lane)
+				? draft.lanes.filter((entry) => entry !== lane)
+				: [...draft.lanes, lane];
+			return { ...current, [providerId]: { ...draft, lanes } };
+		});
+
+	// --- lane configuration ---------------------------------------------
 	const handleSaveLane = async (
 		lane: string,
 		providerId: AIProviderId,
@@ -331,54 +463,37 @@ export default function SettingsPage() {
 				}),
 			`${lane} lane set to ${providerId} / ${modelId}.`,
 		);
+		setLaneProviderDraft((current) => {
+			const next = { ...current };
+			delete next[lane];
+			return next;
+		});
 	};
 
-	const handleLaneProviderChange = async (
-		lane: string,
-		providerId: AIProviderId,
-	) => {
-		const models = modelsForLane(providerId, lane);
-		const firstModel = models[0]?.model_id;
-		if (!firstModel) {
-			setBannerError(
-				`${providerId.toUpperCase()} has no model that supports the ${lane} lane.`,
-			);
-			return;
-		}
-		await handleSaveLane(lane, providerId, firstModel);
+	const handleClearLane = async (lane: string) => {
+		await runProviderMutation(
+			`lane:${lane}`,
+			async () =>
+				fetchAPI<AIProviderRegistry>(`/api/ai-providers/lanes/${lane}`, {
+					method: "DELETE",
+					body: JSON.stringify({}),
+				}),
+			`${lane} lane cleared (NOT CONFIGURED).`,
+		);
+		setLaneProviderDraft((current) => {
+			const next = { ...current };
+			delete next[lane];
+			return next;
+		});
 	};
 
-	const laneStatus = (setting: AIProviderLaneSetting) => {
-		if (!setting.provider_id) {
-			return {
-				label: "NO PROVIDER",
-				className: "border-slate-700 bg-slate-900 text-slate-400",
-			};
-		}
-		const hasKey = providerRegistry?.providers.find(
-			(provider) => provider.provider_id === setting.provider_id,
-		)?.has_key;
-		if (!hasKey) {
-			return {
-				label: "KEY MISSING",
-				className: "border-amber-500/40 bg-amber-500/10 text-amber-300",
-			};
-		}
-		if (!setting.configured) {
-			return {
-				label: "MODEL INVALID",
-				className: "border-amber-500/40 bg-amber-500/10 text-amber-300",
-			};
-		}
-		return setting.execution_enabled
-			? {
-					label: "ACTIVE",
-					className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
-				}
-			: {
-					label: "READY (DISABLED)",
-					className: "border-slate-700 bg-slate-900 text-slate-400",
-				};
+	const LANE_STATUS_STYLE: Record<string, string> = {
+		NOT_CONFIGURED: "border-slate-700 bg-slate-900 text-slate-400",
+		MODEL_MISSING: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+		MODEL_DISABLED: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+		KEY_MISSING: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+		EXECUTION_DISABLED: "border-slate-700 bg-slate-900 text-slate-400",
+		READY: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
 	};
 
 	const activeProviderLabel =
@@ -544,36 +659,156 @@ export default function SettingsPage() {
 											</div>
 										</div>
 
-										{(providerRegistry?.model_catalog?.[provider.provider_id]
-											?.length ?? 0) > 0 ? (
-											<div className="space-y-2">
-												<label className="text-xs font-medium text-slate-400">
-													Default Model
-												</label>
-												<select
-													value={provider.default_model || ""}
-													onChange={(event) =>
-														void handleSaveModel(
-															provider.provider_id,
-															event.target.value,
-														)
-													}
-													disabled={isBusy}
-													className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none transition focus:border-blue-400/60 disabled:cursor-not-allowed disabled:opacity-60"
-												>
-													{providerRegistry?.model_catalog?.[
-														provider.provider_id
-													]?.map((model) => (
-														<option key={model.model_id} value={model.model_id}>
-															{model.label}
-														</option>
-													))}
-												</select>
+										{catalogEntry(provider.provider_id) ? (
+											<div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
 												<div className="text-[11px] text-slate-500">
-													Supported lanes:{" "}
-													{provider.supported_lanes.length
-														? provider.supported_lanes.join(", ")
-														: "—"}
+													Built-in models are starter presets. You can add/edit
+													models as providers change their model IDs.
+												</div>
+
+												<div className="space-y-2">
+													<label className="text-xs font-medium text-slate-400">
+														Default Model{" "}
+														<span className="text-[10px] text-slate-500">
+															(provider convenience — does not select a lane)
+														</span>
+													</label>
+													<select
+														value={provider.default_model || ""}
+														onChange={(event) =>
+															void handleSaveModel(
+																provider.provider_id,
+																event.target.value,
+															)
+														}
+														disabled={isBusy}
+														className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none transition focus:border-blue-400/60 disabled:cursor-not-allowed disabled:opacity-60"
+													>
+														<option value="">Select model…</option>
+														{(catalogEntry(provider.provider_id)?.models ?? [])
+															.filter((model) => model.enabled)
+															.map((model) => (
+																<option key={model.model_id} value={model.model_id}>
+																	{model.label}
+																</option>
+															))}
+													</select>
+													<div className="text-[11px] text-slate-500">
+														Transport: {catalogEntry(provider.provider_id)?.transport}
+														{" · "}Supported lanes:{" "}
+														{provider.supported_lanes.length
+															? provider.supported_lanes.join(", ")
+															: "—"}
+													</div>
+												</div>
+
+												<div className="space-y-1">
+													<div className="text-xs font-semibold text-slate-300">
+														Models
+													</div>
+													{(catalogEntry(provider.provider_id)?.models ?? []).map(
+														(model) => (
+															<div
+																key={model.model_id}
+																className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-2 py-1.5"
+															>
+																<div className="min-w-0">
+																	<div className="flex items-center gap-1">
+																		<span
+																			className={`truncate text-[11px] font-semibold ${model.enabled ? "text-slate-200" : "text-slate-500 line-through"}`}
+																		>
+																			{model.label}
+																		</span>
+																		<span className="rounded bg-slate-800 px-1 text-[9px] uppercase text-slate-400">
+																			{model.source}
+																		</span>
+																	</div>
+																	<div className="truncate text-[10px] text-slate-500">
+																		{model.model_id} ·{" "}
+																		{model.lanes.join(", ") || "no lanes"}
+																	</div>
+																</div>
+																<button
+																	type="button"
+																	onClick={() =>
+																		void handleToggleModelEnabled(
+																			provider.provider_id,
+																			model,
+																		)
+																	}
+																	disabled={isBusy}
+																	className={`shrink-0 rounded border px-2 py-0.5 text-[10px] font-semibold disabled:opacity-50 ${model.enabled ? "border-red-500/30 bg-red-500/10 text-red-200" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"}`}
+																>
+																	{model.enabled ? "Disable" : "Enable"}
+																</button>
+															</div>
+														),
+													)}
+												</div>
+
+												<div className="space-y-2 rounded-lg border border-dashed border-slate-700 p-2">
+													<div className="text-xs font-semibold text-slate-300">
+														Add custom model
+													</div>
+													<input
+														value={
+															customModelDraft[provider.provider_id]?.model_id || ""
+														}
+														onChange={(event) =>
+															setCustomDraftField(provider.provider_id, {
+																model_id: event.target.value,
+															})
+														}
+														placeholder="model_id (e.g. deepseek-reasoner)"
+														className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-400/60"
+													/>
+													<input
+														value={
+															customModelDraft[provider.provider_id]?.label || ""
+														}
+														onChange={(event) =>
+															setCustomDraftField(provider.provider_id, {
+																label: event.target.value,
+															})
+														}
+														placeholder="Label (optional)"
+														className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-400/60"
+													/>
+													<div className="flex flex-wrap gap-3 text-[11px] text-slate-400">
+														{["text_assist", "vision"]
+															.filter((lane) =>
+																laneAllowedForProvider(provider.provider_id, lane),
+															)
+															.map((lane) => (
+																<label
+																	key={lane}
+																	className="flex items-center gap-1"
+																>
+																	<input
+																		type="checkbox"
+																		checked={(
+																			customModelDraft[provider.provider_id]?.lanes ||
+																			[]
+																		).includes(lane)}
+																		onChange={() =>
+																			toggleCustomLane(provider.provider_id, lane)
+																		}
+																		className="accent-blue-500"
+																	/>
+																	{lane}
+																</label>
+															))}
+													</div>
+													<button
+														type="button"
+														onClick={() =>
+															void handleAddCustomModel(provider.provider_id)
+														}
+														disabled={isBusy}
+														className="w-full rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-200 hover:border-blue-400 disabled:opacity-50"
+													>
+														Add custom model
+													</button>
 												</div>
 											</div>
 										) : null}
@@ -658,25 +893,39 @@ export default function SettingsPage() {
 				</div>
 				<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-400">
 					The <span className="font-semibold text-slate-200">global active provider</span>{" "}
-					above is a legacy runtime-wide selector. Lane Settings are what decide
-					which provider/model each AI task actually uses. The{" "}
+					above is a legacy runtime-wide selector. Lane Settings decide which
+					provider/model each AI task actually uses. The{" "}
 					<span className="font-semibold text-slate-200">Text Assist</span> lane
 					powers <span className="font-semibold text-slate-200">AI Copy Assist</span>{" "}
 					(candidate copy only — never the final deterministic prompt). The{" "}
 					<span className="font-semibold text-slate-200">Vision</span> lane powers
-					product-image vision tasks. A lane runs only when it has a stored key and
-					its execution toggle is on.
+					product-image vision tasks. Lanes ship{" "}
+					<span className="font-semibold text-slate-200">NOT CONFIGURED</span> — a lane
+					is inactive until provider, model, key, and the execution toggle are all
+					configured.
 				</div>
 				<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 					{providerRegistry?.lanes?.length
 						? providerRegistry.lanes.map((setting) => {
-								const status = laneStatus(setting);
 								const laneBusy = mutatingProviderId === `lane:${setting.lane}`;
 								const laneProviders = providersForLane(setting.lane);
+								const draftProvider = laneProviderDraft[setting.lane];
+								const displayProvider =
+									draftProvider !== undefined
+										? draftProvider
+										: setting.provider_id || "";
+								const providerChanged =
+									draftProvider !== undefined &&
+									draftProvider !== (setting.provider_id || "");
+								const modelValue = providerChanged
+									? ""
+									: setting.model_id || "";
 								const laneModels = modelsForLane(
-									setting.provider_id,
+									(displayProvider || null) as AIProviderId | null,
 									setting.lane,
 								);
+								const executionAllowed =
+									setting.key_present && setting.model_valid;
 								return (
 									<div
 										key={setting.lane}
@@ -692,9 +941,9 @@ export default function SettingsPage() {
 												</div>
 											</div>
 											<span
-												className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${status.className}`}
+												className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${LANE_STATUS_STYLE[setting.status] || LANE_STATUS_STYLE.NOT_CONFIGURED}`}
 											>
-												{status.label}
+												{setting.status.replaceAll("_", " ")}
 											</span>
 										</div>
 
@@ -704,16 +953,17 @@ export default function SettingsPage() {
 													Provider
 												</label>
 												<select
-													value={setting.provider_id || ""}
+													value={displayProvider}
 													onChange={(event) =>
-														void handleLaneProviderChange(
-															setting.lane,
-															event.target.value as AIProviderId,
-														)
+														setLaneProviderDraft((current) => ({
+															...current,
+															[setting.lane]: event.target.value,
+														}))
 													}
 													disabled={laneBusy}
 													className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none transition focus:border-blue-400/60 disabled:cursor-not-allowed disabled:opacity-60"
 												>
+													<option value="">Select provider…</option>
 													{laneProviders.map((provider) => (
 														<option
 															key={provider.provider_id}
@@ -730,19 +980,20 @@ export default function SettingsPage() {
 													Model
 												</label>
 												<select
-													value={setting.model_id || ""}
+													value={modelValue}
 													onChange={(event) =>
-														setting.provider_id
+														displayProvider && event.target.value
 															? void handleSaveLane(
 																	setting.lane,
-																	setting.provider_id,
+																	displayProvider as AIProviderId,
 																	event.target.value,
 																)
 															: undefined
 													}
-													disabled={laneBusy || !setting.provider_id}
+													disabled={laneBusy || !displayProvider}
 													className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none transition focus:border-blue-400/60 disabled:cursor-not-allowed disabled:opacity-60"
 												>
+													<option value="">Select model…</option>
 													{laneModels.map((model) => (
 														<option key={model.model_id} value={model.model_id}>
 															{model.label}
@@ -766,20 +1017,41 @@ export default function SettingsPage() {
 																)
 															: undefined
 													}
-													disabled={laneBusy || !setting.configured}
+													disabled={laneBusy || !executionAllowed}
 													className="h-4 w-4 cursor-pointer accent-emerald-500 disabled:cursor-not-allowed"
 												/>
 											</label>
-											<div className="text-[11px] text-slate-500">
-												{setting.lane === "text_assist"
-													? "Consumed by AI Copy Assist candidate generation."
-													: "Consumed by product-image vision tasks."}
+
+											<div className="flex items-center justify-between gap-2">
+												<div className="text-[11px] text-slate-500">
+													{setting.lane === "text_assist"
+														? "Consumed by AI Copy Assist candidate generation."
+														: "Consumed by product-image vision tasks."}
+												</div>
+												<button
+													type="button"
+													onClick={() => void handleClearLane(setting.lane)}
+													disabled={laneBusy || !setting.configured_by_user}
+													className="shrink-0 rounded border border-slate-700 bg-slate-950/70 px-2 py-1 text-[10px] font-semibold text-slate-300 hover:border-red-400/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-40"
+												>
+													Clear
+												</button>
 											</div>
 										</div>
 									</div>
 								);
 							})
 						: null}
+				</div>
+				<div className="flex justify-end">
+					<button
+						type="button"
+						onClick={() => void handleResetSeedCatalog()}
+						disabled={mutatingProviderId === "catalog:reset"}
+						className="rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-xs font-semibold text-slate-300 hover:border-blue-400/50 hover:text-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
+					>
+						Reset models to seed
+					</button>
 				</div>
 			</section>
 
