@@ -317,6 +317,51 @@ async def _enrich_product(product: dict[str, Any], *, persist: bool = False) -> 
     return await enrich_product(product, persist=persist)
 
 
+# Catalog enrichment is pure-deterministic per row but costs ~24ms/row, so
+# enriching the whole ~500-row catalog on every GET /api/products (line-515
+# loop) took ~12s and blocked the event loop — the "Loading products..." stall.
+# This memoises the enriched result per row, keyed on the row's mutation markers
+# (updated_at + claim-safe/lifecycle stamps), so any product write invalidates
+# exactly that row with no staleness; unchanged rows are reused instantly.
+_CATALOG_ENRICH_CACHE: dict[tuple, dict[str, Any]] = {}
+_CATALOG_ENRICH_CACHE_MAX = 4000
+
+
+def _catalog_enrich_key(product: dict[str, Any]) -> tuple | None:
+    pid = product.get("id")
+    if pid is None:
+        return None
+    return (
+        pid,
+        product.get("updated_at"),
+        product.get("source"),
+        product.get("lifecycle_status"),
+        product.get("archived_at"),
+        product.get("claim_safe_copy_updated_at"),
+        product.get("mapping_status"),
+    )
+
+
+async def _enrich_product_cached(product: dict[str, Any]) -> dict[str, Any]:
+    """Cache-backed enrichment for the read-only catalog list path only.
+
+    Returns a shallow copy so downstream top-level mutations (e.g. catalog_state)
+    never corrupt the cached entry. Callers that persist or need a guaranteed
+    fresh compute must keep using ``_enrich_product`` directly.
+    """
+    key = _catalog_enrich_key(product)
+    if key is not None:
+        cached = _CATALOG_ENRICH_CACHE.get(key)
+        if cached is not None:
+            return dict(cached)
+    enriched = await _enrich_product(product)
+    if key is not None:
+        if len(_CATALOG_ENRICH_CACHE) >= _CATALOG_ENRICH_CACHE_MAX:
+            _CATALOG_ENRICH_CACHE.clear()
+        _CATALOG_ENRICH_CACHE[key] = enriched
+    return dict(enriched)
+
+
 async def _refresh_claim_safe_product_row_if_needed(product: dict[str, Any]) -> dict[str, Any]:
     product_id = str(product.get("id") or "").strip()
     if not product_id or not product.get("claim_safe_copy_payload"):
@@ -512,7 +557,7 @@ async def _list_products_response(
         include_archived=db_include_archived,
         lifecycle_status=requested_lifecycle,
     )
-    enriched_all = [await _enrich_product(product) for product in db_products]
+    enriched_all = [await _enrich_product_cached(product) for product in db_products]
     merged_products = await _merge_catalog_products(
         enriched_all,
         requested_source=requested_source,
@@ -534,7 +579,12 @@ async def _list_products_response(
         if refreshed_product is product:
             enriched.append(product)
             continue
-        enriched.append(await _enrich_product(refreshed_product))
+        # The claim-safe check returns a fresh DB row for EVERY row that has a
+        # payload (even when nothing changed), so this branch fires for the whole
+        # page. Use the cached enricher: unchanged rows keep the same mutation-key
+        # and hit the cache; genuinely refreshed rows bump claim_safe_copy_updated_at
+        # and re-enrich correctly.
+        enriched.append(await _enrich_product_cached(refreshed_product))
 
     # Annotate every row with the shared Product Truth Gateway lifecycle state so
     # the catalog surface cannot silently disagree with the read model / preview.
