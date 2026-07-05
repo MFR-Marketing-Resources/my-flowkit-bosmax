@@ -1,119 +1,140 @@
-import asyncio
-
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agent.api.product_intelligence import router as product_intelligence_router
-from agent.api.products import router as products_router
-from agent.services import product_intelligence_snapshot_service as svc
-from agent.db import crud
+from agent.api.product_intelligence import router
 
 
-def _client() -> TestClient:
+def _build_app() -> FastAPI:
     app = FastAPI()
-    app.include_router(products_router, prefix="/api")
-    app.include_router(product_intelligence_router, prefix="/api")
-    return TestClient(app)
+    app.include_router(router, prefix="/api")
+    return app
 
 
-def test_get_product_intelligence_404_when_product_missing():
-    response = _client().get("/api/products/missing/intelligence")
-    assert response.status_code == 404
-    assert response.json()["detail"] == "PRODUCT_NOT_FOUND"
+def test_get_product_intelligence_by_id(monkeypatch):
+    async def fake_get(product_id: str):
+        assert product_id == "prod-001"
+        return {
+            "product_id": "prod-001",
+            "group": "LAUNDRY_CARE",
+            "bosmax_product_family": "LAUNDRY_DETERGENT_LIQUID_REFILL",
+            "copy_route": "DIRECT",
+            "claim_gate": "CLAIM_REVIEW_REQUIRED",
+            "sales_metrics_source": "LATEST_FASTMOSS_IMPORT_BATCH",
+            "sales_metrics_batch_id": "batch-001",
+            "sold_count_metric_scope": "PRODUCT",
+            "sold_count_truth_status": "VERIFIED_PRODUCT_LEVEL",
+            "product_sold_count": 88,
+            "image_analysis": {
+                "status": "VISION_PROVIDER_NOT_CONFIGURED",
+                "provider": "not_configured",
+                "detected_package": None,
+                "detected_text": [],
+                "visual_confidence": "NOT_VERIFIED",
+                "warnings": ["SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE"],
+            },
+        }
 
-
-def test_get_product_intelligence_returns_empty_state_for_existing_product_without_snapshot():
-    product = asyncio.run(
-        crud.create_product(
-            raw_product_title="Bosmax Empty Intelligence",
-            source="MANUAL",
-            product_display_name="Bosmax Empty Intelligence",
-            product_short_name="Bosmax Empty Intelligence",
-        )
+    monkeypatch.setattr(
+        "agent.api.product_intelligence.get_product_intelligence_by_id",
+        fake_get,
     )
+    client = TestClient(_build_app())
 
-    response = _client().get(f"/api/products/{product['id']}/intelligence")
+    response = client.get("/api/product-intelligence/prod-001")
+
     assert response.status_code == 200
     payload = response.json()
-    assert payload["product_id"] == product["id"]
-    assert payload["latest_snapshot"] is None
-    assert payload["status"] == "NO_APPROVED_SNAPSHOT"
-    assert payload["provenance_summary"]["total_snapshots"] == 0
+    assert payload["group"] == "LAUNDRY_CARE"
+    assert payload["bosmax_product_family"] == "LAUNDRY_DETERGENT_LIQUID_REFILL"
+    assert payload["sales_metrics_source"] == "LATEST_FASTMOSS_IMPORT_BATCH"
+    assert payload["product_sold_count"] == 88
+    assert payload["image_analysis"]["status"] == "VISION_PROVIDER_NOT_CONFIGURED"
 
 
-def test_get_product_intelligence_and_snapshot_list_return_structured_json_fields():
-    product = asyncio.run(
-        crud.create_product(
-            raw_product_title="Bosmax Approved Snapshot",
-            source="MANUAL",
-            product_display_name="Bosmax Approved Snapshot",
-            product_short_name="Bosmax Approved Snapshot",
-        )
+def test_post_product_intelligence_resolve(monkeypatch):
+    async def fake_resolve(request):
+        assert request.product_payload["raw_product_title"] == "Atlas Lip Balm Original"
+        return {
+            "product_id": "inline-prod",
+            "group": "BEAUTY_AND_PERSONAL_CARE",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+            "copy_route": "DIRECT",
+            "claim_gate": "CLAIM_SAFE",
+        }
+
+    monkeypatch.setattr(
+        "agent.api.product_intelligence.resolve_product_intelligence_request",
+        fake_resolve,
     )
-    snapshot = asyncio.run(
-        svc.create_snapshot(
-            product_id=product["id"],
-            version=1,
-            status="APPROVED",
-            benefits_json=["portable", "clean"],
-            source_urls_json={"source_url": "https://example.com/source"},
-            image_evidence_json={"image_url": "https://example.com/image.jpg"},
-            claim_tokens_json=["safe"],
-            approved_at="2026-07-05T12:00:00Z",
-            created_by="operator",
-        )
-    )
+    client = TestClient(_build_app())
 
-    latest_response = _client().get(f"/api/products/{product['id']}/intelligence")
-    assert latest_response.status_code == 200
-    latest_payload = latest_response.json()
-    assert latest_payload["status"] == "APPROVED_SNAPSHOT_AVAILABLE"
-    assert latest_payload["latest_snapshot"]["snapshot_id"] == snapshot.snapshot_id
-    assert latest_payload["latest_snapshot"]["benefits_json"] == ["portable", "clean"]
-    assert latest_payload["latest_snapshot"]["source_urls_json"] == {
-        "source_url": "https://example.com/source"
-    }
-    assert latest_payload["latest_snapshot"]["image_evidence_json"] == {
-        "image_url": "https://example.com/image.jpg"
-    }
-    assert latest_payload["latest_snapshot"]["claim_tokens_json"] == ["safe"]
-
-    list_response = _client().get(f"/api/products/{product['id']}/intelligence/snapshots")
-    assert list_response.status_code == 200
-    list_payload = list_response.json()
-    assert list_payload["product_id"] == product["id"]
-    assert len(list_payload["items"]) == 1
-    assert list_payload["items"][0]["snapshot_id"] == snapshot.snapshot_id
-    assert list_payload["items"][0]["benefits_json"] == ["portable", "clean"]
-
-
-def test_get_product_intelligence_snapshot_list_returns_empty_items_for_existing_product():
-    product = asyncio.run(
-        crud.create_product(
-            raw_product_title="Bosmax Snapshot List Empty",
-            source="MANUAL",
-            product_display_name="Bosmax Snapshot List Empty",
-            product_short_name="Bosmax Snapshot List Empty",
-        )
+    response = client.post(
+        "/api/product-intelligence/resolve",
+        json={
+            "product_payload": {
+                "id": "inline-prod",
+                "raw_product_title": "Atlas Lip Balm Original",
+            }
+        },
     )
 
-    response = _client().get(f"/api/products/{product['id']}/intelligence/snapshots")
     assert response.status_code == 200
-    assert response.json() == {"product_id": product["id"], "items": []}
+    payload = response.json()
+    assert payload["group"] == "BEAUTY_AND_PERSONAL_CARE"
+    assert payload["claim_gate"] == "CLAIM_SAFE"
 
 
-def test_get_product_intelligence_snapshot_list_rejects_invalid_status():
-    product = asyncio.run(
-        crud.create_product(
-            raw_product_title="Bosmax Snapshot Invalid Status",
-            source="MANUAL",
-            product_display_name="Bosmax Snapshot Invalid Status",
-            product_short_name="Bosmax Snapshot Invalid Status",
-        )
+def test_get_product_intelligence_summary(monkeypatch):
+    async def fake_summary():
+        return {
+            "total_products": 317,
+            "products_by_source": {"FASTMOSS": 299, "MANUAL": 18},
+            "group_distribution": {"LAUNDRY_CARE": 12},
+            "copy_route_distribution": {"DIRECT": 290},
+            "claim_gate_distribution": {"CLAIM_SAFE": 250, "CLAIM_REVIEW_REQUIRED": 67},
+        }
+
+    monkeypatch.setattr(
+        "agent.api.product_intelligence.get_product_intelligence_summary",
+        fake_summary,
     )
+    client = TestClient(_build_app())
 
-    response = _client().get(
-        f"/api/products/{product['id']}/intelligence/snapshots?status=NOT_A_REAL_STATUS"
+    response = client.get("/api/product-intelligence/summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_products"] == 317
+    assert payload["group_distribution"]["LAUNDRY_CARE"] == 12
+
+
+def test_post_product_intelligence_backfill_preview(monkeypatch):
+    async def fake_preview():
+        return {
+            "total_products": 317,
+            "resolved": 299,
+            "high_confidence": 200,
+            "medium_confidence": 80,
+            "low_confidence": 37,
+            "needs_review": 37,
+            "taxonomy_conflicts": 12,
+            "group_distribution": {"FASHION_AND_APPAREL": 50},
+            "copy_route_distribution": {"DIRECT": 280},
+            "claim_gate_distribution": {"CLAIM_SAFE": 240, "CLAIM_REVIEW_REQUIRED": 77},
+            "sample_failures": [],
+            "sample_conflicts": [],
+            "write_back_status": "READ_ONLY_NO_DB_WRITES",
+        }
+
+    monkeypatch.setattr(
+        "agent.api.product_intelligence.get_product_intelligence_backfill_preview",
+        fake_preview,
     )
+    client = TestClient(_build_app())
 
-    assert response.status_code == 422
+    response = client.post("/api/product-intelligence/backfill-preview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["resolved"] == 299
+    assert payload["write_back_status"] == "READ_ONLY_NO_DB_WRITES"

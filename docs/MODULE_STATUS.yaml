@@ -240,6 +240,7 @@ domains:
       - tests/api/test_approved_product_package_api.py
       - tests/api/test_product_catalog_selectable_v1.py
       - tests/api/test_product_intelligence_api.py
+      - tests/api/test_product_intelligence_snapshot_api.py
       - tests/api/test_product_intelligence_provenance_api.py
       - tests/api/test_product_image_truth_v1.py
       - tests/api/test_products_rich_knowledge_patch_regression.py
