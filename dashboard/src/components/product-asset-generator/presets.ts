@@ -107,7 +107,7 @@ export const PRODUCT_ASSET_GENERATOR_PRESETS: ProductAssetGeneratorPresetDefinit
 			family: "HUMAN_PLUS_PRODUCT",
 			description:
 				"Half-body creator lane where scale truth, hand grip, and torso-to-product proportion must stay believable.",
-			requiredInputs: ["Database product", "Character reference"],
+			requiredInputs: ["Database product"],
 			requiresDatabaseProduct: true,
 			requiresCharacterReference: false,
 			requiresSceneContextReference: false,
@@ -126,7 +126,7 @@ export const PRODUCT_ASSET_GENERATOR_PRESETS: ProductAssetGeneratorPresetDefinit
 			family: "HUMAN_PLUS_PRODUCT",
 			description:
 				"Close framing for hand-product interaction where the product must stay readable without inflating the pack.",
-			requiredInputs: ["Database product", "Character reference"],
+			requiredInputs: ["Database product"],
 			requiresDatabaseProduct: true,
 			requiresCharacterReference: false,
 			requiresSceneContextReference: false,
@@ -145,11 +145,7 @@ export const PRODUCT_ASSET_GENERATOR_PRESETS: ProductAssetGeneratorPresetDefinit
 			family: "HUMAN_PLUS_PRODUCT",
 			description:
 				"Tabletop creator composition where the product stays readable on-surface with a visible human anchor.",
-			requiredInputs: [
-				"Database product",
-				"Character reference",
-				"Scene reference",
-			],
+			requiredInputs: ["Database product", "Scene context (text)"],
 			requiresDatabaseProduct: true,
 			requiresCharacterReference: false,
 			requiresSceneContextReference: false,
@@ -168,11 +164,7 @@ export const PRODUCT_ASSET_GENERATOR_PRESETS: ProductAssetGeneratorPresetDefinit
 			family: "PRODUCT_PLUS_SCENE",
 			description:
 				"Blend creator, product, and scene while keeping product truth sovereign over atmosphere and styling.",
-			requiredInputs: [
-				"Database product",
-				"Character reference",
-				"Scene reference",
-			],
+			requiredInputs: ["Database product", "Scene context (text)"],
 			requiresDatabaseProduct: true,
 			requiresCharacterReference: false,
 			requiresSceneContextReference: false,
@@ -210,7 +202,7 @@ export const PRODUCT_ASSET_GENERATOR_PRESETS: ProductAssetGeneratorPresetDefinit
 			family: "PRODUCT_PLUS_SCENE",
 			description:
 				"Scene-led product composition with environment cues while the product remains the visual anchor.",
-			requiredInputs: ["Database product", "Scene reference"],
+			requiredInputs: ["Database product", "Scene context (text)"],
 			requiresDatabaseProduct: true,
 			requiresCharacterReference: false,
 			requiresSceneContextReference: false,
@@ -229,7 +221,7 @@ export const PRODUCT_ASSET_GENERATOR_PRESETS: ProductAssetGeneratorPresetDefinit
 			family: "PRODUCT_PLUS_SCENE",
 			description:
 				"Shelf or rack context preset where the product must stay correctly proportioned relative to its environment.",
-			requiredInputs: ["Database product", "Scene reference"],
+			requiredInputs: ["Database product", "Scene context (text)"],
 			requiresDatabaseProduct: true,
 			requiresCharacterReference: false,
 			requiresSceneContextReference: false,
@@ -248,11 +240,7 @@ export const PRODUCT_ASSET_GENERATOR_PRESETS: ProductAssetGeneratorPresetDefinit
 			family: "PRODUCT_PLUS_SCENE",
 			description:
 				"Blend route for product, scene, and style references where the product remains the sovereign anchor and style stays secondary.",
-			requiredInputs: [
-				"Database product",
-				"Scene reference",
-				"Style reference",
-			],
+			requiredInputs: ["Database product", "Scene context (text)", "Style context (text)"],
 			requiresDatabaseProduct: true,
 			requiresCharacterReference: false,
 			requiresSceneContextReference: false,

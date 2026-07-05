@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import SaveToCreativeLibraryPanel from "../components/creative-library/SaveToCreativeLibraryPanel";
 import {
 	archiveCreativeAsset,
 	fetchCreativeAssets,
@@ -49,6 +50,7 @@ export default function CreativeLibraryPage() {
 	const [isLoading, setIsLoading] = useState(false);
 	const [currentPage, setCurrentPage] = useState(1);
 	const [archiving, setArchiving] = useState<string | null>(null);
+	const [refreshToken, setRefreshToken] = useState(0);
 
 	useEffect(() => {
 		setError(null);
@@ -68,7 +70,7 @@ export default function CreativeLibraryPage() {
 				),
 			)
 			.finally(() => setIsLoading(false));
-	}, [roleFilter, statusFilter, search]);
+	}, [roleFilter, statusFilter, search, refreshToken]);
 
 	const paginationResetKey = `${roleFilter}|${statusFilter}|${modeFilter}|${search}`;
 
@@ -108,6 +110,9 @@ export default function CreativeLibraryPage() {
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
+			<SaveToCreativeLibraryPanel
+				onSaved={() => setRefreshToken((token) => token + 1)}
+			/>
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
 				<div className="mb-4 flex items-center justify-between gap-3">
 					<div>

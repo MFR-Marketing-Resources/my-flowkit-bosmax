@@ -1,0 +1,61 @@
+"""IMG Asset Factory v1 — API surface.
+
+Endpoints:
+  - GET  /img-factory/lanes            list lane recipes (governance authority)
+  - POST /img-factory/save             save an approved REAL IMG output -> Library
+  - GET  /img-factory/provider-status  honest IMG generation runtime boundary
+  - POST /img-factory/f2v-frame-sources resolve F2V start/end frame selections
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException
+
+from agent.models.creative_asset import CreativeAssetRecord
+from agent.models.f2v_frame_source_resolver import (
+    F2VFrameSourceResolverRequest,
+    F2VFrameSourceResolverResponse,
+)
+from agent.models.img_asset_factory import (
+    ImgAssetLaneListResponse,
+    ImgProviderStatusResponse,
+    SaveImgOutputRequest,
+)
+from agent.services.f2v_frame_source_resolver_service import resolve_f2v_frame_sources
+from agent.services.img_asset_factory_service import (
+    get_img_provider_status,
+    list_img_lane_summaries,
+    save_img_output_to_library,
+)
+
+
+router = APIRouter(prefix="/img-factory", tags=["img-factory"])
+
+
+@router.get("/lanes", response_model=ImgAssetLaneListResponse)
+async def get_img_factory_lanes() -> ImgAssetLaneListResponse:
+    items = list_img_lane_summaries()
+    return ImgAssetLaneListResponse(items=items, total=len(items))
+
+
+@router.get("/provider-status", response_model=ImgProviderStatusResponse)
+async def get_img_factory_provider_status() -> ImgProviderStatusResponse:
+    return get_img_provider_status()
+
+
+@router.post("/save", response_model=CreativeAssetRecord)
+async def post_img_factory_save(request: SaveImgOutputRequest) -> CreativeAssetRecord:
+    try:
+        return await save_img_output_to_library(request)
+    except ValueError as exc:
+        message = str(exc)
+        if message.endswith("NOT_FOUND"):
+            raise HTTPException(status_code=404, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+
+@router.post("/f2v-frame-sources", response_model=F2VFrameSourceResolverResponse)
+async def post_img_factory_f2v_frame_sources(
+    request: F2VFrameSourceResolverRequest,
+) -> F2VFrameSourceResolverResponse:
+    return await resolve_f2v_frame_sources(request)

@@ -82,6 +82,14 @@ domains:
       - agent/services/ai_provider_settings_service.py
       - agent/services/i2v_slot_recipe_config.py
       - agent/services/i2v_semantic_slot_resolver_service.py
+      - agent/services/img_asset_lane_config.py
+      - agent/services/img_asset_factory_service.py
+      - agent/services/f2v_frame_source_resolver_service.py
+      - agent/models/img_asset_factory.py
+      - agent/models/f2v_frame_source_resolver.py
+      - agent/api/img_factory.py
+      - dashboard/src/api/imgFactory.ts
+      - dashboard/src/components/creative-library/SaveToCreativeLibraryPanel.tsx
       - agent/services/prompt_compiler_runtime_config_service.py
       - agent/services/canonical_prompt_compiler.py
       - agent/services/product_lock_builder.py
@@ -230,6 +238,12 @@ domains:
       - tests/unit/test_workspace_execution_package_service.py
       - tests/unit/test_creative_asset_service.py
       - tests/unit/test_i2v_semantic_slot_resolver_service.py
+      - tests/unit/test_img_asset_lane_config.py
+      - tests/unit/test_img_asset_factory_service.py
+      - tests/unit/test_f2v_frame_source_resolver.py
+      - tests/unit/test_creative_asset_metadata.py
+      - tests/unit/test_preset_consistency.py
+      - tests/api/test_img_factory_api.py
       - tests/api/test_approved_product_package_api.py
       - tests/api/test_product_catalog_selectable_v1.py
       - tests/api/test_product_image_truth_v1.py
