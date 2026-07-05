@@ -42,10 +42,15 @@ SUPPORTED_TRANSPORTS: frozenset[str] = frozenset(
 
 # Which transports actually have a runtime implementation for each lane:
 # - text_assist: implemented in ai_copy_provider_adapter for BOTH transports.
-# - vision: only the anthropic_messages provider is wired (product_image_analysis).
+# - vision: BOTH transports are wired.
+#     * anthropic_messages   -> product_image_analysis anthropic SDK path (existing).
+#     * openai_compatible_chat -> vision_provider_adapter image_url path, which
+#       reaches OpenAI, Gemini (its OpenAI-compatible endpoint), and Qwen-VL
+#       (DashScope OpenAI-compatible endpoint). A model is still only vision-
+#       selectable if it ALSO lists the vision lane (deepseek ships none).
 LANE_TRANSPORT_SUPPORT: dict[str, frozenset[str]] = {
     "text_assist": frozenset({TRANSPORT_OPENAI_COMPATIBLE, TRANSPORT_ANTHROPIC_MESSAGES}),
-    "vision": frozenset({TRANSPORT_ANTHROPIC_MESSAGES}),
+    "vision": frozenset({TRANSPORT_ANTHROPIC_MESSAGES, TRANSPORT_OPENAI_COMPATIBLE}),
 }
 
 # provider_id -> seed provider block. `models[].lanes` are the lanes the seed model
@@ -66,21 +71,25 @@ SEED_CATALOG: dict[str, dict[str, Any]] = {
         "models": [
             {"model_id": "qwen-plus", "label": "Qwen Plus", "lanes": ["text_assist"]},
             {"model_id": "qwen-max", "label": "Qwen Max", "lanes": ["text_assist"]},
+            # Qwen-VL over the DashScope OpenAI-compatible endpoint (image_url).
+            {"model_id": "qwen-vl-max", "label": "Qwen VL Max", "lanes": ["vision"]},
         ],
     },
     "openai": {
         "label": "OpenAI",
         "transport": TRANSPORT_OPENAI_COMPATIBLE,
         "models": [
-            {"model_id": "gpt-4o-mini", "label": "GPT-4o mini", "lanes": ["text_assist"]},
-            {"model_id": "gpt-4o", "label": "GPT-4o", "lanes": ["text_assist"]},
+            # GPT-4o family is natively multimodal (text_assist + vision).
+            {"model_id": "gpt-4o-mini", "label": "GPT-4o mini", "lanes": ["text_assist", "vision"]},
+            {"model_id": "gpt-4o", "label": "GPT-4o", "lanes": ["text_assist", "vision"]},
         ],
     },
     "gemini": {
         "label": "Gemini",
         "transport": TRANSPORT_OPENAI_COMPATIBLE,
         "models": [
-            {"model_id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash", "lanes": ["text_assist"]},
+            # Gemini 2.0 Flash is multimodal via the OpenAI-compatible endpoint.
+            {"model_id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash", "lanes": ["text_assist", "vision"]},
         ],
     },
     "deepseek": {

@@ -490,7 +490,14 @@ export default function SettingsPage() {
 
 	const laneAllowedForProvider = (providerId: string, lane: string): boolean => {
 		const transport = catalogEntry(providerId)?.transport;
-		if (lane === "vision") return transport === "anthropic_messages";
+		if (lane === "vision") {
+			// Vision is wired for BOTH transports: Anthropic (messages) and the
+			// OpenAI-compatible image_url path (OpenAI / Gemini / Qwen-VL).
+			return (
+				transport === "anthropic_messages" ||
+				transport === "openai_compatible_chat"
+			);
+		}
 		return true; // text_assist supported by all implemented transports
 	};
 

@@ -60,6 +60,9 @@ domains:
       - tests/unit/test_dynamic_model_catalog_service.py
       - docs/AI_PROVIDER_MODEL_AND_LANE_SETTINGS_V1.md
       - docs/DYNAMIC_AI_MODEL_CATALOG_AND_EXPLICIT_LANE_CONFIGURATION_V1.md
+      - agent/services/vision_provider_adapter.py
+      - tests/unit/test_vision_provider_adapter.py
+      - docs/MULTI_PROVIDER_VISION_LANE_ADAPTERS_V1.md
       - agent/api/product_registration.py
       - agent/api/fastmoss_bulk.py
       - agent/api/operator.py

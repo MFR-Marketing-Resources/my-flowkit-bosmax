@@ -115,15 +115,19 @@ def test_put_lane_model_not_supporting_lane_returns_422(monkeypatch, tmp_path):
     assert "MODEL_NOT_SUPPORTED_FOR_LANE" in r.json()["detail"]
 
 
-def test_add_vision_lane_to_qwen_model_rejected_transport(monkeypatch, tmp_path):
+def test_add_custom_qwen_vision_model_now_allowed(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
-    # qwen transport (openai_compatible_chat) cannot serve the vision lane.
+    # Multi-provider vision: qwen transport (openai_compatible_chat) is a wired
+    # vision transport, so a custom Qwen-VL model on the vision lane is accepted.
     r = client.put(
         "/api/ai-providers/model-catalog/qwen/models/qwen-vision-x",
-        json={"label": "Q", "lanes": ["vision"], "enabled": True},
+        json={"label": "Q VL", "lanes": ["vision"], "enabled": True},
     )
-    assert r.status_code == 422
-    assert "TRANSPORT_NOT_SUPPORTED_FOR_LANE" in r.json()["detail"]
+    assert r.status_code == 200
+    models = r.json()["model_catalog"]["qwen"]["models"]
+    custom = next(m for m in models if m["model_id"] == "qwen-vision-x")
+    assert custom["lanes"] == ["vision"]
+    assert custom["source"] == "custom"
 
 
 def test_clear_lane_endpoint(monkeypatch, tmp_path):
@@ -162,6 +166,45 @@ def _fresh_registry_shape_ok(body: dict) -> None:
     # Every lane carries an explicit status string.
     for lane in body["lanes"]:
         assert isinstance(lane.get("status"), str) and lane["status"]
+
+
+def test_vision_lane_supports_multiple_providers(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    body = client.get("/api/ai-providers").json()
+    # Vision is no longer Anthropic-only: openai/gemini/qwen expose seed vision models.
+    catalog = body["model_catalog"]
+    assert any(m["model_id"] == "gpt-4o" and "vision" in m["lanes"] for m in catalog["openai"]["models"])
+    assert any(m["model_id"] == "gemini-2.0-flash" and "vision" in m["lanes"] for m in catalog["gemini"]["models"])
+    assert any(m["model_id"] == "qwen-vl-max" and "vision" in m["lanes"] for m in catalog["qwen"]["models"])
+    for pid in ("anthropic", "openai", "gemini", "qwen"):
+        provider = next(p for p in body["providers"] if p["provider_id"] == pid)
+        assert "vision" in provider["supported_lanes"]
+
+
+def test_select_openai_vision_lane_ready_when_keyed(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.put("/api/ai-providers/openai/key", json={"api_key": "sk-openai-vision-live"})
+    r = client.put(
+        "/api/ai-providers/lanes/vision",
+        json={"provider_id": "openai", "model_id": "gpt-4o", "execution_enabled": True},
+    )
+    assert r.status_code == 200
+    lane = _lane(r.json(), "vision")
+    assert lane["provider_id"] == "openai"
+    assert lane["model_id"] == "gpt-4o"
+    assert lane["status"] == "READY"
+    # Selecting a vision provider must not leak the raw key.
+    assert "sk-openai-vision-live" not in r.text
+
+
+def test_select_openai_vision_without_key_is_key_missing(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    r = client.put(
+        "/api/ai-providers/lanes/vision",
+        json={"provider_id": "openai", "model_id": "gpt-4o", "execution_enabled": False},
+    )
+    assert r.status_code == 200
+    assert _lane(r.json(), "vision")["status"] == "KEY_MISSING"
 
 
 def test_registry_valid_v3_shape_on_fresh_state(monkeypatch, tmp_path):

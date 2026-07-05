@@ -174,6 +174,104 @@ def test_provider_execution_can_be_disabled_for_non_explicit_read_paths(monkeypa
     assert result["metadata"]["configured_provider"] == "anthropic"
 
 
+def _enable_vision(monkeypatch, provider: str, model: str = "some-vision-model"):
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service._configured_provider_name",
+        lambda: provider,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.is_lane_execution_enabled",
+        lambda lane: True,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_api_key",
+        lambda lane: "sk-vision-live-key",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_model",
+        lambda lane: model,
+    )
+
+
+def test_openai_vision_provider_routes_through_adapter_and_uses_selected_model(monkeypatch):
+    _enable_vision(monkeypatch, "openai", model="gpt-4o")
+    seen: dict = {}
+
+    def fake_run(provider, model, api_key, **kwargs):
+        seen["provider"] = provider
+        seen["model"] = model
+        seen["api_key"] = api_key
+        seen["kwargs"] = kwargs
+        return '{"detected_package": "bottle", "detected_text": ["Face Mist"], "visual_confidence": "HIGH"}'
+
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.vision_provider_adapter.run_vision_completion",
+        fake_run,
+    )
+
+    result = analyze_product_image_payload(
+        {
+            "id": "prod-openai",
+            "raw_product_title": "Hydrating Face Mist",
+            "image_url": "https://example.com/product.jpg",
+        }
+    )
+
+    assert result["status"] == "ANALYZED"
+    assert result["provider"] == "openai"
+    assert result["detected_package"] == "bottle"
+    # Product image analysis used the operator-selected vision lane model.
+    assert seen["provider"] == "openai"
+    assert seen["model"] == "gpt-4o"
+    assert "provider:model:gpt-4o" in result["evidence"]
+    # An image source was prepared for the multimodal request.
+    assert seen["kwargs"].get("image_remote_url") == "https://example.com/product.jpg"
+
+
+def test_qwen_vision_provider_failure_falls_closed(monkeypatch):
+    _enable_vision(monkeypatch, "qwen", model="qwen-vl-max")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("qwen transport error")
+
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.vision_provider_adapter.run_vision_completion",
+        boom,
+    )
+
+    result = analyze_product_image_payload(
+        {
+            "id": "prod-qwen",
+            "raw_product_title": "Sabun Dobi",
+            "image_url": "https://example.com/detergent.jpg",
+        }
+    )
+
+    assert result["status"] == "ANALYSIS_FAILED"
+    assert result["provider"] == "qwen"
+    assert result["warnings"] == ["SEMANTIC_IMAGE_ANALYSIS_FAILED"]
+
+
+def test_gemini_vision_provider_analyzes_via_openai_compatible_path(monkeypatch):
+    _enable_vision(monkeypatch, "gemini", model="gemini-2.0-flash")
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.vision_provider_adapter.run_vision_completion",
+        lambda *a, **k: '{"detected_package": "box", "visual_confidence": "MEDIUM"}',
+    )
+
+    result = analyze_product_image_payload(
+        {
+            "id": "prod-gemini",
+            "image_url": "https://example.com/box.jpg",
+        }
+    )
+
+    assert result["status"] == "ANALYZED"
+    assert result["provider"] == "gemini"
+    assert result["detected_package"] == "box"
+    assert "provider:model:gemini-2.0-flash" in result["evidence"]
+
+
 def test_vision_lane_toggle_can_disable_provider_execution_even_for_explicit_analysis(monkeypatch):
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service._configured_provider_name",

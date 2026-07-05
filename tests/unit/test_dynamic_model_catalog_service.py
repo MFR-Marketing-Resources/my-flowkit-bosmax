@@ -52,17 +52,34 @@ def test_disable_model_removes_it_from_lane_options(catalog):
     assert "qwen-plus" in lane_models
 
 
-def test_add_vision_lane_to_openai_compatible_provider_rejected(catalog):
-    # qwen transport is openai_compatible_chat which cannot serve the vision lane.
-    with pytest.raises(ValueError) as exc:
-        cat.upsert_provider_model("qwen", "qwen-vl-x", "Q VL", ["vision"], True)
-    assert "TRANSPORT_NOT_SUPPORTED_FOR_LANE" in str(exc.value)
+def test_openai_compatible_provider_may_now_serve_vision(catalog):
+    # Multi-provider vision: openai_compatible_chat is a wired vision transport, so
+    # an operator may add a custom Qwen-VL model on the vision lane (no code change).
+    summary = cat.upsert_provider_model("qwen", "qwen-vl-x", "Q VL", ["vision"], True)
+    custom = next(m for m in summary["providers"]["qwen"]["models"] if m["model_id"] == "qwen-vl-x")
+    assert custom["enabled"] is True
+    assert custom["lanes"] == ["vision"]
+    assert cat.model_supports_lane("qwen", "qwen-vl-x", "vision") is True
 
 
-def test_anthropic_may_serve_vision(catalog):
+def test_seed_multimodal_models_expose_vision(catalog):
+    # Real seed multimodal models across all four vision-capable providers.
     assert cat.model_supports_lane("anthropic", "claude-sonnet-5", "vision") is True
-    assert "vision" in cat.supported_lanes_for_provider("anthropic")
-    assert "vision" not in cat.supported_lanes_for_provider("qwen")
+    assert cat.model_supports_lane("openai", "gpt-4o", "vision") is True
+    assert cat.model_supports_lane("gemini", "gemini-2.0-flash", "vision") is True
+    assert cat.model_supports_lane("qwen", "qwen-vl-max", "vision") is True
+    for provider in ("anthropic", "openai", "gemini", "qwen"):
+        assert "vision" in cat.supported_lanes_for_provider(provider)
+    # deepseek ships no vision model -> not vision-capable (no fake support).
+    assert "vision" not in cat.supported_lanes_for_provider("deepseek")
+
+
+def test_text_only_model_still_rejected_for_vision(catalog):
+    # A text-only model (qwen-plus) cannot be selected for vision even though its
+    # provider transport supports the lane — the MODEL must list it.
+    with pytest.raises(ValueError) as exc:
+        cat.validate_provider_model_for_lane("qwen", "qwen-plus", "vision")
+    assert "MODEL_NOT_SUPPORTED_FOR_LANE" in str(exc.value)
 
 
 def test_unknown_provider_upsert_rejected(catalog):
