@@ -210,6 +210,8 @@ async def _run_on_existing(job_id: str, project_id: str, image_media_id: str, pr
         job["approved"] = res.get("approved")
         job["generation_started"] = res.get("generation_started")
         if not res.get("approved"):
+            if res.get("error_class") == agent_video.RATE_LIMITED:
+                raise RuntimeError(str(res.get("error")))  # honest 0-credit rate-limit label
             raise RuntimeError("agent did not approve a video: " + str(res.get("error") or res))
 
         # Retrieve the NEW video. Harvest the (user's) tab — already on this project, no drift.
@@ -444,6 +446,8 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             if nres.get("duration_ok") is None:
                 job["duration_unverified"] = True
         if not nres.get("approved"):
+            if nres.get("error_class") == agent_video.RATE_LIMITED:
+                raise RuntimeError(str(nres.get("error")))  # honest 0-credit rate-limit label
             raise RuntimeError("agent did not approve a video: " + str(nres.get("error") or nres))
         # The render can die inside the approve stream itself (agent knowledge:
         # "trouble accessing the reference image" → stale/deleted start media).

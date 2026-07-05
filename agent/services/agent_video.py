@@ -16,6 +16,19 @@ from agent.services import video_models
 VEO_LITE_COST = 10  # legacy default; pricing now lives in video_models (cost = f(model, duration))
 DENIED = "PERMISSION_ACTION_DENIED"
 APPROVED = "PERMISSION_ACTION_APPROVED"
+RATE_LIMITED = "RATE_LIMITED"
+
+# Google anti-abuse / rate-limiter signature on the flowCreationAgent stream. This fires
+# PRE-APPROVE (0 credits): a 403 PERMISSION_DENIED carrying reCAPTCHA / PUBLIC_ERROR_
+# UNUSUAL_ACTIVITY. It is NOT a negotiation decline and NOT a credit charge — surfacing it
+# as "agent did not approve a video" reads like a rejection and hides the real, zero-cost
+# cause (CURRENT_STATE OPEN ITEM #2: cool down ~1-2h, never hammer retries).
+_RATE_LIMIT_SIGNS = (
+    "public_error_unusual_activity",
+    "recaptcha evaluation failed",
+    "unusual_activity",
+    "unusual activity",
+)
 
 # SOFT natural-language phrases that hint a generation started. These are secondary —
 # the HARD proof is a generation toolInvocation (below). "beginrendering" was REMOVED:
@@ -71,6 +84,28 @@ def classify_agent_failure(text) -> str | None:
     if any(p in low for p in _RENDER_FAILED_PHRASES):
         return "RENDER_FAILED"
     return None
+
+
+def classify_provider_error(error) -> str | None:
+    """Classify a raw provider/transport error from the SSE stream.
+    'RATE_LIMITED' = Google anti-abuse block (403 reCAPTCHA / PUBLIC_ERROR_UNUSUAL_ACTIVITY),
+    which always fires pre-approve and spends ZERO credits. None = unclassified (surface raw)."""
+    low = str(error or "").lower()
+    if not low:
+        return None
+    if any(s in low for s in _RATE_LIMIT_SIGNS):
+        return RATE_LIMITED
+    return None
+
+
+def provider_error_message(error) -> str:
+    """Operator-facing message for a provider/transport error. A rate-limiter block is
+    relabelled honestly (zero credits, cool down) instead of reading as a decline."""
+    if classify_provider_error(error) == RATE_LIMITED:
+        return ("RATE_LIMITED: Google anti-abuse rate limiter (reCAPTCHA / unusual "
+                "activity) blocked the request before approval — 0 credits were spent. "
+                "Cool down ~1-2h before retrying; do not hammer retries.")
+    return str(error)
 
 
 async def probe_render_failure(client, project_id, session_id, turn_number) -> dict:
@@ -237,7 +272,10 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
     state = await send(prompt, media=media_ids)
     while turn < max_turns:
         if state["error"]:
-            return {"ok": False, "stage": "error", "error": state["error"], "transcript": transcript}
+            return {"ok": False, "stage": "error",
+                    "error_class": classify_provider_error(state["error"]),
+                    "error": provider_error_message(state["error"]),
+                    "error_raw": state["error"], "transcript": transcript}
         # PRE-approve bail: only a real generation toolInvocation (started_tool) may short-circuit
         # here. Soft text alone must NOT — else it suppresses would_approve on the dry lane (I4a).
         if state["started_tool"]:
