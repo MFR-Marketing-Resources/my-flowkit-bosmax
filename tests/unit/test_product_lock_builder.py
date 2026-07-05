@@ -60,8 +60,11 @@ def test_minyak_warisan_lock_geometry_and_scale():
     lock = plb.build_product_lock(MW25, is_video=True, has_product_reference=True)
     assert lock["matched_product_id"] == "MWTCB_25ML_CAP_BURUNG"
     blob = " ".join(lock.values()).lower()
+    # Identity tokens come from product_truth_ref; scale/palm tokens from scale_lock.
+    # NOTE: the pack-size token ("25ml") is deliberately NOT required here — it must
+    # not appear in the engine-facing scale lock (see the Flow-safe test below).
     for token in [
-        "25ml", "green", "glass", "red ribbed", "flat-front", "compact",
+        "green", "glass", "red ribbed", "flat-front", "compact",
         "palm", "small relative to an adult hand",
     ]:
         assert token in blob, f"missing product truth token: {token}"
@@ -69,6 +72,59 @@ def test_minyak_warisan_lock_geometry_and_scale():
     for forbidden_drift in ["round", "bulbous", "generic", "perfume", "syrup", "skincare", "cosmetic"]:
         assert forbidden_drift in blob, f"missing negative-morph guard: {forbidden_drift}"
     assert "do not enlarge the product for camera visibility" in blob
+
+
+def test_minyak_warisan_scale_lock_is_flow_safe_qualitative():
+    """Google-Flow-safe scale: qualitative hand-fit + size-class + depth language,
+    with NO numeric physical dimension (cm/mm/inch) and NO pack-size token inside
+    the engine-facing scale sentence. Flow can render literal measurements as
+    ruler/diagram/caption artifacts, so the scale lock must stay measurement-free.
+    """
+    lock = plb.build_product_lock(MW25, is_video=True, has_product_reference=True)
+    scale = lock["scale_lock"].lower()
+    # required qualitative size-class + hand-fit + perspective/depth anchors
+    for phrase in [
+        "compact palm-size",
+        "fits naturally in one hand",
+        "fingers wrapping comfortably",
+        "small handheld household herbal-oil bottle",
+        "slightly larger than a chapstick-size roll-on",
+        "compact handheld size family",
+        "natural handheld depth plane",
+        "closer to the camera lens",
+    ]:
+        assert phrase in scale, f"missing Flow-safe scale anchor: {phrase}"
+    # anti-drift + anti-upscale guards
+    for forbidden in [
+        "perfume", "supplement", "syrup", "spray", "cosmetic",
+        "oversized medicine bottle", "dominate the hand", "dominate", "frame",
+    ]:
+        assert forbidden in scale, f"missing anti-drift/anti-upscale guard: {forbidden}"
+    # measurement / pack-size tokens must NOT leak into the engine-facing scale lock
+    for numeric in ["cm", "mm", "inch", "25ml", "25 ml"]:
+        assert numeric not in scale, f"numeric token leaked into Flow scale lock: {numeric}"
+
+
+@pytest.mark.parametrize("mode", ALL_MODES)
+def test_minyak_warisan_flow_safe_scale_reaches_section2(mode):
+    """Proof: the qualitative Flow-safe scale wording propagates into the compiled
+    engine-facing SECTION 2 for every mode (T2V, HYBRID, FRAMES/F2V,
+    INGREDIENTS/I2V, IMAGES/IMG)."""
+    s2 = _s2(MW25, mode)
+    for phrase in [
+        "compact palm-size",
+        "slightly larger than a chapstick-size roll-on",
+        "natural handheld depth plane",
+        "closer to the camera lens",
+    ]:
+        assert phrase in s2, f"[{mode}] Flow-safe scale anchor missing from SECTION 2: {phrase}"
+    # The pack-size token must not leak into the engine-facing SCALE LOCK line.
+    # (It legitimately appears in the product-identity header, which we do NOT touch.)
+    scale_line = next((ln for ln in s2.splitlines() if "product scale lock" in ln), "")
+    assert scale_line, f"[{mode}] SECTION 2 is missing the PRODUCT SCALE LOCK line"
+    assert "25ml" not in scale_line and "25 ml" not in scale_line, (
+        f"[{mode}] pack-size token leaked into the SECTION 2 SCALE LOCK line"
+    )
 
 
 # ── 2. BOSMAX 5ml lock ─────────────────────────────────────────────────────────
