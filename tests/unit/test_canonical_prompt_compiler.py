@@ -1236,17 +1236,31 @@ def test_frames_composed_frame_is_single_visual_truth():
 @pytest.mark.parametrize("mode,kw", _VIDEO_MODES_KW)
 def test_video_modes_block_product_flash_and_cutaway_packshot(mode, kw):
     s5 = _s(mode, "SECTION 5 - SHOT & CAMERA RULES", **kw)
-    assert "no isolated product-only flash shot" in s5
-    assert "no cutaway packshot" in s5
-    assert "no product-only insert" in s5
-    assert "no sudden hero product spotlight" in s5
+    # The unrequested-flash / cutaway / insert-montage / spotlight bans must be present…
+    assert "isolated product-only flash shot" in s5
+    assert "cutaway" in s5 and "packshot" in s5
+    assert "product-only insert montage" in s5
+    assert "sudden hero product spotlight" in s5
     assert "true small scale" in s5
+
+
+@pytest.mark.parametrize("mode,kw", _VIDEO_MODES_KW)
+def test_anti_flash_guard_is_scene_neutral_not_presenter_hardcoded(mode, kw):
+    # …but the guard must NOT force presenter/hands globally — it must stay valid for
+    # legitimate product-only scenes (bedside/drawer/shelf standby). Audit blocker #1.
+    s5 = _s(mode, "SECTION 5 - SHOT & CAMERA RULES", **kw)
+    # the old hardcode must be gone
+    assert "the product stays in the presenter's hands" not in s5
+    # both branches must be expressed conditionally
+    assert "if the presenter is holding the product" in s5
+    assert "resting in its own scene" in s5          # product-only scene preserved
+    assert "unrequested" in s5                        # only *unrequested* flashes are blocked
 
 
 def test_images_mode_has_no_video_anti_flash_rule():
     # A single still may legitimately be product-led; the flash rule is video-only.
     s5 = _s("IMAGES", "SECTION 5 - SHOT & CAMERA RULES")
-    assert "cutaway packshot" not in s5
+    assert "cutaway" not in s5 and "packshot" not in s5
 
 
 @pytest.mark.parametrize("mode,kw", _VIDEO_MODES_KW + [("IMAGES", {})])
@@ -1262,8 +1276,13 @@ def test_no_overlay_blocks_metadata_style_text_everywhere(mode, kw):
     assert "printed on the real product label" in s9
 
 
-def test_overlay_allowed_branch_still_scoped():
+def test_overlay_allowed_branch_still_scoped_and_blocks_metadata():
+    # Audit blocker #3: even when an overlay is approved, metadata-style drawn text
+    # (product name / pack size / founding year / tagline as a graphic) stays banned.
     s9 = _compile(overlay_allowed=True, overlay_text="Cuba ni")["blocks"][0][
-        "sections"]["SECTION 9 - NO_OVERLAY"]
-    assert "Cuba ni" in s9 and "No other captions" in s9
+        "sections"]["SECTION 9 - NO_OVERLAY"].lower()
+    assert "cuba ni" in s9                            # the approved overlay survives
+    for phrase in ["no other captions", "label callouts", "metadata-style text",
+                   "pack size", "founding", "printed on the real product label"]:
+        assert phrase in s9, f"overlay_allowed branch missing metadata guard: {phrase}"
 
