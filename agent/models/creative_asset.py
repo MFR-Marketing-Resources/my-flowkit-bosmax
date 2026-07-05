@@ -69,7 +69,7 @@ class CreativeAssetRecord(BaseModel):
     identity_lock_status: str | None = None
     scale_truth_status: str | None = None
     claim_safety_status: str | None = None
-    review_status: str = "APPROVED"
+    review_status: str = "PENDING_REVIEW"
     status: CreativeAssetStatus
     created_at: str
     updated_at: str
@@ -114,7 +114,7 @@ class CreativeAssetCreateRequest(BaseModel):
     identity_lock_status: str | None = None
     scale_truth_status: str | None = None
     claim_safety_status: str | None = None
-    review_status: CreativeAssetReviewStatus = "APPROVED"
+    review_status: CreativeAssetReviewStatus = "PENDING_REVIEW"
     image_base64: str | None = None
     file_name: str | None = None
 

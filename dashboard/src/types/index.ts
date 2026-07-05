@@ -387,6 +387,7 @@ export interface CreativeAsset {
 	source_prompt_fingerprint: string | null;
 	source_workspace_execution_package_id: string | null;
 	source_prompt_package_snapshot_id: string | null;
+	review_status: string;
 	status: CreativeAssetStatus;
 	created_at: string;
 	updated_at: string;

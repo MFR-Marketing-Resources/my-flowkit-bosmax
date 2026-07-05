@@ -722,7 +722,7 @@ async def create_creative_asset(
     identity_lock_status: str | None = None,
     scale_truth_status: str | None = None,
     claim_safety_status: str | None = None,
-    review_status: str = "APPROVED",
+    review_status: str = "PENDING_REVIEW",
     status: str,
 ) -> dict:
     db = await get_db()

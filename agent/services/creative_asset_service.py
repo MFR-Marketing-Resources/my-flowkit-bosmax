@@ -54,7 +54,7 @@ def _normalize_record(row: dict[str, Any]) -> CreativeAssetRecord:
         if _bool_col in payload:
             payload[_bool_col] = bool(payload.get(_bool_col))
     if not payload.get("review_status"):
-        payload["review_status"] = "APPROVED"
+        payload["review_status"] = "PENDING_REVIEW"
     return CreativeAssetRecord(**payload)
 
 

@@ -87,12 +87,13 @@ export default function SaveToCreativeLibraryPanel({
 		<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4 space-y-4">
 			<div>
 				<div className="text-sm font-semibold text-slate-100">
-					Save Approved IMG Output → Creative Library
+					Save IMG Output for Review → Creative Library
 				</div>
 				<div className="mt-1 text-[11px] text-slate-400">
-					Pick a lane, then upload the approved image output. The lane governs
-					the asset's semantic role, allowed modes, and poster/clean-frame
-					classification — no manual mislabeling.
+					Pick a lane, then upload the image output. It is saved as
+					PENDING_REVIEW (not auto-approved). The lane governs the asset's
+					semantic role, allowed modes, and poster/clean-frame classification —
+					no manual mislabeling.
 				</div>
 			</div>
 
@@ -196,7 +197,8 @@ export default function SaveToCreativeLibraryPanel({
 			{saved ? (
 				<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-100">
 					Saved <strong>{saved.display_name}</strong> as{" "}
-					<strong>{saved.semantic_role}</strong>
+					<strong>{saved.semantic_role}</strong> ·{" "}
+					<strong>{saved.review_status}</strong>
 					{saved.allowed_modes.length > 0
 						? ` · reusable in ${saved.allowed_modes.join(", ")}`
 						: " · terminal asset (no video reuse)"}
@@ -210,7 +212,7 @@ export default function SaveToCreativeLibraryPanel({
 				disabled={!canSave}
 				className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 py-3 text-sm font-bold text-white disabled:opacity-50 disabled:grayscale transition-all"
 			>
-				{saving ? "Saving…" : "Save to Creative Library"}
+				{saving ? "Saving…" : "Save for Review"}
 			</button>
 			{productMissing ? (
 				<p className="text-center text-[10px] text-amber-300/70">

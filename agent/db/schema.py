@@ -314,7 +314,7 @@ CREATE TABLE IF NOT EXISTS creative_asset (
     identity_lock_status TEXT,
     scale_truth_status TEXT,
     claim_safety_status TEXT,
-    review_status TEXT NOT NULL DEFAULT 'APPROVED',
+    review_status TEXT NOT NULL DEFAULT 'PENDING_REVIEW',
     status        TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'ARCHIVED')),
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -1502,7 +1502,12 @@ CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(cla
             "identity_lock_status": "TEXT",
             "scale_truth_status": "TEXT",
             "claim_safety_status": "TEXT",
-            "review_status": "TEXT NOT NULL DEFAULT 'APPROVED'",
+            # Lifecycle default is PENDING_REVIEW everywhere. Pre-existing rows
+            # backfilled by this ALTER become PENDING_REVIEW too — they predate the
+            # review lifecycle, so honestly marking them "not yet reviewed" is
+            # preferred over silently grandfathering them as APPROVED. review_status
+            # is metadata only (NOT a selection gate), so legacy assets stay usable.
+            "review_status": "TEXT NOT NULL DEFAULT 'PENDING_REVIEW'",
         }
         for _col, _type in _ca_new_cols.items():
             if _col not in ca_cols:

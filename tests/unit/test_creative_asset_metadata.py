@@ -100,7 +100,9 @@ def test_defaults_are_clean_when_not_supplied(tmp_path, monkeypatch):
         assert created.contains_rendered_text is False
         assert created.approved_for_video_support is False
         assert created.approved_for_poster is False
-        assert created.review_status == "APPROVED"
+        # Direct create_creative_asset (NOT the factory) must default to
+        # PENDING_REVIEW when review_status is omitted — never silently APPROVED.
+        assert created.review_status == "PENDING_REVIEW"
         assert created.generation_recipe_id is None
 
     _run_db(scenario)

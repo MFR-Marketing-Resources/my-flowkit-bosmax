@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agent.api.creative_assets import router
+from agent.models.creative_asset import CreativeAssetRecord
 
 
 def _build_app() -> FastAPI:
@@ -96,3 +97,34 @@ def test_creative_asset_api_archives_asset(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "ARCHIVED"
+
+
+def test_creative_asset_post_defaults_to_pending_review(monkeypatch):
+    """The direct /creative-assets POST route must default review_status to
+    PENDING_REVIEW when omitted — it must NOT silently create APPROVED assets."""
+    captured = {}
+
+    async def fake_create(request):
+        captured["review_status"] = request.review_status
+        return CreativeAssetRecord(
+            asset_id="ca_new",
+            semantic_role=request.semantic_role,
+            display_name=request.display_name,
+            source_type="UPLOAD",
+            storage_kind="LOCAL_FILE",
+            status="ACTIVE",
+            created_at="2026-05-18T00:00:00Z",
+            updated_at="2026-05-18T00:00:00Z",
+        )
+
+    monkeypatch.setattr("agent.api.creative_assets.create_creative_asset", fake_create)
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/creative-assets",
+        json={"semantic_role": "STYLE_REFERENCE", "display_name": "Style A"},
+    )
+
+    assert response.status_code == 200
+    assert captured["review_status"] == "PENDING_REVIEW"
+    assert response.json()["review_status"] == "PENDING_REVIEW"
