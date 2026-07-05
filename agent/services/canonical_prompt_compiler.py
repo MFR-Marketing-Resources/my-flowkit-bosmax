@@ -1698,6 +1698,10 @@ def render_block(
         s5_lines = [
             "Handheld vertical 9:16 framing with natural micro-jitter and organic human sway.",
             camera_notes or "Eye-level medium close-up to close-up range; soft natural light; no flash, no hard fill.",
+            "Keep the presenter and the product together in one continuous human moment: no "
+            "isolated product-only flash shot, no cutaway packshot, no product-only insert or "
+            "montage, and no sudden hero product spotlight sequence. The product stays in the "
+            "presenter's hands, inside the scene, at its true small scale.",
         ]
     if is_continuation:
         s5_lines.append(
@@ -1735,7 +1739,11 @@ def render_block(
     else:
         s9 = (
             "No on-screen text of any kind: no captions, no subtitles, no lower-thirds, no "
-            "sticker text, no price text, no watermarks. Everything persuasive is spoken."
+            "sticker text, no floating text, no price text, no label callouts, no watermarks, "
+            "and no metadata-style text — never draw the product name, pack size, founding "
+            "year, tagline, or any label wording onto the frame as a graphic. The only "
+            "readable text allowed is the text physically printed on the real product label "
+            "itself. Everything persuasive is spoken."
         )
 
     bodies = (s1, s2, s3, s4, s5, s6, s7, s8, s9)
