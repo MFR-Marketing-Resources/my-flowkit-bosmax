@@ -248,7 +248,11 @@ def build_product_lock(
         (
             "PRODUCT REFERENCE LOCK: Treat the attached product reference image as the hard visual, "
             "geometry, and physical-scale truth source, not mood or style inspiration. Reproduce the "
-            "product's real proportions and small real-world size exactly, and do not upscale it for visibility."
+            "product's real proportions, cap-to-body ratio, and label placement exactly, and match the "
+            "same product-to-hand and product-to-finger relationship shown in the reference so the product "
+            "reads at its true small real-world size in the hand. Do not enlarge the product for label "
+            "readability, hero framing, or camera visibility, do not create forced-perspective overscale, "
+            "and do not push the product much closer to the camera lens than the presenter's hand or face."
         )
         if has_product_reference
         else ""
