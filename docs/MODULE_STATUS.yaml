@@ -90,6 +90,8 @@ domains:
       - agent/api/img_factory.py
       - dashboard/src/api/imgFactory.ts
       - dashboard/src/components/creative-library/SaveToCreativeLibraryPanel.tsx
+      - dashboard/src/pages/ImgCockpitPage.tsx
+      - dashboard/src/pages/imgCockpitLogic.ts
       - agent/services/prompt_compiler_runtime_config_service.py
       - agent/services/canonical_prompt_compiler.py
       - agent/services/product_lock_builder.py
@@ -251,6 +253,8 @@ domains:
       - tests/unit/test_creative_asset_metadata.py
       - tests/unit/test_preset_consistency.py
       - tests/api/test_img_factory_api.py
+      - tests/ui/test_img_cockpit_page_ui_contract.py
+      - tests/ui/test_f2v_composite_frame_picker_ui_contract.py
       - tests/api/test_approved_product_package_api.py
       - tests/api/test_product_catalog_selectable_v1.py
       - tests/api/test_product_intelligence_api.py

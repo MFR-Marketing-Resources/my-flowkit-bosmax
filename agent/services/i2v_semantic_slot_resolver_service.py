@@ -98,6 +98,7 @@ async def resolve_i2v_semantic_slots(
             semantic_role="PRODUCT_REFERENCE",
             allowed_mode="I2V",
             engine_slot=product_reference_slot,  # type: ignore[arg-type]
+            require_approved=True,
         )
         if not validation.valid or validation.asset is None:
             blockers.extend([f"PRODUCT_REFERENCE_{item}" for item in validation.blockers])
@@ -135,6 +136,7 @@ async def resolve_i2v_semantic_slots(
             semantic_role=ROLE_TO_LIBRARY_ROLE[role_key],
             allowed_mode="I2V",
             engine_slot=mapped_slot,
+            require_approved=True,
         )
         if not validation.valid or validation.asset is None:
             blockers.extend([f"{role_key.upper()}_{item}" for item in validation.blockers])

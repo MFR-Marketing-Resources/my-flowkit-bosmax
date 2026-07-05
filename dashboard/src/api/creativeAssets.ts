@@ -122,6 +122,13 @@ export async function updateCreativeAsset(
 		scene_context_dna?: string | null;
 		style_mood_dna?: string | null;
 		mode_a_metadata_handoff?: string | null;
+		// Review lifecycle + truth/safety gates (backend CreativeAssetUpdateRequest).
+		review_status?: "DRAFT" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+		identity_lock_status?: string | null;
+		scale_truth_status?: string | null;
+		claim_safety_status?: string | null;
+		approved_for_video_support?: boolean;
+		approved_for_poster?: boolean;
 	},
 ): Promise<CreativeAsset> {
 	return patchAPI<CreativeAsset>(`/api/creative-assets/${assetId}`, {

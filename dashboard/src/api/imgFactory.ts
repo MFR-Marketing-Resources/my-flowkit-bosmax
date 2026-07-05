@@ -1,5 +1,5 @@
 import type { CreativeAsset } from "../types";
-import { fetchAPI, postAPI } from "./client";
+import { fetchAPI, getAPI, postAPI } from "./client";
 
 export interface ImgAssetLane {
 	lane_id: string;
@@ -70,4 +70,115 @@ export async function saveImgOutputToLibrary(
 	input: SaveImgOutputInput,
 ): Promise<CreativeAsset> {
 	return postAPI<CreativeAsset>("/api/img-factory/save", input);
+}
+
+// ── Gated live generation (credit-spending) ───────────────────────────────────
+// These call the SAME proven one-door lane OperatorPage uses. They are wired for
+// the cockpit but MUST only ever run behind an explicit operator credit-spend
+// confirmation — never auto-fire. Live generation is NOT fired or verified in the
+// build session; the register-output/review/save path below is credit-free.
+
+export interface StartImgGenerationInput {
+	prompt: string;
+	image_media_ids?: string[];
+	aspect?: string;
+	model?: string;
+	duration_s?: number;
+}
+
+export interface StartImgGenerationResult {
+	job_id: string;
+}
+
+export interface ImgGenerationJob {
+	status: string;
+	media_id?: string | null;
+	video_media_id?: string | null;
+	artifact?: string | null;
+	url?: string | null;
+	size_mb?: number | string | null;
+	local_path?: string | null;
+	error?: string | null;
+}
+
+export interface ImageArtifact {
+	media_id: string;
+	artifact_kind: string;
+	local_path?: string | null;
+	size_mb?: number | null;
+	mode?: string | null;
+	created_at?: string | null;
+}
+
+/**
+ * Start a REAL, credit-spending IMG generation via the proven one-door lane.
+ * Call ONLY after an explicit operator credit-spend confirmation.
+ */
+export async function startImgGeneration(
+	input: StartImgGenerationInput,
+): Promise<StartImgGenerationResult> {
+	return postAPI<StartImgGenerationResult>("/api/flow/generate", {
+		mode: "IMG",
+		prompt: input.prompt,
+		image_media_ids: input.image_media_ids ?? [],
+		aspect: input.aspect ?? "9:16",
+		model: input.model,
+		duration_s: input.duration_s,
+	});
+}
+
+export async function pollImgGenerationJob(jobId: string): Promise<ImgGenerationJob> {
+	return getAPI<ImgGenerationJob>(`/api/flow/generate-job/${jobId}`);
+}
+
+/** Finished IMAGE artifacts, for the register-output picker (credit-free). */
+export async function fetchImageArtifacts(limit = 50): Promise<ImageArtifact[]> {
+	const response = await getAPI<{ artifacts: ImageArtifact[] }>(
+		`/api/flow/artifacts?kind=image&limit=${limit}`,
+	);
+	return response.artifacts ?? [];
+}
+
+// ── F2V composite-frame resolver (safe validation gate) ───────────────────────
+
+export interface F2vResolvedFrame {
+	slot_key: string;
+	source_kind: string;
+	asset_id?: string | null;
+	display_name?: string | null;
+	preview_url?: string | null;
+	download_url?: string | null;
+	media_id?: string | null;
+	local_file_path?: string | null;
+	asset_fingerprint?: string | null;
+}
+
+export interface F2vFrameSourcesResponse {
+	mode: string;
+	start_frame: F2vResolvedFrame | null;
+	end_frame: F2vResolvedFrame | null;
+	resolved_frames: F2vResolvedFrame[];
+	warnings: string[];
+	blockers: string[];
+}
+
+export interface F2vFrameSourcesInput {
+	product_id?: string | null;
+	start_frame_asset_id?: string | null;
+	end_frame_asset_id?: string | null;
+	start_frame_manual_upload_present?: boolean;
+}
+
+/**
+ * Validate/resolve F2V start/end frame selections through the backend resolver.
+ * The resolver enforces COMPOSITE_FRAME_REFERENCE role + ACTIVE + F2V + APPROVED +
+ * poster (rendered-text) exclusion — so a picker must gate selections through here.
+ */
+export async function resolveF2vFrameSources(
+	input: F2vFrameSourcesInput,
+): Promise<F2vFrameSourcesResponse> {
+	return postAPI<F2vFrameSourcesResponse>(
+		"/api/img-factory/f2v-frame-sources",
+		input,
+	);
 }

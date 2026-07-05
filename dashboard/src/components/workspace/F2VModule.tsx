@@ -1,7 +1,10 @@
 import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { handleAssetUpload } from "../../api/assets";
+import { fetchCreativeAssets } from "../../api/creativeAssets";
+import { resolveF2vFrameSources } from "../../api/imgFactory";
 import type {
+	CreativeAsset,
 	Orientation,
 	UploadedAsset,
 	WorkspaceExecutePayload,
@@ -9,6 +12,28 @@ import type {
 } from "../../types";
 import ModelSelect, { normalizeModel, type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
+
+// IMG Asset Factory bridge: a saved COMPOSITE_FRAME_REFERENCE asset can feed an
+// F2V start/end frame. Posters (rendered text) + archived assets are excluded by
+// the backend gate; this only surfaces ACTIVE, F2V-eligible composites.
+function compositeToUploadedAsset(asset: CreativeAsset): UploadedAsset {
+	return {
+		mediaId: asset.media_id ?? null,
+		fileName: asset.display_name,
+		label: `${asset.display_name} (composite frame)`,
+		previewUrl: asset.preview_url ?? undefined,
+		downloadUrl: asset.download_url ?? undefined,
+		localFilePath: asset.local_file_path ?? undefined,
+		assetId: asset.asset_id,
+		assetFingerprint: `composite:${asset.asset_id}`,
+		assetSource: "CREATIVE_LIBRARY_COMPOSITE",
+		isDefaultPackageAsset: false,
+		previewRenderableStatus: asset.preview_url ? "READY" : "NOT_AVAILABLE",
+		previewErrorDetail: null,
+		localImagePathPresent: Boolean(asset.local_file_path),
+		remoteImageUrlPresent: Boolean(asset.remote_source_url),
+	};
+}
 
 interface F2VModuleProps {
 	onExecute: (data: WorkspaceExecutePayload) => void;
@@ -229,6 +254,55 @@ export default function F2VModule({
 	const [startAsset, setStartAsset] = useState<UploadedAsset | null>(null);
 	const [endAsset, setEndAsset] = useState<UploadedAsset | null>(null);
 
+	// IMG Asset Factory bridge: ACTIVE, F2V-eligible composite frames from the
+	// Creative Library, selectable as start/end frames (additive to upload).
+	const [compositeAssets, setCompositeAssets] = useState<CreativeAsset[]>([]);
+	useEffect(() => {
+		void fetchCreativeAssets({
+			semantic_role: "COMPOSITE_FRAME_REFERENCE",
+			status: "ACTIVE",
+			allowed_mode: "F2V",
+			limit: 100,
+		})
+			// Only APPROVED composites are reusable — never surface PENDING/REJECTED.
+			.then((r) =>
+				setCompositeAssets(
+					r.items.filter((c) => c.review_status === "APPROVED"),
+				),
+			)
+			.catch(() => {});
+	}, []);
+
+	// Every composite selection is validated by the backend F2V resolver, which
+	// enforces role + ACTIVE + F2V + APPROVED + rendered-text/poster exclusion. A
+	// rejected selection is NOT applied to the frame.
+	const handlePickComposite = async (assetId: string, slot: "start" | "end") => {
+		if (!assetId) return;
+		const asset = compositeAssets.find((c) => c.asset_id === assetId);
+		if (!asset) return;
+		try {
+			const response = await resolveF2vFrameSources(
+				slot === "start"
+					? { start_frame_asset_id: assetId }
+					: {
+							end_frame_asset_id: assetId,
+							start_frame_manual_upload_present: true,
+						},
+			);
+			const prefix = slot === "start" ? "START_FRAME_" : "END_FRAME_";
+			if (response.blockers.some((b) => b.startsWith(prefix))) {
+				alert(
+					`Composite ${slot} frame rejected by the F2V resolver: ${response.blockers.join(", ")}`,
+				);
+				return;
+			}
+			if (slot === "start") setStartAsset(compositeToUploadedAsset(asset));
+			else setEndAsset(compositeToUploadedAsset(asset));
+		} catch {
+			alert("Failed to validate the composite frame via the F2V resolver.");
+		}
+	};
+
 	// Re-normalize once the SSOT registry arrives — a package may hydrate first, so an
 	// unknown/retired model would otherwise stay ghosted and 422 on execute (patch I3b).
 	useEffect(() => {
@@ -373,6 +447,53 @@ export default function F2VModule({
 								</div>
 							</div>
 						)}
+					</div>
+					<div className="mb-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3 space-y-2">
+						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+							Or pick a saved composite frame from the Creative Library
+						</div>
+						<div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+							<select
+								value=""
+								onChange={(e) =>
+									void handlePickComposite(e.target.value, "start")
+								}
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+							>
+								<option value="">
+									{compositeAssets.length === 0
+										? "No approved composite frames in Library"
+										: "Pick composite START frame…"}
+								</option>
+								{compositeAssets.map((c) => (
+									<option key={c.asset_id} value={c.asset_id}>
+										{c.display_name}
+									</option>
+								))}
+							</select>
+							<select
+								value=""
+								onChange={(e) =>
+									void handlePickComposite(e.target.value, "end")
+								}
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+							>
+								<option value="">
+									{compositeAssets.length === 0
+										? "No approved composite frames in Library"
+										: "Pick composite END frame…"}
+								</option>
+								{compositeAssets.map((c) => (
+									<option key={c.asset_id} value={c.asset_id}>
+										{c.display_name}
+									</option>
+								))}
+							</select>
+						</div>
+						<p className="text-[9px] text-slate-500">
+							COMPOSITE_FRAME_REFERENCE assets only. Posters (rendered text) and
+							archived assets are excluded by the backend.
+						</p>
 					</div>
 					<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 						<WorkspaceImageAssetSlot

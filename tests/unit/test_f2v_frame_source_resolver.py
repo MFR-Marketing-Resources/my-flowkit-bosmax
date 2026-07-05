@@ -41,13 +41,25 @@ def _run_db(scenario):
     return asyncio.run(wrapper())
 
 
-async def _make_composite(display_name: str = "Composite A"):
+# Reuse requires APPROVED (all truth statuses PASS). Composites/posters in these
+# tests are APPROVED so the assertion under test isolates its intended gate.
+_APPROVED = {
+    "review_status": "APPROVED",
+    "identity_lock_status": "PASS",
+    "scale_truth_status": "PASS",
+    "claim_safety_status": "PASS",
+}
+
+
+async def _make_composite(display_name: str = "Composite A", approved: bool = True):
+    extra = _APPROVED if approved else {}
     return await save_img_output_to_library(
         SaveImgOutputRequest(
             lane_id="AVATAR_PRODUCT_COMPOSITE",
             display_name=display_name,
             image_base64="aGVsbG8=",
             product_id="prod-1",
+            **extra,
         )
     )
 
@@ -59,6 +71,7 @@ async def _make_poster():
             display_name="Poster A",
             image_base64="aGVsbG8=",
             product_id="prod-1",
+            **_APPROVED,
         )
     )
 
@@ -80,6 +93,21 @@ def test_composite_asset_selectable_as_start_and_end(tmp_path, monkeypatch):
         assert resp.end_frame is not None
         assert resp.end_frame.source_kind == "COMPOSITE_FRAME_REFERENCE"
         assert len(resp.resolved_frames) == 2
+
+    _run_db(scenario)
+
+
+def test_pending_review_composite_is_not_reusable(tmp_path, monkeypatch):
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        # A composite saved WITHOUT approval defaults to PENDING_REVIEW.
+        comp = await _make_composite(approved=False)
+        resp = await resolve_f2v_frame_sources(
+            F2VFrameSourceResolverRequest(start_frame_asset_id=comp.asset_id)
+        )
+        assert resp.start_frame is None
+        assert any("NOT_APPROVED_FOR_REUSE" in b for b in resp.blockers)
 
     _run_db(scenario)
 

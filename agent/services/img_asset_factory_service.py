@@ -160,14 +160,14 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
     scale_truth_status = request.scale_truth_status or "UNVERIFIED"
     claim_safety_status = request.claim_safety_status or "UNVERIFIED"
 
-    # An asset can never be silently APPROVED while its truth/safety gates are
-    # UNVERIFIED — approval requires an explicit operator truth review.
-    if request.review_status == "APPROVED" and "UNVERIFIED" in (
-        identity_lock_status,
-        scale_truth_status,
-        claim_safety_status,
+    # An asset may be APPROVED only when EVERY truth/safety gate explicitly PASSes.
+    # Any UNVERIFIED or FAIL status blocks approval — an APPROVED asset is later
+    # the only kind reusable downstream (validate_selectable_asset require_approved).
+    if request.review_status == "APPROVED" and not all(
+        status == "PASS"
+        for status in (identity_lock_status, scale_truth_status, claim_safety_status)
     ):
-        raise ValueError("APPROVAL_REQUIRES_TRUTH_REVIEW")
+        raise ValueError("APPROVAL_REQUIRES_ALL_TRUTH_PASS")
 
     create_request = CreativeAssetCreateRequest(
         semantic_role=governance["semantic_role"],  # type: ignore[arg-type]
