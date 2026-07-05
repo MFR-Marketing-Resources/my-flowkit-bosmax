@@ -1698,6 +1698,13 @@ def render_block(
         s5_lines = [
             "Handheld vertical 9:16 framing with natural micro-jitter and organic human sway.",
             camera_notes or "Eye-level medium close-up to close-up range; soft natural light; no flash, no hard fill.",
+            "Do not introduce any unrequested isolated product-only flash shot, cutaway "
+            "packshot, product-only insert montage, or sudden hero product spotlight sequence. "
+            "Keep the product within the intended continuous scene at its true small scale and "
+            "preserve the current reference and state relationship: if the presenter is holding "
+            "the product, keep it in hand; if the product is resting in its own scene or setting, "
+            "keep it there naturally — either way, do not cut away to an isolated hero product "
+            "beauty shot.",
         ]
     if is_continuation:
         s5_lines.append(
@@ -1731,11 +1738,22 @@ def render_block(
         cta_type=cta_type,
     )
     if overlay_allowed and overlay_text:
-        s9 = f"On-screen text is permitted for this block only: '{_clean(overlay_text)}'. No other captions, subtitles, price text, or sticker text."
+        s9 = (
+            f"On-screen text is permitted for this block only: '{_clean(overlay_text)}'. "
+            "No other captions, subtitles, lower-thirds, sticker text, floating text, price "
+            "text, label callouts, or watermarks, and no metadata-style text — never draw the "
+            "product name, pack size, founding year, tagline, or any label wording onto the "
+            "frame as a graphic. Apart from the approved overlay text above, the only readable "
+            "text is the text physically printed on the real product label itself."
+        )
     else:
         s9 = (
             "No on-screen text of any kind: no captions, no subtitles, no lower-thirds, no "
-            "sticker text, no price text, no watermarks. Everything persuasive is spoken."
+            "sticker text, no floating text, no price text, no label callouts, no watermarks, "
+            "and no metadata-style text — never draw the product name, pack size, founding "
+            "year, tagline, or any label wording onto the frame as a graphic. The only "
+            "readable text allowed is the text physically printed on the real product label "
+            "itself. Everything persuasive is spoken."
         )
 
     bodies = (s1, s2, s3, s4, s5, s6, s7, s8, s9)

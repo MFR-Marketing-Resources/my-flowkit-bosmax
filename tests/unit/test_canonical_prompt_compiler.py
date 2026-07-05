@@ -1209,3 +1209,80 @@ def test_prompt_intel_audit_section8_payoff_contains_no_meta_wording():
         assert "rather than a vague" not in payoff
         assert "ending" not in payoff
 
+
+# ── Visual-truth incident (oversize / flash / overlay-metadata leakage) ─────────
+# Control case: the operator's successful FRAMES prompt ("Sample prompt yang
+# sukses.txt") anchored the composed frame as the single visual truth, enumerated
+# NO_OVERLAY fully, and never cut away to a product-only flash shot. These tests
+# pin those semantics into the shared compiler for every mode.
+
+_ING_KW = dict(asset_role_map={"PRODUCT_REFERENCE": True, "AVATAR_REFERENCE": True})
+_VIDEO_MODES_KW = [("T2V", {}), ("HYBRID", {}), ("FRAMES", {}), ("INGREDIENTS", _ING_KW)]
+
+
+def _s(mode, section, **kw):
+    return _compile(mode, **kw)["blocks"][0]["sections"][section].lower()
+
+
+def test_frames_composed_frame_is_single_visual_truth():
+    # Control-case semantics must stay pinned (regression guard, not new behavior).
+    s3 = _s("FRAMES", "SECTION 3 - CONTINUITY & STATE LOCK")
+    assert "uploaded finished frame as the single visual reference" in s3
+    assert "continue only" in s3 and "visible frame state" in s3
+    assert "motion only" in s3
+    assert "do not rebuild" in s3
+
+
+@pytest.mark.parametrize("mode,kw", _VIDEO_MODES_KW)
+def test_video_modes_block_product_flash_and_cutaway_packshot(mode, kw):
+    s5 = _s(mode, "SECTION 5 - SHOT & CAMERA RULES", **kw)
+    # The unrequested-flash / cutaway / insert-montage / spotlight bans must be present…
+    assert "isolated product-only flash shot" in s5
+    assert "cutaway" in s5 and "packshot" in s5
+    assert "product-only insert montage" in s5
+    assert "sudden hero product spotlight" in s5
+    assert "true small scale" in s5
+
+
+@pytest.mark.parametrize("mode,kw", _VIDEO_MODES_KW)
+def test_anti_flash_guard_is_scene_neutral_not_presenter_hardcoded(mode, kw):
+    # …but the guard must NOT force presenter/hands globally — it must stay valid for
+    # legitimate product-only scenes (bedside/drawer/shelf standby). Audit blocker #1.
+    s5 = _s(mode, "SECTION 5 - SHOT & CAMERA RULES", **kw)
+    # the old hardcode must be gone
+    assert "the product stays in the presenter's hands" not in s5
+    # both branches must be expressed conditionally
+    assert "if the presenter is holding the product" in s5
+    assert "resting in its own scene" in s5          # product-only scene preserved
+    assert "unrequested" in s5                        # only *unrequested* flashes are blocked
+
+
+def test_images_mode_has_no_video_anti_flash_rule():
+    # A single still may legitimately be product-led; the flash rule is video-only.
+    s5 = _s("IMAGES", "SECTION 5 - SHOT & CAMERA RULES")
+    assert "cutaway" not in s5 and "packshot" not in s5
+
+
+@pytest.mark.parametrize("mode,kw", _VIDEO_MODES_KW + [("IMAGES", {})])
+def test_no_overlay_blocks_metadata_style_text_everywhere(mode, kw):
+    s9 = _s(mode, "SECTION 9 - NO_OVERLAY", **kw)
+    for phrase in [
+        "no captions", "no subtitles", "no lower-thirds", "no sticker text",
+        "no floating text", "no price text", "no label callouts", "no watermarks",
+        "metadata-style text", "pack size", "founding",
+    ]:
+        assert phrase in s9, f"[{mode}] SECTION 9 missing overlay guard: {phrase}"
+    # only the real printed label may be readable — never a drawn graphic
+    assert "printed on the real product label" in s9
+
+
+def test_overlay_allowed_branch_still_scoped_and_blocks_metadata():
+    # Audit blocker #3: even when an overlay is approved, metadata-style drawn text
+    # (product name / pack size / founding year / tagline as a graphic) stays banned.
+    s9 = _compile(overlay_allowed=True, overlay_text="Cuba ni")["blocks"][0][
+        "sections"]["SECTION 9 - NO_OVERLAY"].lower()
+    assert "cuba ni" in s9                            # the approved overlay survives
+    for phrase in ["no other captions", "label callouts", "metadata-style text",
+                   "pack size", "founding", "printed on the real product label"]:
+        assert phrase in s9, f"overlay_allowed branch missing metadata guard: {phrase}"
+
