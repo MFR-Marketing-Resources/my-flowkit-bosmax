@@ -149,6 +149,9 @@ domains:
       - agent/services/ugc_video_prompt_compiler_service.py
       - agent/services/workspace_execution_package_service.py
       - agent/services/flow_client.py
+      - agent/services/agent_video.py
+      - agent/services/make_video.py
+      - tests/unit/test_agent_video.py
       - agent/services/batch_planner.py
       - agent/models/product_registration.py
       - agent/services/product_knowledge_service.py

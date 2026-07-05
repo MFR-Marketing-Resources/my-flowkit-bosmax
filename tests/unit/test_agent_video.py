@@ -213,6 +213,59 @@ def test_classify_agent_failure_generic_and_none():
     assert av.classify_agent_failure(None) is None
 
 
+# --- provider rate-limiter classification (incident: F2V "stuck/rejected" was actually
+#     Google anti-abuse, 0 credits — CURRENT_STATE OPEN ITEM #2). API-lane only; the
+#     negotiation DECISION logic is untouched, only error labelling. ---
+
+# The REAL captured error object (flow_agent.db request_telemetry, 2026-07-05 08:02:35Z F2V).
+_REAL_RATE_LIMIT_ERR = {
+    "code": 403, "message": "reCAPTCHA evaluation failed", "status": "PERMISSION_DENIED",
+    "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                 "reason": "PUBLIC_ERROR_UNUSUAL_ACTIVITY"}],
+}
+
+# The same error as it arrives on the SSE stream.
+_RATE_LIMIT_SSE = (
+    'data: {"error": {"code": 403, "message": "reCAPTCHA evaluation failed", '
+    '"status": "PERMISSION_DENIED", "details": [{"@type": '
+    '"type.googleapis.com/google.rpc.ErrorInfo", "reason": "PUBLIC_ERROR_UNUSUAL_ACTIVITY"}]}}\n'
+)
+
+
+def test_classify_provider_error_rate_limited():
+    assert av.classify_provider_error(_REAL_RATE_LIMIT_ERR) == av.RATE_LIMITED
+    assert av.classify_provider_error("reCAPTCHA evaluation failed") == av.RATE_LIMITED
+    assert av.classify_provider_error("blocked due to unusual activity") == av.RATE_LIMITED
+
+
+def test_classify_provider_error_unknown_is_none():
+    # A genuine non-rate-limit error must NOT be mislabelled (surface raw instead).
+    assert av.classify_provider_error("session expired") is None
+    assert av.classify_provider_error("") is None
+    assert av.classify_provider_error(None) is None
+
+
+def test_provider_error_message_rate_limit_is_honest():
+    msg = av.provider_error_message(_REAL_RATE_LIMIT_ERR).lower()
+    assert "rate_limited" in msg
+    assert "0 credits" in msg and "cool down" in msg
+    assert "did not approve" not in msg          # the mislabel is gone
+    # unclassified errors pass through unchanged
+    assert av.provider_error_message("weird transport error") == "weird transport error"
+
+
+def test_negotiate_surfaces_rate_limited_class_and_preserves_raw():
+    res = _run(av.negotiate_and_generate(
+        _FakeAgentClient(_RATE_LIMIT_SSE), "p1", "s1", "make a video", None,
+        target_model="veo_3_1_lite", target_duration_s=8))
+    assert res["ok"] is False and res["stage"] == "error"
+    assert res["error_class"] == av.RATE_LIMITED
+    assert "rate_limited" in str(res["error"]).lower()
+    assert "0 credits" in str(res["error"]).lower()
+    assert res.get("error_raw")                  # raw error preserved for debugging
+    assert not res.get("approved")               # never approved → no credit spend
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
