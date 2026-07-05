@@ -57,6 +57,14 @@ def _first_nonempty(values: list[str], fallback: str) -> str:
     return fallback
 
 
+def _has_product_image(product: dict[str, Any]) -> bool:
+    """True when the product row carries a real attached product image reference."""
+    for key in ("media_id", "local_image_path", "image_url", "start_asset", "start_image_url", "product_image_url"):
+        if _clean(product.get(key)):
+            return True
+    return False
+
+
 def _handling_line(product: dict[str, Any], mode: str) -> str:
     handling = _clean(product.get("section_5_product_physics_prompt"))
     if handling:
@@ -776,6 +784,11 @@ def compile_ugc_video_prompt(
         {"PRODUCT_REFERENCE": True, "AVATAR_REFERENCE": True}
         if resolved_source_mode == "INGREDIENTS" else None
     )
+    # IMG (IMAGES) with a real attached product image is a product-reference render:
+    # propagate PRODUCT_REFERENCE so the canonical compiler emits the reference lock.
+    # No image attached → left None so SECTION 2 still carries the full text lock.
+    if _ingredient_roles is None and resolved_source_mode == "IMAGES" and _has_product_image(product):
+        _ingredient_roles = {"PRODUCT_REFERENCE": True}
     compiled_blocks: list[dict[str, Any]] = []
     continuation_lineage: list[dict[str, Any]] = []
     total_blocks = len(normalized_blocks)

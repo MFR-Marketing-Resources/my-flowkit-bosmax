@@ -58,11 +58,40 @@
         "allow_fast_vo_override": false
       }
     },
+    "BOSMAX_HERBS_10ML": {
+      "product_id": "BOSMAX_HERBS_10ML",
+      "product_name": "Bosmax Oil 10 ML / BOSMAX HERBS 10ml Herbal Oil Roll On",
+      "product_lane": "PRODUCT_ONLY",
+      "product_truth_ref": "Slim matte-black cylindrical roll-on / oil bottle, glossy black cap, printed BOSMAX identity as it appears on the real product; larger than the smaller BOSMAX roll-on variant yet still a small palm-scale roll-on. Preserve the product's own real printed label exactly and do not borrow, swap in, or morph the smaller-variant label.",
+      "images": [],
+      "scale_lock": "Bottle must remain at exact 10ml slim roll-on scale — larger than the smaller BOSMAX variant yet still small and palm-sized; never drift into perfume, spray, supplement, skincare, or oversized bottle form, and never shrink to the smaller-variant scale.",
+      "label_lock": "Preserve the real printed BOSMAX 10ml label identity exactly; do not swap in, borrow, or morph the smaller-variant label.",
+      "allowed_variants": [
+        "product_only",
+        "studio_closeup",
+        "ugc_handheld",
+        "bathroom_shelf",
+        "desk_side"
+      ],
+      "safety_notes": [
+        "No cure claims.",
+        "No guarantee claims.",
+        "No unsafe content.",
+        "No perfume, spray, supplement, or skincare bottle drift.",
+        "Do not present as the smaller BOSMAX variant."
+      ],
+      "pack_size_ml": 10,
+      "cta_text_default": "Tap to add one to your daily kit.",
+      "on_the_fly_flags": {
+        "allow_overlay": false,
+        "allow_fast_vo_override": false
+      }
+    },
     "MWTCB_25ML_CAP_BURUNG": {
       "product_id": "MWTCB_25ML_CAP_BURUNG",
       "product_name": "Minyak Warisan Tok Cap Burung 25ml",
       "product_lane": "PRODUCT_ONLY",
-      "product_truth_ref": "Short compact transparent green glass bottle, green herbal oil inside, red ribbed screw cap, cream label panel, teal to deep green border, gold ornamental border, bird illustration, and traditional heritage label identity with readable Cap Burung text preserved where visible.",
+      "product_truth_ref": "Short compact transparent green glass bottle with a flat-front, rectangular compact impression, short neck and compact shoulders, green herbal oil inside, short red ribbed screw cap, cream label panel, teal to deep green border, gold ornamental border, bird illustration, and traditional heritage label identity with readable Cap Burung text preserved where visible.",
       "images": [],
       "scale_lock": "Compact 25ml bottle, pocket, travel, or household standby size; never enlarge into tall perfume, supplement, skincare, syrup, spray, or cosmetic bottle.",
       "label_lock": "Preserve Minyak Warisan Tok Cap Burung and Cap Burung heritage label identity, bird illustration, cream label panel, teal to deep green border, gold ornamental border, traditional typography, and all readable label text.",

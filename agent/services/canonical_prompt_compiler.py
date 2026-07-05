@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.services import avatar_registry
+from agent.services import product_lock_builder
 
 _AUTHORITY_DIR = Path(__file__).resolve().parent.parent / "authority"
 
@@ -1635,19 +1636,35 @@ def render_block(
         s1 += f" Treat it as a real {category.lower()} product, not a generic prop."
     if angle_hint:
         s1 += f" The commercial angle is {angle_hint}."
+    is_video = mode != "IMAGES"
+    has_product_reference = mode in ("HYBRID", "FRAMES", "INGREDIENTS") or bool(
+        (asset_role_map or {}).get("PRODUCT_REFERENCE")
+    )
     s2_lines = [
         f"Preserve the exact real-world appearance of {pname}: label, cap, shape, scale, "
         "material, colour, and any readable text must match the true product in every frame.",
     ]
+    # Hard identity/geometry/palm-scale/negative-morph lock from product-truth
+    # authority (never silently dropped — data-driven fallback if unlisted).
+    s2_lines.extend(product_lock_builder.section_2_lock_lines(
+        product, is_video=is_video, has_product_reference=has_product_reference,
+    ))
     if handling_notes:
         s2_lines.append(handling_notes)
     s2_lines.append("Never redesign, restyle, resize, or invent packaging.")
-    s2 = "\n".join(s2_lines)
+    s2 = "\n".join(x for x in s2_lines if x)
     s3 = _section_3_continuity(
         mode, product=product, presenter_prose=presenter_text,
         asset_role_map=asset_role_map, style_scene_source=style_scene_source,
         is_continuation=is_continuation, scene_context=_clean(scene_context),
     )
+    # Reference-image truth lock + per-frame persistence lock (video modes) so the
+    # product cannot grow, round out, or morph across frames or away from the ref.
+    s3_lock_lines = product_lock_builder.section_3_lock_lines(
+        product, is_video=is_video, has_product_reference=has_product_reference,
+    )
+    if s3_lock_lines:
+        s3 = "\n".join([s3, *s3_lock_lines])
     shots = list(shot_plan or [])
     if not shots:
         shot_count = shot_count_hint or (1 if mode == "IMAGES" else 2)
