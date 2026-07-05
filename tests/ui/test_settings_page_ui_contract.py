@@ -116,6 +116,18 @@ def test_settings_page_vision_lane_allows_openai_compatible_providers():
     assert 'transport === "openai_compatible_chat"' in src
 
 
+def test_settings_page_vision_providers_are_registry_driven():
+    """The Vision Lane provider dropdown is derived from the registry's transport-
+    gated supported_lanes — NOT a hardcoded Anthropic-only list. After forward
+    migration surfaces vision for openai/gemini/qwen, they appear automatically."""
+    src = _read("dashboard/src/pages/SettingsPage.tsx")
+    # Lane provider options come from providersForLane(...) which filters by
+    # supported_lanes.includes(lane).
+    assert "providersForLane" in src
+    assert "supported_lanes ?? []).includes(lane)" in src
+    assert "laneProviders.map" in src
+
+
 def test_settings_route_remains_registered_in_dashboard_app():
     src = _read("dashboard/src/App.tsx")
 
