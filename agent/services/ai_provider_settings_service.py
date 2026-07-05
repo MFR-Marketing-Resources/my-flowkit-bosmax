@@ -164,12 +164,16 @@ def _ensure_state_dir() -> None:
     AI_PROVIDER_STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _migrate_lanes(raw: dict, providers_payload: dict) -> dict:
+def _migrate_lanes(raw: dict) -> dict:
     """Deterministic lane migration → V3.
-    - V3 file: preserve explicit lane fields.
-    - V2 file: preserve a lane iff (its provider has a stored key) OR (it deviates
-      from the old hardcoded seed default). Otherwise → NOT_CONFIGURED.
+    - V3 file: preserve explicit lane fields (incl. configured_by_user).
+    - V2 file: a lane that EXACTLY equals the old PR #202 hardcoded seed default is
+      downgraded to NOT_CONFIGURED — regardless of whether the provider has a key,
+      because a seed default is not reliable evidence of an explicit operator
+      choice. Any NON-seed provider/model is preserved as explicit intent
+      (configured_by_user=True; status then reflects key/model reality).
     - V1/absent lanes: NOT_CONFIGURED.
+    Existing provider API keys are never touched by this function.
     """
     raw_version = raw.get("version")
     raw_lanes = raw.get("lanes") if isinstance(raw.get("lanes"), dict) else {}
@@ -195,15 +199,16 @@ def _migrate_lanes(raw: dict, providers_payload: dict) -> dict:
             }
             continue
 
-        # V2 heuristic.
-        if provider_id not in PROVIDER_IDS or not model_id:
-            lanes[lane] = _not_configured_lane()
-            continue
-        has_key = bool(
-            str(providers_payload.get(provider_id, {}).get("api_key") or "").strip()
+        # V2 migration — conservative & explicit. Seed default downgrades FIRST,
+        # before any key-based preservation (no hidden default survives).
+        is_seed_default = (
+            provider_id is not None
+            and model_id is not None
+            and (provider_id, str(model_id)) == _V2_SEED_LANE_DEFAULTS.get(lane)
         )
-        is_seed_default = (provider_id, str(model_id)) == _V2_SEED_LANE_DEFAULTS.get(lane)
-        if has_key or not is_seed_default:
+        if is_seed_default:
+            lanes[lane] = _not_configured_lane()
+        elif provider_id in PROVIDER_IDS and model_id:
             lanes[lane] = {
                 "provider_id": provider_id,
                 "model_id": str(model_id),
@@ -265,7 +270,7 @@ def _load_payload() -> dict:
             "default_model": default_model,
         }
 
-    payload["lanes"] = _migrate_lanes(raw, payload["providers"])
+    payload["lanes"] = _migrate_lanes(raw)
 
     if payload["active_provider"] not in PROVIDER_IDS:
         payload["active_provider"] = None

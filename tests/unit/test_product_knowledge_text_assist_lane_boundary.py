@@ -5,6 +5,8 @@ posts to the Qwen/DashScope endpoint, so it must NEVER read or send a non-Qwen
 `text_assist` lane key. It runs only when the lane provider is qwen; for any
 non-Qwen lane provider it fails closed (returns [] and never calls httpx.post).
 """
+import json
+
 import httpx
 import pytest
 
@@ -101,6 +103,34 @@ def test_other_non_qwen_lanes_skip_and_never_post(lane_state, monkeypatch, provi
 
     monkeypatch.setattr(httpx, "post", boom)
 
+    assert pks._extract_qwen_usp_suggestions(_req(), {}) == []
+
+
+def test_migrated_seed_default_with_qwen_key_skips_before_key_read(lane_state, monkeypatch):
+    # V2 seed default (qwen/qwen-plus) + a qwen key migrates to NOT_CONFIGURED, so
+    # get_lane_provider("text_assist") is None and the qwen USP path must skip
+    # before any key is read — no hidden qwen fallback.
+    (lane_state / "ai-provider-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "active_provider": None,
+                "providers": {
+                    "qwen": {"api_key": "sk-qwen-existing-abcdef", "updated_at": None, "activated_at": None},
+                },
+                "lanes": {
+                    "text_assist": {"provider_id": "qwen", "model_id": "qwen-plus", "execution_enabled": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert svc.get_lane_provider("text_assist") is None
+
+    def boom(*args, **kwargs):
+        raise AssertionError("httpx.post must not be called for a NOT_CONFIGURED lane")
+
+    monkeypatch.setattr(httpx, "post", boom)
     assert pks._extract_qwen_usp_suggestions(_req(), {}) == []
 
 

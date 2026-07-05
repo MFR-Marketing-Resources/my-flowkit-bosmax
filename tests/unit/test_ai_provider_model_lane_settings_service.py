@@ -102,6 +102,71 @@ def test_v2_seeded_default_without_key_downgrades_to_not_configured(state):
     assert _lane(summary, "vision")["status"] == "NOT_CONFIGURED"
 
 
+def test_v2_seeded_text_assist_default_with_qwen_key_downgrades_to_not_configured(state):
+    # A stored Qwen key is NOT proof the operator explicitly chose Qwen for the
+    # text_assist lane — the seed default must still downgrade to NOT_CONFIGURED.
+    state.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "active_provider": None,
+                "providers": {
+                    "qwen": {
+                        "api_key": "sk-qwen-existing-abcdef",
+                        "updated_at": None,
+                        "activated_at": None,
+                        "default_model": "qwen-plus",
+                    },
+                },
+                "lanes": {
+                    "text_assist": {"provider_id": "qwen", "model_id": "qwen-plus", "execution_enabled": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary = svc.summarize_provider_settings()
+    # Key preserved.
+    assert _provider(summary, "qwen")["has_key"] is True
+    assert svc.get_provider_api_key("qwen") == "sk-qwen-existing-abcdef"
+    # Lane downgraded despite the key.
+    lane = _lane(summary, "text_assist")
+    assert lane["status"] == "NOT_CONFIGURED"
+    assert lane["provider_id"] is None
+    assert lane["model_id"] is None
+    assert svc.get_lane_provider("text_assist") is None
+    assert svc.get_lane_model("text_assist") is None
+
+
+def test_v2_seeded_vision_default_with_anthropic_key_downgrades_to_not_configured(state):
+    state.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "active_provider": None,
+                "providers": {
+                    "anthropic": {
+                        "api_key": "sk-ant-existing-abcdef",
+                        "updated_at": None,
+                        "activated_at": None,
+                        "default_model": "claude-sonnet-5",
+                    },
+                },
+                "lanes": {
+                    "vision": {"provider_id": "anthropic", "model_id": "claude-sonnet-5", "execution_enabled": False},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary = svc.summarize_provider_settings()
+    assert _provider(summary, "anthropic")["has_key"] is True
+    lane = _lane(summary, "vision")
+    assert lane["status"] == "NOT_CONFIGURED"
+    assert lane["provider_id"] is None
+    assert svc.get_lane_provider("vision") is None
+
+
 def test_v2_lane_with_key_is_preserved_as_user_configured(state):
     state.write_text(
         json.dumps(

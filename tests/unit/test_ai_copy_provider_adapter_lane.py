@@ -54,6 +54,30 @@ class _FakeResp:
         return self._data
 
 
+def test_migrated_seed_default_with_key_fails_closed(state):
+    # A V2 state with a qwen key + the OLD seeded text_assist default migrates to
+    # NOT_CONFIGURED, so AI Copy Assist must fail closed — never silently use
+    # qwen/qwen-plus.
+    (state / "ai-provider-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "active_provider": None,
+                "providers": {
+                    "qwen": {"api_key": "sk-qwen-existing-abcdef", "updated_at": None, "activated_at": None},
+                },
+                "lanes": {
+                    "text_assist": {"provider_id": "qwen", "model_id": "qwen-plus", "execution_enabled": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert adapter.is_configured() is False
+    with pytest.raises(adapter.AICopyProviderNotConfigured):
+        adapter.generate_candidate("brief text")
+
+
 def test_provider_status_reports_selected_model_and_execution(state):
     svc.update_provider_key("qwen", "sk-qwen-live-abcdef")
     svc.update_lane_settings("text_assist", "qwen", "qwen-max", execution_enabled=True)
