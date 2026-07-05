@@ -52,6 +52,12 @@ domains:
       - tests/unit/test_ai_copy_assist_service.py
       - tests/api/test_ai_copy_assist_api.py
       - docs/AI_COPY_ASSIST_CANDIDATE_COPY_SET_V1.md
+      - agent/services/ai_provider_model_catalog.py
+      - tests/unit/test_ai_provider_model_lane_settings_service.py
+      - tests/api/test_ai_provider_model_lane_settings_api.py
+      - tests/unit/test_ai_copy_provider_adapter_lane.py
+      - tests/unit/test_product_knowledge_text_assist_lane_boundary.py
+      - docs/AI_PROVIDER_MODEL_AND_LANE_SETTINGS_V1.md
       - agent/api/product_registration.py
       - agent/api/fastmoss_bulk.py
       - agent/api/operator.py

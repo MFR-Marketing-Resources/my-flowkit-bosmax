@@ -1201,6 +1201,15 @@ export type AIProviderId =
 	| "gemini"
 	| "deepseek";
 
+export type AIProviderLaneId = "text_assist" | "vision";
+
+export interface AIProviderModelOption {
+	model_id: string;
+	label: string;
+	lanes: string[];
+	default_for?: string[];
+}
+
 export interface AIProviderSummary {
 	provider_id: AIProviderId;
 	label: string;
@@ -1213,11 +1222,24 @@ export interface AIProviderSummary {
 	activated_at: string | null;
 	activation_scope: string;
 	current_capabilities: string[];
+	default_model: string | null;
+	supported_lanes: string[];
+}
+
+export interface AIProviderLaneSetting {
+	lane: AIProviderLaneId;
+	label: string;
+	provider_id: AIProviderId | null;
+	model_id: string | null;
+	execution_enabled: boolean;
+	configured: boolean;
 }
 
 export interface AIProviderRegistry {
 	active_provider: AIProviderId | null;
 	providers: AIProviderSummary[];
+	model_catalog: Record<string, AIProviderModelOption[]>;
+	lanes: AIProviderLaneSetting[];
 }
 
 export interface TelemetrySummary {

@@ -30,12 +30,33 @@ from agent.config import BASE_DIR
 from agent.services.registration_hook_cta_generation_service import (
     generate_registration_hook_cta,
 )
-from agent.services.ai_provider_settings_service import get_lane_api_key, get_provider_api_key, is_lane_execution_enabled
+from agent.services.ai_provider_settings_service import (
+    get_lane_api_key,
+    get_lane_model,
+    get_lane_provider,
+    get_provider_api_key,
+    is_lane_execution_enabled,
+)
 
 
 LOGGER = logging.getLogger(__name__)
 QWEN_TEXT_BASE_URL = str(os.environ.get("DASHSCOPE_COMPAT_BASE_URL") or "").strip().rstrip("/")
 QWEN_TEXT_MODEL = str(os.environ.get("QWEN_TEXT_MODEL") or "qwen-plus").strip() or "qwen-plus"
+
+
+def _resolve_text_assist_qwen_model() -> str:
+    """Honor the operator's UI-selected text_assist model ONLY when the lane is
+    pointed at qwen (this path is a qwen-specific transport). Otherwise keep the
+    env/default qwen model. Default lane == qwen/qwen-plus, so this is a no-op in
+    the default configuration."""
+    try:
+        if get_lane_provider("text_assist") == "qwen":
+            lane_model = get_lane_model("text_assist")
+            if lane_model:
+                return lane_model
+    except Exception:
+        pass
+    return QWEN_TEXT_MODEL
 QWEN_TEXT_TIMEOUT_SECONDS = 20.0
 QWEN_FALLBACK_BASE_URLS = [
     "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
@@ -386,6 +407,14 @@ def _extract_qwen_usp_suggestions(
     if not source_text:
         return []
 
+    # PROVIDER-BOUNDARY GUARD (fail closed): this is a Qwen-specific transport
+    # (posts to the Qwen/DashScope /chat/completions endpoint). It must NEVER read
+    # or send a non-Qwen lane key. If the operator has routed the text_assist lane
+    # to any non-Qwen provider, skip extraction entirely — before any key is read.
+    if get_lane_provider("text_assist") != "qwen":
+        LOGGER.info("Qwen USP extraction skipped: text_assist lane provider is not qwen")
+        return []
+
     api_key = get_lane_api_key("text_assist")
     if not api_key:
         return []
@@ -394,7 +423,7 @@ def _extract_qwen_usp_suggestions(
         return []
 
     payload = {
-        "model": QWEN_TEXT_MODEL,
+        "model": _resolve_text_assist_qwen_model(),
         "temperature": 0.1,
         "messages": [
             {
