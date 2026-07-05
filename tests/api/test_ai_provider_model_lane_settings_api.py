@@ -143,3 +143,61 @@ def test_registry_response_has_no_raw_key(monkeypatch, tmp_path):
     client.put("/api/ai-providers/anthropic/key", json={"api_key": "sk-ant-secret-abcdef123456"})
     body = client.get("/api/ai-providers").text
     assert "sk-ant-secret-abcdef123456" not in body
+
+
+# --- HOTFIX regression: corrupt/legacy state must never break the registry ---
+# The /settings blank-page incident traced to a shape mismatch. The frontend is
+# now defensive, and the backend must keep emitting a valid V3 registry shape
+# (never 500) even when its on-disk state files are corrupt or legacy.
+
+
+def _fresh_registry_shape_ok(body: dict) -> None:
+    assert isinstance(body.get("providers"), list) and body["providers"]
+    assert isinstance(body.get("model_catalog"), dict) and body["model_catalog"]
+    assert isinstance(body.get("lanes"), list) and body["lanes"]
+    # Every catalog entry is the V3 object shape (not a bare array).
+    for entry in body["model_catalog"].values():
+        assert isinstance(entry, dict)
+        assert "transport" in entry and isinstance(entry.get("models"), list)
+    # Every lane carries an explicit status string.
+    for lane in body["lanes"]:
+        assert isinstance(lane.get("status"), str) and lane["status"]
+
+
+def test_registry_valid_v3_shape_on_fresh_state(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    _fresh_registry_shape_ok(client.get("/api/ai-providers").json())
+
+
+def test_registry_survives_corrupt_model_catalog(monkeypatch, tmp_path):
+    (tmp_path / "ai-model-catalog.json").write_text("{ not json", encoding="utf-8")
+    client = _client(monkeypatch, tmp_path)
+    r = client.get("/api/ai-providers")
+    assert r.status_code == 200
+    # Corrupt catalog is reseeded, not surfaced as a 500.
+    _fresh_registry_shape_ok(r.json())
+
+
+def test_registry_survives_corrupt_provider_settings(monkeypatch, tmp_path):
+    (tmp_path / "ai-provider-settings.json").write_text("</corrupt>", encoding="utf-8")
+    client = _client(monkeypatch, tmp_path)
+    r = client.get("/api/ai-providers")
+    assert r.status_code == 200
+    _fresh_registry_shape_ok(r.json())
+
+
+def test_registry_migrates_legacy_v1_provider_settings(monkeypatch, tmp_path):
+    # A pre-#208 (V1, no `version`) settings file with a stored key must migrate
+    # forward: the key is preserved and a valid V3 registry is emitted.
+    (tmp_path / "ai-provider-settings.json").write_text(
+        '{"providers": {"anthropic": {"api_key": "sk-ant-legacy-key-000111"}}}',
+        encoding="utf-8",
+    )
+    client = _client(monkeypatch, tmp_path)
+    r = client.get("/api/ai-providers")
+    assert r.status_code == 200
+    body = r.json()
+    _fresh_registry_shape_ok(body)
+    anthropic = next(p for p in body["providers"] if p["provider_id"] == "anthropic")
+    assert anthropic["has_key"] is True
+    assert "sk-ant-legacy-key-000111" not in r.text  # masked only

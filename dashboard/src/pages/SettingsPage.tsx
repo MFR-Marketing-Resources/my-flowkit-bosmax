@@ -4,6 +4,9 @@ import { useWebSocketContext } from "../contexts/WebSocketContext";
 import type {
 	AIProviderCatalogEntry,
 	AIProviderId,
+	AIProviderLaneId,
+	AIProviderLaneSetting,
+	AIProviderLaneStatus,
 	AIProviderModelOption,
 	AIProviderRegistry,
 	AIProviderSummary,
@@ -129,11 +132,184 @@ function getProviderInputPlaceholder(provider: AIProviderSummary) {
 	return `Paste ${provider.label} API key`;
 }
 
+// --- defensive registry normalization ---------------------------------------
+// The V3 SettingsPage dereferences V3-only fields (lane.status, provider.
+// supported_lanes / current_capabilities, model.lanes, catalog entry.models).
+// A stale (pre-#208) backend, a mid-migration state file, or a corrupt catalog
+// can return an older or partial shape. Coercing every payload into the V3
+// shape here means a single missing/mistyped field can NEVER unmount the whole
+// page (the blank-screen incident). This is idempotent on a well-formed V3
+// payload.
+
+const asStringArray = (value: unknown): string[] =>
+	Array.isArray(value)
+		? value.filter((entry): entry is string => typeof entry === "string")
+		: [];
+
+const LANE_LABELS: Record<string, string> = {
+	text_assist: "Text Assist",
+	vision: "Vision",
+};
+
+function normalizeModelOption(raw: unknown): AIProviderModelOption | null {
+	if (!raw || typeof raw !== "object") return null;
+	const record = raw as Record<string, unknown>;
+	const modelId = typeof record.model_id === "string" ? record.model_id : "";
+	if (!modelId) return null;
+	return {
+		model_id: modelId,
+		label:
+			typeof record.label === "string" && record.label ? record.label : modelId,
+		lanes: asStringArray(record.lanes),
+		enabled: record.enabled === undefined ? true : Boolean(record.enabled),
+		source: typeof record.source === "string" ? record.source : "seed",
+	};
+}
+
+function normalizeCatalogEntry(raw: unknown): AIProviderCatalogEntry {
+	// Old shape: model_catalog[provider] was an ARRAY of models. New shape:
+	// { label, transport, enabled, supported_lanes, models }.
+	const models = (
+		Array.isArray(raw)
+			? raw
+			: raw && typeof raw === "object" && Array.isArray((raw as { models?: unknown }).models)
+				? ((raw as { models: unknown[] }).models)
+				: []
+	)
+		.map(normalizeModelOption)
+		.filter((model): model is AIProviderModelOption => model !== null);
+	const record =
+		raw && typeof raw === "object" && !Array.isArray(raw)
+			? (raw as Record<string, unknown>)
+			: {};
+	return {
+		label: typeof record.label === "string" ? record.label : "",
+		transport: typeof record.transport === "string" ? record.transport : "",
+		enabled: record.enabled === undefined ? true : Boolean(record.enabled),
+		supported_lanes: asStringArray(record.supported_lanes),
+		models,
+	};
+}
+
+function normalizeProvider(raw: unknown): AIProviderSummary | null {
+	if (!raw || typeof raw !== "object") return null;
+	const record = raw as Record<string, unknown>;
+	if (typeof record.provider_id !== "string") return null;
+	return {
+		provider_id: record.provider_id as AIProviderId,
+		label: typeof record.label === "string" ? record.label : record.provider_id,
+		env_var: typeof record.env_var === "string" ? record.env_var : "",
+		has_key: Boolean(record.has_key),
+		masked_key: typeof record.masked_key === "string" ? record.masked_key : null,
+		status: typeof record.status === "string" ? record.status : "KEY_MISSING",
+		is_active: Boolean(record.is_active),
+		updated_at: typeof record.updated_at === "string" ? record.updated_at : null,
+		activated_at:
+			typeof record.activated_at === "string" ? record.activated_at : null,
+		activation_scope:
+			typeof record.activation_scope === "string"
+				? record.activation_scope
+				: "REGISTRY_ONLY",
+		current_capabilities: asStringArray(record.current_capabilities),
+		default_model:
+			typeof record.default_model === "string" ? record.default_model : null,
+		supported_lanes: asStringArray(record.supported_lanes),
+	};
+}
+
+function normalizeLane(raw: unknown): AIProviderLaneSetting | null {
+	if (!raw || typeof raw !== "object") return null;
+	const record = raw as Record<string, unknown>;
+	if (typeof record.lane !== "string") return null;
+	const providerId =
+		typeof record.provider_id === "string"
+			? (record.provider_id as AIProviderId)
+			: null;
+	const modelId = typeof record.model_id === "string" ? record.model_id : null;
+	// Old shape carried `configured` but no explicit `status`; derive one so
+	// `status.replaceAll(...)` in render can never throw.
+	const status: AIProviderLaneStatus =
+		typeof record.status === "string"
+			? (record.status as AIProviderLaneStatus)
+			: providerId && modelId
+				? "READY"
+				: "NOT_CONFIGURED";
+	return {
+		lane: record.lane as AIProviderLaneId,
+		label:
+			typeof record.label === "string"
+				? record.label
+				: LANE_LABELS[record.lane] || record.lane,
+		provider_id: providerId,
+		model_id: modelId,
+		execution_enabled: Boolean(record.execution_enabled),
+		configured_by_user:
+			record.configured_by_user === undefined
+				? Boolean(record.configured)
+				: Boolean(record.configured_by_user),
+		key_present: Boolean(record.key_present),
+		model_valid: Boolean(record.model_valid),
+		status,
+		configured: Boolean(
+			record.configured === undefined ? providerId && modelId : record.configured,
+		),
+	};
+}
+
+function normalizeRegistry(raw: unknown): {
+	registry: AIProviderRegistry;
+	catalogMalformed: boolean;
+} {
+	const record =
+		raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+	const providers = (
+		Array.isArray(record.providers) ? record.providers : []
+	)
+		.map(normalizeProvider)
+		.filter((provider): provider is AIProviderSummary => provider !== null);
+
+	const rawCatalog = record.model_catalog;
+	const model_catalog: Record<string, AIProviderCatalogEntry> = {};
+	let catalogMalformed = false;
+	if (
+		rawCatalog &&
+		typeof rawCatalog === "object" &&
+		!Array.isArray(rawCatalog)
+	) {
+		for (const [providerId, entry] of Object.entries(
+			rawCatalog as Record<string, unknown>,
+		)) {
+			model_catalog[providerId] = normalizeCatalogEntry(entry);
+		}
+	} else if (rawCatalog !== undefined) {
+		// present but wrong type (array / primitive) → unusable
+		catalogMalformed = true;
+	}
+
+	const lanes = (Array.isArray(record.lanes) ? record.lanes : [])
+		.map(normalizeLane)
+		.filter((lane): lane is AIProviderLaneSetting => lane !== null);
+
+	return {
+		registry: {
+			active_provider:
+				typeof record.active_provider === "string"
+					? (record.active_provider as AIProviderId)
+					: null,
+			providers,
+			model_catalog,
+			lanes,
+		},
+		catalogMalformed,
+	};
+}
+
 export default function SettingsPage() {
 	const [agentStatus, setAgentStatus] = useState<LocalAgentStatus | null>(null);
 	const [telemetry, setTelemetry] = useState<TelemetrySummary | null>(null);
 	const [providerRegistry, setProviderRegistry] =
 		useState<AIProviderRegistry | null>(null);
+	const [catalogMalformed, setCatalogMalformed] = useState(false);
 	const [draftKeys, setDraftKeys] = useState<Record<AIProviderId, string>>({
 		qwen: "",
 		anthropic: "",
@@ -157,9 +333,11 @@ export default function SettingsPage() {
 	>({});
 	const { isConnected } = useWebSocketContext();
 
-	const applyRegistry = (registry: AIProviderRegistry) => {
+	const applyRegistry = (raw: unknown) => {
+		const { registry, catalogMalformed: malformed } = normalizeRegistry(raw);
 		startTransition(() => {
 			setProviderRegistry(registry);
+			setCatalogMalformed(malformed);
 		});
 	};
 
@@ -168,12 +346,15 @@ export default function SettingsPage() {
 			const [status, tel, providers] = await Promise.all([
 				fetchAPI<LocalAgentStatus>("/api/local-agent/status"),
 				fetchAPI<TelemetrySummary>("/api/telemetry/summary"),
-				fetchAPI<AIProviderRegistry>("/api/ai-providers"),
+				fetchAPI<unknown>("/api/ai-providers"),
 			]);
+			const { registry, catalogMalformed: malformed } =
+				normalizeRegistry(providers);
 			startTransition(() => {
 				setAgentStatus(status);
 				setTelemetry(tel);
-				setProviderRegistry(providers);
+				setProviderRegistry(registry);
+				setCatalogMalformed(malformed);
 			});
 		} catch (err) {
 			console.error("Failed to fetch settings status", err);
@@ -319,14 +500,14 @@ export default function SettingsPage() {
 	): AIProviderModelOption[] => {
 		if (!providerId) return [];
 		return (catalogEntry(providerId)?.models ?? []).filter(
-			(model) => model.enabled && model.lanes.includes(lane),
+			(model) => model.enabled && (model.lanes ?? []).includes(lane),
 		);
 	};
 
 	const providersForLane = (lane: string): AIProviderSummary[] => {
 		if (!providerRegistry) return [];
-		return providerRegistry.providers.filter((provider) =>
-			provider.supported_lanes.includes(lane),
+		return (providerRegistry.providers ?? []).filter((provider) =>
+			(provider.supported_lanes ?? []).includes(lane),
 		);
 	};
 
@@ -521,7 +702,21 @@ export default function SettingsPage() {
 			) : null}
 			{bannerError ? (
 				<div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-					{bannerError}
+					<div className="flex flex-wrap items-center justify-between gap-3">
+						<span>{bannerError}</span>
+						<button
+							type="button"
+							onClick={() => void refreshStatus()}
+							className="shrink-0 rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-100 hover:border-red-300"
+						>
+							Retry
+						</button>
+					</div>
+				</div>
+			) : null}
+			{catalogMalformed ? (
+				<div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+					Model catalog unavailable or malformed. Reset catalog or refresh.
 				</div>
 			) : null}
 
@@ -634,7 +829,10 @@ export default function SettingsPage() {
 											<div className="mb-2 font-semibold text-slate-200">
 												Current capability lane
 											</div>
-											<div>{provider.current_capabilities.join(" • ")}</div>
+											<div>
+									{(provider.current_capabilities ?? []).join(" • ") ||
+										"No capabilities declared"}
+								</div>
 										</div>
 
 										<div className="space-y-2">
@@ -696,8 +894,8 @@ export default function SettingsPage() {
 													<div className="text-[11px] text-slate-500">
 														Transport: {catalogEntry(provider.provider_id)?.transport}
 														{" · "}Supported lanes:{" "}
-														{provider.supported_lanes.length
-															? provider.supported_lanes.join(", ")
+														{(provider.supported_lanes ?? []).length
+															? (provider.supported_lanes ?? []).join(", ")
 															: "—"}
 													</div>
 												</div>
@@ -725,7 +923,7 @@ export default function SettingsPage() {
 																	</div>
 																	<div className="truncate text-[10px] text-slate-500">
 																		{model.model_id} ·{" "}
-																		{model.lanes.join(", ") || "no lanes"}
+																		{(model.lanes ?? []).join(", ") || "no lanes"}
 																	</div>
 																</div>
 																<button
@@ -943,7 +1141,7 @@ export default function SettingsPage() {
 											<span
 												className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${LANE_STATUS_STYLE[setting.status] || LANE_STATUS_STYLE.NOT_CONFIGURED}`}
 											>
-												{setting.status.replaceAll("_", " ")}
+												{(setting.status ?? "NOT_CONFIGURED").replaceAll("_", " ")}
 											</span>
 										</div>
 
