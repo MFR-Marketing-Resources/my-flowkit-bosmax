@@ -219,6 +219,7 @@ domains:
       - tests/unit/test_creative_asset_service.py
       - tests/unit/test_i2v_semantic_slot_resolver_service.py
       - tests/api/test_approved_product_package_api.py
+      - tests/api/test_product_catalog_selectable_v1.py
       - tests/api/test_creative_asset_api.py
       - tests/api/test_fastmoss_product_visibility_api.py
       - tests/api/test_fastmoss_bulk_api.py

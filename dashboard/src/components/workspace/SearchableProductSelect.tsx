@@ -1,5 +1,6 @@
 import { Check, ChevronDown, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { searchProducts } from "../../api/products";
 import type { Product, WorkspacePackageReadinessItem } from "../../types";
 
 interface SearchableProductSelectProps {
@@ -43,11 +44,56 @@ export default function SearchableProductSelect({
 }: SearchableProductSelectProps) {
 	const [isOpen, setIsOpen] = useState(false);
 	const [search, setSearch] = useState("");
+	const [serverResults, setServerResults] = useState<Product[]>([]);
+	const [isSearching, setIsSearching] = useState(false);
 	const containerRef = useRef<HTMLDivElement>(null);
 
-	const filtered = products.filter((product) =>
-		product.raw_product_title.toLowerCase().includes(search.toLowerCase()),
+	// Debounced server-side search. The `products` prop only holds the first
+	// client-loaded page (the /api/products?limit=… window), so canonical
+	// products that sort after it — e.g. MANUAL BOSMAX / Minyak Warisan rows —
+	// are invisible to a pure client-side filter. Querying /api/products/search
+	// keeps them discoverable by name without loading the entire catalog.
+	useEffect(() => {
+		const query = search.trim();
+		if (query.length < 2) {
+			setServerResults([]);
+			setIsSearching(false);
+			return;
+		}
+		let isActive = true;
+		setIsSearching(true);
+		const handle = window.setTimeout(() => {
+			void searchProducts(query, 25)
+				.then((response) => {
+					if (isActive) setServerResults(response.items ?? []);
+				})
+				.catch(() => {
+					if (isActive) setServerResults([]);
+				})
+				.finally(() => {
+					if (isActive) setIsSearching(false);
+				});
+		}, 250);
+		return () => {
+			isActive = false;
+			window.clearTimeout(handle);
+		};
+	}, [search]);
+
+	const searchLower = search.trim().toLowerCase();
+	const clientFiltered = products.filter((product) =>
+		product.raw_product_title.toLowerCase().includes(searchLower),
 	);
+	// Union the client-loaded matches with the server-side matches, keeping the
+	// loaded catalog order stable and appending any server-only rows (deduped
+	// by id) so results beyond the first page still appear.
+	const seenIds = new Set(clientFiltered.map((product) => product.id));
+	const filtered = [
+		...clientFiltered,
+		...serverResults.filter(
+			(product) => product?.id && !seenIds.has(product.id),
+		),
+	];
 
 	useEffect(() => {
 		const handleClickOutside = (event: MouseEvent) => {
@@ -141,7 +187,7 @@ export default function SearchableProductSelect({
 						<input
 							type="text"
 							className="bg-transparent border-none outline-none text-xs text-slate-300 w-full"
-							placeholder="Search by name..."
+							placeholder="Search all products by name..."
 							value={search}
 							onChange={(event) => setSearch(event.target.value)}
 							onClick={(event) => event.stopPropagation()}
@@ -206,6 +252,10 @@ export default function SearchableProductSelect({
 									</button>
 								);
 							})
+						) : isSearching ? (
+							<div className="px-4 py-6 text-center text-xs text-slate-500 italic">
+								Searching all products…
+							</div>
 						) : (
 							<div className="px-4 py-6 text-center text-xs text-slate-600 italic">
 								No products match your search.
@@ -215,7 +265,7 @@ export default function SearchableProductSelect({
 
 					<div className="p-2 border-t border-slate-800 bg-slate-950/20 text-right">
 						<span className="text-[9px] text-slate-600 uppercase tracking-widest font-bold pr-2">
-							{filtered.length} visible
+							{isSearching ? "Searching…" : `${filtered.length} visible`}
 						</span>
 					</div>
 				</div>

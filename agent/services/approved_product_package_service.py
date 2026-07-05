@@ -443,12 +443,16 @@ async def get_product_package_readiness(product_id: str, mode: str) -> dict[str,
         else production_approved and {"T2V", "IMG"}.issubset(production_modes)
     )
     image_gate = _image_gate_for_mode(normalized_mode)
-    image_requirement_ready = (
-        normalized_mode not in IMAGE_REQUIRED_MODES
-        or img_subject_ready
-        if normalized_mode == "IMG"
-        else image_ready
-    )
+    if normalized_mode not in IMAGE_REQUIRED_MODES:
+        # Text-only modes (T2V) never require a product image; the image gate
+        # must not block them. Previously the collapsed conditional fell through
+        # to `image_ready`, so an image-less but fully-approved T2V product was
+        # wrongly reported as blocked with a NO_IMAGE_REQUIRED "blocker".
+        image_requirement_ready = True
+    elif normalized_mode == "IMG":
+        image_requirement_ready = img_subject_ready
+    else:
+        image_requirement_ready = image_ready
 
     blocker = "READY"
     if lifecycle_status == "ARCHIVED":
