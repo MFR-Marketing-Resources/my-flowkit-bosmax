@@ -47,3 +47,31 @@ def test_product_patch_rejects_rich_product_knowledge_fields():
         "target_customer_text",
         "paste_anything_about_product",
     }
+
+
+def test_product_patch_allows_normal_catalog_fields():
+    product = asyncio.run(
+        crud.create_product(
+            raw_product_title="Bosmax Patch Positive",
+            source="MANUAL",
+            product_display_name="Bosmax Patch Positive",
+            product_short_name="Bosmax Patch Positive",
+        )
+    )
+
+    response = _client().patch(
+        f"/api/products/{product['id']}",
+        json={
+            "brand": "Bosmax",
+            "category": "Beauty",
+            "price": 19.9,
+            "commission_rate": "12%",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["brand"] == "Bosmax"
+    assert payload["category"] == "Beauty"
+    assert payload["price"] == 19.9
+    assert payload["commission_rate"] == "12%"

@@ -17,6 +17,7 @@ from agent.db import crud
 from agent.models.product_intelligence_snapshot import (
     ProductIntelligenceLatestSnapshotResponse,
     ProductIntelligenceSnapshotListResponse,
+    SnapshotStatus,
 )
 from agent.services.product_intelligence import (
     enrich_product, resolve_product_assets, upload_product_to_flow,
@@ -1271,7 +1272,7 @@ async def get_product_intelligence_snapshot(
 @router.get("/{product_id}/intelligence/snapshots")
 async def get_product_intelligence_snapshots(
     product_id: str,
-    status: str | None = Query(default=None),
+    status: SnapshotStatus | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> ProductIntelligenceSnapshotListResponse:
     try:

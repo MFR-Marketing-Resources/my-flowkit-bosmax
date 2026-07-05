@@ -100,3 +100,20 @@ def test_get_product_intelligence_snapshot_list_returns_empty_items_for_existing
     response = _client().get(f"/api/products/{product['id']}/intelligence/snapshots")
     assert response.status_code == 200
     assert response.json() == {"product_id": product["id"], "items": []}
+
+
+def test_get_product_intelligence_snapshot_list_rejects_invalid_status():
+    product = asyncio.run(
+        crud.create_product(
+            raw_product_title="Bosmax Snapshot Invalid Status",
+            source="MANUAL",
+            product_display_name="Bosmax Snapshot Invalid Status",
+            product_short_name="Bosmax Snapshot Invalid Status",
+        )
+    )
+
+    response = _client().get(
+        f"/api/products/{product['id']}/intelligence/snapshots?status=NOT_A_REAL_STATUS"
+    )
+
+    assert response.status_code == 422
