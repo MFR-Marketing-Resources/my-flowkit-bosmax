@@ -36,6 +36,7 @@ import AssetRegistryPage from "./pages/AssetRegistryPage";
 import AvatarRegistryPage from "./pages/AvatarRegistryPage";
 import BatchPromptBuilderPage from "./pages/BatchPromptBuilderPage";
 import CreativeLibraryPage from "./pages/CreativeLibraryPage";
+import ImgCockpitPage from "./pages/ImgCockpitPage";
 import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
 import DashboardPage from "./pages/DashboardPage";
 import GalleryPage from "./pages/GalleryPage";
@@ -99,6 +100,11 @@ const NAV_GROUPS = [
 				to: "/assets/avatar-registry",
 				icon: Users,
 				label: "Avatar Registry",
+			},
+			{
+				to: "/assets/img-cockpit",
+				icon: Sparkles,
+				label: "IMG Cockpit",
 			},
 			{ to: "/asset-registry", icon: Layers, label: "Asset Registry" },
 			{
@@ -474,6 +480,10 @@ function Layout() {
 						<Route
 							path="/assets/avatar-registry"
 							element={<AvatarRegistryPage />}
+						/>
+						<Route
+							path="/assets/img-cockpit"
+							element={<ImgCockpitPage />}
 						/>
 						<Route
 							path="/assets/creative-library"
