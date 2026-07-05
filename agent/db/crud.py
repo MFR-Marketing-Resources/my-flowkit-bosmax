@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record", "social_copy_package", "copy_set"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record", "social_copy_package", "copy_set", "product_intelligence_snapshot", "product_intelligence_field_provenance"})
 
 
 def _validate_table(table: str) -> None:
@@ -42,6 +42,8 @@ _COLUMNS = {
     "postiz_publish_record": {"artifact_media_id", "source_local_path", "source_public_url", "upload_mode", "postiz_media_id", "postiz_media_path", "post_type", "scheduled_at", "content", "integration_ids_json", "provider_settings_json", "postiz_response_json", "status", "error", "updated_at"},
     "social_copy_package": {"artifact_media_id", "source_mode", "platform", "caption", "first_comment", "hashtags_json", "call_to_action", "tone", "language", "status", "compliance_status", "blockers_json", "warnings_json", "approval_note", "approved_at", "postiz_record_id", "updated_at"},
     "copy_set": {"angle", "hook", "subhook", "usp_set_json", "cta", "platform", "language", "route_type", "formula_family", "status", "dedupe_key", "source", "provenance_json", "claim_review_json", "reviewer_note", "approved_at", "approved_by", "updated_at"},
+    "product_intelligence_snapshot": {"product_id", "version", "status", "product_description", "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "created_from_review_draft_id", "created_by", "approved_by", "approved_at", "supersedes_snapshot_id", "updated_at"},
+    "product_intelligence_field_provenance": {"snapshot_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
 }
 
 
@@ -399,6 +401,153 @@ async def get_product_by_fastmoss_reference_id(reference_id: str):
     return dict(row) if row else None
 async def update_product(pid: str, **kw): return await _update("product", "id", pid, **kw)
 async def delete_product(pid: str): return await _delete("product", "id", pid)
+
+
+async def create_product_intelligence_snapshot(product_id: str, version: int, status: str, **kw) -> dict:
+    db = await get_db()
+    snapshot_id, now = _uuid(), _now()
+    cols = ["snapshot_id", "product_id", "version", "status", "created_at", "updated_at"]
+    vals = [snapshot_id, product_id, version, status, now, now]
+    allowed = _COLUMNS["product_intelligence_snapshot"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO product_intelligence_snapshot ({col_str}) VALUES ({placeholders})",
+            vals,
+        )
+        await db.commit()
+    return await _get_with_db(db, "product_intelligence_snapshot", "snapshot_id", snapshot_id)
+
+
+async def get_product_intelligence_snapshot(snapshot_id: str):
+    return await _get("product_intelligence_snapshot", "snapshot_id", snapshot_id)
+
+
+async def list_product_intelligence_snapshots(
+    *,
+    product_id: str,
+    status: str | None = None,
+    limit: int | None = 20,
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM product_intelligence_snapshot WHERE product_id=?"
+    params: list = [product_id]
+    if status:
+        q += " AND status=?"
+        params.append(status)
+    q += " ORDER BY version DESC, created_at DESC, snapshot_id DESC"
+    if limit is not None:
+        q += " LIMIT ?"
+        params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_latest_approved_product_intelligence_snapshot(product_id: str) -> Optional[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        """
+        SELECT *
+        FROM product_intelligence_snapshot
+        WHERE product_id=? AND status='APPROVED'
+        ORDER BY version DESC, approved_at DESC, created_at DESC, snapshot_id DESC
+        LIMIT 1
+        """,
+        (product_id,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def create_product_intelligence_field_provenance(
+    snapshot_id: str,
+    product_id: str,
+    field_name: str,
+    source_type: str,
+    evidence_kind: str,
+    extraction_method: str,
+    verification_status: str,
+    **kw,
+) -> dict:
+    db = await get_db()
+    provenance_id, now = _uuid(), _now()
+    cols = [
+        "provenance_id",
+        "snapshot_id",
+        "product_id",
+        "field_name",
+        "source_type",
+        "evidence_kind",
+        "extraction_method",
+        "verification_status",
+        "created_at",
+        "updated_at",
+    ]
+    vals = [
+        provenance_id,
+        snapshot_id,
+        product_id,
+        field_name,
+        source_type,
+        evidence_kind,
+        extraction_method,
+        verification_status,
+        now,
+        now,
+    ]
+    allowed = _COLUMNS["product_intelligence_field_provenance"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO product_intelligence_field_provenance ({col_str}) VALUES ({placeholders})",
+            vals,
+        )
+        await db.commit()
+    return await _get_with_db(
+        db,
+        "product_intelligence_field_provenance",
+        "provenance_id",
+        provenance_id,
+    )
+
+
+async def list_product_intelligence_field_provenance(
+    *,
+    snapshot_id: str | None = None,
+    product_id: str | None = None,
+    field_name: str | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    if not snapshot_id and not product_id:
+        raise ValueError("SNAPSHOT_ID_OR_PRODUCT_ID_REQUIRED")
+    db = await get_db()
+    q = "SELECT * FROM product_intelligence_field_provenance WHERE 1=1"
+    params: list = []
+    if snapshot_id:
+        q += " AND snapshot_id=?"
+        params.append(snapshot_id)
+    if product_id:
+        q += " AND product_id=?"
+        params.append(product_id)
+    if field_name:
+        q += " AND field_name=?"
+        params.append(field_name)
+    q += " ORDER BY created_at DESC, provenance_id DESC"
+    if limit is not None:
+        q += " LIMIT ?"
+        params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
 
 
 # ─── Copy Set (Copy Strategy Studio Phase 1) ────────────────

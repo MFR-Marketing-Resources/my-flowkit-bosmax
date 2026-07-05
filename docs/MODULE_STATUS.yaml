@@ -155,8 +155,11 @@ domains:
       - agent/services/batch_planner.py
       - agent/models/product_registration.py
       - agent/services/product_knowledge_service.py
+      - agent/api/product_intelligence.py
+      - agent/models/product_intelligence_snapshot.py
       - agent/services/product_intelligence.py
       - agent/services/product_intelligence_service.py
+      - agent/services/product_intelligence_snapshot_service.py
       - agent/services/product_registration_service.py
       - agent/services/registration_commit_service.py
       - agent/services/registration_draft_storage_service.py
@@ -223,7 +226,11 @@ domains:
       - tests/unit/test_product_image_analysis_service.py
       - tests/unit/test_ai_provider_settings_service.py
       - tests/unit/test_product_catalog.py
+      - tests/unit/test_product_intelligence_snapshot_model.py
+      - tests/unit/test_product_intelligence_snapshot_crud.py
+      - tests/unit/test_product_intelligence_field_provenance_crud.py
       - tests/unit/test_product_intelligence_service.py
+      - tests/unit/test_product_intelligence_snapshot_service.py
       - tests/unit/test_video_reviewer.py
       - tests/unit/test_ugc_video_prompt_compiler_service.py
       - tests/unit/test_workspace_image_preview_contract_service.py
@@ -232,7 +239,10 @@ domains:
       - tests/unit/test_i2v_semantic_slot_resolver_service.py
       - tests/api/test_approved_product_package_api.py
       - tests/api/test_product_catalog_selectable_v1.py
+      - tests/api/test_product_intelligence_api.py
+      - tests/api/test_product_intelligence_provenance_api.py
       - tests/api/test_product_image_truth_v1.py
+      - tests/api/test_products_rich_knowledge_patch_regression.py
       - tests/api/test_creative_asset_api.py
       - tests/api/test_fastmoss_product_visibility_api.py
       - tests/api/test_fastmoss_bulk_api.py

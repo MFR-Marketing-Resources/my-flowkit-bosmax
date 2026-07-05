@@ -1756,6 +1756,85 @@ CREATE INDEX IF NOT EXISTS idx_copy_set_dedupe ON copy_set(dedupe_key);
 """)
         await db.commit()
 
+        # Product Intelligence Snapshot foundation (Product Intelligence Backbone
+        # PR 1). Durable sidecar storage only — this does not change product-row
+        # truth, registration commit behavior, or ProductTruthService.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS product_intelligence_snapshot (
+    snapshot_id TEXT PRIMARY KEY,
+    product_id TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('DRAFT','APPROVED','SUPERSEDED','REJECTED','ARCHIVED')),
+    product_description TEXT,
+    benefits_json TEXT NOT NULL DEFAULT '[]',
+    usp_json TEXT NOT NULL DEFAULT '[]',
+    usage_text TEXT,
+    ingredients_text TEXT,
+    warnings_text TEXT,
+    target_customer_text TEXT,
+    paste_anything_summary TEXT,
+    source_urls_json TEXT NOT NULL DEFAULT '{}',
+    image_evidence_json TEXT NOT NULL DEFAULT '{}',
+    package_notes TEXT,
+    size_or_volume TEXT,
+    product_form_factor TEXT,
+    packaging_description TEXT,
+    product_truth_lock TEXT,
+    claim_gate TEXT,
+    claim_risk_level TEXT,
+    claim_tokens_json TEXT NOT NULL DEFAULT '[]',
+    allowed_claims_json TEXT NOT NULL DEFAULT '[]',
+    blocked_claims_json TEXT NOT NULL DEFAULT '[]',
+    buyer_persona_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    copy_strategy_summary_json TEXT NOT NULL DEFAULT '{}',
+    confidence_score REAL,
+    completeness_score REAL,
+    readiness_status TEXT,
+    created_from_review_draft_id TEXT,
+    created_by TEXT,
+    approved_by TEXT,
+    approved_at TEXT,
+    supersedes_snapshot_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(product_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_product_intelligence_snapshot_product_status_version
+    ON product_intelligence_snapshot(product_id, status, version);
+CREATE INDEX IF NOT EXISTS idx_product_intelligence_snapshot_product_created_at
+    ON product_intelligence_snapshot(product_id, created_at);
+
+CREATE TABLE IF NOT EXISTS product_intelligence_field_provenance (
+    provenance_id TEXT PRIMARY KEY,
+    snapshot_id TEXT NOT NULL REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE CASCADE,
+    product_id TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    field_name TEXT NOT NULL,
+    declared_value TEXT,
+    normalized_value TEXT,
+    source_type TEXT NOT NULL,
+    source_url TEXT,
+    source_lane TEXT,
+    evidence_kind TEXT NOT NULL,
+    extraction_method TEXT NOT NULL,
+    confidence_score REAL,
+    verification_status TEXT NOT NULL,
+    claim_risk_flag TEXT,
+    reviewer_decision TEXT,
+    reviewer_note TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_product_intelligence_field_provenance_snapshot
+    ON product_intelligence_field_provenance(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_product_intelligence_field_provenance_product
+    ON product_intelligence_field_provenance(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_intelligence_field_provenance_product_field
+    ON product_intelligence_field_provenance(product_id, field_name);
+CREATE INDEX IF NOT EXISTS idx_product_intelligence_field_provenance_snapshot_field
+    ON product_intelligence_field_provenance(snapshot_id, field_name);
+""")
+        await db.commit()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 
