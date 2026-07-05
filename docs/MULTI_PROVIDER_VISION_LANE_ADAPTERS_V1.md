@@ -73,9 +73,12 @@ model lists the `vision` lane.
   `VISION_PROVIDER_NOT_CONFIGURED`, a disabled execution toggle to
   `ANALYSIS_SKIPPED`, and any adapter failure to `ANALYSIS_FAILED` — it never
   fabricates detections.
-- The operator-selected **vision lane model is authoritative** for every provider
-  (`get_lane_model("vision")`); the deployment default is only a last-resort
-  fallback, never a silent override.
+- The operator-selected **vision lane model is the ONLY model source** for every
+  provider (`get_lane_model("vision")`). There is **no hidden fallback model**: a
+  provider + key + execution but missing model still resolves to
+  `VISION_PROVIDER_NOT_CONFIGURED` and never reaches a provider call.
+  `_configured_vision_runtime()` requires provider + model + key together before
+  any Anthropic/OpenAI/Gemini/Qwen request is built.
 
 ## How to add a custom vision model
 
