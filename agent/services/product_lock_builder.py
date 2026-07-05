@@ -60,7 +60,7 @@ def _parse_pack_ml(product: dict[str, Any]) -> int | None:
                 pass
     haystack = " ".join(
         _lower(product.get(k))
-        for k in ("name", "product_name", "product_short_name", "raw_product_title", "type")
+        for k in ("name", "product_name", "product_display_name", "product_short_name", "raw_product_title", "type")
     )
     match = re.search(r"(\d+(?:\.\d+)?)\s*ml\b", haystack)
     if match:
@@ -71,50 +71,76 @@ def _parse_pack_ml(product: dict[str, Any]) -> int | None:
     return None
 
 
+def _product_name_text(product: dict[str, Any]) -> str:
+    return _lower(
+        product.get("name")
+        or product.get("product_name")
+        or product.get("product_display_name")
+        or product.get("product_short_name")
+        or product.get("raw_product_title")
+    )
+
+
+def _resolved_ml(name: str, pack_ml: int | None) -> int | None:
+    """Explicit size evidence from the row (token or pack size). None = ambiguous."""
+    if pack_ml in (5, 10, 25):
+        return pack_ml
+    if "10ml" in name or "10 ml" in name:
+        return 10
+    if "5ml" in name or "5 ml" in name:
+        return 5
+    if "25ml" in name or "25 ml" in name:
+        return 25
+    return None
+
+
 def resolve_schema_entry(product: dict[str, Any]) -> dict | None:
     """Resolve a product row to its authored UNIVERSAL_PRODUCT_SCHEMA entry.
 
-    Match order: explicit ref/id keys → exact product_name → brand+size signature.
-    The BOSMAX signature path fails closed against 5ml↔10ml contamination: a row
-    that reads as 10ml is never matched to the 5ml entry.
+    Match order: explicit ref/id keys → size-gated brand signature → exact
+    product_name. Fail-closed against 5ml↔10ml contamination: a BOSMAX row is
+    matched to a size variant ONLY with explicit size evidence; a bare, size-less
+    "BOSMAX HERBS" row resolves to NOTHING (deterministic fallback) rather than
+    guessing a size. Real runtime rows always carry the size (verified in
+    flow_agent.db: "Bosmax Herbs 5 ML" / "Bosmax Oil 10 ML").
     """
     products = _schema().get("products") or {}
     if not products:
         return None
 
+    # 1. Explicit operator intent — a ref/id key wins outright (never ambiguous).
     for key in ("product_truth_ref", "product_id", "schema_ref", "id"):
         candidate = _clean(product.get(key)).upper()
         if candidate and candidate in products:
             return products[candidate]
 
-    name = _lower(
-        product.get("name")
-        or product.get("product_name")
-        or product.get("product_short_name")
-        or product.get("raw_product_title")
-    )
+    name = _product_name_text(product)
     if not name:
         return None
+    pack_ml = _parse_pack_ml(product)
+    size_ml = _resolved_ml(name, pack_ml)
 
+    # 2. BOSMAX family — size-gated, fail-closed on ambiguity.
+    if "bosmax" in name:
+        if size_ml == 5 and "BOSMAX_SERUM_5ML" in products:
+            return products["BOSMAX_SERUM_5ML"]
+        if size_ml == 10 and "BOSMAX_HERBS_10ML" in products:
+            return products["BOSMAX_HERBS_10ML"]
+        return None  # ambiguous bare BOSMAX → generic fallback, never a wrong size
+
+    # 3. Minyak Warisan Cap Burung signature (single authored size).
+    if ("minyak warisan" in name or "cap burung" in name) and "MWTCB_25ML_CAP_BURUNG" in products:
+        return products["MWTCB_25ML_CAP_BURUNG"]
+
+    # 4. Exact product_name substring for any other authored (non-BOSMAX) product.
     for entry in products.values():
         pn = _lower(entry.get("product_name"))
-        if not pn:
+        if not pn or "bosmax" in pn:  # BOSMAX handled above (size-gated)
             continue
-        # Forward: authored name fully contained in the row name (strong).
-        # Reverse: row name inside authored name only when it is specific enough
-        # (multi-word, >=8 chars) so short generic words like "oil" never match.
         if pn in name:
             return entry
         if name in pn and len(name) >= 8 and " " in name:
             return entry
-
-    pack_ml = _parse_pack_ml(product)
-    is_ten_ml = "10ml" in name or "10 ml" in name or pack_ml == 10
-    if ("minyak warisan" in name or "cap burung" in name) and "MWTCB_25ML_CAP_BURUNG" in products:
-        return products["MWTCB_25ML_CAP_BURUNG"]
-    if "bosmax" in name and not is_ten_ml and "BOSMAX_SERUM_5ML" in products:
-        if any(tok in name for tok in ("5ml", "5 ml", "roll on", "roll-on", "serum", "herbal oil")) or pack_ml == 5:
-            return products["BOSMAX_SERUM_5ML"]
     return None
 
 
@@ -129,9 +155,9 @@ def _fallback_scale_line(product: dict[str, Any]) -> str:
     if pack_ml is not None:
         size_phrase = f"exact {pack_ml}ml container scale"
         if pack_ml <= 6:
-            size_phrase += " (lip-balm / chapstick size class)"
+            size_phrase += " — a lip-balm / chapstick size class"
         elif pack_ml <= 30:
-            size_phrase += " (compact pocket / palm size class)"
+            size_phrase += " — a compact pocket / palm size class"
     elif any(tok in haystack for tok in ("roll on", "roll-on", "lip balm", "balm", "dropper", "serum")):
         size_phrase = "exact compact roll-on / lip-balm size class"
     elif any(tok in haystack for tok in ("bottle", "jar", "tube", "mist", "perfume", "supplement", "oil")):
@@ -144,13 +170,27 @@ def _fallback_scale_line(product: dict[str, Any]) -> str:
     )
 
 
+def _clean_display_name(raw: str) -> str:
+    """Strip bracket/parenthesis variant tags and SKU tails (mirrors the compiler's
+    _product_name) so fallback identity locks never leak "(Mix Berry)"-style tags."""
+    cleaned = re.sub(r"\s*\[[^\]]*\]\s*", " ", raw)
+    cleaned = re.sub(r"\s*\([^)]*\)\s*", " ", cleaned)
+    cleaned = re.sub(r"\bsku\s*:\s*.*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    cleaned = re.sub(r"\s+-\s+", " - ", cleaned).strip(" -")
+    return cleaned or _clean(raw)
+
+
 def _fallback_identity_line(product: dict[str, Any]) -> str:
-    name = _clean(
+    raw = _clean(
         product.get("name")
         or product.get("product_name")
+        or product.get("product_display_name")
         or product.get("product_short_name")
+        or product.get("raw_product_title")
         or "the product"
     )
+    name = _clean_display_name(raw)
     return (
         f"Preserve the exact identity of {name}: its real label, wordmark, colour, material, "
         "cap, and readable text. Do not relabel, redesign, recolour, replace, or simplify it."
