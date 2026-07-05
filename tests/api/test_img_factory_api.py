@@ -35,8 +35,48 @@ def test_provider_status_is_honest():
     response = client.get("/api/img-factory/provider-status")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["provider_state"] == "RUNTIME_PROVEN"
+    # Must NOT over-claim RUNTIME_PROVEN — generation runtime is external and not
+    # re-verified in this PR.
+    assert payload["provider_state"] == "SAVE_TO_LIBRARY_READY_GENERATION_RUNTIME_EXTERNAL"
     assert payload["generation_endpoint"] == "/api/flow/execute-flow-job"
+
+
+def test_save_multiple_sources_returns_400(monkeypatch):
+    async def fake_save(request):
+        raise ValueError("MULTIPLE_OUTPUT_SOURCES_NOT_ALLOWED")
+
+    monkeypatch.setattr("agent.api.img_factory.save_img_output_to_library", fake_save)
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/img-factory/save",
+        json={
+            "lane_id": "AVATAR_REFERENCE",
+            "display_name": "x",
+            "generated_artifact_media_id": "m1",
+            "image_base64": "aGVsbG8=",
+        },
+    )
+    assert response.status_code == 400
+    assert "MULTIPLE_OUTPUT_SOURCES_NOT_ALLOWED" in response.json()["detail"]
+
+
+def test_save_product_not_found_returns_404(monkeypatch):
+    async def fake_save(request):
+        raise ValueError("PRODUCT_NOT_FOUND")
+
+    monkeypatch.setattr("agent.api.img_factory.save_img_output_to_library", fake_save)
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/img-factory/save",
+        json={
+            "lane_id": "PRODUCT_ONLY_HERO",
+            "display_name": "x",
+            "image_base64": "aGVsbG8=",
+            "product_id": "nope",
+        },
+    )
+    assert response.status_code == 404
+    assert "PRODUCT_NOT_FOUND" in response.json()["detail"]
 
 
 def test_save_endpoint_persists(monkeypatch):

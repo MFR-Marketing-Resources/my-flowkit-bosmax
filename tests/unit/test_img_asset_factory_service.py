@@ -21,6 +21,7 @@ from agent.models.img_asset_factory import SaveImgOutputRequest
 from agent.services import creative_asset_service
 from agent.services.creative_asset_service import (
     archive_creative_asset,
+    list_creative_assets,
     validate_selectable_asset,
 )
 from agent.services.img_asset_factory_service import save_img_output_to_library
@@ -82,8 +83,10 @@ def test_save_from_generated_artifact_image(tmp_path, monkeypatch):
         assert rec.semantic_role == "PRODUCT_REFERENCE"
         assert rec.generation_recipe_id == "PRODUCT_ONLY_HERO"
         assert rec.product_truth_status == "PRESERVED"
-        assert rec.review_status == "APPROVED"
+        # A freshly-saved asset is PENDING_REVIEW, never silently APPROVED.
+        assert rec.review_status == "PENDING_REVIEW"
         assert "I2V" in rec.allowed_modes
+        assert "F2V" not in rec.allowed_modes  # PRODUCT_ONLY_HERO is not an F2V frame
 
     _run_db(scenario)
 
@@ -236,5 +239,202 @@ def test_saved_poster_is_not_a_clean_video_frame(tmp_path, monkeypatch):
             disallow_rendered_text=True,
         )
         assert "RENDERED_TEXT_NOT_ALLOWED_FOR_VIDEO_FRAME" in result.blockers
+
+    _run_db(scenario)
+
+
+def test_poster_fails_mode_gate_and_is_not_listed_for_video(tmp_path, monkeypatch):
+    """Defense-in-depth: the poster fails the MODE gate for F2V/I2V (not only the
+    rendered-text layer) and never appears in F2V/I2V library queries."""
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        poster = await save_img_output_to_library(
+            SaveImgOutputRequest(
+                lane_id="PRODUCT_POSTER",
+                display_name="Poster A",
+                image_base64="aGVsbG8=",
+                product_id="prod-1",
+            )
+        )
+        # Mode gate blocks F2V/I2V even WITHOUT the rendered-text check.
+        for mode, slot in (("F2V", "start_frame"), ("F2V", "end_frame"), ("I2V", "subject")):
+            res = await validate_selectable_asset(
+                poster.asset_id,
+                semantic_role="COMPOSITE_FRAME_REFERENCE",
+                allowed_mode=mode,
+                engine_slot=slot,
+            )
+            assert res.valid is False
+            assert "MODE_NOT_ALLOWED" in res.blockers, (mode, slot, res.blockers)
+
+        # Generic library queries scoped to a video mode never return the poster.
+        for mode in ("F2V", "I2V"):
+            items = await list_creative_assets(allowed_mode=mode)
+            assert poster.asset_id not in {i.asset_id for i in items}
+
+    _run_db(scenario)
+
+
+def test_save_rejects_multiple_output_sources(tmp_path, monkeypatch):
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        await _insert_artifact("media-img-2", "image", tmp_path / "o.png")
+        (tmp_path / "o.png").write_bytes(b"x")
+        with pytest.raises(ValueError, match="MULTIPLE_OUTPUT_SOURCES_NOT_ALLOWED"):
+            await save_img_output_to_library(
+                SaveImgOutputRequest(
+                    lane_id="AVATAR_REFERENCE",
+                    display_name="x",
+                    generated_artifact_media_id="media-img-2",
+                    image_base64="aGVsbG8=",
+                )
+            )
+
+    _run_db(scenario)
+
+
+def test_save_product_not_found(tmp_path, monkeypatch):
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        with pytest.raises(ValueError, match="PRODUCT_NOT_FOUND"):
+            await save_img_output_to_library(
+                SaveImgOutputRequest(
+                    lane_id="PRODUCT_ONLY_HERO",
+                    display_name="x",
+                    image_base64="aGVsbG8=",
+                    product_id="does-not-exist",
+                )
+            )
+
+    _run_db(scenario)
+
+
+def test_save_rejects_invalid_lineage_assets(tmp_path, monkeypatch):
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        # A real, ACTIVE character reference (valid lineage) and a style asset
+        # (wrong role for the character slot).
+        char = await save_img_output_to_library(
+            SaveImgOutputRequest(
+                lane_id="AVATAR_REFERENCE", display_name="Char", image_base64="aGVsbG8="
+            )
+        )
+        style = await save_img_output_to_library(
+            SaveImgOutputRequest(
+                lane_id="STYLE_REFERENCE", display_name="Style", image_base64="aGVsbG8="
+            )
+        )
+
+        # Valid lineage saves fine.
+        ok = await save_img_output_to_library(
+            SaveImgOutputRequest(
+                lane_id="AVATAR_REFERENCE",
+                display_name="Uses valid char",
+                image_base64="aGVsbG8=",
+                source_character_asset_id=char.asset_id,
+            )
+        )
+        assert ok.source_character_asset_id == char.asset_id
+
+        # Missing lineage asset.
+        with pytest.raises(ValueError, match="SOURCE_CHARACTER_ASSET_INVALID"):
+            await save_img_output_to_library(
+                SaveImgOutputRequest(
+                    lane_id="AVATAR_REFERENCE",
+                    display_name="x",
+                    image_base64="aGVsbG8=",
+                    source_character_asset_id="ca_missing",
+                )
+            )
+
+        # Wrong-role lineage asset (style used as character).
+        with pytest.raises(ValueError, match="SOURCE_CHARACTER_ASSET_INVALID"):
+            await save_img_output_to_library(
+                SaveImgOutputRequest(
+                    lane_id="AVATAR_REFERENCE",
+                    display_name="x",
+                    image_base64="aGVsbG8=",
+                    source_character_asset_id=style.asset_id,
+                )
+            )
+
+        # Archived lineage asset.
+        await archive_creative_asset(char.asset_id)
+        with pytest.raises(ValueError, match="SOURCE_CHARACTER_ASSET_INVALID"):
+            await save_img_output_to_library(
+                SaveImgOutputRequest(
+                    lane_id="AVATAR_REFERENCE",
+                    display_name="x",
+                    image_base64="aGVsbG8=",
+                    source_character_asset_id=char.asset_id,
+                )
+            )
+
+        # Wrong-role for the scene slot (style used as scene).
+        with pytest.raises(ValueError, match="SOURCE_SCENE_ASSET_INVALID"):
+            await save_img_output_to_library(
+                SaveImgOutputRequest(
+                    lane_id="AVATAR_REFERENCE",
+                    display_name="x",
+                    image_base64="aGVsbG8=",
+                    source_scene_asset_id=style.asset_id,
+                )
+            )
+
+    _run_db(scenario)
+
+
+def test_save_approved_requires_truth_review(tmp_path, monkeypatch):
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        # APPROVED while truth/safety statuses are UNVERIFIED must fail closed.
+        with pytest.raises(ValueError, match="APPROVAL_REQUIRES_TRUTH_REVIEW"):
+            await save_img_output_to_library(
+                SaveImgOutputRequest(
+                    lane_id="AVATAR_REFERENCE",
+                    display_name="x",
+                    image_base64="aGVsbG8=",
+                    review_status="APPROVED",
+                )
+            )
+
+        # APPROVED with explicit truth statuses succeeds and persists them.
+        rec = await save_img_output_to_library(
+            SaveImgOutputRequest(
+                lane_id="AVATAR_REFERENCE",
+                display_name="Reviewed",
+                image_base64="aGVsbG8=",
+                review_status="APPROVED",
+                identity_lock_status="LOCKED",
+                scale_truth_status="PRESERVED",
+                claim_safety_status="SAFE",
+            )
+        )
+        assert rec.review_status == "APPROVED"
+        assert rec.identity_lock_status == "LOCKED"
+        assert rec.scale_truth_status == "PRESERVED"
+        assert rec.claim_safety_status == "SAFE"
+
+    _run_db(scenario)
+
+
+def test_default_save_is_pending_review_with_unverified_truth(tmp_path, monkeypatch):
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        rec = await save_img_output_to_library(
+            SaveImgOutputRequest(
+                lane_id="AVATAR_REFERENCE", display_name="x", image_base64="aGVsbG8="
+            )
+        )
+        assert rec.review_status == "PENDING_REVIEW"
+        assert rec.identity_lock_status == "UNVERIFIED"
+        assert rec.scale_truth_status == "UNVERIFIED"
+        assert rec.claim_safety_status == "UNVERIFIED"
 
     _run_db(scenario)

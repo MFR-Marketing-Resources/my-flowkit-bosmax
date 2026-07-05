@@ -50,10 +50,24 @@ def test_poster_lane_is_governed_terminal_asset():
     assert lane["allows_rendered_text"] is True
     assert lane["default_contains_rendered_text"] is True
     assert lane["default_approved_for_poster"] is True
-    # A poster is NOT a clean video-support frame and carries no engine slots/modes.
     assert lane["default_approved_for_video_support"] is False
-    assert lane["default_allowed_modes"] == []
+    # allowed_modes MUST be a non-empty IMG-only list (NOT []) so the poster fails
+    # the mode gate for F2V/I2V — empty lists are wildcard/permissive downstream.
+    assert lane["default_allowed_modes"] == ["IMG"]
+    assert "F2V" not in lane["default_allowed_modes"]
+    assert "I2V" not in lane["default_allowed_modes"]
     assert lane["default_engine_slot_eligibility"] == []
+
+
+def test_product_only_hero_is_not_an_f2v_frame():
+    # A saved PRODUCT_REFERENCE asset is not a valid F2V start/end frame (the F2V
+    # resolver accepts only COMPOSITE_FRAME_REFERENCE), so the lane must not
+    # advertise F2V / start_frame eligibility.
+    lane = get_img_asset_lane("PRODUCT_ONLY_HERO")
+    assert lane["default_semantic_role"] == "PRODUCT_REFERENCE"
+    assert "F2V" not in lane["default_allowed_modes"]
+    assert "start_frame" not in lane["default_engine_slot_eligibility"]
+    assert "end_frame" not in lane["default_engine_slot_eligibility"]
 
 
 def test_composite_lanes_are_clean_f2v_frames():

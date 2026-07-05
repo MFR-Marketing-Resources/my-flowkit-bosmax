@@ -28,7 +28,9 @@ export interface ImgAssetLaneListResponse {
 }
 
 export interface ImgProviderStatus {
-	provider_state: "RUNTIME_PROVEN" | "NOT_CONFIGURED";
+	provider_state:
+		| "SAVE_TO_LIBRARY_READY_GENERATION_RUNTIME_EXTERNAL"
+		| "NOT_CONFIGURED";
 	detail: string;
 	generation_endpoint?: string | null;
 }

@@ -118,8 +118,13 @@ IMG_ASSET_LANES: dict[str, dict[str, Any]] = {
         "requires_style_reference": False,
         "default_semantic_role": "PRODUCT_REFERENCE",
         "default_asset_subtype": "PRODUCT_HERO",
-        "default_allowed_modes": ["I2V", "F2V", "IMG"],
-        "default_engine_slot_eligibility": ["subject", "scene", "start_frame"],
+        # I2V product-reference only. A saved PRODUCT_REFERENCE creative asset is
+        # NOT a valid F2V frame (the F2V resolver accepts only
+        # COMPOSITE_FRAME_REFERENCE start/end frames), so this lane must not
+        # advertise F2V / start_frame eligibility. The F2V start frame from the
+        # product IMAGE is a separate path (approved_product_package_service).
+        "default_allowed_modes": ["I2V", "IMG"],
+        "default_engine_slot_eligibility": ["subject", "scene"],
         "allows_rendered_text": False,
         "default_contains_rendered_text": False,
         "default_approved_for_video_support": True,
@@ -141,7 +146,12 @@ IMG_ASSET_LANES: dict[str, dict[str, Any]] = {
         "requires_style_reference": False,
         "default_semantic_role": "COMPOSITE_FRAME_REFERENCE",
         "default_asset_subtype": "POSTER_AD",
-        "default_allowed_modes": [],
+        # Terminal IMG asset. allowed_modes is explicitly ["IMG"] (NOT []) because
+        # empty lists are treated as wildcard/permissive by the shared list +
+        # validate gates — a poster must FAIL the mode gate for F2V/I2V, not slip
+        # through it. This is the primary defense; rendered-text exclusion is the
+        # second layer.
+        "default_allowed_modes": ["IMG"],
         "default_engine_slot_eligibility": [],
         "allows_rendered_text": True,
         "default_contains_rendered_text": True,

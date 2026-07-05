@@ -72,11 +72,20 @@ class SaveImgOutputRequest(BaseModel):
     identity_lock_status: str | None = None
     scale_truth_status: str | None = None
     claim_safety_status: str | None = None
-    review_status: CreativeAssetReviewStatus = "APPROVED"
+    # Governance: a saved asset defaults to PENDING_REVIEW. Marking it APPROVED
+    # requires the operator to also supply non-UNVERIFIED truth/safety statuses
+    # (enforced in the service) so an asset can never be silently APPROVED while
+    # its identity/scale/claim gates stay UNVERIFIED.
+    review_status: CreativeAssetReviewStatus = "PENDING_REVIEW"
 
 
 class ImgProviderStatusResponse(BaseModel):
-    provider_state: Literal["RUNTIME_PROVEN", "NOT_CONFIGURED"]
+    # Honest boundary reporting. This PR ships + tests save-to-library only; the
+    # image GENERATION runtime is external and is NOT re-proven in this PR.
+    provider_state: Literal[
+        "SAVE_TO_LIBRARY_READY_GENERATION_RUNTIME_EXTERNAL",
+        "NOT_CONFIGURED",
+    ]
     detail: str
     generation_endpoint: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
