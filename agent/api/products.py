@@ -569,6 +569,31 @@ def _matches_catalog_source_lane(
     return (product.get("source_lane") or product.get("source") or "").upper() == requested_source_lane
 
 
+_SEARCH_ALIAS_PATH = BASE_DIR / "agent" / "authority" / "PRODUCT_SEARCH_ALIASES.json"
+_SEARCH_ALIAS_CACHE: dict[str, list[str]] | None = None
+
+
+def _load_search_aliases() -> dict[str, list[str]]:
+    """Search-only synonym index: canonical ``raw_product_title`` (lowercased)
+    -> extra search terms. Read once and cached. These aliases widen catalog
+    search matching ONLY; they are never used for display, product identity,
+    claim-safe copy, or prompt compilation."""
+    global _SEARCH_ALIAS_CACHE
+    if _SEARCH_ALIAS_CACHE is None:
+        aliases: dict[str, list[str]] = {}
+        try:
+            raw = json.loads(_SEARCH_ALIAS_PATH.read_text(encoding="utf-8"))
+            for title, terms in (raw.get("aliases") or {}).items():
+                if isinstance(terms, list):
+                    aliases[str(title).strip().lower()] = [
+                        str(term).lower() for term in terms
+                    ]
+        except (OSError, ValueError):
+            aliases = {}
+        _SEARCH_ALIAS_CACHE = aliases
+    return _SEARCH_ALIAS_CACHE
+
+
 def _matches_catalog_query(product: dict[str, Any], query: str | None) -> bool:
     if not query:
         return True
@@ -582,6 +607,11 @@ def _matches_catalog_query(product: dict[str, Any], query: str | None) -> bool:
         product.get("source_lane"),
         product.get("source_label"),
     ]
+    # Search-only synonyms (e.g. the "serum" marketing alias for the BOSMAX
+    # HERBS 5ML roll-on) so a canonical row is findable by names that do not
+    # appear in its identity fields. Display/identity are unchanged.
+    title_key = str(product.get("raw_product_title") or "").strip().lower()
+    haystacks.extend(_load_search_aliases().get(title_key, []))
     return any(needle in str(value or "").lower() for value in haystacks)
 
 

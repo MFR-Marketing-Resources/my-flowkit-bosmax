@@ -92,6 +92,7 @@ domains:
       - agent/authority/BOSMAX_CUSTOM_INSTRUCTION.txt
       - agent/authority/COPYWRITING_FRAMEWORK_UNIVERSAL.yaml
       - agent/authority/UNIVERSAL_PRODUCT_SCHEMA.json
+      - agent/authority/PRODUCT_SEARCH_ALIASES.json
       - agent/authority/VIDEO_PROMPT_COMPILER_TEMPLATES.yaml
       - agent/authority/wps_blocking_authority.json
       - tests/unit/test_canonical_prompt_compiler.py

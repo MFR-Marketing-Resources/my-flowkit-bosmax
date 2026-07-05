@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.api.products import _filter_products_for_catalog
+from agent.api.products import _filter_products_for_catalog, _matches_catalog_query
 from agent.services import approved_product_package_service as svc
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -186,6 +186,34 @@ def test_search_filter_matches_target_terms(term: str):
     )
 
     assert result, f"no product matched search term {term!r}"
+
+
+# ── Search-only alias index — marketing synonyms find canonical rows ─────────
+
+
+@pytest.mark.parametrize("term", ["serum", "bosmax serum", "herbal oil roll on"])
+def test_search_alias_finds_bosmax_serum_row(term: str):
+    """The BOSMAX HERBS 5ML roll-on (raw title "Bosmax Herbs 5 ML") carries no
+    "serum" token in its identity fields, but the search-only alias index makes
+    it findable by the marketing name the operator actually types."""
+    product = _canonical("Bosmax Herbs 5 ML")
+    assert _matches_catalog_query(product, term) is True
+
+
+def test_search_alias_does_not_leak_to_unrelated_products():
+    """The alias index must only widen the row it is keyed to — an unrelated
+    product without "serum" in its own fields must not match "serum"."""
+    unrelated = _canonical("Sumikko Baby Diaper Pants", source="FASTMOSS")
+    assert _matches_catalog_query(unrelated, "serum") is False
+
+
+def test_search_alias_does_not_affect_identity_fields():
+    """Guardrail: aliases are search-only. The identity fields the prompt
+    compiler reads (display_name / short_name / raw_product_title) are never
+    mutated by the alias index."""
+    product = _canonical("Bosmax Herbs 5 ML")
+    assert product["product_display_name"] == "Bosmax Herbs 5 ML"
+    assert product["product_short_name"] == "Bosmax Herbs 5 ML"
 
 
 # ── Discoverability wiring — selector must use server-side search ────────────

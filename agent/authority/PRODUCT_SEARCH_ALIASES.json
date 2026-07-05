@@ -1,0 +1,12 @@
+{
+  "_comment": "Search-only synonym index for the product catalog. Keys are the canonical raw_product_title (matched case-insensitively). Values are extra terms that widen /api/products and /api/products/search matching ONLY. These terms are NEVER used for display, product identity, claim-safe copy, or prompt compilation — they exist purely so a marketing alias finds its canonical row. Extend this map to give any canonical product additional searchable synonyms.",
+  "aliases": {
+    "Bosmax Herbs 5 ML": [
+      "bosmax serum",
+      "serum",
+      "serum 5ml",
+      "herbal oil roll on",
+      "bosmax herbs herbal oil roll on"
+    ]
+  }
+}
