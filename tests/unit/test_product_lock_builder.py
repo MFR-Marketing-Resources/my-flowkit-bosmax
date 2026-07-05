@@ -221,6 +221,84 @@ def test_t2v_has_no_reference_lock_but_strong_text_scale_lock():
     assert "product scale lock" in _s2(MW25, "T2V")
 
 
+# ── 4b. Product-reference SCALE authority (global reference-scale incident) ─────
+# Root incident: live Flow still rendered MWTCB oversized after text scale_lock.
+# The shared reference lock must bind the uploaded reference as hard SCALE truth
+# (product-to-hand relationship, cap/body ratio, label placement, anti-upscale,
+# anti-forced-perspective), globally for every product — not just identity.
+
+_REF_SCALE_PHRASES = [
+    "hard visual",
+    "physical-scale truth",
+    "not mood or style inspiration",
+    "cap-to-body ratio",
+    "label placement",
+    "product-to-hand",
+    "product-to-finger",
+    "true small real-world size",
+    "do not enlarge the product for label readability",
+    "hero framing",
+    "forced-perspective overscale",
+    "closer to the camera lens",
+]
+
+
+@pytest.mark.parametrize("product", [MW25, BOS5, BOS10])
+def test_product_reference_lock_binds_scale_hand_fit_and_anti_forced_perspective(product):
+    ref = plb.build_product_lock(
+        product, is_video=True, has_product_reference=True,
+    )["reference_lock"].lower()
+    for phrase in _REF_SCALE_PHRASES:
+        assert phrase in ref, f"[{product['id']}] reference lock missing scale-authority phrase: {phrase}"
+    # never a numeric physical dimension
+    for numeric in ["cm", "mm", "inch"]:
+        assert numeric not in ref, f"numeric dimension leaked into reference lock: {numeric}"
+
+
+def test_no_reference_lock_when_no_product_image():
+    # No image → no reference lock at all (must not claim an uploaded reference exists).
+    assert plb.build_product_lock(MW25, is_video=True, has_product_reference=False)["reference_lock"] == ""
+
+
+@pytest.mark.parametrize("product", [MW25, BOS5, BOS10])
+@pytest.mark.parametrize("mode", REFERENCE_MODES)
+def test_image_modes_carry_reference_scale_authority_in_section3(product, mode):
+    """HYBRID / FRAMES / INGREDIENTS compiled SECTION 3 carries reference-scale
+    authority (hand-fit + anti-forced-perspective), globally for every product."""
+    s3 = _s3(product, mode)
+    assert "product reference lock" in s3
+    assert "product-to-hand" in s3
+    assert "forced-perspective overscale" in s3
+    assert "closer to the camera lens" in s3
+
+
+def test_img_with_product_reference_carries_scale_authority():
+    s3 = cpc.compile_prompt_set(
+        source_mode="IMAGES", product=MW25, copy=COPY,
+        asset_role_map={"PRODUCT_REFERENCE": True},
+    )["blocks"][0]["sections"]["SECTION 3 - CONTINUITY & STATE LOCK"].lower()
+    assert "product reference lock" in s3
+    assert "product-to-hand" in s3 and "forced-perspective overscale" in s3
+
+
+def test_img_without_product_image_has_no_reference_scale_claim():
+    # IMG with no product image → falls back to schema scale lock, no reference claim.
+    s3 = _s3(MW25, "IMAGES")
+    s2 = _s2(MW25, "IMAGES")
+    assert "product reference lock" not in s3
+    assert "product scale lock" in s2  # schema fallback still present
+
+
+def test_mwtcb_reference_scale_regression_across_image_modes():
+    """MWTCB regression: with a product reference, every image-assisted mode binds
+    bottle-to-hand scale + cap/body ratio + anti-forced-perspective; no numeric dim."""
+    for mode in ["HYBRID", "FRAMES", "INGREDIENTS"]:
+        s3 = _s3(MW25, mode)
+        for phrase in ["product-to-hand", "cap-to-body ratio", "label placement",
+                       "forced-perspective overscale", "closer to the camera lens"]:
+            assert phrase in s3, f"[{mode}] MWTCB reference-scale missing: {phrase}"
+
+
 # ── 5. Regression: fallback + graceful degrade ─────────────────────────────────
 
 def test_unlisted_product_still_gets_strong_lock_via_fallback():
