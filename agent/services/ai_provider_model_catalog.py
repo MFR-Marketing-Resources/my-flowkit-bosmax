@@ -202,11 +202,61 @@ def _write_catalog(payload: dict[str, Any]) -> None:
     AI_MODEL_CATALOG_FILE.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _merge_seed_lanes(existing_lanes: Any, seed_lanes: list[str]) -> list[str]:
+    """Union of existing + seed lanes in canonical LANES order. Only ADDS missing
+    seed lanes; never removes a lane the operator already has."""
+    combined = set(_normalize_lanes(existing_lanes)) | set(seed_lanes)
+    return [lane for lane in LANES if lane in combined]
+
+
+def _forward_merge_seed_models(provider_id: str, entry: dict[str, Any]) -> bool:
+    """Non-destructive forward migration for a KNOWN seed provider already present
+    in the local catalog. Mutates `entry` in place and returns True if anything
+    changed.
+
+    Rules (see MULTI_PROVIDER_VISION_LANE_ADAPTERS_V1 / this hotfix):
+    - ADD any seed model missing from the local provider (new capabilities such as
+      qwen-vl-max reach existing installs without a manual reset).
+    - For an existing model whose model_id matches a current seed model, MERGE any
+      missing seed lanes (e.g. gpt-4o / gemini-2.0-flash gain `vision`). Union only —
+      existing lanes are never dropped.
+    - PRESERVE everything operator-owned: custom models (non-seed ids) are untouched,
+      and existing `enabled` / `label` / `source` are never overwritten. A disabled
+      seed model stays disabled.
+    """
+    seed = SEED_CATALOG.get(provider_id)
+    if not seed:
+        return False
+    seed_model_ids = {str(m["model_id"]) for m in seed["models"]}
+    existing_by_id = {m["model_id"]: m for m in entry["models"]}
+    changed = False
+    for seed_raw in seed["models"]:
+        seed_model = _seed_model(seed_raw)
+        sid = seed_model["model_id"]
+        existing = existing_by_id.get(sid)
+        if existing is None:
+            # New seed model — add it (enabled, source seed). Lane stays NOT_CONFIGURED
+            # until the operator explicitly selects it; adding a model auto-selects nothing.
+            entry["models"].append(seed_model)
+            existing_by_id[sid] = seed_model
+            changed = True
+            continue
+        # Existing model with a seed id: merge missing seed lanes only. Custom models
+        # (ids not in seed_model_ids) are never reached here, so they stay operator-owned.
+        if sid in seed_model_ids:
+            merged = _merge_seed_lanes(existing.get("lanes"), seed_model["lanes"])
+            if merged != _normalize_lanes(existing.get("lanes")):
+                existing["lanes"] = merged
+                changed = True
+    return changed
+
+
 def _load_catalog() -> dict[str, Any]:
     """Load the mutable catalog, seeding on first run. Non-destructive forward
-    merge: seed providers missing from the file are ADDED (never overwriting
-    operator-edited providers/models). Only (re)writes the file when it is
-    absent/corrupt/extended."""
+    merge: seed providers missing from the file are ADDED, and for seed providers
+    already present, missing seed MODELS are added and missing seed LANES are merged
+    into existing seed models (never overwriting custom models or operator-disabled
+    state). Only (re)writes the file when something actually changed."""
     _ensure_dir()
     seed = seed_catalog_payload()
     if not AI_MODEL_CATALOG_FILE.exists():
@@ -231,8 +281,16 @@ def _load_catalog() -> dict[str, Any]:
             providers[pid] = _seed_provider(pid)
             added_seed = True
 
+    # Forward-migrate seed providers already present (pre-#210 catalogs lack the new
+    # vision seed models / lanes). Non-destructive: adds missing seed models, merges
+    # missing seed lanes into existing seed models, preserves everything else.
+    migrated = False
+    for pid in SEED_PROVIDER_IDS:
+        if pid in raw_providers and _forward_merge_seed_models(pid, providers[pid]):
+            migrated = True
+
     payload = {"version": AI_MODEL_CATALOG_VERSION, "providers": providers}
-    if added_seed:
+    if added_seed or migrated:
         _write_catalog(payload)
     return payload
 

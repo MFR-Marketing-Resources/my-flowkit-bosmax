@@ -100,6 +100,23 @@ The Vision Lane is confined to image understanding. The deterministic canonical
 prompt compiler and the final prompt path are untouched and unaware of provider
 selection.
 
+## Forward migration for existing installs
+
+Catalogs seeded before this feature (OpenAI/Gemini models `text_assist`-only, no
+`qwen-vl-max`) are **forward-migrated automatically** on load by
+`_load_catalog()` — no manual "Reset models to seed" required. The merge is
+non-destructive:
+
+- Missing seed models are **added** (e.g. `qwen-vl-max`).
+- Missing seed lanes are **merged** into existing seed models by `model_id`
+  (e.g. `gpt-4o`, `gemini-2.0-flash` gain `vision`) — union only, never removing a
+  lane the operator already has.
+- **Preserved untouched:** custom models (non-seed ids), operator-disabled state
+  (a disabled model stays disabled and is not offered for any lane), labels, and
+  `source`. Lanes stay `NOT_CONFIGURED` — migration never auto-selects a
+  provider/model. The file is rewritten only when something actually changed
+  (idempotent), and `reset_seed_catalog()` still performs a full reset.
+
 ## Known limitations
 
 - **DeepSeek** ships no vision model and is intentionally not vision-eligible.

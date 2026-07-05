@@ -168,6 +168,40 @@ def _fresh_registry_shape_ok(body: dict) -> None:
         assert isinstance(lane.get("status"), str) and lane["status"]
 
 
+def test_registry_after_old_catalog_exposes_multi_provider_vision(monkeypatch, tmp_path):
+    import json
+
+    # A pre-#210 local catalog: openai/gemini text_assist only, no qwen-vl-max.
+    old_catalog = {
+        "version": 1,
+        "providers": {
+            "anthropic": {"label": "Anthropic", "transport": "anthropic_messages", "enabled": True,
+                          "models": [{"model_id": "claude-sonnet-5", "label": "Claude Sonnet 5", "enabled": True, "lanes": ["text_assist", "vision"], "source": "seed"}]},
+            "openai": {"label": "OpenAI", "transport": "openai_compatible_chat", "enabled": True,
+                       "models": [{"model_id": "gpt-4o", "label": "GPT-4o", "enabled": True, "lanes": ["text_assist"], "source": "seed"}]},
+            "gemini": {"label": "Gemini", "transport": "openai_compatible_chat", "enabled": True,
+                       "models": [{"model_id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash", "enabled": True, "lanes": ["text_assist"], "source": "seed"}]},
+            "qwen": {"label": "Qwen", "transport": "openai_compatible_chat", "enabled": True,
+                     "models": [{"model_id": "qwen-plus", "label": "Qwen Plus", "enabled": True, "lanes": ["text_assist"], "source": "seed"}]},
+            "deepseek": {"label": "DeepSeek", "transport": "openai_compatible_chat", "enabled": True,
+                         "models": [{"model_id": "deepseek-chat", "label": "DeepSeek Chat", "enabled": True, "lanes": ["text_assist"], "source": "seed"}]},
+        },
+    }
+    (tmp_path / "ai-model-catalog.json").write_text(json.dumps(old_catalog), encoding="utf-8")
+
+    client = _client(monkeypatch, tmp_path)
+    body = client.get("/api/ai-providers").json()
+    providers = {p["provider_id"]: p for p in body["providers"]}
+    for pid in ("anthropic", "openai", "gemini", "qwen"):
+        assert "vision" in providers[pid]["supported_lanes"], pid
+    assert "vision" not in providers["deepseek"]["supported_lanes"]
+    # Forward-migrated new seed model reaches an existing install.
+    qwen_models = {m["model_id"] for m in body["model_catalog"]["qwen"]["models"]}
+    assert "qwen-vl-max" in qwen_models
+    # Lanes remain NOT_CONFIGURED — migration never auto-selects.
+    assert _lane(body, "vision")["status"] == "NOT_CONFIGURED"
+
+
 def test_vision_lane_supports_multiple_providers(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     body = client.get("/api/ai-providers").json()
