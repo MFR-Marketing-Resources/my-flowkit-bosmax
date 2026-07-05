@@ -65,12 +65,58 @@ def test_cockpit_generate_is_gated_and_honestly_labeled():
     assert "startImgGeneration" in page
 
 
-def test_cockpit_approval_mirrors_backend_truth_gate():
+def test_cockpit_approval_requires_all_pass():
     page = _read("dashboard/src/pages/ImgCockpitPage.tsx")
-    # Approve is blocked while truth statuses are UNVERIFIED (mirrors the backend
-    # APPROVAL_REQUIRES_TRUTH_REVIEW gate).
+    # Approve requires ALL truth statuses to PASS via canApprove (mirrors the backend
+    # APPROVAL_REQUIRES_ALL_TRUTH_PASS gate) — not merely "not UNVERIFIED".
     assert "approvalBlocked" in page
-    assert "APPROVAL_REQUIRES_TRUTH_REVIEW" in page
+    assert "canApprove" in page
+    assert "APPROVAL_REQUIRES_ALL_TRUTH_PASS" in page
+
+
+def test_cockpit_generate_sends_selected_refs():
+    page = _read("dashboard/src/pages/ImgCockpitPage.tsx")
+    # Selected references are resolved into image_media_ids and actually sent to
+    # generation — not ignored.
+    assert "resolveGenerationInputs" in page
+    assert "image_media_ids: genResolution.mediaIds" in page
+    # Generate is blocked when the lane's required visual truth cannot resolve.
+    assert "genResolution.blocked" in page
+    assert "Generate payload preview" in page
+
+
+def test_cockpit_pickers_are_approved_only():
+    page = _read("dashboard/src/pages/ImgCockpitPage.tsx")
+    # Reuse safety: only APPROVED references feed generation/lineage.
+    assert "isReusableAsset" in page
+    assert "approvedCharacters" in page
+    assert "approvedScenes" in page
+    assert "approvedStyles" in page
+
+
+def test_cockpit_rejected_is_archived():
+    page = _read("dashboard/src/pages/ImgCockpitPage.tsx")
+    # A REJECTED output is archived via the real endpoint so it cannot be reused.
+    assert "archiveCreativeAsset(asset.asset_id)" in page
+    assert 'reviewDecision === "REJECTED"' in page
+
+
+def test_img_cockpit_logic_helpers_encode_the_gates():
+    logic = _read("dashboard/src/pages/imgCockpitLogic.ts")
+    assert "export function canApprove" in logic
+    assert "export function resolveGenerationInputs" in logic
+    assert "export function isReusableAsset" in logic
+    # canApprove requires every status === "PASS".
+    assert 'statuses.identity === "PASS"' in logic
+    assert 'statuses.scale === "PASS"' in logic
+    assert 'statuses.claim === "PASS"' in logic
+    # reusable requires APPROVED + ACTIVE.
+    assert 'asset.review_status === "APPROVED"' in logic
+    assert 'asset.status === "ACTIVE"' in logic
+    # resolveGenerationInputs blocks a product-truth lane with no resolvable media.
+    assert "lane?.requires_product_id" in logic
+    assert "blocked = true" in logic
+    assert "mediaId" in logic
 
 
 def test_img_factory_client_wires_gated_generation():

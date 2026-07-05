@@ -92,6 +92,7 @@ async def resolve_f2v_frame_sources(
             allowed_mode="F2V",
             engine_slot="start_frame",
             disallow_rendered_text=True,
+            require_approved=True,
         )
         if not validation.valid or validation.asset is None:
             blockers.extend([f"START_FRAME_{item}" for item in validation.blockers])
@@ -114,6 +115,7 @@ async def resolve_f2v_frame_sources(
             allowed_mode="F2V",
             engine_slot="end_frame",
             disallow_rendered_text=True,
+            require_approved=True,
         )
         if not validation.valid or validation.asset is None:
             blockers.extend([f"END_FRAME_{item}" for item in validation.blockers])

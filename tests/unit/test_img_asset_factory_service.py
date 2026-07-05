@@ -388,12 +388,12 @@ def test_save_rejects_invalid_lineage_assets(tmp_path, monkeypatch):
     _run_db(scenario)
 
 
-def test_save_approved_requires_truth_review(tmp_path, monkeypatch):
+def test_save_approved_requires_all_truth_pass(tmp_path, monkeypatch):
     monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
 
     async def scenario():
-        # APPROVED while truth/safety statuses are UNVERIFIED must fail closed.
-        with pytest.raises(ValueError, match="APPROVAL_REQUIRES_TRUTH_REVIEW"):
+        # APPROVED with any UNVERIFIED status must fail closed.
+        with pytest.raises(ValueError, match="APPROVAL_REQUIRES_ALL_TRUTH_PASS"):
             await save_img_output_to_library(
                 SaveImgOutputRequest(
                     lane_id="AVATAR_REFERENCE",
@@ -403,22 +403,88 @@ def test_save_approved_requires_truth_review(tmp_path, monkeypatch):
                 )
             )
 
-        # APPROVED with explicit truth statuses succeeds and persists them.
+        # APPROVED with a FAIL status must ALSO fail closed (not only UNVERIFIED).
+        with pytest.raises(ValueError, match="APPROVAL_REQUIRES_ALL_TRUTH_PASS"):
+            await save_img_output_to_library(
+                SaveImgOutputRequest(
+                    lane_id="AVATAR_REFERENCE",
+                    display_name="x",
+                    image_base64="aGVsbG8=",
+                    review_status="APPROVED",
+                    identity_lock_status="PASS",
+                    scale_truth_status="FAIL",
+                    claim_safety_status="PASS",
+                )
+            )
+
+        # APPROVED only when EVERY truth gate PASSes.
         rec = await save_img_output_to_library(
             SaveImgOutputRequest(
                 lane_id="AVATAR_REFERENCE",
                 display_name="Reviewed",
                 image_base64="aGVsbG8=",
                 review_status="APPROVED",
-                identity_lock_status="LOCKED",
-                scale_truth_status="PRESERVED",
-                claim_safety_status="SAFE",
+                identity_lock_status="PASS",
+                scale_truth_status="PASS",
+                claim_safety_status="PASS",
             )
         )
         assert rec.review_status == "APPROVED"
-        assert rec.identity_lock_status == "LOCKED"
-        assert rec.scale_truth_status == "PRESERVED"
-        assert rec.claim_safety_status == "SAFE"
+        assert rec.identity_lock_status == "PASS"
+        assert rec.scale_truth_status == "PASS"
+        assert rec.claim_safety_status == "PASS"
+
+    _run_db(scenario)
+
+
+def test_only_approved_assets_are_reusable(tmp_path, monkeypatch):
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        # PENDING_REVIEW (default) avatar: selectable WITHOUT the approval gate,
+        # blocked WITH it.
+        pending = await save_img_output_to_library(
+            SaveImgOutputRequest(
+                lane_id="AVATAR_REFERENCE", display_name="Pending", image_base64="aGVsbG8="
+            )
+        )
+        lax = await validate_selectable_asset(
+            pending.asset_id,
+            semantic_role="CHARACTER_REFERENCE",
+            allowed_mode="I2V",
+            engine_slot="scene",
+        )
+        assert lax.valid is True
+        gated = await validate_selectable_asset(
+            pending.asset_id,
+            semantic_role="CHARACTER_REFERENCE",
+            allowed_mode="I2V",
+            engine_slot="scene",
+            require_approved=True,
+        )
+        assert gated.valid is False
+        assert "NOT_APPROVED_FOR_REUSE" in gated.blockers
+
+        # APPROVED avatar passes the reuse gate.
+        approved = await save_img_output_to_library(
+            SaveImgOutputRequest(
+                lane_id="AVATAR_REFERENCE",
+                display_name="Approved",
+                image_base64="aGVsbG8=",
+                review_status="APPROVED",
+                identity_lock_status="PASS",
+                scale_truth_status="PASS",
+                claim_safety_status="PASS",
+            )
+        )
+        ok = await validate_selectable_asset(
+            approved.asset_id,
+            semantic_role="CHARACTER_REFERENCE",
+            allowed_mode="I2V",
+            engine_slot="scene",
+            require_approved=True,
+        )
+        assert ok.valid is True
 
     _run_db(scenario)
 

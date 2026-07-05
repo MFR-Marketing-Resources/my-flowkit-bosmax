@@ -22,11 +22,23 @@ def test_f2v_composite_picker_added():
     assert "Pick composite START frame" in src
     assert "Pick composite END frame" in src
     # Picker feeds the SAME start/end frame state used by the upload path.
-    assert "setStartAsset(compositeToUploadedAsset(a))" in src
-    assert "setEndAsset(compositeToUploadedAsset(a))" in src
+    assert "setStartAsset(compositeToUploadedAsset(asset))" in src
+    assert "setEndAsset(compositeToUploadedAsset(asset))" in src
     # Only ACTIVE, F2V-eligible composites are surfaced.
     assert 'allowed_mode: "F2V"' in src
     assert 'status: "ACTIVE"' in src
+
+
+def test_f2v_composite_picker_is_approved_only_and_resolver_validated():
+    src = _read("dashboard/src/components/workspace/F2VModule.tsx")
+    # Only APPROVED composites are surfaced (never PENDING/REJECTED).
+    assert 'c.review_status === "APPROVED"' in src
+    # Every selection is validated by the backend F2V resolver before it is applied.
+    assert 'import { resolveF2vFrameSources } from "../../api/imgFactory"' in src
+    assert "handlePickComposite" in src
+    assert "resolveF2vFrameSources(" in src
+    # A rejected selection (blockers) is NOT applied to the frame.
+    assert "response.blockers.some" in src
 
 
 def test_f2v_existing_upload_slots_intact():

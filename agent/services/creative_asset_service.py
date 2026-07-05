@@ -306,6 +306,7 @@ async def validate_selectable_asset(
     allowed_mode: str,
     engine_slot: CreativeAssetEngineSlot,
     disallow_rendered_text: bool = False,
+    require_approved: bool = False,
 ) -> CreativeAssetValidationResult:
     asset = await get_creative_asset(asset_id)
     if not asset:
@@ -325,6 +326,10 @@ async def validate_selectable_asset(
         blockers.append("MODE_NOT_ALLOWED")
     if asset.engine_slot_eligibility and engine_slot not in asset.engine_slot_eligibility:
         blockers.append("ENGINE_SLOT_NOT_ALLOWED")
+    # Reuse safety: a downstream generation (I2V/F2V) may only consume an asset that
+    # has passed operator review. PENDING_REVIEW / REJECTED / DRAFT are NOT reusable.
+    if require_approved and asset.review_status != "APPROVED":
+        blockers.append("NOT_APPROVED_FOR_REUSE")
     # Poster exclusion: a rendered-text asset (poster ad) must not become a clean
     # video-support frame unless it was explicitly approved for video support.
     if (

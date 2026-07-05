@@ -91,6 +91,7 @@ domains:
       - dashboard/src/api/imgFactory.ts
       - dashboard/src/components/creative-library/SaveToCreativeLibraryPanel.tsx
       - dashboard/src/pages/ImgCockpitPage.tsx
+      - dashboard/src/pages/imgCockpitLogic.ts
       - agent/services/prompt_compiler_runtime_config_service.py
       - agent/services/canonical_prompt_compiler.py
       - agent/services/product_lock_builder.py

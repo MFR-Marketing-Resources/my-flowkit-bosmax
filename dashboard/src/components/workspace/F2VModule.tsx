@@ -2,6 +2,7 @@ import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { handleAssetUpload } from "../../api/assets";
 import { fetchCreativeAssets } from "../../api/creativeAssets";
+import { resolveF2vFrameSources } from "../../api/imgFactory";
 import type {
 	CreativeAsset,
 	Orientation,
@@ -263,9 +264,44 @@ export default function F2VModule({
 			allowed_mode: "F2V",
 			limit: 100,
 		})
-			.then((r) => setCompositeAssets(r.items))
+			// Only APPROVED composites are reusable — never surface PENDING/REJECTED.
+			.then((r) =>
+				setCompositeAssets(
+					r.items.filter((c) => c.review_status === "APPROVED"),
+				),
+			)
 			.catch(() => {});
 	}, []);
+
+	// Every composite selection is validated by the backend F2V resolver, which
+	// enforces role + ACTIVE + F2V + APPROVED + rendered-text/poster exclusion. A
+	// rejected selection is NOT applied to the frame.
+	const handlePickComposite = async (assetId: string, slot: "start" | "end") => {
+		if (!assetId) return;
+		const asset = compositeAssets.find((c) => c.asset_id === assetId);
+		if (!asset) return;
+		try {
+			const response = await resolveF2vFrameSources(
+				slot === "start"
+					? { start_frame_asset_id: assetId }
+					: {
+							end_frame_asset_id: assetId,
+							start_frame_manual_upload_present: true,
+						},
+			);
+			const prefix = slot === "start" ? "START_FRAME_" : "END_FRAME_";
+			if (response.blockers.some((b) => b.startsWith(prefix))) {
+				alert(
+					`Composite ${slot} frame rejected by the F2V resolver: ${response.blockers.join(", ")}`,
+				);
+				return;
+			}
+			if (slot === "start") setStartAsset(compositeToUploadedAsset(asset));
+			else setEndAsset(compositeToUploadedAsset(asset));
+		} catch {
+			alert("Failed to validate the composite frame via the F2V resolver.");
+		}
+	};
 
 	// Re-normalize once the SSOT registry arrives — a package may hydrate first, so an
 	// unknown/retired model would otherwise stay ghosted and 422 on execute (patch I3b).
@@ -419,17 +455,14 @@ export default function F2VModule({
 						<div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 							<select
 								value=""
-								onChange={(e) => {
-									const a = compositeAssets.find(
-										(c) => c.asset_id === e.target.value,
-									);
-									if (a) setStartAsset(compositeToUploadedAsset(a));
-								}}
+								onChange={(e) =>
+									void handlePickComposite(e.target.value, "start")
+								}
 								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
 							>
 								<option value="">
 									{compositeAssets.length === 0
-										? "No composite frames in Library"
+										? "No approved composite frames in Library"
 										: "Pick composite START frame…"}
 								</option>
 								{compositeAssets.map((c) => (
@@ -440,17 +473,14 @@ export default function F2VModule({
 							</select>
 							<select
 								value=""
-								onChange={(e) => {
-									const a = compositeAssets.find(
-										(c) => c.asset_id === e.target.value,
-									);
-									if (a) setEndAsset(compositeToUploadedAsset(a));
-								}}
+								onChange={(e) =>
+									void handlePickComposite(e.target.value, "end")
+								}
 								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
 							>
 								<option value="">
 									{compositeAssets.length === 0
-										? "No composite frames in Library"
+										? "No approved composite frames in Library"
 										: "Pick composite END frame…"}
 								</option>
 								{compositeAssets.map((c) => (

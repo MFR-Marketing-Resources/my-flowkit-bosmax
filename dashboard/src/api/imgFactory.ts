@@ -138,3 +138,47 @@ export async function fetchImageArtifacts(limit = 50): Promise<ImageArtifact[]> 
 	);
 	return response.artifacts ?? [];
 }
+
+// ── F2V composite-frame resolver (safe validation gate) ───────────────────────
+
+export interface F2vResolvedFrame {
+	slot_key: string;
+	source_kind: string;
+	asset_id?: string | null;
+	display_name?: string | null;
+	preview_url?: string | null;
+	download_url?: string | null;
+	media_id?: string | null;
+	local_file_path?: string | null;
+	asset_fingerprint?: string | null;
+}
+
+export interface F2vFrameSourcesResponse {
+	mode: string;
+	start_frame: F2vResolvedFrame | null;
+	end_frame: F2vResolvedFrame | null;
+	resolved_frames: F2vResolvedFrame[];
+	warnings: string[];
+	blockers: string[];
+}
+
+export interface F2vFrameSourcesInput {
+	product_id?: string | null;
+	start_frame_asset_id?: string | null;
+	end_frame_asset_id?: string | null;
+	start_frame_manual_upload_present?: boolean;
+}
+
+/**
+ * Validate/resolve F2V start/end frame selections through the backend resolver.
+ * The resolver enforces COMPOSITE_FRAME_REFERENCE role + ACTIVE + F2V + APPROVED +
+ * poster (rendered-text) exclusion — so a picker must gate selections through here.
+ */
+export async function resolveF2vFrameSources(
+	input: F2vFrameSourcesInput,
+): Promise<F2vFrameSourcesResponse> {
+	return postAPI<F2vFrameSourcesResponse>(
+		"/api/img-factory/f2v-frame-sources",
+		input,
+	);
+}

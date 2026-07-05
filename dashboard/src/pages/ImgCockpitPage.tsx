@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchCreativeAssets, updateCreativeAsset } from "../api/creativeAssets";
+import {
+	archiveCreativeAsset,
+	fetchCreativeAssets,
+} from "../api/creativeAssets";
 import {
 	type ImageArtifact,
 	type ImgAssetLane,
@@ -14,6 +17,11 @@ import {
 import { compileWorkspacePromptPreview } from "../api/workspacePackages";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { CreativeAsset, Product } from "../types";
+import {
+	canApprove,
+	isReusableAsset,
+	resolveGenerationInputs,
+} from "./imgCockpitLogic";
 
 // Honesty labels — surfaced verbatim in the Generate step. Live generation is
 // credit-spending / live Google Flow and is NOT fired or verified in the build
@@ -153,12 +161,52 @@ export default function ImgCockpitPage() {
 		[lanes, laneId],
 	);
 
+	// Reuse safety: only APPROVED, ACTIVE references may feed generation/lineage.
+	const approvedCharacters = useMemo(
+		() => characterAssets.filter(isReusableAsset),
+		[characterAssets],
+	);
+	const approvedScenes = useMemo(
+		() => sceneAssets.filter(isReusableAsset),
+		[sceneAssets],
+	);
+	const approvedStyles = useMemo(
+		() => styleAssets.filter(isReusableAsset),
+		[styleAssets],
+	);
+	const selectedCharacter = useMemo(
+		() => approvedCharacters.find((a) => a.asset_id === characterAssetId) ?? null,
+		[approvedCharacters, characterAssetId],
+	);
+	const selectedScene = useMemo(
+		() => approvedScenes.find((a) => a.asset_id === sceneAssetId) ?? null,
+		[approvedScenes, sceneAssetId],
+	);
+	const selectedStyle = useMemo(
+		() => approvedStyles.find((a) => a.asset_id === styleAssetId) ?? null,
+		[approvedStyles, styleAssetId],
+	);
+	const genResolution = useMemo(
+		() =>
+			resolveGenerationInputs(lane, {
+				product: selectedProduct,
+				character: selectedCharacter,
+				scene: selectedScene,
+				style: selectedStyle,
+			}),
+		[lane, selectedProduct, selectedCharacter, selectedScene, selectedStyle],
+	);
+
 	const productMissing = Boolean(lane?.requires_product_id && !selectedProduct);
 	const hasRealOutput =
 		outputMode === "artifact" ? Boolean(artifactMediaId) : Boolean(uploadFile);
 	const approvalBlocked =
 		reviewDecision === "APPROVED" &&
-		[identityStatus, scaleStatus, claimStatus].includes("UNVERIFIED");
+		!canApprove({
+			identity: identityStatus,
+			scale: scaleStatus,
+			claim: claimStatus,
+		});
 	const canSave = Boolean(
 		lane && displayName.trim() && hasRealOutput && !productMissing && !approvalBlocked && !saving,
 	);
@@ -189,7 +237,11 @@ export default function ImgCockpitPage() {
 		setGenerating(true);
 		setError(null);
 		try {
-			const { job_id } = await startImgGeneration({ prompt, aspect: "9:16" });
+			const { job_id } = await startImgGeneration({
+				prompt,
+				image_media_ids: genResolution.mediaIds,
+				aspect: "9:16",
+			});
 			const job = await pollImgGenerationJob(job_id);
 			setGenJob(job);
 			if (job.status === "DONE" && job.media_id) {
@@ -232,9 +284,12 @@ export default function ImgCockpitPage() {
 					: { image_base64: await fileToDataUrl(uploadFile as File), file_name: uploadFile?.name };
 			const asset = await saveImgOutputToLibrary({ ...base, ...output });
 
-			// REJECTED assets are archived so they cannot be reused downstream.
+			// A REJECTED output must not be reusable. Archive it immediately via the
+			// real archive endpoint so validate_selectable_asset blocks it
+			// (ASSET_ARCHIVED) — on top of the review_status=APPROVED reuse gate that
+			// already excludes non-approved assets downstream.
 			if (reviewDecision === "REJECTED") {
-				await updateCreativeAsset(asset.asset_id, { review_status: "REJECTED" }).catch(() => {});
+				await archiveCreativeAsset(asset.asset_id);
 			}
 			setSavedAsset(asset);
 		} catch (err) {
@@ -323,11 +378,11 @@ export default function ImgCockpitPage() {
 			{/* 3 — Avatar */}
 			<Section step="3" title="Generate / select avatar (character reference)">
 				<AssetSelect
-					label="Avatar (CHARACTER_REFERENCE)"
-					assets={characterAssets}
+					label="Avatar (CHARACTER_REFERENCE · approved only)"
+					assets={approvedCharacters}
 					value={characterAssetId}
 					onChange={setCharacterAssetId}
-					emptyHint="No avatars in Library — generate one first"
+					emptyHint="No APPROVED avatars in Library — generate + approve one first"
 				/>
 				<button
 					type="button"
@@ -342,18 +397,18 @@ export default function ImgCockpitPage() {
 			<Section step="4" title="Select scene / style references">
 				<div className="grid gap-3 md:grid-cols-2">
 					<AssetSelect
-						label="Scene (SCENE_CONTEXT_REFERENCE)"
-						assets={sceneAssets}
+						label="Scene (SCENE_CONTEXT_REFERENCE · approved only)"
+						assets={approvedScenes}
 						value={sceneAssetId}
 						onChange={setSceneAssetId}
-						emptyHint="No scene references in Library"
+						emptyHint="No APPROVED scene references in Library"
 					/>
 					<AssetSelect
-						label="Style (STYLE_REFERENCE)"
-						assets={styleAssets}
+						label="Style (STYLE_REFERENCE · approved only)"
+						assets={approvedStyles}
 						value={styleAssetId}
 						onChange={setStyleAssetId}
-						emptyHint="No style references in Library"
+						emptyHint="No APPROVED style references in Library"
 					/>
 				</div>
 			</Section>
@@ -385,10 +440,46 @@ export default function ImgCockpitPage() {
 					<strong>never auto-fires</strong>. Build-session status:{" "}
 					<strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.
 				</div>
+				<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+					<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+						Generate payload preview
+					</div>
+					<div className="mt-1">
+						References sent as image_media_ids:{" "}
+						<strong>
+							{genResolution.mediaIds.length > 0
+								? genResolution.mediaIds.join(", ")
+								: "(none — text-only prompt)"}
+						</strong>
+					</div>
+					{genResolution.refs.length > 0 ? (
+						<ul className="mt-1 space-y-0.5">
+							{genResolution.refs.map((r) => (
+								<li key={`${r.role}:${r.label}`}>
+									{r.role}: {r.label} —{" "}
+									{r.mediaId ? (
+										<span className="text-emerald-300">
+											resolved ({r.mediaId})
+										</span>
+									) : (
+										<span className="text-amber-300">
+											unresolved (no media id — not sent)
+										</span>
+									)}
+								</li>
+							))}
+						</ul>
+					) : null}
+					{genResolution.blocked ? (
+						<div className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1 text-red-200">
+							{genResolution.blockReason}
+						</div>
+					) : null}
+				</div>
 				<button
 					type="button"
 					onClick={() => setShowGenConfirm(true)}
-					disabled={!prompt.trim() || generating}
+					disabled={!prompt.trim() || generating || genResolution.blocked}
 					className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-100 disabled:opacity-40"
 				>
 					{generating ? "Generating (live)…" : "Generate (live · spends credits)"}
@@ -491,8 +582,9 @@ export default function ImgCockpitPage() {
 				</div>
 				{approvalBlocked ? (
 					<p className="text-[10px] text-amber-300/80">
-						APPROVED requires Identity / Scale / Claim to be reviewed (not
-						UNVERIFIED) — mirrors the backend APPROVAL_REQUIRES_TRUTH_REVIEW gate.
+						APPROVED requires Identity / Scale / Claim to ALL be PASS (UNVERIFIED
+						or FAIL blocks approval) — mirrors the backend
+						APPROVAL_REQUIRES_ALL_TRUTH_PASS gate.
 					</p>
 				) : null}
 			</Section>
@@ -535,15 +627,17 @@ export default function ImgCockpitPage() {
 			<Section step="10" title="Reuse in I2V / F2V">
 				<div className="text-[11px] text-slate-300 space-y-2">
 					<p>
-						Saved <strong>CHARACTER</strong> / <strong>SCENE</strong> /{" "}
-						<strong>STYLE</strong> references are already selectable in the{" "}
-						<strong>Ingredients (I2V)</strong> module's Creative Library pickers —
-						approved assets flow in automatically by semantic role.
+						Only <strong>APPROVED</strong>, ACTIVE references are reusable. Saved{" "}
+						<strong>CHARACTER</strong> / <strong>SCENE</strong> /{" "}
+						<strong>STYLE</strong> assets become selectable in the{" "}
+						<strong>Ingredients (I2V)</strong> resolver once approved — it rejects{" "}
+						PENDING_REVIEW and REJECTED assets (<code>NOT_APPROVED_FOR_REUSE</code>).
 					</p>
 					<p>
-						Saved <strong>COMPOSITE_FRAME_REFERENCE</strong> assets are selectable
-						as <strong>Frames (F2V)</strong> start / end frames via the composite
-						frame picker; posters (rendered text) and archived assets are excluded.
+						Approved <strong>COMPOSITE_FRAME_REFERENCE</strong> assets are
+						selectable as <strong>Frames (F2V)</strong> start / end frames via the
+						composite frame picker (validated by the backend F2V resolver);
+						posters (rendered text), archived, and non-approved assets are excluded.
 					</p>
 					<div className="flex gap-2">
 						<button
