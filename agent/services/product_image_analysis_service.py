@@ -4,19 +4,20 @@ import base64
 import json
 import logging
 import mimetypes
-import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from agent.config import BASE_DIR, REVIEW_MODEL
+from agent.config import BASE_DIR
 from agent.db import crud
 from agent.models.product_intelligence import (
     ProductImageAnalysisResolveRequest,
     ProductIntelligenceImageAnalysis,
 )
+from agent.services import vision_provider_adapter
 from agent.services.ai_provider_settings_service import (
     get_lane_api_key,
+    get_lane_model,
     get_lane_provider,
     get_provider_api_key,
     is_lane_execution_enabled,
@@ -27,10 +28,6 @@ SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 SEMANTIC_IMAGE_WARNING = "SEMANTIC_IMAGE_ANALYSIS_NOT_AVAILABLE"
 PROVIDER_EXECUTION_DISABLED_WARNING = "PROVIDER_EXECUTION_DISABLED"
 VISION_PROVIDER_EXECUTION_DISABLED_WARNING = "VISION_PROVIDER_EXECUTION_DISABLED"
-PRODUCT_IMAGE_ANALYSIS_MODEL = os.environ.get(
-    "PRODUCT_IMAGE_ANALYSIS_MODEL",
-    REVIEW_MODEL,
-)
 ALLOWED_PACKAGE_CLASSES = {
     "bottle",
     "refill_pouch",
@@ -95,6 +92,16 @@ def _mime_type_for_path(path: Path) -> str:
     if guessed and guessed.startswith("image/"):
         return guessed
     return "image/jpeg"
+
+
+def _resolve_vision_model() -> str | None:
+    """The operator-selected vision lane model is the ONLY source. There is NO
+    hidden fallback: an unconfigured or catalog-invalidated lane model resolves to
+    None so the runtime fails closed before any provider call."""
+    try:
+        return get_lane_model("vision")
+    except Exception:
+        return None
 
 
 def _parse_json_response(raw: str) -> dict[str, Any]:
@@ -178,6 +185,7 @@ def _normalize_text_list(value: Any, *, limit: int = 12) -> list[str]:
 def _normalize_provider_result(
     provider: str,
     parsed: dict[str, Any],
+    model: str,
 ) -> ProductIntelligenceImageAnalysis:
     detected_package = _normalize_text(parsed.get("detected_package"))
     if detected_package not in ALLOWED_PACKAGE_CLASSES:
@@ -202,7 +210,7 @@ def _normalize_provider_result(
         visual_confidence=visual_confidence,
         evidence=[
             f"provider:{provider}",
-            f"provider:model:{PRODUCT_IMAGE_ANALYSIS_MODEL}",
+            f"provider:model:{model}",
         ],
         warnings=warnings,
         provider=provider,
@@ -226,6 +234,10 @@ def _analyze_with_anthropic(
     try:
         import anthropic
 
+        model = _resolve_vision_model()
+        if not model:
+            # No operator-selected vision model — fail closed, never a hidden default.
+            return None
         local_path = _coerce_local_path(_normalize_text(payload.get("local_image_path")))
         image_url = _normalize_text(payload.get("image_url"))
         client = anthropic.Anthropic(api_key=get_lane_api_key("vision"))
@@ -235,24 +247,81 @@ def _analyze_with_anthropic(
             image_url=image_url,
         )
         response = client.messages.create(
-            model=PRODUCT_IMAGE_ANALYSIS_MODEL,
+            model=model,
             max_tokens=400,
             messages=[{"role": "user", "content": content}],
         )
         parsed = _parse_json_response(_extract_response_text(response))
-        return _normalize_provider_result("anthropic", parsed)
+        return _normalize_provider_result("anthropic", parsed, model)
     except Exception as exc:  # fail closed; outer layer maps to ANALYSIS_FAILED
         logger.warning("Anthropic product image analysis failed: %s", exc)
         return None
 
 
-def _configured_provider_name() -> str | None:
-    provider = get_lane_provider("vision")
-    if not provider:
+def _analyze_with_openai_compatible_vision(
+    provider: str,
+    payload: dict[str, Any],
+    metadata: dict[str, Any],
+) -> ProductIntelligenceImageAnalysis | None:
+    """OpenAI-compatible multimodal path (OpenAI / Gemini / Qwen-VL) via the
+    vision provider adapter. Prepares the image as a base64 data URL (local file)
+    or a remote https URL, then normalizes into the stable analysis schema.
+    Fail-closed: any error returns None (outer layer maps to ANALYSIS_FAILED)."""
+    _ = metadata
+    try:
+        model = _resolve_vision_model()
+        api_key = get_lane_api_key("vision")
+        if not api_key or not model:
+            return None
+
+        local_path = _coerce_local_path(_normalize_text(payload.get("local_image_path")))
+        image_url = _normalize_text(payload.get("image_url"))
+        image_data_url: str | None = None
+        image_remote_url: str | None = None
+        if local_path and local_path.exists():
+            mime = _mime_type_for_path(local_path)
+            encoded = base64.b64encode(local_path.read_bytes()).decode("utf-8")
+            image_data_url = f"data:{mime};base64,{encoded}"
+        elif image_url:
+            image_remote_url = image_url
+        else:
+            return None
+
+        raw = vision_provider_adapter.run_vision_completion(
+            provider,
+            model,
+            api_key,
+            prompt_text=_ANTHROPIC_IMAGE_ANALYSIS_PROMPT,
+            title=_normalize_text(payload.get("raw_product_title")),
+            image_data_url=image_data_url,
+            image_remote_url=image_remote_url,
+        )
+        parsed = _parse_json_response(raw)
+        return _normalize_provider_result(provider, parsed, model)
+    except Exception as exc:  # fail closed; outer layer maps to ANALYSIS_FAILED
+        logger.warning("%s product image analysis failed: %s", provider, exc)
         return None
-    if get_lane_api_key("vision"):
-        return provider
+
+
+def _configured_vision_runtime() -> tuple[str, str] | None:
+    """Vision runtime is runnable ONLY with a COMPLETE lane: provider + model +
+    key. Any missing piece → None (fail closed, no hidden default). Execution-
+    enabled is gated separately downstream so the caller can distinguish
+    NOT_CONFIGURED from ANALYSIS_SKIPPED."""
+    provider = get_lane_provider("vision")
+    model = _resolve_vision_model()
+    key = get_lane_api_key("vision")
+    if provider and model and key:
+        return provider, model
     return None
+
+
+def _configured_provider_name() -> str | None:
+    """Configured vision provider — ONLY when provider + model + key are all
+    present. A stale/corrupt lane with a provider+key but no model is NOT
+    configured and must never reach a provider call."""
+    runtime = _configured_vision_runtime()
+    return runtime[0] if runtime else None
 
 
 def _build_reference_payload(source: dict[str, Any]) -> dict[str, Any]:
@@ -271,7 +340,13 @@ def _analyze_with_provider(
 ) -> ProductIntelligenceImageAnalysis | None:
     if provider == "anthropic":
         return _analyze_with_anthropic(payload, metadata)
-    # Tests may monkeypatch this function to simulate future providers.
+    # OpenAI-compatible multimodal providers (openai / gemini / qwen) share ONE
+    # wired transport in vision_provider_adapter. Transport eligibility was already
+    # enforced when the lane was configured (catalog LANE_TRANSPORT_SUPPORT), so a
+    # provider only reaches here when its transport is genuinely implemented.
+    if provider in {"openai", "gemini", "qwen"}:
+        return _analyze_with_openai_compatible_vision(provider, payload, metadata)
+    # Unknown / unwired provider — fail closed, never guess.
     _ = (payload, metadata)
     return None
 

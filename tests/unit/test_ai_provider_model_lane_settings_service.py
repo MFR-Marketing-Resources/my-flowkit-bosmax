@@ -287,6 +287,24 @@ def test_update_lane_settings_rejects_model_not_supporting_lane(state):
     assert "MODEL_NOT_SUPPORTED_FOR_LANE" in str(exc.value)
 
 
+def test_update_vision_lane_gemini_multi_provider(state):
+    # Multi-provider vision: a non-Anthropic provider can own the vision lane.
+    svc.update_provider_key("gemini", "sk-gemini-live-abcdef")
+    summary = svc.update_lane_settings(
+        "vision", "gemini", "gemini-2.0-flash", execution_enabled=True
+    )
+    lane = _lane(summary, "vision")
+    assert lane["provider_id"] == "gemini"
+    assert lane["model_id"] == "gemini-2.0-flash"
+    assert lane["status"] == "READY"
+    assert svc.get_lane_provider("vision") == "gemini"
+    assert svc.get_lane_model("vision") == "gemini-2.0-flash"
+    # No raw key leaks into the summary.
+    import json as _json
+
+    assert "sk-gemini-live-abcdef" not in _json.dumps(summary)
+
+
 def test_update_lane_settings_rejects_foreign_model(state):
     with pytest.raises(ValueError) as exc:
         svc.update_lane_settings("text_assist", "qwen", "gpt-4o-mini")

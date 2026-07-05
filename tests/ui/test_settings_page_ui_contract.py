@@ -107,6 +107,15 @@ def test_settings_page_guards_v3_field_derefs():
         assert token in src, token
 
 
+def test_settings_page_vision_lane_allows_openai_compatible_providers():
+    """Multi-provider Vision Lane: the custom-model vision checkbox is offered for
+    BOTH wired vision transports (Anthropic messages + OpenAI-compatible), not
+    Anthropic-only."""
+    src = _read("dashboard/src/pages/SettingsPage.tsx")
+    assert 'transport === "anthropic_messages"' in src
+    assert 'transport === "openai_compatible_chat"' in src
+
+
 def test_settings_route_remains_registered_in_dashboard_app():
     src = _read("dashboard/src/App.tsx")
 

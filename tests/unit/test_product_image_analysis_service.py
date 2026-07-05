@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from agent.models.product_intelligence import ProductIntelligenceImageAnalysis
 from agent.services.product_image_analysis_service import (
     PROVIDER_EXECUTION_DISABLED_WARNING,
@@ -172,6 +174,212 @@ def test_provider_execution_can_be_disabled_for_non_explicit_read_paths(monkeypa
     assert PROVIDER_EXECUTION_DISABLED_WARNING in result["warnings"]
     assert "provider_execution:disabled" in result["evidence"]
     assert result["metadata"]["configured_provider"] == "anthropic"
+
+
+def _set_vision_lane_state(
+    monkeypatch,
+    *,
+    provider,
+    model,
+    key="sk-vision-live-key",
+    execution=True,
+):
+    """Drive the REAL _configured_vision_runtime resolver by patching the underlying
+    lane resolvers (NOT _configured_provider_name), so tests exercise the actual
+    provider+model+key completeness gate."""
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_provider",
+        lambda lane: provider,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_model",
+        lambda lane: model,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_api_key",
+        lambda lane: key,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.is_lane_execution_enabled",
+        lambda lane: execution,
+    )
+
+
+def _forbid_provider_calls(monkeypatch):
+    """Fail loudly if ANY provider path is reached (dispatch, adapter, or SDK)."""
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service._analyze_with_provider",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no provider dispatch may occur when model is missing")
+        ),
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.vision_provider_adapter.run_vision_completion",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("vision_provider_adapter.run_vision_completion must not be called")
+        ),
+    )
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai", "gemini", "qwen"])
+def test_missing_model_fails_closed_before_any_provider_call(monkeypatch, provider):
+    # Provider + key + execution present, but NO selected model. The audit blocker:
+    # this must NOT fall back to any env model and must NOT reach a provider.
+    _set_vision_lane_state(monkeypatch, provider=provider, model=None)
+    _forbid_provider_calls(monkeypatch)
+
+    result = analyze_product_image_payload(
+        {
+            "id": f"prod-nomodel-{provider}",
+            "raw_product_title": "Stale Lane Product",
+            "image_url": "https://example.com/product.jpg",
+        }
+    )
+
+    assert result["status"] == "VISION_PROVIDER_NOT_CONFIGURED"
+    assert result["provider"] == "not_configured"
+    assert result["detected_package"] is None
+    # No fallback model leaked into evidence.
+    assert all("provider:model:" not in item for item in result["evidence"])
+    assert SEMANTIC_IMAGE_WARNING in result["warnings"]
+
+
+def _enable_vision(monkeypatch, provider: str, model: str = "some-vision-model"):
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service._configured_provider_name",
+        lambda: provider,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.is_lane_execution_enabled",
+        lambda lane: True,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_api_key",
+        lambda lane: "sk-vision-live-key",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_model",
+        lambda lane: model,
+    )
+
+
+def test_anthropic_real_path_uses_selected_model_no_fallback(monkeypatch):
+    # Exercises the REAL _analyze_with_anthropic (SDK faked) to prove the selected
+    # Claude model is used and no env fallback is substituted.
+    import sys
+    import types
+
+    _set_vision_lane_state(monkeypatch, provider="anthropic", model="claude-sonnet-5")
+    captured: dict = {}
+
+    class _Msg:
+        content = [types.SimpleNamespace(text='{"detected_package": "jar", "visual_confidence": "HIGH"}')]
+
+    class _Messages:
+        def create(self, *, model, max_tokens, messages):
+            captured["model"] = model
+            return _Msg()
+
+    class _FakeAnthropic:
+        def __init__(self, api_key=None):
+            captured["api_key"] = api_key
+            self.messages = _Messages()
+
+    fake_module = types.ModuleType("anthropic")
+    fake_module.Anthropic = _FakeAnthropic
+    monkeypatch.setitem(sys.modules, "anthropic", fake_module)
+
+    result = analyze_product_image_payload(
+        {
+            "id": "prod-anthropic-real",
+            "raw_product_title": "Night Cream",
+            "image_url": "https://example.com/jar.jpg",
+        }
+    )
+
+    assert result["status"] == "ANALYZED"
+    assert result["provider"] == "anthropic"
+    assert captured["model"] == "claude-sonnet-5"
+    assert "provider:model:claude-sonnet-5" in result["evidence"]
+
+
+def test_openai_vision_provider_routes_through_adapter_and_uses_selected_model(monkeypatch):
+    _enable_vision(monkeypatch, "openai", model="gpt-4o")
+    seen: dict = {}
+
+    def fake_run(provider, model, api_key, **kwargs):
+        seen["provider"] = provider
+        seen["model"] = model
+        seen["api_key"] = api_key
+        seen["kwargs"] = kwargs
+        return '{"detected_package": "bottle", "detected_text": ["Face Mist"], "visual_confidence": "HIGH"}'
+
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.vision_provider_adapter.run_vision_completion",
+        fake_run,
+    )
+
+    result = analyze_product_image_payload(
+        {
+            "id": "prod-openai",
+            "raw_product_title": "Hydrating Face Mist",
+            "image_url": "https://example.com/product.jpg",
+        }
+    )
+
+    assert result["status"] == "ANALYZED"
+    assert result["provider"] == "openai"
+    assert result["detected_package"] == "bottle"
+    # Product image analysis used the operator-selected vision lane model.
+    assert seen["provider"] == "openai"
+    assert seen["model"] == "gpt-4o"
+    assert "provider:model:gpt-4o" in result["evidence"]
+    # An image source was prepared for the multimodal request.
+    assert seen["kwargs"].get("image_remote_url") == "https://example.com/product.jpg"
+
+
+def test_qwen_vision_provider_failure_falls_closed(monkeypatch):
+    _enable_vision(monkeypatch, "qwen", model="qwen-vl-max")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("qwen transport error")
+
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.vision_provider_adapter.run_vision_completion",
+        boom,
+    )
+
+    result = analyze_product_image_payload(
+        {
+            "id": "prod-qwen",
+            "raw_product_title": "Sabun Dobi",
+            "image_url": "https://example.com/detergent.jpg",
+        }
+    )
+
+    assert result["status"] == "ANALYSIS_FAILED"
+    assert result["provider"] == "qwen"
+    assert result["warnings"] == ["SEMANTIC_IMAGE_ANALYSIS_FAILED"]
+
+
+def test_gemini_vision_provider_analyzes_via_openai_compatible_path(monkeypatch):
+    _enable_vision(monkeypatch, "gemini", model="gemini-2.0-flash")
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.vision_provider_adapter.run_vision_completion",
+        lambda *a, **k: '{"detected_package": "box", "visual_confidence": "MEDIUM"}',
+    )
+
+    result = analyze_product_image_payload(
+        {
+            "id": "prod-gemini",
+            "image_url": "https://example.com/box.jpg",
+        }
+    )
+
+    assert result["status"] == "ANALYZED"
+    assert result["provider"] == "gemini"
+    assert result["detected_package"] == "box"
+    assert "provider:model:gemini-2.0-flash" in result["evidence"]
 
 
 def test_vision_lane_toggle_can_disable_provider_execution_even_for_explicit_analysis(monkeypatch):
