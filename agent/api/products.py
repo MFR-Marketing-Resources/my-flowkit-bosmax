@@ -274,6 +274,21 @@ async def _parse_image_map_upload(file: UploadFile) -> list[dict[str, str]]:
     return [{str(key): "" if value is None else str(value) for key, value in row.items()} for row in reader]
 
 
+def _detect_image_ext(data: bytes) -> str | None:
+    """Return a canonical extension if ``data`` starts with real image magic
+    bytes, else None. Guards the operator attach path so an empty or non-image
+    payload can never be persisted and then read back as IMAGE_CACHE_READY."""
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "gif"
+    if len(data) >= 12 and data[0:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
 async def _save_manual_image(product_id: str, image_base64: str | None, image_filename: str | None) -> tuple[str | None, str | None]:
     if not image_base64:
         return None, None
@@ -281,10 +296,18 @@ async def _save_manual_image(product_id: str, image_base64: str | None, image_fi
     try:
         data = base64.b64decode(payload)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid image_base64 payload: {exc}") from exc
-    ext = "jpg"
-    if image_filename and "." in image_filename:
-        ext = image_filename.rsplit(".", 1)[-1].lower() or "jpg"
+        raise HTTPException(status_code=422, detail=f"INVALID_IMAGE_BASE64: {exc}") from exc
+    if not data:
+        raise HTTPException(status_code=422, detail="EMPTY_IMAGE: decoded image payload is empty")
+    detected_ext = _detect_image_ext(data)
+    if detected_ext is None:
+        raise HTTPException(
+            status_code=422,
+            detail="UNSUPPORTED_IMAGE_TYPE: expected a real JPEG, PNG, GIF, or WEBP image",
+        )
+    # Prefer the detected type over a caller-supplied extension so the stored
+    # file's extension always matches its real bytes.
+    ext = detected_ext
     dest = product_image_path(product_id, ext=ext)
     dest.write_bytes(data)
     return str(dest), "DOWNLOADED"
@@ -569,6 +592,31 @@ def _matches_catalog_source_lane(
     return (product.get("source_lane") or product.get("source") or "").upper() == requested_source_lane
 
 
+_SEARCH_ALIAS_PATH = BASE_DIR / "agent" / "authority" / "PRODUCT_SEARCH_ALIASES.json"
+_SEARCH_ALIAS_CACHE: dict[str, list[str]] | None = None
+
+
+def _load_search_aliases() -> dict[str, list[str]]:
+    """Search-only synonym index: canonical ``raw_product_title`` (lowercased)
+    -> extra search terms. Read once and cached. These aliases widen catalog
+    search matching ONLY; they are never used for display, product identity,
+    claim-safe copy, or prompt compilation."""
+    global _SEARCH_ALIAS_CACHE
+    if _SEARCH_ALIAS_CACHE is None:
+        aliases: dict[str, list[str]] = {}
+        try:
+            raw = json.loads(_SEARCH_ALIAS_PATH.read_text(encoding="utf-8"))
+            for title, terms in (raw.get("aliases") or {}).items():
+                if isinstance(terms, list):
+                    aliases[str(title).strip().lower()] = [
+                        str(term).lower() for term in terms
+                    ]
+        except (OSError, ValueError):
+            aliases = {}
+        _SEARCH_ALIAS_CACHE = aliases
+    return _SEARCH_ALIAS_CACHE
+
+
 def _matches_catalog_query(product: dict[str, Any], query: str | None) -> bool:
     if not query:
         return True
@@ -582,6 +630,11 @@ def _matches_catalog_query(product: dict[str, Any], query: str | None) -> bool:
         product.get("source_lane"),
         product.get("source_label"),
     ]
+    # Search-only synonyms (e.g. the "serum" marketing alias for the BOSMAX
+    # HERBS 5ML roll-on) so a canonical row is findable by names that do not
+    # appear in its identity fields. Display/identity are unchanged.
+    title_key = str(product.get("raw_product_title") or "").strip().lower()
+    haystacks.extend(_load_search_aliases().get(title_key, []))
     return any(needle in str(value or "").lower() for value in haystacks)
 
 

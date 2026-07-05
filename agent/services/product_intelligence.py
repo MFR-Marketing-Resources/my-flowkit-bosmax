@@ -147,14 +147,18 @@ def resolve_image_readiness(payload: dict[str, Any]) -> dict[str, Any]:
 
     if local_image_path:
         cached_path = resolve_cached_image_path(payload)
-        if cached_path.exists():
+        # Trust the cache only when a real, non-empty file is actually on disk.
+        # A stale `image_asset_status=DOWNLOADED` row whose file was deleted, or
+        # a 0-byte upload, must surface as missing rather than read as ready.
+        if cached_path is not None and cached_path.is_file() and cached_path.stat().st_size > 0:
             return {
                 "image_readiness_status": "IMAGE_CACHE_READY",
                 "image_readiness_detail": str(cached_path),
             }
         return {
             "image_readiness_status": "LOCAL_CACHE_MISSING",
-            "image_readiness_detail": failure_detail or f"Cached image file is missing: {cached_path}",
+            "image_readiness_detail": failure_detail
+            or f"Cached image file is missing or empty: {cached_path}",
         }
 
     if image_status == "NOT_AVAILABLE":

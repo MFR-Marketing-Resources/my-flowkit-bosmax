@@ -1659,6 +1659,19 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								>
 									Open Approved Packages
 								</button>
+								{selectedReadiness.readiness_status ===
+									"START_FRAME_REQUIRED" ||
+								selectedReadiness.readiness_status === "SUBJECT_REQUIRED" ? (
+									<button
+										type="button"
+										onClick={() =>
+											navigate(selectedReadiness.quick_actions.products_path)
+										}
+										className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-100"
+									>
+										Upload product image (Products page)
+									</button>
+								) : null}
 							</div>
 						</div>
 						<div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
