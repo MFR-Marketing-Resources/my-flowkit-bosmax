@@ -28,6 +28,7 @@ CreativeAssetStorageKind = Literal[
 ]
 CreativeAssetAllowedMode = Literal["T2V", "F2V", "I2V", "IMG"]
 CreativeAssetEngineSlot = Literal["subject", "scene", "style", "start_frame", "end_frame"]
+CreativeAssetReviewStatus = Literal["DRAFT", "PENDING_REVIEW", "APPROVED", "REJECTED"]
 
 
 class CreativeAssetRecord(BaseModel):
@@ -56,6 +57,19 @@ class CreativeAssetRecord(BaseModel):
     source_prompt_fingerprint: str | None = None
     source_workspace_execution_package_id: str | None = None
     source_prompt_package_snapshot_id: str | None = None
+    asset_subtype: str | None = None
+    generation_recipe_id: str | None = None
+    source_character_asset_id: str | None = None
+    source_scene_asset_id: str | None = None
+    source_style_asset_id: str | None = None
+    contains_rendered_text: bool = False
+    approved_for_video_support: bool = False
+    approved_for_poster: bool = False
+    product_truth_status: str | None = None
+    identity_lock_status: str | None = None
+    scale_truth_status: str | None = None
+    claim_safety_status: str | None = None
+    review_status: str = "PENDING_REVIEW"
     status: CreativeAssetStatus
     created_at: str
     updated_at: str
@@ -88,6 +102,19 @@ class CreativeAssetCreateRequest(BaseModel):
     source_prompt_fingerprint: str | None = None
     source_workspace_execution_package_id: str | None = None
     source_prompt_package_snapshot_id: str | None = None
+    asset_subtype: str | None = None
+    generation_recipe_id: str | None = None
+    source_character_asset_id: str | None = None
+    source_scene_asset_id: str | None = None
+    source_style_asset_id: str | None = None
+    contains_rendered_text: bool = False
+    approved_for_video_support: bool = False
+    approved_for_poster: bool = False
+    product_truth_status: str | None = None
+    identity_lock_status: str | None = None
+    scale_truth_status: str | None = None
+    claim_safety_status: str | None = None
+    review_status: CreativeAssetReviewStatus = "PENDING_REVIEW"
     image_base64: str | None = None
     file_name: str | None = None
 
@@ -113,6 +140,14 @@ class CreativeAssetUpdateRequest(BaseModel):
     remote_source_url: str | None = None
     media_id: str | None = None
     local_file_path: str | None = None
+    contains_rendered_text: bool | None = None
+    approved_for_video_support: bool | None = None
+    approved_for_poster: bool | None = None
+    product_truth_status: str | None = None
+    identity_lock_status: str | None = None
+    scale_truth_status: str | None = None
+    claim_safety_status: str | None = None
+    review_status: CreativeAssetReviewStatus | None = None
 
 
 class CreativeAssetListResponse(BaseModel):

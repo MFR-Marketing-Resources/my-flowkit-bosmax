@@ -48,6 +48,13 @@ def _normalize_record(row: dict[str, Any]) -> CreativeAssetRecord:
         payload.get("mode_a_metadata_handoff"),
         payload.get("mode_a_metadata_handoff"),
     )
+    # SQLite stores the governance booleans as INTEGER 0/1 — coerce to bool so the
+    # record contract stays truthful (and never leaks a raw int downstream).
+    for _bool_col in ("contains_rendered_text", "approved_for_video_support", "approved_for_poster"):
+        if _bool_col in payload:
+            payload[_bool_col] = bool(payload.get(_bool_col))
+    if not payload.get("review_status"):
+        payload["review_status"] = "PENDING_REVIEW"
     return CreativeAssetRecord(**payload)
 
 
@@ -207,6 +214,19 @@ async def create_creative_asset(request: CreativeAssetCreateRequest) -> Creative
         source_prompt_fingerprint=request.source_prompt_fingerprint,
         source_workspace_execution_package_id=request.source_workspace_execution_package_id,
         source_prompt_package_snapshot_id=request.source_prompt_package_snapshot_id,
+        asset_subtype=request.asset_subtype,
+        generation_recipe_id=request.generation_recipe_id,
+        source_character_asset_id=request.source_character_asset_id,
+        source_scene_asset_id=request.source_scene_asset_id,
+        source_style_asset_id=request.source_style_asset_id,
+        contains_rendered_text=request.contains_rendered_text,
+        approved_for_video_support=request.approved_for_video_support,
+        approved_for_poster=request.approved_for_poster,
+        product_truth_status=request.product_truth_status,
+        identity_lock_status=request.identity_lock_status,
+        scale_truth_status=request.scale_truth_status,
+        claim_safety_status=request.claim_safety_status,
+        review_status=request.review_status,
         status=ACTIVE_STATUS,
     )
     return _normalize_record(row)
@@ -285,6 +305,7 @@ async def validate_selectable_asset(
     semantic_role: str,
     allowed_mode: str,
     engine_slot: CreativeAssetEngineSlot,
+    disallow_rendered_text: bool = False,
 ) -> CreativeAssetValidationResult:
     asset = await get_creative_asset(asset_id)
     if not asset:
@@ -304,6 +325,14 @@ async def validate_selectable_asset(
         blockers.append("MODE_NOT_ALLOWED")
     if asset.engine_slot_eligibility and engine_slot not in asset.engine_slot_eligibility:
         blockers.append("ENGINE_SLOT_NOT_ALLOWED")
+    # Poster exclusion: a rendered-text asset (poster ad) must not become a clean
+    # video-support frame unless it was explicitly approved for video support.
+    if (
+        disallow_rendered_text
+        and asset.contains_rendered_text
+        and not asset.approved_for_video_support
+    ):
+        blockers.append("RENDERED_TEXT_NOT_ALLOWED_FOR_VIDEO_FRAME")
 
     return CreativeAssetValidationResult(
         valid=not blockers,
