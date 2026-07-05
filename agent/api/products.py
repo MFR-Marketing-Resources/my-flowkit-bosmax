@@ -10,10 +10,15 @@ from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from agent.config import BASE_DIR
 from agent.db import crud
+from agent.models.product_intelligence_snapshot import (
+    ProductIntelligenceLatestSnapshotResponse,
+    ProductIntelligenceSnapshotListResponse,
+    SnapshotStatus,
+)
 from agent.services.product_intelligence import (
     enrich_product, resolve_product_assets, upload_product_to_flow,
     normalize_source as _normalize_source,
@@ -55,6 +60,10 @@ from agent.services.fastmoss_product_reference_service import (
     FASTMOSS_REFERENCE_LANE,
     is_fastmoss_reference_product_id,
     list_fastmoss_reference_products,
+)
+from agent.services.product_intelligence_snapshot_service import (
+    get_latest_snapshot_response,
+    get_snapshot_list_response,
 )
 from agent.utils.paths import product_image_path
 
@@ -127,6 +136,8 @@ class ManualProductRequest(BaseModel):
 
 
 class ProductPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     source: str | None = None
     source_url: str | None = None
     brand: str | None = None
@@ -1244,6 +1255,32 @@ async def patch_product(product_id: str, data: ProductPatchRequest):
     if local_image_path:
         updated = await crud.update_product(product_id, local_image_path=local_image_path, asset_status=image_asset_status, image_asset_status=image_asset_status)
     return await _enrich_product(updated, persist=True)
+
+
+@router.get("/{product_id}/intelligence")
+async def get_product_intelligence_snapshot(
+    product_id: str,
+) -> ProductIntelligenceLatestSnapshotResponse:
+    try:
+        return await get_latest_snapshot_response(product_id)
+    except ValueError as exc:
+        if str(exc) == "PRODUCT_NOT_FOUND":
+            raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc
+        raise
+
+
+@router.get("/{product_id}/intelligence/snapshots")
+async def get_product_intelligence_snapshots(
+    product_id: str,
+    status: SnapshotStatus | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> ProductIntelligenceSnapshotListResponse:
+    try:
+        return await get_snapshot_list_response(product_id, status=status, limit=limit)
+    except ValueError as exc:
+        if str(exc) == "PRODUCT_NOT_FOUND":
+            raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc
+        raise
 
 
 @router.post("/{product_id}/resolve-assets")
