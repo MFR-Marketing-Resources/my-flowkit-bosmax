@@ -1,0 +1,489 @@
+{
+  "generated_at": "2026-07-06T09:23:46Z",
+  "script_version": "V3",
+  "db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+  "total": 516,
+  "active": 516,
+  "archived": 0,
+  "comment_1": "ALL rows in the product table are canonical committed product rows.",
+  "comment_2": "source=FASTMOSS is provenance, not reference-only lifecycle.",
+  "comment_3": "mapping_status=APPROVED is a valid ready state alongside READY.",
+  "comment_4": "Confidence labels use simplified heuristic ONLY. NOT ProductTruthService.build_computed_profile().",
+  "with_raw_title": 516,
+  "with_display_name": 516,
+  "with_short_name": 516,
+  "with_category": 510,
+  "with_subcategory": 510,
+  "with_type": 508,
+  "mapping_robust": 211,
+  "mapping_null": 302,
+  "mapping_blocked": 3,
+  "mapping_status_breakdown": {
+    "MISSING": 302,
+    "READY": 7,
+    "APPROVED": 204,
+    "BLOCKED": 3
+  },
+  "with_image_url": 505,
+  "with_usable_image_url": 503,
+  "with_local_image": 3,
+  "image_asset_downloaded": 3,
+  "image_asset_IMAGE_READY": 0,
+  "image_statuses": {
+    "UNRESOLVED": 303,
+    "DOWNLOADED": 3,
+    "MISSING": 210
+  },
+  "image_tiers": {
+    "PRODUCT_IMAGE_PROMPT_READY": 503,
+    "PRODUCT_HERO_POSTER_READY": 3,
+    "TEXT_ONLY_POSTER_READY": 10
+  },
+  "claim_safe": {
+    "CLAIM_SAFE_COPY_APPROVED": 300,
+    "CLAIM_SAFE_COPY_REVIEW_READY": 195,
+    "CLAIM_SAFE_COPY_PREVIEW_ONLY": 13,
+    "MISSING": 8
+  },
+  "claim_risk": {
+    "MISSING": 305,
+    "HIGH": 3,
+    "MEDIUM": 2,
+    "LOW": 206
+  },
+  "img_prod_approved": 495,
+  "confidence_heuristic": {
+    "LOW (heuristic)": 302,
+    "HIGH (heuristic)": 3,
+    "MEDIUM (heuristic)": 208,
+    "NEEDS_REVIEW (heuristic)": 3
+  },
+  "poster_ready": 196,
+  "poster_preview": 320,
+  "poster_blocked": 0,
+  "ready_categories": [
+    "Automotive & Motorcycle",
+    "Baby & Maternity",
+    "Baby Care",
+    "Beauty & Personal Care",
+    "Computers & Office Equipment",
+    "Fashion",
+    "Fashion Accessories",
+    "Food & Beverages",
+    "Health",
+    "Health & Personal Care",
+    "Home Improvement",
+    "Home Supplies",
+    "Household Appliances",
+    "Kitchenware",
+    "Menswear & Underwear",
+    "Muslim Fashion",
+    "Pet Supplies",
+    "Phones & Electronics",
+    "Shoes",
+    "Sports & Outdoor",
+    "Textiles & Soft Furnishings",
+    "Tools & Hardware",
+    "Toys & Hobbies",
+    "Womenswear & Underwear"
+  ],
+  "ready_category_count": 24,
+  "target_products": [
+    {
+      "product_id": "b460ffbd-7d9d-4f6b-a570-0e9b1056439a",
+      "product_display_name": "Bosmax Oil 10 ML",
+      "source": "MANUAL",
+      "lifecycle": "ACTIVE",
+      "mapping_status": "APPROVED",
+      "claim_safe_status": "CLAIM_SAFE_COPY_APPROVED",
+      "claim_risk_level": "HIGH",
+      "image_url_raw": "UNKNOWN",
+      "image_url_usable": false,
+      "local_image_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\data\\products\\images\\b460ffbd-7d9d-4f6b-a570-0e9b1056439a.png",
+      "image_asset_status": "DOWNLOADED",
+      "image_tier": "PRODUCT_HERO_POSTER_READY",
+      "production_approved_modes": [
+        "T2V",
+        "IMG"
+      ],
+      "poster_tier": "POSTER_PREVIEW_ONLY",
+      "blocker": "CLAIM_RISK_HIGH"
+    },
+    {
+      "product_id": "90349f8c-9e14-4efe-988e-76ec60ea31f4",
+      "product_display_name": "Bosmax Herbs 5 ML",
+      "source": "MANUAL",
+      "lifecycle": "ACTIVE",
+      "mapping_status": "READY",
+      "claim_safe_status": "CLAIM_SAFE_COPY_APPROVED",
+      "claim_risk_level": "HIGH",
+      "image_url_raw": "UNKNOWN",
+      "image_url_usable": false,
+      "local_image_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\data\\products\\images\\90349f8c-9e14-4efe-988e-76ec60ea31f4.png",
+      "image_asset_status": "DOWNLOADED",
+      "image_tier": "PRODUCT_HERO_POSTER_READY",
+      "production_approved_modes": [
+        "T2V",
+        "IMG"
+      ],
+      "poster_tier": "POSTER_PREVIEW_ONLY",
+      "blocker": "CLAIM_RISK_HIGH"
+    },
+    {
+      "product_id": "6483d624-a03d-4933-9bba-6ca2e5f7b6fd",
+      "product_display_name": "Minyak Warisan Tok Cap Burung 25ml",
+      "source": "MANUAL",
+      "lifecycle": "ACTIVE",
+      "mapping_status": "READY",
+      "claim_safe_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+      "claim_risk_level": "MEDIUM",
+      "image_url_raw": null,
+      "image_url_usable": false,
+      "local_image_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\data\\products\\images\\6483d624-a03d-4933-9bba-6ca2e5f7b6fd.png",
+      "image_asset_status": "DOWNLOADED",
+      "image_tier": "PRODUCT_HERO_POSTER_READY",
+      "production_approved_modes": [
+        "T2V",
+        "IMG"
+      ],
+      "poster_tier": "POSTER_READY",
+      "blocker": null
+    }
+  ],
+  "target_ready_count": 1,
+  "ready_with_local_image": 1,
+  "blockers": [
+    [
+      "MAPPING_MISSING",
+      302
+    ],
+    [
+      "IMG_NOT_PROD_APPROVED",
+      21
+    ],
+    [
+      "NO_IMAGE",
+      10
+    ],
+    [
+      "MISSING_CATEGORY",
+      6
+    ],
+    [
+      "MISSING_SUBCAT_AND_TYPE",
+      6
+    ],
+    [
+      "CLAIM_RISK_HIGH",
+      3
+    ],
+    [
+      "MAPPING_BLOCKED",
+      3
+    ]
+  ],
+  "samples_ready": [
+    {
+      "product_id": "de3ee6bd-592b-4228-bf96-f2cdcf15e78c",
+      "product_display_name": "\u3010KKM\u30117LUME White Tomato\uff08Buy 3 Save RM8\uff09Skin Supplement | Sijil",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": "READY",
+      "image_status": "UNRESOLVED",
+      "image_tier": "PRODUCT_IMAGE_PROMPT_READY",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "HIGH (heuristic)",
+      "blocker": null
+    },
+    {
+      "product_id": "3bc08dc9-02b8-44d5-bdcd-086a62cbfd34",
+      "product_display_name": "Sumikko 50PCS Premium Baby Diaper pants disposable diaper tape",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": "READY",
+      "image_status": "UNRESOLVED",
+      "image_tier": "PRODUCT_IMAGE_PROMPT_READY",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "HIGH (heuristic)",
+      "blocker": null
+    },
+    {
+      "product_id": "ef9c117e-7f3e-4df4-8434-d4b6f33d2aef",
+      "product_display_name": "Wooden Curtain Rod Batang Langsir Kayu Langsir Murah 28mm (Free Screw & Wall Plu",
+      "source": "MANUAL",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": "APPROVED",
+      "image_status": "MISSING",
+      "image_tier": "PRODUCT_IMAGE_PROMPT_READY",
+      "claim_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+      "confidence": "MEDIUM (heuristic)",
+      "blocker": null
+    },
+    {
+      "product_id": "29db89c6-c7dd-4f09-8b85-9862253e1152",
+      "product_display_name": "Sabun Dobi Malaya Combo isi ulang 10 KG (5+5kg/L)",
+      "source": "MANUAL",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": "APPROVED",
+      "image_status": "MISSING",
+      "image_tier": "PRODUCT_IMAGE_PROMPT_READY",
+      "claim_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+      "confidence": "MEDIUM (heuristic)",
+      "blocker": null
+    },
+    {
+      "product_id": "6c70428f-3dbd-43e8-ba70-3023e87aee64",
+      "product_display_name": "[KKM] FEREENA GLUTA SOAP 10g",
+      "source": "MANUAL",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": "APPROVED",
+      "image_status": "MISSING",
+      "image_tier": "PRODUCT_IMAGE_PROMPT_READY",
+      "claim_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+      "confidence": "MEDIUM (heuristic)",
+      "blocker": null
+    }
+  ],
+  "samples_preview": [
+    {
+      "product_id": "8ae553d2-4810-4d03-926b-5f2f1282c21c",
+      "product_display_name": "CLASSY 6XXXL Size Karpet Velvet Paling Besar Anti Slip",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": null,
+      "image_status": "UNRESOLVED",
+      "image_tier": "PRODUCT_IMAGE_PROMPT_READY",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "LOW (heuristic)",
+      "blocker": "MAPPING_MISSING"
+    },
+    {
+      "product_id": "bd96da55-0ad4-494d-afb1-f9fb1b30caa1",
+      "product_display_name": "Elianto Body Spray Fragrance Mist Pewangi Badan (Coconut/ Watermelon/",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": null,
+      "image_status": "UNRESOLVED",
+      "image_tier": "PRODUCT_IMAGE_PROMPT_READY",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "LOW (heuristic)",
+      "blocker": "MAPPING_MISSING"
+    },
+    {
+      "product_id": "3b51d01e-6e59-4b94-83ca-9e10ef611056",
+      "product_display_name": "QAYRAA P1 (S-XL) Jersi Muslimah Labuh Microfiber/Athleisure Sport Quick",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": null,
+      "image_status": "UNRESOLVED",
+      "image_tier": "PRODUCT_IMAGE_PROMPT_READY",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "LOW (heuristic)",
+      "blocker": "MAPPING_MISSING"
+    },
+    {
+      "product_id": "1c5b5c1a-43d2-4239-b87b-7b0f95c7e58f",
+      "product_display_name": "UNICO LEMON TTOX ( 10 PAKET)",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": null,
+      "image_status": "UNRESOLVED",
+      "image_tier": "PRODUCT_IMAGE_PROMPT_READY",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "LOW (heuristic)",
+      "blocker": "MAPPING_MISSING"
+    },
+    {
+      "product_id": "dcf0b2a3-b714-4305-a0de-37033f9762a1",
+      "product_display_name": "Seluar Tarik Ke Atas, SUMIKKO, 50PCS, Lampin Bayi, Semua",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": null,
+      "image_status": "UNRESOLVED",
+      "image_tier": "PRODUCT_IMAGE_PROMPT_READY",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "LOW (heuristic)",
+      "blocker": "MAPPING_MISSING"
+    }
+  ],
+  "samples_blocked": [],
+  "sources": {
+    "FASTMOSS": 298,
+    "MANUAL": 218
+  },
+  "verdict": "PASS",
+  "verdict_detail": "196 POSTER_READY (>=5), 24 categories (>=3), 1 target product(s) (>=1), 1 with local/downloaded image (>=1)",
+  "verdict_scoped": {
+    "generic_poster_module": "PASS",
+    "primary_bosmax_poster": "HOLD",
+    "minyak_warisan_poster": "READY",
+    "primary_bosmax_note": "Bosmax Oil and Bosmax Herbs are POSTER_PREVIEW_ONLY due to CLAIM_RISK_HIGH; not safe for primary BOSMAX poster generation until claim_risk_level is cleared."
+  },
+  "pass_threshold": {
+    "ready_count >= 5": true,
+    "categories >= 3": true,
+    "target_products >= 1": true,
+    "local_image >= 1": true
+  },
+  "consistency_check": {
+    "rows": [
+      {
+        "key": "total",
+        "json_value": 516,
+        "report_value": 516,
+        "match": "OK"
+      },
+      {
+        "key": "with_category",
+        "json_value": 510,
+        "report_value": 510,
+        "match": "OK"
+      },
+      {
+        "key": "with_subcategory",
+        "json_value": 510,
+        "report_value": 510,
+        "match": "OK"
+      },
+      {
+        "key": "with_type",
+        "json_value": 508,
+        "report_value": 508,
+        "match": "OK"
+      },
+      {
+        "key": "poster_ready",
+        "json_value": 196,
+        "report_value": 196,
+        "match": "OK"
+      },
+      {
+        "key": "poster_preview",
+        "json_value": 320,
+        "report_value": 320,
+        "match": "OK"
+      },
+      {
+        "key": "poster_blocked",
+        "json_value": 0,
+        "report_value": 0,
+        "match": "OK"
+      },
+      {
+        "key": "mapping_robust",
+        "json_value": 211,
+        "report_value": 211,
+        "match": "OK"
+      },
+      {
+        "key": "with_local_image",
+        "json_value": 3,
+        "report_value": 3,
+        "match": "OK"
+      },
+      {
+        "key": "ready_category_count",
+        "json_value": 24,
+        "report_value": 24,
+        "match": "OK"
+      },
+      {
+        "key": "target_ready_count",
+        "json_value": 1,
+        "report_value": 1,
+        "match": "OK"
+      },
+      {
+        "key": "confidence:LOW (heuristic)",
+        "json_value": 302,
+        "report_value": 302,
+        "match": "OK"
+      },
+      {
+        "key": "confidence:MEDIUM (heuristic)",
+        "json_value": 208,
+        "report_value": 208,
+        "match": "OK"
+      },
+      {
+        "key": "confidence:HIGH (heuristic)",
+        "json_value": 3,
+        "report_value": 3,
+        "match": "OK"
+      },
+      {
+        "key": "confidence:NEEDS_REVIEW (heuristic)",
+        "json_value": 3,
+        "report_value": 3,
+        "match": "OK"
+      },
+      {
+        "key": "claim_safe:CLAIM_SAFE_COPY_APPROVED",
+        "json_value": 300,
+        "report_value": 300,
+        "match": "OK"
+      },
+      {
+        "key": "claim_safe:CLAIM_SAFE_COPY_REVIEW_READY",
+        "json_value": 195,
+        "report_value": 195,
+        "match": "OK"
+      },
+      {
+        "key": "claim_safe:CLAIM_SAFE_COPY_PREVIEW_ONLY",
+        "json_value": 13,
+        "report_value": 13,
+        "match": "OK"
+      },
+      {
+        "key": "claim_safe:MISSING",
+        "json_value": 8,
+        "report_value": 8,
+        "match": "OK"
+      },
+      {
+        "key": "blocker:MAPPING_MISSING",
+        "json_value": 302,
+        "report_value": 302,
+        "match": "OK"
+      },
+      {
+        "key": "blocker:IMG_NOT_PROD_APPROVED",
+        "json_value": 21,
+        "report_value": 21,
+        "match": "OK"
+      },
+      {
+        "key": "blocker:NO_IMAGE",
+        "json_value": 10,
+        "report_value": 10,
+        "match": "OK"
+      },
+      {
+        "key": "blocker:MISSING_CATEGORY",
+        "json_value": 6,
+        "report_value": 6,
+        "match": "OK"
+      },
+      {
+        "key": "blocker:MISSING_SUBCAT_AND_TYPE",
+        "json_value": 6,
+        "report_value": 6,
+        "match": "OK"
+      },
+      {
+        "key": "blocker:CLAIM_RISK_HIGH",
+        "json_value": 3,
+        "report_value": 3,
+        "match": "OK"
+      },
+      {
+        "key": "blocker:MAPPING_BLOCKED",
+        "json_value": 3,
+        "report_value": 3,
+        "match": "OK"
+      }
+    ],
+    "all_match": true
+  }
+}
