@@ -397,7 +397,7 @@ def _extract_images(data) -> list[dict]:
     return out
 
 
-async def _generate_image_with_recovery(client, prompt, project_id, aspect, tier, refs, max_tries=8):
+async def _generate_image_with_recovery(client, prompt, project_id, aspect, tier, refs, max_tries=8, image_model="NANO_BANANA_PRO"):
     """Generate an image with the proven recovery recipe.
 
     The Flow tab is often stale after idle / a backend restart, so reload it ONCE up
@@ -419,7 +419,8 @@ async def _generate_image_with_recovery(client, prompt, project_id, aspect, tier
     for _ in range(max_tries):
         result = await client.generate_images(
             prompt=prompt, project_id=project_id, aspect_ratio=aspect,
-            user_paygate_tier=tier, character_media_ids=refs or None)
+            user_paygate_tier=tier, character_media_ids=refs or None,
+            image_model=image_model)
         if not (result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400)):
             return result
         last = result
@@ -704,6 +705,7 @@ class GenerateRequest(BaseModel):
     image_prompt: Optional[str] = None         # auto start-frame if no refs (I2V/F2V)
     aspect: str = "9:16"
     model: Optional[str] = None                # video model (ui_label or key); default Veo 3.1 - Lite
+    image_model: Optional[str] = None          # IMG image model key/ui_label; default Nano Banana Pro
     duration_s: Optional[int] = None           # default = the model's default duration
     count: int = 1                             # USER count setting (1-4): negotiate AND retrieve N videos
     refs: Optional[dict] = None
@@ -767,7 +769,7 @@ async def generate(body: GenerateRequest):
         mode, body.prompt, project_id=body.project_id,
         image_media_ids=resolved_ids, image_prompt=body.image_prompt,
         aspect=body.aspect, tier=tier, model=body.model, duration_s=body.duration_s,
-        num_videos=body.count)
+        num_videos=body.count, image_model=body.image_model)
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
         raise HTTPException(409, result.get("error") or "rejected")

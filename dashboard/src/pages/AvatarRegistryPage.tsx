@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { useImageGenSettings } from "../api/imageGenSettings";
 
 // AVATAR REGISTRY — read-only view of the approved presenter pool (ADR-008
 // avatar law). The pool is TEXT authority: the canonical prompt compiler reads
@@ -85,6 +86,20 @@ const PAGE_SIZE_AVATARS = 25;
 
 export default function AvatarRegistryPage() {
 	const navigate = useNavigate();
+	// "Back" must return to wherever the registry was opened from (Fastlane,
+	// Cockpit, …) rather than a hardcoded page. Callers pass ?from=<path>;
+	// default to IMG Cockpit for direct/legacy entry.
+	const [searchParams] = useSearchParams();
+	const backTo = searchParams.get("from") || "/assets/img-cockpit";
+	const backLabel = backTo.includes("img-fastlane")
+		? "← Back to IMG Fastlane"
+		: backTo.includes("img-cockpit")
+			? "← Back to IMG Cockpit"
+			: "← Back";
+	const imgGen = useImageGenSettings();
+	const [aspect, setAspect] = useState<string>("9:16");
+	const [count, setCount] = useState<number>(1);
+	const [imageModel, setImageModel] = useState<string>("Nano Banana 2");
 	const [avatars, setAvatars] = useState<AvatarProfile[]>([]);
 	const [bridgeActive, setBridgeActive] = useState(false);
 	const [search, setSearch] = useState("");
@@ -342,6 +357,9 @@ export default function AvatarRegistryPage() {
 					body: JSON.stringify({
 						avatar_code: avatar.avatar_code,
 						confirm_credit_burn: true,
+						aspect,
+						count,
+						image_model: imageModel,
 					}),
 				},
 			);
@@ -458,11 +476,30 @@ export default function AvatarRegistryPage() {
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
 				<a
-					href="/assets/img-cockpit"
+					href={backTo}
 					className="mb-3 inline-block text-[11px] font-semibold text-slate-400 hover:text-slate-200"
 				>
-					← Back to IMG Cockpit
+					{backLabel}
 				</a>
+				<div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+					<label className="text-[10px] text-slate-400">
+						<span className="mb-1 block font-semibold uppercase tracking-[0.14em] text-slate-500">Aspect</span>
+						<select value={aspect} onChange={(e) => setAspect(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200">
+							{imgGen.aspect_options.map((a) => (<option key={a} value={a}>{a}</option>))}
+						</select>
+					</label>
+					<label className="text-[10px] text-slate-400">
+						<span className="mb-1 block font-semibold uppercase tracking-[0.14em] text-slate-500">Count</span>
+						<input type="number" min="1" max="4" value={count} onChange={(e) => setCount(Math.max(1, Math.min(4, parseInt(e.target.value) || 1)))} className="w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200" />
+					</label>
+					<label className="text-[10px] text-slate-400">
+						<span className="mb-1 block font-semibold uppercase tracking-[0.14em] text-slate-500">Image Model</span>
+						<select value={imageModel} onChange={(e) => setImageModel(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200">
+							{imgGen.models.map((m) => (<option key={m.label} value={m.label}>{m.label}{m.pending ? " (id pending)" : ""}</option>))}
+						</select>
+					</label>
+					<span className="text-[10px] text-slate-500">Shared image-gen settings — applied to every avatar generate below.</span>
+				</div>
 				<div className="mb-4 flex items-center justify-between gap-3">
 					<div>
 						<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">

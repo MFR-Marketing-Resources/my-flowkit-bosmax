@@ -20,6 +20,28 @@ from agent.services.headers import random_headers
 logger = logging.getLogger(__name__)
 
 
+def resolve_image_model_name(model: str | None) -> str:
+    """Map an image-model key OR ui_label (e.g. "NANO_BANANA_2" / "Nano Banana 2")
+    to Google Flow's internal imageModelName from models.json.
+
+    Defaults to Nano Banana Pro (today's hardcoded behaviour). Fails CLOSED on an
+    unknown model, or on an alias whose internal id is not yet configured
+    (e.g. Nano Banana 2 Lite before its id is captured) — it NEVER silently
+    substitutes a different model, so a picker can offer 2 Lite honestly.
+    """
+    key = (model or "NANO_BANANA_PRO").strip().upper().replace(" ", "_").replace("-", "_")
+    value = IMAGE_MODELS.get(key)
+    if value is None:
+        raise ValueError(
+            f"ERR_UNKNOWN_IMAGE_MODEL: {model!r} (known: {', '.join(IMAGE_MODELS)})"
+        )
+    if not str(value).strip() or "PENDING" in str(value).upper():
+        raise ValueError(
+            f"ERR_IMAGE_MODEL_ALIAS_PENDING: {key} internal id not set in models.json"
+        )
+    return value
+
+
 class FlowClient:
     """Sends commands to Chrome extension via WebSocket."""
 
@@ -446,7 +468,8 @@ class FlowClient:
     async def generate_images(self, prompt: str, project_id: str,
                                aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
                                user_paygate_tier: str = "PAYGATE_TIER_TWO",
-                               character_media_ids: list[str] = None) -> dict:
+                               character_media_ids: list[str] = None,
+                               image_model: str = "NANO_BANANA_PRO") -> dict:
         """Generate image(s).
 
         If character_media_ids is provided, uses edit_image flow (batchGenerateImages
@@ -464,7 +487,7 @@ class FlowClient:
             "seed": ts % 1000000,
             "structuredPrompt": {"parts": [{"text": prompt}]},
             "imageAspectRatio": aspect_ratio,
-            "imageModelName": IMAGE_MODELS["NANO_BANANA_PRO"],
+            "imageModelName": resolve_image_model_name(image_model),
         }
 
         # Add character references if provided (edit_image flow)
@@ -496,7 +519,8 @@ class FlowClient:
                           project_id: str,
                           aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
                           user_paygate_tier: str = "PAYGATE_TIER_ONE",
-                          character_media_ids: list[str] = None) -> dict:
+                          character_media_ids: list[str] = None,
+                          image_model: str = "NANO_BANANA_PRO") -> dict:
         """Edit an existing image using IMAGE_INPUT_TYPE_BASE_IMAGE.
 
         If character_media_ids is provided, appends them as IMAGE_INPUT_TYPE_REFERENCE
@@ -518,7 +542,7 @@ class FlowClient:
             "seed": ts % 1000000,
             "structuredPrompt": {"parts": [{"text": prompt}]},
             "imageAspectRatio": aspect_ratio,
-            "imageModelName": IMAGE_MODELS["NANO_BANANA_PRO"],
+            "imageModelName": resolve_image_model_name(image_model),
             "imageInputs": image_inputs,
         }
 

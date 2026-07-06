@@ -14,6 +14,7 @@ import {
 	saveImgOutputToLibrary,
 	startImgGeneration,
 } from "../api/imgFactory";
+import { useImageGenSettings } from "../api/imageGenSettings";
 import { fetchProductCatalog } from "../api/products";
 import { compileWorkspacePromptPreview } from "../api/workspacePackages";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
@@ -30,7 +31,8 @@ import {
 const GEN_NOT_FIRED = "NOT_FIRED_IN_SESSION";
 const GEN_RUNTIME_UNVERIFIED = "EXTERNAL_RUNTIME_NOT_VERIFIED";
 
-const ASPECT_OPTIONS = ["9:16", "1:1", "16:9", "4:3", "3:4"] as const;
+// Aspect / count / image-model options come from the shared image-gen settings
+// SSOT (useImageGenSettings) so this page matches every other image-gen surface.
 
 type TruthStatus = "UNVERIFIED" | "PASS" | "FAIL";
 type ReviewDecision = "PENDING_REVIEW" | "APPROVED" | "REJECTED";
@@ -145,6 +147,7 @@ function ReferenceField({
 }
 
 export default function ImgCockpitPage() {
+	const imgGen = useImageGenSettings();
 	const [lanes, setLanes] = useState<ImgAssetLane[]>([]);
 	const [laneId, setLaneId] = useState("");
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -162,6 +165,8 @@ export default function ImgCockpitPage() {
 	const [displayName, setDisplayName] = useState("");
 	const [compiling, setCompiling] = useState(false);
 	const [aspect, setAspect] = useState<string>("9:16");
+	const [count, setCount] = useState<number>(1);
+	const [imageModel, setImageModel] = useState<string>("Nano Banana 2");
 
 	// Gated live generation (never auto-fires).
 	const [showGenConfirm, setShowGenConfirm] = useState(false);
@@ -343,6 +348,8 @@ export default function ImgCockpitPage() {
 				prompt,
 				image_media_ids: genResolution.mediaIds,
 				aspect,
+				count,
+				image_model: imageModel,
 			});
 			const job = await pollImgGenerationJob(job_id);
 			setGenJob(job);
@@ -630,12 +637,50 @@ export default function ImgCockpitPage() {
 						onChange={(e) => setAspect(e.target.value)}
 						className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 md:w-40"
 					>
-						{ASPECT_OPTIONS.map((a) => (
+						{imgGen.aspect_options.map((a) => (
 							<option key={a} value={a}>
 								{a}
 							</option>
 						))}
 					</select>
+				</label>
+				<label className="block text-[11px] text-slate-300 space-y-1">
+					<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+						Count (1-4)
+					</span>
+					<input
+						type="number"
+						min="1"
+						max="4"
+						value={count}
+						onChange={(e) =>
+							setCount(Math.max(1, Math.min(4, parseInt(e.target.value) || 1)))
+						}
+						className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 md:w-40"
+					/>
+				</label>
+				<label className="block text-[11px] text-slate-300 space-y-1">
+					<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+						Image Model
+					</span>
+					<select
+						value={imageModel}
+						onChange={(e) => setImageModel(e.target.value)}
+						className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 md:w-56"
+					>
+						{imgGen.models.map((m) => (
+							<option key={m.label} value={m.label}>
+								{m.label}
+								{m.pending ? " (id pending)" : ""}
+							</option>
+						))}
+					</select>
+					{imgGen.models.find((m) => m.label === imageModel)?.pending ? (
+						<p className="text-[10px] text-amber-300/80">
+							{imageModel}: internal id not configured yet — generation fails
+							closed until it's set in models.json.
+						</p>
+					) : null}
 				</label>
 				<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
 					<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">

@@ -286,6 +286,8 @@ class AvatarGenerateImageRequest(BaseModel):
     avatar_code: str
     confirm_credit_burn: bool = False
     aspect: str = "9:16"
+    count: int = 1                       # 1-4; clamped in start_generate
+    image_model: str | None = None       # Nano Banana Pro/2/2 Lite; None → default
 
 
 @router.post("/avatar-registry/generate-image")
@@ -302,7 +304,8 @@ async def avatar_registry_generate_image(request: AvatarGenerateImageRequest):
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     result = await make_video.start_generate(
-        "IMG", identity["prompt"], aspect=request.aspect, num_videos=1)
+        "IMG", identity["prompt"], aspect=request.aspect,
+        num_videos=request.count, image_model=request.image_model)
     return {
         "job_id": result.get("job_id"),
         "status": result.get("status"),

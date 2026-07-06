@@ -19,6 +19,7 @@ import {
 	saveImgOutputToLibrary,
 	startImgGeneration,
 } from "../api/imgFactory";
+import { useImageGenSettings } from "../api/imageGenSettings";
 import { fetchProductCatalog } from "../api/products";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { CreativeAsset, Product } from "../types";
@@ -30,7 +31,8 @@ import {
 
 const GEN_NOT_FIRED = "NOT_FIRED_IN_SESSION";
 const GEN_RUNTIME_UNVERIFIED = "EXTERNAL_RUNTIME_NOT_VERIFIED";
-const ASPECT_OPTIONS = ["9:16", "1:1", "16:9", "4:3", "3:4"] as const;
+// Aspect ratios, counts and image models now come from the shared image-gen
+// settings SSOT (useImageGenSettings) so every page holds the SAME options.
 
 type TruthStatus = "UNVERIFIED" | "PASS" | "FAIL";
 type ReviewDecision = "PENDING_REVIEW" | "APPROVED" | "REJECTED";
@@ -111,7 +113,11 @@ function Section({
 	children: React.ReactNode;
 }) {
 	return (
-		<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 space-y-4 shadow-lg shadow-black/10 backdrop-blur-md">
+		// NOTE: no `backdrop-blur` here. backdrop-filter creates a stacking context,
+		// which traps an open dropdown (SearchableProductSelect, z-50) *inside* this
+		// section so it paints BEHIND the next section instead of overlaying it. The
+		// blur is imperceptible over the solid dark page bg, so dropping it is free.
+		<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 space-y-4 shadow-lg shadow-black/10">
 			<h3 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-300 flex items-center gap-2">
 				<span className="rounded-md border border-slate-700 bg-slate-950 px-2 py-0.5 text-slate-300 font-mono text-[10px]">
 					{step}
@@ -196,6 +202,7 @@ function ReferenceField({
 }
 
 export default function ImgFastlanePage() {
+	const imgGen = useImageGenSettings();
 	const [activeTab, setActiveTab] = useState<FastlaneTab>("frames");
 	const [ingSaveLaneId, setIngSaveLaneId] =
 		useState<ImgFastlaneIngredientRole>("AVATAR_REFERENCE");
@@ -217,7 +224,9 @@ export default function ImgFastlanePage() {
 
 	const [characterAssetId, setCharacterAssetId] = useState("");
 	const [sceneAssetId, setSceneAssetId] = useState("");
-	const [styleAssetId, setStyleAssetId] = useState("");
+	// Style is optional and has no Frames picker (no style library yet), so it
+	// stays empty; kept for the compile payload / ingredients lineage.
+	const [styleAssetId] = useState("");
 	const [approvingId, setApprovingId] = useState<string | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
 	const [framePresetId, setFramePresetId] = useState("");
@@ -231,6 +240,7 @@ export default function ImgFastlanePage() {
 	const [compiling, setCompiling] = useState(false);
 	const [aspect, setAspect] = useState<string>("9:16");
 	const [quantity, setQuantity] = useState<number>(1);
+	const [imageModel, setImageModel] = useState<string>("Nano Banana 2");
 
 	// Gated live generation.
 	const [showGenConfirm, setShowGenConfirm] = useState(false);
@@ -395,12 +405,21 @@ export default function ImgFastlanePage() {
 
 	useEffect(() => {
 		if (!framePresets.length) return;
-		setFramePresetId((current) =>
-			current && framePresets.some((preset) => preset.preset_id === current)
-				? current
-				: framePresets[0]?.preset_id ?? "",
-		);
-	}, [framePresets]);
+		// Universal frames flow: ALWAYS use the generic database-driven merge preset
+		// (scene-aware). Product-specific presets (BOSMAX / MWCB) are never forced —
+		// the prompt is compiled from whatever product's DB truth is selected, so it
+		// works for ALL products, not a hardcoded few.
+		const wantId = sceneAssetId
+			? "GENERIC_FRAMES_AVATAR_PRODUCT_SCENE"
+			: "GENERIC_FRAMES_AVATAR_PRODUCT";
+		const universal =
+			framePresets.find((preset) => preset.preset_id === wantId) ??
+			framePresets.find((preset) =>
+				preset.preset_id.startsWith("GENERIC_FRAMES"),
+			) ??
+			framePresets[0];
+		setFramePresetId(universal?.preset_id ?? "");
+	}, [framePresets, sceneAssetId]);
 
 	useEffect(() => {
 		if (!ingredientPresets.length) return;
@@ -480,25 +499,31 @@ export default function ImgFastlanePage() {
 
 	const compiledBlockers = compiledPreview?.blockers ?? [];
 	const characterMissing = compiledBlockers.includes("AVATAR_REFERENCE_REQUIRED");
-	const sceneMissing =
-		compiledBlockers.includes("SCENE_REFERENCE_REQUIRED") ||
-		compiledBlockers.includes("SCENE_OR_STYLE_CONTEXT_REQUIRED");
-	const styleMissing =
-		compiledBlockers.includes("STYLE_REFERENCE_REQUIRED") ||
-		compiledBlockers.includes("SCENE_OR_STYLE_CONTEXT_REQUIRED");
+	// Style and scene are OPTIONAL context for the universal avatar+product merge —
+	// they must never block Generate nor be shown as "required".
+	const sceneMissing = false;
+	const OPTIONAL_BLOCKERS = new Set([
+		"STYLE_REFERENCE_REQUIRED",
+		"SCENE_REFERENCE_REQUIRED",
+		"SCENE_OR_STYLE_CONTEXT_REQUIRED",
+	]);
+	// Only real, missing inputs (product truth, avatar, resolvable refs) block
+	// generation. Optional style/scene advisories are filtered out.
+	const hardBlockers = compiledBlockers.filter(
+		(blocker) => !OPTIONAL_BLOCKERS.has(blocker),
+	);
 
-	// Generation is blocked if inputs are missing OR product has no visual reference.
+	// Generation needs only: product (+ its visual truth) + avatar + a compiled
+	// prompt. Missing style/scene never blocks.
 	const generationBlocked =
 		activeTab === "frames"
 			? (productMissing ||
 				productVisualReferenceMissing ||
 				characterMissing ||
-				sceneMissing ||
-				styleMissing ||
 				genResolution.blocked ||
-				compiledBlockers.length > 0 ||
+				hardBlockers.length > 0 ||
 				!prompt.trim())
-			: compiledBlockers.length > 0 || !prompt.trim();
+			: hardBlockers.length > 0 || !prompt.trim();
 
 	const hasRealOutput =
 		outputMode === "artifact" ? Boolean(artifactMediaId) : Boolean(uploadFile);
@@ -644,6 +669,7 @@ export default function ImgFastlanePage() {
 				refs: resolvedRefsPayload,
 				aspect,
 				count: quantity,
+				image_model: imageModel,
 			});
 			const job = await pollImgGenerationJob(job_id);
 			setGenJob(job);
@@ -815,77 +841,30 @@ export default function ImgFastlanePage() {
 								</div>
 							</Section>
 
-							<Section step="2" title="Template Preset">
-								<div className="space-y-3">
-									<label className="block text-[11px] text-slate-300 space-y-1">
-										<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
-											Template Preset
-										</span>
-										<select
-											value={framePresetId}
-											onChange={(event) => setFramePresetId(event.target.value)}
-											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
-										>
-											<option value="">
-												{framePresets.length
-													? "Select a frame preset…"
-													: "No frame presets available"}
-											</option>
-											{framePresets.map((preset) => (
-												<option key={preset.preset_id} value={preset.preset_id}>
-													{preset.label}
-												</option>
-											))}
-										</select>
-									</label>
-									{framePresetId ? (
-										<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400 space-y-1">
-											<div className="font-semibold text-slate-200">
-												{
-													framePresets.find((preset) => preset.preset_id === framePresetId)
-														?.description
-												}
-											</div>
-											<div>
-												Required inputs:{" "}
-												{(
-													framePresets.find((preset) => preset.preset_id === framePresetId)
-														?.required_inputs ?? []
-												).join(" • ")}
-											</div>
-										</div>
-									) : null}
-								</div>
-							</Section>
+							{/* Template Preset removed: the frames flow is universal. The prompt is
+							    compiled from the selected product's DB truth + avatar via the generic
+							    scale-lock merge preset (chosen automatically), so it works for ANY
+							    product without picking a preset. */}
 
-							<Section step="3" title="Select Existing References">
-								<div className="grid gap-4 md:grid-cols-2">
-									<ReferenceField
-										label="Select Existing Reference — Avatar"
-										noun="avatar"
-										assets={characterAssets}
-										value={characterAssetId}
-										onChange={setCharacterAssetId}
-										emptyHint="No references found — create one from preset"
-										requiredMissing={characterMissing}
-										onApprove={handleApproveAsset}
-										approvingId={approvingId}
-									/>
-									<ReferenceField
-										label="Select Existing Reference — Style"
-										noun="style reference"
-										assets={styleAssets}
-										value={styleAssetId}
-										onChange={setStyleAssetId}
-										emptyHint="No references found — create one from preset"
-										requiredMissing={styleMissing}
-										onApprove={handleApproveAsset}
-										approvingId={approvingId}
-									/>
-								</div>
+							<Section step="2" title="Select Avatar (required)">
+								{/* Style reference field removed: there are no STYLE_REFERENCE
+								    records and no way to create one in this flow, so the picker was
+								    a dead/misleading field. Style stays optional and is simply not
+								    surfaced until a real style library exists. */}
+								<ReferenceField
+									label="Select Existing Reference — Avatar"
+									noun="avatar"
+									assets={characterAssets}
+									value={characterAssetId}
+									onChange={setCharacterAssetId}
+									emptyHint="No avatars yet — open the Avatar Registry to add one"
+									requiredMissing={characterMissing}
+									onApprove={handleApproveAsset}
+									approvingId={approvingId}
+								/>
 								<div className="mt-2 flex gap-2">
 									<a
-										href="/assets/avatar-registry"
+										href="/assets/avatar-registry?from=/assets/img-fastlane"
 										target="_blank"
 										rel="noopener noreferrer"
 										className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-[10px] font-semibold text-blue-100 hover:bg-blue-500/20 text-center flex-1 transition-all"
@@ -903,21 +882,22 @@ export default function ImgFastlanePage() {
 								</div>
 							</Section>
 
-							<Section step="4" title="Select Existing Reference — Scene">
+							<Section step="3" title="Select Scene (optional)">
 								<div className="space-y-2">
 									<ReferenceField
-										label="Select Existing Reference"
+										label="Select Existing Reference — Scene"
 										noun="scene reference"
 										assets={sceneAssets}
 										value={sceneAssetId}
 										onChange={setSceneAssetId}
-										emptyHint="No references found — create one from preset"
+										emptyHint="No scene references yet — optional"
 										requiredMissing={sceneMissing}
 										onApprove={handleApproveAsset}
 										approvingId={approvingId}
 									/>
 									<p className="text-[10px] text-slate-500">
-										Optional for generic frames, but scene-aware presets will surface a blocker until context is selected.
+										Optional. Adds environment context to the merge when a scene
+										reference exists; never required to generate.
 									</p>
 								</div>
 							</Section>
@@ -1053,7 +1033,7 @@ export default function ImgFastlanePage() {
 
 					{/* Section 4: Prompt Creator */}
 					<Section
-						step={activeTab === "frames" ? "5" : "4"}
+						step={activeTab === "frames" ? "4" : "4"}
 						title="Auto-built Prompt Preview"
 					>
 						<div className="grid gap-4 md:grid-cols-2">
@@ -1111,12 +1091,12 @@ export default function ImgFastlanePage() {
 								))}
 							</div>
 						) : null}
-						{compiledBlockers.length ? (
+						{hardBlockers.length ? (
 							<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-100 space-y-1">
 								<div className="font-semibold uppercase tracking-[0.14em] text-amber-200">
 									Fastlane Blockers
 								</div>
-								{compiledBlockers.map((blocker) => (
+								{hardBlockers.map((blocker) => (
 									<div key={blocker}>{blocker}</div>
 								))}
 							</div>
@@ -1134,7 +1114,7 @@ export default function ImgFastlanePage() {
 					</Section>
 
 					{/* Section 5: Generation configuration & confirm trigger */}
-					<Section step={activeTab === "frames" ? "5" : "6"} title="Generate (Gated · Credit-spending)">
+					<Section step={activeTab === "frames" ? "5" : "6"} title="Generate Image (Avatar + Product) · Credit-free">
 						<div className="grid gap-4 md:grid-cols-3">
 							<label className="block text-[11px] text-slate-300 space-y-1">
 								<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -1145,7 +1125,7 @@ export default function ImgFastlanePage() {
 									onChange={(e) => setAspect(e.target.value)}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
 								>
-									{ASPECT_OPTIONS.map((a) => (
+									{imgGen.aspect_options.map((a) => (
 										<option key={a} value={a}>
 											{a}
 										</option>
@@ -1165,7 +1145,30 @@ export default function ImgFastlanePage() {
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
 								/>
 							</label>
+							<label className="block text-[11px] text-slate-300 space-y-1">
+								<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+									Image Model
+								</span>
+								<select
+									value={imageModel}
+									onChange={(e) => setImageModel(e.target.value)}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
+								>
+									{imgGen.models.map((m) => (
+										<option key={m.label} value={m.label}>
+											{m.label}
+											{m.pending ? " (id pending)" : ""}
+										</option>
+									))}
+								</select>
+							</label>
 						</div>
+						{imgGen.models.find((m) => m.label === imageModel)?.pending ? (
+							<p className="text-[10px] text-amber-300/80">
+								{imageModel}: internal model id not configured yet — generation fails
+								closed until it's set in models.json (never a wrong-model fallback).
+							</p>
+						) : null}
 
 						{/* Live Payload Preview */}
 						<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-300 space-y-2">
@@ -1187,9 +1190,9 @@ export default function ImgFastlanePage() {
 							type="button"
 							onClick={() => setShowGenConfirm(true)}
 							disabled={!prompt.trim() || generating || generationBlocked}
-							className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-5 py-2.5 text-xs font-bold text-rose-300 hover:bg-rose-500/20 disabled:opacity-40 transition-all w-full cursor-pointer"
+							className="rounded-xl border border-blue-500/40 bg-blue-500/10 px-5 py-2.5 text-xs font-bold text-blue-200 hover:bg-blue-500/20 disabled:opacity-40 transition-all w-full cursor-pointer"
 						>
-							{generating ? "Generating (live)…" : "Generate Live Image (Spends Credits)"}
+							{generating ? "Generating image…" : "Generate Image (Avatar + Product) — credit-free"}
 						</button>
 						{genJob && (
 							<div className="text-xs text-slate-300 mt-2">
@@ -1420,13 +1423,15 @@ export default function ImgFastlanePage() {
 			{/* live confirmation modal */}
 			{showGenConfirm && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]">
-					<div className="max-w-md w-full rounded-2xl border border-rose-500/40 bg-slate-950 p-6 space-y-4 shadow-2xl">
-						<div className="text-sm font-bold text-rose-300 uppercase tracking-wider">
-							⚠️ Confirm Live Credit-spending Generation
+					<div className="max-w-md w-full rounded-2xl border border-blue-500/40 bg-slate-950 p-6 space-y-4 shadow-2xl">
+						<div className="text-sm font-bold text-blue-200 uppercase tracking-wider">
+							Confirm Image Generation
 						</div>
 						<div className="text-xs text-slate-300 space-y-2">
 							<p>
-								This will trigger a real image generation on Google Flow and <strong>spends credits</strong>.
+								This fires a real avatar + product image generation on Google Flow.{" "}
+								<strong>Image generation is credit-free</strong> — only video
+								generations consume credits.
 							</p>
 							<p>
 								Build status: <strong>{GEN_NOT_FIRED}</strong> | <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.
@@ -1443,9 +1448,9 @@ export default function ImgFastlanePage() {
 							<button
 								type="button"
 								onClick={() => void handleConfirmedGenerate()}
-								className="rounded-xl border border-rose-500/40 bg-rose-500/20 px-4 py-2 text-xs font-bold text-rose-200 hover:bg-rose-500/30 cursor-pointer"
+								className="rounded-xl border border-blue-500/40 bg-blue-500/20 px-4 py-2 text-xs font-bold text-blue-100 hover:bg-blue-500/30 cursor-pointer"
 							>
-								Confirm &amp; Generate (live)
+								Confirm &amp; Generate
 							</button>
 						</div>
 					</div>

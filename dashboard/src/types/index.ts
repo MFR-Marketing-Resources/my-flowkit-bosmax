@@ -318,6 +318,7 @@ export interface WorkspaceExecutePayload {
 	orientation?: Orientation;
 	aspectRatio?: string;
 	model?: string;
+	image_model?: string;
 	count?: number;
 	stop_after_stage?: string;
 	startAsset?: UploadedAsset | null;
