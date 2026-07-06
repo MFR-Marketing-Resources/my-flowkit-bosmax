@@ -103,9 +103,15 @@ def combined_similarity(
     Default weights favour hook-heavy copy similarity (most important for
     avoiding repetitive UGC).
     """
-    hook_sim = levenshtein_ratio(_field_string(candidate), _field_string(existing))
+    cand_str = _field_string(candidate)
+    exist_str = _field_string(existing)
+    # Both empty = no meaningful signal. Exact duplicate is handled by
+    # the existing dedupe_key, not by near-duplicate detection.
+    if not cand_str or not exist_str:
+        return 0.0
+    hook_sim = levenshtein_ratio(cand_str, exist_str)
     angle_sim = levenshtein_ratio(_angle_string(candidate), _angle_string(existing))
-    token_sim = jaccard(token_set(_field_string(candidate)), token_set(_field_string(existing)))
+    token_sim = jaccard(token_set(cand_str), token_set(exist_str))
     return (
         hook_weight * hook_sim
         + angle_weight * angle_sim

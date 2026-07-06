@@ -68,6 +68,7 @@ async def get_suitable_avatars(
             enriched.append({
                 **profile,
                 "fit_score": fit.get("fit_score", 1.0),
+                "fit_source": "EXPLICIT_MAPPING",
                 "suitability_notes": fit.get("suitability_notes"),
             })
         enriched.sort(key=lambda x: -x["fit_score"])
@@ -79,7 +80,8 @@ async def get_suitable_avatars(
     # Safe fallback: all registered avatars
     all_avatars = avatar_registry.list_pool()
     return [
-        {**a, "fit_score": 1.0, "suitability_notes": "fallback — no explicit category mapping"}
+        {**a, "fit_score": 0.5, "fit_source": "FALLBACK_UNRANKED",
+         "suitability_notes": "fallback only — no explicit category mapping"}
         for a in all_avatars
     ]
 

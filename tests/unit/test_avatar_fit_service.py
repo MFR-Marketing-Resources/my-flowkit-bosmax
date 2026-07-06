@@ -61,9 +61,10 @@ async def test_suitable_avatars_fallback_when_no_mapping():
         include_all_fallback=True,
     )
     assert len(suitable) > 0
-    # All should have the fallback fit_score
+    # All should have the fallback fit_score (0.5, not 1.0)
     for a in suitable:
-        assert a["fit_score"] == 1.0
+        assert a["fit_score"] == 0.5
+        assert a.get("fit_source") == "FALLBACK_UNRANKED"
         assert "fallback" in str(a.get("suitability_notes", "")).lower()
 
 

@@ -50,6 +50,8 @@ async def increment_copy_usage(
     row = await crud.get_copy_set(copy_set_id)
     if not row:
         raise ValueError(f"COPY_SET_NOT_FOUND:{copy_set_id}")
+    if row.get("status") != "COPY_APPROVED":
+        raise ValueError(f"COPY_SET_NOT_APPROVED:{copy_set_id}")
     current_count = row.get("usage_count") or 0
     current_modes = row.get("used_in_modes") or "[]"
     updated_modes = _unique_append(current_modes, mode)
@@ -79,7 +81,7 @@ async def get_product_copy_usage_stats(
     """
     all_rows = await crud.list_copy_sets_for_product(product_id)
     total = len(all_rows)
-    approved = [r for r in all_rows if r.get("status") == "COPY_APPROVED"]
+    approved = [r for r in all_rows if r.get("status") == "COPY_APPROVED" and not r.get("archived")]
     approved_count = len(approved)
 
     usage_items: list[dict[str, Any]] = []
@@ -118,6 +120,7 @@ async def get_product_copy_usage_stats(
         "product_id": product_id,
         "total_copy_sets": total,
         "approved_count": approved_count,
+        "archived_approved_count": sum(1 for r in all_rows if r.get("status") == "COPY_APPROVED" and r.get("archived")),
         "usage_by_copy_set": sorted(usage_items, key=lambda x: -x["usage_count"]),
         "fatigue_warnings": fatigue_warnings,
         "thresholds": {

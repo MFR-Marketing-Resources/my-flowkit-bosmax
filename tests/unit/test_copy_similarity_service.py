@@ -75,6 +75,33 @@ def test_levenshtein_similar():
     assert ratio > 0.7
 
 
+# ── combined_similarity empty/low-signal guard ─────────────
+
+def test_combined_similarity_both_empty():
+    """Empty candidate + empty existing = 0.0 (not near-duplicate)."""
+    score = combined_similarity({}, {})
+    assert score == 0.0
+
+
+def test_combined_similarity_candidate_empty():
+    """Empty candidate + real existing = 0.0."""
+    score = combined_similarity({}, {"hook": "Real hook", "cta": "Buy"})
+    assert score == 0.0
+
+
+def test_combined_similarity_existing_empty():
+    """Real candidate + empty existing = 0.0."""
+    score = combined_similarity({"hook": "Real hook", "cta": "Buy"}, {})
+    assert score == 0.0
+
+
+def test_empty_candidate_not_near_duplicate():
+    """Empty fields don't trigger near-duplicate at default threshold."""
+    is_dup, score = is_near_duplicate({}, {"hook": "Something"})
+    assert is_dup is False
+    assert score < 0.80
+
+
 # ── combined_similarity ────────────────────────────────────
 
 def test_combined_similarity_identical():

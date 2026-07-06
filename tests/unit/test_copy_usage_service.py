@@ -65,6 +65,93 @@ async def test_increment_multiple_modes_no_duplicates():
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_increment_fails_on_draft():
+    """Incrementing usage on a DRAFT Copy Set raises ValueError."""
+    product = await crud.create_product(
+        source="MANUAL",
+        raw_product_title="Draft Guard Product",
+        product_display_name="Draft Guard Product",
+        product_short_name="Draft Guard Product",
+    )
+    cs = await crud.create_copy_set(
+        product["id"],
+        hook="Draft hook",
+        cta="CTA",
+        usp_set_json='["USP"]',
+    )
+    with pytest.raises(ValueError, match="COPY_SET_NOT_APPROVED"):
+        await increment_copy_usage(cs["copy_set_id"], mode="T2V")
+
+
+@pytest.mark.asyncio
+async def test_increment_fails_on_review_required():
+    """Incrementing usage on COPY_REVIEW_REQUIRED raises."""
+    product = await crud.create_product(
+        source="MANUAL",
+        raw_product_title="Review Guard Product",
+        product_display_name="Review Guard Product",
+        product_short_name="Review Guard Product",
+    )
+    cs = await crud.create_copy_set(
+        product["id"],
+        hook="Review hook",
+        cta="CTA",
+        usp_set_json='["USP"]',
+    )
+    await crud.update_copy_set(cs["copy_set_id"], status="COPY_REVIEW_REQUIRED")
+    with pytest.raises(ValueError, match="COPY_SET_NOT_APPROVED"):
+        await increment_copy_usage(cs["copy_set_id"], mode="T2V")
+
+
+@pytest.mark.asyncio
+async def test_increment_fails_on_rejected():
+    """Incrementing usage on COPY_REJECTED raises."""
+    product = await crud.create_product(
+        source="MANUAL",
+        raw_product_title="Rejected Guard Product",
+        product_display_name="Rejected Guard Product",
+        product_short_name="Rejected Guard Product",
+    )
+    cs = await crud.create_copy_set(
+        product["id"],
+        hook="Rejected hook",
+        cta="CTA",
+        usp_set_json='["USP"]',
+    )
+    await crud.update_copy_set(cs["copy_set_id"], status="COPY_REJECTED")
+    with pytest.raises(ValueError, match="COPY_SET_NOT_APPROVED"):
+        await increment_copy_usage(cs["copy_set_id"], mode="T2V")
+
+
+@pytest.mark.asyncio
+async def test_archived_not_in_fatigue_warnings():
+    """Archived approved Copy Sets are excluded from stats and fatigue."""
+    product = await crud.create_product(
+        source="MANUAL",
+        raw_product_title="Archived Product",
+        product_display_name="Archived Product",
+        product_short_name="Archived Product",
+    )
+    cs = await crud.create_copy_set(
+        product["id"],
+        hook="Archived hook",
+        cta="CTA",
+        usp_set_json='["USP"]',
+    )
+    await crud.update_copy_set(cs["copy_set_id"], status="COPY_APPROVED")
+    for i in range(FATIGUE_HIGH_THRESHOLD):
+        await increment_copy_usage(cs["copy_set_id"], mode="T2V")
+    await crud.update_copy_set(cs["copy_set_id"], archived=1)
+
+    stats = await get_product_copy_usage_stats(product["id"])
+    assert stats["archived_approved_count"] >= 1
+    approved_ids = [u["copy_set_id"] for u in stats["usage_by_copy_set"]]
+    assert cs["copy_set_id"] not in approved_ids
+    warn_ids = [w["copy_set_id"] for w in stats["fatigue_warnings"]]
+    assert cs["copy_set_id"] not in warn_ids
+
+
 async def test_increment_not_found_raises():
     """Passing a non-existent copy_set_id raises ValueError."""
     with pytest.raises(ValueError, match="COPY_SET_NOT_FOUND"):
