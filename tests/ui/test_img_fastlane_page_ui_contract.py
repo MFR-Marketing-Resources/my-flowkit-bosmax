@@ -219,6 +219,27 @@ def test_avatar_registry_back_link_is_context_aware():
     assert "/assets/avatar-registry?from=/assets/img-fastlane" in page
 
 
+def test_image_gen_settings_are_a_shared_ssot():
+    """Aspect / count / image-model options must come from ONE shared config
+    (image-gen settings SSOT), not per-page hardcoded copies, so every image-gen
+    page holds identical settings."""
+    # Backend SSOT endpoint, derived from models.json.
+    api = _read("agent/api/img_factory.py")
+    assert '"/image-gen-settings"' in api
+    assert "aspect_options" in api and "count_options" in api
+    assert "IMAGE_MODELS" in api
+    # Shared frontend module + hook.
+    shared = _read("dashboard/src/api/imageGenSettings.ts")
+    assert "useImageGenSettings" in shared
+    assert "/api/img-factory/image-gen-settings" in shared
+    # IMG Fastlane consumes the shared settings (no private option copies).
+    page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
+    assert "useImageGenSettings" in page
+    assert "imgGen.models" in page
+    assert "imgGen.aspect_options" in page
+    assert "IMG_MODEL_OPTIONS" not in page  # local copy removed
+
+
 def test_frames_flow_is_universal_and_credit_free():
     """Frames Fastlane must be a universal avatar+product Generate — no Template
     Preset dropdown, style/scene optional, and image generation labelled

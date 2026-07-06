@@ -19,6 +19,7 @@ import {
 	saveImgOutputToLibrary,
 	startImgGeneration,
 } from "../api/imgFactory";
+import { useImageGenSettings } from "../api/imageGenSettings";
 import { fetchProductCatalog } from "../api/products";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { CreativeAsset, Product } from "../types";
@@ -30,15 +31,8 @@ import {
 
 const GEN_NOT_FIRED = "NOT_FIRED_IN_SESSION";
 const GEN_RUNTIME_UNVERIFIED = "EXTERNAL_RUNTIME_NOT_VERIFIED";
-const ASPECT_OPTIONS = ["9:16", "1:1", "16:9", "4:3", "3:4"] as const;
-// Image models mirror Google Flow's image-gen picker. `pending` = the backend
-// doesn't yet have Google's internal id for it (models.json), so picking it fails
-// closed with a clear message instead of silently generating with another model.
-const IMG_MODEL_OPTIONS = [
-	{ label: "Nano Banana Pro", pending: false },
-	{ label: "Nano Banana 2", pending: false },
-	{ label: "Nano Banana 2 Lite", pending: true },
-] as const;
+// Aspect ratios, counts and image models now come from the shared image-gen
+// settings SSOT (useImageGenSettings) so every page holds the SAME options.
 
 type TruthStatus = "UNVERIFIED" | "PASS" | "FAIL";
 type ReviewDecision = "PENDING_REVIEW" | "APPROVED" | "REJECTED";
@@ -208,6 +202,7 @@ function ReferenceField({
 }
 
 export default function ImgFastlanePage() {
+	const imgGen = useImageGenSettings();
 	const [activeTab, setActiveTab] = useState<FastlaneTab>("frames");
 	const [ingSaveLaneId, setIngSaveLaneId] =
 		useState<ImgFastlaneIngredientRole>("AVATAR_REFERENCE");
@@ -1128,7 +1123,7 @@ export default function ImgFastlanePage() {
 									onChange={(e) => setAspect(e.target.value)}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
 								>
-									{ASPECT_OPTIONS.map((a) => (
+									{imgGen.aspect_options.map((a) => (
 										<option key={a} value={a}>
 											{a}
 										</option>
@@ -1157,7 +1152,7 @@ export default function ImgFastlanePage() {
 									onChange={(e) => setImageModel(e.target.value)}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
 								>
-									{IMG_MODEL_OPTIONS.map((m) => (
+									{imgGen.models.map((m) => (
 										<option key={m.label} value={m.label}>
 											{m.label}
 											{m.pending ? " (id pending)" : ""}
@@ -1166,7 +1161,7 @@ export default function ImgFastlanePage() {
 								</select>
 							</label>
 						</div>
-						{IMG_MODEL_OPTIONS.find((m) => m.label === imageModel)?.pending ? (
+						{imgGen.models.find((m) => m.label === imageModel)?.pending ? (
 							<p className="text-[10px] text-amber-300/80">
 								{imageModel}: internal model id not configured yet — generation fails
 								closed until it's set in models.json (never a wrong-model fallback).
