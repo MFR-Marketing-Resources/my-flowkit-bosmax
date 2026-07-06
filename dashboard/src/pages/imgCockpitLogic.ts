@@ -99,17 +99,40 @@ export function resolveGenerationInputs(
 		.filter((m): m is string => Boolean(m));
 	const unresolved = all.filter((r) => !r.mediaId);
 
+	// A product carries visual truth via a Flow media_id OR a resolvable image
+	// source (image_url / local_image_path). Products from /api/products always
+	// have media_id=null and expose the image via image_url, so requiring a bare
+	// media_id here falsely blocked EVERY product lane. Mirror OperatorPage/IMGModule:
+	// treat the product as resolvable when any image source exists.
+	const productResolvable = Boolean(
+		refs.product &&
+			(refs.product.media_id ||
+				refs.product.image_url ||
+				refs.product.local_image_path),
+	);
+
 	let blocked = false;
 	let blockReason: string | null = null;
-	if (lane?.requires_product_id) {
-		const productRef = all.find((r) => r.role === "PRODUCT");
-		if (!productRef || !productRef.mediaId) {
-			blocked = true;
-			blockReason =
-				"This lane requires product visual truth, but the selected product has " +
-				"no resolvable image reference (media id). Generation is blocked until a " +
-				"resolvable product image exists.";
-		}
+	if (lane?.requires_product_id && !productResolvable) {
+		blocked = true;
+		blockReason =
+			"This lane requires a product with an image reference. Select a product " +
+			"that has a resolved image (image URL or local file).";
+	} else if (lane?.requires_character_reference && !refs.character) {
+		blocked = true;
+		blockReason =
+			"This lane requires an APPROVED avatar (character reference). Select one " +
+			"in Section 3 — approve it there if it is still pending.";
+	} else if (lane?.requires_scene_reference && !refs.scene) {
+		blocked = true;
+		blockReason =
+			"This lane requires an APPROVED scene reference. Select one in Section 4 " +
+			"— approve it there if it is still pending.";
+	} else if (lane?.requires_style_reference && !refs.style) {
+		blocked = true;
+		blockReason =
+			"This lane requires an APPROVED style reference. Select one in Section 4 " +
+			"— approve it there if it is still pending.";
 	}
 
 	return { mediaIds, refs: all, unresolved, blocked, blockReason };
