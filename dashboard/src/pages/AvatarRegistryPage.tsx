@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 // AVATAR REGISTRY — read-only view of the approved presenter pool (ADR-008
 // avatar law). The pool is TEXT authority: the canonical prompt compiler reads
@@ -85,6 +85,16 @@ const PAGE_SIZE_AVATARS = 25;
 
 export default function AvatarRegistryPage() {
 	const navigate = useNavigate();
+	// "Back" must return to wherever the registry was opened from (Fastlane,
+	// Cockpit, …) rather than a hardcoded page. Callers pass ?from=<path>;
+	// default to IMG Cockpit for direct/legacy entry.
+	const [searchParams] = useSearchParams();
+	const backTo = searchParams.get("from") || "/assets/img-cockpit";
+	const backLabel = backTo.includes("img-fastlane")
+		? "← Back to IMG Fastlane"
+		: backTo.includes("img-cockpit")
+			? "← Back to IMG Cockpit"
+			: "← Back";
 	const [avatars, setAvatars] = useState<AvatarProfile[]>([]);
 	const [bridgeActive, setBridgeActive] = useState(false);
 	const [search, setSearch] = useState("");
@@ -458,10 +468,10 @@ export default function AvatarRegistryPage() {
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
 				<a
-					href="/assets/img-cockpit"
+					href={backTo}
 					className="mb-3 inline-block text-[11px] font-semibold text-slate-400 hover:text-slate-200"
 				>
-					← Back to IMG Cockpit
+					{backLabel}
 				</a>
 				<div className="mb-4 flex items-center justify-between gap-3">
 					<div>

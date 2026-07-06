@@ -889,7 +889,7 @@ export default function ImgFastlanePage() {
 								</div>
 								<div className="mt-2 flex gap-2">
 									<a
-										href="/assets/avatar-registry"
+										href="/assets/avatar-registry?from=/assets/img-fastlane"
 										target="_blank"
 										rel="noopener noreferrer"
 										className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-[10px] font-semibold text-blue-100 hover:bg-blue-500/20 text-center flex-1 transition-all"

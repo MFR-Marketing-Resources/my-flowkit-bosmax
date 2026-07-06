@@ -201,3 +201,17 @@ def test_fastlane_section_has_no_backdrop_blur_stacking_trap():
     Regression guard for the product-selector overlay fix."""
     page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
     assert "shadow-black/10 backdrop-blur-md" not in page
+
+
+def test_avatar_registry_back_link_is_context_aware():
+    """Avatar Registry "Back" must return to the referrer (?from=...) rather than
+    a hardcoded page. Regression guard: opening the registry from IMG Fastlane and
+    pressing Back used to dump the user on IMG Cockpit."""
+    reg = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
+    assert "useSearchParams" in reg
+    assert 'searchParams.get("from")' in reg
+    assert "href={backTo}" in reg
+    assert "{backLabel}" in reg
+    # Fastlane tells the registry where Back should return to.
+    page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
+    assert "/assets/avatar-registry?from=/assets/img-fastlane" in page
