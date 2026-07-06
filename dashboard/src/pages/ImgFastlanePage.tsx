@@ -234,6 +234,7 @@ export default function ImgFastlanePage() {
 	const [advancedOverrideNotes, setAdvancedOverrideNotes] = useState("");
 
 	const [prompt, setPrompt] = useState("");
+	const [promptCopied, setPromptCopied] = useState(false);
 	const [compiledPreview, setCompiledPreview] =
 		useState<ImgFastlanePromptPreview | null>(null);
 	const [displayName, setDisplayName] = useState("");
@@ -656,6 +657,17 @@ export default function ImgFastlanePage() {
 		return () => window.clearTimeout(handle);
 	}, [compileFastlanePreview, activeTab, framePresetId, ingredientPresetId]);
 
+	const handleCopyPrompt = async () => {
+		if (!prompt.trim()) return;
+		try {
+			await navigator.clipboard.writeText(prompt);
+			setPromptCopied(true);
+			window.setTimeout(() => setPromptCopied(false), 1500);
+		} catch {
+			setError("Clipboard copy was blocked by the browser.");
+		}
+	};
+
 	const handleConfirmedGenerate = async () => {
 		setShowGenConfirm(false);
 		setGenerating(true);
@@ -1034,7 +1046,7 @@ export default function ImgFastlanePage() {
 					{/* Section 4: Prompt Creator */}
 					<Section
 						step={activeTab === "frames" ? "4" : "4"}
-						title="Auto-built Prompt Preview"
+						title="Final Prompt → Google Flow"
 					>
 						<div className="grid gap-4 md:grid-cols-2">
 							<label className="block text-[11px] text-slate-300 space-y-1">
@@ -1075,11 +1087,27 @@ export default function ImgFastlanePage() {
 								</div>
 							</div>
 						</div>
+						<div className="flex items-center justify-between gap-2">
+							<span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+								Final prompt → Google Flow
+								<span className="ml-2 normal-case tracking-normal text-slate-500">
+									(the exact text sent to the engine on Generate)
+								</span>
+							</span>
+							<button
+								type="button"
+								onClick={handleCopyPrompt}
+								disabled={!prompt.trim()}
+								className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-200 hover:border-blue-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+							>
+								{promptCopied ? "Copied ✓" : "Copy"}
+							</button>
+						</div>
 						<textarea
 							value={prompt}
 							readOnly
-							className="h-28 w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-slate-200 font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none"
-							placeholder="Auto-built prompt preview appears here after selecting a preset and any required database truth."
+							className="h-64 w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-slate-200 font-mono leading-relaxed focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-y overflow-auto"
+							placeholder="The full prompt sent to Google Flow appears here after selecting a preset and any required database truth."
 						/>
 						{compiledPreview?.reference_map?.length ? (
 							<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400 space-y-1">

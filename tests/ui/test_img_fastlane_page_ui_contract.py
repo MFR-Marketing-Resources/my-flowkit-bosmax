@@ -30,7 +30,7 @@ def test_fastlane_uses_database_driven_preset_compiler():
     assert "compileImgFastlanePromptPreview" in page
     assert "SearchableProductSelect" in page
     assert "Template Preset" in page
-    assert "Auto-built Prompt Preview" in page
+    assert "Final Prompt → Google Flow" in page
     assert "Advanced Override Notes optional" in page
     assert "readOnly" in page
     assert "Prompt preview auto-build is active." in page
@@ -117,7 +117,7 @@ _RETIRED_COMPOSER_MARKERS = (
 
 # The current template-driven UI markers that MUST be present.
 _CURRENT_UI_MARKERS = (
-    "Auto-built Prompt Preview",
+    "Final Prompt → Google Flow",
     "Template Preset",
     "Select Target Ingredient Role",
     "Product Scale Truth Guard",
