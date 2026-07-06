@@ -193,6 +193,7 @@ domains:
       - dashboard/src/pages/AvatarRegistryPage.tsx
       - dashboard/src/pages/CreativeLibraryPage.tsx
       - dashboard/src/pages/CreativeLibraryWorkspacePage.tsx
+      - dashboard/src/pages/ImgFastlanePage.tsx
       - dashboard/src/pages/OperatorPage.tsx
       - dashboard/src/pages/ProductAssetGeneratorPage.tsx
       - dashboard/src/pages/SettingsPage.tsx
@@ -263,6 +264,7 @@ domains:
       - tests/api/test_img_factory_api.py
       - tests/ui/test_img_cockpit_page_ui_contract.py
       - tests/ui/test_f2v_composite_frame_picker_ui_contract.py
+      - tests/ui/test_img_fastlane_page_ui_contract.py
       - tests/api/test_approved_product_package_api.py
       - tests/api/test_product_catalog_selectable_v1.py
       - tests/api/test_product_intelligence_api.py

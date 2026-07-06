@@ -17,11 +17,16 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
+import re
 
 from agent.db import crud
 from agent.models.creative_asset import CreativeAssetCreateRequest, CreativeAssetRecord
 from agent.models.img_asset_factory import (
     ImgAssetLaneSummary,
+    ImgFastlanePresetListResponse,
+    ImgFastlanePresetSummary,
+    ImgFastlanePromptPreviewRequest,
+    ImgFastlanePromptPreviewResponse,
     ImgProviderStatusResponse,
     SaveImgOutputRequest,
 )
@@ -32,6 +37,527 @@ from agent.services.img_asset_lane_config import (
     list_img_asset_lanes,
     validate_img_lane_inputs,
 )
+from agent.services.product_lock_builder import build_product_lock
+
+
+_FASTLANE_OUTPUT_SPEC = "Vertical TikTok 9:16 commercial image."
+
+
+IMG_FASTLANE_PRESETS: list[dict[str, object]] = [
+    {
+        "preset_id": "GENERIC_FRAMES_AVATAR_PRODUCT",
+        "label": "Generic Avatar + Product Fastlane",
+        "route": "FRAMES",
+        "lane_id": "AVATAR_PRODUCT_COMPOSITE",
+        "description": "Database-driven composite frame using product truth plus avatar identity.",
+        "required_inputs": ["Database product", "Avatar reference", "Style reference"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["generic", "frames"],
+        "negative_rules": [
+            "No product drift.",
+            "No oversized product-to-hand ratio.",
+            "No fake typography or brand swap.",
+        ],
+    },
+    {
+        "preset_id": "GENERIC_FRAMES_AVATAR_PRODUCT_SCENE",
+        "label": "Generic Avatar + Product + Scene Fastlane",
+        "route": "FRAMES",
+        "lane_id": "AVATAR_PRODUCT_SCENE_COMPOSITE",
+        "description": "Database-driven frame route with avatar, product truth, and scene context.",
+        "required_inputs": [
+            "Database product",
+            "Avatar reference",
+            "Style reference",
+            "Scene reference",
+        ],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["generic", "frames", "scene"],
+        "negative_rules": [
+            "No product drift.",
+            "No oversized product-to-hand ratio.",
+            "No scene overpowering the product truth lock.",
+        ],
+    },
+    {
+        "preset_id": "BOSMAX_SERUM_AVATAR_PRODUCT_SCENE_3REF",
+        "label": "BOSMAX Serum 3 Ref",
+        "route": "FRAMES",
+        "lane_id": "AVATAR_PRODUCT_SCENE_COMPOSITE",
+        "description": "Avatar identity lock + context lock + BOSMAX Serum product truth lock.",
+        "required_inputs": [
+            "Database product",
+            "Avatar identity reference",
+            "Scene or wardrobe context reference",
+            "Style reference",
+        ],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["bosmax", "serum", "3ref", "frames"],
+        "negative_rules": [
+            "No typography drift.",
+            "No branding drift.",
+            "No product overscale or hand-ratio drift.",
+        ],
+    },
+    {
+        "preset_id": "BOSMAX_SERUM_AVATAR_PRODUCT_2REF",
+        "label": "BOSMAX Serum 2 Ref",
+        "route": "FRAMES",
+        "lane_id": "AVATAR_PRODUCT_COMPOSITE",
+        "description": "Avatar identity lock + BOSMAX Serum product truth lock.",
+        "required_inputs": ["Database product", "Avatar identity reference"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["bosmax", "serum", "2ref", "frames"],
+        "negative_rules": [
+            "No matte-black bottle drift.",
+            "No pinch-grip distortion.",
+            "No label readability tricks that enlarge the product.",
+        ],
+    },
+    {
+        "preset_id": "MWCB_WG40_AVATAR_BOTTLE",
+        "label": "MWCB WG40 Avatar + Bottle",
+        "route": "FRAMES",
+        "lane_id": "AVATAR_PRODUCT_COMPOSITE",
+        "description": "Avatar identity lock with exact Minyak Warisan WG40 bottle truth.",
+        "required_inputs": ["Database product", "Avatar identity reference", "Style reference"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["wg40", "minyak-warisan", "frames"],
+        "negative_rules": [
+            "Reject black cap.",
+            "Reject roller ball.",
+            "Reject oversized or generic bottle drift.",
+        ],
+    },
+    {
+        "preset_id": "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
+        "label": "MWCB WG40 Video Lock",
+        "route": "FRAMES",
+        "lane_id": "AVATAR_PRODUCT_COMPOSITE",
+        "description": "Frame-safe WG40 continuity lock for reusable video-support imagery.",
+        "required_inputs": ["Database product", "Avatar identity reference", "Style reference"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["wg40", "video-lock", "frames"],
+        "negative_rules": [
+            "Reject cap proportion drift.",
+            "Reject oil-color drift.",
+            "Reject label cue loss across frames.",
+        ],
+    },
+    {
+        "preset_id": "GENERIC_AVATAR_REFERENCE_PRESET",
+        "label": "Generic Avatar Reference",
+        "route": "INGREDIENTS",
+        "lane_id": "AVATAR_REFERENCE",
+        "ingredient_role": "AVATAR_REFERENCE",
+        "description": "Create a reusable avatar reference without typing a raw merge prompt.",
+        "required_inputs": ["Template preset"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["generic", "ingredients", "avatar"],
+        "negative_rules": ["No generic stock-face drift.", "No mismatched identity across generations."],
+    },
+    {
+        "preset_id": "GENERIC_SCENE_REFERENCE_PRESET",
+        "label": "Generic Scene Reference",
+        "route": "INGREDIENTS",
+        "lane_id": "SCENE_REFERENCE",
+        "ingredient_role": "SCENE_REFERENCE",
+        "description": "Create a reusable scene or environment reference from product context and template truth.",
+        "required_inputs": ["Template preset"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["generic", "ingredients", "scene"],
+        "negative_rules": ["No scene prompt drift away from product context."],
+    },
+    {
+        "preset_id": "GENERIC_STYLE_REFERENCE_PRESET",
+        "label": "Generic Style Reference",
+        "route": "INGREDIENTS",
+        "lane_id": "STYLE_REFERENCE",
+        "ingredient_role": "STYLE_REFERENCE",
+        "description": "Create a reusable style or mood reference from deterministic template rules.",
+        "required_inputs": ["Template preset"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["generic", "ingredients", "style"],
+        "negative_rules": ["No style prompt drift that overrides product truth."],
+    },
+    {
+        "preset_id": "GENERIC_PRODUCT_REFERENCE_LOCK",
+        "label": "Generic Product Lock",
+        "route": "INGREDIENTS",
+        "lane_id": "PRODUCT_ONLY_HERO",
+        "ingredient_role": "PRODUCT_REFERENCE",
+        "description": "Create a reusable product-truth reference with no raw prompt typing.",
+        "required_inputs": ["Database product"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["generic", "ingredients", "product"],
+        "negative_rules": [
+            "No product silhouette drift.",
+            "No label swap.",
+            "No forced-perspective overscale.",
+        ],
+    },
+    {
+        "preset_id": "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS_PRODUCT",
+        "label": "MWCB WG40 Video Lock",
+        "route": "INGREDIENTS",
+        "lane_id": "PRODUCT_ONLY_HERO",
+        "ingredient_role": "PRODUCT_REFERENCE",
+        "description": "Create a reusable WG40 product lock reference for Frames and Ingredients continuity.",
+        "required_inputs": ["Database product"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["wg40", "ingredients", "product", "video-lock"],
+        "negative_rules": [
+            "Reject black cap.",
+            "Reject roller ball.",
+            "Reject oil-color drift.",
+        ],
+    },
+    {
+        "preset_id": "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK",
+        "label": "MWCB WG40 Product Poster Lock",
+        "route": "INGREDIENTS",
+        "lane_id": "PRODUCT_POSTER",
+        "ingredient_role": "PRODUCT_REFERENCE",
+        "description": "Create a WG40 poster-safe terminal asset without losing product truth.",
+        "required_inputs": ["Database product"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["wg40", "ingredients", "poster"],
+        "negative_rules": [
+            "Reject bottle overscale.",
+            "Reject label redesign.",
+            "Reject cap, stopper, or oil-color drift.",
+        ],
+    },
+]
+
+
+def list_img_fastlane_presets() -> ImgFastlanePresetListResponse:
+    items = [ImgFastlanePresetSummary(**item) for item in IMG_FASTLANE_PRESETS]
+    return ImgFastlanePresetListResponse(items=items, total=len(items))
+
+
+def _clean_text(value: object | None) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _product_display_name(product: dict[str, object] | None) -> str:
+    if not product:
+        return "Selected product"
+    return (
+        _clean_text(product.get("product_display_name"))
+        or _clean_text(product.get("product_short_name"))
+        or _clean_text(product.get("raw_product_title"))
+        or _clean_text(product.get("id"))
+        or "Selected product"
+    )
+
+
+def _asset_label(asset: object | None) -> str | None:
+    if asset is None:
+        return None
+    display_name = getattr(asset, "display_name", None)
+    return _clean_text(display_name) or None
+
+
+def _resolve_preset(preset_id: str, route: str, ingredient_role: str | None) -> dict[str, object]:
+    for preset in IMG_FASTLANE_PRESETS:
+        if preset["preset_id"] != preset_id:
+            continue
+        if str(preset["route"]) != route:
+            continue
+        preset_role = preset.get("ingredient_role")
+        if preset_role and preset_role != ingredient_role:
+            continue
+        return preset
+    raise ValueError("UNKNOWN_FASTLANE_PRESET")
+
+
+def _product_family_flags(product: dict[str, object] | None) -> dict[str, bool]:
+    text = _clean_text(
+        (product or {}).get("product_display_name")
+        or (product or {}).get("product_short_name")
+        or (product or {}).get("raw_product_title")
+    ).lower()
+    return {
+        "is_bosmax_serum": "bosmax" in text and ("5 ml" in text or "5ml" in text or "serum" in text or "roll on" in text or "roll-on" in text),
+        "is_wg40": "minyak warisan" in text or "cap burung" in text or "wg40" in text,
+    }
+
+
+def _display_name_suggestion(
+    preset: dict[str, object],
+    product: dict[str, object] | None,
+) -> str:
+    product_name = _product_display_name(product)
+    label = _clean_text(preset.get("label"))
+    return f"{product_name} — {label}"
+
+
+def _make_blockers(
+    preset: dict[str, object],
+    product: dict[str, object] | None,
+    character_label: str | None,
+    scene_label: str | None,
+    style_label: str | None,
+) -> list[str]:
+    blockers: list[str] = []
+    required_inputs = [str(item) for item in preset.get("required_inputs") or []]
+    if "Database product" in required_inputs and product is None:
+        blockers.append("PRODUCT_REQUIRED")
+    if "Avatar identity reference" in required_inputs and not character_label:
+        blockers.append("AVATAR_REFERENCE_REQUIRED")
+    if "Avatar reference" in required_inputs and not character_label:
+        blockers.append("AVATAR_REFERENCE_REQUIRED")
+    if "Style reference" in required_inputs and not style_label:
+        blockers.append("STYLE_REFERENCE_REQUIRED")
+    if "Scene reference" in required_inputs and not scene_label:
+        blockers.append("SCENE_REFERENCE_REQUIRED")
+    if "Scene or wardrobe context reference" in required_inputs and not (scene_label or style_label):
+        blockers.append("SCENE_OR_STYLE_CONTEXT_REQUIRED")
+    return blockers
+
+
+def _reference_map_lines(
+    preset_id: str,
+    product: dict[str, object] | None,
+    character_label: str | None,
+    scene_label: str | None,
+    style_label: str | None,
+    product_reference_label: str | None,
+) -> list[str]:
+    lines: list[str] = []
+    if preset_id == "BOSMAX_SERUM_AVATAR_PRODUCT_SCENE_3REF":
+        lines.append(f"Ref 1 = avatar identity lock: {character_label or 'Select avatar identity reference'}")
+        lines.append(
+            "Ref 2 = wardrobe / scene / style context: "
+            + (scene_label or style_label or "Select scene or style context reference")
+        )
+        lines.append(f"Ref 3 = product truth: {_product_display_name(product)}")
+        return lines
+    if preset_id == "BOSMAX_SERUM_AVATAR_PRODUCT_2REF":
+        lines.append(f"Ref 1 = avatar identity lock: {character_label or 'Select avatar identity reference'}")
+        lines.append(f"Ref 2 = BOSMAX Herbs roll-on product truth: {_product_display_name(product)}")
+        return lines
+    if preset_id in {
+        "MWCB_WG40_AVATAR_BOTTLE",
+        "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
+        "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS_PRODUCT",
+        "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK",
+    }:
+        if character_label:
+            lines.append(f"Avatar identity lock: {character_label}")
+        lines.append(f"Exact bottle truth: {_product_display_name(product)}")
+        return lines
+    if character_label:
+        lines.append(f"Existing avatar reference: {character_label}")
+    if scene_label:
+        lines.append(f"Existing scene reference: {scene_label}")
+    if style_label:
+        lines.append(f"Existing style reference: {style_label}")
+    if product_reference_label:
+        lines.append(f"Existing product reference: {product_reference_label}")
+    if product:
+        lines.append(f"Database product truth: {_product_display_name(product)}")
+    return lines
+
+
+def _product_lock_lines(product: dict[str, object] | None, *, is_video: bool) -> list[str]:
+    if not product:
+        return []
+    lock = build_product_lock(
+        dict(product),
+        is_video=is_video,
+        has_product_reference=bool(
+            product.get("media_id") or product.get("image_url") or product.get("local_image_path")
+        ),
+    )
+    return [
+        lock["identity_lock"],
+        lock["geometry_lock"],
+        lock["scale_lock"],
+        lock["reference_lock"],
+        lock["frame_persistence"],
+        lock["negative_morph"],
+    ]
+
+
+def _preset_directives(
+    preset_id: str,
+    product: dict[str, object] | None,
+) -> list[str]:
+    product_name = _product_display_name(product)
+    directives: list[str] = []
+    if preset_id == "BOSMAX_SERUM_AVATAR_PRODUCT_SCENE_3REF":
+        directives.extend(
+            [
+                "Typography and branding lock: preserve BOSMAX HERBS identity, white typography, and label truth exactly as the real product appears.",
+                "Spatial math lock: preserve product-to-hand ratio, air gap, product scale, and natural handheld depth so the bottle never enlarges for readability.",
+                f"Render {product_name} as a vertical TikTok 9:16 commercial image with presenter identity locked to the selected avatar reference.",
+            ]
+        )
+    elif preset_id == "BOSMAX_SERUM_AVATAR_PRODUCT_2REF":
+        directives.extend(
+            [
+                "Enforce matte black cylindrical micro-bottle truth, white typography, lip balm size, and pinch grip label readability without enlarging the product.",
+                "Reject perfume, spray, supplement, skincare, or generic bottle drift.",
+            ]
+        )
+    elif preset_id == "MWCB_WG40_AVATAR_BOTTLE":
+        directives.extend(
+            [
+                "Enforce exact compact rectangular clear flint glass bottle with red ribbed screw cap, hidden stopper, emerald herbal oil, and cream / deep green / gold label.",
+                "Preserve bottle proportions and handheld scale with no black cap, no roller ball, and no oversized bottle drift.",
+            ]
+        )
+    elif preset_id in {
+        "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
+        "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS_PRODUCT",
+    }:
+        directives.extend(
+            [
+                "Video continuity lock: same 25ml rectangular clear flint glass bottle, red ribbed cap, hidden stopper, emerald herbal green oil, dark green + cream + gold label, and bird on leafy branch.",
+                "Preserve printed label cues 'Sejak 1958' and 'Petua Turun Temurun' with stable silhouette, cap proportion, oil color, and scale read across frames.",
+            ]
+        )
+    elif preset_id == "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK":
+        directives.extend(
+            [
+                "Poster lock: preserve WG40 bottle truth while allowing terminal poster composition only after product identity, label, and scale remain exact.",
+                "Rendered poster text may decorate around the bottle but must never replace or distort the real product label.",
+            ]
+        )
+    else:
+        directives.extend(
+            [
+                f"Use {_product_display_name(product)} as database-driven product truth when present.",
+                "System composes the prompt from selected references and template preset; operator notes are optional and never mandatory.",
+            ]
+        )
+    return directives
+
+
+async def compile_img_fastlane_prompt_preview(
+    request: ImgFastlanePromptPreviewRequest,
+) -> ImgFastlanePromptPreviewResponse:
+    preset = _resolve_preset(request.preset_id, request.route, request.ingredient_role)
+    product = None
+    if request.product_id:
+        found_product = await crud.get_product(request.product_id)
+        if found_product is None:
+            raise ValueError("PRODUCT_NOT_FOUND")
+        product = dict(found_product)
+
+    selected_character = (
+        await get_creative_asset(request.character_reference_asset_id)
+        if request.character_reference_asset_id
+        else None
+    )
+    selected_scene = (
+        await get_creative_asset(request.scene_reference_asset_id)
+        if request.scene_reference_asset_id
+        else None
+    )
+    selected_style = (
+        await get_creative_asset(request.style_reference_asset_id)
+        if request.style_reference_asset_id
+        else None
+    )
+    selected_product_reference = (
+        await get_creative_asset(request.product_reference_asset_id)
+        if request.product_reference_asset_id
+        else None
+    )
+
+    character_label = _asset_label(selected_character)
+    scene_label = _asset_label(selected_scene)
+    style_label = _asset_label(selected_style)
+    product_reference_label = _asset_label(selected_product_reference)
+    blockers = _make_blockers(
+        preset,
+        product,
+        character_label,
+        scene_label,
+        style_label,
+    )
+
+    warnings: list[str] = []
+    flags = _product_family_flags(product)
+    if request.preset_id.startswith("BOSMAX_") and not flags["is_bosmax_serum"]:
+        warnings.append("PRESET_PRODUCT_FAMILY_MISMATCH_BOSMAX_SERUM")
+    if request.preset_id.startswith("MWCB_WG40") and not flags["is_wg40"]:
+        warnings.append("PRESET_PRODUCT_FAMILY_MISMATCH_WG40")
+    if request.route == "INGREDIENTS" and request.ingredient_role == "PRODUCT_REFERENCE" and not request.product_id:
+        warnings.append("PRODUCT_CONTEXT_RECOMMENDED_FOR_PRODUCT_LOCK")
+
+    prompt_lines: list[str] = [
+        f"TEMPLATE PRESET: {preset['preset_id']}",
+        f"FASTLANE ROUTE: {request.route}",
+        f"TARGET LANE: {preset['lane_id']}",
+        f"OUTPUT SPEC: {preset['output_spec']}",
+    ]
+    if request.ingredient_role:
+        prompt_lines.append(f"TARGET INGREDIENT ROLE: {request.ingredient_role}")
+    prompt_lines.append("")
+    prompt_lines.append("REFERENCE MAP:")
+    prompt_lines.extend(
+        f"- {line}"
+        for line in _reference_map_lines(
+            request.preset_id,
+            product,
+            character_label,
+            scene_label,
+            style_label,
+            product_reference_label,
+        )
+    )
+    prompt_lines.append("")
+    prompt_lines.append("PRODUCT TRUTH LOCK:")
+    product_lock_lines = _product_lock_lines(
+        product,
+        is_video=request.route == "FRAMES"
+        or request.preset_id
+        in {
+            "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
+            "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS_PRODUCT",
+        },
+    )
+    if product_lock_lines:
+        prompt_lines.extend(f"- {line}" for line in product_lock_lines if line)
+    else:
+        prompt_lines.append("- No product selected. Select a product for product-truth locking.")
+    prompt_lines.append("")
+    prompt_lines.append("COMPOSITION DIRECTIVES:")
+    prompt_lines.extend(
+        f"- {line}" for line in _preset_directives(request.preset_id, product)
+    )
+    if request.advanced_override_notes and _clean_text(request.advanced_override_notes):
+        prompt_lines.append("")
+        prompt_lines.append("ADVANCED OVERRIDE NOTES (optional):")
+        prompt_lines.append(f"- {_clean_text(request.advanced_override_notes)}")
+    prompt_lines.append("")
+    prompt_lines.append("NEGATIVE RULES:")
+    prompt_lines.extend(f"- {rule}" for rule in list(preset.get("negative_rules") or []))
+
+    return ImgFastlanePromptPreviewResponse(
+        preset_id=str(preset["preset_id"]),
+        route=request.route,
+        ingredient_role=request.ingredient_role,
+        lane_id=str(preset["lane_id"]),
+        prompt_text="\n".join(prompt_lines).strip(),
+        display_name_suggestion=_display_name_suggestion(preset, product),
+        blockers=blockers,
+        warnings=warnings,
+        output_spec=str(preset["output_spec"]),
+        negative_rules=[str(rule) for rule in list(preset.get("negative_rules") or [])],
+        reference_map=_reference_map_lines(
+            request.preset_id,
+            product,
+            character_label,
+            scene_label,
+            style_label,
+            product_reference_label,
+        ),
+    )
 
 
 def list_img_lane_summaries() -> list[ImgAssetLaneSummary]:

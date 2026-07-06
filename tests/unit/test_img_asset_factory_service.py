@@ -12,19 +12,27 @@ closes the shared connection in the SAME loop (``close_db``). Proves:
 """
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from agent.db import crud
 from agent.db.schema import close_db, init_db
-from agent.models.img_asset_factory import SaveImgOutputRequest
+from agent.models.img_asset_factory import (
+    ImgFastlanePromptPreviewRequest,
+    SaveImgOutputRequest,
+)
 from agent.services import creative_asset_service
 from agent.services.creative_asset_service import (
     archive_creative_asset,
     list_creative_assets,
     validate_selectable_asset,
 )
-from agent.services.img_asset_factory_service import save_img_output_to_library
+from agent.services.img_asset_factory_service import (
+    compile_img_fastlane_prompt_preview,
+    list_img_fastlane_presets,
+    save_img_output_to_library,
+)
 
 
 async def _seed_product(product_id: str = "prod-1") -> None:
@@ -504,3 +512,118 @@ def test_default_save_is_pending_review_with_unverified_truth(tmp_path, monkeypa
         assert rec.claim_safety_status == "UNVERIFIED"
 
     _run_db(scenario)
+
+
+def test_fastlane_preset_listing_contains_required_presets():
+    response = list_img_fastlane_presets()
+    preset_ids = {item.preset_id for item in response.items}
+    assert {
+        "BOSMAX_SERUM_AVATAR_PRODUCT_SCENE_3REF",
+        "BOSMAX_SERUM_AVATAR_PRODUCT_2REF",
+        "MWCB_WG40_AVATAR_BOTTLE",
+        "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
+        "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK",
+    }.issubset(preset_ids)
+
+
+def test_compile_bosmax_three_ref_preview_uses_product_truth_and_template_rules(monkeypatch):
+    async def fake_get_product(_product_id: str):
+        return {
+            "id": "prod-bosmax",
+            "product_display_name": "Bosmax Herbs 5 ML",
+            "raw_product_title": "Bosmax Herbs 5 ML",
+            "product_short_name": "BOSMAX",
+            "media_id": "media-bosmax",
+        }
+
+    async def fake_get_asset(asset_id: str):
+        labels = {
+            "char-1": "Aina Presenter Identity",
+            "style-1": "Clean modern wardrobe context",
+        }
+        return SimpleNamespace(display_name=labels.get(asset_id, asset_id))
+
+    monkeypatch.setattr(crud, "get_product", fake_get_product)
+    monkeypatch.setattr(
+        "agent.services.img_asset_factory_service.get_creative_asset",
+        fake_get_asset,
+    )
+
+    preview = asyncio.run(
+        compile_img_fastlane_prompt_preview(
+            ImgFastlanePromptPreviewRequest(
+                preset_id="BOSMAX_SERUM_AVATAR_PRODUCT_SCENE_3REF",
+                route="FRAMES",
+                product_id="prod-bosmax",
+                character_reference_asset_id="char-1",
+                style_reference_asset_id="style-1",
+            )
+        )
+    )
+
+    assert preview.blockers == []
+    assert "Ref 1 = avatar identity lock: Aina Presenter Identity" in preview.reference_map
+    assert "Ref 3 = product truth: Bosmax Herbs 5 ML" in preview.reference_map
+    assert "Typography and branding lock" in preview.prompt_text
+    assert "Spatial math lock" in preview.prompt_text
+    assert "PRODUCT SCALE LOCK:" in preview.prompt_text
+    assert "real size outranks label readability" in preview.prompt_text
+    assert "FRAME PERSISTENCE LOCK" in preview.prompt_text
+
+
+def test_compile_wg40_video_lock_preview_emits_exact_bottle_truth(monkeypatch):
+    async def fake_get_product(_product_id: str):
+        return {
+            "id": "prod-wg40",
+            "product_display_name": "Minyak Warisan Tok Cap Burung 25ml",
+            "raw_product_title": "Minyak Warisan Tok Cap Burung 25ml",
+            "media_id": "media-wg40",
+        }
+
+    async def fake_get_asset(asset_id: str):
+        labels = {
+            "char-1": "Mak Cik Host Identity",
+            "style-1": "Traditional herbal presentation",
+        }
+        return SimpleNamespace(display_name=labels.get(asset_id, asset_id))
+
+    monkeypatch.setattr(crud, "get_product", fake_get_product)
+    monkeypatch.setattr(
+        "agent.services.img_asset_factory_service.get_creative_asset",
+        fake_get_asset,
+    )
+
+    preview = asyncio.run(
+        compile_img_fastlane_prompt_preview(
+            ImgFastlanePromptPreviewRequest(
+                preset_id="MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
+                route="FRAMES",
+                product_id="prod-wg40",
+                character_reference_asset_id="char-1",
+                style_reference_asset_id="style-1",
+            )
+        )
+    )
+
+    assert preview.blockers == []
+    assert "Exact bottle truth: Minyak Warisan Tok Cap Burung 25ml" in preview.reference_map
+    assert "red ribbed cap" in preview.prompt_text
+    assert "emerald herbal green oil" in preview.prompt_text
+    assert "Sejak 1958" in preview.prompt_text
+    assert "Petua Turun Temurun" in preview.prompt_text
+
+
+def test_compile_product_lock_preview_warns_and_blocks_without_product():
+    preview = asyncio.run(
+        compile_img_fastlane_prompt_preview(
+            ImgFastlanePromptPreviewRequest(
+                preset_id="GENERIC_PRODUCT_REFERENCE_LOCK",
+                route="INGREDIENTS",
+                ingredient_role="PRODUCT_REFERENCE",
+            )
+        )
+    )
+
+    assert "PRODUCT_REQUIRED" in preview.blockers
+    assert "PRODUCT_CONTEXT_RECOMMENDED_FOR_PRODUCT_LOCK" in preview.warnings
+    assert preview.lane_id == "PRODUCT_ONLY_HERO"

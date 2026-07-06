@@ -18,12 +18,17 @@ from agent.models.f2v_frame_source_resolver import (
 )
 from agent.models.img_asset_factory import (
     ImgAssetLaneListResponse,
+    ImgFastlanePresetListResponse,
+    ImgFastlanePromptPreviewRequest,
+    ImgFastlanePromptPreviewResponse,
     ImgProviderStatusResponse,
     SaveImgOutputRequest,
 )
 from agent.services.f2v_frame_source_resolver_service import resolve_f2v_frame_sources
 from agent.services.img_asset_factory_service import (
+    compile_img_fastlane_prompt_preview,
     get_img_provider_status,
+    list_img_fastlane_presets,
     list_img_lane_summaries,
     save_img_output_to_library,
 )
@@ -41,6 +46,21 @@ async def get_img_factory_lanes() -> ImgAssetLaneListResponse:
 @router.get("/provider-status", response_model=ImgProviderStatusResponse)
 async def get_img_factory_provider_status() -> ImgProviderStatusResponse:
     return get_img_provider_status()
+
+
+@router.get("/fastlane-presets", response_model=ImgFastlanePresetListResponse)
+async def get_img_fastlane_presets() -> ImgFastlanePresetListResponse:
+    return list_img_fastlane_presets()
+
+
+@router.post("/fastlane-preview", response_model=ImgFastlanePromptPreviewResponse)
+async def post_img_fastlane_preview(
+    request: ImgFastlanePromptPreviewRequest,
+) -> ImgFastlanePromptPreviewResponse:
+    try:
+        return await compile_img_fastlane_prompt_preview(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/save", response_model=CreativeAssetRecord)

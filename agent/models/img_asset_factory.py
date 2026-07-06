@@ -89,3 +89,57 @@ class ImgProviderStatusResponse(BaseModel):
     detail: str
     generation_endpoint: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
+
+
+FastlaneRoute = Literal["FRAMES", "INGREDIENTS"]
+IngredientRole = Literal[
+    "AVATAR_REFERENCE",
+    "SCENE_REFERENCE",
+    "STYLE_REFERENCE",
+    "PRODUCT_REFERENCE",
+]
+
+
+class ImgFastlanePresetSummary(BaseModel):
+    preset_id: str
+    label: str
+    route: FastlaneRoute
+    lane_id: str
+    ingredient_role: IngredientRole | None = None
+    description: str
+    required_inputs: list[str] = Field(default_factory=list)
+    output_spec: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class ImgFastlanePresetListResponse(BaseModel):
+    items: list[ImgFastlanePresetSummary] = Field(default_factory=list)
+    total: int
+
+
+class ImgFastlanePromptPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preset_id: str
+    route: FastlaneRoute
+    ingredient_role: IngredientRole | None = None
+    product_id: str | None = None
+    character_reference_asset_id: str | None = None
+    scene_reference_asset_id: str | None = None
+    style_reference_asset_id: str | None = None
+    product_reference_asset_id: str | None = None
+    advanced_override_notes: str | None = None
+
+
+class ImgFastlanePromptPreviewResponse(BaseModel):
+    preset_id: str
+    route: FastlaneRoute
+    ingredient_role: IngredientRole | None = None
+    lane_id: str
+    prompt_text: str
+    display_name_suggestion: str
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    output_spec: str
+    negative_rules: list[str] = Field(default_factory=list)
+    reference_map: list[str] = Field(default_factory=list)

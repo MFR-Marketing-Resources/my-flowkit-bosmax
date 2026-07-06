@@ -9,6 +9,7 @@ from agent.models.f2v_frame_source_resolver import (
     F2VFrameSourceResolverResponse,
     F2VResolvedFrame,
 )
+from agent.models.img_asset_factory import ImgFastlanePromptPreviewResponse
 
 
 def _build_app() -> FastAPI:
@@ -39,6 +40,70 @@ def test_provider_status_is_honest():
     # re-verified in this PR.
     assert payload["provider_state"] == "SAVE_TO_LIBRARY_READY_GENERATION_RUNTIME_EXTERNAL"
     assert payload["generation_endpoint"] == "/api/flow/execute-flow-job"
+
+
+def test_fastlane_presets_endpoint_returns_required_presets():
+    client = TestClient(_build_app())
+    response = client.get("/api/img-factory/fastlane-presets")
+    assert response.status_code == 200
+    payload = response.json()
+    preset_ids = {item["preset_id"] for item in payload["items"]}
+    assert {
+        "BOSMAX_SERUM_AVATAR_PRODUCT_SCENE_3REF",
+        "BOSMAX_SERUM_AVATAR_PRODUCT_2REF",
+        "MWCB_WG40_AVATAR_BOTTLE",
+        "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
+        "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK",
+    }.issubset(preset_ids)
+
+
+def test_fastlane_preview_endpoint_returns_compiled_prompt(monkeypatch):
+    async def fake_compile(request):
+        return ImgFastlanePromptPreviewResponse(
+            preset_id=request.preset_id,
+            route=request.route,
+            ingredient_role=request.ingredient_role,
+            lane_id="AVATAR_PRODUCT_COMPOSITE",
+            prompt_text="compiled prompt",
+            display_name_suggestion="Bosmax Herbs 5 ML - Hero",
+            blockers=[],
+            warnings=[],
+            output_spec="Vertical TikTok 9:16 commercial image.",
+            negative_rules=["No drift."],
+            reference_map=["Ref 1 = avatar identity lock"],
+        )
+
+    monkeypatch.setattr("agent.api.img_factory.compile_img_fastlane_prompt_preview", fake_compile)
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/img-factory/fastlane-preview",
+        json={
+            "preset_id": "BOSMAX_SERUM_AVATAR_PRODUCT_2REF",
+            "route": "FRAMES",
+            "product_id": "prod-bosmax",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["prompt_text"] == "compiled prompt"
+    assert payload["lane_id"] == "AVATAR_PRODUCT_COMPOSITE"
+
+
+def test_fastlane_preview_endpoint_maps_value_error_to_400(monkeypatch):
+    async def fake_compile(request):
+        raise ValueError("UNKNOWN_FASTLANE_PRESET")
+
+    monkeypatch.setattr("agent.api.img_factory.compile_img_fastlane_prompt_preview", fake_compile)
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/img-factory/fastlane-preview",
+        json={
+            "preset_id": "UNKNOWN",
+            "route": "FRAMES",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "UNKNOWN_FASTLANE_PRESET"
 
 
 def test_save_multiple_sources_returns_400(monkeypatch):

@@ -5,17 +5,21 @@ import {
 	updateCreativeAsset,
 } from "../api/creativeAssets";
 import {
+	compileImgFastlanePromptPreview,
 	type ImageArtifact,
 	type ImgAssetLane,
+	type ImgFastlaneIngredientRole,
+	type ImgFastlanePreset,
+	type ImgFastlanePromptPreview,
 	type ImgGenerationJob,
 	fetchImageArtifacts,
 	fetchImgAssetLanes,
+	fetchImgFastlanePresets,
 	pollImgGenerationJob,
 	saveImgOutputToLibrary,
 	startImgGeneration,
 } from "../api/imgFactory";
 import { fetchProductCatalog } from "../api/products";
-import { compileWorkspacePromptPreview } from "../api/workspacePackages";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { CreativeAsset, Product } from "../types";
 import {
@@ -32,6 +36,39 @@ type TruthStatus = "UNVERIFIED" | "PASS" | "FAIL";
 type ReviewDecision = "PENDING_REVIEW" | "APPROVED" | "REJECTED";
 type OutputMode = "artifact" | "upload";
 type FastlaneTab = "frames" | "ingredients";
+
+const INGREDIENT_ROLE_OPTIONS: ImgFastlaneIngredientRole[] = [
+	"AVATAR_REFERENCE",
+	"SCENE_REFERENCE",
+	"STYLE_REFERENCE",
+	"PRODUCT_REFERENCE",
+];
+
+function ingredientRoleLabel(role: ImgFastlaneIngredientRole) {
+	switch (role) {
+		case "AVATAR_REFERENCE":
+			return "Subject / Avatar";
+		case "SCENE_REFERENCE":
+			return "Scene";
+		case "STYLE_REFERENCE":
+			return "Style";
+		case "PRODUCT_REFERENCE":
+			return "Product / Product Lock";
+	}
+}
+
+function ingredientRoleHelp(role: ImgFastlaneIngredientRole) {
+	switch (role) {
+		case "AVATAR_REFERENCE":
+			return "Creates a reusable character identity. Output role: CHARACTER_REFERENCE.";
+		case "SCENE_REFERENCE":
+			return "Creates a reusable scene context. Output role: SCENE_CONTEXT_REFERENCE.";
+		case "STYLE_REFERENCE":
+			return "Creates a reusable visual style reference. Output role: STYLE_REFERENCE.";
+		case "PRODUCT_REFERENCE":
+			return "Creates a reusable product lock or poster-safe product reference from the database product truth.";
+	}
+}
 
 function fileToDataUrl(file: File): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -160,29 +197,36 @@ function ReferenceField({
 
 export default function ImgFastlanePage() {
 	const [activeTab, setActiveTab] = useState<FastlaneTab>("frames");
-	// Ingredients composer states
-	const [ingSaveLaneId, setIngSaveLaneId] = useState<string>("AVATAR_REFERENCE");
+	const [ingSaveLaneId, setIngSaveLaneId] =
+		useState<ImgFastlaneIngredientRole>("AVATAR_REFERENCE");
 	const [ingCharacterAssetId, setIngCharacterAssetId] = useState("");
 	const [ingSceneAssetId, setIngSceneAssetId] = useState("");
 	const [ingStyleAssetId, setIngStyleAssetId] = useState("");
-	const [ingSubjectText, setIngSubjectText] = useState("");
-	const [ingSceneText, setIngSceneText] = useState("");
-	const [ingStyleText, setIngStyleText] = useState("");
+	const [ingProductReferenceAssetId, setIngProductReferenceAssetId] = useState("");
 
 	const [lanes, setLanes] = useState<ImgAssetLane[]>([]);
+	const [presets, setPresets] = useState<ImgFastlanePreset[]>([]);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [products, setProducts] = useState<Product[]>([]);
 	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
 	const [sceneAssets, setSceneAssets] = useState<CreativeAsset[]>([]);
 	const [styleAssets, setStyleAssets] = useState<CreativeAsset[]>([]);
+	const [productReferenceAssets, setProductReferenceAssets] = useState<
+		CreativeAsset[]
+	>([]);
 
 	const [characterAssetId, setCharacterAssetId] = useState("");
 	const [sceneAssetId, setSceneAssetId] = useState("");
 	const [styleAssetId, setStyleAssetId] = useState("");
 	const [approvingId, setApprovingId] = useState<string | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
+	const [framePresetId, setFramePresetId] = useState("");
+	const [ingredientPresetId, setIngredientPresetId] = useState("");
+	const [advancedOverrideNotes, setAdvancedOverrideNotes] = useState("");
 
 	const [prompt, setPrompt] = useState("");
+	const [compiledPreview, setCompiledPreview] =
+		useState<ImgFastlanePromptPreview | null>(null);
 	const [displayName, setDisplayName] = useState("");
 	const [compiling, setCompiling] = useState(false);
 	const [aspect, setAspect] = useState<string>("9:16");
@@ -217,15 +261,34 @@ export default function ImgFastlanePage() {
 
 	const loadReferences = useCallback(async () => {
 		const results = await Promise.allSettled([
-			fetchCreativeAssets({ semantic_role: "CHARACTER_REFERENCE", status: "ACTIVE", limit: 100 }),
-			fetchCreativeAssets({ semantic_role: "SCENE_CONTEXT_REFERENCE", status: "ACTIVE", limit: 100 }),
-			fetchCreativeAssets({ semantic_role: "STYLE_REFERENCE", status: "ACTIVE", limit: 100 }),
+			fetchCreativeAssets({
+				semantic_role: "CHARACTER_REFERENCE",
+				status: "ACTIVE",
+				limit: 100,
+			}),
+			fetchCreativeAssets({
+				semantic_role: "SCENE_CONTEXT_REFERENCE",
+				status: "ACTIVE",
+				limit: 100,
+			}),
+			fetchCreativeAssets({
+				semantic_role: "STYLE_REFERENCE",
+				status: "ACTIVE",
+				limit: 100,
+			}),
+			fetchCreativeAssets({
+				semantic_role: "PRODUCT_REFERENCE",
+				status: "ACTIVE",
+				limit: 100,
+			}),
 			fetchImageArtifacts(50),
 		]);
-		const [chars, scenes, styles, arts] = results;
+		const [chars, scenes, styles, productRefs, arts] = results;
 		if (chars.status === "fulfilled") setCharacterAssets(chars.value.items);
 		if (scenes.status === "fulfilled") setSceneAssets(scenes.value.items);
 		if (styles.status === "fulfilled") setStyleAssets(styles.value.items);
+		if (productRefs.status === "fulfilled")
+			setProductReferenceAssets(productRefs.value.items);
 		if (arts.status === "fulfilled") setArtifacts(arts.value);
 		if (results.some((r) => r.status === "rejected")) {
 			setError("Failed to load reference assets from Library.");
@@ -236,6 +299,9 @@ export default function ImgFastlanePage() {
 		void fetchImgAssetLanes()
 			.then((r) => setLanes(r.items))
 			.catch(() => setError("Failed to load IMG lanes."));
+		void fetchImgFastlanePresets()
+			.then((r) => setPresets(r.items))
+			.catch(() => setError("Failed to load IMG Fastlane presets."));
 		void fetchProductCatalog(500)
 			.then((r) => setProducts(r.items ?? []))
 			.catch(() => setError("Failed to load product catalog."));
@@ -250,13 +316,16 @@ export default function ImgFastlanePage() {
 
 	// Automatically choose the correct lane based on selections and tab.
 	const lane = useMemo(() => {
+		if (compiledPreview?.lane_id) {
+			return lanes.find((item) => item.lane_id === compiledPreview.lane_id) ?? null;
+		}
 		if (activeTab === "frames") {
 			const laneId = sceneAssetId ? "AVATAR_PRODUCT_SCENE_COMPOSITE" : "AVATAR_PRODUCT_COMPOSITE";
 			return lanes.find((l) => l.lane_id === laneId) ?? null;
 		} else {
 			return lanes.find((l) => l.lane_id === ingSaveLaneId) ?? null;
 		}
-	}, [lanes, activeTab, sceneAssetId, ingSaveLaneId]);
+	}, [lanes, compiledPreview?.lane_id, activeTab, sceneAssetId, ingSaveLaneId]);
 
 	const selectedCharacter = useMemo(
 		() => characterAssets.find((a) => a.asset_id === characterAssetId) ?? null,
@@ -291,6 +360,13 @@ export default function ImgFastlanePage() {
 		() => styleAssets.find((a) => a.asset_id === ingStyleAssetId) ?? null,
 		[styleAssets, ingStyleAssetId],
 	);
+	const selectedIngProductReference = useMemo(
+		() =>
+			productReferenceAssets.find(
+				(a) => a.asset_id === ingProductReferenceAssetId,
+			) ?? null,
+		[productReferenceAssets, ingProductReferenceAssetId],
+	);
 
 	const approvedIngCharacter =
 		selectedIngCharacter && isReusableAsset(selectedIngCharacter) ? selectedIngCharacter : null;
@@ -298,6 +374,43 @@ export default function ImgFastlanePage() {
 		selectedIngScene && isReusableAsset(selectedIngScene) ? selectedIngScene : null;
 	const approvedIngStyle =
 		selectedIngStyle && isReusableAsset(selectedIngStyle) ? selectedIngStyle : null;
+	const approvedIngProductReference =
+		selectedIngProductReference && isReusableAsset(selectedIngProductReference)
+			? selectedIngProductReference
+			: null;
+
+	const framePresets = useMemo(
+		() => presets.filter((preset) => preset.route === "FRAMES"),
+		[presets],
+	);
+	const ingredientPresets = useMemo(
+		() =>
+			presets.filter(
+				(preset) =>
+					preset.route === "INGREDIENTS" &&
+					preset.ingredient_role === ingSaveLaneId,
+			),
+		[presets, ingSaveLaneId],
+	);
+
+	useEffect(() => {
+		if (!framePresets.length) return;
+		setFramePresetId((current) =>
+			current && framePresets.some((preset) => preset.preset_id === current)
+				? current
+				: framePresets[0]?.preset_id ?? "",
+		);
+	}, [framePresets]);
+
+	useEffect(() => {
+		if (!ingredientPresets.length) return;
+		setIngredientPresetId((current) =>
+			current &&
+			ingredientPresets.some((preset) => preset.preset_id === current)
+				? current
+				: ingredientPresets[0]?.preset_id ?? "",
+		);
+	}, [ingredientPresets]);
 
 	const resolvedRefsPayload = useMemo(() => {
 		const refs: Record<string, any> = {};
@@ -324,6 +437,11 @@ export default function ImgFastlanePage() {
 			if (approvedIngStyle) {
 				refs.styleAsset = buildAssetPayload(approvedIngStyle);
 			}
+			if (approvedIngProductReference) {
+				refs.imageAsset = buildAssetPayload(approvedIngProductReference);
+			} else if (selectedProduct) {
+				refs.imageAsset = buildProductAssetPayload(selectedProduct);
+			}
 		}
 		return refs;
 	}, [
@@ -335,6 +453,7 @@ export default function ImgFastlanePage() {
 		approvedIngCharacter,
 		approvedIngScene,
 		approvedIngStyle,
+		approvedIngProductReference,
 	]);
 
 	const genResolution = useMemo(
@@ -359,13 +478,14 @@ export default function ImgFastlanePage() {
 	const productMissing = Boolean(activeTab === "frames" && lane?.requires_product_id && !selectedProduct);
 	const productVisualReferenceMissing = Boolean(activeTab === "frames" && lane?.requires_product_id && selectedProduct && !productResolvable);
 
-	const characterMissing = Boolean(activeTab === "frames" && lane?.requires_character_reference && !approvedCharacter);
-	const sceneMissing = Boolean(activeTab === "frames" && lane?.requires_scene_reference && !approvedScene);
-	
-	// Frames tab requires style reference. Ingredients tab depends on lane requirements.
-	const styleMissing = Boolean(
-		activeTab === "frames" ? !approvedStyle : false
-	);
+	const compiledBlockers = compiledPreview?.blockers ?? [];
+	const characterMissing = compiledBlockers.includes("AVATAR_REFERENCE_REQUIRED");
+	const sceneMissing =
+		compiledBlockers.includes("SCENE_REFERENCE_REQUIRED") ||
+		compiledBlockers.includes("SCENE_OR_STYLE_CONTEXT_REQUIRED");
+	const styleMissing =
+		compiledBlockers.includes("STYLE_REFERENCE_REQUIRED") ||
+		compiledBlockers.includes("SCENE_OR_STYLE_CONTEXT_REQUIRED");
 
 	// Generation is blocked if inputs are missing OR product has no visual reference.
 	const generationBlocked =
@@ -375,8 +495,10 @@ export default function ImgFastlanePage() {
 				characterMissing ||
 				sceneMissing ||
 				styleMissing ||
-				genResolution.blocked)
-			: !prompt.trim();
+				genResolution.blocked ||
+				compiledBlockers.length > 0 ||
+				!prompt.trim())
+			: compiledBlockers.length > 0 || !prompt.trim();
 
 	const hasRealOutput =
 		outputMode === "artifact" ? Boolean(artifactMediaId) : Boolean(uploadFile);
@@ -405,6 +527,7 @@ export default function ImgFastlanePage() {
 		lane &&
 			displayName.trim() &&
 			hasRealOutput &&
+			prompt.trim() &&
 			!generationBlocked &&
 			!approvalBlocked &&
 			!saving,
@@ -435,52 +558,78 @@ export default function ImgFastlanePage() {
 		}
 	};
 
-	const handleCompilePrompt = async () => {
-		if (!selectedProduct) return;
+	const compileFastlanePreview = useCallback(async () => {
+		const presetId = activeTab === "frames" ? framePresetId : ingredientPresetId;
+		if (!presetId) {
+			setCompiledPreview(null);
+			setPrompt("");
+			return;
+		}
 		setCompiling(true);
 		setError(null);
 		try {
-			const preview = await compileWorkspacePromptPreview({
-				product_id: selectedProduct.id,
-				mode: "IMG",
-				source_mode: "IMAGES",
+			const preview = await compileImgFastlanePromptPreview({
+				preset_id: presetId,
+				route: activeTab === "frames" ? "FRAMES" : "INGREDIENTS",
+				ingredient_role:
+					activeTab === "ingredients" ? ingSaveLaneId : undefined,
+				product_id: selectedProduct?.id ?? null,
+				character_reference_asset_id:
+					activeTab === "frames"
+						? characterAssetId || null
+						: ingCharacterAssetId || null,
+				scene_reference_asset_id:
+					activeTab === "frames" ? sceneAssetId || null : ingSceneAssetId || null,
+				style_reference_asset_id:
+					activeTab === "frames" ? styleAssetId || null : ingStyleAssetId || null,
+				product_reference_asset_id:
+					activeTab === "ingredients" ? ingProductReferenceAssetId || null : null,
+				advanced_override_notes: advancedOverrideNotes || null,
 			});
-			setPrompt(preview.final_compiled_prompt_text || prompt);
+			setCompiledPreview(preview);
+			setPrompt(preview.prompt_text || "");
+			setDisplayName((current) =>
+				current.trim() ? current : preview.display_name_suggestion,
+			);
 		} catch (err) {
+			setCompiledPreview(null);
+			setPrompt("");
 			setError(
-				err instanceof Error ? err.message : "Failed to compile suggested prompt.",
+				err instanceof Error
+					? err.message
+					: "Failed to compile Fastlane prompt preview.",
 			);
 		} finally {
 			setCompiling(false);
 		}
-	};
+	}, [
+		activeTab,
+		framePresetId,
+		ingredientPresetId,
+		ingSaveLaneId,
+		selectedProduct?.id,
+		characterAssetId,
+		sceneAssetId,
+		styleAssetId,
+		ingCharacterAssetId,
+		ingSceneAssetId,
+		ingStyleAssetId,
+		ingProductReferenceAssetId,
+		advancedOverrideNotes,
+	]);
 
-	const handleCompileIngredientsPrompt = () => {
-		const parts: string[] = [];
-		if (ingSubjectText.trim()) {
-			parts.push(`Subject: ${ingSubjectText.trim()}`);
-		} else if (approvedIngCharacter) {
-			parts.push(`Subject: character profile of ${approvedIngCharacter.display_name}`);
-		}
-
-		if (ingSceneText.trim()) {
-			parts.push(`Scene: ${ingSceneText.trim()}`);
-		} else if (approvedIngScene) {
-			parts.push(`Scene: environment context from ${approvedIngScene.display_name}`);
-		}
-
-		if (ingStyleText.trim()) {
-			parts.push(`Style: ${ingStyleText.trim()}`);
-		} else if (approvedIngStyle) {
-			parts.push(`Style: visual mood from ${approvedIngStyle.display_name}`);
-		}
-
-		if (parts.length > 0) {
-			setPrompt(parts.join(", "));
-		} else {
+	useEffect(() => {
+		const presetId = activeTab === "frames" ? framePresetId : ingredientPresetId;
+		if (!presetId) {
+			setCompiledPreview(null);
 			setPrompt("");
+			return;
 		}
-	};
+		const handle = window.setTimeout(() => {
+			void compileFastlanePreview();
+		}, 150);
+		return () => window.clearTimeout(handle);
+	}, [compileFastlanePreview, activeTab, framePresetId, ingredientPresetId]);
 
 	const handleConfirmedGenerate = async () => {
 		setShowGenConfirm(false);
@@ -525,6 +674,9 @@ export default function ImgFastlanePage() {
 		setArtifactMediaId("");
 		setUploadFile(null);
 		setOutputMode("artifact");
+		setCompiledPreview(null);
+		setPrompt("");
+		setAdvancedOverrideNotes("");
 		setChecklistOversized(false);
 		setChecklistPreserved(false);
 		setChecklistContext(false);
@@ -635,11 +787,10 @@ export default function ImgFastlanePage() {
 				<div className="lg:col-span-7 space-y-6">
 					{activeTab === "frames" ? (
 						<>
-							{/* Section 1: Product Selection */}
 							<Section step="1" title="Select Product">
 								<div className="space-y-2">
 									<p className="text-[11px] text-slate-400">
-										Required. Selected product details will compile visual truth templates.
+										Required. Product truth is loaded from the product database and compiled automatically into the Fastlane preset.
 									</p>
 									<SearchableProductSelect
 										products={products}
@@ -648,39 +799,85 @@ export default function ImgFastlanePage() {
 									/>
 									{productMissing ? (
 										<p className="text-[10px] text-amber-300/80">
-											Frames mode requires a product to ensure product truth.
+											Frames Fastlane blocks generation until a database product is selected.
 										</p>
 									) : null}
 									{selectedProduct && !productResolvable ? (
 										<div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-200 space-y-1">
-											<div><strong>No Product Visual Reference:</strong></div>
-											<div>This product has no media_id, image_url, or local_image_path. Generation is blocked. Please register product images in the Product Catalog first.</div>
+											<div>
+												<strong>No Product Visual Reference:</strong>
+											</div>
+											<div>
+												This product has no media_id, image_url, or local_image_path. Generation is blocked until the product row has a real image reference.
+											</div>
 										</div>
 									) : null}
 								</div>
 							</Section>
 
-							{/* Section 2: Character / Style References */}
-							<Section step="2" title="Select Character & Style Reference">
+							<Section step="2" title="Template Preset">
+								<div className="space-y-3">
+									<label className="block text-[11px] text-slate-300 space-y-1">
+										<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+											Template Preset
+										</span>
+										<select
+											value={framePresetId}
+											onChange={(event) => setFramePresetId(event.target.value)}
+											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
+										>
+											<option value="">
+												{framePresets.length
+													? "Select a frame preset…"
+													: "No frame presets available"}
+											</option>
+											{framePresets.map((preset) => (
+												<option key={preset.preset_id} value={preset.preset_id}>
+													{preset.label}
+												</option>
+											))}
+										</select>
+									</label>
+									{framePresetId ? (
+										<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400 space-y-1">
+											<div className="font-semibold text-slate-200">
+												{
+													framePresets.find((preset) => preset.preset_id === framePresetId)
+														?.description
+												}
+											</div>
+											<div>
+												Required inputs:{" "}
+												{(
+													framePresets.find((preset) => preset.preset_id === framePresetId)
+														?.required_inputs ?? []
+												).join(" • ")}
+											</div>
+										</div>
+									) : null}
+								</div>
+							</Section>
+
+							<Section step="3" title="Select Existing References">
 								<div className="grid gap-4 md:grid-cols-2">
 									<ReferenceField
-										label="Avatar Reference (Required)"
+										label="Select Existing Reference — Avatar"
 										noun="avatar"
 										assets={characterAssets}
 										value={characterAssetId}
 										onChange={setCharacterAssetId}
-										emptyHint="No avatars in Library — create one in Avatar Registry"
+										emptyHint="No references found — create one from preset"
 										requiredMissing={characterMissing}
 										onApprove={handleApproveAsset}
 										approvingId={approvingId}
 									/>
 									<ReferenceField
-										label="Style / Mood Reference (Required)"
+										label="Select Existing Reference — Style"
 										noun="style reference"
 										assets={styleAssets}
 										value={styleAssetId}
 										onChange={setStyleAssetId}
-										emptyHint="No style references in Library"
+										emptyHint="No references found — create one from preset"
 										requiredMissing={styleMissing}
 										onApprove={handleApproveAsset}
 										approvingId={approvingId}
@@ -695,166 +892,245 @@ export default function ImgFastlanePage() {
 									>
 										Open Avatar Registry ↗
 									</a>
+									<a
+										href="/assets/creative-library"
+										target="_blank"
+										rel="noopener noreferrer"
+										className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[10px] font-semibold text-slate-200 hover:bg-slate-800 text-center flex-1 transition-all"
+									>
+										Open Creative Library ↗
+									</a>
 								</div>
 							</Section>
 
-							{/* Section 3: Optional Scene Reference */}
-							<Section step="3" title="Select Scene Reference (Optional)">
-								<ReferenceField
-									label="Scene Context Reference"
-									noun="scene reference"
-									assets={sceneAssets}
-									value={sceneAssetId}
-									onChange={setSceneAssetId}
-									emptyHint="No scene references in Library"
-									requiredMissing={sceneMissing}
-									onApprove={handleApproveAsset}
-									approvingId={approvingId}
-								/>
+							<Section step="4" title="Select Existing Reference — Scene">
+								<div className="space-y-2">
+									<ReferenceField
+										label="Select Existing Reference"
+										noun="scene reference"
+										assets={sceneAssets}
+										value={sceneAssetId}
+										onChange={setSceneAssetId}
+										emptyHint="No references found — create one from preset"
+										requiredMissing={sceneMissing}
+										onApprove={handleApproveAsset}
+										approvingId={approvingId}
+									/>
+									<p className="text-[10px] text-slate-500">
+										Optional for generic frames, but scene-aware presets will surface a blocker until context is selected.
+									</p>
+								</div>
 							</Section>
 						</>
 					) : (
 						<>
-							{/* Ingredients composer */}
 							<Section step="1" title="Select Target Ingredient Role">
-								<div className="flex gap-2">
-									{(["AVATAR_REFERENCE", "SCENE_REFERENCE", "STYLE_REFERENCE"] as const).map((role) => (
+								<div className="grid gap-2 md:grid-cols-2">
+									{INGREDIENT_ROLE_OPTIONS.map((role) => (
 										<button
 											key={role}
 											type="button"
 											onClick={() => setIngSaveLaneId(role)}
-											className={`flex-1 rounded-xl border py-2.5 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+											className={`rounded-xl border py-2.5 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
 												ingSaveLaneId === role
 													? "border-blue-500 bg-blue-600/10 text-blue-400"
 													: "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200"
 											}`}
 										>
-											{role === "AVATAR_REFERENCE" ? "Subject/Avatar" : role === "SCENE_REFERENCE" ? "Scene" : "Style"}
+											{ingredientRoleLabel(role)}
 										</button>
 									))}
 								</div>
 								<div className="rounded-xl bg-slate-950/60 border border-slate-800/80 p-3 text-[11px] text-slate-400">
-									{ingSaveLaneId === "AVATAR_REFERENCE" && (
-										<span>Creates a reusable character identity. Output role: <strong>CHARACTER_REFERENCE</strong>.</span>
-									)}
-									{ingSaveLaneId === "SCENE_REFERENCE" && (
-										<span>Creates a reusable scene context. Output role: <strong>SCENE_CONTEXT_REFERENCE</strong>.</span>
-									)}
-									{ingSaveLaneId === "STYLE_REFERENCE" && (
-										<span>Creates a reusable visual style reference. Output role: <strong>STYLE_REFERENCE</strong>.</span>
-									)}
+									{ingredientRoleHelp(ingSaveLaneId)}
 								</div>
 							</Section>
 
-							<Section step="2" title="Compose Subject / Avatar">
+							<Section step="2" title="Select Product / Context">
 								<div className="space-y-3">
-									<label className="block text-[11px] text-slate-300 space-y-1">
-										<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
-											Subject Details / Prompt
-										</span>
-										<input
-											value={ingSubjectText}
-											onChange={(e) => setIngSubjectText(e.target.value)}
-											placeholder="e.g. A futuristic robot holding a glowing sphere"
-											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-										/>
-									</label>
-									<ReferenceField
-										label="Select Existing Avatar for Lineage"
-										noun="avatar"
-										assets={characterAssets}
-										value={ingCharacterAssetId}
-										onChange={setIngCharacterAssetId}
-										emptyHint="No avatars in Library"
-										requiredMissing={false}
-										onApprove={handleApproveAsset}
-										approvingId={approvingId}
+									<p className="text-[11px] text-slate-400">
+										Product context is optional for generic avatar / scene / style presets, but required for product locks and product-truth poster presets.
+									</p>
+									<SearchableProductSelect
+										products={products}
+										selectedProduct={selectedProduct}
+										onSelect={setSelectedProduct}
 									/>
 								</div>
 							</Section>
 
-							<Section step="3" title="Compose Scene / Environment">
-								<div className="space-y-3">
+							<Section step="3" title="Select Existing Reference Or Create From Preset">
+								<div className="space-y-4">
 									<label className="block text-[11px] text-slate-300 space-y-1">
 										<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
-											Scene Details / Prompt
+											Template Preset
 										</span>
-										<input
-											value={ingSceneText}
-											onChange={(e) => setIngSceneText(e.target.value)}
-											placeholder="e.g. cyber-punk neon lit city alleyway at night"
-											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-										/>
+										<select
+											value={ingredientPresetId}
+											onChange={(event) =>
+												setIngredientPresetId(event.target.value)
+											}
+											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
+										>
+											<option value="">
+												{ingredientPresets.length
+													? "Select a preset…"
+													: "No presets available for this role"}
+											</option>
+											{ingredientPresets.map((preset) => (
+												<option key={preset.preset_id} value={preset.preset_id}>
+													{preset.label}
+												</option>
+											))}
+										</select>
 									</label>
-									<ReferenceField
-										label="Select Existing Scene for Lineage"
-										noun="scene reference"
-										assets={sceneAssets}
-										value={ingSceneAssetId}
-										onChange={setIngSceneAssetId}
-										emptyHint="No scene references in Library"
-										requiredMissing={false}
-										onApprove={handleApproveAsset}
-										approvingId={approvingId}
-									/>
-								</div>
-							</Section>
 
-							<Section step="4" title="Compose Style / Mood">
-								<div className="space-y-3">
-									<label className="block text-[11px] text-slate-300 space-y-1">
-										<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
-											Style Details / Prompt
-										</span>
-										<input
-											value={ingStyleText}
-											onChange={(e) => setIngStyleText(e.target.value)}
-											placeholder="e.g. cinematic, dramatic rim lighting, unreal engine 5 render"
-											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+									{ingSaveLaneId === "AVATAR_REFERENCE" ? (
+										<ReferenceField
+											label="Select Existing Reference"
+											noun="avatar"
+											assets={characterAssets}
+											value={ingCharacterAssetId}
+											onChange={setIngCharacterAssetId}
+											emptyHint="No references found — create one from preset"
+											requiredMissing={false}
+											onApprove={handleApproveAsset}
+											approvingId={approvingId}
 										/>
-									</label>
-									<ReferenceField
-										label="Select Existing Style for Lineage"
-										noun="style reference"
-										assets={styleAssets}
-										value={ingStyleAssetId}
-										onChange={setIngStyleAssetId}
-										emptyHint="No style references in Library"
-										requiredMissing={false}
-										onApprove={handleApproveAsset}
-										approvingId={approvingId}
-									/>
+									) : null}
+									{ingSaveLaneId === "SCENE_REFERENCE" ? (
+										<ReferenceField
+											label="Select Existing Reference"
+											noun="scene reference"
+											assets={sceneAssets}
+											value={ingSceneAssetId}
+											onChange={setIngSceneAssetId}
+											emptyHint="No references found — create one from preset"
+											requiredMissing={false}
+											onApprove={handleApproveAsset}
+											approvingId={approvingId}
+										/>
+									) : null}
+									{ingSaveLaneId === "STYLE_REFERENCE" ? (
+										<ReferenceField
+											label="Select Existing Reference"
+											noun="style reference"
+											assets={styleAssets}
+											value={ingStyleAssetId}
+											onChange={setIngStyleAssetId}
+											emptyHint="No references found — create one from preset"
+											requiredMissing={false}
+											onApprove={handleApproveAsset}
+											approvingId={approvingId}
+										/>
+									) : null}
+									{ingSaveLaneId === "PRODUCT_REFERENCE" ? (
+										<ReferenceField
+											label="Select Existing Reference"
+											noun="product reference"
+											assets={productReferenceAssets}
+											value={ingProductReferenceAssetId}
+											onChange={setIngProductReferenceAssetId}
+											emptyHint="No references found — create one from preset"
+											requiredMissing={false}
+											onApprove={handleApproveAsset}
+											approvingId={approvingId}
+										/>
+									) : null}
+
+									<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400">
+										<div className="font-semibold text-slate-200">
+											Create From Preset
+										</div>
+										<div className="mt-1">
+											No references found — create one from preset. Fastlane compiles the prompt automatically from the selected role, product context, preset, and existing lineage.
+										</div>
+									</div>
 								</div>
 							</Section>
 						</>
 					)}
 
 					{/* Section 4: Prompt Creator */}
-					<Section step={activeTab === "frames" ? "4" : "5"} title="Prompt Preview & Builder">
+					<Section
+						step={activeTab === "frames" ? "5" : "4"}
+						title="Auto-built Prompt Preview"
+					>
+						<div className="grid gap-4 md:grid-cols-2">
+							<label className="block text-[11px] text-slate-300 space-y-1">
+								<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+									Advanced Override Notes optional
+								</span>
+								<textarea
+									value={advancedOverrideNotes}
+									onChange={(event) =>
+										setAdvancedOverrideNotes(event.target.value)
+									}
+									className="h-24 w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none"
+									placeholder="Optional notes only. Fastlane still builds the main prompt from product truth, preset rules, and selected references."
+								/>
+							</label>
+							<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400 space-y-2">
+								<div className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+									Template State
+								</div>
+								<div>{compiling ? "Compiling preview…" : "Prompt preview auto-build is active."}</div>
+								<div>
+									Template Preset:{" "}
+									<strong className="text-slate-200">
+										{compiledPreview?.preset_id || "Not selected"}
+									</strong>
+								</div>
+								<div>
+									Output Spec:{" "}
+									<strong className="text-slate-200">
+										{compiledPreview?.output_spec || "Unavailable"}
+									</strong>
+								</div>
+								<div>
+									Target Lane:{" "}
+									<strong className="text-slate-200">
+										{compiledPreview?.lane_id || lane?.lane_id || "Unknown"}
+									</strong>
+								</div>
+							</div>
+						</div>
 						<textarea
 							value={prompt}
-							onChange={(e) => setPrompt(e.target.value)}
+							readOnly
 							className="h-28 w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-slate-200 font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none"
-							placeholder="Describe the image prompt here..."
+							placeholder="Auto-built prompt preview appears here after selecting a preset and any required database truth."
 						/>
-						{activeTab === "frames" ? (
-							<button
-								type="button"
-								onClick={() => void handleCompilePrompt()}
-								disabled={!selectedProduct || compiling}
-								className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 transition-all disabled:opacity-40 cursor-pointer"
-							>
-								{compiling ? "Compiling…" : "⚡ Auto compile product prompt"}
-							</button>
-						) : (
-							<button
-								type="button"
-								onClick={handleCompileIngredientsPrompt}
-								className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 transition-all cursor-pointer"
-							>
-								⚡ Auto compile ingredients prompt
-							</button>
-						)}
+						{compiledPreview?.reference_map?.length ? (
+							<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400 space-y-1">
+								<div className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+									Reference Map
+								</div>
+								{compiledPreview.reference_map.map((line) => (
+									<div key={line}>{line}</div>
+								))}
+							</div>
+						) : null}
+						{compiledBlockers.length ? (
+							<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-100 space-y-1">
+								<div className="font-semibold uppercase tracking-[0.14em] text-amber-200">
+									Fastlane Blockers
+								</div>
+								{compiledBlockers.map((blocker) => (
+									<div key={blocker}>{blocker}</div>
+								))}
+							</div>
+						) : null}
+						{compiledPreview?.warnings.length ? (
+							<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400 space-y-1">
+								<div className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+									Warnings
+								</div>
+								{compiledPreview.warnings.map((warning) => (
+									<div key={warning}>{warning}</div>
+								))}
+							</div>
+						) : null}
 					</Section>
 
 					{/* Section 5: Generation configuration & confirm trigger */}
@@ -927,7 +1203,10 @@ export default function ImgFastlanePage() {
 				{/* Right Column: Registry, Checklist, Save */}
 				<div className="lg:col-span-5 space-y-6">
 					{/* Register Output Section */}
-					<Section step={activeTab === "frames" ? "6" : "7"} title="Register Output (Credit-free)">
+					<Section
+						step={activeTab === "frames" ? "6" : "5"}
+						title="Register Output (Credit-free)"
+					>
 						<div className="flex gap-1 rounded-xl border border-slate-700 bg-slate-950 p-0.5 text-[10px] font-bold uppercase tracking-wider">
 							<button
 								type="button"
@@ -950,29 +1229,44 @@ export default function ImgFastlanePage() {
 						</div>
 
 						{outputMode === "artifact" ? (
-							<select
-								value={artifactMediaId}
-								onChange={(e) => setArtifactMediaId(e.target.value)}
-								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
-							>
-								<option value="">
-									{artifacts.length === 0
-										? "No finished image artifacts found"
-										: "Select a finished image artifact…"}
-								</option>
-								{artifacts.map((a) => (
-									<option key={a.media_id} value={a.media_id}>
-										{a.media_id} {a.size_mb ? `(${a.size_mb}MB)` : ""}
+							<div className="space-y-2">
+								<select
+									value={artifactMediaId}
+									onChange={(e) => setArtifactMediaId(e.target.value)}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
+								>
+									<option value="">
+										{artifacts.length === 0
+											? "No finished image artifacts found — generate one first or use Upload File"
+											: "Select a finished image artifact…"}
 									</option>
-								))}
-							</select>
+									{artifacts.map((a) => (
+										<option key={a.media_id} value={a.media_id}>
+											{a.media_id} {a.size_mb ? `(${a.size_mb}MB)` : ""}
+										</option>
+									))}
+								</select>
+								<p className="text-[10px] text-slate-500">
+									Finished Artifact reads from the real generated artifact records returned by <code>/api/flow/artifacts</code>.
+								</p>
+							</div>
 						) : (
-							<input
-								type="file"
-								accept="image/*"
-								onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-								className="w-full text-xs text-slate-400 file:mr-3 file:rounded-xl file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-slate-200 file:cursor-pointer"
-							/>
+							<div className="space-y-2">
+								<input
+									type="file"
+									accept="image/*"
+									onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+									className="w-full text-xs text-slate-400 file:mr-3 file:rounded-xl file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-slate-200 file:cursor-pointer"
+								/>
+								<p className="text-[10px] text-slate-500">
+									Upload File creates a finished artifact candidate for review and save-to-library without requiring a raw prompt rewrite.
+								</p>
+								{uploadFile ? (
+									<div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-[10px] text-slate-300">
+										Finished artifact candidate: <strong>{uploadFile.name}</strong>
+									</div>
+								) : null}
+							</div>
 						)}
 					</Section>
 

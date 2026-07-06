@@ -27,6 +27,56 @@ export interface ImgAssetLaneListResponse {
 	total: number;
 }
 
+export type ImgFastlaneRoute = "FRAMES" | "INGREDIENTS";
+export type ImgFastlaneIngredientRole =
+	| "AVATAR_REFERENCE"
+	| "SCENE_REFERENCE"
+	| "STYLE_REFERENCE"
+	| "PRODUCT_REFERENCE";
+
+export interface ImgFastlanePreset {
+	preset_id: string;
+	label: string;
+	route: ImgFastlaneRoute;
+	lane_id: string;
+	ingredient_role?: ImgFastlaneIngredientRole | null;
+	description: string;
+	required_inputs: string[];
+	output_spec: string;
+	tags: string[];
+}
+
+export interface ImgFastlanePresetListResponse {
+	items: ImgFastlanePreset[];
+	total: number;
+}
+
+export interface ImgFastlanePromptPreviewInput {
+	preset_id: string;
+	route: ImgFastlaneRoute;
+	ingredient_role?: ImgFastlaneIngredientRole | null;
+	product_id?: string | null;
+	character_reference_asset_id?: string | null;
+	scene_reference_asset_id?: string | null;
+	style_reference_asset_id?: string | null;
+	product_reference_asset_id?: string | null;
+	advanced_override_notes?: string | null;
+}
+
+export interface ImgFastlanePromptPreview {
+	preset_id: string;
+	route: ImgFastlaneRoute;
+	ingredient_role?: ImgFastlaneIngredientRole | null;
+	lane_id: string;
+	prompt_text: string;
+	display_name_suggestion: string;
+	blockers: string[];
+	warnings: string[];
+	output_spec: string;
+	negative_rules: string[];
+	reference_map: string[];
+}
+
 export interface ImgProviderStatus {
 	provider_state:
 		| "SAVE_TO_LIBRARY_READY_GENERATION_RUNTIME_EXTERNAL"
@@ -60,6 +110,16 @@ export interface SaveImgOutputInput {
 
 export async function fetchImgAssetLanes(): Promise<ImgAssetLaneListResponse> {
 	return fetchAPI<ImgAssetLaneListResponse>("/api/img-factory/lanes");
+}
+
+export async function fetchImgFastlanePresets(): Promise<ImgFastlanePresetListResponse> {
+	return fetchAPI<ImgFastlanePresetListResponse>("/api/img-factory/fastlane-presets");
+}
+
+export async function compileImgFastlanePromptPreview(
+	input: ImgFastlanePromptPreviewInput,
+): Promise<ImgFastlanePromptPreview> {
+	return postAPI<ImgFastlanePromptPreview>("/api/img-factory/fastlane-preview", input);
 }
 
 export async function fetchImgProviderStatus(): Promise<ImgProviderStatus> {
