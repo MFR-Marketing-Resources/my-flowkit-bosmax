@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record", "social_copy_package", "copy_set", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record", "social_copy_package", "copy_set", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit"})
 
 
 def _validate_table(table: str) -> None:
@@ -41,10 +41,12 @@ _COLUMNS = {
     "production_run": {"status", "dry_run", "max_parallel_jobs", "interval_min_seconds", "interval_max_seconds", "cooldown_after_n_jobs", "cooldown_seconds", "total_expected", "total_completed", "total_failed", "error_log_json", "config_json", "updated_at"},
     "postiz_publish_record": {"artifact_media_id", "source_local_path", "source_public_url", "upload_mode", "postiz_media_id", "postiz_media_path", "post_type", "scheduled_at", "content", "integration_ids_json", "provider_settings_json", "postiz_response_json", "status", "error", "updated_at"},
     "social_copy_package": {"artifact_media_id", "source_mode", "platform", "caption", "first_comment", "hashtags_json", "call_to_action", "tone", "language", "status", "compliance_status", "blockers_json", "warnings_json", "approval_note", "approved_at", "postiz_record_id", "updated_at"},
-    "copy_set": {"angle", "hook", "subhook", "usp_set_json", "cta", "platform", "language", "route_type", "formula_family", "status", "dedupe_key", "source", "provenance_json", "claim_review_json", "reviewer_note", "approved_at", "approved_by", "updated_at"},
+    "copy_set": {"angle", "hook", "subhook", "usp_set_json", "cta", "platform", "language", "route_type", "formula_family", "status", "dedupe_key", "source", "provenance_json", "claim_review_json", "reviewer_note", "approved_at", "approved_by", "usage_count", "last_used_at", "used_in_modes", "uniqueness_score", "similar_to_copy_set_id", "similarity_score", "archived", "updated_at"},
     "product_intelligence_snapshot": {"product_id", "version", "status", "product_description", "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "created_from_review_draft_id", "created_by", "approved_by", "approved_at", "supersedes_snapshot_id", "updated_at"},
     "product_intelligence_field_provenance": {"snapshot_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
     "product_intelligence_review_draft": {"product_id", "review_status", "product_description", "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "reviewer_note", "created_by", "reviewed_by", "approved_by", "approved_at", "rejected_by", "rejected_at", "updated_at"},
+    "copy_generation_batch": {"product_id", "requested_count", "created_count", "deduped_count", "rejected_count", "source", "provider_lane", "provider_model", "updated_at"},
+    "avatar_product_fit": {"avatar_code", "product_category", "fit_score", "suitability_notes", "updated_at"},
     "product_intelligence_review_field_provenance": {"draft_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
 }
 
@@ -697,7 +699,105 @@ async def delete_product_intelligence_review_field_provenance_for_draft(draft_id
         await db.commit()
 
 
-# ─── Copy Set (Copy Strategy Studio Phase 1) ────────────────
+# ==================================================================
+# Copy Intelligence Phase 1 = CRUD foundation for batch ledger,
+# avatar-product fit, and copy usage/fatigue/similarity fields.
+# ==================================================================
+
+# --- copy_generation_batch ---
+
+async def create_copy_generation_batch(**kw) -> dict:
+    db = await get_db()
+    bid, now = _uuid(), _now()
+    cols = ["batch_id", "created_at", "updated_at"]
+    vals = [bid, now, now]
+    allowed = _COLUMNS["copy_generation_batch"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO copy_generation_batch ({col_str}) VALUES ({placeholders})",
+            vals,
+        )
+        await db.commit()
+    return await _get_with_db(db, "copy_generation_batch", "batch_id", bid)
+
+
+async def list_copy_generation_batches(
+    product_id: str | None = None, limit: int = 50
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM copy_generation_batch"
+    params: list[object] = []
+    if product_id:
+        q += " WHERE product_id=?"
+        params.append(product_id)
+    q += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+# --- avatar_product_fit ---
+
+async def upsert_avatar_product_fit(**kw) -> dict:
+    db = await get_db()
+    now = _now()
+    avatar_code = kw.get("avatar_code", "")
+    product_category = kw.get("product_category", "")
+    if not avatar_code or not product_category:
+        raise ValueError("avatar_code and product_category are required")
+    allowed = _COLUMNS["avatar_product_fit"]
+    cols: list[str] = []
+    vals: list[object] = []
+    for k, v in kw.items():
+        if k in allowed and k not in ("avatar_code", "product_category"):
+            cols.append(k)
+            vals.append(v)
+    if "updated_at" not in cols:
+        cols.append("updated_at")
+        vals.append(now)
+    set_clause = ", ".join(f"{c}=?" for c in cols)
+    set_vals = list(vals)  # same values for DO UPDATE SET
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO avatar_product_fit (avatar_code, product_category, {', '.join(cols)}) "
+            f"VALUES (?, ?, {', '.join(['?'] * len(cols))}) "
+            f"ON CONFLICT(avatar_code, product_category) DO UPDATE SET {set_clause}",
+            [avatar_code, product_category] + vals + set_vals,
+        )
+        await db.commit()
+    return await _get_with_db(
+        db, "avatar_product_fit", "avatar_code||','||product_category",
+        f"{avatar_code},{product_category}",
+    )
+
+
+async def list_avatar_product_fits(
+    avatar_code: str | None = None,
+    product_category: str | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM avatar_product_fit WHERE 1=1"
+    params: list[object] = []
+    if avatar_code:
+        q += " AND avatar_code=?"
+        params.append(avatar_code)
+    if product_category:
+        q += " AND product_category=?"
+        params.append(product_category)
+    q += " ORDER BY fit_score DESC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+# --- Copy Set (Copy Strategy Studio Phase 1) ---
 
 async def create_copy_set(product_id: str, **kw) -> dict:
     """Insert a Copy Set row for a product. product_id is immutable and set here;
