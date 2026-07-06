@@ -240,6 +240,27 @@ def test_image_gen_settings_are_a_shared_ssot():
     assert "IMG_MODEL_OPTIONS" not in page  # local copy removed
 
 
+def test_all_image_gen_pages_share_settings_and_route_the_model():
+    """Every image-gen surface consumes the shared useImageGenSettings hook and
+    sends image_model end-to-end, so aspect/count/model are standardized (not
+    per-page) AND the picked model actually routes (no display-only pickers)."""
+    # Image Gen (IMGModule) → OperatorPage one-door.
+    imgmod = _read("dashboard/src/components/workspace/IMGModule.tsx")
+    assert "useImageGenSettings" in imgmod and "imgGen.models" in imgmod
+    assert "image_model: model" in imgmod
+    operator = _read("dashboard/src/pages/OperatorPage.tsx")
+    assert "image_model: data.image_model" in operator
+    # IMG Cockpit → startImgGeneration.
+    cockpit = _read("dashboard/src/pages/ImgCockpitPage.tsx")
+    assert "useImageGenSettings" in cockpit and "image_model: imageModel" in cockpit
+    # Avatar Registry → /generate-image backend (additive image_model/count).
+    avatar = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
+    assert "useImageGenSettings" in avatar and "image_model: imageModel" in avatar
+    wp = _read("agent/api/workspace_packages.py")
+    assert "image_model: str | None = None" in wp
+    assert "image_model=request.image_model" in wp
+
+
 def test_frames_flow_is_universal_and_credit_free():
     """Frames Fastlane must be a universal avatar+product Generate — no Template
     Preset dropdown, style/scene optional, and image generation labelled

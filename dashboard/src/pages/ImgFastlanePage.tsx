@@ -224,7 +224,9 @@ export default function ImgFastlanePage() {
 
 	const [characterAssetId, setCharacterAssetId] = useState("");
 	const [sceneAssetId, setSceneAssetId] = useState("");
-	const [styleAssetId, setStyleAssetId] = useState("");
+	// Style is optional and has no Frames picker (no style library yet), so it
+	// stays empty; kept for the compile payload / ingredients lineage.
+	const [styleAssetId] = useState("");
 	const [approvingId, setApprovingId] = useState<string | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
 	const [framePresetId, setFramePresetId] = useState("");

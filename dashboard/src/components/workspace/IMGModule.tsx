@@ -1,6 +1,7 @@
 import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { handleAssetUpload } from "../../api/assets";
+import { useImageGenSettings } from "../../api/imageGenSettings";
 import type {
 	Product,
 	UploadedAsset,
@@ -243,8 +244,9 @@ export default function IMGModule({
 	// --- States ---
 	const [manualPrompt, setManualPrompt] = useState("");
 	const [isManualOverride, setIsManualOverride] = useState(false);
+	const imgGen = useImageGenSettings();
 	const [aspectRatio, setAspectRatio] = useState("9:16");
-	const [model] = useState("Nano Banana 2");
+	const [model, setModel] = useState("Nano Banana 2");
 	const [count, setCount] = useState(1);
 	const [isUploading, setIsUploading] = useState(false);
 	const packagePromptText =
@@ -328,6 +330,7 @@ export default function IMGModule({
 			prompt: manualPrompt,
 			aspectRatio,
 			model,
+			image_model: model,
 			count,
 			refs: {
 				subjectAsset: subjectAsset,
@@ -564,7 +567,7 @@ export default function IMGModule({
 						<div className="space-y-3">
 							<p className="text-xs font-bold text-slate-400">Aspect Ratio</p>
 							<div className="grid grid-cols-5 gap-1.5">
-								{["16:9", "4:3", "1:1", "3:4", "9:16"].map((ratio) => (
+								{imgGen.aspect_options.map((ratio) => (
 									<button
 										type="button"
 										key={ratio}
@@ -579,7 +582,7 @@ export default function IMGModule({
 						<div className="space-y-3">
 							<p className="text-xs font-bold text-slate-400">Count</p>
 							<div className="grid grid-cols-4 gap-2">
-								{[1, 2, 3, 4].map((v) => (
+								{imgGen.count_options.map((v) => (
 									<button
 										type="button"
 										key={v}
@@ -590,6 +593,27 @@ export default function IMGModule({
 									</button>
 								))}
 							</div>
+						</div>
+						<div className="space-y-3">
+							<p className="text-xs font-bold text-slate-400">Image Model</p>
+							<select
+								value={model}
+								onChange={(e) => setModel(e.target.value)}
+								className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-300 outline-none"
+							>
+								{imgGen.models.map((m) => (
+									<option key={m.label} value={m.label}>
+										{m.label}
+										{m.pending ? " (id pending)" : ""}
+									</option>
+								))}
+							</select>
+							{imgGen.models.find((m) => m.label === model)?.pending ? (
+								<p className="text-[10px] text-amber-300/80">
+									{model}: internal id not configured yet — generation fails closed
+									until it's set in models.json.
+								</p>
+							) : null}
 						</div>
 					</div>
 				</section>

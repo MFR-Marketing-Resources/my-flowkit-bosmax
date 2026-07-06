@@ -895,6 +895,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					image_media_ids: refs,
 					aspect,
 					model: data.model,
+					// IMG image model (Nano Banana …) — separate from the video `model`.
+					image_model: data.image_model,
 					duration_s: videoModels.find((m) => m.ui_label === data.model)
 						?.default_duration_s,
 				}),
