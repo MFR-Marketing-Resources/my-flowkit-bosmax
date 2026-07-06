@@ -149,6 +149,36 @@ def test_review_draft_blocked_claim_cannot_be_approved():
     assert approve_response.json()["detail"].startswith("DRAFT_NOT_APPROVABLE:")
 
 
+def test_review_draft_claim_review_required_cannot_be_approved_without_override():
+    product = asyncio.run(
+        crud.create_product(
+            raw_product_title="Bosmax Draft API Review Required",
+            source="MANUAL",
+            product_display_name="Bosmax Draft API Review Required",
+            product_short_name="Bosmax Draft API Review Required",
+        )
+    )
+    client = _client()
+    created = client.post(
+        f"/api/products/{product['id']}/intelligence/review-drafts",
+        json={
+            **_safe_payload(),
+            "product_description": "Anti-inflammatory comfort positioning for review.",
+            "allowed_claims_json": ["portable daily carry"],
+        },
+    ).json()
+
+    assert created["claim_gate"] == "CLAIM_REVIEW_REQUIRED"
+    assert created["readiness_status"] == "CLAIM_REVIEW_REQUIRED"
+
+    approve_response = client.post(
+        f"/api/product-intelligence/review-drafts/{created['draft_id']}/approve",
+        json={"approved_by": "reviewer-api"},
+    )
+    assert approve_response.status_code == 409
+    assert "CLAIM_REVIEW_REQUIRED:" in approve_response.json()["detail"]
+
+
 def test_review_draft_reject_preserves_note_without_snapshot():
     product = asyncio.run(
         crud.create_product(

@@ -150,3 +150,29 @@ async def test_blocked_review_draft_cannot_be_approved():
             draft.draft_id,
             ProductIntelligenceReviewDraftApproveRequest(approved_by="reviewer-3"),
         )
+
+
+@pytest.mark.asyncio
+async def test_claim_review_required_draft_cannot_be_approved_without_override():
+    product = await crud.create_product(
+        raw_product_title="Bosmax Review Draft Review Required",
+        source="MANUAL",
+        product_display_name="Bosmax Review Draft Review Required",
+        product_short_name="Bosmax Review Draft Review Required",
+    )
+    draft = await svc.create_review_draft(
+        product["id"],
+        _safe_request(
+            product_description="Anti-inflammatory comfort positioning for review.",
+            allowed_claims_json=["portable daily carry"],
+        ),
+    )
+
+    assert draft.claim_gate == "CLAIM_REVIEW_REQUIRED"
+    assert draft.readiness_status == "CLAIM_REVIEW_REQUIRED"
+
+    with pytest.raises(ValueError, match="CLAIM_REVIEW_REQUIRED:"):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(approved_by="reviewer-4"),
+        )
