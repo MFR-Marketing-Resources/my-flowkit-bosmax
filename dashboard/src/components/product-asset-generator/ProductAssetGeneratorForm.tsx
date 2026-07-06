@@ -1,3 +1,4 @@
+import { Check, ChevronDown, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchCreativeAssets } from "../../api/creativeAssets";
@@ -164,6 +165,158 @@ function SelectField({
 				</option>
 			))}
 		</select>
+	);
+}
+
+function ProductSearchSelect({
+	value,
+	onChange,
+	options,
+	placeholder = "Select a product",
+}: {
+	value: string;
+	onChange: (value: string) => void;
+	options: Array<{ value: string; label: string }>;
+	placeholder?: string;
+}) {
+	const [isOpen, setIsOpen] = useState(false);
+	const [search, setSearch] = useState("");
+	const containerRef = useRef<HTMLDivElement>(null);
+	const searchInputRef = useRef<HTMLInputElement>(null);
+
+	const selectedOption = useMemo(
+		() => options.find((option) => option.value === value) || null,
+		[options, value],
+	);
+
+	const filteredOptions = useMemo(() => {
+		const normalized = search.trim().toLowerCase();
+		if (!normalized) {
+			return options;
+		}
+		return options.filter((option) =>
+			option.label.toLowerCase().includes(normalized),
+		);
+	}, [options, search]);
+
+	useEffect(() => {
+		if (!isOpen) {
+			return;
+		}
+
+		const handlePointerDown = (event: MouseEvent) => {
+			if (
+				containerRef.current &&
+				!containerRef.current.contains(event.target as Node)
+			) {
+				setIsOpen(false);
+			}
+		};
+
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				setIsOpen(false);
+			}
+		};
+
+		document.addEventListener("mousedown", handlePointerDown);
+		document.addEventListener("keydown", handleKeyDown);
+		return () => {
+			document.removeEventListener("mousedown", handlePointerDown);
+			document.removeEventListener("keydown", handleKeyDown);
+		};
+	}, [isOpen]);
+
+	useEffect(() => {
+		if (!isOpen) {
+			setSearch("");
+			return;
+		}
+		searchInputRef.current?.focus();
+	}, [isOpen]);
+
+	return (
+		<div className="relative min-w-0" ref={containerRef}>
+			<button
+				type="button"
+				onClick={() => setIsOpen((current) => !current)}
+				aria-expanded={isOpen}
+				className="flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-left text-xs text-slate-200 transition hover:border-sky-500/50"
+				title={selectedOption?.label || placeholder}
+			>
+				<span className="min-w-0 flex-1 truncate">
+					{selectedOption?.label || placeholder}
+				</span>
+				<ChevronDown
+					size={14}
+					className={`shrink-0 text-slate-500 transition-transform ${isOpen ? "rotate-180" : ""}`}
+				/>
+			</button>
+
+			{isOpen ? (
+				<div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-xl border border-slate-800 bg-slate-900 shadow-2xl shadow-black/40">
+					<div className="border-b border-slate-800 bg-slate-950/80 p-3">
+						<label className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">
+							<Search size={14} className="shrink-0 text-slate-500" />
+							<input
+								ref={searchInputRef}
+								type="text"
+								value={search}
+								onChange={(event) => setSearch(event.target.value)}
+								placeholder="Search products by name..."
+								className="w-full min-w-0 bg-transparent text-xs text-slate-200 outline-none placeholder:text-slate-500"
+							/>
+						</label>
+						<button
+							type="button"
+							onClick={() => {
+								onChange("");
+								setIsOpen(false);
+							}}
+							className="mt-2 inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] text-slate-300 transition hover:border-slate-600 hover:text-slate-100"
+						>
+							<X size={12} />
+							Clear product selection
+						</button>
+					</div>
+
+					<div className="max-h-72 overflow-y-auto py-2">
+						{filteredOptions.length > 0 ? (
+							filteredOptions.map((option) => {
+								const isSelected = option.value === value;
+								return (
+									<button
+										key={`${option.value}:${option.label}`}
+										type="button"
+										onClick={() => {
+											onChange(option.value);
+											setIsOpen(false);
+										}}
+										className={`flex w-full min-w-0 items-center justify-between gap-3 px-3 py-2 text-left text-[11px] transition ${
+											isSelected
+												? "bg-sky-500/15 text-sky-200"
+												: "text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+										}`}
+										title={option.label}
+									>
+										<span className="min-w-0 flex-1 truncate">
+											{option.label}
+										</span>
+										{isSelected ? (
+											<Check size={14} className="shrink-0" />
+										) : null}
+									</button>
+								);
+							})
+						) : (
+							<div className="px-3 py-5 text-center text-[11px] text-slate-500">
+								No products match your search.
+							</div>
+						)}
+					</div>
+				</div>
+			) : null}
+		</div>
 	);
 }
 
@@ -1555,7 +1708,7 @@ export default function ProductAssetGeneratorForm({
 											label="Database Product"
 											helper="Selecting a product uses product_id preview authority. Canonical products resolve through product_id; reference-only rows stay preview-only and cannot drive production. Scale truth, product physics, and label-safe framing all come from the product row."
 										>
-											<SelectField
+											<ProductSearchSelect
 												value={draft.product_id || ""}
 												onChange={(value) => onChange({ product_id: value })}
 												options={productOptions}
@@ -1758,7 +1911,7 @@ export default function ProductAssetGeneratorForm({
 												label="Or: Database Product"
 												helper="For scale truth, product physics, and label-safe framing."
 											>
-												<SelectField
+												<ProductSearchSelect
 													value={draft.product_id || ""}
 													onChange={(value) => onChange({ product_id: value })}
 													options={productOptions}
