@@ -43,6 +43,7 @@ import DashboardPage from "./pages/DashboardPage";
 import GalleryPage from "./pages/GalleryPage";
 import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
+import PosterBuilderPage from "./pages/PosterBuilderPage";
 import PostizPublishPage from "./pages/PostizPublishPage";
 import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
 import ProductionQueuePage from "./pages/ProductionQueuePage";
@@ -122,6 +123,11 @@ const NAV_GROUPS = [
 				to: "/product-registration",
 				icon: ScrollText,
 				label: "Smart Registration",
+			},
+			{
+				to: "/creative/poster-builder",
+				icon: ImageIcon,
+				label: "Poster Builder",
 			},
 			{ to: "/products", icon: PackageSearch, label: "Products" },
 			{ to: "/projects", icon: FolderOpen, label: "Projects" },
@@ -506,6 +512,10 @@ function Layout() {
 						<Route
 							path="/product-registration"
 							element={<ProductRegistrationPage />}
+						/>
+						<Route
+							path="/creative/poster-builder"
+							element={<PosterBuilderPage />}
 						/>
 						<Route path="/products" element={<ProductsSalesAnalyzerPage />} />
 						<Route path="/projects" element={<ProjectsPage />} />
