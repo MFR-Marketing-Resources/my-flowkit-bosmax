@@ -286,16 +286,18 @@ async def test_behavioral_similarity_metadata_populated(monkeypatch):
         source="MANUAL", raw_product_title="Similarity Test",
         product_display_name="Similarity Test", product_short_name="Similarity Test",
     )
-    # Provider returns very similar hooks (1 word differs each call)
+    # Provider returns very similar hooks (1 char/word differs, rest identical)
+    # so combined_similarity > 0.80 on the second candidate vs the first.
     calls = [0]
-    words = ["sekarang", "cepat", "pantas"]
     def fake_gen(brief):
         idx = calls[0]
         calls[0] += 1
+        # Only the last character varies — hook is otherwise identical
+        suffix = ["a", "b", "c"]
         return _make_fake_provider_output(
-            hook=f"Kulit cerah glowing selepas guna produk ni dengan {words[idx % 3]}",
-            cta=f"Beli {words[idx % 3]}",
-            usp_set=["Vitamin C", "Kolagen"])
+            hook=f"Kulit cerah glowing selepas guna produk ni dengan hasil yang sangat memuaskan dan terbukti berkesan untuk semua jenis kulit wajah {suffix[idx % 3]}",
+            cta="Beli sekarang sebelum habis stok promosi terhad ini",
+            usp_set=["Vitamin C premium", "Kolagen marin", "SPF perlindungan"])
 
     monkeypatch.setattr(ai_provider, "is_configured", lambda: True)
     monkeypatch.setattr(ai_provider, "generate_candidate", fake_gen)
@@ -306,21 +308,21 @@ async def test_behavioral_similarity_metadata_populated(monkeypatch):
     result = await ai_svc.generate_ai_copy_candidates_batch(
         AICopyAssistBatchRequest(product_id=product["id"], requested_count=3))
 
-    # Check that similarity fields are populated on at least one candidate
-    # (first has no approved sets to compare against, so similarity may be None;
-    # second and third should have at least one approved to compare to)
+    # First candidate has similarity=None (nothing to compare against),
+    # second and third should have similarity populated against the first.
     found = False
-    for c in result["candidates"]:
-        if c.get("similarity_score") is not None:
-            found = True
-            assert c["uniqueness_score"] is not None
-            has_near_dup = any("NEAR_DUPLICATE" in w for w in c.get("warnings", []))
-            if c.get("similarity_score", 0) >= 0.80:
-                assert has_near_dup, f"Expected NEAR_DUPLICATE warning for score {c['similarity_score']}"
-    # At least ONE candidate (index 1 or 2) should have similarity metadata
-    # since the first created candidate becomes the comparison baseline.
-    # If similarity is all None, the hooks were not similar enough — that's
-    # acceptable; similarity accuracy is tested in test_copy_similarity_service.py
+    for i, c in enumerate(result["candidates"]):
+        if i == 0:
+            continue  # first has no comparison baseline
+        assert c.get("similarity_score") is not None, f"Candidate {i} has no similarity_score"
+        assert c.get("similar_to_copy_set_id") is not None, f"Candidate {i} has no similar_to_copy_set_id"
+        assert c.get("uniqueness_score") is not None, f"Candidate {i} has no uniqueness_score"
+        found = True
+        # Near-duplicate warning should fire when score >= 0.80
+        has_near_dup = any("NEAR_DUPLICATE" in w for w in c.get("warnings", []))
+        if c.get("similarity_score", 0) >= 0.80:
+            assert has_near_dup, f"Expected NEAR_DUPLICATE warning for score {c['similarity_score']}"
+    assert found, "Candidates 1 and 2 must have similarity metadata against candidate 0"
 
 
 @pytest.mark.asyncio

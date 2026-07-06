@@ -67,7 +67,7 @@ async def ai_assist_copy_candidate(request: AICopyAssistRequest):
 @router.post("/generate-batch")
 async def generate_copy_set_batch(request: AICopyAssistBatchRequest):
     """AI Copy Assist Batch — generate multiple reviewable candidate Copy Sets
-    in one request. Returns up to candidate_count candidates (default 5,
+    in one request. Returns up to requested_count candidates (default 5,
     range 3-10). Each is independently deduped, safety-scanned, and
     similarity-scored. A copy_generation_batch ledger row is created.
 

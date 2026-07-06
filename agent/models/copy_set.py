@@ -303,4 +303,12 @@ def serialize_copy_set(row: dict[str, Any]) -> dict[str, Any]:
         "approved_by": row.get("approved_by"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        # Phase 1 fields (Copy Intelligence foundation)
+        "usage_count": row.get("usage_count") or 0,
+        "last_used_at": row.get("last_used_at"),
+        "used_in_modes": _load_json_list(row.get("used_in_modes")),
+        "uniqueness_score": row.get("uniqueness_score"),
+        "similar_to_copy_set_id": row.get("similar_to_copy_set_id"),
+        "similarity_score": row.get("similarity_score"),
+        "archived": row.get("archived") or 0,
     }

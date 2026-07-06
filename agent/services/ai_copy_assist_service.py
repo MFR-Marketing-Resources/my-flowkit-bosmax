@@ -228,12 +228,14 @@ async def generate_ai_copy_candidates_batch(
             detail={"product_id": req.product_id},
         )
 
-    threshold = req.dedupe_threshold or 0.80
+    threshold = 0.80 if req.dedupe_threshold is None else req.dedupe_threshold
     warnings: list[dict[str, Any]] = []
 
-    # Load existing approved Copy Sets for similarity comparison
+    # Comparison pool: previously approved Copy Sets + newly created
+    # candidates from THIS batch (so intra-batch dedupe works).  Only
+    # active (non-archived) approved sets seed the pool.
     existing_rows = await crud.list_copy_sets_for_product(req.product_id)
-    existing_approved = [
+    comparison_pool = [
         serialize_copy_set(r)
         for r in existing_rows
         if r.get("status") == "COPY_APPROVED" and not r.get("archived")
@@ -299,8 +301,8 @@ async def generate_ai_copy_candidates_batch(
         if is_new:
             # Compute and persist similarity metadata, then re-read the
             # updated row so response fields are populated (not stale-None).
-            uni = sim_svc.compute_uniqueness_score(cs, existing_approved)
-            nearest, sim_score = sim_svc.find_nearest(cs, existing_approved, threshold=threshold)
+            uni = sim_svc.compute_uniqueness_score(cs, comparison_pool)
+            nearest, sim_score = sim_svc.find_nearest(cs, comparison_pool, threshold=threshold)
 
             updated_row = await crud.update_copy_set(
                 cs["copy_set_id"],
@@ -316,7 +318,7 @@ async def generate_ai_copy_candidates_batch(
                     f"NEAR_DUPLICATE: {sim_score:.2f} similar to {nearest.get('copy_set_id', '?')}"
                 )
 
-            existing_approved.append(cs)
+            comparison_pool.append(cs)
             created += 1
         elif is_dup:
             deduped += 1
