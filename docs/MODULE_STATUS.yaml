@@ -112,6 +112,22 @@ domains:
       - agent/authority/PRODUCT_SEARCH_ALIASES.json
       - agent/authority/VIDEO_PROMPT_COMPILER_TEMPLATES.yaml
       - agent/authority/wps_blocking_authority.json
+      - agent/authority/poster_design/
+      - agent/authority/poster_design/BOSMAX_UNIVERSAL_COMMERCIAL_DESIGN_SKILL.md
+      - agent/authority/poster_design/Color_Testing_v1_SATELLITE.yaml
+      - agent/authority/poster_design/Commercial_Design_Intelligence_v1_STRICT.yaml
+      - agent/authority/poster_design/Copywriting_v1_SATELLITE.yaml
+      - agent/authority/poster_design/Custom_Instruction.txt
+      - agent/authority/poster_design/Ecommerce_Product_v1_SATELLITE.yaml
+      - agent/authority/poster_design/MANIFEST.yaml
+      - agent/authority/poster_design/Model_Behaviour_v1_STRICT.yaml
+      - agent/authority/poster_design/Platform_Specs_v1_STRICT.yaml
+      - agent/authority/poster_design/PostProcessing_v1_STRICT.yaml
+      - agent/authority/poster_design/Prompt_Framework_v1_STRICT.yaml
+      - agent/authority/poster_design/README.md
+      - agent/authority/poster_design/RealEstate_v1_SATELLITE.yaml
+      - agent/authority/poster_design/Typography_v1_SATELLITE.yaml
+      - agent/authority/poster_design/Visual_Language_v1_STRICT.yaml
       - tests/unit/test_canonical_prompt_compiler.py
       - tests/unit/test_product_lock_builder.py
       - tests/unit/test_prompt_authority_sovereignty.py

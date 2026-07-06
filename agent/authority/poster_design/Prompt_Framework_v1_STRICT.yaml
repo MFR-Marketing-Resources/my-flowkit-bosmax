@@ -1,0 +1,477 @@
+%YAML 1.2
+---
+id: KB-PROMPT-FRAMEWORK-SEA-003
+title: Prompt Framework Sovereign Core (Malaysia + SEA)
+version: "1.0.0"
+type: sovereign
+
+document_control:
+  enforcement_level: strict
+  region_scope: malaysia_sea
+  owner: BINA_POSTER_PROJECT
+  last_updated: "2026-03-02"
+
+description:
+  en: Master prompt architecture defining structured generation logic for commercial visual AI outputs across Malaysia and Southeast Asia.
+
+governance:
+  language_default: english
+  verbosity_control: structured_concise
+  mobile_first_context: true
+  hallucination_tolerance: zero
+  ambiguity_tolerance: low
+  commercial_poster_elevation_enabled: true
+
+prompt_architecture:
+
+  commercial_pre_resolution:
+    enabled: true
+    applies_when_intent_contains:
+      - poster
+      - hero shot
+      - listing image
+      - thumbnail
+      - banner
+      - commercial visual
+      - tiktok shop
+    resolve_before_block_1:
+      - selling_angle
+      - proof_point_limit
+      - visual_hierarchy
+      - copy_density
+      - premium_vs_hard_sell_posture
+      - marketplace_spam_negatives
+
+  structure_order:
+    - subject
+    - context
+    - environment
+    - lighting
+    - camera_specifications
+    - composition_rules
+    - technical_constraints
+    - negative_prompts
+  
+  metadata_handoff_contract:
+    description: "Metadata handoff is isolated from the image-generation prompt."
+    intended_consumer: layer_b_production_pipeline
+    image_prompt_inclusion: prohibited
+    legacy_aliases:
+      - metadata_json_handoff
+    legacy_alias_usage: metadata_only_never_image_prompt
+    fields:
+      - technical_requirements
+      - platform_target
+      - spatial_geometry
+      - validation_flags
+      - metadata_reference_targets
+
+  subject_rules:
+    require_clear_primary_object: true
+    prohibit_ambiguous_nouns: true
+    brand_name_must_match_reference: true
+
+  context_rules:
+    require_location_if_lifestyle: true
+    enforce_sea_cultural_relevance: true
+    prohibit_irrelevant_background_elements: true
+
+  lighting_rules:
+    allowed_types:
+      - studio_high_key
+      - natural_daylight
+      - golden_hour
+      - three_point_lighting
+      - hdr_balanced
+    prohibit_mixed_shadow_sources: true
+    require_consistent_light_direction: true
+
+  camera_specifications:
+    focal_length_required: true
+    allowed_focal_lengths_mm: [24, 35, 50, 85, 100]
+    depth_of_field_definition_required: true
+    resolution_declaration_required: true
+
+  composition_rules:
+    rule_of_thirds_allowed: true
+    subject_center_tolerance_percentage: 5
+    prohibit_extreme_crop_unless_explicit: true
+    horizon_alignment_required: true
+
+  technical_constraints:
+    aspect_ratio_must_be_explicit: true
+    resolution_must_be_explicit: true
+    color_profile_must_be_srgb: true
+    distortion_prevention_flag_required: true
+    metadata_leak_prevention:
+      prohibition_scope: image_generation_prompt
+      prohibited_terms:
+        - metadata_json_handoff
+        - rule_id
+        - layer_b
+        - layer_b_enforcement_flags
+        - metadata_reference_targets
+        - safe_zone
+        - side_margin_px
+        - bottom_exclusion_px
+        - top_px
+        - bottom_px
+        - product_scale_class
+        - anatomical_anchor_required
+        - camera_macro_enforced
+        - max_canvas_width_percent
+      allowed_terms:
+        - "9:16"
+        - "1:1"
+        - "1080x1920px"
+        - "2000x2000px"
+        - "sRGB"
+        - "35mm"
+        - "50mm"
+        - "85mm"
+        - "100mm"
+        - "f/2.8"
+        - "shallow depth of field"
+        - "macro lens only when product route explicitly requires it"
+      note: "Macro lens references are allowed only when product_scale_activation applies."
+
+  commercial_overlay_logic:
+    headline_limit: 1
+    support_line_limit: 1
+    badge_limit: 3
+    one_big_idea_required: true
+    product_first_by_default: true
+    avatar_led_only_when_explicit: true
+    fake_discount_spam_prohibited: true
+    rendered_text_can_be_inferred_for_poster_asset_types: true
+    rendered_text_prohibited_for_shopee_lazada_hero: true
+
+  negative_prompt_framework:
+    mandatory_negatives:
+      - no_text_distortion
+      - no_extra_limbs
+      - no_logo_modification
+      - no_warped_geometry
+      - no_unreadable_labels
+    conditional_negatives:
+      ecommerce_thumbnail:
+        - no_background_gradient
+        - no_shadow_overflow
+      real_estate:
+        - no_vertical_line_bending
+        - no_overexposed_windows
+
+  product_scale_activation:
+    enabled: true
+    applies_when:
+      explicit_product_request: true
+      explicit_keywords:
+        - product
+        - packaging
+        - bottle
+        - container
+        - listing
+        - ecommerce
+    allowed_routes:
+      - if_static_product
+    prohibited_in_routes:
+      - if_human_avatar_livestream_creator
+      - if_lifestyle_scene
+      - if_real_estate
+    non_product_scene_defaults:
+      product_scale_classification: prohibited
+      anatomical_anchor_required: prohibited
+      camera_macro_enforced: prohibited
+      max_canvas_width_percent: prohibited
+
+  product_scale_classification:
+    class_a_micro:
+      volume_range_ml: [5, 10]
+      anatomical_anchor_tokens:
+        - distal_phalanx_pinch
+        - pad_to_pad_precision_grip
+        - fingernail_scale_reference
+        - floating_grip
+      camera_profile:
+        focal_length_mm: 100
+        lens_type: macro
+        aperture_range: [2.0, 2.8]
+        magnification_ratio: "1:1"
+      canvas_constraints:
+        max_canvas_width_percentage: 20
+        negative_space_required: wide
+      mandatory_negative_prompts:
+        - full_hand_grip
+        - palm_filling
+        - oversized_product
+        - giant_bottle
+        - macro_product_scale
+        - wrapped_fingers
+        - clutching
+        - grasping
+
+    class_b_mini:
+      volume_range_ml: [15, 30]
+      anatomical_anchor_tokens:
+        - tripod_grip
+        - three_jaw_chuck
+      camera_profile:
+        focal_length_mm: 85
+        aperture_range: [3.5, 4.0]
+
+    class_c_standard:
+      volume_range_ml: [50, 100]
+      anatomical_anchor_tokens:
+        - palm_wrap
+      camera_profile:
+        focal_length_mm: 50
+        aperture_range: [4.0, 5.6]
+
+    class_d_large:
+      volume_range_ml: [200, 500]
+      anatomical_anchor_tokens:
+        - two_hand_power_grip
+      camera_profile:
+        focal_length_mm: 35
+
+    class_e_oversized:
+      volume_range_ml: [500, 9999]
+      anatomical_anchor_tokens:
+        - arm_cradle
+      camera_profile:
+        focal_length_mm: 24
+
+metadata_reference_targets:
+  - rule_id: missing_aspect_ratio
+    condition: aspect_ratio_not_declared
+    action: force_include_in_metadata
+  - rule_id: missing_resolution
+    condition: resolution_not_declared
+    action: force_include_in_metadata
+  - rule_id: missing_negative_prompts
+    condition: mandatory_negatives_not_included
+    action: force_include_in_metadata
+  - rule_id: lighting_conflict
+    condition: multiple_conflicting_light_sources
+    action: enforce_in_generation_rules
+  - rule_id: ambiguous_subject
+    condition: subject_not_specific
+    action: enforce_in_generation_rules
+
+routing_integration:
+
+  if_static_product:
+    required_sections:
+      - subject
+      - lighting
+      - composition_rules
+      - technical_constraints
+      - negative_prompts
+    metadata_required: true
+    metadata_contract_ref: metadata_handoff_contract
+      
+  if_lifestyle_scene:
+    required_sections:
+      - subject
+      - context
+      - environment
+      - lighting
+      - camera_specifications
+      - technical_constraints
+      - negative_prompts
+
+  human_avatar_portrait:
+    description: "Primary subject is a human portrait or avatar with no product interaction."
+    required_sections:
+      - subject
+      - context
+      - environment
+      - lighting
+      - camera_specifications
+      - composition_rules
+      - technical_constraints
+      - negative_prompts
+    mandatory_subject_fields:
+      - cultural_identity
+      - age_range
+      - gender_presentation
+      - attire_description
+      - hijab_style_when_requested
+      - facial_features
+      - natural_skin_tone
+      - facial_expression
+      - posture_specification
+      - hand_behavior
+      - camera_engagement
+    activate_product_scale_classification: false
+    product_scale_class: prohibited
+    anatomical_anchor_required: prohibited
+    camera_macro_enforced: prohibited
+    max_canvas_width_percent: prohibited
+    product_handling_terms: prohibited_unless_product_explicit
+    metadata_required: false
+    metadata_contract_ref: metadata_handoff_contract
+
+  if_real_estate:
+    required_sections:
+      - subject
+      - environment
+      - lighting
+      - camera_specifications
+      - composition_rules
+      - technical_constraints
+      - negative_prompts
+
+  if_human_avatar_livestream_creator:
+    required_sections:
+      - subject
+      - context
+      - environment
+      - lighting
+      - camera_specifications
+      - composition_rules
+      - technical_constraints
+      - negative_prompts
+    mandatory_subject_fields:
+      - cultural_identity
+      - age_range
+      - gender_presentation
+      - attire_description
+      - hijab_style_when_requested
+      - facial_expression
+      - posture_specification
+      - hand_behavior
+      - studio_or_location_context
+      - camera_engagement
+    prohibitions:
+      activate_product_scale_classification: false
+      product_scale_class: prohibited
+      anatomical_anchor_required: prohibited
+      camera_macro_enforced: prohibited
+      max_canvas_width_percent: prohibited
+      product_handling_terms: prohibited
+
+  human_with_product_scene:
+    description: "Human subject with explicit product/object interaction requested by the user."
+    activation_condition:
+      human_subject_required: true
+      explicit_product_request_required: true
+    required_sections:
+      - subject
+      - context
+      - environment
+      - lighting
+      - camera_specifications
+      - composition_rules
+      - technical_constraints
+      - negative_prompts
+    mandatory_subject_fields:
+      - cultural_identity
+      - age_range
+      - gender_presentation
+      - attire_description
+      - facial_expression
+      - posture_specification
+      - hand_behavior
+      - product_interaction_description
+      - camera_engagement
+    product_interaction_rules:
+      product_allowed_only_when_explicit: true
+      product_must_remain_secondary_unless_user_requests_product_focus: true
+      describe_product_interaction_in_natural_language: true
+      prohibit_raw_schema_tokens_in_prompt: true
+    product_scale_classification:
+      allowed_when_product_size_explicit: true
+      class_a_micro_allowed_when_product_volume_5_to_10ml_or_micro_macro_explicit: true
+      raw_schema_token_output: prohibited
+    metadata_required: false
+    metadata_contract_ref: metadata_handoff_contract
+
+  text_overlay_composition:
+    description: "Text, headline, CTA, or overlay requested by user; text must be isolated from image prompt unless user explicitly requests rendered text inside the image."
+    activation_condition:
+      explicit_text_or_cta_request_required: true
+    required_sections:
+      - subject
+      - context
+      - environment
+      - lighting
+      - camera_specifications
+      - composition_rules
+      - technical_constraints
+      - negative_prompts
+    text_handling_policy:
+      default_text_rendering_in_image_prompt: prohibited
+      text_goes_to_metadata_or_layer_b_by_default: true
+      rendered_text_allowed_only_if_user_explicitly_requests_text_inside_image: true
+      prohibit_garbled_text_risk: true
+      prohibit_rule_ids_in_prompt: true
+      prohibit_safe_zone_terms_in_prompt: true
+    metadata_required: conditional
+    metadata_contract_ref: metadata_handoff_contract
+
+  commercial_poster_design:
+    description: "Commercial poster, hero shot, thumbnail, banner, or listing image requiring elevated selling logic and senior-designer hierarchy."
+    activation_condition:
+      poster_or_listing_intent_present: true
+    required_sections:
+      - subject
+      - context
+      - environment
+      - lighting
+      - camera_specifications
+      - composition_rules
+      - technical_constraints
+      - negative_prompts
+    internal_resolution:
+      selling_angle_required: true
+      proof_point_limit: 3
+      mobile_first_hierarchy_required: true
+      product_truth_lock_required: true
+      clutter_rejection_required: true
+    overlay_policy:
+      text_defaults_to_metadata_or_layer_b: true
+      rendered_text_can_be_inferred_when_asset_type_is_poster_banner_thumbnail_and_platform_allows: true
+      rendered_text_prohibited_when_asset_type_is_shopee_or_lazada_hero_listing: true
+      rendered_text_allowed_only_if_explicit: true
+      headline_limit: 1
+      support_line_limit: 1
+      badge_limit: 3
+    metadata_required: conditional
+    metadata_contract_ref: metadata_handoff_contract
+
+  route_priority:
+    explicit_product_request_overrides_non_product_routes: true
+    explicit_text_overlay_request_routes_to_text_overlay_composition: true
+    commercial_poster_intent_routes_to_commercial_poster_design: true
+    human_avatar_portrait_preferred_over_generic_lifestyle_when_no_product: true
+    human_avatar_livestream_creator_preferred_when_livestream_or_creator_context_present: true
+    real_estate_terms_route_to_if_real_estate: true
+    fallback_to_lifestyle_scene_only_when_no_specific_route_matches: true
+
+canonical_prompt_templates:
+
+  - template_id: ecommerce_product_standard
+    structure: "Premium [Product Name], centered on white background, studio_high_key lighting, 50mm lens, shallow depth of field, 1:1 aspect ratio, 2000x2000px, sRGB, no text distortion, no extra limbs, no logo modification."
+
+  - template_id: lifestyle_vertical_tiktok
+    structure: "Young Malaysian adult in authentic Kuala Lumpur urban setting, natural lifestyle context, golden_hour lighting, 35mm lens, cinematic depth of field, 9:16 aspect ratio, 1080x1920px, sRGB, no warped anatomy, no mixed shadows, no product interaction unless explicitly requested."
+
+  - template_id: commercial_tiktok_shop_poster
+    structure: "Single dominant hero product or explicitly requested hero subject, mobile-first 9:16 composition, one strong selling angle, premium trustworthy lighting, strong hierarchy, minimal overlay density, no clutter, no fake discount styling."
+
+  - template_id: real_estate_luxury_standard
+    structure: "Luxury condo interior in Mont Kiara, hdr_balanced daylight, 24mm wide angle, straight vertical lines, 16:9 aspect ratio, 1920x1080px, sRGB, no vertical line bending, no overexposed highlights."
+
+examples:
+
+  - prompt: "Premium skincare bottle, marble surface, studio_high_key lighting, 50mm lens, 1:1 aspect ratio, 2000x2000px, sRGB, no text distortion, no logo modification."
+    validation_result: compliant
+
+  - prompt: "Modern hijab fashion scene, Kuala Lumpur rooftop, golden_hour lighting, 35mm lens, 9:16 aspect ratio, 1080x1920px, sRGB, no extra limbs."
+    validation_result: compliant
+
+  - prompt: "Luxury condo living room, hdr_balanced lighting, 24mm lens, 16:9 aspect ratio, 1920x1080px, sRGB, no vertical line bending."
+    validation_result: compliant
+
+...
