@@ -14,6 +14,7 @@ import {
 	saveImgOutputToLibrary,
 	startImgGeneration,
 } from "../api/imgFactory";
+import { fetchProductCatalog } from "../api/products";
 import { compileWorkspacePromptPreview } from "../api/workspacePackages";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { CreativeAsset, Product } from "../types";
@@ -106,6 +107,7 @@ export default function ImgCockpitPage() {
 	const [lanes, setLanes] = useState<ImgAssetLane[]>([]);
 	const [laneId, setLaneId] = useState("");
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+	const [products, setProducts] = useState<Product[]>([]);
 	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
 	const [sceneAssets, setSceneAssets] = useState<CreativeAsset[]>([]);
 	const [styleAssets, setStyleAssets] = useState<CreativeAsset[]>([]);
@@ -142,6 +144,12 @@ export default function ImgCockpitPage() {
 		void fetchImgAssetLanes()
 			.then((r) => setLanes(r.items))
 			.catch(() => setError("Failed to load IMG lanes."));
+		// Seed the product picker with the first catalog page (same as OperatorPage).
+		// SearchableProductSelect unions this with server-side search for the long tail;
+		// without it the picker is empty until the operator types 2+ characters.
+		void fetchProductCatalog(500)
+			.then((r) => setProducts(r.items ?? []))
+			.catch(() => {});
 		void fetchCreativeAssets({ semantic_role: "CHARACTER_REFERENCE", status: "ACTIVE", limit: 100 })
 			.then((r) => setCharacterAssets(r.items))
 			.catch(() => {});
@@ -364,7 +372,7 @@ export default function ImgCockpitPage() {
 			{/* 2 — Product */}
 			<Section step="2" title="Select product (product picker, not a raw ID)">
 				<SearchableProductSelect
-					products={[]}
+					products={products}
 					selectedProduct={selectedProduct}
 					onSelect={setSelectedProduct}
 				/>
