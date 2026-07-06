@@ -968,6 +968,18 @@ export type ProductIntelligenceSnapshotStatus =
 	| "REJECTED"
 	| "ARCHIVED";
 
+export type ProductIntelligenceReviewDraftStatus =
+	| "DRAFT"
+	| "READY_FOR_REVIEW"
+	| "NEEDS_REVISION"
+	| "REJECTED"
+	| "APPROVED";
+
+export type ProductIntelligenceClaimGate =
+	| "CLAIM_SAFE"
+	| "CLAIM_REVIEW_REQUIRED"
+	| "CLAIM_BLOCKED";
+
 export type ProductIntelligenceLatestStatus =
 	| "NO_APPROVED_SNAPSHOT"
 	| "APPROVED_SNAPSHOT_AVAILABLE";
@@ -1055,6 +1067,118 @@ export interface ProductIntelligenceFieldProvenanceListResponse {
 	snapshot_id: string;
 	product_id: string;
 	items: ProductIntelligenceFieldProvenance[];
+}
+
+export interface ProductIntelligenceReviewFieldProvenanceInput {
+	field_name: string;
+	declared_value: string | null;
+	normalized_value: string | null;
+	source_type: string;
+	source_url: string | null;
+	source_lane: string | null;
+	evidence_kind: string;
+	extraction_method: string;
+	confidence_score: number | null;
+	verification_status: string;
+	claim_risk_flag: string | null;
+	reviewer_decision: string | null;
+	reviewer_note: string | null;
+}
+
+export interface ProductIntelligenceReviewFieldProvenance
+	extends ProductIntelligenceReviewFieldProvenanceInput {
+	review_provenance_id: string;
+	draft_id: string;
+	product_id: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ProductIntelligenceReviewDraft {
+	draft_id: string;
+	product_id: string;
+	review_status: ProductIntelligenceReviewDraftStatus;
+	product_description: string | null;
+	benefits_json: string[];
+	usp_json: string[];
+	usage_text: string | null;
+	ingredients_text: string | null;
+	warnings_text: string | null;
+	target_customer_text: string | null;
+	paste_anything_summary: string | null;
+	source_urls_json: Record<string, unknown>;
+	image_evidence_json: Record<string, unknown>;
+	package_notes: string | null;
+	size_or_volume: string | null;
+	product_form_factor: string | null;
+	packaging_description: string | null;
+	product_truth_lock: string | null;
+	claim_gate: ProductIntelligenceClaimGate;
+	claim_risk_level: "LOW" | "MEDIUM" | "HIGH";
+	claim_tokens_json: string[];
+	allowed_claims_json: string[];
+	blocked_claims_json: string[];
+	buyer_persona_snapshot_json: Record<string, unknown>;
+	copy_strategy_summary_json: Record<string, unknown>;
+	confidence_score: number | null;
+	completeness_score: number | null;
+	readiness_status: string | null;
+	reviewer_note: string | null;
+	created_by: string | null;
+	reviewed_by: string | null;
+	approved_by: string | null;
+	approved_at: string | null;
+	rejected_by: string | null;
+	rejected_at: string | null;
+	created_at: string;
+	updated_at: string;
+	provenance_items: ProductIntelligenceReviewFieldProvenance[];
+}
+
+export interface ProductIntelligenceReviewDraftListResponse {
+	product_id: string;
+	items: ProductIntelligenceReviewDraft[];
+}
+
+export interface ProductIntelligenceReviewDraftValidationResponse {
+	draft: ProductIntelligenceReviewDraft;
+	missing_required_fields: string[];
+	present_required_fields: string[];
+	completeness_score: number;
+	readiness_status: string;
+	claim_gate: ProductIntelligenceClaimGate;
+	claim_risk_level: "LOW" | "MEDIUM" | "HIGH";
+	claim_tokens_json: string[];
+	allowed_claims_json: string[];
+	blocked_claims_json: string[];
+	approval_blockers: string[];
+}
+
+export interface ProductIntelligenceReviewDraftMutationRequest {
+	product_description?: string | null;
+	benefits_json?: string[] | null;
+	usp_json?: string[] | null;
+	usage_text?: string | null;
+	ingredients_text?: string | null;
+	warnings_text?: string | null;
+	target_customer_text?: string | null;
+	paste_anything_summary?: string | null;
+	source_urls_json?: Record<string, unknown> | null;
+	image_evidence_json?: Record<string, unknown> | null;
+	package_notes?: string | null;
+	size_or_volume?: string | null;
+	product_form_factor?: string | null;
+	packaging_description?: string | null;
+	product_truth_lock?: string | null;
+	allowed_claims_json?: string[] | null;
+	blocked_claims_json?: string[] | null;
+	buyer_persona_snapshot_json?: Record<string, unknown> | null;
+	copy_strategy_summary_json?: Record<string, unknown> | null;
+	confidence_score?: number | null;
+	reviewer_note?: string | null;
+	created_by?: string | null;
+	reviewed_by?: string | null;
+	provenance_items?: ProductIntelligenceReviewFieldProvenanceInput[] | null;
 }
 
 export interface FastMossSalesMetricScopeEntry {

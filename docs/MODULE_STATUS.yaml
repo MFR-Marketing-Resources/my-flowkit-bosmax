@@ -167,9 +167,12 @@ domains:
       - agent/services/product_knowledge_service.py
       - agent/api/product_intelligence.py
       - agent/models/product_intelligence_snapshot.py
+      - agent/models/product_intelligence_review_draft.py
       - agent/services/product_intelligence.py
+      - agent/services/product_intelligence_claim_safety_service.py
       - agent/services/product_intelligence_service.py
       - agent/services/product_intelligence_snapshot_service.py
+      - agent/services/product_intelligence_review_draft_service.py
       - agent/services/product_registration_service.py
       - agent/services/registration_commit_service.py
       - agent/services/registration_draft_storage_service.py
@@ -183,6 +186,7 @@ domains:
       - dashboard/src/api/client.ts
       - dashboard/src/api/creativeAssets.ts
       - dashboard/src/api/products.ts
+      - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.tsx
       - dashboard/src/api/workspacePackages.ts
       - dashboard/src/pages/ApprovedPackagesPage.tsx
       - dashboard/src/pages/AssetRegistryPage.tsx
@@ -239,6 +243,10 @@ domains:
       - tests/unit/test_product_intelligence_snapshot_model.py
       - tests/unit/test_product_intelligence_snapshot_crud.py
       - tests/unit/test_product_intelligence_field_provenance_crud.py
+      - tests/unit/test_product_intelligence_review_draft_model.py
+      - tests/unit/test_product_intelligence_review_draft_crud.py
+      - tests/unit/test_product_intelligence_review_draft_service.py
+      - tests/unit/test_product_intelligence_claim_safety_service.py
       - tests/unit/test_product_intelligence_service.py
       - tests/unit/test_product_intelligence_snapshot_service.py
       - tests/unit/test_video_reviewer.py
@@ -260,6 +268,7 @@ domains:
       - tests/api/test_product_intelligence_api.py
       - tests/api/test_product_intelligence_snapshot_api.py
       - tests/api/test_product_intelligence_provenance_api.py
+      - tests/api/test_product_intelligence_review_draft_api.py
       - tests/api/test_product_image_truth_v1.py
       - tests/api/test_products_rich_knowledge_patch_regression.py
       - tests/api/test_creative_asset_api.py

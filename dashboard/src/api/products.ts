@@ -2,6 +2,11 @@ import type {
 	ProductCatalogResponse,
 	ProductIntelligenceFieldProvenanceListResponse,
 	ProductIntelligenceLatestSnapshotResponse,
+	ProductIntelligenceReviewDraft,
+	ProductIntelligenceReviewDraftListResponse,
+	ProductIntelligenceReviewDraftMutationRequest,
+	ProductIntelligenceReviewDraftValidationResponse,
+	ProductIntelligenceSnapshot,
 	ProductIntelligenceSnapshotListResponse,
 	ProductIntelligenceSnapshotStatus,
 } from "../types";
@@ -61,5 +66,96 @@ export async function fetchProductIntelligenceProvenance(
 	const query = params.size > 0 ? `?${params.toString()}` : "";
 	return fetchAPI<ProductIntelligenceFieldProvenanceListResponse>(
 		`/api/product-intelligence/snapshots/${encodeURIComponent(snapshotId)}/provenance${query}`,
+	);
+}
+
+export async function fetchProductIntelligenceReviewDrafts(
+	productId: string,
+): Promise<ProductIntelligenceReviewDraftListResponse> {
+	return fetchAPI<ProductIntelligenceReviewDraftListResponse>(
+		`/api/products/${encodeURIComponent(productId)}/intelligence/review-drafts`,
+	);
+}
+
+export async function fetchProductIntelligenceReviewDraft(
+	draftId: string,
+): Promise<ProductIntelligenceReviewDraft> {
+	return fetchAPI<ProductIntelligenceReviewDraft>(
+		`/api/product-intelligence/review-drafts/${encodeURIComponent(draftId)}`,
+	);
+}
+
+export async function createProductIntelligenceReviewDraft(
+	productId: string,
+	payload: ProductIntelligenceReviewDraftMutationRequest,
+): Promise<ProductIntelligenceReviewDraft> {
+	return fetchAPI<ProductIntelligenceReviewDraft>(
+		`/api/products/${encodeURIComponent(productId)}/intelligence/review-drafts`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		},
+	);
+}
+
+export async function updateProductIntelligenceReviewDraft(
+	draftId: string,
+	payload: ProductIntelligenceReviewDraftMutationRequest,
+): Promise<ProductIntelligenceReviewDraft> {
+	return fetchAPI<ProductIntelligenceReviewDraft>(
+		`/api/product-intelligence/review-drafts/${encodeURIComponent(draftId)}`,
+		{
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		},
+	);
+}
+
+export async function validateProductIntelligenceReviewDraft(
+	draftId: string,
+): Promise<ProductIntelligenceReviewDraftValidationResponse> {
+	return fetchAPI<ProductIntelligenceReviewDraftValidationResponse>(
+		`/api/product-intelligence/review-drafts/${encodeURIComponent(draftId)}/validate`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		},
+	);
+}
+
+export async function approveProductIntelligenceReviewDraft(
+	draftId: string,
+	payload: {
+		approved_by?: string | null;
+		approval_note?: string | null;
+	},
+): Promise<ProductIntelligenceSnapshot> {
+	return fetchAPI<ProductIntelligenceSnapshot>(
+		`/api/product-intelligence/review-drafts/${encodeURIComponent(draftId)}/approve`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		},
+	);
+}
+
+export async function rejectProductIntelligenceReviewDraft(
+	draftId: string,
+	payload: {
+		rejected_by?: string | null;
+		reviewer_note?: string | null;
+	},
+): Promise<ProductIntelligenceReviewDraft> {
+	return fetchAPI<ProductIntelligenceReviewDraft>(
+		`/api/product-intelligence/review-drafts/${encodeURIComponent(draftId)}/reject`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		},
 	);
 }

@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record", "social_copy_package", "copy_set", "product_intelligence_snapshot", "product_intelligence_field_provenance"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record", "social_copy_package", "copy_set", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance"})
 
 
 def _validate_table(table: str) -> None:
@@ -44,6 +44,8 @@ _COLUMNS = {
     "copy_set": {"angle", "hook", "subhook", "usp_set_json", "cta", "platform", "language", "route_type", "formula_family", "status", "dedupe_key", "source", "provenance_json", "claim_review_json", "reviewer_note", "approved_at", "approved_by", "updated_at"},
     "product_intelligence_snapshot": {"product_id", "version", "status", "product_description", "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "created_from_review_draft_id", "created_by", "approved_by", "approved_at", "supersedes_snapshot_id", "updated_at"},
     "product_intelligence_field_provenance": {"snapshot_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
+    "product_intelligence_review_draft": {"product_id", "review_status", "product_description", "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "reviewer_note", "created_by", "reviewed_by", "approved_by", "approved_at", "rejected_by", "rejected_at", "updated_at"},
+    "product_intelligence_review_field_provenance": {"draft_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
 }
 
 
@@ -548,6 +550,151 @@ async def list_product_intelligence_field_provenance(
         params.append(limit)
     cur = await db.execute(q, params)
     return [dict(r) for r in await cur.fetchall()]
+
+
+async def create_product_intelligence_review_draft(product_id: str, review_status: str, **kw) -> dict:
+    db = await get_db()
+    draft_id, now = _uuid(), _now()
+    cols = ["draft_id", "product_id", "review_status", "created_at", "updated_at"]
+    vals = [draft_id, product_id, review_status, now, now]
+    allowed = _COLUMNS["product_intelligence_review_draft"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO product_intelligence_review_draft ({col_str}) VALUES ({placeholders})",
+            vals,
+        )
+        await db.commit()
+    return await _get_with_db(db, "product_intelligence_review_draft", "draft_id", draft_id)
+
+
+async def get_product_intelligence_review_draft(draft_id: str):
+    return await _get("product_intelligence_review_draft", "draft_id", draft_id)
+
+
+async def update_product_intelligence_review_draft(draft_id: str, **kw):
+    return await _update("product_intelligence_review_draft", "draft_id", draft_id, **kw)
+
+
+async def list_product_intelligence_review_drafts(
+    *,
+    product_id: str,
+    limit: int | None = 20,
+) -> list[dict]:
+    db = await get_db()
+    q = """
+        SELECT *
+        FROM product_intelligence_review_draft
+        WHERE product_id=?
+        ORDER BY updated_at DESC, created_at DESC, draft_id DESC
+    """
+    params: list[Any] = [product_id]
+    if limit is not None:
+        q += " LIMIT ?"
+        params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def create_product_intelligence_review_field_provenance(
+    draft_id: str,
+    product_id: str,
+    field_name: str,
+    source_type: str,
+    evidence_kind: str,
+    extraction_method: str,
+    verification_status: str,
+    **kw,
+) -> dict:
+    db = await get_db()
+    review_provenance_id, now = _uuid(), _now()
+    cols = [
+        "review_provenance_id",
+        "draft_id",
+        "product_id",
+        "field_name",
+        "source_type",
+        "evidence_kind",
+        "extraction_method",
+        "verification_status",
+        "created_at",
+        "updated_at",
+    ]
+    vals = [
+        review_provenance_id,
+        draft_id,
+        product_id,
+        field_name,
+        source_type,
+        evidence_kind,
+        extraction_method,
+        verification_status,
+        now,
+        now,
+    ]
+    allowed = _COLUMNS["product_intelligence_review_field_provenance"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO product_intelligence_review_field_provenance ({col_str}) VALUES ({placeholders})",
+            vals,
+        )
+        await db.commit()
+    return await _get_with_db(
+        db,
+        "product_intelligence_review_field_provenance",
+        "review_provenance_id",
+        review_provenance_id,
+    )
+
+
+async def list_product_intelligence_review_field_provenance(
+    *,
+    draft_id: str | None = None,
+    product_id: str | None = None,
+    field_name: str | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    if not draft_id and not product_id:
+        raise ValueError("DRAFT_ID_OR_PRODUCT_ID_REQUIRED")
+    db = await get_db()
+    q = "SELECT * FROM product_intelligence_review_field_provenance WHERE 1=1"
+    params: list[Any] = []
+    if draft_id:
+        q += " AND draft_id=?"
+        params.append(draft_id)
+    if product_id:
+        q += " AND product_id=?"
+        params.append(product_id)
+    if field_name:
+        q += " AND field_name=?"
+        params.append(field_name)
+    q += " ORDER BY created_at DESC, review_provenance_id DESC"
+    if limit is not None:
+        q += " LIMIT ?"
+        params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def delete_product_intelligence_review_field_provenance_for_draft(draft_id: str) -> None:
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            "DELETE FROM product_intelligence_review_field_provenance WHERE draft_id=?",
+            (draft_id,),
+        )
+        await db.commit()
 
 
 # ─── Copy Set (Copy Strategy Studio Phase 1) ────────────────

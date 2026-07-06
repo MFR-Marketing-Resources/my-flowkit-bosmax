@@ -7,6 +7,7 @@ import {
 	fetchProductIntelligenceProvenance,
 	fetchProductIntelligenceSnapshots,
 } from "../api/products";
+import ProductIntelligenceReviewDraftPanel from "../components/product-intelligence/ProductIntelligenceReviewDraftPanel";
 import type {
 	FastMossImportBatchReport,
 	Product,
@@ -796,6 +797,49 @@ export default function ProductsSalesAnalyzerPage() {
 		return summary;
 	}, [filteredProducts]);
 
+	const reloadProductIntelligence = useCallback(
+		async (preferredSnapshotId?: string | null) => {
+			if (!selectedId) return;
+			const productId = selectedId;
+			setIntelligenceLoading(true);
+			setIntelligenceError(null);
+			try {
+				const [summary, snapshots] = await Promise.all([
+					fetchProductIntelligence(productId),
+					fetchProductIntelligenceSnapshots(productId),
+				]);
+				setIntelligenceSummary(summary);
+				setIntelligenceSnapshots(snapshots.items);
+				setSelectedSnapshotId((current) => {
+					if (
+						preferredSnapshotId &&
+						snapshots.items.some(
+							(snapshot) => snapshot.snapshot_id === preferredSnapshotId,
+						)
+					) {
+						return preferredSnapshotId;
+					}
+					if (
+						current &&
+						snapshots.items.some((snapshot) => snapshot.snapshot_id === current)
+					) {
+						return current;
+					}
+					return (
+						summary.latest_snapshot?.snapshot_id ||
+						snapshots.items[0]?.snapshot_id ||
+						null
+					);
+				});
+			} catch (err) {
+				setIntelligenceError(normalizeProductIntelligenceError(err));
+			} finally {
+				setIntelligenceLoading(false);
+			}
+		},
+		[selectedId],
+	);
+
 	useEffect(() => {
 		if (
 			selectedId &&
@@ -872,46 +916,18 @@ export default function ProductsSalesAnalyzerPage() {
 
 	useEffect(() => {
 		if (activeTab !== "INTELLIGENCE" || !selectedId) return;
-		const productId = selectedId;
 		let cancelled = false;
 
 		async function loadProductIntelligence() {
-			setIntelligenceLoading(true);
-			setIntelligenceError(null);
-			try {
-				const [summary, snapshots] = await Promise.all([
-					fetchProductIntelligence(productId),
-					fetchProductIntelligenceSnapshots(productId),
-				]);
-				if (cancelled) return;
-				setIntelligenceSummary(summary);
-				setIntelligenceSnapshots(snapshots.items);
-				setSelectedSnapshotId((current) => {
-					if (
-						current &&
-						snapshots.items.some((snapshot) => snapshot.snapshot_id === current)
-					) {
-						return current;
-					}
-					return (
-						summary.latest_snapshot?.snapshot_id ||
-						snapshots.items[0]?.snapshot_id ||
-						null
-					);
-				});
-			} catch (err) {
-				if (cancelled) return;
-				setIntelligenceError(normalizeProductIntelligenceError(err));
-			} finally {
-				if (!cancelled) setIntelligenceLoading(false);
-			}
+			await reloadProductIntelligence();
+			if (cancelled) return;
 		}
 
 		void loadProductIntelligence();
 		return () => {
 			cancelled = true;
 		};
-	}, [activeTab, selectedId]);
+	}, [activeTab, selectedId, reloadProductIntelligence]);
 
 	useEffect(() => {
 		if (activeTab !== "INTELLIGENCE") return;
@@ -2528,9 +2544,17 @@ export default function ProductsSalesAnalyzerPage() {
 
 								{activeTab === "INTELLIGENCE" && (
 									<div className="space-y-6">
+										{selectedProduct ? (
+											<ProductIntelligenceReviewDraftPanel
+												productId={selectedProduct.id}
+												onApproved={async (snapshotId) => {
+													await reloadProductIntelligence(snapshotId);
+												}}
+											/>
+										) : null}
 										<Panel
 											title="Product Intelligence Snapshot Review"
-											subtitle="Read-only PR1 backend evidence surface. No UI writeback, no approval actions."
+											subtitle="Approved snapshot evidence surface backed by immutable product_intelligence_snapshot storage."
 										>
 											<div className="grid gap-4 lg:grid-cols-2">
 												<div className="space-y-1">
@@ -2602,10 +2626,11 @@ export default function ProductsSalesAnalyzerPage() {
 												) : null}
 											</div>
 											<div className="mt-4 rounded border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-[11px] text-sky-100">
-												Operator Clarity: Product Intelligence is review-only in
-												this screen. No edit, no dual-write, no approval
-												workflow, and no bulk AI enrichment actions are exposed
-												here.
+												Operator Clarity: Approved Product Intelligence truth
+												remains sidecar-only. The product row stays
+												catalog/routing metadata only, approval creates
+												immutable snapshots, and no dual-write or bulk AI
+												enrichment path is exposed here.
 											</div>
 										</Panel>
 
@@ -2643,12 +2668,10 @@ export default function ProductsSalesAnalyzerPage() {
 											>
 												<div className="rounded border border-amber-500/20 bg-amber-500/10 px-4 py-4 text-[11px] leading-relaxed text-amber-100">
 													No approved snapshot stored for this product yet.
-													Reviewers can see the product row, but the Product
-													table is still catalog/routing only. There is no
-													snapshot summary, field provenance, or evidence pack
-													to audit from the PR1 storage layer. Approve product
-													intelligence through the review/registration flow in a
-													future PR.
+													Reviewers can still create and validate Product
+													Intelligence review drafts above, but no immutable
+													approved snapshot has been created yet from that
+													review pipeline.
 												</div>
 											</Panel>
 										) : (

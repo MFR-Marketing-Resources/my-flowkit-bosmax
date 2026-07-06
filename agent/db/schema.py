@@ -1864,6 +1864,77 @@ CREATE INDEX IF NOT EXISTS idx_product_intelligence_field_provenance_product_fie
     ON product_intelligence_field_provenance(product_id, field_name);
 CREATE INDEX IF NOT EXISTS idx_product_intelligence_field_provenance_snapshot_field
     ON product_intelligence_field_provenance(snapshot_id, field_name);
+
+CREATE TABLE IF NOT EXISTS product_intelligence_review_draft (
+    draft_id TEXT PRIMARY KEY,
+    product_id TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    review_status TEXT NOT NULL CHECK(review_status IN ('DRAFT','READY_FOR_REVIEW','NEEDS_REVISION','REJECTED','APPROVED')),
+    product_description TEXT,
+    benefits_json TEXT NOT NULL DEFAULT '[]',
+    usp_json TEXT NOT NULL DEFAULT '[]',
+    usage_text TEXT,
+    ingredients_text TEXT,
+    warnings_text TEXT,
+    target_customer_text TEXT,
+    paste_anything_summary TEXT,
+    source_urls_json TEXT NOT NULL DEFAULT '{}',
+    image_evidence_json TEXT NOT NULL DEFAULT '{}',
+    package_notes TEXT,
+    size_or_volume TEXT,
+    product_form_factor TEXT,
+    packaging_description TEXT,
+    product_truth_lock TEXT,
+    claim_gate TEXT,
+    claim_risk_level TEXT,
+    claim_tokens_json TEXT NOT NULL DEFAULT '[]',
+    allowed_claims_json TEXT NOT NULL DEFAULT '[]',
+    blocked_claims_json TEXT NOT NULL DEFAULT '[]',
+    buyer_persona_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    copy_strategy_summary_json TEXT NOT NULL DEFAULT '{}',
+    confidence_score REAL,
+    completeness_score REAL,
+    readiness_status TEXT,
+    reviewer_note TEXT,
+    created_by TEXT,
+    reviewed_by TEXT,
+    approved_by TEXT,
+    approved_at TEXT,
+    rejected_by TEXT,
+    rejected_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_draft_product_status
+    ON product_intelligence_review_draft(product_id, review_status, created_at);
+CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_draft_product_updated
+    ON product_intelligence_review_draft(product_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS product_intelligence_review_field_provenance (
+    review_provenance_id TEXT PRIMARY KEY,
+    draft_id TEXT NOT NULL REFERENCES product_intelligence_review_draft(draft_id) ON DELETE CASCADE,
+    product_id TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    field_name TEXT NOT NULL,
+    declared_value TEXT,
+    normalized_value TEXT,
+    source_type TEXT NOT NULL,
+    source_url TEXT,
+    source_lane TEXT,
+    evidence_kind TEXT NOT NULL,
+    extraction_method TEXT NOT NULL,
+    confidence_score REAL,
+    verification_status TEXT NOT NULL,
+    claim_risk_flag TEXT,
+    reviewer_decision TEXT,
+    reviewer_note TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_field_provenance_draft
+    ON product_intelligence_review_field_provenance(draft_id);
+CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_field_provenance_product
+    ON product_intelligence_review_field_provenance(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_field_provenance_draft_field
+    ON product_intelligence_review_field_provenance(draft_id, field_name);
 """)
         await db.commit()
 
