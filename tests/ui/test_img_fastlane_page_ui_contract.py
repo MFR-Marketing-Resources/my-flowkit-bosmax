@@ -49,7 +49,9 @@ def test_fastlane_surfaces_reference_and_product_wiring():
     assert "productReferenceAssets" in page
     assert "Select Existing Reference — Avatar" in page
     assert "Select Existing Reference — Scene" in page
-    assert "Select Existing Reference — Style" in page
+    # The Frames "Style" reference field was a dead/fake picker (no STYLE records,
+    # no way to create one) — it must stay removed.
+    assert "Select Existing Reference — Style" not in page
     assert "Select Existing Reference Or Create From Preset" in page
     assert "Create From Preset" in page
     assert "No references found — create one from preset" in page

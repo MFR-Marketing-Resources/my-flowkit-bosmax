@@ -496,7 +496,6 @@ export default function ImgFastlanePage() {
 	// Style and scene are OPTIONAL context for the universal avatar+product merge —
 	// they must never block Generate nor be shown as "required".
 	const sceneMissing = false;
-	const styleMissing = false;
 	const OPTIONAL_BLOCKERS = new Set([
 		"STYLE_REFERENCE_REQUIRED",
 		"SCENE_REFERENCE_REQUIRED",
@@ -840,31 +839,22 @@ export default function ImgFastlanePage() {
 							    scale-lock merge preset (chosen automatically), so it works for ANY
 							    product without picking a preset. */}
 
-							<Section step="2" title="Select Existing References">
-								<div className="grid gap-4 md:grid-cols-2">
-									<ReferenceField
-										label="Select Existing Reference — Avatar"
-										noun="avatar"
-										assets={characterAssets}
-										value={characterAssetId}
-										onChange={setCharacterAssetId}
-										emptyHint="No references found — create one from preset"
-										requiredMissing={characterMissing}
-										onApprove={handleApproveAsset}
-										approvingId={approvingId}
-									/>
-									<ReferenceField
-										label="Select Existing Reference — Style"
-										noun="style reference"
-										assets={styleAssets}
-										value={styleAssetId}
-										onChange={setStyleAssetId}
-										emptyHint="No references found — create one from preset"
-										requiredMissing={styleMissing}
-										onApprove={handleApproveAsset}
-										approvingId={approvingId}
-									/>
-								</div>
+							<Section step="2" title="Select Avatar (required)">
+								{/* Style reference field removed: there are no STYLE_REFERENCE
+								    records and no way to create one in this flow, so the picker was
+								    a dead/misleading field. Style stays optional and is simply not
+								    surfaced until a real style library exists. */}
+								<ReferenceField
+									label="Select Existing Reference — Avatar"
+									noun="avatar"
+									assets={characterAssets}
+									value={characterAssetId}
+									onChange={setCharacterAssetId}
+									emptyHint="No avatars yet — open the Avatar Registry to add one"
+									requiredMissing={characterMissing}
+									onApprove={handleApproveAsset}
+									approvingId={approvingId}
+								/>
 								<div className="mt-2 flex gap-2">
 									<a
 										href="/assets/avatar-registry?from=/assets/img-fastlane"
@@ -885,21 +875,22 @@ export default function ImgFastlanePage() {
 								</div>
 							</Section>
 
-							<Section step="3" title="Select Existing Reference — Scene">
+							<Section step="3" title="Select Scene (optional)">
 								<div className="space-y-2">
 									<ReferenceField
-										label="Select Existing Reference"
+										label="Select Existing Reference — Scene"
 										noun="scene reference"
 										assets={sceneAssets}
 										value={sceneAssetId}
 										onChange={setSceneAssetId}
-										emptyHint="No references found — create one from preset"
+										emptyHint="No scene references yet — optional"
 										requiredMissing={sceneMissing}
 										onApprove={handleApproveAsset}
 										approvingId={approvingId}
 									/>
 									<p className="text-[10px] text-slate-500">
-										Optional for generic frames, but scene-aware presets will surface a blocker until context is selected.
+										Optional. Adds environment context to the merge when a scene
+										reference exists; never required to generate.
 									</p>
 								</div>
 							</Section>
