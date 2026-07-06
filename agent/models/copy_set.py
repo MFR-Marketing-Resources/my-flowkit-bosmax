@@ -90,8 +90,8 @@ class AICopyAssistBatchRequest(BaseModel):
     3-10), each independently deduped, safety-scanned, and similarity-scored.
     A copy_generation_batch ledger row is created for audit.
 
-    Optional ``dry_run`` validates inputs and returns what WOULD be generated
-    without persisting any Copy Set or ledger rows."""
+    Optional ``dry_run`` validates request and product context only. It does
+    NOT call the provider and does NOT persist Copy Set or ledger rows."""
 
     model_config = ConfigDict(extra="allow")
 

@@ -349,3 +349,43 @@ async def test_behavioral_no_live_provider_calls(monkeypatch):
 
     assert called[0] is True  # Our fake was called, not live provider
     assert result["created_count"] >= 1
+
+@pytest.mark.asyncio
+async def test_behavioral_dedupe_threshold_zero_is_honored(monkeypatch):
+    """dedupe_threshold=0.0 is passed through, not silently replaced with 0.80."""
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="Threshold Zero Test",
+        product_display_name="Threshold Zero Test", product_short_name="Threshold Zero Test",
+    )
+    captured_threshold = []
+
+    # Wrap find_nearest to capture the threshold argument
+    from agent.services import copy_similarity_service as sim_svc
+    original_find_nearest = sim_svc.find_nearest
+
+    def wrap_find_nearest(candidate, existing, threshold=0.80):
+        captured_threshold.append(threshold)
+        return original_find_nearest(candidate, existing, threshold=threshold)
+
+    monkeypatch.setattr(sim_svc, "find_nearest", wrap_find_nearest)
+
+    fake_out = _make_fake_provider_output()
+    calls = [0]
+    def fake_gen(brief):
+        idx = calls[0]; calls[0] += 1
+        return _make_fake_provider_output(hook=f"Hook variant {idx}", cta=f"CTA {idx}")
+
+    monkeypatch.setattr(ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(ai_provider, "generate_candidate", fake_gen)
+    monkeypatch.setattr(ai_provider, "provider_status",
+                        lambda: {"lane": "test", "configured": True, "provider_id": "t", "model_id": "m"})
+
+    from agent.models.copy_set import AICopyAssistBatchRequest
+    result = await ai_svc.generate_ai_copy_candidates_batch(
+        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3, dedupe_threshold=0.0))
+
+    assert result["created_count"] >= 1
+    assert len(captured_threshold) > 0, "find_nearest was never called"
+    for t in captured_threshold:
+        assert t == 0.0, f"Expected threshold 0.0, got {t}"
+
