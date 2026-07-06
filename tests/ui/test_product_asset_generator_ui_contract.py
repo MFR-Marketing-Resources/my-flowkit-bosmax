@@ -43,6 +43,11 @@ def test_product_asset_generator_form_locks_dry_run_only_true_and_shows_truth_co
     assert "No repo-backed wardrobe registry exists in this checkout. Manual fallback remains required." in form_source
     assert "Operator-pack headwear suggestions are not canonical registry truth." in form_source
     assert "Selecting a product uses product_id preview authority." in form_source
+    assert "function ProductSearchSelect" in form_source
+    assert "Search products by name..." in form_source
+    assert "Clear product selection" in form_source
+    assert "max-h-72 overflow-y-auto" in form_source
+    assert "truncate" in form_source
     assert "Advanced Manual Override" in form_source
     assert "Use this profile in Prompt Preview" in form_source
     assert "Profile Source Status" in form_source
