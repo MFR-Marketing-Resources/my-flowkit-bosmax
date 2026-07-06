@@ -1,6 +1,9 @@
 """API contract for the Avatar Registry CSV Factory endpoints."""
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -220,3 +223,132 @@ def test_avatar_registry_pool_reports_truthful_generated_and_missing_states(monk
     assert avatars["BOS_F_ALYA_01"]["image_status"] == "GENERATED"
     assert avatars["BOS_F_ALYA_02"]["image_generated"] is False
     assert avatars["BOS_F_ALYA_02"]["image_status"] == "MISSING_ASSET"
+
+
+def test_avatar_register_generated_blocks_existing_retrievable_avatar(monkeypatch, tmp_path):
+    artifact_file = tmp_path / "avatar.jpg"
+    artifact_file.write_bytes(b"avatar")
+
+    async def fake_artifacts(limit=200, kind=None):
+        return [
+            {
+                "media_id": "media_avatar_001",
+                "job_id": "g_123",
+                "local_path": str(artifact_file),
+            }
+        ]
+
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.get_generation_prompt",
+        lambda code: {"avatar_code": code, "character_name": "Alya", "prompt": "prompt"},
+    )
+    monkeypatch.setattr("agent.db.crud.list_generated_artifacts", fake_artifacts)
+
+    async def fake_generated_index():
+        return {
+            "BOS_F_ALYA_01": {
+                "asset_id": "ca_avatar_live",
+                "avatar_status": "GENERATED",
+                "retrievable": True,
+            }
+        }
+
+    monkeypatch.setattr(
+        "agent.api.workspace_packages._generated_avatar_asset_index",
+        fake_generated_index,
+    )
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/workspace/avatar-registry/register-generated",
+        json={"avatar_code": "BOS_F_ALYA_01", "media_id": "media_avatar_001"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "AVATAR_ALREADY_REGISTERED:ca_avatar_live"
+
+
+@pytest.mark.parametrize(
+    ("avatar_status", "retrievable"),
+    [
+        ("MISSING_ASSET", False),
+        ("BROKEN_LINK", False),
+        ("GENERATED_METADATA_ONLY", False),
+        ("NEEDS_REGENERATION", False),
+    ],
+)
+def test_avatar_register_generated_allows_repair_for_non_retrievable_existing_asset(
+    monkeypatch,
+    tmp_path,
+    avatar_status,
+    retrievable,
+):
+    artifact_file = tmp_path / f"{avatar_status.lower()}.jpg"
+    artifact_file.write_bytes(b"avatar")
+    captured = {}
+    archived = []
+
+    async def fake_artifacts(limit=200, kind=None):
+        return [
+            {
+                "media_id": "media_avatar_002",
+                "job_id": "g_456",
+                "local_path": str(artifact_file),
+            }
+        ]
+
+    async def fake_create(request):
+        captured["request"] = request
+        return type("Record", (), {"asset_id": "ca_avatar_repaired"})()
+
+    async def fake_archive(asset_id):
+        archived.append(asset_id)
+        return {"asset_id": asset_id, "status": "ARCHIVED"}
+
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.get_generation_prompt",
+        lambda code: {"avatar_code": code, "character_name": "Alya", "prompt": "prompt"},
+    )
+    monkeypatch.setattr("agent.db.crud.list_generated_artifacts", fake_artifacts)
+
+    async def fake_generated_index():
+        return {
+            "BOS_F_ALYA_02": {
+                "asset_id": "ca_avatar_broken",
+                "avatar_status": avatar_status,
+                "retrievable": retrievable,
+            }
+        }
+
+    monkeypatch.setattr(
+        "agent.api.workspace_packages._generated_avatar_asset_index",
+        fake_generated_index,
+    )
+    monkeypatch.setattr(
+        "agent.services.creative_asset_service.create_creative_asset",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "agent.services.creative_asset_service.archive_creative_asset",
+        fake_archive,
+    )
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/workspace/avatar-registry/register-generated",
+        json={"avatar_code": "BOS_F_ALYA_02", "media_id": "media_avatar_002"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "asset_id": "ca_avatar_repaired",
+        "avatar_code": "BOS_F_ALYA_02",
+    }
+    assert archived == ["ca_avatar_broken"]
+    assert captured["request"].semantic_role == "CHARACTER_REFERENCE"
+    assert captured["request"].asset_lifecycle == "CANONICAL_AVATAR_ASSET"
+    assert captured["request"].retention_policy == "PERSISTENT"
+    assert captured["request"].is_reusable is True
+    assert captured["request"].is_canonical is True
+    assert captured["request"].avatar_code == "BOS_F_ALYA_02"
+    assert Path(captured["request"].file_name).name == artifact_file.name

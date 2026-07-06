@@ -142,19 +142,27 @@ def audit_creative_asset(asset: CreativeAssetRecord) -> dict[str, Any]:
     local_exists = False
     if asset.local_file_path:
         local_exists = Path(asset.local_file_path).is_file()
-    has_remote_reference = bool(asset.remote_source_url or asset.preview_url or asset.download_url)
     if asset.local_file_path:
         retrievable = local_exists
         integrity_status = "LOCAL_FILE_OK" if local_exists else "LOCAL_FILE_MISSING"
     elif asset.storage_kind == "REMOTE_URL":
-        retrievable = has_remote_reference
-        integrity_status = "REMOTE_REFERENCE_READY" if retrievable else "REMOTE_REFERENCE_MISSING"
+        retrievable = bool(asset.preview_url or asset.download_url)
+        integrity_status = (
+            "REMOTE_REFERENCE_PRESENT"
+            if (asset.remote_source_url or asset.preview_url or asset.download_url)
+            else "REMOTE_REFERENCE_MISSING"
+        )
     elif asset.storage_kind == "MEDIA_ID":
         retrievable = bool(asset.media_id)
         integrity_status = "MEDIA_REFERENCE_READY" if retrievable else "MEDIA_REFERENCE_MISSING"
     elif asset.storage_kind == "PRODUCT_IMAGE_CACHE":
-        retrievable = bool(asset.preview_url or asset.download_url or asset.product_id)
-        integrity_status = "PRODUCT_CACHE_READY" if retrievable else "PRODUCT_CACHE_MISSING"
+        retrievable = bool(asset.preview_url or asset.download_url)
+        if retrievable:
+            integrity_status = "PRODUCT_CACHE_REFERENCE_PRESENT"
+        elif asset.product_id:
+            integrity_status = "PRODUCT_CACHE_PRODUCT_LINK_ONLY"
+        else:
+            integrity_status = "PRODUCT_CACHE_MISSING"
     else:
         retrievable = bool(asset.preview_url or asset.download_url or asset.remote_source_url)
         integrity_status = "REFERENCE_READY" if retrievable else "REFERENCE_MISSING"
@@ -175,6 +183,29 @@ def audit_creative_asset(asset: CreativeAssetRecord) -> dict[str, Any]:
         "local_file_exists": local_exists,
         "integrity_status": integrity_status,
         "avatar_status": avatar_status,
+    }
+
+
+def _is_image_library_eligible(
+    asset: CreativeAssetRecord,
+    *,
+    lifecycle: str,
+    retrievable: bool,
+) -> bool:
+    if not retrievable:
+        return False
+    if lifecycle not in {
+        "CANONICAL_AVATAR_ASSET",
+        "CANONICAL_PRODUCT_ASSET",
+        "SAVED_REUSABLE_ASSET",
+    }:
+        return False
+    return asset.semantic_role in {
+        "CHARACTER_REFERENCE",
+        "PRODUCT_REFERENCE",
+        "SCENE_CONTEXT_REFERENCE",
+        "STYLE_REFERENCE",
+        "COMPOSITE_FRAME_REFERENCE",
     }
 
 
@@ -581,7 +612,11 @@ async def list_image_library_items(limit: int = 60, mode: str | None = None) -> 
                 reusable_avatar_assets += 1
             else:
                 broken_avatar_assets += 1
-        if not audit["retrievable"]:
+        if not _is_image_library_eligible(
+            asset,
+            lifecycle=lifecycle,
+            retrievable=bool(audit["retrievable"]),
+        ):
             continue
         reusable_items.append(
             {

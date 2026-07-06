@@ -327,7 +327,7 @@ async def avatar_registry_register_generated(request: AvatarRegisterGeneratedReq
     from agent.db import crud
     from agent.models.creative_asset import CreativeAssetCreateRequest
     from agent.services import avatar_registry
-    from agent.services.creative_asset_service import create_creative_asset
+    from agent.services.creative_asset_service import archive_creative_asset, create_creative_asset
     try:
         identity = avatar_registry.get_generation_prompt(request.avatar_code)
     except ValueError as exc:
@@ -337,12 +337,14 @@ async def avatar_registry_register_generated(request: AvatarRegisterGeneratedReq
         (a for a in artifacts if a.get("media_id") == request.media_id), None)
     if artifact is None:
         raise HTTPException(404, "GENERATED_ARTIFACT_NOT_FOUND")
-    existing = await _generated_avatar_asset_index()
-    if identity["avatar_code"].upper() in existing:
+    existing = (await _generated_avatar_asset_index()).get(identity["avatar_code"].upper())
+    if existing and existing.get("avatar_status") == "GENERATED" and existing.get("retrievable"):
         raise HTTPException(
             409,
-            f"AVATAR_ALREADY_REGISTERED:{existing[identity['avatar_code'].upper()]['asset_id']}",
+            f"AVATAR_ALREADY_REGISTERED:{existing['asset_id']}",
         )
+    if existing and existing.get("asset_id"):
+        await archive_creative_asset(str(existing["asset_id"]))
     # Copy the image OUT of the 48h-retention artifact library into permanent
     # creative-asset storage (the base64 path handles file placement + URLs).
     import base64
