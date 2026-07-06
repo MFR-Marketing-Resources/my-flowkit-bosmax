@@ -52,7 +52,7 @@ async def get_suitable_avatars(
     Returns explicit ``avatar_product_fit`` rows ordered by
     ``fit_score`` descending.  When ``include_all_fallback`` is True and
     no explicit mappings exist, falls back to ALL registered avatars
-    with a default fit_score of 1.0.
+    with a fit_score of 0.5 (FALLBACK_UNRANKED).  Explicit matches\n    are tagged with fit_source=\"EXPLICIT_MAPPING\".
     """
     norm = normalise_category(product_category)
     fits = await crud.list_avatar_product_fits(product_category=norm)
