@@ -84,6 +84,7 @@ export interface StartImgGenerationInput {
 	aspect?: string;
 	model?: string;
 	duration_s?: number;
+	count?: number;
 }
 
 export interface StartImgGenerationResult {
@@ -124,6 +125,7 @@ export async function startImgGeneration(
 		aspect: input.aspect ?? "9:16",
 		model: input.model,
 		duration_s: input.duration_s,
+		count: input.count,
 	});
 }
 

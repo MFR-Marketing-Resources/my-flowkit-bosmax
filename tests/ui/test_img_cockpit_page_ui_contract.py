@@ -89,9 +89,9 @@ def test_cockpit_pickers_are_approved_only():
     page = _read("dashboard/src/pages/ImgCockpitPage.tsx")
     # Reuse safety: only APPROVED references feed generation/lineage.
     assert "isReusableAsset" in page
-    assert "approvedCharacters" in page
-    assert "approvedScenes" in page
-    assert "approvedStyles" in page
+    assert "approvedCharacter" in page
+    assert "approvedScene" in page
+    assert "approvedStyle" in page
 
 
 def test_cockpit_rejected_is_archived():
