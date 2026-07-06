@@ -6,16 +6,36 @@ import { useCallback, useEffect, useState } from "react";
 // retained 48 hours by the backend, then auto-deleted (file + record).
 
 interface LibraryArtifact {
-	media_id: string;
-	job_id: string | null;
-	mode: string | null;
+	media_id: string | null;
+	job_id?: string | null;
+	mode?: string | null;
 	artifact_kind: "video" | "image";
-	size_mb: number | null;
-	model_used: string | null;
-	duration_used: number | null;
+	size_mb?: number | null;
+	model_used?: string | null;
+	duration_used?: number | null;
 	created_at: string;
-	expires_at: string | null;
-	expires_in_hours: number | null;
+	expires_at?: string | null;
+	expires_in_hours?: number | null;
+	library_key?: string;
+	library_source?: "TEMP_JOB_OUTPUT" | "CREATIVE_ASSET";
+	asset_lifecycle?: string | null;
+	retention_policy?: string | null;
+	source_asset_id?: string | null;
+	semantic_role?: string | null;
+	avatar_code?: string | null;
+	product_id?: string | null;
+	display_name?: string | null;
+	preview_url?: string | null;
+	download_url?: string | null;
+	integrity_status?: string | null;
+}
+
+interface ImageLibraryDiagnostics {
+	temp_image_outputs: number;
+	reusable_image_assets: number;
+	reusable_avatar_assets: number;
+	broken_avatar_assets: number;
+	purged_temp_rows?: number;
 }
 
 interface LibraryPageProps {
@@ -33,20 +53,34 @@ function expiryTone(hours: number | null): string {
 
 export default function LibraryPage({ kind }: LibraryPageProps) {
 	const [artifacts, setArtifacts] = useState<LibraryArtifact[]>([]);
-	const [modeFilter, setModeFilter] = useState<(typeof MODE_FILTERS)[number]>("ALL");
+	const [modeFilter, setModeFilter] =
+		useState<(typeof MODE_FILTERS)[number]>("ALL");
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [imageDiagnostics, setImageDiagnostics] =
+		useState<ImageLibraryDiagnostics | null>(null);
 
 	const refresh = useCallback(async () => {
 		setIsLoading(true);
 		setError(null);
 		try {
-			const params = new URLSearchParams({ limit: "60", kind });
+			const params = new URLSearchParams({ limit: "60" });
 			if (modeFilter !== "ALL") params.set("mode", modeFilter);
-			const response = await fetch(`/api/flow/artifacts?${params.toString()}`);
+			const response = await fetch(
+				kind === "image"
+					? `/api/creative-assets/library-images?${params.toString()}`
+					: `/api/flow/artifacts?${new URLSearchParams({
+							limit: "60",
+							kind,
+							...(modeFilter !== "ALL" ? { mode: modeFilter } : {}),
+						}).toString()}`,
+			);
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
 			const data = await response.json();
 			setArtifacts(Array.isArray(data.artifacts) ? data.artifacts : []);
+			setImageDiagnostics(
+				kind === "image" && data.diagnostics ? data.diagnostics : null,
+			);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to load library");
 		} finally {
@@ -59,6 +93,10 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 	}, [refresh]);
 
 	const title = kind === "video" ? "Video Library" : "Image Library";
+	const emptyImageMismatch =
+		kind === "image" &&
+		(imageDiagnostics?.reusable_avatar_assets || 0) > 0 &&
+		artifacts.length === 0;
 
 	return (
 		<div className="space-y-4">
@@ -68,9 +106,9 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 						{kind === "video" ? "🎬" : "🖼"} {title}
 					</h1>
 					<p className="mt-1 text-xs text-slate-400">
-						Semua hasil siap dari Google Flow terkumpul di sini. Setiap item
-						disimpan <span className="font-semibold text-slate-200">48 jam</span>{" "}
-						sebelum auto-delete — download apa yang anda mahu simpan.
+						{kind === "video"
+							? "Semua hasil siap dari Google Flow terkumpul di sini. Setiap item disimpan 48 jam sebelum auto-delete."
+							: "Output Google Flow sementara tamat selepas 48 jam, tetapi aset avatar, produk, dan aset reusable yang sudah disimpan kekal tersedia di sini."}
 					</p>
 				</div>
 				<div className="flex items-center gap-2">
@@ -105,22 +143,41 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 				</div>
 			)}
 
+			{kind === "image" && imageDiagnostics && (
+				<div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-300">
+					{imageDiagnostics.temp_image_outputs} temp output ·{" "}
+					{imageDiagnostics.reusable_image_assets} reusable asset ·{" "}
+					{imageDiagnostics.reusable_avatar_assets} canonical avatar ·{" "}
+					{imageDiagnostics.broken_avatar_assets} broken avatar
+				</div>
+			)}
+
 			{!error && artifacts.length === 0 && !isLoading && (
 				<div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-4 py-10 text-center text-sm text-slate-400">
-					Tiada {kind === "video" ? "video" : "imej"} dalam tempoh simpanan 48
-					jam. Hasil baharu akan muncul di sini secara automatik selepas job
-					siap.
+					{emptyImageMismatch
+						? "Avatar Registry ada aset generated, tetapi tiada item retrievable dalam Image Library. Semak avatar yang rosak atau link yang hilang sebelum gunakan downstream."
+						: kind === "video"
+							? "Tiada video dalam tempoh simpanan 48 jam. Hasil baharu akan muncul di sini secara automatik selepas job siap."
+							: "Tiada imej temp atau reusable yang retrievable buat masa ini."}
 				</div>
 			)}
 
 			<div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
 				{artifacts.map((item) => (
 					<div
-						key={item.media_id}
+						key={
+							item.library_key ||
+							item.media_id ||
+							item.source_asset_id ||
+							item.created_at
+						}
 						className="group rounded-xl border border-slate-800 bg-slate-950/60 p-2 hover:border-slate-600"
 					>
 						<a
-							href={`/api/flow/retrieved/${item.media_id}`}
+							href={
+								item.preview_url ||
+								(item.media_id ? `/api/flow/retrieved/${item.media_id}` : "#")
+							}
 							target="_blank"
 							rel="noopener noreferrer"
 						>
@@ -135,8 +192,13 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 								/>
 							) : (
 								<img
-									src={`/api/flow/retrieved/${item.media_id}`}
-									alt={item.mode ?? "artifact"}
+									src={
+										item.preview_url ||
+										(item.media_id
+											? `/api/flow/retrieved/${item.media_id}`
+											: "")
+									}
+									alt={item.display_name || item.mode || "artifact"}
 									loading="lazy"
 									className="aspect-[9/16] w-full rounded-lg bg-black object-contain"
 								/>
@@ -144,29 +206,43 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 						</a>
 						<div className="mt-2 flex items-center justify-between text-[10px] text-slate-400">
 							<span className="font-semibold text-slate-300">
-								{item.mode ?? "?"}
+								{item.display_name ?? item.mode ?? "?"}
 								{item.duration_used ? ` · ${item.duration_used}s` : ""}
 							</span>
 							<span>{item.size_mb != null ? `${item.size_mb}MB` : ""}</span>
 						</div>
 						<div className="mt-1 flex items-center justify-between">
 							<span
-								className={`flex items-center gap-1 text-[10px] ${expiryTone(item.expires_in_hours)}`}
+								className={`flex items-center gap-1 text-[10px] ${expiryTone(item.expires_in_hours ?? null)}`}
 								title={item.expires_at ?? undefined}
 							>
 								<Timer size={11} />
 								{item.expires_in_hours != null
 									? `${item.expires_in_hours}j lagi`
-									: "—"}
+									: item.retention_policy === "PERSISTENT"
+										? "Persistent"
+										: "—"}
 							</span>
 							<a
-								href={`/api/flow/retrieved/${item.media_id}`}
-								download={`${item.media_id}.${item.artifact_kind === "video" ? "mp4" : "jpg"}`}
+								href={
+									item.download_url ||
+									item.preview_url ||
+									(item.media_id ? `/api/flow/retrieved/${item.media_id}` : "#")
+								}
+								download={
+									item.media_id
+										? `${item.media_id}.${item.artifact_kind === "video" ? "mp4" : "jpg"}`
+										: undefined
+								}
 								className="flex items-center gap-1 rounded border border-slate-700 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800"
 							>
 								<Download size={11} />
 								Save
 							</a>
+						</div>
+						<div className="mt-1 text-[9px] text-slate-500">
+							{item.asset_lifecycle ?? item.library_source ?? ""}
+							{item.avatar_code ? ` · ${item.avatar_code}` : ""}
 						</div>
 						<div className="mt-1 text-[9px] text-slate-500">
 							{item.created_at?.replace("T", " ").replace("Z", "")}

@@ -29,6 +29,14 @@ CreativeAssetStorageKind = Literal[
 CreativeAssetAllowedMode = Literal["T2V", "F2V", "I2V", "IMG"]
 CreativeAssetEngineSlot = Literal["subject", "scene", "style", "start_frame", "end_frame"]
 CreativeAssetReviewStatus = Literal["DRAFT", "PENDING_REVIEW", "APPROVED", "REJECTED"]
+CreativeAssetLifecycle = Literal[
+    "TEMP_JOB_OUTPUT",
+    "CANONICAL_AVATAR_ASSET",
+    "CANONICAL_PRODUCT_ASSET",
+    "SAVED_REUSABLE_ASSET",
+    "BROKEN_OR_MISSING_ASSET",
+]
+CreativeAssetRetentionPolicy = Literal["TEMP_48H", "PERSISTENT"]
 
 
 class CreativeAssetRecord(BaseModel):
@@ -70,6 +78,13 @@ class CreativeAssetRecord(BaseModel):
     scale_truth_status: str | None = None
     claim_safety_status: str | None = None
     review_status: str = "PENDING_REVIEW"
+    asset_lifecycle: CreativeAssetLifecycle = "SAVED_REUSABLE_ASSET"
+    retention_policy: CreativeAssetRetentionPolicy = "PERSISTENT"
+    expires_at: str | None = None
+    is_reusable: bool = True
+    is_canonical: bool = False
+    source_job_id: str | None = None
+    avatar_code: str | None = None
     status: CreativeAssetStatus
     created_at: str
     updated_at: str
@@ -115,6 +130,13 @@ class CreativeAssetCreateRequest(BaseModel):
     scale_truth_status: str | None = None
     claim_safety_status: str | None = None
     review_status: CreativeAssetReviewStatus = "PENDING_REVIEW"
+    asset_lifecycle: CreativeAssetLifecycle = "SAVED_REUSABLE_ASSET"
+    retention_policy: CreativeAssetRetentionPolicy = "PERSISTENT"
+    expires_at: str | None = None
+    is_reusable: bool = True
+    is_canonical: bool = False
+    source_job_id: str | None = None
+    avatar_code: str | None = None
     image_base64: str | None = None
     file_name: str | None = None
 
@@ -148,6 +170,13 @@ class CreativeAssetUpdateRequest(BaseModel):
     scale_truth_status: str | None = None
     claim_safety_status: str | None = None
     review_status: CreativeAssetReviewStatus | None = None
+    asset_lifecycle: CreativeAssetLifecycle | None = None
+    retention_policy: CreativeAssetRetentionPolicy | None = None
+    expires_at: str | None = None
+    is_reusable: bool | None = None
+    is_canonical: bool | None = None
+    source_job_id: str | None = None
+    avatar_code: str | None = None
 
 
 class CreativeAssetListResponse(BaseModel):

@@ -4,7 +4,9 @@ import base64
 import hashlib
 import json
 import mimetypes
+import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,7 @@ from agent.models.creative_asset import (
 CREATIVE_ASSET_UPLOAD_DIR = BASE_DIR / ".local-agent" / "creative-assets"
 ACTIVE_STATUS = "ACTIVE"
 ARCHIVED_STATUS = "ARCHIVED"
+AVATAR_ASSET_MARKER = "AVATAR_CODE:"
 
 
 def _json_text(value: Any) -> str:
@@ -50,11 +53,29 @@ def _normalize_record(row: dict[str, Any]) -> CreativeAssetRecord:
     )
     # SQLite stores the governance booleans as INTEGER 0/1 — coerce to bool so the
     # record contract stays truthful (and never leaks a raw int downstream).
-    for _bool_col in ("contains_rendered_text", "approved_for_video_support", "approved_for_poster"):
+    for _bool_col in (
+        "contains_rendered_text",
+        "approved_for_video_support",
+        "approved_for_poster",
+        "is_reusable",
+        "is_canonical",
+    ):
         if _bool_col in payload:
             payload[_bool_col] = bool(payload.get(_bool_col))
+    if payload.get("storage_kind") == "REMOTE_URL" and payload.get("remote_source_url"):
+        remote_source_url = str(payload["remote_source_url"])
+        preview_url = str(payload.get("preview_url") or "")
+        download_url = str(payload.get("download_url") or "")
+        if not preview_url or preview_url.startswith("/api/creative-assets/"):
+            payload["preview_url"] = remote_source_url
+        if not download_url or download_url.startswith("/api/creative-assets/"):
+            payload["download_url"] = remote_source_url
     if not payload.get("review_status"):
         payload["review_status"] = "PENDING_REVIEW"
+    if not payload.get("asset_lifecycle"):
+        payload["asset_lifecycle"] = "SAVED_REUSABLE_ASSET"
+    if not payload.get("retention_policy"):
+        payload["retention_policy"] = "PERSISTENT"
     return CreativeAssetRecord(**payload)
 
 
@@ -91,6 +112,101 @@ def _build_local_preview_url(asset_id: str) -> str:
 
 def _build_local_download_url(asset_id: str) -> str:
     return f"/api/creative-assets/{asset_id}/download"
+
+
+def _extract_avatar_code(description: str | None, explicit_avatar_code: str | None = None) -> str | None:
+    if explicit_avatar_code:
+        code = explicit_avatar_code.strip().upper()
+        if code:
+            return code
+    match = re.search(r"AVATAR_CODE:([A-Z0-9_]+)", str(description or ""))
+    if match:
+        return match.group(1).strip().upper()
+    return None
+
+
+def _infer_asset_lifecycle(asset: CreativeAssetRecord) -> str:
+    if asset.asset_lifecycle and asset.asset_lifecycle != "SAVED_REUSABLE_ASSET":
+        return asset.asset_lifecycle
+    if asset.semantic_role == "CHARACTER_REFERENCE" and _extract_avatar_code(
+        asset.description,
+        asset.avatar_code,
+    ):
+        return "CANONICAL_AVATAR_ASSET"
+    if asset.semantic_role == "PRODUCT_REFERENCE":
+        return "CANONICAL_PRODUCT_ASSET"
+    return asset.asset_lifecycle or "SAVED_REUSABLE_ASSET"
+
+
+def audit_creative_asset(asset: CreativeAssetRecord) -> dict[str, Any]:
+    local_exists = False
+    if asset.local_file_path:
+        local_exists = Path(asset.local_file_path).is_file()
+    if asset.local_file_path:
+        retrievable = local_exists
+        integrity_status = "LOCAL_FILE_OK" if local_exists else "LOCAL_FILE_MISSING"
+    elif asset.storage_kind == "REMOTE_URL":
+        retrievable = False
+        integrity_status = (
+            "REMOTE_RETRIEVABILITY_UNVERIFIED"
+            if (asset.remote_source_url or asset.preview_url or asset.download_url)
+            else "REMOTE_REFERENCE_MISSING"
+        )
+    elif asset.storage_kind == "MEDIA_ID":
+        retrievable = bool(asset.media_id)
+        integrity_status = "MEDIA_REFERENCE_READY" if retrievable else "MEDIA_REFERENCE_MISSING"
+    elif asset.storage_kind == "PRODUCT_IMAGE_CACHE":
+        retrievable = bool(asset.preview_url or asset.download_url)
+        if retrievable:
+            integrity_status = "PRODUCT_CACHE_REFERENCE_PRESENT"
+        elif asset.product_id:
+            integrity_status = "PRODUCT_CACHE_PRODUCT_LINK_ONLY"
+        else:
+            integrity_status = "PRODUCT_CACHE_MISSING"
+    else:
+        retrievable = bool(asset.preview_url or asset.download_url or asset.remote_source_url)
+        integrity_status = "REFERENCE_READY" if retrievable else "REFERENCE_MISSING"
+
+    if retrievable:
+        avatar_status = "GENERATED"
+    elif asset.local_file_path:
+        avatar_status = "MISSING_ASSET"
+    elif asset.preview_url or asset.download_url or asset.remote_source_url or asset.media_id:
+        avatar_status = "BROKEN_LINK"
+    elif asset.description or asset.display_name:
+        avatar_status = "GENERATED_METADATA_ONLY"
+    else:
+        avatar_status = "NEEDS_REGENERATION"
+
+    return {
+        "retrievable": retrievable,
+        "local_file_exists": local_exists,
+        "integrity_status": integrity_status,
+        "avatar_status": avatar_status,
+    }
+
+
+def _is_image_library_eligible(
+    asset: CreativeAssetRecord,
+    *,
+    lifecycle: str,
+    retrievable: bool,
+) -> bool:
+    if not retrievable:
+        return False
+    if lifecycle not in {
+        "CANONICAL_AVATAR_ASSET",
+        "CANONICAL_PRODUCT_ASSET",
+        "SAVED_REUSABLE_ASSET",
+    }:
+        return False
+    return asset.semantic_role in {
+        "CHARACTER_REFERENCE",
+        "PRODUCT_REFERENCE",
+        "SCENE_CONTEXT_REFERENCE",
+        "STYLE_REFERENCE",
+        "COMPOSITE_FRAME_REFERENCE",
+    }
 
 
 def _fingerprint(asset_id: str, slot_key: str, source_value: str) -> str:
@@ -227,6 +343,13 @@ async def create_creative_asset(request: CreativeAssetCreateRequest) -> Creative
         scale_truth_status=request.scale_truth_status,
         claim_safety_status=request.claim_safety_status,
         review_status=request.review_status,
+        asset_lifecycle=request.asset_lifecycle,
+        retention_policy=request.retention_policy,
+        expires_at=request.expires_at,
+        is_reusable=request.is_reusable,
+        is_canonical=request.is_canonical,
+        source_job_id=request.source_job_id,
+        avatar_code=_extract_avatar_code(request.description, request.avatar_code),
         status=ACTIVE_STATUS,
     )
     return _normalize_record(row)
@@ -384,4 +507,154 @@ def build_resolved_workspace_asset(
         "preview_error_detail": None if asset.preview_url else "Preview URL is not available.",
         "local_image_path_present": bool(asset.local_file_path),
         "remote_image_url_present": bool(asset.remote_source_url),
+    }
+
+
+async def list_avatar_asset_index() -> dict[str, dict[str, Any]]:
+    assets = await list_creative_assets(
+        semantic_role="CHARACTER_REFERENCE",
+        status=ACTIVE_STATUS,
+        limit=1000,
+    )
+    mapping: dict[str, dict[str, Any]] = {}
+    for asset in assets:
+        avatar_code = _extract_avatar_code(asset.description, asset.avatar_code)
+        if not avatar_code:
+            continue
+        audit = audit_creative_asset(asset)
+        payload = {
+            "asset_id": asset.asset_id,
+            "avatar_code": avatar_code,
+            "preview_url": asset.preview_url,
+            "download_url": asset.download_url,
+            "local_file_path": asset.local_file_path,
+            "media_id": asset.media_id,
+            "created_at": asset.created_at,
+            "display_name": asset.display_name,
+            "asset_lifecycle": _infer_asset_lifecycle(asset),
+            **audit,
+        }
+        current = mapping.get(avatar_code)
+        if current is None:
+            mapping[avatar_code] = payload
+            continue
+        current_rank = (1 if current.get("retrievable") else 0, str(current.get("created_at") or ""))
+        next_rank = (1 if payload["retrievable"] else 0, str(payload.get("created_at") or ""))
+        if next_rank > current_rank:
+            mapping[avatar_code] = payload
+    return mapping
+
+
+async def list_image_library_items(limit: int = 60, mode: str | None = None) -> dict[str, Any]:
+    purged = await crud.purge_expired_artifacts(retention_hours=48)
+    temp_rows = await crud.list_generated_artifacts(limit=limit, kind="image", mode=mode)
+    temp_items = []
+    for row in temp_rows:
+        expires_at = None
+        expires_in_hours = None
+        created_at = str(row.get("created_at") or "")
+        if created_at:
+            try:
+                created = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=timezone.utc,
+                )
+                expires = created + timedelta(hours=48)
+                expires_at = expires.strftime("%Y-%m-%dT%H:%M:%SZ")
+                expires_in_hours = max(
+                    0,
+                    round(
+                        (expires - datetime.now(timezone.utc)).total_seconds() / 3600,
+                        1,
+                    ),
+                )
+            except ValueError:
+                expires_at = None
+                expires_in_hours = None
+        temp_items.append(
+            {
+                "library_key": f"artifact:{row['media_id']}",
+                "library_source": "TEMP_JOB_OUTPUT",
+                "artifact_kind": "image",
+                "asset_lifecycle": "TEMP_JOB_OUTPUT",
+                "retention_policy": "TEMP_48H",
+                "source_asset_id": None,
+                "semantic_role": None,
+                "avatar_code": None,
+                "product_id": None,
+                "display_name": row.get("mode") or "Generated Image",
+                "media_id": row.get("media_id"),
+                "mode": row.get("mode"),
+                "size_mb": row.get("size_mb"),
+                "local_path": row.get("local_path"),
+                "created_at": row.get("created_at"),
+                "preview_url": f"/api/flow/retrieved/{row['media_id']}",
+                "download_url": f"/api/flow/retrieved/{row['media_id']}",
+                "expires_at": expires_at,
+                "expires_in_hours": expires_in_hours,
+                "integrity_status": "LOCAL_FILE_OK"
+                if row.get("local_path") and Path(str(row["local_path"])).is_file()
+                else "LOCAL_FILE_MISSING",
+            }
+        )
+
+    asset_rows = await list_creative_assets(status=ACTIVE_STATUS, limit=1000)
+    reusable_items: list[dict[str, Any]] = []
+    broken_avatar_assets = 0
+    reusable_avatar_assets = 0
+    for asset in asset_rows:
+        if mode and asset.allowed_modes and mode not in asset.allowed_modes:
+            continue
+        audit = audit_creative_asset(asset)
+        lifecycle = _infer_asset_lifecycle(asset)
+        avatar_code = _extract_avatar_code(asset.description, asset.avatar_code)
+        if lifecycle == "CANONICAL_AVATAR_ASSET":
+            if audit["retrievable"]:
+                reusable_avatar_assets += 1
+            else:
+                broken_avatar_assets += 1
+        if not _is_image_library_eligible(
+            asset,
+            lifecycle=lifecycle,
+            retrievable=bool(audit["retrievable"]),
+        ):
+            continue
+        reusable_items.append(
+            {
+                "library_key": f"creative:{asset.asset_id}",
+                "library_source": "CREATIVE_ASSET",
+                "artifact_kind": "image",
+                "asset_lifecycle": lifecycle,
+                "retention_policy": asset.retention_policy,
+                "source_asset_id": asset.asset_id,
+                "semantic_role": asset.semantic_role,
+                "avatar_code": avatar_code,
+                "product_id": asset.product_id,
+                "display_name": asset.display_name,
+                "media_id": asset.media_id,
+                "mode": None,
+                "size_mb": None,
+                "local_path": asset.local_file_path,
+                "created_at": asset.created_at,
+                "preview_url": asset.preview_url,
+                "download_url": asset.download_url or asset.preview_url,
+                "expires_at": asset.expires_at,
+                "expires_in_hours": None,
+                "integrity_status": audit["integrity_status"],
+            }
+        )
+
+    combined = sorted(
+        [*temp_items, *reusable_items],
+        key=lambda item: str(item.get("created_at") or ""),
+        reverse=True,
+    )[:limit]
+    return {
+        "items": combined,
+        "diagnostics": {
+            "temp_image_outputs": len(temp_items),
+            "reusable_image_assets": len(reusable_items),
+            "reusable_avatar_assets": reusable_avatar_assets,
+            "broken_avatar_assets": broken_avatar_assets,
+            "purged_temp_rows": purged["purged_rows"],
+        },
     }

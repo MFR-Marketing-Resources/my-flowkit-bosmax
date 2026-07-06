@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 // AVATAR REGISTRY — read-only view of the approved presenter pool (ADR-008
 // avatar law). The pool is TEXT authority: the canonical prompt compiler reads
@@ -21,6 +21,10 @@ interface AvatarProfile {
 	usage_tags: string[];
 	image_generated: boolean;
 	generated_asset_id: string | null;
+	image_status?: string;
+	asset_lifecycle?: string | null;
+	asset_integrity_status?: string | null;
+	generated_preview_url?: string | null;
 }
 
 interface AvatarGenerationState {
@@ -31,6 +35,8 @@ interface AvatarGenerationState {
 interface AvatarPoolResponse {
 	avatars: AvatarProfile[];
 	count: number;
+	generated_count: number;
+	broken_count: number;
 	source: string;
 	bridge_active: boolean;
 }
@@ -85,6 +91,16 @@ const PAGE_SIZE_AVATARS = 25;
 
 export default function AvatarRegistryPage() {
 	const navigate = useNavigate();
+	// "Back" must return to wherever the registry was opened from (Fastlane,
+	// Cockpit, …) rather than a hardcoded page. Callers pass ?from=<path>;
+	// default to IMG Cockpit for direct/legacy entry.
+	const [searchParams] = useSearchParams();
+	const backTo = searchParams.get("from") || "/assets/img-cockpit";
+	const backLabel = backTo.includes("img-fastlane")
+		? "← Back to IMG Fastlane"
+		: backTo.includes("img-cockpit")
+			? "← Back to IMG Cockpit"
+			: "← Back";
 	const [avatars, setAvatars] = useState<AvatarProfile[]>([]);
 	const [bridgeActive, setBridgeActive] = useState(false);
 	const [search, setSearch] = useState("");
@@ -101,14 +117,65 @@ export default function AvatarRegistryPage() {
 	const [factoryBatches, setFactoryBatches] = useState<
 		CsvFactoryBatchSummary[]
 	>([]);
-	const [factoryBatch, setFactoryBatch] = useState<CsvFactoryBatchDetail | null>(
-		null,
-	);
+	const [factoryBatch, setFactoryBatch] =
+		useState<CsvFactoryBatchDetail | null>(null);
 	const [factoryReport, setFactoryReport] = useState<CsvFactoryReport | null>(
 		null,
 	);
 	const [isImporting, setIsImporting] = useState(false);
 	const [isFactoryBusy, setIsFactoryBusy] = useState(false);
+	const renderImageStatus = (avatar: AvatarProfile) => {
+		const previewHref =
+			avatar.generated_preview_url ||
+			(avatar.generated_asset_id
+				? `/api/creative-assets/${avatar.generated_asset_id}/preview`
+				: null);
+		if (avatar.image_status === "GENERATED" && previewHref) {
+			return (
+				<a
+					href={previewHref}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
+				>
+					✓ Generated
+				</a>
+			);
+		}
+		if (generating[avatar.avatar_code]) {
+			return (
+				<span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold text-blue-200">
+					⏳ {generating[avatar.avatar_code].stage}
+				</span>
+			);
+		}
+		if (avatar.image_status && avatar.image_status !== "NOT_GENERATED") {
+			const warningLabel = avatar.image_status.replaceAll("_", " ");
+			return (
+				<div className="flex flex-col gap-2">
+					<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200">
+						{warningLabel}
+					</span>
+					<button
+						type="button"
+						onClick={() => void handleGenerateImage(avatar)}
+						className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
+					>
+						Regenerate
+					</button>
+				</div>
+			);
+		}
+		return (
+			<button
+				type="button"
+				onClick={() => void handleGenerateImage(avatar)}
+				className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
+			>
+				Generate
+			</button>
+		);
+	};
 
 	const refresh = useCallback(async () => {
 		setIsLoading(true);
@@ -182,7 +249,9 @@ export default function AvatarRegistryPage() {
 			setFactoryBatches(data.batches || []);
 		} catch (err) {
 			setError(
-				err instanceof Error ? err.message : "Failed to load CSV Factory batches.",
+				err instanceof Error
+					? err.message
+					: "Failed to load CSV Factory batches.",
 			);
 		}
 	}, []);
@@ -412,7 +481,9 @@ export default function AvatarRegistryPage() {
 				}
 			} catch (err) {
 				setError(
-					err instanceof Error ? err.message : "Avatar generation polling failed.",
+					err instanceof Error
+						? err.message
+						: "Avatar generation polling failed.",
 				);
 				setGenerating((prev) => {
 					const next = { ...prev };
@@ -422,7 +493,9 @@ export default function AvatarRegistryPage() {
 				return;
 			}
 		}
-		setError(`${avatarCode}: generation timed out — semak Video Jobs / Library.`);
+		setError(
+			`${avatarCode}: generation timed out — semak Video Jobs / Library.`,
+		);
 		setGenerating((prev) => {
 			const next = { ...prev };
 			delete next[avatarCode];
@@ -458,10 +531,10 @@ export default function AvatarRegistryPage() {
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
 				<a
-					href="/assets/img-cockpit"
+					href={backTo}
 					className="mb-3 inline-block text-[11px] font-semibold text-slate-400 hover:text-slate-200"
 				>
-					← Back to IMG Cockpit
+					{backLabel}
 				</a>
 				<div className="mb-4 flex items-center justify-between gap-3">
 					<div>
@@ -538,8 +611,8 @@ export default function AvatarRegistryPage() {
 							CSV Factory — Staging &amp; Review
 						</div>
 						<div className="mt-1 text-xs text-slate-400">
-							Import seed-schema candidate rows, review, then sync only
-							approved rows into the runtime pool.
+							Import seed-schema candidate rows, review, then sync only approved
+							rows into the runtime pool.
 						</div>
 					</div>
 					<div>
@@ -604,8 +677,8 @@ export default function AvatarRegistryPage() {
 										: "border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800"
 								}`}
 							>
-								{b.batch_id} · {b.status} · {b.approved_rows}✓ {b.rejected_rows}✗{" "}
-								{b.pending_rows}⏳
+								{b.batch_id} · {b.status} · {b.approved_rows}✓ {b.rejected_rows}
+								✗ {b.pending_rows}⏳
 							</button>
 						))}
 					</div>
@@ -802,30 +875,7 @@ export default function AvatarRegistryPage() {
 										<td className="px-4 py-3 text-xs text-slate-400">
 											{a.usage_tags.join(", ") || "—"}
 										</td>
-										<td className="px-4 py-3">
-											{a.image_generated && a.generated_asset_id ? (
-												<a
-													href={`/api/creative-assets/${a.generated_asset_id}/preview`}
-													target="_blank"
-													rel="noopener noreferrer"
-													className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
-												>
-													✓ Generated
-												</a>
-											) : generating[a.avatar_code] ? (
-												<span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold text-blue-200">
-													⏳ {generating[a.avatar_code].stage}
-												</span>
-											) : (
-												<button
-													type="button"
-													onClick={() => void handleGenerateImage(a)}
-													className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
-												>
-													Generate
-												</button>
-											)}
-										</td>
+										<td className="px-4 py-3">{renderImageStatus(a)}</td>
 									</tr>
 								))
 							)}

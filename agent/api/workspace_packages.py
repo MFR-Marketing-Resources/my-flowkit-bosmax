@@ -248,35 +248,37 @@ async def sync_avatar_registry(request: Request):
 _AVATAR_ASSET_MARKER = "AVATAR_CODE:"
 
 
-async def _generated_avatar_asset_ids() -> dict[str, str]:
-    """Map avatar_code -> creative asset_id for every ACTIVE CHARACTER_REFERENCE
-    asset carrying the AVATAR_CODE marker in its description."""
-    from agent.services.creative_asset_service import list_creative_assets
-    assets = await list_creative_assets(
-        semantic_role="CHARACTER_REFERENCE", status="ACTIVE", limit=1000)
-    mapping: dict[str, str] = {}
-    for asset in assets:
-        description = str(getattr(asset, "description", "") or "")
-        if _AVATAR_ASSET_MARKER in description:
-            code = description.split(_AVATAR_ASSET_MARKER, 1)[1].split()[0].strip()
-            if code:
-                mapping[code.upper()] = asset.asset_id
-    return mapping
+async def _generated_avatar_asset_index() -> dict[str, dict]:
+    from agent.services.creative_asset_service import list_avatar_asset_index
+
+    return await list_avatar_asset_index()
 
 
 @router.get("/avatar-registry/pool")
 async def avatar_registry_pool():
     from agent.services import avatar_registry
     profiles = avatar_registry.list_pool()
-    generated = await _generated_avatar_asset_ids()
+    generated = await _generated_avatar_asset_index()
+    generated_count = 0
+    broken_count = 0
     for profile in profiles:
-        asset_id = generated.get(str(profile.get("avatar_code", "")).upper())
-        profile["generated_asset_id"] = asset_id
-        profile["image_generated"] = bool(asset_id)
+        asset = generated.get(str(profile.get("avatar_code", "")).upper())
+        image_status = str(asset.get("avatar_status")) if asset else "NOT_GENERATED"
+        profile["generated_asset_id"] = asset.get("asset_id") if asset else None
+        profile["image_generated"] = image_status == "GENERATED"
+        profile["image_status"] = image_status
+        profile["asset_lifecycle"] = asset.get("asset_lifecycle") if asset else None
+        profile["asset_integrity_status"] = asset.get("integrity_status") if asset else None
+        profile["generated_preview_url"] = asset.get("preview_url") if asset else None
+        if image_status == "GENERATED":
+            generated_count += 1
+        elif image_status != "NOT_GENERATED":
+            broken_count += 1
     return {
         "avatars": profiles,
         "count": len(profiles),
-        "generated_count": sum(1 for p in profiles if p["image_generated"]),
+        "generated_count": generated_count,
+        "broken_count": broken_count,
         "source": str(avatar_registry._active_pool_file()),
         "bridge_active": avatar_registry._BRIDGE_FILE.exists(),
     }
@@ -325,7 +327,7 @@ async def avatar_registry_register_generated(request: AvatarRegisterGeneratedReq
     from agent.db import crud
     from agent.models.creative_asset import CreativeAssetCreateRequest
     from agent.services import avatar_registry
-    from agent.services.creative_asset_service import create_creative_asset
+    from agent.services.creative_asset_service import archive_creative_asset, create_creative_asset
     try:
         identity = avatar_registry.get_generation_prompt(request.avatar_code)
     except ValueError as exc:
@@ -335,9 +337,12 @@ async def avatar_registry_register_generated(request: AvatarRegisterGeneratedReq
         (a for a in artifacts if a.get("media_id") == request.media_id), None)
     if artifact is None:
         raise HTTPException(404, "GENERATED_ARTIFACT_NOT_FOUND")
-    existing = await _generated_avatar_asset_ids()
-    if identity["avatar_code"].upper() in existing:
-        raise HTTPException(409, f"AVATAR_ALREADY_REGISTERED:{existing[identity['avatar_code'].upper()]}")
+    existing = (await _generated_avatar_asset_index()).get(identity["avatar_code"].upper())
+    if existing and existing.get("avatar_status") == "GENERATED" and existing.get("retrievable"):
+        raise HTTPException(
+            409,
+            f"AVATAR_ALREADY_REGISTERED:{existing['asset_id']}",
+        )
     # Copy the image OUT of the 48h-retention artifact library into permanent
     # creative-asset storage (the base64 path handles file placement + URLs).
     import base64
@@ -355,9 +360,24 @@ async def avatar_registry_register_generated(request: AvatarRegisterGeneratedReq
         source_type="GENERATED_IMAGE",
         storage_kind="LOCAL_FILE",
         media_id=request.media_id,
+        source_job_id=artifact.get("job_id"),
+        avatar_code=identity["avatar_code"],
+        asset_lifecycle="CANONICAL_AVATAR_ASSET",
+        retention_policy="PERSISTENT",
+        is_reusable=True,
+        is_canonical=True,
         image_base64=image_base64,
         file_name=artifact_path.name,
     ))
+    if existing and existing.get("asset_id"):
+        try:
+            await archive_creative_asset(str(existing["asset_id"]))
+        except Exception as exc:
+            try:
+                await archive_creative_asset(record.asset_id)
+            except Exception:
+                pass
+            raise HTTPException(500, "AVATAR_REPAIR_ARCHIVE_FAILED") from exc
     return {"asset_id": record.asset_id, "avatar_code": identity["avatar_code"]}
 
 

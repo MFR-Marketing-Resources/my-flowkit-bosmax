@@ -35,7 +35,7 @@ _COLUMNS = {
     "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "workspace_generation_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "git_sha", "background_build_id", "content_build_id", "last_checkpoint", "runtime_ready", "build_match", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message"},
     "request_stage_event": {"request_id", "timestamp", "checkpoint", "stage", "status", "message", "git_sha", "background_build_id", "content_build_id", "runtime_ready", "build_match", "selector_used", "evidence_pointer", "fail_code", "first_fail_stage", "source"},
     "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
-    "creative_asset": {"semantic_role", "display_name", "description", "source_type", "storage_kind", "preview_url", "download_url", "media_id", "local_file_path", "remote_source_url", "product_id", "category", "silo", "product_type", "allowed_modes", "engine_slot_eligibility", "mode_a_metadata_handoff", "visual_dna_summary", "character_dna", "scene_context_dna", "style_mood_dna", "source_prompt_fingerprint", "source_workspace_execution_package_id", "source_prompt_package_snapshot_id", "asset_subtype", "generation_recipe_id", "source_character_asset_id", "source_scene_asset_id", "source_style_asset_id", "contains_rendered_text", "approved_for_video_support", "approved_for_poster", "product_truth_status", "identity_lock_status", "scale_truth_status", "claim_safety_status", "review_status", "status", "updated_at"},
+    "creative_asset": {"semantic_role", "display_name", "description", "source_type", "storage_kind", "preview_url", "download_url", "media_id", "local_file_path", "remote_source_url", "product_id", "category", "silo", "product_type", "allowed_modes", "engine_slot_eligibility", "mode_a_metadata_handoff", "visual_dna_summary", "character_dna", "scene_context_dna", "style_mood_dna", "source_prompt_fingerprint", "source_workspace_execution_package_id", "source_prompt_package_snapshot_id", "asset_subtype", "generation_recipe_id", "source_character_asset_id", "source_scene_asset_id", "source_style_asset_id", "contains_rendered_text", "approved_for_video_support", "approved_for_poster", "product_truth_status", "identity_lock_status", "scale_truth_status", "claim_safety_status", "review_status", "asset_lifecycle", "retention_policy", "expires_at", "is_reusable", "is_canonical", "source_job_id", "avatar_code", "status", "updated_at"},
     "fastmoss_bulk_draft_status": {"raw_product_title", "source_url", "tiktok_product_url", "image_url", "category", "claim_risk_level", "mapping_confidence", "image_readiness", "copy_route", "sold_count", "commission_rate", "promotion_status", "draft_id", "committed_product_id", "suspected_existing_product_id", "suspected_existing_product_title", "suspected_existing_product_source", "suspected_existing_product_mapping_source", "duplicate_match_reason", "linked_product_id", "linked_product_title", "duplicate_resolution", "duplicate_resolved_at", "duplicate_resolution_note", "duplicate_ignore_product_id", "error_message", "batch_provenance", "recomputed_at", "recompute_previous_status", "recompute_previous_error", "updated_at"},
     "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "operator_notes", "batch_run_id", "logical_mode", "variation_strategy", "prompt_fingerprint", "variation_fingerprints_json", "anti_redundancy_json", "production_status", "production_run_id", "production_job_id", "production_error", "artifact_media_ids_json", "approved_at", "sent_to_production_at", "updated_at"},
     "production_run": {"status", "dry_run", "max_parallel_jobs", "interval_min_seconds", "interval_max_seconds", "cooldown_after_n_jobs", "cooldown_seconds", "total_expected", "total_completed", "total_failed", "error_log_json", "config_json", "updated_at"},
@@ -1121,6 +1121,13 @@ async def create_creative_asset(
     scale_truth_status: str | None = None,
     claim_safety_status: str | None = None,
     review_status: str = "PENDING_REVIEW",
+    asset_lifecycle: str = "SAVED_REUSABLE_ASSET",
+    retention_policy: str = "PERSISTENT",
+    expires_at: str | None = None,
+    is_reusable: bool = True,
+    is_canonical: bool = False,
+    source_job_id: str | None = None,
+    avatar_code: str | None = None,
     status: str,
 ) -> dict:
     db = await get_db()
@@ -1139,8 +1146,9 @@ async def create_creative_asset(
                 source_scene_asset_id, source_style_asset_id, contains_rendered_text,
                 approved_for_video_support, approved_for_poster, product_truth_status,
                 identity_lock_status, scale_truth_status, claim_safety_status, review_status,
-                status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                asset_lifecycle, retention_policy, expires_at, is_reusable, is_canonical,
+                source_job_id, avatar_code, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 asset_id,
@@ -1181,6 +1189,13 @@ async def create_creative_asset(
                 scale_truth_status,
                 claim_safety_status,
                 review_status,
+                asset_lifecycle,
+                retention_policy,
+                expires_at,
+                int(bool(is_reusable)),
+                int(bool(is_canonical)),
+                source_job_id,
+                avatar_code,
                 status,
                 now,
                 now,
