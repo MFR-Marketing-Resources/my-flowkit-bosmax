@@ -132,6 +132,10 @@ function getProviderInputPlaceholder(provider: AIProviderSummary) {
 	return `Paste ${provider.label} API key`;
 }
 
+function formatLaneStatus(status: string | null | undefined) {
+	return (status ?? "NOT_CONFIGURED").replaceAll("_", " ");
+}
+
 // --- defensive registry normalization ---------------------------------------
 // The V3 SettingsPage dereferences V3-only fields (lane.status, provider.
 // supported_lanes / current_capabilities, model.lanes, catalog entry.models).
@@ -675,6 +679,113 @@ export default function SettingsPage() {
 		});
 	};
 
+	const textAssistLane =
+		providerRegistry?.lanes?.find((setting) => setting.lane === "text_assist") ??
+		null;
+
+	const getProviderLabel = (providerId: AIProviderId | null | undefined) =>
+		(providerRegistry?.providers ?? []).find(
+			(provider) => provider.provider_id === providerId,
+		)?.label ?? providerId ?? "another provider";
+
+	const resolveQuickAssignTextAssistModel = (provider: AIProviderSummary) => {
+		const laneModels = modelsForLane(provider.provider_id, "text_assist");
+		if (!laneModels.length) return null;
+		if (
+			provider.default_model &&
+			laneModels.some((model) => model.model_id === provider.default_model)
+		) {
+			return provider.default_model;
+		}
+		if (laneModels.length === 1) {
+			return laneModels[0]?.model_id ?? null;
+		}
+		return null;
+	};
+
+	const describeTextAssistForProvider = (provider: AIProviderSummary) => {
+		const assigned = textAssistLane?.provider_id === provider.provider_id;
+		const assignedProviderLabel = getProviderLabel(textAssistLane?.provider_id);
+		const quickAssignModelId = resolveQuickAssignTextAssistModel(provider);
+		const readyForCopyAssist =
+			assigned &&
+			textAssistLane?.status === "READY" &&
+			textAssistLane?.provider_id === provider.provider_id;
+		if (readyForCopyAssist) {
+			return {
+				assigned,
+				readyForCopyAssist,
+				statusLabel: "Text Assist: READY",
+				detail:
+					"AI Copy Assist is ready on this provider. Candidate drafts stay review-required until you approve them.",
+				actionLabel: "Text Assist Ready",
+				actionDisabled: true,
+				actionReason: "Text Assist already routes here and execution is ready.",
+				quickAssignModelId,
+			};
+		}
+		if (assigned) {
+			return {
+				assigned,
+				readyForCopyAssist,
+				statusLabel: `Text Assist: ${formatLaneStatus(textAssistLane?.status)}`,
+				detail:
+					"AI Copy Assist is routed to this provider, but the lane is blocked until the status becomes READY.",
+				actionLabel: "Finish Text Assist Setup",
+				actionDisabled: true,
+				actionReason:
+					"Use the Lane Settings section below to fix the current Text Assist lane state.",
+				quickAssignModelId,
+			};
+		}
+		if (textAssistLane?.provider_id) {
+			return {
+				assigned,
+				readyForCopyAssist,
+				statusLabel: `Text Assist: Assigned to ${assignedProviderLabel} (${formatLaneStatus(textAssistLane?.status)})`,
+				detail: `AI Copy Assist is not currently routed to ${provider.label}.`,
+				actionLabel: "Use for Text Assist + Enable",
+				actionDisabled: !provider.has_key || !quickAssignModelId,
+				actionReason: !provider.has_key
+					? `Save a ${provider.label} key first, then assign Text Assist.`
+					: !quickAssignModelId
+						? "Choose a Text Assist model in Lane Settings before assigning this provider."
+						: `Assigns ${provider.label} to Text Assist and enables execution.`,
+				quickAssignModelId,
+			};
+		}
+		return {
+			assigned,
+			readyForCopyAssist,
+			statusLabel: "Text Assist: NOT CONFIGURED",
+			detail:
+				"AI Copy Assist is not configured yet. Provider, model, key, and execution must all be valid before it is ready.",
+			actionLabel: "Use for Text Assist + Enable",
+			actionDisabled: !provider.has_key || !quickAssignModelId,
+			actionReason: !provider.has_key
+				? `Save a ${provider.label} key first, then assign Text Assist.`
+				: !quickAssignModelId
+					? "Choose a Text Assist model in Lane Settings before assigning this provider."
+					: `Assigns ${provider.label} to Text Assist and enables execution.`,
+			quickAssignModelId,
+		};
+	};
+
+	const handleUseForTextAssist = async (provider: AIProviderSummary) => {
+		const modelId = resolveQuickAssignTextAssistModel(provider);
+		if (!provider.has_key) {
+			setBannerError(`Save a ${provider.label} key before assigning Text Assist.`);
+			return;
+		}
+		if (!modelId) {
+			setBannerError(
+				`Choose a Text Assist model for ${provider.label} in Lane Settings before assigning it here.`,
+			);
+			return;
+		}
+		await handleSaveLane("text_assist", provider.provider_id, modelId, true);
+	};
+
 	const LANE_STATUS_STYLE: Record<string, string> = {
 		NOT_CONFIGURED: "border-slate-700 bg-slate-900 text-slate-400",
 		MODEL_MISSING: "border-amber-500/40 bg-amber-500/10 text-amber-300",
@@ -798,6 +909,7 @@ export default function SettingsPage() {
 						{providerRegistry?.providers.length ? providerRegistry.providers.map((provider) => {
 							const isBusy = mutatingProviderId === provider.provider_id;
 							const draftValue = draftKeys[provider.provider_id] || "";
+							const textAssistState = describeTextAssistForProvider(provider);
 							return (
 								<div
 									key={provider.provider_id}
@@ -837,9 +949,40 @@ export default function SettingsPage() {
 												Current capability lane
 											</div>
 											<div>
-									{(provider.current_capabilities ?? []).join(" • ") ||
-										"No capabilities declared"}
-								</div>
+												{(provider.current_capabilities ?? []).join(" • ") ||
+													"No capabilities declared"}
+											</div>
+										</div>
+
+										<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
+											<div className="mb-2 flex items-center justify-between gap-3">
+												<div className="font-semibold text-slate-200">
+													Text Assist Lane
+												</div>
+												<span
+													className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${textAssistState.readyForCopyAssist ? LANE_STATUS_STYLE.READY : textAssistState.assigned ? (LANE_STATUS_STYLE[textAssistLane?.status ?? "NOT_CONFIGURED"] || LANE_STATUS_STYLE.NOT_CONFIGURED) : LANE_STATUS_STYLE.NOT_CONFIGURED}`}
+												>
+													{textAssistState.statusLabel}
+												</span>
+											</div>
+											<div className="text-[11px] leading-relaxed text-slate-400">
+												{textAssistState.detail}
+											</div>
+											<div className="mt-3 flex flex-wrap items-center gap-2">
+												<button
+													type="button"
+													onClick={() => void handleUseForTextAssist(provider)}
+													disabled={
+														isBusy || textAssistState.actionDisabled
+													}
+													className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-semibold text-blue-200 hover:border-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
+												>
+													{textAssistState.actionLabel}
+												</button>
+												<div className="text-[11px] text-slate-500">
+													{textAssistState.actionReason}
+												</div>
+											</div>
 										</div>
 
 										<div className="space-y-2">
@@ -1033,10 +1176,10 @@ export default function SettingsPage() {
 												disabled={
 													isBusy || (!provider.has_key && !draftValue.trim())
 												}
-												className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-											>
-												Activate
-											</button>
+											className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+										>
+											Set Global Active Provider
+										</button>
 											<button
 												type="button"
 												onClick={() => void handleClearKey(provider.provider_id)}

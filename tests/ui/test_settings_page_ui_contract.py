@@ -17,7 +17,7 @@ def test_settings_page_exposes_ai_provider_registry_controls():
         "auto_start_warning",
         "AI Provider Registry",
         "/api/ai-providers",
-        "Activate",
+        "Set Global Active Provider",
         "Save Key",
         "Clear",
         "Deactivate Active Provider",
@@ -29,6 +29,9 @@ def test_settings_page_exposes_ai_provider_registry_controls():
     ]:
         assert token in src
 
+    assert "Set Global Active Provider" in src
+    assert '"Activate"' not in src
+
 
 def test_settings_page_exposes_model_and_lane_controls():
     src = _read("dashboard/src/pages/SettingsPage.tsx")
@@ -36,6 +39,7 @@ def test_settings_page_exposes_model_and_lane_controls():
     for token in [
         "Default Model",
         "Lane Settings",
+        "Text Assist Lane",
         "Text Assist",
         "Vision",
         "Execution enabled",
@@ -61,6 +65,24 @@ def test_settings_page_exposes_dynamic_catalog_and_explicit_lanes():
         "handleAddCustomModel",
         "key_present",
         "model_valid",
+        "Use for Text Assist + Enable",
+        "Text Assist: READY",
+        "Text Assist: NOT CONFIGURED",
+        "Finish Text Assist Setup",
+    ]:
+        assert token in src
+
+
+def test_settings_page_provider_card_distinguishes_global_activation_from_text_assist():
+    src = _read("dashboard/src/pages/SettingsPage.tsx")
+
+    for token in [
+        "describeTextAssistForProvider",
+        "handleUseForTextAssist",
+        "Text Assist already routes here and execution is ready.",
+        "AI Copy Assist is not currently routed to",
+        "Assigns ",
+        "to Text Assist and enables execution.",
     ]:
         assert token in src
 
