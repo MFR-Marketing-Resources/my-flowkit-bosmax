@@ -93,7 +93,31 @@ No blockers + restricted clearance verified → POSTER_READY_RESTRICTED
 No blockers → POSTER_READY
 ```
 
-## Target product examples (expected behavior)
+## Repair action expectations
+
+- `expected_status_after_success`: immediate outcome after the action — usually `RECHECK_REQUIRED` (call readiness again).
+- `expected_status_if_no_other_blockers`: terminal poster status when this was the last remaining blocker (e.g. `POSTER_READY`, `POSTER_READY_RESTRICTED`).
+- Notes on `RECHECK_REQUIRED` actions state that additional blockers may still apply.
+
+## Live target verification (PR #231 IDs)
+
+When `flow_agent.db` is present locally, `tests/unit/test_poster_readiness_live_targets.py` verifies:
+
+| Product | ID |
+|---------|-----|
+| Bosmax Oil 10 ML | `b460ffbd-7d9d-4f6b-a570-0e9b1056439a` |
+| Bosmax Herbs 5 ML | `90349f8c-9e14-4efe-988e-76ec60ea31f4` |
+| Minyak Warisan Tok Cap Burung 25ml | `6483d624-a03d-4933-9bba-6ca2e5f7b6fd` |
+
+Expected: Bosmax products → `POSTER_REPAIR_REQUIRED` + `CLAIM_RISK_HIGH`; Minyak → `POSTER_READY` when DB matches audit baseline (test allows reporting stricter actual status).
+
+## Mapping ready states
+
+`mapping_route.mapping_ready` uses `MAPPING_READY_STATES`: `READY`, `APPROVED`, `MAPPED`, `COMPLETE` (aligned with blocker logic).
+
+## Image signals
+
+`_has_any_image` considers `local_image_path`, usable `image_url`, `asset_status`, `image_asset_status`, and `image_readiness_status` (`IMAGE_READY_STATES`).
 
 | Product | Expected |
 |---------|----------|

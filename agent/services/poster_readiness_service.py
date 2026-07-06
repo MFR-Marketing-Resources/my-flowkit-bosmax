@@ -29,6 +29,14 @@ from agent.services.production_prompt_approval_service import (
 
 RESTRICTED_SAFE_POSTER_MARKER = "RESTRICTED_SAFE_POSTER"
 
+MAPPING_READY_STATES = frozenset({"READY", "APPROVED", "MAPPED", "COMPLETE"})
+
+_ASSET_DOWNLOADED_STATES = frozenset({"DOWNLOADED", "CACHED", "READY", "ASSET_READY"})
+
+_REPAIR_RECHECK_NOTE = (
+    "After this action, call recheck_poster_readiness; other blockers may still apply."
+)
+
 HARD_BLOCKERS = frozenset(
     {
         "PRODUCT_ARCHIVED",
@@ -78,12 +86,27 @@ def _has_local_image(product: dict[str, Any]) -> bool:
     return bool(_norm(product.get("local_image_path")))
 
 
+def _asset_field_indicates_downloaded(value: Any) -> bool:
+    return _norm(value).upper() in _ASSET_DOWNLOADED_STATES
+
+
 def _has_any_image(product: dict[str, Any]) -> bool:
     if _has_local_image(product):
         return True
     if _usable_remote_image_url(product):
         return True
-    return _norm(product.get("asset_status")).upper() == "DOWNLOADED"
+    if _asset_field_indicates_downloaded(product.get("asset_status")):
+        return True
+    if _asset_field_indicates_downloaded(product.get("image_asset_status")):
+        return True
+    readiness = _norm(product.get("image_readiness_status"))
+    if readiness in IMAGE_READY_STATES:
+        return True
+    return False
+
+
+def _mapping_ready(mapping_status: Any) -> bool:
+    return _norm(mapping_status).upper() in MAPPING_READY_STATES
 
 
 def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
@@ -96,7 +119,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 severity="P1",
                 auto_executable=True,
                 recommended_endpoint="POST /api/products/map",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
                 notes="Also available: POST /api/products/backfill-mapping?product_id={id}",
             ),
         ],
@@ -108,7 +131,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 requires_human_approval=True,
                 manual_review_required=True,
                 recommended_endpoint="PATCH /api/products/{product_id}",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
             ),
         ],
         "MISSING_CATEGORY": [
@@ -117,7 +140,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 label="Fix Product Category",
                 severity="P1",
                 recommended_endpoint="PATCH /api/products/{product_id}",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
             ),
         ],
         "MISSING_SUBCAT_AND_TYPE": [
@@ -126,7 +149,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 label="Fix Product Taxonomy",
                 severity="P1",
                 recommended_endpoint="PATCH /api/products/{product_id}",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
             ),
         ],
         "NO_IMAGE": [
@@ -136,7 +159,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 severity="P1",
                 recommended_endpoint="PATCH /api/products/{product_id}",
                 notes="Use image_base64 / image_filename on patch payload.",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
             ),
             PosterRepairAction(
                 action_code="CACHE_PRODUCT_IMAGE",
@@ -144,7 +167,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 severity="P1",
                 auto_executable=True,
                 recommended_endpoint="POST /api/products/{product_id}/cache-image",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
             ),
         ],
         "IMG_NOT_PROD_APPROVED": [
@@ -154,7 +177,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 severity="P1",
                 requires_human_approval=True,
                 recommended_endpoint="POST /api/products/{product_id}/production-prompt-approval",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
                 notes="Include IMG in approved_modes after claim-safe review.",
             ),
         ],
@@ -165,7 +188,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 severity="P0",
                 requires_human_approval=True,
                 recommended_endpoint="GET /api/products/{product_id}/claim-safe-rewrite-preview",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
                 notes="Follow with POST /api/products/{product_id}/claim-safe-rewrite-approval",
             ),
             PosterRepairAction(
@@ -174,7 +197,8 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 severity="P0",
                 requires_human_approval=True,
                 recommended_endpoint="POST /api/products/{product_id}/production-prompt-approval",
-                expected_status_after_success="POSTER_READY_RESTRICTED",
+                expected_status_after_success="RECHECK_REQUIRED",
+                expected_status_if_no_other_blockers="POSTER_READY_RESTRICTED",
                 notes=(
                     f"Reviewer must record {RESTRICTED_SAFE_POSTER_MARKER} in approval note/provenance "
                     "after claim risk is lowered and claim-safe copy is approved."
@@ -188,7 +212,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 severity="P0",
                 requires_human_approval=True,
                 recommended_endpoint="GET /api/products/{product_id}/claim-safe-rewrite-preview",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
             ),
         ],
         "PRODUCT_ARCHIVED": [
@@ -199,7 +223,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 requires_human_approval=True,
                 manual_review_required=True,
                 recommended_endpoint="POST /api/products/{product_id}/unarchive",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
             ),
         ],
         "SEVERE_PRODUCT_TRUTH_CONTRADICTION": [
@@ -219,7 +243,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 label="Fix Product Raw Title",
                 severity="P0",
                 recommended_endpoint="PATCH /api/products/{product_id}",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
             ),
         ],
         "MISSING_DISPLAY_NAME": [
@@ -228,7 +252,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 label="Fix Product Display Name",
                 severity="P0",
                 recommended_endpoint="PATCH /api/products/{product_id}",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
             ),
         ],
         "REMOTE_IMAGE_ONLY": [
@@ -238,7 +262,8 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 severity="P2",
                 auto_executable=True,
                 recommended_endpoint="POST /api/products/{product_id}/cache-image",
-                expected_status_after_success="POSTER_READY",
+                expected_status_after_success="RECHECK_REQUIRED",
+                expected_status_if_no_other_blockers="POSTER_READY",
             ),
         ],
         "PRODUCT_TRUTH_GAP": [
@@ -247,7 +272,7 @@ def _repair_catalog() -> dict[str, list[PosterRepairAction]]:
                 label="Complete Product Truth Fields",
                 severity="P2",
                 recommended_endpoint="POST /api/products/{product_id}/intelligence/review-drafts",
-                expected_status_after_success="POSTER_REPAIR_REQUIRED",
+                expected_status_after_success="RECHECK_REQUIRED",
             ),
         ],
     }
@@ -261,6 +286,10 @@ def _substitute_endpoints(actions: list[PosterRepairAction], product_id: str) ->
             val = payload.get(key)
             if isinstance(val, str):
                 payload[key] = val.replace("{product_id}", product_id).replace("{id}", product_id)
+        if payload.get("expected_status_after_success") == "RECHECK_REQUIRED":
+            notes = (payload.get("notes") or "").strip()
+            if _REPAIR_RECHECK_NOTE not in notes:
+                payload["notes"] = f"{notes} {_REPAIR_RECHECK_NOTE}".strip() if notes else _REPAIR_RECHECK_NOTE
         out.append(PosterRepairAction(**payload))
     return out
 
@@ -309,6 +338,10 @@ def _compute_image_tier(product: dict[str, Any]) -> PosterImageTier:
     if _has_local_image(product) or readiness in IMAGE_READY_STATES:
         return PosterImageTier.PRODUCT_HERO_POSTER_READY
     if _usable_remote_image_url(product):
+        return PosterImageTier.PRODUCT_IMAGE_PROMPT_READY
+    if _asset_field_indicates_downloaded(product.get("asset_status")) or _asset_field_indicates_downloaded(
+        product.get("image_asset_status")
+    ):
         return PosterImageTier.PRODUCT_IMAGE_PROMPT_READY
     return PosterImageTier.TEXT_ONLY_POSTER_READY
 
@@ -486,7 +519,7 @@ class PosterReadinessService:
             ),
             mapping_route=PosterMappingRoute(
                 mapping_status=_norm(working.get("mapping_status")) or None,
-                mapping_ready=_norm(working.get("mapping_status")).upper() in {"READY", "APPROVED"},
+                mapping_ready=_mapping_ready(working.get("mapping_status")),
                 mapping_review_status=_norm(working.get("mapping_review_status")) or None,
             ),
             approval_route=PosterApprovalRoute(

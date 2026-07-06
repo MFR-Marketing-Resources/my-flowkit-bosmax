@@ -133,3 +133,49 @@ async def test_every_listed_blocker_has_repair_action():
     for code, actions in catalog.items():
         assert actions, f"blocker {code} must map to actions"
         assert actions[0].action_code
+
+
+@pytest.mark.asyncio
+async def test_mapping_status_mapped_ready_without_mapping_blocker():
+    product = _ready_base(mapping_status="MAPPED")
+    result = await PosterReadinessService.evaluate_product(product, enrich=False)
+    assert "MAPPING_MISSING" not in result.blockers
+    assert "MAPPING_BLOCKED" not in result.blockers
+    assert result.mapping_route.mapping_ready is True
+
+
+@pytest.mark.asyncio
+async def test_mapping_status_complete_ready_without_mapping_blocker():
+    product = _ready_base(mapping_status="COMPLETE")
+    result = await PosterReadinessService.evaluate_product(product, enrich=False)
+    assert "MAPPING_MISSING" not in result.blockers
+    assert result.mapping_route.mapping_ready is True
+
+
+@pytest.mark.asyncio
+async def test_image_asset_status_downloaded_counts_as_having_image():
+    product = _ready_base(
+        local_image_path="",
+        image_url=None,
+        asset_status="",
+        image_asset_status="DOWNLOADED",
+        image_readiness_status="",
+    )
+    result = await PosterReadinessService.evaluate_product(product, enrich=False)
+    assert "NO_IMAGE" not in result.blockers
+    assert result.image_tier.value != "IMAGE_MISSING"
+
+
+@pytest.mark.asyncio
+async def test_remote_image_only_preview_only():
+    product = _ready_base(
+        local_image_path="",
+        image_url="https://example.com/product.jpg",
+        image_readiness_status="IMAGE_READY",
+    )
+    result = await PosterReadinessService.evaluate_product(product, enrich=False)
+    assert "REMOTE_IMAGE_ONLY" in result.blockers
+    assert result.poster_status == PosterReadinessStatus.POSTER_PREVIEW_ONLY
+    assert result.generation_allowed is False
+    assert result.preview_allowed is True
+    assert any(a.action_code == "CACHE_PRODUCT_IMAGE" for a in result.repair_actions)

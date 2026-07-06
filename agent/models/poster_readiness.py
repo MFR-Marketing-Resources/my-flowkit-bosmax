@@ -35,6 +35,7 @@ class PosterRepairAction(BaseModel):
     manual_review_required: bool = False
     next_check: str = "recheck_poster_readiness"
     expected_status_after_success: str | None = None
+    expected_status_if_no_other_blockers: str | None = None
     notes: str | None = None
 
 
