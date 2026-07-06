@@ -1788,6 +1788,68 @@ CREATE INDEX IF NOT EXISTS idx_copy_set_dedupe ON copy_set(dedupe_key);
 """)
         await db.commit()
 
+        # Copy Intelligence Phase 1 — additive columns on copy_set (usage,
+        # fatigue, similarity, archival). Never alters the status CHECK
+        # constraint or existing compiler-bound fields.
+        cursor = await db.execute("PRAGMA table_info(copy_set)")
+        copy_set_columns = {row[1] for row in await cursor.fetchall()}
+        for col, typedef in [
+            ("usage_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_used_at", "TEXT"),
+            ("used_in_modes", "TEXT NOT NULL DEFAULT '[]'"),
+            ("uniqueness_score", "REAL"),
+            ("similar_to_copy_set_id", "TEXT"),
+            ("similarity_score", "REAL"),
+            ("archived", "INTEGER NOT NULL DEFAULT 0"),
+        ]:
+            if col not in copy_set_columns:
+                await db.execute(f"ALTER TABLE copy_set ADD COLUMN {col} {typedef}")
+                logger.info("Migrated: added %s column to copy_set table", col)
+
+        # Copy Intelligence Phase 1 — batch generation ledger.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS copy_generation_batch (
+    batch_id          TEXT PRIMARY KEY,
+    product_id        TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    requested_count   INTEGER NOT NULL,
+    created_count     INTEGER NOT NULL,
+    deduped_count     INTEGER NOT NULL,
+    rejected_count    INTEGER NOT NULL,
+    source            TEXT NOT NULL,
+    provider_lane     TEXT,
+    provider_model    TEXT,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_copy_generation_batch_product
+    ON copy_generation_batch(product_id, created_at);
+""")
+        await db.commit()
+
+        # Copy Intelligence Phase 1 — avatar-product fit mapping.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS avatar_product_fit (
+    avatar_code       TEXT NOT NULL,
+    product_category  TEXT NOT NULL,
+    fit_score         REAL NOT NULL DEFAULT 1.0,
+    suitability_notes TEXT,
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    PRIMARY KEY (avatar_code, product_category)
+);
+""")
+        await db.commit()
+
+        # Migrate: ensure updated_at exists on new tables (Phase 1 additive).
+        for tbl in ("copy_generation_batch", "avatar_product_fit"):
+            cursor = await db.execute(f"PRAGMA table_info({tbl})")
+            tbl_columns = {row[1] for row in await cursor.fetchall()}
+            if tbl_columns and "updated_at" not in tbl_columns:
+                await db.execute(
+                    f"ALTER TABLE {tbl} ADD COLUMN updated_at "
+                    "TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))"
+                )
+                logger.info("Migrated: added updated_at column to %s table", tbl)
+
         # Product Intelligence Snapshot foundation (Product Intelligence Backbone
         # PR 1). Durable sidecar storage only — this does not change product-row
         # truth, registration commit behavior, or ProductTruthService.
