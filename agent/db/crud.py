@@ -771,10 +771,12 @@ async def upsert_avatar_product_fit(**kw) -> dict:
             [avatar_code, product_category] + vals + set_vals,
         )
         await db.commit()
-    return await _get_with_db(
-        db, "avatar_product_fit", "avatar_code||','||product_category",
-        f"{avatar_code},{product_category}",
+    cur = await db.execute(
+        "SELECT * FROM avatar_product_fit WHERE avatar_code=? AND product_category=?",
+        (avatar_code, product_category),
     )
+    row = await cur.fetchone()
+    return dict(row) if row else {}
 
 
 async def list_avatar_product_fits(

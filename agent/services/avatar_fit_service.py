@@ -8,7 +8,8 @@ Phase 1 foundation:
 - Read explicit avatar / category mappings from ``avatar_product_fit``.
 - Return suitable avatars ordered by fit_score.
 - Safe fallback when no explicit mapping exists: returns ALL registered
-  avatars with a default fit_score (1.0).
+  avatars with fit_score=0.5 (FALLBACK_UNRANKED). Explicit mappings use
+  fit_source="EXPLICIT_MAPPING".
 
 This service READS the avatar pool and the fit table but NEVER:
 - Changes ``resolve_presenter()`` in ``avatar_registry.py``.

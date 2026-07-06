@@ -65,7 +65,6 @@ async def test_increment_multiple_modes_no_duplicates():
 
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
 async def test_increment_fails_on_draft():
     """Incrementing usage on a DRAFT Copy Set raises ValueError."""
     product = await crud.create_product(
@@ -152,6 +151,7 @@ async def test_archived_not_in_fatigue_warnings():
     assert cs["copy_set_id"] not in warn_ids
 
 
+@pytest.mark.asyncio
 async def test_increment_not_found_raises():
     """Passing a non-existent copy_set_id raises ValueError."""
     with pytest.raises(ValueError, match="COPY_SET_NOT_FOUND"):
