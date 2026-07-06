@@ -95,3 +95,100 @@ def test_fastlane_generate_and_approval_guards_remain_honest():
 def test_no_live_generation_calls_in_tests():
     api = _read("dashboard/src/api/imgFactory.ts")
     assert "/api/flow/generate" in api
+
+
+# ── Forensic counter-audit V2 regression guards ──────────────────────────────
+# These lock in the findings of the IMG_FASTLANE_FORENSIC_COUNTER_AUDIT_V2 so a
+# future regression to the retired free-text composer, a dead/duplicate route,
+# or a missing role button fails CI instead of shipping as a "stale UI" mystery.
+
+# The retired pre-template composer UI. If any of these strings reappear in the
+# page source, a stale/duplicate component has been reintroduced.
+_RETIRED_COMPOSER_MARKERS = (
+    "Auto compile product prompt",
+    "COMPOSE SUBJECT / AVATAR",
+    "COMPOSE SCENE / ENVIRONMENT",
+    "COMPOSE STYLE / MOOD",
+    "Describe the image prompt here",
+    "SELECT EXISTING AVATAR FOR LINEAGE",
+)
+
+# The current template-driven UI markers that MUST be present.
+_CURRENT_UI_MARKERS = (
+    "Auto-built Prompt Preview",
+    "Template Preset",
+    "Select Target Ingredient Role",
+    "Product Scale Truth Guard",
+    "Register Output (Credit-free)",
+)
+
+
+def test_fastlane_has_no_retired_composer_markers():
+    page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
+    for marker in _RETIRED_COMPOSER_MARKERS:
+        assert marker not in page, f"retired composer marker leaked back: {marker!r}"
+    for marker in _CURRENT_UI_MARKERS:
+        assert marker in page, f"current UI marker missing: {marker!r}"
+
+
+def test_fastlane_all_four_ingredient_roles_wired():
+    page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
+    # Canonical role enum options.
+    for role in (
+        "AVATAR_REFERENCE",
+        "SCENE_REFERENCE",
+        "STYLE_REFERENCE",
+        "PRODUCT_REFERENCE",
+    ):
+        assert role in page
+    # Each role's visible button label.
+    for label in ("Subject / Avatar", "Scene", "Style", "Product / Product Lock"):
+        assert label in page
+    # Each role's output-role help text (independent copy per role).
+    assert "Output role: CHARACTER_REFERENCE." in page
+    assert "Output role: SCENE_CONTEXT_REFERENCE." in page
+    assert "Output role: STYLE_REFERENCE." in page
+    assert "product lock or poster-safe product reference" in page
+    # Role state drives lane/preset/reference selection.
+    assert "ingSaveLaneId" in page
+    assert 'ingSaveLaneId === "PRODUCT_REFERENCE"' in page
+
+
+def test_fastlane_product_role_resolves_lane_via_compiled_preview_not_direct_lookup():
+    """PRODUCT_REFERENCE has no lane_id of its own (lanes are PRODUCT_ONLY_HERO /
+    PRODUCT_POSTER), so the page MUST resolve the active lane from the compiled
+    preview's lane_id, not only from a direct lanes.find(ingSaveLaneId)."""
+    page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
+    assert "compiledPreview?.lane_id" in page
+    assert "lanes.find((item) => item.lane_id === compiledPreview.lane_id)" in page
+
+
+def test_portal_side_route_uses_same_img_fastlane_component():
+    """`/assets/img-fastlane?portal=side` must render the SAME component. React
+    Router matches on path only, so there must be exactly one img-fastlane route
+    and no separate/duplicate portal-specific element."""
+    app = _read("dashboard/src/App.tsx")
+    assert app.count('path="/assets/img-fastlane"') == 1
+    assert app.count("<ImgFastlanePage />") == 1
+    # No alternate img-fastlane route element that could diverge under a query.
+    assert "img-fastlane-side" not in app
+    assert "ImgFastlaneSidePage" not in app
+
+
+def test_build_identity_marker_is_wired():
+    """The stale-bundle observability marker must stay wired: build-time define
+    in vite config + a boot marker in main.tsx exposing window.__FLOWKIT_BUILD__."""
+    vite = _read("dashboard/vite.config.ts")
+    assert "__BUILD_SHA__" in vite
+    assert "__BUILT_AT__" in vite
+    assert "git rev-parse --short HEAD" in vite
+
+    main = _read("dashboard/src/main.tsx")
+    assert "__FLOWKIT_BUILD__" in main
+    assert "__BUILD_SHA__" in main
+    assert "__BUILT_AT__" in main
+    assert "[flowkit] build" in main
+
+    decl = _read("dashboard/src/build-info.d.ts")
+    assert "declare const __BUILD_SHA__: string;" in decl
+    assert "declare const __BUILT_AT__: string;" in decl
