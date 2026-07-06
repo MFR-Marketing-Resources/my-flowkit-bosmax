@@ -84,6 +84,33 @@ class AICopyAssistRequest(BaseModel):
     candidate_count: int = Field(default=1, ge=1, le=3)
 
 
+class AICopyAssistBatchRequest(BaseModel):
+    """AI Copy Assist Batch — generate multiple reviewable candidate Copy Sets
+    in a single request. Produces requested_count candidates (default 5, range
+    3-10), each independently deduped, safety-scanned, and similarity-scored.
+    A copy_generation_batch ledger row is created for audit.
+
+    Optional ``dry_run`` validates request and product context only. It does
+    NOT call the provider and does NOT persist Copy Set or ledger rows."""
+
+    model_config = ConfigDict(extra="allow")
+
+    product_id: str
+    requested_count: int = Field(default=5, ge=3, le=10)
+    platform: str = "TIKTOK"
+    language: str = "BM_MS"
+    angle: Optional[str] = None
+    hook: Optional[str] = None
+    route_type: Optional[str] = None
+    formula_family: Optional[str] = None
+    content_style_mode: str = "UGC_IPHONE"
+    operator_notes: Optional[str] = None
+    dedupe_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    provider_lane: Optional[str] = None
+    provider_model: Optional[str] = None
+    dry_run: bool = False
+
+
 class CopySetPatchRequest(BaseModel):
     """Operator edit of a draft/review Copy Set. Editing an approved Copy Set
     reverts it to DRAFT_COPY (re-review) — approval never survives a silent edit."""
@@ -276,4 +303,12 @@ def serialize_copy_set(row: dict[str, Any]) -> dict[str, Any]:
         "approved_by": row.get("approved_by"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        # Phase 1 fields (Copy Intelligence foundation)
+        "usage_count": row.get("usage_count") or 0,
+        "last_used_at": row.get("last_used_at"),
+        "used_in_modes": _load_json_list(row.get("used_in_modes")),
+        "uniqueness_score": row.get("uniqueness_score"),
+        "similar_to_copy_set_id": row.get("similar_to_copy_set_id"),
+        "similarity_score": row.get("similarity_score"),
+        "archived": row.get("archived") or 0,
     }
