@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
 	archiveCreativeAsset,
 	fetchCreativeAssets,
+	updateCreativeAsset,
 } from "../api/creativeAssets";
 import {
 	type ImageArtifact,
@@ -29,6 +29,8 @@ import {
 // session; the register-output → review → save path is credit-free.
 const GEN_NOT_FIRED = "NOT_FIRED_IN_SESSION";
 const GEN_RUNTIME_UNVERIFIED = "EXTERNAL_RUNTIME_NOT_VERIFIED";
+
+const ASPECT_OPTIONS = ["9:16", "1:1", "16:9", "4:3", "3:4"] as const;
 
 type TruthStatus = "UNVERIFIED" | "PASS" | "FAIL";
 type ReviewDecision = "PENDING_REVIEW" | "APPROVED" | "REJECTED";
@@ -65,45 +67,84 @@ function Section({
 	);
 }
 
-function AssetSelect({
+/**
+ * Library reference picker. Shows ALL active assets (approved + pending) so an
+ * operator is never stuck with an empty dropdown; pending assets are badged and
+ * can be APPROVED inline (only APPROVED references feed generation / lineage).
+ */
+function ReferenceField({
 	label,
+	noun,
 	assets,
 	value,
 	onChange,
 	emptyHint,
+	requiredMissing,
+	onApprove,
+	approvingId,
 }: {
 	label: string;
+	noun: string;
 	assets: CreativeAsset[];
 	value: string;
 	onChange: (v: string) => void;
 	emptyHint: string;
+	requiredMissing: boolean;
+	onApprove: (asset: CreativeAsset) => void;
+	approvingId: string | null;
 }) {
+	const selected = assets.find((a) => a.asset_id === value) ?? null;
+	const selectedApproved = selected ? isReusableAsset(selected) : false;
 	return (
-		<label className="block text-[11px] text-slate-300 space-y-1">
-			<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
-				{label}
-			</span>
-			<select
-				value={value}
-				onChange={(e) => onChange(e.target.value)}
-				className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
-			>
-				<option value="">
-					{assets.length === 0 ? emptyHint : "None (optional)"}
-				</option>
-				{assets.map((a) => (
-					<option key={a.asset_id} value={a.asset_id}>
-						{a.display_name}
+		<div className="space-y-1.5">
+			<label className="block text-[11px] text-slate-300 space-y-1">
+				<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+					{label}
+				</span>
+				<select
+					value={value}
+					onChange={(e) => onChange(e.target.value)}
+					className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+				>
+					<option value="">
+						{assets.length === 0 ? emptyHint : "None (optional)"}
 					</option>
-				))}
-			</select>
-		</label>
+					{assets.map((a) => (
+						<option key={a.asset_id} value={a.asset_id}>
+							{a.display_name}
+							{isReusableAsset(a) ? "" : ` · ${a.review_status}`}
+						</option>
+					))}
+				</select>
+			</label>
+			{selected && !selectedApproved ? (
+				<div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-amber-100 space-y-1.5">
+					<div>
+						“{selected.display_name}” is <strong>{selected.review_status}</strong> —
+						only APPROVED references may be used for generation or lineage.
+					</div>
+					<button
+						type="button"
+						onClick={() => onApprove(selected)}
+						disabled={approvingId === selected.asset_id}
+						className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-50"
+					>
+						{approvingId === selected.asset_id
+							? "Approving…"
+							: "Approve for reuse"}
+					</button>
+				</div>
+			) : null}
+			{requiredMissing ? (
+				<p className="text-[10px] text-amber-300/80">
+					This lane requires an approved {noun}.
+				</p>
+			) : null}
+		</div>
 	);
 }
 
 export default function ImgCockpitPage() {
-	const navigate = useNavigate();
-
 	const [lanes, setLanes] = useState<ImgAssetLane[]>([]);
 	const [laneId, setLaneId] = useState("");
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -114,10 +155,13 @@ export default function ImgCockpitPage() {
 	const [characterAssetId, setCharacterAssetId] = useState("");
 	const [sceneAssetId, setSceneAssetId] = useState("");
 	const [styleAssetId, setStyleAssetId] = useState("");
+	const [approvingId, setApprovingId] = useState<string | null>(null);
+	const [refreshing, setRefreshing] = useState(false);
 
 	const [prompt, setPrompt] = useState("");
 	const [displayName, setDisplayName] = useState("");
 	const [compiling, setCompiling] = useState(false);
+	const [aspect, setAspect] = useState<string>("9:16");
 
 	// Gated live generation (never auto-fires).
 	const [showGenConfirm, setShowGenConfirm] = useState(false);
@@ -140,72 +184,92 @@ export default function ImgCockpitPage() {
 	const [savedAsset, setSavedAsset] = useState<CreativeAsset | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
+	// Reusable loaders — the Library pickers must be refetchable (after an inline
+	// approve, after a save, and when the operator returns from the Avatar Registry
+	// tab) so newly-approved / newly-saved assets appear without a full page reload.
+	const loadReferences = useCallback(async () => {
+		const results = await Promise.allSettled([
+			fetchCreativeAssets({ semantic_role: "CHARACTER_REFERENCE", status: "ACTIVE", limit: 100 }),
+			fetchCreativeAssets({ semantic_role: "SCENE_CONTEXT_REFERENCE", status: "ACTIVE", limit: 100 }),
+			fetchCreativeAssets({ semantic_role: "STYLE_REFERENCE", status: "ACTIVE", limit: 100 }),
+			fetchImageArtifacts(50),
+		]);
+		const [chars, scenes, styles, arts] = results;
+		if (chars.status === "fulfilled") setCharacterAssets(chars.value.items);
+		if (scenes.status === "fulfilled") setSceneAssets(scenes.value.items);
+		if (styles.status === "fulfilled") setStyleAssets(styles.value.items);
+		if (arts.status === "fulfilled") setArtifacts(arts.value);
+		if (results.some((r) => r.status === "rejected")) {
+			setError("Failed to load one or more Library reference lists.");
+		}
+	}, []);
+
 	useEffect(() => {
 		void fetchImgAssetLanes()
 			.then((r) => setLanes(r.items))
 			.catch(() => setError("Failed to load IMG lanes."));
 		// Seed the product picker with the first catalog page (same as OperatorPage).
-		// SearchableProductSelect unions this with server-side search for the long tail;
-		// without it the picker is empty until the operator types 2+ characters.
 		void fetchProductCatalog(500)
 			.then((r) => setProducts(r.items ?? []))
-			.catch(() => {});
-		void fetchCreativeAssets({ semantic_role: "CHARACTER_REFERENCE", status: "ACTIVE", limit: 100 })
-			.then((r) => setCharacterAssets(r.items))
-			.catch(() => {});
-		void fetchCreativeAssets({ semantic_role: "SCENE_CONTEXT_REFERENCE", status: "ACTIVE", limit: 100 })
-			.then((r) => setSceneAssets(r.items))
-			.catch(() => {});
-		void fetchCreativeAssets({ semantic_role: "STYLE_REFERENCE", status: "ACTIVE", limit: 100 })
-			.then((r) => setStyleAssets(r.items))
-			.catch(() => {});
-		void fetchImageArtifacts(50)
-			.then(setArtifacts)
-			.catch(() => {});
-	}, []);
+			.catch(() => setError("Failed to load product catalog."));
+		void loadReferences();
+	}, [loadReferences]);
+
+	// When the operator returns from the Avatar Registry (opened in a new tab),
+	// refocusing this tab refetches references so a newly-approved avatar shows up.
+	useEffect(() => {
+		const onFocus = () => void loadReferences();
+		window.addEventListener("focus", onFocus);
+		return () => window.removeEventListener("focus", onFocus);
+	}, [loadReferences]);
 
 	const lane = useMemo(
 		() => lanes.find((l) => l.lane_id === laneId) ?? null,
 		[lanes, laneId],
 	);
 
-	// Reuse safety: only APPROVED, ACTIVE references may feed generation/lineage.
-	const approvedCharacters = useMemo(
-		() => characterAssets.filter(isReusableAsset),
-		[characterAssets],
-	);
-	const approvedScenes = useMemo(
-		() => sceneAssets.filter(isReusableAsset),
-		[sceneAssets],
-	);
-	const approvedStyles = useMemo(
-		() => styleAssets.filter(isReusableAsset),
-		[styleAssets],
-	);
+	// Selected references (any ACTIVE asset) and the approved-only subset that may
+	// actually feed generation / lineage.
 	const selectedCharacter = useMemo(
-		() => approvedCharacters.find((a) => a.asset_id === characterAssetId) ?? null,
-		[approvedCharacters, characterAssetId],
+		() => characterAssets.find((a) => a.asset_id === characterAssetId) ?? null,
+		[characterAssets, characterAssetId],
 	);
 	const selectedScene = useMemo(
-		() => approvedScenes.find((a) => a.asset_id === sceneAssetId) ?? null,
-		[approvedScenes, sceneAssetId],
+		() => sceneAssets.find((a) => a.asset_id === sceneAssetId) ?? null,
+		[sceneAssets, sceneAssetId],
 	);
 	const selectedStyle = useMemo(
-		() => approvedStyles.find((a) => a.asset_id === styleAssetId) ?? null,
-		[approvedStyles, styleAssetId],
+		() => styleAssets.find((a) => a.asset_id === styleAssetId) ?? null,
+		[styleAssets, styleAssetId],
 	);
+	const approvedCharacter =
+		selectedCharacter && isReusableAsset(selectedCharacter) ? selectedCharacter : null;
+	const approvedScene =
+		selectedScene && isReusableAsset(selectedScene) ? selectedScene : null;
+	const approvedStyle =
+		selectedStyle && isReusableAsset(selectedStyle) ? selectedStyle : null;
+
 	const genResolution = useMemo(
 		() =>
 			resolveGenerationInputs(lane, {
 				product: selectedProduct,
-				character: selectedCharacter,
-				scene: selectedScene,
-				style: selectedStyle,
+				character: approvedCharacter,
+				scene: approvedScene,
+				style: approvedStyle,
 			}),
-		[lane, selectedProduct, selectedCharacter, selectedScene, selectedStyle],
+		[lane, selectedProduct, approvedCharacter, approvedScene, approvedStyle],
 	);
 
+	// Lane requirement gates — mirror the backend validate_img_lane_inputs contract
+	// (product / character / scene / style) so Save is never sent into a late
+	// IMG_LANE_INPUT_BLOCKED backend rejection.
 	const productMissing = Boolean(lane?.requires_product_id && !selectedProduct);
+	const characterMissing = Boolean(lane?.requires_character_reference && !approvedCharacter);
+	const sceneMissing = Boolean(lane?.requires_scene_reference && !approvedScene);
+	const styleMissing = Boolean(lane?.requires_style_reference && !approvedStyle);
+	const requirementsMissing =
+		productMissing || characterMissing || sceneMissing || styleMissing;
+
 	const hasRealOutput =
 		outputMode === "artifact" ? Boolean(artifactMediaId) : Boolean(uploadFile);
 	const approvalBlocked =
@@ -216,8 +280,38 @@ export default function ImgCockpitPage() {
 			claim: claimStatus,
 		});
 	const canSave = Boolean(
-		lane && displayName.trim() && hasRealOutput && !productMissing && !approvalBlocked && !saving,
+		lane &&
+			displayName.trim() &&
+			hasRealOutput &&
+			!requirementsMissing &&
+			!approvalBlocked &&
+			!saving,
 	);
+
+	const handleRefresh = async () => {
+		setRefreshing(true);
+		setError(null);
+		try {
+			await loadReferences();
+		} finally {
+			setRefreshing(false);
+		}
+	};
+
+	const handleApproveAsset = async (asset: CreativeAsset) => {
+		setApprovingId(asset.asset_id);
+		setError(null);
+		try {
+			await updateCreativeAsset(asset.asset_id, { review_status: "APPROVED" });
+			await loadReferences();
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : "Failed to approve the reference.",
+			);
+		} finally {
+			setApprovingId(null);
+		}
+	};
 
 	const handleCompilePrompt = async () => {
 		if (!selectedProduct) return;
@@ -248,17 +342,23 @@ export default function ImgCockpitPage() {
 			const { job_id } = await startImgGeneration({
 				prompt,
 				image_media_ids: genResolution.mediaIds,
-				aspect: "9:16",
+				aspect,
 			});
 			const job = await pollImgGenerationJob(job_id);
 			setGenJob(job);
 			if (job.status === "DONE" && job.media_id) {
+				const mediaId = job.media_id;
+				const sizeMb =
+					typeof job.size_mb === "number" ? job.size_mb : null;
 				setOutputMode("artifact");
-				setArtifactMediaId(job.media_id);
+				setArtifactMediaId(mediaId);
 				setArtifacts((prev) =>
-					prev.some((a) => a.media_id === job.media_id)
+					prev.some((a) => a.media_id === mediaId)
 						? prev
-						: [{ media_id: job.media_id as string, artifact_kind: "image" }, ...prev],
+						: [
+								{ media_id: mediaId, artifact_kind: "image", size_mb: sizeMb },
+								...prev,
+							],
 				);
 			}
 		} catch (err) {
@@ -266,6 +366,17 @@ export default function ImgCockpitPage() {
 		} finally {
 			setGenerating(false);
 		}
+	};
+
+	const resetOutputForm = () => {
+		setDisplayName("");
+		setArtifactMediaId("");
+		setUploadFile(null);
+		setOutputMode("artifact");
+		setIdentityStatus("UNVERIFIED");
+		setScaleStatus("UNVERIFIED");
+		setClaimStatus("UNVERIFIED");
+		setReviewDecision("PENDING_REVIEW");
 	};
 
 	const handleSave = async () => {
@@ -277,10 +388,13 @@ export default function ImgCockpitPage() {
 			const base = {
 				lane_id: lane.lane_id,
 				display_name: displayName.trim(),
+				description: prompt.trim() || null,
 				product_id: selectedProduct?.id || null,
-				source_character_asset_id: characterAssetId || null,
-				source_scene_asset_id: sceneAssetId || null,
-				source_style_asset_id: styleAssetId || null,
+				// Only APPROVED references are valid lineage; a pending selection is
+				// treated as absent so the backend never rejects the save.
+				source_character_asset_id: approvedCharacter?.asset_id || null,
+				source_scene_asset_id: approvedScene?.asset_id || null,
+				source_style_asset_id: approvedStyle?.asset_id || null,
 				identity_lock_status: identityStatus,
 				scale_truth_status: scaleStatus,
 				claim_safety_status: claimStatus,
@@ -300,6 +414,10 @@ export default function ImgCockpitPage() {
 				await archiveCreativeAsset(asset.asset_id);
 			}
 			setSavedAsset(asset);
+			// Refetch pickers so an APPROVED save immediately round-trips into the
+			// reference lists, and reset the per-output form to prevent a duplicate save.
+			await loadReferences();
+			resetOutputForm();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to save to Creative Library.");
 		} finally {
@@ -310,13 +428,25 @@ export default function ImgCockpitPage() {
 	return (
 		<div className="flex min-w-0 flex-col gap-5 p-4 md:p-6">
 			<header className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
-				<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
-					IMG Cockpit
-				</div>
-				<div className="mt-1 text-xs text-slate-400">
-					Operator workflow: pick a lane → product/avatar/scene/style → preview
-					prompt → (gated) generate or register a real output → review → save to
-					the Creative Library → reuse in I2V / F2V.
+				<div className="flex items-start justify-between gap-3">
+					<div>
+						<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
+							IMG Cockpit
+						</div>
+						<div className="mt-1 text-xs text-slate-400">
+							Operator workflow: pick a lane → product/avatar/scene/style → preview
+							prompt → (gated) generate or register a real output → review → save to
+							the Creative Library → reuse in I2V / F2V.
+						</div>
+					</div>
+					<button
+						type="button"
+						onClick={() => void handleRefresh()}
+						disabled={refreshing}
+						className="shrink-0 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+					>
+						{refreshing ? "Refreshing…" : "↻ Refresh references"}
+					</button>
 				</div>
 			</header>
 
@@ -364,6 +494,35 @@ export default function ImgCockpitPage() {
 								</span>
 							)}
 						</div>
+						{/* Required inputs for this lane, so nothing is a silent surprise. */}
+						{(lane.requires_product_id ||
+							lane.requires_character_reference ||
+							lane.requires_scene_reference ||
+							lane.requires_style_reference) ? (
+							<div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+								<span className="text-slate-500">Requires:</span>
+								{lane.requires_product_id ? (
+									<span className={productMissing ? "text-amber-300" : "text-emerald-300"}>
+										product{productMissing ? " (missing)" : " ✓"}
+									</span>
+								) : null}
+								{lane.requires_character_reference ? (
+									<span className={characterMissing ? "text-amber-300" : "text-emerald-300"}>
+										avatar{characterMissing ? " (missing)" : " ✓"}
+									</span>
+								) : null}
+								{lane.requires_scene_reference ? (
+									<span className={sceneMissing ? "text-amber-300" : "text-emerald-300"}>
+										scene{sceneMissing ? " (missing)" : " ✓"}
+									</span>
+								) : null}
+								{lane.requires_style_reference ? (
+									<span className={styleMissing ? "text-amber-300" : "text-emerald-300"}>
+										style{styleMissing ? " (missing)" : " ✓"}
+									</span>
+								) : null}
+							</div>
+						) : null}
 						<div className="mt-2 text-[10px] text-slate-500">{lane.purpose}</div>
 					</div>
 				) : null}
@@ -377,7 +536,7 @@ export default function ImgCockpitPage() {
 					onSelect={setSelectedProduct}
 				/>
 				{productMissing ? (
-					<p className="text-[10px] text-amber-300/70">
+					<p className="text-[10px] text-amber-300/80">
 						This lane requires a product to preserve product truth.
 					</p>
 				) : null}
@@ -385,38 +544,52 @@ export default function ImgCockpitPage() {
 
 			{/* 3 — Avatar */}
 			<Section step="3" title="Generate / select avatar (character reference)">
-				<AssetSelect
-					label="Avatar (CHARACTER_REFERENCE · approved only)"
-					assets={approvedCharacters}
+				<ReferenceField
+					label="Avatar (CHARACTER_REFERENCE)"
+					noun="avatar"
+					assets={characterAssets}
 					value={characterAssetId}
 					onChange={setCharacterAssetId}
-					emptyHint="No APPROVED avatars in Library — generate + approve one first"
+					emptyHint="No avatars in Library — generate one, then approve it here"
+					requiredMissing={characterMissing}
+					onApprove={handleApproveAsset}
+					approvingId={approvingId}
 				/>
-				<button
-					type="button"
-					onClick={() => navigate("/assets/avatar-registry")}
-					className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-[11px] font-semibold text-blue-100 hover:bg-blue-500/20"
+				<a
+					href="/assets/avatar-registry"
+					target="_blank"
+					rel="noopener noreferrer"
+					className="inline-block rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-[11px] font-semibold text-blue-100 hover:bg-blue-500/20"
 				>
-					Generate a new avatar in Avatar Registry →
-				</button>
+					Generate a new avatar in Avatar Registry ↗ (opens a new tab — your
+					cockpit progress is kept)
+				</a>
 			</Section>
 
 			{/* 4 — Scene / Style */}
 			<Section step="4" title="Select scene / style references">
 				<div className="grid gap-3 md:grid-cols-2">
-					<AssetSelect
-						label="Scene (SCENE_CONTEXT_REFERENCE · approved only)"
-						assets={approvedScenes}
+					<ReferenceField
+						label="Scene (SCENE_CONTEXT_REFERENCE)"
+						noun="scene reference"
+						assets={sceneAssets}
 						value={sceneAssetId}
 						onChange={setSceneAssetId}
-						emptyHint="No APPROVED scene references in Library"
+						emptyHint="No scene references in Library"
+						requiredMissing={sceneMissing}
+						onApprove={handleApproveAsset}
+						approvingId={approvingId}
 					/>
-					<AssetSelect
-						label="Style (STYLE_REFERENCE · approved only)"
-						assets={approvedStyles}
+					<ReferenceField
+						label="Style (STYLE_REFERENCE)"
+						noun="style reference"
+						assets={styleAssets}
 						value={styleAssetId}
 						onChange={setStyleAssetId}
-						emptyHint="No APPROVED style references in Library"
+						emptyHint="No style references in Library"
+						requiredMissing={styleMissing}
+						onApprove={handleApproveAsset}
+						approvingId={approvingId}
 					/>
 				</div>
 			</Section>
@@ -448,6 +621,22 @@ export default function ImgCockpitPage() {
 					<strong>never auto-fires</strong>. Build-session status:{" "}
 					<strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.
 				</div>
+				<label className="block text-[11px] text-slate-300 space-y-1">
+					<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+						Aspect ratio
+					</span>
+					<select
+						value={aspect}
+						onChange={(e) => setAspect(e.target.value)}
+						className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 md:w-40"
+					>
+						{ASPECT_OPTIONS.map((a) => (
+							<option key={a} value={a}>
+								{a}
+							</option>
+						))}
+					</select>
+				</label>
 				<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
 					<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
 						Generate payload preview
@@ -471,7 +660,7 @@ export default function ImgCockpitPage() {
 										</span>
 									) : (
 										<span className="text-amber-300">
-											unresolved (no media id — not sent)
+											no media id — not sent as an image reference
 										</span>
 									)}
 								</li>
@@ -610,6 +799,12 @@ export default function ImgCockpitPage() {
 						placeholder="e.g. Avatar A — front"
 					/>
 				</label>
+				{requirementsMissing ? (
+					<p className="text-[10px] text-amber-300/80">
+						This lane still needs its required inputs (see the amber notes above)
+						before it can be saved.
+					</p>
+				) : null}
 				<button
 					type="button"
 					onClick={() => void handleSave()}
@@ -626,7 +821,7 @@ export default function ImgCockpitPage() {
 						{savedAsset.allowed_modes.length > 0
 							? ` · reusable in ${savedAsset.allowed_modes.join(", ")}`
 							: " · terminal asset (no video reuse)"}
-						.
+						. The form was reset for the next output.
 					</div>
 				) : null}
 			</Section>
@@ -648,20 +843,22 @@ export default function ImgCockpitPage() {
 						posters (rendered text), archived, and non-approved assets are excluded.
 					</p>
 					<div className="flex gap-2">
-						<button
-							type="button"
-							onClick={() => navigate("/operator/i2v")}
+						<a
+							href="/operator/i2v"
+							target="_blank"
+							rel="noopener noreferrer"
 							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-200"
 						>
-							Open I2V (Ingredients) →
-						</button>
-						<button
-							type="button"
-							onClick={() => navigate("/assets/creative-library")}
+							Open I2V (Ingredients) ↗
+						</a>
+						<a
+							href="/assets/creative-library"
+							target="_blank"
+							rel="noopener noreferrer"
 							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-200"
 						>
-							Open Creative Library →
-						</button>
+							Open Creative Library ↗
+						</a>
 					</div>
 				</div>
 			</Section>

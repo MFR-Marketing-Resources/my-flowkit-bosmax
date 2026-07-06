@@ -457,6 +457,12 @@ export default function AvatarRegistryPage() {
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+				<a
+					href="/assets/img-cockpit"
+					className="mb-3 inline-block text-[11px] font-semibold text-slate-400 hover:text-slate-200"
+				>
+					← Back to IMG Cockpit
+				</a>
 				<div className="mb-4 flex items-center justify-between gap-3">
 					<div>
 						<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">

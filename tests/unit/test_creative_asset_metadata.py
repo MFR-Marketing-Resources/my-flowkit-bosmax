@@ -11,9 +11,16 @@ import asyncio
 
 from agent.db import crud
 from agent.db.schema import close_db, init_db
-from agent.models.creative_asset import CreativeAssetCreateRequest
+from agent.models.creative_asset import (
+	CreativeAssetCreateRequest,
+	CreativeAssetUpdateRequest,
+)
 from agent.services import creative_asset_service
-from agent.services.creative_asset_service import create_creative_asset, get_creative_asset
+from agent.services.creative_asset_service import (
+	create_creative_asset,
+	get_creative_asset,
+	update_creative_asset,
+)
 
 
 async def _seed_product(product_id: str = "prod-1") -> None:
@@ -104,5 +111,48 @@ def test_defaults_are_clean_when_not_supplied(tmp_path, monkeypatch):
         # PENDING_REVIEW when review_status is omitted — never silently APPROVED.
         assert created.review_status == "PENDING_REVIEW"
         assert created.generation_recipe_id is None
+
+    _run_db(scenario)
+
+
+def test_review_status_update_persists_via_patch_path(tmp_path, monkeypatch):
+    """Regression: the crud _COLUMNS whitelist for creative_asset omitted the
+    governance columns (review_status + truth statuses), so update_creative_asset
+    silently DROPPED them — a PATCH bumped updated_at but never changed
+    review_status, so an asset could never be APPROVED via the review endpoint.
+    This asserts the PATCH/update path actually persists those columns."""
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        created = await create_creative_asset(
+            CreativeAssetCreateRequest(
+                semantic_role="CHARACTER_REFERENCE",
+                display_name="Avatar To Approve",
+                image_base64="aGVsbG8=",
+                file_name="avatar.png",
+                allowed_modes=["IMG"],
+                engine_slot_eligibility=["subject"],
+            )
+        )
+        assert created.review_status == "PENDING_REVIEW"
+
+        updated = await update_creative_asset(
+            created.asset_id,
+            CreativeAssetUpdateRequest(
+                review_status="APPROVED",
+                identity_lock_status="PASS",
+                scale_truth_status="PASS",
+                claim_safety_status="PASS",
+            ),
+        )
+        assert updated.review_status == "APPROVED"
+        assert updated.identity_lock_status == "PASS"
+
+        # Must survive a fresh read (not just the in-memory update return value).
+        reloaded = await get_creative_asset(created.asset_id)
+        assert reloaded is not None
+        assert reloaded.review_status == "APPROVED"
+        assert reloaded.scale_truth_status == "PASS"
+        assert reloaded.claim_safety_status == "PASS"
 
     _run_db(scenario)

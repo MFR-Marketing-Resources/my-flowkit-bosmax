@@ -127,8 +127,37 @@ export async function startImgGeneration(
 	});
 }
 
-export async function pollImgGenerationJob(jobId: string): Promise<ImgGenerationJob> {
-	return getAPI<ImgGenerationJob>(`/api/flow/generate-job/${jobId}`);
+const IMG_JOB_TERMINAL_STATES = new Set([
+	"DONE",
+	"COMPLETE",
+	"COMPLETED",
+	"FAILED",
+	"ERROR",
+	"CANCELLED",
+	"GENERATED_BUT_UNRETRIEVED",
+]);
+
+/**
+ * Poll the generate job until it reaches a terminal state. The backend job is
+ * asynchronous (starts as SUBMITTED/GENERATING), so a single GET returns before
+ * the image exists. Loops every `intervalMs` up to `maxAttempts`, then returns
+ * the last-seen job. This is a read-only poll — it never starts a generation.
+ */
+export async function pollImgGenerationJob(
+	jobId: string,
+	opts: { intervalMs?: number; maxAttempts?: number } = {},
+): Promise<ImgGenerationJob> {
+	const intervalMs = opts.intervalMs ?? 3000;
+	const maxAttempts = opts.maxAttempts ?? 150;
+	let last: ImgGenerationJob = { status: "SUBMITTED" };
+	for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+		last = await getAPI<ImgGenerationJob>(`/api/flow/generate-job/${jobId}`);
+		if (last.status && IMG_JOB_TERMINAL_STATES.has(last.status)) {
+			return last;
+		}
+		await new Promise((resolve) => setTimeout(resolve, intervalMs));
+	}
+	return last;
 }
 
 /** Finished IMAGE artifacts, for the register-output picker (credit-free). */
