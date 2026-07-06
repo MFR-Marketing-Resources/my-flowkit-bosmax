@@ -14,6 +14,7 @@ from agent.services.creative_asset_service import (
     create_creative_asset,
     get_creative_asset,
     get_creative_asset_file_path,
+    list_image_library_items,
     list_creative_assets,
     unarchive_creative_asset,
     update_creative_asset,
@@ -43,6 +44,19 @@ async def get_creative_assets(
         limit=limit,
     )
     return CreativeAssetListResponse(items=items, total=len(items))
+
+
+@router.get("/library-images")
+async def get_library_images(
+    limit: int = Query(default=60, ge=1, le=500),
+    mode: str | None = Query(default=None),
+):
+    payload = await list_image_library_items(limit=limit, mode=mode)
+    return {
+        "artifacts": payload["items"],
+        "count": len(payload["items"]),
+        "diagnostics": payload["diagnostics"],
+    }
 
 
 @router.post("", response_model=CreativeAssetRecord)

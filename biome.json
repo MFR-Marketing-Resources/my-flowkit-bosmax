@@ -1,8 +1,10 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.5.2/schema.json",
 	"files": {
 		"ignoreUnknown": true,
 		"includes": [
+			"**",
+			"!**/.claude/worktrees",
 			"dashboard/src/App.tsx",
 			"dashboard/src/api/products.ts",
 			"dashboard/src/api/workspacePackages.ts",
@@ -14,6 +16,8 @@
 			"dashboard/src/pages/ApprovedPackagesPage.tsx",
 			"dashboard/src/pages/AssetRegistryPage.tsx",
 			"dashboard/src/pages/CreativeLibraryPage.tsx",
+			"dashboard/src/pages/AvatarRegistryPage.tsx",
+			"dashboard/src/pages/LibraryPage.tsx",
 			"dashboard/src/pages/OperatorPage.tsx",
 			"dashboard/src/pages/ProductAssetGeneratorPage.tsx",
 			"dashboard/src/pages/ProductRegistrationPage.tsx",

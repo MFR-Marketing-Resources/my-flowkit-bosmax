@@ -2,6 +2,7 @@
 import asyncio
 import aiosqlite
 import logging
+import re
 from agent.config import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -315,6 +316,13 @@ CREATE TABLE IF NOT EXISTS creative_asset (
     scale_truth_status TEXT,
     claim_safety_status TEXT,
     review_status TEXT NOT NULL DEFAULT 'PENDING_REVIEW',
+    asset_lifecycle TEXT NOT NULL DEFAULT 'SAVED_REUSABLE_ASSET',
+    retention_policy TEXT NOT NULL DEFAULT 'PERSISTENT',
+    expires_at TEXT,
+    is_reusable INTEGER NOT NULL DEFAULT 1,
+    is_canonical INTEGER NOT NULL DEFAULT 0,
+    source_job_id TEXT,
+    avatar_code TEXT,
     status        TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'ARCHIVED')),
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -1508,11 +1516,59 @@ CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(cla
             # preferred over silently grandfathering them as APPROVED. review_status
             # is metadata only (NOT a selection gate), so legacy assets stay usable.
             "review_status": "TEXT NOT NULL DEFAULT 'PENDING_REVIEW'",
+            "asset_lifecycle": "TEXT NOT NULL DEFAULT 'SAVED_REUSABLE_ASSET'",
+            "retention_policy": "TEXT NOT NULL DEFAULT 'PERSISTENT'",
+            "expires_at": "TEXT",
+            "is_reusable": "INTEGER NOT NULL DEFAULT 1",
+            "is_canonical": "INTEGER NOT NULL DEFAULT 0",
+            "source_job_id": "TEXT",
+            "avatar_code": "TEXT",
         }
         for _col, _type in _ca_new_cols.items():
             if _col not in ca_cols:
                 await db.execute(f"ALTER TABLE creative_asset ADD COLUMN {_col} {_type}")
                 logger.info("Migrated: added %s column to creative_asset table", _col)
+        await db.commit()
+
+        # Backfill canonical avatar lifecycle metadata for legacy rows that were
+        # already promoted out of the temp artifact library before lifecycle truth
+        # fields existed.
+        cursor = await db.execute(
+            """
+            SELECT asset_id, description, source_job_id, avatar_code
+            FROM creative_asset
+            WHERE semantic_role='CHARACTER_REFERENCE'
+              AND status='ACTIVE'
+            """
+        )
+        avatar_rows = await cursor.fetchall()
+        marker = "AVATAR_CODE:"
+        for asset_id, description, source_job_id, avatar_code in avatar_rows:
+            desc = str(description or "")
+            match = re.search(r"AVATAR_CODE:([A-Z0-9_]+)", desc)
+            resolved_avatar_code = avatar_code or (match.group(1) if match else None)
+            if not resolved_avatar_code and marker not in desc:
+                continue
+            updates: list[tuple[str, object]] = []
+            if resolved_avatar_code and avatar_code != resolved_avatar_code:
+                updates.append(("avatar_code", resolved_avatar_code))
+            if source_job_id in (None, "") and "generated from avatar registry PromptV1 via IMG lane" in desc:
+                updates.append(("source_job_id", None))
+            updates.extend(
+                [
+                    ("asset_lifecycle", "CANONICAL_AVATAR_ASSET"),
+                    ("retention_policy", "PERSISTENT"),
+                    ("is_reusable", 1),
+                    ("is_canonical", 1),
+                ]
+            )
+            set_clause = ", ".join(f"{column}=?" for column, _ in updates)
+            values = [value for _, value in updates]
+            values.append(asset_id)
+            await db.execute(
+                f"UPDATE creative_asset SET {set_clause} WHERE asset_id=?",
+                values,
+            )
         await db.commit()
 
         # Migration: add batch_run_id to workspace_generation_package

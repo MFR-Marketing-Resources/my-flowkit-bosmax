@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.models.creative_asset import CreativeAssetCreateRequest
+from agent.models.creative_asset import CreativeAssetCreateRequest, CreativeAssetRecord
 from agent.services import creative_asset_service
 
 
@@ -181,3 +181,137 @@ async def test_validate_selectable_asset_blocks_archived_and_semantic_mismatch(m
     assert result.valid is False
     assert "ASSET_ARCHIVED" in result.blockers
     assert "SEMANTIC_ROLE_MISMATCH" in result.blockers
+
+
+@pytest.mark.asyncio
+async def test_avatar_asset_index_marks_missing_local_file_as_missing_asset(monkeypatch):
+    async def fake_list_creative_assets(**kwargs):
+        return [
+            CreativeAssetRecord(
+                asset_id="ca_missing_avatar",
+                semantic_role="CHARACTER_REFERENCE",
+                display_name="Avatar Missing",
+                description="AVATAR_CODE:BOS_F_TEST_01 generated from avatar registry PromptV1 via IMG lane",
+                source_type="GENERATED_IMAGE",
+                storage_kind="LOCAL_FILE",
+                preview_url="/api/creative-assets/ca_missing_avatar/preview",
+                download_url="/api/creative-assets/ca_missing_avatar/download",
+                media_id="m_missing",
+                local_file_path="C:/does/not/exist.jpg",
+                avatar_code="BOS_F_TEST_01",
+                asset_lifecycle="CANONICAL_AVATAR_ASSET",
+                retention_policy="PERSISTENT",
+                is_reusable=True,
+                is_canonical=True,
+                status="ACTIVE",
+                created_at="2026-07-03T00:00:00Z",
+                updated_at="2026-07-03T00:00:00Z",
+            )
+        ]
+
+    monkeypatch.setattr(
+        creative_asset_service,
+        "list_creative_assets",
+        fake_list_creative_assets,
+    )
+
+    result = await creative_asset_service.list_avatar_asset_index()
+
+    assert result["BOS_F_TEST_01"]["retrievable"] is False
+    assert result["BOS_F_TEST_01"]["avatar_status"] == "MISSING_ASSET"
+
+
+@pytest.mark.asyncio
+async def test_image_library_includes_old_canonical_avatar_asset_and_matches_avatar_index(
+    tmp_path,
+    monkeypatch,
+):
+    avatar_file = tmp_path / "avatar.jpg"
+    avatar_file.write_bytes(b"avatar")
+    avatar_asset = CreativeAssetRecord(
+        asset_id="ca_avatar_001",
+        semantic_role="CHARACTER_REFERENCE",
+        display_name="Alya - BOS_F_ALYA_01",
+        description="AVATAR_CODE:BOS_F_ALYA_01 generated from avatar registry PromptV1 via IMG lane",
+        source_type="GENERATED_IMAGE",
+        storage_kind="LOCAL_FILE",
+        preview_url="/api/creative-assets/ca_avatar_001/preview",
+        download_url="/api/creative-assets/ca_avatar_001/download",
+        media_id="media_avatar_001",
+        local_file_path=str(avatar_file),
+        avatar_code="BOS_F_ALYA_01",
+        asset_lifecycle="CANONICAL_AVATAR_ASSET",
+        retention_policy="PERSISTENT",
+        is_reusable=True,
+        is_canonical=True,
+        status="ACTIVE",
+        created_at="2026-06-01T00:00:00Z",
+        updated_at="2026-06-01T00:00:00Z",
+    )
+
+    async def fake_generated_artifacts(limit=50, mode=None, kind=None):
+        return []
+
+    async def fake_purge(retention_hours=48):
+        return {"purged_rows": 0, "purged_files": 0}
+
+    async def fake_list_creative_assets(**kwargs):
+        return [avatar_asset]
+
+    monkeypatch.setattr(
+        creative_asset_service.crud,
+        "list_generated_artifacts",
+        fake_generated_artifacts,
+    )
+    monkeypatch.setattr(
+        creative_asset_service.crud,
+        "purge_expired_artifacts",
+        fake_purge,
+    )
+    monkeypatch.setattr(
+        creative_asset_service,
+        "list_creative_assets",
+        fake_list_creative_assets,
+    )
+
+    library = await creative_asset_service.list_image_library_items(limit=20)
+    avatar_index = await creative_asset_service.list_avatar_asset_index()
+
+    assert library["items"][0]["asset_lifecycle"] == "CANONICAL_AVATAR_ASSET"
+    assert library["items"][0]["retention_policy"] == "PERSISTENT"
+    assert library["items"][0]["expires_at"] is None
+    assert library["items"][0]["source_asset_id"] == "ca_avatar_001"
+    assert library["items"][0]["avatar_code"] == "BOS_F_ALYA_01"
+    assert avatar_index["BOS_F_ALYA_01"]["asset_id"] == library["items"][0]["source_asset_id"]
+
+
+def test_build_resolved_workspace_asset_keeps_preview_and_download_for_canonical_avatar():
+    asset = CreativeAssetRecord(
+        asset_id="ca_avatar_usable",
+        semantic_role="CHARACTER_REFERENCE",
+        display_name="Alya - BOS_F_ALYA_02",
+        description="AVATAR_CODE:BOS_F_ALYA_02 generated from avatar registry PromptV1 via IMG lane",
+        source_type="GENERATED_IMAGE",
+        storage_kind="LOCAL_FILE",
+        preview_url="/api/creative-assets/ca_avatar_usable/preview",
+        download_url="/api/creative-assets/ca_avatar_usable/download",
+        media_id="media_avatar_usable",
+        local_file_path="C:/tmp/avatar_usable.jpg",
+        avatar_code="BOS_F_ALYA_02",
+        asset_lifecycle="CANONICAL_AVATAR_ASSET",
+        retention_policy="PERSISTENT",
+        is_reusable=True,
+        is_canonical=True,
+        status="ACTIVE",
+        created_at="2026-07-03T00:00:00Z",
+        updated_at="2026-07-03T00:00:00Z",
+    )
+
+    resolved = creative_asset_service.build_resolved_workspace_asset(
+        asset=asset,
+        slot_key="subject",
+    )
+
+    assert resolved["preview_url"] == "/api/creative-assets/ca_avatar_usable/preview"
+    assert resolved["download_url"] == "/api/creative-assets/ca_avatar_usable/download"
+    assert resolved["media_id"] == "media_avatar_usable"

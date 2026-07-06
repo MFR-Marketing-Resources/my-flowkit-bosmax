@@ -128,3 +128,47 @@ def test_creative_asset_post_defaults_to_pending_review(monkeypatch):
     assert response.status_code == 200
     assert captured["review_status"] == "PENDING_REVIEW"
     assert response.json()["review_status"] == "PENDING_REVIEW"
+
+
+def test_creative_asset_library_images_endpoint_returns_diagnostics(monkeypatch):
+    async def fake_library(limit=60, mode=None):
+        assert limit == 25
+        assert mode == "IMG"
+        return {
+            "items": [
+                {
+                    "library_key": "creative:ca_avatar_001",
+                    "artifact_kind": "image",
+                    "library_source": "CREATIVE_ASSET",
+                    "asset_lifecycle": "CANONICAL_AVATAR_ASSET",
+                    "retention_policy": "PERSISTENT",
+                    "source_asset_id": "ca_avatar_001",
+                    "avatar_code": "BOS_F_ALYA_01",
+                    "display_name": "Alya",
+                    "media_id": "media_avatar_001",
+                    "created_at": "2026-07-03T00:00:00Z",
+                    "preview_url": "/api/creative-assets/ca_avatar_001/preview",
+                    "download_url": "/api/creative-assets/ca_avatar_001/download",
+                    "expires_at": None,
+                    "expires_in_hours": None,
+                }
+            ],
+            "diagnostics": {
+                "temp_image_outputs": 0,
+                "reusable_image_assets": 1,
+                "reusable_avatar_assets": 1,
+                "broken_avatar_assets": 0,
+                "purged_temp_rows": 0,
+            },
+        }
+
+    monkeypatch.setattr("agent.api.creative_assets.list_image_library_items", fake_library)
+
+    client = TestClient(_build_app())
+    response = client.get("/api/creative-assets/library-images?limit=25&mode=IMG")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["artifacts"][0]["asset_lifecycle"] == "CANONICAL_AVATAR_ASSET"
+    assert payload["diagnostics"]["reusable_avatar_assets"] == 1

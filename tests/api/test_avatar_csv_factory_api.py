@@ -166,3 +166,57 @@ def test_sync_success_and_failure_mapping(monkeypatch):
         fail_sync)
     response = client.post(f"{_BASE}/batches/acf_abc123def456/sync")
     assert response.status_code == 422
+
+
+def test_avatar_registry_pool_reports_truthful_generated_and_missing_states(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.list_pool",
+        lambda: [
+            {"avatar_code": "BOS_F_ALYA_01", "character_name": "Alya", "usage_tags": []},
+            {"avatar_code": "BOS_F_ALYA_02", "character_name": "Alya 2", "usage_tags": []},
+        ],
+    )
+    monkeypatch.setattr(
+        "agent.services.avatar_registry._active_pool_file",
+        lambda: "C:/tmp/AVATAR_POOL_NORMALIZED.csv",
+    )
+    monkeypatch.setattr(
+        "agent.services.avatar_registry._BRIDGE_FILE",
+        type("BridgeFile", (), {"exists": staticmethod(lambda: False)})(),
+    )
+
+    async def fake_index():
+        return {
+            "BOS_F_ALYA_01": {
+                "asset_id": "ca_avatar_ok",
+                "avatar_status": "GENERATED",
+                "asset_lifecycle": "CANONICAL_AVATAR_ASSET",
+                "integrity_status": "LOCAL_FILE_OK",
+                "preview_url": "/api/creative-assets/ca_avatar_ok/preview",
+            },
+            "BOS_F_ALYA_02": {
+                "asset_id": "ca_avatar_missing",
+                "avatar_status": "MISSING_ASSET",
+                "asset_lifecycle": "CANONICAL_AVATAR_ASSET",
+                "integrity_status": "LOCAL_FILE_MISSING",
+                "preview_url": "/api/creative-assets/ca_avatar_missing/preview",
+            },
+        }
+
+    monkeypatch.setattr(
+        "agent.services.creative_asset_service.list_avatar_asset_index",
+        fake_index,
+    )
+
+    client = TestClient(_build_app())
+    response = client.get("/api/workspace/avatar-registry/pool")
+
+    assert response.status_code == 200
+    payload = response.json()
+    avatars = {row["avatar_code"]: row for row in payload["avatars"]}
+    assert payload["generated_count"] == 1
+    assert payload["broken_count"] == 1
+    assert avatars["BOS_F_ALYA_01"]["image_generated"] is True
+    assert avatars["BOS_F_ALYA_01"]["image_status"] == "GENERATED"
+    assert avatars["BOS_F_ALYA_02"]["image_generated"] is False
+    assert avatars["BOS_F_ALYA_02"]["image_status"] == "MISSING_ASSET"
