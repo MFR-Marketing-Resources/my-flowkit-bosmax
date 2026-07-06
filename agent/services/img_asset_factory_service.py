@@ -272,6 +272,30 @@ def _resolve_preset(preset_id: str, route: str, ingredient_role: str | None) -> 
     raise ValueError("UNKNOWN_FASTLANE_PRESET")
 
 
+# Clean-frame guard: every fastlane lane EXCEPT the poster lane produces a
+# background/composite plate whose typography is layered later by the social-copy
+# stage. The image model must therefore draw ZERO baked-in text. This mirrors the
+# canonical video compiler's no-text negative block (see test_canonical_prompt_compiler)
+# so IMG output obeys the same law. Poster lanes (allows_rendered_text=True) are
+# intentionally exempt because their whole purpose is a text-bearing terminal asset.
+_CLEAN_FRAME_NEGATIVE_RULES: tuple[str, ...] = (
+    "No rendered text, captions, headlines, CTAs, price tags, subtitles, or logos-as-typography baked into the image.",
+    "No watermark, sticker, badge, or UI chrome; keep a clean commercial frame so any copy is layered later, never drawn by the image model.",
+)
+
+
+def _effective_negative_rules(preset: dict[str, object]) -> list[str]:
+    """Preset negative rules plus the clean-frame no-text guard for non-poster lanes."""
+    rules = [str(rule) for rule in list(preset.get("negative_rules") or [])]
+    try:
+        allows_text = bool(get_img_asset_lane(str(preset["lane_id"])).get("allows_rendered_text"))
+    except Exception:
+        allows_text = False
+    if not allows_text:
+        rules.extend(_CLEAN_FRAME_NEGATIVE_RULES)
+    return rules
+
+
 def _product_family_flags(product: dict[str, object] | None) -> dict[str, bool]:
     text = _clean_text(
         (product or {}).get("product_display_name")
@@ -534,9 +558,10 @@ async def compile_img_fastlane_prompt_preview(
         prompt_lines.append("")
         prompt_lines.append("ADVANCED OVERRIDE NOTES (optional):")
         prompt_lines.append(f"- {_clean_text(request.advanced_override_notes)}")
+    effective_negative_rules = _effective_negative_rules(preset)
     prompt_lines.append("")
     prompt_lines.append("NEGATIVE RULES:")
-    prompt_lines.extend(f"- {rule}" for rule in list(preset.get("negative_rules") or []))
+    prompt_lines.extend(f"- {rule}" for rule in effective_negative_rules)
 
     return ImgFastlanePromptPreviewResponse(
         preset_id=str(preset["preset_id"]),
@@ -548,7 +573,7 @@ async def compile_img_fastlane_prompt_preview(
         blockers=blockers,
         warnings=warnings,
         output_spec=str(preset["output_spec"]),
-        negative_rules=[str(rule) for rule in list(preset.get("negative_rules") or [])],
+        negative_rules=effective_negative_rules,
         reference_map=_reference_map_lines(
             request.preset_id,
             product,
