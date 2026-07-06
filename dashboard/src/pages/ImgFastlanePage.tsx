@@ -32,7 +32,6 @@ type TruthStatus = "UNVERIFIED" | "PASS" | "FAIL";
 type ReviewDecision = "PENDING_REVIEW" | "APPROVED" | "REJECTED";
 type OutputMode = "artifact" | "upload";
 type FastlaneTab = "frames" | "ingredients";
-type IngredientType = "subject" | "scene" | "style";
 
 function fileToDataUrl(file: File): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -41,6 +40,28 @@ function fileToDataUrl(file: File): Promise<string> {
 		reader.onerror = reject;
 		reader.readAsDataURL(file);
 	});
+}
+
+function buildAssetPayload(asset: CreativeAsset | null): Record<string, any> | null {
+	if (!asset) return null;
+	return {
+		mediaId: asset.media_id || null,
+		localFilePath: asset.local_file_path || null,
+		local_file_path: asset.local_file_path || null,
+		downloadUrl: asset.download_url || asset.preview_url || asset.remote_source_url || null,
+		image_url: asset.download_url || asset.preview_url || asset.remote_source_url || null,
+	};
+}
+
+function buildProductAssetPayload(product: Product | null): Record<string, any> | null {
+	if (!product) return null;
+	return {
+		mediaId: product.media_id || null,
+		localFilePath: product.local_image_path || null,
+		local_file_path: product.local_image_path || null,
+		downloadUrl: product.image_url || null,
+		image_url: product.image_url || null,
+	};
 }
 
 function Section({
@@ -139,7 +160,14 @@ function ReferenceField({
 
 export default function ImgFastlanePage() {
 	const [activeTab, setActiveTab] = useState<FastlaneTab>("frames");
-	const [ingredientType, setIngredientType] = useState<IngredientType>("subject");
+	// Ingredients composer states
+	const [ingSaveLaneId, setIngSaveLaneId] = useState<string>("AVATAR_REFERENCE");
+	const [ingCharacterAssetId, setIngCharacterAssetId] = useState("");
+	const [ingSceneAssetId, setIngSceneAssetId] = useState("");
+	const [ingStyleAssetId, setIngStyleAssetId] = useState("");
+	const [ingSubjectText, setIngSubjectText] = useState("");
+	const [ingSceneText, setIngSceneText] = useState("");
+	const [ingStyleText, setIngStyleText] = useState("");
 
 	const [lanes, setLanes] = useState<ImgAssetLane[]>([]);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -223,20 +251,12 @@ export default function ImgFastlanePage() {
 	// Automatically choose the correct lane based on selections and tab.
 	const lane = useMemo(() => {
 		if (activeTab === "frames") {
-			// If a scene is selected, use AVATAR_PRODUCT_SCENE_COMPOSITE. Otherwise, AVATAR_PRODUCT_COMPOSITE.
 			const laneId = sceneAssetId ? "AVATAR_PRODUCT_SCENE_COMPOSITE" : "AVATAR_PRODUCT_COMPOSITE";
 			return lanes.find((l) => l.lane_id === laneId) ?? null;
 		} else {
-			// Ingredients lanes based on sub-selector
-			const laneId =
-				ingredientType === "subject"
-					? "AVATAR_REFERENCE"
-					: ingredientType === "scene"
-						? "SCENE_REFERENCE"
-						: "STYLE_REFERENCE";
-			return lanes.find((l) => l.lane_id === laneId) ?? null;
+			return lanes.find((l) => l.lane_id === ingSaveLaneId) ?? null;
 		}
-	}, [lanes, activeTab, ingredientType, sceneAssetId]);
+	}, [lanes, activeTab, sceneAssetId, ingSaveLaneId]);
 
 	const selectedCharacter = useMemo(
 		() => characterAssets.find((a) => a.asset_id === characterAssetId) ?? null,
@@ -258,6 +278,65 @@ export default function ImgFastlanePage() {
 	const approvedStyle =
 		selectedStyle && isReusableAsset(selectedStyle) ? selectedStyle : null;
 
+	// Ingredients selections
+	const selectedIngCharacter = useMemo(
+		() => characterAssets.find((a) => a.asset_id === ingCharacterAssetId) ?? null,
+		[characterAssets, ingCharacterAssetId],
+	);
+	const selectedIngScene = useMemo(
+		() => sceneAssets.find((a) => a.asset_id === ingSceneAssetId) ?? null,
+		[sceneAssets, ingSceneAssetId],
+	);
+	const selectedIngStyle = useMemo(
+		() => styleAssets.find((a) => a.asset_id === ingStyleAssetId) ?? null,
+		[styleAssets, ingStyleAssetId],
+	);
+
+	const approvedIngCharacter =
+		selectedIngCharacter && isReusableAsset(selectedIngCharacter) ? selectedIngCharacter : null;
+	const approvedIngScene =
+		selectedIngScene && isReusableAsset(selectedIngScene) ? selectedIngScene : null;
+	const approvedIngStyle =
+		selectedIngStyle && isReusableAsset(selectedIngStyle) ? selectedIngStyle : null;
+
+	const resolvedRefsPayload = useMemo(() => {
+		const refs: Record<string, any> = {};
+		if (activeTab === "frames") {
+			if (approvedCharacter) {
+				refs.subjectAsset = buildAssetPayload(approvedCharacter);
+			}
+			if (approvedScene) {
+				refs.sceneAsset = buildAssetPayload(approvedScene);
+			}
+			if (approvedStyle) {
+				refs.styleAsset = buildAssetPayload(approvedStyle);
+			}
+			if (selectedProduct) {
+				refs.imageAsset = buildProductAssetPayload(selectedProduct);
+			}
+		} else {
+			if (approvedIngCharacter) {
+				refs.subjectAsset = buildAssetPayload(approvedIngCharacter);
+			}
+			if (approvedIngScene) {
+				refs.sceneAsset = buildAssetPayload(approvedIngScene);
+			}
+			if (approvedIngStyle) {
+				refs.styleAsset = buildAssetPayload(approvedIngStyle);
+			}
+		}
+		return refs;
+	}, [
+		activeTab,
+		approvedCharacter,
+		approvedScene,
+		approvedStyle,
+		selectedProduct,
+		approvedIngCharacter,
+		approvedIngScene,
+		approvedIngStyle,
+	]);
+
 	const genResolution = useMemo(
 		() =>
 			resolveGenerationInputs(lane, {
@@ -277,21 +356,27 @@ export default function ImgFastlanePage() {
 				selectedProduct.local_image_path),
 	);
 
-	const productMissing = Boolean(lane?.requires_product_id && !selectedProduct);
-	const productVisualReferenceMissing = Boolean(lane?.requires_product_id && selectedProduct && !productResolvable);
+	const productMissing = Boolean(activeTab === "frames" && lane?.requires_product_id && !selectedProduct);
+	const productVisualReferenceMissing = Boolean(activeTab === "frames" && lane?.requires_product_id && selectedProduct && !productResolvable);
 
-	const characterMissing = Boolean(lane?.requires_character_reference && !approvedCharacter);
-	const sceneMissing = Boolean(lane?.requires_scene_reference && !approvedScene);
-	const styleMissing = Boolean(lane?.requires_style_reference && !approvedStyle);
+	const characterMissing = Boolean(activeTab === "frames" && lane?.requires_character_reference && !approvedCharacter);
+	const sceneMissing = Boolean(activeTab === "frames" && lane?.requires_scene_reference && !approvedScene);
+	
+	// Frames tab requires style reference. Ingredients tab depends on lane requirements.
+	const styleMissing = Boolean(
+		activeTab === "frames" ? !approvedStyle : false
+	);
 
 	// Generation is blocked if inputs are missing OR product has no visual reference.
 	const generationBlocked =
-		productMissing ||
-		productVisualReferenceMissing ||
-		characterMissing ||
-		sceneMissing ||
-		styleMissing ||
-		genResolution.blocked;
+		activeTab === "frames"
+			? (productMissing ||
+				productVisualReferenceMissing ||
+				characterMissing ||
+				sceneMissing ||
+				styleMissing ||
+				genResolution.blocked)
+			: !prompt.trim();
 
 	const hasRealOutput =
 		outputMode === "artifact" ? Boolean(artifactMediaId) : Boolean(uploadFile);
@@ -370,6 +455,33 @@ export default function ImgFastlanePage() {
 		}
 	};
 
+	const handleCompileIngredientsPrompt = () => {
+		const parts: string[] = [];
+		if (ingSubjectText.trim()) {
+			parts.push(`Subject: ${ingSubjectText.trim()}`);
+		} else if (approvedIngCharacter) {
+			parts.push(`Subject: character profile of ${approvedIngCharacter.display_name}`);
+		}
+
+		if (ingSceneText.trim()) {
+			parts.push(`Scene: ${ingSceneText.trim()}`);
+		} else if (approvedIngScene) {
+			parts.push(`Scene: environment context from ${approvedIngScene.display_name}`);
+		}
+
+		if (ingStyleText.trim()) {
+			parts.push(`Style: ${ingStyleText.trim()}`);
+		} else if (approvedIngStyle) {
+			parts.push(`Style: visual mood from ${approvedIngStyle.display_name}`);
+		}
+
+		if (parts.length > 0) {
+			setPrompt(parts.join(", "));
+		} else {
+			setPrompt("");
+		}
+	};
+
 	const handleConfirmedGenerate = async () => {
 		setShowGenConfirm(false);
 		setGenerating(true);
@@ -377,7 +489,10 @@ export default function ImgFastlanePage() {
 		try {
 			const { job_id } = await startImgGeneration({
 				prompt,
-				image_media_ids: genResolution.mediaIds,
+				image_media_ids: Object.values(resolvedRefsPayload)
+					.map((asset) => asset.mediaId)
+					.filter((id): id is string => Boolean(id)),
+				refs: resolvedRefsPayload,
 				aspect,
 				count: quantity,
 			});
@@ -432,9 +547,9 @@ export default function ImgFastlanePage() {
 				display_name: displayName.trim(),
 				description: prompt.trim() || null,
 				product_id: selectedProduct?.id || null,
-				source_character_asset_id: approvedCharacter?.asset_id || null,
-				source_scene_asset_id: approvedScene?.asset_id || null,
-				source_style_asset_id: approvedStyle?.asset_id || null,
+				source_character_asset_id: (activeTab === "frames" ? approvedCharacter : approvedIngCharacter)?.asset_id || null,
+				source_scene_asset_id: (activeTab === "frames" ? approvedScene : approvedIngScene)?.asset_id || null,
+				source_style_asset_id: (activeTab === "frames" ? approvedStyle : approvedIngStyle)?.asset_id || null,
 				identity_lock_status: identityStatus,
 				scale_truth_status: scaleStatus,
 				claim_safety_status: claimStatus,
@@ -600,51 +715,129 @@ export default function ImgFastlanePage() {
 						</>
 					) : (
 						<>
-							{/* Ingredients tab configuration */}
-							<Section step="1" title="Select Ingredient Type">
+							{/* Ingredients composer */}
+							<Section step="1" title="Select Target Ingredient Role">
 								<div className="flex gap-2">
-									{(["subject", "scene", "style"] as const).map((type) => (
+									{(["AVATAR_REFERENCE", "SCENE_REFERENCE", "STYLE_REFERENCE"] as const).map((role) => (
 										<button
-											key={type}
+											key={role}
 											type="button"
-											onClick={() => {
-												setIngredientType(type);
-												resetOutputForm();
-											}}
-											className={`flex-1 rounded-xl border py-2.5 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-												ingredientType === type
+											onClick={() => setIngSaveLaneId(role)}
+											className={`flex-1 rounded-xl border py-2.5 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+												ingSaveLaneId === role
 													? "border-blue-500 bg-blue-600/10 text-blue-400"
 													: "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200"
 											}`}
 										>
-											{type === "subject" ? "Subject / Avatar" : type}
+											{role === "AVATAR_REFERENCE" ? "Subject/Avatar" : role === "SCENE_REFERENCE" ? "Scene" : "Style"}
 										</button>
 									))}
 								</div>
 								<div className="rounded-xl bg-slate-950/60 border border-slate-800/80 p-3 text-[11px] text-slate-400">
-									{ingredientType === "subject" && (
-										<span>Creates a reusable avatar/character reference. Output role: <strong>CHARACTER_REFERENCE</strong>.</span>
+									{ingSaveLaneId === "AVATAR_REFERENCE" && (
+										<span>Creates a reusable character identity. Output role: <strong>CHARACTER_REFERENCE</strong>.</span>
 									)}
-									{ingredientType === "scene" && (
-										<span>Creates a reusable scene/environment reference. Output role: <strong>SCENE_CONTEXT_REFERENCE</strong>.</span>
+									{ingSaveLaneId === "SCENE_REFERENCE" && (
+										<span>Creates a reusable scene context. Output role: <strong>SCENE_CONTEXT_REFERENCE</strong>.</span>
 									)}
-									{ingredientType === "style" && (
+									{ingSaveLaneId === "STYLE_REFERENCE" && (
 										<span>Creates a reusable visual style reference. Output role: <strong>STYLE_REFERENCE</strong>.</span>
 									)}
+								</div>
+							</Section>
+
+							<Section step="2" title="Compose Subject / Avatar">
+								<div className="space-y-3">
+									<label className="block text-[11px] text-slate-300 space-y-1">
+										<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+											Subject Details / Prompt
+										</span>
+										<input
+											value={ingSubjectText}
+											onChange={(e) => setIngSubjectText(e.target.value)}
+											placeholder="e.g. A futuristic robot holding a glowing sphere"
+											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+										/>
+									</label>
+									<ReferenceField
+										label="Select Existing Avatar for Lineage"
+										noun="avatar"
+										assets={characterAssets}
+										value={ingCharacterAssetId}
+										onChange={setIngCharacterAssetId}
+										emptyHint="No avatars in Library"
+										requiredMissing={false}
+										onApprove={handleApproveAsset}
+										approvingId={approvingId}
+									/>
+								</div>
+							</Section>
+
+							<Section step="3" title="Compose Scene / Environment">
+								<div className="space-y-3">
+									<label className="block text-[11px] text-slate-300 space-y-1">
+										<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+											Scene Details / Prompt
+										</span>
+										<input
+											value={ingSceneText}
+											onChange={(e) => setIngSceneText(e.target.value)}
+											placeholder="e.g. cyber-punk neon lit city alleyway at night"
+											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+										/>
+									</label>
+									<ReferenceField
+										label="Select Existing Scene for Lineage"
+										noun="scene reference"
+										assets={sceneAssets}
+										value={ingSceneAssetId}
+										onChange={setIngSceneAssetId}
+										emptyHint="No scene references in Library"
+										requiredMissing={false}
+										onApprove={handleApproveAsset}
+										approvingId={approvingId}
+									/>
+								</div>
+							</Section>
+
+							<Section step="4" title="Compose Style / Mood">
+								<div className="space-y-3">
+									<label className="block text-[11px] text-slate-300 space-y-1">
+										<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+											Style Details / Prompt
+										</span>
+										<input
+											value={ingStyleText}
+											onChange={(e) => setIngStyleText(e.target.value)}
+											placeholder="e.g. cinematic, dramatic rim lighting, unreal engine 5 render"
+											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+										/>
+									</label>
+									<ReferenceField
+										label="Select Existing Style for Lineage"
+										noun="style reference"
+										assets={styleAssets}
+										value={ingStyleAssetId}
+										onChange={setIngStyleAssetId}
+										emptyHint="No style references in Library"
+										requiredMissing={false}
+										onApprove={handleApproveAsset}
+										approvingId={approvingId}
+									/>
 								</div>
 							</Section>
 						</>
 					)}
 
 					{/* Section 4: Prompt Creator */}
-					<Section step="4" title="Prompt Preview & Builder">
+					<Section step={activeTab === "frames" ? "4" : "5"} title="Prompt Preview & Builder">
 						<textarea
 							value={prompt}
 							onChange={(e) => setPrompt(e.target.value)}
 							className="h-28 w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-slate-200 font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none"
 							placeholder="Describe the image prompt here..."
 						/>
-						{activeTab === "frames" && (
+						{activeTab === "frames" ? (
 							<button
 								type="button"
 								onClick={() => void handleCompilePrompt()}
@@ -653,11 +846,19 @@ export default function ImgFastlanePage() {
 							>
 								{compiling ? "Compiling…" : "⚡ Auto compile product prompt"}
 							</button>
+						) : (
+							<button
+								type="button"
+								onClick={handleCompileIngredientsPrompt}
+								className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 transition-all cursor-pointer"
+							>
+								⚡ Auto compile ingredients prompt
+							</button>
 						)}
 					</Section>
 
 					{/* Section 5: Generation configuration & confirm trigger */}
-					<Section step="5" title="Generate (Gated · Credit-spending)">
+					<Section step={activeTab === "frames" ? "5" : "6"} title="Generate (Gated · Credit-spending)">
 						<div className="grid gap-4 md:grid-cols-3">
 							<label className="block text-[11px] text-slate-300 space-y-1">
 								<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -698,28 +899,12 @@ export default function ImgFastlanePage() {
 							<div>
 								Aspect: <strong>{aspect}</strong> | Count: <strong>{quantity}</strong>
 							</div>
-							<div>
-								References Sent:{" "}
-								<strong>
-									{genResolution.mediaIds.length > 0
-										? genResolution.mediaIds.join(", ")
-										: "(none)"}
-								</strong>
+							<div className="space-y-1">
+								<span className="text-[10px] font-semibold text-slate-500 block">refs payload:</span>
+								<pre className="max-h-40 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-2 font-mono text-[10px] text-slate-400">
+									{JSON.stringify(resolvedRefsPayload, null, 2)}
+								</pre>
 							</div>
-							{genResolution.refs.length > 0 && (
-								<ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-400">
-									{genResolution.refs.map((r, i) => (
-										<li key={i}>
-											{r.role}: {r.label} —{" "}
-											{r.mediaId ? (
-												<span className="text-emerald-400">Resolved ({r.mediaId})</span>
-											) : (
-												<span className="text-amber-400">No media ID (text reference only)</span>
-											)}
-										</li>
-									))}
-								</ul>
-							)}
 						</div>
 
 						<button
@@ -742,7 +927,7 @@ export default function ImgFastlanePage() {
 				{/* Right Column: Registry, Checklist, Save */}
 				<div className="lg:col-span-5 space-y-6">
 					{/* Register Output Section */}
-					<Section step="6" title="Register Output (Credit-free)">
+					<Section step={activeTab === "frames" ? "6" : "7"} title="Register Output (Credit-free)">
 						<div className="flex gap-1 rounded-xl border border-slate-700 bg-slate-950 p-0.5 text-[10px] font-bold uppercase tracking-wider">
 							<button
 								type="button"

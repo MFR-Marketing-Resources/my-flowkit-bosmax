@@ -85,6 +85,8 @@ export interface StartImgGenerationInput {
 	model?: string;
 	duration_s?: number;
 	count?: number;
+	refs?: Record<string, any>;
+	startAsset?: Record<string, any>;
 }
 
 export interface StartImgGenerationResult {
@@ -126,6 +128,8 @@ export async function startImgGeneration(
 		model: input.model,
 		duration_s: input.duration_s,
 		count: input.count,
+		refs: input.refs,
+		startAsset: input.startAsset,
 	});
 }
 
