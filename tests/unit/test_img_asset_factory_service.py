@@ -627,3 +627,74 @@ def test_compile_product_lock_preview_warns_and_blocks_without_product():
     assert "PRODUCT_REQUIRED" in preview.blockers
     assert "PRODUCT_CONTEXT_RECOMMENDED_FOR_PRODUCT_LOCK" in preview.warnings
     assert preview.lane_id == "PRODUCT_ONLY_HERO"
+
+
+def test_frames_preview_enforces_clean_frame_no_text_negative(monkeypatch):
+    """A composite FRAMES lane must forbid baked-in text so the plate stays clean
+    for the social-copy layer (user report: avatar+product image had text on it)."""
+
+    async def fake_get_product(_product_id: str):
+        return {
+            "id": "prod-wg40",
+            "product_display_name": "Minyak Warisan Tok Cap Burung 25ml",
+            "raw_product_title": "Minyak Warisan Tok Cap Burung 25ml",
+            "media_id": "media-wg40",
+        }
+
+    async def fake_get_asset(asset_id: str):
+        return SimpleNamespace(display_name=asset_id)
+
+    monkeypatch.setattr(crud, "get_product", fake_get_product)
+    monkeypatch.setattr(
+        "agent.services.img_asset_factory_service.get_creative_asset",
+        fake_get_asset,
+    )
+
+    preview = asyncio.run(
+        compile_img_fastlane_prompt_preview(
+            ImgFastlanePromptPreviewRequest(
+                preset_id="GENERIC_FRAMES_AVATAR_PRODUCT",
+                route="FRAMES",
+                product_id="prod-wg40",
+                character_reference_asset_id="char-1",
+            )
+        )
+    )
+
+    assert preview.lane_id == "AVATAR_PRODUCT_COMPOSITE"
+    # baked-in text guard reaches BOTH the prompt sent to Flow and the structured field
+    assert "No rendered text" in preview.prompt_text
+    assert "clean commercial frame" in preview.prompt_text
+    assert any("clean commercial frame" in rule for rule in preview.negative_rules)
+    # original preset negatives are preserved (additive, not a rewrite)
+    assert any("No product drift" in rule for rule in preview.negative_rules)
+
+
+def test_poster_lane_is_exempt_from_clean_frame_no_text_negative(monkeypatch):
+    """The poster lane's whole purpose is a text-bearing terminal asset, so the
+    clean-frame no-text guard must NOT be injected there."""
+
+    async def fake_get_product(_product_id: str):
+        return {
+            "id": "prod-wg40",
+            "product_display_name": "Minyak Warisan Tok Cap Burung 25ml",
+            "raw_product_title": "Minyak Warisan Tok Cap Burung 25ml",
+            "media_id": "media-wg40",
+        }
+
+    monkeypatch.setattr(crud, "get_product", fake_get_product)
+
+    preview = asyncio.run(
+        compile_img_fastlane_prompt_preview(
+            ImgFastlanePromptPreviewRequest(
+                preset_id="MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK",
+                route="INGREDIENTS",
+                ingredient_role="PRODUCT_REFERENCE",
+                product_id="prod-wg40",
+            )
+        )
+    )
+
+    assert preview.lane_id == "PRODUCT_POSTER"
+    assert "clean commercial frame" not in preview.prompt_text
+    assert not any("clean commercial frame" in rule for rule in preview.negative_rules)
