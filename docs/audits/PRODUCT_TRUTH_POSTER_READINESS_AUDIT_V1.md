@@ -1,269 +1,290 @@
-# Product Truth Poster Readiness Audit V1
+# Product Truth Poster Readiness Audit V2 (FORENSIC CORRECTION)
 
-**Date:** 2026-07-06  
-**Auditor:** Hermes Agent  
+**Date:** 2026-07-06 (revised)  
+**Auditor:** Hermes Agent (counter-audit correction of PR #231)  
 **DB Path:** `C:\Users\USER\Desktop\_ref_flowkit\flow_agent.db`  
 **Command:** `python scripts/audit-product-truth-poster-readiness.py`  
+**Script:** `scripts/audit-product-truth-poster-readiness.py`  
+
+> **FORENSIC NOTE:** This V2 report replaces V1. V1 contained material contradictions between the markdown report (claimed 194 ready) and raw JSON (recorded 3 ready), used a flawed source=FASTMOSS→ref_only heuristic, excluded APPROVED mapping from the ready gate, and applied an unacceptably weak PASS threshold. See counter-audit findings below.
 
 ---
 
 ## Executive Verdict: PASS ✅
 
-**194 canonical products meet the POSTER_READY gate.** The database has sufficient Product Truth to build and test a poster/image prompt generation module. All required identity fields (raw_title, display_name, short_name, category, subcategory/type) are present, mapping is complete (APPROVED/READY), claim-safe copy is at least REVIEW_READY, and claim risk is not HIGH.
+**196 committed product rows meet the POSTER_READY gate.** All four strict threshold checks pass:
 
-The poster module can be built and tested against real runtime products starting today.
+| Threshold | Required | Actual | Status |
+|-----------|----------|--------|--------|
+| Ready products | ≥5 | **196** | ✅ |
+| Distinct categories | ≥3 | **24** | ✅ |
+| Target product (Bosmax/Minyak) | ≥1 | **1** (Minyak Warisan) | ✅ |
+| Product with local/downloaded image | ≥1 | **1** | ✅ |
+
+The poster/image prompt generation module can be built and tested now. Use the 196 POSTER_READY products as test fixtures.
+
+> **⚠️ WARNING:** Bosmax Oil 10 ML and Bosmax Herbs 5 ML are **NOT** POSTER_READY. Both are blocked by `CLAIM_RISK_HIGH`. Only Minyak Warisan Tok Cap Burung 25ml is a target product that passes the poster gate. See Section 7.
 
 ---
 
-## 1. Product Counts Table
+## Counter-Audit: V1 Material Contradictions Repaired
+
+| Issue | V1 (broken) | V2 (fixed) |
+|-------|-------------|------------|
+| **Report vs JSON** | Report claimed 194 ready; JSON said 3 ready | Both report 196 ready ✅ |
+| **APPROVED mapping** | Script excluded APPROVED as blocker; report claimed it was ready | APPROVED IS a valid ready state; script and report agree ✅ |
+| **Canonical / ref-only** | `source=FASTMOSS` → ref_only (wrong) | All 516 product table rows are canonical; `source` is provenance, not lifecycle |
+| **PASS threshold** | `ready > 0` (trivial) | ≥5 ready, ≥3 categories, ≥1 target, ≥1 local image ✅ |
+| **Confidence** | Unlabeled heuristic | Clearly labeled "heuristic only" — not ProductTruthService ✅ |
+| **Image counts** | Report said 36 local_image; JSON said 3 | Both now say 3 local / 3 DOWNLOADED ✅ |
+| **Bosmax targets** | Not reported | Full per-product readiness matrix in Section 7 ✅ |
+
+---
+
+## 1. Product Counts Table (ALL 516 = canonical committed rows)
+
+> The `product` table has **no `reference_only` column**. All 516 rows are committed canonical product rows. `source=FASTMOSS` indicates provenance (import source), not lifecycle state. Reference-only products live in the FastMoss workbook (outside the product table) and are not counted here.
 
 | # | Metric | Count |
 |---|--------|-------|
 | 1 | Total products in `product` table | **516** |
 | 2 | Active products | **516** |
 | 3 | Archived products | **0** |
-| 4 | Reference-only (source=FASTMOSS) | **298** |
-| 5 | Approved canonical (source=MANUAL) | **218** |
+| 4 | Source: FASTMOSS (provenance only) | **298** |
+| 5 | Source: MANUAL | **218** |
 | 6 | With `raw_product_title` | **516** (100%) |
 | 7 | With `product_display_name` | **516** (100%) |
 | 8 | With `product_short_name` | **516** (100%) |
-| 9 | With `category` | **510** (6 missing) |
-| 10 | With `subcategory` | **510** |
-| 11 | With `type` | **516** |
-| 12 | `mapping_status` READY/APPROVED | **211** (7 READY + 204 APPROVED) |
-| 13 | `mapping_status` NOT ready / missing | **305** (302 NULL + 3 BLOCKED) |
-| 14 | With `image_url` | **502** |
-| 15 | With `local_image_path` | **36** |
-| 16 | `image_asset_status` ready | **36** (DOWNLOADED/IMAGE_CACHE_READY) |
-| 17 | `claim_safe_copy_status` ready/approved | **470** (REVIEW_READY) |
-| 18 | `claim_risk_level` HIGH / MEDIUM / LOW / MISSING | HIGH: 3, MEDIUM: 116, LOW: 359, MISSING: 38 |
-| 19 | Production-approved for IMG | **0** (no explicit IMG approval recorded) |
-| 20 | Canonical products passing POSTER_READY gate | **194** (of 218 canonical) |
+| 9 | With `category` | **516** (100%) |
+| 10 | With `subcategory` | **516** (100%) |
+| 11 | With `type` | **508** |
+| 12 | `mapping_status` robust (READY + APPROVED) | **211** (7 READY + 204 APPROVED) |
+| 13 | `mapping_status` missing (NULL) | **302** (295 FASTMOSS + 7 MANUAL) |
+| 14 | `mapping_status` BLOCKED | **3** |
+| 15 | With `image_url` | **505** |
+| 16 | With `local_image_path` | **3** |
+| 17 | `image_asset_status` DOWNLOADED | **3** |
+| 18 | `image_asset_status` IMAGE_READY | **0** |
+| 19 | `claim_safe_copy_status` breakdown | APPROVED: 302, REVIEW_READY: 196, PREVIEW_ONLY: 13, MISSING: 5 |
+| 20 | `claim_risk_level` breakdown | HIGH: 3 (2 are Bosmax), MEDIUM: 2, LOW: 206, MISSING: 305 (all FASTMOSS) |
+| 21 | Production-approved for IMG | **495** |
+| 22 | Products passing POSTER_READY gate | **196** |
 
 ---
 
-## 2. Product Truth Confidence Distribution
+## 2. Image Readiness Tiers
 
-| Confidence | Count | Notes |
-|------------|-------|-------|
-| HIGH | 3 | FAST_MOSS source + raw file + READY mapping |
-| MEDIUM | 4 | READY mapping (non-FASTMOSS) |
-| LOW | 506 | Missing or incomplete mapping_status |
-| NEEDS_REVIEW | 3 | BLOCKED mapping status |
+| Tier | Count | Description |
+|------|-------|-------------|
+| **PRODUCT_HERO_POSTER_READY** | 3 | Local image cached OR image_asset_status=DOWNLOADED |
+| **PRODUCT_IMAGE_PROMPT_READY** | 503 | Has remote image_url (no local cache) |
+| **TEXT_ONLY_POSTER_READY** | 10 | No image at all — poster generation must use text-only subject |
 
-Contradiction flags (severe): 2 products with `claim_risk_level=HIGH`.  
-Source anchor missing/weak: 302 products with `mapping_status=NULL` (primarily FastMoss reference rows).  
-Image analysis unavailable: 14 products have no image_url or local_image_path.  
-Claim review required: 0 canonical products (46 FastMoss rows have non-ready claim status).
+The IMG mode supports text-only subject through `PROMPT_TEXT_SUBJECT` fallback (`approved_product_package_service.py` L253-258), so TEXT_ONLY products are not blocked for IMG — they just cannot produce visual product hero posters.
 
 ---
 
-## 3. Poster Readiness Distribution
+## 3. Product Truth Confidence (Simplified Heuristic Only)
+
+> ⚠️ **LIMITATION:** Confidence values below use a simplified heuristic (`simple_confidence()`). The actual `ProductTruthService.build_computed_profile()` is NOT invoked because it requires the full async app context (aiosqlite, FastMoss taxonomy reconciliation, image analysis provider). These labels are approximate and should not be treated as authoritative Product Truth confidence.
+
+| Label | Count | Heuristic Basis |
+|-------|-------|----------------|
+| MEDIUM (heuristic) | 211 | mapping_status IN (READY, APPROVED) |
+| LOW (heuristic) | 302 | mapping_status NULL (needs mapping) |
+| NEEDS_REVIEW (heuristic) | 3 | mapping_status BLOCKED |
+
+No HIGH heuristic confidence exists for FastMoss source + raw file because 0 FASTMOSS products have `fastmoss_source_file` populated.
+
+---
+
+## 4. Poster Readiness Distribution
 
 | Gate | Count | Description |
 |------|-------|-------------|
-| **POSTER_READY** | **194** | Canonical, all identity fields, mapping APPROVED/READY, claim-safe ready, low/medium risk |
-| **POSTER_PREVIEW_ONLY** | **322** | 298 FastMoss reference-only + 24 canonical with blockers |
-| **POSTER_BLOCKED** | **0** | No products are fully blocked |
-
-### Canonical Preview-Only Breakdown (24 products)
-
-These are the canonical products that are ALMOST ready but have one or more blockers:
-
-| Blocker | Count | Severity |
-|---------|-------|----------|
-| `IMG_NOT_PROD_APPROVED` | 21 | P1 |
-| `NO_IMAGE` | 10 | P1 |
-| `NO_CATEGORY` | 6 | P2 |
-| `NO_SUBCAT_OR_TYPE` | 6 | P2 |
-| `MAPPING_BLOCKED` | 3 | P2 |
-| `CLAIM_RISK_HIGH` | 2 | P1 |
+| **POSTER_READY** | **196** | All identity fields + mapping robust + claim safe ready + IMG prod approved |
+| **POSTER_PREVIEW_ONLY** | **320** | One or more blockers (see below) |
+| **POSTER_BLOCKED** | **0** | Zero archived products; zero missing raw_title/display_name |
 
 ---
 
-## 4. Top Blockers Table
+## 5. Top Blockers Table
 
 | Blocker Code | Count | Severity | Recommended Fix |
 |-------------|-------|----------|----------------|
-| `REFERENCE_ONLY` | 298 | P2 | FastMoss products need Smart Registration workflow to become canonical. Non-blocking for poster test — these are expected to be preview-only. |
-| `IMG_NOT_PROD_APPROVED` | 21 | P1 | Run production prompt approval flow. Add "IMG" to `production_prompt_approved_modes`. |
-| `NO_IMAGE` | 10 | P1 | Upload/attach product images. Image cache download needed. |
-| `NO_CATEGORY` | 6 | P2 | Add category via product edit UI. |
-| `NO_SUBCAT_OR_TYPE` | 6 | P2 | Add subcategory or type via product edit UI. |
-| `MAPPING_BLOCKED` | 3 | P2 | Review blocked mapping. Run mapping reconciliation. |
-| `CLAIM_RISK_HIGH` | 2 | P1 | Manual claim review required before poster generation. |
+| `MAPPING_MISSING` | 302 | P1 | Run product mapping workflow on all NULL-mapping products. 295 are FASTMOSS-source — these were bulk-imported but never mapped. |
+| `MAPPING_BLOCKED` | 3 | P1 | Review blocked mapping. Run mapping reconciliation. |
+| `IMG_NOT_PROD_APPROVED` | 19 | P1 | Run production prompt approval flow. Add "IMG" to `production_prompt_approved_modes`. |
+| `CLAIM_RISK_HIGH` | 2 | P0 | **CRITICAL:** Bosmax Oil and Bosmax Herbs have HIGH claim risk. Manual claim review required before poster generation. |
+| `NO_IMAGE` | 7 | P2 | Upload/attach product images. |
+| `MISSING_CATEGORY` | 0 | — | No products missing category (fixed from V1 overcount). |
+| `MISSING_SUBCAT_AND_TYPE` | 0 | — | No products missing both (fixed from V1 overcount). |
 
 ---
 
-## 5. Sample Products
+## 6. Sample Products
 
-### 5.1 POSTER_READY (5 samples)
+### 6.1 POSTER_READY (5 samples)
 
-| Product ID | Display Name | Source | Lifecycle | Mapping | Image | Claim | Confidence |
-|------------|-------------|--------|-----------|---------|-------|-------|------------|
-| `ef9c117e` | Wooden Curtain Rod Batang Langsir Kayu 28mm | MANUAL | ACTIVE | APPROVED | IMAGE_URL | REVIEW_READY | LOW |
-| `29db89c6` | Sabun Dobi Malaya Combo 10 KG | MANUAL | ACTIVE | APPROVED | IMAGE_URL | REVIEW_READY | LOW |
-| `6c70428f` | [KKM] FEREENA GLUTA SOAP 10g | MANUAL | ACTIVE | APPROVED | IMAGE_URL | REVIEW_READY | LOW |
-| `9311100f` | Numinara Aurelia Body Soap 125g | MANUAL | ACTIVE | APPROVED | IMAGE_URL | REVIEW_READY | LOW |
-| `20a935f9` | CantikBaby Sapu Tangan Bayi 6 Lapis | MANUAL | ACTIVE | APPROVED | IMAGE_URL | REVIEW_READY | LOW |
+| Product ID | Display Name | Source | Mapping | Image Tier | Claim | Confidence |
+|------------|-------------|--------|---------|-----------|-------|------------|
+| `de3ee6bd` | [KKM] 7LUME White Tomato Skin Supplement | MANUAL | READY | IMAGE_PROMPT | APPROVED | MEDIUM (h) |
+| `3bc08dc9` | Sumikko Premium Baby Diaper pants | MANUAL | READY | IMAGE_PROMPT | APPROVED | MEDIUM (h) |
+| `ef9c117e` | Wooden Curtain Rod Batang Langsir Kayu 28mm | MANUAL | APPROVED | IMAGE_PROMPT | REVIEW_READY | MEDIUM (h) |
+| `29db89c6` | Sabun Dobi Malaya Combo 10 KG | MANUAL | APPROVED | IMAGE_PROMPT | REVIEW_READY | MEDIUM (h) |
+| `6483d624` | **Minyak Warisan Tok Cap Burung 25ml** | MANUAL | READY | HERO_POSTER | REVIEW_READY | MEDIUM (h) |
 
-### 5.2 POSTER_PREVIEW_ONLY (5 samples)
+### 6.2 POSTER_PREVIEW_ONLY (5 samples)
 
-| Product ID | Display Name | Source | Lifecycle | Mapping | Image | Claim | Blocker |
-|------------|-------------|--------|-----------|---------|-------|-------|---------|
-| `b460ffbd` | Bosmax Oil 10 ML | MANUAL | ACTIVE | APPROVED | IMAGE_URL | REVIEW_READY | `IMG_NOT_PROD_APPROVED` |
-| `90349f8c` | Bosmax Herbs 5 ML | MANUAL | ACTIVE | READY | IMAGE_URL | REVIEW_READY | `IMG_NOT_PROD_APPROVED` |
-| `fe8f489e` | BIYA Gel eyeliner pencil 1.7mm | MANUAL | ACTIVE | APPROVED | IMAGE_URL | REVIEW_READY | `IMG_NOT_PROD_APPROVED` |
-| *(FastMoss ref)* | *(various FastMoss products)* | FASTMOSS | ACTIVE | NULL | IMAGE_URL | various | `REFERENCE_ONLY` |
-| *(No image)* | *(various)* | MANUAL | ACTIVE | APPROVED | MISSING | REVIEW_READY | `NO_IMAGE` |
+| Product ID | Display Name | Source | Mapping | Image | Claim | Blocker |
+|------------|-------------|--------|---------|-------|-------|---------|
+| `b460ffbd` | **Bosmax Oil 10 ML** | MANUAL | APPROVED | HERO_POSTER | APPROVED | `CLAIM_RISK_HIGH` |
+| `90349f8c` | **Bosmax Herbs 5 ML** | MANUAL | READY | HERO_POSTER | APPROVED | `CLAIM_RISK_HIGH` |
+| `8ae553d2` | CLASSY Karpet Velvet | FASTMOSS | NULL | IMAGE_PROMPT | APPROVED | `MAPPING_MISSING` |
+| *(various)* | *(295 FASTMOSS products)* | FASTMOSS | NULL | IMAGE_PROMPT | various | `MAPPING_MISSING` |
+| *(various)* | *(7 MANUAL + 3 BLOCKED)* | MANUAL | BLOCKED/NULL | various | various | `MAPPING_BLOCKED` or `MAPPING_MISSING` |
 
-### 5.3 POSTER_BLOCKED (0 samples)
+### 6.3 POSTER_BLOCKED (0 samples)
 
-No canonical products are truly blocked. All canonical products have at minimum `raw_product_title`, `product_display_name`, and `product_short_name`. Zero archives.
+Zero products are truly blocked. All 516 have `raw_product_title`, `product_display_name`, and are ACTIVE.
 
 ---
 
-## 6. Key Findings
+## 7. Target Product Readiness Matrix
 
-### Product Truth: Computed / Read-Only ✅
+> ⚠️ These are the poster module's primary target products.
 
-`ProductTruthService.build_computed_profile()` is a **read-only, stateless computation** over existing product rows. Product Truth Profiles are never persisted — they are computed on-demand from the product table's existing columns. This means:
+### Bosmax Herbs 5 ML
 
-- No migration needed to add Product Truth storage.
-- Product Truth confidence is derived from `mapping_status`, `source`, and source anchor availability.
-- The poster module can call `ProductTruthService` inline without waiting for a database backfill.
+| Field | Value |
+|-------|-------|
+| `product_id` | `90349f8c-9e14-4efe-988e-76ec60ea31f4` |
+| Product state | **POSTER_PREVIEW_ONLY** (not ready) |
+| Source | MANUAL |
+| Lifecycle | ACTIVE |
+| Mapping status | READY ✅ |
+| Claim safe copy | CLAIM_SAFE_COPY_APPROVED ✅ |
+| Claim risk level | **HIGH** 🔴 |
+| Image URL | Yes |
+| Local image path | Yes (DOWNLOADED) |
+| Image tier | PRODUCT_HERO_POSTER_READY |
+| IMG production approved | Yes (in modes: T2V, IMG) |
+| **Blocker** | `CLAIM_RISK_HIGH` |
 
-### Image Gate for IMG Mode
+### Bosmax Oil 10 ML
 
-From `approved_product_package_service.py` line 254-256:
+| Field | Value |
+|-------|-------|
+| `product_id` | `b460ffbd-7d9d-4f6b-a570-0e9b1056439a` |
+| Product state | **POSTER_PREVIEW_ONLY** (not ready) |
+| Source | MANUAL |
+| Lifecycle | ACTIVE |
+| Mapping status | APPROVED ✅ |
+| Claim safe copy | CLAIM_SAFE_COPY_APPROVED ✅ |
+| Claim risk level | **HIGH** 🔴 |
+| Image URL | Yes |
+| Local image path | Yes (DOWNLOADED) |
+| Image tier | PRODUCT_HERO_POSTER_READY |
+| IMG production approved | Yes (in modes: T2V, IMG) |
+| **Blocker** | `CLAIM_RISK_HIGH` |
 
+### Minyak Warisan Tok Cap Burung 25ml ⭐
+
+| Field | Value |
+|-------|-------|
+| `product_id` | `6483d624-a03d-4933-9bba-6ca2e5f7b6fd` |
+| Product state | **POSTER_READY** ✅ |
+| Source | MANUAL |
+| Lifecycle | ACTIVE |
+| Mapping status | READY ✅ |
+| Claim safe copy | CLAIM_SAFE_COPY_REVIEW_READY ✅ |
+| Claim risk level | MEDIUM ✅ |
+| Image URL | Yes |
+| Local image path | Yes (DOWNLOADED) |
+| Image tier | PRODUCT_HERO_POSTER_READY |
+| IMG production approved | Yes (in modes: T2V, IMG) |
+| **Blocker** | None ✅ |
+
+---
+
+## 8. Critical Decision: APPROVED as Valid Ready State
+
+**DECISION: `mapping_status=APPROVED` IS a valid ready state.**
+
+Rationale:
+- The mapping pipeline produces two equivalent outcome states: `READY` (auto-mapped) and `APPROVED` (manually reviewed and approved).
+- 204 MANUAL products carry `APPROVED` status. These went through the same approval workflow as the 7 `READY` products, just through a different path.
+- Excluding `APPROVED` would drop the ready count from 196 → 7, which would be a FALSE NEGATIVE — treating fully-approved mapped products as if they need remediation.
+- The `product_catalog_read_model` and mapping audit both treat `APPROVED` as a resolved state.
+
+The script now uses:
 ```python
-if mode == "IMG":
-    if not has_img_subject:
-        blockers.append("SUBJECT_REQUIRED")
+MAPPING_READY_STATES = {"READY", "APPROVED", "MAPPED", "COMPLETE"}
 ```
 
-And `_img_subject_ready()` on line 135:
-```python
-def _img_subject_ready(product):
-    return bool(_product_identity(product))
-```
+---
 
-Where `_product_identity` = `product_display_name or raw_product_title`.
+## 9. Canonical vs Reference-Only: Corrected Methodology
 
-**This means IMG mode permits TEXT-ONLY subject when a product has identity text.** An image is NOT strictly required for IMG mode if the product has a display name. This is confirmed by the slot's default source falling back to `PROMPT_TEXT_SUBJECT` when no image is available.
+**V1 error:** Script treated `source=FASTMOSS` as reference-only. This was wrong.
 
-**194 ready products satisfy this text-only subject gate.** They all have `product_display_name`.
+**Correct methodology:**
+- The `product` table has **no `reference_only` column**. The schema `CHECK(source IN ('FASTMOSS','TIKTOKSHOP','MANUAL','IMPORTED'))` — `source` is provenance, not lifecycle.
+- `derive_catalog_state()` in `product_catalog_read_model.py` checks `row.get("reference_only")` — this key is injected by the reference workbook loader for products that are NOT in the product table. Product table rows never have this key set.
+- `is_fastmoss_reference_product_id()` checks for `fastmoss-ref:*` ID prefix — our FASTMOSS products have UUIDs, not ref prefixes.
+- All 516 rows in the `product` table are **committed canonical products**. None are reference-only.
 
-### Claim Gate: Non-Blocking
-
-All 218 canonical products have `claim_safe_copy_status` = `CLAIM_SAFE_COPY_REVIEW_READY` (not BLOCKED, not REVIEW_REQUIRED). The service treats `REVIEW_READY` as a valid claim-safe state:
-```python
-CLAIM_SAFE_READY_STATES = {STATUS_REVIEW_READY, CLAIM_SAFE_STATUS_APPROVED}
-```
-
-### Production Approval Gap
-
-21 canonical products lack IMG in `production_prompt_approved_modes`. This is the single largest blocker for those products. Running the production prompt approval flow would clear this.
-
-### Image Cache Gap
-
-Only 36 products have `local_image_path` set (image cached locally). However, 502 have `image_url` (remote image). The IMG mode can use either, so this is not a hard blocker for the 194 ready products.
+**Limitation:** This script only queries the `product` table. It cannot detect FastMoss reference-only products that live in the external reference workbook (loaded via `list_fastmoss_reference_products()`). Those are out of scope for this product-table-focused audit.
 
 ---
 
-## 7. Specific Answers
-
-### Can we safely build and test the poster module now?
-
-**YES.** 194 canonical products meet the POSTER_READY gate. They have:
-- Canonical identity (raw_title, display_name, short_name)
-- Category and subcategory/type
-- Mapping APPROVED/READY
-- Claim-safe copy REVIEW_READY
-- At least one image source (image_url or local_image_path)
-- Low/medium claim risk
-
-### Which products should be used as test fixtures?
-
-Use any of the 194 POSTER_READY products. Recommended test fixture categories:
-- **Fashion:** ~60+ ready products (tudung, baju, seluar, jersey)
-- **Home & Living:** ~30+ ready products (bedsheets, curtains, storage)
-- **Beauty & Personal Care:** ~20+ ready products (soap, lipstick, skincare)
-- **Food & Beverage:** ~10+ ready products (sambal, cookies, popcorn)
-- **Electronics:** ~5+ ready products (chargers, fans, smartwatches)
-- **Baby Care:** ~5+ ready products (diapers, wipes, handkerchiefs)
-
-### If no, what work must be done first? (N/A — verdict is PASS)
-
-No blocking work is required. Optional pre-poster work:
-1. Run production prompt approval for IMG on the 21 preview-only products.
-2. Download images for the 10 products with NO_IMAGE to bring them into READY state.
-3. Add category/subcategory to the 6 products missing them.
-
----
-
-## 8. Remaining Gaps
+## 10. Remaining Gaps
 
 | Gap | Impact | Priority |
 |-----|--------|----------|
-| No `mapping_status` for 302 FastMoss reference rows | These are reference-only by design; no impact on canonical poster testing | P3 |
-| `claim_risk_level=MISSING` for 38 products | Unknown risk; these are mostly FastMoss ref rows; <1% are canonical | P3 |
-| No IMG-specific production approval workflow | 21 canonical products cannot generate IMG without this approval | P2 |
-| Product Truth Profile not persisted | Confidence is recomputed each time; acceptable for now | P3 |
-| `image_asset_status=NULL` for most products | IMG mode tolerates this via image_url fallback; not blocking | P3 |
-| No explicit `reference_only` column | Detected via `source=FASTMOSS` heuristic; schema could be clearer | P3 |
+| Bosmax Oil + Herbs blocked by HIGH claim risk | Cannot generate poster prompts for primary BOSMAX products | **P0** |
+| 295 FASTMOSS products with NULL mapping | Were bulk-imported but never mapped. Cannot reach POSTER_READY until mapped. | P1 |
+| Confidence is heuristic, not ProductTruthService | Real contradiction detection (boundary locks, taxonomy conflicts) not performed | P2 |
+| Only 3 products with local image cache | Hero poster generation limited to 3 products with cached images | P2 |
+| Image analysis status all UNRESOLVED or MISSING | No actual vision provider analysis performed on any product image | P3 |
 
 ---
 
-## 9. Audit Methodology
+## 11. Recommended Pre-Poster Actions
 
-The audit script `scripts/audit-product-truth-poster-readiness.py`:
-1. Connects to the runtime SQLite database at `flow_agent.db`
-2. Queries all columns from the `product` table
-3. Classifies each product using the proposed POSTER_READY gate
-4. Counts `mapping_status=APPROVED` as equivalent to READY (per BOSMAX convention)
-5. Treats `claim_safe_copy_status=CLAIM_SAFE_COPY_REVIEW_READY` as a valid ready state
-6. Allows text-only subject for IMG mode when no image is present but product identity exists
-
-### Classification Logic
-
-```
-POSTER_READY:
-  lifecycle = ACTIVE
-  raw_product_title EXISTS
-  product_display_name EXISTS
-  product_short_name EXISTS
-  category EXISTS
-  (subcategory EXISTS OR type EXISTS)
-  mapping_status IN (READY, MAPPED, COMPLETE, APPROVED)
-  (image_url EXISTS OR local_image_path EXISTS)
-  claim_safe_copy_status NOT IN (REVIEW_REQUIRED, NEEDS_REVIEW, BLOCKED)
-  claim_risk_level != HIGH
-  source != FASTMOSS (canonical only)
-
-POSTER_PREVIEW_ONLY:
-  Any canonical product missing one or more ready conditions
-  OR any FastMoss reference product with category + short_name
-
-POSTER_BLOCKED:
-  ARCHIVED products
-  OR FastMoss reference products missing category or short_name
-  OR products missing raw_product_title or product_display_name
-```
+1. **P0:** Clear `claim_risk_level=HIGH` on Bosmax Oil and Bosmax Herbs through claim-safe review.
+2. **P1:** Run mapping workflow on 295 FASTMOSS null-mapping products to reach robust mapping.
+3. **P2:** Download images for priority categories to increase PRODUCT_HERO_POSTER_READY count beyond 3.
+4. **P2:** Replace simple_confidence() with actual `ProductTruthService.build_computed_profile()` for authoritative contradiction detection.
+5. **P3:** Enable vision provider for image analysis.
 
 ---
 
-## 10. Validation Proof
+## 12. Validation Proof
 
 ```
-DB Path:           C:\Users\USER\Desktop\_ref_flowkit\flow_agent.db
-Command:           python scripts/audit-product-truth-poster-readiness.py
-Total products:    516
-Report path:       docs/audits/PRODUCT_TRUTH_POSTER_READINESS_AUDIT_V1.md
-Final verdict:     PASS
+DB Path:      C:\Users\USER\Desktop\_ref_flowkit\flow_agent.db
+Command:      python scripts/audit-product-truth-poster-readiness.py
+Total:        516
+Ready:        196
+Preview:      320
+Blocked:      0
+Categories:   24
+Verdict:      PASS
+JSON matches: YES (all counts verified identical)
 ```
+
+| Check | Status |
+|-------|--------|
+| Raw JSON `poster_ready` matches report | ✅ Both = 196 |
+| Script treats APPROVED as ready | ✅ `MAPPING_READY_STATES` includes APPROVED |
+| No source=FASTMOSS→ref_only lie | ✅ All 516 are canonical |
+| Stricter PASS threshold applied | ✅ 4 checks, all pass |
+| Confidence labeled as heuristic | ✅ |
+| Bosmax/Minyak targets reported | ✅ Section 7 |
+| Image tiers distinguished | ✅ HERO/IMAGE_PROMPT/TEXT_ONLY |
+| JSON `verdict_detail` matches threshold checks | ✅ |
 
 ---
 
-*Generated by Hermes Agent on 2026-07-06. Script is read-only and reusable.*
+*Generated by corrected audit script V2 on 2026-07-06. Read-only. No product rows were modified.*
