@@ -19,6 +19,10 @@ from agent.models.product_intelligence_snapshot import (
     ProductIntelligenceSnapshotListResponse,
     SnapshotStatus,
 )
+from agent.models.product_intelligence_review_draft import (
+    ProductIntelligenceReviewDraftCreateRequest,
+    ProductIntelligenceReviewDraftListResponse,
+)
 from agent.services.product_intelligence import (
     enrich_product, resolve_product_assets, upload_product_to_flow,
     normalize_source as _normalize_source,
@@ -64,6 +68,10 @@ from agent.services.fastmoss_product_reference_service import (
 from agent.services.product_intelligence_snapshot_service import (
     get_latest_snapshot_response,
     get_snapshot_list_response,
+)
+from agent.services.product_intelligence_review_draft_service import (
+    create_review_draft,
+    list_review_drafts,
 )
 from agent.utils.paths import product_image_path
 
@@ -1277,6 +1285,32 @@ async def get_product_intelligence_snapshots(
 ) -> ProductIntelligenceSnapshotListResponse:
     try:
         return await get_snapshot_list_response(product_id, status=status, limit=limit)
+    except ValueError as exc:
+        if str(exc) == "PRODUCT_NOT_FOUND":
+            raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc
+        raise
+
+
+@router.post("/{product_id}/intelligence/review-drafts")
+async def create_product_intelligence_review_draft(
+    product_id: str,
+    request: ProductIntelligenceReviewDraftCreateRequest,
+) -> dict:
+    try:
+        return (await create_review_draft(product_id, request)).model_dump()
+    except ValueError as exc:
+        if str(exc) == "PRODUCT_NOT_FOUND":
+            raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc
+        raise
+
+
+@router.get("/{product_id}/intelligence/review-drafts")
+async def get_product_intelligence_review_drafts(
+    product_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> ProductIntelligenceReviewDraftListResponse:
+    try:
+        return await list_review_drafts(product_id, limit=limit)
     except ValueError as exc:
         if str(exc) == "PRODUCT_NOT_FOUND":
             raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc

@@ -105,7 +105,7 @@ def test_products_sales_analyzer_uses_wrap_safe_layout_and_kv_structure():
         "Buyer Persona Snapshot",
         "Copy Strategy Summary",
         "No approved snapshot stored for this product yet.",
-        "Operator Clarity: Product Intelligence is review-only",
+        "Operator Clarity: Approved Product Intelligence truth",
         "Loading Product Intelligence snapshots...",
         "Product Not Found",
     ]:
@@ -126,6 +126,9 @@ def test_products_sales_analyzer_does_not_truncate_long_product_and_shop_text():
 def test_products_sales_analyzer_product_intelligence_wires_real_snapshot_apis():
     page_source = _read("dashboard/src/pages/ProductsSalesAnalyzerPage.tsx")
     api_source = _read("dashboard/src/api/products.ts")
+    component_source = _read(
+        "dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.tsx"
+    )
     types_source = _read("dashboard/src/types/index.ts")
 
     for token in [
@@ -136,15 +139,19 @@ def test_products_sales_analyzer_product_intelligence_wires_real_snapshot_apis()
         "Failed to load field provenance evidence",
         "No approved snapshot stored for this product yet.",
         "No field provenance evidence stored for this",
-        "Approve product",
-        "intelligence through the review/registration flow in a",
-        "future PR.",
+        "ProductIntelligenceReviewDraftPanel",
+        "reloadProductIntelligence",
     ]:
         assert token in page_source
 
     for token in [
         "/api/products/${encodeURIComponent(productId)}/intelligence",
         "/api/products/${encodeURIComponent(productId)}/intelligence/snapshots",
+        "/api/products/${encodeURIComponent(productId)}/intelligence/review-drafts",
+        "/api/product-intelligence/review-drafts/${encodeURIComponent(draftId)}",
+        "/api/product-intelligence/review-drafts/${encodeURIComponent(draftId)}/validate",
+        "/api/product-intelligence/review-drafts/${encodeURIComponent(draftId)}/approve",
+        "/api/product-intelligence/review-drafts/${encodeURIComponent(draftId)}/reject",
         "/api/product-intelligence/snapshots/${encodeURIComponent(snapshotId)}/provenance",
         "field_name",
     ]:
@@ -156,8 +163,24 @@ def test_products_sales_analyzer_product_intelligence_wires_real_snapshot_apis()
         "export interface ProductIntelligenceLatestSnapshotResponse",
         "export interface ProductIntelligenceSnapshotListResponse",
         "export interface ProductIntelligenceFieldProvenanceListResponse",
+        "export interface ProductIntelligenceReviewDraft",
+        "export interface ProductIntelligenceReviewDraftListResponse",
+        "export interface ProductIntelligenceReviewDraftValidationResponse",
     ]:
         assert token in types_source
+
+    for token in [
+        "Product Intelligence Review Draft Pipeline",
+        "Create Review Draft",
+        "Validate Draft",
+        "Approve Draft",
+        "Reject Draft",
+        "Field Provenance Editor",
+        "Missing Required Fields",
+        "Claim Safety Gate",
+        "Review draft approved. Immutable snapshot",
+    ]:
+        assert token in component_source
 
 
 def test_product_display_util_formats_currency_with_commas_and_two_decimals():
