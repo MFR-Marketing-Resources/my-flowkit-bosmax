@@ -81,7 +81,7 @@ def test_fastlane_generate_and_approval_guards_remain_honest():
     assert "EXTERNAL_RUNTIME_NOT_VERIFIED" in page
     assert "setShowGenConfirm(true)" in page
     assert "handleConfirmedGenerate" in page
-    assert "Confirm &amp; Generate (live)" in page
+    assert "Confirm &amp; Generate" in page
     assert "startImgGeneration" in page
     assert "generationBlocked" in page
     assert "approvalBlocked" in page
@@ -215,3 +215,20 @@ def test_avatar_registry_back_link_is_context_aware():
     # Fastlane tells the registry where Back should return to.
     page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
     assert "/assets/avatar-registry?from=/assets/img-fastlane" in page
+
+
+def test_frames_flow_is_universal_and_credit_free():
+    """Frames Fastlane must be a universal avatar+product Generate — no Template
+    Preset dropdown, style/scene optional, and image generation labelled
+    credit-free (only video burns credits). Regression guard for the rework."""
+    page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
+    # Template Preset picker is gone; the universal generic preset is forced.
+    assert 'title="Template Preset"' not in page
+    assert '"GENERIC_FRAMES_AVATAR_PRODUCT"' in page
+    # Style/scene never hard-block generation.
+    assert "OPTIONAL_BLOCKERS" in page
+    assert "hardBlockers" in page
+    # The false "spends credits" claim is gone; image gen is credit-free.
+    assert "Spends Credits" not in page
+    assert "Credit-spending Generation" not in page
+    assert "credit-free" in page
