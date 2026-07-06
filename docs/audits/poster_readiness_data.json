@@ -1,0 +1,185 @@
+{
+  "db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+  "total": 516,
+  "active": 516,
+  "archived": 0,
+  "ref_only": 298,
+  "canonical": 218,
+  "with_raw_title": 516,
+  "with_display_name": 516,
+  "with_short_name": 516,
+  "with_category": 510,
+  "with_subcategory": 510,
+  "with_type": 508,
+  "mapping_ready": 7,
+  "mapping_not_ready": 509,
+  "with_image_url": 505,
+  "with_local_image": 3,
+  "image_statuses": {
+    "UNRESOLVED": 303,
+    "DOWNLOADED": 3,
+    "MISSING": 210
+  },
+  "image_ready": 0,
+  "claim_safe": {
+    "CLAIM_SAFE_COPY_APPROVED": 300,
+    "CLAIM_SAFE_COPY_REVIEW_READY": 195,
+    "CLAIM_SAFE_COPY_PREVIEW_ONLY": 13,
+    "MISSING": 8
+  },
+  "claim_risk": {
+    "MISSING": 305,
+    "HIGH": 3,
+    "MEDIUM": 2,
+    "LOW": 206
+  },
+  "img_prod_approved": 495,
+  "confidence": {
+    "LOW": 506,
+    "HIGH": 3,
+    "MEDIUM": 4,
+    "NEEDS_REVIEW": 3
+  },
+  "poster_ready": 3,
+  "poster_preview": 513,
+  "poster_blocked": 0,
+  "blockers": [
+    [
+      "REFERENCE_ONLY",
+      298
+    ],
+    [
+      "MAPPING_APPROVED",
+      204
+    ],
+    [
+      "IMG_NOT_PROD_APPROVED",
+      21
+    ],
+    [
+      "NO_IMAGE",
+      10
+    ],
+    [
+      "MISSING_CATEGORY",
+      6
+    ],
+    [
+      "MISSING_SUBCAT_AND_TYPE",
+      6
+    ],
+    [
+      "MAPPING_BLOCKED",
+      3
+    ],
+    [
+      "CLAIM_RISK_HIGH",
+      2
+    ]
+  ],
+  "samples_ready": [
+    {
+      "product_id": "dc833ab3-cd2e-4968-b9db-40210aba38dc",
+      "product_display_name": "Sumikko 50PCS Premium Baby Diaper pants disposable diaper tape diaper pants pull-ups Ultra-thin and breathable All size S/M/L/XL/XXL/XXXL",
+      "source": "MANUAL",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": "READY",
+      "image_status": "UNRESOLVED",
+      "claim_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+      "confidence": "MEDIUM",
+      "blocker": null
+    },
+    {
+      "product_id": "ec2c8e7d-bdd4-4df3-88c4-9330fed2a3f7",
+      "product_display_name": "(W)UGREEN PD20W Fast Charger Pengecas Pantas, Palam UK, dengan Set Kabel, Serasi dengan iPhone 8-16 Pro Max Samsung S25 Ultra Android Cellphone Mobile Phone Siri, SKU: 70297",
+      "source": "MANUAL",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": "READY",
+      "image_status": "UNRESOLVED",
+      "claim_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+      "confidence": "MEDIUM",
+      "blocker": null
+    },
+    {
+      "product_id": "6483d624-a03d-4933-9bba-6ca2e5f7b6fd",
+      "product_display_name": "Minyak Warisan Tok Cap Burung 25ml",
+      "source": "MANUAL",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": "READY",
+      "image_status": "DOWNLOADED",
+      "claim_status": "CLAIM_SAFE_COPY_REVIEW_READY",
+      "confidence": "MEDIUM",
+      "blocker": null
+    }
+  ],
+  "samples_preview": [
+    {
+      "product_id": "8ae553d2-4810-4d03-926b-5f2f1282c21c",
+      "product_display_name": "CLASSY 6XXXL Size Karpet Velvet Paling Besar Anti Slip",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": null,
+      "image_status": "UNRESOLVED",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "LOW",
+      "blocker": "REFERENCE_ONLY"
+    },
+    {
+      "product_id": "bd96da55-0ad4-494d-afb1-f9fb1b30caa1",
+      "product_display_name": "Elianto Body Spray Fragrance Mist Pewangi Badan (Coconut/ Watermelon/",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": null,
+      "image_status": "UNRESOLVED",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "LOW",
+      "blocker": "REFERENCE_ONLY"
+    },
+    {
+      "product_id": "3b51d01e-6e59-4b94-83ca-9e10ef611056",
+      "product_display_name": "QAYRAA P1 (S-XL) Jersi Muslimah Labuh Microfiber/Athleisure Sport Quick",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": null,
+      "image_status": "UNRESOLVED",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "LOW",
+      "blocker": "REFERENCE_ONLY"
+    },
+    {
+      "product_id": "1c5b5c1a-43d2-4239-b87b-7b0f95c7e58f",
+      "product_display_name": "UNICO LEMON TTOX ( 10 PAKET)",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": null,
+      "image_status": "UNRESOLVED",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "LOW",
+      "blocker": "REFERENCE_ONLY"
+    },
+    {
+      "product_id": "dcf0b2a3-b714-4305-a0de-37033f9762a1",
+      "product_display_name": "Seluar Tarik Ke Atas, SUMIKKO, 50PCS, Lampin Bayi, Semua",
+      "source": "FASTMOSS",
+      "lifecycle_status": "ACTIVE",
+      "mapping_status": null,
+      "image_status": "UNRESOLVED",
+      "claim_status": "CLAIM_SAFE_COPY_APPROVED",
+      "confidence": "LOW",
+      "blocker": "REFERENCE_ONLY"
+    }
+  ],
+  "samples_blocked": [],
+  "sources": {
+    "FASTMOSS": 298,
+    "MANUAL": 218
+  },
+  "mapping_statuses": {
+    "MISSING": 302,
+    "READY": 7,
+    "APPROVED": 204,
+    "BLOCKED": 3
+  },
+  "verdict": "PASS",
+  "detail": "3 POSTER_READY"
+}
