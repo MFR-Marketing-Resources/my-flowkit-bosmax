@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException
 
 from agent.models.copy_set import (
     APPROVAL_PHRASE,
+    AICopyAssistBatchRequest,
     AICopyAssistRequest,
     CopySetApproveRequest,
     CopySetGenerateRequest,
@@ -51,6 +52,29 @@ async def ai_assist_copy_candidate(request: AICopyAssistRequest):
     provider is not configured or returns an invalid response."""
     try:
         return await ai_svc.generate_ai_copy_candidate(request)
+    except ai_provider.AICopyProviderNotConfigured as error:
+        raise HTTPException(
+            status_code=409, detail={"error": error.code}
+        ) from error
+    except ai_provider.AICopyProviderError as error:
+        raise HTTPException(
+            status_code=502, detail={"error": error.code, "detail": error.detail}
+        ) from error
+    except svc.CopySetError as error:
+        _raise(error)
+
+
+@router.post("/generate-batch")
+async def generate_copy_set_batch(request: AICopyAssistBatchRequest):
+    """AI Copy Assist Batch — generate multiple reviewable candidate Copy Sets
+    in one request. Returns up to candidate_count candidates (default 5,
+    range 3-10). Each is independently deduped, safety-scanned, and
+    similarity-scored. A copy_generation_batch ledger row is created.
+
+    Fails closed when the provider is not configured or returns invalid data.
+    """
+    try:
+        return await ai_svc.generate_ai_copy_candidates_batch(request)
     except ai_provider.AICopyProviderNotConfigured as error:
         raise HTTPException(
             status_code=409, detail={"error": error.code}

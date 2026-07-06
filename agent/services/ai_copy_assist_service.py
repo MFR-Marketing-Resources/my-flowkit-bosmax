@@ -189,3 +189,114 @@ async def generate_ai_copy_candidate(
     # the router maps them to fail-closed responses.
     candidates = [await _generate_one(req, product) for _ in range(req.candidate_count)]
     return {"provider": provider.provider_status(), "candidates": candidates}
+
+
+async def generate_ai_copy_candidates_batch(
+    request: AICopyAssistBatchRequest | dict,
+) -> dict[str, Any]:
+    """Generate candidate_count candidates in a single batch request.
+
+    Each candidate is independently generated, deduped, safety-scanned,
+    and similarity-scored against existing approved Copy Sets for the
+    same product.  A copy_generation_batch ledger row records the run.
+
+    Fails closed on: product not found, insufficient product truth,
+    provider not configured, or invalid provider response.
+    """
+    from agent.models.copy_set import AICopyAssistBatchRequest as BReq
+    from agent.services import copy_similarity_service as sim_svc
+
+    req = request if isinstance(request, BReq) else BReq.model_validate(request)
+    product = await crud.get_product(req.product_id)
+    if not product:
+        raise CopySetError(
+            "PRODUCT_NOT_FOUND", status_code=404, detail={"product_id": req.product_id}
+        )
+    if not _product_truth(product):
+        raise CopySetError(
+            "PRODUCT_TRUTH_INSUFFICIENT",
+            status_code=422,
+            detail={"product_id": req.product_id},
+        )
+
+    # Load existing approved Copy Sets for similarity comparison
+    existing_rows = await crud.list_copy_sets_for_product(req.product_id)
+    existing_approved = [
+        serialize_copy_set(r)
+        for r in existing_rows
+        if r.get("status") == "COPY_APPROVED" and not r.get("archived")
+    ]
+
+    # Build a single-assist request to reuse _generate_one logic
+    single_req = AICopyAssistRequest(
+        product_id=req.product_id,
+        platform=req.platform,
+        language=req.language,
+        route_type=req.route_type,
+        formula_family=req.formula_family,
+        content_style_mode=req.content_style_mode,
+        operator_notes=req.operator_notes,
+        candidate_count=1,
+    )
+
+    results: list[dict[str, Any]] = []
+    created = 0
+    deduped = 0
+    rejected = 0
+
+    for i in range(req.candidate_count):
+        result = await _generate_one(single_req, product)
+        if result.get("created"):
+            cs = result["copy_set"]
+            # Compute uniqueness against approved
+            uni = sim_svc.compute_uniqueness_score(cs, existing_approved)
+            # Find nearest match
+            nearest, sim_score = sim_svc.find_nearest(cs, existing_approved)
+            # Persist similarity metadata
+            await crud.update_copy_set(
+                cs["copy_set_id"],
+                uniqueness_score=round(uni, 4),
+                similar_to_copy_set_id=nearest.get("copy_set_id") if nearest else None,
+                similarity_score=round(sim_score, 4) if nearest else None,
+            )
+            # Add newly created to the approved pool for cross-batch dedupe
+            existing_approved.append(cs)
+            created += 1
+        else:
+            deduped += 1
+
+        # Count safety rejections (candidate created but unsafe)
+        safety = result.get("safety", {})
+        if not safety.get("safe", True):
+            rejected += 1
+
+        results.append({
+            "copy_set": result.get("copy_set"),
+            "created": result.get("created", False),
+            "dedupe_match": result.get("dedupe_match", False),
+            "safety": safety,
+            "warnings": result.get("warnings", []),
+        })
+
+    # Record batch ledger
+    await crud.create_copy_generation_batch(
+        product_id=req.product_id,
+        requested_count=req.candidate_count,
+        created_count=created,
+        deduped_count=deduped,
+        rejected_count=rejected,
+        source="AI_COPY_ASSIST",
+        provider_lane=provider.provider_status().get("lane"),
+        provider_model=provider.provider_status().get("model_id"),
+    )
+
+    return {
+        "provider": provider.provider_status(),
+        "candidates": results,
+        "summary": {
+            "requested": req.candidate_count,
+            "created": created,
+            "deduped_existing": deduped,
+            "rejected_safety": rejected,
+        },
+    }

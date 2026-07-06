@@ -84,6 +84,24 @@ class AICopyAssistRequest(BaseModel):
     candidate_count: int = Field(default=1, ge=1, le=3)
 
 
+class AICopyAssistBatchRequest(BaseModel):
+    """AI Copy Assist Batch — generate multiple reviewable candidate Copy Sets
+    in a single request. Produces candidate_count candidates (default 5, range
+    3-10), each independently deduped, safety-scanned, and similarity-scored.
+    A copy_generation_batch ledger row is created for audit."""
+
+    model_config = ConfigDict(extra="allow")
+
+    product_id: str
+    candidate_count: int = Field(default=5, ge=3, le=10)
+    platform: str = "TIKTOK"
+    language: str = "BM_MS"
+    route_type: Optional[str] = None
+    formula_family: Optional[str] = None
+    content_style_mode: str = "UGC_IPHONE"
+    operator_notes: Optional[str] = None
+
+
 class CopySetPatchRequest(BaseModel):
     """Operator edit of a draft/review Copy Set. Editing an approved Copy Set
     reverts it to DRAFT_COPY (re-review) — approval never survives a silent edit."""
