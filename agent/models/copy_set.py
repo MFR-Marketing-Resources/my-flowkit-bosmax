@@ -86,20 +86,29 @@ class AICopyAssistRequest(BaseModel):
 
 class AICopyAssistBatchRequest(BaseModel):
     """AI Copy Assist Batch — generate multiple reviewable candidate Copy Sets
-    in a single request. Produces candidate_count candidates (default 5, range
+    in a single request. Produces requested_count candidates (default 5, range
     3-10), each independently deduped, safety-scanned, and similarity-scored.
-    A copy_generation_batch ledger row is created for audit."""
+    A copy_generation_batch ledger row is created for audit.
+
+    Optional ``dry_run`` validates inputs and returns what WOULD be generated
+    without persisting any Copy Set or ledger rows."""
 
     model_config = ConfigDict(extra="allow")
 
     product_id: str
-    candidate_count: int = Field(default=5, ge=3, le=10)
+    requested_count: int = Field(default=5, ge=3, le=10)
     platform: str = "TIKTOK"
     language: str = "BM_MS"
+    angle: Optional[str] = None
+    hook: Optional[str] = None
     route_type: Optional[str] = None
     formula_family: Optional[str] = None
     content_style_mode: str = "UGC_IPHONE"
     operator_notes: Optional[str] = None
+    dedupe_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    provider_lane: Optional[str] = None
+    provider_model: Optional[str] = None
+    dry_run: bool = False
 
 
 class CopySetPatchRequest(BaseModel):

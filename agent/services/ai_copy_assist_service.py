@@ -194,15 +194,18 @@ async def generate_ai_copy_candidate(
 async def generate_ai_copy_candidates_batch(
     request: AICopyAssistBatchRequest | dict,
 ) -> dict[str, Any]:
-    """Generate candidate_count candidates in a single batch request.
+    """Generate requested_count candidates in a single batch request.
 
     Each candidate is independently generated, deduped, safety-scanned,
     and similarity-scored against existing approved Copy Sets for the
     same product.  A copy_generation_batch ledger row records the run.
 
+    When ``dry_run`` is True, validation runs but nothing is persisted.
+
     Fails closed on: product not found, insufficient product truth,
     provider not configured, or invalid provider response.
     """
+    import uuid as _uuid_mod
     from agent.models.copy_set import AICopyAssistBatchRequest as BReq
     from agent.services import copy_similarity_service as sim_svc
 
@@ -218,6 +221,10 @@ async def generate_ai_copy_candidates_batch(
             status_code=422,
             detail={"product_id": req.product_id},
         )
+
+    batch_id = str(_uuid_mod.uuid4())
+    threshold = req.dedupe_threshold or 0.80
+    warnings: list[dict[str, Any]] = []
 
     # Load existing approved Copy Sets for similarity comparison
     existing_rows = await crud.list_copy_sets_for_product(req.product_id)
@@ -244,14 +251,48 @@ async def generate_ai_copy_candidates_batch(
     deduped = 0
     rejected = 0
 
-    for i in range(req.candidate_count):
+    for i in range(req.requested_count):
+        if req.dry_run:
+            # Dry run: build a simulated candidate without persisting
+            results.append({
+                "copy_set_id": None,
+                "status": "DRY_RUN",
+                "angle": req.angle or "",
+                "hook": req.hook or "",
+                "subhook": "",
+                "usp_set": [],
+                "cta": "",
+                "dedupe_key": "",
+                "similarity_score": None,
+                "similar_to_copy_set_id": None,
+                "uniqueness_score": None,
+                "warnings": ["DRY_RUN_NO_PERSIST"],
+                "created": False,
+                "dedupe_match": False,
+                "safety": {"safe": True, "violations": []},
+            })
+            continue
+
         result = await _generate_one(single_req, product)
-        if result.get("created"):
-            cs = result["copy_set"]
+        cs = result.get("copy_set") or {}
+        is_new = result.get("created", False)
+        is_dup = result.get("dedupe_match", False)
+        safety = result.get("safety", {})
+        candidate_warnings: list[str] = list(result.get("warnings", []))
+
+        if is_new:
             # Compute uniqueness against approved
             uni = sim_svc.compute_uniqueness_score(cs, existing_approved)
-            # Find nearest match
-            nearest, sim_score = sim_svc.find_nearest(cs, existing_approved)
+            nearest, sim_score = sim_svc.find_nearest(cs, existing_approved, threshold=threshold)
+            near_dup = nearest is not None and sim_score >= threshold
+
+            if near_dup:
+                candidate_warnings.append(
+                    f"NEAR_DUPLICATE: {sim_score:.2f} similar to {nearest.get('copy_set_id', '?')}"
+                )
+                if {"NEAR_DUPLICATE_WARNING"} not in [set(w.get("code","") for w in warnings)]:
+                    pass  # warnings handled per-candidate
+
             # Persist similarity metadata
             await crud.update_copy_set(
                 cs["copy_set_id"],
@@ -259,44 +300,70 @@ async def generate_ai_copy_candidates_batch(
                 similar_to_copy_set_id=nearest.get("copy_set_id") if nearest else None,
                 similarity_score=round(sim_score, 4) if nearest else None,
             )
-            # Add newly created to the approved pool for cross-batch dedupe
             existing_approved.append(cs)
             created += 1
-        else:
+        elif is_dup:
             deduped += 1
 
-        # Count safety rejections (candidate created but unsafe)
-        safety = result.get("safety", {})
         if not safety.get("safe", True):
             rejected += 1
 
         results.append({
-            "copy_set": result.get("copy_set"),
-            "created": result.get("created", False),
-            "dedupe_match": result.get("dedupe_match", False),
+            "copy_set_id": cs.get("copy_set_id"),
+            "status": cs.get("status"),
+            "angle": cs.get("angle", ""),
+            "hook": cs.get("hook", ""),
+            "subhook": cs.get("subhook", ""),
+            "usp_set": cs.get("usp_set", []),
+            "cta": cs.get("cta", ""),
+            "dedupe_key": cs.get("dedupe_key", ""),
+            "similarity_score": cs.get("similarity_score"),
+            "similar_to_copy_set_id": cs.get("similar_to_copy_set_id"),
+            "uniqueness_score": cs.get("uniqueness_score"),
+            "warnings": candidate_warnings,
+            "created": is_new,
+            "dedupe_match": is_dup,
             "safety": safety,
-            "warnings": result.get("warnings", []),
         })
 
-    # Record batch ledger
-    await crud.create_copy_generation_batch(
-        product_id=req.product_id,
-        requested_count=req.candidate_count,
-        created_count=created,
-        deduped_count=deduped,
-        rejected_count=rejected,
-        source="AI_COPY_ASSIST",
-        provider_lane=provider.provider_status().get("lane"),
-        provider_model=provider.provider_status().get("model_id"),
-    )
+    # Compile top-level warnings
+    if deduped > 0:
+        warnings.append({"code": "EXACT_DEDUPE_HIT", "count": deduped,
+                         "message": f"{deduped} candidate(s) matched existing Copy Sets exactly."})
+    if created == 0 and not req.dry_run:
+        warnings.append({"code": "NO_NEW_CANDIDATES", "count": 0,
+                         "message": "All requested candidates were exact duplicates of existing Copy Sets."})
+
+    # Record batch ledger (skip in dry_run)
+    if not req.dry_run:
+        await crud.create_copy_generation_batch(
+            product_id=req.product_id,
+            requested_count=req.requested_count,
+            created_count=created,
+            deduped_count=deduped,
+            rejected_count=rejected,
+            source="AI_COPY_ASSIST",
+            provider_lane=req.provider_lane or provider.provider_status().get("lane"),
+            provider_model=req.provider_model or provider.provider_status().get("model_id"),
+        )
 
     return {
+        "batch_id": batch_id,
+        "product_id": req.product_id,
+        "requested_count": req.requested_count,
+        "created_count": created,
+        "deduped_count": deduped,
+        "rejected_count": rejected,
         "provider": provider.provider_status(),
         "candidates": results,
-        "summary": {
-            "requested": req.candidate_count,
-            "created": created,
-            "deduped_existing": deduped,
-            "rejected_safety": rejected,
+        "ledger": {
+            "batch_id": batch_id,
+            "source": "AI_COPY_ASSIST",
+            "requested_count": req.requested_count,
+            "created_count": created,
+            "deduped_count": deduped,
+            "rejected_count": rejected,
         },
+        "warnings": warnings,
+        "dry_run": req.dry_run,
     }
