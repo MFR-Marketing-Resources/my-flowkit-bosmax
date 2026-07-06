@@ -288,8 +288,8 @@ def test_audit_creative_asset_remote_url_marks_reference_without_overclaim():
         description="remote image",
         source_type="REMOTE_URL",
         storage_kind="REMOTE_URL",
-        preview_url=None,
-        download_url=None,
+        preview_url="https://example.com/source.png",
+        download_url="https://example.com/source.png",
         media_id=None,
         local_file_path=None,
         remote_source_url="https://example.com/source.png",
@@ -301,8 +301,70 @@ def test_audit_creative_asset_remote_url_marks_reference_without_overclaim():
     audit = creative_asset_service.audit_creative_asset(asset)
 
     assert audit["retrievable"] is False
-    assert audit["integrity_status"] == "REMOTE_REFERENCE_PRESENT"
+    assert audit["integrity_status"] == "REMOTE_RETRIEVABILITY_UNVERIFIED"
     assert audit["avatar_status"] == "BROKEN_LINK"
+
+
+def test_normalized_remote_url_asset_does_not_become_generated_from_reference_strings():
+    asset = creative_asset_service._normalize_record(
+        {
+            "asset_id": "ca_remote_normalized",
+            "semantic_role": "CHARACTER_REFERENCE",
+            "display_name": "Remote Normalized",
+            "description": "AVATAR_CODE:BOS_F_REMOTE_01 remote image",
+            "source_type": "REMOTE_URL",
+            "storage_kind": "REMOTE_URL",
+            "preview_url": "/api/creative-assets/ca_remote_normalized/preview",
+            "download_url": "/api/creative-assets/ca_remote_normalized/download",
+            "media_id": None,
+            "local_file_path": None,
+            "remote_source_url": "https://example.com/remote-avatar.png",
+            "product_id": None,
+            "category": None,
+            "silo": None,
+            "product_type": None,
+            "allowed_modes": "[]",
+            "engine_slot_eligibility": "[]",
+            "mode_a_metadata_handoff": None,
+            "visual_dna_summary": None,
+            "character_dna": None,
+            "scene_context_dna": None,
+            "style_mood_dna": None,
+            "source_prompt_fingerprint": None,
+            "source_workspace_execution_package_id": None,
+            "source_prompt_package_snapshot_id": None,
+            "asset_subtype": None,
+            "generation_recipe_id": None,
+            "source_character_asset_id": None,
+            "source_scene_asset_id": None,
+            "source_style_asset_id": None,
+            "contains_rendered_text": 0,
+            "approved_for_video_support": 0,
+            "approved_for_poster": 0,
+            "product_truth_status": None,
+            "identity_lock_status": None,
+            "scale_truth_status": None,
+            "claim_safety_status": None,
+            "review_status": "PENDING_REVIEW",
+            "asset_lifecycle": "CANONICAL_AVATAR_ASSET",
+            "retention_policy": "PERSISTENT",
+            "expires_at": None,
+            "is_reusable": 1,
+            "is_canonical": 1,
+            "source_job_id": None,
+            "avatar_code": "BOS_F_REMOTE_01",
+            "status": "ACTIVE",
+            "created_at": "2026-07-04T00:00:00Z",
+            "updated_at": "2026-07-04T00:00:00Z",
+        }
+    )
+
+    audit = creative_asset_service.audit_creative_asset(asset)
+
+    assert asset.preview_url == "https://example.com/remote-avatar.png"
+    assert asset.download_url == "https://example.com/remote-avatar.png"
+    assert audit["retrievable"] is False
+    assert audit["avatar_status"] != "GENERATED"
 
 
 def test_audit_creative_asset_product_cache_requires_preview_or_download():
@@ -417,8 +479,8 @@ async def test_image_library_excludes_metadata_only_and_non_library_lifecycle_as
                 description="no preview or download",
                 source_type="REMOTE_URL",
                 storage_kind="REMOTE_URL",
-                preview_url=None,
-                download_url=None,
+                preview_url="https://example.com/metadata-only.png",
+                download_url="https://example.com/metadata-only.png",
                 media_id=None,
                 local_file_path=None,
                 remote_source_url="https://example.com/metadata-only.png",

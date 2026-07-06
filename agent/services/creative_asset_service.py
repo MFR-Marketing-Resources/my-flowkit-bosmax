@@ -146,9 +146,9 @@ def audit_creative_asset(asset: CreativeAssetRecord) -> dict[str, Any]:
         retrievable = local_exists
         integrity_status = "LOCAL_FILE_OK" if local_exists else "LOCAL_FILE_MISSING"
     elif asset.storage_kind == "REMOTE_URL":
-        retrievable = bool(asset.preview_url or asset.download_url)
+        retrievable = False
         integrity_status = (
-            "REMOTE_REFERENCE_PRESENT"
+            "REMOTE_RETRIEVABILITY_UNVERIFIED"
             if (asset.remote_source_url or asset.preview_url or asset.download_url)
             else "REMOTE_REFERENCE_MISSING"
         )

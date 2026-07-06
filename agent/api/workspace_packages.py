@@ -343,8 +343,6 @@ async def avatar_registry_register_generated(request: AvatarRegisterGeneratedReq
             409,
             f"AVATAR_ALREADY_REGISTERED:{existing['asset_id']}",
         )
-    if existing and existing.get("asset_id"):
-        await archive_creative_asset(str(existing["asset_id"]))
     # Copy the image OUT of the 48h-retention artifact library into permanent
     # creative-asset storage (the base64 path handles file placement + URLs).
     import base64
@@ -371,6 +369,15 @@ async def avatar_registry_register_generated(request: AvatarRegisterGeneratedReq
         image_base64=image_base64,
         file_name=artifact_path.name,
     ))
+    if existing and existing.get("asset_id"):
+        try:
+            await archive_creative_asset(str(existing["asset_id"]))
+        except Exception as exc:
+            try:
+                await archive_creative_asset(record.asset_id)
+            except Exception:
+                pass
+            raise HTTPException(500, "AVATAR_REPAIR_ARCHIVE_FAILED") from exc
     return {"asset_id": record.asset_id, "avatar_code": identity["avatar_code"]}
 
 
