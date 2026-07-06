@@ -9,6 +9,19 @@ import { getAPI } from "./client";
 // updates. A `pending` model is listed but has no Google internal id yet, so
 // generation fails closed until it is configured.
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TODO(video-gen-settings SSOT): mirror this shared-settings pattern for VIDEO.
+// Video already has a model registry (agent/services/video_models.py) served by
+// GET /api/flow/video-models (Omni Flash, Veo 3.1 - Lite/Fast/Quality). What's
+// missing is a UNIFIED video-gen settings endpoint + hook like this one:
+//   - backend: GET /api/flow/video-gen-settings → { models (from video_models),
+//     aspect_options: ["16:9","9:16"], count_options: [1..4], defaults, duration }
+//   - frontend: useVideoGenSettings() (this file's twin, e.g. videoGenSettings.ts)
+//   - adopt it in the T2V / I2V / F2V / Hybrid / Batch pages so video settings
+//     stop being per-page copies too.
+// Deferred to finish the image standardization first (2026-07-06).
+// ─────────────────────────────────────────────────────────────────────────────
+
 export interface ImageModelOption {
 	key: string;
 	label: string;
