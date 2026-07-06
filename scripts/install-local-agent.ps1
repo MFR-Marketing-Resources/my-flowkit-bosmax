@@ -21,7 +21,7 @@ function Register-StartupShortcut {
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($script:StartupShortcutPath)
     $shortcut.TargetPath = $powershellExe
-    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$script:RepoRoot\scripts\start-local-agent.ps1`""
+    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$script:RepoRoot\scripts\start-local-agent.ps1`" -Watchdog"
     $shortcut.WorkingDirectory = $script:RepoRoot
     $shortcut.WindowStyle = 7
     $shortcut.Description = 'Start BOSMAX Flow Kit local agent on Windows logon.'
@@ -67,7 +67,7 @@ if ($task) {
 }
 
 $principalUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-$actionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$script:RepoRoot\scripts\start-local-agent.ps1`""
+$actionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$script:RepoRoot\scripts\start-local-agent.ps1`" -Watchdog"
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $actionArgs
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
@@ -98,6 +98,16 @@ if ($autoStartMode -eq 'SCHEDULED_TASK' -and (Test-Path $script:StartupShortcutP
 
 Stop-BosmaxBackendProcess | Out-Null
 & "$PSScriptRoot\start-local-agent.ps1" -ForceRestart
+
+# Launch the durable watchdog supervisor detached for this session so the
+# backend is auto-restarted on mid-session death immediately (not only at the
+# next logon). It adopts the just-started healthy agent; the single-owner lock
+# prevents a duplicate supervisor.
+Start-Process `
+    -FilePath 'powershell.exe' `
+    -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$script:RepoRoot\scripts\start-local-agent.ps1", '-Watchdog') `
+    -WorkingDirectory $script:RepoRoot `
+    -WindowStyle Hidden | Out-Null
 
 Write-Host "INSTALL_LOCAL_AGENT: PASS" -ForegroundColor Green
 Write-Host "TASK_NAME: $script:LocalAgentTaskName"
