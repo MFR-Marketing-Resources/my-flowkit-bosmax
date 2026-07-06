@@ -192,3 +192,12 @@ def test_build_identity_marker_is_wired():
     decl = _read("dashboard/src/build-info.d.ts")
     assert "declare const __BUILD_SHA__: string;" in decl
     assert "declare const __BUILT_AT__: string;" in decl
+
+
+def test_fastlane_section_has_no_backdrop_blur_stacking_trap():
+    """The Section wrapper must not use backdrop-blur. backdrop-filter creates a
+    stacking context that trapped the open SearchableProductSelect dropdown (z-50)
+    inside the section, so it painted BEHIND the next section and was unusable.
+    Regression guard for the product-selector overlay fix."""
+    page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
+    assert "shadow-black/10 backdrop-blur-md" not in page

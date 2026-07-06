@@ -110,8 +110,12 @@ function Section({
 	title: string;
 	children: React.ReactNode;
 }) {
+	// No `backdrop-blur` on the section: backdrop-filter creates a stacking
+	// context, which traps an open dropdown (SearchableProductSelect, z-50)
+	// inside this section so it paints BEHIND the following section instead of
+	// overlaying it. The blur is imperceptible over the solid dark page bg.
 	return (
-		<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 space-y-4 shadow-lg shadow-black/10 backdrop-blur-md">
+		<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 space-y-4 shadow-lg shadow-black/10">
 			<h3 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-300 flex items-center gap-2">
 				<span className="rounded-md border border-slate-700 bg-slate-950 px-2 py-0.5 text-slate-300 font-mono text-[10px]">
 					{step}
