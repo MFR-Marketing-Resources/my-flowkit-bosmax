@@ -31,6 +31,14 @@ import {
 const GEN_NOT_FIRED = "NOT_FIRED_IN_SESSION";
 const GEN_RUNTIME_UNVERIFIED = "EXTERNAL_RUNTIME_NOT_VERIFIED";
 const ASPECT_OPTIONS = ["9:16", "1:1", "16:9", "4:3", "3:4"] as const;
+// Image models mirror Google Flow's image-gen picker. `pending` = the backend
+// doesn't yet have Google's internal id for it (models.json), so picking it fails
+// closed with a clear message instead of silently generating with another model.
+const IMG_MODEL_OPTIONS = [
+	{ label: "Nano Banana Pro", pending: false },
+	{ label: "Nano Banana 2", pending: false },
+	{ label: "Nano Banana 2 Lite", pending: true },
+] as const;
 
 type TruthStatus = "UNVERIFIED" | "PASS" | "FAIL";
 type ReviewDecision = "PENDING_REVIEW" | "APPROVED" | "REJECTED";
@@ -235,6 +243,7 @@ export default function ImgFastlanePage() {
 	const [compiling, setCompiling] = useState(false);
 	const [aspect, setAspect] = useState<string>("9:16");
 	const [quantity, setQuantity] = useState<number>(1);
+	const [imageModel, setImageModel] = useState<string>("Nano Banana 2");
 
 	// Gated live generation.
 	const [showGenConfirm, setShowGenConfirm] = useState(false);
@@ -663,6 +672,7 @@ export default function ImgFastlanePage() {
 				refs: resolvedRefsPayload,
 				aspect,
 				count: quantity,
+				image_model: imageModel,
 			});
 			const job = await pollImgGenerationJob(job_id);
 			setGenJob(job);
@@ -1138,7 +1148,30 @@ export default function ImgFastlanePage() {
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
 								/>
 							</label>
+							<label className="block text-[11px] text-slate-300 space-y-1">
+								<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+									Image Model
+								</span>
+								<select
+									value={imageModel}
+									onChange={(e) => setImageModel(e.target.value)}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
+								>
+									{IMG_MODEL_OPTIONS.map((m) => (
+										<option key={m.label} value={m.label}>
+											{m.label}
+											{m.pending ? " (id pending)" : ""}
+										</option>
+									))}
+								</select>
+							</label>
 						</div>
+						{IMG_MODEL_OPTIONS.find((m) => m.label === imageModel)?.pending ? (
+							<p className="text-[10px] text-amber-300/80">
+								{imageModel}: internal model id not configured yet — generation fails
+								closed until it's set in models.json (never a wrong-model fallback).
+							</p>
+						) : null}
 
 						{/* Live Payload Preview */}
 						<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-300 space-y-2">

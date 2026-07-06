@@ -143,6 +143,7 @@ export interface StartImgGenerationInput {
 	image_media_ids?: string[];
 	aspect?: string;
 	model?: string;
+	image_model?: string;
 	duration_s?: number;
 	count?: number;
 	refs?: Record<string, any>;
@@ -186,6 +187,7 @@ export async function startImgGeneration(
 		image_media_ids: input.image_media_ids ?? [],
 		aspect: input.aspect ?? "9:16",
 		model: input.model,
+		image_model: input.image_model,
 		duration_s: input.duration_s,
 		count: input.count,
 		refs: input.refs,

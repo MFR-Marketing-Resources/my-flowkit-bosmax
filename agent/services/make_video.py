@@ -281,7 +281,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          image_media_ids: list = None, image_prompt: str = None,
                          aspect: str = "9:16", tier: str = "PAYGATE_TIER_ONE",
                          model: str = None, duration_s: int = None,
-                         num_videos: int = 1) -> dict:
+                         num_videos: int = 1, image_model: str = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all."""
@@ -304,7 +304,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         _VIDEO_LANE_JOB = job_id  # claim the lane synchronously to avoid a race
     _JOBS[job_id]["_task"] = asyncio.create_task(
         _run_generate(job_id, mode, prompt, project_id, image_media_ids, image_prompt,
-                      aspect, tier, model, duration_s, num_videos))
+                      aspect, tier, model, duration_s, num_videos, image_model))
     return {"job_id": job_id, "status": "SUBMITTED", "mode": mode}
 
 
@@ -342,7 +342,7 @@ def _is_retrieval_phase_error(msg) -> bool:
 
 async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                         image_prompt, aspect, tier, model=None, duration_s=None,
-                        num_videos=1):
+                        num_videos=1, image_model=None):
     from agent.api.flow import (_generate_image_with_recovery, _extract_images,
                                  _extract_project_id, _IMG_ASPECT_MAP)
     import aiohttp
@@ -375,7 +375,8 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         if mode == "IMG":
             job["status"], job["stage"] = "GENERATING", "generating image"
             res = await _generate_image_with_recovery(
-                client, prompt, project_id, aspect_key, tier, image_media_ids or [])
+                client, prompt, project_id, aspect_key, tier, image_media_ids or [],
+                image_model=image_model or "NANO_BANANA_PRO")
             if not res or res.get("error"):
                 raise RuntimeError("image gen failed: " + str((res or {}).get("error")))
             imgs = _extract_images(res.get("data", res))
