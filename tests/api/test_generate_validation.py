@@ -138,6 +138,11 @@ def test_generate_resolves_refs_payload_contract(monkeypatch):
     assert "fresh-upload-1" in calls["start_generate"]["image_media_ids"]
 
 
+def test_negotiate_job_unknown_model_returns_422():
+    _expect_422_nego(flow.NegotiateJobRequest(prompt="x", model="Nano Banana 2"),
+                     "unknown video model")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
