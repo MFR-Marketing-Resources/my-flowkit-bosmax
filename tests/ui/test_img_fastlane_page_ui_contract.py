@@ -50,8 +50,6 @@ def test_fastlane_uses_database_driven_preset_compiler():
 def test_fastlane_surfaces_reference_and_product_wiring():
     page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
 
-    assert "PRODUCT_REFERENCE" in page
-    assert "productReferenceAssets" in page
     assert "Select Existing Reference — Avatar" in page
     # Scene is now selectable from the Scene Context Library (all 20 registry scenes,
     # text-injectable immediately) — its background feeds the compiled prompt.
@@ -61,10 +59,12 @@ def test_fastlane_surfaces_reference_and_product_wiring():
     # The Frames "Style" reference field was a dead/fake picker (no STYLE records,
     # no way to create one) — it must stay removed.
     assert "Select Existing Reference — Style" not in page
-    assert "Select Existing Reference Or Create From Preset" in page
-    assert "Create From Preset" in page
-    assert "No references found — create one from preset" in page
-    assert "Frames Fastlane blocks generation until a database product is selected." in page
+    # The redundant Ingredients sub-module (its own preset picker + "create from
+    # preset" reference fields) is purged — the page is a single Frames flow now.
+    assert "Select Existing Reference Or Create From Preset" not in page
+    assert "Create From Preset" not in page
+    assert "No references found — create one from preset" not in page
+    assert "Composite Frames (F2V) blocks generation until a database product is selected." in page
     assert "No Product Visual Reference" in page
     assert "/api/flow/artifacts" in page
     assert "Finished artifact candidate" in page
@@ -73,7 +73,9 @@ def test_fastlane_surfaces_reference_and_product_wiring():
 def test_fastlane_presets_and_blockers_are_explicit():
     page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
     assert "framePresets" in page
-    assert "ingredientPresets" in page
+    # The Ingredients sub-module was purged; the page is a single Frames flow, so
+    # the ingredient preset picker/state must be gone.
+    assert "ingredientPresets" not in page
     assert "compiledBlockers" in page
     assert "AVATAR_REFERENCE_REQUIRED" in page
     assert "SCENE_REFERENCE_REQUIRED" in page
@@ -128,9 +130,20 @@ _RETIRED_COMPOSER_MARKERS = (
 _CURRENT_UI_MARKERS = (
     "Final Prompt → Google Flow",
     "Template Preset",
-    "Select Target Ingredient Role",
+    "Composite Frames (F2V)",
     "Product Scale Truth Guard",
     "Register Output (Credit-free)",
+)
+
+# The purged Ingredients sub-module markers. The Frames flow already combines
+# 2/3 images and feeds F2V, so the redundant Ingredients route/preset UI was
+# removed and must stay removed (single Frames-only flow).
+_PURGED_INGREDIENTS_MARKERS = (
+    "Select Target Ingredient Role",
+    "Ingredients Fastlane",
+    "ingSaveLaneId",
+    "ingredientPresets",
+    "INGREDIENT_ROLE_OPTIONS",
 )
 
 
@@ -142,27 +155,13 @@ def test_fastlane_has_no_retired_composer_markers():
         assert marker in page, f"current UI marker missing: {marker!r}"
 
 
-def test_fastlane_all_four_ingredient_roles_wired():
+def test_fastlane_is_frames_only_ingredients_module_purged():
+    """The redundant Ingredients sub-module is purged: the page is a single
+    'Composite Frames (F2V)' flow with no ingredient tab/role/preset UI."""
     page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
-    # Canonical role enum options.
-    for role in (
-        "AVATAR_REFERENCE",
-        "SCENE_REFERENCE",
-        "STYLE_REFERENCE",
-        "PRODUCT_REFERENCE",
-    ):
-        assert role in page
-    # Each role's visible button label.
-    for label in ("Subject / Avatar", "Scene", "Style", "Product / Product Lock"):
-        assert label in page
-    # Each role's output-role help text (independent copy per role).
-    assert "Output role: CHARACTER_REFERENCE." in page
-    assert "Output role: SCENE_CONTEXT_REFERENCE." in page
-    assert "Output role: STYLE_REFERENCE." in page
-    assert "product lock or poster-safe product reference" in page
-    # Role state drives lane/preset/reference selection.
-    assert "ingSaveLaneId" in page
-    assert 'ingSaveLaneId === "PRODUCT_REFERENCE"' in page
+    assert "Composite Frames (F2V)" in page
+    for marker in _PURGED_INGREDIENTS_MARKERS:
+        assert marker not in page, f"purged ingredients marker leaked back: {marker!r}"
 
 
 def test_fastlane_product_role_resolves_lane_via_compiled_preview_not_direct_lookup():

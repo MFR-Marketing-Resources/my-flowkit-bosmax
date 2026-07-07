@@ -8,7 +8,6 @@ import {
 	compileImgFastlanePromptPreview,
 	type ImageArtifact,
 	type ImgAssetLane,
-	type ImgFastlaneIngredientRole,
 	type ImgFastlanePreset,
 	type ImgFastlanePromptPreview,
 	type ImgGenerationJob,
@@ -37,40 +36,6 @@ const GEN_RUNTIME_UNVERIFIED = "EXTERNAL_RUNTIME_NOT_VERIFIED";
 type TruthStatus = "UNVERIFIED" | "PASS" | "FAIL";
 type ReviewDecision = "PENDING_REVIEW" | "APPROVED" | "REJECTED";
 type OutputMode = "artifact" | "upload";
-type FastlaneTab = "frames" | "ingredients";
-
-const INGREDIENT_ROLE_OPTIONS: ImgFastlaneIngredientRole[] = [
-	"AVATAR_REFERENCE",
-	"SCENE_REFERENCE",
-	"STYLE_REFERENCE",
-	"PRODUCT_REFERENCE",
-];
-
-function ingredientRoleLabel(role: ImgFastlaneIngredientRole) {
-	switch (role) {
-		case "AVATAR_REFERENCE":
-			return "Subject / Avatar";
-		case "SCENE_REFERENCE":
-			return "Scene";
-		case "STYLE_REFERENCE":
-			return "Style";
-		case "PRODUCT_REFERENCE":
-			return "Product / Product Lock";
-	}
-}
-
-function ingredientRoleHelp(role: ImgFastlaneIngredientRole) {
-	switch (role) {
-		case "AVATAR_REFERENCE":
-			return "Creates a reusable character identity. Output role: CHARACTER_REFERENCE.";
-		case "SCENE_REFERENCE":
-			return "Creates a reusable scene context. Output role: SCENE_CONTEXT_REFERENCE.";
-		case "STYLE_REFERENCE":
-			return "Creates a reusable visual style reference. Output role: STYLE_REFERENCE.";
-		case "PRODUCT_REFERENCE":
-			return "Creates a reusable product lock or poster-safe product reference from the database product truth.";
-	}
-}
 
 function fileToDataUrl(file: File): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -203,13 +168,6 @@ function ReferenceField({
 
 export default function ImgFastlanePage() {
 	const imgGen = useImageGenSettings();
-	const [activeTab, setActiveTab] = useState<FastlaneTab>("frames");
-	const [ingSaveLaneId, setIngSaveLaneId] =
-		useState<ImgFastlaneIngredientRole>("AVATAR_REFERENCE");
-	const [ingCharacterAssetId, setIngCharacterAssetId] = useState("");
-	const [ingSceneAssetId, setIngSceneAssetId] = useState("");
-	const [ingStyleAssetId, setIngStyleAssetId] = useState("");
-	const [ingProductReferenceAssetId, setIngProductReferenceAssetId] = useState("");
 
 	const [lanes, setLanes] = useState<ImgAssetLane[]>([]);
 	const [presets, setPresets] = useState<ImgFastlanePreset[]>([]);
@@ -218,9 +176,6 @@ export default function ImgFastlanePage() {
 	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
 	const [sceneAssets, setSceneAssets] = useState<CreativeAsset[]>([]);
 	const [styleAssets, setStyleAssets] = useState<CreativeAsset[]>([]);
-	const [productReferenceAssets, setProductReferenceAssets] = useState<
-		CreativeAsset[]
-	>([]);
 
 	const [characterAssetId, setCharacterAssetId] = useState("");
 	const [sceneAssetId, setSceneAssetId] = useState("");
@@ -242,7 +197,6 @@ export default function ImgFastlanePage() {
 	const [approvingId, setApprovingId] = useState<string | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
 	const [framePresetId, setFramePresetId] = useState("");
-	const [ingredientPresetId, setIngredientPresetId] = useState("");
 	const [advancedOverrideNotes, setAdvancedOverrideNotes] = useState("");
 
 	const [prompt, setPrompt] = useState("");
@@ -299,20 +253,13 @@ export default function ImgFastlanePage() {
 				status: "ACTIVE",
 				limit: 100,
 			}),
-			fetchCreativeAssets({
-				semantic_role: "PRODUCT_REFERENCE",
-				status: "ACTIVE",
-				limit: 100,
-			}),
 			fetchImageArtifacts(50),
 			fetch("/api/workspace/scene-context-registry/pool").then((r) => r.json()),
 		]);
-		const [chars, scenes, styles, productRefs, arts, scenePool] = results;
+		const [chars, scenes, styles, arts, scenePool] = results;
 		if (chars.status === "fulfilled") setCharacterAssets(chars.value.items);
 		if (scenes.status === "fulfilled") setSceneAssets(scenes.value.items);
 		if (styles.status === "fulfilled") setStyleAssets(styles.value.items);
-		if (productRefs.status === "fulfilled")
-			setProductReferenceAssets(productRefs.value.items);
 		if (arts.status === "fulfilled") setArtifacts(arts.value);
 		if (scenePool.status === "fulfilled")
 			setSceneRegistry(scenePool.value?.scenes ?? []);
@@ -349,18 +296,14 @@ export default function ImgFastlanePage() {
 		return () => window.removeEventListener("focus", onFocus);
 	}, [loadReferences]);
 
-	// Automatically choose the correct lane based on selections and tab.
+	// Automatically choose the correct lane based on selections.
 	const lane = useMemo(() => {
 		if (compiledPreview?.lane_id) {
 			return lanes.find((item) => item.lane_id === compiledPreview.lane_id) ?? null;
 		}
-		if (activeTab === "frames") {
-			const laneId = sceneAssetId ? "AVATAR_PRODUCT_SCENE_COMPOSITE" : "AVATAR_PRODUCT_COMPOSITE";
-			return lanes.find((l) => l.lane_id === laneId) ?? null;
-		} else {
-			return lanes.find((l) => l.lane_id === ingSaveLaneId) ?? null;
-		}
-	}, [lanes, compiledPreview?.lane_id, activeTab, sceneAssetId, ingSaveLaneId]);
+		const laneId = sceneAssetId ? "AVATAR_PRODUCT_SCENE_COMPOSITE" : "AVATAR_PRODUCT_COMPOSITE";
+		return lanes.find((l) => l.lane_id === laneId) ?? null;
+	}, [lanes, compiledPreview?.lane_id, sceneAssetId]);
 
 	const selectedCharacter = useMemo(
 		() => characterAssets.find((a) => a.asset_id === characterAssetId) ?? null,
@@ -382,50 +325,9 @@ export default function ImgFastlanePage() {
 	const approvedStyle =
 		selectedStyle && isReusableAsset(selectedStyle) ? selectedStyle : null;
 
-	// Ingredients selections
-	const selectedIngCharacter = useMemo(
-		() => characterAssets.find((a) => a.asset_id === ingCharacterAssetId) ?? null,
-		[characterAssets, ingCharacterAssetId],
-	);
-	const selectedIngScene = useMemo(
-		() => sceneAssets.find((a) => a.asset_id === ingSceneAssetId) ?? null,
-		[sceneAssets, ingSceneAssetId],
-	);
-	const selectedIngStyle = useMemo(
-		() => styleAssets.find((a) => a.asset_id === ingStyleAssetId) ?? null,
-		[styleAssets, ingStyleAssetId],
-	);
-	const selectedIngProductReference = useMemo(
-		() =>
-			productReferenceAssets.find(
-				(a) => a.asset_id === ingProductReferenceAssetId,
-			) ?? null,
-		[productReferenceAssets, ingProductReferenceAssetId],
-	);
-
-	const approvedIngCharacter =
-		selectedIngCharacter && isReusableAsset(selectedIngCharacter) ? selectedIngCharacter : null;
-	const approvedIngScene =
-		selectedIngScene && isReusableAsset(selectedIngScene) ? selectedIngScene : null;
-	const approvedIngStyle =
-		selectedIngStyle && isReusableAsset(selectedIngStyle) ? selectedIngStyle : null;
-	const approvedIngProductReference =
-		selectedIngProductReference && isReusableAsset(selectedIngProductReference)
-			? selectedIngProductReference
-			: null;
-
 	const framePresets = useMemo(
 		() => presets.filter((preset) => preset.route === "FRAMES"),
 		[presets],
-	);
-	const ingredientPresets = useMemo(
-		() =>
-			presets.filter(
-				(preset) =>
-					preset.route === "INGREDIENTS" &&
-					preset.ingredient_role === ingSaveLaneId,
-			),
-		[presets, ingSaveLaneId],
 	);
 
 	useEffect(() => {
@@ -446,58 +348,26 @@ export default function ImgFastlanePage() {
 		setFramePresetId(universal?.preset_id ?? "");
 	}, [framePresets, sceneAssetId]);
 
-	useEffect(() => {
-		if (!ingredientPresets.length) return;
-		setIngredientPresetId((current) =>
-			current &&
-			ingredientPresets.some((preset) => preset.preset_id === current)
-				? current
-				: ingredientPresets[0]?.preset_id ?? "",
-		);
-	}, [ingredientPresets]);
-
 	const resolvedRefsPayload = useMemo(() => {
 		const refs: Record<string, any> = {};
-		if (activeTab === "frames") {
-			if (approvedCharacter) {
-				refs.subjectAsset = buildAssetPayload(approvedCharacter);
-			}
-			if (approvedScene) {
-				refs.sceneAsset = buildAssetPayload(approvedScene);
-			}
-			if (approvedStyle) {
-				refs.styleAsset = buildAssetPayload(approvedStyle);
-			}
-			if (selectedProduct) {
-				refs.imageAsset = buildProductAssetPayload(selectedProduct);
-			}
-		} else {
-			if (approvedIngCharacter) {
-				refs.subjectAsset = buildAssetPayload(approvedIngCharacter);
-			}
-			if (approvedIngScene) {
-				refs.sceneAsset = buildAssetPayload(approvedIngScene);
-			}
-			if (approvedIngStyle) {
-				refs.styleAsset = buildAssetPayload(approvedIngStyle);
-			}
-			if (approvedIngProductReference) {
-				refs.imageAsset = buildAssetPayload(approvedIngProductReference);
-			} else if (selectedProduct) {
-				refs.imageAsset = buildProductAssetPayload(selectedProduct);
-			}
+		if (approvedCharacter) {
+			refs.subjectAsset = buildAssetPayload(approvedCharacter);
+		}
+		if (approvedScene) {
+			refs.sceneAsset = buildAssetPayload(approvedScene);
+		}
+		if (approvedStyle) {
+			refs.styleAsset = buildAssetPayload(approvedStyle);
+		}
+		if (selectedProduct) {
+			refs.imageAsset = buildProductAssetPayload(selectedProduct);
 		}
 		return refs;
 	}, [
-		activeTab,
 		approvedCharacter,
 		approvedScene,
 		approvedStyle,
 		selectedProduct,
-		approvedIngCharacter,
-		approvedIngScene,
-		approvedIngStyle,
-		approvedIngProductReference,
 	]);
 
 	const genResolution = useMemo(
@@ -519,8 +389,8 @@ export default function ImgFastlanePage() {
 				selectedProduct.local_image_path),
 	);
 
-	const productMissing = Boolean(activeTab === "frames" && lane?.requires_product_id && !selectedProduct);
-	const productVisualReferenceMissing = Boolean(activeTab === "frames" && lane?.requires_product_id && selectedProduct && !productResolvable);
+	const productMissing = Boolean(lane?.requires_product_id && !selectedProduct);
+	const productVisualReferenceMissing = Boolean(lane?.requires_product_id && selectedProduct && !productResolvable);
 
 	const compiledBlockers = compiledPreview?.blockers ?? [];
 	const characterMissing = compiledBlockers.includes("AVATAR_REFERENCE_REQUIRED");
@@ -541,14 +411,12 @@ export default function ImgFastlanePage() {
 	// Generation needs only: product (+ its visual truth) + avatar + a compiled
 	// prompt. Missing style/scene never blocks.
 	const generationBlocked =
-		activeTab === "frames"
-			? (productMissing ||
-				productVisualReferenceMissing ||
-				characterMissing ||
-				genResolution.blocked ||
-				hardBlockers.length > 0 ||
-				!prompt.trim())
-			: hardBlockers.length > 0 || !prompt.trim();
+		productMissing ||
+		productVisualReferenceMissing ||
+		characterMissing ||
+		genResolution.blocked ||
+		hardBlockers.length > 0 ||
+		!prompt.trim();
 
 	const hasRealOutput =
 		outputMode === "artifact" ? Boolean(artifactMediaId) : Boolean(uploadFile);
@@ -560,9 +428,9 @@ export default function ImgFastlanePage() {
 		checklistClaims &&
 		checklistSuitable;
 
-	// Scale guard: Frames mode requires all checks and checklist to PASS before approval is allowed.
+	// Scale guard: requires all checks and checklist to PASS before approval is allowed.
 	const scaleGuardFailed =
-		activeTab === "frames" && reviewDecision === "APPROVED" && !isChecklistComplete;
+		reviewDecision === "APPROVED" && !isChecklistComplete;
 
 	const approvalBlocked =
 		reviewDecision === "APPROVED" &&
@@ -609,7 +477,7 @@ export default function ImgFastlanePage() {
 	};
 
 	const compileFastlanePreview = useCallback(async () => {
-		const presetId = activeTab === "frames" ? framePresetId : ingredientPresetId;
+		const presetId = framePresetId;
 		if (!presetId) {
 			setCompiledPreview(null);
 			setPrompt("");
@@ -620,20 +488,11 @@ export default function ImgFastlanePage() {
 		try {
 			const preview = await compileImgFastlanePromptPreview({
 				preset_id: presetId,
-				route: activeTab === "frames" ? "FRAMES" : "INGREDIENTS",
-				ingredient_role:
-					activeTab === "ingredients" ? ingSaveLaneId : undefined,
+				route: "FRAMES",
 				product_id: selectedProduct?.id ?? null,
-				character_reference_asset_id:
-					activeTab === "frames"
-						? characterAssetId || null
-						: ingCharacterAssetId || null,
-				scene_reference_asset_id:
-					activeTab === "frames" ? sceneAssetId || null : ingSceneAssetId || null,
-				style_reference_asset_id:
-					activeTab === "frames" ? styleAssetId || null : ingStyleAssetId || null,
-				product_reference_asset_id:
-					activeTab === "ingredients" ? ingProductReferenceAssetId || null : null,
+				character_reference_asset_id: characterAssetId || null,
+				scene_reference_asset_id: sceneAssetId || null,
+				style_reference_asset_id: styleAssetId || null,
 				advanced_override_notes: advancedOverrideNotes || null,
 				scene_context_code: sceneContextCode || null,
 			});
@@ -657,25 +516,17 @@ export default function ImgFastlanePage() {
 			setCompiling(false);
 		}
 	}, [
-		activeTab,
 		framePresetId,
-		ingredientPresetId,
-		ingSaveLaneId,
 		selectedProduct?.id,
 		characterAssetId,
 		sceneAssetId,
 		styleAssetId,
-		ingCharacterAssetId,
-		ingSceneAssetId,
-		ingStyleAssetId,
-		ingProductReferenceAssetId,
 		advancedOverrideNotes,
 		sceneContextCode,
 	]);
 
 	useEffect(() => {
-		const presetId = activeTab === "frames" ? framePresetId : ingredientPresetId;
-		if (!presetId) {
+		if (!framePresetId) {
 			setCompiledPreview(null);
 			setPrompt("");
 			return;
@@ -684,7 +535,7 @@ export default function ImgFastlanePage() {
 			void compileFastlanePreview();
 		}, 150);
 		return () => window.clearTimeout(handle);
-	}, [compileFastlanePreview, activeTab, framePresetId, ingredientPresetId]);
+	}, [compileFastlanePreview, framePresetId]);
 
 	const handleCopyPrompt = async () => {
 		if (!prompt.trim()) return;
@@ -766,9 +617,9 @@ export default function ImgFastlanePage() {
 				display_name: displayName.trim(),
 				description: prompt.trim() || null,
 				product_id: selectedProduct?.id || null,
-				source_character_asset_id: (activeTab === "frames" ? approvedCharacter : approvedIngCharacter)?.asset_id || null,
-				source_scene_asset_id: (activeTab === "frames" ? approvedScene : approvedIngScene)?.asset_id || null,
-				source_style_asset_id: (activeTab === "frames" ? approvedStyle : approvedIngStyle)?.asset_id || null,
+				source_character_asset_id: approvedCharacter?.asset_id || null,
+				source_scene_asset_id: approvedScene?.asset_id || null,
+				source_style_asset_id: approvedStyle?.asset_id || null,
 				identity_lock_status: identityStatus,
 				scale_truth_status: scaleStatus,
 				claim_safety_status: claimStatus,
@@ -800,7 +651,7 @@ export default function ImgFastlanePage() {
 				<div>
 					<h2 className="text-lg font-bold text-white tracking-wide">IMG Fastlane</h2>
 					<p className="mt-1 text-xs text-slate-400">
-						Fast generation and registration of clean F2V Start Frames or reusable Ingredients.
+						Fast generation and registration of clean F2V Start Frames.
 					</p>
 				</div>
 				<button
@@ -819,42 +670,17 @@ export default function ImgFastlanePage() {
 				</div>
 			) : null}
 
-			{/* Navigation Tabs */}
+			{/* Single flow: Composite Frames (F2V) */}
 			<div className="flex border-b border-slate-800">
-				<button
-					onClick={() => {
-						setActiveTab("frames");
-						resetOutputForm();
-					}}
-					className={`px-6 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer ${
-						activeTab === "frames"
-							? "border-blue-500 text-blue-400 bg-blue-500/5"
-							: "border-transparent text-slate-400 hover:text-slate-200"
-					}`}
-				>
-					Frames Fastlane
-				</button>
-				<button
-					onClick={() => {
-						setActiveTab("ingredients");
-						resetOutputForm();
-					}}
-					className={`px-6 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer ${
-						activeTab === "ingredients"
-							? "border-blue-500 text-blue-400 bg-blue-500/5"
-							: "border-transparent text-slate-400 hover:text-slate-200"
-					}`}
-				>
-					Ingredients Fastlane
-				</button>
+				<div className="px-6 py-3 text-xs font-bold uppercase tracking-wider border-b-2 border-blue-500 text-blue-400 bg-blue-500/5">
+					Composite Frames (F2V)
+				</div>
 			</div>
 
 			<div className="grid gap-6 lg:grid-cols-12">
 				{/* Left Column: Configurations */}
 				<div className="lg:col-span-7 space-y-6">
-					{activeTab === "frames" ? (
-						<>
-							<Section step="1" title="Select Product">
+					<Section step="1" title="Select Product">
 								<div className="space-y-2">
 									<p className="text-[11px] text-slate-400">
 										Required. Product truth is loaded from the product database and compiled automatically into the Fastlane preset.
@@ -866,7 +692,7 @@ export default function ImgFastlanePage() {
 									/>
 									{productMissing ? (
 										<p className="text-[10px] text-amber-300/80">
-											Frames Fastlane blocks generation until a database product is selected.
+											Composite Frames (F2V) blocks generation until a database product is selected.
 										</p>
 									) : null}
 									{selectedProduct && !productResolvable ? (
@@ -965,141 +791,9 @@ export default function ImgFastlanePage() {
 									/>
 								</div>
 							</Section>
-						</>
-					) : (
-						<>
-							<Section step="1" title="Select Target Ingredient Role">
-								<div className="grid gap-2 md:grid-cols-2">
-									{INGREDIENT_ROLE_OPTIONS.map((role) => (
-										<button
-											key={role}
-											type="button"
-											onClick={() => setIngSaveLaneId(role)}
-											className={`rounded-xl border py-2.5 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
-												ingSaveLaneId === role
-													? "border-blue-500 bg-blue-600/10 text-blue-400"
-													: "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200"
-											}`}
-										>
-											{ingredientRoleLabel(role)}
-										</button>
-									))}
-								</div>
-								<div className="rounded-xl bg-slate-950/60 border border-slate-800/80 p-3 text-[11px] text-slate-400">
-									{ingredientRoleHelp(ingSaveLaneId)}
-								</div>
-							</Section>
-
-							<Section step="2" title="Select Product / Context">
-								<div className="space-y-3">
-									<p className="text-[11px] text-slate-400">
-										Product context is optional for generic avatar / scene / style presets, but required for product locks and product-truth poster presets.
-									</p>
-									<SearchableProductSelect
-										products={products}
-										selectedProduct={selectedProduct}
-										onSelect={setSelectedProduct}
-									/>
-								</div>
-							</Section>
-
-							<Section step="3" title="Select Existing Reference Or Create From Preset">
-								<div className="space-y-4">
-									<label className="block text-[11px] text-slate-300 space-y-1">
-										<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
-											Template Preset
-										</span>
-										<select
-											value={ingredientPresetId}
-											onChange={(event) =>
-												setIngredientPresetId(event.target.value)
-											}
-											className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none"
-										>
-											<option value="">
-												{ingredientPresets.length
-													? "Select a preset…"
-													: "No presets available for this role"}
-											</option>
-											{ingredientPresets.map((preset) => (
-												<option key={preset.preset_id} value={preset.preset_id}>
-													{preset.label}
-												</option>
-											))}
-										</select>
-									</label>
-
-									{ingSaveLaneId === "AVATAR_REFERENCE" ? (
-										<ReferenceField
-											label="Select Existing Reference"
-											noun="avatar"
-											assets={characterAssets}
-											value={ingCharacterAssetId}
-											onChange={setIngCharacterAssetId}
-											emptyHint="No references found — create one from preset"
-											requiredMissing={false}
-											onApprove={handleApproveAsset}
-											approvingId={approvingId}
-										/>
-									) : null}
-									{ingSaveLaneId === "SCENE_REFERENCE" ? (
-										<ReferenceField
-											label="Select Existing Reference"
-											noun="scene reference"
-											assets={sceneAssets}
-											value={ingSceneAssetId}
-											onChange={setIngSceneAssetId}
-											emptyHint="No references found — create one from preset"
-											requiredMissing={false}
-											onApprove={handleApproveAsset}
-											approvingId={approvingId}
-										/>
-									) : null}
-									{ingSaveLaneId === "STYLE_REFERENCE" ? (
-										<ReferenceField
-											label="Select Existing Reference"
-											noun="style reference"
-											assets={styleAssets}
-											value={ingStyleAssetId}
-											onChange={setIngStyleAssetId}
-											emptyHint="No references found — create one from preset"
-											requiredMissing={false}
-											onApprove={handleApproveAsset}
-											approvingId={approvingId}
-										/>
-									) : null}
-									{ingSaveLaneId === "PRODUCT_REFERENCE" ? (
-										<ReferenceField
-											label="Select Existing Reference"
-											noun="product reference"
-											assets={productReferenceAssets}
-											value={ingProductReferenceAssetId}
-											onChange={setIngProductReferenceAssetId}
-											emptyHint="No references found — create one from preset"
-											requiredMissing={false}
-											onApprove={handleApproveAsset}
-											approvingId={approvingId}
-										/>
-									) : null}
-
-									<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400">
-										<div className="font-semibold text-slate-200">
-											Create From Preset
-										</div>
-										<div className="mt-1">
-											No references found — create one from preset. Fastlane compiles the prompt automatically from the selected role, product context, preset, and existing lineage.
-										</div>
-									</div>
-								</div>
-							</Section>
-						</>
-					)}
 
 					{/* Section 4: Prompt Creator */}
-					<Section
-						step={activeTab === "frames" ? "4" : "4"}
-						title="Final Prompt → Google Flow"
-					>
+					<Section step="4" title="Final Prompt → Google Flow">
 						<div className="grid gap-4 md:grid-cols-2">
 							<label className="block text-[11px] text-slate-300 space-y-1">
 								<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -1204,7 +898,7 @@ export default function ImgFastlanePage() {
 					</Section>
 
 					{/* Section 5: Generation configuration & confirm trigger */}
-					<Section step={activeTab === "frames" ? "5" : "6"} title="Generate Image (Avatar + Product) · Credit-free">
+					<Section step="5" title="Generate Image (Avatar + Product) · Credit-free">
 						<div className="grid gap-4 md:grid-cols-3">
 							<label className="block text-[11px] text-slate-300 space-y-1">
 								<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -1296,10 +990,7 @@ export default function ImgFastlanePage() {
 				{/* Right Column: Registry, Checklist, Save */}
 				<div className="lg:col-span-5 space-y-6">
 					{/* Register Output Section */}
-					<Section
-						step={activeTab === "frames" ? "6" : "5"}
-						title="Register Output (Credit-free)"
-					>
+					<Section step="6" title="Register Output (Credit-free)">
 						<div className="flex gap-1 rounded-xl border border-slate-700 bg-slate-950 p-0.5 text-[10px] font-bold uppercase tracking-wider">
 							<button
 								type="button"
@@ -1364,7 +1055,7 @@ export default function ImgFastlanePage() {
 					</Section>
 
 					{/* Scale & Truth Checklist (Only for Frames mode when product is selected) */}
-					{activeTab === "frames" && selectedProduct && (
+					{selectedProduct && (
 						<Section step="7" title="Product Scale Truth Guard">
 							<div className="space-y-3">
 								<p className="text-[10px] text-slate-400">
@@ -1422,7 +1113,7 @@ export default function ImgFastlanePage() {
 					)}
 
 					{/* Review & Decision Panel */}
-					<Section step={activeTab === "frames" && selectedProduct ? "8" : "7"} title="Review & Approval">
+					<Section step={selectedProduct ? "8" : "7"} title="Review & Approval">
 						<div className="grid gap-3 md:grid-cols-3">
 							{(
 								[
@@ -1475,7 +1166,7 @@ export default function ImgFastlanePage() {
 					</Section>
 
 					{/* Save Section */}
-					<Section step={activeTab === "frames" && selectedProduct ? "9" : "8"} title="Save to Creative Library">
+					<Section step={selectedProduct ? "9" : "8"} title="Save to Creative Library">
 						<label className="block text-[11px] text-slate-300 space-y-1">
 							<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
 								Display Name

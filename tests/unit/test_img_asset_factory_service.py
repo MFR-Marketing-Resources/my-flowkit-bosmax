@@ -614,10 +614,14 @@ def test_compile_wg40_video_lock_preview_emits_exact_bottle_truth(monkeypatch):
 
 
 def test_compile_product_lock_preview_warns_and_blocks_without_product():
+    # The generic INGREDIENTS product-lock presets were purged with the Ingredients
+    # sub-module; the surviving INGREDIENTS + PRODUCT_REFERENCE path is the kept
+    # poster-lock preset, which exercises the same warns-and-blocks-without-product
+    # contract (lane PRODUCT_POSTER).
     preview = asyncio.run(
         compile_img_fastlane_prompt_preview(
             ImgFastlanePromptPreviewRequest(
-                preset_id="GENERIC_PRODUCT_REFERENCE_LOCK",
+                preset_id="MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK",
                 route="INGREDIENTS",
                 ingredient_role="PRODUCT_REFERENCE",
             )
@@ -626,7 +630,7 @@ def test_compile_product_lock_preview_warns_and_blocks_without_product():
 
     assert "PRODUCT_REQUIRED" in preview.blockers
     assert "PRODUCT_CONTEXT_RECOMMENDED_FOR_PRODUCT_LOCK" in preview.warnings
-    assert preview.lane_id == "PRODUCT_ONLY_HERO"
+    assert preview.lane_id == "PRODUCT_POSTER"
 
 
 def test_frames_preview_enforces_clean_frame_no_text_negative(monkeypatch):
