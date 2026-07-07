@@ -170,6 +170,7 @@ def test_delete_avatar_removes_row_and_archives_linked_image(monkeypatch):
 
     class _Asset:
         asset_id = "ca_linked"
+        media_id = "m_zara"
         description = "AVATAR_CODE:BOS_F_ZARA_01 — generated from registry PromptV1"
 
     async def fake_list(**kwargs):
@@ -181,10 +182,18 @@ def test_delete_avatar_removes_row_and_archives_linked_image(monkeypatch):
         archived["id"] = asset_id
         return None
 
+    purged: dict = {}
+
+    async def fake_purge(media_id):
+        purged["id"] = media_id
+        return {"deleted": 1, "file_removed": True}
+
     monkeypatch.setattr(
         "agent.services.creative_asset_service.list_creative_assets", fake_list)
     monkeypatch.setattr(
         "agent.services.creative_asset_service.archive_creative_asset", fake_archive)
+    monkeypatch.setattr(
+        "agent.db.crud.delete_generated_artifact", fake_purge)
 
     client = TestClient(_build_app())
     response = client.delete("/api/workspace/avatar-registry/BOS_F_ZARA_01")
@@ -193,6 +202,9 @@ def test_delete_avatar_removes_row_and_archives_linked_image(monkeypatch):
     assert body["removed"] == "BOS_F_ZARA_01"
     assert body["archived_asset_id"] == "ca_linked"
     assert archived["id"] == "ca_linked"  # linked image WAS archived (not dead code)
+    # the linked 48h temp artifact is also purged so the image fully leaves the Library
+    assert body["purged_media_id"] == "m_zara"
+    assert purged["id"] == "m_zara"
 
 
 def test_delete_avatar_unknown_code_404(monkeypatch):

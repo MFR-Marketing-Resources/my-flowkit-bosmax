@@ -315,19 +315,43 @@ async def scene_context_registry_delete(scene_code: str):
     so it also leaves the active Library. 404 if the code is absent; the image
     archive never blocks the profile delete."""
     from agent.services import scene_context_registry
-    from agent.services.creative_asset_service import archive_creative_asset
+    from agent.services.creative_asset_service import (
+        archive_creative_asset,
+        list_creative_assets,
+    )
     try:
         result = scene_context_registry.delete_scene(scene_code)
     except ValueError as exc:
         msg = str(exc)
         raise HTTPException(404 if "NOT_FOUND" in msg else 422, msg) from exc
+    # Best-effort archive of the linked background image + purge its 48h temp
+    # artifact so the image fully leaves the Library now (archiving the saved
+    # asset alone un-hides its temp twin). Match the SCENE_CODE marker in the
+    # asset description. Never blocks the profile delete.
     archived_asset_id = None
+    purged_media_id = None
     try:
-        index = await _generated_scene_asset_ids()
-        asset_id = index.get(scene_code.strip().upper())
-        if asset_id:
-            await archive_creative_asset(str(asset_id))
-            archived_asset_id = str(asset_id)
+        target = scene_code.strip().upper()
+        assets = await list_creative_assets(
+            semantic_role="SCENE_CONTEXT_REFERENCE", status="ACTIVE", limit=1000)
+        for asset in assets:
+            description = str(getattr(asset, "description", "") or "")
+            if _SCENE_ASSET_MARKER not in description:
+                continue
+            code = description.split(_SCENE_ASSET_MARKER, 1)[1].split()[0].strip().upper()
+            if code == target:
+                await archive_creative_asset(str(asset.asset_id))
+                archived_asset_id = str(asset.asset_id)
+                media_id = getattr(asset, "media_id", None)
+                if media_id:
+                    try:
+                        from agent.db import crud
+                        await crud.delete_generated_artifact(str(media_id))
+                        purged_media_id = str(media_id)
+                    except Exception:
+                        purged_media_id = None
+                break
     except Exception:
-        archived_asset_id = None
-    return {**result, "archived_asset_id": archived_asset_id}
+        pass
+    return {**result, "archived_asset_id": archived_asset_id,
+            "purged_media_id": purged_media_id}

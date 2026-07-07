@@ -1899,6 +1899,32 @@ async def get_generated_artifact(media_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+async def delete_generated_artifact(media_id: str) -> dict:
+    """Delete ONE artifact (DB row + local file) by Flow media id, immediately.
+    Used when a registry profile is deleted so its temp reference image does not
+    linger in the Library until the 48h retention sweep. Safe no-op if absent."""
+    import os
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT local_path FROM generated_artifact WHERE media_id=?", (media_id,))
+    row = await cursor.fetchone()
+    if row is None:
+        return {"deleted": 0, "file_removed": False}
+    local_path = row[0]
+    file_removed = False
+    if local_path:
+        try:
+            os.remove(local_path)
+            file_removed = True
+        except OSError:
+            pass  # already gone — row cleanup below still applies
+    async with _db_lock:
+        await db.execute(
+            "DELETE FROM generated_artifact WHERE media_id=?", (media_id,))
+        await db.commit()
+    return {"deleted": 1, "file_removed": file_removed}
+
+
 async def list_generated_artifacts(limit: int = 50, mode: str = None,
                                     kind: str = None) -> list:
     """Newest-first library listing for the dashboard gallery."""

@@ -233,3 +233,62 @@ def test_auto_generate_invalid_ai_json_502(monkeypatch):
     )
     assert response.status_code == 502
     assert "AI_SCENE_INVALID" in response.text
+
+
+def test_delete_scene_removes_row_archives_and_purges_temp(monkeypatch):
+    """DELETE removes the pool row (mocked), archives the linked background image
+    via the SCENE_CODE marker, and purges its 48h temp artifact."""
+    monkeypatch.setattr(
+        "agent.services.scene_context_registry.delete_scene",
+        lambda code: {"removed": code, "remaining": 19, "bridge_path": "x"},
+    )
+
+    class _Asset:
+        asset_id = "ca_scene"
+        media_id = "m_scene"
+        description = "SCENE_CODE:SCN_STUDIO_TEST — generated from registry PromptV1"
+
+    async def fake_list(**kwargs):
+        return [_Asset()]
+
+    archived: dict = {}
+    purged: dict = {}
+
+    async def fake_archive(asset_id):
+        archived["id"] = asset_id
+        return None
+
+    async def fake_purge(media_id):
+        purged["id"] = media_id
+        return {"deleted": 1, "file_removed": True}
+
+    monkeypatch.setattr(
+        "agent.services.creative_asset_service.list_creative_assets", fake_list)
+    monkeypatch.setattr(
+        "agent.services.creative_asset_service.archive_creative_asset", fake_archive)
+    monkeypatch.setattr(
+        "agent.db.crud.delete_generated_artifact", fake_purge)
+
+    client = TestClient(_build_app())
+    response = client.delete(
+        "/api/workspace/scene-context-registry/SCN_STUDIO_TEST")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["removed"] == "SCN_STUDIO_TEST"
+    assert body["archived_asset_id"] == "ca_scene"
+    assert body["purged_media_id"] == "m_scene"
+    assert archived["id"] == "ca_scene"
+    assert purged["id"] == "m_scene"
+
+
+def test_delete_scene_unknown_code_404(monkeypatch):
+    def fake_delete(code):
+        raise ValueError(f"SCENE_CODE_NOT_FOUND:{code}")
+
+    monkeypatch.setattr(
+        "agent.services.scene_context_registry.delete_scene", fake_delete)
+
+    client = TestClient(_build_app())
+    response = client.delete("/api/workspace/scene-context-registry/SCN_NOPE")
+    assert response.status_code == 404
+    assert "SCENE_CODE_NOT_FOUND" in response.text
