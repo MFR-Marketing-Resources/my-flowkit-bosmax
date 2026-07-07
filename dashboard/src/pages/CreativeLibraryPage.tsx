@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { DataTable, Badge } from "../components/ui";
 import SaveToCreativeLibraryPanel from "../components/creative-library/SaveToCreativeLibraryPanel";
 import {
 	archiveCreativeAsset,
@@ -12,7 +13,6 @@ import type {
 	WorkspaceMode,
 } from "../types";
 
-const PAGE_SIZE_ASSETS = 20;
 
 const ROLE_OPTIONS: CreativeAssetSemanticRole[] = [
 	"PRODUCT_REFERENCE",
@@ -48,7 +48,6 @@ export default function CreativeLibraryPage() {
 	const [search, setSearch] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
-	const [currentPage, setCurrentPage] = useState(1);
 	const [archiving, setArchiving] = useState<string | null>(null);
 	const [refreshToken, setRefreshToken] = useState(0);
 
@@ -72,14 +71,6 @@ export default function CreativeLibraryPage() {
 			.finally(() => setIsLoading(false));
 	}, [roleFilter, statusFilter, search, refreshToken]);
 
-	const paginationResetKey = `${roleFilter}|${statusFilter}|${modeFilter}|${search}`;
-
-	useEffect(() => {
-		if (paginationResetKey) {
-			setCurrentPage(1);
-		}
-	}, [paginationResetKey]);
-
 	const handleArchive = async (assetId: string) => {
 		setArchiving(assetId);
 		try {
@@ -100,13 +91,6 @@ export default function CreativeLibraryPage() {
 		modeFilter === "ALL"
 			? items
 			: items.filter((item) => item.allowed_modes.includes(modeFilter));
-
-	const totalPages = Math.ceil(displayedItems.length / PAGE_SIZE_ASSETS);
-	const safePage = Math.min(Math.max(1, currentPage), totalPages || 1);
-	const paginatedItems = displayedItems.slice(
-		(safePage - 1) * PAGE_SIZE_ASSETS,
-		safePage * PAGE_SIZE_ASSETS,
-	);
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
@@ -214,115 +198,72 @@ export default function CreativeLibraryPage() {
 					/>
 				</div>
 
-				<div className="overflow-x-auto rounded-2xl border border-slate-800">
-					<table className="min-w-full divide-y divide-slate-800 text-sm">
-						<thead className="bg-slate-900/70 text-[10px] uppercase tracking-[0.18em] text-slate-500">
-							<tr>
-								<th className="px-4 py-3 text-left">Asset</th>
-								<th className="px-4 py-3 text-left">Semantic Role</th>
-								<th className="px-4 py-3 text-left">Status</th>
-								<th className="px-4 py-3 text-left">Modes</th>
-								<th className="px-4 py-3 text-left">Edit</th>
-								<th className="px-4 py-3 text-left">Archive</th>
-							</tr>
-						</thead>
-						<tbody className="divide-y divide-slate-800 bg-slate-950/40 text-slate-200">
-							{displayedItems.length === 0 ? (
-								<tr>
-									<td
-										colSpan={6}
-										className="px-4 py-8 text-center text-xs text-slate-500"
-									>
-										{isLoading ? "Loading assets..." : "No assets found."}
-									</td>
-								</tr>
-							) : (
-								paginatedItems.map((item) => (
-									<tr key={item.asset_id} className="hover:bg-slate-900/50">
-										<td className="px-4 py-3">
-											<div className="font-semibold">{item.display_name}</div>
-											<div className="text-xs text-slate-500">
-												{item.asset_id}
-											</div>
-										</td>
-										<td className="px-4 py-3 text-xs">{item.semantic_role}</td>
-										<td className="px-4 py-3 text-xs">
-											<span
-												className={`rounded-full border px-2 py-1 ${
-													item.status === "ACTIVE"
-														? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-														: "border-amber-500/30 bg-amber-500/10 text-amber-100"
-												}`}
-											>
-												{item.status}
-											</span>
-										</td>
-										<td className="px-4 py-3 text-xs text-slate-400">
-											{item.allowed_modes
-												.map((mode) => MODE_LABELS[mode] ?? mode)
-												.join(", ") || "ALL"}
-										</td>
-										<td className="px-4 py-3">
-											<button
-												type="button"
-												onClick={() =>
-													navigate(
-														`/assets/creative-library/workspace?id=${item.asset_id}`,
-													)
-												}
-												className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-800"
-											>
-												Edit
-											</button>
-										</td>
-										<td className="px-4 py-3">
-											{item.status === "ACTIVE" && (
-												<button
-													type="button"
-													onClick={() => handleArchive(item.asset_id)}
-													disabled={archiving === item.asset_id}
-													className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
-												>
-													{archiving === item.asset_id ? "..." : "Archive"}
-												</button>
-											)}
-										</td>
-									</tr>
-								))
-							)}
-						</tbody>
-					</table>
-				</div>
-				{totalPages > 1 && (
-					<div className="mt-4 flex items-center justify-center gap-1">
-						<button
-							type="button"
-							onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-							disabled={safePage === 1}
-							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
-						>
-							Prev
-						</button>
-						{Array.from({ length: totalPages }, (_, i) => i + 1).map((pg) => (
+				<DataTable
+					rows={displayedItems}
+					getRowId={(item) => item.asset_id}
+					pageSize={20}
+					emptyLabel={isLoading ? "Loading assets..." : "No assets found."}
+					initialSort={{ key: "asset", dir: "asc" }}
+					columns={[
+						{
+							key: "asset",
+							header: "Asset",
+							sortValue: (item) => item.display_name,
+							render: (item) => (
+								<div>
+									<div className="font-semibold">{item.display_name}</div>
+									<div className="text-xs text-slate-500">{item.asset_id}</div>
+								</div>
+							),
+						},
+						{
+							key: "role",
+							header: "Semantic Role",
+							sortValue: (item) => item.semantic_role,
+							render: (item) => <span className="text-xs">{item.semantic_role}</span>,
+						},
+						{
+							key: "status",
+							header: "Status",
+							sortValue: (item) => item.status,
+							render: (item) => (
+								<Badge tone={item.status === "ACTIVE" ? "success" : "warn"}>
+									{item.status}
+								</Badge>
+							),
+						},
+						{
+							key: "modes",
+							header: "Modes",
+							render: (item) => (
+								<span className="text-xs text-slate-400">
+									{item.allowed_modes.map((mode) => MODE_LABELS[mode] ?? mode).join(", ") || "ALL"}
+								</span>
+							),
+						},
+					]}
+					rowActions={(item) => (
+						<div className="flex items-center justify-end gap-2">
 							<button
-								key={pg}
 								type="button"
-								onClick={() => setCurrentPage(pg)}
-								className={`w-8 h-8 rounded-lg border text-xs font-semibold ${safePage === pg ? "border-blue-500/50 bg-blue-500/20 text-blue-200" : "border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800"}`}
+								onClick={() => navigate(`/assets/creative-library/workspace?id=${item.asset_id}`)}
+								className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-800"
 							>
-								{pg}
+								Edit
 							</button>
-						))}
-						<button
-							type="button"
-							onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-							disabled={safePage === totalPages}
-							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
-						>
-							Next
-						</button>
-					</div>
-				)}
+							{item.status === "ACTIVE" && (
+								<button
+									type="button"
+									onClick={() => handleArchive(item.asset_id)}
+									disabled={archiving === item.asset_id}
+									className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
+								>
+									{archiving === item.asset_id ? "..." : "Archive"}
+								</button>
+							)}
+						</div>
+					)}
+				/>
 			</section>
 		</div>
 	);
