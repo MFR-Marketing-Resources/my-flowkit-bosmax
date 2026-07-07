@@ -1,0 +1,557 @@
+import { PenLine } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import {
+	approveCopySet,
+	deleteCopySet,
+	generateCopySet,
+	generateCopySetBatch,
+	listCopySetsForProduct,
+	patchCopySet,
+	rejectCopySet,
+} from "../api/copySets";
+import { fetchProductCatalog } from "../api/products";
+import {
+	Badge,
+	type BadgeTone,
+	ConfirmActionModal,
+	DataTable,
+	type DataTableColumn,
+	FormField,
+	HelperText,
+	Section,
+} from "../components/ui";
+import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
+import type { CopySet, CopySetStatus, Product } from "../types";
+
+const GENERATE_COUNT = 5;
+const DELETE_PHRASE = "DELETE";
+
+const STATUS_TONE: Record<CopySetStatus, BadgeTone> = {
+	DRAFT_COPY: "neutral",
+	COPY_REVIEW_REQUIRED: "warn",
+	COPY_APPROVED: "success",
+	COPY_REJECTED: "danger",
+};
+const STATUS_LABEL: Record<CopySetStatus, string> = {
+	DRAFT_COPY: "Draft",
+	COPY_REVIEW_REQUIRED: "Review required",
+	COPY_APPROVED: "Approved",
+	COPY_REJECTED: "Rejected",
+};
+
+// ---- Edit modal ---------------------------------------------------------
+
+function EditCopySetModal({
+	set,
+	busy,
+	onSave,
+	onCancel,
+}: {
+	set: CopySet;
+	busy: boolean;
+	onSave: (patch: {
+		angle: string;
+		hook: string;
+		subhook: string;
+		usp_set: string[];
+		cta: string;
+	}) => void;
+	onCancel: () => void;
+}) {
+	const [angle, setAngle] = useState(set.angle);
+	const [hook, setHook] = useState(set.hook);
+	const [subhook, setSubhook] = useState(set.subhook);
+	const [usp1, setUsp1] = useState(set.usp_set[0] ?? "");
+	const [usp2, setUsp2] = useState(set.usp_set[1] ?? "");
+	const [usp3, setUsp3] = useState(set.usp_set[2] ?? "");
+	const [cta, setCta] = useState(set.cta);
+
+	const inputCls =
+		"mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200";
+
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+			<div
+				className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-950 p-5"
+				data-testid="edit-copy-set-modal"
+			>
+				<h3 className="text-sm font-bold text-slate-100">Edit copywriting set</h3>
+				<p className="mt-1 text-xs text-slate-400">
+					Editing re-derives status and clears any previous approval.
+				</p>
+				<div className="mt-4 grid gap-3 md:grid-cols-2">
+					<FormField label="Angle">
+						<input className={inputCls} value={angle} onChange={(e) => setAngle(e.target.value)} />
+					</FormField>
+					<FormField label="Hook">
+						<input className={inputCls} value={hook} onChange={(e) => setHook(e.target.value)} />
+					</FormField>
+					<FormField label="Subhook" className="md:col-span-2">
+						<input className={inputCls} value={subhook} onChange={(e) => setSubhook(e.target.value)} />
+					</FormField>
+					<FormField label="USP 1">
+						<input className={inputCls} value={usp1} onChange={(e) => setUsp1(e.target.value)} />
+					</FormField>
+					<FormField label="USP 2">
+						<input className={inputCls} value={usp2} onChange={(e) => setUsp2(e.target.value)} />
+					</FormField>
+					<FormField label="USP 3">
+						<input className={inputCls} value={usp3} onChange={(e) => setUsp3(e.target.value)} />
+					</FormField>
+					<FormField label="CTA">
+						<input className={inputCls} value={cta} onChange={(e) => setCta(e.target.value)} />
+					</FormField>
+				</div>
+				<div className="mt-5 flex justify-end gap-2">
+					<button
+						type="button"
+						onClick={onCancel}
+						disabled={busy}
+						className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						data-testid="save-copy-set-edit"
+						disabled={busy}
+						onClick={() =>
+							onSave({
+								angle,
+								hook,
+								subhook,
+								usp_set: [usp1, usp2, usp3].map((u) => u.trim()).filter(Boolean),
+								cta,
+							})
+						}
+						className="rounded-lg border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40"
+					>
+						{busy ? "Saving…" : "Save changes"}
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+// ---- Page ---------------------------------------------------------------
+
+export default function CopySetRegistryPage() {
+	const [searchParams, setSearchParams] = useSearchParams();
+	const [products, setProducts] = useState<Product[]>([]);
+	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+	const [sets, setSets] = useState<CopySet[]>([]);
+	const [loading, setLoading] = useState(false);
+	const [generating, setGenerating] = useState(false);
+	const [busyId, setBusyId] = useState<string | null>(null);
+	const [error, setError] = useState("");
+	const [success, setSuccess] = useState("");
+	const [editTarget, setEditTarget] = useState<CopySet | null>(null);
+	const [deleteTarget, setDeleteTarget] = useState<CopySet | null>(null);
+
+	useEffect(() => {
+		void fetchProductCatalog(500)
+			.then((r) => setProducts(r.items ?? []))
+			.catch((e: Error) => setError(e.message || "Gagal muat katalog produk."));
+	}, []);
+
+	useEffect(() => {
+		const pid = searchParams.get("product_id");
+		if (!pid || products.length === 0) return;
+		const match = products.find((p) => p.id === pid);
+		if (match && match.id !== selectedProduct?.id) setSelectedProduct(match);
+	}, [searchParams, products, selectedProduct?.id]);
+
+	const loadSets = useCallback(async (productId: string) => {
+		setLoading(true);
+		setError("");
+		try {
+			const res = await listCopySetsForProduct(productId);
+			setSets(res.items ?? []);
+		} catch (e) {
+			setSets([]);
+			setError(e instanceof Error ? e.message : "Gagal muat copywriting set.");
+		} finally {
+			setLoading(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		if (!selectedProduct) {
+			setSets([]);
+			return;
+		}
+		const cur = searchParams.get("product_id");
+		if (cur !== selectedProduct.id) {
+			setSearchParams({ product_id: selectedProduct.id }, { replace: true });
+		}
+		setSuccess("");
+		void loadSets(selectedProduct.id);
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when product id changes
+	}, [selectedProduct?.id]);
+
+	// AI generation is EXPLICIT-only (button click). Never fired on product select.
+	const handleGenerate = async () => {
+		if (!selectedProduct || generating) return;
+		setGenerating(true);
+		setError("");
+		setSuccess("");
+		try {
+			const res = await generateCopySetBatch({
+				product_id: selectedProduct.id,
+				requested_count: GENERATE_COUNT,
+			});
+			setSuccess(
+				`${res.created_count} set baru dijana${res.deduped_count ? ` · ${res.deduped_count} duplikat ditapis` : ""}. Semak & approve sebelum guna.`,
+			);
+			await loadSets(selectedProduct.id);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : "Gagal jana copywriting set.";
+			setError(
+				/409|NOT_CONFIGURED/i.test(msg)
+					? "Lane AI (DeepSeek text_assist) belum dikonfigur. Sila set di Cockpit Settings / AI Providers dahulu."
+					: msg,
+			);
+		} finally {
+			setGenerating(false);
+		}
+	};
+
+	const handleAddDeterministic = async () => {
+		if (!selectedProduct || generating) return;
+		setGenerating(true);
+		setError("");
+		setSuccess("");
+		try {
+			await generateCopySet({ product_id: selectedProduct.id });
+			setSuccess("1 set deterministik (tanpa AI) ditambah.");
+			await loadSets(selectedProduct.id);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Gagal tambah set.");
+		} finally {
+			setGenerating(false);
+		}
+	};
+
+	const withBusy = async (id: string, fn: () => Promise<unknown>) => {
+		setBusyId(id);
+		setError("");
+		try {
+			await fn();
+			if (selectedProduct) await loadSets(selectedProduct.id);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Tindakan gagal.");
+		} finally {
+			setBusyId(null);
+		}
+	};
+
+	const handleApprove = (s: CopySet) =>
+		void withBusy(s.copy_set_id, async () => {
+			await approveCopySet(s.copy_set_id, { approved_by: "operator" });
+			setSuccess("Set diluluskan (APPROVED).");
+		});
+
+	const handleReject = (s: CopySet) => {
+		const note = window.prompt("Sebab reject (reviewer note):", "Not suitable");
+		if (note == null || !note.trim()) return;
+		void withBusy(s.copy_set_id, async () => {
+			await rejectCopySet(s.copy_set_id, note.trim());
+			setSuccess("Set direject.");
+		});
+	};
+
+	const handleSaveEdit = (patch: {
+		angle: string;
+		hook: string;
+		subhook: string;
+		usp_set: string[];
+		cta: string;
+	}) => {
+		if (!editTarget) return;
+		const target = editTarget;
+		void withBusy(target.copy_set_id, async () => {
+			await patchCopySet(target.copy_set_id, patch);
+			setSuccess("Set dikemas kini.");
+			setEditTarget(null);
+		});
+	};
+
+	const confirmDelete = () => {
+		if (!deleteTarget) return;
+		const target = deleteTarget;
+		void withBusy(target.copy_set_id, async () => {
+			await deleteCopySet(target.copy_set_id);
+			setSuccess("Set dipadam.");
+			setDeleteTarget(null);
+		});
+	};
+
+	const columns: DataTableColumn<CopySet>[] = useMemo(
+		() => [
+			{
+				key: "status",
+				header: "Status",
+				sortValue: (r) => r.status,
+				render: (r) => (
+					<Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
+				),
+			},
+			{
+				key: "angle",
+				header: "Angle",
+				sortValue: (r) => r.angle,
+				render: (r) => <span className="text-slate-200">{r.angle || "—"}</span>,
+			},
+			{
+				key: "hook",
+				header: "Hook",
+				render: (r) => (
+					<span className="text-slate-100">{r.hook || "—"}</span>
+				),
+			},
+			{
+				key: "subhook",
+				header: "Subhook",
+				render: (r) => (
+					<span className="text-slate-400">{r.subhook || "—"}</span>
+				),
+			},
+			{
+				key: "usp",
+				header: "USPs",
+				render: (r) => (
+					<span className="text-slate-400">
+						{r.usp_set.filter(Boolean).join(" · ") || "—"}
+					</span>
+				),
+			},
+			{
+				key: "cta",
+				header: "CTA",
+				render: (r) => <span className="text-slate-300">{r.cta || "—"}</span>,
+			},
+			{
+				key: "source",
+				header: "Source",
+				sortValue: (r) => r.source,
+				render: (r) => (
+					<span className="text-[10px] uppercase text-slate-500">{r.source || "—"}</span>
+				),
+			},
+		],
+		[],
+	);
+
+	const filters = useMemo(
+		() => [
+			{
+				key: "status",
+				label: "Status",
+				value: (r: CopySet) => r.status,
+				options: [
+					{ value: "COPY_APPROVED", label: "Approved" },
+					{ value: "COPY_REVIEW_REQUIRED", label: "Review required" },
+					{ value: "DRAFT_COPY", label: "Draft" },
+					{ value: "COPY_REJECTED", label: "Rejected" },
+				],
+			},
+		],
+		[],
+	);
+
+	const rowActions = (r: CopySet) => {
+		const busy = busyId === r.copy_set_id;
+		return (
+			<div className="flex flex-wrap justify-end gap-1.5">
+				{r.status !== "COPY_APPROVED" && r.status !== "COPY_REJECTED" ? (
+					<button
+						type="button"
+						data-testid={`approve-${r.copy_set_id}`}
+						disabled={busy}
+						onClick={() => handleApprove(r)}
+						className="rounded border border-emerald-500/40 px-2 py-1 text-[10px] font-bold uppercase text-emerald-200 disabled:opacity-40"
+					>
+						Approve
+					</button>
+				) : null}
+				{r.status !== "COPY_REJECTED" ? (
+					<button
+						type="button"
+						data-testid={`reject-${r.copy_set_id}`}
+						disabled={busy}
+						onClick={() => handleReject(r)}
+						className="rounded border border-amber-500/40 px-2 py-1 text-[10px] font-bold uppercase text-amber-200 disabled:opacity-40"
+					>
+						Reject
+					</button>
+				) : null}
+				<button
+					type="button"
+					data-testid={`edit-${r.copy_set_id}`}
+					disabled={busy}
+					onClick={() => setEditTarget(r)}
+					className="rounded border border-slate-600 px-2 py-1 text-[10px] font-bold uppercase text-slate-200 disabled:opacity-40"
+				>
+					Edit
+				</button>
+				<button
+					type="button"
+					data-testid={`delete-${r.copy_set_id}`}
+					disabled={busy}
+					onClick={() => setDeleteTarget(r)}
+					className="rounded border border-rose-500/40 px-2 py-1 text-[10px] font-bold uppercase text-rose-200 disabled:opacity-40"
+				>
+					Delete
+				</button>
+			</div>
+		);
+	};
+
+	const approvedCount = sets.filter((s) => s.status === "COPY_APPROVED").length;
+
+	return (
+		<div
+			className="mx-auto max-w-6xl space-y-6 p-4 md:p-8"
+			data-testid="copy-set-registry-page"
+		>
+			<header>
+				<div className="flex items-center gap-2 text-blue-300">
+					<PenLine size={20} />
+					<span className="text-[10px] font-bold uppercase tracking-[0.2em]">
+						Creative
+					</span>
+				</div>
+				<h1 className="mt-1 text-2xl font-bold text-slate-100">
+					Copywriting Set Registry
+				</h1>
+				<p className="mt-2 max-w-3xl text-sm text-slate-400">
+					Satu database copywriting set per produk (angle → hook → subhook → USP →
+					CTA). Tekan Generate, AI (DeepSeek) isi set. Approved set dipakai oleh
+					Poster Builder dan video generation (T2V/F2V/Hybrid/I2V). Setiap baris =
+					satu set MAPPING lengkap.
+				</p>
+			</header>
+
+			{error ? (
+				<p
+					className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100"
+					data-testid="copy-registry-error"
+				>
+					{error}
+				</p>
+			) : null}
+			{success ? (
+				<p
+					className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100"
+					data-testid="copy-registry-success"
+				>
+					{success}
+				</p>
+			) : null}
+
+			<Section title="Product" helper="Pilih produk untuk urus copywriting set-nya.">
+				<div className="max-w-xl">
+					<SearchableProductSelect
+						products={products}
+						selectedProduct={selectedProduct}
+						onSelect={setSelectedProduct}
+					/>
+				</div>
+			</Section>
+
+			{selectedProduct ? (
+				<>
+					<Section
+						title="Generate copywriting sets"
+						helper={`AI menjana ${GENERATE_COUNT} set setiap tekan (max ${GENERATE_COUNT} demi kualiti). Tekan lagi untuk tambah. Set baru bertaraf "Review required" — approve sebelum guna.`}
+						action={
+							<div className="flex flex-wrap gap-2">
+								<button
+									type="button"
+									data-testid="generate-copy-sets"
+									disabled={generating}
+									onClick={handleGenerate}
+									className="rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
+								>
+									{generating ? "Generating…" : `Generate ${GENERATE_COUNT} sets (AI)`}
+								</button>
+								<button
+									type="button"
+									data-testid="add-deterministic-copy-set"
+									disabled={generating}
+									onClick={handleAddDeterministic}
+									className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-bold uppercase text-slate-300 disabled:opacity-40"
+								>
+									Add 1 (no AI)
+								</button>
+							</div>
+						}
+					>
+						<HelperText tone="warn">
+							Generate menggunakan token DeepSeek — hanya berjalan bila anda tekan
+							butang, tidak automatik. {approvedCount} set diluluskan setakat ini.
+						</HelperText>
+					</Section>
+
+					<Section
+						title="Copywriting sets"
+						helper="Edit / Approve / Reject / Delete. Approved set auto dipakai builder & video."
+					>
+						{loading ? (
+							<p className="text-sm text-slate-400">Memuatkan…</p>
+						) : (
+							<DataTable<CopySet>
+								rows={sets}
+								columns={columns}
+								getRowId={(r) => r.copy_set_id}
+								pageSize={25}
+								searchText={(r) =>
+									`${r.angle} ${r.hook} ${r.subhook} ${r.usp_set.join(" ")} ${r.cta}`
+								}
+								searchPlaceholder="Cari angle / hook / CTA…"
+								filters={filters}
+								initialSort={{ key: "status", dir: "asc" }}
+								rowActions={rowActions}
+								emptyLabel="Belum ada copywriting set. Tekan Generate untuk mula."
+								minWidthClassName="min-w-[900px]"
+							/>
+						)}
+					</Section>
+				</>
+			) : (
+				<Section title="Copywriting sets">
+					<p className="text-sm text-slate-500">
+						Pilih produk dahulu untuk lihat & jana copywriting set.
+					</p>
+				</Section>
+			)}
+
+			{editTarget ? (
+				<EditCopySetModal
+					set={editTarget}
+					busy={busyId === editTarget.copy_set_id}
+					onSave={handleSaveEdit}
+					onCancel={() => setEditTarget(null)}
+				/>
+			) : null}
+
+			<ConfirmActionModal
+				open={!!deleteTarget}
+				tone="danger"
+				title="Padam copywriting set?"
+				body={
+					deleteTarget
+						? `Set "${deleteTarget.angle || deleteTarget.hook || deleteTarget.copy_set_id}" akan dipadam kekal. Guna Reject jika hanya mahu tandakan tidak sesuai.`
+						: ""
+				}
+				requiredPhrase={DELETE_PHRASE}
+				confirmLabel="Delete permanently"
+				busy={!!deleteTarget && busyId === deleteTarget.copy_set_id}
+				onConfirm={confirmDelete}
+				onCancel={() => setDeleteTarget(null)}
+			/>
+		</div>
+	);
+}

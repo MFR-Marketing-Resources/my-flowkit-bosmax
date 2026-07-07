@@ -9,6 +9,7 @@ Backend foundation for the approved Copy Set workflow:
     POST   /api/copy-sets/{copy_set_id}/approve
     POST   /api/copy-sets/{copy_set_id}/reject
     POST   /api/copy-sets/{copy_set_id}/regenerate
+    DELETE /api/copy-sets/{copy_set_id}
 
 No Google Flow execution, no credit spend, no compiler mutation — this router
 only creates/reviews/approves Copy Sets. Errors fail closed with operator-readable
@@ -134,5 +135,14 @@ async def regenerate_copy_set(copy_set_id: str, request: CopySetRegenerateReques
     overrides = request.model_dump(exclude_none=True) if request else None
     try:
         return await svc.regenerate_copy_set(copy_set_id, overrides or None)
+    except svc.CopySetError as error:
+        _raise(error)
+
+
+@router.delete("/{copy_set_id}")
+async def delete_copy_set(copy_set_id: str):
+    """Hard-delete a Copy Set from the registry (permanent). 404 if missing."""
+    try:
+        return await svc.delete_copy_set(copy_set_id)
     except svc.CopySetError as error:
         _raise(error)

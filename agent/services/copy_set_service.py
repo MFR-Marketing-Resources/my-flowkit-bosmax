@@ -335,6 +335,16 @@ async def list_copy_sets(product_id: str) -> list[dict[str, Any]]:
     return [serialize_copy_set(row) for row in rows]
 
 
+async def delete_copy_set(copy_set_id: str) -> dict[str, Any]:
+    """Hard-delete a Copy Set. `reject` remains the soft option; this is the
+    registry's permanent remove. Fail closed (404) when the set is missing."""
+    row = await crud.get_copy_set(copy_set_id)
+    if not row:
+        raise CopySetError("COPY_SET_NOT_FOUND", status_code=404)
+    await crud.delete_copy_set(copy_set_id)
+    return {"deleted": True, "copy_set_id": copy_set_id}
+
+
 async def patch_copy_set(copy_set_id: str, request: CopySetPatchRequest | dict) -> dict[str, Any]:
     req = request if isinstance(request, CopySetPatchRequest) else CopySetPatchRequest.model_validate(request)
     row = await crud.get_copy_set(copy_set_id)

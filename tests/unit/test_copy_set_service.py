@@ -232,6 +232,27 @@ async def test_reject_sets_rejected(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_delete_copy_set_removes_row(monkeypatch):
+    pid = await _make_product()
+    _no_landbank(monkeypatch)
+    _fake_generator(monkeypatch, _fake_signal())
+    cs = (await svc.generate_copy_set({"product_id": pid}))["copy_set"]
+    cid = cs["copy_set_id"]
+    assert await svc.get_copy_set(cid) is not None
+
+    result = await svc.delete_copy_set(cid)
+    assert result == {"deleted": True, "copy_set_id": cid}
+    assert await svc.get_copy_set(cid) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_copy_set_missing_raises():
+    with pytest.raises(svc.CopySetError) as exc:
+        await svc.delete_copy_set("does-not-exist")
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_regenerate_keeps_id_and_resets_status(monkeypatch):
     pid = await _make_product()
     _no_landbank(monkeypatch)
