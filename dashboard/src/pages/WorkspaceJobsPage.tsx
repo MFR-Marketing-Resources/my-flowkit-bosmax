@@ -6,6 +6,7 @@ import {
 	RefreshCcw,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DataTable } from "../components/ui";
 import { fetchAPI } from "../api/client";
 import { fetchProductCatalog } from "../api/products";
 import type {
@@ -35,7 +36,6 @@ import {
 type StatusFilter = "ALL" | "WAITING" | "RUNNING" | "COMPLETED" | "FAILED";
 type ModeFilter = "ALL" | WorkspaceMode;
 
-const PAGE_SIZE_JOBS = 20;
 
 const MODE_FILTERS: Array<{ id: ModeFilter; label: string }> = [
 	{ id: "ALL", label: "All" },
@@ -143,7 +143,6 @@ export default function WorkspaceJobsPage() {
 	const [detail, setDetail] = useState<TelemetryRequestDetail | null>(null);
 	const [detailLoading, setDetailLoading] = useState(false);
 	const [detailError, setDetailError] = useState("");
-	const [currentPageJobs, setCurrentPageJobs] = useState(1);
 
 	const loadTelemetry = useCallback(() => {
 		fetchAPI<TelemetryRequest[]>("/api/telemetry/requests?limit=200")
@@ -225,7 +224,6 @@ export default function WorkspaceJobsPage() {
 		});
 	}, [modeFilter, products, requests, search, statusFilter]);
 
-	const paginationResetKey = `${modeFilter}|${statusFilter}|${search}`;
 
 	useEffect(() => {
 		if (!selectedRequestId && filteredRequests.length > 0) {
@@ -273,21 +271,6 @@ export default function WorkspaceJobsPage() {
 		};
 	}, [selectedRequestId]);
 
-	useEffect(() => {
-		if (paginationResetKey) {
-			setCurrentPageJobs(1);
-		}
-	}, [paginationResetKey]);
-
-	const totalPagesJobs = Math.ceil(filteredRequests.length / PAGE_SIZE_JOBS);
-	const safePageJobs = Math.min(
-		Math.max(1, currentPageJobs),
-		totalPagesJobs || 1,
-	);
-	const paginatedRequests = filteredRequests.slice(
-		(safePageJobs - 1) * PAGE_SIZE_JOBS,
-		safePageJobs * PAGE_SIZE_JOBS,
-	);
 
 	const selectedTrace =
 		filteredRequests.find((trace) => trace.request_id === selectedRequestId) ||
@@ -443,9 +426,6 @@ export default function WorkspaceJobsPage() {
 				</div>
 				<div className="mt-3 text-[11px] text-slate-400">
 					Showing {filteredRequests.length} request(s), newest first.
-					{totalPagesJobs > 1
-						? ` — Page ${safePageJobs} of ${totalPagesJobs}`
-						: ""}
 				</div>
 				<div className="mt-1 text-[11px] text-slate-500">
 					Telemetry is still job-mode authoritative here, so HYBRID activity is
@@ -455,134 +435,88 @@ export default function WorkspaceJobsPage() {
 
 			<div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)]">
 				<div className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/80">
-					<div className="overflow-x-auto">
-						<table className="min-w-[1040px] w-full border-collapse text-left">
-							<thead className="sticky top-0 z-10 bg-slate-900/95">
-								<tr className="border-b border-slate-800 text-[10px] uppercase tracking-[0.18em] text-slate-500">
-									<th className="px-4 py-3 font-semibold">Request ID</th>
-									<th className="px-4 py-3 font-semibold">Job Type / Mode</th>
-									<th className="px-4 py-3 font-semibold">Product / Package</th>
-									<th className="px-4 py-3 font-semibold">Status</th>
-									<th className="px-4 py-3 font-semibold">Latest Stage</th>
-									<th className="px-4 py-3 font-semibold">Created / Updated</th>
-									<th className="px-4 py-3 font-semibold">Error / Remark</th>
-									<th className="px-4 py-3 font-semibold">
-										Actions / View Details
-									</th>
-								</tr>
-							</thead>
-							<tbody className="divide-y divide-slate-800 text-sm text-slate-200">
-								{filteredRequests.length === 0 ? (
-									<tr>
-										<td
-											className="px-4 py-8 text-sm text-slate-400"
-											colSpan={8}
-										>
-											No workspace jobs match the current filters.
-										</td>
-									</tr>
-								) : (
-									paginatedRequests.map((trace) => {
-										const selected = trace.request_id === selectedRequestId;
-										return (
-											<tr
-												key={trace.request_id}
-												className={
-													selected ? "bg-blue-500/10" : "bg-transparent"
-												}
-											>
-												<td className="px-4 py-4 align-top">
-													<div className="font-mono text-xs text-slate-100">
-														{trace.request_id}
-													</div>
-												</td>
-												<td className="px-4 py-4 align-top">
-													<div className="flex items-center gap-2 font-semibold text-slate-100">
-														<StatusIcon status={trace.status} />
-														<span>{getTelemetryRequestLabel(trace)}</span>
-													</div>
-													<div className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
-														{getWorkspaceJobModeLabel(trace)}
-													</div>
-												</td>
-												<td className="px-4 py-4 align-top">
-													<div className="font-medium text-slate-100">
-														{resolveProductLabel(trace, products)}
-													</div>
-													<div className="mt-1 text-xs text-slate-500">
-														{resolveProductMeta(trace, products)}
-													</div>
-												</td>
-												<td className="px-4 py-4 align-top">
-													<StatusBadge status={trace.status} />
-												</td>
-												<td className="px-4 py-4 align-top text-xs text-slate-300">
-													{getTelemetryStage(trace)}
-												</td>
-												<td className="px-4 py-4 align-top text-xs text-slate-300">
-													<div>
-														Created {formatExactDateTime(trace.created_at)}
-													</div>
-													<div className="mt-1 text-slate-500">
-														Updated{" "}
-														{formatRelativeTime(getTelemetryUpdatedAt(trace))}
-													</div>
-												</td>
-												<td className="px-4 py-4 align-top text-xs text-slate-300">
-													{getTelemetryPrimaryRemark(trace)}
-												</td>
-												<td className="px-4 py-4 align-top">
-													<button
-														type="button"
-														onClick={() =>
-															setSelectedRequestId(trace.request_id)
-														}
-														className={`rounded-full border px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] ${selected ? "border-blue-400/60 bg-blue-500/10 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-300 hover:border-blue-400/50 hover:text-blue-200"}`}
-													>
-														View Details
-													</button>
-												</td>
-											</tr>
-										);
-									})
-								)}
-							</tbody>
-						</table>
-					</div>
-					{totalPagesJobs > 1 && (
-						<div className="flex items-center justify-center gap-1 border-t border-slate-800 px-4 py-3">
-							<button
-								type="button"
-								onClick={() => setCurrentPageJobs((p) => Math.max(1, p - 1))}
-								disabled={safePageJobs === 1}
-								className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 hover:text-blue-200 disabled:opacity-40 disabled:cursor-not-allowed"
-							>
-								Prev
-							</button>
-							{Array.from({ length: totalPagesJobs }, (_, i) => i + 1).map(
-								(pg) => (
-									<button
-										key={pg}
-										type="button"
-										onClick={() => setCurrentPageJobs(pg)}
-										className={`w-7 h-7 rounded-full border text-[10px] font-semibold ${safePageJobs === pg ? "border-blue-400/60 bg-blue-500/10 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
-									>
-										{pg}
-									</button>
-								),
+					<div className="p-3">
+						<DataTable
+							rows={filteredRequests}
+							getRowId={(t) => t.request_id}
+							pageSize={20}
+							selectedRowId={selectedRequestId}
+							emptyLabel="No workspace jobs match the current filters."
+							minWidthClassName="min-w-[1040px]"
+							initialSort={{ key: "created", dir: "desc" }}
+							columns={[
+								{
+									key: "request_id",
+									header: "Request ID",
+									sortValue: (t) => t.request_id,
+									render: (t) => <div className="font-mono text-xs text-slate-100">{t.request_id}</div>,
+								},
+								{
+									key: "type",
+									header: "Job Type / Mode",
+									render: (t) => (
+										<div>
+											<div className="flex items-center gap-2 font-semibold text-slate-100">
+												<StatusIcon status={t.status} />
+												<span>{getTelemetryRequestLabel(t)}</span>
+											</div>
+											<div className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
+												{getWorkspaceJobModeLabel(t)}
+											</div>
+										</div>
+									),
+								},
+								{
+									key: "product",
+									header: "Product / Package",
+									render: (t) => (
+										<div>
+											<div className="font-medium text-slate-100">{resolveProductLabel(t, products)}</div>
+											<div className="mt-1 text-xs text-slate-500">{resolveProductMeta(t, products)}</div>
+										</div>
+									),
+								},
+								{
+									key: "status",
+									header: "Status",
+									sortValue: (t) => t.status,
+									render: (t) => <StatusBadge status={t.status} />,
+								},
+								{
+									key: "stage",
+									header: "Latest Stage",
+									render: (t) => <span className="text-xs text-slate-300">{getTelemetryStage(t)}</span>,
+								},
+								{
+									key: "created",
+									header: "Created / Updated",
+									sortValue: (t) => t.created_at,
+									render: (t) => (
+										<div className="text-xs text-slate-300">
+											<div>Created {formatExactDateTime(t.created_at)}</div>
+											<div className="mt-1 text-slate-500">
+												Updated {formatRelativeTime(getTelemetryUpdatedAt(t))}
+											</div>
+										</div>
+									),
+								},
+								{
+									key: "remark",
+									header: "Error / Remark",
+									render: (t) => <span className="text-xs text-slate-300">{getTelemetryPrimaryRemark(t)}</span>,
+								},
+							]}
+							rowActions={(t) => (
+								<button
+									type="button"
+									onClick={() => setSelectedRequestId(t.request_id)}
+									className={`rounded-full border px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] ${t.request_id === selectedRequestId ? "border-blue-400/60 bg-blue-500/10 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-300 hover:border-blue-400/50 hover:text-blue-200"}`}
+								>
+									View Details
+								</button>
 							)}
-							<button
-								type="button"
-								onClick={() =>
-									setCurrentPageJobs((p) => Math.min(totalPagesJobs, p + 1))
-								}
-								disabled={safePageJobs === totalPagesJobs}
-								className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 hover:text-blue-200 disabled:opacity-40 disabled:cursor-not-allowed"
-							>
-								Next
-							</button>
-						</div>
-					)}
+						/>
+					</div>
 				</div>
 
 				<div className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5 xl:sticky xl:top-4">
