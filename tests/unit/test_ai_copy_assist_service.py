@@ -173,3 +173,92 @@ async def test_invalid_provider_response_fails_closed(monkeypatch):
     with pytest.raises(provider.AICopyProviderError) as exc:
         await ai.generate_ai_copy_candidate({"product_id": pid})
     assert exc.value.code == "AI_COPY_ASSIST_RESPONSE_INVALID"
+
+
+# ── Product-grounding of the AI brief (Fix 1) ────────────────────────────
+
+def _stealth_product() -> dict:
+    return {
+        "id": "p-stealth",
+        "product_display_name": "Bosmax Herbs 5 ML",
+        "raw_product_title": "Bosmax Herbs 5 ML",
+        "category": "Health",
+        "subcategory": "Supplements",
+        "type": "Male Health",
+        "product_type": "STEALTH",
+        "silo": "health_supp_stealth_01",
+        "trigger_id": "EGO_01",
+        "formula": "PAS",
+        "claim_risk_level": "HIGH",
+        "copywriting_angle": "",
+    }
+
+
+def _direct_product() -> dict:
+    return {
+        "id": "p-direct",
+        "product_display_name": "Clean Face Serum 30 ML",
+        "raw_product_title": "Clean Face Serum 30 ML",
+        "category": "Beauty",
+        "subcategory": "Skincare",
+        "type": "Facial Serum",
+        "product_type": "",
+        "silo": "beauty_direct_01",
+        "trigger_id": "",
+        "formula": "HSO",
+        "claim_risk_level": "LOW",
+    }
+
+
+def test_stealth_brief_carries_product_signals_and_strategy():
+    product = _stealth_product()
+    ctx = ai._product_copy_context(product)
+    assert ctx["is_stealth"] is True
+    assert ctx["effective_route"] == "STEALTH"
+
+    req = models.AICopyAssistRequest(product_id="p-stealth")  # operator sets no route
+    brief = json.loads(ai._build_brief(req, product, ctx))
+    assert brief["product_class"] == "Male Health"
+    assert brief["sensitivity"] == "STEALTH"
+    assert brief["route_type"] == "STEALTH"
+    assert brief["copy_trigger"] == "EGO_01"
+    assert brief["copy_formula"] == "PAS"
+    assert brief["claim_risk_level"] == "HIGH"
+    assert "STEALTH" in brief["strategy"]
+
+
+def test_direct_product_not_flagged_stealth():
+    product = _direct_product()
+    ctx = ai._product_copy_context(product)
+    assert ctx["is_stealth"] is False
+
+    req = models.AICopyAssistRequest(product_id="p-direct")
+    brief = json.loads(ai._build_brief(req, product, ctx))
+    assert brief.get("sensitivity", "") == ""
+    assert "strategy" not in brief  # empty strategy is filtered out of the brief
+    assert brief["route_type"] != "STEALTH"
+    assert brief["product_class"] == "Facial Serum"
+
+
+def test_merge_auto_routes_stealth_only_for_stealth_products():
+    req = models.AICopyAssistRequest(product_id="x")  # no operator route
+    stealth_ctx = ai._product_copy_context(_stealth_product())
+    direct_ctx = ai._product_copy_context(_direct_product())
+
+    assert ai._merge_candidate_fields(dict(SAFE_AI), req, stealth_ctx)["route_type"] == "STEALTH"
+    assert ai._merge_candidate_fields(dict(SAFE_AI), req, direct_ctx)["route_type"] == "DIRECT"
+
+    # An explicit operator route always wins over the auto-derived one.
+    req_override = models.AICopyAssistRequest(product_id="x", route_type="DIRECT")
+    assert (
+        ai._merge_candidate_fields(dict(SAFE_AI), req_override, stealth_ctx)["route_type"]
+        == "DIRECT"
+    )
+
+
+def test_provider_system_prompt_is_stealth_and_route_aware():
+    system = provider.build_messages("{}")[0]["content"]
+    assert "STEALTH" in system
+    assert "route_type" in system
+    assert "claim_risk_level" in system
+    assert "STRICT JSON" in system  # existing contract preserved

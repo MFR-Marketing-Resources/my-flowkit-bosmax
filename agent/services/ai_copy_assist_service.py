@@ -33,6 +33,22 @@ from agent.services.copy_set_service import (
     assess_copy_completeness,
     scan_copy_safety,
 )
+from agent.services.product_intelligence_service import (
+    inject_product_intelligence_fields,
+    resolve_product_intelligence_profile,
+)
+
+# Privacy-sensitive strategy, sourced from the concepts in
+# agent/authority/COPYWRITING_FRAMEWORK_UNIVERSAL.yaml (stealth_mode /
+# stealth_sensitive_triggers). Guides the AI when a product routes STEALTH.
+_STEALTH_STRATEGY = (
+    "STEALTH / privacy-sensitive product: NEVER name the body part, medical "
+    "condition, or intimate/sexual function explicitly. Sell through wrapped "
+    "metaphor, ego / maruah (masculine pride & dignity) and self-confidence "
+    "pressure, and everyday-routine framing. Keep every line dialogue-safe and "
+    "TikTok platform-compliant. No health/medical outcomes, no performance or "
+    "cure claims."
+)
 
 
 def _product_truth(product: dict[str, Any]) -> str:
@@ -43,31 +59,91 @@ def _product_truth(product: dict[str, Any]) -> str:
     )
 
 
-def _build_brief(req: AICopyAssistRequest, product: dict[str, Any]) -> str:
-    """A grounded, safe brief string for the provider. Product truth only — no
-    invented facts, no internal ids echoed as copy."""
+def _product_copy_context(product: dict[str, Any]) -> dict[str, Any]:
+    """Derive the copy-relevant product signals the deterministic lane already
+    uses, so the AI brief is grounded in the SAME intelligence instead of just the
+    product name. Pure / in-memory — reuses the shared product-intelligence
+    resolver (no DB, no tokens). Fails soft to the raw row on any resolver error."""
+    try:
+        profile = resolve_product_intelligence_profile(product)
+        hydrated = inject_product_intelligence_fields(dict(product), profile)
+    except Exception:
+        hydrated = dict(product)
+
+    silo = _clean(hydrated.get("silo"))
+    product_type = _clean(hydrated.get("product_type")).upper()
+    copy_route = _clean(hydrated.get("copy_route")).upper()
+    is_stealth = (
+        product_type == "STEALTH"
+        or copy_route == "STEALTH"
+        or "stealth" in silo.lower()
+    )
+    if is_stealth:
+        effective_route = "STEALTH"
+    elif copy_route in ("REVIEW_REQUIRED", "DIRECT"):
+        effective_route = copy_route
+    else:
+        effective_route = "DIRECT"
+
+    return {
+        "product_class": _clean(hydrated.get("type")),
+        "subcategory": _clean(hydrated.get("subcategory")),
+        "product_type": product_type,
+        "silo": silo,
+        "trigger_id": _clean(hydrated.get("trigger_id")),
+        "formula": _clean(hydrated.get("formula")),
+        "claim_risk_level": _clean(hydrated.get("claim_risk_level")),
+        "product_family": _clean(hydrated.get("bosmax_product_family")),
+        "copy_route": copy_route,
+        "claim_gate": _clean(hydrated.get("claim_gate")),
+        "is_stealth": is_stealth,
+        "effective_route": effective_route,
+    }
+
+
+def _build_brief(
+    req: AICopyAssistRequest, product: dict[str, Any], ctx: dict[str, Any]
+) -> str:
+    """A grounded, safe brief string for the provider. Product truth + the copy
+    intelligence signals the product already carries — no invented facts, no
+    internal ids echoed as copy (the provider is told to treat signal codes as
+    strategy only, never to print them)."""
     brief = {
         "product_name": _product_truth(product),
         "category": _clean(product.get("category")),
+        "product_class": ctx.get("product_class"),  # e.g. "Male Health"
+        "subcategory": ctx.get("subcategory"),
+        "sensitivity": "STEALTH" if ctx.get("is_stealth") else "",
+        "product_family": ctx.get("product_family"),
+        "copy_trigger": ctx.get("trigger_id"),  # strategy signal, e.g. EGO_01
+        "copy_formula": ctx.get("formula"),  # e.g. PAS / STEALTH_DIALOGUE_SAFE
+        "silo": ctx.get("silo"),  # strategy signal, never echoed
+        "claim_gate": ctx.get("claim_gate"),
+        "claim_risk_level": ctx.get("claim_risk_level"),  # e.g. HIGH
         "existing_angle": _clean(product.get("copywriting_angle")),
         "platform": _clean(req.platform) or "TIKTOK",
         "language": _clean(req.language) or "BM_MS",
-        "route_type": _clean(req.route_type) or "DIRECT",
+        "route_type": _clean(req.route_type) or ctx.get("effective_route") or "DIRECT",
         "formula_family": _clean(req.formula_family) or "HSO",
         "content_style_mode": _clean(req.content_style_mode) or "UGC_IPHONE",
         "desired_angle": _clean(req.angle),
         "hook_direction": _clean(req.hook),
         "operator_notes": _clean(req.operator_notes),
+        "strategy": _STEALTH_STRATEGY if ctx.get("is_stealth") else "",
         "safety": "no medical/cure/treat/heal/guaranteed/universal-safety/before-after claims",
     }
     return json.dumps({k: v for k, v in brief.items() if v}, ensure_ascii=True)
 
 
 def _merge_candidate_fields(
-    ai: dict[str, Any], req: AICopyAssistRequest
+    ai: dict[str, Any], req: AICopyAssistRequest, ctx: dict[str, Any]
 ) -> dict[str, Any]:
     """AI output populates the copy fields; an explicit operator field overrides
-    the AI value for that field. Result is run through the shared normalizer."""
+    the AI value for that field. Result is run through the shared normalizer.
+
+    When the operator did not set a route, stealth products auto-route STEALTH
+    (which keeps them review-gated); non-stealth products stay DIRECT as before."""
+    stealth_route = ctx.get("effective_route") if ctx.get("is_stealth") else "DIRECT"
     fields = {
         "angle": req.angle if req.angle is not None else ai.get("angle"),
         "hook": req.hook if req.hook is not None else ai.get("hook"),
@@ -77,7 +153,7 @@ def _merge_candidate_fields(
         ),
         "cta": req.cta if req.cta is not None else ai.get("cta"),
         "formula_family": req.formula_family or ai.get("formula_family") or "HSO",
-        "route_type": req.route_type or "DIRECT",
+        "route_type": req.route_type or stealth_route,
         "platform": req.platform or "TIKTOK",
         "language": req.language or "BM_MS",
     }
@@ -104,11 +180,12 @@ def _internal_provenance(ai: dict[str, Any]) -> dict[str, Any]:
 async def _generate_one(
     req: AICopyAssistRequest, product: dict[str, Any]
 ) -> dict[str, Any]:
-    ai = provider.generate_candidate(_build_brief(req, product))
+    ctx = _product_copy_context(product)
+    ai = provider.generate_candidate(_build_brief(req, product, ctx))
     if not isinstance(ai, dict):
         raise provider.AICopyProviderError(provider.ERR_RESPONSE_INVALID)
 
-    fields = _merge_candidate_fields(ai, req)
+    fields = _merge_candidate_fields(ai, req, ctx)
     completeness = assess_copy_completeness(fields)
     safety = scan_copy_safety(fields, product_id=req.product_id)
 
