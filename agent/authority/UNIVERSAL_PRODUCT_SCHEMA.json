@@ -36,7 +36,7 @@
           "role": "product_angle"
         }
       ],
-      "scale_lock": "Bottle must remain at exact 5ml lip balm or chapstick scale; never drift into perfume, spray, supplement, skincare, or oversized bottle form.",
+      "scale_lock": "Bottle stays at exactly lip balm size — small enough to fit into the fingers naturally and read as a tiny handheld roll-on. It is the smaller BOSMAX variant and never grows toward the larger variant; never drift into perfume, spray, supplement, skincare, or oversized bottle form.",
       "label_lock": "Keep BOSMAX HERBS wordmark, leaf icon, and Herbal Oil Roll On label readable and unchanged.",
       "allowed_variants": [
         "product_only",
@@ -64,8 +64,8 @@
       "product_lane": "PRODUCT_ONLY",
       "product_truth_ref": "Slim matte-black cylindrical roll-on / oil bottle, glossy black cap, printed BOSMAX identity as it appears on the real product; larger than the smaller BOSMAX roll-on variant yet still a small palm-scale roll-on. Preserve the product's own real printed label exactly and do not borrow, swap in, or morph the smaller-variant label.",
       "images": [],
-      "scale_lock": "Bottle must remain at exact 10ml slim roll-on scale — larger than the smaller BOSMAX variant yet still small and palm-sized; never drift into perfume, spray, supplement, skincare, or oversized bottle form, and never shrink to the smaller-variant scale.",
-      "label_lock": "Preserve the real printed BOSMAX 10ml label identity exactly; do not swap in, borrow, or morph the smaller-variant label.",
+      "scale_lock": "Bottle stays at exactly chapstick size — it fits into the fingers naturally and reads as a slim handheld roll-on, the larger BOSMAX variant, slightly bigger than the smaller variant yet still small and palm-sized; never drift into perfume, spray, supplement, skincare, or oversized bottle form, and never shrink to the smaller-variant scale.",
+      "label_lock": "Preserve the real printed BOSMAX label identity exactly; do not swap in, borrow, or morph the smaller-variant label.",
       "allowed_variants": [
         "product_only",
         "studio_closeup",
