@@ -210,48 +210,72 @@ def _direct_product() -> dict:
     }
 
 
-def test_stealth_brief_carries_product_signals_and_strategy():
+def test_stealth_brief_carries_avatar_and_angle_strategy():
+    from agent.services.copy_grounding_service import build_framework_grounding
+
     product = _stealth_product()
-    ctx = ai._product_copy_context(product)
-    assert ctx["is_stealth"] is True
-    assert ctx["effective_route"] == "STEALTH"
+    g = build_framework_grounding(product)
+    assert g.is_stealth is True
+    assert g.effective_route == "STEALTH"
+    assert g.family == "MALE_HEALTH_SENSITIVE"
+    assert g.angle_strategies  # distinct strategic angles from the framework
 
     req = models.AICopyAssistRequest(product_id="p-stealth")  # operator sets no route
-    brief = json.loads(ai._build_brief(req, product, ctx))
-    assert brief["product_class"] == "Male Health"
+    angles = ai._rotation_angles(req, g)
+    brief = json.loads(ai._build_brief(req, product, g, angles[0]))
     assert brief["sensitivity"] == "STEALTH"
     assert brief["route_type"] == "STEALTH"
-    assert brief["copy_trigger"] == "EGO_01"
-    assert brief["copy_formula"] == "PAS"
-    assert brief["claim_risk_level"] == "HIGH"
+    assert brief["family"] == "MALE_HEALTH_SENSITIVE"
+    assert brief["avatar_audience"]  # the customer avatar is grounded
+    assert "ego" in brief["avatar_triggers"]
+    assert brief["target_angle_strategy"] == angles[0]
+    assert brief["available_angle_strategies"]
+    assert brief["banned_terms"]  # claim guardrails present
     assert "STEALTH" in brief["strategy"]
 
 
 def test_direct_product_not_flagged_stealth():
+    from agent.services.copy_grounding_service import build_framework_grounding
+
     product = _direct_product()
-    ctx = ai._product_copy_context(product)
-    assert ctx["is_stealth"] is False
+    g = build_framework_grounding(product)
+    assert g.is_stealth is False
 
     req = models.AICopyAssistRequest(product_id="p-direct")
-    brief = json.loads(ai._build_brief(req, product, ctx))
+    brief = json.loads(ai._build_brief(req, product, g))
     assert brief.get("sensitivity", "") == ""
-    assert "strategy" not in brief  # empty strategy is filtered out of the brief
+    assert "strategy" not in brief  # empty stealth strategy is filtered out
     assert brief["route_type"] != "STEALTH"
-    assert brief["product_class"] == "Facial Serum"
+
+
+def test_rotation_angles_are_distinct_and_operator_angle_pins():
+    from agent.services.copy_grounding_service import build_framework_grounding
+
+    g = build_framework_grounding(_stealth_product())
+    req = models.AICopyAssistRequest(product_id="x")  # no operator angle
+    angles = ai._rotation_angles(req, g)
+    assert len(angles) >= 3
+    assert len(set(angles)) == len(angles)  # each candidate gets a DIFFERENT angle
+
+    # An operator-pinned angle disables rotation (that one angle steers all).
+    req_pinned = models.AICopyAssistRequest(product_id="x", angle="my angle")
+    assert ai._rotation_angles(req_pinned, g) == []
 
 
 def test_merge_auto_routes_stealth_only_for_stealth_products():
-    req = models.AICopyAssistRequest(product_id="x")  # no operator route
-    stealth_ctx = ai._product_copy_context(_stealth_product())
-    direct_ctx = ai._product_copy_context(_direct_product())
+    from agent.services.copy_grounding_service import build_framework_grounding
 
-    assert ai._merge_candidate_fields(dict(SAFE_AI), req, stealth_ctx)["route_type"] == "STEALTH"
-    assert ai._merge_candidate_fields(dict(SAFE_AI), req, direct_ctx)["route_type"] == "DIRECT"
+    req = models.AICopyAssistRequest(product_id="x")  # no operator route
+    stealth_g = build_framework_grounding(_stealth_product())
+    direct_g = build_framework_grounding(_direct_product())
+
+    assert ai._merge_candidate_fields(dict(SAFE_AI), req, stealth_g)["route_type"] == "STEALTH"
+    assert ai._merge_candidate_fields(dict(SAFE_AI), req, direct_g)["route_type"] == "DIRECT"
 
     # An explicit operator route always wins over the auto-derived one.
     req_override = models.AICopyAssistRequest(product_id="x", route_type="DIRECT")
     assert (
-        ai._merge_candidate_fields(dict(SAFE_AI), req_override, stealth_ctx)["route_type"]
+        ai._merge_candidate_fields(dict(SAFE_AI), req_override, stealth_g)["route_type"]
         == "DIRECT"
     )
 

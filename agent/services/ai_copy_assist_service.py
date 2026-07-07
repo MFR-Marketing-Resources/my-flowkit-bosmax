@@ -33,10 +33,8 @@ from agent.services.copy_set_service import (
     assess_copy_completeness,
     scan_copy_safety,
 )
-from agent.services.product_intelligence_service import (
-    inject_product_intelligence_fields,
-    resolve_product_intelligence_profile,
-)
+from agent.models.copy_grounding import CopyGrounding
+from agent.services.copy_grounding_service import resolve_copy_grounding
 
 # Privacy-sensitive strategy, sourced from the concepts in
 # agent/authority/COPYWRITING_FRAMEWORK_UNIVERSAL.yaml (stealth_mode /
@@ -59,91 +57,96 @@ def _product_truth(product: dict[str, Any]) -> str:
     )
 
 
-def _product_copy_context(product: dict[str, Any]) -> dict[str, Any]:
-    """Derive the copy-relevant product signals the deterministic lane already
-    uses, so the AI brief is grounded in the SAME intelligence instead of just the
-    product name. Pure / in-memory — reuses the shared product-intelligence
-    resolver (no DB, no tokens). Fails soft to the raw row on any resolver error."""
-    try:
-        profile = resolve_product_intelligence_profile(product)
-        hydrated = inject_product_intelligence_fields(dict(product), profile)
-    except Exception:
-        hydrated = dict(product)
-
-    silo = _clean(hydrated.get("silo"))
-    product_type = _clean(hydrated.get("product_type")).upper()
-    copy_route = _clean(hydrated.get("copy_route")).upper()
-    is_stealth = (
-        product_type == "STEALTH"
-        or copy_route == "STEALTH"
-        or "stealth" in silo.lower()
-    )
-    if is_stealth:
-        effective_route = "STEALTH"
-    elif copy_route in ("REVIEW_REQUIRED", "DIRECT"):
-        effective_route = copy_route
-    else:
-        effective_route = "DIRECT"
-
-    return {
-        "product_class": _clean(hydrated.get("type")),
-        "subcategory": _clean(hydrated.get("subcategory")),
-        "product_type": product_type,
-        "silo": silo,
-        "trigger_id": _clean(hydrated.get("trigger_id")),
-        "formula": _clean(hydrated.get("formula")),
-        "claim_risk_level": _clean(hydrated.get("claim_risk_level")),
-        "product_family": _clean(hydrated.get("bosmax_product_family")),
-        "copy_route": copy_route,
-        "claim_gate": _clean(hydrated.get("claim_gate")),
-        "is_stealth": is_stealth,
-        "effective_route": effective_route,
-    }
+def _rotation_angles(req: AICopyAssistRequest, grounding: CopyGrounding) -> list[str]:
+    """Distinct strategic angles to rotate across candidates so a batch covers
+    DIFFERENT angles (not the same one reworded). Empty when the operator pinned
+    an explicit angle (then that single angle steers every candidate)."""
+    if _clean(getattr(req, "angle", "")):
+        return []
+    return list(grounding.angle_strategies or [])
 
 
 def _build_brief(
-    req: AICopyAssistRequest, product: dict[str, Any], ctx: dict[str, Any]
+    req: AICopyAssistRequest,
+    product: dict[str, Any],
+    grounding: CopyGrounding,
+    target_angle: str = "",
 ) -> str:
-    """A grounded, safe brief string for the provider. Product truth + the copy
-    intelligence signals the product already carries — no invented facts, no
-    internal ids echoed as copy (the provider is told to treat signal codes as
-    strategy only, never to print them)."""
+    """Grounded brief for the provider: product truth + product knowledge +
+    customer avatar + the assigned strategic angle + claim guardrails.
+
+    Product FACTS (benefits/USPs) are only present when an approved snapshot
+    exists — never invented. Signal fields are strategy guidance; the provider is
+    told never to print codes/ids as copy."""
+    g = grounding
+    pk = g.product_knowledge
+    persona = g.buyer_persona
+    cg = g.claim_guardrails
     brief = {
         "product_name": _product_truth(product),
         "category": _clean(product.get("category")),
-        "product_class": ctx.get("product_class"),  # e.g. "Male Health"
-        "subcategory": ctx.get("subcategory"),
-        "sensitivity": "STEALTH" if ctx.get("is_stealth") else "",
-        "product_family": ctx.get("product_family"),
-        "copy_trigger": ctx.get("trigger_id"),  # strategy signal, e.g. EGO_01
-        "copy_formula": ctx.get("formula"),  # e.g. PAS / STEALTH_DIALOGUE_SAFE
-        "silo": ctx.get("silo"),  # strategy signal, never echoed
-        "claim_gate": ctx.get("claim_gate"),
-        "claim_risk_level": ctx.get("claim_risk_level"),  # e.g. HIGH
+        "product_class": _clean(product.get("type")),
+        "grounding_source": g.source,
+        "family": g.family,
+        "sensitivity": "STEALTH" if g.is_stealth else "",
+        # ── customer avatar — the root of a real angle ──
+        "avatar_audience": persona.audience,
+        "avatar_desires": persona.desires,
+        "avatar_fears": persona.fears,
+        "avatar_pains": persona.pains,
+        "avatar_objections": persona.objections,
+        "avatar_triggers": persona.triggers,
+        "tone": persona.tone,
+        "pronoun": persona.pronoun,
+        # ── product knowledge — real facts only (empty until an approved snapshot) ──
+        "product_description": pk.description,
+        "product_benefits": pk.benefits,
+        "product_usps": pk.usps,
+        "target_customer": pk.target_customer,
+        # ── angle strategy ──
+        "target_angle_strategy": target_angle,
+        "available_angle_strategies": g.angle_strategies,
+        "copy_formula_hint": g.copy_formula,
+        "metaphor_silos": g.metaphor_silos,
+        # ── request settings ──
         "existing_angle": _clean(product.get("copywriting_angle")),
         "platform": _clean(req.platform) or "TIKTOK",
         "language": _clean(req.language) or "BM_MS",
-        "route_type": _clean(req.route_type) or ctx.get("effective_route") or "DIRECT",
+        "route_type": _clean(req.route_type) or g.effective_route or "DIRECT",
         "formula_family": _clean(req.formula_family) or "HSO",
         "content_style_mode": _clean(req.content_style_mode) or "UGC_IPHONE",
         "desired_angle": _clean(req.angle),
         "hook_direction": _clean(req.hook),
         "operator_notes": _clean(req.operator_notes),
-        "strategy": _STEALTH_STRATEGY if ctx.get("is_stealth") else "",
-        "safety": "no medical/cure/treat/heal/guaranteed/universal-safety/before-after claims",
+        "strategy": _STEALTH_STRATEGY if g.is_stealth else "",
+        # ── claim guardrails ──
+        "claim_gate": cg.claim_gate,
+        "claim_risk_level": cg.claim_risk_level,
+        "allowed_claims": cg.allowed_claims,
+        "banned_terms": cg.banned_terms,
+        "instruction": (
+            "Derive the angle from ONE specific buyer pain or desire in the avatar "
+            "(use target_angle_strategy if given). Build hook -> subhook -> USPs -> "
+            "CTA from that angle + avatar. Ground USPs in product_benefits/product_usps "
+            "when present; do NOT invent product outcomes or claims. Obey banned_terms "
+            "and claim_gate."
+        ),
     }
-    return json.dumps({k: v for k, v in brief.items() if v}, ensure_ascii=True)
+    return json.dumps(
+        {k: v for k, v in brief.items() if v not in ("", [], None)},
+        ensure_ascii=True,
+    )
 
 
 def _merge_candidate_fields(
-    ai: dict[str, Any], req: AICopyAssistRequest, ctx: dict[str, Any]
+    ai: dict[str, Any], req: AICopyAssistRequest, grounding: CopyGrounding
 ) -> dict[str, Any]:
     """AI output populates the copy fields; an explicit operator field overrides
     the AI value for that field. Result is run through the shared normalizer.
 
     When the operator did not set a route, stealth products auto-route STEALTH
     (which keeps them review-gated); non-stealth products stay DIRECT as before."""
-    stealth_route = ctx.get("effective_route") if ctx.get("is_stealth") else "DIRECT"
+    stealth_route = grounding.effective_route if grounding.is_stealth else "DIRECT"
     fields = {
         "angle": req.angle if req.angle is not None else ai.get("angle"),
         "hook": req.hook if req.hook is not None else ai.get("hook"),
@@ -178,14 +181,18 @@ def _internal_provenance(ai: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _generate_one(
-    req: AICopyAssistRequest, product: dict[str, Any]
+    req: AICopyAssistRequest,
+    product: dict[str, Any],
+    grounding: CopyGrounding | None = None,
+    target_angle: str = "",
 ) -> dict[str, Any]:
-    ctx = _product_copy_context(product)
-    ai = provider.generate_candidate(_build_brief(req, product, ctx))
+    if grounding is None:
+        grounding = await resolve_copy_grounding(product)
+    ai = provider.generate_candidate(_build_brief(req, product, grounding, target_angle))
     if not isinstance(ai, dict):
         raise provider.AICopyProviderError(provider.ERR_RESPONSE_INVALID)
 
-    fields = _merge_candidate_fields(ai, req, ctx)
+    fields = _merge_candidate_fields(ai, req, grounding)
     completeness = assess_copy_completeness(fields)
     safety = scan_copy_safety(fields, product_id=req.product_id)
 
@@ -264,7 +271,14 @@ async def generate_ai_copy_candidate(
 
     # Provider adapter raises AICopyProviderNotConfigured / AICopyProviderError —
     # the router maps them to fail-closed responses.
-    candidates = [await _generate_one(req, product) for _ in range(req.candidate_count)]
+    grounding = await resolve_copy_grounding(product)
+    angles = _rotation_angles(req, grounding)
+    candidates = [
+        await _generate_one(
+            req, product, grounding, angles[i % len(angles)] if angles else ""
+        )
+        for i in range(req.candidate_count)
+    ]
     return {"provider": provider.provider_status(), "candidates": candidates}
 
 
@@ -361,6 +375,9 @@ async def generate_ai_copy_candidates_batch(
             "dry_run": True,
         }
 
+    grounding = await resolve_copy_grounding(product)
+    angles = _rotation_angles(single_req, grounding)
+
     results: list[dict[str, Any]] = []
     created = 0
     deduped = 0
@@ -368,7 +385,8 @@ async def generate_ai_copy_candidates_batch(
     unsafe_warnings = 0
 
     for i in range(req.requested_count):
-        result = await _generate_one(single_req, product)
+        target_angle = angles[i % len(angles)] if angles else ""
+        result = await _generate_one(single_req, product, grounding, target_angle)
         cs = result.get("copy_set") or {}
         is_new = result.get("created", False)
         is_dup = result.get("dedupe_match", False)
