@@ -34,6 +34,7 @@ import {
 import ApprovedPackagesPage from "./pages/ApprovedPackagesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
 import AvatarRegistryPage from "./pages/AvatarRegistryPage";
+import SceneContextRegistryPage from "./pages/SceneContextRegistryPage";
 import BatchPromptBuilderPage from "./pages/BatchPromptBuilderPage";
 import CreativeLibraryPage from "./pages/CreativeLibraryPage";
 import ImgCockpitPage from "./pages/ImgCockpitPage";
@@ -101,6 +102,11 @@ const NAV_GROUPS = [
 				to: "/assets/avatar-registry",
 				icon: Users,
 				label: "Avatar Registry",
+			},
+			{
+				to: "/assets/scene-context-registry",
+				icon: Sparkles,
+				label: "Scene Registry",
 			},
 			{
 				to: "/assets/img-cockpit",
@@ -486,6 +492,10 @@ function Layout() {
 						<Route
 							path="/assets/avatar-registry"
 							element={<AvatarRegistryPage />}
+						/>
+						<Route
+							path="/assets/scene-context-registry"
+							element={<SceneContextRegistryPage />}
 						/>
 						<Route
 							path="/assets/img-cockpit"

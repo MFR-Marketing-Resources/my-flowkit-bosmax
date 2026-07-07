@@ -37,6 +37,7 @@ from agent.api.operator import router as operator_router
 from agent.api.products import router as products_router
 from agent.api.poster_readiness import router as poster_readiness_router
 from agent.api.workspace_packages import router as workspace_packages_router
+from agent.api.scene_context_registry import router as scene_context_registry_router
 from agent.api.workspace_generation_packages import router as workspace_generation_packages_router
 from agent.api.production_queue import router as production_queue_router
 from agent.api.postiz import router as postiz_router
@@ -212,6 +213,7 @@ app.add_middleware(
 app.include_router(products_router, prefix="/api")
 app.include_router(poster_readiness_router, prefix="/api")
 app.include_router(workspace_packages_router, prefix="/api")
+app.include_router(scene_context_registry_router, prefix="/api")
 app.include_router(workspace_generation_packages_router, prefix="/api")
 app.include_router(production_queue_router, prefix="/api")
 app.include_router(postiz_router, prefix="/api")
