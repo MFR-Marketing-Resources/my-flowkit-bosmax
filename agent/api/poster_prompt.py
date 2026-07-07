@@ -1,6 +1,10 @@
 from fastapi import APIRouter, HTTPException
 
+from agent.models.poster_copy_recommendations import PosterCopyRecommendationRequest
 from agent.models.poster_prompt_draft import PosterPromptDraftRequest
+from agent.services.poster_copy_recommendation_service import (
+    PosterCopyRecommendationService,
+)
 from agent.services.poster_prompt_draft_service import (
     PosterPromptDraftService,
     PosterPromptDraftValidationError,
@@ -25,4 +29,16 @@ async def create_poster_prompt_draft(body: PosterPromptDraftRequest):
                 "field_errors": exc.field_errors,
             },
         ) from exc
+    return result.model_dump(mode="json")
+
+
+@router.post("/copy-recommendations")
+async def poster_copy_recommendations(body: PosterCopyRecommendationRequest):
+    """Recommend poster copy kits from approved/draft copy sets, AI assist, or safe fallbacks."""
+    try:
+        result = await PosterCopyRecommendationService.recommend(body)
+    except ValueError as exc:
+        if str(exc) == "PRODUCT_NOT_FOUND":
+            raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc
+        raise
     return result.model_dump(mode="json")

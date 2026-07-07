@@ -10,6 +10,8 @@ interface PosterBuilderShellFormProps {
 	onPromptDraft: () => void;
 	promptDraftLoading?: boolean;
 	imageGenerateLabel: string;
+	/** When true, show Manual Expert heading (manual working mode). */
+	manualExpert?: boolean;
 }
 
 const FIELDS: { key: keyof PosterBuilderDraft; label: string; multiline?: boolean }[] = [
@@ -39,15 +41,19 @@ export default function PosterBuilderShellForm({
 	onPromptDraft,
 	promptDraftLoading = false,
 	imageGenerateLabel,
+	manualExpert = false,
 }: PosterBuilderShellFormProps) {
 	const editable = mode === "full" || mode === "restricted" || mode === "preview";
 	const previewOnly = mode === "preview";
 
 	return (
-		<section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-5">
+		<section
+			className="rounded-2xl border border-slate-800 bg-slate-950/80 p-5"
+			data-testid={manualExpert ? "poster-manual-expert-panel" : "poster-builder-shell-form"}
+		>
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<h3 className="text-sm font-bold uppercase tracking-[0.16em] text-slate-200">
-					Poster builder shell
+					{manualExpert ? "Manual Expert Mode" : "Poster builder shell"}
 				</h3>
 				{mode === "restricted" ? (
 					<span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[9px] font-bold uppercase text-amber-100">
