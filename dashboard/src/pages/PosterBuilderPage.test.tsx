@@ -42,11 +42,28 @@ vi.mock("../api/posterCopyRecommendations", () => ({
 	fetchPosterCopyRecommendations: vi.fn(),
 }));
 
+vi.mock("../api/imageGenSettings", () => ({
+	useImageGenSettings: () => ({
+		models: [
+			{ key: "NANO_BANANA_2", label: "Nano Banana 2", pending: false },
+			{ key: "NANO_BANANA_PRO", label: "Nano Banana Pro", pending: false },
+		],
+		default_model: "Nano Banana 2",
+		aspect_options: ["9:16", "1:1", "16:9", "4:3", "3:4"],
+		default_aspect: "9:16",
+		count_options: [1, 2, 3, 4],
+		default_count: 1,
+	}),
+	IMAGE_GEN_SETTINGS_FALLBACK: {},
+}));
+
 import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations";
+import { draftToPromptRequest } from "../api/posterPromptDraft";
 
 const mockedFetch = vi.mocked(fetchPosterReadiness);
 const mockedPromptDraft = vi.mocked(createPosterPromptDraft);
 const mockedRecs = vi.mocked(fetchPosterCopyRecommendations);
+const mockedDraftToPrompt = vi.mocked(draftToPromptRequest);
 
 const sampleKit = {
 	kit_id: "k1",
@@ -181,6 +198,109 @@ describe("PosterBuilderPage", () => {
 		expect(handoff).toBeInTheDocument();
 	});
 
+	it("POSTER_READY shows Flow Mirror Settings section", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		expect(await screen.findByTestId("poster-flow-mirror-settings")).toBeInTheDocument();
+		expect(screen.getByText("Flow Mirror Settings")).toBeInTheDocument();
+		for (const ratio of ["9:16", "1:1", "16:9", "4:3", "3:4"]) {
+			expect(screen.getByText(ratio)).toBeInTheDocument();
+		}
+		for (const c of ["1x", "2x", "3x", "4x"]) {
+			expect(screen.getByText(c)).toBeInTheDocument();
+		}
+		expect(screen.getByTestId("flow-image-model")).toHaveValue("Nano Banana 2");
+	});
+
+	it("Auto mode Use for prompt draft sends selected kit fields atomically", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedPromptDraft.mockResolvedValue({
+			product_id: "p1",
+			poster_status: "POSTER_READY",
+			prompt_package_status: "DRAFT_READY",
+			generation_allowed: true,
+			production_allowed: true,
+			restricted_mode: false,
+			poster_prompt: "x",
+			negative_prompt: "",
+			copy_layout: { hook: "Safe hook", subhook: "Sub", usp: ["a", "b", "c"], cta: "Shop" },
+			visual_instruction: "",
+			text_overlay_instruction: "",
+			product_truth_lock: "",
+			safety_guardrails: [],
+			blocked_reasons: [],
+			repair_actions: [],
+			readiness_meta: {},
+			operator_notes: "",
+		});
+		renderPage();
+		await waitForReadinessUi();
+		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
+		useBtn.click();
+		await waitFor(() => {
+			expect(mockedDraftToPrompt).toHaveBeenCalledWith(
+				"p1",
+				expect.objectContaining({
+					angle: "Trust",
+					hook: "Safe hook",
+					subhook: "Sub",
+					usp_1: "a",
+					usp_2: "b",
+					usp_3: "c",
+					cta: "Shop",
+					poster_type: "Product-only hero poster",
+					visual_route: "Premium commercial",
+					frame_ratio: "9:16",
+					language: "ms",
+				}),
+			);
+		});
+	});
+
+	it("changing Flow Mirror aspect ratio updates prompt draft payload", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedPromptDraft.mockResolvedValue({
+			product_id: "p1",
+			poster_status: "POSTER_READY",
+			prompt_package_status: "DRAFT_READY",
+			generation_allowed: true,
+			production_allowed: true,
+			restricted_mode: false,
+			poster_prompt: "x",
+			negative_prompt: "",
+			copy_layout: { hook: "h", subhook: "", usp: [], cta: "c" },
+			visual_instruction: "",
+			text_overlay_instruction: "",
+			product_truth_lock: "",
+			safety_guardrails: [],
+			blocked_reasons: [],
+			repair_actions: [],
+			readiness_meta: {},
+			operator_notes: "",
+		});
+		renderPage();
+		await waitForReadinessUi();
+		const ratioBtn = await screen.findByTestId("flow-aspect-1-1");
+		ratioBtn.click();
+		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
+		useBtn.click();
+		await waitFor(() => {
+			expect(mockedDraftToPrompt).toHaveBeenCalledWith(
+				"p1",
+				expect.objectContaining({ frame_ratio: "1:1", hook: "Safe hook" }),
+			);
+		});
+	});
+
+	it("image generation handoff button stays disabled", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		const btn = await screen.findByTestId("generate-poster-button");
+		expect(btn).toBeDisabled();
+	});
+
 	it("shows prompt package preview after successful prompt draft API", async () => {
 		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
 		mockedPromptDraft.mockResolvedValue({
@@ -204,7 +324,7 @@ describe("PosterBuilderPage", () => {
 		});
 		renderPage();
 		await waitForReadinessUi();
-		const useBtn = await screen.findByText("Use for prompt draft");
+		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
 		useBtn.click();
 		expect(
 			await screen.findByTestId("poster-prompt-package-preview"),

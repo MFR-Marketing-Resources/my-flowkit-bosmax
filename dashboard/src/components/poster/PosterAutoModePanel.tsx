@@ -18,7 +18,7 @@ export default function PosterAutoModePanel({
 	warnings,
 	onRefresh,
 	onSelectKit,
-	onUseForPromptDraft,
+	onUseKitForPromptDraft,
 	promptDraftLoading,
 }: {
 	draft: PosterBuilderDraft;
@@ -29,13 +29,12 @@ export default function PosterAutoModePanel({
 	warnings: string[];
 	onRefresh: () => void;
 	onSelectKit: (kit: PosterCopyKit) => void;
-	onUseForPromptDraft: () => void;
+	onUseKitForPromptDraft: (kit: PosterCopyKit) => void;
 	promptDraftLoading: boolean;
 }) {
 	const miniFields: { key: keyof PosterBuilderDraft; label: string }[] = [
 		{ key: "poster_objective", label: "Objective" },
 		{ key: "poster_type", label: "Poster Type" },
-		{ key: "frame_ratio", label: "Frame Ratio" },
 		{ key: "language", label: "Language" },
 	];
 
@@ -117,10 +116,8 @@ export default function PosterAutoModePanel({
 							</button>
 							<button
 								type="button"
-								onClick={() => {
-									onSelectKit(kit);
-									onUseForPromptDraft();
-								}}
+								data-testid={`use-kit-prompt-${kit.kit_id}`}
+								onClick={() => onUseKitForPromptDraft(kit)}
 								disabled={promptDraftLoading}
 								className="rounded-lg border border-blue-500/40 px-2 py-1 text-[10px] font-bold uppercase text-blue-100"
 							>

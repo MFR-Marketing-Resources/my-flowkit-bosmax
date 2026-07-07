@@ -11,6 +11,7 @@ import {
 import { fetchProductCatalog } from "../api/products";
 import PosterAutoModePanel from "../components/poster/PosterAutoModePanel";
 import PosterBuilderShellForm from "../components/poster/PosterBuilderShellForm";
+import PosterFlowMirrorSettingsPanel from "../components/poster/PosterFlowMirrorSettingsPanel";
 import PosterGuidedModePanel from "../components/poster/PosterGuidedModePanel";
 import PosterPromptPackagePreview from "../components/poster/PosterPromptPackagePreview";
 import PosterReadinessStatusCard from "../components/poster/PosterReadinessStatusCard";
@@ -33,6 +34,11 @@ import type {
 	PosterWorkingMode,
 } from "../types/posterCopyRecommendations";
 import type { PosterPromptDraftResponse } from "../types/posterPromptDraft";
+import {
+	DEFAULT_POSTER_FLOW_MIRROR_SETTINGS,
+	isPosterFlowAspectRatio,
+	type PosterFlowMirrorSettings,
+} from "../types/posterFlowMirror";
 import {
 	EMPTY_POSTER_DRAFT,
 	type PosterBuilderDraft,
@@ -60,6 +66,20 @@ export default function PosterBuilderPage() {
 	const [promptPackage, setPromptPackage] = useState<PosterPromptDraftResponse | null>(null);
 	const [promptError, setPromptError] = useState("");
 	const [promptLoading, setPromptLoading] = useState(false);
+	const [flowMirror, setFlowMirror] = useState<PosterFlowMirrorSettings>(
+		DEFAULT_POSTER_FLOW_MIRROR_SETTINGS,
+	);
+
+	const applyFlowAspectToDraft = (aspect: string, base?: PosterBuilderDraft) => {
+		const next = { ...(base ?? draft), frame_ratio: aspect };
+		setDraft(next);
+		return next;
+	};
+
+	const handleFlowMirrorChange = (next: PosterFlowMirrorSettings) => {
+		setFlowMirror(next);
+		applyFlowAspectToDraft(next.aspect_ratio);
+	};
 
 	useEffect(() => {
 		void fetchProductCatalog(500)
@@ -88,7 +108,11 @@ export default function PosterBuilderPage() {
 		try {
 			const payload = await fetchPosterReadiness(product.id);
 			setReadiness(payload);
-			setDraft({ ...POSTER_AUTO_DEFAULT_DRAFT });
+			setFlowMirror({ ...DEFAULT_POSTER_FLOW_MIRROR_SETTINGS });
+			setDraft({
+				...POSTER_AUTO_DEFAULT_DRAFT,
+				frame_ratio: DEFAULT_POSTER_FLOW_MIRROR_SETTINGS.aspect_ratio,
+			});
 			setWorkingMode("auto");
 		} catch (err) {
 			const message =
@@ -182,12 +206,13 @@ export default function PosterBuilderPage() {
 		loadRecommendations,
 	]);
 
-	const handlePromptDraft = async () => {
+	const handlePromptDraft = async (draftOverride?: PosterBuilderDraft) => {
 		if (!selectedProduct || !readiness) return;
+		const activeDraft = draftOverride ?? draft;
 		setPromptLoading(true);
 		setPromptError("");
 		try {
-			const payload = draftToPromptRequest(selectedProduct.id, draft);
+			const payload = draftToPromptRequest(selectedProduct.id, activeDraft);
 			const pkg = await createPosterPromptDraft(payload);
 			setPromptPackage(pkg);
 		} catch (e) {
@@ -198,8 +223,25 @@ export default function PosterBuilderPage() {
 		}
 	};
 
+	const mergeKitIntoDraft = (kit: PosterCopyKit): PosterBuilderDraft => {
+		const ratio = flowMirror.aspect_ratio;
+		const next = { ...kitToDraft(kit, draft), frame_ratio: ratio };
+		setDraft(next);
+		return next;
+	};
+
 	const handleSelectKit = (kit: PosterCopyKit) => {
-		setDraft((prev) => kitToDraft(kit, prev));
+		const ratio = (kit.frame_ratio && isPosterFlowAspectRatio(kit.frame_ratio)
+			? kit.frame_ratio
+			: flowMirror.aspect_ratio) as PosterFlowMirrorSettings["aspect_ratio"];
+		const next = { ...kitToDraft(kit, draft), frame_ratio: ratio };
+		setDraft(next);
+		setFlowMirror((prev) => ({ ...prev, aspect_ratio: ratio }));
+	};
+
+	const handleUseKitForPromptDraft = async (kit: PosterCopyKit) => {
+		const nextDraft = mergeKitIntoDraft(kit);
+		await handlePromptDraft(nextDraft);
 	};
 
 	return (
@@ -313,7 +355,7 @@ export default function PosterBuilderPage() {
 									warnings={recWarnings}
 									onRefresh={() => void loadRecommendations(true)}
 									onSelectKit={handleSelectKit}
-									onUseForPromptDraft={() => void handlePromptDraft()}
+									onUseKitForPromptDraft={(kit) => void handleUseKitForPromptDraft(kit)}
 									promptDraftLoading={promptLoading}
 								/>
 							) : null}
@@ -322,7 +364,15 @@ export default function PosterBuilderPage() {
 								<PosterGuidedModePanel
 									draft={draft}
 									kits={kits}
-									onDraftChange={setDraft}
+									onDraftChange={(d) => {
+										setDraft(d);
+										if (d.frame_ratio && d.frame_ratio !== flowMirror.aspect_ratio) {
+											setFlowMirror((prev) => ({
+												...prev,
+												aspect_ratio: d.frame_ratio as PosterFlowMirrorSettings["aspect_ratio"],
+											}));
+										}
+									}}
 									onUseForPromptDraft={() => void handlePromptDraft()}
 									promptDraftLoading={promptLoading}
 								/>
@@ -331,7 +381,15 @@ export default function PosterBuilderPage() {
 							{workingMode === "manual" ? (
 								<PosterBuilderShellForm
 									draft={draft}
-									onChange={setDraft}
+									onChange={(d) => {
+										setDraft(d);
+										if (d.frame_ratio !== flowMirror.aspect_ratio) {
+											setFlowMirror((prev) => ({
+												...prev,
+												aspect_ratio: d.frame_ratio as PosterFlowMirrorSettings["aspect_ratio"],
+											}));
+										}
+									}}
 									mode={shellMode}
 									promptDraftEnabled={promptDraftEnabled}
 									promptDraftLabel={promptDraftLabel}
@@ -342,6 +400,12 @@ export default function PosterBuilderPage() {
 								/>
 							) : null}
 
+							<PosterFlowMirrorSettingsPanel
+								settings={flowMirror}
+								onChange={handleFlowMirrorChange}
+								disabled={!recommendationsEnabled}
+							/>
+
 							<section
 								className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5"
 								data-testid="poster-image-handoff"
@@ -350,15 +414,22 @@ export default function PosterBuilderPage() {
 									Poster image generation
 								</h3>
 								<p className="mt-2 text-sm text-slate-400">
-									Image generation handoff not enabled for Poster Builder yet.
-									Avatar Registry and Scene Registry use{" "}
-									<code className="text-xs">/api/ai/generate-image</code> with
-									explicit operator action; poster module reuses prompt package only
-									until a gated poster image route is approved.
+									Image generation handoff not enabled for Poster Builder yet. Flow
+									Mirror Settings are captured for future gated Google Flow / image
+									generation route.
+								</p>
+								<p
+									className="mt-2 text-xs text-slate-500"
+									data-testid="flow-handoff-captured"
+								>
+									Flow handoff settings captured: Aspect Ratio:{" "}
+									{flowMirror.aspect_ratio} · Count: {flowMirror.count}x · Image
+									Model: {flowMirror.image_model}
 								</p>
 								<button
 									type="button"
 									disabled
+									data-testid="generate-poster-button"
 									className="mt-3 rounded-xl border border-slate-800 px-4 py-2 text-xs font-bold uppercase text-slate-500"
 								>
 									{imageGenerateLabel}
@@ -378,6 +449,7 @@ export default function PosterBuilderPage() {
 								{
 									working_mode: workingMode,
 									draft,
+									flow_mirror_settings: flowMirror,
 									readiness_meta: {
 										poster_status: readiness.poster_status,
 										generation_allowed: readiness.generation_allowed,

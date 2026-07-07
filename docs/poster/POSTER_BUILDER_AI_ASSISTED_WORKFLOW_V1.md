@@ -54,6 +54,22 @@ Per product: readiness → `copy-recommendations` → operator picks kit → `pr
 6. Switch **Manual Expert** — all fields editable; prompt draft still works.
 7. Repair-required product — repair center visible; working modes hidden.
 
+### Atomic “Use for prompt draft”
+
+Auto mode **Use for prompt draft** calls `handleUseKitForPromptDraft(kit)`, which builds `nextDraft = kitToDraft(kit, …)` and passes it directly to `handlePromptDraft(nextDraft)`. It does **not** rely on stale React state after `setDraft`.
+
+### Flow Mirror Settings / Output Control
+
+Section **Flow Mirror Settings** (all modes when shell is visible):
+
+- **Aspect Ratio:** 9:16, 1:1, 16:9, 4:3, 3:4 — synced with `draft.frame_ratio` (single source; kit select updates both).
+- **Count:** 1x–4x — handoff metadata only; no image API calls.
+- **Image Model:** from shared `useImageGenSettings()` / `/api/img-factory/image-gen-settings` (same SSOT as Avatar Registry, IMG Fastlane). Default **Nano Banana 2**.
+
+Captured in Draft JSON preview as `flow_mirror_settings` and in the disabled handoff block. Backend prompt-draft API unchanged; persistence to server is future work.
+
+Future path: gated poster image route reads prompt package + flow mirror settings + explicit operator click (Google Flow / Nano Banana family).
+
 ### Image generation status
 
 **Not implemented; handoff-ready only.** Avatar/Scene Registry use `/api/ai/generate-image` with explicit clicks. Poster module stops at prompt package until a dedicated gated poster image route is designed (no auto credit burn).
