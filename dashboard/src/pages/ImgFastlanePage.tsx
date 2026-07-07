@@ -613,7 +613,10 @@ export default function ImgFastlanePage() {
 				advanced_override_notes: advancedOverrideNotes || null,
 			});
 			setCompiledPreview(preview);
-			setPrompt(preview.prompt_text || "");
+			// Send + display the CLEAN engine brief (no internal routing ids), which
+			// is portable verbatim to Flow / ChatGPT Image / Grok. The labeled
+			// prompt_text is kept as the operator breakdown below.
+			setPrompt(preview.engine_prompt_text || "");
 			setDisplayName((current) =>
 				current.trim() ? current : preview.display_name_suggestion,
 			);
@@ -1089,9 +1092,9 @@ export default function ImgFastlanePage() {
 						</div>
 						<div className="flex items-center justify-between gap-2">
 							<span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-								Final prompt → Google Flow
+								Final prompt → Flow / ChatGPT / Grok
 								<span className="ml-2 normal-case tracking-normal text-slate-500">
-									(the exact text sent to the engine on Generate)
+									(portable brief — exact text sent on Generate; paste-ready for any image engine)
 								</span>
 							</span>
 							<button
@@ -1107,8 +1110,18 @@ export default function ImgFastlanePage() {
 							value={prompt}
 							readOnly
 							className="h-64 w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-slate-200 font-mono leading-relaxed focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-y overflow-auto"
-							placeholder="The full prompt sent to Google Flow appears here after selecting a preset and any required database truth."
+							placeholder="The portable prompt sent to the image engine appears here after selecting a preset and any required database truth."
 						/>
+						{compiledPreview?.prompt_text ? (
+							<details className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400">
+								<summary className="cursor-pointer font-semibold uppercase tracking-[0.14em] text-slate-500">
+									Structured breakdown (operator reference — not sent to the engine)
+								</summary>
+								<pre className="mt-2 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-slate-400">
+									{compiledPreview.prompt_text}
+								</pre>
+							</details>
+						) : null}
 						{compiledPreview?.reference_map?.length ? (
 							<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400 space-y-1">
 								<div className="font-semibold uppercase tracking-[0.14em] text-slate-500">

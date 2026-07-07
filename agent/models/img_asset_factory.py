@@ -137,6 +137,11 @@ class ImgFastlanePromptPreviewResponse(BaseModel):
     ingredient_role: IngredientRole | None = None
     lane_id: str
     prompt_text: str
+    # Clean, engine-agnostic brief actually sent to the generator. Carries NO
+    # internal routing metadata (preset/route/lane ids) so it is portable verbatim
+    # across Google Flow, ChatGPT Image, and Grok. `prompt_text` remains the
+    # labeled operator breakdown. Additive (default "") for backward compatibility.
+    engine_prompt_text: str = ""
     display_name_suggestion: str
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

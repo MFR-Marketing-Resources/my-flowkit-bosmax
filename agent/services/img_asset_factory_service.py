@@ -296,6 +296,51 @@ def _effective_negative_rules(preset: dict[str, object]) -> list[str]:
     return rules
 
 
+def _build_engine_prompt(
+    *,
+    output_spec: str,
+    reference_map: list[str],
+    product_lock_lines: list[str],
+    directives: list[str],
+    override_notes: str,
+    negative_rules: list[str],
+) -> str:
+    """Clean, engine-agnostic image brief actually sent to the generator.
+
+    Deliberately carries NO internal routing metadata — no ``TEMPLATE PRESET``,
+    ``FASTLANE ROUTE``, ``TARGET LANE``, or ``TARGET INGREDIENT ROLE`` lines. Those
+    are engineering scaffolding that mean nothing to an image engine and can be
+    rendered as literal on-image text. The result is a portable creative brief that
+    can be pasted verbatim into Google Flow, ChatGPT Image, or Grok so the SAME
+    brief drives a fair cross-engine quality comparison. The labeled operator
+    breakdown still lives in ``prompt_text``; this is the payload.
+    """
+    blocks: list[str] = []
+    spec = (output_spec or "").strip()
+    if spec:
+        blocks.append(spec)
+    refs = [r for r in reference_map if r]
+    if refs:
+        blocks.append("REFERENCES:\n" + "\n".join(f"- {r}" for r in refs))
+    # product lock lines are self-labeled ("PRODUCT IDENTITY LOCK: ...") full
+    # sentences, so they stand as their own paragraph without an extra header.
+    lock_lines = [line for line in product_lock_lines if line]
+    if lock_lines:
+        blocks.append("\n".join(lock_lines))
+    # Drop operator-facing workflow meta ("System composes the prompt ...") — it is
+    # not visual direction and only clutters a portable cross-engine brief.
+    comp = [d for d in directives if d and "system composes the prompt" not in d.lower()]
+    if comp:
+        blocks.append("COMPOSITION:\n" + "\n".join(f"- {d}" for d in comp))
+    note = (override_notes or "").strip()
+    if note:
+        blocks.append("ADDITIONAL DIRECTION:\n- " + note)
+    neg = [n for n in negative_rules if n]
+    if neg:
+        blocks.append("AVOID:\n" + "\n".join(f"- {n}" for n in neg))
+    return "\n\n".join(blocks).strip()
+
+
 def _product_family_flags(product: dict[str, object] | None) -> dict[str, bool]:
     text = _clean_text(
         (product or {}).get("product_display_name")
@@ -563,12 +608,33 @@ async def compile_img_fastlane_prompt_preview(
     prompt_lines.append("NEGATIVE RULES:")
     prompt_lines.extend(f"- {rule}" for rule in effective_negative_rules)
 
+    # Clean, portable brief actually sent to the generator (no internal routing
+    # ids) — reuses the same substantive pieces as the labeled breakdown above.
+    engine_prompt_text = _build_engine_prompt(
+        output_spec=str(preset["output_spec"]),
+        reference_map=_reference_map_lines(
+            request.preset_id,
+            product,
+            character_label,
+            scene_label,
+            style_label,
+            product_reference_label,
+        ),
+        product_lock_lines=product_lock_lines,
+        directives=_preset_directives(request.preset_id, product),
+        override_notes=_clean_text(request.advanced_override_notes)
+        if request.advanced_override_notes
+        else "",
+        negative_rules=effective_negative_rules,
+    )
+
     return ImgFastlanePromptPreviewResponse(
         preset_id=str(preset["preset_id"]),
         route=request.route,
         ingredient_role=request.ingredient_role,
         lane_id=str(preset["lane_id"]),
         prompt_text="\n".join(prompt_lines).strip(),
+        engine_prompt_text=engine_prompt_text,
         display_name_suggestion=_display_name_suggestion(preset, product),
         blockers=blockers,
         warnings=warnings,
