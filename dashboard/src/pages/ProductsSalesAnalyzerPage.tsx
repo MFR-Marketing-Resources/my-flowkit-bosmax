@@ -2,6 +2,7 @@ import type { ChangeEvent, FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchAPI, patchAPI, postAPI, postMultipartAPI } from "../api/client";
+import { HelperText } from "../components/ui";
 import {
 	fetchProductIntelligence,
 	fetchProductIntelligenceProvenance,
@@ -1670,6 +1671,13 @@ export default function ProductsSalesAnalyzerPage() {
 					</div>
 				</div>
 
+				<HelperText className="mb-2 px-2">
+					Klik kad untuk butiran penuh. Guna butang{" "}
+					<span className="font-semibold text-blue-300">Edit</span> /{" "}
+					<span className="font-semibold text-amber-300">Archive</span> pada
+					setiap kad untuk kemas kini maklumat atau nyah-aktif produk yang tidak
+					digunakan — terus dari senarai.
+				</HelperText>
 				<div
 					className="min-h-[280px] flex-1 overflow-y-auto p-2 lg:min-h-0"
 					style={{ scrollbarWidth: "thin" }}
@@ -1693,10 +1701,17 @@ export default function ProductsSalesAnalyzerPage() {
 
 					<div className="space-y-1">
 						{paginatedProducts.map((product) => (
-							<button
-								type="button"
+							<div
 								key={product.id}
+								role="button"
+								tabIndex={0}
 								onClick={() => setSelectedId(product.id)}
+								onKeyDown={(e) => {
+									if (e.key === "Enter" || e.key === " ") {
+										e.preventDefault();
+										setSelectedId(product.id);
+									}
+								}}
 								className={`flex min-w-0 gap-3 rounded border p-2 cursor-pointer transition-colors ${selectedId === product.id ? "border border-blue-500/50 bg-blue-900/30" : "border border-transparent hover:bg-slate-800"}`}
 							>
 								<div className="flex-shrink-0 w-16 h-16 rounded overflow-hidden bg-slate-800">
@@ -1804,8 +1819,44 @@ export default function ProductsSalesAnalyzerPage() {
 											)}
 										</span>
 									</div>
+									<div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2">
+										<button
+											type="button"
+											onClick={(e) => {
+												e.stopPropagation();
+												setSelectedId(product.id);
+												setActiveTab("EDIT");
+											}}
+											className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-[10px] font-semibold text-blue-200 hover:bg-blue-500/20"
+										>
+											Edit
+										</button>
+										{isArchivedProduct(product) ? (
+											<button
+												type="button"
+												onClick={(e) => {
+													e.stopPropagation();
+													openLifecycleModal("UNARCHIVE", product);
+												}}
+												className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
+											>
+												Unarchive
+											</button>
+										) : (
+											<button
+												type="button"
+												onClick={(e) => {
+													e.stopPropagation();
+													openLifecycleModal("ARCHIVE", product);
+												}}
+												className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20"
+											>
+												Archive
+											</button>
+										)}
+									</div>
 								</div>
-							</button>
+							</div>
 						))}
 					</div>
 
