@@ -173,3 +173,136 @@ async def scene_context_registry_register_generated(request: SceneRegisterGenera
         review_status="APPROVED",
     ))
     return {"asset_id": record.asset_id, "scene_code": scene["scene_code"]}
+
+
+# ── Manual add + AI auto-generate (additive, mirror of avatar-registry). Both
+# build a full pool row and add it through the fail-closed add_scene() door.
+# Redundancy fails closed with 409 so the pool never gains a duplicate scene.
+
+class SceneManualAddRequest(BaseModel):
+    scene_name: str
+    background_prompt: str
+    route_fit: str | None = None
+    usage_tags: str | None = None
+
+
+def _build_scene_pool_row(scene_context_registry, payload: dict) -> tuple[str, dict]:
+    """Build (scene_code, full pool row dict) from a validated manual/AI payload."""
+    scene_code = scene_context_registry.next_scene_code(payload["scene_name"])
+    background = str(payload["background_prompt"]).strip()
+    background_cell = background if background.lower().startswith("background") \
+        else f"Background: {background}"
+    prompt_v1 = scene_context_registry.build_scene_prompt_v1(
+        payload["scene_name"], background)
+    row = {
+        "SceneName": payload["scene_name"],
+        "SceneCode": scene_code,
+        "BackgroundPrompt": background_cell,
+        "RouteFit": str(payload.get("route_fit") or "").strip(),
+        "SafetyBlock": "STANDARD_SCENE_SAFETY_BLOCK",
+        "PromptV1": prompt_v1,
+        "approved_flag": "TRUE",
+        "usage_tags": str(payload.get("usage_tags") or "").strip(),
+    }
+    return scene_code, row
+
+
+@router.post("/scene-context-registry/add-manual")
+async def scene_context_registry_add_manual(request: SceneManualAddRequest):
+    """Manual single-scene add. Fail-closed 409 on a redundant scene (same
+    normalized scene_name or identical background text already in the pool)."""
+    from agent.services import scene_context_registry
+    existing = scene_context_registry.find_duplicate_scene(
+        request.scene_name, request.background_prompt)
+    if existing is not None:
+        raise HTTPException(409, f"SCENE_REDUNDANT:{existing['scene_code']}")
+    scene_code, row = _build_scene_pool_row(
+        scene_context_registry, request.model_dump())
+    try:
+        scene_context_registry.add_scene(row)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"scene_code": scene_code, "scene_name": request.scene_name}
+
+
+class SceneAutoGenRequest(BaseModel):
+    brief: str | None = None
+
+
+_SCENE_AI_REQUIRED_KEYS = ("scene_name", "background_prompt")
+
+
+def _coerce_ai_scene_profile(data: dict) -> dict | None:
+    """Validate + coerce the AI-returned dict into a manual-add payload, or None
+    if required keys are missing. usage_tags array → pipe-delimited string."""
+    if not isinstance(data, dict):
+        return None
+    if any(not str(data.get(key) or "").strip() for key in _SCENE_AI_REQUIRED_KEYS):
+        return None
+    usage_tags = data.get("usage_tags")
+    if isinstance(usage_tags, list):
+        usage_tags = "|".join(str(t).strip() for t in usage_tags if str(t).strip())
+    return {
+        "scene_name": str(data["scene_name"]).strip(),
+        "background_prompt": str(data["background_prompt"]).strip(),
+        "route_fit": str(data.get("route_fit") or "").strip() or None,
+        "usage_tags": str(usage_tags or "").strip() or None,
+    }
+
+
+@router.post("/scene-context-registry/auto-generate")
+async def scene_context_registry_auto_generate(request: SceneAutoGenRequest):
+    """AI auto-generate ONE non-duplicate background scene via the configured
+    text_assist lane. Fail-closed: 503 if unconfigured, 502 on invalid AI JSON,
+    409 if the AI keeps returning a duplicate after one stronger retry."""
+    from agent.services import ai_copy_provider_adapter
+    from agent.services import scene_context_registry
+    if not ai_copy_provider_adapter.is_configured():
+        raise HTTPException(503, "TEXT_ASSIST_NOT_CONFIGURED")
+
+    existing_names = ", ".join(
+        p["scene_name"] for p in scene_context_registry.list_pool())
+    system = (
+        "Generate ONE Malaysian commercial background SCENE as STRICT JSON, avoid "
+        "duplicating: " + existing_names + ". Keys: scene_name, background_prompt"
+        "(one clean 'Background: ...' style env description, no people/product), "
+        "usage_tags(array)."
+    )
+    user = str(request.brief or "Generate a fresh commercial background scene.")
+
+    try:
+        raw = ai_copy_provider_adapter.complete_json(system, user)
+    except ai_copy_provider_adapter.AICopyProviderNotConfigured as exc:
+        raise HTTPException(503, "TEXT_ASSIST_NOT_CONFIGURED") from exc
+    except ai_copy_provider_adapter.AICopyProviderError as exc:
+        raise HTTPException(502, "AI_SCENE_GENERATION_FAILED") from exc
+
+    payload = _coerce_ai_scene_profile(raw)
+    if payload is None:
+        raise HTTPException(502, "AI_SCENE_INVALID")
+
+    duplicate = scene_context_registry.find_duplicate_scene(
+        payload["scene_name"], payload["background_prompt"])
+    if duplicate is not None:
+        retry_user = user + (
+            "\nThe previous result duplicated an existing scene. You MUST return a "
+            "DISTINCT scene_name and background not already listed.")
+        try:
+            raw = ai_copy_provider_adapter.complete_json(system, retry_user)
+        except ai_copy_provider_adapter.AICopyProviderError as exc:
+            raise HTTPException(502, "AI_SCENE_GENERATION_FAILED") from exc
+        payload = _coerce_ai_scene_profile(raw)
+        if payload is None:
+            raise HTTPException(502, "AI_SCENE_INVALID")
+        duplicate = scene_context_registry.find_duplicate_scene(
+            payload["scene_name"], payload["background_prompt"])
+        if duplicate is not None:
+            raise HTTPException(409, "SCENE_REDUNDANT_AI")
+
+    scene_code, row = _build_scene_pool_row(scene_context_registry, payload)
+    try:
+        scene_context_registry.add_scene(row)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"scene_code": scene_code, "scene_name": payload["scene_name"],
+            "generated": True}

@@ -120,3 +120,116 @@ def test_register_generated_constructs_valid_request_and_stamps_scene_governance
     assert req.contains_rendered_text is False          # clean plate
     assert "SCENE_CODE:SCN_RAYA_KAMPUNG" in req.description
     assert req.generation_recipe_id == "SCENE_REFERENCE"
+
+
+# ── Manual add + AI auto-generate (additive). The AI adapter is ALWAYS mocked —
+# no real provider network call ever happens in these tests.
+
+def test_add_manual_redundant_scene_409():
+    """A scene whose name already exists in the pool fails closed with 409."""
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/workspace/scene-context-registry/add-manual",
+        json={"scene_name": "Raya Kampung",
+              "background_prompt": "Background: something different"},
+    )
+    assert response.status_code == 409
+    assert "SCENE_REDUNDANT" in response.text
+
+
+def test_add_manual_happy_path(monkeypatch):
+    """A distinct scene is added through the (mocked) add_scene door and returns
+    a SCN_ code — the real bridge/pool is never touched."""
+    captured: dict = {}
+
+    def fake_add_scene(row):
+        captured["row"] = row
+        return {"rows": 21, "approved_loaded": 21, "bridge_path": "x"}
+
+    monkeypatch.setattr(
+        "agent.services.scene_context_registry.add_scene", fake_add_scene)
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/workspace/scene-context-registry/add-manual",
+        json={"scene_name": "Neon Arcade Lobby",
+              "background_prompt": "Background: glowing neon arcade, retro cabinets",
+              "usage_tags": "neon|arcade"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["scene_code"] == "SCN_NEON_ARCADE_LOBBY"
+    assert body["scene_name"] == "Neon Arcade Lobby"
+    # the row that was assembled carries a clean-plate PromptV1 + approved flag
+    row = captured["row"]
+    assert row["SceneCode"] == "SCN_NEON_ARCADE_LOBBY"
+    assert row["approved_flag"] == "TRUE"
+    assert "no people and no product" in row["PromptV1"].lower()
+
+
+def test_auto_generate_fail_closed_when_unconfigured(monkeypatch):
+    """Unconfigured text_assist lane → 503, no provider call attempted."""
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.is_configured", lambda: False)
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/workspace/scene-context-registry/auto-generate",
+        json={"brief": "a cozy hawker stall at night"},
+    )
+    assert response.status_code == 503
+    assert "TEXT_ASSIST_NOT_CONFIGURED" in response.text
+
+
+def test_auto_generate_happy_path_mocked_adapter(monkeypatch):
+    """Configured lane + mocked complete_json returning a valid distinct scene →
+    200 with a scene_code. The provider is NEVER really called; add_scene mocked."""
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.is_configured", lambda: True)
+
+    def fake_complete_json(system, user):
+        return {
+            "scene_name": "Hawker Stall Night Market",
+            "background_prompt": "Background: bustling hawker stall alley at night, "
+                                 "warm string lights, steam, shallow depth of field",
+            "usage_tags": ["hawker", "night", "street"],
+        }
+
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.complete_json", fake_complete_json)
+
+    captured: dict = {}
+
+    def fake_add_scene(row):
+        captured["row"] = row
+        return {"rows": 21, "approved_loaded": 21, "bridge_path": "x"}
+
+    monkeypatch.setattr(
+        "agent.services.scene_context_registry.add_scene", fake_add_scene)
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/workspace/scene-context-registry/auto-generate",
+        json={"brief": "night street food scene"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["generated"] is True
+    assert body["scene_code"].startswith("SCN_HAWKER_STALL_NIGHT_MARKET")
+    assert body["scene_name"] == "Hawker Stall Night Market"
+    assert captured["row"]["usage_tags"] == "hawker|night|street"
+
+
+def test_auto_generate_invalid_ai_json_502(monkeypatch):
+    """A configured lane returning a dict missing required keys → 502."""
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.is_configured", lambda: True)
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.complete_json",
+        lambda system, user: {"scene_name": "Only A Name"})  # no background_prompt
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/workspace/scene-context-registry/auto-generate",
+        json={"brief": "x"},
+    )
+    assert response.status_code == 502
+    assert "AI_SCENE_INVALID" in response.text
