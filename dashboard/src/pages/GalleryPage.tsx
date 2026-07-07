@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { fetchAPI, deleteAPI } from '../api/client'
 import type { Project, Video, Scene } from '../types'
 import VideoGallery from '../components/gallery/VideoGallery'
+import { ConfirmActionModal } from '../components/ui'
 
 const PAGE_SIZE_VIDEOS = 20
 
@@ -163,37 +164,17 @@ export default function GalleryPage() {
         <VideoGallery scenes={scenes} onDeleteScene={handleDeleteScene} />
       )}
 
-      {/* Delete video confirm modal */}
-      {confirmDeleteVideo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)' }}>
-          <div className="rounded-xl p-6 w-80 flex flex-col gap-4" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
-            <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Delete this video?</p>
-            <p className="text-xs" style={{ color: 'var(--muted)' }}>
-              This will permanently delete the video and all its scenes. This cannot be undone.
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button
-                type="button"
-                onClick={() => setConfirmDeleteVideo(false)}
-                disabled={deletingVideo}
-                className="px-3 py-1.5 rounded text-xs"
-                style={{ background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)' }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleDeleteVideo}
-                disabled={deletingVideo}
-                className="px-3 py-1.5 rounded text-xs font-semibold disabled:opacity-60"
-                style={{ background: '#ef4444', color: '#fff' }}
-              >
-                {deletingVideo ? 'Deleting...' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Delete video confirm — shared standard ConfirmActionModal */}
+      <ConfirmActionModal
+        open={confirmDeleteVideo}
+        title="Delete this video?"
+        body="This will permanently delete the video and all its scenes. This cannot be undone."
+        confirmLabel="Delete"
+        tone="danger"
+        busy={deletingVideo}
+        onConfirm={handleDeleteVideo}
+        onCancel={() => setConfirmDeleteVideo(false)}
+      />
     </div>
   )
 }
