@@ -129,15 +129,20 @@ def test_minyak_warisan_flow_safe_scale_reaches_section2(mode):
 
 # ── 2. BOSMAX 5ml lock ─────────────────────────────────────────────────────────
 
-def test_bosmax_5ml_lock_tiny_and_no_10ml():
+def test_bosmax_5ml_lock_lipbalm_size_no_chapstick_no_numbers():
     lock = plb.build_product_lock(BOS5, is_video=True, has_product_reference=True)
     assert lock["matched_product_id"] == "BOSMAX_SERUM_5ML"
     blob = " ".join(lock.values()).lower()
-    for token in ["5ml", "lip balm", "roll-on", "black", "palm", "bosmax herbs"]:
+    # 5ml now uses the qualitative "lip balm" anchor + finger-fit (no numeric scale).
+    for token in ["lip balm", "fingers", "roll-on", "black", "palm", "bosmax herbs"]:
         assert token in blob, f"missing product truth token: {token}"
     for forbidden in ["perfume", "spray", "supplement", "skincare", "pump"]:
         assert forbidden in blob, f"missing forbidden-container guard: {forbidden}"
-    assert "10ml" not in blob and "10 ml" not in blob, "5ml lock leaked 10ml scale"
+    # the engine-facing SCALE LOCK must be number-free and must NOT carry the 10ml
+    # variant's "chapstick" anchor (the numeric survives only in the internal id / real name).
+    scale = lock["scale_lock"].lower()
+    assert "5ml" not in scale and "10ml" not in scale and "10 ml" not in scale, "numeric scale leaked"
+    assert "chapstick" not in scale, "5ml scale lock leaked the 10ml chapstick anchor"
 
 
 # ── 3. BOSMAX 5ml vs 10ml separation (both authored, size-gated) ────────────────
@@ -148,15 +153,26 @@ def test_bosmax_10ml_has_its_own_authored_lock():
     lock = plb.build_product_lock(BOS10, is_video=True, has_product_reference=True)
     assert lock["matched_product_id"] == "BOSMAX_HERBS_10ML"
     blob = " ".join(lock.values()).lower()
-    assert "10ml" in blob and "5ml" not in blob
+    # 10ml uses the qualitative "chapstick" anchor; no "lip balm" bleed.
+    assert "chapstick" in blob and "lip balm" not in blob
+    # numeric pack size must not leak into the engine-facing scale (only the internal id / real name carry it).
+    scale = lock["scale_lock"].lower()
+    assert "10ml" not in scale and "5ml" not in scale
     assert "never shrink to the smaller-variant scale" in blob
 
 
 def test_bosmax_5ml_and_10ml_never_inherit_each_other():
     s2_5 = _s2(BOS5, "IMAGES")
     s2_10 = _s2(BOS10, "IMAGES")
-    assert "5ml" in s2_5 and "10ml" not in s2_5
-    assert "10ml" in s2_10 and "5ml" not in s2_10
+    # qualitative anchors, mutually exclusive
+    assert "lip balm" in s2_5 and "chapstick" not in s2_5
+    assert "chapstick" in s2_10 and "lip balm" not in s2_10
+    # the numeric pack size must not leak into the engine-facing SCALE LOCK line
+    # (it legitimately appears in the product-identity header / real name).
+    scale_line_5 = next((ln for ln in s2_5.splitlines() if "product scale lock" in ln), "")
+    scale_line_10 = next((ln for ln in s2_10.splitlines() if "product scale lock" in ln), "")
+    assert scale_line_5 and scale_line_10
+    assert "5ml" not in scale_line_5 and "10ml" not in scale_line_10
     assert plb.resolve_schema_entry(BOS5)["product_id"] == "BOSMAX_SERUM_5ML"
     assert plb.resolve_schema_entry(BOS10)["product_id"] == "BOSMAX_HERBS_10ML"
 
@@ -309,8 +325,72 @@ def test_unlisted_product_still_gets_strong_lock_via_fallback():
     assert "product identity lock" in blob
     assert "product geometry lock" in blob
     assert "product scale lock" in blob
-    assert "30ml" in blob  # pack size derived from name
+    # pack size drives a qualitative size CLASS, but the numeric value must NOT be
+    # printed into the engine-facing scale lock (Flow can draw it as a ruler).
+    scale = lock["scale_lock"].lower()
+    assert "one-hand-grip bottle size class" in scale  # 30ml -> small handheld bottle class
+    assert "30ml" not in scale and "30 ml" not in scale
     assert "do not enlarge the product for camera visibility" in blob
+
+
+def test_fallback_scale_never_prints_numeric_pack_size():
+    # Item 2: a sized non-authored product derives a qualitative size CLASS, but the
+    # numeric pack size must never be printed into the engine-facing scale lock — Flow
+    # can render a literal measurement as a ruler/label/caption artifact.
+    for name, size_class in [
+        ("New Serum 100ml Bottle", "medium one-hand bottle size class"),
+        ("Kombo Kokojar Balang Saiz 300ml", "large bottle or jar size class"),
+        ("Bulk Refill 1000ml Drum", "bulk container size class"),
+    ]:
+        scale = plb.build_product_lock(
+            {"id": "z", "name": name, "category": "Wellness"},
+            is_video=False, has_product_reference=False,
+        )["scale_lock"].lower()
+        assert size_class in scale, f"expected {size_class!r} for {name!r}"
+        for num in ["100ml", "300ml", "1000ml", "100 ml", "300 ml", "1000 ml"]:
+            assert num not in scale, f"numeric pack size leaked into scale lock: {num} ({name})"
+
+
+def test_fallback_non_bottle_product_gets_no_palm_bottle_framing():
+    # Item 3: carpets, apparel, bedding, furniture are not handheld bottles — they must
+    # NOT inherit the palm-sized / small-relative-to-hand bottle assumption.
+    for name in [
+        "Classy 6XXXL Karpet Velvet Paling Besar",
+        "Qayraa Jersi Muslimah Labuh",
+        "Premium Cadar Bedsheet Set",
+        "Almari Perabot Kayu",
+    ]:
+        scale = plb.build_product_lock(
+            {"id": "n", "name": name, "category": "Home"},
+            is_video=False, has_product_reference=False,
+        )["scale_lock"].lower()
+        assert "true real-world size" in scale, f"non-bottle {name!r} missing real-world scale"
+        assert "palm-sized" not in scale, f"non-bottle {name!r} kept palm-sized bottle framing"
+        assert "small relative to an adult hand" not in scale, f"non-bottle {name!r} kept hand framing"
+
+
+def test_fallback_bottle_product_still_gets_handheld_scale():
+    # Guard: a genuine bottle (spray/mist) must still get palm/handheld framing so the
+    # non-bottle guard does not over-reach.
+    scale = plb.build_product_lock(
+        {"id": "b", "name": "Elianto Body Spray Fragrance Mist", "category": "Beauty"},
+        is_video=False, has_product_reference=False,
+    )["scale_lock"].lower()
+    assert "palm-sized bottle" in scale
+    assert "small relative to an adult hand" in scale
+
+
+def test_non_bottle_guard_ignores_ambiguous_substrings_like_drug():
+    # Regression: the non-bottle guard must use low-ambiguity tokens. A "drugstore"
+    # roll-on must NOT be misclassified as a carpet/non-bottle ("rug" substring),
+    # which would strip its handheld palm-scale framing.
+    for name in ["Drugstore Beauty Roll On", "Herbal Drug Serum Dropper"]:
+        scale = plb.build_product_lock(
+            {"id": "d", "name": name, "category": "Beauty"},
+            is_video=False, has_product_reference=False,
+        )["scale_lock"].lower()
+        assert "true real-world size" not in scale, f"{name!r} wrongly classified non-bottle"
+        assert "small relative to an adult hand" in scale, f"{name!r} lost handheld framing"
 
 
 def test_thin_name_with_size_resolves_and_without_size_fails_closed():
@@ -432,12 +512,13 @@ def test_no_vape_or_pod_object_named_in_mwtcb_locks():
 
 
 def test_bosmax_inherits_readability_precedence_without_mwtcb_contamination():
-    for prod, own_class in ((BOS5, "lip balm"), (BOS10, "10ml")):
+    for prod, own_class in ((BOS5, "lip balm"), (BOS10, "chapstick")):
         scale = plb.build_product_lock(prod, is_video=True, has_product_reference=False)["scale_lock"].lower()
         assert "real size outranks label readability" in scale   # global improvement reaches BOSMAX
-        assert own_class in scale                                # BOSMAX keeps its own scale class
+        assert own_class in scale                                # BOSMAX keeps its own qualitative scale class
         ident = plb.build_product_lock(prod, is_video=True, has_product_reference=False)["identity_lock"].lower()
         # MWTCB object-class must NOT bleed into BOSMAX identity
         assert "medicated-oil" not in ident and "minyak-angin" not in ident
-    # 5ml<->10ml separation intact
-    assert "10ml" not in plb.build_product_lock(BOS5, is_video=True, has_product_reference=False)["scale_lock"].lower()
+    # 5ml<->10ml separation intact (qualitative anchors, no numeric leak)
+    bos5_scale = plb.build_product_lock(BOS5, is_video=True, has_product_reference=False)["scale_lock"].lower()
+    assert "chapstick" not in bos5_scale and "10ml" not in bos5_scale

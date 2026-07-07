@@ -146,27 +146,78 @@ def resolve_schema_entry(product: dict[str, Any]) -> dict | None:
 
 # ── data-driven fallback (no schema entry) ─────────────────────────────────────
 
+# Non-bottle / worn / large-format product families. For these the "palm-sized
+# bottle, small relative to an adult hand" assumption is WRONG (a carpet, a jersey,
+# or a mattress is not a handheld bottle), so they get a neutral real-world-scale
+# lock instead. Tokens MUST be low-ambiguity substrings: e.g. "rug" is deliberately
+# excluded because it matches "drugstore"/"drug"; carpets are covered by
+# "karpet"/"carpet"/"permaidani" and furniture by "perabot"/"furniture"/"almari".
+_NON_BOTTLE_TOKENS: tuple[str, ...] = (
+    "karpet", "carpet", "permaidani",
+    "jersi", "jersey", "seluar", "tudung", "hijab", "kasut", "selipar", "sandal",
+    "cadar", "bedsheet", "tilam", "mattress", "langsir", "curtain",
+    "perabot", "furniture", "almari",
+)
+
+
 def _fallback_scale_line(product: dict[str, Any]) -> str:
+    """Deterministic scale lock for products with no authored schema entry.
+
+    Two hard rules, both required for Google-Flow safety and portability:
+      * NEVER print a numeric pack size (e.g. "300ml") into the scale sentence — the
+        engine can render a literal measurement as a ruler/label/caption artifact.
+        The pack size only *selects* a qualitative size class.
+      * Do NOT force palm-sized-bottle / hand-relative framing onto products that are
+        not handheld bottles (apparel, textiles, furniture, large-format).
+    """
     pack_ml = _parse_pack_ml(product)
     haystack = " ".join(
         _lower(product.get(k))
-        for k in ("type", "product_type", "product_scale", "physics_class", "category", "name", "product_name")
+        for k in (
+            "type", "product_type", "product_scale", "physics_class", "category",
+            "subcategory", "name", "product_name", "product_display_name", "raw_product_title",
+        )
     )
+
+    # Item 3 — non-bottle / large-format: neutral real-world scale, no hand/bottle framing.
+    if any(tok in haystack for tok in _NON_BOTTLE_TOKENS):
+        return (
+            "Keep the product at its true real-world size and correct proportion relative to a person "
+            "and the surrounding environment. Preserve its natural full-size scale; do not shrink it to "
+            "a small palm object, do not enlarge the product for camera visibility, and do not distort it."
+        )
+
+    # Item 2 — qualitative size CLASS from pack size, never the numeric value.
+    handheld: bool | None = None
     if pack_ml is not None:
-        size_phrase = f"exact {pack_ml}ml container scale"
         if pack_ml <= 6:
-            size_phrase += " — a lip-balm / chapstick size class"
-        elif pack_ml <= 30:
-            size_phrase += " — a compact pocket / palm size class"
+            size_phrase = "a tiny lip-balm / chapstick handheld size class"; handheld = True
+        elif pack_ml <= 20:
+            size_phrase = "a compact pocket roll-on handheld size class"; handheld = True
+        elif pack_ml <= 60:
+            size_phrase = "a small one-hand-grip bottle size class"; handheld = True
+        elif pack_ml <= 150:
+            size_phrase = "a medium one-hand bottle size class"; handheld = True
+        elif pack_ml <= 500:
+            size_phrase = "a large bottle or jar size class held with one or two hands"; handheld = False
+        else:
+            size_phrase = "a bulk container size class handled with two hands"; handheld = False
     elif any(tok in haystack for tok in ("roll on", "roll-on", "lip balm", "balm", "dropper", "serum")):
-        size_phrase = "exact compact roll-on / lip-balm size class"
+        size_phrase = "a compact roll-on / lip-balm handheld size class"; handheld = True
     elif any(tok in haystack for tok in ("bottle", "jar", "tube", "mist", "perfume", "supplement", "oil")):
-        size_phrase = "exact palm-sized bottle scale unless verified dimensions say otherwise"
+        size_phrase = "a palm-sized bottle size class unless verified dimensions say otherwise"; handheld = True
     else:
-        size_phrase = "exact true-to-life product scale, handled naturally in hand without enlargement"
+        size_phrase = "its true-to-life real-world size, handled naturally without enlargement"; handheld = None
+
+    if handheld is True:
+        tail = " It stays small relative to an adult hand, fingers, and face."
+    elif handheld is False:
+        tail = " It stays correct in proportion to an adult hand and body, not shrunk to a palm-sized object."
+    else:
+        tail = " Keep it at its correct real-world proportion, neither shrunk nor enlarged for the camera."
     return (
-        f"Keep the product at {size_phrase}, small relative to an adult hand, fingers, and face. "
-        "Do not enlarge the product for camera visibility, and do not push it into a larger bottle category."
+        f"Keep the product at {size_phrase}.{tail} "
+        "Do not enlarge the product for camera visibility, and do not push it into a different size category."
     )
 
 
