@@ -216,6 +216,17 @@ export default function AvatarRegistryPage() {
 				expression: "",
 			});
 			await refresh();
+			// One press = profile + a generated reference image in the Library, not
+			// just a text row. Image gen is FREE (only video burns credit), so chain
+			// straight into the IMG lane; failures degrade gracefully (profile stays,
+			// image can be retried from the card).
+			await handleGenerateImage(
+				{
+					avatar_code: data.avatar_code,
+					character_name: data.character_name,
+				} as AvatarProfile,
+				true,
+			);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Manual avatar add failed.");
 		} finally {
@@ -261,6 +272,15 @@ export default function AvatarRegistryPage() {
 			setSuccessMsg(`Avatar ${data.avatar_code} dijana`);
 			setAutoBrief("");
 			await refresh();
+			// Auto-chain into the free IMG lane so the new avatar arrives with a
+			// generated reference image in the Library, not just a text row.
+			await handleGenerateImage(
+				{
+					avatar_code: data.avatar_code,
+					character_name: data.character_name,
+				} as AvatarProfile,
+				true,
+			);
 		} catch (err) {
 			setError(
 				err instanceof Error ? err.message : "AI avatar auto-generate failed.",
@@ -457,14 +477,19 @@ export default function AvatarRegistryPage() {
 		}
 	};
 
-	const handleGenerateImage = async (avatar: AvatarProfile) => {
-		const confirmed = window.confirm(
-			`Generate imej untuk ${avatar.character_name} (${avatar.avatar_code})?\n\n` +
-				"Ini akan hantar 1 job IMG ke Google Flow (imej PERCUMA — hanya video " +
-				"yang dicaj kredit). Imej siap akan disimpan kekal dalam Creative " +
-				"Library sebagai CHARACTER_REFERENCE.",
-		);
-		if (!confirmed) return;
+	const handleGenerateImage = async (
+		avatar: AvatarProfile,
+		skipConfirm = false,
+	) => {
+		if (!skipConfirm) {
+			const confirmed = window.confirm(
+				`Generate imej untuk ${avatar.character_name} (${avatar.avatar_code})?\n\n` +
+					"Ini akan hantar 1 job IMG ke Google Flow (imej PERCUMA — hanya video " +
+					"yang dicaj kredit). Imej siap akan disimpan kekal dalam Creative " +
+					"Library sebagai CHARACTER_REFERENCE.",
+			);
+			if (!confirmed) return;
+		}
 		setError(null);
 		setSuccessMsg(null);
 		try {

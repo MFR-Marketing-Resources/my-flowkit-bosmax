@@ -150,6 +150,17 @@ export default function SceneContextRegistryPage() {
 			setSuccessMsg(`Scene ${data.scene_code} ditambah`);
 			setManualScene({ scene_name: "", background_prompt: "", usage_tags: "" });
 			await refresh();
+			// One press = scene + a generated empty-plate background image in the
+			// Library (immediately selectable in Fastlane/I2V), not just a text row.
+			// Image gen is FREE, so chain straight into the IMG lane; failures degrade
+			// gracefully (scene stays, image can be retried from the card).
+			await handleGenerateImage(
+				{
+					scene_code: data.scene_code,
+					scene_name: data.scene_name,
+				} as SceneProfile,
+				true,
+			);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Manual scene add failed.");
 		} finally {
@@ -193,6 +204,15 @@ export default function SceneContextRegistryPage() {
 			setSuccessMsg(`Scene ${data.scene_code} dijana`);
 			setAutoBrief("");
 			await refresh();
+			// Auto-chain into the free IMG lane so the new scene arrives with a
+			// generated background image in the Library, not just a text row.
+			await handleGenerateImage(
+				{
+					scene_code: data.scene_code,
+					scene_name: data.scene_name,
+				} as SceneProfile,
+				true,
+			);
 		} catch (err) {
 			setError(
 				err instanceof Error ? err.message : "AI scene auto-generate failed.",
@@ -202,14 +222,19 @@ export default function SceneContextRegistryPage() {
 		}
 	};
 
-	const handleGenerateImage = async (scene: SceneProfile) => {
-		const confirmed = window.confirm(
-			`Generate imej background untuk "${scene.scene_name}" (${scene.scene_code})?\n\n` +
-				"Ini akan hantar 1 job IMG ke Google Flow (imej PERCUMA — hanya video yang " +
-				"dicaj kredit). Imej scene siap akan disimpan kekal sebagai " +
-				"SCENE_CONTEXT_REFERENCE dan terus boleh dipilih di IMG Fastlane + I2V.",
-		);
-		if (!confirmed) return;
+	const handleGenerateImage = async (
+		scene: SceneProfile,
+		skipConfirm = false,
+	) => {
+		if (!skipConfirm) {
+			const confirmed = window.confirm(
+				`Generate imej background untuk "${scene.scene_name}" (${scene.scene_code})?\n\n` +
+					"Ini akan hantar 1 job IMG ke Google Flow (imej PERCUMA — hanya video yang " +
+					"dicaj kredit). Imej scene siap akan disimpan kekal sebagai " +
+					"SCENE_CONTEXT_REFERENCE dan terus boleh dipilih di IMG Fastlane + I2V.",
+			);
+			if (!confirmed) return;
+		}
 		setError(null);
 		setSuccessMsg(null);
 		try {
