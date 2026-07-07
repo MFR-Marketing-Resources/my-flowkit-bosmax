@@ -89,3 +89,22 @@ def test_build_scene_prompt_v1_is_clean_empty_plate():
     assert "clean" in low
     # the leading "Background:" label is stripped from the embedded description
     assert "scene: neon arcade. glowing neon arcade" in low
+
+
+def test_delete_scene_removes_row(tmp_pool):
+    scr.add_scene(_sample_row("SCN_NEON_ARCADE_LOBBY"))
+    before = len(scr.list_pool())
+    result = scr.delete_scene("SCN_NEON_ARCADE_LOBBY")
+    assert result["remaining"] == before - 1
+    assert "SCN_NEON_ARCADE_LOBBY" not in {p["scene_code"] for p in scr.list_pool()}
+
+
+def test_delete_scene_case_insensitive(tmp_pool):
+    scr.add_scene(_sample_row("SCN_NEON_ARCADE_LOBBY"))
+    scr.delete_scene("scn_neon_arcade_lobby")
+    assert "SCN_NEON_ARCADE_LOBBY" not in {p["scene_code"] for p in scr.list_pool()}
+
+
+def test_delete_scene_unknown_code_fails_closed(tmp_pool):
+    with pytest.raises(ValueError, match="(?i)SCENE_CODE_NOT_FOUND"):
+        scr.delete_scene("SCN_DOES_NOT_EXIST")

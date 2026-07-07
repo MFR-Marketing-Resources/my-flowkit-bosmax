@@ -157,3 +157,52 @@ def test_auto_generate_invalid_ai_json_502(monkeypatch):
     )
     assert response.status_code == 502
     assert "AI_AVATAR_INVALID" in response.text
+
+
+def test_delete_avatar_removes_row_and_archives_linked_image(monkeypatch):
+    """DELETE removes the pool row (mocked) AND archives the linked reference
+    image located via the AVATAR_CODE marker in the asset description — this
+    exercises the previously-dead archive branch."""
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.delete_avatar",
+        lambda code: {"removed": code, "remaining": 249, "bridge_path": "x"},
+    )
+
+    class _Asset:
+        asset_id = "ca_linked"
+        description = "AVATAR_CODE:BOS_F_ZARA_01 — generated from registry PromptV1"
+
+    async def fake_list(**kwargs):
+        return [_Asset()]
+
+    archived: dict = {}
+
+    async def fake_archive(asset_id):
+        archived["id"] = asset_id
+        return None
+
+    monkeypatch.setattr(
+        "agent.services.creative_asset_service.list_creative_assets", fake_list)
+    monkeypatch.setattr(
+        "agent.services.creative_asset_service.archive_creative_asset", fake_archive)
+
+    client = TestClient(_build_app())
+    response = client.delete("/api/workspace/avatar-registry/BOS_F_ZARA_01")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["removed"] == "BOS_F_ZARA_01"
+    assert body["archived_asset_id"] == "ca_linked"
+    assert archived["id"] == "ca_linked"  # linked image WAS archived (not dead code)
+
+
+def test_delete_avatar_unknown_code_404(monkeypatch):
+    def fake_delete(code):
+        raise ValueError(f"AVATAR_CODE_NOT_FOUND:{code}")
+
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.delete_avatar", fake_delete)
+
+    client = TestClient(_build_app())
+    response = client.delete("/api/workspace/avatar-registry/BOS_F_NOPE_00")
+    assert response.status_code == 404
+    assert "AVATAR_CODE_NOT_FOUND" in response.text

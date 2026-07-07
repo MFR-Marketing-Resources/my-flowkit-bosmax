@@ -124,3 +124,23 @@ def test_build_avatar_prompt_v1_mirrors_seed_and_flags_hijab():
         "hijab": False,
     })
     assert "hijab" not in no_hijab.lower()
+
+
+def test_delete_avatar_removes_row(tmp_pool):
+    ar.add_avatar(_sample_row("BOS_F_TESTINA_NEON_99"))
+    before = len(ar.list_pool())
+    result = ar.delete_avatar("BOS_F_TESTINA_NEON_99")
+    assert result["remaining"] == before - 1
+    codes = {p["avatar_code"] for p in ar.list_pool()}
+    assert "BOS_F_TESTINA_NEON_99" not in codes
+
+
+def test_delete_avatar_case_insensitive(tmp_pool):
+    ar.add_avatar(_sample_row("BOS_F_TESTINA_NEON_99"))
+    ar.delete_avatar("bos_f_testina_neon_99")  # different case still matches
+    assert "BOS_F_TESTINA_NEON_99" not in {p["avatar_code"] for p in ar.list_pool()}
+
+
+def test_delete_avatar_unknown_code_fails_closed(tmp_pool):
+    with pytest.raises(ValueError, match="(?i)AVATAR_CODE_NOT_FOUND"):
+        ar.delete_avatar("BOS_F_DOES_NOT_EXIST_00")

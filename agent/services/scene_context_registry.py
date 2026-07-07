@@ -227,6 +227,38 @@ def add_scene(row: dict) -> dict:
     return sync_pool_csv(buffer.getvalue().encode("utf-8"))
 
 
+def delete_scene(scene_code: str) -> dict:
+    """Remove ONE row by SceneCode (case-insensitive) and write the whole table
+    back through the SAME fail-closed sync_pool_csv() door as add_scene. Raises
+    SCENE_CODE_NOT_FOUND if absent, refuses to empty the registry
+    (SCENE_REGISTRY_WOULD_BE_EMPTY)."""
+    target = str(scene_code or "").strip()
+    if not target:
+        raise ValueError("SCENE_CODE_REQUIRED")
+
+    with open(_active_pool_file(), encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        header = list(reader.fieldnames or [])
+        existing = list(reader)
+
+    kept = [
+        r for r in existing
+        if str(r.get("SceneCode") or "").strip().casefold() != target.casefold()
+    ]
+    if len(kept) == len(existing):
+        raise ValueError(f"SCENE_CODE_NOT_FOUND:{target}")
+    if not kept:
+        raise ValueError("SCENE_REGISTRY_WOULD_BE_EMPTY")
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=header)
+    writer.writeheader()
+    for r in kept:
+        writer.writerow({column: str(r.get(column, "") or "") for column in header})
+    result = sync_pool_csv(buffer.getvalue().encode("utf-8"))
+    return {"removed": target, "remaining": result["rows"], "bridge_path": result["bridge_path"]}
+
+
 def find_duplicate_scene(scene_name: str, background_prompt: str) -> dict | None:
     """Return the first pool profile that matches on normalized scene_name OR on
     identical normalized background text, else None."""

@@ -558,6 +558,45 @@ async def avatar_registry_auto_generate(request: AvatarAutoGenRequest):
             "generated": True}
 
 
+@router.delete("/avatar-registry/{avatar_code}")
+async def avatar_registry_delete(avatar_code: str):
+    """CRUD delete: remove ONE avatar profile from the pool (fail-closed through
+    the same sync door as add) and best-effort ARCHIVE its generated reference
+    image so it also leaves the active Library. 404 if the code is absent; the
+    image archive never blocks the profile delete."""
+    from agent.services import avatar_registry
+    from agent.services.creative_asset_service import (
+        archive_creative_asset,
+        list_creative_assets,
+    )
+    try:
+        result = avatar_registry.delete_avatar(avatar_code)
+    except ValueError as exc:
+        msg = str(exc)
+        raise HTTPException(404 if "NOT_FOUND" in msg else 422, msg) from exc
+    # Best-effort archive of the linked reference image. Match the AVATAR_CODE
+    # marker embedded in the asset description (the code is NOT a model field) —
+    # inlined from _generated_avatar_asset_ids so it depends only on the stable
+    # list_creative_assets/archive_creative_asset primitives. Never blocks delete.
+    archived_asset_id = None
+    try:
+        target = avatar_code.strip().upper()
+        assets = await list_creative_assets(
+            semantic_role="CHARACTER_REFERENCE", status="ACTIVE", limit=1000)
+        for asset in assets:
+            description = str(getattr(asset, "description", "") or "")
+            if _AVATAR_ASSET_MARKER not in description:
+                continue
+            code = description.split(_AVATAR_ASSET_MARKER, 1)[1].split()[0].strip().upper()
+            if code == target:
+                await archive_creative_asset(str(asset.asset_id))
+                archived_asset_id = str(asset.asset_id)
+                break
+    except Exception:
+        archived_asset_id = None
+    return {**result, "archived_asset_id": archived_asset_id}
+
+
 # ── Avatar Registry CSV Factory: seed-schema candidate CSVs go through
 # validate -> stage -> operator review -> export/sync. Candidates NEVER write
 # the runtime bridge directly; sync merges approved rows through the existing
