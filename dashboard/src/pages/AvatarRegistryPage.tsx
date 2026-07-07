@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useImageGenSettings } from "../api/imageGenSettings";
+import { DataTable } from "../components/ui";
 
 // AVATAR REGISTRY — read-only view of the approved presenter pool (ADR-008
 // avatar law). The pool is TEXT authority: the canonical prompt compiler reads
@@ -82,8 +83,6 @@ interface CsvFactoryBatchDetail {
 	summary: CsvFactoryBatchSummary;
 }
 
-const PAGE_SIZE_AVATARS = 25;
-
 export default function AvatarRegistryPage() {
 	const navigate = useNavigate();
 	// "Back" must return to wherever the registry was opened from (Fastlane,
@@ -102,12 +101,10 @@ export default function AvatarRegistryPage() {
 	const [imageModel, setImageModel] = useState<string>("Nano Banana 2");
 	const [avatars, setAvatars] = useState<AvatarProfile[]>([]);
 	const [bridgeActive, setBridgeActive] = useState(false);
-	const [search, setSearch] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [successMsg, setSuccessMsg] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
 	const [isSyncing, setIsSyncing] = useState(false);
-	const [currentPage, setCurrentPage] = useState(1);
 	const [generating, setGenerating] = useState<
 		Record<string, AvatarGenerationState>
 	>({});
@@ -165,10 +162,6 @@ export default function AvatarRegistryPage() {
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
-
-	useEffect(() => {
-		setCurrentPage(1);
-	}, []);
 
 	const handleAddManualAvatar = async () => {
 		if (!manualForm.character_name.trim()) {
@@ -623,30 +616,6 @@ export default function AvatarRegistryPage() {
 		});
 	};
 
-	const query = search.trim().toLowerCase();
-	const displayed = query
-		? avatars.filter((a) =>
-				[
-					a.avatar_code,
-					a.character_name,
-					a.variant,
-					a.environment,
-					a.wardrobe,
-					a.usage_tags.join(" "),
-				]
-					.join(" ")
-					.toLowerCase()
-					.includes(query),
-			)
-		: avatars;
-
-	const totalPages = Math.ceil(displayed.length / PAGE_SIZE_AVATARS);
-	const safePage = Math.min(Math.max(1, currentPage), totalPages || 1);
-	const paginated = displayed.slice(
-		(safePage - 1) * PAGE_SIZE_AVATARS,
-		safePage * PAGE_SIZE_AVATARS,
-	);
-
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
@@ -683,7 +652,7 @@ export default function AvatarRegistryPage() {
 						<div className="mt-1 text-xs text-slate-400">
 							{isLoading
 								? "Loading..."
-								: `${displayed.length} approved avatar${displayed.length !== 1 ? "s" : ""} · ${avatars.filter((a) => a.image_generated).length} generated · source: ${bridgeActive ? "synced bridge CSV" : "repo seed"}`}
+								: `${avatars.length} approved avatar${avatars.length !== 1 ? "s" : ""} · ${avatars.filter((a) => a.image_generated).length} generated · source: ${bridgeActive ? "synced bridge CSV" : "repo seed"}`}
 						</div>
 					</div>
 					<div>
@@ -1136,128 +1105,112 @@ export default function AvatarRegistryPage() {
 			</section>
 
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
-				<div className="mb-4">
-					<input
-						value={search}
-						onChange={(e) => {
-							setSearch(e.target.value);
-							setCurrentPage(1);
-						}}
-						placeholder="Search code, name, environment, wardrobe, tags"
-						className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 md:w-96"
-					/>
-				</div>
-
-				<div className="overflow-x-auto rounded-2xl border border-slate-800">
-					<table className="min-w-full divide-y divide-slate-800 text-sm">
-						<thead className="bg-slate-900/70 text-[10px] uppercase tracking-[0.18em] text-slate-500">
-							<tr>
-								<th className="px-4 py-3 text-left">Avatar Code</th>
-								<th className="px-4 py-3 text-left">Character</th>
-								<th className="px-4 py-3 text-left">Appearance</th>
-								<th className="px-4 py-3 text-left">Scene</th>
-								<th className="px-4 py-3 text-left">Usage Tags</th>
-								<th className="px-4 py-3 text-left">Image</th>
-							</tr>
-						</thead>
-						<tbody className="divide-y divide-slate-800 bg-slate-950/40 text-slate-200">
-							{displayed.length === 0 ? (
-								<tr>
-									<td
-										colSpan={6}
-										className="px-4 py-8 text-center text-xs text-slate-500"
+				<DataTable
+					rows={avatars}
+					getRowId={(a) => a.avatar_code}
+					pageSize={25}
+					searchText={(a) =>
+						[a.avatar_code, a.character_name, a.variant, a.environment, a.wardrobe, a.usage_tags.join(" ")].join(
+							" ",
+						)
+					}
+					searchPlaceholder="Search code, name, environment, wardrobe, tags"
+					emptyLabel={isLoading ? "Loading avatars..." : "No avatars found."}
+					initialSort={{ key: "avatar_code", dir: "asc" }}
+					minWidthClassName="min-w-[760px]"
+					filters={[
+						{
+							key: "image",
+							label: "Image",
+							value: (a) => (a.image_generated ? "GENERATED" : "NOT_GENERATED"),
+							options: [
+								{ value: "GENERATED", label: "Generated" },
+								{ value: "NOT_GENERATED", label: "Not generated" },
+							],
+						},
+					]}
+					columns={[
+						{
+							key: "avatar_code",
+							header: "Avatar Code",
+							sortValue: (a) => a.avatar_code,
+							render: (a) => <div className="font-semibold">{a.avatar_code}</div>,
+						},
+						{
+							key: "character",
+							header: "Character",
+							sortValue: (a) => a.character_name,
+							render: (a) => (
+								<div className="text-xs">
+									<div className="font-semibold text-slate-100">{a.character_name}</div>
+									<div className="text-slate-500">{a.variant}</div>
+								</div>
+							),
+						},
+						{
+							key: "appearance",
+							header: "Appearance",
+							render: (a) => (
+								<span className="text-xs text-slate-400">
+									{[a.skin_tone, a.hair_style, a.wardrobe, a.expression].filter(Boolean).join(" · ")}
+								</span>
+							),
+						},
+						{
+							key: "scene",
+							header: "Scene",
+							render: (a) => (
+								<span className="text-xs text-slate-400">
+									{[a.environment, a.lighting, a.camera].filter(Boolean).join(" · ")}
+								</span>
+							),
+						},
+						{
+							key: "tags",
+							header: "Usage Tags",
+							render: (a) => (
+								<span className="text-xs text-slate-400">{a.usage_tags.join(", ") || "—"}</span>
+							),
+						},
+						{
+							key: "image",
+							header: "Image",
+							render: (a) =>
+								a.image_generated && a.generated_asset_id ? (
+									<a
+										href={`/api/creative-assets/${a.generated_asset_id}/preview`}
+										target="_blank"
+										rel="noopener noreferrer"
+										className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
 									>
-										{isLoading ? "Loading avatars..." : "No avatars found."}
-									</td>
-								</tr>
-							) : (
-								paginated.map((a) => (
-									<tr key={a.avatar_code} className="hover:bg-slate-900/50">
-										<td className="px-4 py-3">
-											<div className="font-semibold">{a.avatar_code}</div>
-										</td>
-										<td className="px-4 py-3 text-xs">
-											<div className="font-semibold text-slate-100">
-												{a.character_name}
-											</div>
-											<div className="text-slate-500">{a.variant}</div>
-										</td>
-										<td className="px-4 py-3 text-xs text-slate-400">
-											{[a.skin_tone, a.hair_style, a.wardrobe, a.expression]
-												.filter(Boolean)
-												.join(" · ")}
-										</td>
-										<td className="px-4 py-3 text-xs text-slate-400">
-											{[a.environment, a.lighting, a.camera]
-												.filter(Boolean)
-												.join(" · ")}
-										</td>
-										<td className="px-4 py-3 text-xs text-slate-400">
-											{a.usage_tags.join(", ") || "—"}
-										</td>
-										<td className="px-4 py-3">
-											<div className="flex flex-col items-start gap-2">
-												{a.image_generated && a.generated_asset_id ? (
-													<a
-														href={`/api/creative-assets/${a.generated_asset_id}/preview`}
-														target="_blank"
-														rel="noopener noreferrer"
-														className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
-													>
-														✓ Generated
-													</a>
-												) : generating[a.avatar_code] ? (
-													<span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold text-blue-200">
-														⏳ {generating[a.avatar_code].stage}
-													</span>
-												) : (
-													<button
-														type="button"
-														onClick={() => void handleGenerateImage(a)}
-														className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
-													>
-														Generate
-													</button>
-												)}
-												<button
-													type="button"
-													onClick={() => void handleDeleteAvatar(a)}
-													disabled={deletingCode === a.avatar_code}
-													className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-												>
-													{deletingCode === a.avatar_code ? "..." : "Delete"}
-												</button>
-											</div>
-										</td>
-									</tr>
-								))
-							)}
-						</tbody>
-					</table>
-				</div>
-				{totalPages > 1 && (
-					<div className="mt-4 flex items-center justify-center gap-1">
+										✓ Generated
+									</a>
+								) : generating[a.avatar_code] ? (
+									<span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold text-blue-200">
+										⏳ {generating[a.avatar_code].stage}
+									</span>
+								) : (
+									<button
+										type="button"
+										onClick={() => void handleGenerateImage(a)}
+										className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
+									>
+										Generate
+									</button>
+								),
+						},
+					]}
+					rowActions={(a) => (
 						<button
 							type="button"
-							onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-							disabled={safePage === 1}
-							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+							onClick={() => void handleDeleteAvatar(a)}
+							disabled={deletingCode === a.avatar_code}
+							className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
 						>
-							Prev
+							{deletingCode === a.avatar_code ? "..." : "Delete"}
 						</button>
-						<span className="px-3 text-xs text-slate-400">
-							{safePage} / {totalPages}
-						</span>
-						<button
-							type="button"
-							onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-							disabled={safePage === totalPages}
-							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
-						>
-							Next
-						</button>
-					</div>
-				)}
+					)}
+				/>
 			</section>
 		</div>
 	);
