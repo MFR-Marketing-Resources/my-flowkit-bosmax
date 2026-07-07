@@ -145,74 +145,6 @@ IMG_FASTLANE_PRESETS: list[dict[str, object]] = [
         ],
     },
     {
-        "preset_id": "GENERIC_AVATAR_REFERENCE_PRESET",
-        "label": "Generic Avatar Reference",
-        "route": "INGREDIENTS",
-        "lane_id": "AVATAR_REFERENCE",
-        "ingredient_role": "AVATAR_REFERENCE",
-        "description": "Create a reusable avatar reference without typing a raw merge prompt.",
-        "required_inputs": ["Template preset"],
-        "output_spec": _FASTLANE_OUTPUT_SPEC,
-        "tags": ["generic", "ingredients", "avatar"],
-        "negative_rules": ["No generic stock-face drift.", "No mismatched identity across generations."],
-    },
-    {
-        "preset_id": "GENERIC_SCENE_REFERENCE_PRESET",
-        "label": "Generic Scene Reference",
-        "route": "INGREDIENTS",
-        "lane_id": "SCENE_REFERENCE",
-        "ingredient_role": "SCENE_REFERENCE",
-        "description": "Create a reusable scene or environment reference from product context and template truth.",
-        "required_inputs": ["Template preset"],
-        "output_spec": _FASTLANE_OUTPUT_SPEC,
-        "tags": ["generic", "ingredients", "scene"],
-        "negative_rules": ["No scene prompt drift away from product context."],
-    },
-    {
-        "preset_id": "GENERIC_STYLE_REFERENCE_PRESET",
-        "label": "Generic Style Reference",
-        "route": "INGREDIENTS",
-        "lane_id": "STYLE_REFERENCE",
-        "ingredient_role": "STYLE_REFERENCE",
-        "description": "Create a reusable style or mood reference from deterministic template rules.",
-        "required_inputs": ["Template preset"],
-        "output_spec": _FASTLANE_OUTPUT_SPEC,
-        "tags": ["generic", "ingredients", "style"],
-        "negative_rules": ["No style prompt drift that overrides product truth."],
-    },
-    {
-        "preset_id": "GENERIC_PRODUCT_REFERENCE_LOCK",
-        "label": "Generic Product Lock",
-        "route": "INGREDIENTS",
-        "lane_id": "PRODUCT_ONLY_HERO",
-        "ingredient_role": "PRODUCT_REFERENCE",
-        "description": "Create a reusable product-truth reference with no raw prompt typing.",
-        "required_inputs": ["Database product"],
-        "output_spec": _FASTLANE_OUTPUT_SPEC,
-        "tags": ["generic", "ingredients", "product"],
-        "negative_rules": [
-            "No product silhouette drift.",
-            "No label swap.",
-            "No forced-perspective overscale.",
-        ],
-    },
-    {
-        "preset_id": "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS_PRODUCT",
-        "label": "MWCB WG40 Video Lock",
-        "route": "INGREDIENTS",
-        "lane_id": "PRODUCT_ONLY_HERO",
-        "ingredient_role": "PRODUCT_REFERENCE",
-        "description": "Create a reusable WG40 product lock reference for Frames and Ingredients continuity.",
-        "required_inputs": ["Database product"],
-        "output_spec": _FASTLANE_OUTPUT_SPEC,
-        "tags": ["wg40", "ingredients", "product", "video-lock"],
-        "negative_rules": [
-            "Reject black cap.",
-            "Reject roller ball.",
-            "Reject oil-color drift.",
-        ],
-    },
-    {
         "preset_id": "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK",
         "label": "MWCB WG40 Product Poster Lock",
         "route": "INGREDIENTS",
@@ -416,7 +348,6 @@ def _reference_map_lines(
     if preset_id in {
         "MWCB_WG40_AVATAR_BOTTLE",
         "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
-        "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS_PRODUCT",
         "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK",
     }:
         if character_label:
@@ -484,10 +415,7 @@ def _preset_directives(
                 "Preserve bottle proportions and handheld scale with no black cap, no roller ball, and no oversized bottle drift.",
             ]
         )
-    elif preset_id in {
-        "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
-        "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS_PRODUCT",
-    }:
+    elif preset_id == "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS":
         directives.extend(
             [
                 "Video continuity lock: same 25ml rectangular clear flint glass bottle, red ribbed cap, hidden stopper, emerald herbal green oil, dark green + cream + gold label, and bird on leafy branch.",
@@ -605,11 +533,7 @@ async def compile_img_fastlane_prompt_preview(
     product_lock_lines = _product_lock_lines(
         product,
         is_video=request.route == "FRAMES"
-        or request.preset_id
-        in {
-            "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
-            "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS_PRODUCT",
-        },
+        or request.preset_id == "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
     )
     if product_lock_lines:
         prompt_lines.extend(f"- {line}" for line in product_lock_lines if line)
