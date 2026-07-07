@@ -236,3 +236,88 @@ async def test_kit_populates_prompt_draft_fields(monkeypatch):
     kits = _fallback_kits(product, settings, restricted=False)
     kit = kits[0]
     assert kit.hook and kit.cta and kit.angle
+
+
+def _no_copy_set_env(monkeypatch, product, spy):
+    async def fake_get(_pid):
+        return product
+
+    async def fake_list(_pid):
+        return []
+
+    async def fake_eval(_product, enrich=False):
+        return _readiness()
+
+    monkeypatch.setattr(
+        "agent.services.poster_copy_recommendation_service.crud.get_product", fake_get
+    )
+    monkeypatch.setattr(
+        "agent.services.poster_copy_recommendation_service.crud.list_copy_sets_for_product",
+        fake_list,
+    )
+    monkeypatch.setattr(
+        "agent.services.poster_copy_recommendation_service.PosterReadinessService.evaluate_product",
+        fake_eval,
+    )
+    monkeypatch.setattr(
+        "agent.services.poster_copy_recommendation_service.ai_provider.is_configured",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "agent.services.poster_copy_recommendation_service.ai_provider.generate_candidate",
+        spy,
+    )
+
+
+@pytest.mark.asyncio
+async def test_refresh_ai_false_never_calls_ai_provider(monkeypatch):
+    """Guardrail: auto-load (refresh_ai=False) must NEVER spend AI tokens, even
+    with a configured provider and no copy sets. It falls back to deterministic
+    templates instead."""
+    product = _ready_base()
+    calls: list = []
+
+    def spy(brief):
+        calls.append(brief)
+        return {
+            "angle": "x",
+            "hook": "h",
+            "subhook": "s",
+            "usp_set": ["a", "b", "c"],
+            "cta": "Buy",
+        }
+
+    _no_copy_set_env(monkeypatch, product, spy)
+
+    result = await PosterCopyRecommendationService.recommend(
+        PosterCopyRecommendationRequest(product_id=product["id"], refresh_ai=False)
+    )
+    assert calls == []  # zero AI / token spend on auto-load
+    assert len(result.recommendations) >= 1
+    assert all(
+        k.source != PosterKitSource.AI_CANDIDATE for k in result.recommendations
+    )
+
+
+@pytest.mark.asyncio
+async def test_refresh_ai_true_calls_ai_provider(monkeypatch):
+    """Explicit AI Copy Assist (refresh_ai=True) DOES invoke the provider."""
+    product = _ready_base()
+    calls: list = []
+
+    def spy(brief):
+        calls.append(brief)
+        return {
+            "angle": "Fresh",
+            "hook": "Nice hook",
+            "subhook": "sub",
+            "usp_set": ["aa", "bb", "cc"],
+            "cta": "Shop",
+        }
+
+    _no_copy_set_env(monkeypatch, product, spy)
+
+    await PosterCopyRecommendationService.recommend(
+        PosterCopyRecommendationRequest(product_id=product["id"], refresh_ai=True)
+    )
+    assert len(calls) >= 1  # AI invoked only on explicit request

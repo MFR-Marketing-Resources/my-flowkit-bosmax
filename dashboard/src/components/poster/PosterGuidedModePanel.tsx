@@ -51,6 +51,16 @@ export default function PosterGuidedModePanel({
 				Progressive picks from recommended kits — no blank typing required.
 			</p>
 
+			{kits.length === 0 ? (
+				<p
+					data-testid="guided-empty-state"
+					className="mt-3 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-400"
+				>
+					No suggestions loaded. Use AI Copy Assist in Auto mode, or switch to
+					Manual Expert to enter copy directly.
+				</p>
+			) : null}
+
 			<label className="mt-4 block">
 				<span className="text-[10px] font-bold uppercase text-slate-500">Angle</span>
 				<select

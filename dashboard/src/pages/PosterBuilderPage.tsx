@@ -1,6 +1,7 @@
 import { ImageIcon, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { usePosterBuilderSettings } from "../api/posterBuilderSettings";
 import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations";
 import { fetchPosterReadiness } from "../api/posterReadiness";
 import {
@@ -69,6 +70,7 @@ export default function PosterBuilderPage() {
 	const [flowMirror, setFlowMirror] = useState<PosterFlowMirrorSettings>(
 		DEFAULT_POSTER_FLOW_MIRROR_SETTINGS,
 	);
+	const builderSettings = usePosterBuilderSettings();
 	const draftRef = useRef(draft);
 	draftRef.current = draft;
 	const autoRecLoadedProductRef = useRef<string | null>(null);
@@ -363,6 +365,7 @@ export default function PosterBuilderPage() {
 								<PosterAutoModePanel
 									draft={draft}
 									onDraftChange={setDraft}
+									settings={builderSettings}
 									kits={kits}
 									loading={recLoading}
 									error={recError}
@@ -370,6 +373,9 @@ export default function PosterBuilderPage() {
 									onRefresh={() => void loadRecommendations(true, draftRef.current)}
 									onSelectKit={handleSelectKit}
 									onUseKitForPromptDraft={(kit) => void handleUseKitForPromptDraft(kit)}
+									onGeneratePromptDraft={() => void handlePromptDraft(draftRef.current)}
+									promptDraftEnabled={promptDraftEnabled}
+									promptDraftLabel={promptDraftLabel}
 									promptDraftLoading={promptLoading}
 								/>
 							) : null}

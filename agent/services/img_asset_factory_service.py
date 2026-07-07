@@ -628,6 +628,38 @@ def get_img_provider_status() -> ImgProviderStatusResponse:
     )
 
 
+def build_image_gen_settings() -> dict:
+    """Single source of truth for image-generation default settings shared by
+    EVERY image-gen surface (IMG Fastlane, Image Gen, IMG Cockpit, Avatar
+    Registry, and the Poster Builder Flow Mirror / Creative Cockpit): aspect
+    ratios, counts, and the image-model list (from models.json). A model is
+    ``pending`` when its Google internal id is not yet configured — the UI still
+    lists it, but generation fails closed until the id is set."""
+    from agent.config import IMAGE_MODELS
+
+    labels = {
+        "NANO_BANANA_PRO": "Nano Banana Pro",
+        "NANO_BANANA_2": "Nano Banana 2",
+        "NANO_BANANA_2_LITE": "Nano Banana 2 Lite",
+    }
+    models = [
+        {
+            "key": key,
+            "label": labels.get(key, key.replace("_", " ").title()),
+            "pending": (not str(internal).strip()) or "PENDING" in str(internal).upper(),
+        }
+        for key, internal in IMAGE_MODELS.items()
+    ]
+    return {
+        "models": models,
+        "default_model": "Nano Banana 2",
+        "aspect_options": ["9:16", "1:1", "16:9", "4:3", "3:4"],
+        "default_aspect": "9:16",
+        "count_options": [1, 2, 3, 4],
+        "default_count": 1,
+    }
+
+
 async def _resolve_real_output(
     request: SaveImgOutputRequest,
 ) -> tuple[str, str | None, str]:

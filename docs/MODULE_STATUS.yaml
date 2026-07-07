@@ -344,3 +344,19 @@ domains:
       - skills/workspace-agent/bosmax-avatar-registry-builder/references/seed_bridge_mapping.md
       - skills/workspace-agent/bosmax-avatar-registry-builder/references/validation_checklist.md
       - skills/workspace-agent/bosmax-avatar-registry-builder/scripts/validate_avatar_registry_csv.py
+      # PROMPT_PREVIEW_COCKPIT_SSOT + poster builder auto-workflow repair
+      - agent/api/poster_prompt.py
+      - agent/services/poster_copy_recommendation_service.py
+      - agent/models/poster_builder_settings.py
+      - agent/services/poster_builder_settings_service.py
+      - tests/unit/test_poster_copy_recommendation_service.py
+      - tests/api/test_poster_builder_settings_api.py
+      - tests/unit/test_poster_builder_settings_service.py
+      - dashboard/src/api/posterBuilderSettings.ts
+      - dashboard/src/components/poster/PosterAutoModePanel.tsx
+      - dashboard/src/components/poster/PosterGuidedModePanel.tsx
+      - dashboard/src/pages/PosterBuilderPage.tsx
+      - dashboard/src/pages/PosterBuilderPage.test.tsx
+      - dashboard/src/pages/CockpitSettingsPage.tsx
+      - dashboard/src/pages/CockpitSettingsPage.test.tsx
+      - docs/poster/POSTER_COCKPIT_SSOT_V1.md
