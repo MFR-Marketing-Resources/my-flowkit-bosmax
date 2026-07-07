@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { PosterReadinessResponse } from "../types/posterReadiness";
 import {
 	isGenerateButtonDisabled,
+	isPromptDraftGenerationEnabled,
 	posterStatusOperatorLabel,
 	resolveBuilderShellMode,
 	resolveGenerateButtonLabel,
+	resolvePromptDraftButtonLabel,
 	shouldShowHighRiskGuidance,
 	shouldShowHumanReviewPanel,
 	shouldShowRepairActionCenter,
@@ -84,7 +86,8 @@ describe("posterBuilderUi", () => {
 			production_allowed: false,
 		});
 		expect(resolveBuilderShellMode(r)).toBe("restricted");
-		expect(resolveGenerateButtonLabel(r)).toContain("Restricted generator");
+		expect(resolveGenerateButtonLabel(r)).toContain("External image generation");
+		expect(isPromptDraftGenerationEnabled(r)).toBe(true);
 	});
 
 	it("POSTER_PREVIEW_ONLY uses preview shell", () => {
@@ -112,6 +115,8 @@ describe("posterBuilderUi", () => {
 	it("generate button stays disabled (out of scope)", () => {
 		const r = baseReadiness({ poster_status: "POSTER_READY" });
 		expect(isGenerateButtonDisabled(r)).toBe(true);
-		expect(resolveGenerateButtonLabel(r)).toContain("not implemented");
+		expect(resolveGenerateButtonLabel(r)).toContain("External image generation");
+		expect(isPromptDraftGenerationEnabled(r)).toBe(true);
+		expect(resolvePromptDraftButtonLabel(r)).toContain("prompt draft");
 	});
 });

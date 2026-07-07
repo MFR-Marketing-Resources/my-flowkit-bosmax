@@ -57,17 +57,55 @@ export function shouldShowHumanReviewPanel(
 	return readiness.poster_status === "POSTER_BLOCKED";
 }
 
+export function isImageGenerationDisabled(
+	_readiness: PosterReadinessResponse,
+): boolean {
+	return true;
+}
+
+/** Prompt draft generation follows API readiness — no local inference. */
+export function isPromptDraftGenerationEnabled(
+	readiness: PosterReadinessResponse,
+): boolean {
+	return (
+		readiness.poster_status === "POSTER_READY" ||
+		readiness.poster_status === "POSTER_READY_RESTRICTED" ||
+		readiness.poster_status === "POSTER_PREVIEW_ONLY"
+	);
+}
+
+export function resolvePromptDraftButtonLabel(
+	readiness: PosterReadinessResponse,
+): string {
+	if (readiness.poster_status === "POSTER_READY") {
+		return "Generate poster prompt draft";
+	}
+	if (readiness.poster_status === "POSTER_READY_RESTRICTED") {
+		return "Generate restricted-safe prompt draft";
+	}
+	if (readiness.poster_status === "POSTER_PREVIEW_ONLY") {
+		return "Generate diagnostic prompt preview";
+	}
+	if (readiness.poster_status === "POSTER_REPAIR_REQUIRED") {
+		return "Complete repairs before prompt draft";
+	}
+	if (readiness.poster_status === "POSTER_BLOCKED") {
+		return "Prompt draft blocked";
+	}
+	return "Prompt draft unavailable";
+}
+
 export function resolveGenerateButtonLabel(
 	readiness: PosterReadinessResponse,
 ): string {
 	if (readiness.poster_status === "POSTER_READY") {
-		return "Generator not implemented in this PR";
+		return "External image generation disabled in this release";
 	}
 	if (readiness.poster_status === "POSTER_READY_RESTRICTED") {
-		return "Restricted generator not implemented in this PR";
+		return "External image generation disabled in this release";
 	}
 	if (readiness.poster_status === "POSTER_PREVIEW_ONLY") {
-		return "Production generation disabled (preview mode)";
+		return "External image generation disabled (preview mode)";
 	}
 	if (readiness.poster_status === "POSTER_REPAIR_REQUIRED") {
 		return "Complete repairs before generation";

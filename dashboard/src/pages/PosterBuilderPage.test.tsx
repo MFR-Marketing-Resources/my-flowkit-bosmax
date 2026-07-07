@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import PosterBuilderPage from "./PosterBuilderPage";
+import { createPosterPromptDraft } from "../api/posterPromptDraft";
 import { fetchPosterReadiness } from "../api/posterReadiness";
 import { posterReadinessFixtures } from "../poster/posterReadinessTestFixtures";
 
@@ -25,11 +26,20 @@ vi.mock("../api/products", () => ({
 	}),
 }));
 
+vi.mock("../api/posterPromptDraft", () => ({
+	createPosterPromptDraft: vi.fn(),
+	draftToPromptRequest: vi.fn((id: string, draft: unknown) => ({
+		product_id: id,
+		...(draft as object),
+	})),
+}));
+
 vi.mock("../api/posterReadiness", () => ({
 	fetchPosterReadiness: vi.fn(),
 }));
 
 const mockedFetch = vi.mocked(fetchPosterReadiness);
+const mockedPromptDraft = vi.mocked(createPosterPromptDraft);
 
 function renderPage(query = "?product_id=p1") {
 	return render(
@@ -54,6 +64,7 @@ describe("PosterBuilderPage", () => {
 
 	beforeEach(() => {
 		mockedFetch.mockReset();
+		mockedPromptDraft.mockReset();
 	});
 
 	it("renders poster builder heading", async () => {
@@ -82,8 +93,10 @@ describe("PosterBuilderPage", () => {
 		expect(generateBtn).toBeDisabled();
 		expect(generateBtn).toHaveAttribute(
 			"title",
-			"Generator not implemented in this PR",
+			"External image generation disabled in this release",
 		);
+		const promptBtn = await screen.findByTestId("generate-prompt-draft-button");
+		expect(promptBtn).not.toBeDisabled();
 	});
 
 	it("POSTER_REPAIR_REQUIRED renders repair center and hides builder shell", async () => {
@@ -123,8 +136,10 @@ describe("PosterBuilderPage", () => {
 		expect(restrictedBtn).toBeDisabled();
 		expect(restrictedBtn).toHaveAttribute(
 			"title",
-			"Restricted generator not implemented in this PR",
+			"External image generation disabled in this release",
 		);
+		const promptBtn = await screen.findByTestId("generate-prompt-draft-button");
+		expect(promptBtn).not.toBeDisabled();
 	});
 
 	it("POSTER_PREVIEW_ONLY renders preview diagnostic shell", async () => {
@@ -140,7 +155,38 @@ describe("PosterBuilderPage", () => {
 		expect(previewBtn).toBeDisabled();
 		expect(previewBtn).toHaveAttribute(
 			"title",
-			"Production generation disabled (preview mode)",
+			"External image generation disabled (preview mode)",
 		);
+	});
+
+	it("shows prompt package preview after successful prompt draft API", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedPromptDraft.mockResolvedValue({
+			product_id: "p1",
+			poster_status: "POSTER_READY",
+			prompt_package_status: "DRAFT_READY",
+			generation_allowed: true,
+			production_allowed: true,
+			restricted_mode: false,
+			poster_prompt: "LOCKED PRODUCT TRUTH",
+			negative_prompt: "no blur",
+			copy_layout: { hook: "h", subhook: "", usp: [], cta: "c" },
+			visual_instruction: "",
+			text_overlay_instruction: "",
+			product_truth_lock: "",
+			safety_guardrails: [],
+			blocked_reasons: [],
+			repair_actions: [],
+			readiness_meta: {},
+			operator_notes: "",
+		});
+		renderPage();
+		await waitForReadinessUi();
+		const promptBtn = await screen.findByTestId("generate-prompt-draft-button");
+		promptBtn.click();
+		expect(
+			await screen.findByTestId("poster-prompt-package-preview"),
+		).toBeInTheDocument();
+		expect(mockedPromptDraft).toHaveBeenCalled();
 	});
 });

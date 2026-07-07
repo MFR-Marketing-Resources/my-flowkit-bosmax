@@ -2,19 +2,28 @@ import { ImageIcon, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { fetchPosterReadiness } from "../api/posterReadiness";
+import {
+	createPosterPromptDraft,
+	draftToPromptRequest,
+	formatPosterPromptDraftError,
+} from "../api/posterPromptDraft";
 import { fetchProductCatalog } from "../api/products";
 import PosterBuilderShellForm from "../components/poster/PosterBuilderShellForm";
+import PosterPromptPackagePreview from "../components/poster/PosterPromptPackagePreview";
 import PosterReadinessStatusCard from "../components/poster/PosterReadinessStatusCard";
 import PosterRepairActionCenter from "../components/poster/PosterRepairActionCenter";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import {
 	isGenerateButtonDisabled,
+	isPromptDraftGenerationEnabled,
 	resolveBuilderShellMode,
 	resolveGenerateButtonLabel,
+	resolvePromptDraftButtonLabel,
 	shouldShowHumanReviewPanel,
 	shouldShowRepairActionCenter,
 } from "../poster/posterBuilderUi";
 import type { Product } from "../types";
+import type { PosterPromptDraftResponse } from "../types/posterPromptDraft";
 import {
 	EMPTY_POSTER_DRAFT,
 	type PosterBuilderDraft,
@@ -34,6 +43,9 @@ export default function PosterBuilderPage() {
 	const [loadingReadiness, setLoadingReadiness] = useState(false);
 	const [error, setError] = useState<string>("");
 	const [catalogError, setCatalogError] = useState<string>("");
+	const [promptPackage, setPromptPackage] = useState<PosterPromptDraftResponse | null>(null);
+	const [promptError, setPromptError] = useState("");
+	const [promptLoading, setPromptLoading] = useState(false);
 
 	useEffect(() => {
 		void fetchProductCatalog(500)
@@ -54,6 +66,8 @@ export default function PosterBuilderPage() {
 		setLoadingReadiness(true);
 		setError("");
 		setReadiness(null);
+		setPromptPackage(null);
+		setPromptError("");
 		try {
 			const payload = await fetchPosterReadiness(product.id);
 			setReadiness(payload);
@@ -83,10 +97,30 @@ export default function PosterBuilderPage() {
 		() => (readiness ? resolveBuilderShellMode(readiness) : "hidden"),
 		[readiness],
 	);
-
-	const generateLabel = readiness
+	const promptDraftEnabled =
+		!!readiness && isPromptDraftGenerationEnabled(readiness);
+	const promptDraftLabel = readiness
+		? resolvePromptDraftButtonLabel(readiness)
+		: "Prompt draft unavailable";
+	const imageGenerateLabel = readiness
 		? resolveGenerateButtonLabel(readiness)
-		: "Select a product";
+		: "Generation unavailable";
+
+	const handlePromptDraft = async () => {
+		if (!selectedProduct || !readiness) return;
+		setPromptLoading(true);
+		setPromptError("");
+		try {
+			const payload = draftToPromptRequest(selectedProduct.id, draft);
+			const pkg = await createPosterPromptDraft(payload);
+			setPromptPackage(pkg);
+		} catch (e) {
+			setPromptPackage(null);
+			setPromptError(formatPosterPromptDraftError(e));
+		} finally {
+			setPromptLoading(false);
+		}
+	};
 
 	return (
 		<div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
@@ -185,12 +219,19 @@ export default function PosterBuilderPage() {
 					) : null}
 
 					{shellMode !== "hidden" ? (
-						<PosterBuilderShellForm
-							draft={draft}
-							onChange={setDraft}
-							mode={shellMode}
-							generateButtonLabel={generateLabel}
-						/>
+						<>
+							<PosterBuilderShellForm
+								draft={draft}
+								onChange={setDraft}
+								mode={shellMode}
+								promptDraftEnabled={promptDraftEnabled}
+								promptDraftLabel={promptDraftLabel}
+								onPromptDraft={handlePromptDraft}
+								promptDraftLoading={promptLoading}
+								imageGenerateLabel={imageGenerateLabel}
+							/>
+							<PosterPromptPackagePreview package_={promptPackage} error={promptError} />
+						</>
 					) : null}
 
 					<section className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
@@ -204,7 +245,7 @@ export default function PosterBuilderPage() {
 									readiness_meta: {
 										poster_status: readiness.poster_status,
 										generation_allowed: readiness.generation_allowed,
-										generate_disabled_reason: generateLabel,
+										generate_disabled_reason: imageGenerateLabel,
 										generate_disabled: isGenerateButtonDisabled(readiness),
 									},
 								},
