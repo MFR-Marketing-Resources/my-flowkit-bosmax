@@ -5,7 +5,11 @@ interface PosterBuilderShellFormProps {
 	draft: PosterBuilderDraft;
 	onChange: (draft: PosterBuilderDraft) => void;
 	mode: PosterBuilderShellMode;
-	generateButtonLabel: string;
+	promptDraftEnabled: boolean;
+	promptDraftLabel: string;
+	onPromptDraft: () => void;
+	promptDraftLoading?: boolean;
+	imageGenerateLabel: string;
 }
 
 const FIELDS: { key: keyof PosterBuilderDraft; label: string; multiline?: boolean }[] = [
@@ -30,7 +34,11 @@ export default function PosterBuilderShellForm({
 	draft,
 	onChange,
 	mode,
-	generateButtonLabel,
+	promptDraftEnabled,
+	promptDraftLabel,
+	onPromptDraft,
+	promptDraftLoading = false,
+	imageGenerateLabel,
 }: PosterBuilderShellFormProps) {
 	const editable = mode === "full" || mode === "restricted" || mode === "preview";
 	const previewOnly = mode === "preview";
@@ -82,14 +90,24 @@ export default function PosterBuilderShellForm({
 			<div className="mt-4 flex flex-wrap gap-3">
 				<button
 					type="button"
+					data-testid="generate-prompt-draft-button"
+					disabled={!promptDraftEnabled || promptDraftLoading}
+					title={promptDraftLabel}
+					onClick={onPromptDraft}
+					className="rounded-xl border border-blue-500/50 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
+				>
+					{promptDraftLoading ? "Generating…" : promptDraftLabel}
+				</button>
+				<button
+					type="button"
 					data-testid="generate-poster-button"
 					disabled
-					title={generateButtonLabel}
+					title={imageGenerateLabel}
 					className="cursor-not-allowed rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-slate-400"
 				>
-					Generate poster
+					Generate poster (image)
 				</button>
-				<span className="self-center text-xs text-slate-500">{generateButtonLabel}</span>
+				<span className="self-center text-xs text-slate-500">{imageGenerateLabel}</span>
 			</div>
 		</section>
 	);
