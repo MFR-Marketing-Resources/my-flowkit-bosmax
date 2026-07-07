@@ -306,3 +306,28 @@ async def scene_context_registry_auto_generate(request: SceneAutoGenRequest):
         raise HTTPException(422, str(exc)) from exc
     return {"scene_code": scene_code, "scene_name": payload["scene_name"],
             "generated": True}
+
+
+@router.delete("/scene-context-registry/{scene_code}")
+async def scene_context_registry_delete(scene_code: str):
+    """CRUD delete: remove ONE scene profile from the pool (fail-closed through the
+    same sync door as add) and best-effort ARCHIVE its generated background image
+    so it also leaves the active Library. 404 if the code is absent; the image
+    archive never blocks the profile delete."""
+    from agent.services import scene_context_registry
+    from agent.services.creative_asset_service import archive_creative_asset
+    try:
+        result = scene_context_registry.delete_scene(scene_code)
+    except ValueError as exc:
+        msg = str(exc)
+        raise HTTPException(404 if "NOT_FOUND" in msg else 422, msg) from exc
+    archived_asset_id = None
+    try:
+        index = await _generated_scene_asset_ids()
+        asset_id = index.get(scene_code.strip().upper())
+        if asset_id:
+            await archive_creative_asset(str(asset_id))
+            archived_asset_id = str(asset_id)
+    except Exception:
+        archived_asset_id = None
+    return {**result, "archived_asset_id": archived_asset_id}

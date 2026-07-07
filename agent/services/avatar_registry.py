@@ -254,6 +254,41 @@ def add_avatar(row: dict) -> dict:
     return sync_pool_csv(buffer.getvalue().encode("utf-8"))
 
 
+def delete_avatar(avatar_code: str) -> dict:
+    """Remove ONE row by AvatarCode (case-insensitive) and write the whole table
+    back through the SAME fail-closed sync_pool_csv() door as add_avatar (which
+    re-validates REQUIRED_COLUMNS + uniqueness, installs the bridge, reloads the
+    cache). Raises AVATAR_CODE_NOT_FOUND if the code is absent, and refuses to
+    empty the registry (AVATAR_REGISTRY_WOULD_BE_EMPTY)."""
+    import io
+
+    target = str(avatar_code or "").strip()
+    if not target:
+        raise ValueError("AVATAR_CODE_REQUIRED")
+
+    with open(_active_pool_file(), encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        header = list(reader.fieldnames or [])
+        existing = list(reader)
+
+    kept = [
+        r for r in existing
+        if str(r.get("AvatarCode") or "").strip().casefold() != target.casefold()
+    ]
+    if len(kept) == len(existing):
+        raise ValueError(f"AVATAR_CODE_NOT_FOUND:{target}")
+    if not kept:
+        raise ValueError("AVATAR_REGISTRY_WOULD_BE_EMPTY")
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=header)
+    writer.writeheader()
+    for r in kept:
+        writer.writerow({column: str(r.get(column, "") or "") for column in header})
+    result = sync_pool_csv(buffer.getvalue().encode("utf-8"))
+    return {"removed": target, "remaining": result["rows"], "bridge_path": result["bridge_path"]}
+
+
 def descriptor_key(profile: dict, gender: str | None = None) -> tuple[str, ...]:
     """Lowercased descriptor tuple (skin_tone, hair_style, wardrobe, expression,
     gender_word) used to detect duplicate avatars. gender_word derives from the

@@ -42,6 +42,7 @@ export default function SceneContextRegistryPage() {
 	const [isAddingManual, setIsAddingManual] = useState(false);
 	const [autoBrief, setAutoBrief] = useState("");
 	const [isAutoGenerating, setIsAutoGenerating] = useState(false);
+	const [deletingCode, setDeletingCode] = useState<string | null>(null);
 
 	const refresh = useCallback(async () => {
 		setLoading(true);
@@ -219,6 +220,36 @@ export default function SceneContextRegistryPage() {
 			);
 		} finally {
 			setIsAutoGenerating(false);
+		}
+	};
+
+	const handleDeleteScene = async (scene: SceneProfile) => {
+		const confirmed = window.confirm(
+			`Padam scene "${scene.scene_name}" (${scene.scene_code}) dari registry?\n\n` +
+				"Profil dibuang dari pool dan imej background-nya (jika ada) diarkibkan " +
+				"(boleh pulih semula dari Creative Library). Tiada kesan pada video/kredit.",
+		);
+		if (!confirmed) return;
+		setDeletingCode(scene.scene_code);
+		setError(null);
+		setSuccessMsg(null);
+		try {
+			const response = await fetch(
+				`/api/workspace/scene-context-registry/${encodeURIComponent(scene.scene_code)}`,
+				{ method: "DELETE" },
+			);
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data?.detail || `HTTP ${response.status}`);
+			}
+			setSuccessMsg(
+				`Scene ${scene.scene_code} dipadam (baki ${data.remaining} scene).`,
+			);
+			await refresh();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Gagal padam scene.");
+		} finally {
+			setDeletingCode(null);
 		}
 	};
 
@@ -497,6 +528,7 @@ export default function SceneContextRegistryPage() {
 									<span className="text-[9px] text-slate-600">
 										{scene.route_fit.join(" · ")}
 									</span>
+									<div className="flex items-center gap-2">
 									{gen ? (
 										<span className="text-[11px] text-blue-300">
 											Generating… {gen.stage}
@@ -518,6 +550,15 @@ export default function SceneContextRegistryPage() {
 											Generate scene image
 										</button>
 									)}
+										<button
+											type="button"
+											onClick={() => void handleDeleteScene(scene)}
+											disabled={deletingCode === scene.scene_code}
+											className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1 text-[11px] font-semibold text-red-200 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+										>
+											{deletingCode === scene.scene_code ? "..." : "Delete"}
+										</button>
+									</div>
 								</div>
 							</div>
 						);

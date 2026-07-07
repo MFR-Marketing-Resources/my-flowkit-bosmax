@@ -142,6 +142,7 @@ export default function AvatarRegistryPage() {
 	const [autoGender, setAutoGender] = useState("");
 	const [autoHijab, setAutoHijab] = useState(false);
 	const [isAutoGenerating, setIsAutoGenerating] = useState(false);
+	const [deletingCode, setDeletingCode] = useState<string | null>(null);
 
 	const refresh = useCallback(async () => {
 		setIsLoading(true);
@@ -474,6 +475,36 @@ export default function AvatarRegistryPage() {
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "CSV Factory sync failed.");
 			setIsFactoryBusy(false);
+		}
+	};
+
+	const handleDeleteAvatar = async (avatar: AvatarProfile) => {
+		const confirmed = window.confirm(
+			`Padam avatar "${avatar.character_name}" (${avatar.avatar_code}) dari registry?\n\n` +
+				"Profil dibuang dari pool dan imej rujukannya (jika ada) diarkibkan " +
+				"(boleh pulih semula dari Creative Library). Tiada kesan pada video/kredit.",
+		);
+		if (!confirmed) return;
+		setDeletingCode(avatar.avatar_code);
+		setError(null);
+		setSuccessMsg(null);
+		try {
+			const response = await fetch(
+				`/api/workspace/avatar-registry/${encodeURIComponent(avatar.avatar_code)}`,
+				{ method: "DELETE" },
+			);
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data?.detail || `HTTP ${response.status}`);
+			}
+			setSuccessMsg(
+				`Avatar ${avatar.avatar_code} dipadam (baki ${data.remaining} avatar).`,
+			);
+			await refresh();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Gagal padam avatar.");
+		} finally {
+			setDeletingCode(null);
 		}
 	};
 
@@ -1165,28 +1196,38 @@ export default function AvatarRegistryPage() {
 											{a.usage_tags.join(", ") || "—"}
 										</td>
 										<td className="px-4 py-3">
-											{a.image_generated && a.generated_asset_id ? (
-												<a
-													href={`/api/creative-assets/${a.generated_asset_id}/preview`}
-													target="_blank"
-													rel="noopener noreferrer"
-													className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
-												>
-													✓ Generated
-												</a>
-											) : generating[a.avatar_code] ? (
-												<span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold text-blue-200">
-													⏳ {generating[a.avatar_code].stage}
-												</span>
-											) : (
+											<div className="flex flex-col items-start gap-2">
+												{a.image_generated && a.generated_asset_id ? (
+													<a
+														href={`/api/creative-assets/${a.generated_asset_id}/preview`}
+														target="_blank"
+														rel="noopener noreferrer"
+														className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
+													>
+														✓ Generated
+													</a>
+												) : generating[a.avatar_code] ? (
+													<span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold text-blue-200">
+														⏳ {generating[a.avatar_code].stage}
+													</span>
+												) : (
+													<button
+														type="button"
+														onClick={() => void handleGenerateImage(a)}
+														className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
+													>
+														Generate
+													</button>
+												)}
 												<button
 													type="button"
-													onClick={() => void handleGenerateImage(a)}
-													className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
+													onClick={() => void handleDeleteAvatar(a)}
+													disabled={deletingCode === a.avatar_code}
+													className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
 												>
-													Generate
+													{deletingCode === a.avatar_code ? "..." : "Delete"}
 												</button>
-											)}
+											</div>
 										</td>
 									</tr>
 								))
