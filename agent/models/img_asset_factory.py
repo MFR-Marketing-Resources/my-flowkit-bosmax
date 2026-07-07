@@ -129,6 +129,11 @@ class ImgFastlanePromptPreviewRequest(BaseModel):
     style_reference_asset_id: str | None = None
     product_reference_asset_id: str | None = None
     advanced_override_notes: str | None = None
+    # A scene-context registry SceneCode (e.g. "SCN_RAYA_KAMPUNG"). When set, the
+    # scene's Background: prose is injected into the prompt as environment context —
+    # so any of the 20 seeded scenes is usable immediately, without first generating
+    # a scene image. Independent of scene_reference_asset_id (the image reference).
+    scene_context_code: str | None = None
 
 
 class ImgFastlanePromptPreviewResponse(BaseModel):

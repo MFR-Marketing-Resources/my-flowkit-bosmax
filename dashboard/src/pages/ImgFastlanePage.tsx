@@ -224,6 +224,18 @@ export default function ImgFastlanePage() {
 
 	const [characterAssetId, setCharacterAssetId] = useState("");
 	const [sceneAssetId, setSceneAssetId] = useState("");
+	// Scene Context registry (20 seeded scenes). Pick any scene as background TEXT
+	// immediately — even before a scene image is generated. If the chosen scene has
+	// a generated image, bind it as the scene image reference too.
+	const [sceneRegistry, setSceneRegistry] = useState<
+		{
+			scene_code: string;
+			scene_name: string;
+			image_generated: boolean;
+			generated_asset_id?: string | null;
+		}[]
+	>([]);
+	const [sceneContextCode, setSceneContextCode] = useState("");
 	// Style is optional and has no Frames picker (no style library yet), so it
 	// stays empty; kept for the compile payload / ingredients lineage.
 	const [styleAssetId] = useState("");
@@ -293,18 +305,30 @@ export default function ImgFastlanePage() {
 				limit: 100,
 			}),
 			fetchImageArtifacts(50),
+			fetch("/api/workspace/scene-context-registry/pool").then((r) => r.json()),
 		]);
-		const [chars, scenes, styles, productRefs, arts] = results;
+		const [chars, scenes, styles, productRefs, arts, scenePool] = results;
 		if (chars.status === "fulfilled") setCharacterAssets(chars.value.items);
 		if (scenes.status === "fulfilled") setSceneAssets(scenes.value.items);
 		if (styles.status === "fulfilled") setStyleAssets(styles.value.items);
 		if (productRefs.status === "fulfilled")
 			setProductReferenceAssets(productRefs.value.items);
 		if (arts.status === "fulfilled") setArtifacts(arts.value);
+		if (scenePool.status === "fulfilled")
+			setSceneRegistry(scenePool.value?.scenes ?? []);
 		if (results.some((r) => r.status === "rejected")) {
 			setError("Failed to load reference assets from Library.");
 		}
 	}, []);
+
+	const handlePickSceneContext = (code: string) => {
+		setSceneContextCode(code);
+		// If the chosen scene already has a generated image, bind it as the scene
+		// image reference too; otherwise text-only (its background is injected into
+		// the prompt so the scene still drives the generation).
+		const scene = sceneRegistry.find((s) => s.scene_code === code);
+		setSceneAssetId(scene?.generated_asset_id ?? "");
+	};
 
 	useEffect(() => {
 		void fetchImgAssetLanes()
@@ -611,6 +635,7 @@ export default function ImgFastlanePage() {
 				product_reference_asset_id:
 					activeTab === "ingredients" ? ingProductReferenceAssetId || null : null,
 				advanced_override_notes: advancedOverrideNotes || null,
+				scene_context_code: sceneContextCode || null,
 			});
 			setCompiledPreview(preview);
 			// Send + display the CLEAN engine brief (no internal routing ids), which
@@ -645,6 +670,7 @@ export default function ImgFastlanePage() {
 		ingStyleAssetId,
 		ingProductReferenceAssetId,
 		advancedOverrideNotes,
+		sceneContextCode,
 	]);
 
 	useEffect(() => {
@@ -899,21 +925,44 @@ export default function ImgFastlanePage() {
 
 							<Section step="3" title="Select Scene (optional)">
 								<div className="space-y-2">
+									{/* Scene Context Library — pick any of the 20 seeded scenes.
+									    Its background is injected into the prompt immediately (text),
+									    even before a scene image is generated. */}
+									<label className="block text-[11px] text-slate-300 space-y-1">
+										<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+											Scene Context Library — {sceneRegistry.length} scenes
+										</span>
+										<select
+											value={sceneContextCode}
+											onChange={(e) => handlePickSceneContext(e.target.value)}
+											className="w-full rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-xs text-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+										>
+											<option value="">None (optional)</option>
+											{sceneRegistry.map((s) => (
+												<option key={s.scene_code} value={s.scene_code}>
+													{s.scene_name}
+													{s.image_generated ? " · image ready" : " · text"}
+												</option>
+											))}
+										</select>
+									</label>
+									<p className="text-[10px] text-slate-500">
+										Pick any scene — its background is injected into the prompt
+										immediately (no image needed). Scenes with a generated image
+										are also bound as a scene reference. Generate images in the
+										Scene Registry page. Never required to generate.
+									</p>
 									<ReferenceField
-										label="Select Existing Reference — Scene"
+										label="Or pick a specific generated scene image"
 										noun="scene reference"
 										assets={sceneAssets}
 										value={sceneAssetId}
 										onChange={setSceneAssetId}
-										emptyHint="No scene references yet — optional"
+										emptyHint="No generated scene images yet — optional"
 										requiredMissing={sceneMissing}
 										onApprove={handleApproveAsset}
 										approvingId={approvingId}
 									/>
-									<p className="text-[10px] text-slate-500">
-										Optional. Adds environment context to the merge when a scene
-										reference exists; never required to generate.
-									</p>
 								</div>
 							</Section>
 						</>
