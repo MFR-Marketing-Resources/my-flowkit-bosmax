@@ -579,6 +579,7 @@ async def avatar_registry_delete(avatar_code: str):
     # inlined from _generated_avatar_asset_ids so it depends only on the stable
     # list_creative_assets/archive_creative_asset primitives. Never blocks delete.
     archived_asset_id = None
+    purged_media_id = None
     try:
         target = avatar_code.strip().upper()
         assets = await list_creative_assets(
@@ -591,10 +592,22 @@ async def avatar_registry_delete(avatar_code: str):
             if code == target:
                 await archive_creative_asset(str(asset.asset_id))
                 archived_asset_id = str(asset.asset_id)
+                # Also purge the linked 48h temp artifact so the image fully
+                # leaves the Library now (archiving the saved asset alone un-hides
+                # its temp twin). Best-effort; never blocks the delete.
+                media_id = getattr(asset, "media_id", None)
+                if media_id:
+                    try:
+                        from agent.db import crud
+                        await crud.delete_generated_artifact(str(media_id))
+                        purged_media_id = str(media_id)
+                    except Exception:
+                        purged_media_id = None
                 break
     except Exception:
-        archived_asset_id = None
-    return {**result, "archived_asset_id": archived_asset_id}
+        pass
+    return {**result, "archived_asset_id": archived_asset_id,
+            "purged_media_id": purged_media_id}
 
 
 # ── Avatar Registry CSV Factory: seed-schema candidate CSVs go through
