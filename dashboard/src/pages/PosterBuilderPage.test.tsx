@@ -38,8 +38,53 @@ vi.mock("../api/posterReadiness", () => ({
 	fetchPosterReadiness: vi.fn(),
 }));
 
+vi.mock("../api/posterCopyRecommendations", () => ({
+	fetchPosterCopyRecommendations: vi.fn(),
+}));
+
+vi.mock("../api/imageGenSettings", () => ({
+	useImageGenSettings: () => ({
+		models: [
+			{ key: "NANO_BANANA_2", label: "Nano Banana 2", pending: false },
+			{ key: "NANO_BANANA_PRO", label: "Nano Banana Pro", pending: false },
+		],
+		default_model: "Nano Banana 2",
+		aspect_options: ["9:16", "1:1", "16:9", "4:3", "3:4"],
+		default_aspect: "9:16",
+		count_options: [1, 2, 3, 4],
+		default_count: 1,
+	}),
+	IMAGE_GEN_SETTINGS_FALLBACK: {},
+}));
+
+import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations";
+import { draftToPromptRequest } from "../api/posterPromptDraft";
+
 const mockedFetch = vi.mocked(fetchPosterReadiness);
 const mockedPromptDraft = vi.mocked(createPosterPromptDraft);
+const mockedRecs = vi.mocked(fetchPosterCopyRecommendations);
+const mockedDraftToPrompt = vi.mocked(draftToPromptRequest);
+
+const sampleKit = {
+	kit_id: "k1",
+	status: "candidate" as const,
+	source: "FALLBACK_TEMPLATE" as const,
+	angle: "Trust",
+	hook: "Safe hook",
+	subhook: "Sub",
+	usp_1: "a",
+	usp_2: "b",
+	usp_3: "c",
+	cta: "Shop",
+	poster_type: "Product-only hero poster",
+	visual_route: "Premium commercial",
+	human_presence_mode: "No human / product-forward",
+	frame_ratio: "9:16",
+	language: "ms",
+	text_density: "medium",
+	safety_notes: [],
+	blocked_reasons: [],
+};
 
 function renderPage(query = "?product_id=p1") {
 	return render(
@@ -65,6 +110,18 @@ describe("PosterBuilderPage", () => {
 	beforeEach(() => {
 		mockedFetch.mockReset();
 		mockedPromptDraft.mockReset();
+		mockedRecs.mockReset();
+		mockedRecs.mockResolvedValue({
+			product_id: "p1",
+			poster_status: "POSTER_READY",
+			generation_allowed: true,
+			recommendation_source: "FALLBACK_TEMPLATE",
+			recommendations: [sampleKit],
+			blocked_reasons: [],
+			repair_actions: [],
+			ai_provider_status: {},
+			warnings: [],
+		});
 	});
 
 	it("renders poster builder heading", async () => {
@@ -81,22 +138,18 @@ describe("PosterBuilderPage", () => {
 		});
 	});
 
-	it("POSTER_READY renders builder shell and disabled generate reason", async () => {
+	it("POSTER_READY shows working mode selector and auto panel by default", async () => {
 		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
 		renderPage();
 		await waitForReadinessUi();
 		expect(
-			(await screen.findAllByRole("heading", { name: "Poster builder shell" }))
-				.length,
-		).toBeGreaterThan(0);
-		const generateBtn = await screen.findByTestId("generate-poster-button");
-		expect(generateBtn).toBeDisabled();
-		expect(generateBtn).toHaveAttribute(
-			"title",
-			"External image generation disabled in this release",
-		);
-		const promptBtn = await screen.findByTestId("generate-prompt-draft-button");
-		expect(promptBtn).not.toBeDisabled();
+			await screen.findByTestId("poster-working-mode-selector"),
+		).toBeInTheDocument();
+		expect(await screen.findByTestId("poster-auto-mode-panel")).toBeInTheDocument();
+		expect(
+			screen.queryAllByRole("heading", { name: "Poster builder shell" }),
+		).toHaveLength(0);
+		expect(mockedRecs).toHaveBeenCalled();
 	});
 
 	it("POSTER_REPAIR_REQUIRED renders repair center and hides builder shell", async () => {
@@ -124,39 +177,161 @@ describe("PosterBuilderPage", () => {
 		).toHaveLength(0);
 	});
 
-	it("POSTER_READY_RESTRICTED renders restricted warning", async () => {
+	it("POSTER_READY_RESTRICTED renders restricted readiness badge", async () => {
 		mockedFetch.mockResolvedValue(posterReadinessFixtures.restricted());
 		renderPage();
 		await waitForReadinessUi();
 		expect(
 			await screen.findByText(/Restricted safe poster rules apply/i),
 		).toBeInTheDocument();
-		expect(screen.getByText("Restricted mode")).toBeInTheDocument();
-		const restrictedBtn = await screen.findByTestId("generate-poster-button");
-		expect(restrictedBtn).toBeDisabled();
-		expect(restrictedBtn).toHaveAttribute(
-			"title",
-			"External image generation disabled in this release",
-		);
-		const promptBtn = await screen.findByTestId("generate-prompt-draft-button");
-		expect(promptBtn).not.toBeDisabled();
+		expect(screen.getByText("Restricted Ready")).toBeInTheDocument();
+		expect(await screen.findByTestId("poster-auto-mode-panel")).toBeInTheDocument();
 	});
 
-	it("POSTER_PREVIEW_ONLY renders preview diagnostic shell", async () => {
+	it("POSTER_PREVIEW_ONLY renders preview badge and working modes", async () => {
 		mockedFetch.mockResolvedValue(posterReadinessFixtures.previewOnly());
 		renderPage();
 		await waitForReadinessUi();
-		expect(screen.getByText("Preview / diagnostic")).toBeInTheDocument();
-		expect(
-			(await screen.findAllByRole("heading", { name: "Poster builder shell" }))
-				.length,
-		).toBeGreaterThan(0);
-		const previewBtn = await screen.findByTestId("generate-poster-button");
-		expect(previewBtn).toBeDisabled();
-		expect(previewBtn).toHaveAttribute(
-			"title",
-			"External image generation disabled (preview mode)",
-		);
+		expect(screen.getByText("Preview Only")).toBeInTheDocument();
+		expect(await screen.findByTestId("poster-auto-mode-panel")).toBeInTheDocument();
+		const handoff = await screen.findByTestId("poster-image-handoff");
+		expect(handoff).toBeInTheDocument();
+	});
+
+	it("fetchPosterReadiness is called once after stable product load", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		await waitFor(() => {
+			expect(mockedFetch).toHaveBeenCalledTimes(1);
+			expect(mockedFetch).toHaveBeenCalledWith("p1");
+		});
+	});
+
+	it("fetchPosterCopyRecommendations auto-loads once per product", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		await waitFor(() => {
+			expect(mockedRecs).toHaveBeenCalledTimes(1);
+		});
+		await new Promise((r) => setTimeout(r, 50));
+		expect(mockedRecs).toHaveBeenCalledTimes(1);
+	});
+
+	it("changing Flow Mirror aspect does not refetch readiness or recommendations", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		await waitFor(() => expect(mockedRecs).toHaveBeenCalledTimes(1));
+		const ratioBtn = await screen.findByTestId("flow-aspect-1-1");
+		ratioBtn.click();
+		await new Promise((r) => setTimeout(r, 50));
+		expect(mockedFetch).toHaveBeenCalledTimes(1);
+		expect(mockedRecs).toHaveBeenCalledTimes(1);
+	});
+
+	it("POSTER_READY shows Flow Mirror Settings section", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		expect(await screen.findByTestId("poster-flow-mirror-settings")).toBeInTheDocument();
+		expect(screen.getByText("Flow Mirror Settings")).toBeInTheDocument();
+		for (const ratio of ["9:16", "1:1", "16:9", "4:3", "3:4"]) {
+			expect(screen.getByText(ratio)).toBeInTheDocument();
+		}
+		for (const c of ["1x", "2x", "3x", "4x"]) {
+			expect(screen.getByText(c)).toBeInTheDocument();
+		}
+		expect(screen.getByTestId("flow-image-model")).toHaveValue("Nano Banana 2");
+	});
+
+	it("Auto mode Use for prompt draft sends selected kit fields atomically", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedPromptDraft.mockResolvedValue({
+			product_id: "p1",
+			poster_status: "POSTER_READY",
+			prompt_package_status: "DRAFT_READY",
+			generation_allowed: true,
+			production_allowed: true,
+			restricted_mode: false,
+			poster_prompt: "x",
+			negative_prompt: "",
+			copy_layout: { hook: "Safe hook", subhook: "Sub", usp: ["a", "b", "c"], cta: "Shop" },
+			visual_instruction: "",
+			text_overlay_instruction: "",
+			product_truth_lock: "",
+			safety_guardrails: [],
+			blocked_reasons: [],
+			repair_actions: [],
+			readiness_meta: {},
+			operator_notes: "",
+		});
+		renderPage();
+		await waitForReadinessUi();
+		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
+		useBtn.click();
+		await waitFor(() => {
+			expect(mockedDraftToPrompt).toHaveBeenCalledWith(
+				"p1",
+				expect.objectContaining({
+					angle: "Trust",
+					hook: "Safe hook",
+					subhook: "Sub",
+					usp_1: "a",
+					usp_2: "b",
+					usp_3: "c",
+					cta: "Shop",
+					poster_type: "Product-only hero poster",
+					visual_route: "Premium commercial",
+					frame_ratio: "9:16",
+					language: "ms",
+				}),
+			);
+		});
+	});
+
+	it("changing Flow Mirror aspect ratio updates prompt draft payload", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedPromptDraft.mockResolvedValue({
+			product_id: "p1",
+			poster_status: "POSTER_READY",
+			prompt_package_status: "DRAFT_READY",
+			generation_allowed: true,
+			production_allowed: true,
+			restricted_mode: false,
+			poster_prompt: "x",
+			negative_prompt: "",
+			copy_layout: { hook: "h", subhook: "", usp: [], cta: "c" },
+			visual_instruction: "",
+			text_overlay_instruction: "",
+			product_truth_lock: "",
+			safety_guardrails: [],
+			blocked_reasons: [],
+			repair_actions: [],
+			readiness_meta: {},
+			operator_notes: "",
+		});
+		renderPage();
+		await waitForReadinessUi();
+		const ratioBtn = await screen.findByTestId("flow-aspect-1-1");
+		ratioBtn.click();
+		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
+		useBtn.click();
+		await waitFor(() => {
+			expect(mockedDraftToPrompt).toHaveBeenCalledWith(
+				"p1",
+				expect.objectContaining({ frame_ratio: "1:1", hook: "Safe hook" }),
+			);
+		});
+	});
+
+	it("image generation handoff button stays disabled", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		const btn = await screen.findByTestId("generate-poster-button");
+		expect(btn).toBeDisabled();
 	});
 
 	it("shows prompt package preview after successful prompt draft API", async () => {
@@ -182,11 +357,21 @@ describe("PosterBuilderPage", () => {
 		});
 		renderPage();
 		await waitForReadinessUi();
-		const promptBtn = await screen.findByTestId("generate-prompt-draft-button");
-		promptBtn.click();
+		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
+		useBtn.click();
 		expect(
 			await screen.findByTestId("poster-prompt-package-preview"),
 		).toBeInTheDocument();
 		expect(mockedPromptDraft).toHaveBeenCalled();
+	});
+
+	it("manual expert mode shows manual panel", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		const manualBtn = await screen.findByTestId("working-mode-manual");
+		manualBtn.click();
+		expect(await screen.findByTestId("poster-manual-expert-panel")).toBeInTheDocument();
+		expect(await screen.findByTestId("generate-prompt-draft-button")).toBeInTheDocument();
 	});
 });
