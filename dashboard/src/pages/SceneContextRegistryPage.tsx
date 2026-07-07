@@ -43,6 +43,7 @@ export default function SceneContextRegistryPage() {
 	const [autoBrief, setAutoBrief] = useState("");
 	const [isAutoGenerating, setIsAutoGenerating] = useState(false);
 	const [deletingCode, setDeletingCode] = useState<string | null>(null);
+	const [sceneSearch, setSceneSearch] = useState("");
 
 	const refresh = useCallback(async () => {
 		setLoading(true);
@@ -481,11 +482,34 @@ export default function SceneContextRegistryPage() {
 				</div>
 			</section>
 
+			<div className="mb-2">
+				<input
+					value={sceneSearch}
+					onChange={(e) => setSceneSearch(e.target.value)}
+					placeholder="Cari scene (nama, kod, tag)…"
+					className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 md:w-96"
+				/>
+			</div>
+
 			{loading ? (
 				<div className="text-sm text-slate-400">Loading scene contexts…</div>
 			) : (
 				<div className="grid gap-4 md:grid-cols-2">
-					{pool?.scenes.map((scene) => {
+					{(pool?.scenes ?? [])
+						.filter((scene) => {
+							const q = sceneSearch.trim().toLowerCase();
+							if (!q) return true;
+							return [
+								scene.scene_name,
+								scene.scene_code,
+								scene.usage_tags.join(" "),
+								scene.route_fit.join(" "),
+							]
+								.join(" ")
+								.toLowerCase()
+								.includes(q);
+						})
+						.map((scene) => {
 						const gen = generating[scene.scene_code];
 						return (
 							<div
