@@ -82,6 +82,7 @@ export default function PosterBuilderShellForm({
 			<div className="mt-4 flex flex-wrap gap-3">
 				<button
 					type="button"
+					data-testid="generate-poster-button"
 					disabled
 					title={generateButtonLabel}
 					className="cursor-not-allowed rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-slate-400"

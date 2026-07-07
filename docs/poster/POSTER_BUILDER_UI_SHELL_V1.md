@@ -67,10 +67,7 @@ A later PR should:
 
 ## Target products (PR #231 IDs)
 
-Quick-select buttons load catalog rows when present; readiness always comes from the API.
-
-- Bosmax Oil / Herbs → expect `POSTER_REPAIR_REQUIRED` + `CLAIM_RISK_HIGH` when DB matches audit baseline.
-- Minyak Warisan → expect `POSTER_READY` when DB matches baseline; UI shows actual API status if stricter.
+Use product search/picker in the UI. Audit product IDs are referenced in **test fixtures only** (`posterReadinessTestFixtures.ts`), not in production UI.
 
 ## Tests
 

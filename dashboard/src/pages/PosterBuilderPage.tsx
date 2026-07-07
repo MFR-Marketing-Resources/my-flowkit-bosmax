@@ -21,15 +21,6 @@ import {
 	type PosterReadinessResponse,
 } from "../types/posterReadiness";
 
-const TARGET_PRESETS: { label: string; id: string }[] = [
-	{ label: "Bosmax Oil 10 ML", id: "b460ffbd-7d9d-4f6b-a570-0e9b1056439a" },
-	{ label: "Bosmax Herbs 5 ML", id: "90349f8c-9e14-4efe-988e-76ec60ea31f4" },
-	{
-		label: "Minyak Warisan 25ml",
-		id: "6483d624-a03d-4933-9bba-6ca2e5f7b6fd",
-	},
-];
-
 function productThumb(product: Product): string | null {
 	return product.image_analysis?.image_url ?? null;
 }
@@ -164,25 +155,6 @@ export default function PosterBuilderPage() {
 						) : null}
 					</div>
 				) : null}
-				<div className="mt-4 flex flex-wrap gap-2">
-					{TARGET_PRESETS.map((preset) => (
-						<button
-							key={preset.id}
-							type="button"
-							onClick={() => {
-								const found = products.find((p) => p.id === preset.id);
-								if (found) setSelectedProduct(found);
-								else
-									setError(
-										`${preset.label} not in loaded catalog page — search by name.`,
-									);
-							}}
-							className="rounded-lg border border-slate-800 px-2 py-1 text-[10px] text-slate-400 hover:border-slate-600"
-						>
-							{preset.label}
-						</button>
-					))}
-				</div>
 			</section>
 
 			{loadingReadiness ? (
