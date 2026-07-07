@@ -69,6 +69,9 @@ export interface ImgFastlanePromptPreview {
 	ingredient_role?: ImgFastlaneIngredientRole | null;
 	lane_id: string;
 	prompt_text: string;
+	// Clean, engine-agnostic brief actually sent to the generator (no internal
+	// preset/route/lane ids) — portable verbatim to Flow, ChatGPT Image, and Grok.
+	engine_prompt_text: string;
 	display_name_suggestion: string;
 	blockers: string[];
 	warnings: string[];

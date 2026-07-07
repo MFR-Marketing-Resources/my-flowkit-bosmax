@@ -35,6 +35,11 @@ def test_fastlane_uses_database_driven_preset_compiler():
     assert "readOnly" in page
     assert "Prompt preview auto-build is active." in page
 
+    # The page must SEND + display the clean, portable engine_prompt_text (not the
+    # labeled prompt_text), and expose the labeled breakdown separately.
+    assert "engine_prompt_text" in page
+    assert "Structured breakdown" in page
+
     assert "compileWorkspacePromptPreview" not in page
     assert "ingSubjectText" not in page
     assert "ingSceneText" not in page

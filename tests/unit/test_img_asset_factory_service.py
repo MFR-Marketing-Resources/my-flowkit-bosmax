@@ -698,3 +698,63 @@ def test_poster_lane_is_exempt_from_clean_frame_no_text_negative(monkeypatch):
     assert preview.lane_id == "PRODUCT_POSTER"
     assert "clean commercial frame" not in preview.prompt_text
     assert not any("clean commercial frame" in rule for rule in preview.negative_rules)
+
+
+def test_engine_prompt_is_clean_portable_and_leak_free(monkeypatch):
+    """engine_prompt_text is the payload actually sent to the generator and must be
+    portable across engines (Flow / ChatGPT / Grok): it carries the substantive
+    creative brief but ZERO internal routing metadata. The labeled prompt_text
+    breakdown is preserved separately for the operator."""
+
+    async def fake_get_product(_product_id: str):
+        return {
+            "id": "prod-wg40",
+            "product_display_name": "Minyak Warisan Tok Cap Burung 25ml",
+            "raw_product_title": "Minyak Warisan Tok Cap Burung 25ml",
+            "media_id": "media-wg40",
+        }
+
+    async def fake_get_asset(asset_id: str):
+        return SimpleNamespace(display_name=asset_id)
+
+    monkeypatch.setattr(crud, "get_product", fake_get_product)
+    monkeypatch.setattr(
+        "agent.services.img_asset_factory_service.get_creative_asset",
+        fake_get_asset,
+    )
+
+    preview = asyncio.run(
+        compile_img_fastlane_prompt_preview(
+            ImgFastlanePromptPreviewRequest(
+                preset_id="GENERIC_FRAMES_AVATAR_PRODUCT",
+                route="FRAMES",
+                product_id="prod-wg40",
+                character_reference_asset_id="char-1",
+            )
+        )
+    )
+
+    engine = preview.engine_prompt_text
+    assert engine, "engine_prompt_text must be populated"
+
+    # NO internal routing metadata may leak into the payload sent to any engine.
+    for leaked in (
+        "TEMPLATE PRESET",
+        "FASTLANE ROUTE",
+        "TARGET LANE",
+        "TARGET INGREDIENT ROLE",
+        "GENERIC_FRAMES_AVATAR_PRODUCT",  # preset id
+        "AVATAR_PRODUCT_COMPOSITE",  # lane id
+        "System composes the prompt",  # operator-facing workflow meta
+    ):
+        assert leaked not in engine, f"internal metadata leaked into engine prompt: {leaked!r}"
+
+    # ...but the substantive creative brief IS present, incl. the clean-frame guard.
+    assert "PRODUCT SCALE LOCK" in engine
+    assert "REFERENCES:" in engine
+    assert "AVOID:" in engine
+    assert any("clean commercial frame" in line for line in engine.splitlines())
+
+    # The labeled operator breakdown is unchanged and still carries the scaffold.
+    assert "TEMPLATE PRESET:" in preview.prompt_text
+    assert "NEGATIVE RULES:" in preview.prompt_text
