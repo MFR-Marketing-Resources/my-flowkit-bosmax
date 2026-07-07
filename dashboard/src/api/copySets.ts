@@ -6,7 +6,54 @@ import type {
 	CopySetListResponse,
 } from "../types";
 import { COPY_SET_APPROVAL_PHRASE } from "../types";
-import { fetchAPI, patchAPI, postAPI } from "./client";
+import { fetchAPI, getAPI, patchAPI, postAPI } from "./client";
+
+// Copy grounding readiness — is copy generation grounded in real product
+// knowledge + customer avatar (approved snapshot), the framework family, or
+// ungrounded? Read-only; drives the Copy Registry grounding banner.
+export interface CopyGroundingSummary {
+	product_id: string;
+	grounded: boolean;
+	source: string; // APPROVED_SNAPSHOT | FRAMEWORK_FAMILY | MINIMAL
+	family: string;
+	is_stealth: boolean;
+	effective_route: string;
+	copy_formula: string;
+	angle_strategies: string[];
+	buyer_persona: {
+		audience: string;
+		desires: string[];
+		fears: string[];
+		pains: string[];
+		objections: string[];
+		triggers: string[];
+		tone: string;
+		pronoun: string;
+	};
+	product_knowledge: {
+		description: string;
+		benefits: string[];
+		usps: string[];
+		ingredients: string;
+		target_customer: string;
+	};
+	claim_guardrails: {
+		claim_gate: string;
+		claim_risk_level: string;
+		allowed_claims: string[];
+		blocked_claims: string[];
+		banned_terms: string[];
+	};
+	missing: string[];
+}
+
+export async function fetchCopyGrounding(
+	productId: string,
+): Promise<CopyGroundingSummary> {
+	return getAPI<CopyGroundingSummary>(
+		`/api/copy-sets/grounding/${encodeURIComponent(productId)}`,
+	);
+}
 
 // Copy Set API client (Copy Strategy Studio) — read/review/approve/select the
 // approvable copywriting bundle that binds into the deterministic final prompt

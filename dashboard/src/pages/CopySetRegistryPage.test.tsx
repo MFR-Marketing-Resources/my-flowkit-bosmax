@@ -36,11 +36,13 @@ vi.mock("../api/copySets", () => ({
 	rejectCopySet: vi.fn(),
 	patchCopySet: vi.fn(),
 	deleteCopySet: vi.fn(),
+	fetchCopyGrounding: vi.fn(),
 }));
 
 import {
 	approveCopySet,
 	deleteCopySet,
+	fetchCopyGrounding,
 	generateCopySetBatch,
 	listCopySetsForProduct,
 	rejectCopySet,
@@ -51,6 +53,43 @@ const mockedBatch = vi.mocked(generateCopySetBatch);
 const mockedApprove = vi.mocked(approveCopySet);
 const mockedReject = vi.mocked(rejectCopySet);
 const mockedDelete = vi.mocked(deleteCopySet);
+const mockedGrounding = vi.mocked(fetchCopyGrounding);
+
+const sampleGrounding = {
+	product_id: "p1",
+	grounded: true,
+	source: "FRAMEWORK_FAMILY",
+	family: "MALE_HEALTH_SENSITIVE",
+	is_stealth: true,
+	effective_route: "STEALTH",
+	copy_formula: "PAS / PESTA",
+	angle_strategies: ["stealth_masculinity", "wrapped_readiness", "maruah_and_ego"],
+	buyer_persona: {
+		audience: "Lelaki dewasa yang jaga maruah",
+		desires: ["yakin semula"],
+		fears: ["malu"],
+		pains: ["keyakinan menurun"],
+		objections: ["selamat ke?"],
+		triggers: ["ego", "maruah"],
+		tone: "wrapped, ego-aware",
+		pronoun: "aku / kau",
+	},
+	product_knowledge: {
+		description: "",
+		benefits: [],
+		usps: [],
+		ingredients: "",
+		target_customer: "Lelaki dewasa yang jaga maruah",
+	},
+	claim_guardrails: {
+		claim_gate: "CLAIM_REVIEW_REQUIRED",
+		claim_risk_level: "HIGH",
+		allowed_claims: [],
+		blocked_claims: [],
+		banned_terms: ["zakar", "cure"],
+	},
+	missing: ["approved product-intelligence snapshot"],
+};
 
 const sampleSet = {
 	copy_set_id: "cs1",
@@ -95,6 +134,8 @@ describe("CopySetRegistryPage", () => {
 		mockedApprove.mockReset();
 		mockedReject.mockReset();
 		mockedDelete.mockReset();
+		mockedGrounding.mockReset();
+		mockedGrounding.mockResolvedValue(sampleGrounding);
 		mockedList.mockResolvedValue({ product_id: "p1", items: [sampleSet] });
 		mockedBatch.mockResolvedValue({
 			batch_id: "b1",
@@ -116,6 +157,18 @@ describe("CopySetRegistryPage", () => {
 		await waitFor(() => expect(mockedList).toHaveBeenCalledWith("p1"));
 		expect(await screen.findByTestId("generate-copy-sets")).toBeInTheDocument();
 		expect(await screen.findByText("Safe hook")).toBeInTheDocument();
+	});
+
+	it("shows the copy grounding banner with avatar + angle strategies", async () => {
+		renderPage();
+		await waitFor(() => expect(mockedGrounding).toHaveBeenCalledWith("p1"));
+		const banner = await screen.findByTestId("copy-grounding-banner");
+		expect(banner).toBeInTheDocument();
+		expect(banner).toHaveTextContent("MALE_HEALTH_SENSITIVE");
+		expect(banner).toHaveTextContent("stealth_masculinity");
+		expect(banner).toHaveTextContent(/Lelaki dewasa/);
+		// framework tier → prompts the operator to author a snapshot
+		expect(banner).toHaveTextContent(/Product Knowledge snapshot/i);
 	});
 
 	it("does NOT auto-generate on product select (AI is click-only)", async () => {

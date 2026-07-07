@@ -93,6 +93,22 @@ async def list_copy_sets_for_product(product_id: str):
     return {"product_id": product_id, "items": await svc.list_copy_sets(product_id)}
 
 
+@router.get("/grounding/{product_id}")
+async def get_copy_grounding(product_id: str):
+    """Copy grounding readiness for a product: is the copy generation grounded in
+    real product knowledge + customer avatar (approved snapshot), the framework
+    family, or ungrounded? Drives the operator's 'author knowledge/avatar' guidance.
+    Read-only, no generation, no token spend."""
+    from agent.db import crud
+    from agent.services.copy_grounding_service import resolve_copy_grounding
+
+    product = await crud.get_product(product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail={"error": "PRODUCT_NOT_FOUND"})
+    grounding = await resolve_copy_grounding(product)
+    return grounding.model_dump(mode="json")
+
+
 @router.get("/{copy_set_id}")
 async def get_copy_set(copy_set_id: str):
     result = await svc.get_copy_set(copy_set_id)

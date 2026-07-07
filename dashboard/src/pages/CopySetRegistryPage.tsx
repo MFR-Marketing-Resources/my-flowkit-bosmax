@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
 	approveCopySet,
+	type CopyGroundingSummary,
 	deleteCopySet,
+	fetchCopyGrounding,
 	generateCopySet,
 	generateCopySetBatch,
 	listCopySetsForProduct,
@@ -149,6 +151,7 @@ export default function CopySetRegistryPage() {
 	const [success, setSuccess] = useState("");
 	const [editTarget, setEditTarget] = useState<CopySet | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<CopySet | null>(null);
+	const [grounding, setGrounding] = useState<CopyGroundingSummary | null>(null);
 
 	useEffect(() => {
 		void fetchProductCatalog(500)
@@ -167,8 +170,12 @@ export default function CopySetRegistryPage() {
 		setLoading(true);
 		setError("");
 		try {
-			const res = await listCopySetsForProduct(productId);
+			const [res, g] = await Promise.all([
+				listCopySetsForProduct(productId),
+				fetchCopyGrounding(productId).catch(() => null),
+			]);
 			setSets(res.items ?? []);
+			setGrounding(g);
 		} catch (e) {
 			setSets([]);
 			setError(e instanceof Error ? e.message : "Gagal muat copywriting set.");
@@ -463,6 +470,78 @@ export default function CopySetRegistryPage() {
 
 			{selectedProduct ? (
 				<>
+					{grounding ? (
+						<Section
+							title="Copy grounding"
+							helper="Adakah copy dijana berdasarkan product knowledge + customer avatar sebenar?"
+							action={
+								<Badge
+									tone={
+										grounding.source === "APPROVED_SNAPSHOT"
+											? "success"
+											: grounding.source === "FRAMEWORK_FAMILY"
+												? "info"
+												: "danger"
+									}
+								>
+									{grounding.source === "APPROVED_SNAPSHOT"
+										? "Grounded · approved snapshot"
+										: grounding.source === "FRAMEWORK_FAMILY"
+											? "Grounded · BOSMAX framework"
+											: "Ungrounded · generic"}
+								</Badge>
+							}
+						>
+							<div
+								data-testid="copy-grounding-banner"
+								className="space-y-2 text-xs text-slate-300"
+							>
+								<p>
+									<span className="text-slate-500">Family: </span>
+									{grounding.family || "—"}
+									{grounding.is_stealth ? (
+										<span className="ml-2 rounded bg-amber-600/20 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-200">
+											STEALTH
+										</span>
+									) : null}
+									<span className="ml-2 text-slate-500">· route </span>
+									{grounding.effective_route}
+									<span className="ml-2 text-slate-500">· claim </span>
+									{grounding.claim_guardrails.claim_gate || "—"}
+								</p>
+								{grounding.buyer_persona.audience ? (
+									<p>
+										<span className="text-slate-500">Avatar: </span>
+										{grounding.buyer_persona.audience}
+									</p>
+								) : null}
+								{grounding.angle_strategies.length ? (
+									<div className="flex flex-wrap items-center gap-1.5">
+										<span className="text-slate-500">Angle strategies:</span>
+										{grounding.angle_strategies.map((a) => (
+											<span
+												key={a}
+												className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300"
+											>
+												{a}
+											</span>
+										))}
+									</div>
+								) : null}
+								{grounding.source !== "APPROVED_SNAPSHOT" ? (
+									<HelperText tone="warn">
+										Grounded pada peringkat framework family. Untuk copy paling
+										tepat (benefit / USP / persona sebenar), author satu Product
+										Knowledge snapshot untuk produk ini.
+										{grounding.missing.length
+											? ` Kurang: ${grounding.missing.join("; ")}.`
+											: ""}
+									</HelperText>
+								) : null}
+							</div>
+						</Section>
+					) : null}
+
 					<Section
 						title="Generate copywriting sets"
 						helper={`AI menjana ${GENERATE_COUNT} set setiap tekan (max ${GENERATE_COUNT} demi kualiti). Tekan lagi untuk tambah. Set baru bertaraf "Review required" — approve sebelum guna.`}

@@ -364,3 +364,9 @@ domains:
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx
       - docs/copywriting/COPY_SET_REGISTRY_V1.md
+      # COPY_GROUNDING: product-knowledge + customer-avatar grounding for copy gen
+      - agent/models/copy_grounding.py
+      - agent/authority/copy_family_grounding.py
+      - agent/services/copy_grounding_service.py
+      - tests/unit/test_copy_grounding_service.py
+      - docs/copywriting/COPY_GROUNDING_V1.md
