@@ -1,9 +1,15 @@
+import type {
+	PosterBuilderSettings,
+	PosterSettingOption,
+} from "../../api/posterBuilderSettings";
 import type { PosterBuilderDraft } from "../../types/posterReadiness";
 import type { PosterBuilderShellMode } from "../../poster/posterBuilderUi";
 
 interface PosterBuilderShellFormProps {
 	draft: PosterBuilderDraft;
 	onChange: (draft: PosterBuilderDraft) => void;
+	/** DB-backed option lists (same cockpit SSOT the Auto / Quick Start panel uses). */
+	settings: PosterBuilderSettings;
 	mode: PosterBuilderShellMode;
 	promptDraftEnabled: boolean;
 	promptDraftLabel: string;
@@ -14,27 +20,33 @@ interface PosterBuilderShellFormProps {
 	manualExpert?: boolean;
 }
 
-const FIELDS: { key: keyof PosterBuilderDraft; label: string; multiline?: boolean }[] = [
-	{ key: "poster_objective", label: "Poster Objective" },
-	{ key: "poster_type", label: "Poster Type" },
-	{ key: "visual_route", label: "Visual Route" },
-	{ key: "human_presence_mode", label: "Human Presence Mode" },
-	{ key: "frame_ratio", label: "Frame Ratio" },
-	{ key: "language", label: "Language" },
-	{ key: "text_density", label: "Text Density" },
-	{ key: "angle", label: "Angle" },
-	{ key: "hook", label: "Hook" },
-	{ key: "subhook", label: "Subhook" },
-	{ key: "usp_1", label: "USP 1" },
-	{ key: "usp_2", label: "USP 2" },
-	{ key: "usp_3", label: "USP 3" },
-	{ key: "cta", label: "CTA" },
-	{ key: "operator_notes", label: "Notes / Operator Instruction", multiline: true },
+type FieldKind = "select" | "text" | "multiline";
+
+const FIELDS: { key: keyof PosterBuilderDraft; label: string; kind: FieldKind }[] = [
+	{ key: "poster_objective", label: "Poster Objective", kind: "select" },
+	{ key: "poster_type", label: "Poster Type", kind: "select" },
+	{ key: "visual_route", label: "Visual Route", kind: "select" },
+	{ key: "human_presence_mode", label: "Human Presence Mode", kind: "select" },
+	{ key: "frame_ratio", label: "Frame Ratio", kind: "select" },
+	{ key: "language", label: "Language", kind: "select" },
+	{ key: "text_density", label: "Text Density", kind: "select" },
+	{ key: "angle", label: "Angle", kind: "text" },
+	{ key: "hook", label: "Hook", kind: "text" },
+	{ key: "subhook", label: "Subhook", kind: "text" },
+	{ key: "usp_1", label: "USP 1", kind: "text" },
+	{ key: "usp_2", label: "USP 2", kind: "text" },
+	{ key: "usp_3", label: "USP 3", kind: "text" },
+	{ key: "cta", label: "CTA", kind: "text" },
+	{ key: "operator_notes", label: "Notes / Operator Instruction", kind: "multiline" },
 ];
+
+const INPUT_CLASS =
+	"mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-50";
 
 export default function PosterBuilderShellForm({
 	draft,
 	onChange,
+	settings,
 	mode,
 	promptDraftEnabled,
 	promptDraftLabel,
@@ -45,6 +57,23 @@ export default function PosterBuilderShellForm({
 }: PosterBuilderShellFormProps) {
 	const editable = mode === "full" || mode === "restricted" || mode === "preview";
 	const previewOnly = mode === "preview";
+
+	// Every settings field is driven by the same cockpit SSOT option lists as the
+	// Auto / Quick Start panel — Manual Expert must never diverge into free text.
+	const selectOptions: Partial<
+		Record<keyof PosterBuilderDraft, PosterSettingOption[]>
+	> = {
+		poster_objective: settings.poster_objectives,
+		poster_type: settings.poster_types,
+		visual_route: settings.visual_routes,
+		human_presence_mode: settings.human_presence_modes,
+		language: settings.languages,
+		text_density: settings.text_density_options,
+		frame_ratio: settings.flow_mirror.aspect_ratios.map((ratio) => ({
+			id: ratio,
+			label: ratio,
+		})),
+	};
 
 	return (
 		<section
@@ -68,29 +97,48 @@ export default function PosterBuilderShellForm({
 			</div>
 
 			<div className="mt-4 grid gap-3 md:grid-cols-2">
-				{FIELDS.map(({ key, label, multiline }) => (
-					<label key={key} className={multiline ? "md:col-span-2" : ""}>
-						<span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
-							{label}
-						</span>
-						{multiline ? (
-							<textarea
-								className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
-								rows={3}
-								value={draft[key]}
-								disabled={!editable}
-								onChange={(e) => onChange({ ...draft, [key]: e.target.value })}
-							/>
-						) : (
-							<input
-								className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
-								value={draft[key]}
-								disabled={!editable}
-								onChange={(e) => onChange({ ...draft, [key]: e.target.value })}
-							/>
-						)}
-					</label>
-				))}
+				{FIELDS.map(({ key, label, kind }) => {
+					const options = selectOptions[key];
+					return (
+						<label key={key} className={kind === "multiline" ? "md:col-span-2" : ""}>
+							<span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+								{label}
+							</span>
+							{options ? (
+								<select
+									data-testid={`poster-manual-${key}-select`}
+									className={INPUT_CLASS}
+									value={String(draft[key] ?? "")}
+									disabled={!editable}
+									onChange={(e) => onChange({ ...draft, [key]: e.target.value })}
+								>
+									{options.map((opt) => (
+										<option key={opt.id} value={opt.id}>
+											{opt.label}
+										</option>
+									))}
+								</select>
+							) : kind === "multiline" ? (
+								<textarea
+									data-testid={`poster-manual-${key}-input`}
+									className={INPUT_CLASS}
+									rows={3}
+									value={String(draft[key] ?? "")}
+									disabled={!editable}
+									onChange={(e) => onChange({ ...draft, [key]: e.target.value })}
+								/>
+							) : (
+								<input
+									data-testid={`poster-manual-${key}-input`}
+									className={INPUT_CLASS}
+									value={String(draft[key] ?? "")}
+									disabled={!editable}
+									onChange={(e) => onChange({ ...draft, [key]: e.target.value })}
+								/>
+							)}
+						</label>
+					);
+				})}
 			</div>
 
 			<div className="mt-4 flex flex-wrap gap-3">

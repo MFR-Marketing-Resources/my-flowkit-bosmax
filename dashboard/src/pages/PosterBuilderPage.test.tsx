@@ -435,6 +435,33 @@ describe("PosterBuilderPage", () => {
 		expect(await screen.findByTestId("generate-prompt-draft-button")).toBeInTheDocument();
 	});
 
+	it("manual expert mode renders settings fields as shared DB dropdowns", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		(await screen.findByTestId("working-mode-manual")).click();
+		await screen.findByTestId("poster-manual-expert-panel");
+		for (const key of [
+			"poster_objective",
+			"poster_type",
+			"visual_route",
+			"human_presence_mode",
+			"frame_ratio",
+			"language",
+			"text_density",
+		]) {
+			expect(screen.getByTestId(`poster-manual-${key}-select`).tagName).toBe("SELECT");
+		}
+		// Copy fields stay free-text.
+		expect(screen.getByTestId("poster-manual-hook-input").tagName).toBe("INPUT");
+		// Options come from the cockpit SSOT (same source as Auto / Quick Start).
+		expect(
+			within(screen.getByTestId("poster-manual-visual_route-select")).getByText(
+				"Premium commercial",
+			),
+		).toBeInTheDocument();
+	});
+
 	it("Auto mode renders Objective / Poster Type / Language as dropdowns", async () => {
 		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
 		renderPage();

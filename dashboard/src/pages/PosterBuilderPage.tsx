@@ -410,6 +410,7 @@ export default function PosterBuilderPage() {
 											}));
 										}
 									}}
+									settings={builderSettings}
 									mode={shellMode}
 									promptDraftEnabled={promptDraftEnabled}
 									promptDraftLabel={promptDraftLabel}
