@@ -1,4 +1,5 @@
 import type {
+	AICopyAssistBatchResponse,
 	AICopyAssistResponse,
 	CopySet,
 	CopySetGenerateResponse,
@@ -51,6 +52,38 @@ export async function generateAICopyCandidate(input: {
 	candidate_count?: number;
 }): Promise<AICopyAssistResponse> {
 	return postAPI<AICopyAssistResponse>("/api/copy-sets/ai-assist", input);
+}
+
+// AI Copy Assist BATCH — generate several reviewable candidate sets in one call.
+// requested_count defaults to 5 (backend range 3–10). Spends AI tokens on the
+// configured text_assist (DeepSeek) lane; call only on an explicit operator click.
+export async function generateCopySetBatch(input: {
+	product_id: string;
+	requested_count?: number;
+	platform?: string;
+	language?: string;
+	angle?: string;
+	hook?: string;
+	route_type?: string;
+	formula_family?: string;
+	content_style_mode?: string;
+	operator_notes?: string;
+	dry_run?: boolean;
+}): Promise<AICopyAssistBatchResponse> {
+	return postAPI<AICopyAssistBatchResponse>(
+		"/api/copy-sets/generate-batch",
+		input,
+	);
+}
+
+// Hard-delete a Copy Set (permanent). `rejectCopySet` is the soft alternative.
+export async function deleteCopySet(
+	copySetId: string,
+): Promise<{ deleted: boolean; copy_set_id: string }> {
+	return fetchAPI<{ deleted: boolean; copy_set_id: string }>(
+		`/api/copy-sets/${encodeURIComponent(copySetId)}`,
+		{ method: "DELETE" },
+	);
 }
 
 export async function regenerateCopySet(

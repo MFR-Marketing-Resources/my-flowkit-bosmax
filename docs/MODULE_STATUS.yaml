@@ -360,3 +360,7 @@ domains:
       - dashboard/src/pages/CockpitSettingsPage.tsx
       - dashboard/src/pages/CockpitSettingsPage.test.tsx
       - docs/poster/POSTER_COCKPIT_SSOT_V1.md
+      # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
+      - dashboard/src/pages/CopySetRegistryPage.tsx
+      - dashboard/src/pages/CopySetRegistryPage.test.tsx
+      - docs/copywriting/COPY_SET_REGISTRY_V1.md

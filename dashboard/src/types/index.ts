@@ -669,6 +669,39 @@ export interface AICopyAssistResponse {
 	candidates: AICopyCandidate[];
 }
 
+// AI Copy Assist batch — generate N reviewable candidate sets in one call
+// (POST /api/copy-sets/generate-batch). Candidates come back COPY_REVIEW_REQUIRED.
+export interface AICopyBatchCandidate {
+	copy_set_id: string;
+	status: CopySetStatus;
+	angle: string;
+	hook: string;
+	subhook: string;
+	usp_set: string[];
+	cta: string;
+	dedupe_key: string;
+	similarity_score: number | null;
+	similar_to_copy_set_id: string | null;
+	uniqueness_score: number | null;
+	warnings: string[];
+	created: boolean;
+	dedupe_match: boolean;
+	safety: { safe: boolean; violations: string[] };
+}
+
+export interface AICopyAssistBatchResponse {
+	batch_id: string;
+	product_id: string;
+	requested_count: number;
+	created_count: number;
+	deduped_count: number;
+	rejected_count: number;
+	provider: { lane: string; configured: boolean; provider_id: string | null };
+	candidates: AICopyBatchCandidate[];
+	warnings: string[];
+	dry_run: boolean;
+}
+
 export const COPY_SET_APPROVAL_PHRASE = "APPROVE_COPY_SET";
 
 export interface PromptCompilerRuntimeConfig {

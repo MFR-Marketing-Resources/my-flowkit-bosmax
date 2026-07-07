@@ -159,3 +159,23 @@ def test_patch_and_reject_and_regenerate(monkeypatch):
     # Regenerate also works with no body (product is derived from the Copy Set).
     regenerated_empty = client.post("/api/copy-sets/cs-001/regenerate")
     assert regenerated_empty.status_code == 200
+
+
+def test_delete_copy_set(monkeypatch):
+    async def fake_delete(copy_set_id):
+        return {"deleted": True, "copy_set_id": copy_set_id}
+
+    monkeypatch.setattr(svc, "delete_copy_set", fake_delete)
+    response = _client().delete("/api/copy-sets/cs-001")
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True, "copy_set_id": "cs-001"}
+
+
+def test_delete_copy_set_not_found(monkeypatch):
+    async def fake_delete(copy_set_id):
+        raise svc.CopySetError("COPY_SET_NOT_FOUND", status_code=404)
+
+    monkeypatch.setattr(svc, "delete_copy_set", fake_delete)
+    response = _client().delete("/api/copy-sets/missing")
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"] == "COPY_SET_NOT_FOUND"
