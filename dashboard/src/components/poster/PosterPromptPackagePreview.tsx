@@ -11,9 +11,12 @@ export default function PosterPromptPackagePreview({
 }: PosterPromptPackagePreviewProps) {
 	if (error) {
 		return (
-			<section className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-5">
+			<section
+				className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-5"
+				data-testid="poster-prompt-draft-error"
+			>
 				<h3 className="text-sm font-bold text-rose-100">Prompt draft error</h3>
-				<p className="mt-2 text-sm text-rose-100/90">{error}</p>
+				<p className="mt-2 whitespace-pre-wrap text-sm text-rose-100/90">{error}</p>
 			</section>
 		);
 	}

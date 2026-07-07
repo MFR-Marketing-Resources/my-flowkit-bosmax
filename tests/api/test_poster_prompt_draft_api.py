@@ -59,3 +59,33 @@ def test_prompt_draft_repair_required_shape(monkeypatch):
     body = response.json()
     assert body["prompt_package_status"] == "REPAIR_REQUIRED"
     assert body["poster_prompt"] == ""
+
+
+def test_prompt_draft_ready_unsafe_copy_422(monkeypatch):
+    from tests.unit.test_poster_readiness_service import _ready_base
+
+    product = _ready_base()
+
+    async def fake_get(_pid):
+        return product
+
+    monkeypatch.setattr(
+        "agent.services.poster_prompt_draft_service.crud.get_product",
+        fake_get,
+    )
+    payload = {
+        "product_id": "prod-ready-001",
+        "poster_objective": "Drive awareness",
+        "poster_type": "Product hero",
+        "visual_route": "Studio",
+        "frame_ratio": "9:16",
+        "language": "ms",
+        "angle": "Trust",
+        "hook": "Instant cure for all pain",
+        "cta": "Buy",
+    }
+    response = _client().post("/api/poster/prompt-draft", json=payload)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["message"] == "Unsafe or unapproved claim wording detected."
+    assert any("cure" in e for e in detail["field_errors"])

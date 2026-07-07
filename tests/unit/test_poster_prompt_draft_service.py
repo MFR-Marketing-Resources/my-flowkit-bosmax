@@ -125,6 +125,85 @@ async def test_restricted_unsafe_terms_rejected(monkeypatch):
             _full_request(hook="Ubat sakit hilang serta merta"),
         )
     assert any("Unsafe term" in e for e in exc.value.field_errors)
+    assert "restricted-safe" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_ready_unsafe_hook_rejected(monkeypatch):
+    product = _ready_base()
+
+    async def fake_get(_pid):
+        return product
+
+    monkeypatch.setattr(
+        "agent.services.poster_prompt_draft_service.crud.get_product",
+        fake_get,
+    )
+    with pytest.raises(PosterPromptDraftValidationError) as exc:
+        await PosterPromptDraftService.build_draft(
+            _full_request(hook="This will cure your pain"),
+        )
+    assert "Unsafe or unapproved claim wording detected" in str(exc.value)
+    assert any("cure" in e for e in exc.value.field_errors)
+
+
+@pytest.mark.asyncio
+async def test_ready_unsafe_usp_cta_rejected(monkeypatch):
+    product = _ready_base()
+
+    async def fake_get(_pid):
+        return product
+
+    monkeypatch.setattr(
+        "agent.services.poster_prompt_draft_service.crud.get_product",
+        fake_get,
+    )
+    with pytest.raises(PosterPromptDraftValidationError) as exc:
+        await PosterPromptDraftService.build_draft(
+            _full_request(usp_2="Guaranteed relief today", cta="Beli ubat sekarang"),
+        )
+    assert "Unsafe or unapproved claim wording detected" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_preview_only_unsafe_term_rejected(monkeypatch):
+    product = _ready_base(
+        local_image_path="",
+        image_url="https://cdn.example.com/p.jpg",
+        asset_status="",
+        image_asset_status="",
+        image_readiness_status="",
+    )
+
+    async def fake_get(_pid):
+        return product
+
+    monkeypatch.setattr(
+        "agent.services.poster_prompt_draft_service.crud.get_product",
+        fake_get,
+    )
+    with pytest.raises(PosterPromptDraftValidationError) as exc:
+        await PosterPromptDraftService.build_draft(
+            _full_request(operator_notes="Diagnostic only but claims sembuh"),
+        )
+    assert "Unsafe or unapproved claim wording detected" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_ready_safe_copy_still_draft_ready(monkeypatch):
+    product = _ready_base()
+
+    async def fake_get(_pid):
+        return product
+
+    monkeypatch.setattr(
+        "agent.services.poster_prompt_draft_service.crud.get_product",
+        fake_get,
+    )
+    result = await PosterPromptDraftService.build_draft(_full_request())
+    assert result.poster_status == PosterReadinessStatus.POSTER_READY.value
+    assert result.prompt_package_status == "DRAFT_READY"
+    assert result.poster_prompt
 
 
 @pytest.mark.asyncio

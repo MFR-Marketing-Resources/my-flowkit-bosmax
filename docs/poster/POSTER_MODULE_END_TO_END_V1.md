@@ -54,7 +54,7 @@ When readiness is `POSTER_READY_RESTRICTED`, the assembled prompt includes expli
 - No cure/treat/heal/disease/guaranteed relief/before-after/fake proof
 - Lifestyle, heritage, portability, product-size angles only
 
-Unsafe wording in operator copy is rejected with HTTP 422.
+Unsafe wording in operator copy (`hook`, `subhook`, `usp_*`, `cta`, `operator_notes`) is scanned on **all** prompt-generating readiness paths (`POSTER_READY`, `POSTER_READY_RESTRICTED`, `POSTER_PREVIEW_ONLY`) before `poster_prompt` is assembled; rejected with HTTP 422. Negative prompt does not cancel unsafe positive copy.
 
 ## Out of scope (V1)
 

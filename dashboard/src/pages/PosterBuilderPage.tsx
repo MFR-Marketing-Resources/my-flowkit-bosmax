@@ -5,6 +5,7 @@ import { fetchPosterReadiness } from "../api/posterReadiness";
 import {
 	createPosterPromptDraft,
 	draftToPromptRequest,
+	formatPosterPromptDraftError,
 } from "../api/posterPromptDraft";
 import { fetchProductCatalog } from "../api/products";
 import PosterBuilderShellForm from "../components/poster/PosterBuilderShellForm";
@@ -115,7 +116,7 @@ export default function PosterBuilderPage() {
 			setPromptPackage(pkg);
 		} catch (e) {
 			setPromptPackage(null);
-			setPromptError(e instanceof Error ? e.message : "Prompt draft failed");
+			setPromptError(formatPosterPromptDraftError(e));
 		} finally {
 			setPromptLoading(false);
 		}

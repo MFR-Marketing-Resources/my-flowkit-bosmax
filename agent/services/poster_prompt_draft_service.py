@@ -115,6 +115,27 @@ def _find_unsafe_terms(text: str) -> list[str]:
     return hits
 
 
+def _unsafe_copy_validation_message(status: PosterReadinessStatus) -> str:
+    if status == PosterReadinessStatus.POSTER_READY_RESTRICTED:
+        return "Unsafe claim wording detected for restricted-safe poster route."
+    return "Unsafe or unapproved claim wording detected."
+
+
+def _reject_unsafe_operator_copy(
+    fields: dict[str, str],
+    readiness_status: PosterReadinessStatus,
+) -> None:
+    """Block prompt assembly when operator copy contains claim-risk terms (all draft paths)."""
+    copy_blob = _collect_copy_text(fields)
+    unsafe_hits = _find_unsafe_terms(copy_blob)
+    if not unsafe_hits:
+        return
+    raise PosterPromptDraftValidationError(
+        _unsafe_copy_validation_message(readiness_status),
+        field_errors=[f"Unsafe term: {t}" for t in unsafe_hits],
+    )
+
+
 def _product_truth_lock(product: dict[str, Any], profile: Any) -> str:
     display = _norm(product.get("product_display_name")) or _norm(product.get("raw_product_title"))
     category = _norm(product.get("category"))
@@ -261,13 +282,7 @@ class PosterPromptDraftService:
             )
 
         restricted_mode = readiness.poster_status == PosterReadinessStatus.POSTER_READY_RESTRICTED
-        copy_blob = _collect_copy_text(fields)
-        unsafe_hits = _find_unsafe_terms(copy_blob) if restricted_mode else []
-        if unsafe_hits:
-            raise PosterPromptDraftValidationError(
-                "Unsafe claim wording detected for restricted-safe poster route",
-                field_errors=[f"Unsafe term: {t}" for t in unsafe_hits],
-            )
+        _reject_unsafe_operator_copy(fields, readiness.poster_status)
 
         profile = ProductTruthService.build_computed_profile(product)
         truth_lock = _product_truth_lock(product, profile)
