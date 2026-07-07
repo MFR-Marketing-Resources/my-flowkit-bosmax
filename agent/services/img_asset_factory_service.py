@@ -299,6 +299,7 @@ def _effective_negative_rules(preset: dict[str, object]) -> list[str]:
 def _build_engine_prompt(
     *,
     output_spec: str,
+    scene_context: str = "",
     reference_map: list[str],
     product_lock_lines: list[str],
     directives: list[str],
@@ -319,6 +320,11 @@ def _build_engine_prompt(
     spec = (output_spec or "").strip()
     if spec:
         blocks.append(spec)
+    scene = (scene_context or "").strip()
+    if scene:
+        # Sets the environment early, before references/product locks (already
+        # prefixed "Background: ..." by the scene registry).
+        blocks.append(scene)
     refs = [r for r in reference_map if r]
     if refs:
         blocks.append("REFERENCES:\n" + "\n".join(f"- {r}" for r in refs))
@@ -558,6 +564,21 @@ async def compile_img_fastlane_prompt_preview(
     if request.route == "INGREDIENTS" and request.ingredient_role == "PRODUCT_REFERENCE" and not request.product_id:
         warnings.append("PRODUCT_CONTEXT_RECOMMENDED_FOR_PRODUCT_LOCK")
 
+    # Optional scene-context injection: any of the 20 seeded registry scenes is
+    # usable as environment TEXT immediately, without first generating a scene
+    # image. Independent of scene_reference_asset_id (the optional image reference).
+    scene_context_text = ""
+    scene_context_name = ""
+    if request.scene_context_code and _clean_text(request.scene_context_code):
+        try:
+            from agent.services import scene_context_registry
+            _scene_profile = scene_context_registry.resolve_scene_context(
+                _clean_text(request.scene_context_code))
+            scene_context_text = scene_context_registry.scene_background_prose(_scene_profile)
+            scene_context_name = str(_scene_profile.get("scene_name") or "")
+        except Exception:
+            warnings.append("SCENE_CONTEXT_NOT_FOUND")
+
     prompt_lines: list[str] = [
         f"TEMPLATE PRESET: {preset['preset_id']}",
         f"FASTLANE ROUTE: {request.route}",
@@ -599,6 +620,11 @@ async def compile_img_fastlane_prompt_preview(
     prompt_lines.extend(
         f"- {line}" for line in _preset_directives(request.preset_id, product)
     )
+    if scene_context_text:
+        prompt_lines.append("")
+        prompt_lines.append("SCENE CONTEXT (background):")
+        _scene_label = f"{scene_context_name}: " if scene_context_name else ""
+        prompt_lines.append(f"- {_scene_label}{scene_context_text}")
     if request.advanced_override_notes and _clean_text(request.advanced_override_notes):
         prompt_lines.append("")
         prompt_lines.append("ADVANCED OVERRIDE NOTES (optional):")
@@ -612,6 +638,7 @@ async def compile_img_fastlane_prompt_preview(
     # ids) — reuses the same substantive pieces as the labeled breakdown above.
     engine_prompt_text = _build_engine_prompt(
         output_spec=str(preset["output_spec"]),
+        scene_context=scene_context_text,
         reference_map=_reference_map_lines(
             request.preset_id,
             product,

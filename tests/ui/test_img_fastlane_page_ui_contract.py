@@ -53,7 +53,11 @@ def test_fastlane_surfaces_reference_and_product_wiring():
     assert "PRODUCT_REFERENCE" in page
     assert "productReferenceAssets" in page
     assert "Select Existing Reference — Avatar" in page
-    assert "Select Existing Reference — Scene" in page
+    # Scene is now selectable from the Scene Context Library (all 20 registry scenes,
+    # text-injectable immediately) — its background feeds the compiled prompt.
+    assert "Scene Context Library" in page
+    assert "scene_context_code" in page
+    assert "handlePickSceneContext" in page
     # The Frames "Style" reference field was a dead/fake picker (no STYLE records,
     # no way to create one) — it must stay removed.
     assert "Select Existing Reference — Style" not in page

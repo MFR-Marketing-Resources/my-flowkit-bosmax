@@ -758,3 +758,50 @@ def test_engine_prompt_is_clean_portable_and_leak_free(monkeypatch):
     # The labeled operator breakdown is unchanged and still carries the scaffold.
     assert "TEMPLATE PRESET:" in preview.prompt_text
     assert "NEGATIVE RULES:" in preview.prompt_text
+
+
+def test_scene_context_code_injects_background_into_prompt(monkeypatch):
+    """Selecting a registry SceneCode injects the scene's Background: text into both
+    the engine prompt and the labeled breakdown — usable immediately, no scene image
+    needed."""
+
+    async def fake_get_product(_pid):
+        return None
+
+    monkeypatch.setattr(crud, "get_product", fake_get_product)
+
+    preview = asyncio.run(
+        compile_img_fastlane_prompt_preview(
+            ImgFastlanePromptPreviewRequest(
+                preset_id="GENERIC_FRAMES_AVATAR_PRODUCT",
+                route="FRAMES",
+                scene_context_code="SCN_RAYA_KAMPUNG",
+            )
+        )
+    )
+    # engine prompt carries the scene Background (right after the output-spec lead)
+    engine = preview.engine_prompt_text.lower()
+    assert "background:" in engine
+    assert "kampung" in engine and "pelita" in engine  # from the Raya Kampung scene
+    # labeled breakdown carries a dedicated SCENE CONTEXT section
+    assert "SCENE CONTEXT (background)" in preview.prompt_text
+    assert "Raya Kampung" in preview.prompt_text
+
+
+def test_unknown_scene_context_code_warns_not_crashes(monkeypatch):
+    async def fake_get_product(_pid):
+        return None
+
+    monkeypatch.setattr(crud, "get_product", fake_get_product)
+
+    preview = asyncio.run(
+        compile_img_fastlane_prompt_preview(
+            ImgFastlanePromptPreviewRequest(
+                preset_id="GENERIC_FRAMES_AVATAR_PRODUCT",
+                route="FRAMES",
+                scene_context_code="SCN_DOES_NOT_EXIST",
+            )
+        )
+    )
+    assert "SCENE_CONTEXT_NOT_FOUND" in preview.warnings
+    assert "SCENE CONTEXT" not in preview.prompt_text  # nothing injected on miss
