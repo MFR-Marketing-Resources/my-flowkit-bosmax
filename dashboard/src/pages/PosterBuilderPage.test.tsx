@@ -198,6 +198,39 @@ describe("PosterBuilderPage", () => {
 		expect(handoff).toBeInTheDocument();
 	});
 
+	it("fetchPosterReadiness is called once after stable product load", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		await waitFor(() => {
+			expect(mockedFetch).toHaveBeenCalledTimes(1);
+			expect(mockedFetch).toHaveBeenCalledWith("p1");
+		});
+	});
+
+	it("fetchPosterCopyRecommendations auto-loads once per product", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		await waitFor(() => {
+			expect(mockedRecs).toHaveBeenCalledTimes(1);
+		});
+		await new Promise((r) => setTimeout(r, 50));
+		expect(mockedRecs).toHaveBeenCalledTimes(1);
+	});
+
+	it("changing Flow Mirror aspect does not refetch readiness or recommendations", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		await waitFor(() => expect(mockedRecs).toHaveBeenCalledTimes(1));
+		const ratioBtn = await screen.findByTestId("flow-aspect-1-1");
+		ratioBtn.click();
+		await new Promise((r) => setTimeout(r, 50));
+		expect(mockedFetch).toHaveBeenCalledTimes(1);
+		expect(mockedRecs).toHaveBeenCalledTimes(1);
+	});
+
 	it("POSTER_READY shows Flow Mirror Settings section", async () => {
 		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
 		renderPage();

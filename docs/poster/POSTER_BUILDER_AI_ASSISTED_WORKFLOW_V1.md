@@ -54,6 +54,13 @@ Per product: readiness → `copy-recommendations` → operator picks kit → `pr
 6. Switch **Manual Expert** — all fields editable; prompt draft still works.
 7. Repair-required product — repair center visible; working modes hidden.
 
+### Runtime stability (flicker prevention)
+
+- `loadRecommendations` does **not** depend on live `draft` (uses `draftRef` + optional snapshot) so draft/Flow Mirror edits do not retrigger auto-fetch loops.
+- Auto recommendations load **once per product** (`autoRecLoadedProductRef`); manual **Refresh** passes current draft explicitly.
+- `loadReadiness` clears shell state only when **product id** changes; recheck keeps UI mounted.
+- URL `product_id` sync sets `selectedProduct` only when id changes.
+
 ### Atomic “Use for prompt draft”
 
 Auto mode **Use for prompt draft** calls `handleUseKitForPromptDraft(kit)`, which builds `nextDraft = kitToDraft(kit, …)` and passes it directly to `handlePromptDraft(nextDraft)`. It does **not** rely on stale React state after `setDraft`.

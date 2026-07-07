@@ -1,5 +1,5 @@
 import { ImageIcon, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations";
 import { fetchPosterReadiness } from "../api/posterReadiness";
@@ -69,11 +69,14 @@ export default function PosterBuilderPage() {
 	const [flowMirror, setFlowMirror] = useState<PosterFlowMirrorSettings>(
 		DEFAULT_POSTER_FLOW_MIRROR_SETTINGS,
 	);
+	const draftRef = useRef(draft);
+	draftRef.current = draft;
+	const autoRecLoadedProductRef = useRef<string | null>(null);
+	const readinessProductRef = useRef<string | null>(null);
 
-	const applyFlowAspectToDraft = (aspect: string, base?: PosterBuilderDraft) => {
-		const next = { ...(base ?? draft), frame_ratio: aspect };
-		setDraft(next);
-		return next;
+	const applyFlowAspectToDraft = (aspect: string) => {
+		if (draftRef.current.frame_ratio === aspect) return;
+		setDraft((prev) => ({ ...prev, frame_ratio: aspect }));
 	};
 
 	const handleFlowMirrorChange = (next: PosterFlowMirrorSettings) => {
@@ -93,18 +96,25 @@ export default function PosterBuilderPage() {
 		const productId = searchParams.get("product_id");
 		if (!productId || products.length === 0) return;
 		const match = products.find((p) => p.id === productId);
-		if (match) setSelectedProduct(match);
-	}, [searchParams, products]);
+		if (match && match.id !== selectedProduct?.id) {
+			setSelectedProduct(match);
+		}
+	}, [searchParams, products, selectedProduct?.id]);
 
 	const loadReadiness = async (product: Product) => {
+		const productChanged = readinessProductRef.current !== product.id;
+		readinessProductRef.current = product.id;
+		autoRecLoadedProductRef.current = null;
 		setLoadingReadiness(true);
 		setError("");
-		setReadiness(null);
-		setPromptPackage(null);
-		setPromptError("");
-		setKits([]);
-		setRecWarnings([]);
-		setRecError("");
+		if (productChanged) {
+			setReadiness(null);
+			setPromptPackage(null);
+			setPromptError("");
+			setKits([]);
+			setRecWarnings([]);
+			setRecError("");
+		}
 		try {
 			const payload = await fetchPosterReadiness(product.id);
 			setReadiness(payload);
@@ -151,20 +161,21 @@ export default function PosterBuilderPage() {
 	const recommendationsEnabled = shellMode !== "hidden";
 
 	const loadRecommendations = useCallback(
-		async (refreshAi = false) => {
+		async (refreshAi = false, draftSnapshot?: PosterBuilderDraft) => {
 			if (!selectedProduct || !recommendationsEnabled) return;
+			const d = draftSnapshot ?? draftRef.current;
 			setRecLoading(true);
 			setRecError("");
 			try {
 				const res = await fetchPosterCopyRecommendations({
 					product_id: selectedProduct.id,
-					poster_objective: draft.poster_objective,
-					poster_type: draft.poster_type,
-					frame_ratio: draft.frame_ratio,
-					language: draft.language,
-					visual_route: draft.visual_route,
-					human_presence_mode: draft.human_presence_mode,
-					text_density: draft.text_density,
+					poster_objective: d.poster_objective,
+					poster_type: d.poster_type,
+					frame_ratio: d.frame_ratio,
+					language: d.language,
+					visual_route: d.visual_route,
+					human_presence_mode: d.human_presence_mode,
+					text_density: d.text_density,
 					refresh_ai: refreshAi,
 				});
 				setKits(res.recommendations ?? []);
@@ -184,24 +195,27 @@ export default function PosterBuilderPage() {
 				setRecLoading(false);
 			}
 		},
-		[selectedProduct, recommendationsEnabled, draft],
+		[selectedProduct?.id, recommendationsEnabled],
 	);
 
 	useEffect(() => {
 		if (
-			recommendationsEnabled &&
-			workingMode !== "manual" &&
-			selectedProduct &&
-			kits.length === 0 &&
-			!recLoading
+			!recommendationsEnabled ||
+			workingMode === "manual" ||
+			!selectedProduct?.id ||
+			recLoading
 		) {
-			void loadRecommendations(false);
+			return;
 		}
+		if (autoRecLoadedProductRef.current === selectedProduct.id) {
+			return;
+		}
+		autoRecLoadedProductRef.current = selectedProduct.id;
+		void loadRecommendations(false, draftRef.current);
 	}, [
 		recommendationsEnabled,
 		workingMode,
 		selectedProduct?.id,
-		kits.length,
 		recLoading,
 		loadRecommendations,
 	]);
@@ -353,7 +367,7 @@ export default function PosterBuilderPage() {
 									loading={recLoading}
 									error={recError}
 									warnings={recWarnings}
-									onRefresh={() => void loadRecommendations(true)}
+									onRefresh={() => void loadRecommendations(true, draftRef.current)}
 									onSelectKit={handleSelectKit}
 									onUseKitForPromptDraft={(kit) => void handleUseKitForPromptDraft(kit)}
 									promptDraftLoading={promptLoading}
