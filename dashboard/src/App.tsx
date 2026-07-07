@@ -3,6 +3,7 @@ import {
 	Briefcase,
 	Film,
 	FolderOpen,
+	Gauge,
 	Image as ImageIcon,
 	Layers,
 	LayoutDashboard,
@@ -40,6 +41,7 @@ import CreativeLibraryPage from "./pages/CreativeLibraryPage";
 import ImgCockpitPage from "./pages/ImgCockpitPage";
 import ImgFastlanePage from "./pages/ImgFastlanePage";
 import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
+import CockpitSettingsPage from "./pages/CockpitSettingsPage";
 import DashboardPage from "./pages/DashboardPage";
 import GalleryPage from "./pages/GalleryPage";
 import LogsPage from "./pages/LogsPage";
@@ -134,6 +136,11 @@ const NAV_GROUPS = [
 				to: "/creative/poster-builder",
 				icon: ImageIcon,
 				label: "Poster Builder",
+			},
+			{
+				to: "/creative/cockpit-settings",
+				icon: Gauge,
+				label: "Cockpit Settings",
 			},
 			{ to: "/products", icon: PackageSearch, label: "Products" },
 			{ to: "/projects", icon: FolderOpen, label: "Projects" },
@@ -526,6 +533,10 @@ function Layout() {
 						<Route
 							path="/creative/poster-builder"
 							element={<PosterBuilderPage />}
+						/>
+						<Route
+							path="/creative/cockpit-settings"
+							element={<CockpitSettingsPage />}
 						/>
 						<Route path="/products" element={<ProductsSalesAnalyzerPage />} />
 						<Route path="/projects" element={<ProjectsPage />} />

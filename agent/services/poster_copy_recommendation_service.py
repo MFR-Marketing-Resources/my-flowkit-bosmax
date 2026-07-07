@@ -353,7 +353,11 @@ class PosterCopyRecommendationService:
             k.source == PosterKitSource.APPROVED_COPY_SET for k in kits
         ) else ""
 
-        if len(kits) < MAX_KITS and (req.refresh_ai or not kits):
+        # AI candidate generation spends provider tokens, so it is EXPLICIT-only:
+        # it fires solely when the operator asks for it (refresh_ai=true), never
+        # silently on auto-load. Products without copy sets fall through to the
+        # deterministic fallback templates below — no hidden credit/token spend.
+        if len(kits) < MAX_KITS and req.refresh_ai:
             ai_kits, ai_warn = await _ai_ephemeral_kits(
                 req, product, settings, MAX_KITS - len(kits)
             )

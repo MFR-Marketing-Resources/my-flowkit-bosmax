@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import PosterBuilderPage from "./PosterBuilderPage";
@@ -56,6 +56,66 @@ vi.mock("../api/imageGenSettings", () => ({
 	}),
 	IMAGE_GEN_SETTINGS_FALLBACK: {},
 }));
+
+vi.mock("../api/posterBuilderSettings", () => {
+	const settings = {
+		poster_objectives: [
+			{ id: "Product awareness", label: "Product awareness", default: true },
+			{ id: "Sales conversion", label: "Sales conversion" },
+		],
+		poster_types: [
+			{ id: "Product-only hero poster", label: "Product-only hero poster", default: true },
+			{ id: "Lifestyle in-use", label: "Lifestyle in-use" },
+		],
+		languages: [
+			{ id: "ms", label: "Malay", default: true },
+			{ id: "en", label: "English" },
+		],
+		visual_routes: [
+			{ id: "Premium commercial", label: "Premium commercial", default: true },
+		],
+		human_presence_modes: [
+			{ id: "No human / product-forward", label: "No human / product-forward", default: true },
+		],
+		text_density_options: [{ id: "medium", label: "Medium", default: true }],
+		flow_mirror: {
+			aspect_ratios: ["9:16", "1:1", "16:9", "4:3", "3:4"],
+			counts: [1, 2, 3, 4],
+			image_models: [{ key: "NANO_BANANA_2", label: "Nano Banana 2", pending: false }],
+			defaults: { aspect_ratio: "9:16", count: 1, image_model: "Nano Banana 2" },
+			source: "models.json",
+		},
+		copy_components: {
+			routes: ["DIRECT", "STEALTH", "REVIEW_REQUIRED"],
+			copy_sets_scope: "product",
+			copy_sets_endpoint: "/api/copy-sets/product/{product_id}",
+			landbank_products: 0,
+			source: "copy_signals+landbank",
+		},
+		ai_provider: {
+			lane: "text_assist",
+			configured: true,
+			status: "configured",
+			provider_id: "deepseek",
+			model_id: "deepseek-chat",
+			execution_enabled: true,
+			source: "ai_provider",
+		},
+		sources: {
+			poster_dimensions: "config",
+			flow_mirror: "models.json",
+			copy_components: "copy_signals+landbank",
+			ai_provider: "ai_provider",
+		},
+	};
+	return {
+		usePosterBuilderSettings: () => settings,
+		fetchPosterBuilderSettings: vi.fn().mockResolvedValue(settings),
+		POSTER_BUILDER_SETTINGS_FALLBACK: settings,
+		defaultOptionId: (opts: { id: string; default?: boolean }[]) =>
+			(opts.find((o) => o.default) ?? opts[0])?.id ?? "",
+	};
+});
 
 import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations";
 import { draftToPromptRequest } from "../api/posterPromptDraft";
@@ -373,5 +433,104 @@ describe("PosterBuilderPage", () => {
 		manualBtn.click();
 		expect(await screen.findByTestId("poster-manual-expert-panel")).toBeInTheDocument();
 		expect(await screen.findByTestId("generate-prompt-draft-button")).toBeInTheDocument();
+	});
+
+	it("Auto mode renders Objective / Poster Type / Language as dropdowns", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		const obj = await screen.findByTestId("poster-objective-select");
+		expect(obj.tagName).toBe("SELECT");
+		expect(screen.getByTestId("poster-type-select").tagName).toBe("SELECT");
+		expect(screen.getByTestId("poster-language-select").tagName).toBe("SELECT");
+		expect(within(obj).getByText("Product awareness")).toBeInTheDocument();
+	});
+
+	it("Auto mode shows always-visible copy draft fields", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		for (const key of ["angle", "hook", "subhook", "usp_1", "usp_2", "usp_3", "cta"]) {
+			expect(await screen.findByTestId(`copy-field-${key}`)).toBeInTheDocument();
+		}
+	});
+
+	it("keeps copy draft fields visible when recommendations fail", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedRecs.mockRejectedValue(new Error("provider down"));
+		renderPage();
+		await waitForReadinessUi();
+		expect(await screen.findByTestId("copy-field-hook")).toBeInTheDocument();
+		expect(await screen.findByTestId("poster-ai-copy-assist")).toBeInTheDocument();
+		expect(await screen.findByText("provider down")).toBeInTheDocument();
+	});
+
+	it("renders the AI Copy Assist section", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		expect(await screen.findByTestId("poster-ai-copy-assist")).toBeInTheDocument();
+		expect(screen.getByTestId("ai-assist-provider-status")).toBeInTheDocument();
+	});
+
+	it("auto-load uses refresh_ai=false; AI Copy Assist uses refresh_ai=true", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		await waitFor(() => expect(mockedRecs).toHaveBeenCalledTimes(1));
+		// Guardrail: the automatic load must NOT spend AI tokens.
+		expect(mockedRecs.mock.calls[0][0]).toEqual(
+			expect.objectContaining({ refresh_ai: false }),
+		);
+		const genBtn = await screen.findByTestId("refresh-poster-recommendations");
+		genBtn.click();
+		await waitFor(() => expect(mockedRecs).toHaveBeenCalledTimes(2));
+		expect(mockedRecs.mock.calls[1][0]).toEqual(
+			expect.objectContaining({ refresh_ai: true }),
+		);
+	});
+
+	it("Apply suggestion fills the visible copy draft fields", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		const applyBtn = await screen.findByTestId("select-kit-k1");
+		applyBtn.click();
+		await waitFor(() => {
+			expect(screen.getByTestId("copy-field-hook")).toHaveValue("Safe hook");
+		});
+	});
+
+	it("Auto mode generate-prompt-draft uses the visible copy fields", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedPromptDraft.mockResolvedValue({
+			product_id: "p1",
+			poster_status: "POSTER_READY",
+			prompt_package_status: "DRAFT_READY",
+			generation_allowed: true,
+			production_allowed: true,
+			restricted_mode: false,
+			poster_prompt: "x",
+			negative_prompt: "",
+			copy_layout: { hook: "", subhook: "", usp: [], cta: "" },
+			visual_instruction: "",
+			text_overlay_instruction: "",
+			product_truth_lock: "",
+			safety_guardrails: [],
+			blocked_reasons: [],
+			repair_actions: [],
+			readiness_meta: {},
+			operator_notes: "",
+		});
+		renderPage();
+		await waitForReadinessUi();
+		const genBtn = await screen.findByTestId("auto-generate-prompt-draft");
+		genBtn.click();
+		await waitFor(() => {
+			expect(mockedDraftToPrompt).toHaveBeenCalledWith(
+				"p1",
+				expect.objectContaining({ poster_objective: "Product awareness" }),
+			);
+		});
 	});
 });

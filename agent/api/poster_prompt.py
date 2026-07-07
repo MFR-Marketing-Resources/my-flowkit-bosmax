@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException
 
+from agent.models.poster_builder_settings import PosterBuilderSettingsResponse
 from agent.models.poster_copy_recommendations import PosterCopyRecommendationRequest
 from agent.models.poster_prompt_draft import PosterPromptDraftRequest
+from agent.services.poster_builder_settings_service import PosterBuilderSettingsService
 from agent.services.poster_copy_recommendation_service import (
     PosterCopyRecommendationService,
 )
@@ -11,6 +13,15 @@ from agent.services.poster_prompt_draft_service import (
 )
 
 router = APIRouter(prefix="/poster", tags=["poster"])
+
+
+@router.get("/builder-settings", response_model=PosterBuilderSettingsResponse)
+async def get_poster_builder_settings() -> PosterBuilderSettingsResponse:
+    """Read-only SSOT for the Poster Builder + Creative Cockpit: poster-dimension
+    option lists, Flow Mirror image settings (from models.json), copy-component
+    availability, and text_assist AI-provider status. No mutation, no generation,
+    no token spend."""
+    return PosterBuilderSettingsService.build_settings()
 
 
 @router.post("/prompt-draft")

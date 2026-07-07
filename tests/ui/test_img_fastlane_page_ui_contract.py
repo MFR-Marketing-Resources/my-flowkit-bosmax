@@ -231,11 +231,17 @@ def test_image_gen_settings_are_a_shared_ssot():
     """Aspect / count / image-model options must come from ONE shared config
     (image-gen settings SSOT), not per-page hardcoded copies, so every image-gen
     page holds identical settings."""
-    # Backend SSOT endpoint, derived from models.json.
+    # Backend SSOT endpoint, derived from models.json. The option lists live in
+    # ONE shared builder (build_image_gen_settings) that the route delegates to,
+    # so other surfaces (e.g. the Poster/Creative Cockpit) read the exact same
+    # source instead of duplicating it.
     api = _read("agent/api/img_factory.py")
     assert '"/image-gen-settings"' in api
-    assert "aspect_options" in api and "count_options" in api
-    assert "IMAGE_MODELS" in api
+    assert "build_image_gen_settings" in api
+    builder = _read("agent/services/img_asset_factory_service.py")
+    assert "def build_image_gen_settings" in builder
+    assert "aspect_options" in builder and "count_options" in builder
+    assert "IMAGE_MODELS" in builder
     # Shared frontend module + hook.
     shared = _read("dashboard/src/api/imageGenSettings.ts")
     assert "useImageGenSettings" in shared
