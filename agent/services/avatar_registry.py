@@ -212,3 +212,146 @@ def resolve_presenter(
     digest = hashlib.sha256(str(seed or "bosmax-default").encode("utf-8")).hexdigest()
     index = int(digest[:8], 16) % len(candidates)
     return _normalize_profile(candidates[index])
+
+
+# ── Manual single-row add + AI auto-generate support (additive). Both paths write
+# through the EXISTING fail-closed sync_pool_csv() door so REQUIRED_COLUMNS +
+# uniqueness validation and the runtime bridge/reload stay authoritative.
+
+_CODE_RE = re.compile(r"^BOS_[FM]_[A-Z0-9]+(?:_[A-Z0-9]+)*_[0-9]{2,}$")
+
+
+def add_avatar(row: dict) -> dict:
+    """Single-row add WITHOUT a CSV upload.
+
+    Reads the active pool, requires row['AvatarCode'] (case-insensitive uniqueness),
+    builds a full row for EVERY header column, then writes the whole table back
+    through the EXISTING fail-closed sync_pool_csv() door (which re-validates
+    REQUIRED_COLUMNS + uniqueness, installs the bridge, and reloads the cache)."""
+    import io
+
+    new_code = str(row.get("AvatarCode") or "").strip()
+    if not new_code:
+        raise ValueError("AVATAR_CODE_REQUIRED")
+
+    with open(_active_pool_file(), encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        header = list(reader.fieldnames or [])
+        existing = list(reader)
+
+    for existing_row in existing:
+        if str(existing_row.get("AvatarCode") or "").strip().casefold() == new_code.casefold():
+            raise ValueError(f"AVATAR_CODE_EXISTS:{new_code}")
+
+    full_row = {column: str(row.get(column, "") or "") for column in header}
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=header)
+    writer.writeheader()
+    for existing_row in existing:
+        writer.writerow({column: str(existing_row.get(column, "") or "") for column in header})
+    writer.writerow(full_row)
+    return sync_pool_csv(buffer.getvalue().encode("utf-8"))
+
+
+def descriptor_key(profile: dict, gender: str | None = None) -> tuple[str, ...]:
+    """Lowercased descriptor tuple (skin_tone, hair_style, wardrobe, expression,
+    gender_word) used to detect duplicate avatars. gender_word derives from the
+    avatar_code, or falls back to a passed gender ('F'/'M' or a plain word)."""
+    gender_word = _gender_word(str(profile.get("avatar_code") or ""))
+    if gender_word == "adult" and gender:
+        g = str(gender).strip().upper()
+        gender_word = "woman" if g == "F" else "man" if g == "M" else str(gender).strip().lower()
+    return (
+        str(profile.get("skin_tone") or "").strip().lower(),
+        str(profile.get("hair_style") or "").strip().lower(),
+        str(profile.get("wardrobe") or "").strip().lower(),
+        str(profile.get("expression") or "").strip().lower(),
+        gender_word,
+    )
+
+
+def find_duplicate_avatar(
+    skin_tone: str, hair_style: str, wardrobe: str, expression: str, gender: str
+) -> dict | None:
+    """Return the first pool profile whose descriptor_key equals the given one
+    (case-insensitive), else None."""
+    g = str(gender or "").strip().upper()
+    gender_word = "woman" if g == "F" else "man" if g == "M" else str(gender or "").strip().lower()
+    wanted = (
+        str(skin_tone or "").strip().lower(),
+        str(hair_style or "").strip().lower(),
+        str(wardrobe or "").strip().lower(),
+        str(expression or "").strip().lower(),
+        gender_word,
+    )
+    for profile in list_pool():
+        if descriptor_key(profile, gender=gender) == wanted:
+            return profile
+    return None
+
+
+def _slugify(text: str) -> str:
+    """Uppercased alnum slug: non-alnum -> '_', collapsed repeats, no edge '_'."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", str(text or "")).strip("_").upper()
+    return slug
+
+
+def next_avatar_code(gender: str, descriptor: str) -> str:
+    """Build BOS_{F|M}_{SLUG}_{NN}. NN = 2-digit (max existing NN for that
+    BOS_{F|M}_{SLUG}_ prefix + 1, else '01'). Matches the canonical code regex."""
+    g = str(gender or "").strip().upper()
+    if g not in ("F", "M"):
+        raise ValueError(f"AVATAR_GENDER_INVALID:{gender}")
+    slug = _slugify(descriptor)
+    if not slug:
+        raise ValueError("AVATAR_DESCRIPTOR_EMPTY")
+    prefix = f"BOS_{g}_{slug}_"
+    max_nn = 0
+    for row in _load_pool():
+        code = str(row.get("AvatarCode") or "").strip().upper()
+        if code.startswith(prefix):
+            tail = code[len(prefix):]
+            if tail.isdigit():
+                max_nn = max(max_nn, int(tail))
+    code = f"{prefix}{max_nn + 1:02d}"
+    if not _CODE_RE.match(code):
+        raise ValueError(f"AVATAR_CODE_MALFORMED:{code}")
+    return code
+
+
+def build_avatar_prompt_v1(profile: dict) -> str:
+    """The image-gen PromptV1, mirroring the seed-row format in
+    AVATAR_POOL_NORMALIZED.csv (Identity/Code included, matching the seed style)."""
+    name = str(profile.get("CharacterName") or profile.get("character_name") or "").strip()
+    code = str(profile.get("AvatarCode") or profile.get("avatar_code") or "").strip()
+    gender_word = _gender_word(code)
+    demographic = "Female" if gender_word == "woman" else "Male" if gender_word == "man" else "Adult"
+    skin = str(profile.get("SkinTone") or profile.get("skin_tone") or "").strip()
+    hair = str(profile.get("HairStyle") or profile.get("hair_style") or "").strip()
+    wardrobe = str(profile.get("Wardrobe") or profile.get("wardrobe") or "").strip()
+    expression = str(profile.get("Expression") or profile.get("expression") or "").strip()
+    environment = str(profile.get("Environment") or profile.get("environment") or "").strip()
+    lighting = str(profile.get("Lighting") or profile.get("lighting") or "").strip()
+    camera = str(profile.get("Camera") or profile.get("camera") or "").strip()
+    hijab = bool(profile.get("hijab"))
+
+    styling = wardrobe
+    if hijab:
+        styling = f"{styling}, wearing a hijab/tudung" if styling else "wearing a hijab/tudung"
+
+    return (
+        "Create a photorealistic avatar reference image. "
+        f"Identity: {name}, Code: {code}. "
+        f"Demographic: {demographic}, Young Adult, Malay/SEA market fit. "
+        f"Skin tone: {skin or 'Light-medium'}. Hair: {hair or 'Medium tidy'}. "
+        f"Styling: {styling or 'Smart casual wear'}. "
+        f"Expression: {expression or 'Calm neutral'}. Pose: Relaxed, natural. "
+        f"Environment: {environment or 'clean commercial'}, "
+        f"{lighting or 'balanced commercial'} lighting. "
+        f"Camera framing: {camera or 'Waist-up'}, clear face. "
+        "Safety: Do not generate nudity, sexual content, gore, violence, hate "
+        "symbols, illegal activity, or any harmful or unsafe depiction. Keep the "
+        "character fully clothed, respectful, and suitable for general audience "
+        "and commercial use."
+    )

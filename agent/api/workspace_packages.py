@@ -375,6 +375,189 @@ async def avatar_registry_status():
     }
 
 
+# ── Manual add + AI auto-generate (additive). Both build a full pool row and add
+# it through the fail-closed avatar_registry.add_avatar() door. Redundancy on the
+# descriptor tuple fails closed with 409 so the pool never gains a duplicate face.
+
+class AvatarManualAddRequest(BaseModel):
+    character_name: str
+    gender: str = Field(pattern="^[FM]$")
+    skin_tone: str
+    hair_style: str
+    wardrobe: str
+    hijab: bool = False
+    expression: str
+    environment: str | None = None
+    lighting: str | None = None
+    camera: str | None = None
+    usage_tags: str | None = None
+
+
+def _build_avatar_pool_row(avatar_registry, payload: dict) -> tuple[str, dict]:
+    """Build (avatar_code, full pool row dict) from a validated manual/AI payload."""
+    descriptor = f"{payload['character_name']} {payload['wardrobe']}"
+    avatar_code = avatar_registry.next_avatar_code(payload["gender"], descriptor)
+    prompt_profile = {
+        "CharacterName": payload["character_name"],
+        "AvatarCode": avatar_code,
+        "SkinTone": payload["skin_tone"],
+        "HairStyle": payload["hair_style"],
+        "Wardrobe": payload["wardrobe"],
+        "Expression": payload["expression"],
+        "Environment": payload.get("environment") or "",
+        "Lighting": payload.get("lighting") or "",
+        "Camera": payload.get("camera") or "",
+        "hijab": bool(payload.get("hijab")),
+    }
+    prompt_v1 = avatar_registry.build_avatar_prompt_v1(prompt_profile)
+    row = {
+        "CharacterName": payload["character_name"],
+        "Variant": "",
+        "AvatarCode": avatar_code,
+        "SkinTone": payload["skin_tone"],
+        "HairStyle": payload["hair_style"],
+        "Wardrobe": payload["wardrobe"],
+        "Environment": payload.get("environment") or "",
+        "Lighting": payload.get("lighting") or "",
+        "Camera": payload.get("camera") or "",
+        "Expression": payload["expression"],
+        "SafetyBlock": "STANDARD_SAFETY_BLOCK",
+        "PromptV1": prompt_v1,
+        "approved_flag": "TRUE",
+        "usage_tags": str(payload.get("usage_tags") or "").strip(),
+    }
+    return avatar_code, row
+
+
+@router.post("/avatar-registry/add-manual")
+async def avatar_registry_add_manual(request: AvatarManualAddRequest):
+    """Manual single-avatar add. Fail-closed 409 on a redundant descriptor
+    (same skin+hair+wardrobe+expression+gender combo already in the pool)."""
+    from agent.services import avatar_registry
+    existing = avatar_registry.find_duplicate_avatar(
+        request.skin_tone, request.hair_style, request.wardrobe,
+        request.expression, request.gender)
+    if existing is not None:
+        raise HTTPException(409, f"AVATAR_REDUNDANT:{existing['avatar_code']}")
+    avatar_code, row = _build_avatar_pool_row(avatar_registry, request.model_dump())
+    try:
+        avatar_registry.add_avatar(row)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"avatar_code": avatar_code, "character_name": request.character_name,
+            "redundant": False}
+
+
+class AvatarAutoGenRequest(BaseModel):
+    brief: str | None = None
+    gender: str | None = None
+    hijab: bool | None = None
+
+
+_AVATAR_AI_REQUIRED_KEYS = (
+    "character_name", "gender", "skin_tone", "hair_style", "wardrobe",
+    "expression",
+)
+
+
+def _coerce_ai_avatar_profile(data: dict) -> dict | None:
+    """Validate + coerce the AI-returned dict into a manual-add payload, or None
+    if required keys are missing. usage_tags array → pipe-delimited string."""
+    if not isinstance(data, dict):
+        return None
+    if any(not str(data.get(key) or "").strip() for key in _AVATAR_AI_REQUIRED_KEYS):
+        return None
+    gender = str(data.get("gender") or "").strip().upper()
+    if gender not in ("F", "M"):
+        return None
+    usage_tags = data.get("usage_tags")
+    if isinstance(usage_tags, list):
+        usage_tags = "|".join(str(t).strip() for t in usage_tags if str(t).strip())
+    return {
+        "character_name": str(data["character_name"]).strip(),
+        "gender": gender,
+        "skin_tone": str(data["skin_tone"]).strip(),
+        "hair_style": str(data["hair_style"]).strip(),
+        "wardrobe": str(data["wardrobe"]).strip(),
+        "hijab": bool(data.get("hijab")),
+        "expression": str(data["expression"]).strip(),
+        "environment": str(data.get("environment") or "").strip() or None,
+        "lighting": str(data.get("lighting") or "").strip() or None,
+        "camera": str(data.get("camera") or "").strip() or None,
+        "usage_tags": str(usage_tags or "").strip() or None,
+    }
+
+
+@router.post("/avatar-registry/auto-generate")
+async def avatar_registry_auto_generate(request: AvatarAutoGenRequest):
+    """AI auto-generate ONE non-duplicate avatar profile via the configured
+    text_assist lane. Fail-closed: 503 if the lane is unconfigured, 502 on invalid
+    AI JSON, 409 if the AI keeps returning a duplicate after one stronger retry."""
+    from agent.services import ai_copy_provider_adapter
+    from agent.services import avatar_registry
+    if not ai_copy_provider_adapter.is_configured():
+        raise HTTPException(503, "TEXT_ASSIST_NOT_CONFIGURED")
+
+    existing_descriptors = ", ".join(
+        "+".join(avatar_registry.descriptor_key(p)) for p in avatar_registry.list_pool()
+    )
+    system = (
+        "You generate ONE Malaysian commercial UGC avatar profile as STRICT JSON. "
+        "Avoid duplicating any of these existing avatars (do NOT repeat the same "
+        "skin+hair+wardrobe+expression combo): " + existing_descriptors + ". "
+        "Return JSON keys: character_name, gender('F'|'M'), skin_tone, hair_style, "
+        "wardrobe, hijab(bool), expression, environment, lighting, camera, "
+        "usage_tags(array of strings)."
+    )
+    constraints = []
+    if request.gender:
+        constraints.append(f"gender must be '{str(request.gender).strip().upper()}'")
+    if request.hijab is not None:
+        constraints.append(f"hijab must be {bool(request.hijab)}")
+    user = str(request.brief or "Generate a fresh commercial UGC avatar.")
+    if constraints:
+        user += "\nConstraints: " + "; ".join(constraints) + "."
+
+    try:
+        raw = ai_copy_provider_adapter.complete_json(system, user)
+    except ai_copy_provider_adapter.AICopyProviderNotConfigured as exc:
+        raise HTTPException(503, "TEXT_ASSIST_NOT_CONFIGURED") from exc
+    except ai_copy_provider_adapter.AICopyProviderError as exc:
+        raise HTTPException(502, "AI_AVATAR_GENERATION_FAILED") from exc
+
+    payload = _coerce_ai_avatar_profile(raw)
+    if payload is None:
+        raise HTTPException(502, "AI_AVATAR_INVALID")
+
+    duplicate = avatar_registry.find_duplicate_avatar(
+        payload["skin_tone"], payload["hair_style"], payload["wardrobe"],
+        payload["expression"], payload["gender"])
+    if duplicate is not None:
+        retry_user = user + (
+            "\nThe previous result duplicated an existing avatar. You MUST return a "
+            "DISTINCT skin+hair+wardrobe+expression combination not already listed.")
+        try:
+            raw = ai_copy_provider_adapter.complete_json(system, retry_user)
+        except ai_copy_provider_adapter.AICopyProviderError as exc:
+            raise HTTPException(502, "AI_AVATAR_GENERATION_FAILED") from exc
+        payload = _coerce_ai_avatar_profile(raw)
+        if payload is None:
+            raise HTTPException(502, "AI_AVATAR_INVALID")
+        duplicate = avatar_registry.find_duplicate_avatar(
+            payload["skin_tone"], payload["hair_style"], payload["wardrobe"],
+            payload["expression"], payload["gender"])
+        if duplicate is not None:
+            raise HTTPException(409, "AVATAR_REDUNDANT_AI")
+
+    avatar_code, row = _build_avatar_pool_row(avatar_registry, payload)
+    try:
+        avatar_registry.add_avatar(row)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"avatar_code": avatar_code, "character_name": payload["character_name"],
+            "generated": True}
+
+
 # ── Avatar Registry CSV Factory: seed-schema candidate CSVs go through
 # validate -> stage -> operator review -> export/sync. Candidates NEVER write
 # the runtime bridge directly; sync merges approved rows through the existing

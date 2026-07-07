@@ -33,6 +33,16 @@ export default function SceneContextRegistryPage() {
 	const [count, setCount] = useState<number>(1);
 	const [imageModel, setImageModel] = useState<string>("Nano Banana 2");
 
+	// Create Scene — manual add + AI auto-generate (mirror of avatar registry).
+	const [manualScene, setManualScene] = useState({
+		scene_name: "",
+		background_prompt: "",
+		usage_tags: "",
+	});
+	const [isAddingManual, setIsAddingManual] = useState(false);
+	const [autoBrief, setAutoBrief] = useState("");
+	const [isAutoGenerating, setIsAutoGenerating] = useState(false);
+
 	const refresh = useCallback(async () => {
 		setLoading(true);
 		try {
@@ -106,6 +116,90 @@ export default function SceneContextRegistryPage() {
 			delete next[sceneCode];
 			return next;
 		});
+	};
+
+	const handleAddManualScene = async () => {
+		if (!manualScene.scene_name.trim() || !manualScene.background_prompt.trim()) {
+			setError("scene_name dan background_prompt wajib diisi.");
+			return;
+		}
+		setIsAddingManual(true);
+		setError(null);
+		setSuccessMsg(null);
+		try {
+			const response = await fetch(
+				"/api/workspace/scene-context-registry/add-manual",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						scene_name: manualScene.scene_name.trim(),
+						background_prompt: manualScene.background_prompt.trim(),
+						usage_tags: manualScene.usage_tags.trim() || undefined,
+					}),
+				},
+			);
+			const data = await response.json();
+			if (!response.ok) {
+				const detail = String(data?.detail || `HTTP ${response.status}`);
+				if (response.status === 409 && detail.startsWith("SCENE_REDUNDANT")) {
+					throw new Error("Scene serupa sudah wujud");
+				}
+				throw new Error(detail);
+			}
+			setSuccessMsg(`Scene ${data.scene_code} ditambah`);
+			setManualScene({ scene_name: "", background_prompt: "", usage_tags: "" });
+			await refresh();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Manual scene add failed.");
+		} finally {
+			setIsAddingManual(false);
+		}
+	};
+
+	const handleAutoGenerateScene = async () => {
+		setIsAutoGenerating(true);
+		setError(null);
+		setSuccessMsg(null);
+		try {
+			const body: Record<string, unknown> = {};
+			if (autoBrief.trim()) body.brief = autoBrief.trim();
+			const response = await fetch(
+				"/api/workspace/scene-context-registry/auto-generate",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body),
+				},
+			);
+			const data = await response.json();
+			if (!response.ok) {
+				const detail = String(data?.detail || `HTTP ${response.status}`);
+				if (response.status === 503) {
+					throw new Error(
+						"AI text provider belum diset. Set di AI Provider Settings (lane text_assist) dahulu.",
+					);
+				}
+				if (response.status === 409) {
+					throw new Error(
+						"AI hasilkan scene yang serupa sedia ada — cuba brief lain.",
+					);
+				}
+				if (response.status === 502) {
+					throw new Error("Penjanaan AI gagal / respons tak sah.");
+				}
+				throw new Error(detail);
+			}
+			setSuccessMsg(`Scene ${data.scene_code} dijana`);
+			setAutoBrief("");
+			await refresh();
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : "AI scene auto-generate failed.",
+			);
+		} finally {
+			setIsAutoGenerating(false);
+		}
 	};
 
 	const handleGenerateImage = async (scene: SceneProfile) => {
@@ -227,6 +321,109 @@ export default function SceneContextRegistryPage() {
 					{successMsg}
 				</div>
 			)}
+
+			{/* Create Scene — manual add + AI auto-generate */}
+			<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
+				<div className="mb-3">
+					<h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
+						Create Scene
+					</h2>
+					<p className="mt-1 text-xs text-slate-400">
+						Tambah scene tunggal secara manual, atau biar AI jana satu scene
+						baharu (bukan duplikat) terus ke pool.
+					</p>
+				</div>
+				<div className="grid gap-4 md:grid-cols-2">
+					{/* A) Manual add */}
+					<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+						<div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+							Manual add
+						</div>
+						<label className="block text-[10px] text-slate-400">
+							<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+								Scene name
+							</span>
+							<input
+								value={manualScene.scene_name}
+								onChange={(e) =>
+									setManualScene((s) => ({ ...s, scene_name: e.target.value }))
+								}
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+							/>
+						</label>
+						<label className="mt-3 block text-[10px] text-slate-400">
+							<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+								Background prompt
+							</span>
+							<textarea
+								value={manualScene.background_prompt}
+								onChange={(e) =>
+									setManualScene((s) => ({
+										...s,
+										background_prompt: e.target.value,
+									}))
+								}
+								rows={3}
+								placeholder="Background: ..."
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+							/>
+						</label>
+						<label className="mt-3 block text-[10px] text-slate-400">
+							<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+								Usage tags (optional)
+							</span>
+							<input
+								value={manualScene.usage_tags}
+								onChange={(e) =>
+									setManualScene((s) => ({ ...s, usage_tags: e.target.value }))
+								}
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+							/>
+						</label>
+						<button
+							type="button"
+							disabled={isAddingManual}
+							onClick={() => void handleAddManualScene()}
+							className="mt-3 w-full rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/20 disabled:opacity-50"
+						>
+							{isAddingManual ? "Menambah..." : "+ Tambah Scene"}
+						</button>
+					</div>
+
+					{/* B) AI auto-generate */}
+					<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+						<div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+							AI auto-generate
+						</div>
+						<label className="block text-[10px] text-slate-400">
+							<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+								Brief
+							</span>
+							<textarea
+								value={autoBrief}
+								onChange={(e) => setAutoBrief(e.target.value)}
+								rows={3}
+								placeholder="Ringkasan: cth 'dapur moden cerah untuk demo produk penjagaan kulit'"
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+							/>
+						</label>
+						<button
+							type="button"
+							disabled={isAutoGenerating}
+							onClick={() => void handleAutoGenerateScene()}
+							className="mt-3 w-full rounded-xl border border-purple-500/30 bg-purple-500/10 px-4 py-2 text-sm font-semibold text-purple-100 hover:bg-purple-500/20 disabled:opacity-50"
+						>
+							{isAutoGenerating
+								? "Menjana scene..."
+								: "🤖 Auto-generate Scene"}
+						</button>
+						<div className="mt-2 text-[10px] text-slate-500">
+							Guna lane text_assist (AI Provider Settings). Boleh ambil masa
+							beberapa saat.
+						</div>
+					</div>
+				</div>
+			</section>
 
 			{loading ? (
 				<div className="text-sm text-slate-400">Loading scene contexts…</div>

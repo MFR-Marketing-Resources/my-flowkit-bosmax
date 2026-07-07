@@ -52,6 +52,32 @@ def test_csv_factory_surfaces_validation_report():
     assert "disabled={isFactoryBusy || !row.valid}" in src
 
 
+def test_create_avatar_manual_add_wired():
+    """The Create Avatar card must expose a manual-add form wired to the
+    add-manual endpoint with fail-closed redundancy messaging."""
+    src = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
+    assert "Create Avatar" in src
+    assert "/api/workspace/avatar-registry/add-manual" in src
+    assert "handleAddManualAvatar" in src
+    # Fail-closed redundancy surface (409 AVATAR_REDUNDANT).
+    assert "AVATAR_REDUNDANT" in src
+    assert "Avatar serupa sudah wujud" in src
+
+
+def test_create_avatar_auto_generate_wired():
+    """The Create Avatar card must expose an AI auto-generate action wired to
+    the auto-generate endpoint with fail-closed 503/409/502 messaging."""
+    src = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
+    assert "/api/workspace/avatar-registry/auto-generate" in src
+    assert "handleAutoGenerateAvatar" in src
+    assert "Auto-generate Avatar" in src
+    # 503 must point operators to the AI Provider Settings text_assist lane.
+    assert "AI Provider Settings" in src
+    assert "text_assist" in src
+    # Loading state while the LLM call is in flight.
+    assert "isAutoGenerating" in src
+
+
 def test_legacy_direct_sync_is_demoted_and_warned():
     """The legacy /avatar-registry/sync path must be explicitly labelled as
     legacy and warn that it bypasses the CSV Factory, so operators do not

@@ -279,3 +279,13 @@ def generate_candidate(brief: str) -> dict[str, Any]:
         raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
     message_text = _complete(build_messages(brief))
     return _extract_json_object(message_text)
+
+
+def complete_json(system: str, user: str) -> dict[str, Any]:
+    """Generic structured-JSON call via the configured text_assist lane. Fail-closed
+    when the lane is unconfigured (raises AICopyProviderNotConfigured). Reuses the
+    SAME provider/key/model/transport as copy — no new secrets, no hardcoded model."""
+    if not is_configured():
+        raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
+    text = _complete([{"role": "system", "content": system}, {"role": "user", "content": user}])
+    return _extract_json_object(text)

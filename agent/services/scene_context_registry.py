@@ -187,3 +187,97 @@ def resolve_scene_context(
     digest = hashlib.sha256(str(seed or "bosmax-scene-default").encode("utf-8")).hexdigest()
     index = int(digest[:8], 16) % len(candidates)
     return _normalize_profile(candidates[index])
+
+
+# ── Manual single-row add + AI auto-generate support (additive, mirror of
+# avatar_registry). Both paths write through the EXISTING fail-closed sync_pool_csv()
+# door so REQUIRED_COLUMNS + uniqueness stay authoritative.
+
+
+def _normalize_text(text: str) -> str:
+    """Lowercased, whitespace-collapsed comparison key."""
+    return " ".join(str(text or "").strip().lower().split())
+
+
+def add_scene(row: dict) -> dict:
+    """Single-row add WITHOUT a CSV upload. Requires row['SceneCode']
+    (case-insensitive uniqueness), builds a full row for EVERY header column, then
+    writes the whole table back through the EXISTING fail-closed sync_pool_csv()."""
+    new_code = str(row.get("SceneCode") or "").strip()
+    if not new_code:
+        raise ValueError("SCENE_CODE_REQUIRED")
+
+    with open(_active_pool_file(), encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        header = list(reader.fieldnames or [])
+        existing = list(reader)
+
+    for existing_row in existing:
+        if str(existing_row.get("SceneCode") or "").strip().casefold() == new_code.casefold():
+            raise ValueError(f"SCENE_CODE_EXISTS:{new_code}")
+
+    full_row = {column: str(row.get(column, "") or "") for column in header}
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=header)
+    writer.writeheader()
+    for existing_row in existing:
+        writer.writerow({column: str(existing_row.get(column, "") or "") for column in header})
+    writer.writerow(full_row)
+    return sync_pool_csv(buffer.getvalue().encode("utf-8"))
+
+
+def find_duplicate_scene(scene_name: str, background_prompt: str) -> dict | None:
+    """Return the first pool profile that matches on normalized scene_name OR on
+    identical normalized background text, else None."""
+    wanted_name = _normalize_text(scene_name)
+    wanted_bg = _normalize_text(background_prompt)
+    for profile in list_pool():
+        if wanted_name and _normalize_text(profile.get("scene_name")) == wanted_name:
+            return profile
+        if wanted_bg and _normalize_text(profile.get("background_prompt")) == wanted_bg:
+            return profile
+    return None
+
+
+def _slugify(text: str) -> str:
+    """Uppercased alnum slug: non-alnum -> '_', collapsed repeats, no edge '_'."""
+    return re.sub(r"[^A-Za-z0-9]+", "_", str(text or "")).strip("_").upper()
+
+
+def next_scene_code(name: str) -> str:
+    """SCN_{SLUG}; append _NN if that base (or an _NN sibling) already exists."""
+    slug = _slugify(name)
+    if not slug:
+        raise ValueError("SCENE_NAME_EMPTY")
+    base = f"SCN_{slug}"
+    existing_codes = {
+        str(row.get("SceneCode") or "").strip().upper() for row in _load_pool()
+    }
+    if base not in existing_codes:
+        return base
+    n = 2
+    while f"{base}_{n:02d}" in existing_codes:
+        n += 1
+    return f"{base}_{n:02d}"
+
+
+def build_scene_prompt_v1(name: str, background: str) -> str:
+    """The clean empty-plate scene PromptV1, mirroring the seed-row format in
+    SCENE_CONTEXT_POOL.csv (empty environment, no people/product, no rendered text)."""
+    bg = str(background or "").strip()
+    # BackgroundPrompt cells are stored as "Background: ..."; the PromptV1 embeds the
+    # bare description after "Scene: {name}." — strip a leading "Background:" label.
+    if bg.lower().startswith("background:"):
+        bg = bg.split(":", 1)[1].strip()
+    bg = bg.rstrip(". ")
+    return (
+        "Create a photorealistic empty background scene reference plate for "
+        f"commercial compositing. Scene: {str(name or '').strip()}. {bg}. "
+        "Empty environment — no people and no product in frame — a clean "
+        "commercial background plate suitable as a scene/style reference for later "
+        "compositing a presenter and product. Natural depth, perspective, and "
+        "lighting exactly as described. No rendered text, captions, headlines, "
+        "logos-as-text, price tags, watermark, sticker, or UI chrome — a clean "
+        "plate only."
+    )

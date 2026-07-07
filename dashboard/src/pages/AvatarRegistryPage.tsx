@@ -125,6 +125,24 @@ export default function AvatarRegistryPage() {
 	const [isImporting, setIsImporting] = useState(false);
 	const [isFactoryBusy, setIsFactoryBusy] = useState(false);
 
+	// Create Avatar — manual add + AI auto-generate (wired to add-manual /
+	// auto-generate). Both add through the fail-closed pool door; redundancy
+	// fails closed (409) and the AI lane can be unconfigured (503).
+	const [manualForm, setManualForm] = useState({
+		character_name: "",
+		gender: "F",
+		skin_tone: "",
+		hair_style: "",
+		wardrobe: "",
+		hijab: false,
+		expression: "",
+	});
+	const [isAddingManual, setIsAddingManual] = useState(false);
+	const [autoBrief, setAutoBrief] = useState("");
+	const [autoGender, setAutoGender] = useState("");
+	const [autoHijab, setAutoHijab] = useState(false);
+	const [isAutoGenerating, setIsAutoGenerating] = useState(false);
+
 	const refresh = useCallback(async () => {
 		setIsLoading(true);
 		setError(null);
@@ -150,6 +168,107 @@ export default function AvatarRegistryPage() {
 	useEffect(() => {
 		setCurrentPage(1);
 	}, []);
+
+	const handleAddManualAvatar = async () => {
+		if (!manualForm.character_name.trim()) {
+			setError("Nama karakter (character_name) wajib diisi.");
+			return;
+		}
+		setIsAddingManual(true);
+		setError(null);
+		setSuccessMsg(null);
+		try {
+			const response = await fetch(
+				"/api/workspace/avatar-registry/add-manual",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						character_name: manualForm.character_name.trim(),
+						gender: manualForm.gender,
+						skin_tone: manualForm.skin_tone.trim(),
+						hair_style: manualForm.hair_style.trim(),
+						wardrobe: manualForm.wardrobe.trim(),
+						hijab: manualForm.hijab,
+						expression: manualForm.expression.trim(),
+					}),
+				},
+			);
+			const data = await response.json();
+			if (!response.ok) {
+				const detail = String(data?.detail || `HTTP ${response.status}`);
+				if (response.status === 409 && detail.startsWith("AVATAR_REDUNDANT")) {
+					const code = detail.split(":")[1] || "";
+					throw new Error(
+						`Avatar serupa sudah wujud (${code}) — ubah ciri (muka/pakaian).`,
+					);
+				}
+				throw new Error(detail);
+			}
+			setSuccessMsg(`Avatar ${data.avatar_code} ditambah`);
+			setManualForm({
+				character_name: "",
+				gender: "F",
+				skin_tone: "",
+				hair_style: "",
+				wardrobe: "",
+				hijab: false,
+				expression: "",
+			});
+			await refresh();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Manual avatar add failed.");
+		} finally {
+			setIsAddingManual(false);
+		}
+	};
+
+	const handleAutoGenerateAvatar = async () => {
+		setIsAutoGenerating(true);
+		setError(null);
+		setSuccessMsg(null);
+		try {
+			const body: Record<string, unknown> = {};
+			if (autoBrief.trim()) body.brief = autoBrief.trim();
+			if (autoGender) body.gender = autoGender;
+			if (autoHijab) body.hijab = true;
+			const response = await fetch(
+				"/api/workspace/avatar-registry/auto-generate",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body),
+				},
+			);
+			const data = await response.json();
+			if (!response.ok) {
+				const detail = String(data?.detail || `HTTP ${response.status}`);
+				if (response.status === 503) {
+					throw new Error(
+						"AI text provider belum diset. Set di AI Provider Settings (lane text_assist) dahulu.",
+					);
+				}
+				if (response.status === 409) {
+					throw new Error(
+						"AI hasilkan avatar yang serupa sedia ada — cuba brief lain.",
+					);
+				}
+				if (response.status === 502) {
+					throw new Error("Penjanaan AI gagal / respons tak sah.");
+				}
+				throw new Error(detail);
+			}
+			setSuccessMsg(`Avatar ${data.avatar_code} dijana`);
+			setAutoBrief("");
+			await refresh();
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : "AI avatar auto-generate failed.",
+			);
+		} finally {
+			setIsAutoGenerating(false);
+		}
+	};
 
 	const handleSyncUpload = async (file: File) => {
 		const confirmed = window.confirm(
@@ -566,6 +685,187 @@ export default function AvatarRegistryPage() {
 						{successMsg}
 					</div>
 				)}
+			</section>
+
+			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+				<div className="mb-4">
+					<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
+						Create Avatar
+					</div>
+					<div className="mt-1 text-xs text-slate-400">
+						Tambah avatar tunggal secara manual, atau biar AI jana satu
+						profil baharu (bukan duplikat) terus ke pool.
+					</div>
+				</div>
+				<div className="grid gap-4 md:grid-cols-2">
+					{/* A) Manual add */}
+					<div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
+						<div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+							Manual add
+						</div>
+						<div className="grid grid-cols-2 gap-3">
+							<label className="col-span-2 text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Character name
+								</span>
+								<input
+									value={manualForm.character_name}
+									onChange={(e) =>
+										setManualForm((f) => ({
+											...f,
+											character_name: e.target.value,
+										}))
+									}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								/>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Gender
+								</span>
+								<select
+									value={manualForm.gender}
+									onChange={(e) =>
+										setManualForm((f) => ({ ...f, gender: e.target.value }))
+									}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								>
+									<option value="F">F</option>
+									<option value="M">M</option>
+								</select>
+							</label>
+							<label className="flex items-center gap-2 pt-5 text-[10px] text-slate-400">
+								<input
+									type="checkbox"
+									checked={manualForm.hijab}
+									onChange={(e) =>
+										setManualForm((f) => ({ ...f, hijab: e.target.checked }))
+									}
+									className="rounded border-slate-700 bg-slate-950"
+								/>
+								<span className="font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Hijab
+								</span>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Skin tone
+								</span>
+								<input
+									value={manualForm.skin_tone}
+									onChange={(e) =>
+										setManualForm((f) => ({ ...f, skin_tone: e.target.value }))
+									}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								/>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Hair style
+								</span>
+								<input
+									value={manualForm.hair_style}
+									onChange={(e) =>
+										setManualForm((f) => ({ ...f, hair_style: e.target.value }))
+									}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								/>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Wardrobe
+								</span>
+								<input
+									value={manualForm.wardrobe}
+									onChange={(e) =>
+										setManualForm((f) => ({ ...f, wardrobe: e.target.value }))
+									}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								/>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Expression
+								</span>
+								<input
+									value={manualForm.expression}
+									onChange={(e) =>
+										setManualForm((f) => ({ ...f, expression: e.target.value }))
+									}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								/>
+							</label>
+						</div>
+						<button
+							type="button"
+							disabled={isAddingManual}
+							onClick={() => void handleAddManualAvatar()}
+							className="mt-3 w-full rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/20 disabled:opacity-50"
+						>
+							{isAddingManual ? "Menambah..." : "+ Tambah Avatar"}
+						</button>
+					</div>
+
+					{/* B) AI auto-generate */}
+					<div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
+						<div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+							AI auto-generate
+						</div>
+						<label className="block text-[10px] text-slate-400">
+							<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+								Brief
+							</span>
+							<textarea
+								value={autoBrief}
+								onChange={(e) => setAutoBrief(e.target.value)}
+								rows={3}
+								placeholder="Ringkasan: cth 'wanita muda ceria untuk UGC kecantikan'"
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+							/>
+						</label>
+						<div className="mt-3 flex flex-wrap items-end gap-3">
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Gender
+								</span>
+								<select
+									value={autoGender}
+									onChange={(e) => setAutoGender(e.target.value)}
+									className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								>
+									<option value="">Auto</option>
+									<option value="F">F</option>
+									<option value="M">M</option>
+								</select>
+							</label>
+							<label className="flex items-center gap-2 pb-1.5 text-[10px] text-slate-400">
+								<input
+									type="checkbox"
+									checked={autoHijab}
+									onChange={(e) => setAutoHijab(e.target.checked)}
+									className="rounded border-slate-700 bg-slate-950"
+								/>
+								<span className="font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Hijab
+								</span>
+							</label>
+						</div>
+						<button
+							type="button"
+							disabled={isAutoGenerating}
+							onClick={() => void handleAutoGenerateAvatar()}
+							className="mt-3 w-full rounded-xl border border-purple-500/30 bg-purple-500/10 px-4 py-2 text-sm font-semibold text-purple-100 hover:bg-purple-500/20 disabled:opacity-50"
+						>
+							{isAutoGenerating
+								? "Menjana avatar..."
+								: "🤖 Auto-generate Avatar"}
+						</button>
+						<div className="mt-2 text-[10px] text-slate-500">
+							Guna lane text_assist (AI Provider Settings). Boleh ambil masa
+							beberapa saat.
+						</div>
+					</div>
+				</div>
 			</section>
 
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
