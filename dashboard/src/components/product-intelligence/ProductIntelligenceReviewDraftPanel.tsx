@@ -445,6 +445,73 @@ function buildMutationPayload(
 	};
 }
 
+// The API client throws `API <status>: <body>`. Turn a fail-closed approve/validate
+// error into a human, actionable message instead of dumping raw JSON at the operator.
+// The backend detail is a colon-delimited string, e.g.
+// "DRAFT_NOT_APPROVABLE:MISSING_REQUIRED_FIELDS:source_urls_json:CLAIM_BLOCKED:rawat,penyakit".
+export function formatReviewDraftError(err: unknown, fallback: string): string {
+	if (!(err instanceof Error)) return fallback;
+	const raw = err.message || fallback;
+	const brace = raw.indexOf("{");
+	let detail: unknown = raw;
+	if (brace >= 0) {
+		try {
+			const parsed = JSON.parse(raw.slice(brace)) as { detail?: unknown };
+			if (parsed.detail !== undefined) detail = parsed.detail;
+		} catch {
+			/* keep raw */
+		}
+	}
+	const text = typeof detail === "string" ? detail : JSON.stringify(detail);
+	if (/DRAFT_NOT_APPROVABLE/i.test(text)) {
+		// Contract: DRAFT_NOT_APPROVABLE:<blocker>|<blocker>... where each blocker is
+		// KEY:comma,tokens and KEY ∈ MISSING_REQUIRED_FIELDS/CLAIM_BLOCKED/CLAIM_REVIEW_REQUIRED.
+		const body = text.replace(/^[\s\S]*?DRAFT_NOT_APPROVABLE:/i, "");
+		const parts: string[] = [];
+		for (const blocker of body.split("|")) {
+			const idx = blocker.indexOf(":");
+			const key = idx >= 0 ? blocker.slice(0, idx) : blocker;
+			const val = idx >= 0 ? blocker.slice(idx + 1) : "";
+			if (/MISSING_REQUIRED_FIELDS/i.test(key)) {
+				parts.push(`lengkapkan medan wajib yang tiada (${val})`);
+			} else if (/CLAIM_BLOCKED/i.test(key)) {
+				parts.push(`buang / lembutkan perkataan claim ubatan yang disekat (${val})`);
+			} else if (/CLAIM_REVIEW_REQUIRED/i.test(key)) {
+				parts.push(`semak semula perkataan claim yang berisiko (${val})`);
+			}
+		}
+		const how = parts.length ? parts.join("; ") : "selesaikan semua blocker di bawah";
+		return `Draf belum boleh diluluskan — ${how}. Kemas kini medan → Save Draft → Validate Draft → Approve semula. Rujuk panel "Missing Required Fields" & "Claim Safety Gate" di bawah.`;
+	}
+	return raw;
+}
+
+// Build a friendly "action needed" notice from the STRUCTURED validate report, so we
+// never even attempt an approve that will fail closed (no raw 409 reaches the operator).
+// Returns null when the draft is actually approvable.
+export function describeApprovalBlockers(
+	report: ProductIntelligenceReviewDraftValidationResponse,
+): string | null {
+	const missing = report.missing_required_fields ?? [];
+	const claimBlocked =
+		report.claim_gate === "CLAIM_BLOCKED" ? (report.claim_tokens_json ?? []) : [];
+	const otherBlockers = report.approval_blockers ?? [];
+	if (!missing.length && !claimBlocked.length && !otherBlockers.length) return null;
+	const parts: string[] = [];
+	if (missing.length)
+		parts.push(
+			`lengkapkan ${missing.length} medan wajib yang tiada (${missing.join(", ")})`,
+		);
+	if (claimBlocked.length)
+		parts.push(
+			`buang atau lembutkan perkataan claim ubatan yang disekat (${claimBlocked.join(", ")})`,
+		);
+	const how = parts.length
+		? parts.join("; ")
+		: "selesaikan blocker yang tersenarai di bawah";
+	return `Draf belum boleh diluluskan — ${how}. Kemas kini medan di editor, tekan Save Draft, kemudian Validate & Approve semula. Panel "Missing Required Fields" dan "Claim Safety Gate" di bawah menyenaraikan butirannya.`;
+}
+
 export default function ProductIntelligenceReviewDraftPanel({
 	productId,
 	onApproved,
@@ -469,6 +536,9 @@ export default function ProductIntelligenceReviewDraftPanel({
 	>(null);
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	// Amber "action needed" notice for a draft that fails the fail-closed approval
+	// gate (missing required fields / blocked claims) — distinct from a red system error.
+	const [blockerNotice, setBlockerNotice] = useState<string | null>(null);
 
 	const missingRequiredFields = useMemo(() => {
 		if (!activeDraft) return [...REQUIRED_FIELDS];
@@ -504,6 +574,10 @@ export default function ProductIntelligenceReviewDraftPanel({
 	}, [productId]);
 
 	useEffect(() => {
+		// Switching drafts clears stale notices from the previous draft.
+		setBlockerNotice(null);
+		setError(null);
+		setMessage(null);
 		if (!selectedDraftId) {
 			setActiveDraft(null);
 			setForm(null);
@@ -571,6 +645,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 		setBusyAction("CREATE");
 		setError(null);
 		setMessage(null);
+		setBlockerNotice(null);
 		try {
 			const draft = await createProductIntelligenceReviewDraft(productId, {
 				created_by: "operator",
@@ -593,19 +668,18 @@ export default function ProductIntelligenceReviewDraftPanel({
 		setBusyAction("PREPARE");
 		setError(null);
 		setMessage(null);
+		setBlockerNotice(null);
 		try {
 			const result = await prepareProductForCopywriting(productId);
 			syncDraftInList(result.draft);
 			setSelectedDraftId(result.draft.draft_id);
 			setValidation(null);
 			setMessage(
-				`AI drafted Product Knowledge + Customer Avatar (recommended formula: ${result.recommended_formula}). Review every field, then Validate and Approve — nothing is auto-approved.`,
+				`AI drafted Product Knowledge + Customer Avatar (recommended formula: ${result.recommended_formula}). Review every field, then Validate and Approve — nothing is auto-approved. Tekan Validate Draft untuk lihat baki blocker (medan wajib / claim).`,
 			);
 		} catch (err) {
 			setError(
-				err instanceof Error
-					? err.message
-					: "Failed to prepare product for copywriting",
+				formatReviewDraftError(err, "Failed to prepare product for copywriting"),
 			);
 		} finally {
 			setBusyAction(null);
@@ -627,15 +701,17 @@ export default function ProductIntelligenceReviewDraftPanel({
 		setBusyAction("SAVE");
 		setError(null);
 		setMessage(null);
+		setBlockerNotice(null);
 		try {
 			await saveDraft();
 			setValidation(null);
 			setMessage("Review draft saved.");
 		} catch (err) {
 			setError(
-				err instanceof Error
-					? err.message
-					: "Failed to save product intelligence review draft",
+				formatReviewDraftError(
+					err,
+					"Failed to save product intelligence review draft",
+				),
 			);
 		} finally {
 			setBusyAction(null);
@@ -647,6 +723,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 		setBusyAction("VALIDATE");
 		setError(null);
 		setMessage(null);
+		setBlockerNotice(null);
 		try {
 			const saved = await saveDraft();
 			const report = await validateProductIntelligenceReviewDraft(
@@ -654,12 +731,19 @@ export default function ProductIntelligenceReviewDraftPanel({
 			);
 			syncDraftInList(report.draft);
 			setValidation(report);
-			setMessage("Review draft validated.");
+			const blockerMsg = describeApprovalBlockers(report);
+			setBlockerNotice(blockerMsg);
+			setMessage(
+				blockerMsg
+					? null
+					: "Draf disemak — semua medan wajib lengkap dan claim gate selamat. Sedia untuk Approve.",
+			);
 		} catch (err) {
 			setError(
-				err instanceof Error
-					? err.message
-					: "Failed to validate product intelligence review draft",
+				formatReviewDraftError(
+					err,
+					"Failed to validate product intelligence review draft",
+				),
 			);
 		} finally {
 			setBusyAction(null);
@@ -671,6 +755,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 		setBusyAction("APPROVE");
 		setError(null);
 		setMessage(null);
+		setBlockerNotice(null);
 		try {
 			const saved = await saveDraft();
 			const report = await validateProductIntelligenceReviewDraft(
@@ -678,6 +763,13 @@ export default function ProductIntelligenceReviewDraftPanel({
 			);
 			syncDraftInList(report.draft);
 			setValidation(report);
+			// Fail closed BEFORE the approve call: if the draft is not approvable,
+			// surface a clear, actionable notice instead of a raw 409 dump.
+			const blockerMsg = describeApprovalBlockers(report);
+			if (blockerMsg) {
+				setBlockerNotice(blockerMsg);
+				return;
+			}
 			const snapshot = await approveProductIntelligenceReviewDraft(
 				report.draft.draft_id,
 				{
@@ -695,9 +787,10 @@ export default function ProductIntelligenceReviewDraftPanel({
 			);
 		} catch (err) {
 			setError(
-				err instanceof Error
-					? err.message
-					: "Failed to approve product intelligence review draft",
+				formatReviewDraftError(
+					err,
+					"Failed to approve product intelligence review draft",
+				),
 			);
 		} finally {
 			setBusyAction(null);
@@ -709,6 +802,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 		setBusyAction("REJECT");
 		setError(null);
 		setMessage(null);
+		setBlockerNotice(null);
 		try {
 			const saved = await saveDraft();
 			const rejected = await rejectProductIntelligenceReviewDraft(
@@ -723,9 +817,10 @@ export default function ProductIntelligenceReviewDraftPanel({
 			setMessage("Review draft rejected. No approved snapshot created.");
 		} catch (err) {
 			setError(
-				err instanceof Error
-					? err.message
-					: "Failed to reject product intelligence review draft",
+				formatReviewDraftError(
+					err,
+					"Failed to reject product intelligence review draft",
+				),
 			);
 		} finally {
 			setBusyAction(null);
@@ -825,6 +920,14 @@ export default function ProductIntelligenceReviewDraftPanel({
 					{error ? (
 						<div className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
 							{error}
+						</div>
+					) : null}
+					{blockerNotice ? (
+						<div
+							data-testid="approval-blocker-notice"
+							className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100"
+						>
+							{blockerNotice}
 						</div>
 					) : null}
 

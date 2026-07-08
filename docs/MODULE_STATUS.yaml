@@ -198,6 +198,7 @@ domains:
       - dashboard/src/api/creativeAssets.ts
       - dashboard/src/api/products.ts
       - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.tsx
+      - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.test.tsx
       - dashboard/src/api/workspacePackages.ts
       - dashboard/src/pages/ApprovedPackagesPage.tsx
       - dashboard/src/pages/AssetRegistryPage.tsx

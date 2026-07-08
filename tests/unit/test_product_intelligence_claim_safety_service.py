@@ -36,6 +36,53 @@ def test_claim_safety_blocks_medical_english_and_malay_language():
     assert "portable support" in result["allowed_claims_json"]
 
 
+def test_claim_safety_ignores_internal_guardrail_and_avatar_fields():
+    # Regression (BOSMAX health category): internal, non-published fields legitimately
+    # contain medical words and must NOT trip the product-claim gate —
+    #   * blocked_claims_json = the "do NOT say" quarantine / guardrail list, and
+    #   * buyer_persona_snapshot_json = the customer AVATAR, which describes the
+    #     customer's world ("kelegaan tanpa ambil ubat", pains like "penyakit").
+    # The published copy stays clean market-problem language, so the draft is SAFE.
+    result = evaluate_claim_safety(
+        {
+            "product_description": "Minyak angin tradisional untuk melegakan kembung perut dan sengal.",
+            "benefits_json": ["melegakan perut kembung", "mengurangkan rasa sengal"],
+            "allowed_claims_json": ["melegakan kembung perut", "sesuai kegunaan luaran"],
+            "blocked_claims_json": [
+                "Jangan guna 'menyembuhkan' atau 'merawat' sebarang penyakit.",
+                "Jangan dakwa untuk semua jenis penyakit.",
+                "ubat",
+            ],
+            "buyer_persona_snapshot_json": {
+                "audience": "Warga emas yang mengalami penyakit ringan",
+                "desires": ["Nak kelegaan tanpa perlu pergi klinik atau ambil ubat"],
+            },
+            "copy_strategy_summary_json": {"angles": ["bukan ubat, minyak tradisional"]},
+            "reviewer_note": "Semak istilah 'ubat' / 'penyakit' sebelum lulus.",
+        }
+    )
+
+    assert result["claim_gate"] == "CLAIM_SAFE"
+    assert result["claim_risk_level"] == "LOW"
+    # No claim tokens flagged from the guardrail list, the avatar, or the clean copy.
+    assert result["claim_tokens_json"] == []
+    # The guardrail list is preserved in the output (still kept as guardrails).
+    assert "ubat" in result["blocked_claims_json"]
+
+
+def test_claim_safety_still_blocks_overclaim_in_published_copy():
+    # The published copy IS still scanned — a real overclaim there is still blocked.
+    result = evaluate_claim_safety(
+        {
+            "product_description": "Merawat penyakit dan menyembuhkan dalam 3 hari.",
+            "buyer_persona_snapshot_json": {"desires": ["clean avatar"]},
+        }
+    )
+    assert result["claim_gate"] == "CLAIM_BLOCKED"
+    assert "rawat" in result["claim_tokens_json"]
+    assert "penyakit" in result["claim_tokens_json"]
+
+
 def test_claim_safety_review_terms_require_human_review_without_block():
     result = evaluate_claim_safety(
         {
