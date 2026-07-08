@@ -91,6 +91,9 @@ export interface PosterBuilderDraft {
 	copy_source: string;
 	copy_set_id: string;
 	copy_fallback_confirmed: boolean;
+	// Poster recipe (V2). Selected recipe/archetype id; drives the recipe-first
+	// composer path. Empty = legacy no-recipe path.
+	poster_recipe_id: string;
 }
 
 export const EMPTY_POSTER_DRAFT: PosterBuilderDraft = {
@@ -111,4 +114,5 @@ export const EMPTY_POSTER_DRAFT: PosterBuilderDraft = {
 	copy_source: "manual",
 	copy_set_id: "",
 	copy_fallback_confirmed: false,
+	poster_recipe_id: "",
 };

@@ -1,5 +1,12 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import PosterBuilderPage from "./PosterBuilderPage";
@@ -48,6 +55,96 @@ vi.mock("../api/posterCopyRecommendations", () => ({
 vi.mock("../api/imgFactory", () => ({
 	startImgGeneration: vi.fn(),
 	pollImgGenerationJob: vi.fn(),
+}));
+
+const { RECIPE_FIXTURES } = vi.hoisted(() => {
+	const zone = (over: Record<string, unknown>) => ({
+		zone_id: "z",
+		role: "HEADLINE",
+		source_field: "hook",
+		x: 0,
+		y: 0,
+		w: 100,
+		h: 10,
+		align: "left",
+		font_role: "display",
+		max_chars: 48,
+		placeholder: "[x]",
+		...over,
+	});
+	return {
+		RECIPE_FIXTURES: [
+			{
+				recipe_id: "product_hero_night_routine",
+				archetype: "PRODUCT_HERO",
+				label: "Product Hero — Night Routine",
+				description: "Hero in a warm bedside scene.",
+				layout_template: "hero_center_vertical",
+				product_placement: "Centered hero.",
+				background_scene: "Warm bedside.",
+				visual_style: "Premium.",
+				typography_mood: "Warm.",
+				icon_guidance: "",
+				composition_rules: [],
+				safe_zones: [],
+				chip_slots: ["usp_1", "usp_2", "usp_3"],
+				zones: [
+					zone({ zone_id: "headline", role: "HEADLINE", source_field: "hook", max_chars: 48 }),
+					zone({ zone_id: "cta", role: "CTA", source_field: "cta", max_chars: 24 }),
+				],
+				negative_prompt_additions: [],
+				allowed_text_density: ["low", "medium"],
+			},
+			{
+				recipe_id: "heritage_infographic",
+				archetype: "HERITAGE_INFOGRAPHIC",
+				label: "Heritage Infographic",
+				description: "Packshot + use-case rows.",
+				layout_template: "packshot_dominant_infographic",
+				product_placement: "Packshot dominant.",
+				background_scene: "Heritage frame.",
+				visual_style: "Ornamental.",
+				typography_mood: "Bold.",
+				icon_guidance: "",
+				composition_rules: [],
+				safe_zones: [],
+				chip_slots: ["usp_1", "usp_2", "usp_3"],
+				zones: [
+					zone({ zone_id: "headline", role: "HEADLINE", source_field: "hook", max_chars: 48 }),
+					zone({ zone_id: "cta", role: "CTA", source_field: "cta", max_chars: 24 }),
+					zone({ zone_id: "footer", role: "FOOTER", source_field: "", max_chars: 40, placeholder: "[Barisan warisan]" }),
+				],
+				negative_prompt_additions: [],
+				allowed_text_density: ["medium", "high"],
+			},
+			{
+				recipe_id: "product_scale_portability",
+				archetype: "PRODUCT_SCALE",
+				label: "Product Scale / Portability",
+				description: "Product dominance + scale cue.",
+				layout_template: "hero_scale_minimal",
+				product_placement: "Product dominant.",
+				background_scene: "Neutral studio.",
+				visual_style: "Clean.",
+				typography_mood: "Modern.",
+				icon_guidance: "",
+				composition_rules: [],
+				safe_zones: [],
+				chip_slots: ["usp_1", "usp_2"],
+				zones: [
+					zone({ zone_id: "headline", role: "HEADLINE", source_field: "hook", max_chars: 48 }),
+					zone({ zone_id: "cta", role: "CTA", source_field: "cta", max_chars: 24 }),
+				],
+				negative_prompt_additions: [],
+				allowed_text_density: ["low"],
+			},
+		],
+	};
+});
+
+vi.mock("../api/posterRecipes", () => ({
+	usePosterRecipes: () => ({ recipes: RECIPE_FIXTURES, error: "" }),
+	fetchPosterRecipes: vi.fn().mockResolvedValue(RECIPE_FIXTURES),
 }));
 
 vi.mock("../api/imageGenSettings", () => ({
@@ -654,5 +751,143 @@ describe("PosterBuilderPage", () => {
 		await waitFor(() => expect(genBtn).toBeDisabled());
 		// No image generation was ever attempted without a product reference.
 		expect(mockedStartGen).not.toHaveBeenCalled();
+	});
+
+	// ── PR B2: recipe-first UI ────────────────────────────────────────────────
+
+	it("shows the recipe selector with recipe cards before any copy fields", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		expect(await screen.findByTestId("poster-recipe-selector")).toBeInTheDocument();
+		for (const id of [
+			"product_hero_night_routine",
+			"heritage_infographic",
+			"product_scale_portability",
+		]) {
+			expect(screen.getByTestId(`poster-recipe-card-${id}`)).toBeInTheDocument();
+		}
+		// Before a recipe is chosen, copy slots are NOT shown — recipe-first is enforced.
+		expect(screen.getByTestId("poster-recipe-required-hint")).toBeInTheDocument();
+		expect(screen.queryByTestId("poster-recipe-slot-editor")).toBeNull();
+	});
+
+	it("Manual Expert is behind an advanced/legacy disclosure, not the primary form", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		const advanced = await screen.findByTestId("poster-advanced-legacy");
+		expect(advanced.tagName).toBe("DETAILS");
+		expect(advanced).not.toHaveAttribute("open");
+	});
+
+	it("selecting a recipe reveals controlled dropdowns (not free text) and slot editor", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
+		// Controlled settings are SELECT elements, never text inputs.
+		for (const key of [
+			"poster_objective",
+			"poster_type",
+			"visual_route",
+			"human_presence_mode",
+			"frame_ratio",
+			"language",
+			"text_density",
+		]) {
+			const el = await screen.findByTestId(`ctrl-${key}`);
+			expect(el.tagName).toBe("SELECT");
+		}
+		// Recipe slot editor renders zone-driven slots with counters.
+		expect(await screen.findByTestId("poster-recipe-slot-editor")).toBeInTheDocument();
+		expect(screen.getByTestId("slot-field-hook")).toBeInTheDocument();
+		expect(screen.getByTestId("slot-field-cta")).toBeInTheDocument();
+		expect(screen.getByTestId("slot-count-headline")).toBeInTheDocument();
+	});
+
+	it("recipe prompt-draft forwards poster_recipe_id and renders poster_spec / overlay_spec", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedPromptDraft.mockResolvedValue({
+			product_id: "p1",
+			poster_status: "POSTER_READY",
+			prompt_package_status: "DRAFT_READY",
+			generation_allowed: true,
+			production_allowed: true,
+			restricted_mode: false,
+			poster_prompt: "=== POSTER RECIPE ===",
+			negative_prompt: "",
+			copy_layout: { hook: "h", subhook: "", usp: [], cta: "c" },
+			visual_instruction: "",
+			text_overlay_instruction: "",
+			product_truth_lock: "",
+			safety_guardrails: [],
+			blocked_reasons: [],
+			repair_actions: [],
+			readiness_meta: {},
+			operator_notes: "",
+			poster_spec: {
+				recipe_id: "product_hero_night_routine",
+				archetype: "PRODUCT_HERO",
+				layout_template: "hero_center_vertical",
+				product_placement: "Centered hero.",
+				background_scene: "Warm bedside.",
+				visual_style: "Premium.",
+				typography_mood: "Warm.",
+				icon_guidance: "",
+				composition_rules: [],
+				safe_zones: [],
+				chip_slots: [],
+			},
+			overlay_spec: {
+				schema_version: "poster-overlay-v1",
+				frame_ratio: "9:16",
+				typography_mood: "Warm.",
+				safe_zones: [],
+				zones: [
+					{
+						zone_id: "headline",
+						role: "HEADLINE",
+						x: 8,
+						y: 8,
+						w: 84,
+						h: 18,
+						align: "left",
+						font_role: "display",
+						max_chars: 48,
+						text: "Malam tenang",
+					},
+				],
+				renderer: "NONE_PHASE_2",
+				disclaimer: "foundation only",
+			},
+		});
+		renderPage();
+		await waitForReadinessUi();
+		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
+		// Fill the required slots (hook + cta) so the generate button enables.
+		fireEvent.change(await screen.findByTestId("slot-field-hook"), {
+			target: { value: "Malam tenang" },
+		});
+		fireEvent.change(screen.getByTestId("slot-field-cta"), {
+			target: { value: "Dapatkan" },
+		});
+		const genBtn = await screen.findByTestId("recipe-generate-prompt-draft");
+		await waitFor(() => expect(genBtn).not.toBeDisabled());
+		genBtn.click();
+		await waitFor(() =>
+			expect(mockedDraftToPrompt).toHaveBeenCalledWith(
+				"p1",
+				expect.objectContaining({
+					poster_recipe_id: "product_hero_night_routine",
+					hook: "Malam tenang",
+					cta: "Dapatkan",
+				}),
+			),
+		);
+		// Structured spec + overlay preview renders, with the Phase-2 disclaimer.
+		expect(await screen.findByTestId("poster-spec-preview")).toBeInTheDocument();
+		expect(screen.getByTestId("poster-overlay-zones")).toBeInTheDocument();
+		expect(screen.getByTestId("poster-overlay-disclaimer")).toBeInTheDocument();
 	});
 });

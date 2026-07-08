@@ -19,6 +19,7 @@ export const POSTER_AUTO_DEFAULT_DRAFT: PosterBuilderDraft = {
 	copy_source: "manual",
 	copy_set_id: "",
 	copy_fallback_confirmed: false,
+	poster_recipe_id: "",
 };
 
 export function kitToDraft(

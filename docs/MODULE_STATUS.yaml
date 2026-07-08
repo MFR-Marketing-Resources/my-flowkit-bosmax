@@ -406,6 +406,14 @@ domains:
       - tests/unit/test_poster_recipe_service.py
       - tests/unit/test_poster_prompt_composer.py
       - tests/api/test_poster_recipes_api.py
+      # POSTER_RECIPE_UI (PR B2): recipe-first Poster Builder UI — recipe selector,
+      # controlled-dropdown settings, recipe slot editor, spec/overlay preview.
+      - dashboard/src/types/posterRecipe.ts
+      - dashboard/src/api/posterRecipes.ts
+      - dashboard/src/components/poster/PosterRecipeSelector.tsx
+      - dashboard/src/components/poster/PosterControlledSettings.tsx
+      - dashboard/src/components/poster/PosterRecipeSlotEditor.tsx
+      - dashboard/src/components/poster/PosterSpecPreview.tsx
       # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx
