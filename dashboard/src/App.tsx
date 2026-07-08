@@ -50,6 +50,7 @@ import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
 import PosterBuilderPage from "./pages/PosterBuilderPage";
 import PostizPublishPage from "./pages/PostizPublishPage";
+import ResultsHubPage from "./pages/ResultsHubPage";
 import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
 import ProductionQueuePage from "./pages/ProductionQueuePage";
 import ProductRegistrationPage from "./pages/ProductRegistrationPage";
@@ -74,6 +75,7 @@ const NAV_GROUPS = [
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
 			{ to: "/library/videos", icon: Video, label: "Video Library (48j)" },
 			{ to: "/library/images", icon: ImageIcon, label: "Image Library (48j)" },
+			{ to: "/results", icon: FolderOpen, label: "Results (Hasil + Caption)" },
 			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
 			{
 				to: "/workspace/generation-packages",
@@ -485,6 +487,7 @@ function Layout() {
 							path="/library/images"
 							element={<LibraryPage kind="image" />}
 						/>
+						<Route path="/results" element={<ResultsHubPage />} />
 						<Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
 						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
 						<Route path="/operator/img" element={<OperatorPage mode="IMG" />} />

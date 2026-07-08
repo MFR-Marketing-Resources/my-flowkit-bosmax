@@ -1753,6 +1753,40 @@ CREATE INDEX IF NOT EXISTS idx_social_copy_status ON social_copy_package(status)
 """)
         await db.commit()
 
+        # Generation Result (Results Hub) — DURABLE per-finished-generation record.
+        # The heavy artifact FILE still lives in `generated_artifact` and is purged
+        # at 48h; THIS row is the lightweight, long-lived deliverable record so the
+        # operator can, at any time: (a) copy the exact prompt + settings used to
+        # manually re-drive Google Flow if automation breaks, and (b) reach the
+        # per-platform social captions for that result. Keyed by Flow media_id, it
+        # is written on job completion and is NEVER touched by the artifact purge.
+        # Additive: it never rewrites the generation lane or the artifact table.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS generation_result (
+    media_id       TEXT PRIMARY KEY,
+    job_id         TEXT,
+    request_id     TEXT,
+    mode           TEXT,
+    artifact_kind  TEXT NOT NULL DEFAULT 'video'
+                   CHECK(artifact_kind IN ('video','image')),
+    product_id     TEXT,
+    product_name   TEXT,
+    final_prompt_text TEXT NOT NULL DEFAULT '',
+    aspect_ratio   TEXT,
+    model_label    TEXT,
+    duration_s     INTEGER,
+    count_setting  INTEGER,
+    reference_media_ids_json TEXT NOT NULL DEFAULT '[]',
+    workspace_generation_package_id TEXT,
+    project_id     TEXT,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_generation_result_created ON generation_result(created_at);
+CREATE INDEX IF NOT EXISTS idx_generation_result_kind ON generation_result(artifact_kind);
+CREATE INDEX IF NOT EXISTS idx_generation_result_product ON generation_result(product_id);
+""")
+        await db.commit()
+
         # Copy Set foundation (Copy Strategy Studio Phase 1). Additive table —
         # persists an explicitly-approvable Copy Set (product → angle / hook /
         # subhook / usp / cta) that later feeds the canonical prompt compiler as

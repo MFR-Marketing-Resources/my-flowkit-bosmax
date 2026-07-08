@@ -1,5 +1,8 @@
 import type { PosterBuilderDraft } from "../../types/posterReadiness";
-import type { PosterBuilderShellMode } from "../../poster/posterBuilderUi";
+import {
+	type PosterBuilderShellMode,
+	missingPosterCopyFields,
+} from "../../poster/posterBuilderUi";
 
 interface PosterBuilderShellFormProps {
 	draft: PosterBuilderDraft;
@@ -45,6 +48,7 @@ export default function PosterBuilderShellForm({
 }: PosterBuilderShellFormProps) {
 	const editable = mode === "full" || mode === "restricted" || mode === "preview";
 	const previewOnly = mode === "preview";
+	const missingCopy = missingPosterCopyFields(draft);
 
 	return (
 		<section
@@ -93,12 +97,27 @@ export default function PosterBuilderShellForm({
 				))}
 			</div>
 
+			{promptDraftEnabled && missingCopy.length > 0 ? (
+				<p
+					data-testid="poster-copy-required-hint"
+					className="mt-4 text-[11px] text-amber-300"
+				>
+					Isi dulu medan wajib: <strong>{missingCopy.join(", ")}</strong> sebelum
+					menjana prompt draft.
+				</p>
+			) : null}
 			<div className="mt-4 flex flex-wrap gap-3">
 				<button
 					type="button"
 					data-testid="generate-prompt-draft-button"
-					disabled={!promptDraftEnabled || promptDraftLoading}
-					title={promptDraftLabel}
+					disabled={
+						!promptDraftEnabled || promptDraftLoading || missingCopy.length > 0
+					}
+					title={
+						missingCopy.length > 0
+							? `Isi dulu: ${missingCopy.join(", ")}`
+							: promptDraftLabel
+					}
 					onClick={onPromptDraft}
 					className="rounded-xl border border-blue-500/50 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
 				>

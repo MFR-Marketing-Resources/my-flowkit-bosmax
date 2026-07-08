@@ -24,6 +24,7 @@ import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import {
 	isGenerateButtonDisabled,
 	isPromptDraftGenerationEnabled,
+	missingPosterCopyFields,
 	resolveBuilderShellMode,
 	resolveGenerateButtonLabel,
 	resolvePromptDraftButtonLabel,
@@ -230,6 +231,16 @@ export default function PosterBuilderPage() {
 	const handlePromptDraft = async (draftOverride?: PosterBuilderDraft) => {
 		if (!selectedProduct || !readiness) return;
 		const activeDraft = draftOverride ?? draft;
+		// Guard the required copy fields client-side so the operator gets a clear,
+		// actionable message instead of a raw backend "Missing required field" 422.
+		const missingCopy = missingPosterCopyFields(activeDraft);
+		if (missingCopy.length > 0) {
+			setPromptPackage(null);
+			setPromptError(
+				`Isi dulu medan copy wajib: ${missingCopy.join(", ")}. Taip di bahagian Copy draft, atau guna satu cadangan AI (Apply suggestion).`,
+			);
+			return;
+		}
 		setPromptLoading(true);
 		setPromptError("");
 		try {
