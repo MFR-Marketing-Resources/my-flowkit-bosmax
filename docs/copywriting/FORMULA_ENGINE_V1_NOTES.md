@@ -50,12 +50,21 @@ TikTok scroll-stop potential · formula persuasion depth. Additive service +
 
 ## 4. Hardening applied in this PR
 - **Claim sanitization in the Prepare lane** (`_sanitize_claims`): overclaim is
-  NEVER persisted as an *allowed* claim. Every AI `allowed_claim` is scanned with
-  the two-tier `claim_boundary`; safe ones stay allowed, overclaim ones (plus any
-  overclaim found in description/benefits/usps/formula_breakdown) are moved to
-  `blocked_claims`. Closes the coverage gap vs the narrower `claim_safety` scan
-  (which lacks `100%` / `dijamin` / `klinikal` / `npra` / `rawat` / `ubat`). Market
-  / problem language is preserved.
+  NEVER persisted as an *allowed* claim. Each AI `allowed_claim` is scanned with
+  the two-tier `claim_boundary`; safe ones stay allowed, overclaim ones are moved
+  to `blocked_claims`. In addition, `_sanitize_claims` scans **every AI prepare
+  narrative field** — not just allowed_claims — and records any overclaim found
+  there as blocked. The scanned fields are: `product_knowledge.{description,
+  benefits, usps, usage, ingredients, warnings, target_customer}`,
+  `customer_avatar.{audience, tone, pronoun, desires, fears, pains, objections,
+  triggers}`, top-level `market_problem_language, situation, desire, objection,
+  trigger, use_context`, `allowed_claims`, and `formula_breakdown` values. Closes
+  the coverage gap vs the narrower `claim_safety` scan (which lacks `100%` /
+  `dijamin` / `klinikal` / `npra` / `rawat` / `ubat`). Market / problem language is
+  never flagged, so avatar pains / `market_problem_language` (e.g. "anak kembung
+  perut") are safe to scan and are preserved. Overclaim can therefore never reach
+  approved copy: the generated copy is independently re-validated by
+  `claim_boundary` in the formula validator + `scan_copy_safety`.
 - **UI exposes the true formula id** (not just the compiler-safe family): the Copy
   Registry "Formula / QA" column shows `formula_id → compiler_family`,
   `definition_status` (draft), validation issue count + slot coverage (tooltip),
