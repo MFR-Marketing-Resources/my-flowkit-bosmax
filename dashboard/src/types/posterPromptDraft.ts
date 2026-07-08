@@ -28,6 +28,9 @@ export interface PosterPromptDraftRequest {
 	usp_3: string;
 	cta: string;
 	operator_notes: string;
+	copy_source?: string;
+	copy_set_id?: string;
+	copy_fallback_confirmed?: boolean;
 }
 
 export interface PosterPromptDraftResponse {

@@ -22,11 +22,22 @@ from agent.models.poster_copy_recommendations import (
 from agent.models.poster_readiness import PosterReadinessStatus
 from agent.services import ai_copy_assist_service as ai_svc
 from agent.services import ai_copy_provider_adapter as ai_provider
+from agent.services.copy_grounding_service import resolve_copy_grounding
 from agent.services.copy_set_service import _normalize_fields, scan_copy_safety
 from agent.services.poster_prompt_draft_service import UNSAFE_CLAIM_TERMS
 from agent.services.poster_readiness_service import PosterReadinessService
 
 MAX_KITS = 5
+
+# Trust ranking for kit selection: an approved (formula-validated) Copy Set always
+# outranks a draft, an AI candidate, or a fallback template, so the MAX_KITS
+# truncation can never drop an approved set behind lower-trust copy.
+_SOURCE_RANK = {
+    PosterKitSource.APPROVED_COPY_SET: 0,
+    PosterKitSource.DRAFT_COPY_SET: 1,
+    PosterKitSource.AI_CANDIDATE: 2,
+    PosterKitSource.FALLBACK_TEMPLATE: 3,
+}
 RESTRICTED_ANGLES = (
     "Daily comfort routine",
     "Heritage trust",
@@ -94,6 +105,13 @@ def _kit_from_copy_row(
     product_id: str,
 ) -> PosterCopyKit | None:
     cs = serialize_copy_set(row)
+    # An approved Copy Set is formula-validated by construction (approve_copy_set now
+    # enforces + preserves the verdict); surface it so the UI can prefer/badge it.
+    _cr = cs.get("claim_review") or {}
+    _fv = _cr.get("formula_validation") or {}
+    formula_validated = bool(
+        source == PosterKitSource.APPROVED_COPY_SET and _fv.get("valid")
+    )
     usp1, usp2, usp3 = _usp_triple(cs.get("usp_set"))
     fields = {
         "angle": _norm(cs.get("angle")),
@@ -137,6 +155,7 @@ def _kit_from_copy_row(
         safety_notes=notes,
         blocked_reasons=blocked,
         copy_set_id=cs.get("copy_set_id"),
+        formula_validated=formula_validated,
     )
 
 
@@ -217,6 +236,9 @@ async def _ai_ephemeral_kits(
         warnings.append("AI provider not configured — using fallback templates only.")
         return [], warnings
     kits: list[PosterCopyKit] = []
+    # Resolve product grounding once — the AI brief + candidate merge both require it
+    # (the shared AI Copy Assist helpers are grounding-aware since PR #258).
+    grounding = await resolve_copy_grounding(product)
     assist = AICopyAssistRequest(
         product_id=req.product_id,
         language=settings["language"],
@@ -230,12 +252,12 @@ async def _ai_ephemeral_kits(
     )
     for i in range(count):
         try:
-            brief = ai_svc._build_brief(assist, product)
+            brief = ai_svc._build_brief(assist, product, grounding)
             raw = ai_provider.generate_candidate(brief)
             if not isinstance(raw, dict):
                 warnings.append(f"AI candidate {i + 1} invalid response.")
                 continue
-            fields = ai_svc._merge_candidate_fields(raw, assist)
+            fields = ai_svc._merge_candidate_fields(raw, assist, grounding)
             fields = _normalize_fields(fields)
             safety = _safety_for_product(fields, req.product_id)
             usp1, usp2, usp3 = _usp_triple(fields.get("usp_set"))
@@ -376,6 +398,9 @@ class PosterCopyRecommendationService:
             if fb and not primary_source:
                 primary_source = PosterKitSource.FALLBACK_TEMPLATE
 
+        # Stable-sort by trust so approved/formula-validated sets are never truncated
+        # behind drafts/AI/fallback (row order alone could drop an approved set).
+        kits.sort(key=lambda k: _SOURCE_RANK.get(k.source, 9))
         kits = kits[:MAX_KITS]
         if not primary_source and kits:
             primary_source = kits[0].source

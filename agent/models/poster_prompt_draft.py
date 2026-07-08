@@ -32,6 +32,12 @@ class PosterPromptDraftRequest(BaseModel):
     usp_3: str = ""
     cta: str = ""
     operator_notes: str = ""
+    # Copy provenance (Phase D). copy_source is the kit source the copy came from
+    # (APPROVED_COPY_SET / DRAFT_COPY_SET / AI_CANDIDATE / FALLBACK_TEMPLATE / manual).
+    # Copy that is not an approved Copy Set is review-only unless copy_fallback_confirmed.
+    copy_source: str = ""
+    copy_set_id: str = ""
+    copy_fallback_confirmed: bool = False
 
 
 class PosterCopyLayout(BaseModel):

@@ -28,6 +28,8 @@ export interface PosterCopyKit {
 	safety_notes: string[];
 	blocked_reasons: string[];
 	copy_set_id?: string | null;
+	// True only for an approved Copy Set whose formula-validation verdict passed.
+	formula_validated?: boolean;
 }
 
 export interface PosterCopyRecommendationsRequest {

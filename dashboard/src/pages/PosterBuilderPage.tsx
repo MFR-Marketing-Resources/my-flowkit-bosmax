@@ -19,6 +19,8 @@ import PosterReadinessStatusCard from "../components/poster/PosterReadinessStatu
 import PosterRepairActionCenter from "../components/poster/PosterRepairActionCenter";
 import PosterWorkingModeSelector from "../components/poster/PosterWorkingModeSelector";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
+import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
+import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import {
 	isGenerateButtonDisabled,
 	isPromptDraftGenerationEnabled,
@@ -54,6 +56,9 @@ export default function PosterBuilderPage() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [products, setProducts] = useState<Product[]>([]);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+	const { readiness: copyReadiness } = useCopywritingReadiness(
+		selectedProduct?.id ?? null,
+	);
 	const [readiness, setReadiness] = useState<PosterReadinessResponse | null>(null);
 	const [draft, setDraft] = useState<PosterBuilderDraft>(EMPTY_POSTER_DRAFT);
 	const [workingMode, setWorkingMode] = useState<PosterWorkingMode>("auto");
@@ -339,6 +344,23 @@ export default function PosterBuilderPage() {
 			{readiness ? (
 				<>
 					<PosterReadinessStatusCard readiness={readiness} />
+					<CopywritingReadinessCard
+						readiness={copyReadiness}
+						onPrepare={() =>
+							selectedProduct
+								? window.location.assign(
+										`/products?product_id=${encodeURIComponent(selectedProduct.id)}`,
+									)
+								: undefined
+						}
+						onOpenCopyRegistry={() =>
+							selectedProduct
+								? window.location.assign(
+										`/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`,
+									)
+								: undefined
+						}
+					/>
 
 					{shouldShowHumanReviewPanel(readiness) ? (
 						<section className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-5">

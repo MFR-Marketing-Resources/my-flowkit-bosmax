@@ -309,6 +309,21 @@ class PosterPromptDraftService:
             else PromptPackageStatus.DRAFT_READY
         )
 
+        # Copy provenance governance (Phase D): poster copy that is NOT an approved
+        # Copy Set is review-only and never silently production-approved. We downgrade
+        # only when the caller explicitly declares a non-approved source and has not
+        # confirmed fallback — legacy callers that omit copy_source keep prior behavior.
+        validation_warnings: list[str] = []
+        copy_source = _norm(request.copy_source)
+        if (
+            copy_source
+            and copy_source != "APPROVED_COPY_SET"
+            and not request.copy_fallback_confirmed
+        ):
+            validation_warnings.append("UNGROUNDED_COPY_REVIEW_ONLY")
+            prompt_status = PromptPackageStatus.PREVIEW_ONLY
+            production_allowed = False
+
         usps = [fields["usp_1"], fields["usp_2"], fields["usp_3"]]
         usps = [u for u in usps if u]
 
@@ -336,4 +351,5 @@ class PosterPromptDraftService:
             repair_actions=repair_payload,
             readiness_meta=readiness_meta,
             operator_notes=fields["operator_notes"],
+            validation_warnings=validation_warnings,
         )

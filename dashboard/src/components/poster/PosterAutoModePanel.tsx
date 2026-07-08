@@ -131,11 +131,46 @@ export default function PosterAutoModePanel({
 								data-testid={`copy-field-${key}`}
 								className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200"
 								value={String(draft[key] ?? "")}
-								onChange={(e) => onDraftChange({ ...draft, [key]: e.target.value })}
+								onChange={(e) =>
+									onDraftChange({
+										...draft,
+										[key]: e.target.value,
+										// A manual copy edit invalidates any approved binding: the copy is
+										// now operator-authored (non-approved) and re-enters governance.
+										copy_source: "manual",
+										copy_set_id: "",
+										copy_fallback_confirmed: false,
+									})
+								}
 							/>
 						</label>
 					))}
 				</div>
+				{draft.copy_source === "APPROVED_COPY_SET" ? (
+					<p
+						data-testid="poster-copy-grounded"
+						className="mt-3 text-[11px] text-emerald-300"
+					>
+						Copy is bound to an approved Copy Set — production-eligible.
+					</p>
+				) : (
+					<label
+						data-testid="poster-copy-fallback-confirm"
+						className="mt-3 flex items-center gap-2 text-[11px] text-amber-200"
+					>
+						<input
+							type="checkbox"
+							checked={draft.copy_fallback_confirmed}
+							onChange={(e) =>
+								onDraftChange({ ...draft, copy_fallback_confirmed: e.target.checked })
+							}
+						/>
+						<span>
+							This copy is not an approved Copy Set. Without an approved set the prompt
+							draft is review-only — tick to explicitly confirm fallback copy.
+						</span>
+					</label>
+				)}
 				<button
 					type="button"
 					data-testid="auto-generate-prompt-draft"
@@ -199,6 +234,14 @@ export default function PosterAutoModePanel({
 						>
 							<div className="flex flex-wrap gap-2">
 								<SourceBadge source={kit.source} status={kit.status} />
+								{kit.formula_validated ? (
+									<span
+										data-testid={`kit-formula-validated-${kit.kit_id}`}
+										className="rounded border border-emerald-500/40 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300"
+									>
+										Formula ✓
+									</span>
+								) : null}
 							</div>
 							<p className="mt-2 text-xs text-slate-500">Angle: {kit.angle}</p>
 							<p className="mt-1 text-sm font-semibold text-slate-100">{kit.hook}</p>
