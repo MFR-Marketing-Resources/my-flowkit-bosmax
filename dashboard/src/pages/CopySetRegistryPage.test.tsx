@@ -37,6 +37,7 @@ vi.mock("../api/copySets", () => ({
 	patchCopySet: vi.fn(),
 	deleteCopySet: vi.fn(),
 	fetchCopyGrounding: vi.fn(),
+	fetchCopyFormulas: vi.fn().mockResolvedValue({ formulas: [] }),
 }));
 
 import {
