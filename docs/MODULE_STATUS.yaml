@@ -227,6 +227,7 @@ domains:
       - dashboard/src/components/workspace/T2VModule.tsx
       - dashboard/src/components/workspace/F2VModule.tsx
       - dashboard/src/components/workspace/I2VModule.tsx
+      - dashboard/src/components/workspace/I2VModule.test.tsx
       - dashboard/src/components/workspace/IMGModule.tsx
       - dashboard/src/components/workspace/WorkspaceImageAssetSlot.tsx
       - extension/background.js

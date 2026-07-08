@@ -26,6 +26,7 @@ interface I2VModuleProps {
 	workspacePackage?: WorkspaceExecutionPackage | null;
 	onWorkspacePackageUpdated?: (pkg: WorkspaceExecutionPackage) => void;
 	videoModels: VideoModel[];
+	selectedCopySetId?: string | null;
 }
 
 const CANONICAL_PROMPT_SECTIONS = [
@@ -279,6 +280,7 @@ export default function I2VModule({
 	workspacePackage = null,
 	onWorkspacePackageUpdated,
 	videoModels,
+	selectedCopySetId = null,
 }: I2VModuleProps) {
 	const [manualPrompt, setManualPrompt] = useState("");
 	const [isManualOverride, setIsManualOverride] = useState(false);
@@ -513,13 +515,21 @@ export default function I2VModule({
 					character_reference_asset_id: selectedCharacterAssetId || null,
 					scene_context_reference_asset_id: selectedSceneContextAssetId || null,
 					style_reference_asset_id: selectedStyleReferenceAssetId || null,
+					// CRITICAL: preserve the operator's approved Copy Set through the
+					// semantic rebuild (it was previously dropped, stripping the binding).
+					copy_set_id: selectedCopySetId,
+					copy_fallback_confirmed: false,
 				});
 				onWorkspacePackageUpdated?.(effectivePackage);
 			} catch (error) {
-				alert(
+				const msg =
 					error instanceof Error
 						? error.message
-						: "Failed to refresh semantic execution package.",
+						: "Failed to refresh semantic execution package.";
+				alert(
+					/FALLBACK_CONFIRMATION_REQUIRED|409/i.test(msg)
+						? "Select an approved Copy Set (or use Step 3–4 to confirm fallback) before generating I2V — the semantic rebuild will not silently use generic copy."
+						: msg,
 				);
 				setIsRefreshingPackage(false);
 				return;
