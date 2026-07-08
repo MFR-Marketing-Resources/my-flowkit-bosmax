@@ -1,7 +1,24 @@
 import type {
+	PosterBuilderDraft,
 	PosterReadinessResponse,
 	PosterReadinessStatus,
 } from "../types/posterReadiness";
+
+// The copy fields the backend REQUIRES before a poster prompt draft can be built
+// (poster_prompt_draft_service CRITICAL_FIELDS). The Generate button must not fire
+// with these empty — otherwise the operator gets a raw "Missing required field" 422.
+const POSTER_REQUIRED_COPY: readonly [keyof PosterBuilderDraft, string][] = [
+	["angle", "Angle"],
+	["hook", "Hook"],
+	["cta", "CTA"],
+];
+
+/** Human labels of the required copy fields still empty on the draft (empty when ready). */
+export function missingPosterCopyFields(draft: PosterBuilderDraft): string[] {
+	return POSTER_REQUIRED_COPY.filter(
+		([key]) => !String(draft[key] ?? "").trim(),
+	).map(([, label]) => label);
+}
 
 export type PosterBuilderShellMode =
 	| "hidden"

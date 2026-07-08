@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { PosterReadinessResponse } from "../types/posterReadiness";
+import {
+	EMPTY_POSTER_DRAFT,
+	type PosterReadinessResponse,
+} from "../types/posterReadiness";
 import {
 	isGenerateButtonDisabled,
 	isPromptDraftGenerationEnabled,
+	missingPosterCopyFields,
 	posterStatusOperatorLabel,
 	resolveBuilderShellMode,
 	resolveGenerateButtonLabel,
@@ -11,6 +15,38 @@ import {
 	shouldShowHumanReviewPanel,
 	shouldShowRepairActionCenter,
 } from "./posterBuilderUi";
+
+describe("missingPosterCopyFields", () => {
+	it("lists Angle, Hook, CTA when the copy draft is empty (Auto/Quick Start default)", () => {
+		expect(missingPosterCopyFields(EMPTY_POSTER_DRAFT)).toEqual([
+			"Angle",
+			"Hook",
+			"CTA",
+		]);
+	});
+
+	it("returns only the still-missing fields (whitespace counts as empty)", () => {
+		expect(
+			missingPosterCopyFields({
+				...EMPTY_POSTER_DRAFT,
+				angle: "Segar sepanjang hari",
+				hook: "  ",
+				cta: "Beli sekarang",
+			}),
+		).toEqual(["Hook"]);
+	});
+
+	it("is empty when Angle, Hook and CTA are all filled", () => {
+		expect(
+			missingPosterCopyFields({
+				...EMPTY_POSTER_DRAFT,
+				angle: "a",
+				hook: "h",
+				cta: "c",
+			}),
+		).toEqual([]);
+	});
+});
 
 function baseReadiness(
 	overrides: Partial<PosterReadinessResponse>,

@@ -1,6 +1,7 @@
 import type { PosterBuilderSettings } from "../../api/posterBuilderSettings";
 import type { PosterBuilderDraft } from "../../types/posterReadiness";
 import type { PosterCopyKit } from "../../types/posterCopyRecommendations";
+import { missingPosterCopyFields } from "../../poster/posterBuilderUi";
 
 function SourceBadge({ source, status }: { source: string; status: string }) {
 	return (
@@ -78,6 +79,7 @@ export default function PosterAutoModePanel({
 	];
 
 	const aiReady = settings.ai_provider.configured;
+	const missingCopy = missingPosterCopyFields(draft);
 
 	return (
 		<section
@@ -171,10 +173,22 @@ export default function PosterAutoModePanel({
 						</span>
 					</label>
 				)}
+				{promptDraftEnabled && missingCopy.length > 0 ? (
+					<p
+						data-testid="poster-copy-required-hint"
+						className="mt-3 text-[11px] text-amber-300"
+					>
+						Isi dulu: <strong>{missingCopy.join(", ")}</strong>. Taip terus di medan
+						Copy draft di atas, atau tekan <em>Apply suggestion</em> pada satu cadangan
+						AI di bawah untuk mengisinya.
+					</p>
+				) : null}
 				<button
 					type="button"
 					data-testid="auto-generate-prompt-draft"
-					disabled={!promptDraftEnabled || promptDraftLoading}
+					disabled={
+						!promptDraftEnabled || promptDraftLoading || missingCopy.length > 0
+					}
 					onClick={onGeneratePromptDraft}
 					className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40"
 				>

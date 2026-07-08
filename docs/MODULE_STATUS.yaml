@@ -376,6 +376,8 @@ domains:
       - dashboard/src/components/poster/PosterPromptPackagePreview.tsx
       - dashboard/src/poster/posterKitToDraft.ts
       - dashboard/src/poster/posterKitToDraft.test.ts
+      - dashboard/src/poster/posterBuilderUi.ts
+      - dashboard/src/poster/posterBuilderUi.test.ts
       - dashboard/src/types/posterCopyRecommendations.ts
       - dashboard/src/types/posterPromptDraft.ts
       - dashboard/src/types/posterReadiness.ts
