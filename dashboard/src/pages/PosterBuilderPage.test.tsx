@@ -583,6 +583,8 @@ describe("PosterBuilderPage", () => {
 		useBtn.click();
 		const genBtn = await screen.findByTestId("generate-poster-button");
 		await waitFor(() => expect(genBtn).not.toBeDisabled());
+		// With a valid product image, the fail-closed blocker is NOT shown.
+		expect(screen.queryByTestId("poster-product-ref-required")).toBeNull();
 		// Clicking opens the confirm modal — generation must NOT fire yet.
 		genBtn.click();
 		expect(mockedStartGen).not.toHaveBeenCalled();
