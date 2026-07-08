@@ -304,11 +304,12 @@ async def test_f2v_eligibility_audit_counts_exclusions(monkeypatch):
     assert audit.library_total_count == 7
     assert audit.matching_role_total_count == 6
     assert audit.eligible_count == 1
+    assert audit.excluded_count == 5
     assert audit.review_status_counts["PENDING_REVIEW"] == 1
     assert audit.excluded_by_reason["NOT_APPROVED_FOR_REUSE"] == 1
     assert audit.excluded_by_reason["RENDERED_TEXT_NOT_ALLOWED_FOR_VIDEO_FRAME"] == 1
     assert audit.excluded_by_reason["MODE_NOT_ALLOWED"] == 1
     assert audit.excluded_by_reason["ENGINE_SLOT_NOT_ALLOWED"] == 1
     assert audit.excluded_by_reason["PREVIEW_OR_FILE_MISSING"] == 1
-    assert audit.excluded_by_reason["SEMANTIC_ROLE_MISMATCH"] == 1
+    assert "SEMANTIC_ROLE_MISMATCH" not in audit.excluded_by_reason
     assert [asset.asset_id for asset in audit.eligible_assets] == ["eligible"]

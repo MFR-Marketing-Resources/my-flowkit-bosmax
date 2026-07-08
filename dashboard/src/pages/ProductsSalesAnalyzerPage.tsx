@@ -2,13 +2,13 @@ import type { ChangeEvent, FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchAPI, patchAPI, postAPI, postMultipartAPI } from "../api/client";
-import { HelperText } from "../components/ui";
 import {
 	fetchProductIntelligence,
 	fetchProductIntelligenceProvenance,
 	fetchProductIntelligenceSnapshots,
 } from "../api/products";
 import ProductIntelligenceReviewDraftPanel from "../components/product-intelligence/ProductIntelligenceReviewDraftPanel";
+import { HelperText } from "../components/ui";
 import type {
 	FastMossImportBatchReport,
 	Product,
@@ -1701,18 +1701,11 @@ export default function ProductsSalesAnalyzerPage() {
 
 					<div className="space-y-1">
 						{paginatedProducts.map((product) => (
-							<div
+							<button
 								key={product.id}
-								role="button"
-								tabIndex={0}
+								type="button"
 								onClick={() => setSelectedId(product.id)}
-								onKeyDown={(e) => {
-									if (e.key === "Enter" || e.key === " ") {
-										e.preventDefault();
-										setSelectedId(product.id);
-									}
-								}}
-								className={`flex min-w-0 gap-3 rounded border p-2 cursor-pointer transition-colors ${selectedId === product.id ? "border border-blue-500/50 bg-blue-900/30" : "border border-transparent hover:bg-slate-800"}`}
+								className={`flex w-full min-w-0 gap-3 rounded border p-2 text-left transition-colors ${selectedId === product.id ? "border border-blue-500/50 bg-blue-900/30" : "border border-transparent hover:bg-slate-800"}`}
 							>
 								<div className="flex-shrink-0 w-16 h-16 rounded overflow-hidden bg-slate-800">
 									<ImageFallback
@@ -1856,7 +1849,7 @@ export default function ProductsSalesAnalyzerPage() {
 										)}
 									</div>
 								</div>
-							</div>
+							</button>
 						))}
 					</div>
 
