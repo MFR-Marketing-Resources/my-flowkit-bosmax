@@ -404,12 +404,71 @@ async def approve_copy_set(copy_set_id: str, request: CopySetApproveRequest | di
     if not safety["safe"]:
         raise CopySetError("COPY_SET_UNSAFE", status_code=422, detail=safety)
 
+    # Formula-Driven Copywriting Engine gate. An AI-lane Copy Set carries its
+    # formula-validation + sales-clarity verdict inside claim_review. Enforce it so a
+    # set that FAILED formula validation (or is review-required / not sales-clear)
+    # cannot become APPROVED unless the operator supplies an explicit, auditable
+    # override. Sets with no verdict (deterministic lane) are not formula-applicable
+    # and pass on safety + completeness alone.
+    prior = fields.get("claim_review") or {}
+    fv = prior.get("formula_validation") or {}
+    sc = prior.get("sales_clarity") or {}
+    formula_review_required = bool(fv) and (
+        not fv.get("valid", False) or bool(fv.get("review_required", False))
+    )
+    clarity_review_required = bool(sc) and (
+        not sc.get("clear", False) or bool(sc.get("review_required", False))
+    )
+    override = bool(req.override_formula_review)
+    if (formula_review_required or clarity_review_required) and not override:
+        raise CopySetError(
+            "COPY_SET_FORMULA_REVIEW_REQUIRED",
+            status_code=422,
+            detail={
+                "formula_review_required": formula_review_required,
+                "clarity_review_required": clarity_review_required,
+                "formula_validation": fv or None,
+                "sales_clarity": sc or None,
+                "hint": "Fix the copy, or approve with override_formula_review=true + override_reason.",
+            },
+        )
+    if override and not _clean(req.override_reason):
+        raise CopySetError(
+            "OVERRIDE_REASON_REQUIRED",
+            status_code=422,
+            detail={"hint": "override_formula_review=true requires a non-empty override_reason."},
+        )
+
+    # Preserve the formula/clarity verdict — approval must NEVER strip it (readiness
+    # + provenance read it downstream). Overlay the fresh approval-time gate results.
+    preserved = {
+        key: prior[key]
+        for key in (
+            "ai_generated",
+            "grounding_source",
+            "formula_id",
+            "formula_definition_status",
+            "formula_breakdown",
+            "formula_validation",
+            "sales_clarity",
+        )
+        if key in prior
+    }
     claim_review = {
+        **preserved,
         "completeness": completeness,
         "safety": safety,
         "route_type": fields["route_type"],
         "approved": True,
     }
+    if override and (formula_review_required or clarity_review_required):
+        claim_review["approval_override"] = {
+            "formula_review_overridden": formula_review_required,
+            "sales_clarity_overridden": clarity_review_required,
+            "reason": _clean(req.override_reason),
+            "by": _clean(req.approved_by) or "operator",
+            "at": _now(),
+        }
     updated = await crud.update_copy_set(
         copy_set_id,
         status=STATUS_COPY_APPROVED,

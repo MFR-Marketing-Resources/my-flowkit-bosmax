@@ -96,8 +96,22 @@ async def test_candidate_can_be_approved_only_via_existing_gate(monkeypatch):
     with pytest.raises(copy_svc.CopySetPermissionError):
         await copy_svc.approve_copy_set(cs["copy_set_id"], {"approval_phrase": "WRONG"})
 
+    # The ungrounded SAFE_AI candidate is formula-review-required, so the Formula
+    # Engine gate now blocks a plain approval — it needs an explicit + auditable override.
+    with pytest.raises(copy_svc.CopySetError) as exc:
+        await copy_svc.approve_copy_set(
+            cs["copy_set_id"], {"approval_phrase": models.APPROVAL_PHRASE}
+        )
+    assert exc.value.code == "COPY_SET_FORMULA_REVIEW_REQUIRED"
+
     approved = await copy_svc.approve_copy_set(
-        cs["copy_set_id"], {"approval_phrase": models.APPROVAL_PHRASE, "approved_by": "operator"}
+        cs["copy_set_id"],
+        {
+            "approval_phrase": models.APPROVAL_PHRASE,
+            "approved_by": "operator",
+            "override_formula_review": True,
+            "override_reason": "test: ungrounded candidate accepted for lifecycle check",
+        },
     )
     assert approved["status"] == models.STATUS_COPY_APPROVED
 
@@ -146,7 +160,15 @@ async def test_candidate_binds_only_after_approval(monkeypatch):
         await binding.resolve_compiler_copy_intelligence(pid, csid)
     assert exc.value.code == binding.ERR_NOT_APPROVED
 
-    await copy_svc.approve_copy_set(csid, {"approval_phrase": models.APPROVAL_PHRASE})
+    # Ungrounded candidate is formula-review-required; approve via explicit override.
+    await copy_svc.approve_copy_set(
+        csid,
+        {
+            "approval_phrase": models.APPROVAL_PHRASE,
+            "override_formula_review": True,
+            "override_reason": "test: ungrounded candidate accepted for binding check",
+        },
+    )
     bound = await binding.resolve_compiler_copy_intelligence(pid, csid)
     assert bound["lineage"]["copy_binding_status"] == binding.BINDING_BOUND
     assert bound["copy_intelligence"]["hook"] == SAFE_AI["hook"]

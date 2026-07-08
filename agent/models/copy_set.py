@@ -155,6 +155,11 @@ class CopySetApproveRequest(BaseModel):
     approval_phrase: str
     reviewer_note: Optional[str] = None
     approved_by: Optional[str] = None
+    # Explicit, auditable override for the Formula-Driven Copywriting Engine gate.
+    # Never defaults on — approving a formula-review/sales-clarity-flagged Copy Set
+    # requires BOTH this flag and a non-empty reason (recorded in claim_review).
+    override_formula_review: bool = False
+    override_reason: Optional[str] = None
 
 
 class CopySetRejectRequest(BaseModel):
