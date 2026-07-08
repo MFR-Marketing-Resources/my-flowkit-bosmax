@@ -248,6 +248,7 @@ _PHYSICS_TYPE_SIZE_HINT: dict[str, str] = {
     "A": "EXACTLY perfume or body spray bottle size. Elegant pinch or side hold, label and nozzle clearly visible.",
     # ── Health & supplements ────────────────────────────────────────────
     "SUPPLEMENT_BOTTLE": "EXACTLY supplement bottle size. Upright single-hand hold with cap and label facing camera.",
+    "TRADITIONAL_HERBAL_OIL_BOTTLE": "EXACTLY compact traditional herbal-oil bottle size. Small palm-size bottle in an adult hand — hold upright with label facing camera.",
     "MEDICAL_TEST_KIT": "EXACTLY slim test kit size. Mid-body pinch, test window and branding unobstructed.",
     # ── Food & beverage ─────────────────────────────────────────────────
     "FOOD_PACK_OR_JAR": "EXACTLY food jar or pack size. Side hold with label forward, sealed and food-safe appearance.",

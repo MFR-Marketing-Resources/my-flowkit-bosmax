@@ -232,3 +232,43 @@ def test_wall_sticker_uses_small_rigid_decor_family():
 
     assert result["physics_class"] == "SMALL_RIGID_DECOR"
     assert "decorative" in result["handling_notes"] or "silhouette" in result["handling_notes"]
+
+
+def test_traditional_herbal_oil_overrides_beauty_family_class():
+    # A traditional medicated oil enriched into the BEAUTY_PERSONAL_CARE
+    # family must NOT inherit the cosmetic beauty-bottle scale identity.
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Heritage Medicated Oil 25ml",
+            "category": "Health & Personal Care",
+            "subcategory": "Traditional Herbal Oil",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+        },
+    )
+
+    assert result["physics_class"] == "TRADITIONAL_HERBAL_OIL_BOTTLE"
+    assert "palm" in result["handling_notes"]
+
+
+def test_traditional_oil_tokens_override_beauty_category_family():
+    result = resolve_product_physics(
+        product_name="Minyak Urut Tradisional 30ml",
+        category="Beauty & Personal Care",
+        subcategory="Bath and Body",
+        type_name="Body Oil",
+    )
+
+    assert result["physics_class"] == "TRADITIONAL_HERBAL_OIL_BOTTLE"
+
+
+def test_plain_beauty_family_keeps_beauty_bottle_class():
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Glow Fix Setting Spray Kawalan Minyak",
+            "category": "Beauty & Personal Care",
+            "subcategory": "Makeup",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+        },
+    )
+
+    assert result["physics_class"] == "BEAUTY_BOTTLE_OR_TUBE"

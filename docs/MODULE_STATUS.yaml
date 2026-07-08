@@ -174,6 +174,7 @@ domains:
       - requirements.txt
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py
+      - agent/services/product_physics.py
       - agent/services/workspace_execution_package_service.py
       - agent/services/flow_client.py
       - agent/services/agent_video.py
@@ -218,6 +219,7 @@ domains:
       - dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx
       - dashboard/src/components/product-asset-generator/presets.ts
       - dashboard/src/pages/ProductsSalesAnalyzerPage.tsx
+      - dashboard/src/components/product-registration/ProductKnowledgeResultPanel.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
       - dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx
       - dashboard/src/pages/BatchPromptBuilderPage.tsx
@@ -275,6 +277,7 @@ domains:
       - tests/unit/test_product_intelligence_snapshot_service.py
       - tests/unit/test_video_reviewer.py
       - tests/unit/test_ugc_video_prompt_compiler_service.py
+      - tests/unit/test_product_physics.py
       - tests/unit/test_workspace_image_preview_contract_service.py
       - tests/unit/test_workspace_execution_package_service.py
       - tests/unit/test_creative_asset_service.py
