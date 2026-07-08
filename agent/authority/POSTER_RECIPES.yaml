@@ -1,0 +1,278 @@
+# POSTER RECIPES — structured poster archetypes (PR B1 foundation).
+#
+# SSOT for the recipe-first Poster Creative Composer. Each recipe defines
+# STRUCTURE (layout, product placement, scene/style, typography, zones); copy is
+# placed into the zones. Zones carry percent-based coordinates (0-100) so the
+# future compositor is renderer-agnostic.
+#
+# SAFETY LAW: placeholders are NEUTRAL structural labels ONLY. No medical /
+# disease / symptom / therapeutic wording is seeded here (no rawat/sembuh/ubat/
+# penyakit/sakit/lega/pening/resdung/cure/treat/heal). Operator copy that fills
+# these zones is unsafe-scanned upstream in build_draft — recipes never carry
+# claims.
+schema_version: poster-recipes-v1
+recipes:
+  - recipe_id: product_hero_night_routine
+    archetype: PRODUCT_HERO
+    label: "Product Hero — Night Routine"
+    description: "Single product as hero in a warm bedside / night-routine scene."
+    layout_template: hero_center_vertical
+    product_placement: "Product centered or rule-of-thirds as the visual hero; clear negative space for copy."
+    background_scene: "Warm, softly-lit bedside / nightstand setting; cozy evening ambience."
+    visual_style: "Premium commercial, warm tone, shallow depth of field."
+    typography_mood: "Warm, calm, rounded display headline with clean body."
+    icon_guidance: "Simple line icons beside benefit chips."
+    composition_rules:
+      - "Hero product must remain sharp and truth-locked (label readable)."
+      - "Keep the top third for the headline, the lower third for chips + CTA."
+    safe_zones:
+      - "9:16 vertical safe margins ~6% on all edges."
+    chip_slots:
+      - usp_1
+      - usp_2
+      - usp_3
+    zones:
+      - zone_id: headline
+        role: HEADLINE
+        source_field: hook
+        x: 8
+        y: 8
+        w: 84
+        h: 18
+        align: left
+        font_role: display
+        max_chars: 48
+        placeholder: "[Tajuk utama]"
+      - zone_id: subheadline
+        role: SUBHEADLINE
+        source_field: subhook
+        x: 8
+        y: 26
+        w: 84
+        h: 10
+        align: left
+        font_role: subhead
+        max_chars: 72
+        placeholder: "[Sub-tajuk]"
+      - zone_id: chip_1
+        role: CHIP
+        source_field: usp_1
+        x: 8
+        y: 70
+        w: 84
+        h: 6
+        align: left
+        font_role: chip
+        max_chars: 36
+        placeholder: "[USP 1]"
+      - zone_id: chip_2
+        role: CHIP
+        source_field: usp_2
+        x: 8
+        y: 77
+        w: 84
+        h: 6
+        align: left
+        font_role: chip
+        max_chars: 36
+        placeholder: "[USP 2]"
+      - zone_id: chip_3
+        role: CHIP
+        source_field: usp_3
+        x: 8
+        y: 84
+        w: 84
+        h: 6
+        align: left
+        font_role: chip
+        max_chars: 36
+        placeholder: "[USP 3]"
+      - zone_id: cta
+        role: CTA
+        source_field: cta
+        x: 8
+        y: 92
+        w: 60
+        h: 6
+        align: center
+        font_role: button
+        max_chars: 24
+        placeholder: "[CTA]"
+    negative_prompt_additions:
+      - "cluttered layout"
+      - "harsh clinical lighting"
+    allowed_text_density:
+      - low
+      - medium
+
+  - recipe_id: heritage_infographic
+    archetype: HERITAGE_INFOGRAPHIC
+    label: "Heritage Infographic"
+    description: "Dominant product packshot with a numeric headline and use-case rows in an ornamental heritage frame."
+    layout_template: packshot_dominant_infographic
+    product_placement: "Product packshot large and dominant, centered upper area; label fully readable."
+    background_scene: "Clean studio with ornamental Malay heritage framing; cream/gold palette."
+    visual_style: "Ornamental heritage, premium, trustworthy."
+    typography_mood: "Bold numeric display headline with traditional serif accents."
+    icon_guidance: "Row icons beside each use-case line."
+    composition_rules:
+      - "Packshot dominates the upper half; use-case rows fill the lower half."
+      - "Numeric headline is the largest element; heritage footer sits at the very bottom."
+    safe_zones:
+      - "9:16 vertical safe margins ~6% on all edges."
+    chip_slots:
+      - usp_1
+      - usp_2
+      - usp_3
+    zones:
+      - zone_id: headline
+        role: HEADLINE
+        source_field: hook
+        x: 8
+        y: 6
+        w: 84
+        h: 16
+        align: center
+        font_role: display
+        max_chars: 48
+        placeholder: "[Tajuk utama]"
+      - zone_id: subheadline
+        role: SUBHEADLINE
+        source_field: subhook
+        x: 8
+        y: 22
+        w: 84
+        h: 8
+        align: center
+        font_role: subhead
+        max_chars: 72
+        placeholder: "[Sub-tajuk]"
+      - zone_id: use_case_1
+        role: ICON_ROW
+        source_field: usp_1
+        x: 10
+        y: 62
+        w: 80
+        h: 6
+        align: left
+        font_role: chip
+        max_chars: 36
+        placeholder: "[Kegunaan 1]"
+      - zone_id: use_case_2
+        role: ICON_ROW
+        source_field: usp_2
+        x: 10
+        y: 69
+        w: 80
+        h: 6
+        align: left
+        font_role: chip
+        max_chars: 36
+        placeholder: "[Kegunaan 2]"
+      - zone_id: use_case_3
+        role: ICON_ROW
+        source_field: usp_3
+        x: 10
+        y: 76
+        w: 80
+        h: 6
+        align: left
+        font_role: chip
+        max_chars: 36
+        placeholder: "[Kegunaan 3]"
+      - zone_id: cta
+        role: CTA
+        source_field: cta
+        x: 20
+        y: 84
+        w: 60
+        h: 6
+        align: center
+        font_role: button
+        max_chars: 24
+        placeholder: "[CTA]"
+      - zone_id: footer
+        role: FOOTER
+        source_field: ""
+        x: 8
+        y: 93
+        w: 84
+        h: 5
+        align: center
+        font_role: caption
+        max_chars: 40
+        placeholder: "[Barisan warisan]"
+    negative_prompt_additions:
+      - "modern minimalist layout"
+      - "cluttered text"
+    allowed_text_density:
+      - medium
+      - high
+
+  - recipe_id: product_scale_portability
+    archetype: PRODUCT_SCALE
+    label: "Product Scale / Portability"
+    description: "Product dominance with a real-world scale cue and minimal copy."
+    layout_template: hero_scale_minimal
+    product_placement: "Product dominant with a real-world scale cue (e.g. in-hand grip); minimal clutter."
+    background_scene: "Clean neutral studio; single soft shadow for grounding."
+    visual_style: "Clean commercial, high clarity, minimal."
+    typography_mood: "Simple modern sans; compact."
+    icon_guidance: "At most two small chips; no icon rows."
+    composition_rules:
+      - "Product is the dominant subject; keep copy minimal and uncluttered."
+    safe_zones:
+      - "9:16 vertical safe margins ~6% on all edges."
+    chip_slots:
+      - usp_1
+      - usp_2
+    zones:
+      - zone_id: headline
+        role: HEADLINE
+        source_field: hook
+        x: 8
+        y: 10
+        w: 84
+        h: 14
+        align: left
+        font_role: display
+        max_chars: 48
+        placeholder: "[Tajuk utama]"
+      - zone_id: chip_1
+        role: CHIP
+        source_field: usp_1
+        x: 8
+        y: 80
+        w: 84
+        h: 6
+        align: left
+        font_role: chip
+        max_chars: 36
+        placeholder: "[USP 1]"
+      - zone_id: chip_2
+        role: CHIP
+        source_field: usp_2
+        x: 8
+        y: 87
+        w: 84
+        h: 6
+        align: left
+        font_role: chip
+        max_chars: 36
+        placeholder: "[USP 2]"
+      - zone_id: cta
+        role: CTA
+        source_field: cta
+        x: 8
+        y: 94
+        w: 60
+        h: 5
+        align: center
+        font_role: button
+        max_chars: 24
+        placeholder: "[CTA]"
+    negative_prompt_additions:
+      - "busy background"
+      - "cluttered layout"
+    allowed_text_density:
+      - low

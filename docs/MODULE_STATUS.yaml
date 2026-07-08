@@ -396,6 +396,16 @@ domains:
       - dashboard/src/utils/productSubjectAsset.ts
       - dashboard/src/utils/productSubjectAsset.test.ts
       - tests/api/test_flow_generate_product_ref.py
+      # POSTER_RECIPE_COMPOSER (PR B1 backend): recipe/archetype authority +
+      # composer emitting structured poster_spec/overlay_spec; legacy no-recipe
+      # path byte-identical. overlay_spec is a foundation only (no compositor).
+      - agent/authority/POSTER_RECIPES.yaml
+      - agent/models/poster_recipe.py
+      - agent/services/poster_recipe_service.py
+      - agent/services/poster_prompt_composer.py
+      - tests/unit/test_poster_recipe_service.py
+      - tests/unit/test_poster_prompt_composer.py
+      - tests/api/test_poster_recipes_api.py
       # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx

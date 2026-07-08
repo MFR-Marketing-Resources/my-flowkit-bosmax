@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from agent.models.poster_recipe import OverlaySpec, PosterSpec
+
 
 class PromptPackageStatus(StrEnum):
     DRAFT_READY = "DRAFT_READY"
@@ -37,6 +39,9 @@ class PosterPromptDraftRequest(BaseModel):
     copy_source: str = ""
     copy_set_id: str = ""
     copy_fallback_confirmed: bool = False
+    # Poster recipe (V2). When set, build_draft composes a recipe-structured prompt
+    # + poster_spec/overlay_spec. When empty, the legacy prompt path is byte-identical.
+    poster_recipe_id: str = ""
 
 
 class PosterCopyLayout(BaseModel):
@@ -66,3 +71,7 @@ class PosterPromptDraftResponse(BaseModel):
     readiness_meta: dict[str, Any] = Field(default_factory=dict)
     operator_notes: str = ""
     validation_warnings: list[str] = Field(default_factory=list)
+    # Recipe V2 (nullable-additive): populated only when a poster_recipe_id was
+    # provided. Null on the legacy path — poster_prompt stays byte-identical there.
+    poster_spec: PosterSpec | None = None
+    overlay_spec: OverlaySpec | None = None
