@@ -23,6 +23,9 @@ def test_i2v_module_exposes_semantic_controls_before_engine_slots():
         "Resolver Transparency",
         "Resolver Status",
         "Manual slot upload override is active for this run only.",
+        "Refresh eligibility",
+        "Library has",
+        "API fetch failed",
     ]:
         assert token in i2v_source
 
@@ -49,5 +52,7 @@ def test_i2v_module_keeps_prompt_and_manual_upload_fallback_surfaces():
         "Upload style override",
         "handleAssetUpload",
         "createWorkspaceExecutionPackage",
+        "fetchCreativeAssetEligibilityAudit",
+        "eligible_assets",
     ]:
         assert token in i2v_source

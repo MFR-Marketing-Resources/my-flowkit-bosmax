@@ -295,6 +295,14 @@ export type CreativeAssetEngineSlot =
 	| "style"
 	| "start_frame"
 	| "end_frame";
+export type CreativeAssetEligibilityAuditSurface =
+	| "F2V_START_FRAME_PICKER"
+	| "F2V_END_FRAME_PICKER"
+	| "HYBRID_START_FRAME_PICKER"
+	| "HYBRID_END_FRAME_PICKER"
+	| "I2V_CHARACTER_PICKER"
+	| "I2V_SCENE_PICKER"
+	| "I2V_STYLE_PICKER";
 export type I2VRecipeId =
 	| "PRODUCT_HELD_BY_CHARACTER_IN_SCENE"
 	| "CHARACTER_FIRST_PRODUCT_DEMO"
@@ -410,6 +418,25 @@ export interface CreativeAsset {
 export interface CreativeAssetListResponse {
 	items: CreativeAsset[];
 	total: number;
+}
+
+export interface CreativeAssetEligibilityAuditResponse {
+	surface: CreativeAssetEligibilityAuditSurface;
+	surface_label: string;
+	recipe_id: string | null;
+	required_semantic_role: CreativeAssetSemanticRole;
+	required_allowed_mode: Exclude<WorkspaceMode, "HYBRID">;
+	required_engine_slots: CreativeAssetEngineSlot[];
+	library_total_count: number;
+	total_assets_by_semantic_role: Record<string, number>;
+	matching_role_total_count: number;
+	active_count: number;
+	approved_count: number;
+	eligible_count: number;
+	excluded_count: number;
+	review_status_counts: Record<string, number>;
+	excluded_by_reason: Record<string, number>;
+	eligible_assets: CreativeAsset[];
 }
 
 export interface I2VSemanticResolvedAsset {

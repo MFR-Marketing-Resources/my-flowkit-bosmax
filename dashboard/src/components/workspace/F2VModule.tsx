@@ -1,18 +1,19 @@
 import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { handleAssetUpload } from "../../api/assets";
-import { fetchCreativeAssets } from "../../api/creativeAssets";
+import { fetchCreativeAssetEligibilityAudit } from "../../api/creativeAssets";
 import { resolveF2vFrameSources } from "../../api/imgFactory";
 import type {
 	CreativeAsset,
+	CreativeAssetEligibilityAuditResponse,
 	Orientation,
 	UploadedAsset,
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
+import CopyBindingGate from "../copywriting/CopyBindingGate";
 import ModelSelect, { normalizeModel, type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
-import CopyBindingGate from "../copywriting/CopyBindingGate";
 
 // IMG Asset Factory bridge: a saved COMPOSITE_FRAME_REFERENCE asset can feed an
 // F2V start/end frame. Posters (rendered text) + archived assets are excluded by
@@ -43,6 +44,7 @@ interface F2VModuleProps {
 	workspacePackage?: WorkspaceExecutionPackage | null;
 	videoModels: VideoModel[];
 	copyReady?: boolean;
+	surfaceMode?: "F2V" | "HYBRID";
 }
 
 const CANONICAL_PROMPT_SECTIONS = [
@@ -206,6 +208,142 @@ function PromptAuditCard({
 }
 
 const F2V_DEFAULT_MODEL = "Veo 3.1 - Lite";
+const FRAME_AUDIT_REASON_LABELS: Array<{
+	key: string;
+	label: string;
+	className: string;
+}> = [
+	{
+		key: "NOT_APPROVED_FOR_REUSE",
+		label: "Pending / rejected",
+		className: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+	},
+	{
+		key: "RENDERED_TEXT_NOT_ALLOWED_FOR_VIDEO_FRAME",
+		label: "Poster excluded",
+		className: "border-rose-500/30 bg-rose-500/10 text-rose-200",
+	},
+	{
+		key: "ENGINE_SLOT_NOT_ALLOWED",
+		label: "Wrong slot",
+		className: "border-purple-500/30 bg-purple-500/10 text-purple-200",
+	},
+	{
+		key: "MODE_NOT_ALLOWED",
+		label: "Wrong mode",
+		className: "border-sky-500/30 bg-sky-500/10 text-sky-200",
+	},
+	{
+		key: "SEMANTIC_ROLE_MISMATCH",
+		label: "Wrong role",
+		className: "border-slate-700 bg-slate-900 text-slate-300",
+	},
+	{
+		key: "ASSET_ARCHIVED",
+		label: "Archived",
+		className: "border-slate-700 bg-slate-900 text-slate-300",
+	},
+	{
+		key: "PREVIEW_OR_FILE_MISSING",
+		label: "Source missing",
+		className: "border-red-500/30 bg-red-500/10 text-red-200",
+	},
+];
+
+function getFramePickerPlaceholder(
+	audit: CreativeAssetEligibilityAuditResponse | null,
+	error: string | null,
+	label: "START" | "END",
+) {
+	if (error) return `API fetch failed — refresh ${label} eligibility audit`;
+	if (!audit) return `Loading ${label} eligibility audit…`;
+	if (audit.eligible_count > 0) return `Pick composite ${label} frame…`;
+	if (audit.library_total_count === 0)
+		return "No Creative Library assets found";
+	return `Assets found but none eligible for ${label} frame`;
+}
+
+function renderFrameAuditCard(
+	label: "START" | "END",
+	audit: CreativeAssetEligibilityAuditResponse | null,
+	error: string | null,
+) {
+	if (error) {
+		return (
+			<div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-200">
+				<div className="font-bold uppercase tracking-[0.16em]">
+					{label} Audit
+				</div>
+				<div className="mt-1">API fetch failed: {error}</div>
+			</div>
+		);
+	}
+	if (!audit) {
+		return (
+			<div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-[10px] text-slate-400">
+				<div className="font-bold uppercase tracking-[0.16em]">
+					{label} Audit
+				</div>
+				<div className="mt-1">Loading eligibility audit…</div>
+			</div>
+		);
+	}
+	const pendingCount = audit.review_status_counts.PENDING_REVIEW ?? 0;
+	const chips = FRAME_AUDIT_REASON_LABELS.filter(
+		(reason) => (audit.excluded_by_reason[reason.key] ?? 0) > 0,
+	);
+	const summary =
+		audit.library_total_count === 0
+			? "No Creative Library assets found."
+			: audit.eligible_count === 0
+				? "Assets found but none are eligible for this surface."
+				: `${audit.eligible_count} asset${audit.eligible_count === 1 ? "" : "s"} currently selectable.`;
+	return (
+		<div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-[10px] text-slate-300">
+			<div className="font-bold uppercase tracking-[0.16em] text-slate-200">
+				{label} Audit
+			</div>
+			<div className="mt-1">
+				Library has {audit.library_total_count} assets; {audit.eligible_count}{" "}
+				eligible for this surface; {audit.excluded_count} excluded.
+			</div>
+			<div className="mt-1 text-slate-400">{summary}</div>
+			<div className="mt-2 flex flex-wrap gap-1.5">
+				<span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-300">
+					Role pool {audit.matching_role_total_count}
+				</span>
+				<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-200">
+					Pending approval {pendingCount}
+				</span>
+				{chips.map((chip) => (
+					<span
+						key={chip.key}
+						className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${chip.className}`}
+					>
+						{chip.label} {audit.excluded_by_reason[chip.key]}
+					</span>
+				))}
+			</div>
+		</div>
+	);
+}
+
+async function fetchFrameEligibilityAudits(surfaceMode: "F2V" | "HYBRID") {
+	return Promise.allSettled([
+		fetchCreativeAssetEligibilityAudit({
+			surface:
+				surfaceMode === "HYBRID"
+					? "HYBRID_START_FRAME_PICKER"
+					: "F2V_START_FRAME_PICKER",
+		}),
+		fetchCreativeAssetEligibilityAudit({
+			surface:
+				surfaceMode === "HYBRID"
+					? "HYBRID_END_FRAME_PICKER"
+					: "F2V_END_FRAME_PICKER",
+		}),
+	]);
+}
 
 function toUploadedAsset(
 	asset:
@@ -239,6 +377,7 @@ export default function F2VModule({
 	workspacePackage = null,
 	videoModels,
 	copyReady = false,
+	surfaceMode = "F2V",
 }: F2VModuleProps) {
 	// --- States ---
 	const [manualPrompt, setManualPrompt] = useState("");
@@ -258,31 +397,99 @@ export default function F2VModule({
 	const [startAsset, setStartAsset] = useState<UploadedAsset | null>(null);
 	const [endAsset, setEndAsset] = useState<UploadedAsset | null>(null);
 
-	// IMG Asset Factory bridge: ACTIVE, F2V-eligible composite frames from the
-	// Creative Library, selectable as start/end frames (additive to upload).
-	const [compositeAssets, setCompositeAssets] = useState<CreativeAsset[]>([]);
+	// IMG Asset Factory bridge: use the backend eligibility audit as the single
+	// truthful source for the frame pickers, including HYBRID (same F2V rules).
+	const [startFrameAudit, setStartFrameAudit] =
+		useState<CreativeAssetEligibilityAuditResponse | null>(null);
+	const [endFrameAudit, setEndFrameAudit] =
+		useState<CreativeAssetEligibilityAuditResponse | null>(null);
+	const [startFrameAuditError, setStartFrameAuditError] = useState<
+		string | null
+	>(null);
+	const [endFrameAuditError, setEndFrameAuditError] = useState<string | null>(
+		null,
+	);
+	const [isRefreshingAudit, setIsRefreshingAudit] = useState(false);
+	const startCompositeAssets = startFrameAudit?.eligible_assets ?? [];
+	const endCompositeAssets = endFrameAudit?.eligible_assets ?? [];
+
+	const refreshEligibilityAudit = async () => {
+		setIsRefreshingAudit(true);
+		const [startResult, endResult] =
+			await fetchFrameEligibilityAudits(surfaceMode);
+		if (startResult.status === "fulfilled") {
+			setStartFrameAudit(startResult.value);
+			setStartFrameAuditError(null);
+		} else {
+			setStartFrameAudit(null);
+			setStartFrameAuditError(
+				startResult.reason instanceof Error
+					? startResult.reason.message
+					: "Unknown audit failure",
+			);
+		}
+		if (endResult.status === "fulfilled") {
+			setEndFrameAudit(endResult.value);
+			setEndFrameAuditError(null);
+		} else {
+			setEndFrameAudit(null);
+			setEndFrameAuditError(
+				endResult.reason instanceof Error
+					? endResult.reason.message
+					: "Unknown audit failure",
+			);
+		}
+		setIsRefreshingAudit(false);
+	};
+
 	useEffect(() => {
-		void fetchCreativeAssets({
-			semantic_role: "COMPOSITE_FRAME_REFERENCE",
-			status: "ACTIVE",
-			allowed_mode: "F2V",
-			limit: 100,
-		})
-			// Only APPROVED composites are reusable — never surface PENDING/REJECTED.
-			.then((r) =>
-				setCompositeAssets(
-					r.items.filter((c) => c.review_status === "APPROVED"),
-				),
-			)
-			.catch(() => {});
-	}, []);
+		let cancelled = false;
+		const run = async () => {
+			setIsRefreshingAudit(true);
+			const [startResult, endResult] =
+				await fetchFrameEligibilityAudits(surfaceMode);
+			if (cancelled) return;
+			if (startResult.status === "fulfilled") {
+				setStartFrameAudit(startResult.value);
+				setStartFrameAuditError(null);
+			} else {
+				setStartFrameAudit(null);
+				setStartFrameAuditError(
+					startResult.reason instanceof Error
+						? startResult.reason.message
+						: "Unknown audit failure",
+				);
+			}
+			if (endResult.status === "fulfilled") {
+				setEndFrameAudit(endResult.value);
+				setEndFrameAuditError(null);
+			} else {
+				setEndFrameAudit(null);
+				setEndFrameAuditError(
+					endResult.reason instanceof Error
+						? endResult.reason.message
+						: "Unknown audit failure",
+				);
+			}
+			setIsRefreshingAudit(false);
+		};
+		void run();
+		return () => {
+			cancelled = true;
+		};
+	}, [surfaceMode]);
 
 	// Every composite selection is validated by the backend F2V resolver, which
 	// enforces role + ACTIVE + F2V + APPROVED + rendered-text/poster exclusion. A
 	// rejected selection is NOT applied to the frame.
-	const handlePickComposite = async (assetId: string, slot: "start" | "end") => {
+	const handlePickComposite = async (
+		assetId: string,
+		slot: "start" | "end",
+	) => {
 		if (!assetId) return;
-		const asset = compositeAssets.find((c) => c.asset_id === assetId);
+		const sourceAssets =
+			slot === "start" ? startCompositeAssets : endCompositeAssets;
+		const asset = sourceAssets.find((c) => c.asset_id === assetId);
 		if (!asset) return;
 		try {
 			const response = await resolveF2vFrameSources(
@@ -476,50 +683,80 @@ export default function F2VModule({
 						)}
 					</div>
 					<div className="mb-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3 space-y-2">
-						<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
-							Or pick a saved composite frame from the Creative Library
+						<div className="flex items-center justify-between gap-3">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+								Or pick a saved composite frame from the Creative Library
+							</div>
+							<button
+								type="button"
+								onClick={() => void refreshEligibilityAudit()}
+								disabled={isRefreshingAudit}
+								className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+							>
+								{isRefreshingAudit ? "Refreshing…" : "Refresh eligibility"}
+							</button>
 						</div>
+						{surfaceMode === "HYBRID" ? (
+							<div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-[10px] text-blue-100">
+								Hybrid uses F2V frame eligibility.
+							</div>
+						) : null}
 						<div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-							<select
-								value=""
-								onChange={(e) =>
-									void handlePickComposite(e.target.value, "start")
-								}
-								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
-							>
-								<option value="">
-									{compositeAssets.length === 0
-										? "No approved composite frames in Library"
-										: "Pick composite START frame…"}
-								</option>
-								{compositeAssets.map((c) => (
-									<option key={c.asset_id} value={c.asset_id}>
-										{c.display_name}
+							<div className="space-y-2">
+								<select
+									value=""
+									onChange={(e) =>
+										void handlePickComposite(e.target.value, "start")
+									}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+								>
+									<option value="">
+										{getFramePickerPlaceholder(
+											startFrameAudit,
+											startFrameAuditError,
+											"START",
+										)}
 									</option>
-								))}
-							</select>
-							<select
-								value=""
-								onChange={(e) =>
-									void handlePickComposite(e.target.value, "end")
-								}
-								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
-							>
-								<option value="">
-									{compositeAssets.length === 0
-										? "No approved composite frames in Library"
-										: "Pick composite END frame…"}
-								</option>
-								{compositeAssets.map((c) => (
-									<option key={c.asset_id} value={c.asset_id}>
-										{c.display_name}
+									{startCompositeAssets.map((c) => (
+										<option key={c.asset_id} value={c.asset_id}>
+											{c.display_name}
+										</option>
+									))}
+								</select>
+								{renderFrameAuditCard(
+									"START",
+									startFrameAudit,
+									startFrameAuditError,
+								)}
+							</div>
+							<div className="space-y-2">
+								<select
+									value=""
+									onChange={(e) =>
+										void handlePickComposite(e.target.value, "end")
+									}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+								>
+									<option value="">
+										{getFramePickerPlaceholder(
+											endFrameAudit,
+											endFrameAuditError,
+											"END",
+										)}
 									</option>
-								))}
-							</select>
+									{endCompositeAssets.map((c) => (
+										<option key={c.asset_id} value={c.asset_id}>
+											{c.display_name}
+										</option>
+									))}
+								</select>
+								{renderFrameAuditCard("END", endFrameAudit, endFrameAuditError)}
+							</div>
 						</div>
 						<p className="text-[9px] text-slate-500">
-							COMPOSITE_FRAME_REFERENCE assets only. Posters (rendered text) and
-							archived assets are excluded by the backend.
+							COMPOSITE_FRAME_REFERENCE assets only. The backend audit mirrors
+							the resolver truth: approval, slot, mode, rendered-text poster,
+							archive, and missing-source gates all fail closed here.
 						</p>
 					</div>
 					<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

@@ -5,6 +5,7 @@ import hashlib
 import json
 import mimetypes
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -13,15 +14,20 @@ from agent.db import crud
 from agent.models.creative_asset import (
     CreativeAssetCreateRequest,
     CreativeAssetEngineSlot,
+    CreativeAssetEligibilityAuditResponse,
+    CreativeAssetEligibilityAuditSurface,
     CreativeAssetRecord,
     CreativeAssetUpdateRequest,
     CreativeAssetValidationResult,
 )
+from agent.services.i2v_slot_recipe_config import get_i2v_slot_recipe
 
 
 CREATIVE_ASSET_UPLOAD_DIR = BASE_DIR / ".local-agent" / "creative-assets"
 ACTIVE_STATUS = "ACTIVE"
 ARCHIVED_STATUS = "ARCHIVED"
+APPROVED_REVIEW_STATUS = "APPROVED"
+DEFAULT_I2V_RECIPE_ID = "PRODUCT_HELD_BY_CHARACTER_IN_SCENE"
 
 
 def _json_text(value: Any) -> str:
@@ -96,6 +102,128 @@ def _build_local_download_url(asset_id: str) -> str:
 def _fingerprint(asset_id: str, slot_key: str, source_value: str) -> str:
     digest = hashlib.sha1(f"{asset_id}||{slot_key}||{source_value}".encode("utf-8")).hexdigest()
     return f"creative_{digest[:16]}"
+
+
+def _asset_has_resolvable_source(asset: CreativeAssetRecord) -> bool:
+    return bool(
+        asset.local_file_path
+        or asset.preview_url
+        or asset.download_url
+        or asset.remote_source_url
+        or asset.media_id
+    )
+
+
+def _collect_selectable_asset_blockers(
+    asset: CreativeAssetRecord,
+    *,
+    semantic_role: str,
+    allowed_mode: str,
+    engine_slot: CreativeAssetEngineSlot,
+    disallow_rendered_text: bool = False,
+    require_approved: bool = False,
+) -> list[str]:
+    blockers: list[str] = []
+    if asset.status != ACTIVE_STATUS:
+        blockers.append("ASSET_ARCHIVED")
+    if asset.semantic_role != semantic_role:
+        blockers.append("SEMANTIC_ROLE_MISMATCH")
+    if asset.allowed_modes and allowed_mode not in asset.allowed_modes:
+        blockers.append("MODE_NOT_ALLOWED")
+    if asset.engine_slot_eligibility and engine_slot not in asset.engine_slot_eligibility:
+        blockers.append("ENGINE_SLOT_NOT_ALLOWED")
+    if require_approved and asset.review_status != APPROVED_REVIEW_STATUS:
+        blockers.append("NOT_APPROVED_FOR_REUSE")
+    if (
+        disallow_rendered_text
+        and asset.contains_rendered_text
+        and not asset.approved_for_video_support
+    ):
+        blockers.append("RENDERED_TEXT_NOT_ALLOWED_FOR_VIDEO_FRAME")
+    if not _asset_has_resolvable_source(asset):
+        blockers.append("PREVIEW_OR_FILE_MISSING")
+    return blockers
+
+
+def _get_audit_surface_spec(
+    surface: CreativeAssetEligibilityAuditSurface,
+    recipe_id: str | None,
+) -> dict[str, Any]:
+    if surface == "F2V_START_FRAME_PICKER":
+        return {
+            "surface_label": "F2V Start Frame Picker",
+            "required_semantic_role": "COMPOSITE_FRAME_REFERENCE",
+            "required_allowed_mode": "F2V",
+            "required_engine_slot": "start_frame",
+            "disallow_rendered_text": True,
+            "require_approved": True,
+            "resolved_recipe_id": None,
+        }
+    if surface == "F2V_END_FRAME_PICKER":
+        return {
+            "surface_label": "F2V End Frame Picker",
+            "required_semantic_role": "COMPOSITE_FRAME_REFERENCE",
+            "required_allowed_mode": "F2V",
+            "required_engine_slot": "end_frame",
+            "disallow_rendered_text": True,
+            "require_approved": True,
+            "resolved_recipe_id": None,
+        }
+    if surface == "HYBRID_START_FRAME_PICKER":
+        return {
+            "surface_label": "Hybrid Start Frame Picker",
+            "required_semantic_role": "COMPOSITE_FRAME_REFERENCE",
+            "required_allowed_mode": "F2V",
+            "required_engine_slot": "start_frame",
+            "disallow_rendered_text": True,
+            "require_approved": True,
+            "resolved_recipe_id": None,
+        }
+    if surface == "HYBRID_END_FRAME_PICKER":
+        return {
+            "surface_label": "Hybrid End Frame Picker",
+            "required_semantic_role": "COMPOSITE_FRAME_REFERENCE",
+            "required_allowed_mode": "F2V",
+            "required_engine_slot": "end_frame",
+            "disallow_rendered_text": True,
+            "require_approved": True,
+            "resolved_recipe_id": None,
+        }
+
+    resolved_recipe_id = recipe_id or DEFAULT_I2V_RECIPE_ID
+    recipe = get_i2v_slot_recipe(resolved_recipe_id)
+    role_key = {
+        "I2V_CHARACTER_PICKER": "character_reference",
+        "I2V_SCENE_PICKER": "scene_context_reference",
+        "I2V_STYLE_PICKER": "style_reference",
+    }.get(surface)
+    if role_key is None:
+        raise ValueError("CREATIVE_ASSET_AUDIT_SURFACE_UNSUPPORTED")
+    mapped_slot = next(
+        (
+            slot_key
+            for slot_key, mapped_role in recipe["engine_slot_mapping"].items()
+            if mapped_role == role_key
+        ),
+        "style",
+    )
+    return {
+        "surface_label": {
+            "I2V_CHARACTER_PICKER": "I2V Character Picker",
+            "I2V_SCENE_PICKER": "I2V Scene Context Picker",
+            "I2V_STYLE_PICKER": "I2V Style Picker",
+        }[surface],
+        "required_semantic_role": {
+            "character_reference": "CHARACTER_REFERENCE",
+            "scene_context_reference": "SCENE_CONTEXT_REFERENCE",
+            "style_reference": "STYLE_REFERENCE",
+        }[role_key],
+        "required_allowed_mode": "I2V",
+        "required_engine_slot": mapped_slot,
+        "disallow_rendered_text": False,
+        "require_approved": True,
+        "resolved_recipe_id": resolved_recipe_id,
+    }
 
 
 def _auto_generate_metadata_handoff(
@@ -317,33 +445,79 @@ async def validate_selectable_asset(
             asset=None,
         )
 
-    blockers: list[str] = []
-    if asset.status != ACTIVE_STATUS:
-        blockers.append("ASSET_ARCHIVED")
-    if asset.semantic_role != semantic_role:
-        blockers.append("SEMANTIC_ROLE_MISMATCH")
-    if asset.allowed_modes and allowed_mode not in asset.allowed_modes:
-        blockers.append("MODE_NOT_ALLOWED")
-    if asset.engine_slot_eligibility and engine_slot not in asset.engine_slot_eligibility:
-        blockers.append("ENGINE_SLOT_NOT_ALLOWED")
-    # Reuse safety: a downstream generation (I2V/F2V) may only consume an asset that
-    # has passed operator review. PENDING_REVIEW / REJECTED / DRAFT are NOT reusable.
-    if require_approved and asset.review_status != "APPROVED":
-        blockers.append("NOT_APPROVED_FOR_REUSE")
-    # Poster exclusion: a rendered-text asset (poster ad) must not become a clean
-    # video-support frame unless it was explicitly approved for video support.
-    if (
-        disallow_rendered_text
-        and asset.contains_rendered_text
-        and not asset.approved_for_video_support
-    ):
-        blockers.append("RENDERED_TEXT_NOT_ALLOWED_FOR_VIDEO_FRAME")
+    blockers = _collect_selectable_asset_blockers(
+        asset,
+        semantic_role=semantic_role,
+        allowed_mode=allowed_mode,
+        engine_slot=engine_slot,
+        disallow_rendered_text=disallow_rendered_text,
+        require_approved=require_approved,
+    )
 
     return CreativeAssetValidationResult(
         valid=not blockers,
         blockers=blockers,
         warnings=[],
         asset=asset,
+    )
+
+
+async def get_creative_asset_eligibility_audit(
+    *,
+    surface: CreativeAssetEligibilityAuditSurface,
+    recipe_id: str | None = None,
+    limit: int = 1000,
+) -> CreativeAssetEligibilityAuditResponse:
+    spec = _get_audit_surface_spec(surface, recipe_id)
+    items = await list_creative_assets(limit=limit)
+    total_assets_by_semantic_role = Counter(item.semantic_role for item in items)
+    matching_role_items = [
+        item for item in items if item.semantic_role == spec["required_semantic_role"]
+    ]
+    review_status_counts = Counter(item.review_status for item in matching_role_items)
+    excluded_by_reason: Counter[str] = Counter()
+    eligible_assets: list[CreativeAssetRecord] = []
+    excluded_count = 0
+
+    for item in items:
+        blockers = _collect_selectable_asset_blockers(
+            item,
+            semantic_role=spec["required_semantic_role"],
+            allowed_mode=spec["required_allowed_mode"],
+            engine_slot=spec["required_engine_slot"],
+            disallow_rendered_text=spec["disallow_rendered_text"],
+            require_approved=spec["require_approved"],
+        )
+        if blockers:
+            excluded_count += 1
+            for blocker in set(blockers):
+                excluded_by_reason[blocker] += 1
+            continue
+        eligible_assets.append(item)
+
+    eligible_assets.sort(key=lambda item: (item.display_name.lower(), item.asset_id))
+
+    return CreativeAssetEligibilityAuditResponse(
+        surface=surface,
+        surface_label=spec["surface_label"],
+        recipe_id=spec["resolved_recipe_id"],
+        required_semantic_role=spec["required_semantic_role"],
+        required_allowed_mode=spec["required_allowed_mode"],
+        required_engine_slots=[spec["required_engine_slot"]],
+        library_total_count=len(items),
+        total_assets_by_semantic_role=dict(total_assets_by_semantic_role),
+        matching_role_total_count=len(matching_role_items),
+        active_count=sum(1 for item in matching_role_items if item.status == ACTIVE_STATUS),
+        approved_count=sum(
+            1
+            for item in matching_role_items
+            if item.review_status == APPROVED_REVIEW_STATUS
+        ),
+        eligible_count=len(eligible_assets),
+        excluded_count=excluded_count,
+        review_status_counts=dict(review_status_counts),
+        excluded_by_reason=dict(excluded_by_reason),
+        eligible_assets=eligible_assets,
     )
 
 

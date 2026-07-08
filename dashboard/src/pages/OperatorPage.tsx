@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
+import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import { fetchProductCatalog } from "../api/products";
-import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
 import {
 	createF2VGenerationPackage,
 	createI2VGenerationPackage,
@@ -13,10 +13,10 @@ import {
 	fetchPromptCompilerRuntimeConfig,
 	fetchWorkspacePackageReadiness,
 } from "../api/workspacePackages";
-import RequestReportPanel from "../components/reporting/RequestReportPanel";
-import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
 import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
-import { useCopywritingReadiness } from "../api/copywritingReadiness";
+import RequestReportPanel from "../components/reporting/RequestReportPanel";
+import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
+import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
 import F2VModule from "../components/workspace/F2VModule";
 import I2VModule from "../components/workspace/I2VModule";
 import IMGModule from "../components/workspace/IMGModule";
@@ -1197,6 +1197,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						workspacePackage={workspacePackage}
 						videoModels={videoModels}
 						copyReady={copyReadiness?.ready_for_generation ?? false}
+						surfaceMode={mode === "HYBRID" ? "HYBRID" : "F2V"}
 					/>
 				);
 			case "T2V":
@@ -1910,7 +1911,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					<button
 						type="button"
 						onClick={() => void handleGeneratePackage()}
-						disabled={!previewPackage || isLoadingPackage || showFallbackConfirm}
+						disabled={
+							!previewPackage || isLoadingPackage || showFallbackConfirm
+						}
 						className="w-full rounded-xl border border-blue-500/40 bg-blue-500/15 px-4 py-3 text-sm font-bold text-blue-100 hover:bg-blue-500/25 disabled:opacity-50 disabled:grayscale transition-all"
 					>
 						{isLoadingPackage ? "Generating…" : generatePromptLabel}

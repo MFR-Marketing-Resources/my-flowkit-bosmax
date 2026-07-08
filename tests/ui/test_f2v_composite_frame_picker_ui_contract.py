@@ -16,29 +16,37 @@ def _read(rel: str) -> str:
 
 def test_f2v_composite_picker_added():
     src = _read("dashboard/src/components/workspace/F2VModule.tsx")
-    assert 'import { fetchCreativeAssets } from "../../api/creativeAssets"' in src
+    assert 'import { fetchCreativeAssetEligibilityAudit } from "../../api/creativeAssets"' in src
     assert "COMPOSITE_FRAME_REFERENCE" in src
     assert "compositeToUploadedAsset" in src
-    assert "Pick composite START frame" in src
-    assert "Pick composite END frame" in src
+    assert 'getFramePickerPlaceholder(' in src
+    assert '"START"' in src
+    assert '"END"' in src
     # Picker feeds the SAME start/end frame state used by the upload path.
     assert "setStartAsset(compositeToUploadedAsset(asset))" in src
     assert "setEndAsset(compositeToUploadedAsset(asset))" in src
-    # Only ACTIVE, F2V-eligible composites are surfaced.
-    assert 'allowed_mode: "F2V"' in src
-    assert 'status: "ACTIVE"' in src
+    # The dropdowns now read from the backend eligibility audit instead of a blind
+    # ACTIVE/F2V fetch with a frontend-only approval filter.
+    assert "fetchCreativeAssetEligibilityAudit({" in src
+    assert '"F2V_START_FRAME_PICKER"' in src
+    assert '"F2V_END_FRAME_PICKER"' in src
 
 
 def test_f2v_composite_picker_is_approved_only_and_resolver_validated():
     src = _read("dashboard/src/components/workspace/F2VModule.tsx")
-    # Only APPROVED composites are surfaced (never PENDING/REJECTED).
-    assert 'c.review_status === "APPROVED"' in src
+    # Only backend-audited eligible composites are surfaced (never silent
+    # PENDING/REJECTED leaks or slot/mode mismatches).
+    assert "eligible_assets" in src
+    assert "renderFrameAuditCard(" in src
+    assert "Refresh eligibility" in src
     # Every selection is validated by the backend F2V resolver before it is applied.
     assert 'import { resolveF2vFrameSources } from "../../api/imgFactory"' in src
     assert "handlePickComposite" in src
     assert "resolveF2vFrameSources(" in src
     # A rejected selection (blockers) is NOT applied to the frame.
     assert "response.blockers.some" in src
+    assert "API fetch failed" in src
+    assert "Hybrid uses F2V frame eligibility." in src
 
 
 def test_f2v_existing_upload_slots_intact():
