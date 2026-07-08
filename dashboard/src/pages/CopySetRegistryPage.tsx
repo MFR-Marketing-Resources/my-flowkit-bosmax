@@ -376,6 +376,48 @@ export default function CopySetRegistryPage() {
 				render: (r) => <span className="text-slate-300">{r.cta || "—"}</span>,
 			},
 			{
+				key: "formula",
+				header: "Formula / QA",
+				sortValue: (r) => r.claim_review?.formula_id || r.formula_family,
+				render: (r) => {
+					const cr = r.claim_review ?? {};
+					const fid = cr.formula_id || r.formula_family;
+					const val = cr.formula_validation;
+					const isDraft =
+						!!cr.formula_definition_status &&
+						cr.formula_definition_status !== "CANONICAL";
+					const issues = val?.violations?.length ?? 0;
+					const clarity = cr.sales_clarity?.clarity_score;
+					const slots = val?.slot_coverage
+						? Object.entries(val.slot_coverage)
+								.map(([s, ok]) => `${s}:${ok ? "ok" : "MISSING"}`)
+								.join("  ")
+						: "";
+					const breakdown = cr.formula_breakdown
+						? Object.entries(cr.formula_breakdown)
+								.map(([s, t]) => `${s}: ${t}`)
+								.join("\n")
+						: "";
+					return (
+						<div
+							className="text-[10px]"
+							data-testid={`formula-cell-${r.copy_set_id}`}
+							title={[slots, breakdown].filter(Boolean).join("\n")}
+						>
+							<span className="font-bold uppercase text-slate-200">{fid}</span>
+							{r.formula_family && r.formula_family !== fid ? (
+								<span className="text-slate-500"> → {r.formula_family}</span>
+							) : null}
+							{isDraft ? <span className="text-amber-300"> (draft)</span> : null}
+							<div className={issues ? "text-amber-300" : "text-emerald-300"}>
+								{val ? (issues ? `⚠ ${issues} issue(s)` : "✓ formula ok") : "—"}
+								{clarity != null ? ` · clarity ${clarity}` : ""}
+							</div>
+						</div>
+					);
+				},
+			},
+			{
 				key: "source",
 				header: "Source",
 				sortValue: (r) => r.source,

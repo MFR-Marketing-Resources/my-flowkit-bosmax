@@ -636,6 +636,26 @@ export interface CopySet {
 		safety?: { safe: boolean; violations: string[]; detail?: Record<string, string> };
 		route_type?: string;
 		approved?: boolean;
+		grounding_source?: string;
+		// Formula-driven metadata (true formula_id; formula_family holds the
+		// compiler-safe family so SavagePAS/HPAS present as PAS to the compiler).
+		formula_id?: string;
+		formula_definition_status?: string;
+		formula_breakdown?: Record<string, string>;
+		formula_validation?: {
+			formula_id: string;
+			definition_status: string;
+			valid: boolean;
+			review_required: boolean;
+			slot_coverage: Record<string, boolean>;
+			violations: { code: string; message?: string; severity?: string; slot?: string }[];
+		};
+		sales_clarity?: {
+			clarity_score: number;
+			answers: Record<string, boolean>;
+			gaps: string[];
+			clear: boolean;
+		};
 	};
 	reviewer_note: string | null;
 	approved_at: string | null;

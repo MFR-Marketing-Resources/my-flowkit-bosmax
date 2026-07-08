@@ -125,6 +125,50 @@ def _coerce_persona(avatar: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _sanitize_claims(
+    ai: dict[str, Any], pk: dict[str, Any], boundary: dict[str, Any], is_stealth: bool
+) -> tuple[list[str], list[str]]:
+    """NEVER persist overclaim as an allowed claim. Scan the AI draft with the
+    claim boundary: keep only claim-safe allowed_claims, and move every overclaim
+    (from allowed_claims or found anywhere in knowledge/benefits/usps/breakdown)
+    into the blocked/overclaim notes. Market / problem language is preserved —
+    claim_boundary never flags kembung perut / perut berangin / gigitan serangga /
+    legakan / etc. This closes the coverage gap vs the narrower claim_safety scan."""
+    raw_allowed = _list(boundary.get("allowed_claims"))
+    safe_allowed: list[str] = []
+    moved: list[str] = []
+    for claim in raw_allowed:
+        if claim_boundary.assess_claim_boundary(claim, is_stealth)["safe"]:
+            safe_allowed.append(claim)
+        else:
+            moved.append(claim)
+    breakdown = ai.get("formula_breakdown") if isinstance(ai.get("formula_breakdown"), dict) else {}
+    avatar = ai.get("customer_avatar") if isinstance(ai.get("customer_avatar"), dict) else {}
+    # Scan EVERY AI-drafted narrative field (not just allowed_claims) so overclaim
+    # anywhere in the prepare output is recorded as blocked. claim_boundary never
+    # flags market/problem language, so avatar pains / market_problem_language are
+    # safe to scan.
+    scan_parts = [
+        _s(pk.get("description")), *_list(pk.get("benefits")), *_list(pk.get("usps")),
+        _s(pk.get("usage")), _s(pk.get("ingredients")), _s(pk.get("warnings")),
+        _s(pk.get("target_customer")),
+        _s(avatar.get("audience")), _s(avatar.get("tone")), _s(avatar.get("pronoun")),
+        *_list(avatar.get("desires")), *_list(avatar.get("fears")), *_list(avatar.get("pains")),
+        *_list(avatar.get("objections")), *_list(avatar.get("triggers")),
+        *_list(ai.get("market_problem_language")),
+        _s(ai.get("situation")), _s(ai.get("desire")), _s(ai.get("objection")),
+        _s(ai.get("trigger")), _s(ai.get("use_context")),
+        *raw_allowed, *[_s(v) for v in breakdown.values()],
+    ]
+    scan_blob = " || ".join(p for p in scan_parts if p)
+    overclaim_hits = claim_boundary.assess_claim_boundary(scan_blob, is_stealth)["overclaim_hits"]
+    blocked: list[str] = []
+    for item in _list(boundary.get("overclaim_notes")) + moved + overclaim_hits:
+        if item and item not in blocked:
+            blocked.append(item)
+    return safe_allowed, blocked
+
+
 def _to_create_request(
     ai: dict[str, Any], grounding: Any
 ) -> tuple[ProductIntelligenceReviewDraftCreateRequest, str]:
@@ -148,8 +192,9 @@ def _to_create_request(
         "trigger": _s(ai.get("trigger")),
         "use_context": _s(ai.get("use_context")),
     }
-    # Overclaim notes = AI notes + any hard overclaim we detect in allowed_claims.
-    overclaim_notes = _list(boundary.get("overclaim_notes"))
+    # Claim-boundary sanitization: overclaim is NEVER persisted as an allowed claim.
+    is_stealth = bool(getattr(grounding, "is_stealth", False))
+    safe_allowed, blocked_claims = _sanitize_claims(ai, pk, boundary, is_stealth)
 
     provenance = [
         ProductIntelligenceReviewFieldProvenanceInput(
@@ -171,8 +216,8 @@ def _to_create_request(
         ingredients_text=_s(pk.get("ingredients")) or None,
         warnings_text=_s(pk.get("warnings")) or None,
         target_customer_text=_s(pk.get("target_customer")) or _s(avatar.get("audience")) or None,
-        allowed_claims_json=_list(boundary.get("allowed_claims")),
-        blocked_claims_json=overclaim_notes,
+        allowed_claims_json=safe_allowed,
+        blocked_claims_json=blocked_claims,
         buyer_persona_snapshot_json=persona,
         copy_strategy_summary_json=copy_strategy,
         created_by="ai_prepare_lane",

@@ -160,6 +160,63 @@ describe("CopySetRegistryPage", () => {
 		expect(await screen.findByText("Safe hook")).toBeInTheDocument();
 	});
 
+	it("[UI smoke] renders the Formula picker and Prepare Product button", async () => {
+		renderPage();
+		expect(await screen.findByTestId("formula-picker")).toBeInTheDocument();
+		expect(
+			await screen.findByTestId("prepare-product-copywriting"),
+		).toBeInTheDocument();
+	});
+
+	it("[UI smoke] shows the TRUE formula_id + compiler family in the Formula/QA column", async () => {
+		mockedList.mockResolvedValue({
+			product_id: "p1",
+			items: [
+				{
+					...sampleSet,
+					formula_family: "PAS",
+					claim_review: {
+						formula_id: "SavagePAS",
+						formula_definition_status: "OPERATOR_REVIEW_DRAFT",
+						formula_breakdown: { problem: "x", solution: "y" },
+						formula_validation: {
+							formula_id: "SavagePAS",
+							definition_status: "OPERATOR_REVIEW_DRAFT",
+							valid: true,
+							review_required: false,
+							slot_coverage: { problem: true, solution: true },
+							violations: [],
+						},
+						sales_clarity: { clarity_score: 0.88, answers: {}, gaps: [], clear: true },
+					},
+				},
+			],
+		});
+		renderPage();
+		const cell = await screen.findByTestId("formula-cell-cs1");
+		expect(cell).toHaveTextContent("SavagePAS"); // true formula_id (not just PAS)
+		expect(cell).toHaveTextContent("→ PAS"); // compiler-safe family
+		expect(cell).toHaveTextContent(/draft/i); // definition_status
+		expect(cell).toHaveTextContent(/clarity/i);
+	});
+
+	it("[UI smoke] ungrounded Generate is blocked and points to Prepare", async () => {
+		mockedBatch.mockRejectedValue(
+			new Error('API 422: {"error":"COPY_GROUNDING_INSUFFICIENT"}'),
+		);
+		renderPage();
+		(await screen.findByTestId("generate-copy-sets")).click();
+		expect(
+			await screen.findByText(/Prepare Product for Copywriting/i),
+		).toBeInTheDocument();
+	});
+
+	it("[UI smoke] AI copy sets are Review required, never auto-approved", async () => {
+		renderPage();
+		// sampleSet status is COPY_REVIEW_REQUIRED
+		expect(await screen.findByText("Review required")).toBeInTheDocument();
+	});
+
 	it("shows the copy grounding banner with avatar + angle strategies", async () => {
 		renderPage();
 		await waitFor(() => expect(mockedGrounding).toHaveBeenCalledWith("p1"));
