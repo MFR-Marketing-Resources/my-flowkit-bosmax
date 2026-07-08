@@ -3,14 +3,20 @@
     BOSMAX Flow Kit — LOCAL verification gate.
 
 .DESCRIPTION
-    ONE authoritative pre-PR / pre-merge gate that runs the checks that actually
-    reflect the production + local-agent build path — so a change can NEVER be
-    reported "green" while the real dashboard build is broken.
+    The pre-PR / pre-merge gate that runs the checks that actually reflect the
+    production + local-agent build path, so a change SHOULD NOT be reported "green"
+    while the real dashboard build is broken.
 
     Why this exists: `tsc --noEmit -p tsconfig.json` and `vitest` can both pass while
     `npm run build` (`tsc -b && vite build`, stricter via project references) FAILS.
     PR #265 merged exactly that way and broke the dashboard bundle rebuild. This gate
     runs the REAL build, not a weaker proxy. See docs/VERIFICATION_GATE.md.
+
+    ENFORCEMENT: this is a LOCAL process control, not a hard block. There is no CI and
+    no required branch protection yet, and the pre-push hook is optional (not installed),
+    so a human or agent CAN still bypass it. It does not make a broken build "impossible"
+    to merge — it makes the real build easy to run and check before reporting green.
+    Server-side enforcement (GitHub Actions / required checks) is a separate future step.
 
     LOCAL ONLY — this is not CI. It runs on the developer/agent machine. Do not report
     a change as CI-verified on the basis of this gate.
