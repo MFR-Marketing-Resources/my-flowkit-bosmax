@@ -453,3 +453,102 @@ def test_brief_grounds_usps_when_snapshot_facts_present():
     assert brief["ungrounded"] is False
     assert "Ground USPs in product_benefits" in brief["instruction"]
     assert brief["product_benefits"] == ["Real benefit"]
+
+
+# ── End-to-end mock UAT scenarios (#9 MWTCB, #10 BOSMAX sensitive) ────────────
+
+
+def _approved_grounding(is_stealth=False, benefits=None, pains=None):
+    from agent.models.copy_grounding import (
+        GROUNDING_APPROVED_SNAPSHOT,
+        BuyerPersona,
+        CopyGrounding,
+        ProductKnowledge,
+    )
+
+    return CopyGrounding(
+        product_id="uat",
+        grounded=True,
+        source=GROUNDING_APPROVED_SNAPSHOT,
+        is_stealth=is_stealth,
+        product_knowledge=ProductKnowledge(
+            description="d", benefits=list(benefits or []), usps=[]
+        ),
+        buyer_persona=BuyerPersona(audience="aud", pains=list(pains or [])),
+    )
+
+
+_BOSMAX_STEALTH_AI = {
+    "angle": "keyakinan diri",
+    "hook": "Rasa kurang yakin depan pasangan?",
+    "subhook": "Tekanan perbandingan boleh menghakis maruah seorang lelaki.",
+    "usp_set": ["botol kecil mudah dibawa", "guna diskret dalam rutin harian"],
+    "cta": "Cuba simpan satu dalam beg. Klik untuk dapatkan.",
+    "formula_family": "PESTA",
+    "rationale": "",
+    "risk_notes": [],
+}
+
+
+@pytest.mark.asyncio
+async def test_uat_mwtcb_market_language_preserved(monkeypatch):
+    pid = await _make_product()
+    _mock_provider(monkeypatch, _MWTCB_FORMULA_AI)
+
+    async def g(product):
+        return _approved_grounding(
+            benefits=["mudah dibawa", "cepat serap"], pains=["anak kembung perut"]
+        )
+
+    monkeypatch.setattr(ai, "resolve_copy_grounding", g)
+    result = await ai.generate_ai_copy_candidate(
+        {"product_id": pid, "formula_family": "PAS"}
+    )
+    cand = result["candidates"][0]
+    cs = cand["copy_set"]
+    text = f"{cs['hook']} {cs['subhook']}".casefold()
+    assert "kembung perut" in text  # market language survives — not vague "rutin harian"
+    assert cand["formula"]["id"] == "PAS"
+    assert cand["formula"]["sales_clarity"]["answers"]["problem"] is True
+    assert not any(
+        v["code"] == "OVERCLAIM" for v in cand["formula"]["validation"]["violations"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_uat_bosmax_sensitive_preserves_problem_controls_overclaim(monkeypatch):
+    pid = await _make_product()
+    _mock_provider(monkeypatch, _BOSMAX_STEALTH_AI)
+
+    async def g(product):
+        return _approved_grounding(
+            is_stealth=True,
+            benefits=["botol kecil"],
+            pains=["keyakinan diri menurun", "tekanan perbandingan"],
+        )
+
+    monkeypatch.setattr(ai, "resolve_copy_grounding", g)
+    result = await ai.generate_ai_copy_candidate(
+        {"product_id": pid, "formula_family": "PESTA"}
+    )
+    val = result["candidates"][0]["formula"]["validation"]
+    assert not any(v["code"] == "OVERCLAIM" for v in val["violations"])  # ego/maruah is OK
+    assert not any(v["code"] == "NO_PROBLEM_IDENTIFIED" for v in val["violations"])
+
+
+@pytest.mark.asyncio
+async def test_uat_bosmax_explicit_anatomy_is_overclaim(monkeypatch):
+    pid = await _make_product()
+    _mock_provider(
+        monkeypatch, {**_BOSMAX_STEALTH_AI, "hook": "Masalah mati pucuk dan zakar lemah?"}
+    )
+
+    async def g(product):
+        return _approved_grounding(is_stealth=True, pains=["keyakinan diri menurun"])
+
+    monkeypatch.setattr(ai, "resolve_copy_grounding", g)
+    result = await ai.generate_ai_copy_candidate(
+        {"product_id": pid, "formula_family": "PESTA"}
+    )
+    val = result["candidates"][0]["formula"]["validation"]
+    assert any(v["code"] == "OVERCLAIM" for v in val["violations"])
