@@ -1,18 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { DataTable, Badge } from "../components/ui";
-import SaveToCreativeLibraryPanel from "../components/creative-library/SaveToCreativeLibraryPanel";
 import {
 	archiveCreativeAsset,
 	fetchCreativeAssets,
 } from "../api/creativeAssets";
+import SaveToCreativeLibraryPanel from "../components/creative-library/SaveToCreativeLibraryPanel";
+import { Badge, DataTable } from "../components/ui";
 import type {
 	CreativeAsset,
 	CreativeAssetSemanticRole,
 	CreativeAssetStatus,
 	WorkspaceMode,
 } from "../types";
-
 
 const ROLE_OPTIONS: CreativeAssetSemanticRole[] = [
 	"PRODUCT_REFERENCE",
@@ -49,9 +48,8 @@ export default function CreativeLibraryPage() {
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
 	const [archiving, setArchiving] = useState<string | null>(null);
-	const [refreshToken, setRefreshToken] = useState(0);
 
-	useEffect(() => {
+	const loadItems = useCallback(() => {
 		setError(null);
 		setIsLoading(true);
 		void fetchCreativeAssets({
@@ -69,7 +67,11 @@ export default function CreativeLibraryPage() {
 				),
 			)
 			.finally(() => setIsLoading(false));
-	}, [roleFilter, statusFilter, search, refreshToken]);
+	}, [roleFilter, search, statusFilter]);
+
+	useEffect(() => {
+		loadItems();
+	}, [loadItems]);
 
 	const handleArchive = async (assetId: string) => {
 		setArchiving(assetId);
@@ -94,9 +96,7 @@ export default function CreativeLibraryPage() {
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
-			<SaveToCreativeLibraryPanel
-				onSaved={() => setRefreshToken((token) => token + 1)}
-			/>
+			<SaveToCreativeLibraryPanel onSaved={() => loadItems()} />
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
 				<div className="mb-4 flex items-center justify-between gap-3">
 					<div>
@@ -220,7 +220,9 @@ export default function CreativeLibraryPage() {
 							key: "role",
 							header: "Semantic Role",
 							sortValue: (item) => item.semantic_role,
-							render: (item) => <span className="text-xs">{item.semantic_role}</span>,
+							render: (item) => (
+								<span className="text-xs">{item.semantic_role}</span>
+							),
 						},
 						{
 							key: "status",
@@ -237,7 +239,9 @@ export default function CreativeLibraryPage() {
 							header: "Modes",
 							render: (item) => (
 								<span className="text-xs text-slate-400">
-									{item.allowed_modes.map((mode) => MODE_LABELS[mode] ?? mode).join(", ") || "ALL"}
+									{item.allowed_modes
+										.map((mode) => MODE_LABELS[mode] ?? mode)
+										.join(", ") || "ALL"}
 								</span>
 							),
 						},
@@ -246,7 +250,11 @@ export default function CreativeLibraryPage() {
 						<div className="flex items-center justify-end gap-2">
 							<button
 								type="button"
-								onClick={() => navigate(`/assets/creative-library/workspace?id=${item.asset_id}`)}
+								onClick={() =>
+									navigate(
+										`/assets/creative-library/workspace?id=${item.asset_id}`,
+									)
+								}
 								className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-800"
 							>
 								Edit
