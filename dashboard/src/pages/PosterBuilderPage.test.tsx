@@ -21,6 +21,9 @@ vi.mock("../api/products", () => ({
 				product_short_name: "Test",
 				source: "MANUAL",
 				category: "Oil",
+				// Product has a usable reference image → poster can be product-anchored.
+				image_url: "http://x/product.jpg",
+				local_image_path: "/local/p.jpg",
 			},
 		],
 	}),
@@ -125,6 +128,7 @@ vi.mock("../api/posterBuilderSettings", () => {
 import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations";
 import { draftToPromptRequest } from "../api/posterPromptDraft";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
+import { fetchProductCatalog } from "../api/products";
 
 const mockedFetch = vi.mocked(fetchPosterReadiness);
 const mockedPromptDraft = vi.mocked(createPosterPromptDraft);
@@ -132,6 +136,7 @@ const mockedRecs = vi.mocked(fetchPosterCopyRecommendations);
 const mockedDraftToPrompt = vi.mocked(draftToPromptRequest);
 const mockedStartGen = vi.mocked(startImgGeneration);
 const mockedPollGen = vi.mocked(pollImgGenerationJob);
+const mockedCatalog = vi.mocked(fetchProductCatalog);
 
 const sampleKit = {
 	kit_id: "k1",
@@ -578,6 +583,8 @@ describe("PosterBuilderPage", () => {
 		useBtn.click();
 		const genBtn = await screen.findByTestId("generate-poster-button");
 		await waitFor(() => expect(genBtn).not.toBeDisabled());
+		// With a valid product image, the fail-closed blocker is NOT shown.
+		expect(screen.queryByTestId("poster-product-ref-required")).toBeNull();
 		// Clicking opens the confirm modal — generation must NOT fire yet.
 		genBtn.click();
 		expect(mockedStartGen).not.toHaveBeenCalled();
@@ -588,9 +595,64 @@ describe("PosterBuilderPage", () => {
 				expect.objectContaining({
 					prompt: "POSTER PROMPT TEXT",
 					aspect: "9:16",
+					// Product-anchor proof: the real product image is attached as a ref.
+					refs: expect.objectContaining({
+						subjectAsset: expect.objectContaining({
+							downloadUrl: "http://x/product.jpg",
+							assetSource: "PRODUCT_IMAGE_URL",
+						}),
+					}),
 				}),
 			),
 		);
 		expect(await screen.findByTestId("poster-gen-result")).toBeInTheDocument();
+	});
+
+	it("fail-closed: blocks poster generation when the product has no reference image", async () => {
+		// Override the catalog with a product that has NO usable image reference.
+		mockedCatalog.mockResolvedValueOnce({
+			items: [
+				{
+					id: "p1",
+					raw_product_title: "No Image Product",
+					product_display_name: "No Image Product",
+					source: "MANUAL",
+					category: "Oil",
+				},
+			],
+		} as never);
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedPromptDraft.mockResolvedValue({
+			product_id: "p1",
+			poster_status: "POSTER_READY",
+			prompt_package_status: "DRAFT_READY",
+			generation_allowed: true,
+			production_allowed: true,
+			restricted_mode: false,
+			poster_prompt: "POSTER PROMPT TEXT",
+			negative_prompt: "",
+			copy_layout: { hook: "h", subhook: "", usp: [], cta: "c" },
+			visual_instruction: "",
+			text_overlay_instruction: "",
+			product_truth_lock: "",
+			safety_guardrails: [],
+			blocked_reasons: [],
+			repair_actions: [],
+			readiness_meta: {},
+			operator_notes: "",
+		});
+		renderPage();
+		await waitForReadinessUi();
+		// The blocker is shown and the generate button is disabled.
+		expect(
+			await screen.findByTestId("poster-product-ref-required"),
+		).toBeInTheDocument();
+		// Even after producing a prompt package, generation stays blocked.
+		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
+		useBtn.click();
+		const genBtn = await screen.findByTestId("generate-poster-button");
+		await waitFor(() => expect(genBtn).toBeDisabled());
+		// No image generation was ever attempted without a product reference.
+		expect(mockedStartGen).not.toHaveBeenCalled();
 	});
 });

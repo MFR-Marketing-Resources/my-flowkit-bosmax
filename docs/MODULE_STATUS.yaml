@@ -390,6 +390,12 @@ domains:
       - tests/unit/test_poster_copy_fit_service.py
       - tests/api/test_poster_copy_fit_api.py
       - dashboard/src/api/posterCopyFit.ts
+      # POSTER_PRODUCT_ANCHOR (PR A): live poster generation anchors on the real
+      # product image (refs.subjectAsset), fail-closed when no product image.
+      # Shared product->subject resolver extracted from IMGModule.
+      - dashboard/src/utils/productSubjectAsset.ts
+      - dashboard/src/utils/productSubjectAsset.test.ts
+      - tests/api/test_flow_generate_product_ref.py
       # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx

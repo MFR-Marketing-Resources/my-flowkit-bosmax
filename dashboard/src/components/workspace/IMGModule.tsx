@@ -9,6 +9,7 @@ import type {
 	WorkspaceExecutionPackage,
 	WorkspacePromptPreviewResult,
 } from "../../types";
+import { productSubjectAsset } from "../../utils/productSubjectAsset";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface IMGModuleProps {
@@ -205,34 +206,6 @@ function toUploadedAsset(
 	};
 }
 
-function toProductSubjectAsset(
-	product: Product | null | undefined,
-): UploadedAsset | null {
-	if (!product) return null;
-	const previewUrl =
-		product.image_url ||
-		product.rendered_img_src ||
-		product.image_analysis?.image_url ||
-		null;
-	if (!previewUrl) return null;
-	return {
-		mediaId: product.media_id ?? null,
-		fileName: product.product_display_name || product.raw_product_title,
-		label: "Product remote image URL",
-		previewUrl,
-		downloadUrl: previewUrl,
-		localFilePath: product.local_image_path ?? undefined,
-		assetId: undefined,
-		assetFingerprint: `product:${product.id}:${previewUrl}`,
-		assetSource: "PRODUCT_IMAGE_URL",
-		isDefaultPackageAsset: true,
-		previewRenderableStatus: "READY",
-		previewErrorDetail: null,
-		localImagePathPresent: Boolean(product.local_image_path),
-		remoteImageUrlPresent: true,
-	};
-}
-
 export default function IMGModule({
 	onExecute,
 	isExecuting,
@@ -294,7 +267,7 @@ export default function IMGModule({
 		if (workspacePackage || !previewPackage || previewPackage.mode !== "IMG")
 			return;
 		setManualPrompt(previewPackage.final_compiled_prompt_text);
-		setSubjectAsset(toProductSubjectAsset(selectedProduct));
+		setSubjectAsset(productSubjectAsset(selectedProduct));
 		setSceneAsset(null);
 		setStyleAsset(null);
 		setIsManualOverride(false);
