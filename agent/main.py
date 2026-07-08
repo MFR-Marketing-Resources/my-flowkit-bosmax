@@ -126,7 +126,15 @@ async def run_ws_server():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    # Runtime-storage banner: print WHICH database this process is bound to, with
+    try:
+        from agent.services import bulk_generation_service as _bulk_svc
+
+        _rec = await _bulk_svc.recover_stuck_bulk_runs()
+        if _rec.get("count"):
+            logger.info("Bulk generation recover_stuck: %s", _rec)
+    except Exception as _bulk_e:  # pragma: no cover
+        logger.warning("Bulk generation recover_stuck skipped: %s", _bulk_e)
+    # Runtime-storage banner:
     # live counts + git context, so a wrong-worktree launch (the audit's empty
     # :8100 backend) is obvious at boot instead of after operator confusion.
     try:

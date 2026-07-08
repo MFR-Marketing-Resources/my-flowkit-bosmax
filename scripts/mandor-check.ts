@@ -108,6 +108,7 @@ function getChangedPaths(): string[] {
 		.filter((line) => !line.startsWith(".gemini/"))
 		.filter((line) => !line.startsWith(".claude/"))
 		.filter((line) => !line.startsWith("scratch/"))
+		.filter((line) => !line.startsWith("scripts/fixtures/poster-compositor/"))
 		.filter((line) => !line.endsWith(".db"))
 		.filter((line) => !line.endsWith(".sqlite"))
 		.filter((line) => !line.endsWith(".db-shm"))

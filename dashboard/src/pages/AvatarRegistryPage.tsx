@@ -4,9 +4,13 @@ import { useImageGenSettings } from "../api/imageGenSettings";
 import { DataTable } from "../components/ui";
 import {
 	createAvatarImageBulk,
+	cancelBulkRun,
 	getBulkRun,
+	listBulkRuns,
 	registerBulkAvatarAssets,
+	retryFailedBulkRun,
 	startBulkRun,
+	type BulkRunListEntry,
 	type BulkRunSummary,
 } from "../api/bulkGeneration";
 
@@ -154,7 +158,39 @@ export default function AvatarRegistryPage() {
 	const [bulkAllowRegenerate, setBulkAllowRegenerate] = useState(false);
 	const [bulkRunId, setBulkRunId] = useState<string | null>(null);
 	const [bulkRunDetail, setBulkRunDetail] = useState<BulkRunSummary | null>(null);
+	const [bulkRecentRuns, setBulkRecentRuns] = useState<BulkRunListEntry[]>([]);
 	const [isBulkBusy, setIsBulkBusy] = useState(false);
+
+	const BULK_CANCEL_CONFIRM =
+		"Cancel this bulk run?\n\n" +
+		"Queued items will not fire.\n" +
+		"Submitted or running Flow jobs may not be cancellable remotely — they can still complete or burn credits.\n" +
+		"After an agent restart, recovery only requeues local DB state; remote Flow artifacts may need manual reconciliation.";
+
+	const loadBulkRecentRuns = useCallback(async () => {
+		try {
+			const { runs } = await listBulkRuns(15);
+			setBulkRecentRuns(runs);
+		} catch {
+			/* non-fatal */
+		}
+	}, []);
+
+	const resumeBulkRun = useCallback(async (runId: string) => {
+		setBulkRunId(runId);
+		setIsBulkBusy(true);
+		setError(null);
+		try {
+			const detail = await getBulkRun(runId);
+			setBulkRunDetail(detail);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to load bulk run.");
+			setBulkRunId(null);
+			setBulkRunDetail(null);
+		} finally {
+			setIsBulkBusy(false);
+		}
+	}, []);
 
 	const refresh = useCallback(async () => {
 		setIsLoading(true);
@@ -487,6 +523,10 @@ export default function AvatarRegistryPage() {
 	};
 
 	useEffect(() => {
+		void loadBulkRecentRuns();
+	}, [loadBulkRecentRuns]);
+
+	useEffect(() => {
 		if (!bulkRunId) return;
 		let cancelled = false;
 		const poll = async () => {
@@ -556,6 +596,7 @@ export default function AvatarRegistryPage() {
 			);
 			const detail = await getBulkRun(created.bulk_run_id);
 			setBulkRunDetail(detail);
+			await loadBulkRecentRuns();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Bulk generation failed.");
 		} finally {
@@ -575,6 +616,63 @@ export default function AvatarRegistryPage() {
 			setBulkRunDetail(detail);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Bulk register failed.");
+		} finally {
+			setIsBulkBusy(false);
+		}
+	};
+
+	const handleBulkCancel = async () => {
+		if (!bulkRunId) return;
+		if (!window.confirm(BULK_CANCEL_CONFIRM)) return;
+		setIsBulkBusy(true);
+		setError(null);
+		try {
+			await cancelBulkRun(bulkRunId);
+			const detail = await getBulkRun(bulkRunId);
+			setBulkRunDetail(detail);
+			setSuccessMsg("Bulk run cancelled.");
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Cancel failed.");
+		} finally {
+			setIsBulkBusy(false);
+		}
+	};
+
+	const handleBulkRetryFailed = async () => {
+		if (!bulkRunId) return;
+		const confirmed = window.confirm(
+			"Re-queue all FAILED items? You must start the run again and confirm credit burn.",
+		);
+		if (!confirmed) return;
+		setIsBulkBusy(true);
+		setError(null);
+		try {
+			await retryFailedBulkRun(bulkRunId);
+			const detail = await getBulkRun(bulkRunId);
+			setBulkRunDetail(detail);
+			setSuccessMsg("Failed items re-queued. Click Start run to continue (credit confirmation).");
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Retry failed.");
+		} finally {
+			setIsBulkBusy(false);
+		}
+	};
+
+	const handleBulkStartRun = async () => {
+		if (!bulkRunId) return;
+		const confirmed = window.confirm(
+			"Start / resume this bulk run with live Flow credit burn?",
+		);
+		if (!confirmed) return;
+		setIsBulkBusy(true);
+		setError(null);
+		try {
+			await startBulkRun(bulkRunId, { confirm_credit_burn: true });
+			const detail = await getBulkRun(bulkRunId);
+			setBulkRunDetail(detail);
+			setSuccessMsg("Bulk run started.");
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Start failed.");
 		} finally {
 			setIsBulkBusy(false);
 		}
@@ -1222,7 +1320,40 @@ export default function AvatarRegistryPage() {
 						<div className="mt-1 text-xs text-slate-500">
 							{selectedCodes.size} selected · max {bulkMaxParallel} parallel IMG jobs
 						</div>
+						<p
+							className="mt-2 max-w-xl text-[10px] leading-relaxed text-slate-500"
+							data-testid="bulk-recovery-note"
+						>
+							Bulk runs persist in the database. After refresh, pick a recent run below to
+							reload item progress. Cancel stops queued work only; submitted or running Flow
+							jobs may still finish or burn credits. Agent restart recovery requeues local
+							state — reconcile remote Flow artifacts manually if needed.
+						</p>
 					</div>
+					<label className="text-[10px] text-slate-400">
+						<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+							Recent bulk runs
+						</span>
+						<select
+							value={bulkRunId ?? ""}
+							onChange={(e) => {
+								const id = e.target.value;
+								if (id) void resumeBulkRun(id);
+							}}
+							className="min-w-[12rem] rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+							data-testid="bulk-resume-run-select"
+						>
+							<option value="">— Select run to resume —</option>
+							{bulkRecentRuns.map((run) => (
+								<option key={run.bulk_run_id} value={run.bulk_run_id}>
+									{run.bulk_run_id.slice(0, 8)}… · {run.status}
+									{run.total_expected != null
+										? ` · ${run.total_completed ?? 0}/${run.total_expected}`
+										: ""}
+								</option>
+							))}
+						</select>
+					</label>
 					<label className="text-[10px] text-slate-400">
 						<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
 							Parallel IMG
@@ -1257,29 +1388,119 @@ export default function AvatarRegistryPage() {
 					</label>
 					<button
 						type="button"
+						disabled={isBulkBusy || avatars.length === 0}
+						onClick={() => selectAllVisible(avatars.map((a) => a.avatar_code))}
+						className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+						data-testid="bulk-select-all"
+					>
+						Select all
+					</button>
+					<button
+						type="button"
 						disabled={isBulkBusy || selectedCodes.size === 0}
 						onClick={() => void handleBulkCreateAndStart()}
 						className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/20 disabled:opacity-40"
+						data-testid="bulk-generate-selected"
 					>
-						{isBulkBusy ? "Running…" : "Bulk generate selected"}
+						{isBulkBusy ? "Running…" : "Generate selected"}
 					</button>
 					{bulkRunId && (
-						<button
-							type="button"
-							disabled={isBulkBusy}
-							onClick={() => void handleBulkRegister()}
-							className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-40"
-						>
-							Register completed assets
-						</button>
+						<>
+							<button
+								type="button"
+								disabled={isBulkBusy}
+								onClick={() => void handleBulkStartRun()}
+								className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-500/20 disabled:opacity-40"
+								data-testid="bulk-start-run"
+							>
+								Start / resume run
+							</button>
+							<button
+								type="button"
+								disabled={isBulkBusy}
+								onClick={() => void handleBulkCancel()}
+								className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-100 hover:bg-red-500/20 disabled:opacity-40"
+								data-testid="bulk-cancel-run"
+							>
+								Cancel run
+							</button>
+							<button
+								type="button"
+								disabled={isBulkBusy}
+								onClick={() => void handleBulkRetryFailed()}
+								className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-sm font-semibold text-violet-100 hover:bg-violet-500/20 disabled:opacity-40"
+								data-testid="bulk-retry-failed"
+							>
+								Retry failed
+							</button>
+							<button
+								type="button"
+								disabled={isBulkBusy}
+								onClick={() => void handleBulkRegister()}
+								className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-40"
+								data-testid="bulk-register-assets"
+							>
+								Register completed assets
+							</button>
+						</>
 					)}
 					{bulkRunDetail && (
-						<div className="w-full text-[11px] text-slate-400">
-							Run {bulkRunDetail.bulk_run_id.slice(0, 8)}… · {bulkRunDetail.status} ·{" "}
+						<div className="w-full text-[11px] text-slate-400" data-testid="bulk-run-summary">
+							Run {bulkRunDetail.bulk_run_id.slice(0, 8)}… ·{" "}
+							<span className="font-semibold text-slate-200">{bulkRunDetail.status}</span> ·{" "}
 							{bulkRunDetail.total_completed}/{bulkRunDetail.total_expected} done
-							{bulkRunDetail.status_counts
-								? ` · ${JSON.stringify(bulkRunDetail.status_counts)}`
-								: ""}
+							{bulkRunDetail.total_failed > 0 ? ` · ${bulkRunDetail.total_failed} failed` : ""}
+							{bulkRunDetail.status_counts ? (
+								<span className="ml-2 inline-flex flex-wrap gap-1">
+									{Object.entries(bulkRunDetail.status_counts).map(([st, n]) => (
+										<span
+											key={st}
+											className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300"
+										>
+											{st}: {n}
+										</span>
+									))}
+								</span>
+							) : null}
+						</div>
+					)}
+					{bulkRunDetail?.items && bulkRunDetail.items.length > 0 && (
+						<div
+							className="w-full overflow-x-auto rounded-xl border border-slate-800"
+							data-testid="bulk-item-progress-table"
+						>
+							<table className="min-w-full text-left text-[11px] text-slate-300">
+								<thead className="bg-slate-900/80 text-[10px] uppercase tracking-wide text-slate-500">
+									<tr>
+										<th className="px-2 py-2">Avatar / ref</th>
+										<th className="px-2 py-2">Status</th>
+										<th className="px-2 py-2">Job</th>
+										<th className="px-2 py-2">Media</th>
+										<th className="px-2 py-2">Path</th>
+										<th className="px-2 py-2">Error</th>
+									</tr>
+								</thead>
+								<tbody>
+									{bulkRunDetail.items.map((item) => (
+										<tr key={item.bulk_item_id} className="border-t border-slate-800/80">
+											<td className="px-2 py-1.5 font-mono text-slate-200">{item.source_ref}</td>
+											<td className="px-2 py-1.5">{item.status}</td>
+											<td className="px-2 py-1.5 font-mono text-[10px]">
+												{item.job_id ? item.job_id.slice(0, 8) + "…" : "—"}
+											</td>
+											<td className="px-2 py-1.5 font-mono text-[10px]">
+												{item.media_id ? item.media_id.slice(0, 8) + "…" : "—"}
+											</td>
+											<td className="max-w-[140px] truncate px-2 py-1.5 text-[10px]">
+												{item.local_path || "—"}
+											</td>
+											<td className="max-w-[180px] truncate px-2 py-1.5 text-red-300/90">
+												{item.error || "—"}
+											</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
 						</div>
 					)}
 				</div>
