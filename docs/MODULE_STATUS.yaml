@@ -382,6 +382,14 @@ domains:
       - dashboard/src/types/posterCopyRecommendations.ts
       - dashboard/src/types/posterPromptDraft.ts
       - dashboard/src/types/posterReadiness.ts
+      # POSTER_COPY_AUTO_FIT: AI-condense over-length poster copy to the poster
+      # limits (suggestion-only, EXPLICIT-only, fail-closed). Reuses the poster
+      # length SSOT + unsafe-term gate + the text_assist provider lane.
+      - agent/models/poster_copy_fit.py
+      - agent/services/poster_copy_fit_service.py
+      - tests/unit/test_poster_copy_fit_service.py
+      - tests/api/test_poster_copy_fit_api.py
+      - dashboard/src/api/posterCopyFit.ts
       # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx

@@ -12,9 +12,11 @@ import {
 	resolveBuilderShellMode,
 	resolveGenerateButtonLabel,
 	resolvePromptDraftButtonLabel,
+	shouldOfferPosterCopyFit,
 	shouldShowHighRiskGuidance,
 	shouldShowHumanReviewPanel,
 	shouldShowRepairActionCenter,
+	summarizePosterCopyFit,
 } from "./posterBuilderUi";
 
 describe("missingPosterCopyFields", () => {
@@ -57,6 +59,68 @@ describe("overLimitPosterCopyFields", () => {
 			cta: "y".repeat(30), // limit 24
 		});
 		expect(result).toEqual(["Hook (60/48)", "CTA (30/24)"]);
+	});
+});
+
+describe("shouldOfferPosterCopyFit", () => {
+	const overLimitDraft = {
+		...EMPTY_POSTER_DRAFT,
+		hook: "x".repeat(60), // limit 48
+		cta: "Beli sekarang",
+	};
+
+	it("offers the fit action when copy is over limit and the AI provider is ready", () => {
+		expect(shouldOfferPosterCopyFit(overLimitDraft, true)).toBe(true);
+	});
+
+	it("does not offer when the AI provider is unavailable (nothing to call)", () => {
+		expect(shouldOfferPosterCopyFit(overLimitDraft, false)).toBe(false);
+	});
+
+	it("does not offer when all copy already fits", () => {
+		expect(
+			shouldOfferPosterCopyFit(
+				{ ...EMPTY_POSTER_DRAFT, hook: "Lega segera.", cta: "Beli" },
+				true,
+			),
+		).toBe(false);
+	});
+});
+
+describe("summarizePosterCopyFit", () => {
+	it("summarises what was shortened", () => {
+		expect(
+			summarizePosterCopyFit({
+				applied: true,
+				changed_fields: ["Hook", "CTA"],
+				still_over_limit: [],
+				warnings: [],
+			}),
+		).toBe("Dipendekkan: Hook, CTA.");
+	});
+
+	it("reports remaining over-limit fields and warnings", () => {
+		expect(
+			summarizePosterCopyFit({
+				applied: true,
+				changed_fields: ["Hook"],
+				still_over_limit: ["USP 1 (60/36)"],
+				warnings: ["Sebahagian ayat masih panjang."],
+			}),
+		).toBe(
+			"Dipendekkan: Hook. Masih panjang: USP 1 (60/36). Sebahagian ayat masih panjang.",
+		);
+	});
+
+	it("falls back to a no-change message when nothing happened", () => {
+		expect(
+			summarizePosterCopyFit({
+				applied: false,
+				changed_fields: [],
+				still_over_limit: [],
+				warnings: [],
+			}),
+		).toBe("Tiada perubahan pada copy.");
 	});
 });
 

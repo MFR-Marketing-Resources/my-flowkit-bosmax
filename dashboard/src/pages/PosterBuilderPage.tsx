@@ -2,6 +2,7 @@ import { ImageIcon, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { usePosterBuilderSettings } from "../api/posterBuilderSettings";
+import { fitPosterCopy } from "../api/posterCopyFit";
 import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations";
 import { fetchPosterReadiness } from "../api/posterReadiness";
 import {
@@ -31,6 +32,7 @@ import {
 	resolvePromptDraftButtonLabel,
 	shouldShowHumanReviewPanel,
 	shouldShowRepairActionCenter,
+	summarizePosterCopyFit,
 } from "../poster/posterBuilderUi";
 import { kitToDraft, POSTER_AUTO_DEFAULT_DRAFT } from "../poster/posterKitToDraft";
 import type { Product } from "../types";
@@ -74,6 +76,8 @@ export default function PosterBuilderPage() {
 	const [promptPackage, setPromptPackage] = useState<PosterPromptDraftResponse | null>(null);
 	const [promptError, setPromptError] = useState("");
 	const [promptLoading, setPromptLoading] = useState(false);
+	const [fitLoading, setFitLoading] = useState(false);
+	const [fitNotice, setFitNotice] = useState("");
 	const [flowMirror, setFlowMirror] = useState<PosterFlowMirrorSettings>(
 		DEFAULT_POSTER_FLOW_MIRROR_SETTINGS,
 	);
@@ -123,6 +127,7 @@ export default function PosterBuilderPage() {
 			setKits([]);
 			setRecWarnings([]);
 			setRecError("");
+			setFitNotice("");
 		}
 		try {
 			const payload = await fetchPosterReadiness(product.id);
@@ -285,6 +290,49 @@ export default function PosterBuilderPage() {
 		await handlePromptDraft(nextDraft);
 	};
 
+	// Operator-initiated "Fit to poster": AI condenses over-length copy to the
+	// poster limits. Suggestion-only — the returned fields are applied to the draft
+	// (which the operator can still edit), never persisted or auto-approved.
+	const handleFitToPoster = async () => {
+		const d = draftRef.current;
+		setFitLoading(true);
+		setFitNotice("");
+		try {
+			const res = await fitPosterCopy({
+				language: d.language,
+				hook: d.hook,
+				subhook: d.subhook,
+				usp_1: d.usp_1,
+				usp_2: d.usp_2,
+				usp_3: d.usp_3,
+				cta: d.cta,
+			});
+			if (res.applied) {
+				// A shortened line is operator-authored copy now, not the approved Copy
+				// Set — mirror the manual-edit provenance reset so governance stays honest.
+				setDraft((prev) => ({
+					...prev,
+					hook: res.fields.hook,
+					subhook: res.fields.subhook,
+					usp_1: res.fields.usp_1,
+					usp_2: res.fields.usp_2,
+					usp_3: res.fields.usp_3,
+					cta: res.fields.cta,
+					copy_source: "manual",
+					copy_set_id: "",
+					copy_fallback_confirmed: false,
+				}));
+			}
+			setFitNotice(summarizePosterCopyFit(res));
+		} catch (e) {
+			setFitNotice(
+				e instanceof Error ? e.message : "Auto-pendekkan gagal. Cuba lagi.",
+			);
+		} finally {
+			setFitLoading(false);
+		}
+	};
+
 	return (
 		<div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
 			<header className="flex flex-wrap items-start justify-between gap-4">
@@ -416,6 +464,9 @@ export default function PosterBuilderPage() {
 									onSelectKit={handleSelectKit}
 									onUseKitForPromptDraft={(kit) => void handleUseKitForPromptDraft(kit)}
 									onGeneratePromptDraft={() => void handlePromptDraft(draftRef.current)}
+									onFitToPoster={() => void handleFitToPoster()}
+									fitLoading={fitLoading}
+									fitNotice={fitNotice}
 									promptDraftEnabled={promptDraftEnabled}
 									promptDraftLabel={promptDraftLabel}
 									promptDraftLoading={promptLoading}

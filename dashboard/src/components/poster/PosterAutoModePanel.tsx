@@ -5,6 +5,7 @@ import {
 	POSTER_COPY_LIMITS,
 	missingPosterCopyFields,
 	overLimitPosterCopyFields,
+	shouldOfferPosterCopyFit,
 } from "../../poster/posterBuilderUi";
 
 function SourceBadge({ source, status }: { source: string; status: string }) {
@@ -40,6 +41,9 @@ export default function PosterAutoModePanel({
 	onSelectKit,
 	onUseKitForPromptDraft,
 	onGeneratePromptDraft,
+	onFitToPoster,
+	fitLoading,
+	fitNotice,
 	promptDraftEnabled,
 	promptDraftLabel,
 	promptDraftLoading,
@@ -55,6 +59,9 @@ export default function PosterAutoModePanel({
 	onSelectKit: (kit: PosterCopyKit) => void;
 	onUseKitForPromptDraft: (kit: PosterCopyKit) => void;
 	onGeneratePromptDraft: () => void;
+	onFitToPoster: () => void;
+	fitLoading: boolean;
+	fitNotice: string;
 	promptDraftEnabled: boolean;
 	promptDraftLabel: string;
 	promptDraftLoading: boolean;
@@ -88,6 +95,7 @@ export default function PosterAutoModePanel({
 	const aiReady = settings.ai_provider.configured;
 	const missingCopy = missingPosterCopyFields(draft);
 	const overLimit = overLimitPosterCopyFields(draft);
+	const canFit = shouldOfferPosterCopyFit(draft, aiReady);
 
 	return (
 		<section
@@ -207,14 +215,38 @@ export default function PosterAutoModePanel({
 					</p>
 				) : null}
 				{promptDraftEnabled && overLimit.length > 0 ? (
-					<p
-						data-testid="poster-copy-overlimit-hint"
-						className="mt-3 text-[11px] text-rose-300"
-					>
-						Terlalu panjang untuk poster: <strong>{overLimit.join(", ")}</strong>.
-						Pendekkan ayat supaya muat — copy poster mesti ringkas, bukan panjang
-						macam copywriting video.
-					</p>
+					<div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-950/20 p-3">
+						<p
+							data-testid="poster-copy-overlimit-hint"
+							className="text-[11px] text-rose-300"
+						>
+							Terlalu panjang untuk poster: <strong>{overLimit.join(", ")}</strong>.
+							Copy poster mesti ringkas, bukan panjang macam copywriting video.
+						</p>
+						{canFit ? (
+							<button
+								type="button"
+								data-testid="poster-fit-copy"
+								disabled={fitLoading}
+								onClick={onFitToPoster}
+								className="mt-2 rounded-lg border border-amber-500/40 bg-amber-600/20 px-3 py-1.5 text-[10px] font-bold uppercase text-amber-100 disabled:opacity-40"
+							>
+								{fitLoading ? "AI memendekkan…" : "Muatkan ke poster (AI)"}
+							</button>
+						) : !aiReady ? (
+							<p className="mt-2 text-[10px] text-slate-400">
+								AI provider tidak tersedia — pendekkan ayat secara manual.
+							</p>
+						) : null}
+						{fitNotice ? (
+							<p
+								data-testid="poster-fit-notice"
+								className="mt-2 text-[10px] text-amber-200/90"
+							>
+								{fitNotice}
+							</p>
+						) : null}
+					</div>
 				) : null}
 				<button
 					type="button"
