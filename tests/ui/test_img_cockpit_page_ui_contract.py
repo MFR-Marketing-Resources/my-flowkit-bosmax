@@ -119,6 +119,25 @@ def test_img_cockpit_logic_helpers_encode_the_gates():
     assert "mediaId" in logic
 
 
+def test_cockpit_poster_lane_is_copy_governed():
+    page = _read("dashboard/src/pages/ImgCockpitPage.tsx")
+    # Copywriting governance (Phase C): ONLY the rendered-text lane
+    # (default_contains_rendered_text / PRODUCT_POSTER) is copy-applicable. The shared
+    # readiness contract + copy-binding gate are wired in on that lane only.
+    assert "useCopywritingReadiness" in page
+    assert "CopywritingReadinessCard" in page
+    assert "CopyBindingGate" in page
+    # The copy-applicable decision keys on the lane's rendered-text flag — pure-visual
+    # lanes render neither the card nor the gate (copy_applicable=false).
+    assert "default_contains_rendered_text" in page
+    assert "posterCopyApplicable" in page
+    assert "posterCopyApplicable ?" in page  # card/gate mounted conditionally
+    # The credit-spending Generate is blocked for a not-copy-ready poster lane unless
+    # the operator explicitly confirms fallback — never silent generic marketing copy.
+    assert "posterCopyGateBlocked" in page
+    assert "if (posterCopyGateBlocked) return;" in page  # defense in depth
+
+
 def test_img_factory_client_wires_gated_generation():
     api = _read("dashboard/src/api/imgFactory.ts")
     assert "export async function startImgGeneration" in api

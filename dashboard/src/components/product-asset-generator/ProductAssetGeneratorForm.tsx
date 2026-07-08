@@ -2136,6 +2136,14 @@ export default function ProductAssetGeneratorForm({
 						<div className="mt-2 text-[10px] text-slate-500">
 							Hook, USP, CTA, product physics, and source warnings now come from the BOSMAX authority adapter. OPERATOR_PACK and NOT_FOUND signals remain explicit.
 						</div>
+						<div
+							data-testid="pag-copy-advisory"
+							className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-amber-200"
+						>
+							Advisory preview only — these signals are NOT an approved Copy Set and
+							are not formula-grounded. For customer-facing copy, generate + approve a
+							Copy Set in the Copy Registry.
+						</div>
 						<div className="mt-3 grid gap-2">
 							<div>Hook: {selectedCopySignals.hook || "NOT_FOUND"}</div>
 							<div>USP 1: {selectedCopySignals.usp_1 || "NOT_FOUND"}</div>

@@ -17,6 +17,19 @@ def test_product_asset_generator_route_and_nav_exist():
     assert "?preset=" in page_source
 
 
+def test_pag_copy_preview_is_marked_advisory_not_approved_copy():
+    # Copywriting governance (Phase C): the Product Asset Generator preview surfaces
+    # copy SIGNALS from the authority adapter — NOT an approved, formula-grounded Copy
+    # Set. That must be labelled so an operator never mistakes preview copy for approved
+    # customer-facing copy; it points them to the Copy Registry instead.
+    form_source = _read(
+        "dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx"
+    )
+    assert 'data-testid="pag-copy-advisory"' in form_source
+    assert "NOT an approved Copy Set" in form_source
+    assert "Copy Registry" in form_source
+
+
 def test_product_asset_generator_ui_calls_only_the_preview_endpoint():
     api_source = _read("dashboard/src/api/productAssetGenerator.ts")
     products_api = _read("dashboard/src/api/products.ts")
