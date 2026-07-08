@@ -1,6 +1,14 @@
-import { AlertTriangle, CheckCircle2, RefreshCw, Sparkles } from "lucide-react";
+import {
+	AlertTriangle,
+	CheckCircle2,
+	RefreshCw,
+	Sparkles,
+	Wand2,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+	type AICaptionAssistResponse,
+	aiAssistSocialCopy,
 	approveSocialCopyPackage,
 	generateSocialCopyPackage,
 	listSocialCopyPackages,
@@ -97,6 +105,8 @@ export default function SocialCopyPackagePanel({
 	const [busy, setBusy] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const [aiBusy, setAiBusy] = useState(false);
+	const [aiNotice, setAiNotice] = useState<string | null>(null);
 
 	const load = useCallback(async () => {
 		setLoading(true);
@@ -156,6 +166,61 @@ export default function SocialCopyPackagePanel({
 			setError(String(e));
 		} finally {
 			setBusy(false);
+		}
+	};
+
+	// Grounded AI caption — reuses the text_assist lane + product/avatar/Copy-Set
+	// grounding. It only FILLS the editor; the operator still Saves + Approves
+	// (no auto-approve). Fails closed with a friendly notice when the lane is off.
+	const handleAiAssist = async () => {
+		setAiBusy(true);
+		setError(null);
+		setAiNotice(null);
+		try {
+			const res: AICaptionAssistResponse = await aiAssistSocialCopy({
+				platform,
+				artifact_media_id: mediaId,
+				source_mode: sourceMode,
+				tone: form.tone || undefined,
+				language: form.language || undefined,
+			});
+			const cand = res.candidates[0];
+			if (!cand) {
+				setAiNotice("AI tak pulangkan caption — cuba lagi.");
+				return;
+			}
+			setForm((prev) => ({
+				caption: cand.caption,
+				firstComment: cand.first_comment,
+				hashtags: cand.hashtags.join(" "),
+				cta: cand.call_to_action,
+				tone: cand.tone || prev.tone,
+				language: prev.language,
+			}));
+			const src = res.grounding.grounded
+				? `grounded (${res.grounding.source})`
+				: "ungrounded";
+			const aligned = res.grounding.has_campaign_copy
+				? " · aligned to approved Copy Set"
+				: "";
+			const safetyWarn =
+				cand.compliance_status !== "OK"
+					? " ⚠ Claim-safe flagged this draft — betulkan sebelum Approve."
+					: "";
+			setAiNotice(
+				`AI copy assist · ${src}${aligned}.${safetyWarn} Semak & edit, kemudian Save + Approve.`,
+			);
+		} catch (e) {
+			const msg = String(e);
+			if (msg.includes("NOT_CONFIGURED") || msg.includes("409")) {
+				setAiNotice(
+					"AI text_assist lane belum dikonfigur — set provider & model di Settings. Guna 'Suggest copy' untuk scaffold percuma.",
+				);
+			} else {
+				setError(msg);
+			}
+		} finally {
+			setAiBusy(false);
 		}
 	};
 
@@ -264,16 +329,35 @@ export default function SocialCopyPackagePanel({
 							{current.status}
 						</span>
 					)}
-					<button
-						type="button"
-						onClick={() => void handleSuggest()}
-						disabled={busy}
-						className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-[10px] font-semibold text-blue-200 hover:bg-blue-500/20 disabled:opacity-40"
-					>
-						<Sparkles size={11} />
-						Suggest copy
-					</button>
+					<div className="ml-auto flex items-center gap-1.5">
+						<button
+							type="button"
+							onClick={() => void handleSuggest()}
+							disabled={busy || aiBusy}
+							title="Free deterministic per-platform scaffold"
+							className="inline-flex items-center gap-1.5 rounded-lg border border-slate-600/50 bg-slate-800/40 px-3 py-1.5 text-[10px] font-semibold text-slate-200 hover:bg-slate-700/40 disabled:opacity-40"
+						>
+							<Sparkles size={11} />
+							Suggest copy
+						</button>
+						<button
+							type="button"
+							onClick={() => void handleAiAssist()}
+							disabled={busy || aiBusy}
+							title="Grounded AI caption — needs the text_assist provider lane configured in Settings"
+							className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/40 bg-violet-500/10 px-3 py-1.5 text-[10px] font-semibold text-violet-200 hover:bg-violet-500/20 disabled:opacity-40"
+						>
+							<Wand2 size={11} className={aiBusy ? "animate-pulse" : ""} />
+							{aiBusy ? "AI…" : "AI copy assist"}
+						</button>
+					</div>
 				</div>
+
+				{aiNotice && (
+					<div className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-200">
+						{aiNotice}
+					</div>
+				)}
 
 				<label className="block space-y-1">
 					<span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">

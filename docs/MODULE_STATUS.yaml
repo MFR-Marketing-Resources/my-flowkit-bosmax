@@ -407,3 +407,9 @@ domains:
       - tests/api/test_results_api.py
       - tests/unit/test_generation_result_crud.py
       - tests/ui/test_results_hub_ui_contract.py
+      # AI_CAPTION_ASSIST (PR-2): grounded AI caption candidates reusing the
+      # copy_grounding + text_assist stack; suggestion-only (never persists /
+      # approves), fail-closed when the provider lane is unconfigured.
+      - agent/services/ai_caption_assist_service.py
+      - tests/unit/test_ai_caption_assist_service.py
+      - tests/api/test_ai_caption_assist_api.py

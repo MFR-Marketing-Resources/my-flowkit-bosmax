@@ -71,6 +71,38 @@ export interface SocialCopySuggestion {
 	source_mode: string | null;
 }
 
+export interface AICaptionCandidate {
+	platform: SocialPlatform;
+	caption: string;
+	first_comment: string;
+	hashtags: string[];
+	call_to_action: string;
+	tone: string;
+	rationale: string;
+	risk_notes: string[];
+	compliance_status: SocialComplianceStatus;
+	blockers: string[];
+	warnings: string[];
+}
+
+export interface AICaptionAssistResponse {
+	provider: {
+		lane: string;
+		configured: boolean;
+		provider_id: string | null;
+		model_id: string | null;
+		execution_enabled: boolean;
+	};
+	grounding: {
+		source: string;
+		grounded: boolean;
+		is_stealth: boolean;
+		product_name: string | null;
+		has_campaign_copy: boolean;
+	};
+	candidates: AICaptionCandidate[];
+}
+
 export interface GenerateSocialCopyRequest {
 	artifact_media_id: string;
 	platform: SocialPlatform;
@@ -124,6 +156,22 @@ export async function generateSocialCopyPackage(
 	input: GenerateSocialCopyRequest,
 ): Promise<SocialCopyPackage> {
 	return postAPI<SocialCopyPackage>(`${BASE}/generate`, input);
+}
+
+// AI Caption Assist — grounded AI caption candidate(s) for review. Reuses the
+// text_assist lane; fails closed (HTTP 409) when the provider is not configured.
+// Governance: returns suggestions only — the operator still Saves + Approves.
+export async function aiAssistSocialCopy(input: {
+	platform: SocialPlatform;
+	artifact_media_id?: string;
+	product_id?: string;
+	source_mode?: string | null;
+	language?: string;
+	tone?: string;
+	operator_notes?: string;
+	candidate_count?: number;
+}): Promise<AICaptionAssistResponse> {
+	return postAPI<AICaptionAssistResponse>(`${BASE}/ai-assist`, input);
 }
 
 export async function updateSocialCopyPackage(
