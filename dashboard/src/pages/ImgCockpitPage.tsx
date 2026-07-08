@@ -18,6 +18,9 @@ import { useImageGenSettings } from "../api/imageGenSettings";
 import { fetchProductCatalog } from "../api/products";
 import { compileWorkspacePromptPreview } from "../api/workspacePackages";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
+import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
+import CopyBindingGate from "../components/copywriting/CopyBindingGate";
+import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import type { CreativeAsset, Product } from "../types";
 import {
 	canApprove,
@@ -151,6 +154,7 @@ export default function ImgCockpitPage() {
 	const [lanes, setLanes] = useState<ImgAssetLane[]>([]);
 	const [laneId, setLaneId] = useState("");
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+	const [copyFallbackConfirmed, setCopyFallbackConfirmed] = useState(false);
 	const [products, setProducts] = useState<Product[]>([]);
 	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
 	const [sceneAssets, setSceneAssets] = useState<CreativeAsset[]>([]);
@@ -232,6 +236,25 @@ export default function ImgCockpitPage() {
 		() => lanes.find((l) => l.lane_id === laneId) ?? null,
 		[lanes, laneId],
 	);
+
+	// Copywriting governance (Phase C). Only the rendered-text lane (PRODUCT_POSTER,
+	// default_contains_rendered_text) is copy-applicable — a customer reads that copy.
+	// Every other IMG lane is pure-visual (clean-frame, no-text guard) => copy is NOT
+	// applicable: no readiness card, no gate. The poster lane must be copywriting-ready
+	// (approved snapshot + approved Copy Set) or the operator must explicitly confirm
+	// fallback before the credit-spending Generate — it can never silently render
+	// ungrounded generic marketing copy.
+	const posterCopyApplicable = Boolean(lane?.default_contains_rendered_text);
+	const { readiness: copyReadiness } = useCopywritingReadiness(
+		posterCopyApplicable ? (selectedProduct?.id ?? null) : null,
+	);
+	const copyReady = Boolean(copyReadiness?.ready_for_generation);
+	const posterCopyGateBlocked =
+		posterCopyApplicable && !copyReady && !copyFallbackConfirmed;
+	// A lane or product switch clears a stale fallback confirmation.
+	useEffect(() => {
+		setCopyFallbackConfirmed(false);
+	}, [laneId, selectedProduct?.id]);
 
 	// Selected references (any ACTIVE asset) and the approved-only subset that may
 	// actually feed generation / lineage.
@@ -340,6 +363,10 @@ export default function ImgCockpitPage() {
 
 	// GATED: only ever runs after an explicit operator confirmation.
 	const handleConfirmedGenerate = async () => {
+		// Copy gate (defense in depth — the Generate button is also disabled): never
+		// fire a poster/rendered-text generation that is not copywriting-ready without
+		// an explicit fallback confirmation.
+		if (posterCopyGateBlocked) return;
 		setShowGenConfirm(false);
 		setGenerating(true);
 		setError(null);
@@ -718,10 +745,42 @@ export default function ImgCockpitPage() {
 						</div>
 					) : null}
 				</div>
+				{posterCopyApplicable ? (
+					<div className="space-y-3">
+						<CopywritingReadinessCard
+							readiness={copyReadiness}
+							onPrepare={() =>
+								selectedProduct
+									? window.location.assign(
+											`/products?product_id=${encodeURIComponent(selectedProduct.id)}`,
+										)
+									: undefined
+							}
+							onOpenCopyRegistry={() =>
+								selectedProduct
+									? window.location.assign(
+											`/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`,
+										)
+									: undefined
+							}
+						/>
+						<CopyBindingGate
+							copyBound={copyReady}
+							ready={copyReady}
+							fallbackConfirmed={copyFallbackConfirmed}
+							onToggleFallback={setCopyFallbackConfirmed}
+						/>
+					</div>
+				) : null}
 				<button
 					type="button"
 					onClick={() => setShowGenConfirm(true)}
-					disabled={!prompt.trim() || generating || genResolution.blocked}
+					disabled={
+						!prompt.trim() ||
+						generating ||
+						genResolution.blocked ||
+						posterCopyGateBlocked
+					}
 					className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-100 disabled:opacity-40"
 				>
 					{generating ? "Generating (live)…" : "Generate (live · spends credits)"}
