@@ -388,3 +388,9 @@ domains:
       - agent/services/copy_grounding_service.py
       - tests/unit/test_copy_grounding_service.py
       - docs/copywriting/COPY_GROUNDING_V1.md
+      # VERIFICATION_GATE: real-build local gate so no PR is green on a broken build
+      - scripts/verify-gate.ps1
+      - docs/VERIFICATION_GATE.md
+      - tests/ui/test_verification_gate_contract.py
+      - dashboard/package.json
+      - AGENTS.md

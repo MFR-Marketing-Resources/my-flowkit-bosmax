@@ -87,6 +87,12 @@ protection targets. The CURRENT proven-and-locked list lives in
 - Runtime or extension work:
   - the relevant local harness and static checks must pass before commit
   - never use live Google Flow to compensate for missing local proof
+- Dashboard / frontend or backend-service changes:
+  - `scripts/verify-gate.ps1` must PASS before a change is reported green. It runs the
+    REAL build (`npm run build` = `tsc -b && vite build`), vitest, a backend pytest smoke,
+    and mandor-check. A change is NOT green if `DASHBOARD_BUILD` is FAIL — `tsc --noEmit -p`
+    alone is NOT sufficient (it missed the PR #265 build regression). See
+    `docs/VERIFICATION_GATE.md`. LOCAL ONLY — this gate is not CI; do not claim CI.
 - Live UAT:
   - only after `.ai/contracts/ANTIGRAVITY_UAT_CONTRACT.md` preflight passes
 
