@@ -414,6 +414,7 @@ domains:
       - dashboard/src/components/poster/PosterControlledSettings.tsx
       - dashboard/src/components/poster/PosterRecipeSlotEditor.tsx
       - dashboard/src/components/poster/PosterSpecPreview.tsx
+      - docs/poster/POSTER_RECIPE_UI_B2_AUDIT.md
       # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx
