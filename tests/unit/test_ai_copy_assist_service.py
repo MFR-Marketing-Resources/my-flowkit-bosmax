@@ -57,7 +57,7 @@ async def test_provider_not_configured_fails_closed(monkeypatch):
     pid = await _make_product()
     _mock_provider(monkeypatch, provider.AICopyProviderNotConfigured(provider.ERR_NOT_CONFIGURED))
     with pytest.raises(provider.AICopyProviderNotConfigured) as exc:
-        await ai.generate_ai_copy_candidate({"product_id": pid})
+        await ai.generate_ai_copy_candidate({"product_id": pid, "allow_ungrounded": True})
     assert exc.value.code == "AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED"
 
 
@@ -73,7 +73,7 @@ async def test_product_not_found_fails_closed(monkeypatch):
 async def test_valid_candidate_is_review_required_not_approved(monkeypatch):
     pid = await _make_product()
     _mock_provider(monkeypatch, SAFE_AI)
-    result = await ai.generate_ai_copy_candidate({"product_id": pid})
+    result = await ai.generate_ai_copy_candidate({"product_id": pid, "allow_ungrounded": True})
 
     assert len(result["candidates"]) == 1
     cand = result["candidates"][0]
@@ -90,7 +90,7 @@ async def test_valid_candidate_is_review_required_not_approved(monkeypatch):
 async def test_candidate_can_be_approved_only_via_existing_gate(monkeypatch):
     pid = await _make_product()
     _mock_provider(monkeypatch, SAFE_AI)
-    cs = (await ai.generate_ai_copy_candidate({"product_id": pid}))["candidates"][0]["copy_set"]
+    cs = (await ai.generate_ai_copy_candidate({"product_id": pid, "allow_ungrounded": True}))["candidates"][0]["copy_set"]
 
     # Wrong phrase is rejected by the SAME approval gate.
     with pytest.raises(copy_svc.CopySetPermissionError):
@@ -106,7 +106,7 @@ async def test_candidate_can_be_approved_only_via_existing_gate(monkeypatch):
 async def test_unsafe_candidate_is_review_required_and_cannot_approve(monkeypatch):
     pid = await _make_product()
     _mock_provider(monkeypatch, UNSAFE_AI)
-    cand = (await ai.generate_ai_copy_candidate({"product_id": pid}))["candidates"][0]
+    cand = (await ai.generate_ai_copy_candidate({"product_id": pid, "allow_ungrounded": True}))["candidates"][0]
 
     cs = cand["copy_set"]
     assert cs["status"] == models.STATUS_COPY_REVIEW_REQUIRED
@@ -125,8 +125,8 @@ async def test_unsafe_candidate_is_review_required_and_cannot_approve(monkeypatc
 async def test_duplicate_candidate_reuses_existing(monkeypatch):
     pid = await _make_product()
     _mock_provider(monkeypatch, SAFE_AI)
-    first = (await ai.generate_ai_copy_candidate({"product_id": pid}))["candidates"][0]
-    second = (await ai.generate_ai_copy_candidate({"product_id": pid}))["candidates"][0]
+    first = (await ai.generate_ai_copy_candidate({"product_id": pid, "allow_ungrounded": True}))["candidates"][0]
+    second = (await ai.generate_ai_copy_candidate({"product_id": pid, "allow_ungrounded": True}))["candidates"][0]
 
     assert first["created"] is True
     assert second["created"] is False
@@ -138,7 +138,7 @@ async def test_duplicate_candidate_reuses_existing(monkeypatch):
 async def test_candidate_binds_only_after_approval(monkeypatch):
     pid = await _make_product()
     _mock_provider(monkeypatch, SAFE_AI)
-    cs = (await ai.generate_ai_copy_candidate({"product_id": pid}))["candidates"][0]["copy_set"]
+    cs = (await ai.generate_ai_copy_candidate({"product_id": pid, "allow_ungrounded": True}))["candidates"][0]["copy_set"]
     csid = cs["copy_set_id"]
 
     # Review-required AI candidate cannot bind into the compiler.
@@ -156,7 +156,7 @@ async def test_candidate_binds_only_after_approval(monkeypatch):
 async def test_provenance_never_crosses_into_compiler_copy(monkeypatch):
     pid = await _make_product()
     _mock_provider(monkeypatch, SAFE_AI)
-    cs = (await ai.generate_ai_copy_candidate({"product_id": pid}))["candidates"][0]["copy_set"]
+    cs = (await ai.generate_ai_copy_candidate({"product_id": pid, "allow_ungrounded": True}))["candidates"][0]["copy_set"]
 
     # Provenance is stored internally (source/provider/rationale) ...
     assert cs["provenance"]["source"] == models.SOURCE_AI_COPY_ASSIST
@@ -171,7 +171,7 @@ async def test_invalid_provider_response_fails_closed(monkeypatch):
     pid = await _make_product()
     _mock_provider(monkeypatch, provider.AICopyProviderError(provider.ERR_RESPONSE_INVALID, detail="bad json"))
     with pytest.raises(provider.AICopyProviderError) as exc:
-        await ai.generate_ai_copy_candidate({"product_id": pid})
+        await ai.generate_ai_copy_candidate({"product_id": pid, "allow_ungrounded": True})
     assert exc.value.code == "AI_COPY_ASSIST_RESPONSE_INVALID"
 
 
@@ -286,3 +286,109 @@ def test_provider_system_prompt_is_stealth_and_route_aware():
     assert "route_type" in system
     assert "claim_risk_level" in system
     assert "STRICT JSON" in system  # existing contract preserved
+
+
+# ── Product-intelligence grounding GATE (Block + override) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_gate_blocks_ungrounded_generation_without_override(monkeypatch):
+    """No approved snapshot + no override => fail closed, do NOT generate blind copy."""
+    pid = await _make_product()
+    _mock_provider(monkeypatch, SAFE_AI)
+    with pytest.raises(copy_svc.CopySetError) as exc:
+        await ai.generate_ai_copy_candidate({"product_id": pid})
+    assert exc.value.code == "COPY_GROUNDING_INSUFFICIENT"
+    assert exc.value.detail["grounding_source"] != "APPROVED_SNAPSHOT"
+    assert exc.value.detail["recommended_next_action"]
+
+
+@pytest.mark.asyncio
+async def test_gate_batch_blocks_ungrounded_without_override(monkeypatch):
+    pid = await _make_product()
+    _mock_provider(monkeypatch, SAFE_AI)
+    with pytest.raises(copy_svc.CopySetError) as exc:
+        await ai.generate_ai_copy_candidates_batch(
+            {"product_id": pid, "requested_count": 3}
+        )
+    assert exc.value.code == "COPY_GROUNDING_INSUFFICIENT"
+
+
+@pytest.mark.asyncio
+async def test_gate_allows_ungrounded_with_explicit_override(monkeypatch):
+    pid = await _make_product()
+    _mock_provider(monkeypatch, SAFE_AI)
+    result = await ai.generate_ai_copy_candidate(
+        {"product_id": pid, "allow_ungrounded": True}
+    )
+    assert result["grounding"]["source"] != "APPROVED_SNAPSHOT"
+    assert len(result["candidates"]) == 1
+    assert (
+        result["candidates"][0]["copy_set"]["status"]
+        == models.STATUS_COPY_REVIEW_REQUIRED
+    )
+
+
+@pytest.mark.asyncio
+async def test_gate_allows_when_approved_snapshot_present(monkeypatch):
+    """An approved snapshot => generation proceeds WITHOUT any override."""
+    from agent.models.copy_grounding import (
+        GROUNDING_APPROVED_SNAPSHOT,
+        CopyGrounding,
+        ProductKnowledge,
+    )
+
+    pid = await _make_product()
+    _mock_provider(monkeypatch, SAFE_AI)
+
+    async def fake_ground(product):
+        return CopyGrounding(
+            product_id=product.get("id", ""),
+            grounded=True,
+            source=GROUNDING_APPROVED_SNAPSHOT,
+            product_knowledge=ProductKnowledge(
+                benefits=["Real benefit"], usps=["Real USP"]
+            ),
+        )
+
+    monkeypatch.setattr(ai, "resolve_copy_grounding", fake_ground)
+    result = await ai.generate_ai_copy_candidate({"product_id": pid})
+    assert result["grounding"]["source"] == "APPROVED_SNAPSHOT"
+    assert len(result["candidates"]) == 1
+
+
+def test_brief_forbids_usp_fabrication_when_ungrounded():
+    from agent.services.copy_grounding_service import build_framework_grounding
+
+    g = build_framework_grounding(_direct_product())  # framework tier => no facts
+    brief = json.loads(
+        ai._build_brief(models.AICopyAssistRequest(product_id="p-direct"), _direct_product(), g)
+    )
+    assert brief["ungrounded"] is True
+    assert "UNGROUNDED" in brief["instruction"]
+    assert "Do NOT invent" in brief["instruction"]
+
+
+def test_brief_grounds_usps_when_snapshot_facts_present():
+    from agent.models.copy_grounding import (
+        GROUNDING_APPROVED_SNAPSHOT,
+        CopyGrounding,
+        ProductKnowledge,
+    )
+
+    g = CopyGrounding(
+        product_id="x",
+        grounded=True,
+        source=GROUNDING_APPROVED_SNAPSHOT,
+        product_knowledge=ProductKnowledge(benefits=["Real benefit"], usps=["Real USP"]),
+    )
+    brief = json.loads(
+        ai._build_brief(
+            models.AICopyAssistRequest(product_id="x"),
+            {"id": "x", "product_display_name": "X"},
+            g,
+        )
+    )
+    assert brief["ungrounded"] is False
+    assert "Ground USPs in product_benefits" in brief["instruction"]
+    assert brief["product_benefits"] == ["Real benefit"]

@@ -33,7 +33,7 @@ from agent.services.copy_set_service import (
     assess_copy_completeness,
     scan_copy_safety,
 )
-from agent.models.copy_grounding import CopyGrounding
+from agent.models.copy_grounding import CopyGrounding, GROUNDING_APPROVED_SNAPSHOT
 from agent.services.copy_grounding_service import resolve_copy_grounding
 
 # Privacy-sensitive strategy, sourced from the concepts in
@@ -66,6 +66,36 @@ def _rotation_angles(req: AICopyAssistRequest, grounding: CopyGrounding) -> list
     return list(grounding.angle_strategies or [])
 
 
+def _grounding_next_action() -> str:
+    return (
+        "Complete Product Knowledge + Customer Avatar for this product and approve "
+        "its Product Intelligence snapshot (grounded copy needs real benefits / USPs "
+        "/ persona). To generate degraded, non-factual copy anyway, retry with "
+        "allow_ungrounded=true."
+    )
+
+
+def _enforce_grounding_gate(
+    product_id: str, grounding: CopyGrounding, allow_ungrounded: bool
+) -> None:
+    """Block copy generation when the product has NO approved product-intelligence
+    snapshot, unless the operator explicitly overrides. This is the gate that stops
+    the provider guessing product facts in the dark (blind / generic copy)."""
+    if grounding.source == GROUNDING_APPROVED_SNAPSHOT or allow_ungrounded:
+        return
+    raise CopySetError(
+        "COPY_GROUNDING_INSUFFICIENT",
+        status_code=422,
+        detail={
+            "product_id": product_id,
+            "grounding_source": grounding.source,
+            "grounded": grounding.grounded,
+            "missing": grounding.missing,
+            "recommended_next_action": _grounding_next_action(),
+        },
+    )
+
+
 def _build_brief(
     req: AICopyAssistRequest,
     product: dict[str, Any],
@@ -82,6 +112,23 @@ def _build_brief(
     pk = g.product_knowledge
     persona = g.buyer_persona
     cg = g.claim_guardrails
+    has_facts = bool(pk.benefits or pk.usps or _clean(pk.description))
+    if has_facts:
+        instruction = (
+            "Derive the angle from ONE specific buyer pain or desire in the avatar "
+            "(use target_angle_strategy if given). Build hook -> subhook -> USPs -> "
+            "CTA from that angle + avatar. Ground USPs in product_benefits/product_usps; "
+            "do NOT invent product outcomes or claims. Obey banned_terms and claim_gate."
+        )
+    else:
+        instruction = (
+            "NO verified product facts exist for this product (UNGROUNDED generation). "
+            "Do NOT invent product benefits, ingredients, specifications, numbers, or "
+            "outcome USPs. Derive the angle from ONE avatar pain or desire and write "
+            "ONLY avatar/angle-level copy (emotional hook, identity, everyday-routine "
+            "framing). Keep USPs generic and non-factual, or empty. Never state a "
+            "product claim. Obey banned_terms and claim_gate."
+        )
     brief = {
         "product_name": _product_truth(product),
         "category": _clean(product.get("category")),
@@ -124,13 +171,8 @@ def _build_brief(
         "claim_risk_level": cg.claim_risk_level,
         "allowed_claims": cg.allowed_claims,
         "banned_terms": cg.banned_terms,
-        "instruction": (
-            "Derive the angle from ONE specific buyer pain or desire in the avatar "
-            "(use target_angle_strategy if given). Build hook -> subhook -> USPs -> "
-            "CTA from that angle + avatar. Ground USPs in product_benefits/product_usps "
-            "when present; do NOT invent product outcomes or claims. Obey banned_terms "
-            "and claim_gate."
-        ),
+        "ungrounded": not has_facts,
+        "instruction": instruction,
     }
     return json.dumps(
         {k: v for k, v in brief.items() if v not in ("", [], None)},
@@ -219,6 +261,7 @@ async def _generate_one(
         "safety": safety,
         "route_type": fields["route_type"],
         "ai_generated": True,
+        "grounding_source": grounding.source,
     }
     row = await crud.create_copy_set(
         req.product_id,
@@ -272,6 +315,9 @@ async def generate_ai_copy_candidate(
     # Provider adapter raises AICopyProviderNotConfigured / AICopyProviderError —
     # the router maps them to fail-closed responses.
     grounding = await resolve_copy_grounding(product)
+    _enforce_grounding_gate(
+        req.product_id, grounding, bool(getattr(req, "allow_ungrounded", False))
+    )
     angles = _rotation_angles(req, grounding)
     candidates = [
         await _generate_one(
@@ -279,7 +325,11 @@ async def generate_ai_copy_candidate(
         )
         for i in range(req.candidate_count)
     ]
-    return {"provider": provider.provider_status(), "candidates": candidates}
+    return {
+        "provider": provider.provider_status(),
+        "grounding": {"source": grounding.source, "grounded": grounding.grounded},
+        "candidates": candidates,
+    }
 
 
 async def generate_ai_copy_candidates_batch(
@@ -376,6 +426,9 @@ async def generate_ai_copy_candidates_batch(
         }
 
     grounding = await resolve_copy_grounding(product)
+    _enforce_grounding_gate(
+        req.product_id, grounding, bool(getattr(req, "allow_ungrounded", False))
+    )
     angles = _rotation_angles(single_req, grounding)
 
     results: list[dict[str, Any]] = []
@@ -474,6 +527,7 @@ async def generate_ai_copy_candidates_batch(
         "deduped_count": deduped,
         "rejected_count": rejected,
         "provider": provider.provider_status(),
+        "grounding": {"source": grounding.source, "grounded": grounding.grounded},
         "candidates": results,
         "ledger": {
             "batch_id": real_batch_id,
