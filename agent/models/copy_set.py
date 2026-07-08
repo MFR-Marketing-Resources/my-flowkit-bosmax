@@ -82,6 +82,10 @@ class AICopyAssistRequest(BaseModel):
     content_style_mode: str = "UGC_IPHONE"
     operator_notes: Optional[str] = None
     candidate_count: int = Field(default=1, ge=1, le=3)
+    # Operator override: generate even when the product has NO approved
+    # product-intelligence snapshot (degraded, non-factual copy). Default fails
+    # closed so ungrounded products are blocked, not silently guessed in the dark.
+    allow_ungrounded: bool = False
 
 
 class AICopyAssistBatchRequest(BaseModel):
@@ -109,6 +113,8 @@ class AICopyAssistBatchRequest(BaseModel):
     provider_lane: Optional[str] = None
     provider_model: Optional[str] = None
     dry_run: bool = False
+    # Operator override to generate on an ungrounded product (see AICopyAssistRequest).
+    allow_ungrounded: bool = False
 
 
 class CopySetPatchRequest(BaseModel):

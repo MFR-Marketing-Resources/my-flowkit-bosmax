@@ -55,6 +55,26 @@ export async function fetchCopyGrounding(
 	);
 }
 
+// Formula Registry — slot contracts (PAS/AIDA/HSO/BAB/PASTOR/PESTA + SavagePAS/
+// HPAS drafts) that drive formula-aware generation. Read-only.
+export interface CopyFormulaSlot {
+	slot_id: string;
+	purpose: string;
+	required: boolean;
+}
+export interface CopyFormula {
+	formula_id: string;
+	display_name: string;
+	definition_status: string; // CANONICAL | OPERATOR_REVIEW_DRAFT
+	compiler_family: string;
+	slots: CopyFormulaSlot[];
+	best_for: string[];
+	unsuitable_for: string[];
+}
+export async function fetchCopyFormulas(): Promise<{ formulas: CopyFormula[] }> {
+	return getAPI<{ formulas: CopyFormula[] }>("/api/copy-sets/formulas");
+}
+
 // Copy Set API client (Copy Strategy Studio) — read/review/approve/select the
 // approvable copywriting bundle that binds into the deterministic final prompt
 // compiler. No AI provider execution: generation reuses landbank / copy signals.
@@ -97,6 +117,7 @@ export async function generateAICopyCandidate(input: {
 	formula_family?: string;
 	operator_notes?: string;
 	candidate_count?: number;
+	allow_ungrounded?: boolean;
 }): Promise<AICopyAssistResponse> {
 	return postAPI<AICopyAssistResponse>("/api/copy-sets/ai-assist", input);
 }
@@ -116,6 +137,7 @@ export async function generateCopySetBatch(input: {
 	content_style_mode?: string;
 	operator_notes?: string;
 	dry_run?: boolean;
+	allow_ungrounded?: boolean;
 }): Promise<AICopyAssistBatchResponse> {
 	return postAPI<AICopyAssistBatchResponse>(
 		"/api/copy-sets/generate-batch",

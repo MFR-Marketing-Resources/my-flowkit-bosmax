@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent.authority import claim_boundary
 from agent.authority.copy_family_grounding import (
-    FRAMEWORK_BANNED_TERMS,
     grounding_for_family,
 )
 from agent.models.copy_grounding import (
@@ -93,7 +93,7 @@ def build_framework_grounding(product: dict[str, Any]) -> CopyGrounding:
         claim_risk_level=_clean(hydrated.get("claim_risk_level")),
         allowed_claims=[],
         blocked_claims=[],
-        banned_terms=list(FRAMEWORK_BANNED_TERMS),
+        banned_terms=claim_boundary.banned_terms_for_brief(is_stealth),
     )
     knowledge = ProductKnowledge(target_customer=persona.audience)
 
@@ -180,7 +180,7 @@ def _grounding_from_snapshot(product: dict[str, Any], snap: Any) -> CopyGroundin
         claim_risk_level=_clean(getattr(snap, "claim_risk_level", "")) or fw.claim_guardrails.claim_risk_level,
         allowed_claims=_clean_list(getattr(snap, "allowed_claims_json", [])),
         blocked_claims=blocked,
-        banned_terms=list(FRAMEWORK_BANNED_TERMS) + blocked,
+        banned_terms=claim_boundary.banned_terms_for_brief(fw.is_stealth) + blocked,
     )
     missing: list[str] = []
     if not knowledge.benefits and not knowledge.usps:

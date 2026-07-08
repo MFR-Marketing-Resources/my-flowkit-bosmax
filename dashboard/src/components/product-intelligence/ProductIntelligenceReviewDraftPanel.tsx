@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
 	approveProductIntelligenceReviewDraft,
 	createProductIntelligenceReviewDraft,
+	prepareProductForCopywriting,
 	fetchProductIntelligenceReviewDraft,
 	fetchProductIntelligenceReviewDrafts,
 	rejectProductIntelligenceReviewDraft,
@@ -51,8 +52,16 @@ type DraftFormState = {
 	product_truth_lock: string;
 	allowed_claims_json: string;
 	blocked_claims_json: string;
-	buyer_persona_snapshot_json: string;
-	copy_strategy_summary_json: string;
+	persona_audience: string;
+	persona_desires: string;
+	persona_fears: string;
+	persona_pains: string;
+	persona_objections: string;
+	persona_triggers: string;
+	persona_tone: string;
+	persona_pronoun: string;
+	strategy_angles: string;
+	strategy_summary: string;
 	confidence_score: string;
 	reviewer_note: string;
 	created_by: string;
@@ -94,6 +103,89 @@ function linesToList(value: string) {
 		.split(/\r?\n/)
 		.map((entry) => entry.trim())
 		.filter(Boolean);
+}
+
+// ── Structured Customer-Avatar / Copy-Strategy helpers ───────────────────────
+// The buyer_persona_snapshot_json / copy_strategy_summary_json columns stay the
+// authoritative shape read by the backend copy-grounding resolver. These helpers
+// let the operator author them as friendly fields (audience / desires / fears /
+// pains / objections / triggers / tone / pronoun; angles) instead of raw JSON,
+// parsing the stored object in and re-assembling the SAME object out.
+function jsonToLines(value: unknown): string {
+	if (Array.isArray(value)) {
+		return value
+			.map((entry) => String(entry ?? "").trim())
+			.filter(Boolean)
+			.join("\n");
+	}
+	if (typeof value === "string") return value.trim();
+	return "";
+}
+
+function jsonToText(value: unknown): string {
+	if (typeof value === "string") return value;
+	return value === null || value === undefined ? "" : String(value);
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: {};
+}
+
+function personaToForm(value: unknown) {
+	const p = asObject(value);
+	return {
+		persona_audience: jsonToText(p.audience ?? p.persona ?? p.avatar_summary),
+		persona_desires: jsonToLines(p.desires),
+		persona_fears: jsonToLines(p.fears),
+		persona_pains: jsonToLines(p.pains ?? p.pain_points),
+		persona_objections: jsonToLines(p.objections),
+		persona_triggers: jsonToLines(p.triggers),
+		persona_tone: jsonToText(p.tone),
+		persona_pronoun: jsonToText(p.pronoun),
+	};
+}
+
+function formToPersona(form: DraftFormState): Record<string, unknown> {
+	const obj: Record<string, unknown> = {};
+	const putText = (key: string, value: string) => {
+		if (value.trim()) obj[key] = value.trim();
+	};
+	const putList = (key: string, value: string) => {
+		const list = linesToList(value);
+		if (list.length) obj[key] = list;
+	};
+	putText("audience", form.persona_audience);
+	putList("desires", form.persona_desires);
+	putList("fears", form.persona_fears);
+	putList("pains", form.persona_pains);
+	putList("objections", form.persona_objections);
+	putList("triggers", form.persona_triggers);
+	putText("tone", form.persona_tone);
+	putText("pronoun", form.persona_pronoun);
+	return obj;
+}
+
+function strategyToForm(value: unknown) {
+	const s = asObject(value);
+	const angles = Array.isArray(s.angles)
+		? s.angles
+		: typeof s.angle === "string" && s.angle.trim()
+			? [s.angle]
+			: [];
+	return {
+		strategy_angles: jsonToLines(angles),
+		strategy_summary: jsonToText(s.summary ?? s.strategy),
+	};
+}
+
+function formToStrategy(form: DraftFormState): Record<string, unknown> {
+	const obj: Record<string, unknown> = {};
+	const angles = linesToList(form.strategy_angles);
+	if (angles.length) obj.angles = angles;
+	if (form.strategy_summary.trim()) obj.summary = form.strategy_summary.trim();
+	return obj;
 }
 
 function parseJsonObject(value: string, label: string) {
@@ -160,12 +252,8 @@ function mapDraftToForm(draft: ProductIntelligenceReviewDraft): DraftFormState {
 		product_truth_lock: draft.product_truth_lock || "",
 		allowed_claims_json: listToLines(draft.allowed_claims_json),
 		blocked_claims_json: listToLines(draft.blocked_claims_json),
-		buyer_persona_snapshot_json: toPrettyJson(
-			draft.buyer_persona_snapshot_json,
-		),
-		copy_strategy_summary_json: toPrettyJson(
-			draft.copy_strategy_summary_json,
-		),
+		...personaToForm(draft.buyer_persona_snapshot_json),
+		...strategyToForm(draft.copy_strategy_summary_json),
 		confidence_score:
 			draft.confidence_score === null ? "" : String(draft.confidence_score),
 		reviewer_note: draft.reviewer_note || "",
@@ -325,14 +413,8 @@ function buildMutationPayload(
 		product_truth_lock: form.product_truth_lock.trim() || null,
 		allowed_claims_json: linesToList(form.allowed_claims_json),
 		blocked_claims_json: linesToList(form.blocked_claims_json),
-		buyer_persona_snapshot_json: parseJsonObject(
-			form.buyer_persona_snapshot_json,
-			"Buyer Persona Snapshot",
-		),
-		copy_strategy_summary_json: parseJsonObject(
-			form.copy_strategy_summary_json,
-			"Copy Strategy Summary",
-		),
+		buyer_persona_snapshot_json: formToPersona(form),
+		copy_strategy_summary_json: formToStrategy(form),
 		confidence_score: parseOptionalNumber(
 			form.confidence_score,
 			"Confidence score",
@@ -383,7 +465,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 	const [validation, setValidation] =
 		useState<ProductIntelligenceReviewDraftValidationResponse | null>(null);
 	const [busyAction, setBusyAction] = useState<
-		"CREATE" | "SAVE" | "VALIDATE" | "APPROVE" | "REJECT" | null
+		"CREATE" | "PREPARE" | "SAVE" | "VALIDATE" | "APPROVE" | "REJECT" | null
 	>(null);
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -501,6 +583,29 @@ export default function ProductIntelligenceReviewDraftPanel({
 				err instanceof Error
 					? err.message
 					: "Failed to create product intelligence review draft",
+			);
+		} finally {
+			setBusyAction(null);
+		}
+	};
+
+	const handlePrepareWithAI = async () => {
+		setBusyAction("PREPARE");
+		setError(null);
+		setMessage(null);
+		try {
+			const result = await prepareProductForCopywriting(productId);
+			syncDraftInList(result.draft);
+			setSelectedDraftId(result.draft.draft_id);
+			setValidation(null);
+			setMessage(
+				`AI drafted Product Knowledge + Customer Avatar (recommended formula: ${result.recommended_formula}). Review every field, then Validate and Approve — nothing is auto-approved.`,
+			);
+		} catch (err) {
+			setError(
+				err instanceof Error
+					? err.message
+					: "Failed to prepare product for copywriting",
 			);
 		} finally {
 			setBusyAction(null);
@@ -647,6 +752,17 @@ export default function ProductIntelligenceReviewDraftPanel({
 					className="rounded border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[11px] font-semibold text-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
 				>
 					{busyAction === "CREATE" ? "Creating..." : "Create Review Draft"}
+				</button>
+				<button
+					type="button"
+					onClick={handlePrepareWithAI}
+					disabled={busyAction !== null}
+					title="Draft Product Knowledge + Customer Avatar + a recommended formula via the text_assist (DeepSeek) lane. Spends AI tokens on click. Never auto-approved."
+					className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+				>
+					{busyAction === "PREPARE"
+						? "Preparing with AI…"
+						: "Prepare with AI (DeepSeek)"}
 				</button>
 			</div>
 
@@ -979,24 +1095,75 @@ export default function ProductIntelligenceReviewDraftPanel({
 											rows={6}
 										/>
 									</div>
-									<div className="xl:col-span-2">
-										<TextArea
-											label="Buyer Persona Snapshot JSON"
-											value={form.buyer_persona_snapshot_json}
-											onChange={(value) =>
-												updateFormField("buyer_persona_snapshot_json", value)
-											}
-											rows={8}
+									<div className="xl:col-span-2 space-y-3 rounded border border-slate-800 bg-slate-950/40 p-3">
+										<SectionHeading
+											title="Customer Avatar (buyer persona)"
+											subtitle="Who buys this and why — this drives the angle. One item per line for the lists."
 										/>
-									</div>
-									<div className="xl:col-span-2">
+										<TextInput
+											label="Audience (who is the buyer)"
+											value={form.persona_audience}
+											onChange={(value) => updateFormField("persona_audience", value)}
+											placeholder="e.g. Lelaki 30-50, sibuk, mahu rutin ringkas & yakin"
+										/>
+										<div className="grid gap-3 md:grid-cols-2">
+											<TextArea
+												label="Desires (one per line)"
+												value={form.persona_desires}
+												onChange={(value) => updateFormField("persona_desires", value)}
+											/>
+											<TextArea
+												label="Fears (one per line)"
+												value={form.persona_fears}
+												onChange={(value) => updateFormField("persona_fears", value)}
+											/>
+											<TextArea
+												label="Pains (one per line)"
+												value={form.persona_pains}
+												onChange={(value) => updateFormField("persona_pains", value)}
+											/>
+											<TextArea
+												label="Objections (one per line)"
+												value={form.persona_objections}
+												onChange={(value) => updateFormField("persona_objections", value)}
+											/>
+										</div>
 										<TextArea
-											label="Copy Strategy Summary JSON"
-											value={form.copy_strategy_summary_json}
-											onChange={(value) =>
-												updateFormField("copy_strategy_summary_json", value)
-											}
-											rows={8}
+											label="Triggers (one per line)"
+											value={form.persona_triggers}
+											rows={3}
+											onChange={(value) => updateFormField("persona_triggers", value)}
+										/>
+										<div className="grid gap-3 md:grid-cols-2">
+											<TextInput
+												label="Tone"
+												value={form.persona_tone}
+												onChange={(value) => updateFormField("persona_tone", value)}
+												placeholder="e.g. confident, warm, no-nonsense"
+											/>
+											<TextInput
+												label="Pronoun"
+												value={form.persona_pronoun}
+												onChange={(value) => updateFormField("persona_pronoun", value)}
+												placeholder="e.g. awak / anda"
+											/>
+										</div>
+									</div>
+									<div className="xl:col-span-2 space-y-3 rounded border border-slate-800 bg-slate-950/40 p-3">
+										<SectionHeading
+											title="Copy Strategy"
+											subtitle="Safe angle seeds for copy rotation. One angle per line."
+										/>
+										<TextArea
+											label="Angle strategies (one per line)"
+											value={form.strategy_angles}
+											onChange={(value) => updateFormField("strategy_angles", value)}
+										/>
+										<TextArea
+											label="Strategy summary (optional)"
+											value={form.strategy_summary}
+											rows={3}
+											onChange={(value) => updateFormField("strategy_summary", value)}
 										/>
 									</div>
 								</div>

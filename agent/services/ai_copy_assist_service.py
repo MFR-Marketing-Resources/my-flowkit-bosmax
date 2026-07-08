@@ -33,8 +33,12 @@ from agent.services.copy_set_service import (
     assess_copy_completeness,
     scan_copy_safety,
 )
-from agent.models.copy_grounding import CopyGrounding
+from agent.models.copy_grounding import CopyGrounding, GROUNDING_APPROVED_SNAPSHOT
 from agent.services.copy_grounding_service import resolve_copy_grounding
+from agent.authority import claim_boundary
+from agent.authority.copy_formula_registry import get_formula, recommend_formula
+from agent.services.formula_validator_service import validate_formula_copy
+from agent.services.sales_clarity_qa_service import assess_sales_clarity
 
 # Privacy-sensitive strategy, sourced from the concepts in
 # agent/authority/COPYWRITING_FRAMEWORK_UNIVERSAL.yaml (stealth_mode /
@@ -66,6 +70,70 @@ def _rotation_angles(req: AICopyAssistRequest, grounding: CopyGrounding) -> list
     return list(grounding.angle_strategies or [])
 
 
+def _grounding_next_action() -> str:
+    return (
+        "Complete Product Knowledge + Customer Avatar for this product and approve "
+        "its Product Intelligence snapshot (grounded copy needs real benefits / USPs "
+        "/ persona). To generate degraded, non-factual copy anyway, retry with "
+        "allow_ungrounded=true."
+    )
+
+
+def _enforce_grounding_gate(
+    product_id: str, grounding: CopyGrounding, allow_ungrounded: bool
+) -> None:
+    """Block copy generation when the product has NO approved product-intelligence
+    snapshot, unless the operator explicitly overrides. This is the gate that stops
+    the provider guessing product facts in the dark (blind / generic copy)."""
+    if grounding.source == GROUNDING_APPROVED_SNAPSHOT or allow_ungrounded:
+        return
+    raise CopySetError(
+        "COPY_GROUNDING_INSUFFICIENT",
+        status_code=422,
+        detail={
+            "product_id": product_id,
+            "grounding_source": grounding.source,
+            "grounded": grounding.grounded,
+            "missing": grounding.missing,
+            "recommended_next_action": _grounding_next_action(),
+        },
+    )
+
+
+def _resolve_formula(req: AICopyAssistRequest, grounding: CopyGrounding) -> dict[str, Any]:
+    """The formula for this generation: operator-selected `formula_family` if set,
+    else recommended from grounding. Returns the registry slot contract."""
+    label = _clean(getattr(req, "formula_family", ""))
+    if label:
+        return get_formula(label)
+    return get_formula(
+        recommend_formula(is_stealth=grounding.is_stealth, family=grounding.family)
+    )
+
+
+def _extract_formula_breakdown(
+    ai: dict[str, Any], formula: dict[str, Any], fields: dict[str, Any]
+) -> dict[str, str]:
+    """The formula slot->text breakdown. Prefer an explicit breakdown from the
+    provider; otherwise derive it from the copy fields via the output mapping."""
+    provided = ai.get("formula_breakdown")
+    if isinstance(provided, dict) and provided:
+        return {str(k): _clean(v) for k, v in provided.items() if _clean(v)}
+    reverse: dict[str, str] = {}
+    for field, slot in formula["output_mapping"].items():
+        for s in (slot if isinstance(slot, list) else [slot]):
+            reverse.setdefault(s, field)
+    out: dict[str, str] = {}
+    for slot in formula["slots"]:
+        sid = slot["slot_id"]
+        field = reverse.get(sid, "")
+        if field == "usp":
+            out[sid] = " · ".join(_clean(u) for u in (fields.get("usp_set") or []) if _clean(u))
+        elif field:
+            out[sid] = _clean(fields.get(field))
+    return {k: v for k, v in out.items() if v}
+
+
 def _build_brief(
     req: AICopyAssistRequest,
     product: dict[str, Any],
@@ -82,6 +150,33 @@ def _build_brief(
     pk = g.product_knowledge
     persona = g.buyer_persona
     cg = g.claim_guardrails
+    formula = _resolve_formula(req, g)
+    fmap = formula["output_mapping"]
+    formula_instruction = (
+        f"Use the {formula['formula_id']} formula ({formula['display_name']}). "
+        "Compose EACH formula slot first, then map slots to copy fields "
+        f"(angle<-{fmap['angle']}, hook<-{fmap['hook']}, subhook<-{fmap['subhook']}, "
+        f"usp<-{fmap['usp']}, cta<-{fmap['cta']}). The angle/hook/subhook/USP/CTA "
+        "MUST come FROM the formula structure — never free copy then relabelled. "
+        "Also return a 'formula_breakdown' object keyed by slot id."
+    )
+    has_facts = bool(pk.benefits or pk.usps or _clean(pk.description))
+    if has_facts:
+        instruction = (
+            "Derive the angle from ONE specific buyer pain or desire in the avatar "
+            "(use target_angle_strategy if given). Build hook -> subhook -> USPs -> "
+            "CTA from that angle + avatar. Ground USPs in product_benefits/product_usps; "
+            "do NOT invent product outcomes or claims. Obey banned_terms and claim_gate."
+        )
+    else:
+        instruction = (
+            "NO verified product facts exist for this product (UNGROUNDED generation). "
+            "Do NOT invent product benefits, ingredients, specifications, numbers, or "
+            "outcome USPs. Derive the angle from ONE avatar pain or desire and write "
+            "ONLY avatar/angle-level copy (emotional hook, identity, everyday-routine "
+            "framing). Keep USPs generic and non-factual, or empty. Never state a "
+            "product claim. Obey banned_terms and claim_gate."
+        )
     brief = {
         "product_name": _product_truth(product),
         "category": _clean(product.get("category")),
@@ -113,7 +208,11 @@ def _build_brief(
         "platform": _clean(req.platform) or "TIKTOK",
         "language": _clean(req.language) or "BM_MS",
         "route_type": _clean(req.route_type) or g.effective_route or "DIRECT",
-        "formula_family": _clean(req.formula_family) or "HSO",
+        "formula_id": formula["formula_id"],
+        "formula_display_name": formula["display_name"],
+        "formula_slots": {s["slot_id"]: s["purpose"] for s in formula["slots"]},
+        "formula_instruction": formula_instruction,
+        "formula_family": formula["compiler_family"],
         "content_style_mode": _clean(req.content_style_mode) or "UGC_IPHONE",
         "desired_angle": _clean(req.angle),
         "hook_direction": _clean(req.hook),
@@ -123,14 +222,15 @@ def _build_brief(
         "claim_gate": cg.claim_gate,
         "claim_risk_level": cg.claim_risk_level,
         "allowed_claims": cg.allowed_claims,
-        "banned_terms": cg.banned_terms,
-        "instruction": (
-            "Derive the angle from ONE specific buyer pain or desire in the avatar "
-            "(use target_angle_strategy if given). Build hook -> subhook -> USPs -> "
-            "CTA from that angle + avatar. Ground USPs in product_benefits/product_usps "
-            "when present; do NOT invent product outcomes or claims. Obey banned_terms "
-            "and claim_gate."
+        "banned_terms": claim_boundary.banned_terms_for_brief(g.is_stealth) + list(cg.blocked_claims or []),
+        "preserve_market_language": (
+            "PRESERVE the customer's real problem language (e.g. kembung perut, "
+            "perut berangin, gigitan serangga, sengal, kebas, resdung, anak susah "
+            "lena). Do NOT replace it with vague words like routine/confidence/segar "
+            "— the buyer must instantly understand the problem. Control only OVERCLAIM."
         ),
+        "ungrounded": not has_facts,
+        "instruction": instruction,
     }
     return json.dumps(
         {k: v for k, v in brief.items() if v not in ("", [], None)},
@@ -193,6 +293,13 @@ async def _generate_one(
         raise provider.AICopyProviderError(provider.ERR_RESPONSE_INVALID)
 
     fields = _merge_candidate_fields(ai, req, grounding)
+    formula = _resolve_formula(req, grounding)
+    # Store the compiler-safe family (SavagePAS/HPAS -> PAS) so the deterministic
+    # compiler never downgrades to HSO; the true formula_id lives in the breakdown.
+    fields["formula_family"] = formula["compiler_family"]
+    breakdown = _extract_formula_breakdown(ai, formula, fields)
+    validation = validate_formula_copy(formula["formula_id"], fields, breakdown, grounding)
+    sales_clarity = assess_sales_clarity(fields, grounding, formula["formula_id"], validation)
     completeness = assess_copy_completeness(fields)
     safety = scan_copy_safety(fields, product_id=req.product_id)
 
@@ -212,6 +319,9 @@ async def _generate_one(
         warnings.append("COPY_INCOMPLETE")
     if not safety["safe"]:
         warnings.extend(safety["violations"])
+    warnings.extend(v["code"] for v in validation["violations"])
+    if sales_clarity["gaps"]:
+        warnings.append("SALES_CLARITY_GAPS:" + ",".join(sales_clarity["gaps"]))
 
     # AI-generated copy ALWAYS enters review — never DRAFT-clean, never approved.
     claim_review = {
@@ -219,6 +329,12 @@ async def _generate_one(
         "safety": safety,
         "route_type": fields["route_type"],
         "ai_generated": True,
+        "grounding_source": grounding.source,
+        "formula_id": formula["formula_id"],
+        "formula_definition_status": formula["definition_status"],
+        "formula_breakdown": breakdown,
+        "formula_validation": validation,
+        "sales_clarity": sales_clarity,
     }
     row = await crud.create_copy_set(
         req.product_id,
@@ -243,6 +359,11 @@ async def _generate_one(
         "dedupe_match": False,
         "safety": safety,
         "warnings": warnings,
+        "formula": {
+            "id": formula["formula_id"],
+            "validation": validation,
+            "sales_clarity": sales_clarity,
+        },
     }
 
 
@@ -272,6 +393,9 @@ async def generate_ai_copy_candidate(
     # Provider adapter raises AICopyProviderNotConfigured / AICopyProviderError —
     # the router maps them to fail-closed responses.
     grounding = await resolve_copy_grounding(product)
+    _enforce_grounding_gate(
+        req.product_id, grounding, bool(getattr(req, "allow_ungrounded", False))
+    )
     angles = _rotation_angles(req, grounding)
     candidates = [
         await _generate_one(
@@ -279,7 +403,11 @@ async def generate_ai_copy_candidate(
         )
         for i in range(req.candidate_count)
     ]
-    return {"provider": provider.provider_status(), "candidates": candidates}
+    return {
+        "provider": provider.provider_status(),
+        "grounding": {"source": grounding.source, "grounded": grounding.grounded},
+        "candidates": candidates,
+    }
 
 
 async def generate_ai_copy_candidates_batch(
@@ -376,6 +504,9 @@ async def generate_ai_copy_candidates_batch(
         }
 
     grounding = await resolve_copy_grounding(product)
+    _enforce_grounding_gate(
+        req.product_id, grounding, bool(getattr(req, "allow_ungrounded", False))
+    )
     angles = _rotation_angles(single_req, grounding)
 
     results: list[dict[str, Any]] = []
@@ -474,6 +605,7 @@ async def generate_ai_copy_candidates_batch(
         "deduped_count": deduped,
         "rejected_count": rejected,
         "provider": provider.provider_status(),
+        "grounding": {"source": grounding.source, "grounded": grounding.grounded},
         "candidates": results,
         "ledger": {
             "batch_id": real_batch_id,

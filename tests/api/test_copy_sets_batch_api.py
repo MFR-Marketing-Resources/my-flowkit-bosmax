@@ -148,7 +148,7 @@ async def test_behavioral_batch_creates_ledger_and_copy_sets(monkeypatch):
     # 3. Call the real service
     from agent.models.copy_set import AICopyAssistBatchRequest
     result = await ai_svc.generate_ai_copy_candidates_batch(
-        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3))
+        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3, allow_ungrounded=True))
 
     # 4. Verify response
     assert result["requested_count"] == 3
@@ -189,7 +189,7 @@ async def test_behavioral_batch_id_matches_persisted_ledger(monkeypatch):
 
     from agent.models.copy_set import AICopyAssistBatchRequest
     result = await ai_svc.generate_ai_copy_candidates_batch(
-        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3))
+        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3, allow_ungrounded=True))
 
     resp_batch_id = result["batch_id"]
     ledger_batch_id = result["ledger"]["batch_id"]
@@ -216,7 +216,7 @@ async def test_behavioral_angle_hook_override(monkeypatch):
     from agent.models.copy_set import AICopyAssistBatchRequest
     result = await ai_svc.generate_ai_copy_candidates_batch(
         AICopyAssistBatchRequest(
-            product_id=product["id"], requested_count=3,
+            product_id=product["id"], requested_count=3, allow_ungrounded=True,
             angle="OPERATOR_ANGLE", hook="OPERATOR_HOOK"))
 
     c = result["candidates"][0]
@@ -271,7 +271,7 @@ async def test_behavioral_exact_duplicate_increments_deduped(monkeypatch):
 
     from agent.models.copy_set import AICopyAssistBatchRequest
     result = await ai_svc.generate_ai_copy_candidates_batch(
-        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3))
+        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3, allow_ungrounded=True))
 
     # First is created, rest are exact dupes (same provider output → same dedupe_key)
     assert result["created_count"] >= 1
@@ -306,7 +306,7 @@ async def test_behavioral_similarity_metadata_populated(monkeypatch):
 
     from agent.models.copy_set import AICopyAssistBatchRequest
     result = await ai_svc.generate_ai_copy_candidates_batch(
-        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3))
+        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3, allow_ungrounded=True))
 
     # First candidate has similarity=None (nothing to compare against),
     # second and third should have similarity populated against the first.
@@ -345,7 +345,7 @@ async def test_behavioral_no_live_provider_calls(monkeypatch):
 
     from agent.models.copy_set import AICopyAssistBatchRequest
     result = await ai_svc.generate_ai_copy_candidates_batch(
-        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3))
+        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3, allow_ungrounded=True))
 
     assert called[0] is True  # Our fake was called, not live provider
     assert result["created_count"] >= 1
@@ -382,7 +382,7 @@ async def test_behavioral_dedupe_threshold_zero_is_honored(monkeypatch):
 
     from agent.models.copy_set import AICopyAssistBatchRequest
     result = await ai_svc.generate_ai_copy_candidates_batch(
-        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3, dedupe_threshold=0.0))
+        AICopyAssistBatchRequest(product_id=product["id"], requested_count=3, allow_ungrounded=True, dedupe_threshold=0.0))
 
     assert result["created_count"] >= 1
     assert len(captured_threshold) > 0, "find_nearest was never called"

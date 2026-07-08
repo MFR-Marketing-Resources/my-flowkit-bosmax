@@ -1304,6 +1304,34 @@ async def create_product_intelligence_review_draft(
         raise
 
 
+@router.post("/{product_id}/intelligence/review-drafts/prepare")
+async def prepare_product_for_copywriting_endpoint(product_id: str) -> dict:
+    """Prepare Product for Copywriting — the text_assist (DeepSeek) lane that
+    drafts Product Knowledge + Customer Avatar + Recommended Formula into a review
+    draft (NEVER approved). Fail-closed: 503 unconfigured, 502 invalid AI JSON,
+    404 no product. Operator-initiated (spends tokens)."""
+    from agent.services import ai_copy_provider_adapter
+    from agent.services.copy_set_service import CopySetError
+    from agent.services.product_intelligence_prepare_service import (
+        prepare_product_for_copywriting,
+    )
+
+    if not ai_copy_provider_adapter.is_configured():
+        raise HTTPException(status_code=503, detail="TEXT_ASSIST_NOT_CONFIGURED")
+    try:
+        return await prepare_product_for_copywriting(product_id)
+    except ai_copy_provider_adapter.AICopyProviderNotConfigured as exc:
+        raise HTTPException(status_code=503, detail="TEXT_ASSIST_NOT_CONFIGURED") from exc
+    except ai_copy_provider_adapter.AICopyProviderError as exc:
+        raise HTTPException(
+            status_code=502, detail={"error": exc.code, "detail": exc.detail}
+        ) from exc
+    except CopySetError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail={"error": exc.code, "detail": exc.detail}
+        ) from exc
+
+
 @router.get("/{product_id}/intelligence/review-drafts")
 async def get_product_intelligence_review_drafts(
     product_id: str,
