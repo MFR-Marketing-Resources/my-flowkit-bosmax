@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "postiz_publish_record", "social_copy_package", "copy_set", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit"})
 
 
 def _validate_table(table: str) -> None:
@@ -39,6 +39,8 @@ _COLUMNS = {
     "fastmoss_bulk_draft_status": {"raw_product_title", "source_url", "tiktok_product_url", "image_url", "category", "claim_risk_level", "mapping_confidence", "image_readiness", "copy_route", "sold_count", "commission_rate", "promotion_status", "draft_id", "committed_product_id", "suspected_existing_product_id", "suspected_existing_product_title", "suspected_existing_product_source", "suspected_existing_product_mapping_source", "duplicate_match_reason", "linked_product_id", "linked_product_title", "duplicate_resolution", "duplicate_resolved_at", "duplicate_resolution_note", "duplicate_ignore_product_id", "error_message", "batch_provenance", "recomputed_at", "recompute_previous_status", "recompute_previous_error", "updated_at"},
     "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "operator_notes", "batch_run_id", "logical_mode", "variation_strategy", "prompt_fingerprint", "variation_fingerprints_json", "anti_redundancy_json", "production_status", "production_run_id", "production_job_id", "production_error", "artifact_media_ids_json", "approved_at", "sent_to_production_at", "updated_at"},
     "production_run": {"status", "dry_run", "max_parallel_jobs", "interval_min_seconds", "interval_max_seconds", "cooldown_after_n_jobs", "cooldown_seconds", "total_expected", "total_completed", "total_failed", "error_log_json", "config_json", "updated_at"},
+    "bulk_generation_run": {"kind", "status", "total_expected", "total_completed", "total_failed", "max_parallel_images", "max_parallel_videos", "confirm_credit_burn", "interval_min_seconds", "interval_max_seconds", "cooldown_after_n_jobs", "cooldown_seconds", "error_log_json", "config_json", "updated_at"},
+    "bulk_generation_item": {"bulk_run_id", "item_type", "source_ref", "prompt_snapshot", "payload_json", "status", "job_id", "media_id", "local_path", "creative_asset_id", "error", "retry_count", "started_at", "completed_at", "updated_at"},
     "postiz_publish_record": {"artifact_media_id", "source_local_path", "source_public_url", "upload_mode", "postiz_media_id", "postiz_media_path", "post_type", "scheduled_at", "content", "integration_ids_json", "provider_settings_json", "postiz_response_json", "status", "error", "updated_at"},
     "social_copy_package": {"artifact_media_id", "source_mode", "platform", "caption", "first_comment", "hashtags_json", "call_to_action", "tone", "language", "status", "compliance_status", "blockers_json", "warnings_json", "approval_note", "approved_at", "postiz_record_id", "updated_at"},
     "copy_set": {"angle", "hook", "subhook", "usp_set_json", "cta", "platform", "language", "route_type", "formula_family", "status", "dedupe_key", "source", "provenance_json", "claim_review_json", "reviewer_note", "approved_at", "approved_by", "usage_count", "last_used_at", "used_in_modes", "uniqueness_score", "similar_to_copy_set_id", "similarity_score", "archived", "updated_at"},
@@ -2088,4 +2090,173 @@ async def caption_summary_for_media_ids(media_ids: list) -> dict:
         r["mid"]: {"count": r["total"], "approved": r["approved"] or 0}
         for r in rows
     }
+
+
+# ── Bulk generation orchestrator (Google Flow V1) ─────────────────────────
+
+
+async def create_bulk_generation_run(
+    bulk_run_id: str,
+    *,
+    kind: str,
+    total_expected: int = 0,
+    max_parallel_images: int = 2,
+    max_parallel_videos: int = 1,
+    confirm_credit_burn: bool = False,
+    interval_min_seconds: int = 5,
+    interval_max_seconds: int = 15,
+    cooldown_after_n_jobs: int = 5,
+    cooldown_seconds: int = 60,
+    config_json: str = "{}",
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO bulk_generation_run
+               (bulk_run_id, kind, status, total_expected, total_completed, total_failed,
+                max_parallel_images, max_parallel_videos, confirm_credit_burn,
+                interval_min_seconds, interval_max_seconds, cooldown_after_n_jobs,
+                cooldown_seconds, error_log_json, config_json, created_at, updated_at)
+               VALUES (?,?,?,?,0,0,?,?,?,?,?,?,?,'[]',?,?,?)""",
+            (
+                bulk_run_id,
+                kind,
+                "PENDING",
+                total_expected,
+                max_parallel_images,
+                max_parallel_videos,
+                1 if confirm_credit_burn else 0,
+                interval_min_seconds,
+                interval_max_seconds,
+                cooldown_after_n_jobs,
+                cooldown_seconds,
+                config_json,
+                now,
+                now,
+            ),
+        )
+        await db.commit()
+    return await get_bulk_generation_run(bulk_run_id)
+
+
+async def get_bulk_generation_run(bulk_run_id: str) -> Optional[dict]:
+    return await _get("bulk_generation_run", "bulk_run_id", bulk_run_id)
+
+
+async def update_bulk_generation_run(bulk_run_id: str, **kwargs) -> Optional[dict]:
+    return await _update("bulk_generation_run", "bulk_run_id", bulk_run_id, **kwargs)
+
+
+async def list_bulk_generation_runs(limit: int = 50) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM bulk_generation_run ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def create_bulk_generation_item(
+    bulk_item_id: str,
+    *,
+    bulk_run_id: str,
+    item_type: str,
+    source_ref: str,
+    prompt_snapshot: str | None = None,
+    payload_json: str = "{}",
+    status: str = "QUEUED",
+) -> dict:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO bulk_generation_item
+               (bulk_item_id, bulk_run_id, item_type, source_ref, prompt_snapshot,
+                payload_json, status, retry_count, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,0,?,?)""",
+            (
+                bulk_item_id,
+                bulk_run_id,
+                item_type,
+                source_ref,
+                prompt_snapshot,
+                payload_json,
+                status,
+                now,
+                now,
+            ),
+        )
+        await db.commit()
+    return await get_bulk_generation_item(bulk_item_id)
+
+
+async def get_bulk_generation_item(bulk_item_id: str) -> Optional[dict]:
+    return await _get("bulk_generation_item", "bulk_item_id", bulk_item_id)
+
+
+async def update_bulk_generation_item(bulk_item_id: str, **kwargs) -> Optional[dict]:
+    return await _update("bulk_generation_item", "bulk_item_id", bulk_item_id, **kwargs)
+
+
+async def list_bulk_generation_items(
+    bulk_run_id: str,
+    *,
+    status: str | None = None,
+    limit: int = 500,
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM bulk_generation_item WHERE bulk_run_id=?"
+    params: list = [bulk_run_id]
+    if status:
+        q += " AND status=?"
+        params.append(status)
+    q += " ORDER BY created_at ASC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def claim_next_bulk_item(
+    bulk_run_id: str,
+    *,
+    from_status: str = "QUEUED",
+    to_status: str = "SUBMITTED",
+) -> Optional[dict]:
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        cur = await db.execute(
+            """SELECT bulk_item_id FROM bulk_generation_item
+               WHERE bulk_run_id=? AND status=?
+               ORDER BY created_at ASC LIMIT 1""",
+            (bulk_run_id, from_status),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        item_id = row["bulk_item_id"]
+        cur2 = await db.execute(
+            """UPDATE bulk_generation_item SET status=?, updated_at=?
+               WHERE bulk_item_id=? AND status=?""",
+            (to_status, now, item_id, from_status),
+        )
+        if cur2.rowcount != 1:
+            await db.commit()
+            return None
+        await db.commit()
+    return await get_bulk_generation_item(item_id)
+
+
+async def bulk_item_status_counts(bulk_run_id: str) -> dict[str, int]:
+    db = await get_db()
+    cur = await db.execute(
+        """SELECT status, COUNT(*) AS n FROM bulk_generation_item
+           WHERE bulk_run_id=? GROUP BY status""",
+        (bulk_run_id,),
+    )
+    rows = await cur.fetchall()
+    return {str(r["status"]): int(r["n"]) for r in rows}
 

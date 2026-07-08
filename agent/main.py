@@ -41,6 +41,7 @@ from agent.api.workspace_packages import router as workspace_packages_router
 from agent.api.scene_context_registry import router as scene_context_registry_router
 from agent.api.workspace_generation_packages import router as workspace_generation_packages_router
 from agent.api.production_queue import router as production_queue_router
+from agent.api.bulk_generation import router as bulk_generation_router
 from agent.api.postiz import router as postiz_router
 from agent.api.social_copy_packages import router as social_copy_packages_router
 from agent.api.results import router as results_router
@@ -221,6 +222,7 @@ app.include_router(workspace_packages_router, prefix="/api")
 app.include_router(scene_context_registry_router, prefix="/api")
 app.include_router(workspace_generation_packages_router, prefix="/api")
 app.include_router(production_queue_router, prefix="/api")
+app.include_router(bulk_generation_router, prefix="/api")
 app.include_router(postiz_router, prefix="/api")
 app.include_router(social_copy_packages_router, prefix="/api")
 app.include_router(results_router, prefix="/api")

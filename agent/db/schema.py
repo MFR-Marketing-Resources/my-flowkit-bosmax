@@ -2034,6 +2034,57 @@ CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_field_provenance_draf
 """)
         await db.commit()
 
+        # Google Flow bulk generation orchestrator (V1): persistent runs + items.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS bulk_generation_run (
+    bulk_run_id             TEXT PRIMARY KEY,
+    kind                    TEXT NOT NULL
+                            CHECK(kind IN ('AVATAR_IMAGE','IMG','VIDEO','MIXED')),
+    status                  TEXT NOT NULL DEFAULT 'PENDING'
+                            CHECK(status IN ('PENDING','RUNNING','COMPLETED','PARTIAL_FAILED','FAILED','CANCELLED','PAUSED')),
+    total_expected          INTEGER NOT NULL DEFAULT 0,
+    total_completed         INTEGER NOT NULL DEFAULT 0,
+    total_failed            INTEGER NOT NULL DEFAULT 0,
+    max_parallel_images     INTEGER NOT NULL DEFAULT 2,
+    max_parallel_videos     INTEGER NOT NULL DEFAULT 1,
+    confirm_credit_burn     INTEGER NOT NULL DEFAULT 0,
+    interval_min_seconds    INTEGER NOT NULL DEFAULT 5,
+    interval_max_seconds    INTEGER NOT NULL DEFAULT 15,
+    cooldown_after_n_jobs   INTEGER NOT NULL DEFAULT 5,
+    cooldown_seconds        INTEGER NOT NULL DEFAULT 60,
+    error_log_json          TEXT NOT NULL DEFAULT '[]',
+    config_json             TEXT NOT NULL DEFAULT '{}',
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE TABLE IF NOT EXISTS bulk_generation_item (
+    bulk_item_id            TEXT PRIMARY KEY,
+    bulk_run_id             TEXT NOT NULL,
+    item_type               TEXT NOT NULL
+                            CHECK(item_type IN ('AVATAR_IMAGE','IMG','T2V','I2V','F2V')),
+    source_ref              TEXT NOT NULL,
+    prompt_snapshot         TEXT,
+    payload_json            TEXT NOT NULL DEFAULT '{}',
+    status                  TEXT NOT NULL DEFAULT 'QUEUED'
+                            CHECK(status IN ('QUEUED','SUBMITTED','RUNNING','GENERATED','DOWNLOADED','REGISTERED','FAILED','CANCELLED')),
+    job_id                  TEXT,
+    media_id                TEXT,
+    local_path              TEXT,
+    creative_asset_id       TEXT,
+    error                   TEXT,
+    retry_count             INTEGER NOT NULL DEFAULT 0,
+    started_at              TEXT,
+    completed_at            TEXT,
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_bulk_generation_item_run
+    ON bulk_generation_item(bulk_run_id);
+CREATE INDEX IF NOT EXISTS idx_bulk_generation_item_run_status
+    ON bulk_generation_item(bulk_run_id, status);
+""")
+        await db.commit()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 
