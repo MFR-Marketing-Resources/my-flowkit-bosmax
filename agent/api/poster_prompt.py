@@ -4,6 +4,7 @@ from agent.models.poster_builder_settings import PosterBuilderSettingsResponse
 from agent.models.poster_copy_fit import PosterCopyFitRequest
 from agent.models.poster_copy_recommendations import PosterCopyRecommendationRequest
 from agent.models.poster_prompt_draft import PosterPromptDraftRequest
+from agent.services import poster_recipe_service
 from agent.services.poster_builder_settings_service import PosterBuilderSettingsService
 from agent.services.poster_copy_fit_service import fit_poster_copy
 from agent.services.poster_copy_recommendation_service import (
@@ -55,6 +56,13 @@ async def poster_copy_recommendations(body: PosterCopyRecommendationRequest):
             raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc
         raise
     return result.model_dump(mode="json")
+
+
+@router.get("/recipes")
+async def poster_recipes():
+    """Read-only poster recipe/archetype authority (SSOT for the recipe-first
+    composer). No mutation, no generation, no token/credit spend."""
+    return {"recipes": [r.model_dump(mode="json") for r in poster_recipe_service.list_recipes()]}
 
 
 @router.post("/copy/fit")

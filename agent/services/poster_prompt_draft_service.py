@@ -13,6 +13,8 @@ from agent.models.poster_prompt_draft import (
     PromptPackageStatus,
 )
 from agent.models.poster_readiness import PosterReadinessStatus
+from agent.services import poster_recipe_service
+from agent.services.poster_prompt_composer import compose_recipe_poster
 from agent.services.poster_readiness_service import PosterReadinessService
 from agent.services.product_truth_service import ProductTruthService
 
@@ -315,14 +317,42 @@ class PosterPromptDraftService:
 
         visual = _build_visual_instruction(fields, readiness.image_tier.value)
         overlay = _build_text_overlay(fields)
-        poster_prompt = _assemble_poster_prompt(
-            fields=fields,
-            product_truth_lock=truth_lock,
-            visual_instruction=visual,
-            text_overlay_instruction=overlay,
-            safety_guardrails=guardrails,
-            restricted_mode=restricted_mode,
-        )
+        # Recipe V2 routing. A recipe_id composes a recipe-structured prompt +
+        # poster_spec/overlay_spec. NO recipe_id → the legacy assembler runs
+        # unchanged (poster_prompt byte-identical; specs stay None).
+        poster_spec = None
+        overlay_spec = None
+        negative_prompt = _negative_prompt(restricted_mode)
+        recipe_id = _norm(request.poster_recipe_id)
+        if recipe_id:
+            recipe = poster_recipe_service.get_recipe(recipe_id)
+            if recipe is None:
+                raise PosterPromptDraftValidationError(
+                    "Unknown poster recipe",
+                    field_errors=[f"Unknown poster recipe: {recipe_id}"],
+                )
+            poster_prompt, poster_spec, overlay_spec = compose_recipe_poster(
+                fields=fields,
+                recipe=recipe,
+                product_truth_lock=truth_lock,
+                visual_instruction=visual,
+                text_overlay_instruction=overlay,
+                safety_guardrails=guardrails,
+                restricted_mode=restricted_mode,
+            )
+            if recipe.negative_prompt_additions:
+                negative_prompt = (
+                    negative_prompt + ", " + ", ".join(recipe.negative_prompt_additions)
+                )
+        else:
+            poster_prompt = _assemble_poster_prompt(
+                fields=fields,
+                product_truth_lock=truth_lock,
+                visual_instruction=visual,
+                text_overlay_instruction=overlay,
+                safety_guardrails=guardrails,
+                restricted_mode=restricted_mode,
+            )
 
         production_allowed = readiness.poster_status == PosterReadinessStatus.POSTER_READY
         prompt_status = (
@@ -358,7 +388,7 @@ class PosterPromptDraftService:
             production_allowed=production_allowed,
             restricted_mode=restricted_mode,
             poster_prompt=poster_prompt,
-            negative_prompt=_negative_prompt(restricted_mode),
+            negative_prompt=negative_prompt,
             copy_layout=PosterCopyLayout(
                 hook=fields["hook"],
                 subhook=fields["subhook"],
@@ -374,4 +404,6 @@ class PosterPromptDraftService:
             readiness_meta=readiness_meta,
             operator_notes=fields["operator_notes"],
             validation_warnings=validation_warnings,
+            poster_spec=poster_spec,
+            overlay_spec=overlay_spec,
         )
