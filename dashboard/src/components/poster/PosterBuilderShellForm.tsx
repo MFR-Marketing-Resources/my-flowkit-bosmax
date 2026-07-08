@@ -77,14 +77,14 @@ export default function PosterBuilderShellForm({
 							<textarea
 								className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
 								rows={3}
-								value={draft[key]}
+								value={String(draft[key] ?? "")}
 								disabled={!editable}
 								onChange={(e) => onChange({ ...draft, [key]: e.target.value })}
 							/>
 						) : (
 							<input
 								className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
-								value={draft[key]}
+								value={String(draft[key] ?? "")}
 								disabled={!editable}
 								onChange={(e) => onChange({ ...draft, [key]: e.target.value })}
 							/>
