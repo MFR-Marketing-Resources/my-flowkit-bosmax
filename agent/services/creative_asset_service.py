@@ -479,7 +479,7 @@ async def get_creative_asset_eligibility_audit(
     eligible_assets: list[CreativeAssetRecord] = []
     excluded_count = 0
 
-    for item in items:
+    for item in matching_role_items:
         blockers = _collect_selectable_asset_blockers(
             item,
             semantic_role=spec["required_semantic_role"],

@@ -117,11 +117,10 @@ def test_creative_asset_api_returns_eligibility_audit(monkeypatch):
             "active_count": 3,
             "approved_count": 1,
             "eligible_count": 1,
-            "excluded_count": 3,
+            "excluded_count": 2,
             "review_status_counts": {"APPROVED": 1, "PENDING_REVIEW": 1},
             "excluded_by_reason": {
                 "NOT_APPROVED_FOR_REUSE": 1,
-                "SEMANTIC_ROLE_MISMATCH": 1,
                 "ENGINE_SLOT_NOT_ALLOWED": 1,
             },
             "eligible_assets": [],
