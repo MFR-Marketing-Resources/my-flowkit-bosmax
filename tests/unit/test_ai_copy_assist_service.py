@@ -369,6 +369,67 @@ def test_brief_forbids_usp_fabrication_when_ungrounded():
     assert "Do NOT invent" in brief["instruction"]
 
 
+# ── Formula-aware generation (Phase B) ───────────────────────────────────────
+
+_MWTCB_FORMULA_AI = {
+    "angle": "anak kembung perut waktu malam",
+    "hook": "Anak kecil kembung perut waktu malam, ibu pula susah nak rehat.",
+    "subhook": "Bila anak merengek dan susah lena, rutin tidur satu rumah terganggu.",
+    "usp_set": [
+        "minyak sapuan tradisional botol kecil mudah dibawa",
+        "bau tidak kuat, cepat serap",
+    ],
+    "cta": "Jom cuba sendiri. Klik beg kuning untuk dapatkan botol pertama.",
+    "formula_family": "HSO",  # AI self-report is IGNORED — the system chooses the formula
+    "rationale": "PAS problem-first.",
+    "risk_notes": [],
+}
+
+
+@pytest.mark.asyncio
+async def test_generation_is_formula_aware_and_stores_breakdown(monkeypatch):
+    pid = await _make_product()
+    _mock_provider(monkeypatch, _MWTCB_FORMULA_AI)
+    result = await ai.generate_ai_copy_candidate(
+        {"product_id": pid, "formula_family": "PAS", "allow_ungrounded": True}
+    )
+    cand = result["candidates"][0]
+    # System-chosen formula, not the AI's self-report.
+    assert cand["formula"]["id"] == "PAS"
+    assert cand["copy_set"]["formula_family"] == "PAS"  # compiler-safe family stored
+    val = cand["formula"]["validation"]
+    assert all(val["slot_coverage"].values())  # PAS problem/agitate/solution/cta all filled
+    assert not any(v["code"] == "NO_PROBLEM_IDENTIFIED" for v in val["violations"])
+    assert cand["formula"]["sales_clarity"]["answers"]["problem"] is True
+
+
+@pytest.mark.asyncio
+async def test_savage_pas_stores_true_id_but_compiler_safe_family(monkeypatch):
+    pid = await _make_product()
+    _mock_provider(monkeypatch, _MWTCB_FORMULA_AI)
+    result = await ai.generate_ai_copy_candidate(
+        {"product_id": pid, "formula_family": "SavagePAS", "allow_ungrounded": True}
+    )
+    cand = result["candidates"][0]
+    assert cand["formula"]["id"] == "SavagePAS"
+    assert cand["copy_set"]["formula_family"] == "PAS"  # SavagePAS -> PAS for the compiler
+
+
+def test_brief_is_formula_aware_and_preserves_market_language():
+    from agent.services.copy_grounding_service import build_framework_grounding
+
+    product = _direct_product()
+    g = build_framework_grounding(product)
+    req = models.AICopyAssistRequest(product_id="p-direct", formula_family="PAS")
+    brief = json.loads(ai._build_brief(req, product, g))
+    assert brief["formula_id"] == "PAS"
+    assert "formula_instruction" in brief and "formula_slots" in brief
+    assert "preserve_market_language" in brief
+    banned = [b.casefold() for b in brief["banned_terms"]]
+    assert "buang angin" not in banned and "legakan" not in banned
+    assert any(x in banned for x in ("cure", "dijamin", "klinikal"))
+
+
 def test_brief_grounds_usps_when_snapshot_facts_present():
     from agent.models.copy_grounding import (
         GROUNDING_APPROVED_SNAPSHOT,
