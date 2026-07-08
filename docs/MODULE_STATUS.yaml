@@ -300,6 +300,7 @@ domains:
       - tests/api/test_product_image_truth_v1.py
       - tests/api/test_products_rich_knowledge_patch_regression.py
       - tests/api/test_creative_asset_api.py
+      - tests/api/test_local_agent_version_proof.py
       - tests/api/test_fastmoss_product_visibility_api.py
       - tests/api/test_fastmoss_bulk_api.py
       - tests/api/test_i2v_semantic_slot_resolver_api.py

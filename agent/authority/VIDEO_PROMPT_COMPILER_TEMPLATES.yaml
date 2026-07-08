@@ -68,7 +68,7 @@ rules:
     - Convert internal continuity labels such as INTRO, ANCHOR, and CTA into natural English continuity instructions.
     - Convert internal source-mode labels into natural engine-facing instructions; do not write Hybrid intake, Frames mode, Ingredients mode, or source mode inside final prompt sections.
     - HYBRID final prompts must say the uploaded product image is the exact reference and must embed one resolved concrete presenter description directly.
-    - FRAMES final prompts must say to use the uploaded finished frame as the single visual reference and continue only from the visible frame state.
+    - FRAMES final prompts must scope both truth sources explicitly: the uploaded finished frame is the FRAME CONTINUITY SOURCE (presenter pose, scene, lighting, camera distance, motion continuation — continue only from the visible frame state), and any attached product reference is the PRODUCT TRUTH SOURCE (identity, physical scale, cap/body/label geometry only — never a scene reset or new shot).
     - INGREDIENTS final prompts must say to use the uploaded references according to the asset role map, with product reference controlling product truth and avatar reference controlling identity.
     - If style_scene_source is SCENE_CONTEXT_ONLY, INGREDIENTS final prompts must say environment comes from SCENE_CONTEXT only.
     - If STYLE_SCENE_REFERENCE is provided, INGREDIENTS final prompts must say the style reference controls environment only.

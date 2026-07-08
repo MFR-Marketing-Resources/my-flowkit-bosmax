@@ -26,6 +26,7 @@ from agent.api.music import router as music_router
 from agent.api.models import router as models_router
 from agent.api.active_project import router as active_project_router
 from agent.api.local_agent import (
+    CRITICAL_ROUTE_PATHS,
     LOCAL_AGENT_DASHBOARD_URL,
     LOCAL_AGENT_EXTENSION_STATUS_TIMEOUT_SECONDS,
     LOCAL_AGENT_REPAIR_COMMAND,
@@ -167,6 +168,25 @@ async def lifespan(app: FastAPI):
             )
     except Exception as _e:  # pragma: no cover - never block startup
         logger.warning("RUNTIME_STORAGE banner unavailable: %s", _e)
+    # Route-registration self-check (incident 2026-07-09): a stale process
+    # serving a newer dashboard mis-routed the eligibility audit into
+    # /creative-assets/{asset_id}. Make a broken/stale route table loud at boot.
+    try:
+        _route_paths = {getattr(_r, "path", "") for _r in app.routes}
+        _missing = [_p for _p in CRITICAL_ROUTE_PATHS if _p not in _route_paths]
+        if _missing:
+            logger.critical(
+                "ROUTE_TABLE_INCOMPLETE missing critical routes: %s — this build "
+                "will mis-serve dashboard calls; verify checkout + restart.",
+                _missing,
+            )
+        else:
+            logger.info(
+                "ROUTE_TABLE_OK %d routes, all %d critical routes registered",
+                len(_route_paths), len(CRITICAL_ROUTE_PATHS),
+            )
+    except Exception as _route_e:  # pragma: no cover - never block startup
+        logger.warning("Route-table self-check unavailable: %s", _route_e)
     apply_runtime_provider_environment()
     logger.info("AI provider runtime environment hydrated from registry state")
 

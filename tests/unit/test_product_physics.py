@@ -272,3 +272,66 @@ def test_plain_beauty_family_keeps_beauty_bottle_class():
     )
 
     assert result["physics_class"] == "BEAUTY_BOTTLE_OR_TUBE"
+
+
+def test_mwtcb_shaped_product_gets_herbal_oil_class():
+    # Real-world shape of the reported product: category Health & Personal Care,
+    # subcategory Traditional Herbal Oil, family enriched to BEAUTY_PERSONAL_CARE.
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Minyak Warisan Tok Cap Burung 25ml",
+            "category": "Health & Personal Care",
+            "subcategory": "Traditional Herbal Oil",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+        },
+    )
+    assert result["physics_class"] == "TRADITIONAL_HERBAL_OIL_BOTTLE"
+
+
+def test_medicated_oil_title_overrides_beauty_family():
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Pain relief medicated oil roll-on 10ml",
+            "category": "Beauty & Personal Care",
+            "subcategory": "Bath and Body",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+        },
+    )
+    assert result["physics_class"] == "TRADITIONAL_HERBAL_OIL_BOTTLE"
+
+
+def test_minyak_angin_overrides_beauty_family():
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Minyak Angin Aromatherapy 10ml",
+            "category": "Beauty & Personal Care",
+            "subcategory": "Bath and Body",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+        },
+    )
+    assert result["physics_class"] == "TRADITIONAL_HERBAL_OIL_BOTTLE"
+
+
+def test_skincare_tube_stays_skincare_class():
+    result = resolve_product_physics(
+        product_name="Hydrating facial moisturizer tube 50ml",
+        category="Beauty & Personal Care",
+        subcategory="Skincare",
+        type_name="Moisturizer",
+    )
+    assert result["physics_class"] == "SKINCARE_JAR_OR_TUBE"
+
+
+def test_supplement_bottle_never_becomes_herbal_oil():
+    # HEALTH_SUPPLEMENT family resolves to supplement bottle; the herbal-oil
+    # guard only rewrites the BEAUTY class, so supplements are untouched even
+    # with oil-adjacent wording in the title.
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Fish oil omega supplement softgel bottle",
+            "category": "Health",
+            "subcategory": "Supplements",
+            "bosmax_product_family": "HEALTH_SUPPLEMENT",
+        },
+    )
+    assert result["physics_class"] == "SUPPLEMENT_BOTTLE"

@@ -50,7 +50,7 @@ FINAL OUTPUT SCRUB LAW
 Final engine-facing sections must not contain runtime metadata, source-mode taxonomy, WPS numbers, block_plan, prompt_set_count, debug JSON, avatar pool references, unresolved selection instructions, formulas, or placeholders.
 Naturalize internal source labels before final output:
 HYBRID: use the uploaded product image as exact product reference and embed one resolved presenter description.
-FRAMES: use the uploaded finished frame as the single visual reference and continue only from the visible frame state.
+FRAMES: the uploaded finished frame is the frame continuity source (pose, scene, lighting, camera distance, motion continuation; continue only from the visible frame state); any attached product reference is the product truth source (identity, scale, cap/body/label geometry only — never a scene reset, presenter swap, or new shot).
 INGREDIENTS: use the uploaded asset role map; product controls truth, avatar controls identity, style controls environment only, and absent style means SCENE_CONTEXT only.
 
 BIMODAL ISOLATION

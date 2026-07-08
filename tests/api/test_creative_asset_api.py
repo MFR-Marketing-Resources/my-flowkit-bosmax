@@ -172,3 +172,66 @@ def test_creative_asset_post_defaults_to_pending_review(monkeypatch):
     assert response.status_code == 200
     assert captured["review_status"] == "PENDING_REVIEW"
     assert response.json()["review_status"] == "PENDING_REVIEW"
+
+
+def test_eligibility_audit_url_never_hits_asset_detail_handler(monkeypatch):
+    """Regression (incident 2026-07-09): a stale route table matched
+    /eligibility-audit as /{asset_id} and returned CREATIVE_ASSET_NOT_FOUND.
+    The audit URL must resolve to the audit handler, never asset detail."""
+    detail_calls: list[str] = []
+
+    async def fake_get_asset(asset_id):
+        detail_calls.append(asset_id)
+        return None
+
+    async def fake_audit(**kwargs):
+        from agent.models.creative_asset import (
+            CreativeAssetEligibilityAuditResponse,
+        )
+        return CreativeAssetEligibilityAuditResponse(
+            surface="F2V_START_FRAME_PICKER",
+            surface_label="F2V Start Frame Picker",
+            recipe_id=None,
+            required_semantic_role="COMPOSITE_FRAME_REFERENCE",
+            required_allowed_mode="F2V",
+            required_engine_slots=["start_frame"],
+            library_total_count=0,
+            total_assets_by_semantic_role={},
+            matching_role_total_count=0,
+            active_count=0,
+            approved_count=0,
+            eligible_count=0,
+            excluded_count=0,
+            review_status_counts={},
+            excluded_by_reason={},
+            eligible_assets=[],
+        )
+
+    monkeypatch.setattr("agent.api.creative_assets.get_creative_asset", fake_get_asset)
+    monkeypatch.setattr(
+        "agent.api.creative_assets.get_creative_asset_eligibility_audit", fake_audit
+    )
+    client = TestClient(_build_app())
+
+    for surface in (
+        "F2V_START_FRAME_PICKER",
+        "F2V_END_FRAME_PICKER",
+        "HYBRID_START_FRAME_PICKER",
+        "HYBRID_END_FRAME_PICKER",
+        "I2V_CHARACTER_PICKER",
+        "I2V_SCENE_PICKER",
+        "I2V_STYLE_PICKER",
+    ):
+        response = client.get(
+            f"/api/creative-assets/eligibility-audit?surface={surface}"
+        )
+        assert response.status_code == 200, surface
+        assert "CREATIVE_ASSET_NOT_FOUND" not in response.text, surface
+
+    assert detail_calls == [], (
+        "audit URL was routed into the asset-detail handler: " + repr(detail_calls)
+    )
+    # The dynamic route still works for real ids.
+    response = client.get("/api/creative-assets/some-real-id")
+    assert response.status_code == 404
+    assert detail_calls == ["some-real-id"]

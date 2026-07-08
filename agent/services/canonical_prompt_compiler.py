@@ -166,6 +166,9 @@ def normalize_copy_intelligence(
         "copywriting_angle": copy_angle,
         "trigger_id": trigger_id,
         "cta_type": _infer_cta_type(copy, cta),
+        # Preserved so dialogue assembly can tell operator-approved copy
+        # (selected_copy_set) apart from fallback copy that needs bank support.
+        "copy_source": _clean(copy.get("copy_source")),
     }
 
 
@@ -1193,20 +1196,36 @@ def _formula_dialogue_clauses(
     angle = _split_clauses(copy.get("angle"))
     usps = [clause for usp in (copy.get("usps") or []) for clause in _split_clauses(usp)]
     ctas = _split_clauses(copy.get("cta"))
+    # Operator-approved bound copy is complete (hook+usp+cta gate) and carries
+    # its own angle; generic family/strategic bank filler must never displace
+    # or dilute it inside the word budget. Banks stay active for fallback copy.
+    approved_copy_bound = copy.get("copy_source") == "selected_copy_set"
     opening = (
         [_strategic_opening_clause(copy.get("trigger_id", ""), target_language)]
-        if _hook_needs_strategic_opening(copy, family)
+        if not approved_copy_bound and _hook_needs_strategic_opening(copy, family)
         else []
     )
-    middle = [_strategic_middle_clause(_infer_angle_signal(copy, family), target_language)]
-    cta_bridge = [_strategic_cta_bridge(copy.get("cta_type", ""), copy.get("cta", ""), target_language)]
+    middle = (
+        [] if approved_copy_bound
+        else [_strategic_middle_clause(_infer_angle_signal(copy, family), target_language)]
+    )
+    cta_bridge = (
+        [] if approved_copy_bound
+        else [_strategic_cta_bridge(copy.get("cta_type", ""), copy.get("cta", ""), target_language)]
+    )
     family_opening = (
         [_family_dialogue_clause(family, "opening", target_language)]
-        if _hook_needs_strategic_opening(copy, family)
+        if not approved_copy_bound and _hook_needs_strategic_opening(copy, family)
         else []
     )
-    family_middle = [_family_dialogue_clause(family, "middle", target_language)]
-    family_cta = [_family_dialogue_clause(family, "cta", target_language)]
+    family_middle = (
+        [] if approved_copy_bound
+        else [_family_dialogue_clause(family, "middle", target_language)]
+    )
+    family_cta = (
+        [] if approved_copy_bound
+        else [_family_dialogue_clause(family, "cta", target_language)]
+    )
     chosen_usps = _usp_slice(usps, block_index, total_blocks)
     native_cta_first = family in {"baby_care", "wellness", "fragrance"}
     if total_blocks <= 1:
@@ -1459,10 +1478,18 @@ def _section_3_continuity(
             lines.append(presenter_prose)
     elif source_mode == "FRAMES":
         lines.append(
-            "Use the uploaded finished frame as the single visual reference. Continue only "
-            "from the visible frame state: the same subject, the same product position, the "
-            "same environment, and the same lighting. Animate forward with motion only — do "
-            "not rebuild, restyle, or reintroduce the subject, the product, or the scene."
+            "FRAME CONTINUITY SOURCE: Use the uploaded finished frame only for presenter "
+            "pose, scene continuity, lighting, camera distance, and motion continuation. "
+            "Continue only from the visible frame state: the same subject, the same product "
+            "position, the same environment, and the same lighting. Animate forward with "
+            "motion only — do not rebuild, restyle, or reintroduce the subject, the product, "
+            "or the scene."
+        )
+        lines.append(
+            "PRODUCT TRUTH SOURCE: Any attached product reference image controls product "
+            "identity, physical scale, cap, body, and label geometry, and label placement "
+            "only. It must not reset the scene, replace the presenter, override the uploaded "
+            "frame composition, or create a new shot."
         )
         lines.append(_mode_story_polish(source_mode)["continuity"])
     elif source_mode == "INGREDIENTS":

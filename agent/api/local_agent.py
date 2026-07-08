@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -305,4 +305,93 @@ async def get_repair_page():
         </body>
         </html>
         """.strip()
+    )
+
+
+# ─── Version proof (incident 2026-07-09 guardrail) ──────────────────────────
+# The eligibility-audit 404 was a stale-process failure: the running backend
+# predated the route while the served dashboard called it. This endpoint makes
+# frontend/backend version skew and source-vs-process staleness observable.
+
+_PROCESS_STARTED_AT_DT = datetime.now(timezone.utc)
+_PROCESS_STARTED_AT = _PROCESS_STARTED_AT_DT.isoformat()
+
+# Routes whose absence means the process is stale or the app assembly broke.
+CRITICAL_ROUTE_PATHS: tuple[str, ...] = (
+    "/api/creative-assets/eligibility-audit",
+    "/api/flow/execute-flow-job",
+    "/api/flow/generate",
+    "/api/workspace/execution-package",
+)
+
+
+class LocalAgentVersionProof(BaseModel):
+    pid: int
+    process_started_at: str
+    git_head: str | None
+    git_branch: str | None
+    route_count: int
+    critical_routes: dict[str, bool]
+    dashboard_bundle: str | None
+    source_stale_since_start: bool
+    stale_source_sample: list[str]
+
+
+def _git_output(*args: str) -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", *args], cwd=str(BASE_DIR), stderr=subprocess.DEVNULL,
+            text=True, timeout=5,
+        ).strip() or None
+    except Exception:
+        return None
+
+
+def _served_dashboard_bundle() -> str | None:
+    try:
+        import re
+
+        index_html = (BASE_DIR / "dashboard" / "dist" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        m = re.search(r"assets/(index-[\w-]+\.js)", index_html)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def _stale_backend_sources() -> list[str]:
+    """Backend source files modified AFTER this process imported its code.
+
+    A non-empty list means the running route table/services may not match the
+    tree on disk — exactly the failure that produced the audit 404."""
+    stale: list[str] = []
+    started = _PROCESS_STARTED_AT_DT.timestamp()
+    try:
+        for path in (BASE_DIR / "agent").rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            if path.stat().st_mtime > started:
+                stale.append(str(path.relative_to(BASE_DIR)))
+                if len(stale) >= 5:
+                    break
+    except Exception:
+        pass
+    return stale
+
+
+@router.get("/version-proof", response_model=LocalAgentVersionProof)
+async def get_local_agent_version_proof(request: Request) -> LocalAgentVersionProof:
+    route_paths = {getattr(r, "path", "") for r in request.app.routes}
+    stale = _stale_backend_sources()
+    return LocalAgentVersionProof(
+        pid=os.getpid(),
+        process_started_at=_PROCESS_STARTED_AT,
+        git_head=_git_output("rev-parse", "HEAD"),
+        git_branch=_git_output("rev-parse", "--abbrev-ref", "HEAD"),
+        route_count=len(route_paths),
+        critical_routes={p: p in route_paths for p in CRITICAL_ROUTE_PATHS},
+        dashboard_bundle=_served_dashboard_bundle(),
+        source_stale_since_start=bool(stale),
+        stale_source_sample=stale,
     )

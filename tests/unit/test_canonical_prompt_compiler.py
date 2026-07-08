@@ -140,10 +140,25 @@ def test_frames_is_motion_delta_only_no_rebuild():
     result = _compile(mode="FRAMES")
     text = result["blocks"][0]["engine_prompt_text"]
     assert "uploaded finished frame" in text
-    assert "single visual reference" in text
+    assert "FRAME CONTINUITY SOURCE" in text
     assert "do not rebuild" in text.lower()
+    # The ambiguous "single visual reference" wording contradicted the product
+    # reference truth lock — both sources must now be explicitly scoped.
+    assert "single visual reference" not in text
     # FRAMES must not inject a registry presenter description (frame is truth).
     assert "The presenter is a Malaysian adult" not in text
+
+
+def test_frames_scopes_frame_continuity_vs_product_truth_sources():
+    result = _compile(mode="FRAMES")
+    text = result["blocks"][0]["engine_prompt_text"]
+    # Frame = pose/scene/lighting/camera/motion continuity only.
+    assert "FRAME CONTINUITY SOURCE" in text
+    assert "presenter pose, scene continuity, lighting, camera distance" in text
+    # Product reference = identity/scale/geometry/label only; never a scene reset.
+    assert "PRODUCT TRUTH SOURCE" in text
+    assert "must not reset the scene" in text
+    assert "override the uploaded frame composition" in text
 
 
 def test_hybrid_mode_polish_keeps_creator_as_persuasion_engine():
@@ -1224,13 +1239,17 @@ def _s(mode, section, **kw):
     return _compile(mode, **kw)["blocks"][0]["sections"][section].lower()
 
 
-def test_frames_composed_frame_is_single_visual_truth():
-    # Control-case semantics must stay pinned (regression guard, not new behavior).
+def test_frames_composed_frame_is_scoped_continuity_truth():
+    # The frame is the CONTINUITY authority; the product reference is the
+    # GEOMETRY/SCALE authority. Both scoped, no contradictory single-source claim.
     s3 = _s("FRAMES", "SECTION 3 - CONTINUITY & STATE LOCK")
-    assert "uploaded finished frame as the single visual reference" in s3
+    assert "frame continuity source" in s3
+    assert "single visual reference" not in s3
     assert "continue only" in s3 and "visible frame state" in s3
     assert "motion only" in s3
     assert "do not rebuild" in s3
+    assert "product truth source" in s3
+    assert "must not reset the scene" in s3
 
 
 @pytest.mark.parametrize("mode,kw", _VIDEO_MODES_KW)
@@ -1286,3 +1305,29 @@ def test_overlay_allowed_branch_still_scoped_and_blocks_metadata():
                    "pack size", "founding", "printed on the real product label"]:
         assert phrase in s9, f"overlay_allowed branch missing metadata guard: {phrase}"
 
+
+
+def test_bound_approved_copy_excludes_family_bank_filler():
+    # Regression: a BOUND approved Copy Set (copy_source=selected_copy_set) was
+    # padded with generic family-bank filler ("Botol dia tersusun, memang tak
+    # rasa hype") that displaced the set's own USP/CTA inside the word budget
+    # (observed in the real F2V run wep_8fde2467254bfc90, 2026-07-08).
+    approved = dict(COPY, copy_source="selected_copy_set")
+    result = _compile(mode="FRAMES", copy=approved)
+    dialogue = " ".join(
+        block["sections"]["SECTION 6 - SPOKEN DIALOGUE"] for block in result["blocks"]
+    )
+    # Approved copy present.
+    assert "tak berminyak" in dialogue
+    # Generic bank filler must not appear alongside a bound approved set.
+    assert "tersusun" not in dialogue
+    assert "tak rasa hype" not in dialogue
+
+
+def test_fallback_copy_still_gets_bank_support():
+    # Without a bound approved set the banks keep dialogue from going mute.
+    result = _compile(mode="FRAMES", copy={})
+    dialogue = " ".join(
+        block["sections"]["SECTION 6 - SPOKEN DIALOGUE"] for block in result["blocks"]
+    )
+    assert dialogue.strip(), "fallback dialogue must not be empty"
