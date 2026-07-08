@@ -1,0 +1,15 @@
+{
+  "schema_version": "poster-overlay-v1",
+  "frame_ratio": "9:16",
+  "typography_mood": "Warm",
+  "safe_zones": ["9:16 vertical safe margins ~6% on all edges"],
+  "renderer": "NONE_PHASE_2",
+  "zones": [
+    { "zone_id": "headline", "role": "HEADLINE", "x": 8, "y": 6, "w": 84, "h": 13, "align": "left", "font_role": "display", "max_chars": 48, "text": "Malam lebih tenang" },
+    { "zone_id": "subheadline", "role": "SUBHEADLINE", "x": 8, "y": 21, "w": 84, "h": 7, "align": "left", "font_role": "subhead", "max_chars": 72, "text": "Rutin mudah sebelum tidur" },
+    { "zone_id": "chip_1", "role": "CHIP", "x": 8, "y": 72, "w": 84, "h": 5, "align": "left", "font_role": "chip", "max_chars": 36, "text": "Formula warisan" },
+    { "zone_id": "chip_2", "role": "CHIP", "x": 8, "y": 78, "w": 84, "h": 5, "align": "left", "font_role": "chip", "max_chars": 36, "text": "Saiz kecil mudah dibawa" },
+    { "zone_id": "chip_3", "role": "CHIP", "x": 8, "y": 84, "w": 84, "h": 5, "align": "left", "font_role": "chip", "max_chars": 36, "text": "Sapu sedikit sahaja" },
+    { "zone_id": "cta", "role": "CTA", "x": 8, "y": 90, "w": 56, "h": 6, "align": "center", "font_role": "button", "max_chars": 24, "text": "Dapatkan sekarang" }
+  ]
+}

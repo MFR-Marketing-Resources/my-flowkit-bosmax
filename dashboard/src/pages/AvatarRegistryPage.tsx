@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import { DataTable } from "../components/ui";
+import {
+	createAvatarImageBulk,
+	getBulkRun,
+	registerBulkAvatarAssets,
+	startBulkRun,
+	type BulkRunSummary,
+} from "../api/bulkGeneration";
 
 // AVATAR REGISTRY — read-only view of the approved presenter pool (ADR-008
 // avatar law). The pool is TEXT authority: the canonical prompt compiler reads
@@ -140,6 +147,14 @@ export default function AvatarRegistryPage() {
 	const [autoHijab, setAutoHijab] = useState(false);
 	const [isAutoGenerating, setIsAutoGenerating] = useState(false);
 	const [deletingCode, setDeletingCode] = useState<string | null>(null);
+
+	const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
+	const [bulkMaxParallel, setBulkMaxParallel] = useState(2);
+	const [bulkSkipGenerated, setBulkSkipGenerated] = useState(true);
+	const [bulkAllowRegenerate, setBulkAllowRegenerate] = useState(false);
+	const [bulkRunId, setBulkRunId] = useState<string | null>(null);
+	const [bulkRunDetail, setBulkRunDetail] = useState<BulkRunSummary | null>(null);
+	const [isBulkBusy, setIsBulkBusy] = useState(false);
 
 	const refresh = useCallback(async () => {
 		setIsLoading(true);
@@ -468,6 +483,100 @@ export default function AvatarRegistryPage() {
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "CSV Factory sync failed.");
 			setIsFactoryBusy(false);
+		}
+	};
+
+	useEffect(() => {
+		if (!bulkRunId) return;
+		let cancelled = false;
+		const poll = async () => {
+			try {
+				const detail = await getBulkRun(bulkRunId);
+				if (cancelled) return;
+				setBulkRunDetail(detail);
+				if (detail.status === "RUNNING") {
+					window.setTimeout(poll, 3000);
+				} else if (detail.status === "COMPLETED" || detail.status === "PARTIAL_FAILED") {
+					await refresh();
+				}
+			} catch {
+				/* ignore poll errors */
+			}
+		};
+		void poll();
+		return () => {
+			cancelled = true;
+		};
+	}, [bulkRunId, refresh]);
+
+	const toggleSelectCode = (code: string) => {
+		setSelectedCodes((prev) => {
+			const next = new Set(prev);
+			if (next.has(code)) next.delete(code);
+			else next.add(code);
+			return next;
+		});
+	};
+
+	const selectAllVisible = (codes: string[]) => {
+		setSelectedCodes(new Set(codes));
+	};
+
+	const handleBulkCreateAndStart = async () => {
+		const codes = [...selectedCodes];
+		if (codes.length === 0) {
+			setError("Select at least one avatar for bulk generation.");
+			return;
+		}
+		const confirmed = window.confirm(
+			`Start bulk image generation for ${codes.length} avatar(s)?\n\n` +
+				`Parallel IMG jobs: ${bulkMaxParallel} (video lane stays single-flight).\n` +
+				"Confirm to spend Flow credits on this batch.",
+		);
+		if (!confirmed) return;
+		setIsBulkBusy(true);
+		setError(null);
+		setSuccessMsg(null);
+		try {
+			const created = await createAvatarImageBulk({
+				avatar_codes: codes,
+				aspect,
+				count,
+				image_model: imageModel,
+				max_parallel_images: bulkMaxParallel,
+				skip_already_generated: bulkSkipGenerated,
+				allow_regenerate: bulkAllowRegenerate,
+				confirm_credit_burn: true,
+			});
+			setBulkRunId(created.bulk_run_id);
+			await startBulkRun(created.bulk_run_id, { confirm_credit_burn: true });
+			setSuccessMsg(
+				`Bulk run ${created.bulk_run_id.slice(0, 8)}… queued ${created.total_expected} item(s)` +
+					(created.skipped.length ? `, skipped ${created.skipped.length}` : ""),
+			);
+			const detail = await getBulkRun(created.bulk_run_id);
+			setBulkRunDetail(detail);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Bulk generation failed.");
+		} finally {
+			setIsBulkBusy(false);
+		}
+	};
+
+	const handleBulkRegister = async () => {
+		if (!bulkRunId) return;
+		setIsBulkBusy(true);
+		setError(null);
+		try {
+			const result = await registerBulkAvatarAssets(bulkRunId);
+			setSuccessMsg(`Registered ${result.registered ?? 0} avatar asset(s).`);
+			await refresh();
+			const detail = await getBulkRun(bulkRunId);
+			setBulkRunDetail(detail);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Bulk register failed.");
+		} finally {
+			setIsBulkBusy(false);
 		}
 	};
 
@@ -1105,6 +1214,75 @@ export default function AvatarRegistryPage() {
 			</section>
 
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+				<div className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+					<div>
+						<div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+							Bulk image generation
+						</div>
+						<div className="mt-1 text-xs text-slate-500">
+							{selectedCodes.size} selected · max {bulkMaxParallel} parallel IMG jobs
+						</div>
+					</div>
+					<label className="text-[10px] text-slate-400">
+						<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+							Parallel IMG
+						</span>
+						<select
+							value={bulkMaxParallel}
+							onChange={(e) => setBulkMaxParallel(Number(e.target.value))}
+							className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+						>
+							<option value={1}>1</option>
+							<option value={2}>2</option>
+							<option value={3}>3</option>
+						</select>
+					</label>
+					<label className="flex items-center gap-2 text-[10px] text-slate-400">
+						<input
+							type="checkbox"
+							checked={bulkSkipGenerated}
+							onChange={(e) => setBulkSkipGenerated(e.target.checked)}
+							className="rounded border-slate-700 bg-slate-950"
+						/>
+						Skip already generated
+					</label>
+					<label className="flex items-center gap-2 text-[10px] text-slate-400">
+						<input
+							type="checkbox"
+							checked={bulkAllowRegenerate}
+							onChange={(e) => setBulkAllowRegenerate(e.target.checked)}
+							className="rounded border-slate-700 bg-slate-950"
+						/>
+						Allow regenerate
+					</label>
+					<button
+						type="button"
+						disabled={isBulkBusy || selectedCodes.size === 0}
+						onClick={() => void handleBulkCreateAndStart()}
+						className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/20 disabled:opacity-40"
+					>
+						{isBulkBusy ? "Running…" : "Bulk generate selected"}
+					</button>
+					{bulkRunId && (
+						<button
+							type="button"
+							disabled={isBulkBusy}
+							onClick={() => void handleBulkRegister()}
+							className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-40"
+						>
+							Register completed assets
+						</button>
+					)}
+					{bulkRunDetail && (
+						<div className="w-full text-[11px] text-slate-400">
+							Run {bulkRunDetail.bulk_run_id.slice(0, 8)}… · {bulkRunDetail.status} ·{" "}
+							{bulkRunDetail.total_completed}/{bulkRunDetail.total_expected} done
+							{bulkRunDetail.status_counts
+								? ` · ${JSON.stringify(bulkRunDetail.status_counts)}`
+								: ""}
+						</div>
+					)}
+				</div>
 				<DataTable
 					rows={avatars}
 					getRowId={(a) => a.avatar_code}
@@ -1130,6 +1308,18 @@ export default function AvatarRegistryPage() {
 						},
 					]}
 					columns={[
+						{
+							key: "select",
+							header: "☑",
+							render: (a) => (
+								<input
+									type="checkbox"
+									checked={selectedCodes.has(a.avatar_code)}
+									onChange={() => toggleSelectCode(a.avatar_code)}
+									className="rounded border-slate-700 bg-slate-950"
+								/>
+							),
+						},
 						{
 							key: "avatar_code",
 							header: "Avatar Code",
