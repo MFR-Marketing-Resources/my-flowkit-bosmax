@@ -40,6 +40,7 @@ domains:
       - agent/services/copy_set_service.py
       - agent/services/copy_binding_service.py
       - tests/unit/test_copy_set_service.py
+      - tests/unit/test_copyset_approval_formula_gate.py
       - tests/api/test_copy_sets_api.py
       - tests/unit/test_copy_binding_service.py
       - tests/unit/test_copy_binding_workspace_integration.py
