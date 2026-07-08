@@ -143,3 +143,33 @@ async def test_prepare_never_persists_overclaim_as_allowed_claim(monkeypatch):
     assert any("tradisional" in a for a in allowed)
     # Overclaim recorded in blocked.
     assert ("sembuh" in blocked or "dijamin" in blocked) and "npra" in blocked
+
+
+@pytest.mark.asyncio
+async def test_prepare_blocks_overclaim_in_narrative_fields(monkeypatch):
+    """Hardening (#1): overclaim OUTSIDE allowed_claims (usage, formula_breakdown,
+    etc.) is still caught and recorded as blocked; market/problem language stays."""
+    pid = await _make_product()
+    dirty = {
+        **_PREPARE_AI,
+        "product_knowledge": {
+            **_PREPARE_AI["product_knowledge"],
+            "usage": "sapu untuk rawat bayi sampai sembuh",  # overclaim in usage
+        },
+        "formula_breakdown": {
+            **_PREPARE_AI["formula_breakdown"],
+            "solution": "100% sembuh, diluluskan NPRA",  # overclaim in breakdown
+        },
+    }
+    _mock_complete(monkeypatch, dirty)
+    result = await prep.prepare_product_for_copywriting(pid)
+    draft = result["draft"]
+    blocked = " ".join(draft["blocked_claims_json"]).casefold()
+    # Overclaim from narrative fields is recorded as blocked.
+    assert "sembuh" in blocked
+    assert "npra" in blocked or "100%" in " ".join(draft["blocked_claims_json"])
+    assert "rawat" in blocked
+    # Market/problem language preserved in the avatar.
+    assert "anak kembung perut" in [
+        p.casefold() for p in draft["buyer_persona_snapshot_json"]["pains"]
+    ]

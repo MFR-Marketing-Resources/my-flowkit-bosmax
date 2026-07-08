@@ -143,10 +143,24 @@ def _sanitize_claims(
         else:
             moved.append(claim)
     breakdown = ai.get("formula_breakdown") if isinstance(ai.get("formula_breakdown"), dict) else {}
-    scan_blob = " || ".join(
-        [_s(pk.get("description")), *_list(pk.get("benefits")), *_list(pk.get("usps"))]
-        + [_s(v) for v in breakdown.values()]
-    )
+    avatar = ai.get("customer_avatar") if isinstance(ai.get("customer_avatar"), dict) else {}
+    # Scan EVERY AI-drafted narrative field (not just allowed_claims) so overclaim
+    # anywhere in the prepare output is recorded as blocked. claim_boundary never
+    # flags market/problem language, so avatar pains / market_problem_language are
+    # safe to scan.
+    scan_parts = [
+        _s(pk.get("description")), *_list(pk.get("benefits")), *_list(pk.get("usps")),
+        _s(pk.get("usage")), _s(pk.get("ingredients")), _s(pk.get("warnings")),
+        _s(pk.get("target_customer")),
+        _s(avatar.get("audience")), _s(avatar.get("tone")), _s(avatar.get("pronoun")),
+        *_list(avatar.get("desires")), *_list(avatar.get("fears")), *_list(avatar.get("pains")),
+        *_list(avatar.get("objections")), *_list(avatar.get("triggers")),
+        *_list(ai.get("market_problem_language")),
+        _s(ai.get("situation")), _s(ai.get("desire")), _s(ai.get("objection")),
+        _s(ai.get("trigger")), _s(ai.get("use_context")),
+        *raw_allowed, *[_s(v) for v in breakdown.values()],
+    ]
+    scan_blob = " || ".join(p for p in scan_parts if p)
     overclaim_hits = claim_boundary.assess_claim_boundary(scan_blob, is_stealth)["overclaim_hits"]
     blocked: list[str] = []
     for item in _list(boundary.get("overclaim_notes")) + moved + overclaim_hits:
