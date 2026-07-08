@@ -4,6 +4,11 @@ Branch `fix/traditional-herbal-oil-physics-class` (PR #287).
 Backend under proof: commit `7c122568e6de0fb462b9e5c632550b22e1c50586`, pid 38344,
 served bundle `index-DOx5RJCl.js`, 334 routes.
 
+> REDACTION (public-repo sensitivity, decision A): the product UUID is
+> truncated and verbatim marketing dialogue is trimmed to indicative
+> fragments. Technical proofs (routes, ordering, source_mode, payloads)
+> are unchanged. No credentials/tokens/PII were ever present.
+
 ## 1. Route-table proof (live `/openapi.json` extract)
 
 ```text
@@ -71,7 +76,7 @@ explicit `I understand and confirm fallback copy usage for this run.` checkbox.
 
 ## 4. Execution-package payload proof (no generation fired, zero credits)
 
-Product: MWTCB `6483d624-a03d-4933-9bba-6ca2e5f7b6fd`. All requests sent with
+Product: MWTCB `6483d624… (product id redacted)`. All requests sent with
 `duration_seconds=8, aspect_ratio="9:16", model="Veo 3.1 - Lite"`.
 
 | case | mode | source_mode | wep_id | snapshot | copy binding | resolved assets |
@@ -95,13 +100,13 @@ settings columns for all 54 stored packages May 18 → Jul 8 are uniformly
 ## 5. Section 6 spoken-dialogue proof (three cases, compiled — no AI call)
 
 1. **MWTCB, approved family-night set** (`1174cefb…`):
-   `Anak anda menangis malam-malam, tak boleh tidur lena? Mungkin perut dia kembung atau berangin.`
+   `Anak anda menangis malam-malam… [approved-copy hook, verbatim from set 1174cefb…; full text redacted]`
    — approved copy verbatim; zero bank filler.
 2. **MWTCB, avatar-specific set** (`66da3eef…`, worried-parent avatar angle):
-   `Anak anda kerap menangis malam kerana perut kembung? Risau melihat si kecil tidak selesa dan sukar tidur lena?`
+   `Anak anda kerap menangis malam… [avatar-angle copy, from set 66da3eef…; full text redacted]`
    — dialogue tracks the avatar-targeted copy angle.
 3. **MWTCB, fallback (explicitly confirmed)** — labeled `landbank_fallback / NOT_SELECTED`:
-   `Anak melalak pukul 2 pagi baru kau kalut nak cari minyak? Minyak hijau cap merah ni simpan siap-siap dalam laci bilik tidur.`
+   `[landbank fallback line — full text redacted; labeled landbank_fallback / NOT_SELECTED]`
    — product landbank copy, clearly labeled, only reachable behind the 409 gate.
 
 Golden tests: `test_bound_approved_copy_excludes_family_bank_filler` (the literal
@@ -229,3 +234,60 @@ internal Malay marketing copy — **no credentials, tokens, external URLs, or cu
 PII** (precise credential scan: 0 matches). Posture is unchanged from prior committed
 `docs/evidence/*` files. If the internal identifiers should not be public, redact or
 move this bundle out of the tree.
+
+---
+
+## 11. Pre-merge corrections (round 5)
+
+### 11.1 CI status
+This repository has **no GitHub Actions CI** (`.github/workflows/` does not exist);
+there are no workflow runs for this PR head. **No remote CI is implied.** The
+clean-worktree run below is the substitute clean-checkout proof.
+
+### 11.2 Clean-worktree EXACT proof (pristine `git worktree` at PR head `de77a36`)
+Captured verbatim (`docs/evidence` transcription of the run):
+```text
+### git rev-parse HEAD
+de77a36503c780d02ed2e4614987c067218289e5
+### git status --porcelain (empty = clean)
+[end git status]                      # <- no output: worktree is clean
+### watchdog WIP files present in clean worktree?
+  scripts/ensure-local-agent.ps1: ABSENT
+  scripts/install-local-agent.ps1: COMMITTED-VERSION-PRESENT (no uncommitted WIP)
+  scripts/local-agent-common.ps1: COMMITTED-VERSION-PRESENT (no uncommitted WIP)
+  scripts/start-local-agent.ps1: COMMITTED-VERSION-PRESENT (no uncommitted WIP)
+### MODULE_STATUS ensure-local-agent line count (expect 0)
+0
+### BACKEND PYTEST (agent module path = clean-wt2\agent)
+371 passed in 21.59s
+### FRONTEND (fresh node_modules)
+npm ci exit: 0
+npm run build exit: 0
+vitest exit: 0   ->   Test Files 11 passed (11)
+```
+Confirms: PR-head code passes from a pristine checkout with ZERO concurrent
+watchdog WIP present, so the WIP could not have affected any test/build result.
+
+### 11.3 Evidence sensitivity — decision A (REDACT)
+Repo is PUBLIC. Applied decision **A**: product UUID truncated, verbatim marketing
+dialogue trimmed to indicative fragments (see header REDACTION note). Technical
+proofs unchanged. If the owner prefers, the whole bundle can instead be moved out
+of the public repo (decision B) — that is a one-command follow-up.
+
+### 11.4 Production blockers (explicit — none are closed)
+- **#288** stale-runtime action-disable: banner is WARNING-ONLY; Refresh/Generate
+  remain actionable in a stale state. Production hardening BLOCKED until it lands.
+- **#289** batch fallback gate: production batch can still run landbank fallback
+  silently (no approved-copy requirement, no provenance). Production batch BLOCKED.
+- **#290** F2V endAsset execution gap: end-frame is not folded into the execution
+  ref payload; no ordering or live proof. Two-frame F2V NOT production-safe.
+- **Live AI copy-assist quality**: NOT RUN (requires operator token-burn approval;
+  contract routes live UAT through Antigravity after preflight). NOT VERIFIED.
+- **Live per-mode video quality (T2V/F2V/HYBRID/I2V)**: NOT RUN (operator
+  credit-burn approval required). NOT VERIFIED.
+
+Claude Code did not fire live generation or live AI copy-assist: per AGENTS.md
+("No credit-spending generation without explicit user approval") and the ADR-007
+live-UAT contract, autonomous credit/token burn is forbidden. A ready-to-run
+guarded kit (payloads, expected reference order, review checklist) is prepared for
+operator execution.
