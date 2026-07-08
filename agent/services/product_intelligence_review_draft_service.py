@@ -263,16 +263,41 @@ async def _get_draft_row_or_raise(draft_id: str) -> dict[str, Any]:
 
 
 def _seed_payload_from_product(product: dict[str, Any]) -> dict[str, Any]:
-    source_urls_json: dict[str, Any] = {}
-    if _has_value(product.get("source_url")):
-        source_urls_json["source_url"] = product["source_url"]
-    if _has_value(product.get("tiktok_product_url")):
-        source_urls_json["tiktok_product_url"] = product["tiktok_product_url"]
+    # Image evidence from the product record.
     image_evidence_json: dict[str, Any] = {}
     if _has_value(product.get("image_url")):
         image_evidence_json["image_url"] = product["image_url"]
     if _has_value(product.get("local_image_path")):
         image_evidence_json["local_image_path"] = product["local_image_path"]
+    image_evidence_available = bool(image_evidence_json)
+
+    # Source provenance. Prefer a real external URL; otherwise auto-record the internal
+    # product record as provenance so a MANUAL product (no external URL) is never left
+    # with an empty required field it cannot legitimately fill by hand. source_urls_json
+    # is required by the approval gate and MUST NOT be empty when the product row exists.
+    source_urls_json: dict[str, Any] = {}
+    if _has_value(product.get("source_url")):
+        source_urls_json["source_url"] = product["source_url"]
+    if _has_value(product.get("tiktok_product_url")):
+        source_urls_json["tiktok_product_url"] = product["tiktok_product_url"]
+    if not source_urls_json:
+        product_name = (
+            str(
+                product.get("product_display_name")
+                or product.get("product_short_name")
+                or product.get("raw_product_title")
+                or ""
+            ).strip()
+            or None
+        )
+        source_urls_json = {
+            "source_type": "MANUAL_PRODUCT_RECORD",
+            "product_id": product.get("id"),
+            "product_name": product_name,
+            "local_image_path": product.get("local_image_path") or None,
+            "image_evidence_available": image_evidence_available,
+        }
+
     return {
         "source_urls_json": source_urls_json,
         "image_evidence_json": image_evidence_json,
