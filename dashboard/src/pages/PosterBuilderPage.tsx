@@ -2,6 +2,10 @@ import { ImageIcon, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
+import {
+	PRODUCT_REFERENCE_IMAGE_REQUIRED,
+	productSubjectAsset,
+} from "../utils/productSubjectAsset";
 import { usePosterBuilderSettings } from "../api/posterBuilderSettings";
 import { fitPosterCopy } from "../api/posterCopyFit";
 import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations";
@@ -186,6 +190,11 @@ export default function PosterBuilderPage() {
 		? resolveGenerateButtonLabel(readiness)
 		: "Generation unavailable";
 	const recommendationsEnabled = shellMode !== "hidden";
+	// Product posters MUST anchor on the real product image. Resolve the product
+	// into a Flow subject reference; null = no usable image = fail closed (block
+	// generation, never fall back to prompt-only which hallucinates the product).
+	const posterProductSubject = productSubjectAsset(selectedProduct);
+	const productReferenceReady = posterProductSubject !== null;
 
 	const loadRecommendations = useCallback(
 		async (refreshAi = false, draftSnapshot?: PosterBuilderDraft) => {
@@ -352,6 +361,17 @@ export default function PosterBuilderPage() {
 	const handleConfirmedGeneratePoster = async () => {
 		const pkg = promptPackage;
 		if (!pkg?.poster_prompt) return;
+		// Fail closed BEFORE any credit spend: a product poster must anchor on the
+		// real product image. If the selected product has no usable reference image,
+		// block — never fall back to prompt-only generation.
+		const subjectAsset = productSubjectAsset(selectedProduct);
+		if (!subjectAsset) {
+			setPosterGenConfirm(false);
+			setPosterGenError(
+				`${PRODUCT_REFERENCE_IMAGE_REQUIRED} — produk ini tiada gambar rujukan yang boleh diguna. Poster produk mesti berlabuh pada gambar produk sebenar; penjanaan dihalang.`,
+			);
+			return;
+		}
 		setPosterGenConfirm(false);
 		setPosterGenLoading(true);
 		setPosterGenError("");
@@ -362,6 +382,9 @@ export default function PosterBuilderPage() {
 				aspect: flowMirror.aspect_ratio,
 				count: flowMirror.count,
 				image_model: flowMirror.image_model,
+				// Anchor the poster on the real BOSMAX product image (resolved to a Flow
+				// reference asset server-side → IMAGE_INPUT_TYPE_REFERENCE).
+				refs: { subjectAsset },
 			});
 			const job = await pollImgGenerationJob(job_id);
 			const mediaId = job.media_id ?? "";
@@ -598,13 +621,24 @@ export default function PosterBuilderPage() {
 										Poster tetap boleh dijana untuk semakan.
 									</p>
 								) : null}
+								{!productReferenceReady ? (
+									<p
+										data-testid="poster-product-ref-required"
+										className="mt-2 text-[11px] text-rose-300"
+									>
+										{PRODUCT_REFERENCE_IMAGE_REQUIRED} — produk ini tiada gambar
+										rujukan. Poster produk mesti berlabuh pada gambar produk
+										sebenar; set gambar produk dahulu. Penjanaan dihalang.
+									</p>
+								) : null}
 								<button
 									type="button"
 									data-testid="generate-poster-button"
 									disabled={
 										!promptPackage ||
 										posterGenLoading ||
-										!readiness.generation_allowed
+										!readiness.generation_allowed ||
+										!productReferenceReady
 									}
 									onClick={() => setPosterGenConfirm(true)}
 									className="mt-3 rounded-xl border border-rose-500/40 bg-rose-600/20 px-4 py-2 text-xs font-bold uppercase text-rose-100 disabled:opacity-40"
