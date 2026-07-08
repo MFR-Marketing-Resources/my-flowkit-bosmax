@@ -359,6 +359,7 @@ domains:
       - tests/unit/test_poster_builder_settings_service.py
       - dashboard/src/api/posterBuilderSettings.ts
       - dashboard/src/components/poster/PosterAutoModePanel.tsx
+      - dashboard/src/components/poster/PosterBuilderShellForm.tsx
       - dashboard/src/components/poster/PosterGuidedModePanel.tsx
       - dashboard/src/pages/PosterBuilderPage.tsx
       - dashboard/src/pages/PosterBuilderPage.test.tsx
