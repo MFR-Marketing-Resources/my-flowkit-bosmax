@@ -51,6 +51,35 @@ export function overLimitPosterCopyFields(draft: PosterBuilderDraft): string[] {
 		);
 }
 
+/** True when at least one copy field is over its poster limit AND the AI provider
+ * is available — i.e. the "Fit to poster (AI)" action can actually help. */
+export function shouldOfferPosterCopyFit(
+	draft: PosterBuilderDraft,
+	aiProviderReady: boolean,
+): boolean {
+	return aiProviderReady && overLimitPosterCopyFields(draft).length > 0;
+}
+
+/** Human-readable, Malay one-line summary of a "Fit to poster" result for the
+ * operator (what got shortened, what still overflows, any provider warning). */
+export function summarizePosterCopyFit(result: {
+	applied: boolean;
+	changed_fields: string[];
+	still_over_limit: string[];
+	warnings: string[];
+}): string {
+	const parts: string[] = [];
+	if (result.applied && result.changed_fields.length > 0) {
+		parts.push(`Dipendekkan: ${result.changed_fields.join(", ")}.`);
+	}
+	if (result.still_over_limit.length > 0) {
+		parts.push(`Masih panjang: ${result.still_over_limit.join(", ")}.`);
+	}
+	for (const w of result.warnings) parts.push(w);
+	if (parts.length === 0) parts.push("Tiada perubahan pada copy.");
+	return parts.join(" ");
+}
+
 export type PosterBuilderShellMode =
 	| "hidden"
 	| "preview"

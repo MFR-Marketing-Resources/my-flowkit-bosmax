@@ -1,9 +1,11 @@
 from fastapi import APIRouter, HTTPException
 
 from agent.models.poster_builder_settings import PosterBuilderSettingsResponse
+from agent.models.poster_copy_fit import PosterCopyFitRequest
 from agent.models.poster_copy_recommendations import PosterCopyRecommendationRequest
 from agent.models.poster_prompt_draft import PosterPromptDraftRequest
 from agent.services.poster_builder_settings_service import PosterBuilderSettingsService
+from agent.services.poster_copy_fit_service import fit_poster_copy
 from agent.services.poster_copy_recommendation_service import (
     PosterCopyRecommendationService,
 )
@@ -53,3 +55,13 @@ async def poster_copy_recommendations(body: PosterCopyRecommendationRequest):
             raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc
         raise
     return result.model_dump(mode="json")
+
+
+@router.post("/copy/fit")
+async def poster_copy_fit(body: PosterCopyFitRequest):
+    """AI-condense over-length poster copy to the poster character limits.
+
+    EXPLICIT-only (operator-initiated), suggestion-only (returns candidate fields;
+    never persists/approves/binds), and fail-closed when the text_assist provider
+    lane is unconfigured — the original copy is returned untouched with a reason."""
+    return fit_poster_copy(body).model_dump(mode="json")
