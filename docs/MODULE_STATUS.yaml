@@ -415,6 +415,15 @@ domains:
       - dashboard/src/components/poster/PosterRecipeSlotEditor.tsx
       - dashboard/src/components/poster/PosterSpecPreview.tsx
       - docs/poster/POSTER_RECIPE_UI_B2_AUDIT.md
+      # POSTER_COMPOSITOR_PHASE2A: Playwright/Chromium spike proving overlay_spec +
+      # clean product-anchored background -> crisp 1080x1920 poster PNG. Spike only —
+      # no service/UI/live-generation/credit-spend. Generated .png outputs untracked.
+      - scripts/poster-compositor-spike.js
+      - scripts/fixtures/poster-compositor/sample_overlay_spec.json
+      - scripts/fixtures/poster-compositor/sample_product_safe_region.json
+      - scripts/fixtures/poster-compositor/rendered_zones.json
+      - tests/ui/test_poster_compositor_spike_contract.py
+      - docs/poster/POSTER_COMPOSITOR_PHASE2A_SPIKE.md
       # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx

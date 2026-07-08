@@ -1,0 +1,4 @@
+{
+  "product_safe_region": { "x": 22, "y": 30, "w": 56, "h": 40 },
+  "note": "Percent rect of the product hero (bottle) in the background. Overlay text zones must NOT intersect this."
+}

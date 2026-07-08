@@ -1,0 +1,96 @@
+{
+  "renderer": "HTML_CHROMIUM_v1_spike",
+  "phase": "2A",
+  "canvas": {
+    "w": 1080,
+    "h": 1920
+  },
+  "output_png": {
+    "file": "spike_output.png",
+    "width": 1080,
+    "height": 1920
+  },
+  "product_safe_region": {
+    "x": 22,
+    "y": 30,
+    "w": 56,
+    "h": 40
+  },
+  "zones": [
+    {
+      "zone_id": "headline",
+      "rect_pct": {
+        "x": 7.999131944444445,
+        "y": 5.999348958333333,
+        "w": 83.9988425925926,
+        "h": 12.999674479166668
+      },
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false
+    },
+    {
+      "zone_id": "subheadline",
+      "rect_pct": {
+        "x": 7.999131944444445,
+        "y": 20.999348958333332,
+        "w": 83.9988425925926,
+        "h": 6.99951171875
+      },
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false
+    },
+    {
+      "zone_id": "chip_1",
+      "rect_pct": {
+        "x": 7.999131944444445,
+        "y": 71.99951171875,
+        "w": 83.9988425925926,
+        "h": 5
+      },
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false
+    },
+    {
+      "zone_id": "chip_2",
+      "rect_pct": {
+        "x": 7.999131944444445,
+        "y": 77.99967447916667,
+        "w": 83.9988425925926,
+        "h": 5
+      },
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false
+    },
+    {
+      "zone_id": "chip_3",
+      "rect_pct": {
+        "x": 7.999131944444445,
+        "y": 83.99983723958333,
+        "w": 83.9988425925926,
+        "h": 5
+      },
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false
+    },
+    {
+      "zone_id": "cta",
+      "rect_pct": {
+        "x": 7.999131944444445,
+        "y": 90,
+        "w": 55.99971064814815,
+        "h": 5.999348958333333
+      },
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false
+    }
+  ],
+  "credit_spend": false,
+  "network": false,
+  "note": "Local spike. Not production. System fonts (Noto bundling = Phase 2D)."
+}
