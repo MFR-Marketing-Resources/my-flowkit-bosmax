@@ -109,6 +109,16 @@ async def get_copy_grounding(product_id: str):
     return grounding.model_dump(mode="json")
 
 
+@router.get("/formulas")
+async def list_copy_formulas():
+    """The Formula Registry — slot contracts (PAS/AIDA/HSO/BAB/PASTOR/PESTA +
+    SavagePAS/HPAS drafts) that drive formula-aware generation. Read-only; drives
+    the operator's formula picker + validator display. No token spend."""
+    from agent.authority.copy_formula_registry import list_formulas
+
+    return {"formulas": list_formulas()}
+
+
 @router.get("/{copy_set_id}")
 async def get_copy_set(copy_set_id: str):
     result = await svc.get_copy_set(copy_set_id)
