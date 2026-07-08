@@ -52,6 +52,42 @@ async def test_ready_product_draft_ready(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_poster_prompt_no_longer_requires_or_renders_angle(monkeypatch):
+    product = _ready_base()
+
+    async def fake_get(_pid):
+        return product
+
+    monkeypatch.setattr(
+        "agent.services.poster_prompt_draft_service.crud.get_product",
+        fake_get,
+    )
+    # Angle removed from the poster copy model: no angle supplied, still DRAFT_READY,
+    # and the assembled prompt no longer carries an "Angle:" line.
+    result = await PosterPromptDraftService.build_draft(_full_request(angle=""))
+    assert result.prompt_package_status == "DRAFT_READY"
+    assert "Angle:" not in result.poster_prompt
+    assert "Hook:" in result.poster_prompt
+
+
+@pytest.mark.asyncio
+async def test_poster_copy_length_limit_rejects_long_hook(monkeypatch):
+    product = _ready_base()
+
+    async def fake_get(_pid):
+        return product
+
+    monkeypatch.setattr(
+        "agent.services.poster_prompt_draft_service.crud.get_product",
+        fake_get,
+    )
+    # Poster copy must be short — an over-length hook is rejected with a clear error.
+    with pytest.raises(PosterPromptDraftValidationError) as exc:
+        await PosterPromptDraftService.build_draft(_full_request(hook="x" * 80))
+    assert any("too long" in err for err in exc.value.field_errors)
+
+
+@pytest.mark.asyncio
 async def test_restricted_draft_includes_safety_rules(monkeypatch):
     product = _ready_base(
         claim_risk_level="MEDIUM",

@@ -24,7 +24,6 @@ class PosterPromptDraftRequest(BaseModel):
     frame_ratio: str = ""
     language: str = ""
     text_density: str = ""
-    angle: str = ""
     hook: str = ""
     subhook: str = ""
     usp_1: str = ""

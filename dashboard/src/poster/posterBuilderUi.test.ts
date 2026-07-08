@@ -7,6 +7,7 @@ import {
 	isGenerateButtonDisabled,
 	isPromptDraftGenerationEnabled,
 	missingPosterCopyFields,
+	overLimitPosterCopyFields,
 	posterStatusOperatorLabel,
 	resolveBuilderShellMode,
 	resolveGenerateButtonLabel,
@@ -17,34 +18,45 @@ import {
 } from "./posterBuilderUi";
 
 describe("missingPosterCopyFields", () => {
-	it("lists Angle, Hook, CTA when the copy draft is empty (Auto/Quick Start default)", () => {
-		expect(missingPosterCopyFields(EMPTY_POSTER_DRAFT)).toEqual([
-			"Angle",
-			"Hook",
-			"CTA",
-		]);
+	it("lists Hook and CTA when empty (Angle is NOT a poster copy field)", () => {
+		expect(missingPosterCopyFields(EMPTY_POSTER_DRAFT)).toEqual(["Hook", "CTA"]);
 	});
 
 	it("returns only the still-missing fields (whitespace counts as empty)", () => {
 		expect(
 			missingPosterCopyFields({
 				...EMPTY_POSTER_DRAFT,
-				angle: "Segar sepanjang hari",
 				hook: "  ",
 				cta: "Beli sekarang",
 			}),
 		).toEqual(["Hook"]);
 	});
 
-	it("is empty when Angle, Hook and CTA are all filled", () => {
+	it("is empty when Hook and CTA are filled", () => {
 		expect(
-			missingPosterCopyFields({
+			missingPosterCopyFields({ ...EMPTY_POSTER_DRAFT, hook: "h", cta: "c" }),
+		).toEqual([]);
+	});
+});
+
+describe("overLimitPosterCopyFields", () => {
+	it("is empty for short poster copy", () => {
+		expect(
+			overLimitPosterCopyFields({
 				...EMPTY_POSTER_DRAFT,
-				angle: "a",
-				hook: "h",
-				cta: "c",
+				hook: "Perut kembung? Lega segera.",
+				cta: "Beli sekarang",
 			}),
 		).toEqual([]);
+	});
+
+	it("flags fields that exceed the poster length limit with len/limit", () => {
+		const result = overLimitPosterCopyFields({
+			...EMPTY_POSTER_DRAFT,
+			hook: "x".repeat(60), // limit 48
+			cta: "y".repeat(30), // limit 24
+		});
+		expect(result).toEqual(["Hook (60/48)", "CTA (30/24)"]);
 	});
 });
 

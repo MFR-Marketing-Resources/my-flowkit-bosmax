@@ -247,7 +247,9 @@ async def _ai_ephemeral_kits(
             f"Poster objective: {settings['poster_objective']}. "
             f"Poster type: {settings['poster_type']}. "
             f"Visual route: {settings['visual_route']}. "
-            "Generate safe commercial poster copy only. No medical claims."
+            "Generate safe commercial poster copy only. No medical claims. "
+            "Keep every line SHORT so it fits a poster — hook <=48, subhook <=72, "
+            "each USP <=36, CTA <=24 characters; punchy, not long video sentences."
         ),
     )
     for i in range(count):

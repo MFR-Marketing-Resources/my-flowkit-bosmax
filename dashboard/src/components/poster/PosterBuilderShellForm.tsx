@@ -1,7 +1,9 @@
 import type { PosterBuilderDraft } from "../../types/posterReadiness";
 import {
+	POSTER_COPY_LIMITS,
 	type PosterBuilderShellMode,
 	missingPosterCopyFields,
+	overLimitPosterCopyFields,
 } from "../../poster/posterBuilderUi";
 
 interface PosterBuilderShellFormProps {
@@ -17,7 +19,12 @@ interface PosterBuilderShellFormProps {
 	manualExpert?: boolean;
 }
 
-const FIELDS: { key: keyof PosterBuilderDraft; label: string; multiline?: boolean }[] = [
+const FIELDS: {
+	key: keyof PosterBuilderDraft;
+	label: string;
+	multiline?: boolean;
+	maxLength?: number;
+}[] = [
 	{ key: "poster_objective", label: "Poster Objective" },
 	{ key: "poster_type", label: "Poster Type" },
 	{ key: "visual_route", label: "Visual Route" },
@@ -25,13 +32,12 @@ const FIELDS: { key: keyof PosterBuilderDraft; label: string; multiline?: boolea
 	{ key: "frame_ratio", label: "Frame Ratio" },
 	{ key: "language", label: "Language" },
 	{ key: "text_density", label: "Text Density" },
-	{ key: "angle", label: "Angle" },
-	{ key: "hook", label: "Hook" },
-	{ key: "subhook", label: "Subhook" },
-	{ key: "usp_1", label: "USP 1" },
-	{ key: "usp_2", label: "USP 2" },
-	{ key: "usp_3", label: "USP 3" },
-	{ key: "cta", label: "CTA" },
+	{ key: "hook", label: "Hook", maxLength: POSTER_COPY_LIMITS.hook },
+	{ key: "subhook", label: "Subhook", maxLength: POSTER_COPY_LIMITS.subhook },
+	{ key: "usp_1", label: "USP 1", maxLength: POSTER_COPY_LIMITS.usp_1 },
+	{ key: "usp_2", label: "USP 2", maxLength: POSTER_COPY_LIMITS.usp_2 },
+	{ key: "usp_3", label: "USP 3", maxLength: POSTER_COPY_LIMITS.usp_3 },
+	{ key: "cta", label: "CTA", maxLength: POSTER_COPY_LIMITS.cta },
 	{ key: "operator_notes", label: "Notes / Operator Instruction", multiline: true },
 ];
 
@@ -49,6 +55,7 @@ export default function PosterBuilderShellForm({
 	const editable = mode === "full" || mode === "restricted" || mode === "preview";
 	const previewOnly = mode === "preview";
 	const missingCopy = missingPosterCopyFields(draft);
+	const overLimit = overLimitPosterCopyFields(draft);
 
 	return (
 		<section
@@ -72,29 +79,44 @@ export default function PosterBuilderShellForm({
 			</div>
 
 			<div className="mt-4 grid gap-3 md:grid-cols-2">
-				{FIELDS.map(({ key, label, multiline }) => (
-					<label key={key} className={multiline ? "md:col-span-2" : ""}>
-						<span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
-							{label}
-						</span>
-						{multiline ? (
-							<textarea
-								className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
-								rows={3}
-								value={String(draft[key] ?? "")}
-								disabled={!editable}
-								onChange={(e) => onChange({ ...draft, [key]: e.target.value })}
-							/>
-						) : (
-							<input
-								className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
-								value={String(draft[key] ?? "")}
-								disabled={!editable}
-								onChange={(e) => onChange({ ...draft, [key]: e.target.value })}
-							/>
-						)}
-					</label>
-				))}
+				{FIELDS.map(({ key, label, multiline, maxLength }) => {
+					const len = maxLength ? String(draft[key] ?? "").trim().length : 0;
+					const over = maxLength ? len > maxLength : false;
+					return (
+						<label key={key} className={multiline ? "md:col-span-2" : ""}>
+							<div className="flex items-center justify-between">
+								<span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+									{label}
+								</span>
+								{maxLength ? (
+									<span
+										data-testid={`copy-count-${key}`}
+										className={`text-[9px] ${over ? "text-rose-300" : "text-slate-500"}`}
+									>
+										{len}/{maxLength}
+									</span>
+								) : null}
+							</div>
+							{multiline ? (
+								<textarea
+									className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
+									rows={3}
+									value={String(draft[key] ?? "")}
+									disabled={!editable}
+									onChange={(e) => onChange({ ...draft, [key]: e.target.value })}
+								/>
+							) : (
+								<input
+									className={`mt-1 w-full rounded-lg border bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-50 ${over ? "border-rose-500/60" : "border-slate-800"}`}
+									value={String(draft[key] ?? "")}
+									maxLength={maxLength}
+									disabled={!editable}
+									onChange={(e) => onChange({ ...draft, [key]: e.target.value })}
+								/>
+							)}
+						</label>
+					);
+				})}
 			</div>
 
 			{promptDraftEnabled && missingCopy.length > 0 ? (
@@ -106,17 +128,31 @@ export default function PosterBuilderShellForm({
 					menjana prompt draft.
 				</p>
 			) : null}
+			{promptDraftEnabled && overLimit.length > 0 ? (
+				<p
+					data-testid="poster-copy-overlimit-hint"
+					className="mt-4 text-[11px] text-rose-300"
+				>
+					Terlalu panjang untuk poster: <strong>{overLimit.join(", ")}</strong>.
+					Pendekkan ayat supaya muat.
+				</p>
+			) : null}
 			<div className="mt-4 flex flex-wrap gap-3">
 				<button
 					type="button"
 					data-testid="generate-prompt-draft-button"
 					disabled={
-						!promptDraftEnabled || promptDraftLoading || missingCopy.length > 0
+						!promptDraftEnabled ||
+						promptDraftLoading ||
+						missingCopy.length > 0 ||
+						overLimit.length > 0
 					}
 					title={
 						missingCopy.length > 0
 							? `Isi dulu: ${missingCopy.join(", ")}`
-							: promptDraftLabel
+							: overLimit.length > 0
+								? `Terlalu panjang: ${overLimit.join(", ")}`
+								: promptDraftLabel
 					}
 					onClick={onPromptDraft}
 					className="rounded-xl border border-blue-500/50 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-blue-100 disabled:cursor-not-allowed disabled:opacity-40"

@@ -5,19 +5,50 @@ import type {
 } from "../types/posterReadiness";
 
 // The copy fields the backend REQUIRES before a poster prompt draft can be built
-// (poster_prompt_draft_service CRITICAL_FIELDS). The Generate button must not fire
-// with these empty — otherwise the operator gets a raw "Missing required field" 422.
+// (poster_prompt_draft_service CRITICAL_FIELDS). Angle is NOT a poster copy field.
 const POSTER_REQUIRED_COPY: readonly [keyof PosterBuilderDraft, string][] = [
-	["angle", "Angle"],
 	["hook", "Hook"],
 	["cta", "CTA"],
 ];
+
+// Poster copy must FIT the poster — short, unlike video copywriting. Max characters
+// per copy field (SSOT — MUST match agent/services/poster_prompt_draft_service.py
+// POSTER_COPY_LIMITS).
+export const POSTER_COPY_LIMITS = {
+	hook: 48,
+	subhook: 72,
+	usp_1: 36,
+	usp_2: 36,
+	usp_3: 36,
+	cta: 24,
+} as const;
+
+const POSTER_COPY_LABELS: Record<keyof typeof POSTER_COPY_LIMITS, string> = {
+	hook: "Hook",
+	subhook: "Subhook",
+	usp_1: "USP 1",
+	usp_2: "USP 2",
+	usp_3: "USP 3",
+	cta: "CTA",
+};
 
 /** Human labels of the required copy fields still empty on the draft (empty when ready). */
 export function missingPosterCopyFields(draft: PosterBuilderDraft): string[] {
 	return POSTER_REQUIRED_COPY.filter(
 		([key]) => !String(draft[key] ?? "").trim(),
 	).map(([, label]) => label);
+}
+
+/** Copy fields over their poster length limit, as "Label (len/limit)" (empty when OK). */
+export function overLimitPosterCopyFields(draft: PosterBuilderDraft): string[] {
+	return (Object.keys(POSTER_COPY_LIMITS) as (keyof typeof POSTER_COPY_LIMITS)[])
+		.filter(
+			(key) => String(draft[key] ?? "").trim().length > POSTER_COPY_LIMITS[key],
+		)
+		.map(
+			(key) =>
+				`${POSTER_COPY_LABELS[key]} (${String(draft[key] ?? "").trim().length}/${POSTER_COPY_LIMITS[key]})`,
+		);
 }
 
 export type PosterBuilderShellMode =

@@ -20,7 +20,6 @@ export interface PosterPromptDraftRequest {
 	frame_ratio: string;
 	language: string;
 	text_density: string;
-	angle: string;
 	hook: string;
 	subhook: string;
 	usp_1: string;

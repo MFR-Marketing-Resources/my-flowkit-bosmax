@@ -9,7 +9,6 @@ export const POSTER_AUTO_DEFAULT_DRAFT: PosterBuilderDraft = {
 	frame_ratio: "9:16",
 	language: "ms",
 	text_density: "medium",
-	angle: "",
 	hook: "",
 	subhook: "",
 	usp_1: "",
@@ -35,7 +34,8 @@ export function kitToDraft(
 		frame_ratio: kit.frame_ratio || current.frame_ratio,
 		language: kit.language || current.language,
 		text_density: kit.text_density || current.text_density,
-		angle: kit.angle,
+		// NOTE: kit.angle is the STRATEGY angle (used by guided mode / dedupe), not a
+		// poster copy field — deliberately NOT written into the draft.
 		hook: kit.hook,
 		subhook: kit.subhook,
 		usp_1: kit.usp_1,
