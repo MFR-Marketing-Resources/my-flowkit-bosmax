@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
 	approveProductIntelligenceReviewDraft,
 	createProductIntelligenceReviewDraft,
+	prepareProductForCopywriting,
 	fetchProductIntelligenceReviewDraft,
 	fetchProductIntelligenceReviewDrafts,
 	rejectProductIntelligenceReviewDraft,
@@ -464,7 +465,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 	const [validation, setValidation] =
 		useState<ProductIntelligenceReviewDraftValidationResponse | null>(null);
 	const [busyAction, setBusyAction] = useState<
-		"CREATE" | "SAVE" | "VALIDATE" | "APPROVE" | "REJECT" | null
+		"CREATE" | "PREPARE" | "SAVE" | "VALIDATE" | "APPROVE" | "REJECT" | null
 	>(null);
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -582,6 +583,29 @@ export default function ProductIntelligenceReviewDraftPanel({
 				err instanceof Error
 					? err.message
 					: "Failed to create product intelligence review draft",
+			);
+		} finally {
+			setBusyAction(null);
+		}
+	};
+
+	const handlePrepareWithAI = async () => {
+		setBusyAction("PREPARE");
+		setError(null);
+		setMessage(null);
+		try {
+			const result = await prepareProductForCopywriting(productId);
+			syncDraftInList(result.draft);
+			setSelectedDraftId(result.draft.draft_id);
+			setValidation(null);
+			setMessage(
+				`AI drafted Product Knowledge + Customer Avatar (recommended formula: ${result.recommended_formula}). Review every field, then Validate and Approve — nothing is auto-approved.`,
+			);
+		} catch (err) {
+			setError(
+				err instanceof Error
+					? err.message
+					: "Failed to prepare product for copywriting",
 			);
 		} finally {
 			setBusyAction(null);
@@ -728,6 +752,17 @@ export default function ProductIntelligenceReviewDraftPanel({
 					className="rounded border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[11px] font-semibold text-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
 				>
 					{busyAction === "CREATE" ? "Creating..." : "Create Review Draft"}
+				</button>
+				<button
+					type="button"
+					onClick={handlePrepareWithAI}
+					disabled={busyAction !== null}
+					title="Draft Product Knowledge + Customer Avatar + a recommended formula via the text_assist (DeepSeek) lane. Spends AI tokens on click. Never auto-approved."
+					className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+				>
+					{busyAction === "PREPARE"
+						? "Preparing with AI…"
+						: "Prepare with AI (DeepSeek)"}
 				</button>
 			</div>
 

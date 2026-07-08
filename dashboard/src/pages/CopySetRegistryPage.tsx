@@ -5,6 +5,8 @@ import {
 	approveCopySet,
 	type CopyGroundingSummary,
 	deleteCopySet,
+	type CopyFormula,
+	fetchCopyFormulas,
 	fetchCopyGrounding,
 	generateCopySet,
 	generateCopySetBatch,
@@ -12,7 +14,7 @@ import {
 	patchCopySet,
 	rejectCopySet,
 } from "../api/copySets";
-import { fetchProductCatalog } from "../api/products";
+import { fetchProductCatalog, prepareProductForCopywriting } from "../api/products";
 import {
 	Badge,
 	type BadgeTone,
@@ -152,6 +154,14 @@ export default function CopySetRegistryPage() {
 	const [editTarget, setEditTarget] = useState<CopySet | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<CopySet | null>(null);
 	const [grounding, setGrounding] = useState<CopyGroundingSummary | null>(null);
+	const [formulas, setFormulas] = useState<CopyFormula[]>([]);
+	const [formulaId, setFormulaId] = useState("");
+	const [preparing, setPreparing] = useState(false);
+	useEffect(() => {
+		void fetchCopyFormulas()
+			.then((r) => setFormulas(r.formulas))
+			.catch(() => setFormulas([]));
+	}, []);
 
 	useEffect(() => {
 		void fetchProductCatalog(500)
@@ -208,6 +218,7 @@ export default function CopySetRegistryPage() {
 			const res = await generateCopySetBatch({
 				product_id: selectedProduct.id,
 				requested_count: GENERATE_COUNT,
+				formula_family: formulaId || undefined,
 			});
 			setSuccess(
 				`${res.created_count} set baru dijana${res.deduped_count ? ` · ${res.deduped_count} duplikat ditapis` : ""}. Semak & approve sebelum guna.`,
@@ -218,7 +229,9 @@ export default function CopySetRegistryPage() {
 			setError(
 				/409|NOT_CONFIGURED/i.test(msg)
 					? "Lane AI (DeepSeek text_assist) belum dikonfigur. Sila set di Cockpit Settings / AI Providers dahulu."
-					: msg,
+					: /COPY_GROUNDING_INSUFFICIENT/i.test(msg)
+						? "Produk ini belum ada Product Knowledge + Customer Avatar diluluskan. Tekan 'Prepare Product for Copywriting' dahulu, atau approve snapshot di Products > Intelligence."
+						: msg,
 			);
 		} finally {
 			setGenerating(false);
@@ -238,6 +251,29 @@ export default function CopySetRegistryPage() {
 			setError(e instanceof Error ? e.message : "Gagal tambah set.");
 		} finally {
 			setGenerating(false);
+		}
+	};
+
+	const handlePrepare = async () => {
+		if (!selectedProduct || preparing) return;
+		setPreparing(true);
+		setError("");
+		setSuccess("");
+		try {
+			const r = await prepareProductForCopywriting(selectedProduct.id);
+			setSuccess(
+				`AI sedia draf Product Knowledge + Customer Avatar (formula: ${r.recommended_formula}). Semak & approve di Products > Intelligence sebelum jana copy grounded.`,
+			);
+			void loadSets(selectedProduct.id);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : "Gagal sediakan produk.";
+			setError(
+				/503|NOT_CONFIGURED/i.test(msg)
+					? "Lane AI (DeepSeek text_assist) belum dikonfigur."
+					: msg,
+			);
+		} finally {
+			setPreparing(false);
 		}
 	};
 
@@ -546,7 +582,22 @@ export default function CopySetRegistryPage() {
 						title="Generate copywriting sets"
 						helper={`AI menjana ${GENERATE_COUNT} set setiap tekan (max ${GENERATE_COUNT} demi kualiti). Tekan lagi untuk tambah. Set baru bertaraf "Review required" — approve sebelum guna.`}
 						action={
-							<div className="flex flex-wrap gap-2">
+							<div className="flex flex-wrap items-center gap-2">
+								<select
+									data-testid="formula-picker"
+									value={formulaId}
+									onChange={(e) => setFormulaId(e.target.value)}
+									title="Formula for generation (empty = system recommends)"
+									className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"
+								>
+									<option value="">Formula: auto (recommended)</option>
+									{formulas.map((f) => (
+										<option key={f.formula_id} value={f.formula_id}>
+											{f.display_name}
+											{f.definition_status !== "CANONICAL" ? " (draft)" : ""}
+										</option>
+									))}
+								</select>
 								<button
 									type="button"
 									data-testid="generate-copy-sets"
@@ -564,6 +615,16 @@ export default function CopySetRegistryPage() {
 									className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-bold uppercase text-slate-300 disabled:opacity-40"
 								>
 									Add 1 (no AI)
+								</button>
+								<button
+									type="button"
+									data-testid="prepare-product-copywriting"
+									disabled={preparing}
+									onClick={handlePrepare}
+									title="Draft Product Knowledge + Customer Avatar + formula via DeepSeek. Review & approve in Products > Intelligence."
+									className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40"
+								>
+									{preparing ? "Preparing…" : "Prepare Product for Copywriting"}
 								</button>
 							</div>
 						}

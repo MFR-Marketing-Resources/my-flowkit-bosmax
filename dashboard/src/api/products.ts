@@ -85,6 +85,31 @@ export async function fetchProductIntelligenceReviewDraft(
 	);
 }
 
+// Prepare Product for Copywriting — the text_assist (DeepSeek) lane that drafts
+// Product Knowledge + Customer Avatar + Recommended Formula into a review draft
+// (NEVER approved). Operator-initiated; spends AI tokens on an explicit click.
+export interface PrepareCopywritingResponse {
+	review_draft_id: string;
+	review_status: string;
+	recommended_formula: string;
+	grounding_source: string;
+	claim_boundary: {
+		overclaim_hits: string[];
+		problem_language_present: string[];
+		safe: boolean;
+	};
+	draft: ProductIntelligenceReviewDraft;
+}
+
+export async function prepareProductForCopywriting(
+	productId: string,
+): Promise<PrepareCopywritingResponse> {
+	return fetchAPI<PrepareCopywritingResponse>(
+		`/api/products/${encodeURIComponent(productId)}/intelligence/review-drafts/prepare`,
+		{ method: "POST", body: JSON.stringify({}) },
+	);
+}
+
 export async function createProductIntelligenceReviewDraft(
 	productId: string,
 	payload: ProductIntelligenceReviewDraftMutationRequest,
