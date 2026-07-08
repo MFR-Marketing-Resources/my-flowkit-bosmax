@@ -18,6 +18,7 @@ import type {
 } from "../../types";
 import ModelSelect, { type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
+import CopyBindingGate from "../copywriting/CopyBindingGate";
 
 interface I2VModuleProps {
 	onExecute: (data: WorkspaceExecutePayload) => void;
@@ -26,6 +27,8 @@ interface I2VModuleProps {
 	workspacePackage?: WorkspaceExecutionPackage | null;
 	onWorkspacePackageUpdated?: (pkg: WorkspaceExecutionPackage) => void;
 	videoModels: VideoModel[];
+	selectedCopySetId?: string | null;
+	copyReady?: boolean;
 }
 
 const CANONICAL_PROMPT_SECTIONS = [
@@ -279,6 +282,8 @@ export default function I2VModule({
 	workspacePackage = null,
 	onWorkspacePackageUpdated,
 	videoModels,
+	selectedCopySetId = null,
+	copyReady = false,
 }: I2VModuleProps) {
 	const [manualPrompt, setManualPrompt] = useState("");
 	const [isManualOverride, setIsManualOverride] = useState(false);
@@ -287,6 +292,7 @@ export default function I2VModule({
 	const [count, setCount] = useState(1);
 	const [isUploading, setIsUploading] = useState(false);
 	const [isRefreshingPackage, setIsRefreshingPackage] = useState(false);
+	const [copyFallbackConfirmed, setCopyFallbackConfirmed] = useState(false);
 
 	const [subjectAsset, setSubjectAsset] = useState<UploadedAsset | null>(null);
 	const [sceneAsset, setSceneAsset] = useState<UploadedAsset | null>(null);
@@ -488,6 +494,18 @@ export default function I2VModule({
 		Boolean,
 	).length;
 
+	// --- Copywriting binding gate (Phase B enforcement) ---
+	// I2V rebuilds the package on execute, so a selected approved Copy Set WILL bind
+	// (the backend then fails closed if it is unusable). The run is copy-bound when a
+	// Copy Set is selected or the loaded package was already copy-bound. Otherwise
+	// SEND stays blocked until the operator explicitly confirms fallback (which is
+	// then forwarded to the rebuild so the backend records fallback lineage).
+	const copyBound =
+		Boolean(selectedCopySetId) ||
+		(workspacePackage?.copy_binding?.copy_source === "selected_copy_set" &&
+			Boolean(workspacePackage?.copy_binding?.copy_set_id));
+	const copyGateBlocked = !copyBound && !copyFallbackConfirmed;
+
 	const resolverStatusTone = executionBlocked
 		? "border-amber-500/30 bg-amber-500/10 text-amber-100"
 		: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100";
@@ -496,6 +514,11 @@ export default function I2VModule({
 		// Block a partial I2V LOCALLY before /generate — never submit fewer than 2 images.
 		if (i2vImageCount < 2) {
 			alert("I2V requires at least 2 reference images.");
+			return;
+		}
+		// Copy gate: never rebuild/send without an approved Copy Set or an explicit
+		// fallback confirmation (SEND is also disabled, this is defense in depth).
+		if (copyGateBlocked) {
 			return;
 		}
 		let effectivePackage = workspacePackage;
@@ -513,13 +536,23 @@ export default function I2VModule({
 					character_reference_asset_id: selectedCharacterAssetId || null,
 					scene_context_reference_asset_id: selectedSceneContextAssetId || null,
 					style_reference_asset_id: selectedStyleReferenceAssetId || null,
+					// CRITICAL: preserve the operator's approved Copy Set through the
+					// semantic rebuild (it was previously dropped, stripping the binding).
+					// Under confirmed fallback (no Copy Set), forward the flag so the
+					// backend rebuild succeeds and records fallback lineage instead of 409.
+					copy_set_id: selectedCopySetId,
+					copy_fallback_confirmed: copyBound ? false : copyFallbackConfirmed,
 				});
 				onWorkspacePackageUpdated?.(effectivePackage);
 			} catch (error) {
-				alert(
+				const msg =
 					error instanceof Error
 						? error.message
-						: "Failed to refresh semantic execution package.",
+						: "Failed to refresh semantic execution package.";
+				alert(
+					/FALLBACK_CONFIRMATION_REQUIRED|409/i.test(msg)
+						? "Select an approved Copy Set (or use Step 3–4 to confirm fallback) before generating I2V — the semantic rebuild will not silently use generic copy."
+						: msg,
 				);
 				setIsRefreshingPackage(false);
 				return;
@@ -867,13 +900,19 @@ export default function I2VModule({
 					</div>
 				</section>
 
-				<div className="pt-4">
+				<div className="pt-4 space-y-3">
 					{i2vImageCount < 2 && (
 						<p className="mb-2 text-[11px] font-bold text-amber-300/80">
 							I2V requires at least 2 reference images ({i2vImageCount}/2). Add
 							a Scene or Style ingredient — the 3rd is optional.
 						</p>
 					)}
+					<CopyBindingGate
+						copyBound={copyBound}
+						ready={copyReady}
+						fallbackConfirmed={copyFallbackConfirmed}
+						onToggleFallback={setCopyFallbackConfirmed}
+					/>
 					<button
 						type="button"
 						onClick={() => void handleExecute()}
@@ -883,7 +922,8 @@ export default function I2VModule({
 							isRefreshingPackage ||
 							!manualPrompt ||
 							i2vImageCount < 2 ||
-							executionBlocked
+							executionBlocked ||
+							copyGateBlocked
 						}
 						className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
 					>

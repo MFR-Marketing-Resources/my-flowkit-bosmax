@@ -225,10 +225,14 @@ domains:
       - dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx
       - dashboard/src/components/workspace/SearchableProductSelect.tsx
       - dashboard/src/components/workspace/T2VModule.tsx
+      - dashboard/src/components/workspace/T2VModule.test.tsx
       - dashboard/src/components/workspace/F2VModule.tsx
+      - dashboard/src/components/workspace/F2VModule.test.tsx
       - dashboard/src/components/workspace/I2VModule.tsx
+      - dashboard/src/components/workspace/I2VModule.test.tsx
       - dashboard/src/components/workspace/IMGModule.tsx
       - dashboard/src/components/workspace/WorkspaceImageAssetSlot.tsx
+      - dashboard/src/components/copywriting/CopyBindingGate.tsx
       - extension/background.js
       - extension/f2v-flow-queue-runner.js
       - extension/selector-registry.js

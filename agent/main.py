@@ -50,6 +50,7 @@ from agent.api.img_factory import router as img_factory_router
 from agent.api.bosmax_authority import router as bosmax_authority_router
 from agent.api.copy_signals import router as copy_signals_router
 from agent.api.copy_sets import router as copy_sets_router
+from agent.api.copywriting import router as copywriting_router
 from agent.api.product_asset_generator import router as product_asset_generator_router
 from agent.api.product_image_analysis import router as product_image_analysis_router
 from agent.api.product_intelligence import router as product_intelligence_router
@@ -212,6 +213,7 @@ app.add_middleware(
 )
 
 app.include_router(products_router, prefix="/api")
+app.include_router(copywriting_router, prefix="/api")
 app.include_router(poster_readiness_router, prefix="/api")
 app.include_router(poster_prompt_router, prefix="/api")
 app.include_router(workspace_packages_router, prefix="/api")

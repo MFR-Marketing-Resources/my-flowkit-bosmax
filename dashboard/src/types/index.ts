@@ -333,6 +333,11 @@ export interface WorkspaceExecutePayload {
 	workspace_execution_package_id?: string | null;
 	prompt_fingerprint?: string | null;
 	asset_fingerprints?: string[];
+	// Copywriting binding gate (Phase B enforcement). copy_set_id is the approved
+	// Copy Set bound to this run (null under confirmed fallback); copy_fallback_confirmed
+	// is true only when the operator explicitly acknowledged non-approved copy.
+	copy_set_id?: string | null;
+	copy_fallback_confirmed?: boolean;
 	request_lineage_payload?: {
 		product_id?: string;
 		mode?: WorkspaceMode;
@@ -352,6 +357,14 @@ export interface WorkspaceExecutePayload {
 			| I2VSemanticSlotResolverResponse
 			| Record<string, unknown>;
 		manual_slot_overrides?: Record<string, string | null>;
+		// Records how copy was bound at SEND-to-editor time so provenance shows
+		// whether an approved Copy Set drove the run or fallback was confirmed.
+		copy_binding_gate?: {
+			copy_bound: boolean;
+			copy_set_id?: string | null;
+			copy_fallback_confirmed?: boolean;
+			copy_source?: string;
+		};
 	};
 	mode: WorkspaceMode;
 	// Strict extension execution lane. When set, the extension uploads the

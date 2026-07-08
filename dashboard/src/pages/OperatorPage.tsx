@@ -15,6 +15,8 @@ import {
 } from "../api/workspacePackages";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
+import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
+import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import F2VModule from "../components/workspace/F2VModule";
 import I2VModule from "../components/workspace/I2VModule";
 import IMGModule from "../components/workspace/IMGModule";
@@ -302,6 +304,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [selectedCopySetId, setSelectedCopySetId] = useState<string | null>(
 		null,
 	);
+	const { readiness: copyReadiness, loading: copyReadinessLoading } =
+		useCopywritingReadiness(selectedProduct?.id ?? null);
 	// Explicit-Fallback-Confirmation V1: gate shown before Generate Final Prompt
 	// runs with no approved Copy Set selected.
 	const [showFallbackConfirm, setShowFallbackConfirm] = useState(false);
@@ -1192,6 +1196,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
 						videoModels={videoModels}
+						copyReady={copyReadiness?.ready_for_generation ?? false}
 					/>
 				);
 			case "T2V":
@@ -1202,6 +1207,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
 						videoModels={videoModels}
+						copyReady={copyReadiness?.ready_for_generation ?? false}
 					/>
 				);
 			case "I2V":
@@ -1213,6 +1219,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						workspacePackage={workspacePackage}
 						onWorkspacePackageUpdated={setWorkspacePackage}
 						videoModels={videoModels}
+						selectedCopySetId={selectedCopySetId}
+						copyReady={copyReadiness?.ready_for_generation ?? false}
 					/>
 				);
 			case "IMG":
@@ -1721,6 +1729,29 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				) : null}
 			</div>
 
+			{/* ── Copywriting readiness (video modes only) ─── */}
+			{mode !== "IMG" && (
+				<div className="mb-4">
+					<CopywritingReadinessCard
+						readiness={copyReadiness}
+						loading={copyReadinessLoading}
+						onPrepare={() =>
+							window.location.assign(
+								selectedProduct
+									? `/products?product_id=${encodeURIComponent(selectedProduct.id)}`
+									: "/products",
+							)
+						}
+						onOpenCopyRegistry={() =>
+							window.location.assign(
+								selectedProduct
+									? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`
+									: "/creative/copy-registry",
+							)
+						}
+					/>
+				</div>
+			)}
 			{/* ── Copy Selection & Compiler Binding (video modes only) ─── */}
 			{mode !== "IMG" && (
 				<CopySelectionPanel
