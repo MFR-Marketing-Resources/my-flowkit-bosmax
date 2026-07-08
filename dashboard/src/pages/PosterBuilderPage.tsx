@@ -1,6 +1,7 @@
 import { ImageIcon, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
 import { usePosterBuilderSettings } from "../api/posterBuilderSettings";
 import { fitPosterCopy } from "../api/posterCopyFit";
 import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations";
@@ -78,6 +79,15 @@ export default function PosterBuilderPage() {
 	const [promptLoading, setPromptLoading] = useState(false);
 	const [fitLoading, setFitLoading] = useState(false);
 	const [fitNotice, setFitNotice] = useState("");
+	// Poster image generation (gated, credit-spending — reuses the one-door IMG lane).
+	const [posterGenConfirm, setPosterGenConfirm] = useState(false);
+	const [posterGenLoading, setPosterGenLoading] = useState(false);
+	const [posterGenError, setPosterGenError] = useState("");
+	const [posterGenResult, setPosterGenResult] = useState<{
+		url: string;
+		mediaId: string;
+		sizeMb: number | null;
+	} | null>(null);
 	const [flowMirror, setFlowMirror] = useState<PosterFlowMirrorSettings>(
 		DEFAULT_POSTER_FLOW_MIRROR_SETTINGS,
 	);
@@ -128,6 +138,9 @@ export default function PosterBuilderPage() {
 			setRecWarnings([]);
 			setRecError("");
 			setFitNotice("");
+			setPosterGenResult(null);
+			setPosterGenError("");
+			setPosterGenConfirm(false);
 		}
 		try {
 			const payload = await fetchPosterReadiness(product.id);
@@ -333,6 +346,46 @@ export default function PosterBuilderPage() {
 		}
 	};
 
+	// GATED, credit-spending: only ever runs after the explicit confirm modal. Sends
+	// the generated poster prompt package through the PROVEN one-door IMG lane
+	// (POST /api/flow/generate mode:IMG) + poll, then shows the finished poster image.
+	const handleConfirmedGeneratePoster = async () => {
+		const pkg = promptPackage;
+		if (!pkg?.poster_prompt) return;
+		setPosterGenConfirm(false);
+		setPosterGenLoading(true);
+		setPosterGenError("");
+		setPosterGenResult(null);
+		try {
+			const { job_id } = await startImgGeneration({
+				prompt: pkg.poster_prompt,
+				aspect: flowMirror.aspect_ratio,
+				count: flowMirror.count,
+				image_model: flowMirror.image_model,
+			});
+			const job = await pollImgGenerationJob(job_id);
+			const mediaId = job.media_id ?? "";
+			const url = job.url ?? (mediaId ? `/api/flow/retrieved/${mediaId}` : "");
+			if ((job.status === "DONE" || job.status === "COMPLETED") && url) {
+				setPosterGenResult({
+					url,
+					mediaId,
+					sizeMb: typeof job.size_mb === "number" ? job.size_mb : null,
+				});
+			} else {
+				setPosterGenError(
+					job.error || `Penjanaan tamat sebagai ${job.status} tanpa imej.`,
+				);
+			}
+		} catch (e) {
+			setPosterGenError(
+				e instanceof Error ? e.message : "Penjanaan poster gagal.",
+			);
+		} finally {
+			setPosterGenLoading(false);
+		}
+	};
+
 	return (
 		<div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
 			<header className="flex flex-wrap items-start justify-between gap-4">
@@ -526,11 +579,6 @@ export default function PosterBuilderPage() {
 								<h3 className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
 									Poster image generation
 								</h3>
-								<p className="mt-2 text-sm text-slate-400">
-									Image generation handoff not enabled for Poster Builder yet. Flow
-									Mirror Settings are captured for future gated Google Flow / image
-									generation route.
-								</p>
 								<p
 									className="mt-2 text-xs text-slate-500"
 									data-testid="flow-handoff-captured"
@@ -539,14 +587,65 @@ export default function PosterBuilderPage() {
 									{flowMirror.aspect_ratio} · Count: {flowMirror.count}x · Image
 									Model: {flowMirror.image_model}
 								</p>
+								{!promptPackage ? (
+									<p className="mt-2 text-sm text-slate-400">
+										Jana <strong>prompt draft</strong> dulu di atas — poster
+										image dijana daripada prompt package itu.
+									</p>
+								) : promptPackage.prompt_package_status === "PREVIEW_ONLY" ? (
+									<p className="mt-2 text-[11px] text-amber-300">
+										Nota: copy ini review-only (bukan Copy Set diluluskan).
+										Poster tetap boleh dijana untuk semakan.
+									</p>
+								) : null}
 								<button
 									type="button"
-									disabled
 									data-testid="generate-poster-button"
-									className="mt-3 rounded-xl border border-slate-800 px-4 py-2 text-xs font-bold uppercase text-slate-500"
+									disabled={
+										!promptPackage ||
+										posterGenLoading ||
+										!readiness.generation_allowed
+									}
+									onClick={() => setPosterGenConfirm(true)}
+									className="mt-3 rounded-xl border border-rose-500/40 bg-rose-600/20 px-4 py-2 text-xs font-bold uppercase text-rose-100 disabled:opacity-40"
 								>
-									{imageGenerateLabel}
+									{posterGenLoading
+										? "Menjana poster (live)…"
+										: "Jana poster image (live · guna kredit)"}
 								</button>
+								{posterGenError ? (
+									<p
+										data-testid="poster-gen-error"
+										className="mt-3 text-sm text-rose-200"
+									>
+										{posterGenError}
+									</p>
+								) : null}
+								{posterGenResult ? (
+									<div className="mt-4" data-testid="poster-gen-result">
+										<img
+											src={posterGenResult.url}
+											alt="Poster dijana"
+											className="max-h-96 rounded-xl border border-slate-800"
+										/>
+										<div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+											<a
+												href={posterGenResult.url}
+												target="_blank"
+												rel="noopener noreferrer"
+												className="rounded-lg border border-slate-700 px-3 py-1.5 font-semibold text-slate-200"
+											>
+												Buka / Muat turun ↗
+											</a>
+											{posterGenResult.sizeMb ? (
+												<span>{posterGenResult.sizeMb} MB</span>
+											) : null}
+											{posterGenResult.mediaId ? (
+												<span>media: {posterGenResult.mediaId}</span>
+											) : null}
+										</div>
+									</div>
+								) : null}
 							</section>
 
 							<PosterPromptPackagePreview package_={promptPackage} error={promptError} />
@@ -576,6 +675,37 @@ export default function PosterBuilderPage() {
 						</pre>
 					</section>
 				</>
+			) : null}
+			{posterGenConfirm ? (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+					<div className="max-w-md space-y-3 rounded-2xl border border-rose-500/40 bg-slate-950 p-5">
+						<div className="text-sm font-bold text-rose-100">
+							Sahkan penjanaan poster (guna kredit)
+						</div>
+						<div className="text-[11px] text-slate-300">
+							Ini memanggil lane imej live (<code>POST /api/flow/generate</code>{" "}
+							mode:IMG) dan <strong>membelanjakan kredit</strong>. Ia tidak akan
+							jalan tanpa pengesahan ini.
+						</div>
+						<div className="flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={() => setPosterGenConfirm(false)}
+								className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300"
+							>
+								Batal
+							</button>
+							<button
+								type="button"
+								data-testid="poster-gen-confirm"
+								onClick={() => void handleConfirmedGeneratePoster()}
+								className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-[11px] font-bold text-rose-100"
+							>
+								Sahkan &amp; Jana (live)
+							</button>
+						</div>
+					</div>
+				</div>
 			) : null}
 		</div>
 	);

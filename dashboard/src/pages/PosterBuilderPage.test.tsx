@@ -42,6 +42,11 @@ vi.mock("../api/posterCopyRecommendations", () => ({
 	fetchPosterCopyRecommendations: vi.fn(),
 }));
 
+vi.mock("../api/imgFactory", () => ({
+	startImgGeneration: vi.fn(),
+	pollImgGenerationJob: vi.fn(),
+}));
+
 vi.mock("../api/imageGenSettings", () => ({
 	useImageGenSettings: () => ({
 		models: [
@@ -119,11 +124,14 @@ vi.mock("../api/posterBuilderSettings", () => {
 
 import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations";
 import { draftToPromptRequest } from "../api/posterPromptDraft";
+import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
 
 const mockedFetch = vi.mocked(fetchPosterReadiness);
 const mockedPromptDraft = vi.mocked(createPosterPromptDraft);
 const mockedRecs = vi.mocked(fetchPosterCopyRecommendations);
 const mockedDraftToPrompt = vi.mocked(draftToPromptRequest);
+const mockedStartGen = vi.mocked(startImgGeneration);
+const mockedPollGen = vi.mocked(pollImgGenerationJob);
 
 const sampleKit = {
 	kit_id: "k1",
@@ -171,6 +179,8 @@ describe("PosterBuilderPage", () => {
 		mockedFetch.mockReset();
 		mockedPromptDraft.mockReset();
 		mockedRecs.mockReset();
+		mockedStartGen.mockReset();
+		mockedPollGen.mockReset();
 		mockedRecs.mockResolvedValue({
 			product_id: "p1",
 			poster_status: "POSTER_READY",
@@ -531,5 +541,56 @@ describe("PosterBuilderPage", () => {
 				expect.objectContaining({ poster_objective: "Product awareness" }),
 			);
 		});
+	});
+
+	it("Generate poster image is gated behind a confirm and calls the one-door IMG lane", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedPromptDraft.mockResolvedValue({
+			product_id: "p1",
+			poster_status: "POSTER_READY",
+			prompt_package_status: "DRAFT_READY",
+			generation_allowed: true,
+			production_allowed: true,
+			restricted_mode: false,
+			poster_prompt: "POSTER PROMPT TEXT",
+			negative_prompt: "",
+			copy_layout: { hook: "h", subhook: "", usp: [], cta: "c" },
+			visual_instruction: "",
+			text_overlay_instruction: "",
+			product_truth_lock: "",
+			safety_guardrails: [],
+			blocked_reasons: [],
+			repair_actions: [],
+			readiness_meta: {},
+			operator_notes: "",
+		});
+		mockedStartGen.mockResolvedValue({ job_id: "job1" });
+		mockedPollGen.mockResolvedValue({
+			status: "DONE",
+			media_id: "m1",
+			url: "http://x/poster.jpg",
+			size_mb: 0.5,
+		});
+		renderPage();
+		await waitForReadinessUi();
+		// Build a prompt package first — the generate button needs poster_prompt.
+		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
+		useBtn.click();
+		const genBtn = await screen.findByTestId("generate-poster-button");
+		await waitFor(() => expect(genBtn).not.toBeDisabled());
+		// Clicking opens the confirm modal — generation must NOT fire yet.
+		genBtn.click();
+		expect(mockedStartGen).not.toHaveBeenCalled();
+		const confirmBtn = await screen.findByTestId("poster-gen-confirm");
+		confirmBtn.click();
+		await waitFor(() =>
+			expect(mockedStartGen).toHaveBeenCalledWith(
+				expect.objectContaining({
+					prompt: "POSTER PROMPT TEXT",
+					aspect: "9:16",
+				}),
+			),
+		);
+		expect(await screen.findByTestId("poster-gen-result")).toBeInTheDocument();
 	});
 });
