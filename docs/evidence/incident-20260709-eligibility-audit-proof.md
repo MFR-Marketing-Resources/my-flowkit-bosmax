@@ -161,3 +161,71 @@ cd dashboard && npm run build ................... exit 0
 cd dashboard && npx vitest run .................. exit 0 (full suite)
 npx tsx scripts/mandor-check.ts ................. PASS domain=workspace paths=17
 ```
+
+---
+
+## 10. Pre-merge addendum (round 4) — ordering seam, source_mode guard, fallback policy
+
+### 10.1 Execution-payload reference ORDERING (dry-run proof, no live upload)
+The execution lane orders references via a single pure helper
+`agent/api/flow.py::ordered_ref_slots(start_asset, refs)` (extracted from the
+previously-duplicated inline tuples in `generate()` and
+`_run_manual_job_via_generate()`). Order contract: **startAsset → subject → scene
+→ style → image**. Proven offline in `tests/api/test_flow_ref_ordering.py`:
+- I2V: dict given out of order → resolves `[Subject, Scene, Style]` (canonical, not
+  insertion order).
+- F2V/HYBRID: `[Start, …]` always index 0, product ref rides as `Image` after.
+- empty/missing slots skipped, never reordered.
+
+`image_media_ids` **RESOLUTION** (media-id assignment) still happens at live upload,
+so the *values* are NOT VERIFIED offline; the **ORDER** is fully deterministic and
+proven. F2V **end_frame ordering at EXECUTION**: **NOT VERIFIED / known gap** — the
+API-first lanes materialize `endAsset` (flow.py ~1740) but do not fold it into the
+ordered ref list (`GenerateRequest` has no `endAsset` ref slot). End-frame ordering
+is honored at package-build (`upload_order=["start_frame","end_frame"]`) only. This
+keeps production-generation status blocked pending live confirmation.
+
+### 10.2 source_mode preview↔final consistency + external-caller warning
+Live probes (backend on the round-4 code):
+```text
+exec-package mode=FRAMES, no source_mode  -> source_mode=FRAMES   (was HYBRID — flip FIXED)
+exec-package mode=F2V,    no source_mode  -> source_mode=HYBRID + SOURCE_MODE_DEFAULTED_TO_HYBRID warning
+preview      mode=F2V,    no source_mode  -> source_mode=HYBRID + warning
+preview      mode=FRAMES, no source_mode  -> source_mode=FRAMES, no warning (control)
+```
+Fix: `create_workspace_execution_package` now resolves lineage from the RAW mode
+(`_resolve_preview_source_mode`) before normalization, so a caller-named canonical
+lineage is preserved into the saved package (no silent preview→final flip). Bare
+`mode=F2V` without `source_mode` keeps the documented HYBRID default but now emits a
+non-fatal `SOURCE_MODE_DEFAULTED_TO_HYBRID` warning for external/programmatic callers.
+All in-app operator surfaces already pin `source_mode` (OperatorPage.resolveSourceMode,
+CONFIRMED at OperatorPage.tsx:340-349/959/1032/1095); no in-app path hits the default.
+Tests: `test_source_lineage_default_warning_fires_only_for_bare_f2v`.
+
+### 10.3 Fallback copy — production-batch policy (GAP, tracked)
+The `copy_fallback_confirmed` gate holds on the INTERACTIVE path only. Production
+BATCH/BULK runs (`workspace_generation_package` table) are gated only on
+`production_status==APPROVED` and store no copy provenance — a batch CAN silently run
+landbank fallback copy. This is a pre-existing design gap, deliberately NOT bundled
+into this incident PR (schema + enqueue-gate = distinct subsystem; engineering
+lockdown: do not expand the incident PR). **Production batch remains BLOCKED** until
+issue #289 lands. Interactive single generation is unaffected.
+
+### 10.4 Clean-clone proof (no CI configured on this repo)
+No `.github/workflows` exists, so a pristine `git worktree` at PR head is the
+clean-checkout proof. From a detached worktree at the PR head (no WIP, MODULE_STATUS
+carries zero `ensure-local-agent` lines, watchdog WIP absent):
+- backend: `400 passed` (agent module confirmed resolving to the worktree source);
+- frontend: `npm ci` exit 0 (fresh node_modules) → `npm run build` exit 0 →
+  `vitest` `92 passed`.
+The concurrent watchdog WIP (PowerShell launcher scripts) is not imported by any
+Python runtime/test and could not affect results.
+
+### 10.5 Evidence sensitivity
+Repo is **PUBLIC** (`gh repo view`: visibility PUBLIC) — this contradicts the
+audit's private-repo assumption and is flagged for the owner's decision. The evidence
+contains only opaque internal identifiers (product/WEP/pkg/copy-set UUIDs) and
+internal Malay marketing copy — **no credentials, tokens, external URLs, or customer
+PII** (precise credential scan: 0 matches). Posture is unchanged from prior committed
+`docs/evidence/*` files. If the internal identifiers should not be public, redact or
+move this bundle out of the tree.

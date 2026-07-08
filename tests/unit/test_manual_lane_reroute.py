@@ -313,3 +313,26 @@ def test_f2v_source_lane_normalizer_fails_closed_on_junk():
     assert _normalize_f2v_source_lane(None) == "HYBRID"
     with pytest.raises(ValueError, match="SOURCE_MODE_INVALID"):
         _normalize_f2v_source_lane("FRAMS")
+
+
+# ── source_mode default-to-HYBRID warning (2026-07-09 corrective audit item 9) ──
+
+
+def test_source_lineage_default_warning_fires_only_for_bare_f2v():
+    from agent.services.workspace_execution_package_service import (
+        _source_lineage_default_warning,
+    )
+
+    # Bare F2V surface without explicit source_mode WILL default to HYBRID -> warn.
+    w = _source_lineage_default_warning("F2V", None)
+    assert w and "SOURCE_MODE_DEFAULTED_TO_HYBRID" in w
+    # An explicit canonical lineage (raw mode) pins itself -> no warning.
+    assert _source_lineage_default_warning("FRAMES", None) is None
+    assert _source_lineage_default_warning("HYBRID", None) is None
+    # Explicit source_mode given -> no warning (caller was intentional).
+    assert _source_lineage_default_warning("F2V", "FRAMES") is None
+    assert _source_lineage_default_warning("F2V", "HYBRID") is None
+    # Non-F2V ambiguous surfaces do not warn (they resolve unambiguously).
+    assert _source_lineage_default_warning("I2V", None) is None
+    assert _source_lineage_default_warning("T2V", None) is None
+    assert _source_lineage_default_warning("IMG", None) is None

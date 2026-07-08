@@ -719,6 +719,35 @@ async def video_models_list():
     return {"models": _vm.public_list(), "default": _vm.DEFAULT_MODEL}
 
 
+# Canonical reference-slot ORDER for the execution lane. The engine receives
+# refs positionally, so this tuple IS the ordering contract: startAsset first,
+# then subject, scene, style, image. Single source of truth for both the
+# one-door /generate lane and the manual lane (was duplicated inline in each).
+REF_SLOT_ORDER: tuple[tuple[str, str], ...] = (
+    ("subjectAsset", "Subject"),
+    ("sceneAsset", "Scene"),
+    ("styleAsset", "Style"),
+    ("imageAsset", "Image"),
+)
+
+
+def ordered_ref_slots(start_asset, refs) -> list[tuple[str, dict]]:
+    """Return the ORDERED [(slot_label, asset_dict), ...] the execution lane will
+    upload, WITHOUT resolving/uploading anything — startAsset first, then
+    subject, scene, style, image. Pure and deterministic: this is the dry-run
+    proof seam for execution-payload reference ordering (no live Flow upload).
+    """
+    slots: list[tuple[str, dict]] = []
+    if isinstance(start_asset, dict) and start_asset:
+        slots.append(("Start", start_asset))
+    if isinstance(refs, dict):
+        for ref_key, slot_label in REF_SLOT_ORDER:
+            asset = refs.get(ref_key)
+            if isinstance(asset, dict) and asset:
+                slots.append((slot_label, asset))
+    return slots
+
+
 @router.post("/generate")
 async def generate(body: GenerateRequest):
     """THE one door for all four modes. mode = IMG | T2V | I2V | F2V → job_id.
@@ -742,22 +771,13 @@ async def generate(body: GenerateRequest):
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
 
-    # Resolve visual assets from refs / startAsset to live Flow media IDs
+    # Resolve visual assets from refs / startAsset to live Flow media IDs, in the
+    # canonical slot order (startAsset, subject, scene, style, image).
     resolved_ids = list(body.image_media_ids or [])
-    if body.startAsset:
-        media_id = await _resolve_asset_to_media_id(client, body.startAsset, "Start")
+    for slot_label, ref_asset in ordered_ref_slots(body.startAsset, body.refs):
+        media_id = await _resolve_asset_to_media_id(client, ref_asset, slot_label)
         if media_id and media_id not in resolved_ids:
             resolved_ids.append(media_id)
-    if body.refs:
-        for ref_key, slot_label in (
-            ("subjectAsset", "Subject"), ("sceneAsset", "Scene"),
-            ("styleAsset", "Style"), ("imageAsset", "Image"),
-        ):
-            ref_asset = body.refs.get(ref_key)
-            if isinstance(ref_asset, dict) and ref_asset:
-                media_id = await _resolve_asset_to_media_id(client, ref_asset, slot_label)
-                if media_id and media_id not in resolved_ids:
-                    resolved_ids.append(media_id)
 
     tier = "PAYGATE_TIER_ONE"
     if mode in ("T2V", "I2V", "F2V"):  # video modes need Pro/Ultra
@@ -1386,18 +1406,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     # Collect EVERY image the dashboard sent: F2V uses startAsset; I2V/IMG send
     # refs.{subjectAsset,sceneAsset,styleAsset} (previously DROPPED here — I2V died
     # ERR_START_ASSET_REQUIRED and IMG silently ignored its reference images).
-    slot_assets = []
-    if isinstance(start_asset, dict) and start_asset:
-        slot_assets.append(("Start", start_asset))
-    refs_payload = body.get("refs")
-    if isinstance(refs_payload, dict):
-        for ref_key, slot_label in (
-            ("subjectAsset", "Subject"), ("sceneAsset", "Scene"),
-            ("styleAsset", "Style"), ("imageAsset", "Image"),
-        ):
-            ref_asset = refs_payload.get(ref_key)
-            if isinstance(ref_asset, dict) and ref_asset:
-                slot_assets.append((slot_label, ref_asset))
+    slot_assets = ordered_ref_slots(start_asset, body.get("refs"))
     refs = []
     for slot_label, asset in slot_assets:
         resolved = await _resolve_asset_to_media_id(client, asset, slot_label, request_id)
