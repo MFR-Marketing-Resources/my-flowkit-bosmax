@@ -21,6 +21,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from agent.db import crud
+from agent.services import ai_caption_assist_service as ai_caption_svc
+from agent.services import ai_copy_provider_adapter as ai_provider
 from agent.services import social_copy_package_service as svc
 
 router = APIRouter(prefix="/social-copy-packages", tags=["social-copy-packages"])
@@ -71,6 +73,17 @@ class UpdateRequest(BaseModel):
 
 class ApprovalRequest(BaseModel):
     approval_note: str | None = None
+
+
+class AICaptionAssistRequest(BaseModel):
+    platform: str
+    artifact_media_id: str | None = None
+    product_id: str | None = None
+    source_mode: str | None = None
+    language: str | None = None
+    tone: str | None = None
+    operator_notes: str | None = None
+    candidate_count: int = 1
 
 
 @router.get("")
@@ -125,6 +138,24 @@ async def generate(request: GenerateRequest):
     except svc.SocialCopyError as exc:
         raise _map_svc_error(exc)
     return _parse(pkg)
+
+
+@router.post("/ai-assist")
+async def ai_assist(request: AICaptionAssistRequest):
+    """Grounded AI caption candidate(s) for review — reuses the text_assist lane +
+    product/avatar grounding. Governance: returns suggestions only, never persists
+    or approves (the operator still Saves and Approves). Fails closed (409) when the
+    provider lane is not configured; the free deterministic /suggest stays available."""
+    try:
+        return await ai_caption_svc.generate_caption_candidates(request.model_dump())
+    except ai_provider.AICopyProviderNotConfigured as error:
+        raise HTTPException(status_code=409, detail={"error": error.code}) from error
+    except ai_provider.AICopyProviderError as error:
+        raise HTTPException(
+            status_code=502, detail={"error": error.code, "detail": error.detail}
+        ) from error
+    except svc.SocialCopyError as exc:
+        raise _map_svc_error(exc)
 
 
 @router.get("/{package_id}")

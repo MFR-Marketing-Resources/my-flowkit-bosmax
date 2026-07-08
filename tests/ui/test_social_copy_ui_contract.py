@@ -93,3 +93,20 @@ def test_existing_postiz_onboarding_contract_survives():
     assert "No Postiz channels connected yet" in src
     assert "Open Postiz to Add Channel" in src
     assert "POSTIZ SETUP DOCTOR" in src
+
+
+def test_social_copy_panel_has_grounded_ai_assist():
+    """PR-2: a grounded AI caption assist sits ALONGSIDE the free deterministic
+    scaffold, and only fills the editor — Save + Approve stay manual."""
+    src = _read("dashboard/src/components/SocialCopyPackagePanel.tsx")
+    assert "AI copy assist" in src
+    assert "Suggest copy" in src  # free deterministic scaffold retained
+    assert "aiAssistSocialCopy" in src
+    assert "handleAiAssist" in src
+
+
+def test_social_copy_api_client_exposes_ai_assist():
+    api = _read("dashboard/src/api/socialCopyPackages.ts")
+    assert "aiAssistSocialCopy" in api
+    assert "/ai-assist" in api
+    assert "AICaptionAssistResponse" in api
