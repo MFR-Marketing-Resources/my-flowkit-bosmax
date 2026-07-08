@@ -6,10 +6,12 @@ import type { PosterCopyQualityReport } from "../../types/posterCopyQuality";
 export default function PosterCopyQualityPanel({
 	report,
 	loading,
+	stale = false,
 	onCheck,
 }: {
 	report: PosterCopyQualityReport | null;
 	loading: boolean;
+	stale?: boolean;
 	onCheck: () => void;
 }) {
 	return (
@@ -33,6 +35,15 @@ export default function PosterCopyQualityPanel({
 				Poster bukan skrip video: headline pendek (first-read), satu ayat sokongan,
 				2–3 chip, satu CTA padu, satu idea teras, bahasa selamat.
 			</p>
+
+			{stale ? (
+				<p
+					data-testid="poster-quality-stale"
+					className="mt-3 text-[11px] text-amber-300"
+				>
+					⟳ Copy berubah selepas semakan terakhir — semak semula sebelum jana.
+				</p>
+			) : null}
 
 			{report ? (
 				report.findings.length === 0 ? (

@@ -77,9 +77,32 @@ def _sentences(s: str) -> int:
     return len(parts)
 
 
-def _hits(text: str, terms: tuple[str, ...]) -> list[str]:
-    low = text.lower()
-    return [t for t in terms if t in low]
+def _compile_terms(terms: tuple[str, ...]) -> tuple[tuple[str, re.Pattern[str]], ...]:
+    """Compile each term into a word-boundary / exact-phrase matcher.
+
+    Multi-word terms match as an exact phrase (internal whitespace flexible);
+    short standalone terms match only on word boundaries so they NEVER
+    substring-match inside an unrelated word — e.g. "lega" must not fire on the
+    safe brand word "Legasi", but "legakan" (its own listed term) still fires.
+    """
+    compiled: list[tuple[str, re.Pattern[str]]] = []
+    for term in terms:
+        parts = [re.escape(p) for p in term.lower().split() if p]
+        if not parts:
+            continue
+        pattern = r"\b" + r"\s+".join(parts) + r"\b"
+        compiled.append((term, re.compile(pattern, re.IGNORECASE)))
+    return tuple(compiled)
+
+
+_MEDICAL_RELIEF_PATTERNS = _compile_terms(MEDICAL_RELIEF_TERMS)
+_VIDEO_SCRIPT_PATTERNS = _compile_terms(VIDEO_SCRIPT_MARKERS)
+_CHILD_PATTERNS = _compile_terms(CHILD_TERMS)
+
+
+def _hits(text: str, patterns: tuple[tuple[str, re.Pattern[str]], ...]) -> list[str]:
+    """Return the terms whose word-boundary / phrase pattern matches ``text``."""
+    return [term for term, pat in patterns if pat.search(text)]
 
 
 def _themes(text: str) -> set[str]:
@@ -105,7 +128,7 @@ def evaluate_poster_copy(
     cta = _norm(req.poster_cta)
     detail = _norm(req.product_detail_line)
     max_chips = req.max_chips if req.max_chips and req.max_chips > 0 else DEFAULT_MAX_CHIPS
-    child = bool(req.child_sensitive) or bool(_hits(" ".join([headline, support, *chips]), CHILD_TERMS))
+    child = bool(req.child_sensitive) or bool(_hits(" ".join([headline, support, *chips]), _CHILD_PATTERNS))
 
     f: list[PosterCopyFinding] = []
 
@@ -160,7 +183,7 @@ def evaluate_poster_copy(
 
     # ── Compliance: medical / symptom / relief (BLOCK) ──
     blob = " ".join([headline, support, *chips, cta, detail])
-    med = _hits(blob, MEDICAL_RELIEF_TERMS)
+    med = _hits(blob, _MEDICAL_RELIEF_PATTERNS)
     if med:
         sev = BLOCK
         add("MEDICAL_RELIEF_CLAIM", sev, "overall",
@@ -172,7 +195,7 @@ def evaluate_poster_copy(
                 "Audiens bayi/anak + bahasa kesihatan — mesti sangat konservatif; buang claim.")
 
     # ── Video-script / narrative style (WARN) ──
-    narrative = _hits(blob, VIDEO_SCRIPT_MARKERS)
+    narrative = _hits(blob, _VIDEO_SCRIPT_PATTERNS)
     headline_is_scenario = headline.endswith("?") and _words(headline) > HEADLINE_MAX_WORDS
     if narrative or headline_is_scenario:
         add("VIDEO_SCRIPT_STYLE", WARN, "overall",

@@ -83,6 +83,29 @@ def test_medical_relief_copy_blocks():
         assert r.ok is False
 
 
+def test_safe_word_is_not_substring_blocked():
+    # "Legasi" contains the substring "lega" but is a safe brand/heritage word —
+    # word-boundary matching must NOT raise a medical/relief BLOCK on it.
+    r = evaluate_poster_copy(
+        _good(
+            poster_headline="Legasi Warisan Tok",
+            poster_support_line="Legasi warisan keluarga.",
+            poster_chips=["Legasi warisan", "Buatan asli"],
+            poster_cta="Dapatkan legasi",
+        )
+    )
+    assert "MEDICAL_RELIEF_CLAIM" not in _codes(r, "BLOCK")
+    assert r.ok is True
+
+
+def test_lega_family_still_blocks_on_word_boundary():
+    # The real relief terms must still fire as whole words / exact phrases.
+    for bad in ("lega", "legakan", "legakan kembung", "perut kembung"):
+        r = evaluate_poster_copy(_good(poster_support_line=f"Produk {bad} untuk keluarga"))
+        assert "MEDICAL_RELIEF_CLAIM" in _codes(r, "BLOCK"), bad
+        assert r.ok is False
+
+
 def test_child_health_copy_double_blocks():
     r = evaluate_poster_copy(
         _good(poster_headline="Anak menangis", poster_support_line="legakan kembung anak")
