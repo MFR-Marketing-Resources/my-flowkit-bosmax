@@ -30,6 +30,96 @@ def _safe_request(**kw) -> ProductIntelligenceReviewDraftCreateRequest:
     return ProductIntelligenceReviewDraftCreateRequest(**base)
 
 
+def _content_only_request(**kw) -> ProductIntelligenceReviewDraftCreateRequest:
+    # Every required CONTENT field, but NO source_urls_json / image_evidence_json — so the
+    # seeding layer must supply the provenance (mirrors the AI-prepare lane, which also
+    # leaves those unset).
+    base = {
+        "product_description": "Minyak angin tradisional untuk melegakan kembung perut.",
+        "benefits_json": ["melegakan perut kembung", "mengurangkan rasa sengal"],
+        "usp_json": ["resepi warisan", "ramuan herba asli"],
+        "usage_text": "Sapukan pada bahagian tidak selesa, urut perlahan.",
+        "ingredients_text": "Minyak herba tradisional.",
+        "warnings_text": "Untuk kegunaan luaran sahaja.",
+        "target_customer_text": "Individu yang kerap kembung perut atau sengal.",
+        "allowed_claims_json": ["melegakan kembung perut", "sesuai kegunaan luaran"],
+        "buyer_persona_snapshot_json": {"audience": "warga emas yang mahu kelegaan"},
+        "copy_strategy_summary_json": {"angles": ["routine_upgrade"]},
+        "created_by": "operator",
+    }
+    base.update(kw)
+    return ProductIntelligenceReviewDraftCreateRequest(**base)
+
+
+def test_seed_source_urls_manual_product_with_image():
+    seed = svc._seed_payload_from_product(
+        {
+            "id": "p-1",
+            "product_display_name": "Minyak Cap Burung",
+            "local_image_path": "/data/img/p1.png",
+        }
+    )
+    s = seed["source_urls_json"]
+    assert s["source_type"] == "MANUAL_PRODUCT_RECORD"
+    assert s["product_id"] == "p-1"
+    assert s["product_name"] == "Minyak Cap Burung"
+    assert s["local_image_path"] == "/data/img/p1.png"
+    assert s["image_evidence_available"] is True
+
+
+def test_seed_source_urls_manual_product_no_image():
+    seed = svc._seed_payload_from_product({"id": "p-2", "product_short_name": "X"})
+    s = seed["source_urls_json"]
+    assert s["source_type"] == "MANUAL_PRODUCT_RECORD"
+    assert s["product_id"] == "p-2"
+    assert s["image_evidence_available"] is False
+    # Never empty when the product row exists.
+    assert svc._has_value(s)
+
+
+def test_seed_source_urls_prefers_external_url():
+    seed = svc._seed_payload_from_product(
+        {"id": "p-3", "source_url": "https://shop.example/p3"}
+    )
+    assert seed["source_urls_json"] == {"source_url": "https://shop.example/p3"}
+    assert "source_type" not in seed["source_urls_json"]
+
+
+@pytest.mark.asyncio
+async def test_manual_product_draft_auto_seeds_source_urls_so_it_is_not_missing():
+    product = await crud.create_product(
+        raw_product_title="Minyak Cap Burung Manual",
+        source="MANUAL",
+        product_display_name="Minyak Cap Burung Manual",
+        image_url="https://example.com/burung.jpg",
+    )
+    # No source_urls_json supplied by the operator/AI → seed must fill it.
+    draft = await svc.create_review_draft(product["id"], _content_only_request())
+    assert svc._has_value(draft.source_urls_json)
+    assert draft.source_urls_json["source_type"] == "MANUAL_PRODUCT_RECORD"
+
+    report = await svc.validate_review_draft(draft.draft_id)
+    assert "source_urls_json" not in report.missing_required_fields
+    assert report.approval_blockers == []
+
+
+@pytest.mark.asyncio
+async def test_manual_product_auto_seeded_draft_can_be_approved():
+    product = await crud.create_product(
+        raw_product_title="Minyak Cap Burung Approve",
+        source="MANUAL",
+        product_display_name="Minyak Cap Burung Approve",
+        image_url="https://example.com/burung2.jpg",
+    )
+    draft = await svc.create_review_draft(product["id"], _content_only_request())
+    approved = await svc.approve_review_draft(
+        draft.draft_id,
+        ProductIntelligenceReviewDraftApproveRequest(approved_by="operator"),
+    )
+    assert approved.status == "APPROVED"
+    assert approved.created_from_review_draft_id == draft.draft_id
+
+
 @pytest.mark.asyncio
 async def test_create_and_validate_review_draft_returns_ready_state_with_auto_provenance():
     product = await crud.create_product(
