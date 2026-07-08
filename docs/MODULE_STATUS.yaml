@@ -422,6 +422,15 @@ domains:
       - dashboard/src/components/poster/PosterRecipeSlotEditor.tsx
       - dashboard/src/components/poster/PosterSpecPreview.tsx
       - docs/poster/POSTER_RECIPE_UI_B2_AUDIT.md
+      # POSTER_EXPERT_SYSTEM_REDESIGN_V1: poster-native copy quality guard +
+      # expert e-commerce archetypes + generation gating + FE quality surface.
+      - agent/models/poster_copy_quality.py
+      - agent/services/poster_copy_quality_service.py
+      - tests/unit/test_poster_copy_quality_service.py
+      - tests/api/test_poster_copy_quality_api.py
+      - dashboard/src/types/posterCopyQuality.ts
+      - dashboard/src/api/posterCopyQuality.ts
+      - dashboard/src/components/poster/PosterCopyQualityPanel.tsx
       # POSTER_COMPOSITOR_PHASE2A: Playwright/Chromium spike proving overlay_spec +
       # clean product-anchored background -> crisp 1080x1920 poster PNG. Spike only —
       # no service/UI/live-generation/credit-spend. Generated .png outputs untracked.

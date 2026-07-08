@@ -2,11 +2,13 @@ from fastapi import APIRouter, HTTPException
 
 from agent.models.poster_builder_settings import PosterBuilderSettingsResponse
 from agent.models.poster_copy_fit import PosterCopyFitRequest
+from agent.models.poster_copy_quality import PosterCopyQualityRequest
 from agent.models.poster_copy_recommendations import PosterCopyRecommendationRequest
 from agent.models.poster_prompt_draft import PosterPromptDraftRequest
 from agent.services import poster_recipe_service
 from agent.services.poster_builder_settings_service import PosterBuilderSettingsService
 from agent.services.poster_copy_fit_service import fit_poster_copy
+from agent.services.poster_copy_quality_service import evaluate_poster_copy
 from agent.services.poster_copy_recommendation_service import (
     PosterCopyRecommendationService,
 )
@@ -63,6 +65,14 @@ async def poster_recipes():
     """Read-only poster recipe/archetype authority (SSOT for the recipe-first
     composer). No mutation, no generation, no token/credit spend."""
     return {"recipes": [r.model_dump(mode="json") for r in poster_recipe_service.list_recipes()]}
+
+
+@router.post("/copy/quality")
+async def poster_copy_quality(body: PosterCopyQualityRequest):
+    """Expert poster-copy quality guard: flags headline/support/chip/CTA length,
+    too-many-ideas, video-script style, medical/relief wording, and child-risky
+    copy. Read-only analysis — no mutation, no generation, no credit spend."""
+    return evaluate_poster_copy(body).model_dump(mode="json")
 
 
 @router.post("/copy/fit")

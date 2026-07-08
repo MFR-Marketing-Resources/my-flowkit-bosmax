@@ -36,6 +36,7 @@ class PosterZone(BaseModel):
     align: str = "left"
     font_role: str = "body"  # display | headline | subhead | body | chip | button | caption
     max_chars: int = 0
+    max_words: int = 0  # poster-native word cap (0 = unset)
     placeholder: str = ""  # NEUTRAL structural label only — never a claim
 
 
@@ -56,6 +57,11 @@ class PosterRecipe(BaseModel):
     zones: list[PosterZone] = Field(default_factory=list)
     negative_prompt_additions: list[str] = Field(default_factory=list)
     allowed_text_density: list[str] = Field(default_factory=list)
+    # Poster-expert (V1): archetype-driven chip cap, main selling angles, and a
+    # safety posture (e.g. PROBLEM_AWARE_SAFE forbids relief/symptom copy).
+    max_chips: int = 3
+    safety_posture: str = ""  # STANDARD | HERITAGE_SAFE | ROUTINE_SAFE | PROBLEM_AWARE_SAFE
+    main_selling_angles: list[str] = Field(default_factory=list)
 
 
 class PosterRecipeSummary(BaseModel):
@@ -63,6 +69,9 @@ class PosterRecipeSummary(BaseModel):
     archetype: str
     label: str
     description: str = ""
+    max_chips: int = 3
+    safety_posture: str = ""
+    main_selling_angles: list[str] = Field(default_factory=list)
 
 
 class PosterSpec(BaseModel):

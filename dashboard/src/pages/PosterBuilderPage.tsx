@@ -21,6 +21,9 @@ import PosterRecipeSelector from "../components/poster/PosterRecipeSelector";
 import PosterControlledSettings from "../components/poster/PosterControlledSettings";
 import PosterRecipeSlotEditor from "../components/poster/PosterRecipeSlotEditor";
 import PosterSpecPreview from "../components/poster/PosterSpecPreview";
+import PosterCopyQualityPanel from "../components/poster/PosterCopyQualityPanel";
+import { fetchPosterCopyQuality } from "../api/posterCopyQuality";
+import type { PosterCopyQualityReport } from "../types/posterCopyQuality";
 import PosterAutoModePanel from "../components/poster/PosterAutoModePanel";
 import PosterBuilderShellForm from "../components/poster/PosterBuilderShellForm";
 import PosterFlowMirrorSettingsPanel from "../components/poster/PosterFlowMirrorSettingsPanel";
@@ -88,6 +91,8 @@ export default function PosterBuilderPage() {
 	const [promptLoading, setPromptLoading] = useState(false);
 	const [fitLoading, setFitLoading] = useState(false);
 	const [fitNotice, setFitNotice] = useState("");
+	const [posterQuality, setPosterQuality] = useState<PosterCopyQualityReport | null>(null);
+	const [posterQualityLoading, setPosterQualityLoading] = useState(false);
 	// Poster image generation (gated, credit-spending — reuses the one-door IMG lane).
 	const [posterGenConfirm, setPosterGenConfirm] = useState(false);
 	const [posterGenLoading, setPosterGenLoading] = useState(false);
@@ -207,6 +212,7 @@ export default function PosterBuilderPage() {
 	const selectedRecipe =
 		recipes.find((r) => r.recipe_id === draft.poster_recipe_id) ?? null;
 	const handleSelectRecipe = (recipeId: string) => {
+		setPosterQuality(null);
 		setDraft((prev) => {
 			const r = recipes.find((x) => x.recipe_id === recipeId) ?? null;
 			let text_density = prev.text_density;
@@ -219,6 +225,28 @@ export default function PosterBuilderPage() {
 			}
 			return { ...prev, poster_recipe_id: recipeId, text_density };
 		});
+	};
+	// Expert poster copy quality check (credit-free). Maps the draft's legacy
+	// video-style fields into POSTER-native copy (headline/support/chips/cta).
+	const handleCheckPosterQuality = async () => {
+		const d = draftRef.current;
+		setPosterQualityLoading(true);
+		try {
+			const report = await fetchPosterCopyQuality({
+				archetype: selectedRecipe?.archetype ?? "",
+				language: d.language,
+				max_chips: selectedRecipe?.max_chips ?? 3,
+				poster_headline: d.hook,
+				poster_support_line: d.subhook,
+				poster_chips: [d.usp_1, d.usp_2, d.usp_3].filter((c) => c.trim()),
+				poster_cta: d.cta,
+			});
+			setPosterQuality(report);
+		} catch {
+			setPosterQuality(null);
+		} finally {
+			setPosterQualityLoading(false);
+		}
 	};
 	const missingCopy = missingPosterCopyFields(draft);
 	const overLimitCopy = overLimitPosterCopyFields(draft);
@@ -586,12 +614,17 @@ export default function PosterBuilderPage() {
 										draft={draft}
 										onDraftChange={setDraft}
 									/>
+									<PosterCopyQualityPanel
+										report={posterQuality}
+										loading={posterQualityLoading}
+										onCheck={() => void handleCheckPosterQuality()}
+									/>
 									<section
 										className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5"
 										data-testid="poster-recipe-generate"
 									>
 										<h3 className="text-sm font-bold text-slate-100">
-											4. Generate poster prompt package
+											5. Generate poster prompt package
 										</h3>
 										{missingCopy.length > 0 ? (
 											<p className="mt-2 text-[11px] text-amber-300">
@@ -603,6 +636,14 @@ export default function PosterBuilderPage() {
 												Terlalu panjang: <strong>{overLimitCopy.join(", ")}</strong>.
 											</p>
 										) : null}
+										{(posterQuality?.block_count ?? 0) > 0 ? (
+											<p
+												data-testid="poster-quality-block-note"
+												className="mt-2 text-[11px] text-rose-300"
+											>
+												Kualiti poster gagal ({posterQuality?.block_count} isu) — baiki copy sebelum jana.
+											</p>
+										) : null}
 										<button
 											type="button"
 											data-testid="recipe-generate-prompt-draft"
@@ -610,7 +651,8 @@ export default function PosterBuilderPage() {
 												!promptDraftEnabled ||
 												promptLoading ||
 												missingCopy.length > 0 ||
-												overLimitCopy.length > 0
+												overLimitCopy.length > 0 ||
+												(posterQuality?.block_count ?? 0) > 0
 											}
 											onClick={() => void handlePromptDraft(draftRef.current)}
 											className="mt-3 rounded-xl border border-blue-500/50 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"

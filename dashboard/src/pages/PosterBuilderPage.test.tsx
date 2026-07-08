@@ -147,6 +147,10 @@ vi.mock("../api/posterRecipes", () => ({
 	fetchPosterRecipes: vi.fn().mockResolvedValue(RECIPE_FIXTURES),
 }));
 
+vi.mock("../api/posterCopyQuality", () => ({
+	fetchPosterCopyQuality: vi.fn(),
+}));
+
 vi.mock("../api/imageGenSettings", () => ({
 	useImageGenSettings: () => ({
 		models: [
@@ -226,6 +230,7 @@ import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations
 import { draftToPromptRequest } from "../api/posterPromptDraft";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
 import { fetchProductCatalog } from "../api/products";
+import { fetchPosterCopyQuality } from "../api/posterCopyQuality";
 
 const mockedFetch = vi.mocked(fetchPosterReadiness);
 const mockedPromptDraft = vi.mocked(createPosterPromptDraft);
@@ -234,6 +239,7 @@ const mockedDraftToPrompt = vi.mocked(draftToPromptRequest);
 const mockedStartGen = vi.mocked(startImgGeneration);
 const mockedPollGen = vi.mocked(pollImgGenerationJob);
 const mockedCatalog = vi.mocked(fetchProductCatalog);
+const mockedQuality = vi.mocked(fetchPosterCopyQuality);
 
 const sampleKit = {
 	kit_id: "k1",
@@ -889,5 +895,49 @@ describe("PosterBuilderPage", () => {
 		expect(await screen.findByTestId("poster-spec-preview")).toBeInTheDocument();
 		expect(screen.getByTestId("poster-overlay-zones")).toBeInTheDocument();
 		expect(screen.getByTestId("poster-overlay-disclaimer")).toBeInTheDocument();
+	});
+
+	it("poster copy quality check surfaces findings and BLOCK gates generation", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedQuality.mockResolvedValue({
+			ok: false,
+			block_count: 1,
+			warn_count: 1,
+			findings: [
+				{
+					code: "MEDICAL_RELIEF_CLAIM",
+					severity: "BLOCK",
+					field: "overall",
+					message: "bahasa perubatan/simptom.",
+				},
+				{
+					code: "VIDEO_SCRIPT_STYLE",
+					severity: "WARN",
+					field: "overall",
+					message: "gaya skrip video.",
+				},
+			],
+		});
+		renderPage();
+		await waitForReadinessUi();
+		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
+		// Fill required slots so the ONLY reason to disable generate is the quality BLOCK.
+		fireEvent.change(await screen.findByTestId("slot-field-hook"), {
+			target: { value: "Tajuk pendek" },
+		});
+		fireEvent.change(screen.getByTestId("slot-field-cta"), {
+			target: { value: "Dapatkan" },
+		});
+		// The expert quality panel is part of the recipe flow.
+		expect(await screen.findByTestId("poster-copy-quality-panel")).toBeInTheDocument();
+		(await screen.findByTestId("poster-quality-check")).click();
+		// Findings render (a BLOCK and a WARN).
+		await waitFor(() =>
+			expect(screen.getByTestId("poster-quality-block")).toBeInTheDocument(),
+		);
+		expect(screen.getByTestId("poster-quality-warn")).toBeInTheDocument();
+		// BLOCK gates the recipe generate button + shows the block note.
+		expect(screen.getByTestId("poster-quality-block-note")).toBeInTheDocument();
+		expect(screen.getByTestId("recipe-generate-prompt-draft")).toBeDisabled();
 	});
 });
