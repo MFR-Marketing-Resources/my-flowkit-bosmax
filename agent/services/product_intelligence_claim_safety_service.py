@@ -10,6 +10,20 @@ from agent.models.product_intelligence_review_draft import (
 )
 
 
+# The gate scans the PRODUCT'S published claims — the copy a customer reads + the
+# claims the product is allowed to make. It deliberately EXCLUDES internal, non-published
+# fields that legitimately contain medical words and would otherwise permanently block a
+# correct draft:
+#   - blocked_claims_json     : the "do NOT say" quarantine / guardrail list (e.g.
+#                               "Jangan guna 'merawat' penyakit") — scanning it re-trips
+#                               the gate on the very words it forbids.
+#   - buyer_persona_snapshot_json / copy_strategy_summary_json : the customer AVATAR +
+#                               internal strategy. A health-product avatar naturally
+#                               describes the customer's world (pains like "penyakit",
+#                               desires like "kelegaan tanpa ambil ubat") — that is not a
+#                               product claim, and scanning it blocks the whole health
+#                               category. The copy the engine writes from it IS scanned.
+#   - reviewer_note           : the operator's internal note, not published copy.
 CLAIM_TEXT_FIELDS = (
     "product_description",
     "benefits_json",
@@ -20,10 +34,6 @@ CLAIM_TEXT_FIELDS = (
     "target_customer_text",
     "paste_anything_summary",
     "allowed_claims_json",
-    "blocked_claims_json",
-    "buyer_persona_snapshot_json",
-    "copy_strategy_summary_json",
-    "reviewer_note",
 )
 
 BLOCKED_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
