@@ -44,3 +44,46 @@ def test_get_bulk_run_not_found(monkeypatch):
     client = TestClient(_build_app())
     response = client.get(f"{_BASE}/missing-id")
     assert response.status_code == 404
+
+
+def test_list_runs_not_shadowed_by_id_route(monkeypatch):
+    async def fake_list(limit=20):
+        return [{"bulk_run_id": "abc", "status": "PENDING"}]
+
+    monkeypatch.setattr("agent.db.crud.list_bulk_generation_runs", fake_list)
+    client = TestClient(_build_app())
+    response = client.get(f"{_BASE}/runs")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 1
+    assert body["runs"][0]["bulk_run_id"] == "abc"
+
+
+def test_retry_failed_endpoint(monkeypatch):
+    async def fake_retry(bulk_run_id):
+        return {"bulk_run_id": bulk_run_id, "retried": 2, "status": "PENDING"}
+
+    monkeypatch.setattr(
+        "agent.services.bulk_generation_service.retry_failed_bulk_run",
+        fake_retry,
+    )
+    client = TestClient(_build_app())
+    response = client.post(f"{_BASE}/run-xyz/retry-failed")
+    assert response.status_code == 200
+    assert response.json()["retried"] == 2
+
+
+def test_start_requires_confirm_credit(monkeypatch):
+    async def fake_start(bulk_run_id, *, confirm_credit_burn=False, dry_run=False):
+        if not confirm_credit_burn:
+            return {"dry_run": True, "confirm_credit_burn_required": True}
+        return {"status": "RUNNING"}
+
+    monkeypatch.setattr(
+        "agent.services.bulk_generation_service.start_bulk_run",
+        fake_start,
+    )
+    client = TestClient(_build_app())
+    response = client.post(f"{_BASE}/run-1/start", json={"confirm_credit_burn": False})
+    assert response.status_code == 200
+    assert response.json()["dry_run"] is True

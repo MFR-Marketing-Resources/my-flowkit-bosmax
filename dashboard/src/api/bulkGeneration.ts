@@ -32,7 +32,9 @@ export interface BulkRunItem {
 	status: string;
 	job_id?: string | null;
 	media_id?: string | null;
+	local_path?: string | null;
 	error?: string | null;
+	retry_count?: number;
 }
 
 export interface CreateAvatarImageBulkRequest {
@@ -78,6 +80,12 @@ export async function pauseBulkRun(bulkRunId: string): Promise<Record<string, un
 
 export async function cancelBulkRun(bulkRunId: string): Promise<Record<string, unknown>> {
 	return postAPI(`${BASE}/${bulkRunId}/cancel`, {});
+}
+
+export async function retryFailedBulkRun(
+	bulkRunId: string,
+): Promise<Record<string, unknown>> {
+	return postAPI(`${BASE}/${bulkRunId}/retry-failed`, {});
 }
 
 export async function registerBulkAvatarAssets(

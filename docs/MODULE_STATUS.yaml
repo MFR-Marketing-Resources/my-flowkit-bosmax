@@ -133,6 +133,11 @@ domains:
       - agent/services/workspace_generation_package_service.py
       - agent/services/batch_prompt_planner.py
       - agent/services/production_queue_service.py
+      - agent/services/bulk_generation_service.py
+      - agent/api/bulk_generation.py
+      - tests/unit/test_bulk_generation_service.py
+      - tests/api/test_bulk_generation_api.py
+      - tests/ui/test_avatar_registry_bulk_ui_contract.py
       - tests/ui/test_batch_prompt_builder_ui_contract.py
       - dashboard/src/pages/BatchesPage.tsx
       - agent/api/workspace_generation_packages.py
@@ -217,6 +222,7 @@ domains:
       - dashboard/src/pages/BatchPromptBuilderPage.tsx
       - dashboard/src/pages/ProductionQueuePage.tsx
       - dashboard/src/api/productionQueue.ts
+      - dashboard/src/api/bulkGeneration.ts
       - tests/unit/test_batch_prompt_planner.py
       - tests/unit/test_batch_prompt_run.py
       - tests/unit/test_production_queue_service.py

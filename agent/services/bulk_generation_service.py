@@ -199,6 +199,9 @@ async def create_video_bulk_run(
         if st in ("RUNNING", "QUEUED"):
             refused.append({"package_id": pid, "reason": f"ALREADY_{st}"})
             continue
+        if st != "APPROVED":
+            refused.append({"package_id": pid, "reason": f"NOT_APPROVED:{st}"})
+            continue
         eligible.append(pkg)
 
     if not eligible:
@@ -258,8 +261,12 @@ async def start_bulk_run(
     run = await crud.get_bulk_generation_run(bulk_run_id)
     if not run:
         raise ValueError("BULK_RUN_NOT_FOUND")
-    if run["status"] in ("RUNNING", "COMPLETED", "CANCELLED"):
+    if run["status"] in ("COMPLETED", "CANCELLED"):
         raise ValueError(f"BULK_RUN_NOT_STARTABLE:{run['status']}")
+    if run["status"] == "RUNNING":
+        task = _worker_tasks.get(bulk_run_id)
+        if task and not task.done():
+            raise ValueError("BULK_RUN_ALREADY_RUNNING")
 
     items = await crud.list_bulk_generation_items(bulk_run_id)
     queued = [i for i in items if i.get("status") == "QUEUED"]
@@ -328,14 +335,91 @@ async def cancel_bulk_run(bulk_run_id: str) -> dict:
     if not run:
         raise ValueError("BULK_RUN_NOT_FOUND")
     _run_control[bulk_run_id] = "CANCEL"
-    items = await crud.list_bulk_generation_items(bulk_run_id, status="QUEUED")
-    for item in items:
-        await crud.update_bulk_generation_item(item["bulk_item_id"], status="CANCELLED", updated_at=_now())
+    cancelled_queued = 0
+    for st in ("QUEUED", "SUBMITTED"):
+        items = await crud.list_bulk_generation_items(bulk_run_id, status=st)
+        for item in items:
+            await crud.update_bulk_generation_item(
+                item["bulk_item_id"], status="CANCELLED", updated_at=_now(),
+            )
+            cancelled_queued += 1
     await crud.update_bulk_generation_run(bulk_run_id, status="CANCELLED", updated_at=_now())
     task = _worker_tasks.pop(bulk_run_id, None)
     if task and not task.done():
         task.cancel()
-    return {"bulk_run_id": bulk_run_id, "status": "CANCELLED", "cancelled_queued": len(items)}
+    return {"bulk_run_id": bulk_run_id, "status": "CANCELLED", "cancelled_queued": cancelled_queued}
+
+
+async def retry_failed_bulk_run(bulk_run_id: str) -> dict:
+    run = await crud.get_bulk_generation_run(bulk_run_id)
+    if not run:
+        raise ValueError("BULK_RUN_NOT_FOUND")
+    if run["status"] == "RUNNING":
+        task = _worker_tasks.get(bulk_run_id)
+        if task and not task.done():
+            raise ValueError("BULK_RUN_STILL_RUNNING")
+
+    items = await crud.list_bulk_generation_items(bulk_run_id, limit=500)
+    retried = 0
+    for item in items:
+        if item.get("status") != "FAILED":
+            continue
+        rc = int(item.get("retry_count") or 0) + 1
+        await crud.update_bulk_generation_item(
+            item["bulk_item_id"],
+            status="QUEUED",
+            error=None,
+            job_id=None,
+            media_id=None,
+            local_path=None,
+            retry_count=rc,
+            updated_at=_now(),
+        )
+        retried += 1
+    if retried == 0:
+        raise ValueError("NO_FAILED_ITEMS")
+
+    counts = await crud.bulk_item_status_counts(bulk_run_id)
+    failed_left = int(counts.get("FAILED", 0))
+    await crud.update_bulk_generation_run(
+        bulk_run_id,
+        status="PENDING",
+        total_failed=failed_left,
+        updated_at=_now(),
+    )
+    return {"bulk_run_id": bulk_run_id, "retried": retried, "status": "PENDING"}
+
+
+async def recover_stuck_bulk_runs() -> dict:
+    """After agent restart: pause RUNNING runs with no live worker; re-queue stuck items."""
+    runs = await crud.list_bulk_generation_runs(limit=100)
+    recovered: list[str] = []
+    for run in runs:
+        if (run.get("status") or "").upper() != "RUNNING":
+            continue
+        rid = run["bulk_run_id"]
+        task = _worker_tasks.get(rid)
+        if task is not None and not task.done():
+            continue
+        items = await crud.list_bulk_generation_items(rid, limit=500)
+        for item in items:
+            if item.get("status") in ("RUNNING", "SUBMITTED"):
+                await crud.update_bulk_generation_item(
+                    item["bulk_item_id"],
+                    status="QUEUED",
+                    error="RECOVERED_AFTER_AGENT_RESTART",
+                    job_id=None,
+                    updated_at=_now(),
+                )
+        await crud.update_bulk_generation_run(rid, status="PAUSED", updated_at=_now())
+        _run_control.pop(rid, None)
+        _worker_tasks.pop(rid, None)
+        recovered.append(rid)
+        await _append_error_log(
+            rid,
+            {"event": "RECOVER_STUCK_RUN", "note": "Worker lost after restart; run paused, items re-queued"},
+        )
+    return {"recovered_runs": recovered, "count": len(recovered)}
 
 
 async def register_avatar_assets_bulk(bulk_run_id: str) -> dict:
@@ -559,6 +643,78 @@ async def _process_avatar_image_item(run_id: str, item: dict, config: dict) -> N
         await _append_error_log(run_id, {"bulk_item_id": item_id, "error": str(exc)})
 
 
+_VIDEO_POLL_SECONDS = 5
+_VIDEO_JOB_TIMEOUT_SECONDS = 30 * 60
+_VIDEO_INFLIGHT_RETRY_SECONDS = 30
+_VIDEO_INFLIGHT_MAX_RETRIES = 20
+
+
+async def _fire_video_payload(payload: dict, wgp_id: str) -> dict:
+    """Serial video lane: honour VIDEO_JOB_IN_FLIGHT retries like production queue."""
+    attempts = 0
+    while True:
+        result = await make_video.start_generate(
+            payload["mode"],
+            payload["prompt"],
+            image_media_ids=payload.get("image_media_ids"),
+            aspect=payload.get("aspect") or "9:16",
+            model=payload.get("model"),
+            duration_s=payload.get("duration_s"),
+            num_videos=payload.get("num_videos") or 1,
+        )
+        if result.get("status") == "REJECTED" and result.get("error") == "VIDEO_JOB_IN_FLIGHT":
+            attempts += 1
+            if attempts > _VIDEO_INFLIGHT_MAX_RETRIES:
+                await crud.update_workspace_generation_package(
+                    wgp_id,
+                    production_status="FAILED",
+                    production_error="VIDEO_LANE_BUSY_TIMEOUT",
+                )
+                return {"ok": False, "error": "VIDEO_LANE_BUSY_TIMEOUT"}
+            await asyncio.sleep(_VIDEO_INFLIGHT_RETRY_SECONDS)
+            continue
+        break
+
+    job_id = result.get("job_id")
+    if not job_id:
+        err = result.get("error") or "NO_JOB_ID"
+        await crud.update_workspace_generation_package(
+            wgp_id, production_status="FAILED", production_error=str(err),
+        )
+        return {"ok": False, "error": str(err)}
+
+    await crud.update_workspace_generation_package(wgp_id, production_job_id=job_id)
+
+    waited = 0
+    while waited < _VIDEO_JOB_TIMEOUT_SECONDS:
+        job = make_video.get_job(job_id) or {}
+        status = job.get("status")
+        if status in ("DONE", "FAILED", "REJECTED", "GENERATED_BUT_UNRETRIEVED"):
+            break
+        await asyncio.sleep(_VIDEO_POLL_SECONDS)
+        waited += _VIDEO_POLL_SECONDS
+    else:
+        await crud.update_workspace_generation_package(
+            wgp_id, production_status="FAILED", production_error="JOB_TIMEOUT",
+        )
+        return {"ok": False, "error": "JOB_TIMEOUT", "job_id": job_id}
+
+    job = make_video.get_job(job_id) or {}
+    if job.get("status") in ("FAILED", "REJECTED"):
+        err = job.get("error") or "VIDEO_JOB_FAILED"
+        await crud.update_workspace_generation_package(
+            wgp_id, production_status="FAILED", production_error=str(err),
+        )
+        return {"ok": False, "error": str(err), "job_id": job_id}
+
+    media_id = job.get("media_id")
+    local_path = job.get("local_path")
+    await crud.update_workspace_generation_package(
+        wgp_id, production_status="GENERATED", production_error=None,
+    )
+    return {"ok": True, "job_id": job_id, "media_id": media_id, "local_path": local_path}
+
+
 async def _live_video_loop(run_id: str) -> None:
     from agent.services import production_queue_service as pq
 
@@ -566,9 +722,11 @@ async def _live_video_loop(run_id: str) -> None:
     if not run:
         return
     config = _loads(run.get("config_json"), {})
-    model = config.get("model")
-    aspect = config.get("aspect") or "9:16"
-    duration_s = config.get("duration_s")
+    run_config = {
+        "model": config.get("model"),
+        "aspect": config.get("aspect") or "9:16",
+        "count": 1,
+    }
     interval_min = int(run.get("interval_min_seconds") or 5)
     interval_max = int(run.get("interval_max_seconds") or 15)
     cooldown_after = int(run.get("cooldown_after_n_jobs") or 5)
@@ -589,56 +747,41 @@ async def _live_video_loop(run_id: str) -> None:
                 break
 
             item_id = item["bulk_item_id"]
-            pkg_id = item["source_ref"]
+            wgp_id = item["source_ref"]
             await crud.update_bulk_generation_item(
                 item_id, status="RUNNING", started_at=_now(), updated_at=_now(),
             )
             try:
-                payload = await pq.build_execution_payload(
-                    pkg_id, model=model, aspect=aspect, duration_s=duration_s,
-                )
-                result = await make_video.start_generate(**payload)
-                if result.get("status") == "REJECTED":
-                    raise RuntimeError(result.get("error") or "VIDEO_JOB_IN_FLIGHT")
+                pkg = await crud.get_workspace_generation_package(wgp_id)
+                if not pkg:
+                    raise RuntimeError("PACKAGE_NOT_FOUND")
+                prod_st = (pkg.get("production_status") or "NONE").upper()
+                if prod_st != "APPROVED":
+                    raise RuntimeError(f"NOT_APPROVED:{prod_st}")
 
-                job_id = result.get("job_id")
+                await crud.update_workspace_generation_package(
+                    wgp_id, production_status="RUNNING", production_error=None,
+                )
+                payload, blockers = await pq.build_execution_payload(pkg, run_config)
+                if blockers:
+                    raise RuntimeError(",".join(blockers))
+
+                outcome = await _fire_video_payload(payload, wgp_id)
+                if not outcome.get("ok"):
+                    raise RuntimeError(outcome.get("error") or "VIDEO_FAILED")
+
                 await crud.update_bulk_generation_item(
-                    item_id, job_id=job_id, status="SUBMITTED", updated_at=_now(),
+                    item_id,
+                    status="GENERATED",
+                    job_id=outcome.get("job_id"),
+                    media_id=outcome.get("media_id"),
+                    local_path=outcome.get("local_path"),
+                    completed_at=_now(),
+                    updated_at=_now(),
                 )
-
-                deadline = asyncio.get_event_loop().time() + 1800
-                while asyncio.get_event_loop().time() < deadline:
-                    if _run_control.get(run_id) == "CANCEL":
-                        return
-                    job = make_video.get_job(job_id)
-                    if not job:
-                        await asyncio.sleep(3)
-                        continue
-                    st = (job.get("status") or "").upper()
-                    if st == "DONE":
-                        media_ids = []
-                        if job.get("media_id"):
-                            media_ids.append(job["media_id"])
-                        for art in job.get("artifacts") or []:
-                            if isinstance(art, dict) and art.get("media_id"):
-                                media_ids.append(art["media_id"])
-                        await crud.update_bulk_generation_item(
-                            item_id,
-                            status="GENERATED",
-                            media_id=media_ids[0] if media_ids else job.get("media_id"),
-                            local_path=job.get("local_path"),
-                            completed_at=_now(),
-                            updated_at=_now(),
-                        )
-                        run = await crud.get_bulk_generation_run(run_id)
-                        tc = int(run.get("total_completed") or 0) + 1
-                        await crud.update_bulk_generation_run(run_id, total_completed=tc, updated_at=_now())
-                        break
-                    if st == "FAILED":
-                        raise RuntimeError(job.get("error") or "VIDEO_JOB_FAILED")
-                    await asyncio.sleep(5)
-                else:
-                    raise RuntimeError("VIDEO_JOB_TIMEOUT")
+                run_row = await crud.get_bulk_generation_run(run_id)
+                tc = int(run_row.get("total_completed") or 0) + 1
+                await crud.update_bulk_generation_run(run_id, total_completed=tc, updated_at=_now())
             except Exception as exc:  # noqa: BLE001
                 await crud.update_bulk_generation_item(
                     item_id,
@@ -647,10 +790,15 @@ async def _live_video_loop(run_id: str) -> None:
                     completed_at=_now(),
                     updated_at=_now(),
                 )
-                run = await crud.get_bulk_generation_run(run_id)
-                tf = int(run.get("total_failed") or 0) + 1
+                run_row = await crud.get_bulk_generation_run(run_id)
+                tf = int(run_row.get("total_failed") or 0) + 1
                 await crud.update_bulk_generation_run(run_id, total_failed=tf, updated_at=_now())
                 await _append_error_log(run_id, {"bulk_item_id": item_id, "error": str(exc)})
+                pkg = await crud.get_workspace_generation_package(wgp_id)
+                if pkg and (pkg.get("production_status") or "").upper() == "RUNNING":
+                    await crud.update_workspace_generation_package(
+                        wgp_id, production_status="FAILED", production_error=str(exc),
+                    )
 
             jobs_since_cooldown += 1
             if jobs_since_cooldown >= cooldown_after:

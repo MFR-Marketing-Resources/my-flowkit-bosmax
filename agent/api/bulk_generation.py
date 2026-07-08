@@ -41,6 +41,19 @@ class StartBulkRequest(BaseModel):
     dry_run: bool = False
 
 
+@router.get("/runs")
+async def list_bulks(limit: int = 20):
+    from agent.db import crud
+
+    runs = await crud.list_bulk_generation_runs(limit=limit)
+    return {"runs": runs, "count": len(runs)}
+
+
+@router.post("/recover-stuck")
+async def recover_stuck():
+    return await svc.recover_stuck_bulk_runs()
+
+
 @router.post("/avatar-images")
 async def create_avatar_image_bulk(body: AvatarImageBulkRequest):
     try:
@@ -80,6 +93,14 @@ async def create_video_bulk(body: VideoBulkRequest):
         raise HTTPException(422, str(exc)) from exc
 
 
+@router.get("/{bulk_run_id}")
+async def get_bulk(bulk_run_id: str):
+    detail = await svc.get_bulk_run_detail(bulk_run_id)
+    if not detail:
+        raise HTTPException(404, "BULK_RUN_NOT_FOUND")
+    return detail
+
+
 @router.post("/{bulk_run_id}/start")
 async def start_bulk(bulk_run_id: str, body: StartBulkRequest):
     try:
@@ -90,14 +111,6 @@ async def start_bulk(bulk_run_id: str, body: StartBulkRequest):
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-
-
-@router.get("/{bulk_run_id}")
-async def get_bulk(bulk_run_id: str):
-    detail = await svc.get_bulk_run_detail(bulk_run_id)
-    if not detail:
-        raise HTTPException(404, "BULK_RUN_NOT_FOUND")
-    return detail
 
 
 @router.post("/{bulk_run_id}/pause")
@@ -116,16 +129,17 @@ async def cancel_bulk(bulk_run_id: str):
         raise HTTPException(404, str(exc)) from exc
 
 
+@router.post("/{bulk_run_id}/retry-failed")
+async def retry_failed_bulk(bulk_run_id: str):
+    try:
+        return await svc.retry_failed_bulk_run(bulk_run_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.post("/{bulk_run_id}/register-avatar-assets")
 async def register_avatar_assets(bulk_run_id: str):
     try:
         return await svc.register_avatar_assets_bulk(bulk_run_id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
-
-
-@router.get("/runs")
-async def list_bulks(limit: int = 20):
-    from agent.db import crud
-    runs = await crud.list_bulk_generation_runs(limit=limit)
-    return {"runs": runs, "count": len(runs)}
