@@ -56,6 +56,9 @@ class PosterCopyKit(BaseModel):
     safety_notes: list[str] = Field(default_factory=list)
     blocked_reasons: list[str] = Field(default_factory=list)
     copy_set_id: str | None = None
+    # True only for an approved Copy Set whose formula-validation verdict passed
+    # (approve_copy_set enforces + preserves it). Drives "prefer approved" in the UI.
+    formula_validated: bool = False
 
 
 class PosterCopyRecommendationsResponse(BaseModel):

@@ -84,6 +84,12 @@ export interface PosterBuilderDraft {
 	usp_3: string;
 	cta: string;
 	operator_notes: string;
+	// Copy provenance (Phase D). copy_source is the kit source the copy came from
+	// ("APPROVED_COPY_SET" / "DRAFT_COPY_SET" / "AI_CANDIDATE" / "FALLBACK_TEMPLATE" /
+	// "manual"). Non-approved copy is review-only unless copy_fallback_confirmed.
+	copy_source: string;
+	copy_set_id: string;
+	copy_fallback_confirmed: boolean;
 }
 
 export const EMPTY_POSTER_DRAFT: PosterBuilderDraft = {
@@ -102,4 +108,7 @@ export const EMPTY_POSTER_DRAFT: PosterBuilderDraft = {
 	usp_3: "",
 	cta: "",
 	operator_notes: "",
+	copy_source: "manual",
+	copy_set_id: "",
+	copy_fallback_confirmed: false,
 };

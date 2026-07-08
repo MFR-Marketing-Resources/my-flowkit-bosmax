@@ -17,6 +17,9 @@ export const POSTER_AUTO_DEFAULT_DRAFT: PosterBuilderDraft = {
 	usp_3: "",
 	cta: "",
 	operator_notes: "",
+	copy_source: "manual",
+	copy_set_id: "",
+	copy_fallback_confirmed: false,
 };
 
 export function kitToDraft(
@@ -39,5 +42,10 @@ export function kitToDraft(
 		usp_2: kit.usp_2,
 		usp_3: kit.usp_3,
 		cta: kit.cta,
+		// Carry copy provenance so the prompt-draft governance knows whether this copy
+		// is an approved (formula-validated) Copy Set or lower-trust ephemeral copy.
+		copy_source: kit.source,
+		copy_set_id: kit.copy_set_id ?? "",
+		copy_fallback_confirmed: false,
 	};
 }

@@ -38,6 +38,16 @@ export default function PosterPromptPackagePreview({
 					</span>
 				) : null}
 			</div>
+			{package_.validation_warnings?.length ? (
+				<div
+					data-testid="poster-copy-review-only"
+					className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100"
+				>
+					<span className="font-bold uppercase">Review only — </span>
+					copy is not an approved Copy Set ({package_.validation_warnings.join(", ")}).
+					Bind an approved Copy Set or explicitly confirm fallback before production.
+				</div>
+			) : null}
 			{package_.poster_prompt ? (
 				<>
 					<p className="mt-3 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">

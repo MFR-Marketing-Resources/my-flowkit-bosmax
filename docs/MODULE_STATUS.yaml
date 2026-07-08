@@ -365,6 +365,18 @@ domains:
       - dashboard/src/pages/CockpitSettingsPage.tsx
       - dashboard/src/pages/CockpitSettingsPage.test.tsx
       - docs/poster/POSTER_COCKPIT_SSOT_V1.md
+      # COPYWRITING Phase D: poster copy governance (prefer approved Copy Set,
+      # ungrounded copy review-only)
+      - agent/models/poster_copy_recommendations.py
+      - agent/models/poster_prompt_draft.py
+      - agent/services/poster_prompt_draft_service.py
+      - tests/unit/test_poster_copy_governance.py
+      - dashboard/src/components/poster/PosterPromptPackagePreview.tsx
+      - dashboard/src/poster/posterKitToDraft.ts
+      - dashboard/src/poster/posterKitToDraft.test.ts
+      - dashboard/src/types/posterCopyRecommendations.ts
+      - dashboard/src/types/posterPromptDraft.ts
+      - dashboard/src/types/posterReadiness.ts
       # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx
