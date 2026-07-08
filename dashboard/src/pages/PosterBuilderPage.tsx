@@ -16,6 +16,11 @@ import {
 	formatPosterPromptDraftError,
 } from "../api/posterPromptDraft";
 import { fetchProductCatalog } from "../api/products";
+import { usePosterRecipes } from "../api/posterRecipes";
+import PosterRecipeSelector from "../components/poster/PosterRecipeSelector";
+import PosterControlledSettings from "../components/poster/PosterControlledSettings";
+import PosterRecipeSlotEditor from "../components/poster/PosterRecipeSlotEditor";
+import PosterSpecPreview from "../components/poster/PosterSpecPreview";
 import PosterAutoModePanel from "../components/poster/PosterAutoModePanel";
 import PosterBuilderShellForm from "../components/poster/PosterBuilderShellForm";
 import PosterFlowMirrorSettingsPanel from "../components/poster/PosterFlowMirrorSettingsPanel";
@@ -195,6 +200,28 @@ export default function PosterBuilderPage() {
 	// generation, never fall back to prompt-only which hallucinates the product).
 	const posterProductSubject = productSubjectAsset(selectedProduct);
 	const productReferenceReady = posterProductSubject !== null;
+
+	// Recipe-first: the operator picks a poster archetype BEFORE copy. The selected
+	// recipe drives controlled settings, slot editing, and the composer path.
+	const { recipes, error: recipesError } = usePosterRecipes();
+	const selectedRecipe =
+		recipes.find((r) => r.recipe_id === draft.poster_recipe_id) ?? null;
+	const handleSelectRecipe = (recipeId: string) => {
+		setDraft((prev) => {
+			const r = recipes.find((x) => x.recipe_id === recipeId) ?? null;
+			let text_density = prev.text_density;
+			if (
+				r &&
+				r.allowed_text_density.length > 0 &&
+				!r.allowed_text_density.includes(text_density)
+			) {
+				text_density = r.allowed_text_density[0];
+			}
+			return { ...prev, poster_recipe_id: recipeId, text_density };
+		});
+	};
+	const missingCopy = missingPosterCopyFields(draft);
+	const overLimitCopy = overLimitPosterCopyFields(draft);
 
 	const loadRecommendations = useCallback(
 		async (refreshAi = false, draftSnapshot?: PosterBuilderDraft) => {
@@ -421,8 +448,8 @@ export default function PosterBuilderPage() {
 					</div>
 					<h1 className="mt-1 text-2xl font-bold text-slate-100">Poster Builder</h1>
 					<p className="mt-2 max-w-2xl text-sm text-slate-400">
-						Copy bank first, AI assist second, manual override always available.
-						Choose a working mode after readiness loads — not a blank form first.
+						Recipe-first: pick a poster archetype, confirm the product image, set controlled
+						options, then fill the recipe's copy slots. Manual Expert stays available as an advanced/legacy mode.
 					</p>
 				</div>
 				{selectedProduct && readiness ? (
@@ -521,6 +548,92 @@ export default function PosterBuilderPage() {
 
 					{shellMode !== "hidden" ? (
 						<>
+							<PosterRecipeSelector
+								recipes={recipes}
+								selectedRecipeId={draft.poster_recipe_id}
+								onSelect={handleSelectRecipe}
+								error={recipesError}
+							/>
+							<section
+								className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4"
+								data-testid="poster-product-ref-banner"
+							>
+								{productReferenceReady ? (
+									<p
+										data-testid="poster-product-ref-confirmed"
+										className="text-[11px] text-emerald-300"
+									>
+										✓ Product reference image confirmed — poster akan berlabuh pada
+										gambar produk sebenar.
+									</p>
+								) : (
+									<p className="text-[11px] text-rose-300">
+										{PRODUCT_REFERENCE_IMAGE_REQUIRED} — produk ini tiada gambar rujukan;
+										set gambar produk dahulu (penjanaan dihalang).
+									</p>
+								)}
+							</section>
+							{draft.poster_recipe_id && selectedRecipe ? (
+								<>
+									<PosterControlledSettings
+										draft={draft}
+										onDraftChange={setDraft}
+										settings={builderSettings}
+										recipe={selectedRecipe}
+									/>
+									<PosterRecipeSlotEditor
+										recipe={selectedRecipe}
+										draft={draft}
+										onDraftChange={setDraft}
+									/>
+									<section
+										className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5"
+										data-testid="poster-recipe-generate"
+									>
+										<h3 className="text-sm font-bold text-slate-100">
+											4. Generate poster prompt package
+										</h3>
+										{missingCopy.length > 0 ? (
+											<p className="mt-2 text-[11px] text-amber-300">
+												Isi dulu: <strong>{missingCopy.join(", ")}</strong>.
+											</p>
+										) : null}
+										{overLimitCopy.length > 0 ? (
+											<p className="mt-2 text-[11px] text-rose-300">
+												Terlalu panjang: <strong>{overLimitCopy.join(", ")}</strong>.
+											</p>
+										) : null}
+										<button
+											type="button"
+											data-testid="recipe-generate-prompt-draft"
+											disabled={
+												!promptDraftEnabled ||
+												promptLoading ||
+												missingCopy.length > 0 ||
+												overLimitCopy.length > 0
+											}
+											onClick={() => void handlePromptDraft(draftRef.current)}
+											className="mt-3 rounded-xl border border-blue-500/50 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
+										>
+											{promptLoading ? "Generating…" : promptDraftLabel}
+										</button>
+									</section>
+								</>
+							) : (
+								<p
+									data-testid="poster-recipe-required-hint"
+									className="text-sm text-slate-400"
+								>
+									Pilih satu recipe poster di atas untuk teruskan ke settings + copy slots.
+								</p>
+							)}
+							<details
+								className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4"
+								data-testid="poster-advanced-legacy"
+							>
+								<summary className="cursor-pointer text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+									Advanced / legacy modes (Auto · Guided · Manual Expert)
+								</summary>
 							<PosterWorkingModeSelector
 								mode={workingMode}
 								onChange={setWorkingMode}
@@ -570,6 +683,7 @@ export default function PosterBuilderPage() {
 							{workingMode === "manual" ? (
 								<PosterBuilderShellForm
 									draft={draft}
+									settings={builderSettings}
 									onChange={(d) => {
 										setDraft(d);
 										if (d.frame_ratio !== flowMirror.aspect_ratio) {
@@ -589,6 +703,7 @@ export default function PosterBuilderPage() {
 								/>
 							) : null}
 
+							</details>
 							<PosterFlowMirrorSettingsPanel
 								settings={flowMirror}
 								onChange={handleFlowMirrorChange}
@@ -682,6 +797,10 @@ export default function PosterBuilderPage() {
 								) : null}
 							</section>
 
+							<PosterSpecPreview
+								posterSpec={promptPackage?.poster_spec}
+								overlaySpec={promptPackage?.overlay_spec}
+							/>
 							<PosterPromptPackagePreview package_={promptPackage} error={promptError} />
 						</>
 					) : null}

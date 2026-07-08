@@ -1,3 +1,5 @@
+import type { OverlaySpec, PosterSpec } from "./posterRecipe";
+
 export type PromptPackageStatus =
 	| "DRAFT_READY"
 	| "PREVIEW_ONLY"
@@ -30,6 +32,7 @@ export interface PosterPromptDraftRequest {
 	copy_source?: string;
 	copy_set_id?: string;
 	copy_fallback_confirmed?: boolean;
+	poster_recipe_id?: string;
 }
 
 export interface PosterPromptDraftResponse {
@@ -52,4 +55,6 @@ export interface PosterPromptDraftResponse {
 	readiness_meta: Record<string, unknown>;
 	operator_notes: string;
 	validation_warnings?: string[];
+	poster_spec?: PosterSpec | null;
+	overlay_spec?: OverlaySpec | null;
 }
