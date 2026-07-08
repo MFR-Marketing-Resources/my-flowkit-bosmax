@@ -29,6 +29,24 @@ CreativeAssetStorageKind = Literal[
 CreativeAssetAllowedMode = Literal["T2V", "F2V", "I2V", "IMG"]
 CreativeAssetEngineSlot = Literal["subject", "scene", "style", "start_frame", "end_frame"]
 CreativeAssetReviewStatus = Literal["DRAFT", "PENDING_REVIEW", "APPROVED", "REJECTED"]
+CreativeAssetEligibilityAuditSurface = Literal[
+    "F2V_START_FRAME_PICKER",
+    "F2V_END_FRAME_PICKER",
+    "HYBRID_START_FRAME_PICKER",
+    "HYBRID_END_FRAME_PICKER",
+    "I2V_CHARACTER_PICKER",
+    "I2V_SCENE_PICKER",
+    "I2V_STYLE_PICKER",
+]
+CreativeAssetEligibilityExclusionReason = Literal[
+    "ASSET_ARCHIVED",
+    "NOT_APPROVED_FOR_REUSE",
+    "MODE_NOT_ALLOWED",
+    "ENGINE_SLOT_NOT_ALLOWED",
+    "SEMANTIC_ROLE_MISMATCH",
+    "RENDERED_TEXT_NOT_ALLOWED_FOR_VIDEO_FRAME",
+    "PREVIEW_OR_FILE_MISSING",
+]
 
 
 class CreativeAssetRecord(BaseModel):
@@ -153,6 +171,25 @@ class CreativeAssetUpdateRequest(BaseModel):
 class CreativeAssetListResponse(BaseModel):
     items: list[CreativeAssetRecord] = Field(default_factory=list)
     total: int
+
+
+class CreativeAssetEligibilityAuditResponse(BaseModel):
+    surface: CreativeAssetEligibilityAuditSurface
+    surface_label: str
+    recipe_id: str | None = None
+    required_semantic_role: CreativeAssetSemanticRole
+    required_allowed_mode: CreativeAssetAllowedMode
+    required_engine_slots: list[CreativeAssetEngineSlot] = Field(default_factory=list)
+    library_total_count: int
+    total_assets_by_semantic_role: dict[str, int] = Field(default_factory=dict)
+    matching_role_total_count: int
+    active_count: int
+    approved_count: int
+    eligible_count: int
+    excluded_count: int
+    review_status_counts: dict[str, int] = Field(default_factory=dict)
+    excluded_by_reason: dict[str, int] = Field(default_factory=dict)
+    eligible_assets: list[CreativeAssetRecord] = Field(default_factory=list)
 
 
 class CreativeAssetValidationResult(BaseModel):

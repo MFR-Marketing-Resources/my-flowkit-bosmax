@@ -1,13 +1,14 @@
 import { ArrowRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { handleAssetUpload } from "../../api/assets";
-import { fetchCreativeAssets } from "../../api/creativeAssets";
+import { fetchCreativeAssetEligibilityAudit } from "../../api/creativeAssets";
 import {
 	createWorkspaceExecutionPackage,
 	resolveI2VSemanticSlots,
 } from "../../api/workspacePackages";
 import type {
 	CreativeAsset,
+	CreativeAssetEligibilityAuditResponse,
 	I2VRecipeId,
 	I2VSemanticResolvedAsset,
 	I2VSemanticSlotResolverResponse,
@@ -16,9 +17,9 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
+import CopyBindingGate from "../copywriting/CopyBindingGate";
 import ModelSelect, { type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
-import CopyBindingGate from "../copywriting/CopyBindingGate";
 
 interface I2VModuleProps {
 	onExecute: (data: WorkspaceExecutePayload) => void;
@@ -217,6 +218,137 @@ const RECIPE_OPTIONS: Array<{
 ];
 
 type SlotKey = "subject" | "scene" | "style";
+const INGREDIENT_AUDIT_REASON_LABELS: Array<{
+	key: string;
+	label: string;
+	className: string;
+}> = [
+	{
+		key: "NOT_APPROVED_FOR_REUSE",
+		label: "Pending / rejected",
+		className: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+	},
+	{
+		key: "ENGINE_SLOT_NOT_ALLOWED",
+		label: "Wrong slot",
+		className: "border-purple-500/30 bg-purple-500/10 text-purple-200",
+	},
+	{
+		key: "MODE_NOT_ALLOWED",
+		label: "Wrong mode",
+		className: "border-sky-500/30 bg-sky-500/10 text-sky-200",
+	},
+	{
+		key: "SEMANTIC_ROLE_MISMATCH",
+		label: "Wrong role",
+		className: "border-slate-700 bg-slate-900 text-slate-300",
+	},
+	{
+		key: "ASSET_ARCHIVED",
+		label: "Archived",
+		className: "border-slate-700 bg-slate-900 text-slate-300",
+	},
+	{
+		key: "PREVIEW_OR_FILE_MISSING",
+		label: "Source missing",
+		className: "border-red-500/30 bg-red-500/10 text-red-200",
+	},
+];
+
+function getIngredientPickerPlaceholder(
+	audit: CreativeAssetEligibilityAuditResponse | null,
+	error: string | null,
+	emptyLabel: string,
+) {
+	if (error) return "API fetch failed — refresh eligibility audit";
+	if (!audit) return "Loading eligibility audit…";
+	if (audit.eligible_count > 0) return emptyLabel;
+	if (audit.library_total_count === 0)
+		return "No Creative Library assets found";
+	return "Assets found but none eligible for this surface";
+}
+
+function renderIngredientAuditCard(
+	label: string,
+	audit: CreativeAssetEligibilityAuditResponse | null,
+	error: string | null,
+) {
+	if (error) {
+		return (
+			<div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-200">
+				<div className="font-bold uppercase tracking-[0.16em]">
+					{label} Audit
+				</div>
+				<div className="mt-1">API fetch failed: {error}</div>
+			</div>
+		);
+	}
+	if (!audit) {
+		return (
+			<div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-[10px] text-slate-400">
+				<div className="font-bold uppercase tracking-[0.16em]">
+					{label} Audit
+				</div>
+				<div className="mt-1">Loading eligibility audit…</div>
+			</div>
+		);
+	}
+	const pendingCount = audit.review_status_counts.PENDING_REVIEW ?? 0;
+	const chips = INGREDIENT_AUDIT_REASON_LABELS.filter(
+		(reason) => (audit.excluded_by_reason[reason.key] ?? 0) > 0,
+	);
+	const summary =
+		audit.library_total_count === 0
+			? "No Creative Library assets found."
+			: audit.eligible_count === 0
+				? "Assets found but none are eligible for this surface."
+				: `${audit.eligible_count} asset${audit.eligible_count === 1 ? "" : "s"} currently selectable.`;
+	return (
+		<div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-[10px] text-slate-300">
+			<div className="font-bold uppercase tracking-[0.16em] text-slate-200">
+				{label} Audit
+			</div>
+			<div className="mt-1">
+				Library has {audit.library_total_count} assets; {audit.eligible_count}{" "}
+				eligible for this surface; {audit.excluded_count} excluded.
+			</div>
+			<div className="mt-1 text-slate-400">{summary}</div>
+			<div className="mt-2 flex flex-wrap gap-1.5">
+				<span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-300">
+					Role pool {audit.matching_role_total_count}
+				</span>
+				<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-200">
+					Pending approval {pendingCount}
+				</span>
+				{chips.map((chip) => (
+					<span
+						key={chip.key}
+						className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${chip.className}`}
+					>
+						{chip.label} {audit.excluded_by_reason[chip.key]}
+					</span>
+				))}
+			</div>
+		</div>
+	);
+}
+
+async function fetchIngredientEligibilityAudits(recipeId: I2VRecipeId) {
+	return Promise.allSettled([
+		fetchCreativeAssetEligibilityAudit({
+			surface: "I2V_CHARACTER_PICKER",
+			recipe_id: recipeId,
+		}),
+		fetchCreativeAssetEligibilityAudit({
+			surface: "I2V_SCENE_PICKER",
+			recipe_id: recipeId,
+		}),
+		fetchCreativeAssetEligibilityAudit({
+			surface: "I2V_STYLE_PICKER",
+			recipe_id: recipeId,
+		}),
+	]);
+}
 
 function toUploadedAsset(
 	asset:
@@ -312,6 +444,18 @@ export default function I2VModule({
 	const [styleReferenceAssets, setStyleReferenceAssets] = useState<
 		CreativeAsset[]
 	>([]);
+	const [characterAudit, setCharacterAudit] =
+		useState<CreativeAssetEligibilityAuditResponse | null>(null);
+	const [sceneAudit, setSceneAudit] =
+		useState<CreativeAssetEligibilityAuditResponse | null>(null);
+	const [styleAudit, setStyleAudit] =
+		useState<CreativeAssetEligibilityAuditResponse | null>(null);
+	const [characterAuditError, setCharacterAuditError] = useState<string | null>(
+		null,
+	);
+	const [sceneAuditError, setSceneAuditError] = useState<string | null>(null);
+	const [styleAuditError, setStyleAuditError] = useState<string | null>(null);
+	const [isRefreshingEligibility, setIsRefreshingEligibility] = useState(false);
 	const [selectedRecipeId, setSelectedRecipeId] = useState<I2VRecipeId>(
 		"PRODUCT_HELD_BY_CHARACTER_IN_SCENE",
 	);
@@ -328,31 +472,105 @@ export default function I2VModule({
 		workspacePackage?.prompt_text ??
 		"";
 
+	const refreshEligibilityAudits = async (recipeId: I2VRecipeId) => {
+		setIsRefreshingEligibility(true);
+		const [characterResult, sceneResult, styleResult] =
+			await fetchIngredientEligibilityAudits(recipeId);
+		if (characterResult.status === "fulfilled") {
+			setCharacterAudit(characterResult.value);
+			setCharacterAssets(characterResult.value.eligible_assets);
+			setCharacterAuditError(null);
+		} else {
+			setCharacterAudit(null);
+			setCharacterAssets([]);
+			setCharacterAuditError(
+				characterResult.reason instanceof Error
+					? characterResult.reason.message
+					: "Unknown audit failure",
+			);
+		}
+		if (sceneResult.status === "fulfilled") {
+			setSceneAudit(sceneResult.value);
+			setSceneContextAssets(sceneResult.value.eligible_assets);
+			setSceneAuditError(null);
+		} else {
+			setSceneAudit(null);
+			setSceneContextAssets([]);
+			setSceneAuditError(
+				sceneResult.reason instanceof Error
+					? sceneResult.reason.message
+					: "Unknown audit failure",
+			);
+		}
+		if (styleResult.status === "fulfilled") {
+			setStyleAudit(styleResult.value);
+			setStyleReferenceAssets(styleResult.value.eligible_assets);
+			setStyleAuditError(null);
+		} else {
+			setStyleAudit(null);
+			setStyleReferenceAssets([]);
+			setStyleAuditError(
+				styleResult.reason instanceof Error
+					? styleResult.reason.message
+					: "Unknown audit failure",
+			);
+		}
+		setIsRefreshingEligibility(false);
+	};
+
 	useEffect(() => {
-		void Promise.all([
-			fetchCreativeAssets({
-				semantic_role: "CHARACTER_REFERENCE",
-				status: "ACTIVE",
-				allowed_mode: "I2V",
-			}),
-			fetchCreativeAssets({
-				semantic_role: "SCENE_CONTEXT_REFERENCE",
-				status: "ACTIVE",
-				allowed_mode: "I2V",
-			}),
-			fetchCreativeAssets({
-				semantic_role: "STYLE_REFERENCE",
-				status: "ACTIVE",
-				allowed_mode: "I2V",
-			}),
-		])
-			.then(([characters, scenes, styles]) => {
-				setCharacterAssets(characters.items);
-				setSceneContextAssets(scenes.items);
-				setStyleReferenceAssets(styles.items);
-			})
-			.catch(() => {});
-	}, []);
+		let cancelled = false;
+		const run = async () => {
+			setIsRefreshingEligibility(true);
+			const [characterResult, sceneResult, styleResult] =
+				await fetchIngredientEligibilityAudits(selectedRecipeId);
+			if (cancelled) return;
+			if (characterResult.status === "fulfilled") {
+				setCharacterAudit(characterResult.value);
+				setCharacterAssets(characterResult.value.eligible_assets);
+				setCharacterAuditError(null);
+			} else {
+				setCharacterAudit(null);
+				setCharacterAssets([]);
+				setCharacterAuditError(
+					characterResult.reason instanceof Error
+						? characterResult.reason.message
+						: "Unknown audit failure",
+				);
+			}
+			if (sceneResult.status === "fulfilled") {
+				setSceneAudit(sceneResult.value);
+				setSceneContextAssets(sceneResult.value.eligible_assets);
+				setSceneAuditError(null);
+			} else {
+				setSceneAudit(null);
+				setSceneContextAssets([]);
+				setSceneAuditError(
+					sceneResult.reason instanceof Error
+						? sceneResult.reason.message
+						: "Unknown audit failure",
+				);
+			}
+			if (styleResult.status === "fulfilled") {
+				setStyleAudit(styleResult.value);
+				setStyleReferenceAssets(styleResult.value.eligible_assets);
+				setStyleAuditError(null);
+			} else {
+				setStyleAudit(null);
+				setStyleReferenceAssets([]);
+				setStyleAuditError(
+					styleResult.reason instanceof Error
+						? styleResult.reason.message
+						: "Unknown audit failure",
+				);
+			}
+			setIsRefreshingEligibility(false);
+		};
+		void run();
+		return () => {
+			cancelled = true;
+		};
+	}, [selectedRecipeId]);
 
 	useEffect(() => {
 		if (workspacePackage?.mode !== "I2V") return;
@@ -638,6 +856,18 @@ export default function I2VModule({
 								the ingredient set.
 							</div>
 						</div>
+						<div className="flex justify-end">
+							<button
+								type="button"
+								onClick={() => void refreshEligibilityAudits(selectedRecipeId)}
+								disabled={isRefreshingEligibility}
+								className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+							>
+								{isRefreshingEligibility
+									? "Refreshing…"
+									: "Refresh eligibility"}
+							</button>
+						</div>
 						<div className="grid gap-4 md:grid-cols-2">
 							<div className="space-y-2">
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
@@ -649,13 +879,24 @@ export default function I2VModule({
 									onChange={(e) => setSelectedCharacterAssetId(e.target.value)}
 									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
 								>
-									<option value="">Select Character / Creator</option>
+									<option value="">
+										{getIngredientPickerPlaceholder(
+											characterAudit,
+											characterAuditError,
+											"Select Character / Creator",
+										)}
+									</option>
 									{characterAssets.map((asset) => (
 										<option key={asset.asset_id} value={asset.asset_id}>
 											{asset.display_name}
 										</option>
 									))}
 								</select>
+								{renderIngredientAuditCard(
+									"Character / Creator",
+									characterAudit,
+									characterAuditError,
+								)}
 							</div>
 							<div className="space-y-2">
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
@@ -669,13 +910,24 @@ export default function I2VModule({
 									}
 									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
 								>
-									<option value="">Select Scene Context</option>
+									<option value="">
+										{getIngredientPickerPlaceholder(
+											sceneAudit,
+											sceneAuditError,
+											"Select Scene Context",
+										)}
+									</option>
 									{sceneContextAssets.map((asset) => (
 										<option key={asset.asset_id} value={asset.asset_id}>
 											{asset.display_name}
 										</option>
 									))}
 								</select>
+								{renderIngredientAuditCard(
+									"Scene Context",
+									sceneAudit,
+									sceneAuditError,
+								)}
 							</div>
 							<div className="space-y-2">
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
@@ -689,13 +941,24 @@ export default function I2VModule({
 									}
 									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
 								>
-									<option value="">Optional Style / Mood</option>
+									<option value="">
+										{getIngredientPickerPlaceholder(
+											styleAudit,
+											styleAuditError,
+											"Optional Style / Mood",
+										)}
+									</option>
 									{styleReferenceAssets.map((asset) => (
 										<option key={asset.asset_id} value={asset.asset_id}>
 											{asset.display_name}
 										</option>
 									))}
 								</select>
+								{renderIngredientAuditCard(
+									"Style / Mood",
+									styleAudit,
+									styleAuditError,
+								)}
 							</div>
 							<div className="space-y-2">
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">

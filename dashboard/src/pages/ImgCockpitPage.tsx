@@ -945,6 +945,9 @@ export default function ImgCockpitPage() {
 						selectable as <strong>Frames (F2V)</strong> start / end frames via the
 						composite frame picker (validated by the backend F2V resolver);
 						posters (rendered text), archived, and non-approved assets are excluded.
+						Hybrid uses the same F2V frame eligibility, and the operator surfaces
+						now show eligibility counts plus exclusion reasons instead of a blind
+						empty dropdown.
 					</p>
 					<div className="flex gap-2">
 						<a

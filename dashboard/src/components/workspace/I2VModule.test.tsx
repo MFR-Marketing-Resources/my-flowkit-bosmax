@@ -16,15 +16,20 @@ vi.mock("../../api/workspacePackages", () => ({
 	}),
 }));
 vi.mock("../../api/creativeAssets", () => ({
-	fetchCreativeAssets: vi.fn().mockResolvedValue({ items: [] }),
+	fetchCreativeAssetEligibilityAudit: vi.fn(),
 }));
 vi.mock("../../api/assets", () => ({ handleAssetUpload: vi.fn() }));
 
 import I2VModule from "./I2VModule";
+import { fetchCreativeAssetEligibilityAudit } from "../../api/creativeAssets";
 import { createWorkspaceExecutionPackage } from "../../api/workspacePackages";
-import type { WorkspaceExecutionPackage } from "../../types";
+import type {
+	CreativeAssetEligibilityAuditResponse,
+	WorkspaceExecutionPackage,
+} from "../../types";
 
 const mockedCreate = vi.mocked(createWorkspaceExecutionPackage);
+const mockedAudit = vi.mocked(fetchCreativeAssetEligibilityAudit);
 
 function slotAsset(slot: string) {
 	return {
@@ -53,6 +58,30 @@ const pkg = {
 	request_lineage_payload: { asset_fingerprints: [] },
 } as unknown as WorkspaceExecutionPackage;
 
+function audit(
+	overrides: Partial<CreativeAssetEligibilityAuditResponse> = {},
+): CreativeAssetEligibilityAuditResponse {
+	return {
+		surface: "I2V_CHARACTER_PICKER",
+		surface_label: "I2V Character Picker",
+		recipe_id: "PRODUCT_HELD_BY_CHARACTER_IN_SCENE",
+		required_semantic_role: "CHARACTER_REFERENCE",
+		required_allowed_mode: "I2V",
+		required_engine_slots: ["scene"],
+		library_total_count: 0,
+		total_assets_by_semantic_role: {},
+		matching_role_total_count: 0,
+		active_count: 0,
+		approved_count: 0,
+		eligible_count: 0,
+		excluded_count: 0,
+		review_status_counts: {},
+		excluded_by_reason: {},
+		eligible_assets: [],
+		...overrides,
+	};
+}
+
 describe("I2VModule copy-set binding (CRITICAL)", () => {
 	beforeEach(() => {
 		mockedCreate.mockReset();
@@ -60,6 +89,18 @@ describe("I2VModule copy-set binding (CRITICAL)", () => {
 			...pkg,
 			request_lineage_payload: { asset_fingerprints: [] },
 		} as unknown as WorkspaceExecutionPackage);
+		mockedAudit.mockReset();
+		mockedAudit.mockImplementation(async ({ surface }) =>
+			audit({
+				surface,
+				surface_label:
+					surface === "I2V_CHARACTER_PICKER"
+						? "I2V Character Picker"
+						: surface === "I2V_SCENE_PICKER"
+							? "I2V Scene Context Picker"
+							: "I2V Style Picker",
+			}),
+		);
 		vi.stubGlobal(
 			"fetch",
 			vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [] }) }),
@@ -126,5 +167,58 @@ describe("I2VModule copy-set binding (CRITICAL)", () => {
 		const call = mockedCreate.mock.calls[0][0] as Record<string, unknown>;
 		expect(call).toHaveProperty("copy_set_id", null);
 		expect(call).toHaveProperty("copy_fallback_confirmed", true);
+	});
+
+	it("shows eligibility counts for ingredient pickers", async () => {
+		mockedAudit.mockImplementation(async ({ surface }) =>
+			audit({
+				surface,
+				library_total_count: 5,
+				matching_role_total_count: 2,
+				eligible_count: 1,
+				excluded_count: 4,
+				review_status_counts: { PENDING_REVIEW: 1 },
+				excluded_by_reason: {
+					NOT_APPROVED_FOR_REUSE: 1,
+					ENGINE_SLOT_NOT_ALLOWED: 1,
+				},
+			}),
+		);
+
+		render(
+			<I2VModule
+				onExecute={vi.fn()}
+				isExecuting={false}
+				workspacePackage={pkg}
+				onWorkspacePackageUpdated={vi.fn()}
+				videoModels={[{ key: "nano-banana", label: "Nano Banana" } as never]}
+				selectedCopySetId="cs-approved-1"
+			/>,
+		);
+
+		expect(
+			await screen.findAllByText(
+				"Library has 5 assets; 1 eligible for this surface; 4 excluded.",
+			),
+		).toHaveLength(3);
+	});
+
+	it("shows visible API fetch failure instead of silent empty ingredient selectors", async () => {
+		mockedAudit.mockRejectedValue(new Error("API 500: audit failed"));
+
+		render(
+			<I2VModule
+				onExecute={vi.fn()}
+				isExecuting={false}
+				workspacePackage={pkg}
+				onWorkspacePackageUpdated={vi.fn()}
+				videoModels={[{ key: "nano-banana", label: "Nano Banana" } as never]}
+				selectedCopySetId="cs-approved-1"
+			/>,
+		);
+
+		expect(
+			await screen.findAllByText(/API fetch failed: API 500: audit failed/i),
+		).toHaveLength(3);
 	});
 });

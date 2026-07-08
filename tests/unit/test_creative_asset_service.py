@@ -181,3 +181,134 @@ async def test_validate_selectable_asset_blocks_archived_and_semantic_mismatch(m
     assert result.valid is False
     assert "ASSET_ARCHIVED" in result.blockers
     assert "SEMANTIC_ROLE_MISMATCH" in result.blockers
+
+
+@pytest.mark.asyncio
+async def test_validate_selectable_asset_blocks_missing_source(monkeypatch):
+    async def fake_get(asset_id: str):
+        return creative_asset_service.CreativeAssetRecord(
+            asset_id=asset_id,
+            semantic_role="COMPOSITE_FRAME_REFERENCE",
+            display_name="Composite A",
+            description=None,
+            source_type="UPLOAD",
+            storage_kind="LOCAL_FILE",
+            preview_url=None,
+            download_url=None,
+            media_id=None,
+            local_file_path=None,
+            remote_source_url=None,
+            product_id=None,
+            category=None,
+            silo=None,
+            product_type=None,
+            allowed_modes=["F2V"],
+            engine_slot_eligibility=["start_frame"],
+            mode_a_metadata_handoff=None,
+            visual_dna_summary=None,
+            character_dna=None,
+            scene_context_dna=None,
+            style_mood_dna=None,
+            source_prompt_fingerprint=None,
+            source_workspace_execution_package_id=None,
+            source_prompt_package_snapshot_id=None,
+            contains_rendered_text=False,
+            approved_for_video_support=False,
+            approved_for_poster=False,
+            review_status="APPROVED",
+            status="ACTIVE",
+            created_at="2026-05-18T00:00:00Z",
+            updated_at="2026-05-18T00:00:00Z",
+        )
+
+    monkeypatch.setattr(creative_asset_service, "get_creative_asset", fake_get)
+
+    result = await creative_asset_service.validate_selectable_asset(
+        "ca_frame",
+        semantic_role="COMPOSITE_FRAME_REFERENCE",
+        allowed_mode="F2V",
+        engine_slot="start_frame",
+        require_approved=True,
+    )
+
+    assert result.valid is False
+    assert "PREVIEW_OR_FILE_MISSING" in result.blockers
+
+
+@pytest.mark.asyncio
+async def test_f2v_eligibility_audit_counts_exclusions(monkeypatch):
+    def build_asset(
+        asset_id: str,
+        *,
+        semantic_role: str = "COMPOSITE_FRAME_REFERENCE",
+        allowed_modes: list[str] | None = None,
+        engine_slots: list[str] | None = None,
+        review_status: str = "APPROVED",
+        status: str = "ACTIVE",
+        contains_rendered_text: bool = False,
+        approved_for_video_support: bool = False,
+        preview_url: str | None = "https://example.com/preview.png",
+    ):
+        return creative_asset_service.CreativeAssetRecord(
+            asset_id=asset_id,
+            semantic_role=semantic_role,  # type: ignore[arg-type]
+            display_name=asset_id,
+            description=None,
+            source_type="UPLOAD",
+            storage_kind="LOCAL_FILE",
+            preview_url=preview_url,
+            download_url=preview_url,
+            media_id=None,
+            local_file_path=None,
+            remote_source_url=None,
+            product_id=None,
+            category=None,
+            silo=None,
+            product_type=None,
+            allowed_modes=allowed_modes or ["F2V"],  # type: ignore[arg-type]
+            engine_slot_eligibility=engine_slots or ["start_frame"],  # type: ignore[arg-type]
+            mode_a_metadata_handoff=None,
+            visual_dna_summary=None,
+            character_dna=None,
+            scene_context_dna=None,
+            style_mood_dna=None,
+            source_prompt_fingerprint=None,
+            source_workspace_execution_package_id=None,
+            source_prompt_package_snapshot_id=None,
+            contains_rendered_text=contains_rendered_text,
+            approved_for_video_support=approved_for_video_support,
+            approved_for_poster=False,
+            review_status=review_status,
+            status=status,  # type: ignore[arg-type]
+            created_at="2026-05-18T00:00:00Z",
+            updated_at="2026-05-18T00:00:00Z",
+        )
+
+    async def fake_list(*, limit: int = 1000, **kwargs):
+        return [
+            build_asset("eligible"),
+            build_asset("pending", review_status="PENDING_REVIEW"),
+            build_asset("poster", contains_rendered_text=True),
+            build_asset("wrong_mode", allowed_modes=["IMG"]),
+            build_asset("wrong_slot", engine_slots=["end_frame"]),
+            build_asset("missing_source", preview_url=None),
+            build_asset("style_asset", semantic_role="STYLE_REFERENCE"),
+        ]
+
+    monkeypatch.setattr(creative_asset_service, "list_creative_assets", fake_list)
+
+    audit = await creative_asset_service.get_creative_asset_eligibility_audit(
+        surface="F2V_START_FRAME_PICKER",
+    )
+
+    assert audit.library_total_count == 7
+    assert audit.matching_role_total_count == 6
+    assert audit.eligible_count == 1
+    assert audit.review_status_counts["PENDING_REVIEW"] == 1
+    assert audit.excluded_by_reason["NOT_APPROVED_FOR_REUSE"] == 1
+    assert audit.excluded_by_reason["RENDERED_TEXT_NOT_ALLOWED_FOR_VIDEO_FRAME"] == 1
+    assert audit.excluded_by_reason["MODE_NOT_ALLOWED"] == 1
+    assert audit.excluded_by_reason["ENGINE_SLOT_NOT_ALLOWED"] == 1
+    assert audit.excluded_by_reason["PREVIEW_OR_FILE_MISSING"] == 1
+    assert audit.excluded_by_reason["SEMANTIC_ROLE_MISMATCH"] == 1
+    assert [asset.asset_id for asset in audit.eligible_assets] == ["eligible"]

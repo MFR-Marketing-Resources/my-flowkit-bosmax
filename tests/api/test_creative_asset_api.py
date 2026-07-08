@@ -99,6 +99,51 @@ def test_creative_asset_api_archives_asset(monkeypatch):
     assert response.json()["status"] == "ARCHIVED"
 
 
+def test_creative_asset_api_returns_eligibility_audit(monkeypatch):
+    async def fake_audit(**kwargs):
+        return {
+            "surface": kwargs["surface"],
+            "surface_label": "F2V Start Frame Picker",
+            "recipe_id": None,
+            "required_semantic_role": "COMPOSITE_FRAME_REFERENCE",
+            "required_allowed_mode": "F2V",
+            "required_engine_slots": ["start_frame"],
+            "library_total_count": 4,
+            "total_assets_by_semantic_role": {
+                "COMPOSITE_FRAME_REFERENCE": 3,
+                "STYLE_REFERENCE": 1,
+            },
+            "matching_role_total_count": 3,
+            "active_count": 3,
+            "approved_count": 1,
+            "eligible_count": 1,
+            "excluded_count": 3,
+            "review_status_counts": {"APPROVED": 1, "PENDING_REVIEW": 1},
+            "excluded_by_reason": {
+                "NOT_APPROVED_FOR_REUSE": 1,
+                "SEMANTIC_ROLE_MISMATCH": 1,
+                "ENGINE_SLOT_NOT_ALLOWED": 1,
+            },
+            "eligible_assets": [],
+        }
+
+    monkeypatch.setattr(
+        "agent.api.creative_assets.get_creative_asset_eligibility_audit",
+        fake_audit,
+    )
+
+    client = TestClient(_build_app())
+    response = client.get(
+        "/api/creative-assets/eligibility-audit?surface=F2V_START_FRAME_PICKER",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["surface"] == "F2V_START_FRAME_PICKER"
+    assert payload["eligible_count"] == 1
+    assert payload["excluded_by_reason"]["NOT_APPROVED_FOR_REUSE"] == 1
+
+
 def test_creative_asset_post_defaults_to_pending_review(monkeypatch):
     """The direct /creative-assets POST route must default review_status to
     PENDING_REVIEW when omitted — it must NOT silently create APPROVED assets."""

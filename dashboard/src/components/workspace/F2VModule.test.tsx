@@ -1,21 +1,26 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // F2V pulls creative assets + frame sources on mount / in handlers; stub them and
 // the asset-slot child (its preview state would otherwise flap in jsdom and block
 // SEND for reasons unrelated to the copy gate under test).
 vi.mock("../../api/creativeAssets", () => ({
-	fetchCreativeAssets: vi.fn().mockResolvedValue({ items: [] }),
+	fetchCreativeAssetEligibilityAudit: vi.fn(),
 }));
 vi.mock("../../api/imgFactory", () => ({ resolveF2vFrameSources: vi.fn() }));
 vi.mock("../../api/assets", () => ({ handleAssetUpload: vi.fn() }));
 vi.mock("./WorkspaceImageAssetSlot", () => ({ default: () => null }));
 
 import F2VModule from "./F2VModule";
-import type { WorkspaceExecutionPackage } from "../../types";
+import { fetchCreativeAssetEligibilityAudit } from "../../api/creativeAssets";
+import type {
+	CreativeAssetEligibilityAuditResponse,
+	WorkspaceExecutionPackage,
+} from "../../types";
 
 const MODELS = [{ key: "veo", label: "Veo" } as never];
+const mockedAudit = vi.mocked(fetchCreativeAssetEligibilityAudit);
 
 function startFrame() {
 	return {
@@ -29,6 +34,30 @@ function startFrame() {
 		asset_fingerprint: "f-start",
 		asset_source: "PACKAGE",
 		preview_renderable_status: "RENDERABLE",
+	};
+}
+
+function audit(
+	overrides: Partial<CreativeAssetEligibilityAuditResponse> = {},
+): CreativeAssetEligibilityAuditResponse {
+	return {
+		surface: "F2V_START_FRAME_PICKER",
+		surface_label: "F2V Start Frame Picker",
+		recipe_id: null,
+		required_semantic_role: "COMPOSITE_FRAME_REFERENCE",
+		required_allowed_mode: "F2V",
+		required_engine_slots: ["start_frame"],
+		library_total_count: 0,
+		total_assets_by_semantic_role: {},
+		matching_role_total_count: 0,
+		active_count: 0,
+		approved_count: 0,
+		eligible_count: 0,
+		excluded_count: 0,
+		review_status_counts: {},
+		excluded_by_reason: {},
+		eligible_assets: [],
+		...overrides,
 	};
 }
 
@@ -54,6 +83,11 @@ function pkg(bound: boolean): WorkspaceExecutionPackage {
 }
 
 describe("F2VModule copy-binding gate (Phase B enforcement; covers HYBRID)", () => {
+	beforeEach(() => {
+		mockedAudit.mockReset();
+		mockedAudit.mockResolvedValue(audit());
+	});
+
 	afterEach(() => cleanup());
 
 	it("[gate] not copy-bound → SEND blocked until explicit fallback", async () => {
@@ -106,5 +140,91 @@ describe("F2VModule copy-binding gate (Phase B enforcement; covers HYBRID)", () 
 			copy_set_id: "cs1",
 			copy_fallback_confirmed: false,
 		});
+	});
+
+	it("shows HYBRID eligibility label and audited counts", async () => {
+		mockedAudit.mockImplementation(async ({ surface }) =>
+			audit({
+				surface,
+				library_total_count: 3,
+				matching_role_total_count: 2,
+				eligible_count: 1,
+				excluded_count: 2,
+				review_status_counts: { PENDING_REVIEW: 1 },
+				excluded_by_reason: {
+					NOT_APPROVED_FOR_REUSE: 1,
+					RENDERED_TEXT_NOT_ALLOWED_FOR_VIDEO_FRAME: 1,
+				},
+				eligible_assets: [
+					{
+						asset_id: "ca_frame",
+						display_name: "Composite A",
+						semantic_role: "COMPOSITE_FRAME_REFERENCE",
+						description: null,
+						source_type: "UPLOAD",
+						storage_kind: "LOCAL_FILE",
+						preview_url: "/preview",
+						download_url: "/download",
+						media_id: null,
+						local_file_path: "C:/tmp/a.png",
+						remote_source_url: null,
+						product_id: null,
+						category: null,
+						silo: null,
+						product_type: null,
+						allowed_modes: ["F2V"],
+						engine_slot_eligibility: ["start_frame"],
+						visual_dna_summary: null,
+						character_dna: null,
+						scene_context_dna: null,
+						style_mood_dna: null,
+						source_prompt_fingerprint: null,
+						source_workspace_execution_package_id: null,
+						source_prompt_package_snapshot_id: null,
+						review_status: "APPROVED",
+						status: "ACTIVE",
+						created_at: "2026-07-09T00:00:00Z",
+						updated_at: "2026-07-09T00:00:00Z",
+					},
+				],
+			}),
+		);
+
+		render(
+			<F2VModule
+				onExecute={vi.fn()}
+				isExecuting={false}
+				workspacePackage={pkg(true)}
+				videoModels={MODELS}
+				copyReady={true}
+				surfaceMode="HYBRID"
+			/>,
+		);
+
+		expect(
+			await screen.findByText("Hybrid uses F2V frame eligibility."),
+		).toBeInTheDocument();
+		expect(
+			screen.getAllByText("Library has 3 assets; 1 eligible for this surface; 2 excluded.")
+				.length,
+		).toBeGreaterThan(0);
+	});
+
+	it("shows visible API fetch failure instead of a silent empty picker", async () => {
+		mockedAudit.mockRejectedValue(new Error("API 500: audit failed"));
+
+		render(
+			<F2VModule
+				onExecute={vi.fn()}
+				isExecuting={false}
+				workspacePackage={pkg(true)}
+				videoModels={MODELS}
+				copyReady={true}
+			/>,
+		);
+
+		expect(
+			await screen.findAllByText(/API fetch failed: API 500: audit failed/i),
+		).toHaveLength(2);
 	});
 });

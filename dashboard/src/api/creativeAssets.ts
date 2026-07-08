@@ -1,5 +1,7 @@
 import type {
 	CreativeAsset,
+	CreativeAssetEligibilityAuditResponse,
+	CreativeAssetEligibilityAuditSurface,
 	CreativeAssetEngineSlot,
 	CreativeAssetListResponse,
 	CreativeAssetSemanticRole,
@@ -52,6 +54,20 @@ export async function fetchCreativeAssets(
 	params.set("limit", String(input.limit ?? 200));
 	return fetchAPI<CreativeAssetListResponse>(
 		`/api/creative-assets?${params.toString()}`,
+	);
+}
+
+export async function fetchCreativeAssetEligibilityAudit(input: {
+	surface: CreativeAssetEligibilityAuditSurface;
+	recipe_id?: string;
+	limit?: number;
+}): Promise<CreativeAssetEligibilityAuditResponse> {
+	const params = new URLSearchParams();
+	params.set("surface", input.surface);
+	if (input.recipe_id) params.set("recipe_id", input.recipe_id);
+	params.set("limit", String(input.limit ?? 1000));
+	return fetchAPI<CreativeAssetEligibilityAuditResponse>(
+		`/api/creative-assets/eligibility-audit?${params.toString()}`,
 	);
 }
 

@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 
 from agent.models.creative_asset import (
     CreativeAssetCreateRequest,
+    CreativeAssetEligibilityAuditResponse,
     CreativeAssetListResponse,
     CreativeAssetRecord,
     CreativeAssetUpdateRequest,
@@ -12,6 +13,7 @@ from agent.models.creative_asset import (
 from agent.services.creative_asset_service import (
     archive_creative_asset,
     create_creative_asset,
+    get_creative_asset_eligibility_audit,
     get_creative_asset,
     get_creative_asset_file_path,
     list_creative_assets,
@@ -43,6 +45,22 @@ async def get_creative_assets(
         limit=limit,
     )
     return CreativeAssetListResponse(items=items, total=len(items))
+
+
+@router.get("/eligibility-audit", response_model=CreativeAssetEligibilityAuditResponse)
+async def get_creative_asset_audit(
+    surface: str = Query(...),
+    recipe_id: str | None = Query(default=None),
+    limit: int = Query(default=1000, ge=1, le=5000),
+) -> CreativeAssetEligibilityAuditResponse:
+    try:
+        return await get_creative_asset_eligibility_audit(
+            surface=surface,  # type: ignore[arg-type]
+            recipe_id=recipe_id,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("", response_model=CreativeAssetRecord)
