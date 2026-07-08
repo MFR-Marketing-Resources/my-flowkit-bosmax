@@ -335,7 +335,6 @@ describe("PosterBuilderPage", () => {
 			expect(mockedDraftToPrompt).toHaveBeenCalledWith(
 				"p1",
 				expect.objectContaining({
-					angle: "Trust",
 					hook: "Safe hook",
 					subhook: "Sub",
 					usp_1: "a",
@@ -450,7 +449,7 @@ describe("PosterBuilderPage", () => {
 		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
 		renderPage();
 		await waitForReadinessUi();
-		for (const key of ["angle", "hook", "subhook", "usp_1", "usp_2", "usp_3", "cta"]) {
+		for (const key of ["hook", "subhook", "usp_1", "usp_2", "usp_3", "cta"]) {
 			expect(await screen.findByTestId(`copy-field-${key}`)).toBeInTheDocument();
 		}
 	});

@@ -76,7 +76,8 @@ export interface PosterBuilderDraft {
 	frame_ratio: string;
 	language: string;
 	text_density: string;
-	angle: string;
+	// Poster copy (short — see POSTER_COPY_LIMITS). Angle is a STRATEGY concept, not a
+	// poster text field, so it is intentionally NOT part of the poster copy draft.
 	hook: string;
 	subhook: string;
 	usp_1: string;
@@ -100,7 +101,6 @@ export const EMPTY_POSTER_DRAFT: PosterBuilderDraft = {
 	frame_ratio: "9:16",
 	language: "ms",
 	text_density: "medium",
-	angle: "",
 	hook: "",
 	subhook: "",
 	usp_1: "",

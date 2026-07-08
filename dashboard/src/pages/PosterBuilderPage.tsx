@@ -25,6 +25,7 @@ import {
 	isGenerateButtonDisabled,
 	isPromptDraftGenerationEnabled,
 	missingPosterCopyFields,
+	overLimitPosterCopyFields,
 	resolveBuilderShellMode,
 	resolveGenerateButtonLabel,
 	resolvePromptDraftButtonLabel,
@@ -238,6 +239,14 @@ export default function PosterBuilderPage() {
 			setPromptPackage(null);
 			setPromptError(
 				`Isi dulu medan copy wajib: ${missingCopy.join(", ")}. Taip di bahagian Copy draft, atau guna satu cadangan AI (Apply suggestion).`,
+			);
+			return;
+		}
+		const overLimit = overLimitPosterCopyFields(activeDraft);
+		if (overLimit.length > 0) {
+			setPromptPackage(null);
+			setPromptError(
+				`Copy terlalu panjang untuk poster: ${overLimit.join(", ")}. Pendekkan ayat supaya muat pada poster.`,
 			);
 			return;
 		}

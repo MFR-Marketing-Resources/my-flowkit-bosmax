@@ -22,10 +22,21 @@ CRITICAL_FIELDS: tuple[str, ...] = (
     "visual_route",
     "frame_ratio",
     "language",
-    "angle",
     "hook",
     "cta",
 )
+
+# Poster copy is SHORT — a headline + a few bullets + a CTA that must FIT the poster,
+# not long video-style sentences. Max characters per copy field (SSOT; the dashboard
+# mirrors these limits in dashboard/src/poster/posterBuilderUi.ts — keep them in sync).
+POSTER_COPY_LIMITS: dict[str, int] = {
+    "hook": 48,
+    "subhook": 72,
+    "usp_1": 36,
+    "usp_2": 36,
+    "usp_3": 36,
+    "cta": 24,
+}
 
 UNSAFE_CLAIM_TERMS: tuple[str, ...] = (
     "cure",
@@ -77,7 +88,6 @@ def _request_as_dict(req: PosterPromptDraftRequest) -> dict[str, str]:
         "frame_ratio": _norm(req.frame_ratio),
         "language": _norm(req.language),
         "text_density": _norm(req.text_density),
-        "angle": _norm(req.angle),
         "hook": _norm(req.hook),
         "subhook": _norm(req.subhook),
         "usp_1": _norm(req.usp_1),
@@ -91,6 +101,18 @@ def _request_as_dict(req: PosterPromptDraftRequest) -> dict[str, str]:
 def _validate_critical_fields(fields: dict[str, str]) -> list[str]:
     missing = [name for name in CRITICAL_FIELDS if not fields.get(name)]
     return [f"Missing required field: {name}" for name in missing]
+
+
+def _validate_copy_lengths(fields: dict[str, str]) -> list[str]:
+    """Poster copy must fit the poster — reject over-length copy so nothing overflows."""
+    errors: list[str] = []
+    for name, limit in POSTER_COPY_LIMITS.items():
+        length = len(fields.get(name) or "")
+        if length > limit:
+            errors.append(
+                f"{name} too long for a poster: {length}/{limit} chars — keep it short"
+            )
+    return errors
 
 
 def _collect_copy_text(fields: dict[str, str]) -> str:
@@ -194,7 +216,6 @@ def _assemble_poster_prompt(
         f"Frame ratio: {fields['frame_ratio']}. Camera: commercial product poster framing, slight angle acceptable.",
         "Lighting: soft studio key with gentle fill; brand-safe, not clinical.",
         "=== COPY HIERARCHY ===",
-        f"Angle: {fields['angle']}",
         f"Hook: {fields['hook']}",
         f"Subhook: {fields['subhook']}",
         "USP:",
@@ -275,6 +296,7 @@ class PosterPromptDraftService:
             )
 
         field_errors = _validate_critical_fields(fields)
+        field_errors.extend(_validate_copy_lengths(fields))
         if field_errors:
             raise PosterPromptDraftValidationError(
                 "Poster prompt draft validation failed",

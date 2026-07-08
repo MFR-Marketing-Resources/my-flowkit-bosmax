@@ -1,7 +1,11 @@
 import type { PosterBuilderSettings } from "../../api/posterBuilderSettings";
 import type { PosterBuilderDraft } from "../../types/posterReadiness";
 import type { PosterCopyKit } from "../../types/posterCopyRecommendations";
-import { missingPosterCopyFields } from "../../poster/posterBuilderUi";
+import {
+	POSTER_COPY_LIMITS,
+	missingPosterCopyFields,
+	overLimitPosterCopyFields,
+} from "../../poster/posterBuilderUi";
 
 function SourceBadge({ source, status }: { source: string; status: string }) {
 	return (
@@ -11,14 +15,17 @@ function SourceBadge({ source, status }: { source: string; status: string }) {
 	);
 }
 
-const COPY_FIELDS: { key: keyof PosterBuilderDraft; label: string }[] = [
-	{ key: "angle", label: "Angle" },
-	{ key: "hook", label: "Hook" },
-	{ key: "subhook", label: "Subhook" },
-	{ key: "usp_1", label: "USP 1" },
-	{ key: "usp_2", label: "USP 2" },
-	{ key: "usp_3", label: "USP 3" },
-	{ key: "cta", label: "CTA" },
+const COPY_FIELDS: {
+	key: keyof typeof POSTER_COPY_LIMITS;
+	label: string;
+	maxLength: number;
+}[] = [
+	{ key: "hook", label: "Hook", maxLength: POSTER_COPY_LIMITS.hook },
+	{ key: "subhook", label: "Subhook", maxLength: POSTER_COPY_LIMITS.subhook },
+	{ key: "usp_1", label: "USP 1", maxLength: POSTER_COPY_LIMITS.usp_1 },
+	{ key: "usp_2", label: "USP 2", maxLength: POSTER_COPY_LIMITS.usp_2 },
+	{ key: "usp_3", label: "USP 3", maxLength: POSTER_COPY_LIMITS.usp_3 },
+	{ key: "cta", label: "CTA", maxLength: POSTER_COPY_LIMITS.cta },
 ];
 
 export default function PosterAutoModePanel({
@@ -80,6 +87,7 @@ export default function PosterAutoModePanel({
 
 	const aiReady = settings.ai_provider.configured;
 	const missingCopy = missingPosterCopyFields(draft);
+	const overLimit = overLimitPosterCopyFields(draft);
 
 	return (
 		<section
@@ -126,27 +134,42 @@ export default function PosterAutoModePanel({
 					prompt package.
 				</p>
 				<div className="mt-3 grid gap-3 md:grid-cols-2">
-					{COPY_FIELDS.map(({ key, label }) => (
-						<label key={key}>
-							<span className="text-[10px] font-bold uppercase text-slate-500">{label}</span>
-							<input
-								data-testid={`copy-field-${key}`}
-								className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200"
-								value={String(draft[key] ?? "")}
-								onChange={(e) =>
-									onDraftChange({
-										...draft,
-										[key]: e.target.value,
-										// A manual copy edit invalidates any approved binding: the copy is
-										// now operator-authored (non-approved) and re-enters governance.
-										copy_source: "manual",
-										copy_set_id: "",
-										copy_fallback_confirmed: false,
-									})
-								}
-							/>
-						</label>
-					))}
+					{COPY_FIELDS.map(({ key, label, maxLength }) => {
+						const len = String(draft[key] ?? "").trim().length;
+						const over = len > maxLength;
+						return (
+							<label key={key}>
+								<div className="flex items-center justify-between">
+									<span className="text-[10px] font-bold uppercase text-slate-500">
+										{label}
+									</span>
+									<span
+										data-testid={`copy-count-${key}`}
+										className={`text-[9px] ${over ? "text-rose-300" : "text-slate-500"}`}
+									>
+										{len}/{maxLength}
+									</span>
+								</div>
+								<input
+									data-testid={`copy-field-${key}`}
+									maxLength={maxLength}
+									className={`mt-1 w-full rounded-lg border bg-slate-900 px-3 py-2 text-sm text-slate-200 ${over ? "border-rose-500/60" : "border-slate-800"}`}
+									value={String(draft[key] ?? "")}
+									onChange={(e) =>
+										onDraftChange({
+											...draft,
+											[key]: e.target.value,
+											// A manual copy edit invalidates any approved binding: the copy is
+											// now operator-authored (non-approved) and re-enters governance.
+											copy_source: "manual",
+											copy_set_id: "",
+											copy_fallback_confirmed: false,
+										})
+									}
+								/>
+							</label>
+						);
+					})}
 				</div>
 				{draft.copy_source === "APPROVED_COPY_SET" ? (
 					<p
@@ -183,11 +206,24 @@ export default function PosterAutoModePanel({
 						AI di bawah untuk mengisinya.
 					</p>
 				) : null}
+				{promptDraftEnabled && overLimit.length > 0 ? (
+					<p
+						data-testid="poster-copy-overlimit-hint"
+						className="mt-3 text-[11px] text-rose-300"
+					>
+						Terlalu panjang untuk poster: <strong>{overLimit.join(", ")}</strong>.
+						Pendekkan ayat supaya muat — copy poster mesti ringkas, bukan panjang
+						macam copywriting video.
+					</p>
+				) : null}
 				<button
 					type="button"
 					data-testid="auto-generate-prompt-draft"
 					disabled={
-						!promptDraftEnabled || promptDraftLoading || missingCopy.length > 0
+						!promptDraftEnabled ||
+						promptDraftLoading ||
+						missingCopy.length > 0 ||
+						overLimit.length > 0
 					}
 					onClick={onGeneratePromptDraft}
 					className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40"
