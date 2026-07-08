@@ -147,6 +147,10 @@ vi.mock("../api/posterRecipes", () => ({
 	fetchPosterRecipes: vi.fn().mockResolvedValue(RECIPE_FIXTURES),
 }));
 
+vi.mock("../api/posterCopyQuality", () => ({
+	fetchPosterCopyQuality: vi.fn(),
+}));
+
 vi.mock("../api/imageGenSettings", () => ({
 	useImageGenSettings: () => ({
 		models: [
@@ -226,6 +230,7 @@ import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations
 import { draftToPromptRequest } from "../api/posterPromptDraft";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
 import { fetchProductCatalog } from "../api/products";
+import { fetchPosterCopyQuality } from "../api/posterCopyQuality";
 
 const mockedFetch = vi.mocked(fetchPosterReadiness);
 const mockedPromptDraft = vi.mocked(createPosterPromptDraft);
@@ -234,6 +239,7 @@ const mockedDraftToPrompt = vi.mocked(draftToPromptRequest);
 const mockedStartGen = vi.mocked(startImgGeneration);
 const mockedPollGen = vi.mocked(pollImgGenerationJob);
 const mockedCatalog = vi.mocked(fetchProductCatalog);
+const mockedQuality = vi.mocked(fetchPosterCopyQuality);
 
 const sampleKit = {
 	kit_id: "k1",
@@ -283,6 +289,15 @@ describe("PosterBuilderPage", () => {
 		mockedRecs.mockReset();
 		mockedStartGen.mockReset();
 		mockedPollGen.mockReset();
+		mockedQuality.mockReset();
+		// Default: a clean expert-quality report so tests that reach the generate
+		// gate can pass the mandatory check unless they override it.
+		mockedQuality.mockResolvedValue({
+			ok: true,
+			block_count: 0,
+			warn_count: 0,
+			findings: [],
+		});
 		mockedRecs.mockResolvedValue({
 			product_id: "p1",
 			poster_status: "POSTER_READY",
@@ -872,6 +887,11 @@ describe("PosterBuilderPage", () => {
 		fireEvent.change(screen.getByTestId("slot-field-cta"), {
 			target: { value: "Dapatkan" },
 		});
+		// Mandatory expert-quality gate must pass before generation is allowed.
+		(await screen.findByTestId("poster-quality-check")).click();
+		await waitFor(() =>
+			expect(screen.getByTestId("poster-quality-clean")).toBeInTheDocument(),
+		);
 		const genBtn = await screen.findByTestId("recipe-generate-prompt-draft");
 		await waitFor(() => expect(genBtn).not.toBeDisabled());
 		genBtn.click();
@@ -889,5 +909,121 @@ describe("PosterBuilderPage", () => {
 		expect(await screen.findByTestId("poster-spec-preview")).toBeInTheDocument();
 		expect(screen.getByTestId("poster-overlay-zones")).toBeInTheDocument();
 		expect(screen.getByTestId("poster-overlay-disclaimer")).toBeInTheDocument();
+	});
+
+	it("poster copy quality check surfaces findings and BLOCK gates generation", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedQuality.mockResolvedValue({
+			ok: false,
+			block_count: 1,
+			warn_count: 1,
+			findings: [
+				{
+					code: "MEDICAL_RELIEF_CLAIM",
+					severity: "BLOCK",
+					field: "overall",
+					message: "bahasa perubatan/simptom.",
+				},
+				{
+					code: "VIDEO_SCRIPT_STYLE",
+					severity: "WARN",
+					field: "overall",
+					message: "gaya skrip video.",
+				},
+			],
+		});
+		renderPage();
+		await waitForReadinessUi();
+		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
+		// Fill required slots so the ONLY reason to disable generate is the quality BLOCK.
+		fireEvent.change(await screen.findByTestId("slot-field-hook"), {
+			target: { value: "Tajuk pendek" },
+		});
+		fireEvent.change(screen.getByTestId("slot-field-cta"), {
+			target: { value: "Dapatkan" },
+		});
+		// The expert quality panel is part of the recipe flow.
+		expect(await screen.findByTestId("poster-copy-quality-panel")).toBeInTheDocument();
+		(await screen.findByTestId("poster-quality-check")).click();
+		// Findings render (a BLOCK and a WARN).
+		await waitFor(() =>
+			expect(screen.getByTestId("poster-quality-block")).toBeInTheDocument(),
+		);
+		expect(screen.getByTestId("poster-quality-warn")).toBeInTheDocument();
+		// BLOCK gates the recipe generate button + shows the block note.
+		expect(screen.getByTestId("poster-quality-block-note")).toBeInTheDocument();
+		expect(screen.getByTestId("recipe-generate-prompt-draft")).toBeDisabled();
+	});
+
+	it("generation is blocked until the expert quality check runs (mandatory gate)", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
+		// Required copy is present AND within limits …
+		fireEvent.change(await screen.findByTestId("slot-field-hook"), {
+			target: { value: "Tajuk pendek" },
+		});
+		fireEvent.change(screen.getByTestId("slot-field-cta"), {
+			target: { value: "Dapatkan" },
+		});
+		// … but the quality guard has NOT run yet, so generation stays disabled
+		// and a recheck note explains why (no unchecked copy may generate).
+		expect(screen.getByTestId("recipe-generate-prompt-draft")).toBeDisabled();
+		expect(screen.getByTestId("poster-quality-needscheck-note")).toBeInTheDocument();
+	});
+
+	it("a clean expert quality check enables generation", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		// beforeEach default returns a clean (ok, no-findings) report.
+		renderPage();
+		await waitForReadinessUi();
+		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
+		fireEvent.change(await screen.findByTestId("slot-field-hook"), {
+			target: { value: "Tajuk pendek" },
+		});
+		fireEvent.change(screen.getByTestId("slot-field-cta"), {
+			target: { value: "Dapatkan" },
+		});
+		(await screen.findByTestId("poster-quality-check")).click();
+		await waitFor(() =>
+			expect(screen.getByTestId("poster-quality-clean")).toBeInTheDocument(),
+		);
+		// Required copy present + within limits + quality clean → generation enabled.
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("recipe-generate-prompt-draft"),
+			).not.toBeDisabled(),
+		);
+	});
+
+	it("editing copy after a clean check resets the quality gate (needs recheck)", async () => {
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		renderPage();
+		await waitForReadinessUi();
+		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
+		fireEvent.change(await screen.findByTestId("slot-field-hook"), {
+			target: { value: "Tajuk pendek" },
+		});
+		fireEvent.change(screen.getByTestId("slot-field-cta"), {
+			target: { value: "Dapatkan" },
+		});
+		(await screen.findByTestId("poster-quality-check")).click();
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("recipe-generate-prompt-draft"),
+			).not.toBeDisabled(),
+		);
+		// Any copy change invalidates the prior clean report → gate re-arms.
+		fireEvent.change(screen.getByTestId("slot-field-hook"), {
+			target: { value: "Tajuk pendek yang diubah" },
+		});
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("recipe-generate-prompt-draft"),
+			).toBeDisabled(),
+		);
+		expect(screen.getByTestId("poster-quality-stale")).toBeInTheDocument();
+		expect(screen.getByTestId("poster-quality-needscheck-note")).toBeInTheDocument();
 	});
 });

@@ -13,7 +13,12 @@ from agent.models.poster_prompt_draft import (
     PromptPackageStatus,
 )
 from agent.models.poster_readiness import PosterReadinessStatus
+from agent.models.poster_copy_quality import PosterCopyQualityRequest
 from agent.services import poster_recipe_service
+from agent.services.poster_copy_quality_service import (
+    evaluate_poster_copy,
+    map_legacy_to_poster,
+)
 from agent.services.poster_prompt_composer import compose_recipe_poster
 from agent.services.poster_readiness_service import PosterReadinessService
 from agent.services.product_truth_service import ProductTruthService
@@ -308,6 +313,38 @@ class PosterPromptDraftService:
         restricted_mode = readiness.poster_status == PosterReadinessStatus.POSTER_READY_RESTRICTED
         _reject_unsafe_operator_copy(fields, readiness.poster_status)
 
+        # Poster copy quality guard (expert e-commerce rules). Legacy video-style
+        # fields are mapped to poster-native copy; BLOCK findings stop the draft,
+        # WARN findings are surfaced. archetype/max_chips come from the recipe.
+        _q_archetype = ""
+        _q_max_chips = 3
+        _q_recipe_id = _norm(request.poster_recipe_id)
+        if _q_recipe_id:
+            _q_recipe = poster_recipe_service.get_recipe(_q_recipe_id)
+            if _q_recipe is not None:
+                _q_archetype = _q_recipe.archetype
+                _q_max_chips = _q_recipe.max_chips or 3
+        _q_report = evaluate_poster_copy(
+            PosterCopyQualityRequest(
+                archetype=_q_archetype,
+                language=fields["language"],
+                max_chips=_q_max_chips,
+                **map_legacy_to_poster(fields),
+            )
+        )
+        _q_blocks = [
+            f"{x.code}: {x.message}" for x in _q_report.findings if x.severity == "BLOCK"
+        ]
+        if _q_blocks:
+            raise PosterPromptDraftValidationError(
+                "Poster copy quality failed", field_errors=_q_blocks
+            )
+        _q_warnings = [
+            f"POSTER_QUALITY_WARN {x.code}"
+            for x in _q_report.findings
+            if x.severity == "WARN"
+        ]
+
         profile = ProductTruthService.build_computed_profile(product)
         truth_lock = _product_truth_lock(product, profile)
         guardrails = list(RESTRICTED_SAFETY_GUARDRAILS if restricted_mode else [])
@@ -365,7 +402,7 @@ class PosterPromptDraftService:
         # Copy Set is review-only and never silently production-approved. We downgrade
         # only when the caller explicitly declares a non-approved source and has not
         # confirmed fallback — legacy callers that omit copy_source keep prior behavior.
-        validation_warnings: list[str] = []
+        validation_warnings: list[str] = list(_q_warnings)
         copy_source = _norm(request.copy_source)
         if (
             copy_source

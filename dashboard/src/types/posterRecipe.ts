@@ -33,6 +33,9 @@ export interface PosterRecipe {
 	zones: PosterZone[];
 	negative_prompt_additions: string[];
 	allowed_text_density: string[];
+	max_chips?: number;
+	safety_posture?: string;
+	main_selling_angles?: string[];
 }
 
 export interface PosterSpec {

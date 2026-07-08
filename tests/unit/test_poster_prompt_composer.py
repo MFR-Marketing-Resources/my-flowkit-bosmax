@@ -67,10 +67,25 @@ def test_compose_recipe_poster_builds_spec_and_overlay():
 
 
 def test_overlay_zone_uses_placeholder_when_unfilled():
-    heritage = poster_recipe_service.get_recipe("heritage_infographic")
+    from agent.models.poster_recipe import PosterZone
+
+    recipe = PosterRecipe(
+        recipe_id="t",
+        archetype="X",
+        label="t",
+        layout_template="l",
+        product_placement="p",
+        background_scene="s",
+        visual_style="v",
+        typography_mood="m",
+        zones=[
+            PosterZone(zone_id="headline", role="HEADLINE", source_field="hook", max_chars=48, max_words=7, placeholder="[H]"),
+            PosterZone(zone_id="footer", role="FOOTER", source_field="", max_chars=40, max_words=6, placeholder="[Barisan warisan]"),
+        ],
+    )
     _, _, overlay = compose_recipe_poster(
-        fields={"hook": "Tajuk", "cta": "Beli", "frame_ratio": "9:16"},
-        recipe=heritage,
+        fields={"hook": "Tajuk", "frame_ratio": "9:16"},
+        recipe=recipe,
         product_truth_lock="LOCK",
         visual_instruction="V",
         text_overlay_instruction="O",
@@ -105,7 +120,8 @@ async def test_recipe_path_uses_composer_not_legacy(monkeypatch):
         svc, "_assemble_poster_prompt", lambda **kw: "LEGACY_SENTINEL_PROMPT"
     )
     result = await PosterPromptDraftService.build_draft(
-        _full_request(poster_recipe_id="product_hero_night_routine")
+        # PRODUCT_HERO allows 2 chips (poster-native density) — supply 2 USPs.
+        _full_request(poster_recipe_id="product_hero_night_routine", usp_3="")
     )
     assert result.poster_prompt != "LEGACY_SENTINEL_PROMPT"
     assert "=== POSTER RECIPE ===" in result.poster_prompt
@@ -130,7 +146,7 @@ async def test_recipe_negative_prompt_additions_appended(monkeypatch):
     _mock_product(monkeypatch)
     recipe = poster_recipe_service.get_recipe("product_hero_night_routine")
     result = await PosterPromptDraftService.build_draft(
-        _full_request(poster_recipe_id="product_hero_night_routine")
+        _full_request(poster_recipe_id="product_hero_night_routine", usp_3="")
     )
     for extra in recipe.negative_prompt_additions:
         assert extra in result.negative_prompt

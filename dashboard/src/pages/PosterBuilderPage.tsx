@@ -21,6 +21,9 @@ import PosterRecipeSelector from "../components/poster/PosterRecipeSelector";
 import PosterControlledSettings from "../components/poster/PosterControlledSettings";
 import PosterRecipeSlotEditor from "../components/poster/PosterRecipeSlotEditor";
 import PosterSpecPreview from "../components/poster/PosterSpecPreview";
+import PosterCopyQualityPanel from "../components/poster/PosterCopyQualityPanel";
+import { fetchPosterCopyQuality } from "../api/posterCopyQuality";
+import type { PosterCopyQualityReport } from "../types/posterCopyQuality";
 import PosterAutoModePanel from "../components/poster/PosterAutoModePanel";
 import PosterBuilderShellForm from "../components/poster/PosterBuilderShellForm";
 import PosterFlowMirrorSettingsPanel from "../components/poster/PosterFlowMirrorSettingsPanel";
@@ -88,6 +91,12 @@ export default function PosterBuilderPage() {
 	const [promptLoading, setPromptLoading] = useState(false);
 	const [fitLoading, setFitLoading] = useState(false);
 	const [fitNotice, setFitNotice] = useState("");
+	const [posterQuality, setPosterQuality] = useState<PosterCopyQualityReport | null>(null);
+	const [posterQualityLoading, setPosterQualityLoading] = useState(false);
+	// Signature of the copy the quality guard last ran against. If ANY copy field
+	// changes after a check the signature diverges → the report is stale → the
+	// generate gate re-arms (mandatory recheck before generation).
+	const [posterQualityKey, setPosterQualityKey] = useState<string | null>(null);
 	// Poster image generation (gated, credit-spending — reuses the one-door IMG lane).
 	const [posterGenConfirm, setPosterGenConfirm] = useState(false);
 	const [posterGenLoading, setPosterGenLoading] = useState(false);
@@ -206,7 +215,14 @@ export default function PosterBuilderPage() {
 	const { recipes, error: recipesError } = usePosterRecipes();
 	const selectedRecipe =
 		recipes.find((r) => r.recipe_id === draft.poster_recipe_id) ?? null;
+	// POSTER-native copy signature (headline/support/chips/cta in draft terms).
+	const posterCopySignature = (d: PosterBuilderDraft): string =>
+		[d.hook, d.subhook, d.usp_1, d.usp_2, d.usp_3, d.cta]
+			.map((s) => (s ?? "").trim())
+			.join("\u0001");
 	const handleSelectRecipe = (recipeId: string) => {
+		setPosterQuality(null);
+		setPosterQualityKey(null);
 		setDraft((prev) => {
 			const r = recipes.find((x) => x.recipe_id === recipeId) ?? null;
 			let text_density = prev.text_density;
@@ -220,8 +236,41 @@ export default function PosterBuilderPage() {
 			return { ...prev, poster_recipe_id: recipeId, text_density };
 		});
 	};
+	// Expert poster copy quality check (credit-free). Maps the draft's legacy
+	// video-style fields into POSTER-native copy (headline/support/chips/cta).
+	const handleCheckPosterQuality = async () => {
+		const d = draftRef.current;
+		setPosterQualityLoading(true);
+		try {
+			const report = await fetchPosterCopyQuality({
+				archetype: selectedRecipe?.archetype ?? "",
+				language: d.language,
+				max_chips: selectedRecipe?.max_chips ?? 3,
+				poster_headline: d.hook,
+				poster_support_line: d.subhook,
+				poster_chips: [d.usp_1, d.usp_2, d.usp_3].filter((c) => c.trim()),
+				poster_cta: d.cta,
+			});
+			setPosterQuality(report);
+			setPosterQualityKey(posterCopySignature(d));
+		} catch {
+			setPosterQuality(null);
+			setPosterQualityKey(null);
+		} finally {
+			setPosterQualityLoading(false);
+		}
+	};
 	const missingCopy = missingPosterCopyFields(draft);
 	const overLimitCopy = overLimitPosterCopyFields(draft);
+	// Mandatory quality gate: generation is allowed only after the CURRENT copy
+	// passed the expert guard with zero BLOCK findings. A stale report (copy
+	// edited since the check) counts as "needs recheck", never as a pass.
+	const posterQualityFresh =
+		posterQuality !== null && posterQualityKey === posterCopySignature(draft);
+	const posterQualityStale = posterQuality !== null && !posterQualityFresh;
+	const posterQualityBlocked =
+		posterQualityFresh && (posterQuality?.block_count ?? 0) > 0;
+	const posterQualityNeedsCheck = !posterQualityFresh;
 
 	const loadRecommendations = useCallback(
 		async (refreshAi = false, draftSnapshot?: PosterBuilderDraft) => {
@@ -586,12 +635,18 @@ export default function PosterBuilderPage() {
 										draft={draft}
 										onDraftChange={setDraft}
 									/>
+									<PosterCopyQualityPanel
+										report={posterQualityFresh ? posterQuality : null}
+										stale={posterQualityStale}
+										loading={posterQualityLoading}
+										onCheck={() => void handleCheckPosterQuality()}
+									/>
 									<section
 										className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5"
 										data-testid="poster-recipe-generate"
 									>
 										<h3 className="text-sm font-bold text-slate-100">
-											4. Generate poster prompt package
+											5. Generate poster prompt package
 										</h3>
 										{missingCopy.length > 0 ? (
 											<p className="mt-2 text-[11px] text-amber-300">
@@ -603,6 +658,25 @@ export default function PosterBuilderPage() {
 												Terlalu panjang: <strong>{overLimitCopy.join(", ")}</strong>.
 											</p>
 										) : null}
+										{posterQualityBlocked ? (
+											<p
+												data-testid="poster-quality-block-note"
+												className="mt-2 text-[11px] text-rose-300"
+											>
+												Kualiti poster gagal ({posterQuality?.block_count} isu) — baiki copy sebelum jana.
+											</p>
+										) : missingCopy.length === 0 &&
+											overLimitCopy.length === 0 &&
+											posterQualityNeedsCheck ? (
+											<p
+												data-testid="poster-quality-needscheck-note"
+												className="mt-2 text-[11px] text-amber-300"
+											>
+												{posterQualityStale
+													? "Copy berubah selepas semakan — semak kualiti poster semula sebelum jana."
+													: "Semak kualiti poster dahulu — penjanaan dihalang sehingga lulus."}
+											</p>
+										) : null}
 										<button
 											type="button"
 											data-testid="recipe-generate-prompt-draft"
@@ -610,7 +684,9 @@ export default function PosterBuilderPage() {
 												!promptDraftEnabled ||
 												promptLoading ||
 												missingCopy.length > 0 ||
-												overLimitCopy.length > 0
+												overLimitCopy.length > 0 ||
+												posterQualityNeedsCheck ||
+												posterQualityBlocked
 											}
 											onClick={() => void handlePromptDraft(draftRef.current)}
 											className="mt-3 rounded-xl border border-blue-500/50 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"

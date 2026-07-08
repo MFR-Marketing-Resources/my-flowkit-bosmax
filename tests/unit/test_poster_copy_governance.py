@@ -179,5 +179,7 @@ async def test_legacy_request_without_copy_source_is_unchanged(monkeypatch):
     _draft_env(monkeypatch, _ready_base())
     result = await PosterPromptDraftService.build_draft(_draft_request())
     # No provenance declared → prior behavior preserved (no forced downgrade).
+    # (Poster copy quality WARN findings may appear now, but the governance
+    # downgrade warning must NOT — that is the intent of this test.)
     assert result.prompt_package_status == "DRAFT_READY"
-    assert result.validation_warnings == []
+    assert "UNGROUNDED_COPY_REVIEW_ONLY" not in result.validation_warnings
