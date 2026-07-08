@@ -57,6 +57,23 @@ export interface CreateAvatarImageBulkResponse {
 	max_parallel_images: number;
 }
 
+export interface BulkRunListEntry {
+	bulk_run_id: string;
+	kind: string;
+	status: string;
+	total_expected?: number;
+	total_completed?: number;
+	total_failed?: number;
+	created_at?: string;
+}
+
+export async function listBulkRuns(limit = 15): Promise<{
+	runs: BulkRunListEntry[];
+	count: number;
+}> {
+	return getAPI(`${BASE}/runs?limit=${limit}`);
+}
+
 export async function createAvatarImageBulk(
 	input: CreateAvatarImageBulkRequest,
 ): Promise<CreateAvatarImageBulkResponse> {

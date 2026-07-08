@@ -6,9 +6,11 @@ import {
 	createAvatarImageBulk,
 	cancelBulkRun,
 	getBulkRun,
+	listBulkRuns,
 	registerBulkAvatarAssets,
 	retryFailedBulkRun,
 	startBulkRun,
+	type BulkRunListEntry,
 	type BulkRunSummary,
 } from "../api/bulkGeneration";
 
@@ -156,7 +158,39 @@ export default function AvatarRegistryPage() {
 	const [bulkAllowRegenerate, setBulkAllowRegenerate] = useState(false);
 	const [bulkRunId, setBulkRunId] = useState<string | null>(null);
 	const [bulkRunDetail, setBulkRunDetail] = useState<BulkRunSummary | null>(null);
+	const [bulkRecentRuns, setBulkRecentRuns] = useState<BulkRunListEntry[]>([]);
 	const [isBulkBusy, setIsBulkBusy] = useState(false);
+
+	const BULK_CANCEL_CONFIRM =
+		"Cancel this bulk run?\n\n" +
+		"Queued items will not fire.\n" +
+		"Submitted or running Flow jobs may not be cancellable remotely — they can still complete or burn credits.\n" +
+		"After an agent restart, recovery only requeues local DB state; remote Flow artifacts may need manual reconciliation.";
+
+	const loadBulkRecentRuns = useCallback(async () => {
+		try {
+			const { runs } = await listBulkRuns(15);
+			setBulkRecentRuns(runs);
+		} catch {
+			/* non-fatal */
+		}
+	}, []);
+
+	const resumeBulkRun = useCallback(async (runId: string) => {
+		setBulkRunId(runId);
+		setIsBulkBusy(true);
+		setError(null);
+		try {
+			const detail = await getBulkRun(runId);
+			setBulkRunDetail(detail);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to load bulk run.");
+			setBulkRunId(null);
+			setBulkRunDetail(null);
+		} finally {
+			setIsBulkBusy(false);
+		}
+	}, []);
 
 	const refresh = useCallback(async () => {
 		setIsLoading(true);
@@ -489,6 +523,10 @@ export default function AvatarRegistryPage() {
 	};
 
 	useEffect(() => {
+		void loadBulkRecentRuns();
+	}, [loadBulkRecentRuns]);
+
+	useEffect(() => {
 		if (!bulkRunId) return;
 		let cancelled = false;
 		const poll = async () => {
@@ -558,6 +596,7 @@ export default function AvatarRegistryPage() {
 			);
 			const detail = await getBulkRun(created.bulk_run_id);
 			setBulkRunDetail(detail);
+			await loadBulkRecentRuns();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Bulk generation failed.");
 		} finally {
@@ -584,7 +623,7 @@ export default function AvatarRegistryPage() {
 
 	const handleBulkCancel = async () => {
 		if (!bulkRunId) return;
-		if (!window.confirm("Cancel this bulk run? Queued items will not fire.")) return;
+		if (!window.confirm(BULK_CANCEL_CONFIRM)) return;
 		setIsBulkBusy(true);
 		setError(null);
 		try {
@@ -1281,7 +1320,40 @@ export default function AvatarRegistryPage() {
 						<div className="mt-1 text-xs text-slate-500">
 							{selectedCodes.size} selected · max {bulkMaxParallel} parallel IMG jobs
 						</div>
+						<p
+							className="mt-2 max-w-xl text-[10px] leading-relaxed text-slate-500"
+							data-testid="bulk-recovery-note"
+						>
+							Bulk runs persist in the database. After refresh, pick a recent run below to
+							reload item progress. Cancel stops queued work only; submitted or running Flow
+							jobs may still finish or burn credits. Agent restart recovery requeues local
+							state — reconcile remote Flow artifacts manually if needed.
+						</p>
 					</div>
+					<label className="text-[10px] text-slate-400">
+						<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+							Recent bulk runs
+						</span>
+						<select
+							value={bulkRunId ?? ""}
+							onChange={(e) => {
+								const id = e.target.value;
+								if (id) void resumeBulkRun(id);
+							}}
+							className="min-w-[12rem] rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+							data-testid="bulk-resume-run-select"
+						>
+							<option value="">— Select run to resume —</option>
+							{bulkRecentRuns.map((run) => (
+								<option key={run.bulk_run_id} value={run.bulk_run_id}>
+									{run.bulk_run_id.slice(0, 8)}… · {run.status}
+									{run.total_expected != null
+										? ` · ${run.total_completed ?? 0}/${run.total_expected}`
+										: ""}
+								</option>
+							))}
+						</select>
+					</label>
 					<label className="text-[10px] text-slate-400">
 						<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
 							Parallel IMG
