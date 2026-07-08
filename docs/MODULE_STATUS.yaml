@@ -395,3 +395,13 @@ domains:
       - tests/ui/test_verification_gate_contract.py
       - dashboard/package.json
       - AGENTS.md
+      # RESULTS_HUB: durable deliverable hub — every finished generation gets a
+      # long-lived record (prompt+settings for manual Flow fallback) + per-platform
+      # social captions, decoupled from the 48h artifact file retention.
+      - agent/api/results.py
+      - dashboard/src/api/results.ts
+      - dashboard/src/pages/ResultsHubPage.tsx
+      - docs/RESULTS_HUB_V1.md
+      - tests/api/test_results_api.py
+      - tests/unit/test_generation_result_crud.py
+      - tests/ui/test_results_hub_ui_contract.py

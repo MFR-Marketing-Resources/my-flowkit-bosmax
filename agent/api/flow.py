@@ -1192,9 +1192,56 @@ async def _fail_manual_request(request_id: str, stage: str, message: str, error_
     raise HTTPException(422, error_code)
 
 
-async def _bridge_generate_job_telemetry(request_id: str, job_id: str):
+async def _persist_generation_results(snapshot, job, all_ids):
+    """Best-effort: write the DURABLE Results Hub record for every finished media
+    id, enriched with the product display name. Telemetry has already resolved
+    COMPLETED, so a DB hiccup here must NEVER fail the job (wrapped, swallowed)."""
+    if not snapshot:
+        return
+    try:
+        media_ids = list(all_ids) or (
+            [job.get("media_id")] if job.get("media_id") else [])
+        if not media_ids:
+            return
+        product_name = None
+        pid = snapshot.get("product_id")
+        if pid:
+            try:
+                prod = await crud.get_product(pid)
+                if prod:
+                    product_name = (prod.get("product_display_name")
+                                    or prod.get("raw_product_title")
+                                    or prod.get("name"))
+            except Exception:  # noqa: BLE001 — display enrichment is non-critical
+                product_name = None
+        for mid in media_ids:
+            await crud.insert_generation_result(
+                mid,
+                job_id=snapshot.get("job_id"),
+                request_id=snapshot.get("request_id"),
+                mode=snapshot.get("mode"),
+                artifact_kind=snapshot.get("artifact_kind") or "video",
+                product_id=pid,
+                product_name=product_name,
+                final_prompt_text=snapshot.get("final_prompt_text") or "",
+                aspect_ratio=snapshot.get("aspect_ratio"),
+                model_label=snapshot.get("model_label"),
+                duration_s=snapshot.get("duration_s"),
+                count_setting=snapshot.get("count_setting"),
+                reference_media_ids=snapshot.get("reference_media_ids") or [],
+                workspace_generation_package_id=snapshot.get(
+                    "workspace_generation_package_id"),
+                project_id=snapshot.get("project_id"),
+            )
+    except Exception:  # noqa: BLE001 — durable record is best-effort, never fatal
+        pass
+
+
+async def _bridge_generate_job_telemetry(request_id: str, job_id: str,
+                                         result_snapshot: dict = None):
     """Mirror a make_video job's progress into request telemetry so the dashboard
-    poll loop (which watches the request row) resolves to COMPLETED/FAILED."""
+    poll loop (which watches the request row) resolves to COMPLETED/FAILED. On
+    DONE it also persists the durable Results Hub record(s) for the artifact."""
     import asyncio
     from agent.services import make_video as _mv
     last_stage = None
@@ -1223,6 +1270,7 @@ async def _bridge_generate_job_telemetry(request_id: str, job_id: str):
                 last_heartbeat_at=crud._now(),
             )
             await crud.update_request(request_id, status="COMPLETED", updated_at=crud._now())
+            await _persist_generation_results(result_snapshot, job, all_ids)
             return
         if status in ("FAILED", "GENERATED_BUT_UNRETRIEVED"):
             code = str(job.get("error") or status)
@@ -1460,7 +1508,29 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     await crud.add_stage_event(
         request_id, "API_LANE_ACCEPTED", "WAITING_FLOW",
         f"lane=API_FIRST_GENERATE job={job_id} mode={mode} refs={len(refs)}", "backend")
-    asyncio.create_task(_bridge_generate_job_telemetry(request_id, job_id))
+    # Durable deliverable snapshot (Results Hub): capture the EXACT prompt +
+    # settings the operator fired so they survive the 48h artifact purge and can
+    # be copied to manually re-drive Flow if automation breaks. The finished
+    # media ids are attached on completion inside the telemetry bridge.
+    result_snapshot = {
+        "request_id": request_id,
+        "job_id": job_id,
+        "mode": mode,
+        "artifact_kind": "image" if mode == "IMG" else "video",
+        "product_id": body.get("product_id"),
+        "final_prompt_text": prompt,
+        "aspect_ratio": aspect,
+        "model_label": body.get("model"),
+        "duration_s": duration_s,
+        "count_setting": count,
+        "reference_media_ids": refs,
+        "workspace_generation_package_id": (
+            body.get("workspace_execution_package_id")
+            or body.get("workspace_generation_package_id")),
+        "project_id": created_project_id,
+    }
+    asyncio.create_task(
+        _bridge_generate_job_telemetry(request_id, job_id, result_snapshot))
     return {
         "ok": True,
         "accepted": True,

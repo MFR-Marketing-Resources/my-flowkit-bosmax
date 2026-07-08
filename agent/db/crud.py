@@ -1981,3 +1981,111 @@ async def purge_expired_artifacts(retention_hours: int = 48) -> dict:
     return {"purged_rows": len(rows), "purged_files": removed_files,
             "retention_hours": retention_hours, "cutoff": cutoff}
 
+
+# ── Generation Result (Results Hub durable deliverable record) ───────────────
+# Durable, lightweight companion to `generated_artifact`. The heavy file is
+# purged at 48h; THIS row survives so the prompt/settings/caption stay reachable
+# (manual Flow fallback + social publishing). Keyed by Flow media_id.
+
+async def insert_generation_result(
+    media_id: str,
+    *,
+    job_id: str = None,
+    request_id: str = None,
+    mode: str = None,
+    artifact_kind: str = "video",
+    product_id: str = None,
+    product_name: str = None,
+    final_prompt_text: str = "",
+    aspect_ratio: str = None,
+    model_label: str = None,
+    duration_s: int = None,
+    count_setting: int = None,
+    reference_media_ids: list = None,
+    workspace_generation_package_id: str = None,
+    project_id: str = None,
+) -> None:
+    """Persist a durable deliverable record for a finished generation. Idempotent
+    on media_id; a re-write UPDATES the snapshot but PRESERVES the first
+    created_at so Results ordering is stable. Never touched by the 48h purge."""
+    import json as _json
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO generation_result
+               (media_id, job_id, request_id, mode, artifact_kind, product_id,
+                product_name, final_prompt_text, aspect_ratio, model_label,
+                duration_s, count_setting, reference_media_ids_json,
+                workspace_generation_package_id, project_id, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(media_id) DO UPDATE SET
+                 job_id=excluded.job_id, request_id=excluded.request_id,
+                 mode=excluded.mode, artifact_kind=excluded.artifact_kind,
+                 product_id=excluded.product_id, product_name=excluded.product_name,
+                 final_prompt_text=excluded.final_prompt_text,
+                 aspect_ratio=excluded.aspect_ratio, model_label=excluded.model_label,
+                 duration_s=excluded.duration_s, count_setting=excluded.count_setting,
+                 reference_media_ids_json=excluded.reference_media_ids_json,
+                 workspace_generation_package_id=excluded.workspace_generation_package_id,
+                 project_id=excluded.project_id""",
+            (media_id, job_id, request_id, mode, artifact_kind, product_id,
+             product_name, final_prompt_text or "", aspect_ratio, model_label,
+             duration_s, count_setting, _json.dumps(reference_media_ids or []),
+             workspace_generation_package_id, project_id, _now()),
+        )
+        await db.commit()
+
+
+async def get_generation_result(media_id: str) -> dict | None:
+    """Single durable deliverable record by Flow media id."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM generation_result WHERE media_id=?", (media_id,))
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def list_generation_results(limit: int = 60, mode: str = None,
+                                  kind: str = None) -> list:
+    """Newest-first durable deliverable records for the Results Hub."""
+    db = await get_db()
+    query = "SELECT * FROM generation_result"
+    clauses, params = [], []
+    if mode:
+        clauses.append("mode=?")
+        params.append(mode)
+    if kind:
+        clauses.append("artifact_kind=?")
+        params.append(kind)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(query, params)
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def caption_summary_for_media_ids(media_ids: list) -> dict:
+    """One-query caption rollup: {media_id: {"count": n, "approved": m}} for the
+    given artifacts. Lets the Results list show caption status without N+1."""
+    ids = [m for m in (media_ids or []) if m]
+    if not ids:
+        return {}
+    db = await get_db()
+    placeholders = ",".join("?" for _ in ids)
+    cur = await db.execute(
+        f"""SELECT artifact_media_id AS mid,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN status='APPROVED' THEN 1 ELSE 0 END) AS approved
+            FROM social_copy_package
+            WHERE artifact_media_id IN ({placeholders})
+            GROUP BY artifact_media_id""",
+        ids,
+    )
+    rows = await cur.fetchall()
+    return {
+        r["mid"]: {"count": r["total"], "approved": r["approved"] or 0}
+        for r in rows
+    }
+
