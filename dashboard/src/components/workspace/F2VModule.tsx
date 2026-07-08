@@ -12,6 +12,7 @@ import type {
 } from "../../types";
 import ModelSelect, { normalizeModel, type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
+import CopyBindingGate from "../copywriting/CopyBindingGate";
 
 // IMG Asset Factory bridge: a saved COMPOSITE_FRAME_REFERENCE asset can feed an
 // F2V start/end frame. Posters (rendered text) + archived assets are excluded by
@@ -41,6 +42,7 @@ interface F2VModuleProps {
 	compact?: boolean;
 	workspacePackage?: WorkspaceExecutionPackage | null;
 	videoModels: VideoModel[];
+	copyReady?: boolean;
 }
 
 const CANONICAL_PROMPT_SECTIONS = [
@@ -236,10 +238,12 @@ export default function F2VModule({
 	compact = false,
 	workspacePackage = null,
 	videoModels,
+	copyReady = false,
 }: F2VModuleProps) {
 	// --- States ---
 	const [manualPrompt, setManualPrompt] = useState("");
 	const [isManualOverride, setIsManualOverride] = useState(false);
+	const [copyFallbackConfirmed, setCopyFallbackConfirmed] = useState(false);
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
 	const [model, setModel] = useState(F2V_DEFAULT_MODEL);
 	const [count, setCount] = useState(1);
@@ -362,7 +366,19 @@ export default function F2VModule({
 		}
 	};
 
+	// --- Copywriting binding gate (Phase B enforcement; also covers HYBRID, which
+	// reuses this module) --- F2V does not rebuild on execute, so the run is
+	// copy-bound ONLY when the loaded package was compiled from an approved Copy Set.
+	// Otherwise SEND stays blocked until the operator explicitly confirms fallback.
+	const boundCopySetId =
+		workspacePackage?.copy_binding?.copy_source === "selected_copy_set"
+			? (workspacePackage?.copy_binding?.copy_set_id ?? null)
+			: null;
+	const copyBound = Boolean(boundCopySetId);
+	const copyGateBlocked = !copyBound && !copyFallbackConfirmed;
+
 	const handleExecute = () => {
+		if (copyGateBlocked) return;
 		// Dispatch through the Google Flow V2 runtime lane
 		// (GFV2_UPLOAD_SETTINGS_PROMPT_GENERATE): auto-acquire a healthy V2 surface,
 		// then Upload media -> Add to Prompt -> Settings -> Prompt and STOP before
@@ -385,7 +401,18 @@ export default function F2VModule({
 			prompt_fingerprint: workspacePackage?.prompt_fingerprint,
 			asset_fingerprints:
 				workspacePackage?.request_lineage_payload.asset_fingerprints ?? [],
-			request_lineage_payload: workspacePackage?.request_lineage_payload,
+			copy_set_id: copyBound ? boundCopySetId : null,
+			copy_fallback_confirmed: copyBound ? false : copyFallbackConfirmed,
+			request_lineage_payload: {
+				...(workspacePackage?.request_lineage_payload ?? {}),
+				copy_binding_gate: copyBound
+					? { copy_bound: true, copy_set_id: boundCopySetId }
+					: {
+							copy_bound: false,
+							copy_fallback_confirmed: true,
+							copy_source: "operator_confirmed_fallback",
+						},
+			},
 			mode: "F2V",
 		});
 	};
@@ -629,7 +656,13 @@ export default function F2VModule({
 					</div>
 				</section>
 
-				<div className="pt-4">
+				<div className="pt-4 space-y-3">
+					<CopyBindingGate
+						copyBound={copyBound}
+						ready={copyReady}
+						fallbackConfirmed={copyFallbackConfirmed}
+						onToggleFallback={setCopyFallbackConfirmed}
+					/>
 					<button
 						type="button"
 						onClick={handleExecute}
@@ -638,7 +671,8 @@ export default function F2VModule({
 							isUploading ||
 							!manualPrompt ||
 							!startAsset ||
-							startPreviewFailed
+							startPreviewFailed ||
+							copyGateBlocked
 						}
 						className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold text-sm shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:grayscale transition-all flex items-center justify-center gap-2"
 					>

@@ -1196,6 +1196,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
 						videoModels={videoModels}
+						copyReady={copyReadiness?.ready_for_generation ?? false}
 					/>
 				);
 			case "T2V":
@@ -1206,6 +1207,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
 						videoModels={videoModels}
+						copyReady={copyReadiness?.ready_for_generation ?? false}
 					/>
 				);
 			case "I2V":
@@ -1218,6 +1220,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						onWorkspacePackageUpdated={setWorkspacePackage}
 						videoModels={videoModels}
 						selectedCopySetId={selectedCopySetId}
+						copyReady={copyReadiness?.ready_for_generation ?? false}
 					/>
 				);
 			case "IMG":

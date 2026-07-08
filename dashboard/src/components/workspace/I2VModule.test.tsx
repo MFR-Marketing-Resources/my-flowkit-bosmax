@@ -84,6 +84,8 @@ describe("I2VModule copy-set binding (CRITICAL)", () => {
 		);
 
 		const btn = await screen.findByRole("button", { name: /SEND TO FLOW EDITOR/i });
+		// A bound Copy Set means the gate is not shown and SEND is allowed.
+		expect(screen.queryByTestId("copy-binding-gate")).not.toBeInTheDocument();
 		await waitFor(() => expect(btn).not.toBeDisabled());
 		fireEvent.click(btn);
 
@@ -97,7 +99,7 @@ describe("I2VModule copy-set binding (CRITICAL)", () => {
 		);
 	});
 
-	it("[CRITICAL] a null selection is forwarded (fail-closed), never silently dropped", async () => {
+	it("[gate] no Copy Set → SEND blocked until explicit fallback confirmation", async () => {
 		render(
 			<I2VModule
 				onExecute={vi.fn()}
@@ -109,15 +111,20 @@ describe("I2VModule copy-set binding (CRITICAL)", () => {
 			/>,
 		);
 
+		// Gate visible + SEND blocked (no approved Copy Set is bound).
 		const btn = await screen.findByRole("button", { name: /SEND TO FLOW EDITOR/i });
+		expect(screen.getByTestId("copy-binding-gate")).toBeInTheDocument();
+		await waitFor(() => expect(btn).toBeDisabled());
+
+		// Explicit fallback confirmation unblocks SEND; the rebuild then carries the
+		// (null) binding + copy_fallback_confirmed=true so backend records fallback.
+		fireEvent.click(screen.getByTestId("copy-fallback-confirm"));
 		await waitFor(() => expect(btn).not.toBeDisabled());
 		fireEvent.click(btn);
 
 		await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
-		// The rebuild carries the (null) binding + fallback flag so the backend
-		// gate can fail closed — it does NOT omit the field.
 		const call = mockedCreate.mock.calls[0][0] as Record<string, unknown>;
 		expect(call).toHaveProperty("copy_set_id", null);
-		expect(call).toHaveProperty("copy_fallback_confirmed", false);
+		expect(call).toHaveProperty("copy_fallback_confirmed", true);
 	});
 });
