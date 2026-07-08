@@ -35,6 +35,7 @@ domains:
       - dashboard/src/components/prompt-tool/usePromptToolHydration.ts
       - tests/ui/test_prompt_tool_catalog_fallback_contract.py
       - .ai/audits/evidence/pr-197-counter-audit-2.md
+      - docs/evidence/incident-20260709-eligibility-audit-proof.md
       - agent/api/workspace_packages.py
       - agent/api/copy_sets.py
       - agent/models/copy_set.py
