@@ -32,6 +32,11 @@ from agent.services import copy_landbank_service as _landbank
 # anchor = HYBRID; explicit FRAMES/INGREDIENTS may be passed via source_mode.
 _SOURCE_MODE_BY_MODE = {"F2V": "HYBRID", "T2V": "T2V", "I2V": "INGREDIENTS", "IMG": "IMAGES"}
 
+# The only lineages the canonical compiler knows. Anything else fails closed —
+# a typo or unknown value must never silently compile as a different lineage
+# (incident 2026-07-09 corrective audit: unpinned FRAMES compiled as HYBRID).
+CANONICAL_SOURCE_MODES = {"T2V", "HYBRID", "FRAMES", "INGREDIENTS", "IMAGES"}
+
 
 def _clean(value: Any) -> str:
     return str(value or "").strip()
@@ -759,6 +764,8 @@ def compile_ugc_video_prompt(
         str(source_mode).strip().upper() if source_mode
         else _SOURCE_MODE_BY_MODE.get(normalized_mode, "T2V")
     )
+    if resolved_source_mode not in CANONICAL_SOURCE_MODES:
+        raise ValueError(f"SOURCE_MODE_INVALID:{resolved_source_mode}")
     # Copy intelligence resolution order: explicit > product landbank (secondary
     # reference) > claim-safe package angles. Instruction-prose fallbacks from
     # safe_hook/safe_cta must NEVER become spoken dialogue.

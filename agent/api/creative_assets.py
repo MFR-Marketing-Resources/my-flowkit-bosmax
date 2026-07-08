@@ -24,6 +24,14 @@ from agent.services.creative_asset_service import (
 
 router = APIRouter(prefix="/creative-assets", tags=["creative-assets"])
 
+# Collision-proof home for the eligibility audit (2026-07-09 corrective audit):
+# a prefix that shares no path space with /creative-assets/{asset_id}, so no
+# registration-order or stale-route-table state can ever send an audit call
+# into the asset-detail handler.
+eligibility_router = APIRouter(
+    prefix="/creative-asset-eligibility", tags=["creative-assets"]
+)
+
 
 @router.get("", response_model=CreativeAssetListResponse)
 async def get_creative_assets(
@@ -47,12 +55,18 @@ async def get_creative_assets(
     return CreativeAssetListResponse(items=items, total=len(items))
 
 
+@eligibility_router.get(
+    "/audit", response_model=CreativeAssetEligibilityAuditResponse
+)
 @router.get("/eligibility-audit", response_model=CreativeAssetEligibilityAuditResponse)
 async def get_creative_asset_audit(
     surface: str = Query(...),
     recipe_id: str | None = Query(default=None),
     limit: int = Query(default=1000, ge=1, le=5000),
 ) -> CreativeAssetEligibilityAuditResponse:
+    # Primary: /creative-asset-eligibility/audit (cannot collide with
+    # /creative-assets/{asset_id}). The /creative-assets/eligibility-audit
+    # alias stays for compatibility and is order-pinned by regression test.
     try:
         return await get_creative_asset_eligibility_audit(
             surface=surface,  # type: ignore[arg-type]

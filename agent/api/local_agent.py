@@ -318,6 +318,7 @@ _PROCESS_STARTED_AT = _PROCESS_STARTED_AT_DT.isoformat()
 
 # Routes whose absence means the process is stale or the app assembly broke.
 CRITICAL_ROUTE_PATHS: tuple[str, ...] = (
+    "/api/creative-asset-eligibility/audit",
     "/api/creative-assets/eligibility-audit",
     "/api/flow/execute-flow-job",
     "/api/flow/generate",

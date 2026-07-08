@@ -60,9 +60,14 @@ def _wgp_id(product_id: str, mode: str, source_lane: str, prompt_fp: str) -> str
 
 def _normalize_f2v_source_lane(source_mode: str | None) -> str:
     candidate = str(source_mode or "").strip().upper()
-    if candidate == "FRAMES":
-        return "FRAMES"
-    return "HYBRID"
+    if not candidate:
+        # Documented F2V-surface default: product-image anchor = HYBRID intake.
+        return "HYBRID"
+    if candidate in {"FRAMES", "HYBRID"}:
+        return candidate
+    # A typo or unknown lane must never silently become HYBRID (2026-07-09
+    # corrective audit: silent lineage flips are a prompt-integrity defect).
+    raise ValueError(f"SOURCE_MODE_INVALID:{candidate}")
 
 
 def _build_dom_scaffold(

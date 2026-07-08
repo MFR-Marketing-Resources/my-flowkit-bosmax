@@ -438,6 +438,32 @@ async def create_workspace_execution_package(
     }
 
 
+def _resolve_preview_source_mode(
+    raw_mode: str | None, source_mode: str | None
+) -> str | None:
+    """Resolve the compile lineage from the caller's mode + source_mode.
+
+    - explicit source_mode wins, but must be a canonical lineage (fail closed);
+    - a raw mode that IS a canonical lineage (FRAMES/INGREDIENTS/T2V) pins that
+      lineage instead of silently defaulting into the HYBRID branch;
+    - ambiguous surface modes (F2V/I2V/IMG) return None so the compiler applies
+      its documented per-mode defaults.
+    """
+    from agent.services.ugc_video_prompt_compiler_service import (
+        CANONICAL_SOURCE_MODES,
+    )
+
+    resolved = str(source_mode or "").strip().upper() or None
+    if resolved is not None:
+        if resolved not in CANONICAL_SOURCE_MODES:
+            raise ValueError(f"SOURCE_MODE_INVALID:{resolved}")
+        return resolved
+    raw = str(raw_mode or "").strip().upper()
+    if raw in CANONICAL_SOURCE_MODES:
+        return raw
+    return None
+
+
 async def compile_workspace_prompt_preview(
     *,
     product_id: str,
@@ -458,6 +484,11 @@ async def compile_workspace_prompt_preview(
     copy_set_id: str | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
+    # Source-lineage law (2026-07-09 corrective audit): a caller that names a
+    # canonical source mode ("FRAMES"/"INGREDIENTS"/"T2V") keeps that lineage —
+    # it must never silently compile as HYBRID. Only the ambiguous surface
+    # modes (F2V/I2V) fall through to their documented compiler defaults.
+    source_mode = _resolve_preview_source_mode(mode, source_mode)
     product = await crud.get_product(product_id)
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")

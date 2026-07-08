@@ -1,13 +1,14 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agent.api.creative_assets import router
+from agent.api.creative_assets import eligibility_router, router
 from agent.models.creative_asset import CreativeAssetRecord
 
 
 def _build_app() -> FastAPI:
     app = FastAPI()
     app.include_router(router, prefix="/api")
+    app.include_router(eligibility_router, prefix="/api")
     return app
 
 
@@ -222,11 +223,14 @@ def test_eligibility_audit_url_never_hits_asset_detail_handler(monkeypatch):
         "I2V_SCENE_PICKER",
         "I2V_STYLE_PICKER",
     ):
-        response = client.get(
-            f"/api/creative-assets/eligibility-audit?surface={surface}"
-        )
-        assert response.status_code == 200, surface
-        assert "CREATIVE_ASSET_NOT_FOUND" not in response.text, surface
+        # Primary collision-proof route + legacy order-pinned alias.
+        for url in (
+            f"/api/creative-asset-eligibility/audit?surface={surface}",
+            f"/api/creative-assets/eligibility-audit?surface={surface}",
+        ):
+            response = client.get(url)
+            assert response.status_code == 200, (surface, url)
+            assert "CREATIVE_ASSET_NOT_FOUND" not in response.text, (surface, url)
 
     assert detail_calls == [], (
         "audit URL was routed into the asset-detail handler: " + repr(detail_calls)
