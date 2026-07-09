@@ -98,7 +98,12 @@ async def patch_creative_asset(
     try:
         return await update_creative_asset(asset_id, request)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        detail = str(exc)
+        # NOT_FOUND stays a 404; a governance rejection (e.g. approval blocked because
+        # a truth/safety gate is not PASS — APPROVAL_REQUIRES_ALL_TRUTH_PASS) is a 409
+        # so the operator UI can surface it distinctly from a missing asset.
+        status_code = 404 if detail == "CREATIVE_ASSET_NOT_FOUND" else 409
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.post("/{asset_id}/archive", response_model=CreativeAssetRecord)

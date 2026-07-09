@@ -150,12 +150,16 @@ export async function updateCreativeAsset(
 		approved_for_poster?: boolean;
 	},
 ): Promise<CreativeAsset> {
-	return patchAPI<CreativeAsset>(`/api/creative-assets/${assetId}`, {
-		...input,
-		mode_a_metadata_handoff: normalizeJsonishInput(
+	// Only touch mode_a_metadata_handoff when the caller explicitly provided the key.
+	// Previously it was ALWAYS sent (normalized to null when omitted), so a review-only
+	// PATCH like { review_status: "APPROVED" } cleared the asset's existing metadata.
+	const body: Record<string, unknown> = { ...input };
+	if ("mode_a_metadata_handoff" in input) {
+		body.mode_a_metadata_handoff = normalizeJsonishInput(
 			input.mode_a_metadata_handoff,
-		),
-	});
+		);
+	}
+	return patchAPI<CreativeAsset>(`/api/creative-assets/${assetId}`, body);
 }
 
 export async function archiveCreativeAsset(

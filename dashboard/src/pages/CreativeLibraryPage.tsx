@@ -3,9 +3,12 @@ import { useNavigate } from "react-router-dom";
 import {
 	archiveCreativeAsset,
 	fetchCreativeAssets,
+	updateCreativeAsset,
 } from "../api/creativeAssets";
+import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import SaveToCreativeLibraryPanel from "../components/creative-library/SaveToCreativeLibraryPanel";
-import { Badge, DataTable } from "../components/ui";
+import { Badge, ConfirmActionModal, DataTable } from "../components/ui";
+import type { BadgeTone } from "../components/ui";
 import type {
 	CreativeAsset,
 	CreativeAssetSemanticRole,
@@ -34,6 +37,30 @@ const MODE_LABELS: Record<WorkspaceMode, string> = {
 	IMG: "IMG",
 };
 
+// Review lifecycle is SEPARATE from asset lifecycle (ACTIVE/ARCHIVED). ACTIVE does
+// NOT mean APPROVED — reuse pickers (F2V frames, I2V references) gate on
+// review_status === APPROVED, so the operator needs to see and drive it here.
+type ReviewStatus = "DRAFT" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+const REVIEW_OPTIONS: Array<ReviewStatus | "ALL"> = [
+	"ALL",
+	"PENDING_REVIEW",
+	"APPROVED",
+	"REJECTED",
+	"DRAFT",
+];
+const REVIEW_TONE: Record<string, BadgeTone> = {
+	APPROVED: "success",
+	PENDING_REVIEW: "warn",
+	REJECTED: "danger",
+	DRAFT: "neutral",
+};
+
+function formatTimestamp(value: string): string {
+	const parsed = new Date(value);
+	if (Number.isNaN(parsed.getTime())) return value || "—";
+	return parsed.toLocaleString();
+}
+
 export default function CreativeLibraryPage() {
 	const navigate = useNavigate();
 	const [items, setItems] = useState<CreativeAsset[]>([]);
@@ -44,10 +71,17 @@ export default function CreativeLibraryPage() {
 		"ACTIVE",
 	);
 	const [modeFilter, setModeFilter] = useState<WorkspaceMode | "ALL">("ALL");
+	const [reviewFilter, setReviewFilter] = useState<ReviewStatus | "ALL">("ALL");
 	const [search, setSearch] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
 	const [archiving, setArchiving] = useState<string | null>(null);
+	// Explicit review actions awaiting confirmation — no silent auto-approval.
+	// Approve routes through the truth/safety attestation modal; reject is a plain
+	// confirm.
+	const [approveTarget, setApproveTarget] = useState<CreativeAsset | null>(null);
+	const [rejectTarget, setRejectTarget] = useState<CreativeAsset | null>(null);
+	const [rejectBusy, setRejectBusy] = useState(false);
 
 	const loadItems = useCallback(() => {
 		setError(null);
@@ -89,10 +123,46 @@ export default function CreativeLibraryPage() {
 		}
 	};
 
-	const displayedItems =
-		modeFilter === "ALL"
-			? items
-			: items.filter((item) => item.allowed_modes.includes(modeFilter));
+	const applyReviewUpdate = (updated: CreativeAsset) => {
+		setItems((prev) =>
+			prev.map((i) =>
+				i.asset_id === updated.asset_id
+					? { ...i, review_status: updated.review_status }
+					: i,
+			),
+		);
+	};
+
+	// Reject reuses the existing PATCH review_status contract. Approve is handled by
+	// ApproveAssetModal (explicit truth/safety attestation) — it cannot be a plain
+	// one-click because the backend requires every truth gate to be PASS.
+	const handleReject = async () => {
+		if (!rejectTarget) return;
+		setRejectBusy(true);
+		try {
+			const updated = await updateCreativeAsset(rejectTarget.asset_id, {
+				review_status: "REJECTED",
+			});
+			applyReviewUpdate(updated);
+			setRejectTarget(null);
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : "Failed to update review status.",
+			);
+		} finally {
+			setRejectBusy(false);
+		}
+	};
+
+	const displayedItems = items.filter((item) => {
+		if (modeFilter !== "ALL" && !item.allowed_modes.includes(modeFilter)) {
+			return false;
+		}
+		if (reviewFilter !== "ALL" && item.review_status !== reviewFilter) {
+			return false;
+		}
+		return true;
+	});
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
@@ -140,6 +210,13 @@ export default function CreativeLibraryPage() {
 						Avatar Registry
 					</button>
 				</div>
+				<p className="mt-3 text-[11px] text-slate-500">
+					<strong className="text-slate-300">Lifecycle</strong> (ACTIVE /
+					ARCHIVED) is separate from <strong className="text-slate-300">Review</strong>{" "}
+					(PENDING_REVIEW / APPROVED / REJECTED). Only APPROVED clean composite
+					frames are selectable in the F2V frame pickers — ACTIVE does not mean
+					approved.
+				</p>
 				{error && (
 					<div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
 						{error}
@@ -148,7 +225,7 @@ export default function CreativeLibraryPage() {
 			</section>
 
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
-				<div className="mb-4 grid gap-3 md:grid-cols-4">
+				<div className="mb-4 grid gap-3 md:grid-cols-3 lg:grid-cols-5">
 					<select
 						value={roleFilter}
 						onChange={(e) =>
@@ -172,7 +249,20 @@ export default function CreativeLibraryPage() {
 					>
 						{STATUS_OPTIONS.map((s) => (
 							<option key={s} value={s}>
-								{s}
+								{s === "ALL" ? "All Lifecycle" : s}
+							</option>
+						))}
+					</select>
+					<select
+						value={reviewFilter}
+						onChange={(e) =>
+							setReviewFilter(e.target.value as ReviewStatus | "ALL")
+						}
+						className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+					>
+						{REVIEW_OPTIONS.map((r) => (
+							<option key={r} value={r}>
+								{r === "ALL" ? "All Review" : r}
 							</option>
 						))}
 					</select>
@@ -203,7 +293,7 @@ export default function CreativeLibraryPage() {
 					getRowId={(item) => item.asset_id}
 					pageSize={20}
 					emptyLabel={isLoading ? "Loading assets..." : "No assets found."}
-					initialSort={{ key: "asset", dir: "asc" }}
+					initialSort={{ key: "updated", dir: "desc" }}
 					columns={[
 						{
 							key: "asset",
@@ -226,7 +316,7 @@ export default function CreativeLibraryPage() {
 						},
 						{
 							key: "status",
-							header: "Status",
+							header: "Lifecycle",
 							sortValue: (item) => item.status,
 							render: (item) => (
 								<Badge tone={item.status === "ACTIVE" ? "success" : "warn"}>
@@ -235,19 +325,49 @@ export default function CreativeLibraryPage() {
 							),
 						},
 						{
+							key: "review",
+							header: "Review",
+							sortValue: (item) => item.review_status,
+							render: (item) => (
+								<Badge tone={REVIEW_TONE[item.review_status] ?? "neutral"}>
+									{item.review_status}
+								</Badge>
+							),
+						},
+						{
 							key: "modes",
 							header: "Modes",
 							render: (item) => (
-								<span className="text-xs text-slate-400">
-									{item.allowed_modes
-										.map((mode) => MODE_LABELS[mode] ?? mode)
-										.join(", ") || "ALL"}
-								</span>
+								<div className="text-xs text-slate-400">
+									<div>
+										{item.allowed_modes
+											.map((mode) => MODE_LABELS[mode] ?? mode)
+											.join(", ") || "ALL"}
+									</div>
+									{item.engine_slot_eligibility.length > 0 ? (
+										<div className="mt-0.5 text-[10px] text-slate-500">
+											slots: {item.engine_slot_eligibility.join(", ")}
+										</div>
+									) : null}
+								</div>
+							),
+						},
+						{
+							key: "updated",
+							header: "Updated",
+							sortValue: (item) => new Date(item.updated_at).getTime(),
+							render: (item) => (
+								<div className="text-xs text-slate-400">
+									<div>{formatTimestamp(item.updated_at)}</div>
+									<div className="text-[10px] text-slate-600">
+										created {formatTimestamp(item.created_at)}
+									</div>
+								</div>
 							),
 						},
 					]}
 					rowActions={(item) => (
-						<div className="flex items-center justify-end gap-2">
+						<div className="flex flex-wrap items-center justify-end gap-2">
 							<button
 								type="button"
 								onClick={() =>
@@ -259,6 +379,24 @@ export default function CreativeLibraryPage() {
 							>
 								Edit
 							</button>
+							{item.review_status !== "APPROVED" && (
+								<button
+									type="button"
+									onClick={() => setApproveTarget(item)}
+									className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20"
+								>
+									Approve
+								</button>
+							)}
+							{item.review_status !== "REJECTED" && (
+								<button
+									type="button"
+									onClick={() => setRejectTarget(item)}
+									className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:bg-rose-500/20"
+								>
+									Reject
+								</button>
+							)}
 							{item.status === "ACTIVE" && (
 								<button
 									type="button"
@@ -271,6 +409,30 @@ export default function CreativeLibraryPage() {
 							)}
 						</div>
 					)}
+				/>
+				<ApproveAssetModal
+					asset={approveTarget}
+					open={approveTarget !== null}
+					onCancel={() => setApproveTarget(null)}
+					onApproved={(updated) => {
+						applyReviewUpdate(updated);
+						setApproveTarget(null);
+					}}
+				/>
+				<ConfirmActionModal
+					open={rejectTarget !== null}
+					title="Reject asset?"
+					body={
+						<p>
+							Marks <strong>{rejectTarget?.display_name}</strong> as{" "}
+							<strong>REJECTED</strong> and removes it from every reuse picker.
+							You can approve it again later.
+						</p>
+					}
+					confirmLabel="Reject"
+					busy={rejectBusy}
+					onConfirm={() => void handleReject()}
+					onCancel={() => setRejectTarget(null)}
 				/>
 			</section>
 		</div>

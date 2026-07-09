@@ -28,6 +28,11 @@ ACTIVE_STATUS = "ACTIVE"
 ARCHIVED_STATUS = "ARCHIVED"
 APPROVED_REVIEW_STATUS = "APPROVED"
 DEFAULT_I2V_RECIPE_ID = "PRODUCT_HELD_BY_CHARACTER_IN_SCENE"
+# The truth/safety gates that MUST be PASS before an asset can be APPROVED — the
+# same set the IMG Asset Factory save gate enforces (see save_img_output_to_library).
+# product_truth_status is intentionally NOT here (it is derived PRESERVED/NOT_APPLICABLE,
+# not a human/operator gate), matching the save-flow rule exactly.
+TRUTH_GATE_FIELDS = ("identity_lock_status", "scale_truth_status", "claim_safety_status")
 
 
 def _json_text(value: Any) -> str:
@@ -403,6 +408,19 @@ async def update_creative_asset(
     if not current:
         raise ValueError("CREATIVE_ASSET_NOT_FOUND")
     payload = request.model_dump(exclude_unset=True)
+    # Governance parity with the IMG Asset Factory save gate: a PATCH may flip an
+    # asset to APPROVED only when EVERY truth/safety gate is explicitly PASS. The
+    # effective value is the PATCH-provided one if present, else the asset's current
+    # value. This closes the review-status approval bypass and fails closed. It fires
+    # ONLY when this PATCH explicitly sets review_status=APPROVED, so editing other
+    # fields on an already-approved asset is never re-gated.
+    if payload.get("review_status") == APPROVED_REVIEW_STATUS:
+        effective_gates = {
+            field: payload.get(field, current.get(field))
+            for field in TRUTH_GATE_FIELDS
+        }
+        if not all(value == "PASS" for value in effective_gates.values()):
+            raise ValueError("APPROVAL_REQUIRES_ALL_TRUTH_PASS")
     if "allowed_modes" in payload:
         payload["allowed_modes"] = _json_text(payload["allowed_modes"])
     if "engine_slot_eligibility" in payload:

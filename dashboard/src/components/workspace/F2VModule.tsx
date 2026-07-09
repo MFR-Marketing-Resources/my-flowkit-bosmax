@@ -324,6 +324,21 @@ function renderFrameAuditCard(
 					</span>
 				))}
 			</div>
+			{audit.eligible_count === 0 && audit.matching_role_total_count > 0 ? (
+				<div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-amber-100">
+					<div>
+						Composite frames found but none are eligible for this surface.
+						Review or fix them in the Creative Library — approval is only one
+						gate (role, mode, slot, rendered-text and source must also pass).
+					</div>
+					<a
+						href="/assets/creative-library"
+						className="mt-1 inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-400/20"
+					>
+						Open Creative Library review →
+					</a>
+				</div>
+			) : null}
 		</div>
 	);
 }

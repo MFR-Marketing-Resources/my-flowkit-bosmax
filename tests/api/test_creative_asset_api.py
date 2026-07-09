@@ -239,3 +239,31 @@ def test_eligibility_audit_url_never_hits_asset_detail_handler(monkeypatch):
     response = client.get("/api/creative-assets/some-real-id")
     assert response.status_code == 404
     assert detail_calls == ["some-real-id"]
+
+
+def test_patch_creative_asset_governance_rejection_is_409(monkeypatch):
+    # A truth/safety approval rejection is a 409 (distinct from a missing-asset 404) so
+    # the operator UI can surface it clearly instead of a misleading "not found".
+    async def fake_update(asset_id, request):
+        raise ValueError("APPROVAL_REQUIRES_ALL_TRUTH_PASS")
+
+    monkeypatch.setattr("agent.api.creative_assets.update_creative_asset", fake_update)
+    client = TestClient(_build_app())
+    response = client.patch(
+        "/api/creative-assets/ca_x", json={"review_status": "APPROVED"}
+    )
+    assert response.status_code == 409
+    assert "APPROVAL_REQUIRES_ALL_TRUTH_PASS" in response.text
+
+
+def test_patch_creative_asset_missing_is_404(monkeypatch):
+    async def fake_update(asset_id, request):
+        raise ValueError("CREATIVE_ASSET_NOT_FOUND")
+
+    monkeypatch.setattr("agent.api.creative_assets.update_creative_asset", fake_update)
+    client = TestClient(_build_app())
+    response = client.patch(
+        "/api/creative-assets/ca_missing", json={"display_name": "x"}
+    )
+    assert response.status_code == 404
+    assert "CREATIVE_ASSET_NOT_FOUND" in response.text
