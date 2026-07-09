@@ -214,6 +214,7 @@ domains:
       - dashboard/src/pages/AssetRegistryPage.tsx
       - dashboard/src/pages/AvatarRegistryPage.tsx
       - dashboard/src/pages/CreativeLibraryPage.tsx
+      - dashboard/src/pages/CreativeLibraryPage.test.tsx
       - dashboard/src/pages/CreativeLibraryWorkspacePage.tsx
       - dashboard/src/pages/ImgFastlanePage.tsx
       - dashboard/src/pages/OperatorPage.tsx

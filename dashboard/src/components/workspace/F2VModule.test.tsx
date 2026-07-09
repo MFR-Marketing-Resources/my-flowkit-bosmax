@@ -227,4 +227,61 @@ describe("F2VModule copy-binding gate (Phase B enforcement; covers HYBRID)", () 
 			await screen.findAllByText(/API fetch failed: API 500: audit failed/i),
 		).toHaveLength(2);
 	});
+
+	it("[cta] 0 eligible but composites exist → links to Creative Library review", async () => {
+		mockedAudit.mockResolvedValue(
+			audit({
+				library_total_count: 2,
+				matching_role_total_count: 2,
+				eligible_count: 0,
+				excluded_count: 2,
+				review_status_counts: { PENDING_REVIEW: 2 },
+				excluded_by_reason: { NOT_APPROVED_FOR_REUSE: 2 },
+			}),
+		);
+
+		render(
+			<F2VModule
+				onExecute={vi.fn()}
+				isExecuting={false}
+				workspacePackage={pkg(true)}
+				videoModels={MODELS}
+				copyReady={true}
+			/>,
+		);
+
+		// START + END audit cards each surface the approval CTA — the operator is
+		// never left at a blind "none eligible" dropdown with no next step.
+		const links = await screen.findAllByRole("link", {
+			name: /Open Creative Library review/i,
+		});
+		expect(links).toHaveLength(2);
+		expect(links[0]).toHaveAttribute("href", "/assets/creative-library");
+	});
+
+	it("[cta] eligible composites present → no approval CTA", async () => {
+		mockedAudit.mockResolvedValue(
+			audit({
+				library_total_count: 1,
+				matching_role_total_count: 1,
+				eligible_count: 1,
+				excluded_count: 0,
+			}),
+		);
+
+		render(
+			<F2VModule
+				onExecute={vi.fn()}
+				isExecuting={false}
+				workspacePackage={pkg(true)}
+				videoModels={MODELS}
+				copyReady={true}
+			/>,
+		);
+
+		await screen.findByRole("button", { name: /SEND TO FLOW EDITOR/i });
+		expect(
+			screen.queryByRole("link", { name: /Open Creative Library review/i }),
+		).not.toBeInTheDocument();
+	});
 });
