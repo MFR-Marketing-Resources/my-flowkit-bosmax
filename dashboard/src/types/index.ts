@@ -2380,6 +2380,8 @@ export interface F2VGenerationPackageRequest {
 	dialogue_enabled?: boolean;
 	source_mode?: "HYBRID" | "FRAMES";
 	blocks?: Array<{ block_index: number; duration_seconds: number }>;
+	engine_duration_target?: "GOOGLE_FLOW" | "GROK";
+	requested_total_duration_seconds?: number;
 	start_frame_asset_id?: string | null;
 	start_frame_preview_url?: string | null;
 	start_frame_download_url?: string | null;
@@ -2404,6 +2406,8 @@ export interface I2VGenerationPackageRequest {
 	character_reference_asset_id?: string | null;
 	scene_context_reference_asset_id?: string | null;
 	style_reference_asset_id?: string | null;
+	engine_duration_target?: "GOOGLE_FLOW" | "GROK";
+	requested_total_duration_seconds?: number;
 	operator_notes?: string | null;
 }
 

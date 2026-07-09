@@ -43,10 +43,43 @@ def test_f2v_single_mode_hides_block_2_duration_until_extend():
     operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
 
     assert 'const isExtendMode = generationMode === "EXTEND";' in operator_source
-    assert "Single mode compiles one anchor block." in operator_source
+    assert (
+        "Single mode generates one prompt block only and will not split."
+        in operator_source
+    )
     assert "Switch Generation" in operator_source
-    assert "to Extend to unlock Block 2 duration." in operator_source
+    assert "to Extend to produce a multi-block chain." in operator_source
     assert "{isExtendMode ? (" in operator_source
+
+
+def test_operator_extend_multi_block_split_contract():
+    """BLOCK-SPLIT fix: Extend surfaces a total-duration control that drives the
+    workbook N-block plan (not capped at 2), shows the resolved plan before Load
+    Package, and fails closed on unsupported totals. All video modes share this
+    OperatorPage path."""
+    operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
+    api_source = _read("dashboard/src/api/workspacePackages.ts")
+
+    for token in [
+        "Extend Total Duration",
+        'id="operator-extend-total-duration"',
+        "extendTotalOptions",
+        "extendPlanByTotal",
+        # rule 8: resolved block plan shown before Load Package
+        "Block plan (Google Flow):",
+        # rule 5: fail-closed messaging for unsupported totals
+        "UNSUPPORTED_EXTEND_TOTAL_DURATION_",
+        # rules 1-7: total forwarded so the backend workbook derives N blocks
+        "requested_total_duration_seconds: extendTotalValue",
+        'engine_duration_target: engineDurationTarget || "GOOGLE_FLOW"',
+    ]:
+        assert token in operator_source, token
+
+    # rule 9: preview + generate both forward the total (identical payloads)
+    assert (
+        operator_source.count("requested_total_duration_seconds: extendTotalValue") >= 2  # preview + generate (+ f2v/i2v handoff)
+    )
+    assert "requested_total_duration_seconds" in api_source
 
 
 def test_f2v_workspace_form_controls_have_stable_autofill_identifiers():
@@ -80,3 +113,15 @@ def test_f2v_workspace_form_controls_have_stable_autofill_identifiers():
         'name="f2v_generation_model"',
     ]:
         assert token in f2v_source
+
+
+def test_handoff_bank_renders_all_prompt_blocks():
+    """Prompt Handoff Bank maps EVERY block (not just Block 1) into a separate
+    copy box — mode-agnostic over prompt_blocks_json, so F2V/HYBRID/I2V/T2V all
+    expose each block separately for the manual Extend workflow."""
+    src = _read("dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx")
+    assert "pkg.prompt_blocks_json" in src
+    assert "blocks.map((block, i) =>" in src
+    assert "text={block.engine_prompt_text}" in src
+    assert "Block ${block.block_index}" in src
+    assert "blocks.length} blocks" in src  # count is dynamic, not a hardcoded 1

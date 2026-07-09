@@ -18,6 +18,11 @@ class F2VGenerationPackageRequest(BaseModel):
     dialogue_enabled: bool = True
     source_mode: str | None = None
     blocks: list[dict[str, Any]] = Field(default_factory=list)
+    # BLOCK-SPLIT authority: a requested TOTAL derives the workbook block chain and
+    # OVERRIDES raw blocks[]; unsupported totals fail closed (parity with the
+    # execution package + preview).
+    engine_duration_target: str | None = None  # GOOGLE_FLOW | GROK
+    requested_total_duration_seconds: int | None = None
     start_frame_asset_id: str | None = None
     start_frame_preview_url: str | None = None
     start_frame_download_url: str | None = None
@@ -38,6 +43,10 @@ class I2VGenerationPackageRequest(BaseModel):
     creator_persona: str = "DEFAULT_CREATOR"
     overlay_enabled: bool = False  # NO_OVERLAY law (ADR-008): default off
     dialogue_enabled: bool = True
+    # BLOCK-SPLIT authority (parity with F2V/execution/preview): requested TOTAL
+    # derives the workbook chain and OVERRIDES raw blocks; unsupported fails closed.
+    engine_duration_target: str | None = None  # GOOGLE_FLOW | GROK
+    requested_total_duration_seconds: int | None = None
     product_reference_asset_id: str | None = None
     character_reference_asset_id: str | None = None
     scene_context_reference_asset_id: str | None = None

@@ -181,6 +181,8 @@ async def create_f2v_generation_package(
     dialogue_enabled: bool = True,
     source_mode: str | None = None,
     blocks: list[dict] | None = None,
+    engine_duration_target: str | None = None,
+    requested_total_duration_seconds: int | None = None,
     start_frame_asset_id: str | None = None,
     start_frame_preview_url: str | None = None,
     start_frame_download_url: str | None = None,
@@ -224,6 +226,8 @@ async def create_f2v_generation_package(
         dialogue_enabled=dialogue_enabled,
         source_mode=resolved_source_lane,
         blocks=blocks or [],
+        engine_duration_target=engine_duration_target,
+        requested_total_duration_seconds=requested_total_duration_seconds,
         avatar_id=avatar_id,
         copy_intelligence=copy_intelligence,
     )
@@ -375,6 +379,8 @@ async def create_i2v_generation_package(
     character_reference_asset_id: str | None = None,
     scene_context_reference_asset_id: str | None = None,
     style_reference_asset_id: str | None = None,
+    engine_duration_target: str | None = None,
+    requested_total_duration_seconds: int | None = None,
     operator_notes: str | None = None,
     batch_run_id: str | None = None,
     copy_intelligence: dict | None = None,
@@ -429,6 +435,8 @@ async def create_i2v_generation_package(
         overlay_enabled=overlay_enabled,
         dialogue_enabled=dialogue_enabled,
         blocks=[],
+        engine_duration_target=engine_duration_target,
+        requested_total_duration_seconds=requested_total_duration_seconds,
         copy_intelligence=copy_intelligence,
     )
 
@@ -638,6 +646,8 @@ async def create_t2v_generation_package(
     overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
     blocks: list[dict] | None = None,
+    engine_duration_target: str | None = None,
+    requested_total_duration_seconds: int | None = None,
     operator_notes: str | None = None,
     batch_run_id: str | None = None,
     avatar_id: str | None = None,
@@ -672,6 +682,8 @@ async def create_t2v_generation_package(
         overlay_enabled=overlay_enabled,
         dialogue_enabled=dialogue_enabled,
         blocks=blocks or [],
+        engine_duration_target=engine_duration_target,
+        requested_total_duration_seconds=requested_total_duration_seconds,
         avatar_id=avatar_id,
         copy_intelligence=copy_intelligence,
     )
@@ -777,6 +789,8 @@ async def create_img_generation_package(
     creator_persona: str = "DEFAULT_CREATOR",
     overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
+    engine_duration_target: str | None = None,
+    requested_total_duration_seconds: int | None = None,
     subject_asset_id: str | None = None,
     subject_preview_url: str | None = None,
     subject_download_url: str | None = None,
@@ -792,6 +806,11 @@ async def create_img_generation_package(
 ) -> dict:
     """Create a durable IMG workspace generation package (image generation mode)."""
     mode = "IMG"
+    # IMG is an IMAGE mode, NOT a video duration mode: Extend total-duration block
+    # planning is not applicable. Fail closed rather than silently degrade into a
+    # nonsensical multi-block image plan.
+    if requested_total_duration_seconds is not None:
+        raise ValueError("IMG_MODE_NO_EXTEND_TOTAL_DURATION")
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
