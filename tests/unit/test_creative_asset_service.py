@@ -417,3 +417,72 @@ async def test_update_non_review_edit_on_approved_asset_is_not_regated(monkeypat
     assert result.review_status == "APPROVED"
     assert captured["display_name"] == "Renamed"
     assert "review_status" not in captured
+
+
+@pytest.mark.asyncio
+async def test_update_approval_blocked_when_current_gate_is_fail(monkeypatch):
+    # A gate the truth pipeline already marked FAIL cannot be attested away in the same
+    # approval PATCH — even when the payload sets EVERY gate to PASS, approval is refused
+    # and nothing is written.
+    async def fake_get(asset_id):
+        return _creative_asset_row(identity_lock_status="FAIL")
+
+    called = {"update": False}
+
+    async def fake_update(asset_id, **kw):
+        called["update"] = True
+        return _creative_asset_row()
+
+    monkeypatch.setattr(creative_asset_service.crud, "get_creative_asset", fake_get)
+    monkeypatch.setattr(creative_asset_service.crud, "update_creative_asset", fake_update)
+
+    with pytest.raises(ValueError, match="APPROVAL_BLOCKED_TRUTH_GATE_FAILED"):
+        await creative_asset_service.update_creative_asset(
+            "ca_x",
+            CreativeAssetUpdateRequest(
+                review_status="APPROVED",
+                identity_lock_status="PASS",
+                scale_truth_status="PASS",
+                claim_safety_status="PASS",
+            ),
+        )
+    assert called["update"] is False
+
+
+@pytest.mark.asyncio
+async def test_update_approval_allowed_when_unverified_gate_attested(monkeypatch):
+    # NULL / UNVERIFIED gates (not FAIL) MAY be attested to PASS in the approval PATCH.
+    captured = {}
+
+    async def fake_get(asset_id):
+        return _creative_asset_row(
+            identity_lock_status="UNVERIFIED",
+            scale_truth_status=None,
+            claim_safety_status="UNVERIFIED",
+        )
+
+    async def fake_update(asset_id, **kw):
+        captured.update(kw)
+        return _creative_asset_row(
+            review_status="APPROVED",
+            identity_lock_status="PASS",
+            scale_truth_status="PASS",
+            claim_safety_status="PASS",
+        )
+
+    monkeypatch.setattr(creative_asset_service.crud, "get_creative_asset", fake_get)
+    monkeypatch.setattr(creative_asset_service.crud, "update_creative_asset", fake_update)
+
+    result = await creative_asset_service.update_creative_asset(
+        "ca_x",
+        CreativeAssetUpdateRequest(
+            review_status="APPROVED",
+            identity_lock_status="PASS",
+            scale_truth_status="PASS",
+            claim_safety_status="PASS",
+        ),
+    )
+    assert result.review_status == "APPROVED"
+    assert captured["identity_lock_status"] == "PASS"
+    assert captured["scale_truth_status"] == "PASS"
+    assert captured["claim_safety_status"] == "PASS"
