@@ -11,6 +11,7 @@ from agent.models.creative_asset import (
     CreativeAssetUpdateRequest,
 )
 from agent.services.creative_asset_service import (
+    APPROVAL_GOVERNANCE_ERROR_CODES,
     archive_creative_asset,
     create_creative_asset,
     get_creative_asset_eligibility_audit,
@@ -99,10 +100,15 @@ async def patch_creative_asset(
         return await update_creative_asset(asset_id, request)
     except ValueError as exc:
         detail = str(exc)
-        # NOT_FOUND stays a 404; a governance rejection (e.g. approval blocked because
-        # a truth/safety gate is not PASS — APPROVAL_REQUIRES_ALL_TRUTH_PASS) is a 409
-        # so the operator UI can surface it distinctly from a missing asset.
-        status_code = 404 if detail == "CREATIVE_ASSET_NOT_FOUND" else 409
+        # Specific mapping: NOT_FOUND -> 404; a known approval-governance rejection
+        # (APPROVAL_REQUIRES_ALL_TRUTH_PASS / APPROVAL_BLOCKED_TRUTH_GATE_FAILED) -> 409
+        # so the operator UI surfaces it distinctly; any other/unexpected ValueError -> 422.
+        if detail == "CREATIVE_ASSET_NOT_FOUND":
+            status_code = 404
+        elif detail in APPROVAL_GOVERNANCE_ERROR_CODES:
+            status_code = 409
+        else:
+            status_code = 422
         raise HTTPException(status_code=status_code, detail=detail) from exc
 
 

@@ -267,3 +267,39 @@ def test_patch_creative_asset_missing_is_404(monkeypatch):
     )
     assert response.status_code == 404
     assert "CREATIVE_ASSET_NOT_FOUND" in response.text
+
+
+def test_patch_creative_asset_current_fail_gate_is_409(monkeypatch):
+    # A current-FAIL-gate rejection is also an approval-governance 409 (the operator
+    # attested PASS in the payload but the gate cannot be overridden).
+    async def fake_update(asset_id, request):
+        raise ValueError("APPROVAL_BLOCKED_TRUTH_GATE_FAILED")
+
+    monkeypatch.setattr("agent.api.creative_assets.update_creative_asset", fake_update)
+    client = TestClient(_build_app())
+    response = client.patch(
+        "/api/creative-assets/ca_x",
+        json={
+            "review_status": "APPROVED",
+            "identity_lock_status": "PASS",
+            "scale_truth_status": "PASS",
+            "claim_safety_status": "PASS",
+        },
+    )
+    assert response.status_code == 409
+    assert "APPROVAL_BLOCKED_TRUTH_GATE_FAILED" in response.text
+
+
+def test_patch_creative_asset_unexpected_valueerror_is_422(monkeypatch):
+    # Any ValueError that is NOT a known governance code (and not NOT_FOUND) maps to a
+    # 422 — not a misleading 409 conflict.
+    async def fake_update(asset_id, request):
+        raise ValueError("SOME_UNEXPECTED_VALIDATION")
+
+    monkeypatch.setattr("agent.api.creative_assets.update_creative_asset", fake_update)
+    client = TestClient(_build_app())
+    response = client.patch(
+        "/api/creative-assets/ca_x", json={"display_name": "x"}
+    )
+    assert response.status_code == 422
+    assert "SOME_UNEXPECTED_VALIDATION" in response.text

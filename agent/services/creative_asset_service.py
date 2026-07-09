@@ -33,6 +33,13 @@ DEFAULT_I2V_RECIPE_ID = "PRODUCT_HELD_BY_CHARACTER_IN_SCENE"
 # product_truth_status is intentionally NOT here (it is derived PRESERVED/NOT_APPLICABLE,
 # not a human/operator gate), matching the save-flow rule exactly.
 TRUTH_GATE_FIELDS = ("identity_lock_status", "scale_truth_status", "claim_safety_status")
+FAILED_TRUTH_STATUS = "FAIL"
+# Governance rejections raised by update_creative_asset when an approval PATCH is
+# refused. The API layer maps these to HTTP 409 (distinct from a 404 NOT_FOUND or a
+# 422 for any other/unexpected ValueError).
+APPROVAL_GOVERNANCE_ERROR_CODES = frozenset(
+    {"APPROVAL_REQUIRES_ALL_TRUTH_PASS", "APPROVAL_BLOCKED_TRUTH_GATE_FAILED"}
+)
 
 
 def _json_text(value: Any) -> str:
@@ -415,8 +422,14 @@ async def update_creative_asset(
     # ONLY when this PATCH explicitly sets review_status=APPROVED, so editing other
     # fields on an already-approved asset is never re-gated.
     if payload.get("review_status") == APPROVED_REVIEW_STATUS:
+        current_gates = {field: current.get(field) for field in TRUTH_GATE_FIELDS}
+        # A gate the truth pipeline already marked FAIL cannot be attested away in the
+        # SAME approval PATCH — a current FAIL blocks approval regardless of the payload.
+        # (NULL / UNVERIFIED gates may still be attested to PASS in this PATCH.)
+        if any(value == FAILED_TRUTH_STATUS for value in current_gates.values()):
+            raise ValueError("APPROVAL_BLOCKED_TRUTH_GATE_FAILED")
         effective_gates = {
-            field: payload.get(field, current.get(field))
+            field: payload.get(field, current_gates[field])
             for field in TRUTH_GATE_FIELDS
         }
         if not all(value == "PASS" for value in effective_gates.values()):
