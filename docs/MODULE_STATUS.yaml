@@ -221,6 +221,7 @@ domains:
       - dashboard/src/pages/CreativeLibraryWorkspacePage.tsx
       - dashboard/src/pages/ImgFastlanePage.tsx
       - dashboard/src/pages/OperatorPage.tsx
+      - dashboard/src/pages/OperatorPage.sourceMode.test.ts
       - dashboard/src/pages/ProductAssetGeneratorPage.tsx
       - dashboard/src/pages/SettingsPage.tsx
       - dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx

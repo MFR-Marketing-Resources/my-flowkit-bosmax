@@ -1,5 +1,12 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // F2V pulls creative assets + frame sources on mount / in handlers; stub them and
@@ -283,5 +290,86 @@ describe("F2VModule copy-binding gate (Phase B enforcement; covers HYBRID)", () 
 		expect(
 			screen.queryByRole("link", { name: /Open Creative Library review/i }),
 		).not.toBeInTheDocument();
+	});
+});
+
+describe("F2VModule HYBRID vs FRAMES surface separation", () => {
+	beforeEach(() => {
+		mockedAudit.mockReset();
+		mockedAudit.mockResolvedValue(audit());
+	});
+
+	afterEach(() => cleanup());
+
+	it("[hybrid] renders product-first, no composite required, composite picker demoted to advanced override", async () => {
+		render(
+			<F2VModule
+				onExecute={vi.fn()}
+				isExecuting={false}
+				workspacePackage={pkg(true)}
+				videoModels={MODELS}
+				copyReady={true}
+				surfaceMode="HYBRID"
+			/>,
+		);
+
+		// Product-first identity, not "Frames renamed".
+		expect(
+			await screen.findByText("1. Product Anchor + AI Presenter"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("No composite frame is required."),
+		).toBeInTheDocument();
+		expect(screen.getByText("Auto Product Anchor")).toBeInTheDocument();
+		// The F2V primary header must NOT be shown on the HYBRID surface.
+		expect(
+			screen.queryByText("1. Visual Assets (F2V Slots)"),
+		).not.toBeInTheDocument();
+
+		// The Creative Library composite picker is preserved but demoted into a
+		// collapsed advanced-override <details> (not the primary/default step).
+		const summary = screen.getByText(
+			/Advanced override: use a pre-composited frame/i,
+		);
+		const details = summary.closest("details");
+		expect(details).not.toBeNull();
+		expect(details).not.toHaveAttribute("open");
+		// The composite picker lives INSIDE that collapsed override.
+		expect(
+			within(details as HTMLElement).getByText(
+				"Or pick a saved composite frame from the Creative Library",
+			),
+		).toBeInTheDocument();
+	});
+
+	it("[frames] renders F2V primary, composite picker inline (no advanced-override wrapper)", async () => {
+		render(
+			<F2VModule
+				onExecute={vi.fn()}
+				isExecuting={false}
+				workspacePackage={pkg(true)}
+				videoModels={MODELS}
+				copyReady={true}
+				surfaceMode="F2V"
+			/>,
+		);
+
+		expect(
+			await screen.findByText("1. Visual Assets (F2V Slots)"),
+		).toBeInTheDocument();
+		// Composite picker is primary (inline), not hidden behind an override.
+		const picker = screen.getByText(
+			"Or pick a saved composite frame from the Creative Library",
+		);
+		expect(picker).toBeInTheDocument();
+		expect(picker.closest("details")).toBeNull();
+		expect(
+			screen.queryByText(/Advanced override: use a pre-composited frame/i),
+		).not.toBeInTheDocument();
+		// HYBRID-only product-anchor chrome must be absent on FRAMES.
+		expect(
+			screen.queryByText("1. Product Anchor + AI Presenter"),
+		).not.toBeInTheDocument();
+		expect(screen.queryByText("Auto Product Anchor")).not.toBeInTheDocument();
 	});
 });

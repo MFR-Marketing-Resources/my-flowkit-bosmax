@@ -237,6 +237,20 @@ function workspaceSurfaceLabel(mode: WorkspaceMode) {
 	return "Text to Video";
 }
 
+// Canonical source-mode (ADR-008): PINNED by the operator surface — HYBRID and
+// FRAMES are separate first-class pages, never an ambiguous toggle. Hoisted to a
+// pure module-scope export so the mapping is unit-testable without rendering the
+// page. Mapping is byte-identical to the prior in-component useCallback.
+export function resolveOperatorSourceMode(
+	m: string,
+): "T2V" | "HYBRID" | "FRAMES" | "INGREDIENTS" | "IMAGES" {
+	if (m === "HYBRID") return "HYBRID";
+	if (m === "F2V") return "FRAMES";
+	if (m === "I2V") return "INGREDIENTS";
+	if (m === "IMG") return "IMAGES";
+	return "T2V";
+}
+
 function parseWorkspaceBlocker(error: unknown): string | null {
 	const message = error instanceof Error ? error.message : String(error || "");
 	const match = message.match(
@@ -335,18 +349,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [engineDurationTarget, setEngineDurationTarget] = useState<
 		"" | "GROK" | "GOOGLE_FLOW"
 	>("");
-	// Canonical source-mode (ADR-008): PINNED by the operator surface — HYBRID
-	// and FRAMES are separate first-class pages, never an ambiguous toggle.
-	const resolveSourceMode = useCallback(
-		(m: string): "T2V" | "HYBRID" | "FRAMES" | "INGREDIENTS" | "IMAGES" => {
-			if (m === "HYBRID") return "HYBRID";
-			if (m === "F2V") return "FRAMES";
-			if (m === "I2V") return "INGREDIENTS";
-			if (m === "IMG") return "IMAGES";
-			return "T2V";
-		},
-		[],
-	);
+	// Canonical source-mode (ADR-008) — delegates to the hoisted pure export
+	// resolveOperatorSourceMode; identity is stable across renders.
+	const resolveSourceMode = resolveOperatorSourceMode;
 	const [requestedTotalDuration, setRequestedTotalDuration] = useState<
 		number | ""
 	>("");
