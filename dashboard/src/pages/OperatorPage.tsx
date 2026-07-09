@@ -355,6 +355,22 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [requestedTotalDuration, setRequestedTotalDuration] = useState<
 		number | ""
 	>("");
+	// BLOCK-SPLIT fix: a chosen Extend Total derives an N-block chain from the
+	// Google Flow workbook. The BACKEND is the fail-closed authority (unsupported
+	// totals raise UNSUPPORTED_EXTEND_TOTAL_DURATION_<n>); this map only drives the
+	// operator block-plan preview and the handoff-bank blocks payload.
+	const extendTotalOptions: number[] = [16, 24, 32, 48, 56];
+	const extendPlanByTotal: Record<number, number[]> = {
+		16: [8, 8],
+		24: [8, 8, 8],
+		32: [8, 8, 8, 8],
+		48: [8, 8, 8, 8, 8, 8],
+		56: [8, 8, 8, 8, 8, 8, 8],
+	};
+	const extendTotalValue =
+		requestedTotalDuration === "" ? null : Number(requestedTotalDuration);
+	const extendPlan =
+		extendTotalValue !== null ? (extendPlanByTotal[extendTotalValue] ?? null) : null;
 	const [notice, setNotice] = useState<OperatorNotice>({
 		tone: "idle",
 		title: "Idle",
@@ -975,6 +991,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							? [{ block_index: 2, duration_seconds: block2Duration }]
 							: []),
 					],
+					// backend workbook authority OVERRIDES blocks[] when a total is set (rule 2)
+					...(generationMode === "EXTEND" && extendTotalValue !== null
+						? {
+								engine_duration_target: "GOOGLE_FLOW" as const,
+								requested_total_duration_seconds: extendTotalValue,
+							}
+						: {}),
 				});
 			} else if (mode === "I2V") {
 				pkg = await createI2VGenerationPackage({
@@ -986,6 +1009,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					camera_style: cameraStyle,
 					character_presence: characterPresence,
 					creator_persona: creatorPersona,
+					...(generationMode === "EXTEND" && extendTotalValue !== null
+						? {
+								engine_duration_target: "GOOGLE_FLOW" as const,
+								requested_total_duration_seconds: extendTotalValue,
+							}
+						: {}),
 				});
 			} else {
 				throw new Error(
@@ -1009,6 +1038,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		creatorPersona,
 		block1Duration,
 		block2Duration,
+		requestedTotalDuration,
 		resolveSourceMode,
 	]);
 
@@ -1049,16 +1079,19 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								{ block_index: 2, duration_seconds: block2Duration },
 							]
 						: [],
-				...(engineDurationTarget
+				...(generationMode === "EXTEND" && extendTotalValue !== null
 					? {
-							engine_duration_target: engineDurationTarget,
-							...(requestedTotalDuration !== ""
-								? {
-										requested_total_duration_seconds: requestedTotalDuration,
-									}
-								: {}),
+							engine_duration_target: engineDurationTarget || "GOOGLE_FLOW",
+							requested_total_duration_seconds: extendTotalValue,
 						}
-					: {}),
+					: engineDurationTarget
+						? {
+								engine_duration_target: engineDurationTarget,
+								...(requestedTotalDuration !== ""
+									? { requested_total_duration_seconds: requestedTotalDuration }
+									: {}),
+							}
+						: {}),
 			});
 			setPreviewPackage(preview);
 			setNotice({
@@ -1113,16 +1146,19 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								{ block_index: 2, duration_seconds: block2Duration },
 							]
 						: [],
-				...(engineDurationTarget
+				...(generationMode === "EXTEND" && extendTotalValue !== null
 					? {
-							engine_duration_target: engineDurationTarget,
-							...(requestedTotalDuration !== ""
-								? {
-										requested_total_duration_seconds: requestedTotalDuration,
-									}
-								: {}),
+							engine_duration_target: engineDurationTarget || "GOOGLE_FLOW",
+							requested_total_duration_seconds: extendTotalValue,
 						}
-					: {}),
+					: engineDurationTarget
+						? {
+								engine_duration_target: engineDurationTarget,
+								...(requestedTotalDuration !== ""
+									? { requested_total_duration_seconds: requestedTotalDuration }
+									: {}),
+							}
+						: {}),
 			});
 			setWorkspacePackage(pkg);
 			setPreviewPackage(null);
@@ -1368,26 +1404,22 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</div>
 						{isExtendMode ? (
 							<div className="space-y-2">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-									Block 2 Duration
-								</div>
-								<select
-									id="operator-block-2-duration"
-									name="operator_block_2_duration"
-									title="Block 2 duration"
-									value={String(block2Duration)}
-									onChange={(e) => setBlock2Duration(Number(e.target.value))}
-									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-								>
-									{allowedDurations.map((duration) => (
-										<option key={duration} value={duration}>
-											{duration}s
-										</option>
-									))}
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Extend Total Duration</div>
+								<select id="operator-extend-total-duration" name="operator_extend_total_duration" title="Extend total duration - Google Flow workbook block plan" value={requestedTotalDuration === "" ? "" : String(requestedTotalDuration)} onChange={(e) => setRequestedTotalDuration(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100">
+									<option value="">Manual (Block 1 + Block 2)</option>
+									{extendTotalOptions.map((total) => (<option key={total} value={total}>{total}s</option>))}
 								</select>
-								<div className="text-[11px] text-slate-400">
-									Recommended Shots: {shotPolicy2?.recommended ?? "-"}
-								</div>
+								{extendTotalValue === null ? (
+									<div className="text-[11px] text-slate-400">Manual 2-block chain. Block 2 Duration:{" "}
+										<select id="operator-block-2-duration" name="operator_block_2_duration" title="Block 2 duration" value={String(block2Duration)} onChange={(e) => setBlock2Duration(Number(e.target.value))} className="ml-1 rounded border border-slate-800 bg-slate-900 px-1 py-0.5 text-[11px] text-slate-100">
+											{allowedDurations.map((duration) => (<option key={duration} value={duration}>{duration}s</option>))}
+										</select>{" "}(shots {shotPolicy2?.recommended ?? "-"})
+									</div>
+								) : extendPlan ? (
+									<div className="text-[11px] text-emerald-300">Block plan (Google Flow): {extendPlan.length} blocks - {extendPlan.map((d) => `${d}s`).join(" + ")}</div>
+								) : (
+									<div className="text-[11px] text-amber-300">Unsupported total - generation fails closed (UNSUPPORTED_EXTEND_TOTAL_DURATION_{extendTotalValue}).</div>
+								)}
 							</div>
 						) : (
 							<div className="space-y-2">
@@ -1395,8 +1427,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									Block Structure
 								</div>
 								<div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-400">
-									Single mode compiles one anchor block. Switch Generation Mode
-									to Extend to unlock Block 2 duration.
+									Single mode generates one prompt block only and will not split.
+									Switch Generation Mode to Extend to produce a multi-block chain.
 								</div>
 							</div>
 						)}

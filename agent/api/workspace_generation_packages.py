@@ -78,6 +78,8 @@ class T2VGenerationPackageRequest(_BaseModel):
     overlay_enabled: bool = False  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True
     blocks: list = []
+    engine_duration_target: str | None = None  # GOOGLE_FLOW | GROK
+    requested_total_duration_seconds: int | None = None  # workbook derives N blocks
     operator_notes: str | None = None
 
 
@@ -153,6 +155,8 @@ async def create_f2v_package(request: F2VGenerationPackageRequest):
             dialogue_enabled=request.dialogue_enabled,
             source_mode=request.source_mode,
             blocks=request.blocks,
+            engine_duration_target=request.engine_duration_target,
+            requested_total_duration_seconds=request.requested_total_duration_seconds,
             start_frame_asset_id=request.start_frame_asset_id,
             start_frame_preview_url=request.start_frame_preview_url,
             start_frame_download_url=request.start_frame_download_url,
@@ -181,6 +185,8 @@ async def create_i2v_package(request: I2VGenerationPackageRequest):
             creator_persona=request.creator_persona,
             overlay_enabled=overlay_enabled if (overlay_enabled := request.overlay_enabled) is not None else False,  # NO_OVERLAY law
             dialogue_enabled=request.dialogue_enabled,
+            engine_duration_target=request.engine_duration_target,
+            requested_total_duration_seconds=request.requested_total_duration_seconds,
             product_reference_asset_id=request.product_reference_asset_id,
             character_reference_asset_id=request.character_reference_asset_id,
             scene_context_reference_asset_id=request.scene_context_reference_asset_id,
@@ -226,22 +232,41 @@ async def create_from_execution_package(
                 lineage = {}
         compiler = lineage.get("compiler") or {}
         source_mode = compiler.get("source_mode")
+        # Inherit the resolved plan from the execution package so the seeded
+        # handoff agrees on the same block count (workbook authority parity).
+        _seed_total = compiler.get("total_duration_seconds")
+        _seed_plan_kwargs: dict = (
+            {
+                "generation_mode": "EXTEND",
+                "engine_duration_target": "GOOGLE_FLOW",
+                "requested_total_duration_seconds": int(_seed_total),
+            }
+            if (
+                compiler.get("generation_mode") == "EXTEND"
+                and isinstance(_seed_total, (int, float))
+                and int(_seed_total) > 8
+            )
+            else {}
+        )
 
         if wep_mode == "F2V":
             package = await create_f2v_generation_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
                 source_mode=source_mode,
+                **_seed_plan_kwargs,
             )
         elif wep_mode == "I2V":
             package = await create_i2v_generation_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
+                **_seed_plan_kwargs,
             )
         elif wep_mode == "T2V":
             package = await create_t2v_generation_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
+                **_seed_plan_kwargs,
             )
         elif wep_mode == "IMG":
             package = await create_img_generation_package(
@@ -274,6 +299,8 @@ async def create_t2v_package(request: T2VGenerationPackageRequest):
             overlay_enabled=request.overlay_enabled,
             dialogue_enabled=request.dialogue_enabled,
             blocks=request.blocks,
+            engine_duration_target=request.engine_duration_target,
+            requested_total_duration_seconds=request.requested_total_duration_seconds,
             operator_notes=request.operator_notes,
         )
         return package

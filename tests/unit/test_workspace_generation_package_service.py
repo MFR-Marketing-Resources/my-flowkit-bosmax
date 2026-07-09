@@ -445,3 +445,229 @@ async def test_get_workspace_generation_package_dom_ready_forced_false(monkeypat
     result = await get_workspace_generation_package("wgp_abc123")
     dom = result["dom_handoff_payload_json"]
     assert dom["readiness"]["dom_handoff_ready"] is False
+
+
+# ─── BLOCK-SPLIT: handoff bank derives the workbook N-block plan from a total ──
+# compile_ugc_video_prompt is LEFT REAL here, so the workbook authority + the
+# fail-closed rule are exercised end-to-end (parity with preview + execution pkg).
+
+def _stub_handoff_common(monkeypatch, capture: dict):
+    async def fake_approved(product_id, mode):
+        return FAKE_APPROVED_PKG
+
+    async def fake_resolver(req):
+        return FAKE_RESOLVER_RESULT
+
+    async def fake_create(wgp_id, *, prompt_blocks_json, generation_mode, **kw):
+        capture["blocks"] = json.loads(prompt_blocks_json)
+        capture["generation_mode"] = generation_mode
+        return {**FAKE_WGP_ROW, "workspace_generation_package_id": wgp_id}
+
+    P = "agent.services.workspace_generation_package_service."
+    monkeypatch.setattr(P + "get_approved_product_package", fake_approved)
+    monkeypatch.setattr(P + "resolve_i2v_semantic_slots", fake_resolver)
+    monkeypatch.setattr(P + "crud.create_workspace_generation_package", fake_create)
+
+
+@pytest.mark.asyncio
+async def test_f2v_hybrid_handoff_extend_24_resolves_three_blocks(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    await create_f2v_generation_package(
+        product_id="prod-001", source_mode="HYBRID",
+        generation_mode="EXTEND", engine_duration_target="GOOGLE_FLOW",
+        requested_total_duration_seconds=24,
+    )
+    assert [b["duration_seconds"] for b in cap["blocks"]] == [8, 8, 8]
+    assert cap["blocks"][0]["block_role"] == "ANCHOR"
+    assert cap["blocks"][-1]["block_role"] == "CONTINUATION"
+
+
+@pytest.mark.asyncio
+async def test_f2v_handoff_single_stays_one_block(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    await create_f2v_generation_package(product_id="prod-001", generation_mode="SINGLE")
+    assert len(cap["blocks"]) == 1
+    assert cap["blocks"][0]["block_role"] == "ANCHOR"
+
+
+@pytest.mark.asyncio
+async def test_i2v_handoff_extend_16_stores_two_blocks(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    await create_i2v_generation_package(
+        product_id="prod-001", generation_mode="EXTEND",
+        engine_duration_target="GOOGLE_FLOW", requested_total_duration_seconds=16,
+    )
+    assert [b["duration_seconds"] for b in cap["blocks"]] == [8, 8]
+    assert cap["blocks"][0]["block_role"] == "ANCHOR"
+    assert cap["blocks"][1]["block_role"] == "CONTINUATION"
+
+
+@pytest.mark.asyncio
+async def test_i2v_handoff_extend_24_stores_three_blocks(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    await create_i2v_generation_package(
+        product_id="prod-001", generation_mode="EXTEND",
+        engine_duration_target="GOOGLE_FLOW", requested_total_duration_seconds=24,
+    )
+    assert [b["duration_seconds"] for b in cap["blocks"]] == [8, 8, 8]
+
+
+@pytest.mark.asyncio
+async def test_i2v_handoff_extend_15_fails_closed(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    with pytest.raises(ValueError) as exc:
+        await create_i2v_generation_package(
+            product_id="prod-001", generation_mode="EXTEND",
+            engine_duration_target="GOOGLE_FLOW", requested_total_duration_seconds=15,
+        )
+    assert "UNSUPPORTED_EXTEND_TOTAL_DURATION_15" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_handoff_block_plan_parity_with_direct_compiler(monkeypatch):
+    """Handoff resolves the SAME plan the compiler resolves directly — i.e.
+    preview, execution package, and generation package agree (32s -> [8,8,8,8])."""
+    from agent.services.ugc_video_prompt_compiler_service import compile_ugc_video_prompt
+
+    direct = compile_ugc_video_prompt(
+        product={"id": "prod-001", "name": "Bosmax Test Product", "category": ""},
+        approved_package=FAKE_APPROVED_PKG,
+        mode="F2V", source_mode="HYBRID",
+        generation_mode="EXTEND", engine_duration_target="GOOGLE_FLOW",
+        requested_total_duration_seconds=32,
+    )
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    await create_f2v_generation_package(
+        product_id="prod-001", source_mode="HYBRID",
+        generation_mode="EXTEND", engine_duration_target="GOOGLE_FLOW",
+        requested_total_duration_seconds=32,
+    )
+    assert (
+        [b["duration_seconds"] for b in cap["blocks"]]
+        == [b["duration_seconds"] for b in direct["prompt_blocks"]]
+        == [8, 8, 8, 8]
+    )
+
+
+# ─── ALL-MODES completion: T2V + standalone HYBRID + IMG classification + batch ──
+
+from agent.services.workspace_generation_package_service import (  # noqa: E402
+    _MODE_CREATORS,
+    create_hybrid_generation_package,
+    create_img_generation_package,
+    create_t2v_generation_package,
+)
+
+
+@pytest.mark.asyncio
+async def test_t2v_handoff_extend_16_stores_two_blocks(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    await create_t2v_generation_package(
+        product_id="prod-001", generation_mode="EXTEND",
+        engine_duration_target="GOOGLE_FLOW", requested_total_duration_seconds=16,
+    )
+    assert [b["duration_seconds"] for b in cap["blocks"]] == [8, 8]
+
+
+@pytest.mark.asyncio
+async def test_t2v_handoff_extend_24_stores_three_blocks(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    await create_t2v_generation_package(
+        product_id="prod-001", generation_mode="EXTEND",
+        engine_duration_target="GOOGLE_FLOW", requested_total_duration_seconds=24,
+    )
+    assert [b["duration_seconds"] for b in cap["blocks"]] == [8, 8, 8]
+
+
+@pytest.mark.asyncio
+async def test_t2v_handoff_extend_15_fails_closed(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    with pytest.raises(ValueError) as exc:
+        await create_t2v_generation_package(
+            product_id="prod-001", generation_mode="EXTEND",
+            engine_duration_target="GOOGLE_FLOW", requested_total_duration_seconds=15,
+        )
+    assert "UNSUPPORTED_EXTEND_TOTAL_DURATION_15" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_t2v_handoff_single_stays_one_block(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    await create_t2v_generation_package(product_id="prod-001", generation_mode="SINGLE")
+    assert len(cap["blocks"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_hybrid_standalone_handoff_extend_24_stores_three_blocks(monkeypatch):
+    """Standalone HYBRID creator inherits F2V authority via **kwargs passthrough."""
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    await create_hybrid_generation_package(
+        product_id="prod-001", generation_mode="EXTEND",
+        engine_duration_target="GOOGLE_FLOW", requested_total_duration_seconds=24,
+    )
+    assert [b["duration_seconds"] for b in cap["blocks"]] == [8, 8, 8]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_standalone_handoff_extend_15_fails_closed(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    with pytest.raises(ValueError) as exc:
+        await create_hybrid_generation_package(
+            product_id="prod-001", generation_mode="EXTEND",
+            engine_duration_target="GOOGLE_FLOW", requested_total_duration_seconds=15,
+        )
+    assert "UNSUPPORTED_EXTEND_TOTAL_DURATION_15" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_img_handoff_fails_closed_on_extend_total(monkeypatch):
+    """IMG is an image mode: an Extend total-duration must fail closed."""
+    _stub_handoff_common(monkeypatch, {})
+    with pytest.raises(ValueError) as exc:
+        await create_img_generation_package(
+            product_id="prod-001", generation_mode="EXTEND",
+            requested_total_duration_seconds=16,
+        )
+    assert "IMG_MODE_NO_EXTEND_TOTAL_DURATION" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_img_handoff_without_total_still_works(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    result = await create_img_generation_package(product_id="prod-001", generation_mode="SINGLE")
+    assert result["workspace_generation_package_id"]
+
+
+def test_batch_mode_creators_are_total_aware():
+    """Every batch dispatch target (F2V/HYBRID/I2V/T2V) accepts the workbook total;
+    IMG accepts-then-guards. Prevents a batch path silently degrading to 2 blocks."""
+    import inspect
+    for mode in ("F2V", "HYBRID", "I2V", "T2V", "IMG"):
+        sig = inspect.signature(_MODE_CREATORS[mode])
+        has_var_kw = any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+        assert has_var_kw or "requested_total_duration_seconds" in sig.parameters, mode
+
+
+@pytest.mark.asyncio
+async def test_batch_dispatch_through_mode_creators_honors_total(monkeypatch):
+    """Calling THROUGH _MODE_CREATORS (as the batch loop does) honors the total."""
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    await _MODE_CREATORS["T2V"](
+        product_id="prod-001", generation_mode="EXTEND",
+        engine_duration_target="GOOGLE_FLOW", requested_total_duration_seconds=32,
+    )
+    assert [b["duration_seconds"] for b in cap["blocks"]] == [8, 8, 8, 8]

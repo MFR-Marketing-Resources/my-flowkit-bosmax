@@ -743,14 +743,26 @@ def compile_ugc_video_prompt(
     )
     # ADR-008: an operator-requested TOTAL duration derives the block chain from
     # WORKBOOK AUTHORITY only (1-7 blocks; e.g. Google Flow 56s = seven 8s blocks).
-    # Explicit blocks/manual plans are never accepted over the workbook.
-    if requested_total_duration_seconds and not blocks:
-        # Fail-closed per retained law: ambiguous durations (Google Flow 40s)
-        # raise PREFERRED_LANE_REQUIRED instead of silently picking a lane.
-        _plan = _canonical.resolve_block_plan(
-            engine_duration_target or "GOOGLE_FLOW",
-            int(requested_total_duration_seconds),
-        )
+    # The workbook is AUTHORITATIVE: a requested total OVERRIDES any raw blocks[]
+    # the surface sent (BLOCK-SPLIT fix — raw blocks must never win over the
+    # workbook when a total is requested, else EXTEND stayed capped at the 2 raw
+    # blocks the UI always sent). Explicit blocks[] WITHOUT a requested total stay
+    # honored, for per-block manual plans from non-total callers.
+    if requested_total_duration_seconds:
+        # Fail-closed per retained law: unsupported totals (e.g. Google Flow 15s)
+        # raise UNSUPPORTED_EXTEND_TOTAL_DURATION_<n>; ambiguous totals (Google
+        # Flow 40s) still raise PREFERRED_LANE_REQUIRED — never a silent lane pick.
+        try:
+            _plan = _canonical.resolve_block_plan(
+                engine_duration_target or "GOOGLE_FLOW",
+                int(requested_total_duration_seconds),
+            )
+        except ValueError as exc:
+            if str(exc).startswith("UNSUPPORTED_ENGINE_DURATION"):
+                raise ValueError(
+                    f"UNSUPPORTED_EXTEND_TOTAL_DURATION_{int(requested_total_duration_seconds)}"
+                ) from exc
+            raise
         blocks = [{"block_index": i + 1, "duration_seconds": d} for i, d in enumerate(_plan)]
         if len(_plan) > 1:
             resolved_generation_mode = "EXTEND"
