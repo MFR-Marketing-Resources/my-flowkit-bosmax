@@ -232,3 +232,106 @@ def test_wall_sticker_uses_small_rigid_decor_family():
 
     assert result["physics_class"] == "SMALL_RIGID_DECOR"
     assert "decorative" in result["handling_notes"] or "silhouette" in result["handling_notes"]
+
+
+def test_traditional_herbal_oil_overrides_beauty_family_class():
+    # A traditional medicated oil enriched into the BEAUTY_PERSONAL_CARE
+    # family must NOT inherit the cosmetic beauty-bottle scale identity.
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Heritage Medicated Oil 25ml",
+            "category": "Health & Personal Care",
+            "subcategory": "Traditional Herbal Oil",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+        },
+    )
+
+    assert result["physics_class"] == "TRADITIONAL_HERBAL_OIL_BOTTLE"
+    assert "palm" in result["handling_notes"]
+
+
+def test_traditional_oil_tokens_override_beauty_category_family():
+    result = resolve_product_physics(
+        product_name="Minyak Urut Tradisional 30ml",
+        category="Beauty & Personal Care",
+        subcategory="Bath and Body",
+        type_name="Body Oil",
+    )
+
+    assert result["physics_class"] == "TRADITIONAL_HERBAL_OIL_BOTTLE"
+
+
+def test_plain_beauty_family_keeps_beauty_bottle_class():
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Glow Fix Setting Spray Kawalan Minyak",
+            "category": "Beauty & Personal Care",
+            "subcategory": "Makeup",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+        },
+    )
+
+    assert result["physics_class"] == "BEAUTY_BOTTLE_OR_TUBE"
+
+
+def test_mwtcb_shaped_product_gets_herbal_oil_class():
+    # Real-world shape of the reported product: category Health & Personal Care,
+    # subcategory Traditional Herbal Oil, family enriched to BEAUTY_PERSONAL_CARE.
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Minyak Warisan Tok Cap Burung 25ml",
+            "category": "Health & Personal Care",
+            "subcategory": "Traditional Herbal Oil",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+        },
+    )
+    assert result["physics_class"] == "TRADITIONAL_HERBAL_OIL_BOTTLE"
+
+
+def test_medicated_oil_title_overrides_beauty_family():
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Pain relief medicated oil roll-on 10ml",
+            "category": "Beauty & Personal Care",
+            "subcategory": "Bath and Body",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+        },
+    )
+    assert result["physics_class"] == "TRADITIONAL_HERBAL_OIL_BOTTLE"
+
+
+def test_minyak_angin_overrides_beauty_family():
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Minyak Angin Aromatherapy 10ml",
+            "category": "Beauty & Personal Care",
+            "subcategory": "Bath and Body",
+            "bosmax_product_family": "BEAUTY_PERSONAL_CARE",
+        },
+    )
+    assert result["physics_class"] == "TRADITIONAL_HERBAL_OIL_BOTTLE"
+
+
+def test_skincare_tube_stays_skincare_class():
+    result = resolve_product_physics(
+        product_name="Hydrating facial moisturizer tube 50ml",
+        category="Beauty & Personal Care",
+        subcategory="Skincare",
+        type_name="Moisturizer",
+    )
+    assert result["physics_class"] == "SKINCARE_JAR_OR_TUBE"
+
+
+def test_supplement_bottle_never_becomes_herbal_oil():
+    # HEALTH_SUPPLEMENT family resolves to supplement bottle; the herbal-oil
+    # guard only rewrites the BEAUTY class, so supplements are untouched even
+    # with oil-adjacent wording in the title.
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": "Fish oil omega supplement softgel bottle",
+            "category": "Health",
+            "subcategory": "Supplements",
+            "bosmax_product_family": "HEALTH_SUPPLEMENT",
+        },
+    )
+    assert result["physics_class"] == "SUPPLEMENT_BOTTLE"

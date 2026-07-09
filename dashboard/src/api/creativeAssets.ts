@@ -66,8 +66,11 @@ export async function fetchCreativeAssetEligibilityAudit(input: {
 	params.set("surface", input.surface);
 	if (input.recipe_id) params.set("recipe_id", input.recipe_id);
 	params.set("limit", String(input.limit ?? 1000));
+	// Collision-proof audit route: shares no path space with
+	// /api/creative-assets/{asset_id}, so a stale backend answers 404 Not Found
+	// (an honest miss) instead of the misleading CREATIVE_ASSET_NOT_FOUND.
 	return fetchAPI<CreativeAssetEligibilityAuditResponse>(
-		`/api/creative-assets/eligibility-audit?${params.toString()}`,
+		`/api/creative-asset-eligibility/audit?${params.toString()}`,
 	);
 }
 

@@ -325,3 +325,50 @@ def test_engine_prompt_no_parenthesis_in_product_name():
     )
     final = result["final_compiled_prompt_text"]
     assert "(Mix Berry)" not in final
+
+
+# ── Source-lineage law (2026-07-09 corrective audit) ─────────────────────────
+
+
+def _compile_kwargs(**overrides):
+    kwargs = dict(
+        product=_product(),
+        approved_package=_approved_package(),
+        mode="F2V",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        camera_style="UGC_IPHONE_RAW",
+        character_presence="VISIBLE_CREATOR",
+        creator_persona="DEFAULT_CREATOR",
+        target_language="BM_MS",
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_explicit_frames_lineage_compiles_frames_branch():
+    result = compile_ugc_video_prompt(**_compile_kwargs(source_mode="FRAMES"))
+    assert result["source_mode"] == "FRAMES"
+    text = result["final_compiled_prompt_text"]
+    assert "FRAME CONTINUITY SOURCE" in text
+    assert "PRODUCT TRUTH SOURCE" in text
+
+
+def test_explicit_hybrid_lineage_compiles_hybrid_branch():
+    result = compile_ugc_video_prompt(**_compile_kwargs(source_mode="HYBRID"))
+    assert result["source_mode"] == "HYBRID"
+    text = result["final_compiled_prompt_text"]
+    assert "FRAME CONTINUITY SOURCE" not in text
+    assert "uploaded product image" in text
+
+
+def test_unpinned_f2v_defaults_to_documented_hybrid_anchor():
+    # The F2V SURFACE (ambiguous) still defaults to the documented HYBRID
+    # product-image anchor; the FRAMES fix lives at the preview boundary.
+    result = compile_ugc_video_prompt(**_compile_kwargs(source_mode=None))
+    assert result["source_mode"] == "HYBRID"
+
+
+def test_invalid_source_mode_fails_closed():
+    with pytest.raises(ValueError, match="SOURCE_MODE_INVALID:FRAME"):
+        compile_ugc_video_prompt(**_compile_kwargs(source_mode="FRAME"))

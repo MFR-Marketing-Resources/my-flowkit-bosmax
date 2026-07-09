@@ -14,6 +14,7 @@ import {
 	fetchWorkspacePackageReadiness,
 } from "../api/workspacePackages";
 import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
+import BackendVersionBanner from "../components/BackendVersionBanner";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
 import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
@@ -1260,6 +1261,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						Mode: {workspaceSurfaceLabel(mode as WorkspaceMode)}
 					</div>
 				</div>
+			</div>
+
+			<div className="mb-4">
+				<BackendVersionBanner />
 			</div>
 
 			{isPortalMode && (

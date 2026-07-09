@@ -236,6 +236,19 @@ PHYSICS_FAMILY_RULES: dict[str, dict[str, Any]] = {
         camera_handling_notes="Favor clean beauty close-ups, keep the label and seal readable, and avoid spilling, crushing, or over-squeezing the product container.",
         unsafe_handling_rules=["avoid messy leakage", "avoid obscuring expiry or seal areas", "avoid unsupported before-after claims"],
     ),
+    "traditional_herbal_oil": _rule(
+        physics_class="TRADITIONAL_HERBAL_OIL_BOTTLE",
+        product_scale="SMALL_OBJECT",
+        hand_object_interaction="compact palm-size herbal-oil bottle handling with label-forward grip and controlled application gestures",
+        recommended_grip="two-finger side pinch or palm-cupped hold with the label facing camera",
+        air_gap_rule="keep fingers clear of the label face and the cap mouth so the small bottle format stays readable",
+        material_behavior="small rigid glass or plastic herbal-oil bottle with a screw cap and low liquid weight",
+        surface_behavior="compact labelled bottle with a satin or gloss label panel and readable traditional branding",
+        fragility_level="MEDIUM",
+        handling_notes="Keep the herbal-oil bottle at true compact palm scale with the heritage label readable and the cap intact.",
+        camera_handling_notes="Show the bottle small relative to an adult hand; never enlarge it toward beauty-serum or tonic-bottle proportions.",
+        unsafe_handling_rules=["avoid enlarging the bottle for camera visibility", "avoid messy oil smears", "avoid obscuring the label with fingers"],
+    ),
     "household_packaged_goods": _rule(
         physics_class="HOUSEHOLD_PACKAGED_GOODS",
         product_scale="MEDIUM_OBJECT",
@@ -397,6 +410,21 @@ PHYSICS_FAMILY_RULES: dict[str, dict[str, Any]] = {
 
 def _title_or_taxonomy_contains(haystack: str, *keywords: str) -> bool:
     return any(normalize_mapping_text(keyword) in haystack for keyword in keywords)
+
+
+# Traditional / medicated herbal oils must never inherit the cosmetic
+# BEAUTY_BOTTLE_OR_TUBE scale identity (wrong object class corrupts product
+# geometry in engine prompts). Multi-word tokens only — a bare "minyak" would
+# also match oil-control cosmetics ("kawalan minyak").
+_TRADITIONAL_HERBAL_OIL_TOKENS = (
+    "traditional herbal oil",
+    "herbal oil",
+    "medicated oil",
+    "traditional oil",
+    "minyak angin",
+    "minyak urut",
+    "minyak sapuan",
+)
 
 
 def _resolve_physics_family(title: str, category: str, subcategory: str, type_name: str) -> str | None:
@@ -576,8 +604,17 @@ def resolve_product_physics(
     )
     haystack = f"{title} {taxonomy}".strip()
 
+    is_traditional_herbal_oil = _title_or_taxonomy_contains(
+        haystack, *_TRADITIONAL_HERBAL_OIL_TOKENS
+    )
+
     intelligence_rule = _resolve_intelligence_physics_rule(product)
     if intelligence_rule:
+        if (
+            intelligence_rule.get("physics_class") == "BEAUTY_BOTTLE_OR_TUBE"
+            and is_traditional_herbal_oil
+        ):
+            return dict(PHYSICS_FAMILY_RULES["traditional_herbal_oil"])
         return intelligence_rule
 
     for keywords, rule in PHYSICS_RULES:
@@ -591,6 +628,8 @@ def resolve_product_physics(
         type_name=normalize_mapping_text(type_name or (product or {}).get("type")),
     )
     if family:
+        if family == "beauty_bottle_or_tube" and is_traditional_herbal_oil:
+            family = "traditional_herbal_oil"
         return dict(PHYSICS_FAMILY_RULES[family])
 
     if existing_payload:

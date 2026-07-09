@@ -35,6 +35,7 @@ domains:
       - dashboard/src/components/prompt-tool/usePromptToolHydration.ts
       - tests/ui/test_prompt_tool_catalog_fallback_contract.py
       - .ai/audits/evidence/pr-197-counter-audit-2.md
+      - docs/evidence/incident-20260709-eligibility-audit-proof.md
       - agent/api/workspace_packages.py
       - agent/api/copy_sets.py
       - agent/models/copy_set.py
@@ -162,6 +163,7 @@ domains:
       - agent/services/social_copy_package_service.py
       - dashboard/src/api/socialCopyPackages.ts
       - dashboard/src/components/SocialCopyPackagePanel.tsx
+      - dashboard/src/components/BackendVersionBanner.tsx
       - tests/api/test_social_copy_api.py
       - tests/ui/test_social_copy_ui_contract.py
       - agent/models/workspace_generation_package.py
@@ -174,11 +176,13 @@ domains:
       - requirements.txt
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py
+      - agent/services/product_physics.py
       - agent/services/workspace_execution_package_service.py
       - agent/services/flow_client.py
       - agent/services/agent_video.py
       - agent/services/make_video.py
       - tests/unit/test_agent_video.py
+      - tests/unit/test_manual_lane_reroute.py
       - agent/services/batch_planner.py
       - agent/models/product_registration.py
       - agent/services/product_knowledge_service.py
@@ -218,6 +222,7 @@ domains:
       - dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx
       - dashboard/src/components/product-asset-generator/presets.ts
       - dashboard/src/pages/ProductsSalesAnalyzerPage.tsx
+      - dashboard/src/components/product-registration/ProductKnowledgeResultPanel.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
       - dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx
       - dashboard/src/pages/BatchPromptBuilderPage.tsx
@@ -275,6 +280,7 @@ domains:
       - tests/unit/test_product_intelligence_snapshot_service.py
       - tests/unit/test_video_reviewer.py
       - tests/unit/test_ugc_video_prompt_compiler_service.py
+      - tests/unit/test_product_physics.py
       - tests/unit/test_workspace_image_preview_contract_service.py
       - tests/unit/test_workspace_execution_package_service.py
       - tests/unit/test_creative_asset_service.py
@@ -297,6 +303,8 @@ domains:
       - tests/api/test_product_image_truth_v1.py
       - tests/api/test_products_rich_knowledge_patch_regression.py
       - tests/api/test_creative_asset_api.py
+      - tests/api/test_local_agent_version_proof.py
+      - tests/api/test_flow_ref_ordering.py
       - tests/api/test_fastmoss_product_visibility_api.py
       - tests/api/test_fastmoss_bulk_api.py
       - tests/api/test_i2v_semantic_slot_resolver_api.py

@@ -5,6 +5,7 @@ const PHYSICS_ENGINE_KEYWORD: Record<string, string> = {
   SKINCARE_JAR_OR_TUBE: "EXACTLY skincare jar or tube size. Compact — hold in one hand with lid or label visible.",
   A: "EXACTLY perfume/fragrance bottle size. Small, elegant — display upright with nozzle and label visible.",
   SUPPLEMENT_BOTTLE: "EXACTLY supplement bottle size. Cylindrical, label-forward — hold upright in one hand.",
+  TRADITIONAL_HERBAL_OIL_BOTTLE: "EXACTLY compact traditional herbal-oil bottle size. Small palm-size bottle in an adult hand — hold upright with label facing camera.",
   MEDICAL_TEST_KIT: "EXACTLY medical test kit size. Compact box or pouch — hold flat in one hand, label facing camera.",
   FOOD_PACK_OR_JAR: "EXACTLY food pack or jar size. Sealed — hold upright in one hand with label clearly visible.",
   B: "EXACTLY food jar or bottle size. Hold upright in one hand, label facing camera.",

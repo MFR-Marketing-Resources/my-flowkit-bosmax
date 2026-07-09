@@ -276,3 +276,63 @@ def test_manual_lane_reuses_open_editor_without_minting(monkeypatch):
     assert result["ok"] is True
     assert calls["create_project"] == 0                    # never mints when editor open
     assert calls["start_generate"]["project_id"] is None   # binds the open editor
+
+
+# ── Source-lineage law at the preview boundary (2026-07-09 corrective audit) ──
+
+
+def test_preview_source_mode_resolution_pins_caller_lineage():
+    from agent.services.workspace_execution_package_service import (
+        _resolve_preview_source_mode,
+    )
+    import pytest
+
+    # A caller that names a canonical lineage keeps it (no silent HYBRID flip).
+    assert _resolve_preview_source_mode("FRAMES", None) == "FRAMES"
+    assert _resolve_preview_source_mode("INGREDIENTS", None) == "INGREDIENTS"
+    assert _resolve_preview_source_mode("T2V", None) == "T2V"
+    # Explicit source_mode always wins.
+    assert _resolve_preview_source_mode("FRAMES", "HYBRID") == "HYBRID"
+    assert _resolve_preview_source_mode("F2V", "FRAMES") == "FRAMES"
+    # Ambiguous surface modes defer to the compiler's documented defaults.
+    assert _resolve_preview_source_mode("F2V", None) is None
+    assert _resolve_preview_source_mode("I2V", None) is None
+    # Junk fails closed instead of silently compiling another lineage.
+    with pytest.raises(ValueError, match="SOURCE_MODE_INVALID"):
+        _resolve_preview_source_mode("FRAMES", "FRAMSE")
+
+
+def test_f2v_source_lane_normalizer_fails_closed_on_junk():
+    from agent.services.workspace_generation_package_service import (
+        _normalize_f2v_source_lane,
+    )
+    import pytest
+
+    assert _normalize_f2v_source_lane("FRAMES") == "FRAMES"
+    assert _normalize_f2v_source_lane("hybrid") == "HYBRID"
+    assert _normalize_f2v_source_lane(None) == "HYBRID"
+    with pytest.raises(ValueError, match="SOURCE_MODE_INVALID"):
+        _normalize_f2v_source_lane("FRAMS")
+
+
+# ── source_mode default-to-HYBRID warning (2026-07-09 corrective audit item 9) ──
+
+
+def test_source_lineage_default_warning_fires_only_for_bare_f2v():
+    from agent.services.workspace_execution_package_service import (
+        _source_lineage_default_warning,
+    )
+
+    # Bare F2V surface without explicit source_mode WILL default to HYBRID -> warn.
+    w = _source_lineage_default_warning("F2V", None)
+    assert w and "SOURCE_MODE_DEFAULTED_TO_HYBRID" in w
+    # An explicit canonical lineage (raw mode) pins itself -> no warning.
+    assert _source_lineage_default_warning("FRAMES", None) is None
+    assert _source_lineage_default_warning("HYBRID", None) is None
+    # Explicit source_mode given -> no warning (caller was intentional).
+    assert _source_lineage_default_warning("F2V", "FRAMES") is None
+    assert _source_lineage_default_warning("F2V", "HYBRID") is None
+    # Non-F2V ambiguous surfaces do not warn (they resolve unambiguously).
+    assert _source_lineage_default_warning("I2V", None) is None
+    assert _source_lineage_default_warning("T2V", None) is None
+    assert _source_lineage_default_warning("IMG", None) is None

@@ -152,6 +152,10 @@ async def resolve_compiler_copy_intelligence(
         )
 
     copy_intelligence = to_compiler_copy(copy_set)
+    # The compiler must know this copy is operator-approved: bound approved copy
+    # outranks the compiler's family/strategic dialogue banks, which exist only
+    # to keep FALLBACK dialogue from going mute.
+    copy_intelligence["copy_source"] = COPY_SOURCE_SELECTED
     # An approved Copy Set is guaranteed complete (hook + usp + cta) by the Copy
     # Set approval gate; if the adapter yields nothing usable, fail closed rather
     # than hand an empty copy dict to the compiler.

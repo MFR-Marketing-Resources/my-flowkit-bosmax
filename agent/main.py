@@ -26,6 +26,7 @@ from agent.api.music import router as music_router
 from agent.api.models import router as models_router
 from agent.api.active_project import router as active_project_router
 from agent.api.local_agent import (
+    CRITICAL_ROUTE_PATHS,
     LOCAL_AGENT_DASHBOARD_URL,
     LOCAL_AGENT_EXTENSION_STATUS_TIMEOUT_SECONDS,
     LOCAL_AGENT_REPAIR_COMMAND,
@@ -47,7 +48,10 @@ from agent.api.social_copy_packages import router as social_copy_packages_router
 from agent.api.results import router as results_router
 from agent.api.prompt_preview import router as prompt_preview_router
 from agent.api.asset_registry import router as asset_registry_router
-from agent.api.creative_assets import router as creative_assets_router
+from agent.api.creative_assets import (
+    eligibility_router as creative_asset_eligibility_router,
+    router as creative_assets_router,
+)
 from agent.api.img_factory import router as img_factory_router
 from agent.api.bosmax_authority import router as bosmax_authority_router
 from agent.api.copy_signals import router as copy_signals_router
@@ -167,6 +171,25 @@ async def lifespan(app: FastAPI):
             )
     except Exception as _e:  # pragma: no cover - never block startup
         logger.warning("RUNTIME_STORAGE banner unavailable: %s", _e)
+    # Route-registration self-check (incident 2026-07-09): a stale process
+    # serving a newer dashboard mis-routed the eligibility audit into
+    # /creative-assets/{asset_id}. Make a broken/stale route table loud at boot.
+    try:
+        _route_paths = {getattr(_r, "path", "") for _r in app.routes}
+        _missing = [_p for _p in CRITICAL_ROUTE_PATHS if _p not in _route_paths]
+        if _missing:
+            logger.critical(
+                "ROUTE_TABLE_INCOMPLETE missing critical routes: %s — this build "
+                "will mis-serve dashboard calls; verify checkout + restart.",
+                _missing,
+            )
+        else:
+            logger.info(
+                "ROUTE_TABLE_OK %d routes, all %d critical routes registered",
+                len(_route_paths), len(CRITICAL_ROUTE_PATHS),
+            )
+    except Exception as _route_e:  # pragma: no cover - never block startup
+        logger.warning("Route-table self-check unavailable: %s", _route_e)
     apply_runtime_provider_environment()
     logger.info("AI provider runtime environment hydrated from registry state")
 
@@ -237,6 +260,7 @@ app.include_router(results_router, prefix="/api")
 app.include_router(prompt_preview_router, prefix="/api")
 app.include_router(asset_registry_router, prefix="/api")
 app.include_router(creative_assets_router, prefix="/api")
+app.include_router(creative_asset_eligibility_router, prefix="/api")
 app.include_router(img_factory_router, prefix="/api")
 app.include_router(bosmax_authority_router, prefix="/api")
 app.include_router(copy_signals_router, prefix="/api")

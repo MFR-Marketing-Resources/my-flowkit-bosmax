@@ -131,9 +131,11 @@ async def test_selected_copy_set_reaches_compiler_as_copy_intelligence(monkeypat
     )
 
     # The selected approved Copy Set was passed to the deterministic compiler as
-    # copy_intelligence, sanitized through to_compiler_copy.
+    # copy_intelligence, sanitized through to_compiler_copy, and tagged as
+    # operator-approved so bank filler cannot displace it in dialogue assembly.
     approved = models.serialize_copy_set(await crud.get_copy_set(csid))
-    assert captured["copy_intelligence"] == to_compiler_copy(approved)
+    expected = dict(to_compiler_copy(approved), copy_source=binding.COPY_SOURCE_SELECTED)
+    assert captured["copy_intelligence"] == expected
     assert result["copy_binding"]["copy_binding_status"] == binding.BINDING_BOUND
     assert result["copy_binding"]["copy_set_id"] == csid
 
