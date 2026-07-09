@@ -409,6 +409,15 @@ export interface CreativeAsset {
 	source_prompt_fingerprint: string | null;
 	source_workspace_execution_package_id: string | null;
 	source_prompt_package_snapshot_id: string | null;
+	// Truth/safety gates (backend CreativeAssetRecord). Optional here because some
+	// callers/tests omit them; the backend always returns them. APPROVED requires
+	// identity/scale/claim === "PASS" (mirrors the IMG Asset Factory save gate).
+	contains_rendered_text?: boolean;
+	approved_for_video_support?: boolean;
+	product_truth_status?: string | null;
+	identity_lock_status?: string | null;
+	scale_truth_status?: string | null;
+	claim_safety_status?: string | null;
 	review_status: string;
 	status: CreativeAssetStatus;
 	created_at: string;

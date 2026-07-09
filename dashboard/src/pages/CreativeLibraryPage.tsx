@@ -5,6 +5,7 @@ import {
 	fetchCreativeAssets,
 	updateCreativeAsset,
 } from "../api/creativeAssets";
+import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import SaveToCreativeLibraryPanel from "../components/creative-library/SaveToCreativeLibraryPanel";
 import { Badge, ConfirmActionModal, DataTable } from "../components/ui";
 import type { BadgeTone } from "../components/ui";
@@ -75,12 +76,12 @@ export default function CreativeLibraryPage() {
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
 	const [archiving, setArchiving] = useState<string | null>(null);
-	// Explicit review action awaiting confirmation — no silent auto-approval.
-	const [reviewAction, setReviewAction] = useState<{
-		asset: CreativeAsset;
-		next: "APPROVED" | "REJECTED";
-	} | null>(null);
-	const [reviewBusy, setReviewBusy] = useState(false);
+	// Explicit review actions awaiting confirmation — no silent auto-approval.
+	// Approve routes through the truth/safety attestation modal; reject is a plain
+	// confirm.
+	const [approveTarget, setApproveTarget] = useState<CreativeAsset | null>(null);
+	const [rejectTarget, setRejectTarget] = useState<CreativeAsset | null>(null);
+	const [rejectBusy, setRejectBusy] = useState(false);
 
 	const loadItems = useCallback(() => {
 		setError(null);
@@ -122,30 +123,34 @@ export default function CreativeLibraryPage() {
 		}
 	};
 
-	// Reuses the existing PATCH review_status contract (same call the IMG
-	// Fastlane/Cockpit "approve generated" buttons fire) — no new approval backend.
-	const handleReview = async () => {
-		if (!reviewAction) return;
-		const { asset, next } = reviewAction;
-		setReviewBusy(true);
+	const applyReviewUpdate = (updated: CreativeAsset) => {
+		setItems((prev) =>
+			prev.map((i) =>
+				i.asset_id === updated.asset_id
+					? { ...i, review_status: updated.review_status }
+					: i,
+			),
+		);
+	};
+
+	// Reject reuses the existing PATCH review_status contract. Approve is handled by
+	// ApproveAssetModal (explicit truth/safety attestation) — it cannot be a plain
+	// one-click because the backend requires every truth gate to be PASS.
+	const handleReject = async () => {
+		if (!rejectTarget) return;
+		setRejectBusy(true);
 		try {
-			const updated = await updateCreativeAsset(asset.asset_id, {
-				review_status: next,
+			const updated = await updateCreativeAsset(rejectTarget.asset_id, {
+				review_status: "REJECTED",
 			});
-			setItems((prev) =>
-				prev.map((i) =>
-					i.asset_id === asset.asset_id
-						? { ...i, review_status: updated.review_status }
-						: i,
-				),
-			);
-			setReviewAction(null);
+			applyReviewUpdate(updated);
+			setRejectTarget(null);
 		} catch (err) {
 			setError(
 				err instanceof Error ? err.message : "Failed to update review status.",
 			);
 		} finally {
-			setReviewBusy(false);
+			setRejectBusy(false);
 		}
 	};
 
@@ -377,9 +382,7 @@ export default function CreativeLibraryPage() {
 							{item.review_status !== "APPROVED" && (
 								<button
 									type="button"
-									onClick={() =>
-										setReviewAction({ asset: item, next: "APPROVED" })
-									}
+									onClick={() => setApproveTarget(item)}
 									className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20"
 								>
 									Approve
@@ -388,9 +391,7 @@ export default function CreativeLibraryPage() {
 							{item.review_status !== "REJECTED" && (
 								<button
 									type="button"
-									onClick={() =>
-										setReviewAction({ asset: item, next: "REJECTED" })
-									}
+									onClick={() => setRejectTarget(item)}
 									className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:bg-rose-500/20"
 								>
 									Reject
@@ -409,41 +410,29 @@ export default function CreativeLibraryPage() {
 						</div>
 					)}
 				/>
+				<ApproveAssetModal
+					asset={approveTarget}
+					open={approveTarget !== null}
+					onCancel={() => setApproveTarget(null)}
+					onApproved={(updated) => {
+						applyReviewUpdate(updated);
+						setApproveTarget(null);
+					}}
+				/>
 				<ConfirmActionModal
-					open={reviewAction !== null}
-					title={
-						reviewAction?.next === "APPROVED"
-							? "Approve asset for reuse?"
-							: "Reject asset?"
-					}
+					open={rejectTarget !== null}
+					title="Reject asset?"
 					body={
-						reviewAction?.next === "APPROVED" ? (
-							<div className="space-y-1.5">
-								<p>
-									Marks{" "}
-									<strong>{reviewAction?.asset.display_name}</strong> as{" "}
-									<strong>APPROVED</strong>. Approved clean composite frames become
-									selectable in the F2V start/end pickers (and approved references
-									in the I2V pickers).
-								</p>
-								<p className="text-[10px] text-slate-500">
-									This does not bypass safety gates: the F2V resolver still
-									excludes rendered-text posters, wrong mode/slot, archived, and
-									missing-source assets even after approval.
-								</p>
-							</div>
-						) : (
-							<p>
-								Marks <strong>{reviewAction?.asset.display_name}</strong> as{" "}
-								<strong>REJECTED</strong> and removes it from every reuse picker.
-								You can approve it again later.
-							</p>
-						)
+						<p>
+							Marks <strong>{rejectTarget?.display_name}</strong> as{" "}
+							<strong>REJECTED</strong> and removes it from every reuse picker.
+							You can approve it again later.
+						</p>
 					}
-					confirmLabel={reviewAction?.next === "APPROVED" ? "Approve" : "Reject"}
-					busy={reviewBusy}
-					onConfirm={() => void handleReview()}
-					onCancel={() => setReviewAction(null)}
+					confirmLabel="Reject"
+					busy={rejectBusy}
+					onConfirm={() => void handleReject()}
+					onCancel={() => setRejectTarget(null)}
 				/>
 			</section>
 		</div>

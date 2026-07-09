@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-	archiveCreativeAsset,
-	fetchCreativeAssets,
-	updateCreativeAsset,
-} from "../api/creativeAssets";
+import { archiveCreativeAsset, fetchCreativeAssets } from "../api/creativeAssets";
 import {
 	compileImgFastlanePromptPreview,
 	type ImageArtifact,
@@ -20,6 +16,7 @@ import {
 } from "../api/imgFactory";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import { fetchProductCatalog } from "../api/products";
+import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { CreativeAsset, Product } from "../types";
 import {
@@ -194,7 +191,7 @@ export default function ImgFastlanePage() {
 	// Style is optional and has no Frames picker (no style library yet), so it
 	// stays empty; kept for the compile payload / ingredients lineage.
 	const [styleAssetId] = useState("");
-	const [approvingId, setApprovingId] = useState<string | null>(null);
+	const [approveTarget, setApproveTarget] = useState<CreativeAsset | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
 	const [framePresetId, setFramePresetId] = useState("");
 	const [advancedOverrideNotes, setAdvancedOverrideNotes] = useState("");
@@ -461,19 +458,12 @@ export default function ImgFastlanePage() {
 		}
 	};
 
-	const handleApproveAsset = async (asset: CreativeAsset) => {
-		setApprovingId(asset.asset_id);
+	// Approving a selected reference requires explicit truth/safety attestation
+	// (ApproveAssetModal) — the backend enforces APPROVAL_REQUIRES_ALL_TRUTH_PASS, so
+	// a bare review_status flip would be rejected as a governance bypass.
+	const handleApproveAsset = (asset: CreativeAsset) => {
 		setError(null);
-		try {
-			await updateCreativeAsset(asset.asset_id, { review_status: "APPROVED" });
-			await loadReferences();
-		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Failed to approve the reference.",
-			);
-		} finally {
-			setApprovingId(null);
-		}
+		setApproveTarget(asset);
 	};
 
 	const compileFastlanePreview = useCallback(async () => {
@@ -727,7 +717,7 @@ export default function ImgFastlanePage() {
 									emptyHint="No avatars yet — open the Avatar Registry to add one"
 									requiredMissing={characterMissing}
 									onApprove={handleApproveAsset}
-									approvingId={approvingId}
+									approvingId={approveTarget?.asset_id ?? null}
 								/>
 								<div className="mt-2 flex gap-2">
 									<a
@@ -787,7 +777,7 @@ export default function ImgFastlanePage() {
 										emptyHint="No generated scene images yet — optional"
 										requiredMissing={sceneMissing}
 										onApprove={handleApproveAsset}
-										approvingId={approvingId}
+										approvingId={approveTarget?.asset_id ?? null}
 									/>
 								</div>
 							</Section>
@@ -1200,6 +1190,16 @@ export default function ImgFastlanePage() {
 					</Section>
 				</div>
 			</div>
+
+			<ApproveAssetModal
+				asset={approveTarget}
+				open={approveTarget !== null}
+				onCancel={() => setApproveTarget(null)}
+				onApproved={() => {
+					setApproveTarget(null);
+					void loadReferences();
+				}}
+			/>
 
 			{/* live confirmation modal */}
 			{showGenConfirm && (

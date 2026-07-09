@@ -93,6 +93,8 @@ domains:
       - agent/api/img_factory.py
       - dashboard/src/api/imgFactory.ts
       - dashboard/src/components/creative-library/SaveToCreativeLibraryPanel.tsx
+      - dashboard/src/components/creative-library/ApproveAssetModal.tsx
+      - dashboard/src/components/creative-library/ApproveAssetModal.test.tsx
       - dashboard/src/pages/ImgCockpitPage.tsx
       - dashboard/src/pages/imgCockpitLogic.ts
       - agent/services/prompt_compiler_runtime_config_service.py
@@ -206,6 +208,7 @@ domains:
       - dashboard/src/api/assets.ts
       - dashboard/src/api/client.ts
       - dashboard/src/api/creativeAssets.ts
+      - dashboard/src/api/creativeAssets.test.ts
       - dashboard/src/api/products.ts
       - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.tsx
       - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.test.tsx

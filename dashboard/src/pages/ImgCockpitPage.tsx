@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-	archiveCreativeAsset,
-	fetchCreativeAssets,
-	updateCreativeAsset,
-} from "../api/creativeAssets";
+import { archiveCreativeAsset, fetchCreativeAssets } from "../api/creativeAssets";
 import {
 	type ImageArtifact,
 	type ImgAssetLane,
@@ -17,6 +13,7 @@ import {
 import { useImageGenSettings } from "../api/imageGenSettings";
 import { fetchProductCatalog } from "../api/products";
 import { compileWorkspacePromptPreview } from "../api/workspacePackages";
+import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
 import CopyBindingGate from "../components/copywriting/CopyBindingGate";
@@ -162,7 +159,7 @@ export default function ImgCockpitPage() {
 	const [characterAssetId, setCharacterAssetId] = useState("");
 	const [sceneAssetId, setSceneAssetId] = useState("");
 	const [styleAssetId, setStyleAssetId] = useState("");
-	const [approvingId, setApprovingId] = useState<string | null>(null);
+	const [approveTarget, setApproveTarget] = useState<CreativeAsset | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
 
 	const [prompt, setPrompt] = useState("");
@@ -326,19 +323,12 @@ export default function ImgCockpitPage() {
 		}
 	};
 
-	const handleApproveAsset = async (asset: CreativeAsset) => {
-		setApprovingId(asset.asset_id);
+	// Approving a selected reference requires explicit truth/safety attestation
+	// (ApproveAssetModal) — the backend enforces APPROVAL_REQUIRES_ALL_TRUTH_PASS, so
+	// a bare review_status flip would be rejected as a governance bypass.
+	const handleApproveAsset = (asset: CreativeAsset) => {
 		setError(null);
-		try {
-			await updateCreativeAsset(asset.asset_id, { review_status: "APPROVED" });
-			await loadReferences();
-		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Failed to approve the reference.",
-			);
-		} finally {
-			setApprovingId(null);
-		}
+		setApproveTarget(asset);
 	};
 
 	const handleCompilePrompt = async () => {
@@ -587,7 +577,7 @@ export default function ImgCockpitPage() {
 					emptyHint="No avatars in Library — generate one, then approve it here"
 					requiredMissing={characterMissing}
 					onApprove={handleApproveAsset}
-					approvingId={approvingId}
+					approvingId={approveTarget?.asset_id ?? null}
 				/>
 				<a
 					href="/assets/avatar-registry"
@@ -612,7 +602,7 @@ export default function ImgCockpitPage() {
 						emptyHint="No scene references in Library"
 						requiredMissing={sceneMissing}
 						onApprove={handleApproveAsset}
-						approvingId={approvingId}
+						approvingId={approveTarget?.asset_id ?? null}
 					/>
 					<ReferenceField
 						label="Style (STYLE_REFERENCE)"
@@ -623,7 +613,7 @@ export default function ImgCockpitPage() {
 						emptyHint="No style references in Library"
 						requiredMissing={styleMissing}
 						onApprove={handleApproveAsset}
-						approvingId={approvingId}
+						approvingId={approveTarget?.asset_id ?? null}
 					/>
 				</div>
 			</Section>
@@ -969,6 +959,16 @@ export default function ImgCockpitPage() {
 					</div>
 				</div>
 			</Section>
+
+			<ApproveAssetModal
+				asset={approveTarget}
+				open={approveTarget !== null}
+				onCancel={() => setApproveTarget(null)}
+				onApproved={() => {
+					setApproveTarget(null);
+					void loadReferences();
+				}}
+			/>
 
 			{showGenConfirm ? (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">

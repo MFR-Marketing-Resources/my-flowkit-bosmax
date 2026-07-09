@@ -2,8 +2,36 @@ from pathlib import Path
 
 import pytest
 
-from agent.models.creative_asset import CreativeAssetCreateRequest
+from agent.models.creative_asset import (
+    CreativeAssetCreateRequest,
+    CreativeAssetUpdateRequest,
+)
 from agent.services import creative_asset_service
+
+
+def _creative_asset_row(**over):
+    """A minimal creative_asset DB row for update_creative_asset gate tests."""
+    base = {
+        "asset_id": "ca_x",
+        "semantic_role": "COMPOSITE_FRAME_REFERENCE",
+        "display_name": "Frame X",
+        "source_type": "GENERATED_IMAGE",
+        "storage_kind": "LOCAL_FILE",
+        "preview_url": "/p",
+        "download_url": "/d",
+        "local_file_path": "C:/tmp/x.png",
+        "allowed_modes": '["F2V"]',
+        "engine_slot_eligibility": '["start_frame"]',
+        "review_status": "PENDING_REVIEW",
+        "identity_lock_status": None,
+        "scale_truth_status": None,
+        "claim_safety_status": None,
+        "status": "ACTIVE",
+        "created_at": "2026-07-09T00:00:00Z",
+        "updated_at": "2026-07-09T00:00:00Z",
+    }
+    base.update(over)
+    return base
 
 
 @pytest.mark.asyncio
@@ -313,3 +341,79 @@ async def test_f2v_eligibility_audit_counts_exclusions(monkeypatch):
     assert audit.excluded_by_reason["PREVIEW_OR_FILE_MISSING"] == 1
     assert "SEMANTIC_ROLE_MISMATCH" not in audit.excluded_by_reason
     assert [asset.asset_id for asset in audit.eligible_assets] == ["eligible"]
+
+
+@pytest.mark.asyncio
+async def test_update_approval_blocked_when_truth_gates_not_pass(monkeypatch):
+    # Governance parity with the save gate: a bare review_status=APPROVED PATCH on an
+    # asset whose truth/safety gates are not PASS must be rejected (closes the bypass).
+    async def fake_get(asset_id):
+        return _creative_asset_row()
+
+    monkeypatch.setattr(creative_asset_service.crud, "get_creative_asset", fake_get)
+
+    with pytest.raises(ValueError, match="APPROVAL_REQUIRES_ALL_TRUTH_PASS"):
+        await creative_asset_service.update_creative_asset(
+            "ca_x", CreativeAssetUpdateRequest(review_status="APPROVED")
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_approval_allowed_when_truth_gates_attested(monkeypatch):
+    captured = {}
+
+    async def fake_get(asset_id):
+        return _creative_asset_row()
+
+    async def fake_update(asset_id, **kw):
+        captured.update(kw)
+        return _creative_asset_row(
+            review_status="APPROVED",
+            identity_lock_status="PASS",
+            scale_truth_status="PASS",
+            claim_safety_status="PASS",
+        )
+
+    monkeypatch.setattr(creative_asset_service.crud, "get_creative_asset", fake_get)
+    monkeypatch.setattr(creative_asset_service.crud, "update_creative_asset", fake_update)
+
+    result = await creative_asset_service.update_creative_asset(
+        "ca_x",
+        CreativeAssetUpdateRequest(
+            review_status="APPROVED",
+            identity_lock_status="PASS",
+            scale_truth_status="PASS",
+            claim_safety_status="PASS",
+        ),
+    )
+
+    assert result.review_status == "APPROVED"
+    assert captured["review_status"] == "APPROVED"
+    assert captured["identity_lock_status"] == "PASS"
+    assert captured["scale_truth_status"] == "PASS"
+    assert captured["claim_safety_status"] == "PASS"
+
+
+@pytest.mark.asyncio
+async def test_update_non_review_edit_on_approved_asset_is_not_regated(monkeypatch):
+    # Editing a NON-review field on an already-APPROVED asset (whose truth gates are
+    # NULL) must NOT be re-gated — the gate fires only when THIS PATCH sets APPROVED.
+    captured = {}
+
+    async def fake_get(asset_id):
+        return _creative_asset_row(review_status="APPROVED")
+
+    async def fake_update(asset_id, **kw):
+        captured.update(kw)
+        return _creative_asset_row(review_status="APPROVED", display_name=kw.get("display_name", "Frame X"))
+
+    monkeypatch.setattr(creative_asset_service.crud, "get_creative_asset", fake_get)
+    monkeypatch.setattr(creative_asset_service.crud, "update_creative_asset", fake_update)
+
+    result = await creative_asset_service.update_creative_asset(
+        "ca_x", CreativeAssetUpdateRequest(display_name="Renamed")
+    )
+
+    assert result.review_status == "APPROVED"
+    assert captured["display_name"] == "Renamed"
+    assert "review_status" not in captured

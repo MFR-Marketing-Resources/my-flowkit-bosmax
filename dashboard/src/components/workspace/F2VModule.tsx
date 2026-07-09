@@ -327,8 +327,9 @@ function renderFrameAuditCard(
 			{audit.eligible_count === 0 && audit.matching_role_total_count > 0 ? (
 				<div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-amber-100">
 					<div>
-						Composite frames found but none are approved/eligible for this
-						surface. Approve them in the Creative Library review.
+						Composite frames found but none are eligible for this surface.
+						Review or fix them in the Creative Library — approval is only one
+						gate (role, mode, slot, rendered-text and source must also pass).
 					</div>
 					<a
 						href="/assets/creative-library"

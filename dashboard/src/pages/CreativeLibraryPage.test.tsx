@@ -108,7 +108,7 @@ describe("CreativeLibraryPage review + approval surface", () => {
 		expect(within(table).getAllByText("ACTIVE")).toHaveLength(2);
 	});
 
-	it("approve action confirms then PATCHes review_status APPROVED (existing contract)", async () => {
+	it("approve routes through truth/safety attestation → PATCHes APPROVED + truth PASS", async () => {
 		mockedUpdate.mockResolvedValue(
 			asset({
 				asset_id: "ca_pending",
@@ -122,14 +122,17 @@ describe("CreativeLibraryPage review + approval surface", () => {
 		// Only the PENDING row exposes Approve; the APPROVED row does not.
 		fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
-		// Explicit confirmation — no silent auto-approval.
-		await screen.findByText("Approve asset for reuse?");
-		const approveButtons = screen.getAllByRole("button", { name: "Approve" });
-		fireEvent.click(approveButtons[approveButtons.length - 1]);
+		// The explicit attestation modal opens — approval is NOT a bare one-click.
+		await screen.findByText("Approve asset for reuse");
+		screen.getAllByRole("checkbox").forEach((box) => fireEvent.click(box));
+		fireEvent.click(screen.getByRole("button", { name: /Attest & Approve/i }));
 
 		await waitFor(() =>
 			expect(mockedUpdate).toHaveBeenCalledWith("ca_pending", {
 				review_status: "APPROVED",
+				identity_lock_status: "PASS",
+				scale_truth_status: "PASS",
+				claim_safety_status: "PASS",
 			}),
 		);
 	});
