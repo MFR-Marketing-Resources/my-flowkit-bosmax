@@ -871,6 +871,47 @@ async def create_poster_copy_set(product_id: str, **kw) -> dict:
         await db.commit()
     return await _get_with_db(db, "poster_copy_set", "poster_copy_set_id", pid)
 
+async def create_poster_copy_set_version(
+    product_id: str, parent_poster_copy_set_id: str, parent_status: str, **kw
+) -> dict:
+    """Insert a child version AND mark the parent superseded in ONE transaction.
+
+    If either statement fails (including a missing parent), both roll back —
+    no partial child/parent state can ever persist.
+    """
+    db = await get_db()
+    pid, now = _uuid(), _now()
+    kw["parent_poster_copy_set_id"] = parent_poster_copy_set_id
+    cols = ["poster_copy_set_id", "product_id", "created_at", "updated_at"]
+    vals = [pid, product_id, now, now]
+    allowed = _COLUMNS["poster_copy_set"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        try:
+            await db.execute(
+                f"INSERT INTO poster_copy_set ({col_str}) VALUES ({placeholders})", vals
+            )
+            cur = await db.execute(
+                "UPDATE poster_copy_set SET status=?, updated_at=? "
+                "WHERE poster_copy_set_id=? AND status='POSTER_COPY_APPROVED'",
+                (parent_status, now, parent_poster_copy_set_id),
+            )
+            if cur.rowcount != 1:
+                raise ValueError(
+                    "parent poster_copy_set "
+                    f"{parent_poster_copy_set_id} not found or not currently approved"
+                )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return await _get_with_db(db, "poster_copy_set", "poster_copy_set_id", pid)
+
 async def get_poster_copy_set(poster_copy_set_id: str):
     return await _get("poster_copy_set", "poster_copy_set_id", poster_copy_set_id)
 
@@ -908,6 +949,17 @@ async def create_poster_deliverable(product_id: str, **kw) -> dict:
 
 async def get_poster_deliverable(poster_deliverable_id: str):
     return await _get("poster_deliverable", "poster_deliverable_id", poster_deliverable_id)
+
+async def get_poster_deliverable_by_asset(creative_asset_id: str):
+    """Reverse lookup: Creative Library asset → its saved poster deliverable."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM poster_deliverable WHERE creative_asset_id=? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (creative_asset_id,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
 
 async def update_poster_deliverable(poster_deliverable_id: str, **kw):
     return await _update("poster_deliverable", "poster_deliverable_id", poster_deliverable_id, **kw)

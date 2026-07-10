@@ -158,6 +158,9 @@ export default function PosterAngleCopyStep({
 				POSTER_COPY_APPROVAL_PHRASE,
 			);
 			setApproved(done);
+			setPicked(null);
+			setDirections([]);
+			setSelectedAngle("");
 			onApproved(done);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "Kelulusan Poster Copy Set gagal.");

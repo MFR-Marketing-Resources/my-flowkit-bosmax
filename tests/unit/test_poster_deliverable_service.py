@@ -18,11 +18,22 @@ from agent.models.poster_copy_set import (
 )
 from agent.models.poster_render_manifest import PosterRenderReport, ZoneRenderResult
 from agent.services import poster_compositor_service as compositor
+from agent.services import poster_deliverable_service as deliverable_svc
 from agent.services.poster_copy_set_service import PosterCopySetService
 from agent.services.poster_deliverable_service import (
     PosterDeliverableError,
     PosterDeliverableService,
 )
+
+
+@pytest.fixture(autouse=True)
+def _allow_tmp_background(tmp_path, monkeypatch):
+    """Whitelist the pytest tmp dir as an allowed background root."""
+    monkeypatch.setattr(
+        deliverable_svc,
+        "_ALLOWED_BACKGROUND_ROOTS",
+        (*deliverable_svc._ALLOWED_BACKGROUND_ROOTS, tmp_path),
+    )
 
 
 async def _seed_product() -> str:
@@ -248,3 +259,160 @@ async def test_missing_background_fails_closed(tmp_path, monkeypatch):
             background_local_path=str(tmp_path / "missing.png"),
         )
     assert exc.value.code == "POSTER_BACKGROUND_FILE_MISSING"
+
+
+# ─── Repair PR: honest product truth, path security, library round trip ──────
+
+async def _compose(pid, pcs, tmp_path):
+    return await PosterDeliverableService.compose_poster(
+        product_id=pid,
+        poster_copy_set_id=pcs["poster_copy_set_id"],
+        recipe_id="product_hero_night_routine",
+        background_local_path=_bg(tmp_path),
+    )
+
+
+def _mock_asset(monkeypatch, captured, asset_id="ca_truth_1"):
+    async def fake_create_asset(request):
+        captured["request"] = request
+
+        class _A:
+            pass
+
+        a = _A()
+        a.asset_id = asset_id
+        return a
+
+    monkeypatch.setattr(
+        "agent.services.poster_deliverable_service.create_creative_asset",
+        fake_create_asset,
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_stamps_reference_conditioned_unverified(tmp_path, monkeypatch):
+    """REFERENCE_CONDITIONED composition must NEVER be stamped PRESERVED."""
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    result = await _compose(pid, pcs, tmp_path)
+    assert result["deliverable"]["composition_strategy"] == "REFERENCE_CONDITIONED"
+    captured = {}
+    _mock_asset(monkeypatch, captured)
+    await PosterDeliverableService.save_to_library(
+        result["deliverable"]["poster_deliverable_id"]
+    )
+    req = captured["request"]
+    assert req.product_truth_status == "REFERENCE_CONDITIONED_UNVERIFIED"
+    assert req.product_truth_status != "PRESERVED"
+    # The library description carries the honest human-review note.
+    assert "human review" in req.description
+
+
+def test_truth_status_mapping_is_fail_closed():
+    assert (
+        deliverable_svc.derive_poster_truth_status("REFERENCE_CONDITIONED")
+        == "REFERENCE_CONDITIONED_UNVERIFIED"
+    )
+    assert (
+        deliverable_svc.derive_poster_truth_status("DETERMINISTIC_COMPOSITE")
+        == "DETERMINISTIC_COMPOSITE_VERIFIED"
+    )
+    # Unknown / missing strategy → most conservative label, never PRESERVED.
+    assert deliverable_svc.derive_poster_truth_status("") == "HUMAN_REVIEW_REQUIRED"
+    assert deliverable_svc.derive_poster_truth_status("WEIRD") == "HUMAN_REVIEW_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_background_path_outside_roots_rejected(tmp_path_factory, tmp_path, monkeypatch):
+    """A client path outside the allowed roots is refused with a structured error."""
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    outside = tmp_path_factory.mktemp("outside_roots")  # sibling of tmp_path
+    bg = outside / "bg.png"
+    bg.write_bytes(b"\x89PNG_FAKE_BG")
+    with pytest.raises(PosterDeliverableError) as exc:
+        await PosterDeliverableService.compose_poster(
+            product_id=pid,
+            poster_copy_set_id=pcs["poster_copy_set_id"],
+            recipe_id="product_hero_night_routine",
+            background_local_path=str(bg),
+        )
+    assert exc.value.code == "POSTER_BACKGROUND_PATH_FORBIDDEN"
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_background_path_traversal_rejected(tmp_path_factory, tmp_path, monkeypatch):
+    """`..` traversal is canonicalized away and refused when it escapes the roots."""
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    outside = tmp_path_factory.mktemp("outside_trav")
+    bg = outside / "bg.png"
+    bg.write_bytes(b"\x89PNG_FAKE_BG")
+    sneaky = str(tmp_path / ".." / outside.name / "bg.png")
+    with pytest.raises(PosterDeliverableError) as exc:
+        await PosterDeliverableService.compose_poster(
+            product_id=pid,
+            poster_copy_set_id=pcs["poster_copy_set_id"],
+            recipe_id="product_hero_night_routine",
+            background_local_path=sneaky,
+        )
+    assert exc.value.code == "POSTER_BACKGROUND_PATH_FORBIDDEN"
+
+
+def test_background_path_resolution_runtime_error_is_structured(monkeypatch):
+    """A symlink-loop style resolver failure must not escape as an untyped 500."""
+    def _raise_runtime_error(*_args, **_kwargs):
+        raise RuntimeError("symlink resolution loop")
+
+    monkeypatch.setattr(deliverable_svc.Path, "resolve", _raise_runtime_error)
+    with pytest.raises(PosterDeliverableError) as exc:
+        deliverable_svc._validate_client_background_path("C:/untrusted/bg.png")
+    assert exc.value.code == "POSTER_BACKGROUND_PATH_FORBIDDEN"
+    assert exc.value.status_code == 422
+
+
+def test_allowed_root_resolution_runtime_error_is_structured(tmp_path, monkeypatch):
+    """A malformed allowlisted root must fail closed rather than leak RuntimeError."""
+    bg = tmp_path / "bg.png"
+    bg.write_bytes(b"PNG")
+    original_resolve = deliverable_svc.Path.resolve
+
+    def _resolve_with_bad_root(path, *args, **kwargs):
+        if path == tmp_path:
+            raise RuntimeError("allowlisted root resolution loop")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(deliverable_svc.Path, "resolve", _resolve_with_bad_root)
+    with pytest.raises(PosterDeliverableError) as exc:
+        deliverable_svc._validate_client_background_path(str(bg))
+    assert exc.value.code == "POSTER_BACKGROUND_PATH_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_creative_library_round_trip_by_asset(tmp_path, monkeypatch):
+    """Library reopen: creative_asset_id → deliverable + manifest + copy set."""
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    result = await _compose(pid, pcs, tmp_path)
+    captured = {}
+    _mock_asset(monkeypatch, captured, asset_id="ca_roundtrip_1")
+    await PosterDeliverableService.save_to_library(
+        result["deliverable"]["poster_deliverable_id"]
+    )
+    recon = await PosterDeliverableService.get_by_creative_asset("ca_roundtrip_1")
+    assert (
+        recon["deliverable"]["poster_deliverable_id"]
+        == result["deliverable"]["poster_deliverable_id"]
+    )
+    assert recon["poster_copy_set"]["poster_copy_set_id"] == pcs["poster_copy_set_id"]
+    assert recon["render_manifest"]["provenance"]["recipe_id"] == "product_hero_night_routine"
+    assert recon["output_available"] is True
+    # Unknown asset → structured 404.
+    with pytest.raises(PosterDeliverableError) as exc:
+        await PosterDeliverableService.get_by_creative_asset("ca_nope")
+    assert exc.value.status_code == 404

@@ -1,0 +1,91 @@
+{
+  "run_id": "minyak_warisan_tok_25ml",
+  "product": "Minyak Warisan Tok Cap Burung 25ml",
+  "recipe_id": "heritage_infographic",
+  "background": "APPROVED reference-conditioned generated scene (asset ca_0d56e05025f94eae, real product held by avatar)",
+  "credit_spend": false,
+  "composition_strategy": "REFERENCE_CONDITIONED",
+  "output_sha256": "72cfc5f372eb87f9d3065953774291f071dd09910cb5dd8c8d9d40c0cb1b9562",
+  "qa_report": {
+    "ok": true,
+    "findings": [],
+    "block_count": 0,
+    "warn_count": 0
+  },
+  "render_report": {
+    "renderer": "HTML_CHROMIUM_SERVICE_V1",
+    "canvas": {
+      "w": 1080,
+      "h": 1920
+    },
+    "output_png": {
+      "file": "poster.png",
+      "width": 1080,
+      "height": 1920
+    },
+    "zones": [
+      {
+        "zone_id": "headline",
+        "fitted": true,
+        "overflowed": false,
+        "overlaps_product": false,
+        "font_scale": 1.0,
+        "rendered_text": "Minyak Warisan Tok — Cap Burung"
+      },
+      {
+        "zone_id": "support",
+        "fitted": true,
+        "overflowed": false,
+        "overlaps_product": false,
+        "font_scale": 1.0,
+        "rendered_text": "Sedia di rumah anda, bila-bila masa."
+      },
+      {
+        "zone_id": "chip_1",
+        "fitted": true,
+        "overflowed": false,
+        "overlaps_product": false,
+        "font_scale": 1.0,
+        "rendered_text": "Minyak tradisional"
+      },
+      {
+        "zone_id": "chip_2",
+        "fitted": true,
+        "overflowed": false,
+        "overlaps_product": false,
+        "font_scale": 1.0,
+        "rendered_text": "Botol 25ml"
+      },
+      {
+        "zone_id": "cta",
+        "fitted": true,
+        "overflowed": false,
+        "overlaps_product": false,
+        "font_scale": 1.0,
+        "rendered_text": "Dapatkan sekarang"
+      }
+    ],
+    "missing_zones": [],
+    "errors": [],
+    "ok": true
+  },
+  "product_truth_review": {
+    "status": "REFERENCE_CONDITIONED_UNVERIFIED",
+    "verified": [
+      "deterministic text render",
+      "output dimensions",
+      "text-zone geometry"
+    ],
+    "human_review_required": [
+      "actual product placement inside the author-defined safe region",
+      "product identity and label readability",
+      "product scale and distortion in the background"
+    ]
+  },
+  "round_trip_by_asset": true,
+  "poster_copy_set": {
+    "id": "efd8ec97-9f04-4cc8-bdea-80601cf421d4",
+    "version": 1,
+    "status": "POSTER_COPY_APPROVED"
+  }
+}

@@ -1,11 +1,12 @@
 // Poster Copy Set + AI Poster Copy Assistant + compositor API clients
 // (POSTER_BUILDER_V2). Poster-native domain — separate from /api/copy-sets.
-import { getAPI, postAPI } from "./client";
+import { getAPI, patchAPI, postAPI } from "./client";
 import type {
 	PosterAngleRecommendation,
 	PosterComposeResponse,
 	PosterCopyDirection,
 	PosterCopySet,
+	PosterDeliverableReconstruction,
 	PosterObjectiveRecommendation,
 } from "../types/posterCopySet";
 
@@ -96,4 +97,28 @@ export async function savePosterToLibrary(
 
 export function posterDeliverableOutputUrl(posterDeliverableId: string): string {
 	return `/api/poster/deliverables/${posterDeliverableId}/output`;
+}
+
+// Creative Library round trip: reopen a saved poster from its asset id.
+export async function fetchPosterDeliverableByAsset(
+	creativeAssetId: string,
+): Promise<PosterDeliverableReconstruction> {
+	return getAPI(
+		`/poster/deliverables/by-asset/${encodeURIComponent(creativeAssetId)}`,
+	);
+}
+
+// Safe edit flow for an APPROVED set: creates DRAFT v(n+1), parent SUPERSEDED.
+export async function newPosterCopySetVersion(
+	posterCopySetId: string,
+	patch: Record<string, unknown>,
+): Promise<PosterCopySet> {
+	return postAPI(`/poster/copy-sets/${posterCopySetId}/new-version`, patch);
+}
+
+export async function patchPosterCopySet(
+	posterCopySetId: string,
+	patch: Record<string, unknown>,
+): Promise<PosterCopySet> {
+	return patchAPI(`/poster/copy-sets/${posterCopySetId}`, patch);
 }

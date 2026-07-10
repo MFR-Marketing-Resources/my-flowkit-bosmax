@@ -141,7 +141,10 @@ def build_qa_report(report: PosterRenderReport, *, expected_zone_ids: list[str],
                 f"zone {z.zone_id} text does not fit even at minimum scale", z.zone_id)
         if z.overlaps_product:
             add("PRODUCT_REGION_OVERLAP", "BLOCK",
-                f"zone {z.zone_id} intersects the product-safe region", z.zone_id)
+                f"zone {z.zone_id} intersects the AUTHOR-DEFINED product-safe "
+                "region (template geometry check — the actual product is NOT "
+                "detected; its position/identity/scale need human review)",
+                z.zone_id)
         if z.fitted and z.font_scale < 0.85:
             add("DENSE_COPY_SCALED", "WARN",
                 f"zone {z.zone_id} shrank to {int(z.font_scale * 100)}% — consider shorter copy",

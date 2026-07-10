@@ -7,8 +7,8 @@ import {
 } from "../api/creativeAssets";
 import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import SaveToCreativeLibraryPanel from "../components/creative-library/SaveToCreativeLibraryPanel";
-import { Badge, ConfirmActionModal, DataTable } from "../components/ui";
 import type { BadgeTone } from "../components/ui";
+import { Badge, ConfirmActionModal, DataTable } from "../components/ui";
 import type {
 	CreativeAsset,
 	CreativeAssetSemanticRole,
@@ -79,7 +79,9 @@ export default function CreativeLibraryPage() {
 	// Explicit review actions awaiting confirmation — no silent auto-approval.
 	// Approve routes through the truth/safety attestation modal; reject is a plain
 	// confirm.
-	const [approveTarget, setApproveTarget] = useState<CreativeAsset | null>(null);
+	const [approveTarget, setApproveTarget] = useState<CreativeAsset | null>(
+		null,
+	);
 	const [rejectTarget, setRejectTarget] = useState<CreativeAsset | null>(null);
 	const [rejectBusy, setRejectBusy] = useState(false);
 
@@ -212,10 +214,10 @@ export default function CreativeLibraryPage() {
 				</div>
 				<p className="mt-3 text-[11px] text-slate-500">
 					<strong className="text-slate-300">Lifecycle</strong> (ACTIVE /
-					ARCHIVED) is separate from <strong className="text-slate-300">Review</strong>{" "}
-					(PENDING_REVIEW / APPROVED / REJECTED). Only APPROVED clean composite
-					frames are selectable in the F2V frame pickers — ACTIVE does not mean
-					approved.
+					ARCHIVED) is separate from{" "}
+					<strong className="text-slate-300">Review</strong> (PENDING_REVIEW /
+					APPROVED / REJECTED). Only APPROVED clean composite frames are
+					selectable in the F2V frame pickers — ACTIVE does not mean approved.
 				</p>
 				{error && (
 					<div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
@@ -368,6 +370,20 @@ export default function CreativeLibraryPage() {
 					]}
 					rowActions={(item) => (
 						<div className="flex flex-wrap items-center justify-end gap-2">
+							{item.asset_subtype === "POSTER_AD" && (
+								<button
+									type="button"
+									data-testid={`reopen-poster-${item.asset_id}`}
+									onClick={() =>
+										navigate(
+											`/creative/poster-builder?reopen_asset=${encodeURIComponent(item.asset_id)}`,
+										)
+									}
+									className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-300 hover:bg-sky-500/20"
+								>
+									Buka semula
+								</button>
+							)}
 							<button
 								type="button"
 								onClick={() =>

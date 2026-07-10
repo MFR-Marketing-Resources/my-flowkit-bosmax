@@ -89,3 +89,12 @@ export interface PosterComposeResponse {
 	render_report: Record<string, unknown>;
 	qa_report: PosterQAReport;
 }
+
+// Creative Library round trip: full reconstruction of a saved poster.
+export interface PosterDeliverableReconstruction {
+	deliverable: PosterDeliverableRow;
+	render_manifest: Record<string, unknown>;
+	poster_copy_set: PosterCopySet | null;
+	qa_report: PosterQAReport | Record<string, unknown>;
+	output_available: boolean;
+}

@@ -349,40 +349,71 @@ def _direction_is_safe(direction: dict[str, Any], archetype: str) -> bool:
         return False
 
 
+def _grounded_fallback_points(grounding: Any, limit: int) -> list[str]:
+    """Proof points a fallback may state: ONLY approved benefits/USPs."""
+    points: list[str] = []
+    pk = getattr(grounding, "product_knowledge", None)
+    for src in ((getattr(pk, "benefits", None) or []),
+                (getattr(pk, "usps", None) or [])):
+        for p in src:
+            p = _clip(p, POSTER_NATIVE_LIMITS["proof_point"])
+            if p and p.lower() not in {x.lower() for x in points}:
+                points.append(p)
+            if len(points) >= limit:
+                return points
+    return points
+
+
 def _fallback_directions(
-    product: dict[str, Any], contract: dict[str, Any], angle: str, language: str
+    product: dict[str, Any],
+    contract: dict[str, Any],
+    angle: str,
+    language: str,
+    grounding: Any = None,
 ) -> list[dict[str, Any]]:
-    """Deterministic, no-spend, always-safe poster directions."""
+    """Deterministic, no-spend poster directions.
+
+    TRUTH RULE: a fallback fires exactly when NO AI grounding ran, so it may
+    not fabricate ANY verifiable fact — no popularity ("dipercayai ramai"),
+    scarcity ("stok terhad"), logistics ("penghantaran pantas"), family
+    suitability, quality/authenticity verification ("kualiti terjaga",
+    "kemasan asli"), heritage, ingredients or results. Proof points come ONLY
+    from approved grounding (benefits/USPs); with no approved intelligence the
+    chips stay empty and the copy is pure neutral framing around the product
+    name, the operator's angle and an invitation CTA.
+    """
     name = _norm(product.get("product_display_name")) or _norm(
         product.get("raw_product_title")
     ) or "Produk"
     short = name if len(name) <= 30 else name[:30].rstrip()
-    base_points = ["Mudah dibawa", "Rutin harian", "Kemasan asli"]
+    grounded_points = _grounded_fallback_points(
+        grounding, contract["max_proof_points"]
+    ) if grounding is not None else []
     templates = [
         {
-            "primary_message": _clip(f"{short} — pilihan harian", 48),
-            "support_message": "Sentiasa ada bila anda perlukan."
+            "primary_message": _clip(f"{short} — untuk rutin anda", 48),
+            "support_message": "Jadikan sebahagian rutin harian anda."
             if contract["supports_support_message"] else "",
-            "proof_points": base_points[: contract["max_proof_points"]],
+            "proof_points": list(grounded_points),
             "cta": "Dapatkan sekarang",
             "disclaimer": "",
             "tone": "mesra",
         },
         {
-            "primary_message": _clip(f"Sentiasa bersama {short}", 48),
-            "support_message": "Ringkas, kemas dan mudah digunakan."
+            "primary_message": _clip(f"Kenali {short}", 48),
+            "support_message": "Pilihan anda, cara anda."
             if contract["supports_support_message"] else "",
-            "proof_points": ["Saiz kompak", "Guna bila-bila"][: contract["max_proof_points"]],
+            "proof_points": list(grounded_points),
             "cta": "Cuba hari ini",
             "disclaimer": "",
             "tone": "yakin",
         },
         {
-            "primary_message": _clip(f"{angle or 'Pilihan keluarga'}", 48),
-            "support_message": f"{short} untuk keperluan harian anda."
+            "primary_message": _clip(f"{angle or short}", 48),
+            "support_message": f"{short} — ikut keperluan anda."
             if contract["supports_support_message"] else "",
-            "proof_points": ["Dipercayai ramai", "Kualiti terjaga"][: contract["max_proof_points"]],
-            "cta": "Beli sekarang",
+            "proof_points": list(grounded_points),
+            "cta": "Lihat sekarang",
             "disclaimer": "",
             "tone": "hangat",
         },
@@ -472,7 +503,14 @@ async def generate_directions(
         warnings.append("AI provider not configured — deterministic fallback directions.")
 
     if len(directions) < count:
-        for fb in _fallback_directions(dict(product), contract, angle, language):
+        fb_grounding = None
+        try:
+            fb_grounding = await resolve_copy_grounding(dict(product))
+        except Exception:
+            fb_grounding = None  # no approved intelligence → neutral, chipless fallback
+        for fb in _fallback_directions(
+            dict(product), contract, angle, language, fb_grounding
+        ):
             if len(directions) >= count:
                 break
             if not any(d["primary_message"] == fb["primary_message"] for d in directions):

@@ -252,10 +252,13 @@ class PosterCopySetService:
         payload = _row_payload(merged)
         payload["status"] = STATUS_POSTER_COPY_DRAFT
         payload["version"] = int(row.get("version") or 1) + 1
-        payload["parent_poster_copy_set_id"] = poster_copy_set_id
-        child = await crud.create_poster_copy_set(row["product_id"], **payload)
-        await crud.update_poster_copy_set(
-            poster_copy_set_id, status=STATUS_POSTER_COPY_SUPERSEDED
+        payload.pop("parent_poster_copy_set_id", None)
+        # Atomic: child insert + parent supersede commit (or roll back) together.
+        child = await crud.create_poster_copy_set_version(
+            row["product_id"],
+            poster_copy_set_id,
+            STATUS_POSTER_COPY_SUPERSEDED,
+            **payload,
         )
         out = serialize_poster_copy_set(child)
         out["warnings"] = warnings

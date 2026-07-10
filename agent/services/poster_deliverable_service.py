@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from agent.config import OUTPUT_DIR
 from agent.db import crud
 from agent.models.creative_asset import CreativeAssetCreateRequest
 from agent.models.poster_copy_set import (
@@ -37,6 +38,24 @@ from agent.services.poster_template_service import (
     PosterTemplateError,
     build_render_manifest,
 )
+
+# HONEST product-truth stamping: REFERENCE_CONDITIONED generation cannot prove
+# pixel-level product preservation — never stamp PRESERVED for it. VERIFIED is
+# reserved for a future deterministic-composite path where the inserted layer
+# IS the verified product cutout. Unknown strategies fail to the most
+# conservative label.
+_TRUTH_STATUS_BY_STRATEGY = {
+    "REFERENCE_CONDITIONED": "REFERENCE_CONDITIONED_UNVERIFIED",
+    "DETERMINISTIC_COMPOSITE": "DETERMINISTIC_COMPOSITE_VERIFIED",
+}
+_TRUTH_STATUS_DEFAULT = "HUMAN_REVIEW_REQUIRED"
+
+
+def derive_poster_truth_status(composition_strategy: str) -> str:
+    return _TRUTH_STATUS_BY_STRATEGY.get(
+        str(composition_strategy or "").strip(), _TRUTH_STATUS_DEFAULT
+    )
+
 
 class PosterDeliverableError(Exception):
     def __init__(self, code: str, message: str = "", *, status_code: int = 422):
@@ -57,6 +76,50 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+# Client-supplied background_local_path is only honoured inside these roots
+# (canonical-path containment; traversal collapses under resolve()). Production
+# callers should pass background_media_id — the artifact registry records the
+# system-written path. Tests may extend this tuple via monkeypatch.
+_ALLOWED_BACKGROUND_ROOTS: tuple[Path, ...] = (OUTPUT_DIR,)
+
+
+def _validate_client_background_path(local: str) -> str:
+    """Canonicalize a client-supplied path and enforce root containment."""
+    try:
+        resolved = Path(local).resolve(strict=True)
+    except OSError:
+        raise PosterDeliverableError(
+            "POSTER_BACKGROUND_FILE_MISSING",
+            f"background image file missing: {local}",
+            status_code=404,
+        )
+    except RuntimeError:
+        raise PosterDeliverableError(
+            "POSTER_BACKGROUND_PATH_FORBIDDEN",
+            "background_local_path could not be safely canonicalized",
+            status_code=422,
+        )
+    if not resolved.is_file():
+        raise PosterDeliverableError(
+            "POSTER_BACKGROUND_PATH_FORBIDDEN",
+            "background_local_path must be a file",
+            status_code=422,
+        )
+    for root in _ALLOWED_BACKGROUND_ROOTS:
+        try:
+            root_resolved = Path(root).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if resolved == root_resolved or root_resolved in resolved.parents:
+            return str(resolved)
+    raise PosterDeliverableError(
+        "POSTER_BACKGROUND_PATH_FORBIDDEN",
+        "background_local_path is outside the allowed generated/output asset "
+        "directories — pass background_media_id for production use",
+        status_code=422,
+    )
+
+
 async def _resolve_background(
     background_media_id: str, background_local_path: str
 ) -> tuple[str, str]:
@@ -71,14 +134,22 @@ async def _resolve_background(
                 f"generated artifact {media_id} not found (48h purge?)",
                 status_code=404,
             )
+        # System-recorded path from the artifact registry (not client input).
         local = _norm(artifact.get("local_path"))
-    if not local or not Path(local).exists():
+        if not local or not Path(local).exists():
+            raise PosterDeliverableError(
+                "POSTER_BACKGROUND_FILE_MISSING",
+                f"background image file missing: {local or '(none)'}",
+                status_code=404,
+            )
+        return media_id, local
+    if not local:
         raise PosterDeliverableError(
             "POSTER_BACKGROUND_FILE_MISSING",
-            f"background image file missing: {local or '(none)'}",
+            "background image file missing: (none)",
             status_code=404,
         )
-    return media_id, local
+    return media_id, _validate_client_background_path(local)
 
 
 class PosterDeliverableService:
@@ -205,6 +276,7 @@ class PosterDeliverableService:
 
         product = await crud.get_product(_norm(row.get("product_id"))) or {}
         governance = derive_asset_governance("PRODUCT_POSTER")
+        truth_status = derive_poster_truth_status(row.get("composition_strategy"))
         copy_set = serialize_poster_copy_set(pcs_row)
         display = (
             f"Poster — {_norm(product.get('product_display_name')) or _norm(row.get('product_id'))}"
@@ -216,7 +288,9 @@ class PosterDeliverableService:
             description=(
                 f"Deterministic poster (compositor). angle={copy_set.get('angle')}; "
                 f"copy_set={copy_set.get('poster_copy_set_id')} v{copy_set.get('version')}; "
-                f"deliverable={row.get('poster_deliverable_id')}"
+                f"deliverable={row.get('poster_deliverable_id')}; "
+                f"product truth: {truth_status} — reference-conditioned scene; "
+                "product identity/label/scale need human review"
             ),
             source_type="GENERATED_IMAGE",
             storage_kind="LOCAL_FILE",
@@ -231,7 +305,7 @@ class PosterDeliverableService:
             contains_rendered_text=governance["contains_rendered_text"],
             approved_for_video_support=governance["approved_for_video_support"],
             approved_for_poster=governance["approved_for_poster"],
-            product_truth_status="PRESERVED",
+            product_truth_status=truth_status,
             image_base64=base64.b64encode(data).decode("ascii"),
             file_name=f"poster_{row.get('poster_deliverable_id')}.png",
         )
@@ -277,6 +351,20 @@ class PosterDeliverableService:
                 _norm(row.get("output_path")) and Path(row["output_path"]).exists()
             ),
         }
+
+    @staticmethod
+    async def get_by_creative_asset(creative_asset_id: str) -> dict[str, Any]:
+        """Creative Library reopen: asset id → full reconstruction contract."""
+        row = await crud.get_poster_deliverable_by_asset(_norm(creative_asset_id))
+        if not row:
+            raise PosterDeliverableError(
+                "POSTER_DELIVERABLE_NOT_FOUND",
+                f"no poster deliverable saved for creative asset {creative_asset_id}",
+                status_code=404,
+            )
+        return await PosterDeliverableService.get_with_manifest(
+            row["poster_deliverable_id"]
+        )
 
     @staticmethod
     async def list_for_product(product_id: str, limit: int = 50) -> list[dict[str, Any]]:

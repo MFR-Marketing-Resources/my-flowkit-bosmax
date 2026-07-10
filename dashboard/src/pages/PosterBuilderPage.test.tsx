@@ -48,6 +48,22 @@ vi.mock("../api/posterReadiness", () => ({
 	fetchPosterReadiness: vi.fn(),
 }));
 
+vi.mock("../api/posterCopySets", () => ({
+	recommendPosterObjectives: vi.fn().mockResolvedValue({ recommendations: [], warnings: [] }),
+	recommendPosterAngles: vi.fn(),
+	generatePosterDirections: vi.fn(),
+	regeneratePosterField: vi.fn(),
+	createPosterCopySet: vi.fn(),
+	approvePosterCopySet: vi.fn(),
+	listPosterCopySets: vi.fn(),
+	composePoster: vi.fn(),
+	savePosterToLibrary: vi.fn(),
+	posterDeliverableOutputUrl: (id: string) => `/api/poster/deliverables/${id}/output`,
+	fetchPosterDeliverableByAsset: vi.fn(),
+	newPosterCopySetVersion: vi.fn(),
+	patchPosterCopySet: vi.fn(),
+}));
+
 vi.mock("../api/posterCopyRecommendations", () => ({
 	fetchPosterCopyRecommendations: vi.fn(),
 }));
@@ -231,6 +247,12 @@ import { draftToPromptRequest } from "../api/posterPromptDraft";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
 import { fetchProductCatalog } from "../api/products";
 import { fetchPosterCopyQuality } from "../api/posterCopyQuality";
+import {
+	approvePosterCopySet,
+	fetchPosterDeliverableByAsset,
+	newPosterCopySetVersion,
+	patchPosterCopySet,
+} from "../api/posterCopySets";
 
 const mockedFetch = vi.mocked(fetchPosterReadiness);
 const mockedPromptDraft = vi.mocked(createPosterPromptDraft);
@@ -240,6 +262,10 @@ const mockedStartGen = vi.mocked(startImgGeneration);
 const mockedPollGen = vi.mocked(pollImgGenerationJob);
 const mockedCatalog = vi.mocked(fetchProductCatalog);
 const mockedQuality = vi.mocked(fetchPosterCopyQuality);
+const mockedReopen = vi.mocked(fetchPosterDeliverableByAsset);
+const mockedNewVersion = vi.mocked(newPosterCopySetVersion);
+const mockedPatchCopySet = vi.mocked(patchPosterCopySet);
+const mockedApproveCopySet = vi.mocked(approvePosterCopySet);
 
 const sampleKit = {
 	kit_id: "k1",
@@ -290,6 +316,10 @@ describe("PosterBuilderPage", () => {
 		mockedStartGen.mockReset();
 		mockedPollGen.mockReset();
 		mockedQuality.mockReset();
+		mockedReopen.mockReset();
+		mockedNewVersion.mockReset();
+		mockedPatchCopySet.mockReset();
+		mockedApproveCopySet.mockReset();
 		// Default: a clean expert-quality report so tests that reach the generate
 		// gate can pass the mandatory check unless they override it.
 		mockedQuality.mockResolvedValue({
@@ -1025,5 +1055,95 @@ describe("PosterBuilderPage", () => {
 		);
 		expect(screen.getByTestId("poster-quality-stale")).toBeInTheDocument();
 		expect(screen.getByTestId("poster-quality-needscheck-note")).toBeInTheDocument();
+	});
+
+	it("reopens approved copy into an explicit persisted new-version flow", async () => {
+		const approved = {
+			poster_copy_set_id: "pcs_parent",
+			product_id: "p1",
+			campaign_id: "",
+			objective: "Product introduction",
+			archetype: "PRODUCT_HERO",
+			angle: "Routine",
+			primary_message: "Tajuk asal",
+			support_message: "Sokongan asal",
+			proof_points: ["Bukti asal"],
+			offer: null,
+			cta: "Dapatkan",
+			disclaimer: "",
+			tone: "mesra",
+			language: "ms",
+			variants: [],
+			field_provenance: {},
+			ai_model: "",
+			prompt_version: "",
+			status: "POSTER_COPY_APPROVED",
+			version: 1,
+			parent_poster_copy_set_id: "",
+			approved_at: "2026-07-10T00:00:00Z",
+			approved_by: "operator",
+		};
+		const draftVersion = {
+			...approved,
+			poster_copy_set_id: "pcs_child",
+			status: "POSTER_COPY_DRAFT",
+			version: 2,
+			parent_poster_copy_set_id: "pcs_parent",
+		};
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedReopen.mockResolvedValue({
+			deliverable: {
+				poster_deliverable_id: "pd_saved",
+				product_id: "p1",
+				poster_copy_set_id: "pcs_parent",
+				recipe_id: "product_hero_night_routine",
+				template_version: "v1",
+				composition_strategy: "REFERENCE_CONDITIONED",
+				background_media_id: "m1",
+				output_path: "/poster.png",
+				output_sha256: "abc",
+				creative_asset_id: "ca_saved",
+				status: "POSTER_SAVED",
+			},
+			render_manifest: {},
+			poster_copy_set: approved,
+			qa_report: { ok: true, findings: [], block_count: 0, warn_count: 0 },
+			output_available: false,
+		});
+		mockedNewVersion.mockResolvedValue(draftVersion);
+		mockedPatchCopySet.mockResolvedValue(draftVersion);
+		mockedApproveCopySet.mockResolvedValue({
+			...draftVersion,
+			status: "POSTER_COPY_APPROVED",
+		});
+
+		renderPage("?reopen_asset=ca_saved");
+		await screen.findByTestId("poster-reopen-panel");
+		const createVersion = await screen.findByTestId(
+			"poster-copy-create-new-version",
+		);
+		expect(screen.getByTestId("slot-field-hook")).toBeDisabled();
+		fireEvent.click(createVersion);
+		await waitFor(() =>
+			expect(mockedNewVersion).toHaveBeenCalledWith("pcs_parent", {}),
+		);
+		expect(await screen.findByTestId("poster-copy-version-draft")).toBeInTheDocument();
+		expect(screen.getByTestId("slot-field-hook")).not.toBeDisabled();
+		fireEvent.change(screen.getByTestId("slot-field-hook"), {
+			target: { value: "Tajuk operator baharu" },
+		});
+		fireEvent.click(screen.getByTestId("poster-copy-save-new-version"));
+		await waitFor(() =>
+			expect(mockedPatchCopySet).toHaveBeenCalledWith(
+				"pcs_child",
+				expect.objectContaining({ primary_message: "Tajuk operator baharu" }),
+			),
+		);
+		await waitFor(() =>
+			expect(mockedApproveCopySet).toHaveBeenCalledWith(
+				"pcs_child",
+				"APPROVE_POSTER_COPY_SET",
+			),
+		);
 	});
 });

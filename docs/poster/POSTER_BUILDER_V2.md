@@ -21,12 +21,24 @@ QA → durable save in the Creative Library.
 6. **Generate scene** — the proven one-door IMG lane, confirm-modal gated.
 7. **Compose (deterministic, credit-free)** — Chromium compositor draws the
    marketing text/chips/CTA/disclaimer from the render manifest; shrink-to-fit;
-   product-safe region enforced; deterministic QA (overflow / overlap /
-   missing-element / dimensions) with BLOCK/WARN findings.
+   deterministic QA (overflow / overlap / missing-element / dimensions) with
+   BLOCK/WARN findings. `PRODUCT_REGION_OVERLAP` checks overlay zones against
+   the **author-defined** product-safe region from the template — it is a
+   geometry check, NOT detection of the actual product. Whether the generated
+   product truly sits in that region — and its identity, label, scale and
+   distortion — remains a HUMAN review responsibility.
 8. **Save** — exact previewed bytes (sha256-verified) registered as a
    `creative_asset` (PRODUCT_POSTER governance) + durable `poster_deliverable`
    row (manifest + copy-set ref + QA) for reconstruction after the 48h
    artifact purge.
+9. **Reopen (Creative Library round trip)** — poster assets in the Creative
+   Library carry a "Buka semula" action →
+   `/creative/poster-builder?reopen_asset=<id>` →
+   `GET /api/poster/deliverables/by-asset/{creative_asset_id}` restores the
+   product, recipe and approved copy set, and shows the ORIGINAL saved output.
+   Editing approved copy creates a NEW version
+   (`POST /api/poster/copy-sets/{id}/new-version`, atomic child+supersede);
+   recomposing creates a NEW deliverable — saved bytes are never overwritten.
 
 ## Domain contracts
 
@@ -59,6 +71,12 @@ and adding one was not justified for V1. Product identity in generated scenes
 therefore remains reference-conditioned, honestly labelled, and subject to
 human review.
 
+Creative Library stamping is honest about this:
+`product_truth_status = REFERENCE_CONDITIONED_UNVERIFIED` for
+reference-conditioned posters (never `PRESERVED`). `VERIFIED` labels are
+reserved for a future deterministic-composite path or an explicit human
+review record; unknown strategies stamp `HUMAN_REVIEW_REQUIRED`.
+
 ## OFFER policy (V1 decision)
 
 Non-price promotional creative only. `OFFER_PRICE_CLAIM_UNSUPPORTED` BLOCKS
@@ -70,10 +88,28 @@ OfferSpec + offer-truth source exists (`offer_json` column reserved).
 Compositor: `scripts/poster-compositor-render.js` (Playwright/Chromium,
 offline, credit-free, watchdog + structured exit codes) driven by
 `poster_compositor_service` (semaphore=2, 45s timeout, structured errors).
-Probe: `GET /api/poster/compositor/probe`. Fonts: system stack (BM is
-Latin-script; no bundling/licensing needed). Fixtures:
-`python scripts/generate_poster_fixtures.py` renders all 6 archetypes and
-records machine-checkable reports (committed).
+Probe: `GET /api/poster/compositor/probe`.
+
+**Font determinism is HOST-SCOPED**: layout is deterministic on a given host
+with the manifest's font tokens resolved against SYSTEM fonts (primary family
+`Segoe UI` — the deployment is Windows-hosted). Cross-host byte identity is
+NOT claimed. Every named primary family the manifest uses is verified via
+`document.fonts.check()` before rendering; a missing family FAILS the render
+(`FONT_UNAVAILABLE`) — it is never silently substituted. If cross-runtime
+determinism is ever required, bundle a licensed font and pin it in the tokens.
+
+**Backgrounds**: production callers pass `background_media_id` (resolved from
+the artifact registry). A raw `background_local_path` is only honoured when it
+canonically resolves inside the agent output directories
+(`POSTER_BACKGROUND_PATH_FORBIDDEN` otherwise — traversal and out-of-root
+paths are rejected).
+
+Fixtures: `python scripts/generate_poster_fixtures.py` renders all 6
+archetypes with **synthetic compositor-contract fixtures** (drawn placeholder
+scenes — they prove the render/QA contract, NOT real-product output).
+Real-product proof runs live under
+`scripts/fixtures/poster-compositor/real-products/` with per-run manifest, QA
+report and a product-truth review note.
 
 ## Validation
 
