@@ -1,6 +1,7 @@
 import { ImageIcon, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import PosterGuidedShell from "../components/poster/guided/PosterGuidedShell";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
 import {
 	PRODUCT_REFERENCE_IMAGE_REQUIRED,
@@ -86,7 +87,11 @@ function productThumb(product: Product): string | null {
 	return product.image_analysis?.image_url ?? null;
 }
 
-export default function PosterBuilderPage() {
+// The original full-control Poster Builder. Preserved verbatim as the ADVANCED
+// / LEGACY COMPATIBILITY surface — every proven behavior (readiness matrix,
+// working modes, recipe slot editor, controlled settings, live generate, reopen)
+// stays available for troubleshooting, but it is no longer the default journey.
+export function PosterBuilderLegacyPanel() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [products, setProducts] = useState<Product[]>([]);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -1403,6 +1408,36 @@ export default function PosterBuilderPage() {
 					</div>
 				</div>
 			) : null}
+		</div>
+	);
+}
+
+// Default Poster Builder = the clean guided journey. The full legacy control
+// panel is relocated under a collapsed "Advanced Diagnostics / Legacy
+// Compatibility" disclosure and only mounts when the operator expands it (so its
+// data-fetching effects never run in the normal flow).
+export default function PosterBuilderPage() {
+	const [advancedOpen, setAdvancedOpen] = useState(false);
+	return (
+		<div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6" data-testid="poster-builder-page">
+			<PosterGuidedShell />
+
+			<details
+				className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4"
+				data-testid="poster-advanced-diagnostics"
+				onToggle={(e) => setAdvancedOpen((e.currentTarget as HTMLDetailsElement).open)}
+			>
+				<summary className="cursor-pointer text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+					Advanced Diagnostics / Legacy Compatibility
+				</summary>
+				<p className="mt-2 text-[11px] text-amber-300/80">
+					Untuk penyelesaian masalah dan kawalan lanjutan sahaja — tidak
+					diperlukan untuk penciptaan poster biasa.
+				</p>
+				<div className="mt-4 border-t border-slate-800 pt-4">
+					{advancedOpen ? <PosterBuilderLegacyPanel /> : null}
+				</div>
+			</details>
 		</div>
 	);
 }

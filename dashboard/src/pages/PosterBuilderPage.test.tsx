@@ -9,7 +9,9 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import PosterBuilderPage from "./PosterBuilderPage";
+// The original page is now the ADVANCED / LEGACY panel. These tests validate
+// that relocated full-control surface directly (its behavior is unchanged).
+import { PosterBuilderLegacyPanel } from "./PosterBuilderPage";
 import { createPosterPromptDraft } from "../api/posterPromptDraft";
 import { fetchPosterReadiness } from "../api/posterReadiness";
 import { posterReadinessFixtures } from "../poster/posterReadinessTestFixtures";
@@ -295,7 +297,7 @@ function renderPage(query = "?product_id=p1") {
 	return render(
 		<MemoryRouter initialEntries={[`/creative/poster-builder${query}`]}>
 			<Routes>
-				<Route path="/creative/poster-builder" element={<PosterBuilderPage />} />
+				<Route path="/creative/poster-builder" element={<PosterBuilderLegacyPanel />} />
 			</Routes>
 		</MemoryRouter>,
 	);
