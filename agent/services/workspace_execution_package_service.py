@@ -324,6 +324,9 @@ async def create_workspace_execution_package(
             "shot_plan": compiler_result["shot_plan"],
             "continuation_lineage": compiler_result["continuation_lineage"],
             "warnings": compiler_result["warnings"],
+            "planner_result": compiler_result.get("planner_result"),
+            "planner_version": compiler_result.get("planner_version"),
+            "planner_fingerprint": compiler_result.get("planner_fingerprint"),
         },
     }
     for key in ("metadata_handoff", "overlay_spec", "export_spec", "image_route"):
@@ -436,6 +439,9 @@ async def create_workspace_execution_package(
         "warnings": compiler_result["warnings"],
         "compiler_blockers": compiler_result["blockers"],
         "continuation_lineage": compiler_result["continuation_lineage"],
+        "planner_result": compiler_result.get("planner_result"),
+        "planner_version": compiler_result.get("planner_version"),
+        "planner_fingerprint": compiler_result.get("planner_fingerprint"),
         "runtime_config_snapshot": compiler_result["runtime_config_snapshot"],
         "metadata_handoff": compiler_result.get("metadata_handoff"),
         "overlay_spec": compiler_result.get("overlay_spec"),

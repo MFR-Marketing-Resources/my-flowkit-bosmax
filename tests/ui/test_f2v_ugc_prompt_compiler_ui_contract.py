@@ -127,6 +127,29 @@ def test_handoff_bank_renders_all_prompt_blocks():
     assert "blocks.length} blocks" in src  # count is dynamic, not a hardcoded 1
 
 
+def test_storyboard_first_plan_is_visible_in_operator_preview_and_handoff_bank():
+    operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
+    handoff_source = _read("dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx")
+
+    for token in [
+        "operator-storyboard-plan-summary",
+        "Storyboard-first plan",
+        "Full dialogue:",
+        "storyboard-allocation-summary",
+        "Exact dialogue:",
+    ]:
+        assert token in operator_source, token
+
+    for token in [
+        "storyboard-plan-summary",
+        "storyboardPlan",
+        "Allocated story:",
+        "Allocated dialogue:",
+        "Seam:",
+    ]:
+        assert token in handoff_source, token
+
+
 def test_operator_extend_manual_no_total_blocks_load_and_generate():
     """Counter-audit: EXTEND with no Extend Total is DEV/ADVANCED-only and fails
     closed at the backend. The UI must block BOTH Load and Generate (and the handler

@@ -27,7 +27,7 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from agent.services import avatar_registry
 from agent.services import product_lock_builder
@@ -1601,6 +1601,24 @@ def scrub_check(engine_text: str) -> list[str]:
     return violations
 
 
+def _allocation_state_text(state: Mapping[str, Any] | None) -> str:
+    """Naturalize a planner continuity state without exposing planner metadata."""
+    if not state:
+        return ""
+    values = [
+        _clean(state.get("product_identity")),
+        _clean(state.get("product_position")),
+        _clean(state.get("product_grip")),
+        _clean(state.get("presenter_pose")),
+        _clean(state.get("wardrobe")),
+        _clean(state.get("environment")),
+        _clean(state.get("lighting")),
+        _clean(state.get("camera_framing")),
+        _clean(state.get("motion_direction")),
+    ]
+    return "; ".join(value for value in values if value)
+
+
 def render_block(
     *,
     source_mode: str,
@@ -1623,16 +1641,29 @@ def render_block(
     handling_notes: str = "",
     shot_plan: list[str] | None = None,
     shot_count_hint: int | None = None,
+    allocation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Render ONE complete canonical 9-section engine-facing prompt block."""
+    """Render one canonical prompt block from an allocation when one is required."""
     mode = str(source_mode or "").strip().upper()
     if mode not in SOURCE_MODES:
         raise ValueError(f"UNSUPPORTED_SOURCE_MODE:{source_mode}")
+    allocation_data = dict(allocation or {})
+    if total_blocks > 1 and mode != "IMAGES" and not allocation_data:
+        raise ValueError("BLOCK_ALLOCATION_REQUIRED_FOR_EXTEND")
+    if allocation_data:
+        if int(allocation_data.get("block_index") or 0) != block_index:
+            raise ValueError("BLOCK_ALLOCATION_INDEX_MISMATCH")
+        if int(allocation_data.get("duration_seconds") or 0) != block_seconds:
+            raise ValueError("BLOCK_ALLOCATION_DURATION_MISMATCH")
     lang = language_name(target_language)
-    is_final = block_index == total_blocks
+    is_final = bool(allocation_data.get("is_final")) if allocation_data else block_index == total_blocks
     is_continuation = block_index > 1
-    budget = 0 if mode == "IMAGES" else dialogue_word_budget(
-        block_seconds, target_language, wps_mode=wps_mode,
+    budget = (
+        int(allocation_data.get("dialogue_word_budget") or 0)
+        if allocation_data
+        else (0 if mode == "IMAGES" else dialogue_word_budget(
+            block_seconds, target_language, wps_mode=wps_mode,
+        ))
     )
     norm_copy = normalize_copy_intelligence(copy, product=product)
     presenter = None
@@ -1692,7 +1723,27 @@ def render_block(
     )
     if s3_lock_lines:
         s3 = "\n".join([s3, *s3_lock_lines])
-    shots = list(shot_plan or [])
+    if allocation_data:
+        allocated_beats = list(allocation_data.get("assigned_story_beats") or [])
+        if not allocated_beats:
+            raise ValueError("BLOCK_ALLOCATION_STORY_BEATS_MISSING")
+        shots = [
+            _clean(beat.get("visual_action"))
+            for beat in allocated_beats
+            if _clean(beat.get("visual_action"))
+        ]
+        if not shots:
+            raise ValueError("BLOCK_ALLOCATION_STORY_BEATS_MISSING")
+        entry_text = _allocation_state_text(allocation_data.get("entry_continuity_state"))
+        exit_text = _allocation_state_text(allocation_data.get("exit_continuity_state"))
+        if entry_text and exit_text:
+            s3 = "\n".join([
+                s3,
+                f"Begin from this exact allocated state: {entry_text}.",
+                f"Preserve this allocated exit state for the next block: {exit_text}.",
+            ])
+    else:
+        shots = list(shot_plan or [])
     if not shots:
         shot_count = shot_count_hint or (1 if mode == "IMAGES" else 2)
         shots = _default_shot_plan(
@@ -1741,10 +1792,14 @@ def render_block(
             "there is no product-only shot during the opening spoken line."
         )
     s5 = "\n".join(s5_lines)
-    dialogue = "" if mode == "IMAGES" else build_block_dialogue(
-        copy=norm_copy, block_index=block_index, total_blocks=total_blocks,
-        budget=budget, target_language=target_language, family=family,
-        approved_dialogue=approved_dialogue,
+    dialogue = (
+        "" if mode == "IMAGES" else _clean(allocation_data.get("exact_dialogue_slice"))
+    ) if allocation_data else (
+        "" if mode == "IMAGES" else build_block_dialogue(
+            copy=norm_copy, block_index=block_index, total_blocks=total_blocks,
+            budget=budget, target_language=target_language, family=family,
+            approved_dialogue=approved_dialogue,
+        )
     )
     s6 = dialogue if dialogue else "(No spoken dialogue in this block.)"
     family_voice = _family_voice_clause(family, target_language)
@@ -1753,17 +1808,19 @@ def render_block(
         f"{family_voice + ' ' if family_voice else ''}"
         "No voice-over. No off-camera speech. No audio-only dialogue."
     ) if mode != "IMAGES" else "Not applicable — still image output."
-    s8 = _section_8_end_frame(
-        mode=mode,
-        pname=pname,
-        visual_name=visual_name,
-        is_final=is_final,
-        focus=focus,
-        family=family,
-        angle_signal=angle_signal,
-        trigger_id=trigger_id,
-        cta_type=cta_type,
-    )
+    s8 = _clean(allocation_data.get("end_frame_instruction")) if allocation_data else ""
+    if not s8:
+        s8 = _section_8_end_frame(
+            mode=mode,
+            pname=pname,
+            visual_name=visual_name,
+            is_final=is_final,
+            focus=focus,
+            family=family,
+            angle_signal=angle_signal,
+            trigger_id=trigger_id,
+            cta_type=cta_type,
+        )
     if overlay_allowed and overlay_text:
         s9 = (
             f"On-screen text is permitted for this block only: '{_clean(overlay_text)}'. "
@@ -1796,6 +1853,7 @@ def render_block(
         "dialogue": dialogue,
         "dialogue_word_budget": budget,
         "dialogue_word_count": len(dialogue.split()) if dialogue else 0,
+        "allocation": allocation_data or None,
         "presenter": presenter,
         "scrub_violations": violations,
         "sections": dict(zip(CANONICAL_SECTIONS, bodies)),
@@ -1848,8 +1906,29 @@ def compile_prompt_set(
             style_scene_source = "SCENE_CONTEXT_ONLY"
         asset_role_map = roles
     total = len(plan)
+    planner_result = None
+    allocations: list[dict[str, Any] | None]
+    if mode == "IMAGES":
+        allocations = [None]
+    else:
+        from agent.services.full_storyboard_extend_planner import plan_full_storyboard
+
+        planner_result = plan_full_storyboard(
+            route_id="CANONICAL_WORKBOOK_BLOCK_PLAN",
+            source_mode=mode,
+            product=product,
+            copy_intelligence=copy,
+            resolved_block_plan=plan,
+            target_language=target_language,
+            wps_mode=wps_mode,
+            scene_context=scene_context,
+            approved_dialogue=approved_dialogue,
+            shot_count_by_block=[min(4, max(2, round(seconds / 4))) for seconds in plan],
+        ).to_dict()
+        allocations = list(planner_result["block_allocations"])
     blocks = []
     for i, seconds in enumerate(plan, start=1):
+        allocation = allocations[i - 1]
         blocks.append(render_block(
             source_mode=mode, engine=engine, block_index=i, total_blocks=total,
             block_seconds=seconds or duration_seconds, product=product,
@@ -1859,6 +1938,7 @@ def compile_prompt_set(
             wps_mode=wps_mode, overlay_allowed=overlay_allowed, overlay_text=overlay_text,
             camera_notes=camera_notes, handling_notes=handling_notes,
             shot_count_hint=1 if mode == "IMAGES" else min(4, max(2, round((seconds or duration_seconds) / 4))),
+            allocation=allocation,
         ))
     all_violations = [v for b in blocks for v in b["scrub_violations"]]
     if all_violations:
@@ -1873,4 +1953,5 @@ def compile_prompt_set(
         "target_language": target_language,
         "presenter": resolved_profile,
         "blocks": blocks,
+        "planner_result": planner_result,
     }

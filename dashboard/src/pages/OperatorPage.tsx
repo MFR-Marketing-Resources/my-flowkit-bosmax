@@ -77,6 +77,14 @@ interface PromptAuditBlock {
 	dialogue_word_budget?: number;
 	engine_prompt_text?: string;
 	compiled_prompt_text?: string;
+	allocation?: {
+		start_s: number;
+		end_s: number;
+		is_final: boolean;
+		assigned_story_beats: Array<{ beat_id: string; role: string }>;
+		exact_dialogue_slice: string;
+		seam_policy: string;
+	} | null;
 }
 
 function parsePromptSections(text: string): PromptAuditSection[] {
@@ -119,6 +127,7 @@ function PromptAuditCard({
 		fallbackText ??
 		"";
 	const sections = parsePromptSections(promptText);
+	const allocation = block?.allocation;
 	const presentHeadings = new Set(sections.map((section) => section.heading));
 	const missingSections = CANONICAL_PROMPT_SECTIONS.filter(
 		(heading) => !presentHeadings.has(heading),
@@ -179,6 +188,13 @@ function PromptAuditCard({
 					{copied ? "Copied" : "Copy Prompt"}
 				</button>
 			</div>
+			{allocation ? (
+				<div className="border-b border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-300" data-testid="storyboard-allocation-summary">
+					<div className="font-semibold text-slate-200">Storyboard allocation · {allocation.start_s}–{allocation.end_s}s · {allocation.is_final ? "Final closure" : "Continuation seam"}</div>
+					<div className="mt-1 text-slate-400">Story beats: {allocation.assigned_story_beats.map((beat) => beat.role).join(" → ")}</div>
+					<div className="mt-1 text-slate-400">Exact dialogue: {allocation.exact_dialogue_slice || "(visual-only block)"}</div>
+				</div>
+			) : null}
 			{sections.length > 0 ? (
 				<div className="divide-y divide-slate-800">
 					{sections.map((section) => (
@@ -1935,6 +1951,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										] · Status: [
 										{(previewPackage.wps_status_per_block ?? []).join(", ")}]
 									</div>
+								</div>
+							) : null}
+							{previewPackage.planner_result ? (
+								<div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-3 py-3 text-xs text-slate-300" data-testid="operator-storyboard-plan-summary">
+									<div className="font-bold uppercase tracking-[0.18em] text-indigo-300">Storyboard-first plan · {previewPackage.planner_result.plan_version}</div>
+									<div className="mt-2 text-slate-400">Route: {previewPackage.planner_result.route_id} · Total: {previewPackage.planner_result.total_duration_seconds}s · Blocks: [{previewPackage.planner_result.resolved_block_plan.join(", ")}]</div>
+									<div className="mt-1 text-slate-400">Story: {previewPackage.planner_result.full_story_plan.story_summary}</div>
+									<div className="mt-1 text-slate-400">Full dialogue: {previewPackage.planner_result.full_dialogue_plan.full_dialogue_text || "(visual-only preview)"}</div>
 								</div>
 							) : null}
 							<div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">

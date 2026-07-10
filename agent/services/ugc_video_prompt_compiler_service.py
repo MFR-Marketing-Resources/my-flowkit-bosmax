@@ -27,6 +27,7 @@ SUPPORTED_MODES = {"T2V", "F2V", "I2V", "IMG"}
 from agent.services import canonical_prompt_compiler as _canonical
 from agent.services import copy_landbank_service as _landbank
 from agent.services import extend_route_planner as _extend_route_planner
+from agent.services import full_storyboard_extend_planner as _storyboard
 
 
 # mode → canonical source mode (ADR-008). F2V's live intake is product-only
@@ -818,14 +819,48 @@ def compile_ugc_video_prompt(
     # No image attached → left None so SECTION 2 still carries the full text lock.
     if _ingredient_roles is None and resolved_source_mode == "IMAGES" and _has_product_image(product):
         _ingredient_roles = {"PRODUCT_REFERENCE": True}
+    planner_result: dict[str, Any] | None = None
+    allocation_by_block: dict[int, dict[str, Any]] = {}
+    if resolved_source_mode != "IMAGES":
+        planner_route = (
+            "DEV_MANUAL_BLOCK_PLAN"
+            if resolved_generation_mode == "EXTEND" and not requested_total_duration_seconds
+            else resolved_route
+        )
+        planner = _storyboard.plan_full_storyboard(
+            route_id=planner_route,
+            source_mode=resolved_source_mode,
+            product=product,
+            copy_intelligence=resolved_copy,
+            resolved_block_plan=[int(block["duration_seconds"]) for block in normalized_blocks],
+            target_language=resolved_target_language,
+            wps_mode=wps_mode,
+            scene_context=_clean(approved_package.get("scene_context")),
+            dialogue_enabled=dialogue_enabled,
+            shot_count_by_block=[
+                get_shot_policy(int(block["duration_seconds"]))["recommended"]
+                for block in normalized_blocks
+            ],
+        )
+        planner_result = planner.to_dict()
+        allocation_by_block = {
+            allocation["block_index"]: allocation
+            for allocation in planner_result["block_allocations"]
+        }
+
     compiled_blocks: list[dict[str, Any]] = []
     continuation_lineage: list[dict[str, Any]] = []
     total_blocks = len(normalized_blocks)
     for block in normalized_blocks:
+        allocation = allocation_by_block.get(block["block_index"])
         previous_block_id = (
             compiled_blocks[-1]["block_id"]
-            if block["block_role"] == "CONTINUATION" and compiled_blocks
-            else None
+            if allocation and allocation["block_role"] != "ANCHOR" and compiled_blocks
+            else (
+                compiled_blocks[-1]["block_id"]
+                if block["block_role"] == "CONTINUATION" and compiled_blocks
+                else None
+            )
         )
         _shot_policy = get_shot_policy(block["duration_seconds"])
         _camera = _camera_profile(resolved_camera_style)
@@ -847,6 +882,7 @@ def compile_ugc_video_prompt(
             camera_notes=f"{_camera['style_line']} {_camera['lens_line']}",
             handling_notes=_handling_line(product, normalized_mode),
             shot_count_hint=_shot_policy["recommended"],
+            allocation=allocation,
         )
         shots = [
             x.split(": ", 1)[-1]
@@ -856,7 +892,7 @@ def compile_ugc_video_prompt(
         compiled = {
             "block_id": f"block_{block['block_index']}",
             "block_index": block["block_index"],
-            "block_role": block["block_role"],
+            "block_role": allocation["block_role"] if allocation else block["block_role"],
             "duration_seconds": block["duration_seconds"],
             "start_s": block.get("start_s"),
             "end_s": block.get("end_s"),
@@ -871,6 +907,10 @@ def compile_ugc_video_prompt(
             ),
             "engine_prompt_text": rendered["engine_prompt_text"],
             "shot_plan": shots,
+            "allocation": allocation,
+            "story_beat_ids": allocation["assigned_story_beat_ids"] if allocation else [],
+            "dialogue_utterance_ids": allocation["assigned_dialogue_utterance_ids"] if allocation else [],
+            "exact_dialogue_slice": allocation["exact_dialogue_slice"] if allocation else rendered["dialogue"],
         }
         compiled_blocks.append(compiled)
         if previous_block_id:
@@ -878,7 +918,10 @@ def compile_ugc_video_prompt(
                 {
                     "block_index": compiled["block_index"],
                     "continuation_from_block_id": previous_block_id,
-                    "continuation_strategy": "SAME_CREATOR_PRODUCT_SCENE_CAMERA_COPY_ROUTE",
+                    "continuation_strategy": (
+                        allocation["seam_policy"]
+                        if allocation else "SAME_CREATOR_PRODUCT_SCENE_CAMERA_COPY_ROUTE"
+                    ),
                 }
             )
 
@@ -914,6 +957,9 @@ def compile_ugc_video_prompt(
             block["dialogue_word_budget"] for block in compiled_blocks
         ],
         "prompt_fingerprint": _fingerprint(final_compiled_prompt_text),
+        "planner_result": planner_result,
+        "planner_version": planner_result["plan_version"] if planner_result else None,
+        "planner_fingerprint": planner_result["planner_fingerprint"] if planner_result else None,
         "warnings": warnings,
         "blockers": [],
         "source_of_truth_notes": [

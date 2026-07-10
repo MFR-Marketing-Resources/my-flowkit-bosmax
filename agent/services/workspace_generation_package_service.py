@@ -88,6 +88,7 @@ def _build_dom_scaffold(
     warnings: list,
     prompt_fingerprint: str,
     asset_fingerprints: list,
+    planner_result: dict | None = None,
 ) -> dict:
     """Build the future DOM payload scaffold. dom_handoff_ready MUST stay False."""
     return {
@@ -104,6 +105,7 @@ def _build_dom_scaffold(
             "final_text": final_prompt_text,
             "blocks": prompt_blocks,
             "generation_mode": generation_mode,
+            "planner_result": planner_result,
         },
         "assets": asset_map,
         "settings": settings,
@@ -128,6 +130,7 @@ def _build_manual_handoff(
     upload_order: list[str],
     blockers: list,
     warnings: list,
+    planner_result: dict | None = None,
 ) -> dict:
     """Build the manual operator handoff payload."""
     actions: list[dict] = [
@@ -161,6 +164,7 @@ def _build_manual_handoff(
         "warnings": warnings,
         "manual_fallback_ready": len(blockers) == 0,
         "dom_handoff_note": "DOM handoff not enabled in this wave.",
+        "storyboard_plan": planner_result,
     }
 
 
@@ -313,6 +317,7 @@ async def create_f2v_generation_package(
         upload_order=upload_order,
         blockers=blockers,
         warnings=warnings,
+        planner_result=compiler_result.get("planner_result"),
     )
 
     dom_scaffold = _build_dom_scaffold(
@@ -332,6 +337,7 @@ async def create_f2v_generation_package(
         warnings=warnings,
         prompt_fingerprint=prompt_fingerprint,
         asset_fingerprints=asset_fingerprints,
+        planner_result=compiler_result.get("planner_result"),
     )
 
     row = await crud.create_workspace_generation_package(
@@ -528,6 +534,7 @@ async def create_i2v_generation_package(
         upload_order=upload_order,
         blockers=blockers,
         warnings=warnings,
+        planner_result=compiler_result.get("planner_result"),
     )
 
     dom_scaffold = _build_dom_scaffold(
@@ -547,6 +554,7 @@ async def create_i2v_generation_package(
         warnings=warnings,
         prompt_fingerprint=prompt_fingerprint,
         asset_fingerprints=asset_fingerprints,
+        planner_result=compiler_result.get("planner_result"),
     )
 
     row = await crud.create_workspace_generation_package(
@@ -728,6 +736,7 @@ async def create_t2v_generation_package(
         upload_order=upload_order,
         blockers=blockers,
         warnings=warnings,
+        planner_result=compiler_result.get("planner_result"),
     )
 
     dom_scaffold = _build_dom_scaffold(
@@ -747,6 +756,7 @@ async def create_t2v_generation_package(
         warnings=warnings,
         prompt_fingerprint=prompt_fingerprint,
         asset_fingerprints=asset_fingerprints,
+        planner_result=compiler_result.get("planner_result"),
     )
 
     row = await crud.create_workspace_generation_package(
@@ -915,6 +925,7 @@ async def create_img_generation_package(
         upload_order=upload_order,
         blockers=blockers,
         warnings=warnings,
+        planner_result=compiler_result.get("planner_result"),
     )
 
     dom_scaffold = _build_dom_scaffold(
@@ -934,6 +945,7 @@ async def create_img_generation_package(
         warnings=warnings,
         prompt_fingerprint=prompt_fingerprint,
         asset_fingerprints=asset_fingerprints,
+        planner_result=compiler_result.get("planner_result"),
     )
 
     row = await crud.create_workspace_generation_package(

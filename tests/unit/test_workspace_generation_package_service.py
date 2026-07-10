@@ -461,6 +461,9 @@ def _stub_handoff_common(monkeypatch, capture: dict):
     async def fake_create(wgp_id, *, prompt_blocks_json, generation_mode, **kw):
         capture["blocks"] = json.loads(prompt_blocks_json)
         capture["generation_mode"] = generation_mode
+
+        for key in ("manual_handoff_json", "dom_handoff_payload_json"):
+            capture[key] = json.loads(kw[key])
         return {**FAKE_WGP_ROW, "workspace_generation_package_id": wgp_id}
 
     P = "agent.services.workspace_generation_package_service."
@@ -480,7 +483,7 @@ async def test_f2v_hybrid_handoff_extend_24_resolves_three_blocks(monkeypatch):
     )
     assert [b["duration_seconds"] for b in cap["blocks"]] == [8, 8, 8]
     assert cap["blocks"][0]["block_role"] == "ANCHOR"
-    assert cap["blocks"][-1]["block_role"] == "CONTINUATION"
+    assert cap["blocks"][-1]["block_role"] == "FINAL"
 
 
 @pytest.mark.asyncio
@@ -493,6 +496,25 @@ async def test_f2v_handoff_single_stays_one_block(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_f2v_extend_handoff_persists_the_exact_storyboard_plan(monkeypatch):
+    cap = {}
+    _stub_handoff_common(monkeypatch, cap)
+    await create_f2v_generation_package(
+        product_id="prod-001", source_mode="HYBRID",
+        generation_mode="EXTEND", engine_duration_target="GOOGLE_FLOW",
+        requested_total_duration_seconds=24,
+    )
+
+    planner = cap["manual_handoff_json"]["storyboard_plan"]
+    assert planner["resolved_block_plan"] == [8, 8, 8]
+    assert planner["full_story_plan"]["story_beats"]
+    assert planner["full_dialogue_plan"]["utterances"]
+    assert len(planner["block_allocations"]) == 3
+    assert cap["dom_handoff_payload_json"]["prompt"]["planner_result"] == planner
+    assert all(block["allocation"] for block in cap["blocks"])
+
+
+@pytest.mark.asyncio
 async def test_i2v_handoff_extend_16_stores_two_blocks(monkeypatch):
     cap = {}
     _stub_handoff_common(monkeypatch, cap)
@@ -502,7 +524,7 @@ async def test_i2v_handoff_extend_16_stores_two_blocks(monkeypatch):
     )
     assert [b["duration_seconds"] for b in cap["blocks"]] == [8, 8]
     assert cap["blocks"][0]["block_role"] == "ANCHOR"
-    assert cap["blocks"][1]["block_role"] == "CONTINUATION"
+    assert cap["blocks"][1]["block_role"] == "FINAL"
 
 
 @pytest.mark.asyncio
