@@ -426,6 +426,10 @@ domains:
       - dashboard/src/poster/posterKitToDraft.test.ts
       - dashboard/src/poster/posterBuilderUi.ts
       - dashboard/src/poster/posterBuilderUi.test.ts
+      - dashboard/src/poster/guided/posterGuided.ts
+      - dashboard/src/poster/guided/usePosterGuidedWorkflow.ts
+      - dashboard/src/components/poster/guided/PosterGuidedShell.tsx
+      - dashboard/src/components/poster/guided/PosterGuidedShell.test.tsx
       - dashboard/src/types/posterCopyRecommendations.ts
       - dashboard/src/types/posterPromptDraft.ts
       - dashboard/src/types/posterReadiness.ts
