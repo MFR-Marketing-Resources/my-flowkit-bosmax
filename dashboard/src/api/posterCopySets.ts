@@ -116,6 +116,15 @@ export async function newPosterCopySetVersion(
 	return postAPI(`/poster/copy-sets/${posterCopySetId}/new-version`, patch);
 }
 
+// Reopen a saved poster whose copy set is now SUPERSEDED: clone the exact
+// historical copy into a fresh DRAFT WITHOUT mutating the historical record.
+export async function forkPosterCopySetFromHistorical(
+	posterCopySetId: string,
+	patch: Record<string, unknown> = {},
+): Promise<PosterCopySet> {
+	return postAPI(`/poster/copy-sets/${posterCopySetId}/fork-historical`, patch);
+}
+
 export async function patchPosterCopySet(
 	posterCopySetId: string,
 	patch: Record<string, unknown>,

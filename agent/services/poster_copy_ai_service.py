@@ -374,13 +374,16 @@ def _fallback_directions(
     """Deterministic, no-spend poster directions.
 
     TRUTH RULE: a fallback fires exactly when NO AI grounding ran, so it may
-    not fabricate ANY verifiable fact — no popularity ("dipercayai ramai"),
-    scarcity ("stok terhad"), logistics ("penghantaran pantas"), family
-    suitability, quality/authenticity verification ("kualiti terjaga",
-    "kemasan asli"), heritage, ingredients or results. Proof points come ONLY
-    from approved grounding (benefits/USPs); with no approved intelligence the
-    chips stay empty and the copy is pure neutral framing around the product
-    name, the operator's angle and an invitation CTA.
+    not fabricate ANY verifiable fact and may not IMPLY one either — no
+    popularity ("dipercayai ramai"), scarcity ("stok terhad"), logistics
+    ("penghantaran pantas"), routine/usage suitability ("untuk rutin anda",
+    "rutin harian"), family suitability, quality/authenticity ("kualiti
+    terjaga", "kemasan asli"), heritage, ingredients or results. The operator's
+    ``angle`` is NOT injected verbatim — an unvalidated angle can smuggle any of
+    those claims. Proof points come ONLY from approved grounding (benefits/USPs);
+    with no approved intelligence the chips stay empty and the copy is limited to
+    PRODUCT DISCOVERY language around the product name (Kenali / Lihat / Terokai
+    / Ketahui lebih lanjut).
     """
     name = _norm(product.get("product_display_name")) or _norm(
         product.get("raw_product_title")
@@ -389,33 +392,32 @@ def _fallback_directions(
     grounded_points = _grounded_fallback_points(
         grounding, contract["max_proof_points"]
     ) if grounding is not None else []
+    supports = contract["supports_support_message"]
     templates = [
         {
-            "primary_message": _clip(f"{short} — untuk rutin anda", 48),
-            "support_message": "Jadikan sebahagian rutin harian anda."
-            if contract["supports_support_message"] else "",
-            "proof_points": list(grounded_points),
-            "cta": "Dapatkan sekarang",
-            "disclaimer": "",
-            "tone": "mesra",
-        },
-        {
             "primary_message": _clip(f"Kenali {short}", 48),
-            "support_message": "Pilihan anda, cara anda."
-            if contract["supports_support_message"] else "",
+            "support_message": _clip(f"Ketahui lebih lanjut tentang {short}.", 72)
+            if supports else "",
             "proof_points": list(grounded_points),
-            "cta": "Cuba hari ini",
+            "cta": "Ketahui lebih lanjut",
             "disclaimer": "",
-            "tone": "yakin",
+            "tone": "neutral",
         },
         {
-            "primary_message": _clip(f"{angle or short}", 48),
-            "support_message": f"{short} — ikut keperluan anda."
-            if contract["supports_support_message"] else "",
+            "primary_message": _clip(short, 48),
+            "support_message": "Lihat produk." if supports else "",
             "proof_points": list(grounded_points),
-            "cta": "Lihat sekarang",
+            "cta": "Lihat produk",
             "disclaimer": "",
-            "tone": "hangat",
+            "tone": "neutral",
+        },
+        {
+            "primary_message": _clip(f"Terokai {short}", 48),
+            "support_message": "Terokai pilihan." if supports else "",
+            "proof_points": list(grounded_points),
+            "cta": "Terokai pilihan",
+            "disclaimer": "",
+            "tone": "neutral",
         },
     ]
     out = []

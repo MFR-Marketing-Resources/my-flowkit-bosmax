@@ -95,6 +95,14 @@ export interface PosterDeliverableReconstruction {
 	deliverable: PosterDeliverableRow;
 	render_manifest: Record<string, unknown>;
 	poster_copy_set: PosterCopySet | null;
+	// The saved poster's copy set may since have been SUPERSEDED. Reopen still
+	// restores the EXACT historical copy read-only and flags it for the UI.
+	poster_copy_set_status?: string;
+	poster_copy_set_historical?: boolean;
 	qa_report: PosterQAReport | Record<string, unknown>;
 	output_available: boolean;
+	// Which durable source served the original bytes (DELIVERABLE_FILE |
+	// CREATIVE_LIBRARY), and whether it was sha-verified.
+	output_source?: string | null;
+	output_sha256_verified?: boolean;
 }

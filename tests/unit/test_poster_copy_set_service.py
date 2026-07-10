@@ -222,3 +222,57 @@ async def test_new_version_transaction_requires_currently_approved_parent():
         )
     after = await _crud.list_poster_copy_sets_for_product(pid)
     assert len(after) == len(before), "stale version transaction leaked a child"
+
+
+# ─── Closure: fork a draft from a SUPERSEDED historical copy set (item A) ────
+
+
+@pytest.mark.asyncio
+async def test_fork_from_historical_clones_without_mutating_parent():
+    pid = await _seed_product()
+    out = await PosterCopySetService.create_draft(_create_request(pid))
+    approved = await PosterCopySetService.approve(
+        out["poster_copy_set_id"],
+        approval_phrase=POSTER_COPY_APPROVAL_PHRASE,
+        approved_by="op",
+    )
+    # Supersede the approved parent via the normal edit flow.
+    await PosterCopySetService.new_version(
+        approved["poster_copy_set_id"],
+        PosterCopySetPatchRequest(primary_message="Versi kedua tajuk"),
+    )
+    parent = await PosterCopySetService.get(approved["poster_copy_set_id"])
+    assert parent["status"] == STATUS_POSTER_COPY_SUPERSEDED
+    parent_primary = parent["primary_message"]
+
+    # Reopen the SUPERSEDED historical version and fork a fresh draft from it.
+    forked = await PosterCopySetService.fork_from_historical(
+        parent["poster_copy_set_id"],
+        PosterCopySetPatchRequest(primary_message="Draf dari sejarah"),
+    )
+    assert forked["status"] == STATUS_POSTER_COPY_DRAFT
+    assert forked["primary_message"] == "Draf dari sejarah"
+    assert forked["poster_copy_set_id"] != parent["poster_copy_set_id"]
+    assert forked["version"] > parent["version"]
+
+    # The forked child links back to the historical parent (DB row).
+    child_row = await crud.get_poster_copy_set(forked["poster_copy_set_id"])
+    assert child_row["parent_poster_copy_set_id"] == parent["poster_copy_set_id"]
+
+    # The historical record is NOT mutated (status + copy preserved).
+    parent_after = await PosterCopySetService.get(parent["poster_copy_set_id"])
+    assert parent_after["status"] == STATUS_POSTER_COPY_SUPERSEDED
+    assert parent_after["primary_message"] == parent_primary
+
+
+@pytest.mark.asyncio
+async def test_fork_from_historical_rejects_non_superseded():
+    pid = await _seed_product()
+    out = await PosterCopySetService.create_draft(_create_request(pid))
+    # A DRAFT is edited in place, not forked from history.
+    with pytest.raises(PosterCopySetError) as exc:
+        await PosterCopySetService.fork_from_historical(
+            out["poster_copy_set_id"], PosterCopySetPatchRequest()
+        )
+    assert exc.value.code == "POSTER_COPY_SET_NOT_HISTORICAL"
+    assert exc.value.status_code == 409

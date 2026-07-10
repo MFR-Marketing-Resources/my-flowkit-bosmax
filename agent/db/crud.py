@@ -912,6 +912,35 @@ async def create_poster_copy_set_version(
             raise
     return await _get_with_db(db, "poster_copy_set", "poster_copy_set_id", pid)
 
+async def create_poster_copy_set_child_draft(
+    product_id: str, parent_poster_copy_set_id: str, **kw
+) -> dict:
+    """Insert a DRAFT child cloned from a HISTORICAL parent WITHOUT mutating it.
+
+    Used to fork a fresh editable version from a superseded copy set that a saved
+    poster still references — the historical record (and the saved poster's
+    provenance) is never touched. Unlike ``create_poster_copy_set_version`` there
+    is NO parent status change.
+    """
+    db = await get_db()
+    pid, now = _uuid(), _now()
+    kw["parent_poster_copy_set_id"] = parent_poster_copy_set_id
+    cols = ["poster_copy_set_id", "product_id", "created_at", "updated_at"]
+    vals = [pid, product_id, now, now]
+    allowed = _COLUMNS["poster_copy_set"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO poster_copy_set ({col_str}) VALUES ({placeholders})", vals
+        )
+        await db.commit()
+    return await _get_with_db(db, "poster_copy_set", "poster_copy_set_id", pid)
+
 async def get_poster_copy_set(poster_copy_set_id: str):
     return await _get("poster_copy_set", "poster_copy_set_id", poster_copy_set_id)
 

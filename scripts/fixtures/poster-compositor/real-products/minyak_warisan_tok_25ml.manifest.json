@@ -1,1 +1,195 @@
-{"schema_version":"poster-render-manifest-v1","canvas":{"w":1080,"h":1920},"background_media_id":"","background_local_path":"C:\\Users\\USER\\AppData\\Local\\Temp\\poster_proof_agent_mdtqssbj\\output\\minyak_warisan_tok_25ml_bg.jpg","product_layer":{"strategy":"REFERENCE_CONDITIONED","safe_region":{"x":14.0,"y":27.0,"w":72.0,"h":44.0},"asset_ref":""},"zones":[{"zone_id":"headline","role":"HEADLINE","component":"text","rect":{"x":8.0,"y":6.0,"w":84.0,"h":12.0},"align":"center","font_token":"display","text":"Minyak Warisan Tok — Cap Burung","max_chars":48},{"zone_id":"support","role":"SUBHEADLINE","component":"text","rect":{"x":8.0,"y":19.0,"w":84.0,"h":6.0},"align":"center","font_token":"subhead","text":"Sedia di rumah anda, bila-bila masa.","max_chars":72},{"zone_id":"chip_1","role":"CHIP","component":"chip","rect":{"x":10.0,"y":74.0,"w":80.0,"h":5.0},"align":"left","font_token":"chip","text":"Minyak tradisional","max_chars":36},{"zone_id":"chip_2","role":"CHIP","component":"chip","rect":{"x":10.0,"y":80.0,"w":80.0,"h":5.0},"align":"left","font_token":"chip","text":"Botol 25ml","max_chars":36},{"zone_id":"cta","role":"CTA","component":"cta_button","rect":{"x":22.0,"y":92.0,"w":56.0,"h":5.0},"align":"center","font_token":"button","text":"Dapatkan sekarang","max_chars":24}],"font_tokens":{"display":{"family":"'Segoe UI', 'Noto Sans', Arial, sans-serif","size":76,"weight":800,"color":"#1c1c1c","line_height":1.08,"letter_spacing":"-0.5px"},"headline":{"family":"'Segoe UI', 'Noto Sans', Arial, sans-serif","size":76,"weight":800,"color":"#1c1c1c","line_height":1.08,"letter_spacing":"-0.5px"},"subhead":{"family":"'Segoe UI', 'Noto Sans', Arial, sans-serif","size":36,"weight":600,"color":"#2e2e2e","line_height":1.25,"letter_spacing":"0px"},"chip":{"family":"'Segoe UI', 'Noto Sans', Arial, sans-serif","size":27,"weight":600,"color":"#1f1f1f","line_height":1.2,"letter_spacing":"0px"},"button":{"family":"'Segoe UI', 'Noto Sans', Arial, sans-serif","size":32,"weight":800,"color":"#ffffff","line_height":1.1,"letter_spacing":"0.5px"},"caption":{"family":"'Segoe UI', 'Noto Sans', Arial, sans-serif","size":20,"weight":500,"color":"#4a4a4a","line_height":1.3,"letter_spacing":"0px"},"body":{"family":"'Segoe UI', 'Noto Sans', Arial, sans-serif","size":28,"weight":400,"color":"#2a2a2a","line_height":1.3,"letter_spacing":"0px"}},"component_styles":{"chip":{"background":"rgba(255,255,255,0.88)","border":"1px solid rgba(0,0,0,0.10)","border_radius":"999px","padding":"10px 22px","shadow":"0 4px 14px rgba(0,0,0,0.10)","display":"inline"},"cta_button":{"background":"#b23b2e","border_radius":"16px","padding":"18px 34px","shadow":"0 10px 26px rgba(178,59,46,0.35)","display":"inline"},"disclaimer":{"background":"transparent","color":"rgba(0,0,0,0.55)","size":18}},"fit_policy":{"min_scale":0.6,"step":0.05},"palette":{"text":"#3a2c18","accent":"#8a6d2f","chip_bg":"rgba(255,250,238,0.92)"},"provenance":{"poster_copy_set_id":"efd8ec97-9f04-4cc8-bdea-80601cf421d4","poster_copy_set_version":1,"recipe_id":"heritage_infographic","template_version":"1.0.0","ai_model":"","prompt_version":"","image_model":"EXISTING_REAL_ASSET_NO_GENERATION","background_prompt_fingerprint":""}}
+{
+  "schema_version": "poster-render-manifest-v1",
+  "canvas": {
+    "w": 1080,
+    "h": 1920
+  },
+  "background_media_id": "",
+  "background_local_path": "<staged_output>/minyak_warisan_tok_25ml_bg.jpg",
+  "product_layer": {
+    "strategy": "REFERENCE_CONDITIONED",
+    "safe_region": {
+      "x": 14.0,
+      "y": 27.0,
+      "w": 72.0,
+      "h": 44.0
+    },
+    "asset_ref": ""
+  },
+  "zones": [
+    {
+      "zone_id": "headline",
+      "role": "HEADLINE",
+      "component": "text",
+      "rect": {
+        "x": 8.0,
+        "y": 6.0,
+        "w": 84.0,
+        "h": 12.0
+      },
+      "align": "center",
+      "font_token": "display",
+      "text": "Minyak Warisan Tok — Cap Burung",
+      "max_chars": 48
+    },
+    {
+      "zone_id": "support",
+      "role": "SUBHEADLINE",
+      "component": "text",
+      "rect": {
+        "x": 8.0,
+        "y": 19.0,
+        "w": 84.0,
+        "h": 6.0
+      },
+      "align": "center",
+      "font_token": "subhead",
+      "text": "Sedia di rumah anda, bila-bila masa.",
+      "max_chars": 72
+    },
+    {
+      "zone_id": "chip_1",
+      "role": "CHIP",
+      "component": "chip",
+      "rect": {
+        "x": 10.0,
+        "y": 74.0,
+        "w": 80.0,
+        "h": 5.0
+      },
+      "align": "left",
+      "font_token": "chip",
+      "text": "Minyak tradisional",
+      "max_chars": 36
+    },
+    {
+      "zone_id": "chip_2",
+      "role": "CHIP",
+      "component": "chip",
+      "rect": {
+        "x": 10.0,
+        "y": 80.0,
+        "w": 80.0,
+        "h": 5.0
+      },
+      "align": "left",
+      "font_token": "chip",
+      "text": "Botol 25ml",
+      "max_chars": 36
+    },
+    {
+      "zone_id": "cta",
+      "role": "CTA",
+      "component": "cta_button",
+      "rect": {
+        "x": 22.0,
+        "y": 92.0,
+        "w": 56.0,
+        "h": 5.0
+      },
+      "align": "center",
+      "font_token": "button",
+      "text": "Dapatkan sekarang",
+      "max_chars": 24
+    }
+  ],
+  "font_tokens": {
+    "display": {
+      "family": "'Segoe UI', 'Noto Sans', Arial, sans-serif",
+      "size": 76,
+      "weight": 800,
+      "color": "#1c1c1c",
+      "line_height": 1.08,
+      "letter_spacing": "-0.5px"
+    },
+    "headline": {
+      "family": "'Segoe UI', 'Noto Sans', Arial, sans-serif",
+      "size": 76,
+      "weight": 800,
+      "color": "#1c1c1c",
+      "line_height": 1.08,
+      "letter_spacing": "-0.5px"
+    },
+    "subhead": {
+      "family": "'Segoe UI', 'Noto Sans', Arial, sans-serif",
+      "size": 36,
+      "weight": 600,
+      "color": "#2e2e2e",
+      "line_height": 1.25,
+      "letter_spacing": "0px"
+    },
+    "chip": {
+      "family": "'Segoe UI', 'Noto Sans', Arial, sans-serif",
+      "size": 27,
+      "weight": 600,
+      "color": "#1f1f1f",
+      "line_height": 1.2,
+      "letter_spacing": "0px"
+    },
+    "button": {
+      "family": "'Segoe UI', 'Noto Sans', Arial, sans-serif",
+      "size": 32,
+      "weight": 800,
+      "color": "#ffffff",
+      "line_height": 1.1,
+      "letter_spacing": "0.5px"
+    },
+    "caption": {
+      "family": "'Segoe UI', 'Noto Sans', Arial, sans-serif",
+      "size": 20,
+      "weight": 500,
+      "color": "#4a4a4a",
+      "line_height": 1.3,
+      "letter_spacing": "0px"
+    },
+    "body": {
+      "family": "'Segoe UI', 'Noto Sans', Arial, sans-serif",
+      "size": 28,
+      "weight": 400,
+      "color": "#2a2a2a",
+      "line_height": 1.3,
+      "letter_spacing": "0px"
+    }
+  },
+  "component_styles": {
+    "chip": {
+      "background": "rgba(255,255,255,0.88)",
+      "border": "1px solid rgba(0,0,0,0.10)",
+      "border_radius": "999px",
+      "padding": "10px 22px",
+      "shadow": "0 4px 14px rgba(0,0,0,0.10)",
+      "display": "inline"
+    },
+    "cta_button": {
+      "background": "#b23b2e",
+      "border_radius": "16px",
+      "padding": "18px 34px",
+      "shadow": "0 10px 26px rgba(178,59,46,0.35)",
+      "display": "inline"
+    },
+    "disclaimer": {
+      "background": "transparent",
+      "color": "rgba(0,0,0,0.55)",
+      "size": 18
+    }
+  },
+  "fit_policy": {
+    "min_scale": 0.6,
+    "step": 0.05
+  },
+  "palette": {
+    "text": "#3a2c18",
+    "accent": "#8a6d2f",
+    "chip_bg": "rgba(255,250,238,0.92)"
+  },
+  "provenance": {
+    "poster_copy_set_id": "efd8ec97-9f04-4cc8-bdea-80601cf421d4",
+    "poster_copy_set_version": 1,
+    "recipe_id": "heritage_infographic",
+    "template_version": "1.0.0",
+    "ai_model": "",
+    "prompt_version": "",
+    "image_model": "EXISTING_REAL_ASSET_NO_GENERATION",
+    "background_prompt_fingerprint": ""
+  }
+}

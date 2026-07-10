@@ -221,3 +221,42 @@ def test_compose_rejects_background_path_outside_roots(product_id, tmp_path):
     })
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["code"] == "POSTER_BACKGROUND_PATH_FORBIDDEN"
+
+
+# ─── Closure: fork-historical route (item A) ────────────────────────────────
+
+
+def test_fork_historical_route_forks_without_mutating(product_id):
+    c = _client()
+    r = c.post("/api/poster/copy-sets", json=_payload(product_id))
+    assert r.status_code == 200, r.text
+    pcs = r.json()
+    parent_id = pcs["poster_copy_set_id"]
+    c.post(f"/api/poster/copy-sets/{parent_id}/approve",
+           json={"approval_phrase": POSTER_COPY_APPROVAL_PHRASE, "approved_by": "op"})
+    # Supersede via new-version so the parent becomes historical.
+    r = c.post(f"/api/poster/copy-sets/{parent_id}/new-version",
+               json={"primary_message": "Versi kedua"})
+    assert r.status_code == 200, r.text
+    parent = c.get(f"/api/poster/copy-sets/{parent_id}").json()
+    assert parent["status"] == "POSTER_COPY_SUPERSEDED"
+
+    # Fork a fresh draft from the historical (superseded) parent.
+    r = c.post(f"/api/poster/copy-sets/{parent_id}/fork-historical",
+               json={"primary_message": "Draf sejarah"})
+    assert r.status_code == 200, r.text
+    forked = r.json()
+    assert forked["status"] == "POSTER_COPY_DRAFT"
+    assert forked["primary_message"] == "Draf sejarah"
+
+    # Historical parent is unchanged.
+    parent_after = c.get(f"/api/poster/copy-sets/{parent_id}").json()
+    assert parent_after["status"] == "POSTER_COPY_SUPERSEDED"
+
+    # Forking a non-superseded (fresh draft) is rejected 409.
+    fresh = c.post("/api/poster/copy-sets", json=_payload(product_id)).json()
+    r = c.post(
+        f"/api/poster/copy-sets/{fresh['poster_copy_set_id']}/fork-historical", json={}
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "POSTER_COPY_SET_NOT_HISTORICAL"
