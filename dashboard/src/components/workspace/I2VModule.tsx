@@ -18,7 +18,6 @@ import type {
 	WorkspaceExecutionPackage,
 } from "../../types";
 import CopyBindingGate from "../copywriting/CopyBindingGate";
-import ModelSelect, { type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface I2VModuleProps {
@@ -27,7 +26,6 @@ interface I2VModuleProps {
 	compact?: boolean;
 	workspacePackage?: WorkspaceExecutionPackage | null;
 	onWorkspacePackageUpdated?: (pkg: WorkspaceExecutionPackage) => void;
-	videoModels: VideoModel[];
 	selectedCopySetId?: string | null;
 	copyReady?: boolean;
 }
@@ -413,14 +411,12 @@ export default function I2VModule({
 	compact = false,
 	workspacePackage = null,
 	onWorkspacePackageUpdated,
-	videoModels,
 	selectedCopySetId = null,
 	copyReady = false,
 }: I2VModuleProps) {
 	const [manualPrompt, setManualPrompt] = useState("");
 	const [isManualOverride, setIsManualOverride] = useState(false);
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
-	const [model, setModel] = useState("Veo 3.1 - Lite");
 	const [count, setCount] = useState(1);
 	const [isUploading, setIsUploading] = useState(false);
 	const [isRefreshingPackage, setIsRefreshingPackage] = useState(false);
@@ -748,7 +744,6 @@ export default function I2VModule({
 					mode: "I2V",
 					duration_seconds: workspacePackage.duration_seconds,
 					aspect_ratio: workspacePackage.aspect_ratio,
-					model, // current dropdown selection, not the stale package model
 					manual_override: isManualOverride,
 					recipe_id: selectedRecipeId,
 					character_reference_asset_id: selectedCharacterAssetId || null,
@@ -783,7 +778,6 @@ export default function I2VModule({
 			stop_after_stage: "PROMPT_EDITABLE_AFTER_INSERT",
 			prompt: manualPrompt,
 			orientation,
-			model,
 			count,
 			refs: {
 				subjectAsset,
@@ -1232,11 +1226,6 @@ export default function I2VModule({
 							</div>
 						</div>
 						<div className="space-y-3">
-							<ModelSelect
-								models={videoModels}
-								value={model}
-								onChange={setModel}
-							/>
 							<p className="text-xs font-bold text-slate-400">Count</p>
 							<div className="grid grid-cols-4 gap-2">
 								{[1, 2, 3, 4].map((v) => (

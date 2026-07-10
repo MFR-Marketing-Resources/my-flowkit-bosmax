@@ -119,7 +119,6 @@ describe("I2VModule copy-set binding (CRITICAL)", () => {
 				isExecuting={false}
 				workspacePackage={pkg}
 				onWorkspacePackageUpdated={vi.fn()}
-				videoModels={[{ key: "nano-banana", label: "Nano Banana" } as never]}
 				selectedCopySetId="cs-approved-1"
 			/>,
 		);
@@ -147,7 +146,6 @@ describe("I2VModule copy-set binding (CRITICAL)", () => {
 				isExecuting={false}
 				workspacePackage={pkg}
 				onWorkspacePackageUpdated={vi.fn()}
-				videoModels={[{ key: "nano-banana", label: "Nano Banana" } as never]}
 				selectedCopySetId={null}
 			/>,
 		);
@@ -191,7 +189,6 @@ describe("I2VModule copy-set binding (CRITICAL)", () => {
 				isExecuting={false}
 				workspacePackage={pkg}
 				onWorkspacePackageUpdated={vi.fn()}
-				videoModels={[{ key: "nano-banana", label: "Nano Banana" } as never]}
 				selectedCopySetId="cs-approved-1"
 			/>,
 		);
@@ -212,7 +209,6 @@ describe("I2VModule copy-set binding (CRITICAL)", () => {
 				isExecuting={false}
 				workspacePackage={pkg}
 				onWorkspacePackageUpdated={vi.fn()}
-				videoModels={[{ key: "nano-banana", label: "Nano Banana" } as never]}
 				selectedCopySetId="cs-approved-1"
 			/>,
 		);

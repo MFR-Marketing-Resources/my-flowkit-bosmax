@@ -12,7 +12,6 @@ import type {
 	WorkspaceExecutionPackage,
 } from "../../types";
 import CopyBindingGate from "../copywriting/CopyBindingGate";
-import ModelSelect, { normalizeModel, type VideoModel } from "./ModelSelect";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 // IMG Asset Factory bridge: a saved COMPOSITE_FRAME_REFERENCE asset can feed an
@@ -42,7 +41,6 @@ interface F2VModuleProps {
 	isExecuting: boolean;
 	compact?: boolean;
 	workspacePackage?: WorkspaceExecutionPackage | null;
-	videoModels: VideoModel[];
 	copyReady?: boolean;
 	surfaceMode?: "F2V" | "HYBRID";
 }
@@ -207,7 +205,6 @@ function PromptAuditCard({
 	);
 }
 
-const F2V_DEFAULT_MODEL = "Veo 3.1 - Lite";
 const FRAME_AUDIT_REASON_LABELS: Array<{
 	key: string;
 	label: string;
@@ -390,7 +387,6 @@ export default function F2VModule({
 	isExecuting,
 	compact = false,
 	workspacePackage = null,
-	videoModels,
 	copyReady = false,
 	surfaceMode = "F2V",
 }: F2VModuleProps) {
@@ -399,7 +395,6 @@ export default function F2VModule({
 	const [isManualOverride, setIsManualOverride] = useState(false);
 	const [copyFallbackConfirmed, setCopyFallbackConfirmed] = useState(false);
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
-	const [model, setModel] = useState(F2V_DEFAULT_MODEL);
 	const [count, setCount] = useState(1);
 	const [isUploading, setIsUploading] = useState(false);
 	const [startPreviewFailed, setStartPreviewFailed] = useState(false);
@@ -529,16 +524,9 @@ export default function F2VModule({
 		}
 	};
 
-	// Re-normalize once the SSOT registry arrives — a package may hydrate first, so an
-	// unknown/retired model would otherwise stay ghosted and 422 on execute (patch I3b).
-	useEffect(() => {
-		setModel((m) => normalizeModel(m, videoModels));
-	}, [videoModels]);
-
 	useEffect(() => {
 		if (workspacePackage?.mode !== "F2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
-		setModel(normalizeModel(workspacePackage.model, videoModels));
 		setOrientation(
 			workspacePackage.aspect_ratio === "16:9" ? "HORIZONTAL" : "VERTICAL",
 		);
@@ -558,7 +546,7 @@ export default function F2VModule({
 		);
 		setIsManualOverride(false);
 		setStartPreviewFailed(false);
-	}, [videoModels, workspacePackage]);
+	}, [workspacePackage]);
 
 	// --- Handlers ---
 	const handleFileChange = async (
@@ -611,7 +599,6 @@ export default function F2VModule({
 			gfv2: true,
 			prompt: manualPrompt,
 			orientation,
-			model,
 			count,
 			// Pass the full asset object (including previewUrl/base64) so extension can use it directly
 			startAsset: startAsset,
@@ -1045,19 +1032,6 @@ export default function F2VModule({
 								))}
 							</div>
 						</div>
-						<ModelSelect
-							models={videoModels}
-							value={model}
-							onChange={setModel}
-						/>
-						{/* Stable autofill/test identifier mirroring the selected model. */}
-						<input
-							type="hidden"
-							id="f2v-generation-model"
-							name="f2v_generation_model"
-							value={model}
-							readOnly
-						/>
 						<div className="space-y-3">
 							<p className="text-xs font-bold text-slate-400">Count</p>
 							<div className="grid grid-cols-4 gap-2">

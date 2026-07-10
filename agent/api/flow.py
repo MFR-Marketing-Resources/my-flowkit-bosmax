@@ -710,6 +710,13 @@ class GenerateRequest(BaseModel):
     count: int = 1                             # USER count setting (1-4): negotiate AND retrieve N videos
     refs: Optional[dict] = None
     startAsset: Optional[dict] = None
+    # Operator-surface capability declaration (Step-1). When `engine` is present
+    # with SINGLE generation_mode, the tuple is validated fail-closed against the
+    # capability matrix. Bare programmatic callers omit these and keep the
+    # registry-only validation lane (ADR-007 transport truth).
+    engine: Optional[str] = None
+    generation_mode: Optional[str] = None
+    capability_matrix_version: Optional[str] = None
 
 
 @router.get("/video-models")
@@ -717,6 +724,17 @@ async def video_models_list():
     """SSOT video-model registry for the dashboard dropdown (patch I3)."""
     from agent.services import video_models as _vm
     return {"models": _vm.public_list(), "default": _vm.DEFAULT_MODEL}
+
+
+@router.get("/video-capability-matrix")
+async def video_capability_matrix():
+    """Canonical operator-policy capability matrix (engine → model → SINGLE
+    duration). The dashboard derives every Step-1 engine/model/duration option
+    from this — the single source, no parallel hard-coded frontend list. It is
+    a versioned policy layer ABOVE the video_models registry, not a replacement.
+    """
+    from agent.services import video_capability_matrix as _cm
+    return _cm.public_matrix()
 
 
 # Canonical reference-slot ORDER for the execution lane. The engine receives
@@ -763,10 +781,28 @@ async def generate(body: GenerateRequest):
     # no model (e.g. 10s on default Lite) is caught here, not late inside the job.
     if mode in ("T2V", "I2V", "F2V"):
         from agent.services import video_models as _vm
-        try:
-            _vm.expected_cost(body.model or _vm.DEFAULT_MODEL, body.duration_s)
-        except ValueError as e:
-            raise HTTPException(422, str(e))
+        # Operator-surface capability gate (fail-closed) runs FIRST when the caller
+        # declares an engine + SINGLE generation_mode (the Step-1 operator surface
+        # always does) so stable capability error codes take precedence. It is
+        # stricter than the registry check (also enforces operator policy ∩ model).
+        # Bare programmatic callers omit `engine` and keep the registry-only lane.
+        if body.engine and (body.generation_mode or "SINGLE").upper() == "SINGLE":
+            from agent.services import video_capability_matrix as _cm
+            if (
+                body.capability_matrix_version
+                and body.capability_matrix_version != _cm.CAPABILITY_MATRIX_VERSION
+            ):
+                raise HTTPException(422, _cm.ERR_CAPABILITY_MATRIX_VERSION_MISMATCH)
+            ok, code = _cm.validate_single(
+                body.engine, body.model or _vm.DEFAULT_MODEL, body.duration_s
+            )
+            if not ok:
+                raise HTTPException(422, code)
+        else:
+            try:
+                _vm.expected_cost(body.model or _vm.DEFAULT_MODEL, body.duration_s)
+            except ValueError as e:
+                raise HTTPException(422, str(e))
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")

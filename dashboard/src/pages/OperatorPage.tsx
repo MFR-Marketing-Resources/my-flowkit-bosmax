@@ -24,9 +24,17 @@ import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
 import F2VModule from "../components/workspace/F2VModule";
 import I2VModule from "../components/workspace/I2VModule";
 import IMGModule from "../components/workspace/IMGModule";
-import type { VideoModel } from "../components/workspace/ModelSelect";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import T2VModule from "../components/workspace/T2VModule";
+import {
+	type VideoCapabilityMatrix,
+	defaultEngine as pickDefaultEngine,
+	getEngine,
+	modelsForSingle,
+	resolveDurationChange,
+	resolveSingleSelection,
+	singleDurations,
+} from "../utils/videoCapability";
 import type {
 	Product,
 	PromptCameraStyle,
@@ -743,6 +751,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			if (workspacePackage.prompt_blocks?.[0]?.duration_seconds) {
 				setVideoDurationSeconds(workspacePackage.prompt_blocks[0].duration_seconds);
 			}
+			if (workspacePackage.model) {
+				// Hydrate the operator's model from the saved tuple WITHOUT
+				// normalizing — an unsupported legacy combination must surface a
+				// recompile warning (see legacyPackageWarning below), not be silently
+				// repaired into a different model.
+				setVideoModel(workspacePackage.model);
+			}
 		}
 	}, [workspacePackage]);
 
@@ -768,12 +783,32 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		};
 	}, []);
 
-	const [videoModels, setVideoModels] = useState<VideoModel[]>([]);
+	// Canonical engine → model → SINGLE-duration capability authority. Every
+	// Step-1 engine/model/duration option is derived from this one payload; the
+	// operator UI keeps no parallel hard-coded list. selectedEngineId / videoModel
+	// are the page-owned SINGLE selection (model was previously split across the
+	// mode modules — that split-brain is removed).
+	const [capabilityMatrix, setCapabilityMatrix] =
+		useState<VideoCapabilityMatrix | null>(null);
+	const [selectedEngineId, setSelectedEngineId] = useState<string>("GOOGLE_FLOW");
+	const [videoModel, setVideoModel] = useState<string>("Veo 3.1 - Lite");
+	const [modelAdjustmentNote, setModelAdjustmentNote] = useState<string | null>(
+		null,
+	);
 	useEffect(() => {
-		fetchAPI<{ models: VideoModel[]; default: string }>(
-			"/api/flow/video-models",
-		)
-			.then((r) => setVideoModels(r.models || []))
+		fetchAPI<VideoCapabilityMatrix>("/api/flow/video-capability-matrix")
+			.then((matrix) => {
+				if (!matrix || !Array.isArray(matrix.engines)) return;
+				setCapabilityMatrix(matrix);
+				const engine = pickDefaultEngine(matrix);
+				if (!engine) return;
+				setSelectedEngineId(engine.id);
+				const sel = resolveSingleSelection(engine, null, engine.default_single_duration);
+				if (sel) {
+					setVideoModel(sel.model);
+					setVideoDurationSeconds(sel.durationSeconds);
+				}
+			})
 			.catch(() => {});
 	}, []);
 
@@ -1115,11 +1150,21 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					prompt: data.prompt,
 					image_media_ids: refs,
 					aspect,
-					model: data.model,
+					model: data.mode === "IMG" ? data.model : videoModel,
 					// IMG image model (Nano Banana …) — separate from the video `model`.
 					image_model: data.image_model,
-					duration_s: videoModels.find((m) => m.ui_label === data.model)
-						?.default_duration_s,
+					// Operator's EXPLICIT SINGLE video duration — NOT the model
+					// default. This exact value is the parity anchor the compiler,
+					// package, runtime request and extension payload must all match.
+					// IMG carries no video duration (must not inherit video controls).
+					duration_s: data.mode === "IMG" ? undefined : videoDurationSeconds,
+					engine: data.mode === "IMG" ? undefined : selectedEngineId,
+					generation_mode:
+						data.mode === "IMG" ? undefined : generationMode,
+					capability_matrix_version:
+						data.mode === "IMG"
+							? undefined
+							: capabilityMatrix?.capability_matrix_version,
 				}),
 			});
 
@@ -1178,6 +1223,44 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 	const handleExtendTotalDurationChange = (nextTotal: number | null) => {
 		setRequestedTotalDuration(nextTotal);
+		clearDurationAuthorityArtifacts();
+	};
+
+	// ENGINE change: resolve a valid (duration, model) for the new engine, clear
+	// any incompatible model/duration + stale compiled artifacts.
+	const handleEngineChange = (nextEngineId: string) => {
+		setSelectedEngineId(nextEngineId);
+		const engine = getEngine(capabilityMatrix, nextEngineId);
+		const sel = resolveSingleSelection(engine, videoModel, videoDurationSeconds);
+		if (sel) {
+			setVideoModel(sel.model);
+			setVideoDurationSeconds(sel.durationSeconds);
+			setModelAdjustmentNote(sel.adjusted ? sel.adjustmentReason : null);
+		} else {
+			setModelAdjustmentNote(null);
+		}
+		clearDurationAuthorityArtifacts();
+	};
+
+	// MODEL change: explicit operator choice — never overwrite it downstream.
+	const handleVideoModelChange = (nextModel: string) => {
+		setVideoModel(nextModel);
+		setModelAdjustmentNote(null);
+		clearDurationAuthorityArtifacts();
+	};
+
+	// DURATION change (SINGLE): filter models to the new duration; if the current
+	// model is now incompatible pick the deterministic compatible default.
+	const handleSingleDurationChange = (nextDuration: number) => {
+		const engine = getEngine(capabilityMatrix, selectedEngineId);
+		const sel = resolveDurationChange(engine, videoModel, nextDuration);
+		setVideoDurationSeconds(nextDuration);
+		if (sel) {
+			setVideoModel(sel.model);
+			setModelAdjustmentNote(sel.adjusted ? sel.adjustmentReason : null);
+		} else {
+			setModelAdjustmentNote(null);
+		}
 		clearDurationAuthorityArtifacts();
 	};
 
@@ -1335,6 +1418,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				source_mode: resolveSourceMode(mode),
 				copy_set_id: selectedCopySetId,
 				copy_fallback_confirmed: fallbackConfirmed,
+				// Record the operator-selected video model on the package so the
+				// runtime + reload use the same tuple (was previously unset → "").
+				model: videoModel,
 				...durationAuthority.payload,
 				target_language: targetLanguage,
 				camera_style: cameraStyle,
@@ -1393,6 +1479,36 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const allowedDurations = promptConfig?.allowed_block_durations_seconds ?? [
 		6, 8, 10, 12, 15, 20, 25,
 	];
+	// SINGLE duration + model options come from the capability matrix (operator
+	// policy ∩ model). EXTEND is untouched (route/block-plan authority). Until the
+	// matrix loads, fall back to the compiler-config list so the control still
+	// renders.
+	const currentEngine = getEngine(capabilityMatrix, selectedEngineId);
+	const engineSingleDurations = singleDurations(currentEngine);
+	const singleDurationOptions =
+		engineSingleDurations.length > 0 ? engineSingleDurations : allowedDurations;
+	const singleModelOptions = modelsForSingle(currentEngine, videoDurationSeconds);
+	// EXTEND keeps all engine models (route/block authority owns durations);
+	// SINGLE is filtered to the operator-policy ∩ model duration.
+	const modelSelectOptions = isExtendMode
+		? currentEngine?.models ?? []
+		: singleModelOptions;
+	const engineHelperText = currentEngine
+		? `Single video supports ${engineSingleDurations
+				.map((d) => `${d}s`)
+				.join(" or ")}.`
+		: null;
+	// A SINGLE tuple is valid only when the selected model is offered for the
+	// selected engine+duration. A loaded legacy package with an unsupported
+	// combination surfaces a recompile warning rather than being normalized.
+	const singleModelValid =
+		!currentEngine ||
+		isExtendMode ||
+		singleModelOptions.some((m) => m.ui_label === videoModel);
+	const legacyPackageWarning =
+		workspacePackage && !isExtendMode && !singleModelValid
+			? "This package contains an unsupported engine/model/duration combination and must be recompiled."
+			: null;
 	const languageOptions = Object.keys(
 		promptConfig?.language_wps_policy ?? {
 			BM_MS: {},
@@ -1430,7 +1546,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						isExecuting={isExecuting}
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
-						videoModels={videoModels}
 						copyReady={copyReadiness?.ready_for_generation ?? false}
 						surfaceMode={mode === "HYBRID" ? "HYBRID" : "F2V"}
 					/>
@@ -1442,7 +1557,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						isExecuting={isExecuting}
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
-						videoModels={videoModels}
 						copyReady={copyReadiness?.ready_for_generation ?? false}
 					/>
 				);
@@ -1454,7 +1568,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						compact={isPortalMode}
 						workspacePackage={workspacePackage}
 						onWorkspacePackageUpdated={setWorkspacePackage}
-						videoModels={videoModels}
 						selectedCopySetId={selectedCopySetId}
 						copyReady={copyReadiness?.ready_for_generation ?? false}
 					/>
@@ -1556,6 +1669,65 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</div>
 						<div className="space-y-2">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								Engine
+							</div>
+							<select
+								id="operator-engine"
+								name="operator_engine"
+								title="Engine"
+								value={selectedEngineId}
+								onChange={(e) => handleEngineChange(e.target.value)}
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+							>
+								{(capabilityMatrix?.engines ?? []).map((engine) => (
+									<option
+										key={engine.id}
+										value={engine.id}
+										disabled={!engine.supported}
+									>
+										{engine.supported
+											? `${engine.label} — ${engine.single_duration_policy
+													.map((d) => `${d}s`)
+													.join(" / ")}`
+											: `${engine.label} — ${engine.unsupported_reason ?? "unavailable"}`}
+									</option>
+								))}
+							</select>
+							{engineHelperText ? (
+								<div className="text-[11px] text-slate-400">
+									{engineHelperText}
+								</div>
+							) : null}
+						</div>
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+								Video Model
+							</div>
+							<select
+								id="operator-video-model"
+								name="operator_video_model"
+								title="Video model"
+								value={videoModel}
+								onChange={(e) => handleVideoModelChange(e.target.value)}
+								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+							>
+								{modelSelectOptions.map((m) => (
+									<option key={m.key} value={m.ui_label}>
+										{m.ui_label}
+									</option>
+								))}
+								{!singleModelValid && !isExtendMode ? (
+									<option value={videoModel}>{videoModel} (unsupported)</option>
+								) : null}
+							</select>
+							{modelAdjustmentNote ? (
+								<div className="text-[11px] text-amber-200">
+									{modelAdjustmentNote}
+								</div>
+							) : null}
+						</div>
+						<div className="space-y-2">
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
 								Language
 							</div>
 							<select
@@ -1610,13 +1782,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									name="operator_video_duration"
 									title="Video duration"
 									value={String(videoDurationSeconds)}
-									onChange={(e) => {
-										setVideoDurationSeconds(Number(e.target.value));
-										clearDurationAuthorityArtifacts();
-									}}
+									onChange={(e) =>
+										handleSingleDurationChange(Number(e.target.value))
+									}
 									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
 								>
-									{allowedDurations.map((duration) => (
+									{singleDurationOptions.map((duration) => (
 										<option key={duration} value={duration}>
 											{duration}s
 										</option>
@@ -1691,6 +1862,28 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							</select>
 						</div>
 					</div>
+					{legacyPackageWarning ? (
+						<div
+							data-testid="operator-legacy-package-warning"
+							className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200"
+						>
+							{legacyPackageWarning}
+						</div>
+					) : null}
+					{!isExtendMode ? (
+						<div
+							data-testid="operator-resolved-capability"
+							className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-300"
+						>
+							<span className="font-semibold text-slate-200">
+								Resolved capability
+							</span>{" "}
+							· Source {resolveSourceMode(mode)} · Engine{" "}
+							{currentEngine?.label ?? selectedEngineId} · Model {videoModel} ·
+							Duration {videoDurationSeconds}s · capability v
+							{capabilityMatrix?.capability_matrix_version ?? "—"}
+						</div>
+					) : null}
 					<div className="mt-4 grid gap-3 md:grid-cols-2">
 						<div className="space-y-2">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">

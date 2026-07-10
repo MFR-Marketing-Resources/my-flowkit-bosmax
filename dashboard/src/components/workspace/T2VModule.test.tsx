@@ -5,8 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import T2VModule from "./T2VModule";
 import type { WorkspaceExecutionPackage } from "../../types";
 
-const MODELS = [{ key: "veo", label: "Veo 3.1 - Lite" } as never];
-
 // A T2V package compiled from an approved Copy Set — copy_binding proves the run
 // carries approved copy (the SEND path does not rebuild, so this is the binding).
 const boundPkg = {
@@ -33,7 +31,6 @@ describe("T2VModule copy-binding gate (Phase B enforcement)", () => {
 				onExecute={onExecute}
 				isExecuting={false}
 				workspacePackage={null}
-				videoModels={MODELS}
 				copyReady={false}
 			/>,
 		);
@@ -68,7 +65,6 @@ describe("T2VModule copy-binding gate (Phase B enforcement)", () => {
 				onExecute={onExecute}
 				isExecuting={false}
 				workspacePackage={boundPkg}
-				videoModels={MODELS}
 				copyReady={true}
 			/>,
 		);

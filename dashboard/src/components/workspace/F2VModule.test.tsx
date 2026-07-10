@@ -26,7 +26,6 @@ import type {
 	WorkspaceExecutionPackage,
 } from "../../types";
 
-const MODELS = [{ key: "veo", label: "Veo" } as never];
 const mockedAudit = vi.mocked(fetchCreativeAssetEligibilityAudit);
 
 function startFrame() {
@@ -104,7 +103,6 @@ describe("F2VModule copy-binding gate (Phase B enforcement; covers HYBRID)", () 
 				onExecute={onExecute}
 				isExecuting={false}
 				workspacePackage={pkg(false)}
-				videoModels={MODELS}
 				copyReady={false}
 			/>,
 		);
@@ -132,7 +130,6 @@ describe("F2VModule copy-binding gate (Phase B enforcement; covers HYBRID)", () 
 				onExecute={onExecute}
 				isExecuting={false}
 				workspacePackage={pkg(true)}
-				videoModels={MODELS}
 				copyReady={true}
 			/>,
 		);
@@ -202,7 +199,6 @@ describe("F2VModule copy-binding gate (Phase B enforcement; covers HYBRID)", () 
 				onExecute={vi.fn()}
 				isExecuting={false}
 				workspacePackage={pkg(true)}
-				videoModels={MODELS}
 				copyReady={true}
 				surfaceMode="HYBRID"
 			/>,
@@ -225,7 +221,6 @@ describe("F2VModule copy-binding gate (Phase B enforcement; covers HYBRID)", () 
 				onExecute={vi.fn()}
 				isExecuting={false}
 				workspacePackage={pkg(true)}
-				videoModels={MODELS}
 				copyReady={true}
 			/>,
 		);
@@ -252,7 +247,6 @@ describe("F2VModule copy-binding gate (Phase B enforcement; covers HYBRID)", () 
 				onExecute={vi.fn()}
 				isExecuting={false}
 				workspacePackage={pkg(true)}
-				videoModels={MODELS}
 				copyReady={true}
 			/>,
 		);
@@ -281,7 +275,6 @@ describe("F2VModule copy-binding gate (Phase B enforcement; covers HYBRID)", () 
 				onExecute={vi.fn()}
 				isExecuting={false}
 				workspacePackage={pkg(true)}
-				videoModels={MODELS}
 				copyReady={true}
 			/>,
 		);
@@ -307,7 +300,6 @@ describe("F2VModule HYBRID vs FRAMES surface separation", () => {
 				onExecute={vi.fn()}
 				isExecuting={false}
 				workspacePackage={pkg(true)}
-				videoModels={MODELS}
 				copyReady={true}
 				surfaceMode="HYBRID"
 			/>,
@@ -348,7 +340,6 @@ describe("F2VModule HYBRID vs FRAMES surface separation", () => {
 				onExecute={vi.fn()}
 				isExecuting={false}
 				workspacePackage={pkg(true)}
-				videoModels={MODELS}
 				copyReady={true}
 				surfaceMode="F2V"
 			/>,
