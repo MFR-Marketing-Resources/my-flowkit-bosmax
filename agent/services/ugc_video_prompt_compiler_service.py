@@ -26,6 +26,7 @@ SUPPORTED_MODES = {"T2V", "F2V", "I2V", "IMG"}
 
 from agent.services import canonical_prompt_compiler as _canonical
 from agent.services import copy_landbank_service as _landbank
+from agent.services import extend_route_planner as _extend_route_planner
 
 
 # mode → canonical source mode (ADR-008). F2V's live intake is product-only
@@ -717,6 +718,8 @@ def compile_ugc_video_prompt(
     wps_mode: str = "SWEET",
     engine_duration_target: str | None = None,
     requested_total_duration_seconds: int | None = None,
+    route: str | None = None,
+    allow_manual_block_plan: bool = False,
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "").strip().upper()
     if normalized_mode not in SUPPORTED_MODES:
@@ -741,36 +744,42 @@ def compile_ugc_video_prompt(
         list(safe_cta_angles or []),
         "Close with a calm, claim-safe CTA that stays product-first and commercially credible.",
     )
-    # ADR-008: an operator-requested TOTAL duration derives the block chain from
-    # WORKBOOK AUTHORITY only (1-7 blocks; e.g. Google Flow 56s = seven 8s blocks).
-    # The workbook is AUTHORITATIVE: a requested total OVERRIDES any raw blocks[]
-    # the surface sent (BLOCK-SPLIT fix — raw blocks must never win over the
-    # workbook when a total is requested, else EXTEND stayed capped at the 2 raw
-    # blocks the UI always sent). Explicit blocks[] WITHOUT a requested total stay
-    # honored, for per-block manual plans from non-total callers.
+    # ROUTE-AWARE STORYBOARD-FIRST BLOCK PLAN (extend_route_planner).
+    # A requested TOTAL derives the block chain from the ROUTE's AUTHORITY (workbook,
+    # 1-7 blocks) and OVERRIDES any raw blocks[] the surface sent (BLOCK-SPLIT fix, #294).
+    # Routes without captured runtime evidence — GOOGLE_FLOW_VEO_EXTEND (8+7n) — FAIL
+    # CLOSED with ROUTE_DURATION_AUTHORITY_MISSING (owner decision 2026-07-10). A raw
+    # per-block manual plan (the invalid [15,8] class) is DEV/ADVANCED ONLY; production
+    # EXTEND must be total+route driven, so a manual plan without a resolved total is
+    # rejected fail-closed.
+    resolved_route = _extend_route_planner.normalize_route(route) or (
+        _extend_route_planner.default_route_for_engine(engine_duration_target)
+    )
     if requested_total_duration_seconds:
-        # Fail-closed per retained law: unsupported totals (e.g. Google Flow 15s)
-        # raise UNSUPPORTED_EXTEND_TOTAL_DURATION_<n>; ambiguous totals (Google
-        # Flow 40s) still raise PREFERRED_LANE_REQUIRED — never a silent lane pick.
-        try:
-            _plan = _canonical.resolve_block_plan(
-                engine_duration_target or "GOOGLE_FLOW",
-                int(requested_total_duration_seconds),
-            )
-        except ValueError as exc:
-            if str(exc).startswith("UNSUPPORTED_ENGINE_DURATION"):
-                raise ValueError(
-                    f"UNSUPPORTED_EXTEND_TOTAL_DURATION_{int(requested_total_duration_seconds)}"
-                ) from exc
-            raise
+        # Fail-closed: RouteDurationAuthorityMissing (unproven route),
+        # UNSUPPORTED_EXTEND_TOTAL_DURATION_<n> (bad total), or PREFERRED_LANE_REQUIRED
+        # (ambiguous total) — never a silent plan.
+        _plan = _extend_route_planner.resolve_route_block_plan(
+            resolved_route, int(requested_total_duration_seconds),
+        )
         blocks = [{"block_index": i + 1, "duration_seconds": d} for i, d in enumerate(_plan)]
         if len(_plan) > 1:
             resolved_generation_mode = "EXTEND"
+    elif resolved_generation_mode == "EXTEND" and blocks and not allow_manual_block_plan:
+        raise ValueError("EXTEND_MANUAL_BLOCK_PLAN_BLOCKED_IN_PRODUCTION")
     normalized_blocks = _normalize_blocks(
         generation_mode=resolved_generation_mode,
         duration_seconds=duration_seconds,
         blocks=blocks,
     )
+    # Storyboard timeline metadata: absolute [start_s, end_s) + is_final per block.
+    extend_timeline = _extend_route_planner.segment_timeline(
+        [int(b["duration_seconds"]) for b in normalized_blocks]
+    )
+    for _blk, _seg in zip(normalized_blocks, extend_timeline):
+        _blk["start_s"] = _seg["start_s"]
+        _blk["end_s"] = _seg["end_s"]
+        _blk["is_final"] = _seg["is_final"]
     # ── ADR-008: THE canonical compiler renders every final engine-facing block.
     resolved_source_mode = (
         str(source_mode).strip().upper() if source_mode
@@ -849,6 +858,9 @@ def compile_ugc_video_prompt(
             "block_index": block["block_index"],
             "block_role": block["block_role"],
             "duration_seconds": block["duration_seconds"],
+            "start_s": block.get("start_s"),
+            "end_s": block.get("end_s"),
+            "is_final": block.get("is_final"),
             "shot_count": len(shots),
             "dialogue_word_budget": rendered["dialogue_word_budget"] if dialogue_enabled else 0,
             "continuation_from_block_id": previous_block_id,

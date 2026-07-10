@@ -1406,11 +1406,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							<div className="space-y-2">
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Extend Total Duration</div>
 								<select id="operator-extend-total-duration" name="operator_extend_total_duration" title="Extend total duration - Google Flow workbook block plan" value={requestedTotalDuration === "" ? "" : String(requestedTotalDuration)} onChange={(e) => setRequestedTotalDuration(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100">
-									<option value="">Manual (Block 1 + Block 2)</option>
+									<option value="">Manual per-block — DEV / ADVANCED</option>
 									{extendTotalOptions.map((total) => (<option key={total} value={total}>{total}s</option>))}
 								</select>
 								{extendTotalValue === null ? (
-									<div className="text-[11px] text-slate-400">Manual 2-block chain. Block 2 Duration:{" "}
+									<div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">Production EXTEND requires an Extend Total (route-authority workbook plan). This raw per-block path is DEV / ADVANCED only and fails closed in production (EXTEND_MANUAL_BLOCK_PLAN_BLOCKED_IN_PRODUCTION). Block 2 Duration:{" "}
 										<select id="operator-block-2-duration" name="operator_block_2_duration" title="Block 2 duration" value={String(block2Duration)} onChange={(e) => setBlock2Duration(Number(e.target.value))} className="ml-1 rounded border border-slate-800 bg-slate-900 px-1 py-0.5 text-[11px] text-slate-100">
 											{allowedDurations.map((duration) => (<option key={duration} value={duration}>{duration}s</option>))}
 										</select>{" "}(shots {shotPolicy2?.recommended ?? "-"})

@@ -99,6 +99,7 @@ domains:
       - dashboard/src/pages/imgCockpitLogic.ts
       - agent/services/prompt_compiler_runtime_config_service.py
       - agent/services/canonical_prompt_compiler.py
+      - agent/services/extend_route_planner.py
       - agent/services/product_lock_builder.py
       - agent/services/avatar_registry.py
       - agent/services/avatar_csv_factory_service.py

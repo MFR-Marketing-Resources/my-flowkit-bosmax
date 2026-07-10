@@ -94,6 +94,7 @@ def test_compiler_generates_extend_continuation_lineage():
         target_language="EN_US",
         safe_hook_angles=["Open with a creator-led body serum moment that feels native and safe."],
         safe_cta_angles=["Close with a calm CTA to try the routine."],
+        allow_manual_block_plan=True,  # DEV/ADVANCED: raw per-block plan (lineage under test)
     )
 
     assert result["generation_mode"] == "EXTEND"

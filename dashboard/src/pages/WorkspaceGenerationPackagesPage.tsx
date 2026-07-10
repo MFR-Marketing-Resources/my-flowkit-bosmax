@@ -173,6 +173,9 @@ interface PromptBlock {
 	block_index: number;
 	block_role: string;
 	duration_seconds: number;
+	start_s?: number | null;
+	end_s?: number | null;
+	is_final?: boolean | null;
 	shot_count: number;
 	engine_prompt_text: string;
 }
@@ -598,7 +601,7 @@ function PackageDetailPanel({
 								<PromptCopyBox
 									key={block.block_index}
 									text={block.engine_prompt_text}
-									label={`Block ${block.block_index} — ${block.block_role} (${block.duration_seconds}s · ${block.shot_count} shot)`}
+									label={`Block ${block.block_index} — ${block.block_role} (${block.duration_seconds}s${block.start_s != null && block.end_s != null ? ` · ${block.start_s}–${block.end_s}s` : ""} · ${block.shot_count} shot)${block.is_final ? " · FINAL" : ""}`}
 									stepNumber={promptStep + i}
 								/>
 							))}
