@@ -5,7 +5,6 @@ import type {
 	WorkspaceExecutePayload,
 	WorkspaceExecutionPackage,
 } from "../../types";
-import ModelSelect, { normalizeModel, type VideoModel } from "./ModelSelect";
 import CopyBindingGate from "../copywriting/CopyBindingGate";
 
 interface T2VModuleProps {
@@ -13,7 +12,6 @@ interface T2VModuleProps {
 	isExecuting: boolean;
 	compact?: boolean;
 	workspacePackage?: WorkspaceExecutionPackage | null;
-	videoModels: VideoModel[];
 	copyReady?: boolean;
 }
 
@@ -182,7 +180,6 @@ export default function T2VModule({
 	isExecuting,
 	compact = false,
 	workspacePackage = null,
-	videoModels,
 	copyReady = false,
 }: T2VModuleProps) {
 	// --- States ---
@@ -192,7 +189,6 @@ export default function T2VModule({
 
 	// Mirror States
 	const [orientation, setOrientation] = useState<Orientation>("VERTICAL");
-	const [model, setModel] = useState("Veo 3.1 - Lite");
 	const [count, setCount] = useState(1);
 	const packagePromptText =
 		workspacePackage?.prompt_blocks?.[0]?.engine_prompt_text ??
@@ -202,18 +198,11 @@ export default function T2VModule({
 	useEffect(() => {
 		if (workspacePackage?.mode !== "T2V") return;
 		setManualPrompt(workspacePackage.prompt_text);
-		setModel(normalizeModel(workspacePackage.model, videoModels));
 		setOrientation(
 			workspacePackage.aspect_ratio === "16:9" ? "HORIZONTAL" : "VERTICAL",
 		);
 		setIsManualOverride(false);
-	}, [videoModels, workspacePackage]);
-
-	// Re-normalize once the SSOT registry arrives — a package may hydrate first, so an
-	// unknown/retired model would otherwise stay ghosted and 422 on execute (patch I3b).
-	useEffect(() => {
-		setModel((m) => normalizeModel(m, videoModels));
-	}, [videoModels]);
+	}, [workspacePackage]);
 
 	// --- Copywriting binding gate (Phase B enforcement) ---
 	// T2V does not rebuild on execute, so the run is copy-bound ONLY when the loaded
@@ -235,7 +224,6 @@ export default function T2VModule({
 			stop_after_stage: "PROMPT_EDITABLE_AFTER_INSERT",
 			prompt: manualPrompt,
 			orientation,
-			model,
 			count,
 			product_id: workspacePackage?.product_id,
 			prompt_package_snapshot_id: workspacePackage?.prompt_package_snapshot_id,
@@ -412,12 +400,6 @@ export default function T2VModule({
 								</button>
 							</div>
 						</div>
-
-						<ModelSelect
-							models={videoModels}
-							value={model}
-							onChange={setModel}
-						/>
 
 						<div className="space-y-3">
 							<p className="text-xs font-bold text-slate-400">Count</p>

@@ -234,6 +234,12 @@ domains:
       - dashboard/src/pages/OperatorPage.durationAuthority.test.ts
       - dashboard/src/pages/OperatorPage.durationAuthority.component.test.tsx
       - dashboard/src/api/workspacePackages.durationAuthority.test.ts
+      - dashboard/src/utils/videoCapability.ts
+      - dashboard/src/utils/videoCapability.test.ts
+      - dashboard/src/pages/OperatorPage.capability.component.test.tsx
+      - agent/services/video_capability_matrix.py
+      - tests/unit/test_video_capability_matrix.py
+      - tests/api/test_generate_capability_gate.py
       - dashboard/src/pages/ProductAssetGeneratorPage.tsx
       - dashboard/src/pages/SettingsPage.tsx
       - dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx
