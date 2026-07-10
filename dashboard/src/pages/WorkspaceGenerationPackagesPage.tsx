@@ -19,6 +19,7 @@ import {
 	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { HandoffExtendPromptBlocks, type HandoffPromptBlock } from "../components/HandoffExtendPromptBlocks";
 import { useNavigate } from "react-router-dom";
 import type { VideoModelInfo } from "../api/productionQueue";
 import {
@@ -178,6 +179,14 @@ interface PromptBlock {
 	is_final?: boolean | null;
 	shot_count: number;
 	engine_prompt_text: string;
+	initial_generation_prompt_text?: string | null;
+	independent_block_prompt_text?: string | null;
+	flow_extend_prompt_text?: string | null;
+	previous_block_index?: number | null;
+	audio_seam_contract?: {
+		voice_active_in_final_second?: boolean;
+		audio_seam_out?: string;
+	} | null;
 	exact_dialogue_slice?: string;
 	allocation?: {
 		assigned_story_beats: Array<{ role: string }>;
@@ -612,27 +621,7 @@ function PackageDetailPanel({
 					) : null}
 
 					{isExtend && blocks.length > 0 ? (
-						<div className="space-y-3">
-							<div className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs text-amber-200">
-								EXTEND mode — {blocks.length} blocks. Copy and generate Block 1 first, then continue with Block 2.
-							</div>
-							{blocks.map((block, i) => (
-								<div key={block.block_index} className="space-y-2">
-									<PromptCopyBox
-										text={block.engine_prompt_text}
-										label={`Block ${block.block_index} — ${block.block_role} (${block.duration_seconds}s${block.start_s != null && block.end_s != null ? ` · ${block.start_s}–${block.end_s}s` : ""} · ${block.shot_count} shot)${block.is_final ? " · FINAL" : ""}`}
-										stepNumber={promptStep + i}
-									/>
-									{block.allocation ? (
-										<div className="rounded border border-slate-800 bg-slate-950 px-3 py-2 text-[11px] text-slate-400">
-											<div>Allocated story: {block.allocation.assigned_story_beats.map((beat) => beat.role).join(" → ")}</div>
-											<div className="mt-1">Allocated dialogue: {block.allocation.exact_dialogue_slice || "(visual-only block)"}</div>
-											<div className="mt-1">Seam: {block.allocation.seam_policy} · {block.allocation.continuation_instruction}</div>
-										</div>
-									) : null}
-								</div>
-							))}
-						</div>
+						<HandoffExtendPromptBlocks blocks={blocks as HandoffPromptBlock[]} promptStepStart={promptStep} />
 					) : (
 						<PromptCopyBox text={pkg.final_prompt_text} stepNumber={promptStep} />
 					)}

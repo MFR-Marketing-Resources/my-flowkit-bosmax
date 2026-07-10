@@ -617,7 +617,31 @@ export interface WorkspaceExecutionPackage {
 		dialogue_word_budget: number;
 		continuation_from_block_id?: string | null;
 		compiled_prompt_text: string;
+		/** Independent-block 9-section prompt (production automation compatibility). */
 		engine_prompt_text: string;
+		/** Block 1 only — initial generation prompt. */
+		initial_generation_prompt_text?: string | null;
+		/** All blocks — full standalone 9-section representation. */
+		independent_block_prompt_text?: string | null;
+		/** Block 2+ only — Google Flow Extend-native prompt for manual research. */
+		flow_extend_prompt_text?: string | null;
+		prompt_representation?:
+			| "INITIAL_GENERATION"
+			| "INDEPENDENT_BLOCK"
+			| "GOOGLE_FLOW_EXTEND"
+			| string;
+		prompt_purpose?: "PRODUCTION_INDEPENDENT" | "MANUAL_EXTENSION_RESEARCH" | string;
+		previous_block_index?: number | null;
+		continuation_source?: string | null;
+		audio_seam_contract?: {
+			audio_seam_in?: string;
+			audio_seam_out?: string;
+			voice_active_in_final_second?: boolean;
+			dialogue_continuation_policy?: string;
+			previous_block_dialogue_end_s?: number | null;
+			next_block_dialogue_start_s?: number | null;
+			[key: string]: unknown;
+		} | null;
 		shot_plan?: string[];
 		allocation?: StoryboardBlockAllocation | null;
 		story_beat_ids?: string[];

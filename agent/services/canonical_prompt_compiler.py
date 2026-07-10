@@ -1148,7 +1148,54 @@ def _finalize_dialogue_text(text: str) -> str:
     return cleaned
 
 
+def _dialogue_pack_is_natural(text: str) -> bool:
+    """Reject incomplete mid-clause packs only.
+
+    Valid Malay/English clauses may end with noun objects such as malam, anak,
+    ibu, botol, minyak, badan, perut when the clause is a complete thought.
+    Only known truncated stumps (e.g. 'esok pagi badan' missing 'pun letih')
+    and dangling connectors are refused.
+    """
+    cleaned = _finalize_dialogue_text(text)
+    if not cleaned:
+        return False
+    bare = cleaned.rstrip(".!?…")
+    dangling = (
+        "and", "or", "dan", "atau", "sebab", "because", "kalau", "if", "bila",
+        "when", "supaya", "untuk", "yang", "pun", "dengan", "the", "a", "an",
+    )
+    last = bare.split()[-1].casefold().strip(".,!?") if bare.split() else ""
+    if last in dangling:
+        return False
+    last_clause = cleaned
+    for sep in (". ", "! ", "? "):
+        if sep in cleaned:
+            last_clause = cleaned.split(sep)[-1]
+    last_clause = last_clause.strip().rstrip(".!?…")
+    last_norm = last_clause.replace(",", " ").replace(";", " ").replace(":", " ")
+    last_words = [w for w in last_norm.split() if w]
+    if not last_words:
+        return False
+    joined = " ".join(last_words).casefold()
+    # Known incomplete production stump from budget packing.
+    incomplete_stumps = (
+        "esok pagi badan",
+        "esok pagi",
+        "tidur tak lena, esok pagi badan",
+    )
+    for stump in incomplete_stumps:
+        if joined == stump or joined.endswith(" " + stump) or joined.endswith("," + stump):
+            return False
+    # Very short noun-only leftovers without a verb/predicate.
+    if len(last_words) == 1 and last in {
+        "badan", "perut", "malam", "pagi", "rutin", "botol", "minyak", "anak", "ibu",
+    }:
+        return False
+    return True
+
+
 def _pack_dialogue_clauses(clauses: list[str], budget: int) -> str:
+    """Pack whole natural clauses only. Prefer dropping a clause over unnatural trim."""
     if budget <= 0:
         return ""
     chosen: list[str] = []
@@ -1158,18 +1205,27 @@ def _pack_dialogue_clauses(clauses: list[str], budget: int) -> str:
         if not words:
             continue
         if not chosen and len(words) > budget:
-            return _finalize_dialogue_text(_trim_to_budget(clause, budget))
+            # Only accept a trimmed first clause when the result stays natural.
+            trimmed = _finalize_dialogue_text(_trim_to_budget(clause, budget))
+            if _dialogue_pack_is_natural(trimmed):
+                return trimmed
+            return ""
         if used_words + len(words) <= budget:
-            chosen.append(clause)
-            used_words += len(words)
+            candidate = _finalize_dialogue_text(" ".join([*chosen, clause]))
+            if _dialogue_pack_is_natural(candidate):
+                chosen.append(clause)
+                used_words += len(words)
             continue
         remaining = budget - used_words
         if chosen and remaining >= 9:
-            chosen.append(_finalize_dialogue_text(_trim_to_budget(clause, remaining)))
-            used_words = budget
+            partial = _finalize_dialogue_text(_trim_to_budget(clause, remaining))
+            if partial and _dialogue_pack_is_natural(
+                _finalize_dialogue_text(" ".join([*chosen, partial]))
+            ):
+                chosen.append(partial)
             break
-    if not chosen and clauses:
-        return _finalize_dialogue_text(_trim_to_budget(clauses[0], budget))
+    if not chosen:
+        return ""
     return _finalize_dialogue_text(" ".join(chosen))
 
 
@@ -1556,6 +1612,9 @@ def _section_8_end_frame(
             f"{focus['closing']} expressed through the still image alone and {story['closing']} baked into the final read. {_sentence_case(_mode_story_polish(mode)['closing'])}"
         )
     if not is_final:
+        # Production independent-block semantics (GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS).
+        # Research voice-active seam is applied only to research-specific
+        # initial_generation_prompt_text in google_flow_extend_prompt_renderer.
         return (
             "End on a seam-ready hold: the presenter mid-gesture with the product in grip, face "
             "toward camera, motion direction preserved so the next block can continue exactly "
