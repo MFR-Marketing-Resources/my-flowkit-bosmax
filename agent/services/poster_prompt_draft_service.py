@@ -21,6 +21,15 @@ from agent.services.poster_copy_quality_service import (
 )
 from agent.services.poster_prompt_composer import compose_recipe_poster
 from agent.services.poster_readiness_service import PosterReadinessService
+from agent.models.poster_copy_set import (
+    STATUS_POSTER_COPY_APPROVED,
+    poster_fields_to_zone_fields,
+    serialize_poster_copy_set,
+)
+from agent.services.poster_template_service import (
+    PosterTemplateError,
+    template_contract,
+)
 from agent.services.product_truth_service import ProductTruthService
 
 CRITICAL_FIELDS: tuple[str, ...] = (
@@ -203,6 +212,30 @@ def _build_text_overlay(fields: dict[str, str]) -> str:
     )
 
 
+# POSTER_BUILDER_V2: marketing-text suppression for the compositor lane. The
+# product's OWN label/logo/packaging text is explicitly preserved — only
+# generated marketing typography is banned (never a broad "no text").
+CLEAN_SCENE_NEGATIVE = (
+    "marketing headline text, slogan text, poster typography overlay, "
+    "USP bullet text, CTA button graphic, price tag graphic, promotional "
+    "badge text, watermark text"
+)
+
+
+def _build_clean_scene_instruction(safe_region: dict, background_constraints: str) -> str:
+    return (
+        "CLEAN SCENE MODE - the deterministic compositor renders ALL marketing "
+        "text after generation. Do NOT draw any marketing text: no headline, "
+        "slogan, USP bullets, CTA, price, badge or watermark. PRESERVE the real "
+        "product label, logo, cap and packaging text exactly (product truth). "
+        f"Keep the product hero fully inside the product region (approx "
+        f"x {safe_region['x']}% y {safe_region['y']}% w {safe_region['w']}% "
+        f"h {safe_region['h']}% of the frame) and leave clean uncluttered "
+        "negative space everywhere else for the copy zones. "
+        + (f"Background constraints: {background_constraints}" if background_constraints else "")
+    )
+
+
 def _assemble_poster_prompt(
     *,
     fields: dict[str, str],
@@ -277,6 +310,28 @@ class PosterPromptDraftService:
         readiness = await PosterReadinessService.evaluate_product(product, enrich=False)
         fields = _request_as_dict(request)
         readiness_meta = readiness.model_dump(mode="json")
+
+        # POSTER_BUILDER_V2: an explicit poster-native copy set projects its
+        # fields into the zone copy fields. Approved sets are production-
+        # eligible; non-approved sets keep the review-only downgrade below.
+        poster_copy_set = None
+        poster_copy_set_id = _norm(request.poster_copy_set_id)
+        if poster_copy_set_id:
+            _pcs_row = await crud.get_poster_copy_set(poster_copy_set_id)
+            if not _pcs_row:
+                raise PosterPromptDraftValidationError(
+                    "Unknown poster copy set",
+                    field_errors=[f"Unknown poster_copy_set_id: {poster_copy_set_id}"],
+                )
+            if _norm(_pcs_row.get("product_id")) != product_id:
+                raise PosterPromptDraftValidationError(
+                    "Poster copy set belongs to a different product",
+                    field_errors=["POSTER_COPY_SET_PRODUCT_MISMATCH"],
+                )
+            poster_copy_set = serialize_poster_copy_set(_pcs_row)
+            fields.update(poster_fields_to_zone_fields(poster_copy_set))
+            if _norm(poster_copy_set.get("language")):
+                fields["language"] = _norm(poster_copy_set.get("language"))
 
         package_status = _map_package_status(readiness.poster_status)
         repair_payload = [a.model_dump(mode="json") for a in readiness.repair_actions]
@@ -368,6 +423,20 @@ class PosterPromptDraftService:
                     "Unknown poster recipe",
                     field_errors=[f"Unknown poster recipe: {recipe_id}"],
                 )
+            # POSTER_BUILDER_V2 clean-scene contract: the deterministic
+            # compositor owns ALL marketing text, so the image engine must
+            # produce a CLEAN product-anchored scene (product label preserved,
+            # zero marketing typography) with the product inside the template's
+            # product-safe region.
+            try:
+                _contract = template_contract(recipe_id)
+            except PosterTemplateError as exc:
+                raise PosterPromptDraftValidationError(
+                    "Poster template contract unavailable",
+                    field_errors=[f"{exc.code}: {exc}"],
+                )
+            _safe = _contract["product_safe_region"]
+            overlay = _build_clean_scene_instruction(_safe, _contract["background_constraints"])
             poster_prompt, poster_spec, overlay_spec = compose_recipe_poster(
                 fields=fields,
                 recipe=recipe,
@@ -377,6 +446,7 @@ class PosterPromptDraftService:
                 safety_guardrails=guardrails,
                 restricted_mode=restricted_mode,
             )
+            negative_prompt = negative_prompt + ", " + CLEAN_SCENE_NEGATIVE
             if recipe.negative_prompt_additions:
                 negative_prompt = (
                     negative_prompt + ", " + ", ".join(recipe.negative_prompt_additions)
@@ -404,9 +474,15 @@ class PosterPromptDraftService:
         # confirmed fallback — legacy callers that omit copy_source keep prior behavior.
         validation_warnings: list[str] = list(_q_warnings)
         copy_source = _norm(request.copy_source)
+        if poster_copy_set is not None:
+            copy_source = (
+                "APPROVED_POSTER_COPY_SET"
+                if poster_copy_set.get("status") == STATUS_POSTER_COPY_APPROVED
+                else "POSTER_COPY_SET_DRAFT"
+            )
         if (
             copy_source
-            and copy_source != "APPROVED_COPY_SET"
+            and copy_source not in ("APPROVED_COPY_SET", "APPROVED_POSTER_COPY_SET")
             and not request.copy_fallback_confirmed
         ):
             validation_warnings.append("UNGROUNDED_COPY_REVIEW_ONLY")

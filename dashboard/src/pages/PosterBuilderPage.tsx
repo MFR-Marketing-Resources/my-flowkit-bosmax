@@ -18,6 +18,13 @@ import {
 import { fetchProductCatalog } from "../api/products";
 import { usePosterRecipes } from "../api/posterRecipes";
 import PosterRecipeSelector from "../components/poster/PosterRecipeSelector";
+import PosterAngleCopyStep from "../components/poster/PosterAngleCopyStep";
+import PosterComposePanel from "../components/poster/PosterComposePanel";
+import { recommendPosterObjectives } from "../api/posterCopySets";
+import type {
+	PosterCopySet,
+	PosterObjectiveRecommendation,
+} from "../types/posterCopySet";
 import PosterControlledSettings from "../components/poster/PosterControlledSettings";
 import PosterRecipeSlotEditor from "../components/poster/PosterRecipeSlotEditor";
 import PosterSpecPreview from "../components/poster/PosterSpecPreview";
@@ -106,6 +113,10 @@ export default function PosterBuilderPage() {
 		mediaId: string;
 		sizeMb: number | null;
 	} | null>(null);
+	// POSTER_BUILDER_V2: approved poster-native copy set + AI objective ranking.
+	const [approvedCopySet, setApprovedCopySet] = useState<PosterCopySet | null>(null);
+	const [objectiveRecs, setObjectiveRecs] = useState<PosterObjectiveRecommendation[]>([]);
+	const [objectiveRecsLoading, setObjectiveRecsLoading] = useState(false);
 	const [flowMirror, setFlowMirror] = useState<PosterFlowMirrorSettings>(
 		DEFAULT_POSTER_FLOW_MIRROR_SETTINGS,
 	);
@@ -159,6 +170,8 @@ export default function PosterBuilderPage() {
 			setPosterGenResult(null);
 			setPosterGenError("");
 			setPosterGenConfirm(false);
+			setApprovedCopySet(null);
+			setObjectiveRecs([]);
 		}
 		try {
 			const payload = await fetchPosterReadiness(product.id);
@@ -223,6 +236,9 @@ export default function PosterBuilderPage() {
 	const handleSelectRecipe = (recipeId: string) => {
 		setPosterQuality(null);
 		setPosterQualityKey(null);
+		// A different archetype invalidates the approved poster copy set binding.
+		setApprovedCopySet(null);
+		setDraft((prev) => ({ ...prev, poster_copy_set_id: "" }));
 		setDraft((prev) => {
 			const r = recipes.find((x) => x.recipe_id === recipeId) ?? null;
 			let text_density = prev.text_density;
@@ -331,6 +347,71 @@ export default function PosterBuilderPage() {
 		recLoading,
 		loadRecommendations,
 	]);
+
+	// "Cadangkan untuk saya" — AI (grounded) or deterministic archetype ranking.
+	const handleRecommendObjectives = async () => {
+		if (!selectedProduct) return;
+		setObjectiveRecsLoading(true);
+		try {
+			const res = await recommendPosterObjectives({
+				product_id: selectedProduct.id,
+				refresh_ai: true,
+			});
+			setObjectiveRecs(res.recommendations ?? []);
+		} catch {
+			setObjectiveRecs([]);
+		} finally {
+			setObjectiveRecsLoading(false);
+		}
+	};
+
+	// Approved Poster Copy Set → project fields into the draft, bind the set id,
+	// and immediately re-run the mandatory quality check (fresh gate).
+	const handleApprovedCopySet = (pcs: PosterCopySet) => {
+		setApprovedCopySet(pcs);
+		const points = [...pcs.proof_points, "", "", ""];
+		setDraft((prev) => ({
+			...prev,
+			hook: pcs.primary_message,
+			subhook: pcs.support_message,
+			usp_1: points[0],
+			usp_2: points[1],
+			usp_3: points[2],
+			cta: pcs.cta,
+			language: pcs.language || prev.language,
+			copy_source: "APPROVED_POSTER_COPY_SET",
+			copy_set_id: "",
+			copy_fallback_confirmed: false,
+			poster_copy_set_id: pcs.poster_copy_set_id,
+		}));
+		window.setTimeout(() => void handleCheckPosterQuality(), 0);
+	};
+
+	// Any manual copy edit after approval invalidates the binding (the backend
+	// would otherwise re-project the approved fields over the edits).
+	useEffect(() => {
+		if (!approvedCopySet || !draft.poster_copy_set_id) return;
+		const points = [...approvedCopySet.proof_points, "", "", ""];
+		const projected = [
+			approvedCopySet.primary_message,
+			approvedCopySet.support_message,
+			points[0],
+			points[1],
+			points[2],
+			approvedCopySet.cta,
+		]
+			.map((s) => (s ?? "").trim())
+			.join("");
+		if (posterCopySignature(draft) !== projected) {
+			setApprovedCopySet(null);
+			setDraft((prev) => ({
+				...prev,
+				poster_copy_set_id: "",
+				copy_source: "manual",
+			}));
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- signature comparison only
+	}, [draft.hook, draft.subhook, draft.usp_1, draft.usp_2, draft.usp_3, draft.cta]);
 
 	const handlePromptDraft = async (draftOverride?: PosterBuilderDraft) => {
 		if (!selectedProduct || !readiness) return;
@@ -597,6 +678,48 @@ export default function PosterBuilderPage() {
 
 					{shellMode !== "hidden" ? (
 						<>
+							<section
+								className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4"
+								data-testid="poster-objective-recommender"
+							>
+								<div className="flex flex-wrap items-center justify-between gap-2">
+									<p className="text-xs text-slate-400">
+										Tak pasti objektif / jenis poster?
+									</p>
+									<button
+										type="button"
+										data-testid="poster-recommend-objectives"
+										disabled={objectiveRecsLoading}
+										onClick={() => void handleRecommendObjectives()}
+										className="rounded-xl border border-blue-500/40 bg-blue-600/10 px-3 py-1.5 text-[11px] font-bold text-blue-200 disabled:opacity-40"
+									>
+										{objectiveRecsLoading ? "Menganalisis…" : "Cadangkan untuk saya ✦"}
+									</button>
+								</div>
+								{objectiveRecs.length > 0 ? (
+									<ol className="mt-3 space-y-1" data-testid="poster-objective-recs">
+										{objectiveRecs.slice(0, 3).map((r, i) => (
+											<li key={r.recipe_id}>
+												<button
+													type="button"
+													onClick={() => handleSelectRecipe(r.recipe_id)}
+													className={`w-full rounded-lg border px-3 py-2 text-left text-[11px] ${
+														draft.poster_recipe_id === r.recipe_id
+															? "border-blue-400 bg-blue-500/15 text-blue-100"
+															: "border-slate-700 text-slate-300 hover:border-blue-500/40"
+													}`}
+												>
+													<span className="font-bold">
+														{i + 1}. {r.objective}
+													</span>{" "}
+													<span className="text-slate-400">— {r.reason}</span>
+													{r.source === "AI" ? " ✦" : ""}
+												</button>
+											</li>
+										))}
+									</ol>
+								) : null}
+							</section>
 							<PosterRecipeSelector
 								recipes={recipes}
 								selectedRecipeId={draft.poster_recipe_id}
@@ -630,6 +753,23 @@ export default function PosterBuilderPage() {
 										settings={builderSettings}
 										recipe={selectedRecipe}
 									/>
+									<PosterAngleCopyStep
+										productId={selectedProduct?.id ?? ""}
+										archetype={selectedRecipe.archetype}
+										recipeId={selectedRecipe.recipe_id}
+										language={draft.language}
+										onApproved={handleApprovedCopySet}
+									/>
+									{approvedCopySet ? (
+										<p
+											data-testid="poster-approved-copy-note"
+											className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-[11px] text-emerald-200"
+										>
+											✓ Copy diluluskan (Poster Copy Set v{approvedCopySet.version}).
+											Slot di bawah terkunci pada set itu — edit manual akan
+											menanggalkan ikatan.
+										</p>
+									) : null}
 									<PosterRecipeSlotEditor
 										recipe={selectedRecipe}
 										draft={draft}
@@ -791,8 +931,13 @@ export default function PosterBuilderPage() {
 								data-testid="poster-image-handoff"
 							>
 								<h3 className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
-									Poster image generation
+									Poster scene generation
 								</h3>
+								<p className="mt-1 text-[11px] text-slate-500">
+									Recipe path menjana <strong>scene bersih</strong> (produk +
+									latar, tiada teks pemasaran) — teks muktamad dilukis oleh
+									compositor selepas ini, jadi ejaan sentiasa tepat.
+								</p>
 								<p
 									className="mt-2 text-xs text-slate-500"
 									data-testid="flow-handoff-captured"
@@ -873,6 +1018,12 @@ export default function PosterBuilderPage() {
 								) : null}
 							</section>
 
+							<PosterComposePanel
+								productId={selectedProduct?.id ?? ""}
+								recipeId={draft.poster_recipe_id}
+								copySet={approvedCopySet}
+								backgroundMediaId={posterGenResult?.mediaId ?? ""}
+							/>
 							<PosterSpecPreview
 								posterSpec={promptPackage?.poster_spec}
 								overlaySpec={promptPackage?.overlay_spec}

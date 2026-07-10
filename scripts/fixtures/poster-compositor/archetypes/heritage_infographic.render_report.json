@@ -1,0 +1,77 @@
+{
+  "renderer": "HTML_CHROMIUM_SERVICE_V1",
+  "canvas": {
+    "w": 1080,
+    "h": 1920
+  },
+  "output_png": {
+    "file": "poster.png",
+    "width": 1080,
+    "height": 1920
+  },
+  "zones": [
+    {
+      "zone_id": "headline",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Warisan turun-temurun"
+    },
+    {
+      "zone_id": "support",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Resipi asal yang dikekalkan."
+    },
+    {
+      "zone_id": "chip_1",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Sejak 1975"
+    },
+    {
+      "zone_id": "chip_2",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Resipi asal"
+    },
+    {
+      "zone_id": "chip_3",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Dipercayai ramai"
+    },
+    {
+      "zone_id": "cta",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Kenali warisan"
+    },
+    {
+      "zone_id": "disclaimer",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Produk tradisional."
+    }
+  ],
+  "missing_zones": [],
+  "errors": [],
+  "ok": true,
+  "credit_spend": false,
+  "network": false,
+  "recipe_id": "heritage_infographic",
+  "template_version": "1.0.0"
+}

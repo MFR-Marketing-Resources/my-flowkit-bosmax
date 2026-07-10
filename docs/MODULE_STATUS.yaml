@@ -495,3 +495,38 @@ domains:
       - agent/services/ai_caption_assist_service.py
       - tests/unit/test_ai_caption_assist_service.py
       - tests/api/test_ai_caption_assist_api.py
+      # POSTER_BUILDER_V2: poster-native copy domain (separate from video
+      # copy_set), AI angle-first copy assistant, production template tokens,
+      # clean-scene generation, deterministic Chromium compositor service,
+      # durable poster deliverables + Creative Library save/reconstruction.
+      - agent/models/poster_copy_set.py
+      - agent/models/poster_render_manifest.py
+      - agent/services/poster_copy_set_service.py
+      - agent/services/poster_copy_ai_service.py
+      - agent/services/poster_template_service.py
+      - agent/services/poster_compositor_service.py
+      - agent/services/poster_deliverable_service.py
+      - agent/api/poster_copy_sets.py
+      - agent/api/poster_compose.py
+      - agent/authority/POSTER_TEMPLATE_TOKENS.yaml
+      - scripts/poster-compositor-render.js
+      - scripts/generate_poster_fixtures.py
+      - scripts/fixtures/poster-compositor/archetypes/product_hero_night_routine.render_report.json
+      - scripts/fixtures/poster-compositor/archetypes/product_scale_portability.render_report.json
+      - scripts/fixtures/poster-compositor/archetypes/heritage_infographic.render_report.json
+      - scripts/fixtures/poster-compositor/archetypes/routine_use.render_report.json
+      - scripts/fixtures/poster-compositor/archetypes/offer_promo.render_report.json
+      - scripts/fixtures/poster-compositor/archetypes/problem_aware_safe.render_report.json
+      - dashboard/src/types/posterCopySet.ts
+      - dashboard/src/api/posterCopySets.ts
+      - dashboard/src/components/poster/PosterAngleCopyStep.tsx
+      - dashboard/src/components/poster/PosterAngleCopyStep.test.tsx
+      - dashboard/src/components/poster/PosterComposePanel.tsx
+      - tests/unit/test_poster_copy_set_service.py
+      - tests/unit/test_poster_copy_ai_service.py
+      - tests/unit/test_poster_template_and_manifest.py
+      - tests/unit/test_poster_deliverable_service.py
+      - tests/unit/test_poster_clean_scene_prompt.py
+      - tests/api/test_poster_copy_sets_api.py
+      - tests/ui/test_poster_compositor_service_contract.py
+      - docs/poster/POSTER_BUILDER_V2.md

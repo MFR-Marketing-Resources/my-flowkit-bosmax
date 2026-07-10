@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit", "poster_copy_set", "poster_deliverable"})
 
 
 def _validate_table(table: str) -> None:
@@ -44,6 +44,8 @@ _COLUMNS = {
     "postiz_publish_record": {"artifact_media_id", "source_local_path", "source_public_url", "upload_mode", "postiz_media_id", "postiz_media_path", "post_type", "scheduled_at", "content", "integration_ids_json", "provider_settings_json", "postiz_response_json", "status", "error", "updated_at"},
     "social_copy_package": {"artifact_media_id", "source_mode", "platform", "caption", "first_comment", "hashtags_json", "call_to_action", "tone", "language", "status", "compliance_status", "blockers_json", "warnings_json", "approval_note", "approved_at", "postiz_record_id", "updated_at"},
     "copy_set": {"angle", "hook", "subhook", "usp_set_json", "cta", "platform", "language", "route_type", "formula_family", "status", "dedupe_key", "source", "provenance_json", "claim_review_json", "reviewer_note", "approved_at", "approved_by", "usage_count", "last_used_at", "used_in_modes", "uniqueness_score", "similar_to_copy_set_id", "similarity_score", "archived", "updated_at"},
+    "poster_copy_set": {"campaign_id", "objective", "archetype", "angle", "primary_message", "support_message", "proof_points_json", "offer_json", "cta", "disclaimer", "tone", "language", "variants_json", "field_provenance_json", "ai_model", "prompt_version", "status", "version", "parent_poster_copy_set_id", "archived", "reject_reason", "approved_at", "approved_by", "updated_at"},
+    "poster_deliverable": {"poster_copy_set_id", "recipe_id", "template_version", "composition_strategy", "render_manifest_json", "background_media_id", "background_local_path", "output_path", "output_sha256", "creative_asset_id", "qa_report_json", "settings_json", "status", "updated_at"},
     "product_intelligence_snapshot": {"product_id", "version", "status", "product_description", "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "created_from_review_draft_id", "created_by", "approved_by", "approved_at", "supersedes_snapshot_id", "updated_at"},
     "product_intelligence_field_provenance": {"snapshot_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
     "product_intelligence_review_draft": {"product_id", "review_status", "product_description", "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "reviewer_note", "created_by", "reviewed_by", "approved_by", "approved_at", "rejected_by", "rejected_at", "updated_at"},
@@ -844,6 +846,81 @@ async def find_copy_set_by_dedupe_key(dedupe_key: str) -> Optional[dict]:
     )
     row = await cur.fetchone()
     return dict(row) if row else None
+
+
+# --- Poster Copy Set + Poster Deliverable (POSTER_BUILDER_V2) ---
+# Poster copy is a SEPARATE domain from the video copy_set table; these helpers
+# never touch copy_set so poster rows can never enter video selection.
+
+async def create_poster_copy_set(product_id: str, **kw) -> dict:
+    db = await get_db()
+    pid, now = _uuid(), _now()
+    cols = ["poster_copy_set_id", "product_id", "created_at", "updated_at"]
+    vals = [pid, product_id, now, now]
+    allowed = _COLUMNS["poster_copy_set"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO poster_copy_set ({col_str}) VALUES ({placeholders})", vals
+        )
+        await db.commit()
+    return await _get_with_db(db, "poster_copy_set", "poster_copy_set_id", pid)
+
+async def get_poster_copy_set(poster_copy_set_id: str):
+    return await _get("poster_copy_set", "poster_copy_set_id", poster_copy_set_id)
+
+async def update_poster_copy_set(poster_copy_set_id: str, **kw):
+    return await _update("poster_copy_set", "poster_copy_set_id", poster_copy_set_id, **kw)
+
+async def list_poster_copy_sets_for_product(product_id: str) -> list:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM poster_copy_set WHERE product_id=? AND archived=0 "
+        "ORDER BY created_at DESC",
+        (product_id,),
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+async def create_poster_deliverable(product_id: str, **kw) -> dict:
+    db = await get_db()
+    did, now = _uuid(), _now()
+    cols = ["poster_deliverable_id", "product_id", "created_at", "updated_at"]
+    vals = [did, product_id, now, now]
+    allowed = _COLUMNS["poster_deliverable"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO poster_deliverable ({col_str}) VALUES ({placeholders})", vals
+        )
+        await db.commit()
+    return await _get_with_db(db, "poster_deliverable", "poster_deliverable_id", did)
+
+async def get_poster_deliverable(poster_deliverable_id: str):
+    return await _get("poster_deliverable", "poster_deliverable_id", poster_deliverable_id)
+
+async def update_poster_deliverable(poster_deliverable_id: str, **kw):
+    return await _update("poster_deliverable", "poster_deliverable_id", poster_deliverable_id, **kw)
+
+async def list_poster_deliverables_for_product(product_id: str, limit: int = 50) -> list:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM poster_deliverable WHERE product_id=? "
+        "ORDER BY created_at DESC LIMIT ?",
+        (product_id, limit),
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
 
 async def count_products(source: str = None, query: str = None) -> int:
     db = await get_db()

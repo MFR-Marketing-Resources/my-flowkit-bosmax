@@ -42,6 +42,10 @@ class PosterPromptDraftRequest(BaseModel):
     # Poster recipe (V2). When set, build_draft composes a recipe-structured prompt
     # + poster_spec/overlay_spec. When empty, the legacy prompt path is byte-identical.
     poster_recipe_id: str = ""
+    # POSTER_BUILDER_V2: consume an APPROVED poster-native copy set (separate
+    # poster domain). When set, its fields project into the zone copy fields and
+    # the package is production-eligible without copy_fallback confirmation.
+    poster_copy_set_id: str = ""
 
 
 class PosterCopyLayout(BaseModel):
