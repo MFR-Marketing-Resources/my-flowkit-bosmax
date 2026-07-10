@@ -35,13 +35,19 @@ def test_operator_authoring_pages_keep_workspace_controls_and_modules():
     for token in [
         "Generation Mode",
         "Language",
-        "Block 1 Duration",
-        "Block 2 Duration",
+        # Unified Duration Authority UX: the legacy per-block "Block 1/2 Duration"
+        # controls were removed. SINGLE exposes one "Video Duration"; EXTEND exposes
+        # one "Total Video Duration" plus the read-only "Duration Authority" summary.
+        "Video Duration",
+        "Total Video Duration",
+        "Duration Authority",
         "Camera Style",
         "Character Presence",
         "Creator Persona",
         "Language Policy",
-        "Load F2V Package + Generate Final Prompt",
+        # The load+generate CTA is a per-mode label from packageBridgeFlowLabelByMode
+        # ("... + Generate Final Prompt"); assert the stable shared suffix.
+        "Generate Final Prompt",
         "Regenerate Final Prompt",
         "Package Eligibility",
     ]:

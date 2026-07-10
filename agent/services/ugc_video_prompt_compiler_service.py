@@ -789,6 +789,15 @@ def compile_ugc_video_prompt(
             f"GENERATION_MODE_NOT_SUPPORTED_FOR_MODE:{normalized_mode}:{resolved_generation_mode}",
         )
 
+    # A stale UI continuation total used to silently coerce SINGLE into EXTEND
+    # below when the workbook route resolved. SINGLE is one complete video only;
+    # reject the mixed authority state before any route or block-plan resolution.
+    if (
+        resolved_generation_mode == "SINGLE"
+        and requested_total_duration_seconds is not None
+    ):
+        raise ValueError("SINGLE_MODE_CANNOT_CARRY_REQUESTED_TOTAL_DURATION")
+
     resolved_claim_safe_rewrite = _clean(claim_safe_rewrite or approved_package.get("claim_safe_rewrite"))
     safe_hook = _first_nonempty(
         list(safe_hook_angles or []),

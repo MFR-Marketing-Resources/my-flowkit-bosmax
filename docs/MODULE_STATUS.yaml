@@ -224,6 +224,9 @@ domains:
       - dashboard/src/pages/ImgFastlanePage.tsx
       - dashboard/src/pages/OperatorPage.tsx
       - dashboard/src/pages/OperatorPage.sourceMode.test.ts
+      - dashboard/src/pages/OperatorPage.durationAuthority.test.ts
+      - dashboard/src/pages/OperatorPage.durationAuthority.component.test.tsx
+      - dashboard/src/api/workspacePackages.durationAuthority.test.ts
       - dashboard/src/pages/ProductAssetGeneratorPage.tsx
       - dashboard/src/pages/SettingsPage.tsx
       - dashboard/src/components/product-asset-generator/ProductAssetGeneratorForm.tsx

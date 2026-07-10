@@ -349,6 +349,17 @@ def _compile_kwargs(**overrides):
     return kwargs
 
 
+def test_single_mode_rejects_requested_total_duration_before_extend_resolution():
+    """A stale UI total must never silently convert SINGLE into an EXTEND chain."""
+    with pytest.raises(ValueError, match="SINGLE_MODE_CANNOT_CARRY_REQUESTED_TOTAL_DURATION"):
+        compile_ugc_video_prompt(
+            **_compile_kwargs(
+                engine_duration_target="GOOGLE_FLOW",
+                requested_total_duration_seconds=16,
+            )
+        )
+
+
 def test_explicit_frames_lineage_compiles_frames_branch():
     result = compile_ugc_video_prompt(**_compile_kwargs(source_mode="FRAMES"))
     assert result["source_mode"] == "FRAMES"
