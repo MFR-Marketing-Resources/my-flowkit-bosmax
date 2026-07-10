@@ -110,31 +110,29 @@ def test_f2v_workspace_form_controls_have_stable_autofill_identifiers():
 
 
 def test_handoff_bank_renders_all_prompt_blocks():
-    """Prompt Handoff Bank maps EVERY block (not just Block 1) into a separate
-    copy box — mode-agnostic over prompt_blocks_json, so F2V/HYBRID/I2V/T2V all
-    expose each block separately for the manual Extend workflow.
-
-    Extend is never inferred from block_index alone — only when flow_extend_prompt_text
-    exists via resolvePromptRepresentationPresentation.
-    """
-    src = _read("dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx")
+    """Prompt Handoff Bank maps EVERY block into separate copy controls via HandoffExtendPromptBlocks."""
+    page = _read("dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx")
+    handoff = _read("dashboard/src/components/HandoffExtendPromptBlocks.tsx")
     util = _read("dashboard/src/utils/promptRepresentationUi.ts")
-    assert "pkg.prompt_blocks_json" in src
-    assert "blocks.map((block, i) =>" in src
-    assert "resolvePromptRepresentationPresentation" in src
+    assert "pkg.prompt_blocks_json" in page
+    assert "HandoffExtendPromptBlocks" in page
+    assert "blocks.map((block, i) =>" in handoff
+    assert "resolvePromptRepresentationPresentation" in handoff
     assert "flow_extend_prompt_text" in util
     assert "Copy Extend Prompt" in util
     assert "Copy Initial Prompt" in util
-    assert "Copy Independent Block Prompt" in util or "Copy Independent Block Prompt" in src
-    assert "Extend Not Available" in src or "Extend Not Available" in util
-    assert "Block ${block.block_index}" in src
-    assert "blocks.length} blocks" in src  # count is dynamic, not a hardcoded 1
-    # Must not infer extend from block_index alone in handoff map.
-    assert "block.block_index > 1" not in src
+    assert "Copy Independent Block Prompt" in util or "Copy Independent Block Prompt" in handoff
+    assert "Extend Not Available" in handoff or "Extend Not Available" in util
+    assert "Block ${block.block_index}" in handoff
+    assert "blocks.length} blocks" in handoff
+    assert "block.block_index > 1" not in page
+    assert "block.block_index > 1" not in handoff
+
 
 def test_storyboard_first_plan_is_visible_in_operator_preview_and_handoff_bank():
     operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
     handoff_source = _read("dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx")
+    blocks_source = _read("dashboard/src/components/HandoffExtendPromptBlocks.tsx")
 
     for token in [
         "operator-storyboard-plan-summary",
@@ -148,11 +146,15 @@ def test_storyboard_first_plan_is_visible_in_operator_preview_and_handoff_bank()
     for token in [
         "storyboard-plan-summary",
         "storyboardPlan",
+    ]:
+        assert token in handoff_source, token
+
+    for token in [
         "Allocated story:",
         "Allocated dialogue:",
         "Seam:",
     ]:
-        assert token in handoff_source, token
+        assert token in blocks_source, token
 
 
 def test_operator_extend_requires_total_and_hides_manual_duration_controls():

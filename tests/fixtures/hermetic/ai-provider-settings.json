@@ -1,0 +1,28 @@
+{
+  "version": 3,
+  "active_provider": null,
+  "providers": {
+    "anthropic": {
+      "default_model": "claude-sonnet-5",
+      "api_key": "HERMETIC_DUMMY_KEY_NOT_A_REAL_SECRET"
+    },
+    "openai": {
+      "default_model": "gpt-4o-mini",
+      "api_key": "HERMETIC_DUMMY_KEY_NOT_A_REAL_SECRET"
+    }
+  },
+  "lanes": {
+    "vision": {
+      "provider_id": "anthropic",
+      "model_id": "claude-sonnet-5",
+      "execution_enabled": false,
+      "configured_by_user": true
+    },
+    "text_assist": {
+      "provider_id": "qwen",
+      "model_id": "qwen-plus",
+      "execution_enabled": false,
+      "configured_by_user": false
+    }
+  }
+}

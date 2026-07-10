@@ -642,6 +642,27 @@ def build_research_initial_generation_prompt(
     return head + marker + nl + RESEARCH_VOICE_ACTIVE_END_FRAME + nl + nl + s9 + tail
 
 
+def _representation_bundle(
+    text: str | None,
+    audio_base: Mapping[str, Any],
+    *,
+    role: str,
+) -> dict[str, Any] | None:
+    """Structured representation entry: prompt text + representation-specific audio contract."""
+    cleaned = (text or "").strip()
+    if not cleaned and role != PROMPT_REPRESENTATION_INDEPENDENT:
+        return None
+    audio = dict(_as_dict(audio_base))
+    audio["representation"] = role
+    if role == PROMPT_REPRESENTATION_INITIAL:
+        audio["contract_purpose"] = "ACTIVE_FINAL_SECOND_FOR_EXTEND_CHAIN"
+    elif role == PROMPT_REPRESENTATION_INDEPENDENT:
+        audio["contract_purpose"] = "SEAM_READY_HOLD_INDEPENDENT_ROUTE"
+    elif role == PROMPT_REPRESENTATION_EXTEND:
+        audio["contract_purpose"] = "CONTINUATION_FROM_PRIOR_VIDEO"
+    return {"text": cleaned or None, "audio_seam_contract": audio}
+
+
 def attach_prompt_representations(
     *,
     block: dict[str, Any],
@@ -692,8 +713,12 @@ def attach_prompt_representations(
         block["previous_block_index"] = None
         block["continuation_source"] = CONTINUATION_SOURCE_NONE
         block["prompt_representations"] = {
-            PROMPT_REPRESENTATION_INITIAL: research_initial,
-            PROMPT_REPRESENTATION_INDEPENDENT: independent,
+            PROMPT_REPRESENTATION_INITIAL: _representation_bundle(
+                research_initial, audio_seam, role=PROMPT_REPRESENTATION_INITIAL
+            ),
+            PROMPT_REPRESENTATION_INDEPENDENT: _representation_bundle(
+                independent, audio_seam, role=PROMPT_REPRESENTATION_INDEPENDENT
+            ),
             PROMPT_REPRESENTATION_EXTEND: None,
         }
         return block
@@ -729,8 +754,12 @@ def attach_prompt_representations(
     block["continuation_source"] = CONTINUATION_SOURCE_PREVIOUS_VIDEO
     block["prompt_representations"] = {
         PROMPT_REPRESENTATION_INITIAL: None,
-        PROMPT_REPRESENTATION_INDEPENDENT: independent,
-        PROMPT_REPRESENTATION_EXTEND: extend_text,
+        PROMPT_REPRESENTATION_INDEPENDENT: _representation_bundle(
+            independent, audio_seam, role=PROMPT_REPRESENTATION_INDEPENDENT
+        ),
+        PROMPT_REPRESENTATION_EXTEND: _representation_bundle(
+            extend_text, audio_seam, role=PROMPT_REPRESENTATION_EXTEND
+        ),
     }
     # Research-only metadata — must not claim VEO extend route authority.
     block["manual_extension_research"] = {

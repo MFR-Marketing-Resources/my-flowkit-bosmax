@@ -217,7 +217,28 @@ def test_unknown_product_returns_low_confidence_and_needs_review():
     assert result["intelligence_status"] == "NEEDS_REVIEW"
 
 
-def test_default_profile_resolution_skips_provider_execution_even_when_provider_is_configured():
+def _hermetic_complete_vision_lane(monkeypatch):
+    """Configured vision lane with execution disabled (no machine state)."""
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_provider",
+        lambda lane: "anthropic" if lane == "vision" else None,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_api_key",
+        lambda lane: "HERMETIC_DUMMY_KEY_NOT_A_REAL_SECRET" if lane == "vision" else None,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service._resolve_vision_model",
+        lambda: "claude-sonnet-5",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.is_lane_execution_enabled",
+        lambda lane: False,
+    )
+
+
+def test_image_analysis_skips_when_provider_complete_but_execution_disabled(monkeypatch):
+    _hermetic_complete_vision_lane(monkeypatch)
     result = resolve_product_intelligence_profile(
         _product(
             raw_product_title="Atlas Lip Balm Original",
@@ -225,9 +246,57 @@ def test_default_profile_resolution_skips_provider_execution_even_when_provider_
             local_image_path="",
         )
     )
-
     assert result["image_analysis"]["status"] == "ANALYSIS_SKIPPED"
     assert "image_analysis:provider_execution_disabled" in result["provenance"]
+
+
+def test_image_analysis_not_configured_when_vision_lane_incomplete(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_provider",
+        lambda lane: None,
+    )
+    result = resolve_product_intelligence_profile(
+        _product(
+            raw_product_title="Atlas Lip Balm Original",
+            image_url="https://example.com/product.jpg",
+        )
+    )
+    assert result["image_analysis"]["status"] == "VISION_PROVIDER_NOT_CONFIGURED"
+
+
+def test_image_analysis_mocked_when_execution_enabled(monkeypatch):
+    _hermetic_complete_vision_lane(monkeypatch)
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.is_lane_execution_enabled",
+        lambda lane: lane == "vision",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_intelligence_service.analyze_product_image_payload",
+        lambda product, **kwargs: {
+            "status": "ANALYZED",
+            "image_url": product.get("image_url"),
+            "local_image_path": product.get("local_image_path"),
+            "detected_package": "tube",
+            "detected_text": ["Lip Balm"],
+            "detected_brand": None,
+            "detected_size_text": None,
+            "detected_form_factor": "tube",
+            "visual_confidence": "HIGH",
+            "evidence": ["provider:hermetic_mock"],
+            "warnings": [],
+            "provider": "hermetic_mock",
+            "metadata": {},
+        },
+    )
+    result = resolve_product_intelligence_profile(
+        _product(
+            raw_product_title="Atlas Lip Balm Original",
+            image_url="https://example.com/product.jpg",
+            allow_live_image_analysis=True,
+        )
+    )
+    assert result["image_analysis"]["status"] == "ANALYZED"
+    assert result["image_analysis"]["provider"] == "hermetic_mock"
 
 
 def test_high_confidence_provider_result_can_influence_package_form(monkeypatch):

@@ -26,6 +26,9 @@ GEMINI.md
 .pytest_cache/
 .local-agent/
 
+# PR #298 hermetic A/B harness temp roots (never commit)
+docs/evidence/pr298_ab/
+
 # Dependencies and Scratch
 node_modules/
 scratch/

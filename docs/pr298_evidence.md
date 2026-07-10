@@ -1,52 +1,38 @@
-## PR #298 — Extension-native Google Flow prompt representations (forensic repair)
+## PR #298 — Hermetic baseline & merge readiness (updated)
 
-**State:** OPEN — **NOT MERGED** — **NOT deployed to :8100** — **zero credits / no live generation**
+**State:** OPEN — **NOT MERGED** — **NOT on :8100** — zero credits
 
-### Base / head (verified)
 | | SHA |
 |---|---|
-| **Base (`origin/main`)** | `007a8dbff402286088289b6c88d22676d6a26590` (POSTER_BUILDER_V2) |
-| **Head** | `77fb6f855045784f79f5753452714892ca4cb14f` |
+| **origin/main** | `eda2b1a0443382038f29d4a39f8163aa232a5cb5` |
+| **PR branch (local)** | see `git rev-parse HEAD` after push |
 
-### Runtime separation
-Canonical `:8100` runs **approved `main` only** (PID restarted via lifecycle; `source_stale_since_start=false`). PR branch is developed in isolated worktree — **never deployed to canonical runtime**.
+### Hermetic methodology (authoritative)
+- Isolated `FLOW_AGENT_DIR` roots from `tests/fixtures/hermetic/` only — **never** canonical `_ref_flowkit` machine state.
+- Product intelligence vision tests use **in-test monkeypatch** (`get_lane_provider`, `get_lane_api_key`, `_resolve_vision_model`, `analyze_product_image_payload`) — no operator `.local-agent` dependency.
+- A/B harness: `scripts/pr298_hermetic_ab_compare.py` + machine-readable `docs/pr298_hermetic_ab_evidence.json`.
+- Canonical guard: SHA256 of canonical `ai-provider-settings.json` unchanged across harness runs.
 
-### Architecture
-- **Production route unchanged:** `GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS`; `engine_prompt_text` = independent 9-section blocks.
-- **Research layer:** `initial_generation_prompt_text` (Block 1 active voice seam), `flow_extend_prompt_text` (compact Extend prose), `flow_extend_prompt_validation`.
-- **Dialogue:** pre-finalization packable compression + `omitted_utterances` audit; monotonic allocation; no post-finalization silent drops.
-- **Continuity:** `CONTINUITY_STATE_MISMATCH` fail-closed (no prefer-side merge).
-- **UI:** Extend only when `hasValidFlowExtendPrompt` (not `block_index>1`); malformed → **INVALID EXTEND REPRESENTATION**.
+### Gaps closed this pass
+1. **SQLite CRUD** — `tests/unit/test_extend_prompt_sqlite_persistence.py` (create → reload → raw `prompt_blocks_json`).
+2. **Handoff Bank** — `HandoffExtendPromptBlocks` + `WorkspaceGenerationPackagesHandoff.component.test.tsx` (clipboard + fail-closed).
+3. **Per-representation audio** — structured `prompt_representations` with `audio_seam_contract` per role; `test_extend_representation_audio_contracts.py`.
 
-### Verification (branch worktree)
+### Gates (branch worktree)
 | Gate | Result |
 |------|--------|
-| Focused extend + integrity + persistence tests | **59 passed** |
-| Dashboard Vitest (utils + Operator component) | **11 passed** |
-| `scripts/verify-gate.ps1` | **PASS** |
-### Full backend baseline (fair env)
+| `scripts/verify-gate.ps1` | **PASS** (MANDOR + build + vitest + backend smoke) |
 
-Run branch suite with canonical config parity:
-
+### Run hermetic A/B locally
 ```powershell
-$env:FLOW_AGENT_DIR = "C:\Users\USER\Desktop\_ref_flowkit"
 cd C:\Users\USER\Desktop\_ref_flowkit_wt\feat-google-flow-extension-native-prompt-renderer-v1
 $env:PYTHONPATH = "."
-.\..\..\_ref_flowkit\.venv\Scripts\python.exe -m pytest tests/unit tests/ui tests/api -q --tb=no
+..\..\_ref_flowkit\.venv\Scripts\python.exe scripts\pr298_hermetic_ab_compare.py `
+  --main-repo C:\Users\USER\Desktop\_ref_flowkit `
+  --branch-repo (Get-Location) `
+  --python C:\Users\USER\Desktop\_ref_flowkit\.venv\Scripts\python.exe `
+  --evidence-dir $env:TEMP\pr298-ab-evidence
 ```
 
-| | Failures |
-|--|----------|
-| `origin/main` @ `007a8db` | **20** |
-| PR branch @ `a6cf1e3` (fair `FLOW_AGENT_DIR`) | **20** |
-| **net_new_failures** | **[]** (prior net-new was worktree missing `.local-agent` / `FLOW_AGENT_DIR`, not PR code) |
-
-### Known limitations
-- Persistence proof uses `workspace_generation_package_service._json` round-trip (same serialization path as DB column); full SQLite CRUD integration test not added in this pass.
-- `prompt_representations` map on blocks is not yet fully nested with per-representation audio objects (audio contract on block + validation metadata present).
-- Prompt Handoff Bank: contract + shared util tests; no separate Handoff component render test yet.
-
-### Commits on branch
-1. `ec01276` — initial extend renderer  
-2. `06620b0` — UI / production-research separation repair  
-3. `77fb6f8` — dialogue integrity, continuity fail-closed, validation hardening  
+### PR
+https://github.com/MFR-Marketing-Resources/my-flowkit-bosmax/pull/298

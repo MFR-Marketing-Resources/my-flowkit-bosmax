@@ -299,8 +299,17 @@ domains:
       - tests/unit/test_ugc_video_prompt_compiler_service.py
       - tests/unit/test_full_storyboard_extend_planner.py
       - tests/unit/test_google_flow_extend_prompt_renderer.py
-      - tests/fixtures/full_storyboard_extend_planner/**
-      - tests/fixtures/full_storyboard_extend_planner/__init__.py
+      - tests/unit/test_extend_prompt_sqlite_persistence.py
+      - tests/unit/test_extend_representation_audio_contracts.py
+      - tests/fixtures/hermetic/ai-provider-settings.json
+      - tests/fixtures/hermetic/sanitized.env
+      - tests/support/__init__.py
+      - tests/support/hermetic_runtime.py
+      - dashboard/src/components/HandoffExtendPromptBlocks.tsx
+      - dashboard/src/pages/WorkspaceGenerationPackagesHandoff.component.test.tsx
+      - scripts/pr298_hermetic_ab_compare.py
+      - docs/pr298_evidence.md
+      - docs/pr298_hermetic_ab_evidence.json
       - tests/fixtures/full_storyboard_extend_planner/storyboard_fixtures.py
       - tests/fixtures/full_storyboard_extend_planner/failure_neutral_comparison.json
       - tests/unit/test_product_physics.py
