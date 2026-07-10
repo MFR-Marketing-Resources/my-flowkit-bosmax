@@ -371,6 +371,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		requestedTotalDuration === "" ? null : Number(requestedTotalDuration);
 	const extendPlan =
 		extendTotalValue !== null ? (extendPlanByTotal[extendTotalValue] ?? null) : null;
+	// Production EXTEND must be total + route driven. The manual per-block path is
+	// DEV/ADVANCED and fails closed at the backend — used to block Load/Generate so a
+	// normal operator can never trigger a rejected API call.
+	const extendManualBlocked =
+		generationMode === "EXTEND" && extendTotalValue === null;
+	// Invalidate any stale preview when the operator enters the blocked EXTEND-manual
+	// state, so a previously-loaded package can never be generated on this path.
+	useEffect(() => {
+		if (extendManualBlocked) setPreviewPackage(null);
+	}, [extendManualBlocked]);
 	const [notice, setNotice] = useState<OperatorNotice>({
 		tone: "idle",
 		title: "Idle",
@@ -1192,6 +1202,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// Click handler: an approved Copy Set generates immediately; NO selection
 	// opens the explicit fallback-confirmation gate first (backend also enforces).
 	const handleGeneratePackage = () => {
+		if (extendManualBlocked) {
+			setNotice({
+				tone: "warning",
+				title: "Extend Total required",
+				detail:
+					"Production EXTEND requires an Extend Total. Manual per-block is DEV/ADVANCED only.",
+				requestId: null,
+			});
+			return;
+		}
 		if (!selectedCopySetId) {
 			setShowFallbackConfirm(true);
 			return;
@@ -1213,10 +1233,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const shotPolicy2 =
 		promptConfig?.shot_count_policy[String(block2Duration)] ?? null;
 	const isExtendMode = generationMode === "EXTEND";
-	// Production EXTEND must be total + route driven. The manual per-block path is
-	// DEV/ADVANCED and fails closed at the backend — block Load/Generate so a normal
-	// operator can never trigger a rejected API call.
-	const extendManualBlocked = isExtendMode && extendTotalValue === null;
 	const packageBridgeFlowLabelByMode: Record<WorkspaceMode, string> = {
 		T2V: "Load T2V Package + Generate Final Prompt",
 		HYBRID: "Load HYBRID Package + Generate Final Prompt",
@@ -1967,7 +1983,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						type="button"
 						onClick={() => void handleGeneratePackage()}
 						disabled={
-							!previewPackage || isLoadingPackage || showFallbackConfirm
+							!previewPackage ||
+							isLoadingPackage ||
+							showFallbackConfirm ||
+							extendManualBlocked
 						}
 						className="w-full rounded-xl border border-blue-500/40 bg-blue-500/15 px-4 py-3 text-sm font-bold text-blue-100 hover:bg-blue-500/25 disabled:opacity-50 disabled:grayscale transition-all"
 					>
