@@ -1213,6 +1213,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const shotPolicy2 =
 		promptConfig?.shot_count_policy[String(block2Duration)] ?? null;
 	const isExtendMode = generationMode === "EXTEND";
+	// Production EXTEND must be total + route driven. The manual per-block path is
+	// DEV/ADVANCED and fails closed at the backend — block Load/Generate so a normal
+	// operator can never trigger a rejected API call.
+	const extendManualBlocked = isExtendMode && extendTotalValue === null;
 	const packageBridgeFlowLabelByMode: Record<WorkspaceMode, string> = {
 		T2V: "Load T2V Package + Generate Final Prompt",
 		HYBRID: "Load HYBRID Package + Generate Final Prompt",
@@ -1823,6 +1827,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							(product landbank / claim-safe angles).
 						</div>
 					) : null}
+					{extendManualBlocked ? (
+						<div className="mb-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200">
+							<strong>Production EXTEND requires an Extend Total.</strong> The manual
+							per-block path is DEV/ADVANCED only and fails closed at the backend
+							(EXTEND_MANUAL_BLOCK_PLAN_BLOCKED_IN_PRODUCTION). Pick an Extend Total
+							above to enable Load / Generate.
+						</div>
+					) : null}
 					<button
 						type="button"
 						onClick={() => void handleLoadPreview()}
@@ -1830,7 +1842,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							!selectedProduct ||
 							isLoadingPreview ||
 							selectedReadinessLoading ||
-							selectedReadiness?.readiness_status !== "READY"
+							selectedReadiness?.readiness_status !== "READY" ||
+							extendManualBlocked
 						}
 						className="w-full rounded-xl border border-slate-600/40 bg-slate-700/30 px-4 py-3 text-sm font-bold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50 disabled:grayscale transition-all"
 					>
