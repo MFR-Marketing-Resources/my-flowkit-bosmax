@@ -119,6 +119,12 @@ def test_full_storyboard_plan_is_deterministic_and_complete_for_each_video_mode(
     assert " ".join(
         allocation.exact_dialogue_slice for allocation in first.block_allocations
     ).split() == first.full_dialogue_plan.full_dialogue_text.split()
+    dialogue_clauses = [
+        clause.lower()
+        for utterance in first.full_dialogue_plan.utterances
+        for clause in canonical._split_clauses(utterance.text)
+    ]
+    assert len(dialogue_clauses) == len(set(dialogue_clauses))
 
 
 @pytest.mark.parametrize("total, expected", [(16, [8, 8]), (24, [8, 8, 8]), (32, [8, 8, 8, 8])])

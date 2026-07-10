@@ -379,6 +379,7 @@ def _build_dialogue_plan(
         for seconds in story_plan.resolved_block_plan
     ]
     utterances: list[DialogueUtterance] = []
+    seen_clause_keys: set[str] = set()
     cursor = 0
     for position, seconds in enumerate(story_plan.resolved_block_plan, start=1):
         budget = budgets[position - 1]
@@ -392,6 +393,17 @@ def _build_dialogue_plan(
                 target_language=target_language,
                 family=canonical._infer_product_family(product, normalized_copy),
                 approved_dialogue=approved_dialogue,
+            )
+            unseen_clauses = [
+                clause
+                for clause in canonical._split_clauses(dialogue)
+                if (clause_key := _clean(clause).casefold()) and clause_key not in seen_clause_keys
+            ]
+            dialogue = canonical._pack_dialogue_clauses(unseen_clauses, budget)
+            seen_clause_keys.update(
+                _clean(clause).casefold()
+                for clause in canonical._split_clauses(dialogue)
+                if _clean(clause)
             )
         if dialogue:
             role = "CTA" if position == len(story_plan.resolved_block_plan) and normalized_copy.get("cta") else "DIALOGUE"
