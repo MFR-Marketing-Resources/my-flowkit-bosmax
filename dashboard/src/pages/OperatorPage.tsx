@@ -77,6 +77,20 @@ interface PromptAuditBlock {
 	dialogue_word_budget?: number;
 	engine_prompt_text?: string;
 	compiled_prompt_text?: string;
+	initial_generation_prompt_text?: string | null;
+	independent_block_prompt_text?: string | null;
+	flow_extend_prompt_text?: string | null;
+	prompt_representation?: string | null;
+	prompt_purpose?: string | null;
+	previous_block_index?: number | null;
+	continuation_source?: string | null;
+	audio_seam_contract?: {
+		voice_active_in_final_second?: boolean;
+		audio_seam_out?: string;
+		dialogue_continuation_policy?: string;
+		[key: string]: unknown;
+	} | null;
+	exact_dialogue_slice?: string;
 	allocation?: {
 		start_s: number;
 		end_s: number;
@@ -120,24 +134,41 @@ function PromptAuditCard({
 	block?: PromptAuditBlock | null;
 	fallbackText?: string | null;
 }) {
-	const [copied, setCopied] = useState(false);
-	const promptText =
+	const [copiedPrimary, setCopiedPrimary] = useState(false);
+	const [copiedSecondary, setCopiedSecondary] = useState(false);
+	const blockIndex = block?.block_index ?? 1;
+	const isExtendBlock = Boolean(block?.flow_extend_prompt_text) || (blockIndex > 1);
+	const independentText =
+		block?.independent_block_prompt_text ??
 		block?.engine_prompt_text ??
 		block?.compiled_prompt_text ??
 		fallbackText ??
 		"";
-	const sections = parsePromptSections(promptText);
+	const initialText =
+		block?.initial_generation_prompt_text ??
+		(blockIndex <= 1 ? independentText : "");
+	const extendText = block?.flow_extend_prompt_text ?? "";
+	const primaryText = isExtendBlock ? extendText || independentText : initialText || independentText;
+	const primaryLabel = isExtendBlock ? "Copy Extend Prompt" : "Copy Initial Prompt";
+	const representationLabel = isExtendBlock ? "GOOGLE FLOW EXTEND" : "INITIAL GENERATION";
+	const sections = parsePromptSections(independentText);
 	const allocation = block?.allocation;
 	const presentHeadings = new Set(sections.map((section) => section.heading));
 	const missingSections = CANONICAL_PROMPT_SECTIONS.filter(
 		(heading) => !presentHeadings.has(heading),
 	);
-	const handleCopy = useCallback(() => {
-		navigator.clipboard.writeText(promptText || "").then(() => {
-			setCopied(true);
-			window.setTimeout(() => setCopied(false), 2200);
+	const handleCopyPrimary = useCallback(() => {
+		navigator.clipboard.writeText(primaryText || "").then(() => {
+			setCopiedPrimary(true);
+			window.setTimeout(() => setCopiedPrimary(false), 2200);
 		});
-	}, [promptText]);
+	}, [primaryText]);
+	const handleCopyIndependent = useCallback(() => {
+		navigator.clipboard.writeText(independentText || "").then(() => {
+			setCopiedSecondary(true);
+			window.setTimeout(() => setCopiedSecondary(false), 2200);
+		});
+	}, [independentText]);
 	const metaChips = [
 		block?.block_role ? `Role ${block.block_role}` : null,
 		block?.duration_seconds ? `${block.duration_seconds}s` : null,
@@ -146,18 +177,28 @@ function PromptAuditCard({
 			: null,
 		block?.dialogue_word_budget ? `${block.dialogue_word_budget} words` : null,
 	].filter(Boolean) as string[];
+	const audioSeam = block?.audio_seam_contract;
 
 	return (
-		<div className="rounded-xl border border-slate-800 bg-slate-950/70 overflow-hidden">
+		<div className="rounded-xl border border-slate-800 bg-slate-950/70 overflow-hidden" data-testid="prompt-audit-card">
 			<div className="flex flex-col gap-3 border-b border-slate-800 px-4 py-3 md:flex-row md:items-start md:justify-between">
 				<div className="space-y-2">
 					<div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-200">
 						{label}
 					</div>
 					<div className="flex flex-wrap gap-2">
-						<span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">
-							{sections.length}/9 sections
+						<span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-200" data-testid="prompt-representation-badge">
+							{representationLabel}
 						</span>
+						{!isExtendBlock ? (
+							<span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">
+								{sections.length}/9 sections
+							</span>
+						) : (
+							<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-200">
+								Extension-native · manual research
+							</span>
+						)}
 						{metaChips.map((chip) => (
 							<span
 								key={chip}
@@ -166,33 +207,69 @@ function PromptAuditCard({
 								{chip}
 							</span>
 						))}
-						{missingSections.length === 0 ? (
+						{!isExtendBlock && missingSections.length === 0 ? (
 							<span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
 								Canonical 9-section structure
 							</span>
-						) : (
+						) : null}
+						{!isExtendBlock && missingSections.length > 0 ? (
 							<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200">
 								Missing{" "}
 								{missingSections
 									.map((heading) => heading.replace("SECTION ", "S"))
 									.join(", ")}
 							</span>
-						)}
+						) : null}
 					</div>
 				</div>
-				<button
-					type="button"
-					onClick={handleCopy}
-					className={`rounded-lg border px-3 py-2 text-[11px] font-semibold transition-colors ${copied ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-blue-500/30 bg-blue-500/10 text-blue-100 hover:bg-blue-500/20"}`}
-				>
-					{copied ? "Copied" : "Copy Prompt"}
-				</button>
+				<div className="flex flex-wrap gap-2">
+					<button
+						type="button"
+						onClick={handleCopyPrimary}
+						data-testid={isExtendBlock ? "copy-extend-prompt" : "copy-initial-prompt"}
+						className={`rounded-lg border px-3 py-2 text-[11px] font-semibold transition-colors ${copiedPrimary ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-blue-500/30 bg-blue-500/10 text-blue-100 hover:bg-blue-500/20"}`}
+					>
+						{copiedPrimary ? "Copied" : primaryLabel}
+					</button>
+					{isExtendBlock ? (
+						<button
+							type="button"
+							onClick={handleCopyIndependent}
+							data-testid="copy-independent-block-prompt"
+							className={`rounded-lg border px-3 py-2 text-[11px] font-semibold transition-colors ${copiedSecondary ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-slate-600 bg-slate-800/80 text-slate-200 hover:bg-slate-700"}`}
+						>
+							{copiedSecondary ? "Copied" : "Copy Independent Block Prompt"}
+						</button>
+					) : null}
+				</div>
 			</div>
+			{isExtendBlock ? (
+				<div className="border-b border-slate-800 bg-indigo-500/5 px-4 py-2 text-[11px] text-indigo-100" data-testid="extend-prompt-help">
+					<strong>Extend Prompt</strong> is for manual testing through Google Flow’s Extend function.
+					{" "}
+					<strong>Independent Block Prompt</strong> is the existing standalone-block fallback.
+				</div>
+			) : null}
 			{allocation ? (
 				<div className="border-b border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-300" data-testid="storyboard-allocation-summary">
 					<div className="font-semibold text-slate-200">Storyboard allocation · {allocation.start_s}–{allocation.end_s}s · {allocation.is_final ? "Final closure" : "Continuation seam"}</div>
 					<div className="mt-1 text-slate-400">Story beats: {allocation.assigned_story_beats.map((beat) => beat.role).join(" → ")}</div>
-					<div className="mt-1 text-slate-400">Exact dialogue: {allocation.exact_dialogue_slice || "(visual-only block)"}</div>
+					<div className="mt-1 text-slate-400">Exact dialogue: {allocation.exact_dialogue_slice || block?.exact_dialogue_slice || "(visual-only block)"}</div>
+					{block?.previous_block_index ? (
+						<div className="mt-1 text-slate-400">Previous block: {block.previous_block_index} · Continuation source: {block.continuation_source || "PREVIOUS_GENERATED_VIDEO"}</div>
+					) : null}
+					{audioSeam ? (
+						<div className="mt-1 text-slate-400" data-testid="audio-seam-summary">
+							Audio seam: {String(audioSeam.audio_seam_out || "—")}
+							{audioSeam.voice_active_in_final_second ? " · voice active in final second" : ""}
+							{allocation.is_final ? " · final block (no next extension seam)" : ""}
+						</div>
+					) : null}
+				</div>
+			) : null}
+			{isExtendBlock && extendText ? (
+				<div className="border-b border-slate-800 px-4 py-3 text-sm leading-relaxed text-slate-200 whitespace-pre-wrap" data-testid="flow-extend-prompt-preview">
+					{extendText}
 				</div>
 			) : null}
 			{sections.length > 0 ? (
@@ -230,7 +307,7 @@ function PromptAuditCard({
 				</div>
 			) : (
 				<pre className="px-4 py-3 text-xs text-slate-300 font-mono whitespace-pre-wrap leading-relaxed">
-					{promptText || "(no prompt text)"}
+					{independentText || "(no prompt text)"}
 				</pre>
 			)}
 		</div>

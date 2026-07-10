@@ -180,6 +180,7 @@ domains:
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py
       - agent/services/full_storyboard_extend_planner.py
+      - agent/services/google_flow_extend_prompt_renderer.py
       - agent/services/product_physics.py
       - agent/services/workspace_execution_package_service.py
       - agent/services/flow_client.py
@@ -291,6 +292,7 @@ domains:
       - tests/unit/test_video_reviewer.py
       - tests/unit/test_ugc_video_prompt_compiler_service.py
       - tests/unit/test_full_storyboard_extend_planner.py
+      - tests/unit/test_google_flow_extend_prompt_renderer.py
       - tests/fixtures/full_storyboard_extend_planner/**
       - tests/fixtures/full_storyboard_extend_planner/__init__.py
       - tests/fixtures/full_storyboard_extend_planner/storyboard_fixtures.py

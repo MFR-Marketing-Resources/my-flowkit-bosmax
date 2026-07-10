@@ -112,11 +112,19 @@ def test_f2v_workspace_form_controls_have_stable_autofill_identifiers():
 def test_handoff_bank_renders_all_prompt_blocks():
     """Prompt Handoff Bank maps EVERY block (not just Block 1) into a separate
     copy box — mode-agnostic over prompt_blocks_json, so F2V/HYBRID/I2V/T2V all
-    expose each block separately for the manual Extend workflow."""
+    expose each block separately for the manual Extend workflow.
+
+    Block 1 copies Initial Generation; Block 2+ primary is Extend Prompt with a
+    secondary Independent Block Prompt fallback.
+    """
     src = _read("dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx")
     assert "pkg.prompt_blocks_json" in src
     assert "blocks.map((block, i) =>" in src
-    assert "text={block.engine_prompt_text}" in src
+    assert "flow_extend_prompt_text" in src
+    assert "independent_block_prompt_text" in src or "engine_prompt_text" in src
+    assert "Copy Extend Prompt" in src
+    assert "Copy Initial Prompt" in src
+    assert "Copy Independent Block Prompt" in src
     assert "Block ${block.block_index}" in src
     assert "blocks.length} blocks" in src  # count is dynamic, not a hardcoded 1
 

@@ -178,6 +178,14 @@ interface PromptBlock {
 	is_final?: boolean | null;
 	shot_count: number;
 	engine_prompt_text: string;
+	initial_generation_prompt_text?: string | null;
+	independent_block_prompt_text?: string | null;
+	flow_extend_prompt_text?: string | null;
+	previous_block_index?: number | null;
+	audio_seam_contract?: {
+		voice_active_in_final_second?: boolean;
+		audio_seam_out?: string;
+	} | null;
 	exact_dialogue_slice?: string;
 	allocation?: {
 		assigned_story_beats: Array<{ role: string }>;
@@ -616,22 +624,45 @@ function PackageDetailPanel({
 							<div className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs text-amber-200">
 								EXTEND mode — {blocks.length} blocks. Copy and generate Block 1 first, then continue with Block 2.
 							</div>
-							{blocks.map((block, i) => (
-								<div key={block.block_index} className="space-y-2">
+							{blocks.map((block, i) => {
+								const isExtend = Boolean(block.flow_extend_prompt_text) || block.block_index > 1;
+								const independent = block.independent_block_prompt_text || block.engine_prompt_text;
+								const primary = isExtend
+									? (block.flow_extend_prompt_text || independent)
+									: (block.initial_generation_prompt_text || independent);
+								return (
+								<div key={block.block_index} className="space-y-2" data-testid={`handoff-block-${block.block_index}`}>
+									<div className="text-[10px] font-bold uppercase tracking-widest text-indigo-300">
+										{isExtend ? "GOOGLE FLOW EXTEND" : "INITIAL GENERATION"}
+									</div>
 									<PromptCopyBox
-										text={block.engine_prompt_text}
-										label={`Block ${block.block_index} — ${block.block_role} (${block.duration_seconds}s${block.start_s != null && block.end_s != null ? ` · ${block.start_s}–${block.end_s}s` : ""} · ${block.shot_count} shot)${block.is_final ? " · FINAL" : ""}`}
+										text={primary}
+										label={`Block ${block.block_index} — ${isExtend ? "Copy Extend Prompt" : "Copy Initial Prompt"} (${block.duration_seconds}s${block.start_s != null && block.end_s != null ? ` · ${block.start_s}–${block.end_s}s` : ""})${block.is_final ? " · FINAL" : ""}`}
 										stepNumber={promptStep + i}
 									/>
+									{isExtend ? (
+										<PromptCopyBox
+											text={independent}
+											label={`Block ${block.block_index} — Copy Independent Block Prompt (standalone fallback)`}
+											stepNumber={promptStep + i}
+										/>
+									) : null}
 									{block.allocation ? (
 										<div className="rounded border border-slate-800 bg-slate-950 px-3 py-2 text-[11px] text-slate-400">
 											<div>Allocated story: {block.allocation.assigned_story_beats.map((beat) => beat.role).join(" → ")}</div>
-											<div className="mt-1">Allocated dialogue: {block.allocation.exact_dialogue_slice || "(visual-only block)"}</div>
+											<div className="mt-1">Allocated dialogue: {block.allocation.exact_dialogue_slice || block.exact_dialogue_slice || "(visual-only block)"}</div>
 											<div className="mt-1">Seam: {block.allocation.seam_policy} · {block.allocation.continuation_instruction}</div>
+											{block.previous_block_index ? (
+												<div className="mt-1">Previous block: {block.previous_block_index}</div>
+											) : null}
+											{block.audio_seam_contract ? (
+												<div className="mt-1">Audio seam: {block.audio_seam_contract.audio_seam_out || "—"}{block.audio_seam_contract.voice_active_in_final_second ? " · voice-active final second" : ""}</div>
+											) : null}
 										</div>
 									) : null}
 								</div>
-							))}
+								);
+							})}
 						</div>
 					) : (
 						<PromptCopyBox text={pkg.final_prompt_text} stepNumber={promptStep} />

@@ -662,19 +662,28 @@ def _allocate_dialogue_utterances(
         raise PlannerValidationError("DIALOGUE_PLAN_EXCEEDS_WPS_BUDGET")
     allocated_by_block: list[list[DialogueUtterance]] = [[] for _ in resolved_block_plan]
     used_words = [0 for _ in resolved_block_plan]
-    block_index = 0
+    droppable_roles = {"USP", "CONTEXT", "PROOF", "ANGLE"}
+    deferred: list[DialogueUtterance] = []
     for utterance in dialogue_plan.utterances:
         if utterance.role in final_roles:
             continue
+        placed = False
+        block_index = 0
         while block_index < len(resolved_block_plan):
             reserved_words = reserved_final_words if block_index == len(resolved_block_plan) - 1 else 0
             available_words = budgets[block_index] - reserved_words - used_words[block_index]
             if utterance.word_count <= available_words:
                 allocated_by_block[block_index].append(utterance)
                 used_words[block_index] += utterance.word_count
+                placed = True
                 break
             shortened = canonical._pack_dialogue_clauses([utterance.text], available_words)
-            if shortened:
+            if shortened and len(shortened.split()) == utterance.word_count:
+                allocated_by_block[block_index].append(utterance)
+                used_words[block_index] += utterance.word_count
+                placed = True
+                break
+            if shortened and utterance.role not in droppable_roles:
                 compressed_utterance = replace(
                     utterance,
                     text=shortened,
@@ -682,25 +691,67 @@ def _allocate_dialogue_utterances(
                 )
                 allocated_by_block[block_index].append(compressed_utterance)
                 used_words[block_index] += compressed_utterance.word_count
+                placed = True
                 break
             block_index += 1
-        else:
-            raise PlannerValidationError("DIALOGUE_PLAN_EXCEEDS_WPS_BUDGET")
+        if not placed:
+            if utterance.role in droppable_roles:
+                continue
+            deferred.append(utterance)
+    for utterance in deferred:
+        placed = False
+        for block_index in range(len(resolved_block_plan)):
+            reserved_words = reserved_final_words if block_index == len(resolved_block_plan) - 1 else 0
+            available_words = budgets[block_index] - reserved_words - used_words[block_index]
+            if utterance.word_count <= available_words:
+                allocated_by_block[block_index].append(utterance)
+                used_words[block_index] += utterance.word_count
+                placed = True
+                break
+            keep: list[DialogueUtterance] = []
+            for existing in allocated_by_block[block_index]:
+                if existing.role in droppable_roles:
+                    continue
+                keep.append(existing)
+            allocated_by_block[block_index] = keep
+            used_words[block_index] = sum(item.word_count for item in keep)
+            available_words = budgets[block_index] - reserved_words - used_words[block_index]
+            if utterance.word_count <= available_words:
+                allocated_by_block[block_index].append(utterance)
+                used_words[block_index] += utterance.word_count
+                placed = True
+                break
+        if not placed:
+            raise PlannerValidationError(
+                "DIALOGUE_CANNOT_FORM_NATURAL_EXTENSION_SEAMS",
+                utterance.text[:80],
+            )
     if final_utterances:
         final_index = len(resolved_block_plan) - 1
+        if used_words[final_index] + reserved_final_words > budgets[final_index]:
+            keep = []
+            for existing in allocated_by_block[final_index]:
+                if existing.role in droppable_roles:
+                    continue
+                keep.append(existing)
+            allocated_by_block[final_index] = keep
+            used_words[final_index] = sum(item.word_count for item in keep)
         if used_words[final_index] + reserved_final_words > budgets[final_index]:
             raise PlannerValidationError("FINAL_CTA_CANNOT_FIT_WPS_BUDGET")
         allocated_by_block[final_index].extend(final_utterances)
     allocated_utterances: list[DialogueUtterance] = []
     cursor = 0
+    total_blocks = len(resolved_block_plan)
     for position, seconds in enumerate(resolved_block_plan):
         block_budget = budgets[position]
         block_cursor_words = 0
+        block_rows: list[DialogueUtterance] = []
+        is_final_block = position == total_blocks - 1
         for utterance in allocated_by_block[position]:
             start_s = cursor + (seconds * block_cursor_words / block_budget) if block_budget else float(cursor)
             block_cursor_words += utterance.word_count
             end_s = cursor + (seconds * block_cursor_words / block_budget) if block_budget else float(cursor)
-            allocated_utterances.append(
+            block_rows.append(
                 replace(
                     utterance,
                     start_s=start_s,
@@ -708,6 +759,13 @@ def _allocate_dialogue_utterances(
                     assigned_block_index=position + 1,
                 )
             )
+        if block_rows and not is_final_block:
+            block_end = float(cursor + int(seconds))
+            last = block_rows[-1]
+            if float(last.end_s) < (block_end - 0.95):
+                block_rows[-1] = replace(last, end_s=block_end)
+        allocated_utterances.extend(block_rows)
+        allocated_by_block[position] = block_rows
         cursor += int(seconds)
     full_text = " ".join(utterance.text for utterance in allocated_utterances)
     return (
@@ -1086,3 +1144,13 @@ def validate_planner_result(result: PlannerResult | Mapping[str, Any]) -> None:
     full_dialogue = _clean((data.get("full_dialogue_plan") or {}).get("full_dialogue_text"))
     if concatenated_dialogue != full_dialogue:
         raise PlannerValidationError("DIALOGUE_ALLOCATION_TEXT_MISMATCH")
+    # Linguistic dialogue-seam law for extension-native research readiness.
+    try:
+        from agent.services.google_flow_extend_prompt_renderer import (
+            ExtendPromptValidationError,
+            validate_dialogue_seams,
+        )
+
+        validate_dialogue_seams(allocations)
+    except ExtendPromptValidationError as exc:
+        raise PlannerValidationError(exc.code, exc.detail) from exc

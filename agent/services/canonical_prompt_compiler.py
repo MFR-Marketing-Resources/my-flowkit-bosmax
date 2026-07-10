@@ -1148,7 +1148,39 @@ def _finalize_dialogue_text(text: str) -> str:
     return cleaned
 
 
+def _dialogue_pack_is_natural(text: str) -> bool:
+    """Reject mid-clause stumps that break extension seams (e.g. esok pagi badan)."""
+    cleaned = _finalize_dialogue_text(text)
+    if not cleaned:
+        return False
+    bare = cleaned.rstrip(".!?…")
+    dangling = ("and", "or", "dan", "atau", "sebab", "because", "kalau", "if", "bila", "when", "supaya", "untuk", "yang", "pun", "dengan")
+    last = bare.split()[-1].casefold() if bare.split() else ""
+    if last in dangling:
+        return False
+    # Last clause only.
+    last_clause = cleaned
+    for sep in (". ", "! ", "? "):
+        if sep in cleaned:
+            last_clause = cleaned.split(sep)[-1]
+    last_clause = last_clause.strip().rstrip(".!?…")
+    last_norm = last_clause.replace(",", " ").replace(";", " ").replace(":", " ")
+    last_words = [w for w in last_norm.split() if w]
+    if not last_words:
+        return False
+    joined = " ".join(last_words).casefold()
+    if joined.endswith("esok pagi badan"):
+        return False
+    stump_ends = {"badan", "perut", "malam", "pagi", "rutin", "botol", "minyak", "anak", "ibu"}
+    complete_markers = ("pun letih", "lebih tenang", "lebih lena", "sudah siap", "selesai", "lengkap", "selesa", "terganggu")
+    if last_words[-1].casefold().strip(".,!?") in stump_ends:
+        if len(last_words) <= 8 and not any(m in last_clause.casefold() for m in complete_markers):
+            return False
+    return True
+
+
 def _pack_dialogue_clauses(clauses: list[str], budget: int) -> str:
+    """Pack whole natural clauses only. Prefer dropping a clause over unnatural trim."""
     if budget <= 0:
         return ""
     chosen: list[str] = []
@@ -1158,18 +1190,27 @@ def _pack_dialogue_clauses(clauses: list[str], budget: int) -> str:
         if not words:
             continue
         if not chosen and len(words) > budget:
-            return _finalize_dialogue_text(_trim_to_budget(clause, budget))
+            # Only accept a trimmed first clause when the result stays natural.
+            trimmed = _finalize_dialogue_text(_trim_to_budget(clause, budget))
+            if _dialogue_pack_is_natural(trimmed):
+                return trimmed
+            return ""
         if used_words + len(words) <= budget:
-            chosen.append(clause)
-            used_words += len(words)
+            candidate = _finalize_dialogue_text(" ".join([*chosen, clause]))
+            if _dialogue_pack_is_natural(candidate):
+                chosen.append(clause)
+                used_words += len(words)
             continue
         remaining = budget - used_words
         if chosen and remaining >= 9:
-            chosen.append(_finalize_dialogue_text(_trim_to_budget(clause, remaining)))
-            used_words = budget
+            partial = _finalize_dialogue_text(_trim_to_budget(clause, remaining))
+            if partial and _dialogue_pack_is_natural(
+                _finalize_dialogue_text(" ".join([*chosen, partial]))
+            ):
+                chosen.append(partial)
             break
-    if not chosen and clauses:
-        return _finalize_dialogue_text(_trim_to_budget(clauses[0], budget))
+    if not chosen:
+        return ""
     return _finalize_dialogue_text(" ".join(chosen))
 
 
@@ -1557,9 +1598,11 @@ def _section_8_end_frame(
         )
     if not is_final:
         return (
-            "End on a seam-ready hold: the presenter mid-gesture with the product in grip, face "
-            "toward camera, motion direction preserved so the next block can continue exactly "
-            "from this state. Do not close the commercial arc yet."
+            "During the final second, the presenter remains naturally speaking and moving with "
+            "the product still in grip, face toward camera, mouth movement visible, hand motion "
+            "active, and camera momentum preserved so the next video can extend the same action "
+            "and voice. Do not end on a silent hold, frozen pose, completed commercial closure, "
+            "or final CTA. Do not close the commercial arc yet."
         )
     if mode == "FRAMES":
         return (

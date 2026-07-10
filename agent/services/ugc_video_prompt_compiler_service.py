@@ -21,7 +21,7 @@ from agent.services.prompt_compiler_runtime_config_service import (
 )
 
 
-COMPILER_VERSION = "ugc_video_prompt_compiler_v1"
+COMPILER_VERSION = "ugc_video_prompt_compiler_v2_extend_representations"
 SUPPORTED_MODES = {"T2V", "F2V", "I2V", "IMG"}
 
 
@@ -29,6 +29,7 @@ from agent.services import canonical_prompt_compiler as _canonical
 from agent.services import copy_landbank_service as _landbank
 from agent.services import extend_route_planner as _extend_route_planner
 from agent.services import full_storyboard_extend_planner as _storyboard
+from agent.services import google_flow_extend_prompt_renderer as _extend_renderer
 
 
 # mode → canonical source mode (ADR-008). F2V's live intake is product-only
@@ -987,8 +988,19 @@ def compile_ugc_video_prompt(
                 }
             )
 
+    # Dual prompt representations: INITIAL / INDEPENDENT / GOOGLE_FLOW_EXTEND (research).
+    # engine_prompt_text remains the independent-block 9-section representation so
+    # GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS automation is unchanged.
+    compiled_blocks = _extend_renderer.enrich_compiled_prompt_blocks(
+        compiled_blocks=compiled_blocks,
+        planner_result=planner_result,
+        product=product,
+        source_mode=resolved_source_mode,
+        target_language=resolved_target_language,
+    )
+
     # `compiled_prompt_text` (with internal directives) is preserved per-block for debugging.
-    # `engine_prompt_text` is the clean engine-ready text sent to the AI video engine.
+    # `engine_prompt_text` is the independent-block representation for production automation.
     final_compiled_prompt_text = "\n\n".join(
         block["engine_prompt_text"] for block in compiled_blocks
     )
