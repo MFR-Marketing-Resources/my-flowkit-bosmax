@@ -291,6 +291,7 @@ domains:
       - tests/fixtures/full_storyboard_extend_planner/**
       - tests/fixtures/full_storyboard_extend_planner/__init__.py
       - tests/fixtures/full_storyboard_extend_planner/storyboard_fixtures.py
+      - tests/fixtures/full_storyboard_extend_planner/failure_neutral_comparison.json
       - tests/unit/test_product_physics.py
       - tests/unit/test_workspace_image_preview_contract_service.py
       - tests/unit/test_workspace_execution_package_service.py
