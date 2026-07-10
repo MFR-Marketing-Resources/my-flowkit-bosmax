@@ -175,6 +175,9 @@ domains:
       - dashboard/src/pages/LibraryPage.tsx
       - dashboard/src/App.tsx
       - dashboard/src/pages/OperatorPage.tsx
+      - dashboard/src/pages/OperatorPage.promptRepresentation.component.test.tsx
+      - dashboard/src/utils/promptRepresentationUi.test.ts
+      - dashboard/src/utils/promptRepresentationUi.ts
       - tests/unit/test_artifact_library_retention.py
       - requirements.txt
       - agent/services/prompt_package_dryrun_service.py
@@ -224,6 +227,9 @@ domains:
       - dashboard/src/pages/CreativeLibraryWorkspacePage.tsx
       - dashboard/src/pages/ImgFastlanePage.tsx
       - dashboard/src/pages/OperatorPage.tsx
+      - dashboard/src/pages/OperatorPage.promptRepresentation.component.test.tsx
+      - dashboard/src/utils/promptRepresentationUi.test.ts
+      - dashboard/src/utils/promptRepresentationUi.ts
       - dashboard/src/pages/OperatorPage.sourceMode.test.ts
       - dashboard/src/pages/OperatorPage.durationAuthority.test.ts
       - dashboard/src/pages/OperatorPage.durationAuthority.component.test.tsx

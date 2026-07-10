@@ -485,17 +485,25 @@ def validate_flow_extend_prompt(
 
 
 def dialogue_slice_is_natural_boundary(text: str, *, position: str) -> bool:
-    """Linguistic seam check (not timestamp-only)."""
+    """Linguistic seam check (not timestamp-only).
+
+    Valid Malay/English sentences may end with object nouns such as:
+    malam, anak, ibu, botol, minyak, badan, perut.
+    Only incomplete stumps and dangling connectors fail.
+    """
     cleaned = _clean(text)
     if not cleaned:
         return True
     if position == "end":
         bare = cleaned.rstrip(".!?…")
-        dangling = ("and", "or", "dan", "atau", "sebab", "because", "kalau", "if", "bila", "when", "supaya", "untuk", "yang", "pun", "dengan")
-        last = bare.split()[-1].casefold() if bare.split() else ""
+        dangling = (
+            "and", "or", "dan", "atau", "sebab", "because", "kalau", "if", "bila",
+            "when", "supaya", "untuk", "yang", "pun", "dengan", "the", "a", "an",
+        )
+        last = bare.split()[-1].casefold().strip(".,!?") if bare.split() else ""
         if last in dangling:
             return False
-        if cleaned[-1] not in ".!?…" and len(cleaned.split()) <= 4:
+        if cleaned[-1] not in ".!?…" and len(cleaned.split()) <= 3:
             return False
         last_clause = cleaned
         for sep in (". ", "! ", "? "):
@@ -507,13 +515,23 @@ def dialogue_slice_is_natural_boundary(text: str, *, position: str) -> bool:
         if not last_words:
             return True
         joined = " ".join(last_words).casefold()
-        if joined.endswith("esok pagi badan"):
-            return False
-        stump_ends = {"badan", "perut", "malam", "pagi", "rutin", "botol", "minyak", "anak", "ibu"}
-        complete_markers = ("pun letih", "lebih tenang", "lebih lena", "sudah siap", "selesai", "lengkap", "selesa", "terganggu")
-        if last_words[-1].casefold().strip(".,!?") in stump_ends:
-            if len(last_words) <= 8 and not any(m in last_bare.casefold() for m in complete_markers):
+        incomplete_stumps = (
+            "esok pagi badan",
+            "esok pagi",
+            "tidur tak lena, esok pagi badan",
+            "tidur tak lena esok pagi badan",
+        )
+        joined_n = joined.replace(",", " ")
+        for stump in incomplete_stumps:
+            stump_n = stump.replace(",", " ")
+            if joined_n == stump_n or joined_n.endswith(" " + stump_n):
                 return False
+        # Pure noun leftovers only (e.g. "badan." / "botol."). Verb+object
+        # clauses like "Simpan botol." / "Legakan perut." remain valid.
+        if len(last_words) == 1 and last in {
+            "badan", "perut", "malam", "pagi", "rutin", "botol", "minyak", "anak", "ibu",
+        }:
+            return False
         return True
     if position == "start":
         if len(cleaned.split()) <= 2 and cleaned[-1] not in ".!?…":
@@ -548,6 +566,42 @@ def validate_dialogue_seams(allocations: Sequence[Mapping[str, Any]]) -> None:
                 )
 
 
+
+
+RESEARCH_VOICE_ACTIVE_END_FRAME = (
+    "During the final second, the presenter remains naturally speaking and moving with "
+    "the product still in grip, face toward camera, mouth movement visible, hand motion "
+    "active, and camera momentum preserved so the next video can extend the same action "
+    "and voice. Do not end on a silent hold, frozen pose, completed commercial closure, "
+    "or final CTA. Do not close the commercial arc yet."
+)
+
+
+def build_research_initial_generation_prompt(
+    independent_block_prompt_text: str,
+    *,
+    multi_block: bool,
+    is_final: bool,
+) -> str:
+    """Research-specific Block 1 prompt with active voice seam for multi-block plans.
+
+    Production independent_block_prompt_text remains unchanged (seam-ready hold).
+    """
+    independent = independent_block_prompt_text or ""
+    if not multi_block or is_final or not independent:
+        return independent
+    marker = "SECTION 8 - CTA & END FRAME"
+    if marker not in independent:
+        return independent
+    head, _, rest = independent.partition(marker)
+    s9 = "SECTION 9 - NO_OVERLAY"
+    if s9 not in rest:
+        return independent
+    _body, _, tail = rest.partition(s9)
+    nl = chr(10)
+    return head + marker + nl + RESEARCH_VOICE_ACTIVE_END_FRAME + nl + nl + s9 + tail
+
+
 def attach_prompt_representations(
     *,
     block: dict[str, Any],
@@ -579,14 +633,26 @@ def attach_prompt_representations(
     block["audio_seam_contract"] = audio_seam
 
     if block_index <= 1:
-        block["initial_generation_prompt_text"] = independent
+        multi_block = bool(block.get("_research_multi_block"))
+        research_initial = build_research_initial_generation_prompt(
+            independent,
+            multi_block=multi_block,
+            is_final=is_final,
+        )
+        block["initial_generation_prompt_text"] = research_initial
         block["flow_extend_prompt_text"] = None
         block["prompt_representation"] = PROMPT_REPRESENTATION_INITIAL
-        block["prompt_purpose"] = PROMPT_PURPOSE_PRODUCTION
+        # Research package may expose active-voice initial while production
+        # independent remains the GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS text.
+        block["prompt_purpose"] = (
+            PROMPT_PURPOSE_MANUAL_EXTEND
+            if multi_block and research_initial != independent
+            else PROMPT_PURPOSE_PRODUCTION
+        )
         block["previous_block_index"] = None
         block["continuation_source"] = CONTINUATION_SOURCE_NONE
         block["prompt_representations"] = {
-            PROMPT_REPRESENTATION_INITIAL: independent,
+            PROMPT_REPRESENTATION_INITIAL: research_initial,
             PROMPT_REPRESENTATION_INDEPENDENT: independent,
             PROMPT_REPRESENTATION_EXTEND: None,
         }
@@ -650,9 +716,11 @@ def enrich_compiled_prompt_blocks(
             # Seam repair is attempted by the planner; re-raise for visibility.
             raise
 
+    multi_block = len(compiled_blocks) > 1
     enriched: list[dict[str, Any]] = []
     for i, block in enumerate(compiled_blocks):
         b = dict(block)
+        b["_research_multi_block"] = multi_block
         idx = int(b.get("block_index") or (i + 1))
         allocation = allocation_by_index.get(idx) or b.get("allocation")
         prev = allocation_by_index.get(idx - 1)
@@ -668,5 +736,6 @@ def enrich_compiled_prompt_blocks(
             source_mode=source_mode,
             target_language=target_language,
         )
+        b.pop("_research_multi_block", None)
         enriched.append(b)
     return enriched

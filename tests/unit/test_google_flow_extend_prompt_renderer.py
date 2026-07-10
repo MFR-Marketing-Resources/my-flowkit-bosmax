@@ -126,9 +126,11 @@ def test_audio_seam_and_dialogue_seams(source_key: str):
     assert non_final["audio_seam_contract"]["forbid_silent_final_hold"] is True
     assert final["audio_seam_contract"]["voice_active_in_final_second"] is False
 
-    # Independent non-final end frame is voice-active, not silent seam hold.
-    assert "seam-ready hold" not in non_final["engine_prompt_text"].lower()
-    assert "naturally speaking and moving" in non_final["engine_prompt_text"].lower()
+    # Production independent keeps seam-ready hold; research initial gets voice-active seam.
+    assert "seam-ready hold" in non_final["engine_prompt_text"].lower()
+    assert "seam-ready hold" in (non_final.get("independent_block_prompt_text") or "").lower()
+    assert "naturally speaking and moving" in (non_final.get("initial_generation_prompt_text") or "").lower()
+    assert non_final["initial_generation_prompt_text"] != non_final["independent_block_prompt_text"]
 
     # Dialogue seams natural + concat equals full plan.
     full = " ".join(
@@ -213,3 +215,14 @@ def test_unnatural_fragment_detector():
     assert dialogue_slice_is_natural_boundary(
         "Setiap kali anak menangis, hati ibu pun turut terganggu.", position="end"
     )
+    # Valid noun endings must not false-positive.
+    for ok in (
+        "Anak susah tidur malam.",
+        "Saya jaga anak.",
+        "Kasih sayang ibu.",
+        "Simpan botol.",
+        "Sapu minyak.",
+        "Perut kembung di badan.",
+        "Legakan perut.",
+    ):
+        assert dialogue_slice_is_natural_boundary(ok, position="end"), ok

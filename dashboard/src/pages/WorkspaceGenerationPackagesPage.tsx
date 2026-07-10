@@ -19,6 +19,7 @@ import {
 	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { resolvePromptRepresentationPresentation } from "../utils/promptRepresentationUi";
 import { useNavigate } from "react-router-dom";
 import type { VideoModelInfo } from "../api/productionQueue";
 import {
@@ -625,22 +626,25 @@ function PackageDetailPanel({
 								EXTEND mode — {blocks.length} blocks. Copy and generate Block 1 first, then continue with Block 2.
 							</div>
 							{blocks.map((block, i) => {
-								const isExtend = Boolean(block.flow_extend_prompt_text) || block.block_index > 1;
-								const independent = block.independent_block_prompt_text || block.engine_prompt_text;
-								const primary = isExtend
-									? (block.flow_extend_prompt_text || independent)
-									: (block.initial_generation_prompt_text || independent);
+								const presentation = resolvePromptRepresentationPresentation(block);
+								const independent = presentation.independentText;
+								const primary = presentation.primaryCopyText;
 								return (
 								<div key={block.block_index} className="space-y-2" data-testid={`handoff-block-${block.block_index}`}>
-									<div className="text-[10px] font-bold uppercase tracking-widest text-indigo-300">
-										{isExtend ? "GOOGLE FLOW EXTEND" : "INITIAL GENERATION"}
+									<div className="text-[10px] font-bold uppercase tracking-widest text-indigo-300" data-testid={`handoff-rep-${block.block_index}`}>
+										{presentation.badgeLabel}
 									</div>
+									{presentation.showExtendUnavailable ? (
+										<div className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100" data-testid={`extend-not-available-${block.block_index}`}>
+											Extend Not Available — no flow_extend_prompt_text on this package. Independent Block only.
+										</div>
+									) : null}
 									<PromptCopyBox
 										text={primary}
-										label={`Block ${block.block_index} — ${isExtend ? "Copy Extend Prompt" : "Copy Initial Prompt"} (${block.duration_seconds}s${block.start_s != null && block.end_s != null ? ` · ${block.start_s}–${block.end_s}s` : ""})${block.is_final ? " · FINAL" : ""}`}
+										label={`Block ${block.block_index} — ${presentation.primaryCopyLabel} (${block.duration_seconds}s${block.start_s != null && block.end_s != null ? ` · ${block.start_s}–${block.end_s}s` : ""})${block.is_final ? " · FINAL" : ""}`}
 										stepNumber={promptStep + i}
 									/>
-									{isExtend ? (
+									{presentation.showIndependentSecondary || presentation.showExtendPrimary ? (
 										<PromptCopyBox
 											text={independent}
 											label={`Block ${block.block_index} — Copy Independent Block Prompt (standalone fallback)`}

@@ -1149,16 +1149,24 @@ def _finalize_dialogue_text(text: str) -> str:
 
 
 def _dialogue_pack_is_natural(text: str) -> bool:
-    """Reject mid-clause stumps that break extension seams (e.g. esok pagi badan)."""
+    """Reject incomplete mid-clause packs only.
+
+    Valid Malay/English clauses may end with noun objects such as malam, anak,
+    ibu, botol, minyak, badan, perut when the clause is a complete thought.
+    Only known truncated stumps (e.g. 'esok pagi badan' missing 'pun letih')
+    and dangling connectors are refused.
+    """
     cleaned = _finalize_dialogue_text(text)
     if not cleaned:
         return False
     bare = cleaned.rstrip(".!?…")
-    dangling = ("and", "or", "dan", "atau", "sebab", "because", "kalau", "if", "bila", "when", "supaya", "untuk", "yang", "pun", "dengan")
-    last = bare.split()[-1].casefold() if bare.split() else ""
+    dangling = (
+        "and", "or", "dan", "atau", "sebab", "because", "kalau", "if", "bila",
+        "when", "supaya", "untuk", "yang", "pun", "dengan", "the", "a", "an",
+    )
+    last = bare.split()[-1].casefold().strip(".,!?") if bare.split() else ""
     if last in dangling:
         return False
-    # Last clause only.
     last_clause = cleaned
     for sep in (". ", "! ", "? "):
         if sep in cleaned:
@@ -1169,13 +1177,20 @@ def _dialogue_pack_is_natural(text: str) -> bool:
     if not last_words:
         return False
     joined = " ".join(last_words).casefold()
-    if joined.endswith("esok pagi badan"):
-        return False
-    stump_ends = {"badan", "perut", "malam", "pagi", "rutin", "botol", "minyak", "anak", "ibu"}
-    complete_markers = ("pun letih", "lebih tenang", "lebih lena", "sudah siap", "selesai", "lengkap", "selesa", "terganggu")
-    if last_words[-1].casefold().strip(".,!?") in stump_ends:
-        if len(last_words) <= 8 and not any(m in last_clause.casefold() for m in complete_markers):
+    # Known incomplete production stump from budget packing.
+    incomplete_stumps = (
+        "esok pagi badan",
+        "esok pagi",
+        "tidur tak lena, esok pagi badan",
+    )
+    for stump in incomplete_stumps:
+        if joined == stump or joined.endswith(" " + stump) or joined.endswith("," + stump):
             return False
+    # Very short noun-only leftovers without a verb/predicate.
+    if len(last_words) == 1 and last in {
+        "badan", "perut", "malam", "pagi", "rutin", "botol", "minyak", "anak", "ibu",
+    }:
+        return False
     return True
 
 
@@ -1597,12 +1612,13 @@ def _section_8_end_frame(
             f"{focus['closing']} expressed through the still image alone and {story['closing']} baked into the final read. {_sentence_case(_mode_story_polish(mode)['closing'])}"
         )
     if not is_final:
+        # Production independent-block semantics (GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS).
+        # Research voice-active seam is applied only to research-specific
+        # initial_generation_prompt_text in google_flow_extend_prompt_renderer.
         return (
-            "During the final second, the presenter remains naturally speaking and moving with "
-            "the product still in grip, face toward camera, mouth movement visible, hand motion "
-            "active, and camera momentum preserved so the next video can extend the same action "
-            "and voice. Do not end on a silent hold, frozen pose, completed commercial closure, "
-            "or final CTA. Do not close the commercial arc yet."
+            "End on a seam-ready hold: the presenter mid-gesture with the product in grip, face "
+            "toward camera, motion direction preserved so the next block can continue exactly "
+            "from this state. Do not close the commercial arc yet."
         )
     if mode == "FRAMES":
         return (

@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	resolvePromptRepresentationPresentation,
+} from "../utils/promptRepresentationUi";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
@@ -136,33 +139,33 @@ function PromptAuditCard({
 }) {
 	const [copiedPrimary, setCopiedPrimary] = useState(false);
 	const [copiedSecondary, setCopiedSecondary] = useState(false);
-	const blockIndex = block?.block_index ?? 1;
-	const isExtendBlock = Boolean(block?.flow_extend_prompt_text) || (blockIndex > 1);
-	const independentText =
-		block?.independent_block_prompt_text ??
-		block?.engine_prompt_text ??
-		block?.compiled_prompt_text ??
-		fallbackText ??
-		"";
-	const initialText =
-		block?.initial_generation_prompt_text ??
-		(blockIndex <= 1 ? independentText : "");
-	const extendText = block?.flow_extend_prompt_text ?? "";
-	const primaryText = isExtendBlock ? extendText || independentText : initialText || independentText;
-	const primaryLabel = isExtendBlock ? "Copy Extend Prompt" : "Copy Initial Prompt";
-	const representationLabel = isExtendBlock ? "GOOGLE FLOW EXTEND" : "INITIAL GENERATION";
-	const sections = parsePromptSections(independentText);
+	const presentation = resolvePromptRepresentationPresentation(block, fallbackText);
+	const independentText = presentation.independentText;
+	const extendText = presentation.extendText;
+	const primaryText = presentation.primaryCopyText;
+	const primaryLabel = presentation.primaryCopyLabel;
+	const representationLabel = presentation.badgeLabel;
+	const isExtendBlock = presentation.showExtendPrimary;
+	const showExtendUnavailable = presentation.showExtendUnavailable;
+	const showIndependentSecondary = presentation.showIndependentSecondary;
+	const sections = parsePromptSections(
+		isExtendBlock ? independentText : presentation.initialText || independentText,
+	);
 	const allocation = block?.allocation;
 	const presentHeadings = new Set(sections.map((section) => section.heading));
 	const missingSections = CANONICAL_PROMPT_SECTIONS.filter(
 		(heading) => !presentHeadings.has(heading),
 	);
 	const handleCopyPrimary = useCallback(() => {
+		// Never silently copy independent text through a Copy Extend Prompt button.
+		if (presentation.showExtendPrimary && !presentation.extendText) {
+			return;
+		}
 		navigator.clipboard.writeText(primaryText || "").then(() => {
 			setCopiedPrimary(true);
 			window.setTimeout(() => setCopiedPrimary(false), 2200);
 		});
-	}, [primaryText]);
+	}, [primaryText, presentation.showExtendPrimary, presentation.extendText]);
 	const handleCopyIndependent = useCallback(() => {
 		navigator.clipboard.writeText(independentText || "").then(() => {
 			setCopiedSecondary(true);
@@ -226,12 +229,12 @@ function PromptAuditCard({
 					<button
 						type="button"
 						onClick={handleCopyPrimary}
-						data-testid={isExtendBlock ? "copy-extend-prompt" : "copy-initial-prompt"}
+						data-testid={presentation.primaryTestId}
 						className={`rounded-lg border px-3 py-2 text-[11px] font-semibold transition-colors ${copiedPrimary ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-blue-500/30 bg-blue-500/10 text-blue-100 hover:bg-blue-500/20"}`}
 					>
 						{copiedPrimary ? "Copied" : primaryLabel}
 					</button>
-					{isExtendBlock ? (
+					{showIndependentSecondary || isExtendBlock ? (
 						<button
 							type="button"
 							onClick={handleCopyIndependent}
@@ -243,11 +246,12 @@ function PromptAuditCard({
 					) : null}
 				</div>
 			</div>
-			{isExtendBlock ? (
-				<div className="border-b border-slate-800 bg-indigo-500/5 px-4 py-2 text-[11px] text-indigo-100" data-testid="extend-prompt-help">
-					<strong>Extend Prompt</strong> is for manual testing through Google Flow’s Extend function.
-					{" "}
-					<strong>Independent Block Prompt</strong> is the existing standalone-block fallback.
+			{presentation.helpText ? (
+				<div
+					className={`border-b border-slate-800 px-4 py-2 text-[11px] ${showExtendUnavailable ? "bg-amber-500/10 text-amber-100" : "bg-indigo-500/5 text-indigo-100"}`}
+					data-testid={showExtendUnavailable ? "extend-not-available" : "extend-prompt-help"}
+				>
+					{presentation.helpText}
 				</div>
 			) : null}
 			{allocation ? (

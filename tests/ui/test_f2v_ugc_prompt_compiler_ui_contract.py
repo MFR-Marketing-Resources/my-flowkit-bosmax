@@ -114,20 +114,23 @@ def test_handoff_bank_renders_all_prompt_blocks():
     copy box — mode-agnostic over prompt_blocks_json, so F2V/HYBRID/I2V/T2V all
     expose each block separately for the manual Extend workflow.
 
-    Block 1 copies Initial Generation; Block 2+ primary is Extend Prompt with a
-    secondary Independent Block Prompt fallback.
+    Extend is never inferred from block_index alone — only when flow_extend_prompt_text
+    exists via resolvePromptRepresentationPresentation.
     """
     src = _read("dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx")
+    util = _read("dashboard/src/utils/promptRepresentationUi.ts")
     assert "pkg.prompt_blocks_json" in src
     assert "blocks.map((block, i) =>" in src
-    assert "flow_extend_prompt_text" in src
-    assert "independent_block_prompt_text" in src or "engine_prompt_text" in src
-    assert "Copy Extend Prompt" in src
-    assert "Copy Initial Prompt" in src
-    assert "Copy Independent Block Prompt" in src
+    assert "resolvePromptRepresentationPresentation" in src
+    assert "flow_extend_prompt_text" in util
+    assert "Copy Extend Prompt" in util
+    assert "Copy Initial Prompt" in util
+    assert "Copy Independent Block Prompt" in util or "Copy Independent Block Prompt" in src
+    assert "Extend Not Available" in src or "Extend Not Available" in util
     assert "Block ${block.block_index}" in src
     assert "blocks.length} blocks" in src  # count is dynamic, not a hardcoded 1
-
+    # Must not infer extend from block_index alone in handoff map.
+    assert "block.block_index > 1" not in src
 
 def test_storyboard_first_plan_is_visible_in_operator_preview_and_handoff_bank():
     operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
