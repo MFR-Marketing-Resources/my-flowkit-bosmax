@@ -18,6 +18,7 @@ export const POSTER_AUTO_DEFAULT_DRAFT: PosterBuilderDraft = {
 	operator_notes: "",
 	copy_source: "manual",
 	copy_set_id: "",
+	poster_copy_set_id: "",
 	copy_fallback_confirmed: false,
 	poster_recipe_id: "",
 };

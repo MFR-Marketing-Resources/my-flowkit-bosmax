@@ -51,6 +51,15 @@ VIDEO_SCRIPT_MARKERS: tuple[str, ...] = (
     "esoknya", "pernah tak", "risau", "penat", "menangis", "tak boleh tidur",
 )
 
+# V1 OFFER policy: NON-PRICE promotional creative only. Numeric price/discount
+# claims are BLOCKED until a real OfferSpec + offer-truth source exists.
+_PRICE_CLAIM_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\brm\s?\d", re.IGNORECASE),
+    re.compile(r"\d\s?%"),
+    re.compile(r"\bdiskaun\b[^.!?]*\d", re.IGNORECASE),
+    re.compile(r"\bvoucher\b[^.!?]*\d", re.IGNORECASE),
+)
+
 CHILD_TERMS: tuple[str, ...] = (
     "anak", "bayi", "baby", "kanak", "budak", "si kecil", "infant", "toddler",
 )
@@ -193,6 +202,13 @@ def evaluate_poster_copy(
         if child:
             add("CHILD_HEALTH_CLAIM", BLOCK, "overall",
                 "Audiens bayi/anak + bahasa kesihatan — mesti sangat konservatif; buang claim.")
+
+    # ── OFFER V1 policy: non-price promotional only (BLOCK) ──
+    if _norm(req.archetype).upper() == "OFFER":
+        if any(p.search(blob) for p in _PRICE_CLAIM_PATTERNS):
+            add("OFFER_PRICE_CLAIM_UNSUPPORTED", BLOCK, "overall",
+                "Poster OFFER V1 adalah promosi TANPA harga: buang angka harga/"
+                "diskaun/voucher (tiada sumber offer-truth lagi).")
 
     # ── Video-script / narrative style (WARN) ──
     narrative = _hits(blob, _VIDEO_SCRIPT_PATTERNS)

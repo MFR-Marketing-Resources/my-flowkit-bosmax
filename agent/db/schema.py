@@ -2082,6 +2082,69 @@ CREATE INDEX IF NOT EXISTS idx_bulk_generation_item_run
     ON bulk_generation_item(bulk_run_id);
 CREATE INDEX IF NOT EXISTS idx_bulk_generation_item_run_status
     ON bulk_generation_item(bulk_run_id, status);
+
+-- Poster Copy Set (POSTER_BUILDER_V2) — poster-NATIVE copy domain, fully
+-- separate from the video copy_set table. Statuses are namespaced
+-- POSTER_COPY_* so poster copy can never enter video compilation/selection.
+CREATE TABLE IF NOT EXISTS poster_copy_set (
+    poster_copy_set_id      TEXT PRIMARY KEY,
+    product_id              TEXT NOT NULL,
+    campaign_id             TEXT NOT NULL DEFAULT '',
+    objective               TEXT NOT NULL DEFAULT '',
+    archetype               TEXT NOT NULL DEFAULT '',
+    angle                   TEXT NOT NULL DEFAULT '',
+    primary_message         TEXT NOT NULL DEFAULT '',
+    support_message         TEXT NOT NULL DEFAULT '',
+    proof_points_json       TEXT NOT NULL DEFAULT '[]',
+    offer_json              TEXT,
+    cta                     TEXT NOT NULL DEFAULT '',
+    disclaimer              TEXT NOT NULL DEFAULT '',
+    tone                    TEXT NOT NULL DEFAULT '',
+    language                TEXT NOT NULL DEFAULT 'ms',
+    variants_json           TEXT NOT NULL DEFAULT '[]',
+    field_provenance_json   TEXT NOT NULL DEFAULT '{}',
+    ai_model                TEXT NOT NULL DEFAULT '',
+    prompt_version          TEXT NOT NULL DEFAULT '',
+    status                  TEXT NOT NULL DEFAULT 'POSTER_COPY_DRAFT'
+                            CHECK(status IN ('POSTER_COPY_DRAFT','POSTER_COPY_REVIEW_REQUIRED','POSTER_COPY_APPROVED','POSTER_COPY_REJECTED','POSTER_COPY_SUPERSEDED')),
+    version                 INTEGER NOT NULL DEFAULT 1,
+    parent_poster_copy_set_id TEXT NOT NULL DEFAULT '',
+    archived                INTEGER NOT NULL DEFAULT 0,
+    reject_reason           TEXT NOT NULL DEFAULT '',
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    approved_at             TEXT,
+    approved_by             TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_poster_copy_set_product
+    ON poster_copy_set(product_id, status);
+
+-- Poster Deliverable (POSTER_BUILDER_V2) — one generated/composited poster with
+-- its full render manifest so preview/save identity, reconstruction and
+-- Creative Library reopening survive the 48h generated_artifact purge.
+CREATE TABLE IF NOT EXISTS poster_deliverable (
+    poster_deliverable_id   TEXT PRIMARY KEY,
+    product_id              TEXT NOT NULL,
+    poster_copy_set_id      TEXT NOT NULL DEFAULT '',
+    recipe_id               TEXT NOT NULL DEFAULT '',
+    template_version        TEXT NOT NULL DEFAULT '',
+    composition_strategy    TEXT NOT NULL DEFAULT 'REFERENCE_CONDITIONED'
+                            CHECK(composition_strategy IN ('REFERENCE_CONDITIONED','DETERMINISTIC_COMPOSITE')),
+    render_manifest_json    TEXT NOT NULL DEFAULT '{}',
+    background_media_id     TEXT NOT NULL DEFAULT '',
+    background_local_path   TEXT NOT NULL DEFAULT '',
+    output_path             TEXT NOT NULL DEFAULT '',
+    output_sha256           TEXT NOT NULL DEFAULT '',
+    creative_asset_id       TEXT NOT NULL DEFAULT '',
+    qa_report_json          TEXT NOT NULL DEFAULT '{}',
+    settings_json           TEXT NOT NULL DEFAULT '{}',
+    status                  TEXT NOT NULL DEFAULT 'POSTER_DRAFT'
+                            CHECK(status IN ('POSTER_DRAFT','POSTER_COMPOSED','POSTER_SAVED')),
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_poster_deliverable_product
+    ON poster_deliverable(product_id, status);
 """)
         await db.commit()
 

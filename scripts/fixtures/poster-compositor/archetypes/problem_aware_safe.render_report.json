@@ -1,0 +1,61 @@
+{
+  "renderer": "HTML_CHROMIUM_SERVICE_V1",
+  "canvas": {
+    "w": 1080,
+    "h": 1920
+  },
+  "output_png": {
+    "file": "poster.png",
+    "width": 1080,
+    "height": 1920
+  },
+  "zones": [
+    {
+      "zone_id": "headline",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Tenang di penghujung hari"
+    },
+    {
+      "zone_id": "support",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Suasana rehat yang anda cari."
+    },
+    {
+      "zone_id": "chip_1",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Rutin santai"
+    },
+    {
+      "zone_id": "chip_2",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Aroma lembut"
+    },
+    {
+      "zone_id": "cta",
+      "fitted": true,
+      "overflowed": false,
+      "overlaps_product": false,
+      "font_scale": 1.0,
+      "rendered_text": "Rasai sendiri"
+    }
+  ],
+  "missing_zones": [],
+  "errors": [],
+  "ok": true,
+  "credit_spend": false,
+  "network": false,
+  "recipe_id": "problem_aware_safe",
+  "template_version": "1.0.0"
+}
