@@ -409,6 +409,8 @@ export interface CreativeAsset {
 	source_prompt_fingerprint: string | null;
 	source_workspace_execution_package_id: string | null;
 	source_prompt_package_snapshot_id: string | null;
+	// Governance subtype (e.g. "POSTER_AD" for saved posters — enables reopen).
+	asset_subtype?: string | null;
 	// Truth/safety gates (backend CreativeAssetRecord). Optional here because some
 	// callers/tests omit them; the backend always returns them. APPROVED requires
 	// identity/scale/claim === "PASS" (mirrors the IMG Asset Factory save gate).

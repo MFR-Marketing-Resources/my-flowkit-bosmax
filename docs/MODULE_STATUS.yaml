@@ -511,6 +511,8 @@ domains:
       - agent/authority/POSTER_TEMPLATE_TOKENS.yaml
       - scripts/poster-compositor-render.js
       - scripts/generate_poster_fixtures.py
+      - scripts/generate_real_product_poster_proof.py
+      - scripts/fixtures/poster-compositor/real-products/**
       - scripts/fixtures/poster-compositor/archetypes/product_hero_night_routine.render_report.json
       - scripts/fixtures/poster-compositor/archetypes/product_scale_portability.render_report.json
       - scripts/fixtures/poster-compositor/archetypes/heritage_infographic.render_report.json

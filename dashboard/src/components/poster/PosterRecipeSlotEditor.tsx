@@ -19,10 +19,12 @@ export default function PosterRecipeSlotEditor({
 	recipe,
 	draft,
 	onDraftChange,
+	copyLocked = false,
 }: {
 	recipe: PosterRecipe;
 	draft: PosterBuilderDraft;
 	onDraftChange: (d: PosterBuilderDraft) => void;
+	copyLocked?: boolean;
 }) {
 	return (
 		<section
@@ -72,6 +74,7 @@ export default function PosterRecipeSlotEditor({
 							</div>
 							<input
 								data-testid={`slot-field-${zone.source_field}`}
+								disabled={copyLocked}
 								maxLength={zone.max_chars}
 								placeholder={zone.placeholder}
 								className={`mt-1 w-full rounded-lg border bg-slate-900 px-3 py-2 text-sm text-slate-200 ${over ? "border-rose-500/60" : "border-slate-800"}`}

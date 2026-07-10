@@ -1,0 +1,13 @@
+{
+  "status": "REFERENCE_CONDITIONED_UNVERIFIED",
+  "verified": [
+    "deterministic text render",
+    "output dimensions",
+    "text-zone geometry"
+  ],
+  "human_review_required": [
+    "actual product placement inside the author-defined safe region",
+    "product identity and label readability",
+    "product scale and distortion in the background"
+  ]
+}

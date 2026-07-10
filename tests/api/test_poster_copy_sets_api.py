@@ -39,6 +39,17 @@ def _payload(product_id: str) -> dict:
     }
 
 
+def test_new_version_route_is_registered_once():
+    """A duplicate FastAPI registration makes the route contract ambiguous."""
+    routes = [
+        route
+        for route in copy_sets_router.routes
+        if route.path == "/poster/copy-sets/{poster_copy_set_id}/new-version"
+        and route.methods == {"POST"}
+    ]
+    assert len(routes) == 1
+
+
 def test_full_copy_set_api_lifecycle(product_id):
     c = _client()
     # Create draft.
@@ -96,6 +107,12 @@ def test_recommenders_work_without_ai(product_id, monkeypatch):
 
 
 def test_compose_api_flow_with_mocked_renderer(product_id, tmp_path, monkeypatch):
+    from agent.services import poster_deliverable_service as deliverable_svc
+    monkeypatch.setattr(
+        deliverable_svc,
+        "_ALLOWED_BACKGROUND_ROOTS",
+        (*deliverable_svc._ALLOWED_BACKGROUND_ROOTS, tmp_path),
+    )
     from agent.models.poster_render_manifest import PosterRenderReport, ZoneRenderResult
     from agent.services import poster_compositor_service as compositor
 
@@ -149,3 +166,58 @@ def test_compose_api_flow_with_mocked_renderer(product_id, tmp_path, monkeypatch
     r = c.post(f"/api/poster/deliverables/{did}/save-to-library")
     assert r.status_code == 200
     assert r.json()["creative_asset_id"] == "ca_api_test"
+
+
+# ─── Repair PR: new-version route, by-asset round trip, path security ────────
+
+def test_new_version_route_supersedes_parent_atomically(product_id):
+    c = _client()
+    r = c.post("/api/poster/copy-sets", json=_payload(product_id))
+    assert r.status_code == 200, r.text
+    pcs = r.json()
+    r = c.post(
+        f"/api/poster/copy-sets/{pcs['poster_copy_set_id']}/approve",
+        json={"approval_phrase": POSTER_COPY_APPROVAL_PHRASE, "approved_by": "op"},
+    )
+    assert r.status_code == 200, r.text
+    r = c.post(
+        f"/api/poster/copy-sets/{pcs['poster_copy_set_id']}/new-version",
+        json={"primary_message": "Versi baharu tajuk"},
+    )
+    assert r.status_code == 200, r.text
+    child = r.json()
+    assert child["version"] == 2
+    assert child["status"] == "POSTER_COPY_DRAFT"
+    assert child["parent_poster_copy_set_id"] == pcs["poster_copy_set_id"]
+    parent = c.get(f"/api/poster/copy-sets/{pcs['poster_copy_set_id']}").json()
+    assert parent["status"] == "POSTER_COPY_SUPERSEDED"
+    # New-version on a non-approved (now superseded) parent is refused.
+    r = c.post(
+        f"/api/poster/copy-sets/{pcs['poster_copy_set_id']}/new-version",
+        json={"primary_message": "Cuba lagi"},
+    )
+    assert r.status_code == 409
+
+
+def test_deliverable_by_asset_route_404_when_unknown():
+    c = _client()
+    r = c.get("/api/poster/deliverables/by-asset/ca_unknown_asset")
+    assert r.status_code == 404
+    assert r.json()["detail"]["code"] == "POSTER_DELIVERABLE_NOT_FOUND"
+
+
+def test_compose_rejects_background_path_outside_roots(product_id, tmp_path):
+    """API surface: arbitrary client paths are refused with a structured 422."""
+    c = _client()
+    r = c.post("/api/poster/copy-sets", json=_payload(product_id))
+    pcs = r.json()
+    bg = tmp_path / "evil.png"
+    bg.write_bytes(b"\x89PNG_FAKE")
+    r = c.post("/api/poster/compose", json={
+        "product_id": product_id,
+        "poster_copy_set_id": pcs["poster_copy_set_id"],
+        "recipe_id": "product_hero_night_routine",
+        "background_local_path": str(bg),
+    })
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["code"] == "POSTER_BACKGROUND_PATH_FORBIDDEN"

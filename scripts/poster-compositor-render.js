@@ -8,8 +8,12 @@
  *
  * Hard guarantees:
  *  - OFFLINE: local files only; no network, no generation lane, no credit spend.
- *  - Deterministic environment: system font stack pinned by the manifest's
- *    font tokens (BM is Latin-script; no webfont download).
+ *  - HOST-SCOPED determinism: layout is deterministic on a given host with the
+ *    manifest's font tokens resolved against SYSTEM fonts (no webfont
+ *    download). Cross-host byte identity is NOT claimed. Every required
+ *    primary font family is verified via document.fonts.check() before
+ *    rendering — a missing family FAILS the render (FONT_UNAVAILABLE), it is
+ *    never silently substituted.
  *  - Structured report ALWAYS written (even on failure) with errors[].
  *  - Watchdog timeout → exit 3. Manifest/background errors → exit 2.
  *    Render errors → exit 4. Success → exit 0.
@@ -65,6 +69,24 @@ function intersects(a, b) {
 		a.y + a.h <= b.y ||
 		b.y + b.h <= a.y
 	);
+}
+
+const DEFAULT_FONT_STACK = "'Segoe UI', Arial, sans-serif";
+// CSS generic families always resolve; only named families need verification.
+const GENERIC_FAMILIES = new Set(["sans-serif", "serif", "monospace", "system-ui", "cursive", "fantasy"]);
+
+function primaryFamily(familyStack) {
+	const first = String(familyStack || DEFAULT_FONT_STACK).split(",")[0].trim();
+	return first.replace(/^['"]|['"]$/g, "");
+}
+
+function requiredFontFamilies(manifest) {
+	const tokens = manifest.font_tokens || {};
+	const families = (manifest.zones || []).map((z) => {
+		const token = tokens[z.font_token] || tokens.body || {};
+		return primaryFamily(token.family);
+	});
+	return Array.from(new Set(families)).filter((f) => f && !GENERIC_FAMILIES.has(f.toLowerCase()));
 }
 
 function fontCss(token) {
@@ -175,7 +197,13 @@ async function probe() {
 	const p = chromium.executablePath();
 	const ok = fs.existsSync(p);
 	console.log(
-		JSON.stringify({ node: process.version, renderer: RENDERER_ID, chromium_path: p, chromium_installed: ok }),
+		JSON.stringify({
+			node: process.version,
+			renderer: RENDERER_ID,
+			chromium_path: p,
+			chromium_installed: ok,
+			font_determinism_scope: "HOST_SCOPED",
+		}),
 	);
 	process.exit(ok ? 0 : 1);
 }
@@ -236,6 +264,51 @@ async function main() {
 			deviceScaleFactor: 1,
 		});
 		await page.setContent(buildHtml(manifest, bgDataUri), { waitUntil: "load", timeout: timeoutMs });
+
+		// FAIL-CLOSED font verification: every named primary family the manifest
+		// uses must resolve on THIS host — no silent substitute fonts under a
+		// "deterministic layout" claim.
+		const required = requiredFontFamilies(manifest);
+		const missingFonts = await page.evaluate((families) => {
+			function fontFamilyLooksAvailable(family) {
+				const probeText = "WwMm@#%&1234567890ilI|!";
+				const escapedFamily = String(family).replace(/[\\"]/g, "\\\\$&");
+				const probe = document.createElement("span");
+				const baseline = document.createElement("span");
+				for (const element of [probe, baseline]) {
+					element.textContent = probeText;
+					element.style.cssText =
+						"position:absolute;visibility:hidden;white-space:nowrap;font-size:72px;font-weight:400;line-height:1;";
+					document.body.appendChild(element);
+				}
+				try {
+					return ["monospace", "serif", "sans-serif"].some((fallback) => {
+						probe.style.fontFamily = `"${escapedFamily}", ${fallback}`;
+						baseline.style.fontFamily = fallback;
+						return (
+							document.fonts.check(`16px "${escapedFamily}"`) &&
+							probe.getBoundingClientRect().width !==
+								baseline.getBoundingClientRect().width
+						);
+					});
+				} finally {
+					probe.remove();
+					baseline.remove();
+				}
+			}
+			return families.filter((family) => !fontFamilyLooksAvailable(family));
+		}, required);
+		report.fonts = {
+			determinism_scope: "HOST_SCOPED",
+			required_families: required,
+			missing_families: missingFonts,
+		};
+		if (missingFonts.length > 0) {
+			throw new Error(
+				`FONT_UNAVAILABLE: required font families missing on this host: ${missingFonts.join(", ")}`,
+			);
+		}
+
 		const measured = await page.evaluate(pageFitAndMeasure, manifest.fit_policy || {});
 		await page.screenshot({
 			path: outPath,

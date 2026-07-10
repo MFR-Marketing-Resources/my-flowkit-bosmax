@@ -68,6 +68,15 @@ async def list_deliverables(product_id: str, limit: int = 50):
     }
 
 
+@router.get("/deliverables/by-asset/{creative_asset_id}")
+async def get_deliverable_by_asset(creative_asset_id: str):
+    """Creative Library round trip: reopen a saved poster from its asset id."""
+    try:
+        return await PosterDeliverableService.get_by_creative_asset(creative_asset_id)
+    except PosterDeliverableError as exc:
+        raise _http(exc, exc.code, exc.status_code)
+
+
 @router.get("/deliverables/{poster_deliverable_id}")
 async def get_deliverable(poster_deliverable_id: str):
     try:

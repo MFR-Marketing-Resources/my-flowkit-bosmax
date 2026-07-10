@@ -11,6 +11,7 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 RENDERER = ROOT / "scripts" / "poster-compositor-render.js"
 FIXGEN = ROOT / "scripts" / "generate_poster_fixtures.py"
+REAL_PRODUCT_PROOF = ROOT / "scripts" / "generate_real_product_poster_proof.py"
 ARCHETYPE_FIXTURES = ROOT / "scripts" / "fixtures" / "poster-compositor" / "archetypes"
 
 EXPECTED_RECIPES = (
@@ -81,3 +82,48 @@ def test_fixture_generator_is_offline():
     src = FIXGEN.read_text(encoding="utf-8")
     for banned in ("/api/flow/generate", "start_generate", "http://", "https://"):
         assert banned not in src
+
+
+def test_renderer_fails_closed_on_missing_fonts_and_declares_scope():
+    """Repair PR: font determinism is HOST-SCOPED and fail-closed — the renderer
+    must verify every named primary family via document.fonts.check() and fail
+    with FONT_UNAVAILABLE instead of silently substituting a fallback font.
+    (Runtime failure-path proof: real-products evidence run renders a bogus-font
+    manifest and records the FONT_UNAVAILABLE exit.)"""
+    src = RENDERER.read_text(encoding="utf-8")
+    assert "document.fonts.check" in src
+    # FontFaceSet.check returns true for an unknown family when a fallback can
+    # render the text; the renderer needs an explicit metric-comparison guard.
+    assert "fontFamilyLooksAvailable" in src
+    assert "FONT_UNAVAILABLE" in src
+    assert "HOST_SCOPED" in src
+    # The claim language must be scoped: no cross-host determinism claim.
+    assert "HOST-SCOPED determinism" in src
+
+
+def test_qa_overlap_message_does_not_claim_product_detection():
+    """PRODUCT_REGION_OVERLAP is an author-defined-geometry check; the finding
+    text must say so instead of implying the actual product was detected."""
+    model_src = (ROOT / "agent" / "models" / "poster_render_manifest.py").read_text(
+        encoding="utf-8"
+    )
+    assert "AUTHOR-DEFINED" in model_src
+    assert "NOT" in model_src and "detected" in model_src
+
+
+def test_real_product_proof_targets_required_serum_and_warisan_assets():
+    """The proof lane must use the requested real products, never a substitute."""
+    src = REAL_PRODUCT_PROOF.read_text(encoding="utf-8")
+    # The documented `python scripts/...` invocation must resolve `agent`.
+    assert "sys.path.insert(0, str(ROOT))" in src
+    # The isolated FLOW_AGENT_DIR must contain the renderer resolved by the
+    # compositor service; it must not silently use the shared runtime.
+    assert "scratch / \"scripts\" / \"poster-compositor-render.js\"" in src
+    # The proof command must return zero on a Windows legacy console.
+    assert "real-product runs →" not in src
+    assert "Minyak Warisan Tok Cap Burung 25ml" in src
+    assert "BOSMAX Serum 5 ML" in src
+    assert "90349f8c-9e14-4efe-988e-76ec60ea31f4.png" in src
+    assert "Bosmax Oil 10 ML" not in src
+    assert ".qa_report.json" in src
+    assert ".product_truth_review.json" in src

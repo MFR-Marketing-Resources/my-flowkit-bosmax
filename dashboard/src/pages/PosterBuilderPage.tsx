@@ -20,10 +20,19 @@ import { usePosterRecipes } from "../api/posterRecipes";
 import PosterRecipeSelector from "../components/poster/PosterRecipeSelector";
 import PosterAngleCopyStep from "../components/poster/PosterAngleCopyStep";
 import PosterComposePanel from "../components/poster/PosterComposePanel";
-import { recommendPosterObjectives } from "../api/posterCopySets";
-import type {
-	PosterCopySet,
-	PosterObjectiveRecommendation,
+import {
+	approvePosterCopySet,
+	fetchPosterDeliverableByAsset,
+	newPosterCopySetVersion,
+	patchPosterCopySet,
+	posterDeliverableOutputUrl,
+	recommendPosterObjectives,
+} from "../api/posterCopySets";
+import {
+	POSTER_COPY_APPROVAL_PHRASE,
+	type PosterCopySet,
+	type PosterDeliverableReconstruction,
+	type PosterObjectiveRecommendation,
 } from "../types/posterCopySet";
 import PosterControlledSettings from "../components/poster/PosterControlledSettings";
 import PosterRecipeSlotEditor from "../components/poster/PosterRecipeSlotEditor";
@@ -115,11 +124,21 @@ export default function PosterBuilderPage() {
 	} | null>(null);
 	// POSTER_BUILDER_V2: approved poster-native copy set + AI objective ranking.
 	const [approvedCopySet, setApprovedCopySet] = useState<PosterCopySet | null>(null);
+	const [editingCopySet, setEditingCopySet] = useState<PosterCopySet | null>(null);
+	const [copyVersionLoading, setCopyVersionLoading] = useState<"" | "create" | "approve">("");
+	const [copyVersionError, setCopyVersionError] = useState("");
 	const [objectiveRecs, setObjectiveRecs] = useState<PosterObjectiveRecommendation[]>([]);
 	const [objectiveRecsLoading, setObjectiveRecsLoading] = useState(false);
 	const [flowMirror, setFlowMirror] = useState<PosterFlowMirrorSettings>(
 		DEFAULT_POSTER_FLOW_MIRROR_SETTINGS,
 	);
+	// Creative Library round trip: ?reopen_asset=<creative_asset_id> restores a
+	// saved poster's configuration (product, recipe, approved copy set) and shows
+	// the ORIGINAL saved output. Recompose creates a NEW deliverable; the saved
+	// bytes are never overwritten.
+	const [reopened, setReopened] = useState<PosterDeliverableReconstruction | null>(null);
+	const [reopenError, setReopenError] = useState("");
+	const reopenAppliedRef = useRef(false);
 	const builderSettings = usePosterBuilderSettings();
 	const draftRef = useRef(draft);
 	draftRef.current = draft;
@@ -152,6 +171,31 @@ export default function PosterBuilderPage() {
 			setSelectedProduct(match);
 		}
 	}, [searchParams, products, selectedProduct?.id]);
+
+	// Reopen step 1: fetch the saved deliverable and point product_id at it.
+	useEffect(() => {
+		const reopenAsset = searchParams.get("reopen_asset");
+		if (!reopenAsset || reopened || reopenAppliedRef.current) return;
+		void fetchPosterDeliverableByAsset(reopenAsset)
+			.then((data) => {
+				setReopened(data);
+				setReopenError("");
+				const pid = data.deliverable.product_id;
+				if (pid && searchParams.get("product_id") !== pid) {
+					setSearchParams(
+						{ product_id: pid, reopen_asset: reopenAsset },
+						{ replace: true },
+					);
+				}
+			})
+			.catch((err: Error) =>
+				setReopenError(
+					err.message || "Gagal buka semula poster dari Creative Library.",
+				),
+			);
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once per reopen id
+	}, [searchParams]);
+
 
 	const loadReadiness = async (product: Product) => {
 		const productChanged = readinessProductRef.current !== product.id;
@@ -365,10 +409,10 @@ export default function PosterBuilderPage() {
 		}
 	};
 
-	// Approved Poster Copy Set → project fields into the draft, bind the set id,
-	// and immediately re-run the mandatory quality check (fresh gate).
-	const handleApprovedCopySet = (pcs: PosterCopySet) => {
-		setApprovedCopySet(pcs);
+	const projectPosterCopySetToDraft = (
+		pcs: PosterCopySet,
+		copySource: "APPROVED_POSTER_COPY_SET" | "DRAFT_POSTER_COPY_SET",
+	) => {
 		const points = [...pcs.proof_points, "", "", ""];
 		setDraft((prev) => ({
 			...prev,
@@ -379,13 +423,90 @@ export default function PosterBuilderPage() {
 			usp_3: points[2],
 			cta: pcs.cta,
 			language: pcs.language || prev.language,
-			copy_source: "APPROVED_POSTER_COPY_SET",
+			copy_source: copySource,
 			copy_set_id: "",
 			copy_fallback_confirmed: false,
 			poster_copy_set_id: pcs.poster_copy_set_id,
 		}));
+	};
+
+	// Approved Poster Copy Set → project fields into the draft, bind the set id,
+	// and immediately re-run the mandatory quality check (fresh gate).
+	const handleApprovedCopySet = (pcs: PosterCopySet) => {
+		setEditingCopySet(null);
+		setApprovedCopySet(pcs);
+		setCopyVersionError("");
+		projectPosterCopySetToDraft(pcs, "APPROVED_POSTER_COPY_SET");
 		window.setTimeout(() => void handleCheckPosterQuality(), 0);
 	};
+
+	const handleCreateCopyVersion = async () => {
+		if (!approvedCopySet) return;
+		setCopyVersionLoading("create");
+		setCopyVersionError("");
+		try {
+			const draftVersion = await newPosterCopySetVersion(
+				approvedCopySet.poster_copy_set_id,
+				{},
+			);
+			setApprovedCopySet(null);
+			setEditingCopySet(draftVersion);
+			projectPosterCopySetToDraft(draftVersion, "DRAFT_POSTER_COPY_SET");
+			setPosterQuality(null);
+			setPosterQualityKey(null);
+		} catch (err) {
+			setCopyVersionError(
+				err instanceof Error ? err.message : "Gagal membuka versi baharu untuk edit.",
+			);
+		} finally {
+			setCopyVersionLoading("");
+		}
+	};
+
+	const handleApproveCopyVersion = async () => {
+		if (!editingCopySet) return;
+		setCopyVersionLoading("approve");
+		setCopyVersionError("");
+		try {
+			const patched = await patchPosterCopySet(editingCopySet.poster_copy_set_id, {
+				primary_message: draft.hook,
+				support_message: draft.subhook,
+				proof_points: [draft.usp_1, draft.usp_2, draft.usp_3].filter(Boolean),
+				cta: draft.cta,
+				disclaimer: editingCopySet.disclaimer,
+			});
+			const approved = await approvePosterCopySet(
+				patched.poster_copy_set_id,
+				POSTER_COPY_APPROVAL_PHRASE,
+			);
+			handleApprovedCopySet(approved);
+		} catch (err) {
+			setCopyVersionError(
+				err instanceof Error ? err.message : "Gagal menyimpan versi baharu Poster Copy Set.",
+			);
+		} finally {
+			setCopyVersionLoading("");
+		}
+	};
+
+	// Reopen step 2: once readiness + recipes are in for the SAME product,
+	// restore recipe + approved copy set exactly once.
+	useEffect(() => {
+		if (!reopened || reopenAppliedRef.current) return;
+		if (!readiness || !selectedProduct) return;
+		if (selectedProduct.id !== reopened.deliverable.product_id) return;
+		if (recipes.length === 0) return;
+		reopenAppliedRef.current = true;
+		const recipeId = reopened.deliverable.recipe_id;
+		if (recipeId && recipes.some((r) => r.recipe_id === recipeId)) {
+			handleSelectRecipe(recipeId);
+		}
+		const pcs = reopened.poster_copy_set;
+		if (pcs && pcs.status === "POSTER_COPY_APPROVED") {
+			handleApprovedCopySet(pcs);
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot restore
+	}, [reopened, readiness, selectedProduct?.id, recipes]);
 
 	// Any manual copy edit after approval invalidates the binding (the backend
 	// would otherwise re-project the approved fields over the edits).
@@ -632,6 +753,75 @@ export default function PosterBuilderPage() {
 				) : null}
 			</section>
 
+			{reopenError ? (
+				<p
+					className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100"
+					data-testid="poster-reopen-error"
+				>
+					{reopenError}
+				</p>
+			) : null}
+
+			{reopened ? (
+				<section
+					className="rounded-2xl border border-emerald-700/50 bg-emerald-950/20 p-5"
+					data-testid="poster-reopen-panel"
+				>
+					<p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-400">
+						Dibuka semula dari Creative Library
+					</p>
+					<div className="mt-3 flex flex-wrap gap-5">
+						{reopened.output_available ? (
+							<img
+								src={posterDeliverableOutputUrl(
+									reopened.deliverable.poster_deliverable_id,
+								)}
+								alt="Poster asal yang disimpan"
+								className="h-56 rounded-lg border border-slate-800 object-contain"
+								data-testid="poster-reopen-original-output"
+							/>
+						) : (
+							<p className="text-xs text-amber-300">
+								Fail output asal tiada di runtime ini — konfigurasi tetap
+								dipulihkan; compose semula untuk hasilkan output baharu.
+							</p>
+						)}
+						<dl className="space-y-1 text-xs text-slate-300">
+							<div>
+								<dt className="inline font-semibold">Deliverable:</dt>{" "}
+								<dd className="inline">
+									{reopened.deliverable.poster_deliverable_id}
+								</dd>
+							</div>
+							<div>
+								<dt className="inline font-semibold">Recipe:</dt>{" "}
+								<dd className="inline">{reopened.deliverable.recipe_id}</dd>
+							</div>
+							<div>
+								<dt className="inline font-semibold">Copy set:</dt>{" "}
+								<dd className="inline">
+									{reopened.poster_copy_set
+										? `${reopened.poster_copy_set.poster_copy_set_id} v${reopened.poster_copy_set.version} (${reopened.poster_copy_set.status})`
+										: "—"}
+								</dd>
+							</div>
+							<div>
+								<dt className="inline font-semibold">Strategi produk:</dt>{" "}
+								<dd className="inline">
+									{reopened.deliverable.composition_strategy} — identiti/label/
+									skala produk dalam scene janaan perlu semakan manusia.
+								</dd>
+							</div>
+						</dl>
+					</div>
+					<p className="mt-3 text-[11px] text-slate-400">
+						Konfigurasi (produk, recipe, copy set) telah dipulihkan di bawah.
+						Edit copy yang diluluskan akan mencipta VERSI BAHARU; compose semula
+						mencipta deliverable baharu — output asal tidak ditulis ganti.
+					</p>
+				</section>
+			) : null}
+
 			{loadingReadiness ? (
 				<p className="text-sm text-slate-400">Loading poster readiness…</p>
 			) : null}
@@ -761,19 +951,59 @@ export default function PosterBuilderPage() {
 										onApproved={handleApprovedCopySet}
 									/>
 									{approvedCopySet ? (
-										<p
+										<div
 											data-testid="poster-approved-copy-note"
-											className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-[11px] text-emerald-200"
+											className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-[11px] text-emerald-200"
 										>
-											✓ Copy diluluskan (Poster Copy Set v{approvedCopySet.version}).
-											Slot di bawah terkunci pada set itu — edit manual akan
-											menanggalkan ikatan.
+											<span>
+												✓ Copy diluluskan (Poster Copy Set v{approvedCopySet.version}).
+												Untuk edit, buka versi baharu — set asal kekal immutable.
+											</span>
+											<button
+												type="button"
+												data-testid="poster-copy-create-new-version"
+												disabled={copyVersionLoading !== ""}
+												onClick={() => void handleCreateCopyVersion()}
+												className="rounded-lg border border-emerald-400/40 px-3 py-1.5 font-semibold text-emerald-100 disabled:opacity-40"
+											>
+												{copyVersionLoading === "create"
+													? "Membuka versi…"
+													: "Buka versi baharu untuk edit"}
+											</button>
+										</div>
+									) : null}
+									{editingCopySet ? (
+										<div
+											data-testid="poster-copy-version-draft"
+											className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-[11px] text-amber-100"
+										>
+											<span>
+												Versi baharu v{editingCopySet.version} sedang diedit. Simpan &
+												luluskan untuk mengikat copy ini semula ke compositor.
+											</span>
+											<button
+												type="button"
+												data-testid="poster-copy-save-new-version"
+												disabled={copyVersionLoading !== "" || !draft.hook || !draft.cta}
+												onClick={() => void handleApproveCopyVersion()}
+												className="rounded-lg border border-amber-300/50 px-3 py-1.5 font-semibold text-amber-50 disabled:opacity-40"
+											>
+												{copyVersionLoading === "approve"
+													? "Menyimpan…"
+													: "Simpan & luluskan versi baharu"}
+											</button>
+										</div>
+									) : null}
+									{copyVersionError ? (
+										<p data-testid="poster-copy-version-error" className="text-[11px] text-rose-300">
+											{copyVersionError}
 										</p>
 									) : null}
 									<PosterRecipeSlotEditor
 										recipe={selectedRecipe}
 										draft={draft}
 										onDraftChange={setDraft}
+										copyLocked={approvedCopySet !== null}
 									/>
 									<PosterCopyQualityPanel
 										report={posterQualityFresh ? posterQuality : null}

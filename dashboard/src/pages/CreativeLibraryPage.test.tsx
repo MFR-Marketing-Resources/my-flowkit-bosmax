@@ -157,3 +157,36 @@ describe("CreativeLibraryPage review + approval surface", () => {
 		expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
 	});
 });
+
+describe("CreativeLibraryPage poster reopen round trip", () => {
+	beforeEach(() => {
+		mockedFetch.mockReset();
+		mockedUpdate.mockReset();
+	});
+
+	afterEach(() => cleanup());
+
+	it("shows 'Buka semula' ONLY on POSTER_AD assets and routes to the Poster Builder reopen URL", async () => {
+		mockedFetch.mockResolvedValue({
+			items: [
+				asset({
+					asset_id: "ca_poster_1",
+					display_name: "Poster — Minyak Warisan",
+					asset_subtype: "POSTER_AD",
+					review_status: "APPROVED",
+				}),
+				asset({
+					asset_id: "ca_frame_1",
+					display_name: "Plain Frame",
+					review_status: "APPROVED",
+				}),
+			],
+			total: 2,
+		});
+		renderPage();
+		const reopenBtn = await screen.findByTestId("reopen-poster-ca_poster_1");
+		expect(reopenBtn).toHaveTextContent("Buka semula");
+		// Non-poster assets get no reopen affordance.
+		expect(screen.queryByTestId("reopen-poster-ca_frame_1")).toBeNull();
+	});
+});

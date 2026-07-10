@@ -186,3 +186,65 @@ async def test_regenerated_unsafe_value_is_rejected(monkeypatch):
     with pytest.raises(svc.PosterCopyAIError) as exc:
         await svc.regenerate_field(pid, "PRODUCT_HERO", "Hero", fields, "cta")
     assert exc.value.code == "POSTER_FIELD_REGEN_UNSAFE"
+
+
+# ─── Fallback truth rule (repair PR): no fabricated claims ────────────────────
+
+# Claims a no-grounding fallback must NEVER fabricate: popularity, scarcity,
+# logistics, family suitability, quality/authenticity verification, heritage,
+# ingredients, results.
+_BANNED_FALLBACK_FRAGMENTS = (
+    "dipercayai", "ramai", "kualiti", "terjaga", "kemasan", "asli",
+    "keluarga", "stok", "terhad", "penghantaran", "pantas", "percuma",
+    "original", "authentic", "turun-temurun", "warisan turun", "berkesan",
+    "terbukti", "no.1", "terlaris", "mudah dibawa", "saiz kompak",
+)
+
+
+@pytest.mark.asyncio
+async def test_fallback_makes_no_unsupported_claims_without_intelligence(monkeypatch):
+    """A product with NO approved intelligence gets neutral copy: zero
+    fabricated factual/social-proof claims and ZERO proof chips."""
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    pid = await _seed_product(title="Produk Baru XYZ", display="Produk Baru XYZ")
+    out = await svc.generate_directions(pid, "PRODUCT_HERO", "")
+    assert out["directions"], "fallback must still produce directions"
+    for d in out["directions"]:
+        blob = " ".join(
+            [d["primary_message"], d["support_message"], d["cta"], d["disclaimer"]]
+            + list(d["proof_points"])
+        ).lower()
+        for banned in _BANNED_FALLBACK_FRAGMENTS:
+            assert banned not in blob, (
+                f"fallback fabricated an unsupported claim: {banned!r} in {blob!r}"
+            )
+        # No approved benefits/USPs exist → chips must stay EMPTY.
+        assert d["proof_points"] == []
+        assert all(v == "FALLBACK_TEMPLATE" for v in d["field_provenance"].values())
+
+
+@pytest.mark.asyncio
+async def test_fallback_chips_come_only_from_approved_grounding(monkeypatch):
+    """When approved benefits exist, fallback chips may state ONLY those."""
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    pid = await _seed_product(title="Produk Grounded ABC", display="Produk Grounded ABC")
+
+    class _PK:
+        description = ""
+        benefits = ["Menyegarkan aroma ruang"]
+        usps = ["Formula asli Kelantan"]
+
+    class _G:
+        source = "TEST"
+        product_knowledge = _PK()
+
+    async def fake_grounding(_product):
+        return _G()
+
+    monkeypatch.setattr(svc, "resolve_copy_grounding", fake_grounding)
+    out = await svc.generate_directions(pid, "PRODUCT_HERO", "Aroma asli")
+    assert out["directions"]
+    allowed = {"Menyegarkan aroma ruang", "Formula asli Kelantan"}
+    for d in out["directions"]:
+        for chip in d["proof_points"]:
+            assert chip in allowed, f"chip {chip!r} is not an approved fact"

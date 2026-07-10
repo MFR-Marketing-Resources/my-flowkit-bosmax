@@ -141,6 +141,17 @@ async def patch_poster_copy_set(
         raise _http(exc)
 
 
+@router.post("/{poster_copy_set_id}/new-version")
+async def new_poster_copy_set_version(
+    poster_copy_set_id: str, req: PosterCopySetPatchRequest
+):
+    """Safe edit flow for APPROVED sets: atomic child DRAFT + parent SUPERSEDED."""
+    try:
+        return await PosterCopySetService.new_version(poster_copy_set_id, req)
+    except PosterCopySetError as exc:
+        raise _http(exc)
+
+
 @router.post("/{poster_copy_set_id}/approve")
 async def approve_poster_copy_set(
     poster_copy_set_id: str, req: PosterCopySetApproveRequest
@@ -161,15 +172,5 @@ async def reject_poster_copy_set(
 ):
     try:
         return await PosterCopySetService.reject(poster_copy_set_id, reason=req.reason)
-    except PosterCopySetError as exc:
-        raise _http(exc)
-
-
-@router.post("/{poster_copy_set_id}/new-version")
-async def new_poster_copy_set_version(
-    poster_copy_set_id: str, req: PosterCopySetPatchRequest
-):
-    try:
-        return await PosterCopySetService.new_version(poster_copy_set_id, req)
     except PosterCopySetError as exc:
         raise _http(exc)

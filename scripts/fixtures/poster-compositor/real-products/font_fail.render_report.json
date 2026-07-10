@@ -1,0 +1,25 @@
+{
+  "renderer": "HTML_CHROMIUM_SERVICE_V1",
+  "canvas": {
+    "w": 1080,
+    "h": 1920
+  },
+  "output_png": {},
+  "zones": [],
+  "missing_zones": [],
+  "errors": [
+    "render failed: FONT_UNAVAILABLE: required font families missing on this host: NoSuchFontFamilyXYZ"
+  ],
+  "credit_spend": false,
+  "network": false,
+  "ok": false,
+  "fonts": {
+    "determinism_scope": "HOST_SCOPED",
+    "required_families": [
+      "NoSuchFontFamilyXYZ"
+    ],
+    "missing_families": [
+      "NoSuchFontFamilyXYZ"
+    ]
+  }
+}

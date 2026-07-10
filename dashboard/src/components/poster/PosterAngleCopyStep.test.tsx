@@ -123,6 +123,7 @@ describe("PosterAngleCopyStep — angle-first AI copy flow", () => {
 		await waitFor(() =>
 			expect(screen.getByTestId("poster-copy-set-approved")).toBeInTheDocument(),
 		);
+		expect(screen.queryByTestId("poster-direction-primary_message")).toBeNull();
 		expect(vi.mocked(approvePosterCopySet)).toHaveBeenCalledWith(
 			"pcs-77",
 			"APPROVE_POSTER_COPY_SET",

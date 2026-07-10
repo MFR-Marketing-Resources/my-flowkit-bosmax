@@ -83,7 +83,10 @@ export default function PosterComposePanel({
 			</h3>
 			<p className="text-[11px] text-slate-500">
 				Teks pemasaran dilukis oleh compositor (bukan AI imej) — ejaan tepat,
-				muat zon, tak tutup produk. Preview = fail yang DISIMPAN (byte sama).
+				muat zon, dan teks dijauhkan dari kawasan-produk yang DITETAPKAN
+				template (bukan pengesanan produk sebenar). Preview = fail yang
+				DISIMPAN (byte sama). Semakan manusia tetap perlu: kedudukan, identiti,
+				label & skala produk dalam scene janaan.
 			</p>
 			{!ready ? (
 				<p className="text-[11px] text-amber-300" data-testid="poster-compose-waiting">

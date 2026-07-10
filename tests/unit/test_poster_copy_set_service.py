@@ -168,3 +168,57 @@ def test_zone_projection_is_render_time_only():
         "usp_3": "",
         "cta": "Beli",
     }
+
+
+# ─── Repair PR: atomic new-version transaction ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_new_version_atomicity_no_partial_state_on_failure():
+    """If the parent supersede fails, the child insert must roll back too."""
+    from agent.db import crud as _crud
+
+    pid = (await _crud.create_product(
+        "Atomic Test Product", source="MANUAL",
+        product_display_name="Atomic Test Product", category="Traditional",
+    ))["id"]
+    before = await _crud.list_poster_copy_sets_for_product(pid)
+    with pytest.raises(Exception):
+        await _crud.create_poster_copy_set_version(
+            pid,
+            "pcs-does-not-exist",
+            "POSTER_COPY_SUPERSEDED",
+            status="POSTER_COPY_DRAFT",
+            version=2,
+            primary_message="orphan child must not persist",
+        )
+    after = await _crud.list_poster_copy_sets_for_product(pid)
+    assert len(after) == len(before), "child row leaked from a failed version txn"
+
+
+@pytest.mark.asyncio
+async def test_new_version_transaction_requires_currently_approved_parent():
+    """A stale caller must not create another child after parent supersession."""
+    from agent.db import crud as _crud
+
+    pid = (await _crud.create_product(
+        "Stale Parent Product", source="MANUAL",
+        product_display_name="Stale Parent Product", category="Traditional",
+    ))["id"]
+    parent = await _crud.create_poster_copy_set(
+        pid,
+        status="POSTER_COPY_SUPERSEDED",
+        version=1,
+        primary_message="Parent is no longer editable",
+    )
+    before = await _crud.list_poster_copy_sets_for_product(pid)
+    with pytest.raises(ValueError, match="not currently approved"):
+        await _crud.create_poster_copy_set_version(
+            pid,
+            parent["poster_copy_set_id"],
+            "POSTER_COPY_SUPERSEDED",
+            status="POSTER_COPY_DRAFT",
+            version=2,
+            primary_message="stale child must not persist",
+        )
+    after = await _crud.list_poster_copy_sets_for_product(pid)
+    assert len(after) == len(before), "stale version transaction leaked a child"
