@@ -21,6 +21,7 @@ Usage (from the repo root; uses an ISOLATED scratch agent dir + DB):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -33,6 +34,32 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 EVIDENCE_DIR = ROOT / "scripts" / "fixtures" / "poster-compositor" / "real-products"
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _git_commit() -> str:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout.strip() or "UNKNOWN"
+    except Exception:
+        return "UNKNOWN"
+
+
+def _sanitize_manifest_json(render_manifest_json: str, staged_rel: str) -> str:
+    """Strip the ephemeral absolute staged background path from a manifest so
+    committed evidence carries a relative placeholder, not a machine path."""
+    try:
+        manifest = json.loads(render_manifest_json)
+    except ValueError:
+        return render_manifest_json
+    if "background_local_path" in manifest:
+        manifest["background_local_path"] = staged_rel
+    return json.dumps(manifest, indent=2, ensure_ascii=False)
 
 # Real repository assets (registered in the shared catalog; read-only inputs).
 _MAIN_TREE = Path(os.environ.get("FLOWKIT_MAIN_TREE", r"C:\Users\USER\Desktop\_ref_flowkit"))
@@ -155,8 +182,27 @@ async def _run() -> int:
                     "product scale and distortion in the background",
                 ],
             }
+            staged_rel = f"<staged_output>/{spec['run_id']}_bg{bg_src.suffix}"
+            renderer = composed["render_report"].get("renderer", "")
             evidence = {
                 "run_id": spec["run_id"],
+                # Honest label: an offline deterministic compositor run over a
+                # REAL approved asset — NOT a live generation call.
+                "evidence_type": "REAL-ASSET COMPOSITOR PROOF",
+                "source_asset_id": bg_src.stem,
+                "source_asset_sha256": _sha256_file(bg_src),
+                "background_staged_from": staged_rel,
+                "renderer_version": renderer,
+                "commit_sha": _git_commit(),
+                "reproducible_command": (
+                    "python scripts/generate_real_product_poster_proof.py"
+                ),
+                "evidence_paths": {
+                    "poster_png": f"{spec['run_id']}.poster.png",
+                    "manifest": f"{spec['run_id']}.manifest.json",
+                    "qa_report": f"{spec['run_id']}.qa_report.json",
+                    "product_truth_review": f"{spec['run_id']}.product_truth_review.json",
+                },
                 "product": spec["display"],
                 "recipe_id": spec["recipe_id"],
                 "background": spec["background_kind"],
@@ -178,7 +224,9 @@ async def _run() -> int:
                 encoding="utf-8",
             )
             (EVIDENCE_DIR / f"{spec['run_id']}.manifest.json").write_text(
-                deliverable["render_manifest_json"] + "\n", encoding="utf-8"
+                _sanitize_manifest_json(deliverable["render_manifest_json"], staged_rel)
+                + "\n",
+                encoding="utf-8",
             )
             (EVIDENCE_DIR / f"{spec['run_id']}.qa_report.json").write_text(
                 json.dumps(composed["qa_report"], indent=2, ensure_ascii=False) + "\n",

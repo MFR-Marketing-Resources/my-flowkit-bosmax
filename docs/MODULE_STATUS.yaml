@@ -513,6 +513,10 @@ domains:
       - scripts/generate_poster_fixtures.py
       - scripts/generate_real_product_poster_proof.py
       - scripts/fixtures/poster-compositor/real-products/**
+      - scripts/fixtures/poster-compositor/real-products/bosmax_serum_5ml.evidence.json
+      - scripts/fixtures/poster-compositor/real-products/bosmax_serum_5ml.manifest.json
+      - scripts/fixtures/poster-compositor/real-products/minyak_warisan_tok_25ml.evidence.json
+      - scripts/fixtures/poster-compositor/real-products/minyak_warisan_tok_25ml.manifest.json
       - scripts/fixtures/poster-compositor/archetypes/product_hero_night_routine.render_report.json
       - scripts/fixtures/poster-compositor/archetypes/product_scale_portability.render_report.json
       - scripts/fixtures/poster-compositor/archetypes/heritage_infographic.render_report.json

@@ -32,7 +32,11 @@ from agent.models.poster_render_manifest import (
     build_qa_report,
 )
 from agent.services import poster_compositor_service as compositor
-from agent.services.creative_asset_service import create_creative_asset
+from agent.services.creative_asset_service import (
+    CREATIVE_ASSET_UPLOAD_DIR,
+    create_creative_asset,
+    get_creative_asset_file_path,
+)
 from agent.services.img_asset_lane_config import derive_asset_governance
 from agent.services.poster_template_service import (
     PosterTemplateError,
@@ -40,21 +44,47 @@ from agent.services.poster_template_service import (
 )
 
 # HONEST product-truth stamping: REFERENCE_CONDITIONED generation cannot prove
-# pixel-level product preservation — never stamp PRESERVED for it. VERIFIED is
-# reserved for a future deterministic-composite path where the inserted layer
-# IS the verified product cutout. Unknown strategies fail to the most
-# conservative label.
+# pixel-level product preservation — never stamp PRESERVED for it. A
+# DETERMINISTIC_COMPOSITE is likewise NOT trusted just because its strategy
+# name says "composite": it stays *_UNVERIFIED until explicit verification
+# evidence is supplied. Unknown strategies fail to the most conservative label.
 _TRUTH_STATUS_BY_STRATEGY = {
     "REFERENCE_CONDITIONED": "REFERENCE_CONDITIONED_UNVERIFIED",
-    "DETERMINISTIC_COMPOSITE": "DETERMINISTIC_COMPOSITE_VERIFIED",
+    "DETERMINISTIC_COMPOSITE": "DETERMINISTIC_COMPOSITE_UNVERIFIED",
 }
 _TRUTH_STATUS_DEFAULT = "HUMAN_REVIEW_REQUIRED"
 
+# A deterministic composite earns the VERIFIED label ONLY when every piece of
+# verification evidence is present and truthy: an approved product-asset
+# reference, that asset's hash/provenance, a successful deterministic
+# composition, and a verification/attestation record. Missing ANY of these →
+# fail closed to *_UNVERIFIED. Absent an actual deterministic-composite pipeline,
+# no caller supplies this, so composites correctly remain unverified.
+_COMPOSITE_VERIFICATION_KEYS = (
+    "approved_product_asset_id",
+    "product_asset_sha256",
+    "composition_ok",
+    "attestation",
+)
 
-def derive_poster_truth_status(composition_strategy: str) -> str:
-    return _TRUTH_STATUS_BY_STRATEGY.get(
+
+def _has_composite_verification(verification: dict[str, Any] | None) -> bool:
+    if not isinstance(verification, dict):
+        return False
+    return all(bool(verification.get(k)) for k in _COMPOSITE_VERIFICATION_KEYS)
+
+
+def derive_poster_truth_status(
+    composition_strategy: str, *, verification: dict[str, Any] | None = None
+) -> str:
+    base = _TRUTH_STATUS_BY_STRATEGY.get(
         str(composition_strategy or "").strip(), _TRUTH_STATUS_DEFAULT
     )
+    if base == "DETERMINISTIC_COMPOSITE_UNVERIFIED" and _has_composite_verification(
+        verification
+    ):
+        return "DETERMINISTIC_COMPOSITE_VERIFIED"
+    return base
 
 
 class PosterDeliverableError(Exception):
@@ -76,33 +106,45 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-# Client-supplied background_local_path is only honoured inside these roots
-# (canonical-path containment; traversal collapses under resolve()). Production
-# callers should pass background_media_id — the artifact registry records the
-# system-written path. Tests may extend this tuple via monkeypatch.
-_ALLOWED_BACKGROUND_ROOTS: tuple[Path, ...] = (OUTPUT_DIR,)
+# Trusted storage roots for ANY background image — whether supplied as a client
+# background_local_path OR resolved from a background_media_id artifact row. A
+# database record does NOT make a path safe: the SAME canonical-root containment
+# is enforced on both. Generated scenes live under OUTPUT_DIR/retrieved and
+# approved product photos under the creative-asset upload dir; both are trusted.
+# Traversal/symlinks collapse under resolve(). Tests may extend via monkeypatch.
+_ALLOWED_BACKGROUND_ROOTS: tuple[Path, ...] = (OUTPUT_DIR, CREATIVE_ASSET_UPLOAD_DIR)
 
 
-def _validate_client_background_path(local: str) -> str:
-    """Canonicalize a client-supplied path and enforce root containment."""
+def _validate_trusted_storage_path(
+    local: str,
+    *,
+    missing_code: str = "POSTER_BACKGROUND_FILE_MISSING",
+    forbidden_code: str = "POSTER_BACKGROUND_PATH_FORBIDDEN",
+) -> str:
+    """Canonicalize a storage path and enforce trusted-root containment.
+
+    Shared by the client-path and media-id-resolved-artifact lanes so neither
+    can escape the trusted roots. resolve(strict=True) proves existence and
+    collapses symlinks/traversal to a canonical path before containment.
+    """
     try:
         resolved = Path(local).resolve(strict=True)
     except OSError:
         raise PosterDeliverableError(
-            "POSTER_BACKGROUND_FILE_MISSING",
+            missing_code,
             f"background image file missing: {local}",
             status_code=404,
         )
     except RuntimeError:
         raise PosterDeliverableError(
-            "POSTER_BACKGROUND_PATH_FORBIDDEN",
-            "background_local_path could not be safely canonicalized",
+            forbidden_code,
+            "background path could not be safely canonicalized",
             status_code=422,
         )
     if not resolved.is_file():
         raise PosterDeliverableError(
-            "POSTER_BACKGROUND_PATH_FORBIDDEN",
-            "background_local_path must be a file",
+            forbidden_code,
+            "background path must resolve to a regular file",
             status_code=422,
         )
     for root in _ALLOWED_BACKGROUND_ROOTS:
@@ -113,11 +155,17 @@ def _validate_client_background_path(local: str) -> str:
         if resolved == root_resolved or root_resolved in resolved.parents:
             return str(resolved)
     raise PosterDeliverableError(
-        "POSTER_BACKGROUND_PATH_FORBIDDEN",
-        "background_local_path is outside the allowed generated/output asset "
-        "directories — pass background_media_id for production use",
+        forbidden_code,
+        "background path is outside the trusted generated/creative-asset "
+        "storage roots",
         status_code=422,
     )
+
+
+# Back-compat alias: the client-path validator is now the shared trusted-storage
+# resolver (also applied to media-id-resolved artifact paths). Same signature and
+# error codes, so existing callers/tests are unaffected.
+_validate_client_background_path = _validate_trusted_storage_path
 
 
 async def _resolve_background(
@@ -134,22 +182,78 @@ async def _resolve_background(
                 f"generated artifact {media_id} not found (48h purge?)",
                 status_code=404,
             )
-        # System-recorded path from the artifact registry (not client input).
-        local = _norm(artifact.get("local_path"))
-        if not local or not Path(local).exists():
+        art_local = _norm(artifact.get("local_path"))
+        if not art_local:
             raise PosterDeliverableError(
                 "POSTER_BACKGROUND_FILE_MISSING",
-                f"background image file missing: {local or '(none)'}",
+                "background image file missing: (none)",
                 status_code=404,
             )
-        return media_id, local
+        # A DB record does not make a path safe — the artifact-recorded path is
+        # validated against the SAME trusted roots as client input.
+        return media_id, _validate_trusted_storage_path(
+            art_local,
+            missing_code="POSTER_BACKGROUND_FILE_MISSING",
+            forbidden_code="POSTER_BACKGROUND_ARTIFACT_PATH_FORBIDDEN",
+        )
     if not local:
         raise PosterDeliverableError(
             "POSTER_BACKGROUND_FILE_MISSING",
             "background image file missing: (none)",
             status_code=404,
         )
-    return media_id, _validate_client_background_path(local)
+    return media_id, _validate_trusted_storage_path(local)
+
+
+async def _resolve_durable_output(row: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the original saved poster output from the most durable source.
+
+    Order (never regenerates):
+      1. the deliverable ``output_path`` file, verified against ``output_sha256``;
+      2. the linked Creative Library asset file, verified against the same hash;
+      3. honest failure.
+    A hash mismatch on BOTH copies fails closed (POSTER_OUTPUT_IDENTITY_MISMATCH)
+    rather than serving bytes that are not the saved poster.
+    """
+    expected = _norm(row.get("output_sha256"))
+    saw_mismatch = False
+
+    out_path = _norm(row.get("output_path"))
+    if out_path and Path(out_path).exists():
+        actual = _sha256(Path(out_path))
+        if not expected or actual == expected:
+            return {
+                "available": True,
+                "source": "DELIVERABLE_FILE",
+                "path": out_path,
+                "sha256_verified": bool(expected),
+            }
+        saw_mismatch = True
+
+    asset_id = _norm(row.get("creative_asset_id"))
+    if asset_id:
+        asset_path = await get_creative_asset_file_path(asset_id)
+        if asset_path and Path(asset_path).exists():
+            actual = _sha256(Path(asset_path))
+            if not expected or actual == expected:
+                return {
+                    "available": True,
+                    "source": "CREATIVE_LIBRARY",
+                    "path": str(asset_path),
+                    "sha256_verified": bool(expected),
+                }
+            saw_mismatch = True
+
+    return {
+        "available": False,
+        "source": None,
+        "path": None,
+        "sha256_verified": False,
+        "reason": (
+            "POSTER_OUTPUT_IDENTITY_MISMATCH" if saw_mismatch
+            else "POSTER_OUTPUT_UNAVAILABLE"
+        ),
+    }
 
 
 class PosterDeliverableService:
@@ -342,15 +446,45 @@ class PosterDeliverableService:
             qa = json.loads(row.get("qa_report_json") or "{}")
         except ValueError:
             pass
+        # The saved poster's copy set may since have been SUPERSEDED. Reopen must
+        # still restore the EXACT historical copy the poster was rendered with —
+        # read-only — and flag it so the UI can label it and offer a fork.
+        copy_set_status = _norm(pcs_row.get("status")) if pcs_row else ""
+        durable = await _resolve_durable_output(row)
         return {
             "deliverable": row,
             "render_manifest": manifest,
             "poster_copy_set": copy_set,
+            "poster_copy_set_status": copy_set_status,
+            "poster_copy_set_historical": copy_set_status == "POSTER_COPY_SUPERSEDED",
             "qa_report": qa,
-            "output_available": bool(
-                _norm(row.get("output_path")) and Path(row["output_path"]).exists()
-            ),
+            "output_available": durable["available"],
+            "output_source": durable["source"],
+            "output_sha256_verified": durable["sha256_verified"],
         }
+
+    @staticmethod
+    async def get_output_file(poster_deliverable_id: str) -> dict[str, Any]:
+        """Resolve the ORIGINAL saved poster bytes from the most durable source.
+
+        Reopen must not depend only on ``output_path`` (it can be purged). We
+        try the original deliverable file (sha-verified), then the durable
+        Creative Library asset (sha-verified), then fail honestly. The original
+        saved output is served verbatim — a poster is NEVER silently regenerated.
+        """
+        row = await crud.get_poster_deliverable(_norm(poster_deliverable_id))
+        if not row:
+            raise PosterDeliverableError("POSTER_DELIVERABLE_NOT_FOUND", status_code=404)
+        durable = await _resolve_durable_output(row)
+        if not durable["available"]:
+            code = durable.get("reason") or "POSTER_OUTPUT_UNAVAILABLE"
+            raise PosterDeliverableError(
+                code,
+                "original saved poster output is unavailable from all durable "
+                "sources — refusing to regenerate",
+                status_code=409 if code == "POSTER_OUTPUT_IDENTITY_MISMATCH" else 404,
+            )
+        return durable
 
     @staticmethod
     async def get_by_creative_asset(creative_asset_id: str) -> dict[str, Any]:

@@ -1,5 +1,18 @@
 {
   "run_id": "bosmax_serum_5ml",
+  "evidence_type": "REAL-ASSET COMPOSITOR PROOF",
+  "source_asset_id": "90349f8c-9e14-4efe-988e-76ec60ea31f4",
+  "source_asset_sha256": "31924843b59c598051de52e14f499a2d9be7c56599d68463525d9dd8891b76f2",
+  "background_staged_from": "<staged_output>/bosmax_serum_5ml_bg.png",
+  "renderer_version": "HTML_CHROMIUM_SERVICE_V1",
+  "commit_sha": "eda2b1a0443382038f29d4a39f8163aa232a5cb5",
+  "reproducible_command": "python scripts/generate_real_product_poster_proof.py",
+  "evidence_paths": {
+    "poster_png": "bosmax_serum_5ml.poster.png",
+    "manifest": "bosmax_serum_5ml.manifest.json",
+    "qa_report": "bosmax_serum_5ml.qa_report.json",
+    "product_truth_review": "bosmax_serum_5ml.product_truth_review.json"
+  },
   "product": "BOSMAX Serum 5 ML",
   "recipe_id": "product_hero_night_routine",
   "background": "APPROVED registered BOSMAX Serum product-lock photo (stored product title: Bosmax Herbs 5 ML; no generated scene exists and no new generation fired)",

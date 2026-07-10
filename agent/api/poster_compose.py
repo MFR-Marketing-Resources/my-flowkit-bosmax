@@ -87,19 +87,17 @@ async def get_deliverable(poster_deliverable_id: str):
 
 @router.get("/deliverables/{poster_deliverable_id}/output")
 async def get_deliverable_output(poster_deliverable_id: str):
+    # Serve the ORIGINAL saved bytes from the most durable source (deliverable
+    # file → Creative Library asset), sha-verified. Never regenerates.
     try:
-        info = await PosterDeliverableService.get_with_manifest(poster_deliverable_id)
+        durable = await PosterDeliverableService.get_output_file(poster_deliverable_id)
     except PosterDeliverableError as exc:
         raise _http(exc, exc.code, exc.status_code)
-    if not info["output_available"]:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "POSTER_OUTPUT_FILE_MISSING", "message": "output purged or not composed"},
-        )
     return FileResponse(
-        info["deliverable"]["output_path"],
+        durable["path"],
         media_type="image/png",
         filename=f"poster_{poster_deliverable_id}.png",
+        headers={"X-Poster-Output-Source": durable["source"]},
     )
 
 

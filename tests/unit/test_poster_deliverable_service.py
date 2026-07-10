@@ -314,8 +314,36 @@ def test_truth_status_mapping_is_fail_closed():
         deliverable_svc.derive_poster_truth_status("REFERENCE_CONDITIONED")
         == "REFERENCE_CONDITIONED_UNVERIFIED"
     )
+    # A deterministic composite is NOT auto-trusted: without verification
+    # evidence it stays UNVERIFIED (item C — no false *_VERIFIED stamp).
     assert (
         deliverable_svc.derive_poster_truth_status("DETERMINISTIC_COMPOSITE")
+        == "DETERMINISTIC_COMPOSITE_UNVERIFIED"
+    )
+    # Partial / falsy evidence still fails closed to UNVERIFIED.
+    assert (
+        deliverable_svc.derive_poster_truth_status(
+            "DETERMINISTIC_COMPOSITE",
+            verification={
+                "approved_product_asset_id": "ca_1",
+                "product_asset_sha256": "abc",
+                "composition_ok": False,  # not a successful composition
+                "attestation": "op",
+            },
+        )
+        == "DETERMINISTIC_COMPOSITE_UNVERIFIED"
+    )
+    # ONLY complete, truthy verification evidence earns the VERIFIED label.
+    assert (
+        deliverable_svc.derive_poster_truth_status(
+            "DETERMINISTIC_COMPOSITE",
+            verification={
+                "approved_product_asset_id": "ca_1",
+                "product_asset_sha256": "abc123",
+                "composition_ok": True,
+                "attestation": "operator-attested",
+            },
+        )
         == "DETERMINISTIC_COMPOSITE_VERIFIED"
     )
     # Unknown / missing strategy → most conservative label, never PRESERVED.
@@ -416,3 +444,198 @@ async def test_creative_library_round_trip_by_asset(tmp_path, monkeypatch):
     with pytest.raises(PosterDeliverableError) as exc:
         await PosterDeliverableService.get_by_creative_asset("ca_nope")
     assert exc.value.status_code == 404
+
+
+# ─── Closure: durable original-output fallback (item B) ─────────────────────
+
+
+async def _compose_and_save(pid, pcs, tmp_path, monkeypatch, captured):
+    result = await _compose(pid, pcs, tmp_path)
+    _mock_asset(monkeypatch, captured, asset_id="ca_durable_1")
+    saved = await PosterDeliverableService.save_to_library(
+        result["deliverable"]["poster_deliverable_id"]
+    )
+    return result["deliverable"]["poster_deliverable_id"], saved
+
+
+@pytest.mark.asyncio
+async def test_durable_output_prefers_original_file(tmp_path, monkeypatch):
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    result = await _compose(pid, pcs, tmp_path)
+    did = result["deliverable"]["poster_deliverable_id"]
+    durable = await PosterDeliverableService.get_output_file(did)
+    assert durable["source"] == "DELIVERABLE_FILE"
+    assert durable["available"] is True
+    assert durable["sha256_verified"] is True
+    info = await PosterDeliverableService.get_with_manifest(did)
+    assert info["output_available"] is True
+    assert info["output_source"] == "DELIVERABLE_FILE"
+
+
+@pytest.mark.asyncio
+async def test_durable_output_falls_back_to_creative_library(tmp_path, monkeypatch):
+    """Original deliverable file purged, but the durable Library copy survives."""
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    captured = {}
+    did, _ = await _compose_and_save(pid, pcs, tmp_path, monkeypatch, captured)
+    row = await crud.get_poster_deliverable(did)
+    original = Path(row["output_path"])
+    library_copy = tmp_path / "library" / "poster_copy.png"
+    library_copy.parent.mkdir(parents=True, exist_ok=True)
+    library_copy.write_bytes(original.read_bytes())  # identical bytes -> same sha
+    original.unlink()  # simulate 48h purge of the deliverable file
+
+    async def fake_asset_path(asset_id):
+        assert asset_id == "ca_durable_1"
+        return library_copy
+
+    monkeypatch.setattr(deliverable_svc, "get_creative_asset_file_path", fake_asset_path)
+    durable = await PosterDeliverableService.get_output_file(did)
+    assert durable["source"] == "CREATIVE_LIBRARY"
+    assert durable["sha256_verified"] is True
+    info = await PosterDeliverableService.get_with_manifest(did)
+    assert info["output_available"] is True
+    assert info["output_source"] == "CREATIVE_LIBRARY"
+
+
+@pytest.mark.asyncio
+async def test_durable_output_both_missing_fails_honestly(tmp_path, monkeypatch):
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    captured = {}
+    did, _ = await _compose_and_save(pid, pcs, tmp_path, monkeypatch, captured)
+    Path((await crud.get_poster_deliverable(did))["output_path"]).unlink()
+
+    async def no_asset(asset_id):
+        return None
+
+    monkeypatch.setattr(deliverable_svc, "get_creative_asset_file_path", no_asset)
+    with pytest.raises(PosterDeliverableError) as exc:
+        await PosterDeliverableService.get_output_file(did)
+    assert exc.value.code == "POSTER_OUTPUT_UNAVAILABLE"
+    assert exc.value.status_code == 404
+    info = await PosterDeliverableService.get_with_manifest(did)
+    assert info["output_available"] is False
+    assert info["output_source"] is None
+
+
+@pytest.mark.asyncio
+async def test_durable_output_hash_mismatch_never_serves(tmp_path, monkeypatch):
+    """Both copies present but neither matches the saved hash -> fail closed,
+    never serve non-original bytes and never regenerate."""
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    captured = {}
+    did, _ = await _compose_and_save(pid, pcs, tmp_path, monkeypatch, captured)
+    row = await crud.get_poster_deliverable(did)
+    original = Path(row["output_path"])
+    original.write_bytes(b"TAMPERED-DELIVERABLE-BYTES")  # no longer matches sha
+    library_copy = tmp_path / "library" / "poster_copy.png"
+    library_copy.parent.mkdir(parents=True, exist_ok=True)
+    library_copy.write_bytes(b"TAMPERED-LIBRARY-BYTES")  # also mismatched
+
+    async def fake_asset_path(asset_id):
+        return library_copy
+
+    monkeypatch.setattr(deliverable_svc, "get_creative_asset_file_path", fake_asset_path)
+    with pytest.raises(PosterDeliverableError) as exc:
+        await PosterDeliverableService.get_output_file(did)
+    assert exc.value.code == "POSTER_OUTPUT_IDENTITY_MISMATCH"
+    assert exc.value.status_code == 409
+
+
+# ─── Closure: trusted-path policy for media-id artifacts (item E) ───────────
+
+
+@pytest.mark.asyncio
+async def test_media_id_artifact_path_inside_roots_ok(tmp_path, monkeypatch):
+    bg = tmp_path / "artifact_bg.png"
+    bg.write_bytes(b"\x89PNG_ART")
+
+    async def fake_artifact(media_id):
+        return {"local_path": str(bg)}
+
+    monkeypatch.setattr(deliverable_svc.crud, "get_generated_artifact", fake_artifact)
+    media_id, local = await deliverable_svc._resolve_background("m1", "")
+    assert media_id == "m1"
+    assert Path(local) == bg.resolve()
+
+
+@pytest.mark.asyncio
+async def test_media_id_artifact_path_outside_roots_rejected(
+    tmp_path_factory, monkeypatch
+):
+    outside = tmp_path_factory.mktemp("evil_outside")
+    bad = outside / "bg.png"
+    bad.write_bytes(b"X")
+
+    async def fake_artifact(media_id):
+        return {"local_path": str(bad)}
+
+    monkeypatch.setattr(deliverable_svc.crud, "get_generated_artifact", fake_artifact)
+    with pytest.raises(PosterDeliverableError) as exc:
+        await deliverable_svc._resolve_background("m1", "")
+    assert exc.value.code == "POSTER_BACKGROUND_ARTIFACT_PATH_FORBIDDEN"
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_media_id_artifact_missing_file_fails_closed(tmp_path, monkeypatch):
+    async def fake_artifact(media_id):
+        return {"local_path": str(tmp_path / "does_not_exist.png")}
+
+    monkeypatch.setattr(deliverable_svc.crud, "get_generated_artifact", fake_artifact)
+    with pytest.raises(PosterDeliverableError) as exc:
+        await deliverable_svc._resolve_background("m1", "")
+    assert exc.value.code == "POSTER_BACKGROUND_FILE_MISSING"
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_media_id_artifact_traversal_collapses_and_rejected(
+    tmp_path_factory, tmp_path, monkeypatch
+):
+    """A traversal path recorded on the artifact row that escapes the trusted
+    roots is refused after canonicalization - a DB record is not a trust root."""
+    outside = tmp_path_factory.mktemp("traversal_target")
+    target = outside / "bg.png"
+    target.write_bytes(b"X")
+    traversal = tmp_path / ".." / outside.name / "bg.png"
+
+    async def fake_artifact(media_id):
+        return {"local_path": str(traversal)}
+
+    monkeypatch.setattr(deliverable_svc.crud, "get_generated_artifact", fake_artifact)
+    with pytest.raises(PosterDeliverableError) as exc:
+        await deliverable_svc._resolve_background("m1", "")
+    assert exc.value.code == "POSTER_BACKGROUND_ARTIFACT_PATH_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_media_id_artifact_symlink_escape_rejected(
+    tmp_path_factory, tmp_path, monkeypatch
+):
+    """A symlink inside a trusted root that points OUTSIDE it must fail closed
+    (resolve() collapses the link before containment)."""
+    outside = tmp_path_factory.mktemp("symlink_target")
+    target = outside / "bg.png"
+    target.write_bytes(b"X")
+    link = tmp_path / "link_bg.png"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted on this platform")
+
+    async def fake_artifact(media_id):
+        return {"local_path": str(link)}
+
+    monkeypatch.setattr(deliverable_svc.crud, "get_generated_artifact", fake_artifact)
+    with pytest.raises(PosterDeliverableError) as exc:
+        await deliverable_svc._resolve_background("m1", "")
+    assert exc.value.code == "POSTER_BACKGROUND_ARTIFACT_PATH_FORBIDDEN"

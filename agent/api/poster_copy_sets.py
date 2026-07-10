@@ -152,6 +152,18 @@ async def new_poster_copy_set_version(
         raise _http(exc)
 
 
+@router.post("/{poster_copy_set_id}/fork-historical")
+async def fork_poster_copy_set_from_historical(
+    poster_copy_set_id: str, req: PosterCopySetPatchRequest
+):
+    """Reopen a saved poster whose copy set is now SUPERSEDED: clone the exact
+    historical copy into a fresh DRAFT without mutating the historical record."""
+    try:
+        return await PosterCopySetService.fork_from_historical(poster_copy_set_id, req)
+    except PosterCopySetError as exc:
+        raise _http(exc)
+
+
 @router.post("/{poster_copy_set_id}/approve")
 async def approve_poster_copy_set(
     poster_copy_set_id: str, req: PosterCopySetApproveRequest

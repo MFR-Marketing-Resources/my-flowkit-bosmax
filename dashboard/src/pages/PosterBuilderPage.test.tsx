@@ -61,6 +61,7 @@ vi.mock("../api/posterCopySets", () => ({
 	posterDeliverableOutputUrl: (id: string) => `/api/poster/deliverables/${id}/output`,
 	fetchPosterDeliverableByAsset: vi.fn(),
 	newPosterCopySetVersion: vi.fn(),
+	forkPosterCopySetFromHistorical: vi.fn(),
 	patchPosterCopySet: vi.fn(),
 }));
 
@@ -250,6 +251,7 @@ import { fetchPosterCopyQuality } from "../api/posterCopyQuality";
 import {
 	approvePosterCopySet,
 	fetchPosterDeliverableByAsset,
+	forkPosterCopySetFromHistorical,
 	newPosterCopySetVersion,
 	patchPosterCopySet,
 } from "../api/posterCopySets";
@@ -264,6 +266,7 @@ const mockedCatalog = vi.mocked(fetchProductCatalog);
 const mockedQuality = vi.mocked(fetchPosterCopyQuality);
 const mockedReopen = vi.mocked(fetchPosterDeliverableByAsset);
 const mockedNewVersion = vi.mocked(newPosterCopySetVersion);
+const mockedForkHistorical = vi.mocked(forkPosterCopySetFromHistorical);
 const mockedPatchCopySet = vi.mocked(patchPosterCopySet);
 const mockedApproveCopySet = vi.mocked(approvePosterCopySet);
 
@@ -318,6 +321,7 @@ describe("PosterBuilderPage", () => {
 		mockedQuality.mockReset();
 		mockedReopen.mockReset();
 		mockedNewVersion.mockReset();
+		mockedForkHistorical.mockReset();
 		mockedPatchCopySet.mockReset();
 		mockedApproveCopySet.mockReset();
 		// Default: a clean expert-quality report so tests that reach the generate
@@ -1144,6 +1148,80 @@ describe("PosterBuilderPage", () => {
 				"pcs_child",
 				"APPROVE_POSTER_COPY_SET",
 			),
+		);
+	});
+
+	it("reopens a SUPERSEDED historical copy read-only and forks a new draft", async () => {
+		const superseded = {
+			poster_copy_set_id: "pcs_hist",
+			product_id: "p1",
+			campaign_id: "",
+			objective: "Product introduction",
+			archetype: "PRODUCT_HERO",
+			angle: "Routine",
+			primary_message: "Tajuk sejarah",
+			support_message: "Sokongan sejarah",
+			proof_points: ["Bukti sejarah"],
+			offer: null,
+			cta: "Dapatkan",
+			disclaimer: "",
+			tone: "mesra",
+			language: "ms",
+			variants: [],
+			field_provenance: {},
+			ai_model: "",
+			prompt_version: "",
+			status: "POSTER_COPY_SUPERSEDED",
+			version: 1,
+			parent_poster_copy_set_id: "",
+			approved_at: "2026-07-10T00:00:00Z",
+			approved_by: "operator",
+		};
+		const forkedDraft = {
+			...superseded,
+			poster_copy_set_id: "pcs_fork",
+			status: "POSTER_COPY_DRAFT",
+			version: 3,
+			parent_poster_copy_set_id: "pcs_hist",
+		};
+		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
+		mockedReopen.mockResolvedValue({
+			deliverable: {
+				poster_deliverable_id: "pd_hist",
+				product_id: "p1",
+				poster_copy_set_id: "pcs_hist",
+				recipe_id: "product_hero_night_routine",
+				template_version: "v1",
+				composition_strategy: "REFERENCE_CONDITIONED",
+				background_media_id: "m1",
+				output_path: "/poster.png",
+				output_sha256: "abc",
+				creative_asset_id: "ca_saved",
+				status: "POSTER_SAVED",
+			},
+			render_manifest: {},
+			poster_copy_set: superseded,
+			poster_copy_set_status: "POSTER_COPY_SUPERSEDED",
+			poster_copy_set_historical: true,
+			qa_report: { ok: true, findings: [], block_count: 0, warn_count: 0 },
+			output_available: true,
+			output_source: "CREATIVE_LIBRARY",
+			output_sha256_verified: true,
+		});
+		mockedForkHistorical.mockResolvedValue(forkedDraft);
+
+		renderPage("?reopen_asset=ca_saved");
+		await screen.findByTestId("poster-reopen-panel");
+		// Historical version is clearly labelled and read-only.
+		expect(screen.getByTestId("poster-reopen-historical")).toBeInTheDocument();
+		// Durable output source is surfaced to the operator.
+		expect(
+			screen.getByTestId("poster-reopen-output-source").textContent,
+		).toContain("Creative Library");
+		// Forking clones the historical copy WITHOUT mutating it.
+		fireEvent.click(screen.getByTestId("poster-reopen-fork-historical"));
+		await waitFor(() =>
+			expect(mockedForkHistorical).toHaveBeenCalledWith("pcs_hist", {}),
 		);
 	});
 });

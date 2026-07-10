@@ -23,6 +23,7 @@ import PosterComposePanel from "../components/poster/PosterComposePanel";
 import {
 	approvePosterCopySet,
 	fetchPosterDeliverableByAsset,
+	forkPosterCopySetFromHistorical,
 	newPosterCopySetVersion,
 	patchPosterCopySet,
 	posterDeliverableOutputUrl,
@@ -125,7 +126,9 @@ export default function PosterBuilderPage() {
 	// POSTER_BUILDER_V2: approved poster-native copy set + AI objective ranking.
 	const [approvedCopySet, setApprovedCopySet] = useState<PosterCopySet | null>(null);
 	const [editingCopySet, setEditingCopySet] = useState<PosterCopySet | null>(null);
-	const [copyVersionLoading, setCopyVersionLoading] = useState<"" | "create" | "approve">("");
+	const [copyVersionLoading, setCopyVersionLoading] = useState<
+		"" | "create" | "approve" | "fork"
+	>("");
 	const [copyVersionError, setCopyVersionError] = useState("");
 	const [objectiveRecs, setObjectiveRecs] = useState<PosterObjectiveRecommendation[]>([]);
 	const [objectiveRecsLoading, setObjectiveRecsLoading] = useState(false);
@@ -457,6 +460,44 @@ export default function PosterBuilderPage() {
 		} catch (err) {
 			setCopyVersionError(
 				err instanceof Error ? err.message : "Gagal membuka versi baharu untuk edit.",
+			);
+		} finally {
+			setCopyVersionLoading("");
+		}
+	};
+
+	const handleForkHistorical = async () => {
+		const historical = reopened?.poster_copy_set;
+		if (!historical) return;
+		setCopyVersionLoading("fork");
+		setCopyVersionError("");
+		try {
+			// Clone the SUPERSEDED historical copy into a fresh editable DRAFT —
+			// the historical record and the saved poster's provenance are untouched.
+			const draftVersion = await forkPosterCopySetFromHistorical(
+				historical.poster_copy_set_id,
+				{},
+			);
+			setApprovedCopySet(null);
+			setEditingCopySet(draftVersion);
+			projectPosterCopySetToDraft(draftVersion, "DRAFT_POSTER_COPY_SET");
+			setPosterQuality(null);
+			setPosterQualityKey(null);
+			setReopened((prev) =>
+				prev
+					? {
+							...prev,
+							poster_copy_set: draftVersion,
+							poster_copy_set_status: draftVersion.status,
+							poster_copy_set_historical: false,
+						}
+					: prev,
+			);
+		} catch (err) {
+			setCopyVersionError(
+				err instanceof Error
+					? err.message
+					: "Gagal membuka draf baharu daripada versi sejarah.",
 			);
 		} finally {
 			setCopyVersionLoading("");
@@ -812,8 +853,53 @@ export default function PosterBuilderPage() {
 									skala produk dalam scene janaan perlu semakan manusia.
 								</dd>
 							</div>
+							<div>
+								<dt className="inline font-semibold">Sumber output:</dt>{" "}
+								<dd className="inline" data-testid="poster-reopen-output-source">
+									{reopened.output_available
+										? reopened.output_source === "CREATIVE_LIBRARY"
+											? "Salinan Creative Library (durable)"
+											: "Fail deliverable asal"
+										: "Tiada — kedua-dua salinan hilang"}
+								</dd>
+							</div>
 						</dl>
 					</div>
+					{reopened.poster_copy_set &&
+					(reopened.poster_copy_set_historical ||
+						reopened.poster_copy_set.status === "POSTER_COPY_SUPERSEDED") ? (
+						<div
+							className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3"
+							data-testid="poster-reopen-historical"
+						>
+							<p className="text-[11px] text-amber-100">
+								<span className="font-bold uppercase tracking-wide">
+									Versi sejarah (superseded)
+								</span>{" "}
+								— copy ini dipaparkan baca-sahaja. Poster yang disimpan
+								mengekalkan salinan copy asalnya; rekod sejarah tidak diubah.
+							</p>
+							<button
+								type="button"
+								data-testid="poster-reopen-fork-historical"
+								onClick={() => void handleForkHistorical()}
+								disabled={copyVersionLoading === "fork"}
+								className="mt-2 rounded-lg border border-amber-400/60 bg-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-50 disabled:opacity-50"
+							>
+								{copyVersionLoading === "fork"
+									? "Membuka draf…"
+									: "Buat draf baharu daripada versi sejarah ini"}
+							</button>
+							{copyVersionError ? (
+								<p
+									className="mt-2 text-[11px] text-rose-200"
+									data-testid="poster-reopen-fork-error"
+								>
+									{copyVersionError}
+								</p>
+							) : null}
+						</div>
+					) : null}
 					<p className="mt-3 text-[11px] text-slate-400">
 						Konfigurasi (produk, recipe, copy set) telah dipulihkan di bawah.
 						Edit copy yang diluluskan akan mencipta VERSI BAHARU; compose semula

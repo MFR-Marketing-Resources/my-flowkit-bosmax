@@ -1,5 +1,18 @@
 {
   "run_id": "minyak_warisan_tok_25ml",
+  "evidence_type": "REAL-ASSET COMPOSITOR PROOF",
+  "source_asset_id": "ca_0d56e05025f94eae",
+  "source_asset_sha256": "c9ec5c321d726c63c80cc38b0257e4eccbcd6084170dfd116d961e7602cba463",
+  "background_staged_from": "<staged_output>/minyak_warisan_tok_25ml_bg.jpg",
+  "renderer_version": "HTML_CHROMIUM_SERVICE_V1",
+  "commit_sha": "eda2b1a0443382038f29d4a39f8163aa232a5cb5",
+  "reproducible_command": "python scripts/generate_real_product_poster_proof.py",
+  "evidence_paths": {
+    "poster_png": "minyak_warisan_tok_25ml.poster.png",
+    "manifest": "minyak_warisan_tok_25ml.manifest.json",
+    "qa_report": "minyak_warisan_tok_25ml.qa_report.json",
+    "product_truth_review": "minyak_warisan_tok_25ml.product_truth_review.json"
+  },
   "product": "Minyak Warisan Tok Cap Burung 25ml",
   "recipe_id": "heritage_infographic",
   "background": "APPROVED reference-conditioned generated scene (asset ca_0d56e05025f94eae, real product held by avatar)",

@@ -248,3 +248,58 @@ async def test_fallback_chips_come_only_from_approved_grounding(monkeypatch):
     for d in out["directions"]:
         for chip in d["proof_points"]:
             assert chip in allowed, f"chip {chip!r} is not an approved fact"
+
+
+# ─── Closure: neutral fallback copy — no usage/routine, no angle (item D) ────
+
+_ROUTINE_USAGE_FRAGMENTS = (
+    "rutin", "harian", "sedia bila", "setiap hari", "gunakan", "guna setiap",
+    "ikut keperluan", "cara anda", "pilihan anda", "untuk anda",
+)
+
+
+@pytest.mark.asyncio
+async def test_fallback_implies_no_routine_or_usage_context(monkeypatch):
+    """No-intelligence fallback must not imply routine/usage suitability."""
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    pid = await _seed_product(title="Produk Neutral D1", display="Produk Neutral D1")
+    out = await svc.generate_directions(pid, "PRODUCT_HERO", "")
+    assert out["directions"]
+    for d in out["directions"]:
+        blob = " ".join(
+            [d["primary_message"], d["support_message"], d["cta"]]
+        ).lower()
+        for frag in _ROUTINE_USAGE_FRAGMENTS:
+            assert frag not in blob, (
+                f"fallback implied usage/routine: {frag!r} in {blob!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_fallback_does_not_inject_operator_angle_verbatim(monkeypatch):
+    """A malicious/claim-laden operator angle must NOT reach fallback copy."""
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    pid = await _seed_product(title="Produk Angle D2", display="Produk Angle D2")
+    malicious = "Terbukti no.1 dipercayai ramai keluarga stok terhad"
+    out = await svc.generate_directions(pid, "PRODUCT_HERO", malicious)
+    assert out["directions"]
+    for d in out["directions"]:
+        blob = " ".join(
+            [d["primary_message"], d["support_message"], d["cta"], d["disclaimer"]]
+        ).lower()
+        for token in ("terbukti", "no.1", "dipercayai", "ramai", "stok", "terhad"):
+            assert token not in blob, (
+                f"operator angle leaked verbatim into fallback: {token!r} in {blob!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_fallback_uses_only_product_discovery_ctas(monkeypatch):
+    """Every fallback CTA is a neutral product-discovery invitation."""
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    pid = await _seed_product(title="Produk Discover D3", display="Produk Discover D3")
+    out = await svc.generate_directions(pid, "PRODUCT_HERO", "")
+    allowed_ctas = {"Ketahui lebih lanjut", "Lihat produk", "Terokai pilihan"}
+    assert out["directions"]
+    for d in out["directions"]:
+        assert d["cta"] in allowed_ctas, f"non-discovery CTA {d['cta']!r}"

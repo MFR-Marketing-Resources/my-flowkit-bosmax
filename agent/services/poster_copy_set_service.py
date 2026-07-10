@@ -265,6 +265,56 @@ class PosterCopySetService:
         return out
 
     @staticmethod
+    async def fork_from_historical(
+        poster_copy_set_id: str, request: PosterCopySetPatchRequest
+    ) -> dict[str, Any]:
+        """Fork a NEW draft from a SUPERSEDED historical copy set.
+
+        A saved poster may reference a set that was APPROVED at render time and
+        later SUPERSEDED. This clones that historical copy into a fresh editable
+        DRAFT WITHOUT mutating the historical record — the saved poster keeps its
+        exact original copy and provenance. (Approved sets use ``new_version``;
+        drafts are edited in place.)
+        """
+        row = await crud.get_poster_copy_set(poster_copy_set_id)
+        if not row:
+            raise PosterCopySetError("POSTER_COPY_SET_NOT_FOUND", status_code=404)
+        if row.get("status") != STATUS_POSTER_COPY_SUPERSEDED:
+            raise PosterCopySetError(
+                "POSTER_COPY_SET_NOT_HISTORICAL",
+                "fork-from-historical applies only to superseded versions; "
+                "approved sets use new-version and drafts are edited in place",
+                status_code=409,
+            )
+        merged = serialize_poster_copy_set(row)
+        patch = {k: v for k, v in request.model_dump().items() if v is not None}
+        merged.update(patch)
+        provenance = dict(merged.get("field_provenance") or {})
+        for k in patch:
+            if k in ("primary_message", "support_message", "proof_points", "cta",
+                     "disclaimer"):
+                provenance[k] = PROVENANCE_OPERATOR
+        merged["field_provenance"] = provenance
+        warnings = run_poster_copy_gate(merged, strict=False)
+        payload = _row_payload(merged)
+        payload["status"] = STATUS_POSTER_COPY_DRAFT
+        # Next version across the product line so it never collides with an
+        # existing version number.
+        existing = await crud.list_poster_copy_sets_for_product(row["product_id"])
+        max_v = max(
+            (int(r.get("version") or 1) for r in existing),
+            default=int(row.get("version") or 1),
+        )
+        payload["version"] = max_v + 1
+        payload.pop("parent_poster_copy_set_id", None)
+        child = await crud.create_poster_copy_set_child_draft(
+            row["product_id"], poster_copy_set_id, **payload
+        )
+        out = serialize_poster_copy_set(child)
+        out["warnings"] = warnings
+        return out
+
+    @staticmethod
     async def get(poster_copy_set_id: str) -> dict[str, Any]:
         row = await crud.get_poster_copy_set(poster_copy_set_id)
         if not row:
