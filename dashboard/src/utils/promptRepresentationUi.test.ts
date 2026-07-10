@@ -72,4 +72,35 @@ describe("promptRepresentationUi", () => {
 		expect(p.showExtendUnavailable).toBe(true);
 		expect(p.primaryCopyText).toBe("INDEPENDENT ONLY");
 	});
+
+	it("rejects malformed non-empty extend (standalone generator opening)", () => {
+		const p = resolvePromptRepresentationPresentation({
+			block_index: 2,
+			engine_prompt_text: "INDEPENDENT",
+			independent_block_prompt_text: "INDEPENDENT",
+			flow_extend_prompt_text:
+				"You are generating an 8-second video clip.\n\nContinue the scene.",
+		});
+		expect(hasValidFlowExtendPrompt({
+			block_index: 2,
+			flow_extend_prompt_text:
+				"You are generating an 8-second video clip.\n\nContinue the scene.",
+		})).toBe(false);
+		expect(p.badgeLabel).toBe("INVALID EXTEND REPRESENTATION");
+		expect(p.showExtendPrimary).toBe(false);
+		expect(p.primaryCopyLabel).toBe("Copy Independent Block Prompt");
+		expect(p.helpText).toContain("Invalid Extend Representation");
+	});
+
+	it("rejects extend when validation metadata marks invalid", () => {
+		const p = resolvePromptRepresentationPresentation({
+			block_index: 2,
+			engine_prompt_text: "IND",
+			flow_extend_prompt_text: "Extend this video from the exact ending of Video 1.",
+			flow_extend_prompt_validation: { valid: false, error_codes: ["EXTEND_PROMPT_STANDALONE_OPENING_FORBIDDEN"] },
+			prompt_representation: "GOOGLE_FLOW_EXTEND",
+		});
+		expect(p.badgeLabel).toBe("INVALID EXTEND REPRESENTATION");
+		expect(p.showExtendPrimary).toBe(false);
+	});
 });

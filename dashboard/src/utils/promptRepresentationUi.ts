@@ -18,6 +18,8 @@ export interface PromptRepresentationFields {
 	initial_generation_prompt_text?: string | null;
 	independent_block_prompt_text?: string | null;
 	flow_extend_prompt_text?: string | null;
+	flow_extend_prompt_validation?: { valid?: boolean; error_codes?: string[] } | null;
+	prompt_representation?: string | null;
 }
 
 export interface PromptRepresentationPresentation {
@@ -43,7 +45,20 @@ function clean(value: string | null | undefined): string {
 export function hasValidFlowExtendPrompt(
 	block?: PromptRepresentationFields | null,
 ): boolean {
-	return clean(block?.flow_extend_prompt_text).length > 0;
+	const text = clean(block?.flow_extend_prompt_text);
+	if (!text) return false;
+	// Must begin with extension intent and not be standalone generation.
+	const lines = text.split("\n");
+	const first = lines.map((line) => line.trim()).find((line) => line.length > 0) ?? "";
+	if (!/^extend this video\b/i.test(first)) return false;
+	if (/^you are generating\b/i.test(first)) return false;
+	if (block?.prompt_representation && block.prompt_representation !== "GOOGLE_FLOW_EXTEND") {
+		return false;
+	}
+	if (block?.flow_extend_prompt_validation && block.flow_extend_prompt_validation.valid === false) {
+		return false;
+	}
+	return true;
 }
 
 /**
@@ -61,12 +76,32 @@ export function resolvePromptRepresentationPresentation(
 		clean(fallbackText);
 
 	const extendText = clean(block?.flow_extend_prompt_text);
-	const hasExtend = extendText.length > 0;
+	const hasExtend = hasValidFlowExtendPrompt(block);
 	const blockIndex = Number(block?.block_index ?? 1) || 1;
 	const hasInitialField = block?.initial_generation_prompt_text != null;
 	const initialText =
 		clean(block?.initial_generation_prompt_text) ||
 		(blockIndex <= 1 ? independentText : "");
+
+	
+	// Non-empty but invalid Extend representation (malformed/imported).
+	if (extendText.length > 0 && !hasExtend) {
+		return {
+			kind: "LEGACY_INDEPENDENT",
+			badgeLabel: "INVALID EXTEND REPRESENTATION",
+			independentText,
+			initialText: "",
+			extendText: "",
+			primaryCopyText: independentText,
+			primaryCopyLabel: "Copy Independent Block Prompt",
+			primaryTestId: "copy-independent-block-prompt",
+			showExtendPrimary: false,
+			showIndependentSecondary: false,
+			showExtendUnavailable: true,
+			helpText:
+				"Invalid Extend Representation — Extend Prompt Not Available. Showing Independent Block Prompt only.",
+		};
+	}
 
 	if (hasExtend) {
 		return {

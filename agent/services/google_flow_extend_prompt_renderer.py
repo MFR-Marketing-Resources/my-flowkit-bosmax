@@ -20,7 +20,8 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping, Sequence
 
-RENDERER_VERSION = "google_flow_extend_prompt_renderer_v1"
+RENDERER_VERSION = "google_flow_extend_prompt_renderer_v2"
+VALIDATION_VERSION = "flow_extend_validation_v2"
 
 PROMPT_REPRESENTATION_INITIAL = "INITIAL_GENERATION"
 PROMPT_REPRESENTATION_INDEPENDENT = "INDEPENDENT_BLOCK"
@@ -274,14 +275,13 @@ def build_audio_seam_contract(
     if first_utt_start is None:
         first_utt_start = start_s
 
-    voice_active_final = (not is_final) and bool(_clean(allocation.get("exact_dialogue_slice"))) and (
-        last_utt_end >= (end_s - 1.05)
-    )
-    # Non-final blocks with dialogue are required to keep voice active in final second.
-    if not is_final and _clean(allocation.get("exact_dialogue_slice")):
-        voice_active_final = True
-        if last_utt_end < (end_s - 1.05):
-            last_utt_end = end_s
+    has_dialogue = bool(_clean(allocation.get("exact_dialogue_slice")))
+    voice_required = (not is_final) and has_dialogue
+    # Planned from actual utterance end times (no fabrication of missing dialogue).
+    voice_planned = bool(voice_required and last_utt_end >= (end_s - 1.05))
+    # Verified remains null until live runtime evidence exists.
+    voice_verified = None
+    voice_active_final = voice_planned
 
     prev_end = None
     if previous_allocation is not None:
@@ -311,12 +311,16 @@ def build_audio_seam_contract(
             if is_final
             else "VOICE_AND_MOTION_ACTIVE_FOR_EXTENSION"
         ),
-        "voice_active_in_final_second": bool(voice_active_final) if not is_final else False,
+        "voice_active_in_final_second_required": bool(voice_required) if not is_final else False,
+        "voice_active_in_final_second_planned": bool(voice_planned) if not is_final else False,
+        "voice_active_in_final_second_verified": voice_verified,
+        # Compatibility mirror (planned only — not verified).
+        "voice_active_in_final_second": bool(voice_planned) if not is_final else False,
         "dialogue_continuation_policy": policy,
-        "previous_block_dialogue_end_s": prev_end,
-        "next_block_dialogue_start_s": next_start,
-        "this_block_dialogue_start_s": float(first_utt_start) if first_utt_start is not None else None,
-        "this_block_dialogue_end_s": float(last_utt_end) if last_utt_end else None,
+        "previous_block_dialogue_end_s": prev_end if previous_allocation else None,
+        "next_block_dialogue_start_s": next_start if next_allocation else None,
+        "this_block_dialogue_start_s": float(first_utt_start) if first_utt_start is not None and has_dialogue else None,
+        "this_block_dialogue_end_s": float(last_utt_end) if last_utt_end and has_dialogue else None,
         "requires_visible_mouth_motion_final_second": not is_final,
         "requires_body_or_hand_motion_final_second": not is_final,
         "requires_camera_momentum_final_second": not is_final,
@@ -360,12 +364,18 @@ def render_flow_extend_prompt(
     dialogue = _clean(allocation.get("exact_dialogue_slice"))
     entry = _as_dict(allocation.get("entry_continuity_state"))
     prev_exit = _as_dict(previous_allocation.get("exit_continuity_state"))
-    # Continuity law: previous exit must equal current entry when both present.
-    if prev_exit and entry and prev_exit != entry:
-        # Prefer entry (current block) for rendering but still note continuity.
-        continuity_state = entry
-    else:
-        continuity_state = entry or prev_exit
+    # Continuity law: previous exit MUST equal current entry. Fail closed.
+    if not prev_exit or not entry:
+        raise ExtendPromptValidationError(
+            "CONTINUITY_STATE_MISMATCH",
+            f"block={allocation.get('block_index')} missing entry or previous exit continuity",
+        )
+    if prev_exit != entry:
+        raise ExtendPromptValidationError(
+            "CONTINUITY_STATE_MISMATCH",
+            f"block={allocation.get('block_index')} previous exit != current entry",
+        )
+    continuity_state = entry
 
     prev_idx = int(previous_block_index if previous_block_index is not None else previous_allocation.get("block_index") or (block_index - 1))
     command = _extend_command_line(block_index=block_index)
@@ -482,6 +492,36 @@ def validate_flow_extend_prompt(
             "EXTEND_PROMPT_EXCESSIVE_STANDALONE_DUPLICATION",
             f"word_count={len(words)}",
         )
+
+
+
+def validate_extend_representation(
+    *,
+    flow_extend_prompt_text: str | None,
+    prompt_representation: str | None = None,
+) -> dict:
+    """Validate Extend representation; never classify as Extend on non-empty alone."""
+    text = (flow_extend_prompt_text or "").strip()
+    errors: list[str] = []
+    if not text:
+        return {
+            "valid": False,
+            "renderer_version": RENDERER_VERSION,
+            "validation_version": VALIDATION_VERSION,
+            "error_codes": ["EXTEND_PROMPT_EMPTY"],
+        }
+    try:
+        validate_flow_extend_prompt(text)
+    except ExtendPromptValidationError as exc:
+        errors.append(exc.code)
+    if prompt_representation and prompt_representation != PROMPT_REPRESENTATION_EXTEND:
+        errors.append("EXTEND_REPRESENTATION_MISMATCH")
+    return {
+        "valid": not errors,
+        "renderer_version": RENDERER_VERSION,
+        "validation_version": VALIDATION_VERSION,
+        "error_codes": errors,
+    }
 
 
 def dialogue_slice_is_natural_boundary(text: str, *, position: str) -> bool:
@@ -672,8 +712,17 @@ def attach_prompt_representations(
         previous_block_index=int(previous_allocation.get("block_index") or (block_index - 1)),
     )
     validate_flow_extend_prompt(extend_text, independent_block_prompt_text=independent)
+    validation = validate_extend_representation(
+        flow_extend_prompt_text=extend_text,
+        prompt_representation=PROMPT_REPRESENTATION_EXTEND,
+    )
+    if not validation["valid"]:
+        raise ExtendPromptValidationError(
+            validation["error_codes"][0] if validation["error_codes"] else "EXTEND_PROMPT_INVALID",
+        )
     block["initial_generation_prompt_text"] = None
     block["flow_extend_prompt_text"] = extend_text
+    block["flow_extend_prompt_validation"] = validation
     block["prompt_representation"] = PROMPT_REPRESENTATION_EXTEND
     block["prompt_purpose"] = PROMPT_PURPOSE_MANUAL_EXTEND
     block["previous_block_index"] = int(previous_allocation.get("block_index") or (block_index - 1))

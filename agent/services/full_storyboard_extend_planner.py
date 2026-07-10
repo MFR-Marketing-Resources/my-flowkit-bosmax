@@ -459,6 +459,11 @@ def _build_dialogue_plan(
         final_block_budget=budgets[-1] if dialogue_enabled else 0,
         total_blocks=len(story_plan.resolved_block_plan),
     )
+    clause_specs, omission_log = _ensure_packable_clause_specs(
+        clause_specs=clause_specs,
+        block_budgets=budgets if dialogue_enabled else [],
+        total_blocks=len(story_plan.resolved_block_plan),
+    )
     utterances = _timestamp_global_dialogue_utterances(
         clause_specs=clause_specs,
         total_duration=story_plan.total_duration_seconds,
@@ -476,7 +481,12 @@ def _build_dialogue_plan(
         full_dialogue_text=full_text,
         utterances=tuple(utterances),
         approved_copy_provenance={"copy_source": normalized_copy.get("copy_source") or "fallback"},
-        compliance_metadata={"generated_once": True, "final_cta_required": bool(cta and dialogue_enabled)},
+        compliance_metadata={
+            "generated_once": True,
+            "final_cta_required": bool(cta and dialogue_enabled),
+            "omitted_utterances": omission_log if dialogue_enabled else [],
+            "compression_version": "dialogue_packable_compress_v1",
+        },
     )
 
 
@@ -639,118 +649,134 @@ def _timestamp_global_dialogue_utterances(
     return utterances
 
 
+
+def _ensure_packable_clause_specs(
+    *,
+    clause_specs: Sequence[tuple[str, str]],
+    block_budgets: Sequence[int],
+    total_blocks: int,
+) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:
+    """Pre-allocation compression so every remaining clause can be placed whole."""
+    if not block_budgets or not clause_specs:
+        return list(clause_specs), []
+    final_roles = {"CTA"} if total_blocks == 1 else {"RESOLUTION", "CTA"}
+    droppable = {"USP", "CONTEXT", "PROOF", "ANGLE"}
+    budgets = [int(b) for b in block_budgets]
+    working = list(clause_specs)
+    omitted: list[dict[str, Any]] = []
+
+    def packable(specs: list[tuple[str, str]]) -> bool:
+        final_specs = [(r, t) for r, t in specs if r in final_roles]
+        non_final = [(r, t) for r, t in specs if r not in final_roles]
+        reserved = sum(len(t.split()) for _, t in final_specs)
+        if reserved > budgets[-1]:
+            return False
+        used = [0 for _ in budgets]
+        min_block = 0
+        for _role, text_clause in non_final:
+            words = len(text_clause.split())
+            placed = False
+            bi = min_block
+            while bi < len(budgets):
+                reserved_b = reserved if bi == len(budgets) - 1 else 0
+                if words <= budgets[bi] - reserved_b - used[bi]:
+                    used[bi] += words
+                    min_block = bi
+                    placed = True
+                    break
+                bi += 1
+            if not placed:
+                return False
+        return used[-1] + reserved <= budgets[-1]
+
+    while working and not packable(working):
+        drop_idx = None
+        for i in range(len(working) - 1, -1, -1):
+            if working[i][0] in droppable:
+                drop_idx = i
+                break
+        if drop_idx is None:
+            raise PlannerValidationError(
+                "DIALOGUE_CANNOT_FORM_NATURAL_EXTENSION_SEAMS",
+                "cannot_pack_without_dropping_required_roles",
+            )
+        role, clause = working.pop(drop_idx)
+        omitted.append({
+            "role": role,
+            "text": clause,
+            "omission_reason": "PACKABLE_BUDGET_COMPRESSION",
+            "source_provenance": "pre_finalization_compression",
+        })
+    return working, omitted
+
+
 def _allocate_dialogue_utterances(
     dialogue_plan: FullDialoguePlan,
     resolved_block_plan: Sequence[int],
 ) -> tuple[FullDialoguePlan, tuple[tuple[DialogueUtterance, ...], ...]]:
+    """Assign every finalized utterance to blocks without reordering or silent loss.
+
+    Invariants:
+    - FullDialoguePlan text/order/IDs are immutable during allocation.
+    - Utterance order is monotonic across blocks (no A,C then B).
+    - Concatenated block dialogue equals full_dialogue_text.
+    - CTA/resolution remain final-block-only when multi-block.
+    """
     budgets = [
         canonical.dialogue_word_budget(seconds, dialogue_plan.target_language, wps_mode=dialogue_plan.wps_mode)
         for seconds in resolved_block_plan
     ]
-    cta_utterances = [utterance for utterance in dialogue_plan.utterances if utterance.role == "CTA"]
+    utterances = list(dialogue_plan.utterances)
+    cta_utterances = [u for u in utterances if u.role == "CTA"]
     if len(cta_utterances) > 1:
         raise PlannerValidationError("DUPLICATE_FINAL_CTA")
-    cta_words = sum(utterance.word_count for utterance in cta_utterances)
     final_roles = {"CTA"} if len(resolved_block_plan) == 1 else {"RESOLUTION", "CTA"}
-    final_utterances = [
-        utterance for utterance in dialogue_plan.utterances if utterance.role in final_roles
-    ]
-    reserved_final_words = sum(utterance.word_count for utterance in final_utterances)
-    if cta_words > budgets[-1]:
-        raise PlannerValidationError("FINAL_CTA_CANNOT_FIT_WPS_BUDGET")
+    non_final = [u for u in utterances if u.role not in final_roles]
+    final_utterances = [u for u in utterances if u.role in final_roles]
+    reserved_final_words = sum(u.word_count for u in final_utterances)
     if reserved_final_words > budgets[-1]:
-        raise PlannerValidationError("DIALOGUE_PLAN_EXCEEDS_WPS_BUDGET")
+        raise PlannerValidationError("FINAL_CTA_CANNOT_FIT_WPS_BUDGET")
+
     allocated_by_block: list[list[DialogueUtterance]] = [[] for _ in resolved_block_plan]
     used_words = [0 for _ in resolved_block_plan]
-    droppable_roles = {"USP", "CONTEXT", "PROOF", "ANGLE"}
-    deferred: list[DialogueUtterance] = []
-    for utterance in dialogue_plan.utterances:
-        if utterance.role in final_roles:
-            continue
+    min_block = 0
+    for utterance in non_final:
         placed = False
-        block_index = 0
+        block_index = min_block
         while block_index < len(resolved_block_plan):
-            reserved_words = reserved_final_words if block_index == len(resolved_block_plan) - 1 else 0
-            available_words = budgets[block_index] - reserved_words - used_words[block_index]
-            if utterance.word_count <= available_words:
+            reserved = reserved_final_words if block_index == len(resolved_block_plan) - 1 else 0
+            available = budgets[block_index] - reserved - used_words[block_index]
+            if utterance.word_count <= available:
                 allocated_by_block[block_index].append(utterance)
                 used_words[block_index] += utterance.word_count
-                placed = True
-                break
-            shortened = canonical._pack_dialogue_clauses([utterance.text], available_words)
-            if shortened and len(shortened.split()) == utterance.word_count:
-                allocated_by_block[block_index].append(utterance)
-                used_words[block_index] += utterance.word_count
-                placed = True
-                break
-            if shortened and utterance.role not in droppable_roles:
-                compressed_utterance = replace(
-                    utterance,
-                    text=shortened,
-                    word_count=len(shortened.split()),
-                )
-                allocated_by_block[block_index].append(compressed_utterance)
-                used_words[block_index] += compressed_utterance.word_count
+                min_block = block_index
                 placed = True
                 break
             block_index += 1
         if not placed:
-            if utterance.role in droppable_roles:
-                continue
-            deferred.append(utterance)
-    for utterance in deferred:
-        placed = False
-        for block_index in range(len(resolved_block_plan)):
-            reserved_words = reserved_final_words if block_index == len(resolved_block_plan) - 1 else 0
-            available_words = budgets[block_index] - reserved_words - used_words[block_index]
-            if utterance.word_count <= available_words:
-                allocated_by_block[block_index].append(utterance)
-                used_words[block_index] += utterance.word_count
-                placed = True
-                break
-            keep: list[DialogueUtterance] = []
-            for existing in allocated_by_block[block_index]:
-                if existing.role in droppable_roles:
-                    continue
-                keep.append(existing)
-            allocated_by_block[block_index] = keep
-            used_words[block_index] = sum(item.word_count for item in keep)
-            available_words = budgets[block_index] - reserved_words - used_words[block_index]
-            if utterance.word_count <= available_words:
-                allocated_by_block[block_index].append(utterance)
-                used_words[block_index] += utterance.word_count
-                placed = True
-                break
-        if not placed:
             raise PlannerValidationError(
                 "DIALOGUE_CANNOT_FORM_NATURAL_EXTENSION_SEAMS",
-                utterance.text[:80],
+                f"cannot_place:{utterance.role}:{utterance.text[:80]}",
             )
+
+    final_index = len(resolved_block_plan) - 1
     if final_utterances:
-        final_index = len(resolved_block_plan) - 1
-        if used_words[final_index] + reserved_final_words > budgets[final_index]:
-            keep = []
-            for existing in allocated_by_block[final_index]:
-                if existing.role in droppable_roles:
-                    continue
-                keep.append(existing)
-            allocated_by_block[final_index] = keep
-            used_words[final_index] = sum(item.word_count for item in keep)
         if used_words[final_index] + reserved_final_words > budgets[final_index]:
             raise PlannerValidationError("FINAL_CTA_CANNOT_FIT_WPS_BUDGET")
         allocated_by_block[final_index].extend(final_utterances)
+
     allocated_utterances: list[DialogueUtterance] = []
     cursor = 0
     total_blocks = len(resolved_block_plan)
     for position, seconds in enumerate(resolved_block_plan):
-        block_budget = budgets[position]
+        word_total = sum(u.word_count for u in allocated_by_block[position]) or 1
         block_cursor_words = 0
         block_rows: list[DialogueUtterance] = []
         is_final_block = position == total_blocks - 1
         for utterance in allocated_by_block[position]:
-            start_s = cursor + (seconds * block_cursor_words / block_budget) if block_budget else float(cursor)
+            start_s = cursor + (seconds * block_cursor_words / word_total)
             block_cursor_words += utterance.word_count
-            end_s = cursor + (seconds * block_cursor_words / block_budget) if block_budget else float(cursor)
+            end_s = cursor + (seconds * block_cursor_words / word_total)
             block_rows.append(
                 replace(
                     utterance,
@@ -767,13 +793,34 @@ def _allocate_dialogue_utterances(
         allocated_utterances.extend(block_rows)
         allocated_by_block[position] = block_rows
         cursor += int(seconds)
-    full_text = " ".join(utterance.text for utterance in allocated_utterances)
+
+    original_ids = [u.utterance_id for u in utterances]
+    allocated_ids = [u.utterance_id for u in allocated_utterances]
+    if allocated_ids != original_ids:
+        raise PlannerValidationError(
+            "DIALOGUE_UTTERANCE_ORDER_MISMATCH",
+            f"expected={original_ids} got={allocated_ids}",
+        )
+    original_texts = [_clean(u.text) for u in utterances]
+    allocated_texts = [_clean(u.text) for u in allocated_utterances]
+    if allocated_texts != original_texts:
+        raise PlannerValidationError(
+            "DIALOGUE_PLAN_MUTATED_DURING_ALLOCATION",
+            "utterance text changed during allocation",
+        )
+    concat = _clean(" ".join(u.text for u in allocated_utterances))
+    if concat != _clean(dialogue_plan.full_dialogue_text):
+        raise PlannerValidationError(
+            "DIALOGUE_ALLOCATION_CONTENT_LOSS",
+            "concatenated allocation differs from immutable FullDialoguePlan",
+        )
+
     return (
         replace(
             dialogue_plan,
-            actual_total_word_count=len(full_text.split()),
-            full_dialogue_text=full_text,
             utterances=tuple(allocated_utterances),
+            actual_total_word_count=dialogue_plan.actual_total_word_count,
+            full_dialogue_text=dialogue_plan.full_dialogue_text,
         ),
         tuple(tuple(block) for block in allocated_by_block),
     )
