@@ -103,7 +103,9 @@ def test_compiler_generates_extend_continuation_lineage():
     assert result["prompt_blocks"][0]["duration_seconds"] == 10
     assert result["prompt_blocks"][0]["shot_count"] == 3
     assert result["prompt_blocks"][1]["duration_seconds"] == 6
-    assert result["prompt_blocks"][1]["shot_count"] == 1
+    # The global 4s beat crossing the 10s boundary is deterministically split
+    # into seam-linked child beats; allocation therefore retains both portions.
+    assert result["prompt_blocks"][1]["shot_count"] == 2
     assert result["prompt_blocks"][1]["continuation_from_block_id"] == "block_1"
     assert result["continuation_lineage"][0]["continuation_from_block_id"] == "block_1"
     # ADR-008 canonical: continuation is naturalized prose inside SECTION 3/5,
@@ -159,8 +161,8 @@ def test_engine_prompt_no_dialog_duplication():
 def test_overlay_is_compact_not_verbatim_cta():
     """Overlay must not be the verbatim spoken CTA sentence."""
     long_cta = (
-        "Kalau korang tengah cari serum badan yang boleh bagi kulit lembut dan wangi "
-        "seharian, memang boleh cuba yang ni dulu sebab memang berbaloi."
+        "Kalau korang nak serum badan yang rasa lembut dan wangi sepanjang hari, "
+        "cuba yang ni dulu sebab sesuai untuk rutin harian."
     )
     result = compile_ugc_video_prompt(
         product=_product(),
@@ -345,6 +347,17 @@ def _compile_kwargs(**overrides):
     )
     kwargs.update(overrides)
     return kwargs
+
+
+def test_single_mode_rejects_requested_total_duration_before_extend_resolution():
+    """A stale UI total must never silently convert SINGLE into an EXTEND chain."""
+    with pytest.raises(ValueError, match="SINGLE_MODE_CANNOT_CARRY_REQUESTED_TOTAL_DURATION"):
+        compile_ugc_video_prompt(
+            **_compile_kwargs(
+                engine_duration_target="GOOGLE_FLOW",
+                requested_total_duration_seconds=16,
+            )
+        )
 
 
 def test_explicit_frames_lineage_compiles_frames_branch():

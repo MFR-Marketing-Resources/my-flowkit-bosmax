@@ -14,6 +14,21 @@ import type {
 } from "../types";
 import { fetchAPI, postAPI } from "./client";
 
+function applyDurationAuthorityDefaults<T extends {
+	generation_mode?: PromptGenerationMode;
+	duration_seconds?: number;
+	blocks?: unknown[];
+}>(
+	request: T,
+) {
+	if (request.generation_mode === "EXTEND") {
+		const { blocks: _rawBlocks, duration_seconds: _singleDuration, ...extendRequest } =
+			request;
+		return extendRequest;
+	}
+	return request;
+}
+
 export async function fetchApprovedProductPackage(
 	productId: string,
 	mode: WorkspaceMode,
@@ -56,20 +71,19 @@ export async function createWorkspaceExecutionPackage(input: {
 	// no approved Copy Set is selected (backend fails closed otherwise).
 	copy_fallback_confirmed?: boolean;
 }): Promise<WorkspaceExecutionPackage> {
-	return postAPI<WorkspaceExecutionPackage>(
-		"/api/workspace/execution-package",
+	const request = applyDurationAuthorityDefaults(
 		{
 			duration_seconds: 8,
 			aspect_ratio: "9:16",
 			manual_override: false,
-			generation_mode: "SINGLE",
-			target_language: "BM_MS",
-			camera_style: "UGC_IPHONE_RAW",
-			character_presence: "VISIBLE_CREATOR",
+			generation_mode: "SINGLE" as PromptGenerationMode,
+			target_language: "BM_MS" as PromptTargetLanguage,
+			camera_style: "UGC_IPHONE_RAW" as PromptCameraStyle,
+			character_presence: "VISIBLE_CREATOR" as PromptCharacterPresence,
 			creator_persona: "DEFAULT_CREATOR",
-			overlay_enabled: false, // NO_OVERLAY law (ADR-008): default off
+			overlay_enabled: false,
 			dialogue_enabled: true,
-			recipe_id: "PRODUCT_HELD_BY_CHARACTER_IN_SCENE",
+			recipe_id: "PRODUCT_HELD_BY_CHARACTER_IN_SCENE" as I2VRecipeId,
 			product_reference_asset_id: null,
 			character_reference_asset_id: null,
 			scene_context_reference_asset_id: null,
@@ -77,6 +91,10 @@ export async function createWorkspaceExecutionPackage(input: {
 			blocks: [],
 			...input,
 		},
+	);
+	return postAPI<WorkspaceExecutionPackage>(
+		"/api/workspace/execution-package",
+		request,
 	);
 }
 
@@ -132,20 +150,23 @@ export async function compileWorkspacePromptPreview(input: {
 	// Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
 	copy_set_id?: string | null;
 }): Promise<WorkspacePromptPreviewResult> {
-	return postAPI<WorkspacePromptPreviewResult>(
-		"/api/workspace/ugc-video-prompt-compile",
+	const request = applyDurationAuthorityDefaults(
 		{
 			duration_seconds: 8,
-			generation_mode: "SINGLE",
-			target_language: "BM_MS",
-			camera_style: "UGC_IPHONE_RAW",
-			character_presence: "VISIBLE_CREATOR",
+			generation_mode: "SINGLE" as PromptGenerationMode,
+			target_language: "BM_MS" as PromptTargetLanguage,
+			camera_style: "UGC_IPHONE_RAW" as PromptCameraStyle,
+			character_presence: "VISIBLE_CREATOR" as PromptCharacterPresence,
 			creator_persona: "DEFAULT_CREATOR",
-			overlay_enabled: false, // NO_OVERLAY law (ADR-008): default off
+			overlay_enabled: false,
 			dialogue_enabled: true,
 			blocks: [],
 			...input,
 		},
+	);
+	return postAPI<WorkspacePromptPreviewResult>(
+		"/api/workspace/ugc-video-prompt-compile",
+		request,
 	);
 }
 

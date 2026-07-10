@@ -13,8 +13,8 @@ import {
 	fetchPromptCompilerRuntimeConfig,
 	fetchWorkspacePackageReadiness,
 } from "../api/workspacePackages";
-import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
 import BackendVersionBanner from "../components/BackendVersionBanner";
+import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
 import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
@@ -77,6 +77,14 @@ interface PromptAuditBlock {
 	dialogue_word_budget?: number;
 	engine_prompt_text?: string;
 	compiled_prompt_text?: string;
+	allocation?: {
+		start_s: number;
+		end_s: number;
+		is_final: boolean;
+		assigned_story_beats: Array<{ beat_id: string; role: string }>;
+		exact_dialogue_slice: string;
+		seam_policy: string;
+	} | null;
 }
 
 function parsePromptSections(text: string): PromptAuditSection[] {
@@ -119,6 +127,7 @@ function PromptAuditCard({
 		fallbackText ??
 		"";
 	const sections = parsePromptSections(promptText);
+	const allocation = block?.allocation;
 	const presentHeadings = new Set(sections.map((section) => section.heading));
 	const missingSections = CANONICAL_PROMPT_SECTIONS.filter(
 		(heading) => !presentHeadings.has(heading),
@@ -179,6 +188,13 @@ function PromptAuditCard({
 					{copied ? "Copied" : "Copy Prompt"}
 				</button>
 			</div>
+			{allocation ? (
+				<div className="border-b border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-300" data-testid="storyboard-allocation-summary">
+					<div className="font-semibold text-slate-200">Storyboard allocation · {allocation.start_s}–{allocation.end_s}s · {allocation.is_final ? "Final closure" : "Continuation seam"}</div>
+					<div className="mt-1 text-slate-400">Story beats: {allocation.assigned_story_beats.map((beat) => beat.role).join(" → ")}</div>
+					<div className="mt-1 text-slate-400">Exact dialogue: {allocation.exact_dialogue_slice || "(visual-only block)"}</div>
+				</div>
+			) : null}
 			{sections.length > 0 ? (
 				<div className="divide-y divide-slate-800">
 					{sections.map((section) => (
@@ -249,6 +265,109 @@ export function resolveOperatorSourceMode(
 	if (m === "I2V") return "INGREDIENTS";
 	if (m === "IMG") return "IMAGES";
 	return "T2V";
+}
+
+const OPERATOR_EXTEND_ROUTE = "GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS";
+const OPERATOR_EXTEND_PLAN_BY_TOTAL: Record<number, number[]> = {
+	16: [8, 8],
+	24: [8, 8, 8],
+	32: [8, 8, 8, 8],
+	48: [8, 8, 8, 8, 8, 8],
+	56: [8, 8, 8, 8, 8, 8, 8],
+};
+
+type OperatorDurationAuthorityPayload =
+	| {
+			generation_mode: "SINGLE";
+			duration_seconds: number;
+			blocks: [];
+	  }
+	| {
+			generation_mode: "EXTEND";
+			engine_duration_target: "GOOGLE_FLOW";
+			requested_total_duration_seconds: number;
+	  };
+
+export type OperatorDurationAuthority = {
+	generationMode: PromptGenerationMode;
+	route: string | null;
+	plan: number[];
+	timeline: Array<{ block_index: number; start_s: number; end_s: number }>;
+	payload: OperatorDurationAuthorityPayload;
+};
+
+/**
+ * The shared video-mode duration authority. SINGLE never carries continuation
+ * state; EXTEND resolves its fixed, authorized Google Flow route from one total.
+ */
+export function buildOperatorDurationAuthority({
+	generationMode,
+	videoDurationSeconds,
+	extendTotalDurationSeconds,
+}: {
+	generationMode: PromptGenerationMode;
+	videoDurationSeconds: number;
+	extendTotalDurationSeconds: number | null;
+}): OperatorDurationAuthority {
+	if (generationMode === "SINGLE") {
+		return {
+			generationMode,
+			route: null,
+			plan: [videoDurationSeconds],
+			timeline: [
+				{ block_index: 1, start_s: 0, end_s: videoDurationSeconds },
+			],
+			payload: {
+				generation_mode: "SINGLE",
+				duration_seconds: videoDurationSeconds,
+				blocks: [],
+			},
+		};
+	}
+
+	if (extendTotalDurationSeconds === null) {
+		throw new Error("EXTEND_TOTAL_DURATION_REQUIRED");
+	}
+	const plan = OPERATOR_EXTEND_PLAN_BY_TOTAL[extendTotalDurationSeconds];
+	if (!plan) {
+		throw new Error(
+			`UNSUPPORTED_EXTEND_TOTAL_DURATION_${extendTotalDurationSeconds}`,
+		);
+	}
+	let cursor = 0;
+	const timeline = plan.map((durationSeconds, index) => {
+		const start_s = cursor;
+		cursor += durationSeconds;
+		return { block_index: index + 1, start_s, end_s: cursor };
+	});
+	return {
+		generationMode,
+		route: OPERATOR_EXTEND_ROUTE,
+		plan,
+		timeline,
+		payload: {
+			generation_mode: "EXTEND",
+			engine_duration_target: "GOOGLE_FLOW",
+			requested_total_duration_seconds: extendTotalDurationSeconds,
+		},
+	};
+}
+
+export function transitionOperatorDurationAuthority(
+	current: {
+		generationMode: PromptGenerationMode;
+		extendTotalDurationSeconds: number | null;
+	},
+	nextGenerationMode: PromptGenerationMode,
+) {
+	return {
+		generationMode: nextGenerationMode,
+		extendTotalDurationSeconds:
+			nextGenerationMode === "SINGLE"
+				? null
+				: current.extendTotalDurationSeconds,
+		clearCompiledArtifacts: current.generationMode !== nextGenerationMode,
+	};
 }
 
 function parseWorkspaceBlocker(error: unknown): string | null {
@@ -340,47 +459,28 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [characterPresence, setCharacterPresence] =
 		useState<PromptCharacterPresence>("VISIBLE_CREATOR");
 	const [creatorPersona, setCreatorPersona] = useState("DEFAULT_CREATOR");
-	const [block1Duration, setBlock1Duration] = useState(8);
-	const [block2Duration, setBlock2Duration] = useState(8);
-	// WPS chaining opt-in (default OFF). When an engine vendor is selected the
-	// preview/generate payload sends engine_duration_target +
-	// requested_total_duration_seconds so the backend enforces the WPS Blocking
-	// Template. Empty vendor = existing behavior, byte-identical payload.
-	const [engineDurationTarget, setEngineDurationTarget] = useState<
-		"" | "GROK" | "GOOGLE_FLOW"
-	>("");
+	const [videoDurationSeconds, setVideoDurationSeconds] = useState(8);
 	// Canonical source-mode (ADR-008) — delegates to the hoisted pure export
 	// resolveOperatorSourceMode; identity is stable across renders.
 	const resolveSourceMode = resolveOperatorSourceMode;
-	const [requestedTotalDuration, setRequestedTotalDuration] = useState<
-		number | ""
-	>("");
-	// BLOCK-SPLIT fix: a chosen Extend Total derives an N-block chain from the
-	// Google Flow workbook. The BACKEND is the fail-closed authority (unsupported
-	// totals raise UNSUPPORTED_EXTEND_TOTAL_DURATION_<n>); this map only drives the
-	// operator block-plan preview and the handoff-bank blocks payload.
-	const extendTotalOptions: number[] = [16, 24, 32, 48, 56];
-	const extendPlanByTotal: Record<number, number[]> = {
-		16: [8, 8],
-		24: [8, 8, 8],
-		32: [8, 8, 8, 8],
-		48: [8, 8, 8, 8, 8, 8],
-		56: [8, 8, 8, 8, 8, 8, 8],
-	};
-	const extendTotalValue =
-		requestedTotalDuration === "" ? null : Number(requestedTotalDuration);
-	const extendPlan =
-		extendTotalValue !== null ? (extendPlanByTotal[extendTotalValue] ?? null) : null;
-	// Production EXTEND must be total + route driven. The manual per-block path is
-	// DEV/ADVANCED and fails closed at the backend — used to block Load/Generate so a
-	// normal operator can never trigger a rejected API call.
-	const extendManualBlocked =
-		generationMode === "EXTEND" && extendTotalValue === null;
-	// Invalidate any stale preview when the operator enters the blocked EXTEND-manual
-	// state, so a previously-loaded package can never be generated on this path.
+	const [requestedTotalDuration, setRequestedTotalDuration] = useState<number | null>(
+		null,
+	);
+	const isExtendMode = generationMode === "EXTEND";
+	const durationAuthority =
+		isExtendMode && requestedTotalDuration === null
+			? null
+			: buildOperatorDurationAuthority({
+					generationMode,
+					videoDurationSeconds,
+					extendTotalDurationSeconds: requestedTotalDuration,
+				});
+	const extendTotalRequired = isExtendMode && durationAuthority === null;
+	// A total is mandatory in production EXTEND. Never let a stale preview survive
+	// an incomplete duration choice.
 	useEffect(() => {
-		if (extendManualBlocked) setPreviewPackage(null);
-	}, [extendManualBlocked]);
+		if (extendTotalRequired) setPreviewPackage(null);
+	}, [extendTotalRequired]);
 	const [notice, setNotice] = useState<OperatorNotice>({
 		tone: "idle",
 		title: "Idle",
@@ -461,8 +561,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				setCameraStyle(config.defaults.camera_style);
 				setCharacterPresence(config.defaults.character_presence);
 				setCreatorPersona(config.defaults.creator_persona);
-				setBlock1Duration(config.defaults.block_duration_seconds);
-				setBlock2Duration(config.defaults.block_2_duration_seconds);
+				setVideoDurationSeconds(config.defaults.block_duration_seconds);
 			})
 			.catch(() => {});
 	}, []);
@@ -553,11 +652,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		if (workspacePackage.creator_persona) {
 			setCreatorPersona(workspacePackage.creator_persona);
 		}
-		if (workspacePackage.prompt_blocks?.[0]?.duration_seconds) {
-			setBlock1Duration(workspacePackage.prompt_blocks[0].duration_seconds);
-		}
-		if (workspacePackage.prompt_blocks?.[1]?.duration_seconds) {
-			setBlock2Duration(workspacePackage.prompt_blocks[1].duration_seconds);
+		if (workspacePackage.generation_mode === "EXTEND") {
+			const total = workspacePackage.total_duration_seconds;
+			setRequestedTotalDuration(
+				total && OPERATOR_EXTEND_PLAN_BY_TOTAL[total] ? total : null,
+			);
+		} else {
+			setRequestedTotalDuration(null);
+			if (workspacePackage.prompt_blocks?.[0]?.duration_seconds) {
+				setVideoDurationSeconds(workspacePackage.prompt_blocks[0].duration_seconds);
+			}
 		}
 	}, [workspacePackage]);
 
@@ -969,8 +1073,39 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		}
 	};
 
+	const clearDurationAuthorityArtifacts = () => {
+		setPreviewPackage(null);
+		setWorkspacePackage(null);
+		setSavedGenPackage(null);
+		setSavePackageError(null);
+	};
+
+	const handleGenerationModeChange = (nextGenerationMode: PromptGenerationMode) => {
+		const transition = transitionOperatorDurationAuthority(
+			{
+				generationMode,
+				extendTotalDurationSeconds: requestedTotalDuration,
+			},
+			nextGenerationMode,
+		);
+		setGenerationMode(transition.generationMode);
+		setRequestedTotalDuration(transition.extendTotalDurationSeconds);
+		if (transition.clearCompiledArtifacts) {
+			clearDurationAuthorityArtifacts();
+		}
+	};
+
+	const handleExtendTotalDurationChange = (nextTotal: number | null) => {
+		setRequestedTotalDuration(nextTotal);
+		clearDurationAuthorityArtifacts();
+	};
+
 	const handleSaveGenerationPackage = useCallback(async () => {
 		if (!selectedProduct || !workspacePackage) return;
+		if (!durationAuthority) {
+			setSavePackageError("EXTEND_TOTAL_DURATION_REQUIRED");
+			return;
+		}
 		if (selectedProduct.reference_only) {
 			setSavePackageError(
 				"REFERENCE_ONLY_PRODUCT — Convert/Register this product via Smart Registration before saving a generation package.",
@@ -988,43 +1123,24 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					workspace_execution_package_id:
 						workspacePackage.workspace_execution_package_id,
 					source_mode: resolveSourceMode(mode) as "HYBRID" | "FRAMES",
-					generation_mode: generationMode,
+					...durationAuthority.payload,
 					target_language: targetLanguage,
 					camera_style: cameraStyle,
 					character_presence: characterPresence,
 					creator_persona: creatorPersona,
 					overlay_enabled: false, // NO_OVERLAY law (ADR-008): default off
 					dialogue_enabled: true,
-					blocks: [
-						{ block_index: 1, duration_seconds: block1Duration },
-						...(generationMode === "EXTEND"
-							? [{ block_index: 2, duration_seconds: block2Duration }]
-							: []),
-					],
-					// backend workbook authority OVERRIDES blocks[] when a total is set (rule 2)
-					...(generationMode === "EXTEND" && extendTotalValue !== null
-						? {
-								engine_duration_target: "GOOGLE_FLOW" as const,
-								requested_total_duration_seconds: extendTotalValue,
-							}
-						: {}),
 				});
 			} else if (mode === "I2V") {
 				pkg = await createI2VGenerationPackage({
 					product_id: selectedProduct.id,
 					workspace_execution_package_id:
 						workspacePackage.workspace_execution_package_id,
-					generation_mode: generationMode,
+					...durationAuthority.payload,
 					target_language: targetLanguage,
 					camera_style: cameraStyle,
 					character_presence: characterPresence,
 					creator_persona: creatorPersona,
-					...(generationMode === "EXTEND" && extendTotalValue !== null
-						? {
-								engine_duration_target: "GOOGLE_FLOW" as const,
-								requested_total_duration_seconds: extendTotalValue,
-							}
-						: {}),
 				});
 			} else {
 				throw new Error(
@@ -1041,19 +1157,25 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		selectedProduct,
 		workspacePackage,
 		mode,
-		generationMode,
+		durationAuthority,
 		targetLanguage,
 		cameraStyle,
 		characterPresence,
 		creatorPersona,
-		block1Duration,
-		block2Duration,
-		requestedTotalDuration,
-		resolveSourceMode,
 	]);
 
 	// Step 3 — Load Package Preview (compile only, no DB save)
 	const handleLoadPreview = async () => {
+		if (!durationAuthority) {
+			setNotice({
+				tone: "warning",
+				title: "Total Video Duration required",
+				detail:
+					"EXTEND compiles only from one authorized Total Video Duration. Select a total to derive the route and block plan.",
+				requestId: null,
+			});
+			return;
+		}
 		if (!selectedProduct || selectedReadiness?.readiness_status !== "READY") {
 			const blocker =
 				selectedReadiness?.blocker ??
@@ -1076,32 +1198,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				mode: jobMode,
 				source_mode: resolveSourceMode(mode),
 				copy_set_id: selectedCopySetId,
-				duration_seconds: block1Duration,
-				generation_mode: generationMode,
+				...durationAuthority.payload,
 				target_language: targetLanguage,
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
 				creator_persona: creatorPersona,
-				blocks:
-					generationMode === "EXTEND"
-						? [
-								{ block_index: 1, duration_seconds: block1Duration },
-								{ block_index: 2, duration_seconds: block2Duration },
-							]
-						: [],
-				...(generationMode === "EXTEND" && extendTotalValue !== null
-					? {
-							engine_duration_target: engineDurationTarget || "GOOGLE_FLOW",
-							requested_total_duration_seconds: extendTotalValue,
-						}
-					: engineDurationTarget
-						? {
-								engine_duration_target: engineDurationTarget,
-								...(requestedTotalDuration !== ""
-									? { requested_total_duration_seconds: requestedTotalDuration }
-									: {}),
-							}
-						: {}),
 			});
 			setPreviewPackage(preview);
 			setNotice({
@@ -1134,6 +1235,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// not explicitly confirmed (Explicit-Fallback-Confirmation V1).
 	const runGeneratePackage = async (fallbackConfirmed: boolean) => {
 		if (!selectedProduct || !previewPackage) return;
+		if (!durationAuthority) {
+			setNotice({
+				tone: "warning",
+				title: "Total Video Duration required",
+				detail:
+					"EXTEND cannot generate from stale manual duration state. Select one Total Video Duration first.",
+				requestId: null,
+			});
+			return;
+		}
 		setShowFallbackConfirm(false);
 		setIsLoadingPackage(true);
 		try {
@@ -1143,32 +1254,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				source_mode: resolveSourceMode(mode),
 				copy_set_id: selectedCopySetId,
 				copy_fallback_confirmed: fallbackConfirmed,
-				duration_seconds: block1Duration,
-				generation_mode: generationMode,
+				...durationAuthority.payload,
 				target_language: targetLanguage,
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
 				creator_persona: creatorPersona,
-				blocks:
-					generationMode === "EXTEND"
-						? [
-								{ block_index: 1, duration_seconds: block1Duration },
-								{ block_index: 2, duration_seconds: block2Duration },
-							]
-						: [],
-				...(generationMode === "EXTEND" && extendTotalValue !== null
-					? {
-							engine_duration_target: engineDurationTarget || "GOOGLE_FLOW",
-							requested_total_duration_seconds: extendTotalValue,
-						}
-					: engineDurationTarget
-						? {
-								engine_duration_target: engineDurationTarget,
-								...(requestedTotalDuration !== ""
-									? { requested_total_duration_seconds: requestedTotalDuration }
-									: {}),
-							}
-						: {}),
 			});
 			setWorkspacePackage(pkg);
 			setPreviewPackage(null);
@@ -1202,12 +1292,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// Click handler: an approved Copy Set generates immediately; NO selection
 	// opens the explicit fallback-confirmation gate first (backend also enforces).
 	const handleGeneratePackage = () => {
-		if (extendManualBlocked) {
+		if (extendTotalRequired) {
 			setNotice({
 				tone: "warning",
-				title: "Extend Total required",
+				title: "Total Video Duration required",
 				detail:
-					"Production EXTEND requires an Extend Total. Manual per-block is DEV/ADVANCED only.",
+					"Production EXTEND requires one Total Video Duration. The route and block plan are derived automatically.",
 				requestId: null,
 			});
 			return;
@@ -1228,11 +1318,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			EN_US: {},
 		},
 	) as PromptTargetLanguage[];
-	const shotPolicy1 =
-		promptConfig?.shot_count_policy[String(block1Duration)] ?? null;
-	const shotPolicy2 =
-		promptConfig?.shot_count_policy[String(block2Duration)] ?? null;
-	const isExtendMode = generationMode === "EXTEND";
+	const videoShotPolicy =
+		promptConfig?.shot_count_policy[String(videoDurationSeconds)] ?? null;
+	const extendAuthority =
+		durationAuthority?.generationMode === "EXTEND" ? durationAuthority : null;
+	const extendTotalOptions = Object.keys(OPERATOR_EXTEND_PLAN_BY_TOTAL).map(Number);
+	const automaticWps =
+		promptConfig?.language_wps_policy[targetLanguage]?.body_wps ?? null;
 	const packageBridgeFlowLabelByMode: Record<WorkspaceMode, string> = {
 		T2V: "Load T2V Package + Generate Final Prompt",
 		HYBRID: "Load HYBRID Package + Generate Final Prompt",
@@ -1371,7 +1463,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								title="Generation mode"
 								value={generationMode}
 								onChange={(e) =>
-									setGenerationMode(e.target.value as PromptGenerationMode)
+									handleGenerationModeChange(
+										e.target.value as PromptGenerationMode,
+									)
 								}
 								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
 							>
@@ -1400,55 +1494,55 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								))}
 							</select>
 						</div>
-						<div className="space-y-2">
-							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-								Block 1 Duration
-							</div>
-							<select
-								id="operator-block-1-duration"
-								name="operator_block_1_duration"
-								title="Block 1 duration"
-								value={String(block1Duration)}
-								onChange={(e) => setBlock1Duration(Number(e.target.value))}
-								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-							>
-								{allowedDurations.map((duration) => (
-									<option key={duration} value={duration}>
-										{duration}s
-									</option>
-								))}
-							</select>
-							<div className="text-[11px] text-slate-400">
-								Recommended Shots: {shotPolicy1?.recommended ?? "-"}
-							</div>
-						</div>
 						{isExtendMode ? (
 							<div className="space-y-2">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Extend Total Duration</div>
-								<select id="operator-extend-total-duration" name="operator_extend_total_duration" title="Extend total duration - Google Flow workbook block plan" value={requestedTotalDuration === "" ? "" : String(requestedTotalDuration)} onChange={(e) => setRequestedTotalDuration(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100">
-									<option value="">Manual per-block — DEV / ADVANCED</option>
-									{extendTotalOptions.map((total) => (<option key={total} value={total}>{total}s</option>))}
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+									Total Video Duration
+								</div>
+								<select
+									id="operator-extend-total-duration"
+									name="operator_extend_total_duration"
+									title="Total video duration"
+									value={requestedTotalDuration === null ? "" : String(requestedTotalDuration)}
+									onChange={(e) =>
+										handleExtendTotalDurationChange(
+											e.target.value === "" ? null : Number(e.target.value),
+										)
+									}
+									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+								>
+									<option value="">Select total video duration</option>
+									{extendTotalOptions.map((total) => (
+										<option key={total} value={total}>
+											{total}s
+										</option>
+									))}
 								</select>
-								{extendTotalValue === null ? (
-									<div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">Production EXTEND requires an Extend Total (route-authority workbook plan). This raw per-block path is DEV / ADVANCED only and fails closed in production (EXTEND_MANUAL_BLOCK_PLAN_BLOCKED_IN_PRODUCTION). Block 2 Duration:{" "}
-										<select id="operator-block-2-duration" name="operator_block_2_duration" title="Block 2 duration" value={String(block2Duration)} onChange={(e) => setBlock2Duration(Number(e.target.value))} className="ml-1 rounded border border-slate-800 bg-slate-900 px-1 py-0.5 text-[11px] text-slate-100">
-											{allowedDurations.map((duration) => (<option key={duration} value={duration}>{duration}s</option>))}
-										</select>{" "}(shots {shotPolicy2?.recommended ?? "-"})
-									</div>
-								) : extendPlan ? (
-									<div className="text-[11px] text-emerald-300">Block plan (Google Flow): {extendPlan.length} blocks - {extendPlan.map((d) => `${d}s`).join(" + ")}</div>
-								) : (
-									<div className="text-[11px] text-amber-300">Unsupported total - generation fails closed (UNSUPPORTED_EXTEND_TOTAL_DURATION_{extendTotalValue}).</div>
-								)}
 							</div>
 						) : (
 							<div className="space-y-2">
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-									Block Structure
+									Video Duration
 								</div>
-								<div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-400">
-									Single mode generates one prompt block only and will not split.
-									Switch Generation Mode to Extend to produce a multi-block chain.
+								<select
+									id="operator-video-duration"
+									name="operator_video_duration"
+									title="Video duration"
+									value={String(videoDurationSeconds)}
+									onChange={(e) => {
+										setVideoDurationSeconds(Number(e.target.value));
+										clearDurationAuthorityArtifacts();
+									}}
+									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+								>
+									{allowedDurations.map((duration) => (
+										<option key={duration} value={duration}>
+											{duration}s
+										</option>
+									))}
+								</select>
+								<div className="text-[11px] text-slate-400">
+									One complete video · {videoShotPolicy?.recommended ?? "-"} recommended shot(s)
 								</div>
 							</div>
 						)}
@@ -1546,50 +1640,29 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</div>
 						<div className="space-y-2">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-								WPS Engine Vendor (optional)
+								Duration Authority
 							</div>
-							<select
-								title="WPS engine vendor"
-								value={engineDurationTarget}
-								onChange={(e) =>
-									setEngineDurationTarget(
-										e.target.value as "" | "GROK" | "GOOGLE_FLOW",
-									)
-								}
-								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+							<div
+								className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-300"
+								data-testid="operator-duration-authority-summary"
 							>
-								<option value="">None (no WPS chaining)</option>
-								<option value="GROK">Grok</option>
-								<option value="GOOGLE_FLOW">Google Flow</option>
-							</select>
-							<div className="text-[11px] text-slate-400">
-								Select a vendor to enforce the WPS Blocking Template.
-							</div>
-						</div>
-						<div className="space-y-2">
-							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-								WPS Total Duration (s)
-							</div>
-							<input
-								type="number"
-								min={1}
-								title="WPS requested total duration seconds"
-								value={
-									requestedTotalDuration === ""
-										? ""
-										: String(requestedTotalDuration)
-								}
-								onChange={(e) =>
-									setRequestedTotalDuration(
-										e.target.value === "" ? "" : Number(e.target.value),
-									)
-								}
-								disabled={engineDurationTarget === ""}
-								placeholder="e.g. 24"
-								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 disabled:opacity-40"
-							/>
-							<div className="text-[11px] text-slate-400">
-								Total video seconds; backend resolves the block chain.
+								{extendTotalRequired ? (
+									"Select one Total Video Duration to derive the authorized route, block plan, timeline, and automatic WPS budget."
+								) : extendAuthority ? (
+									<>
+										<div>
+											Route: {extendAuthority.route} · authorized · {extendAuthority.plan.length} blocks
+										</div>
+										<div className="mt-1">
+											Plan: {extendAuthority.plan.map((duration) => `${duration}s`).join(" + ")} · Timeline: {extendAuthority.timeline.map((segment) => `${segment.start_s}–${segment.end_s}s`).join(" | ")}
+										</div>
+										<div className="mt-1">
+											WPS: automatic {automaticWps === null ? "from compiler policy" : `${automaticWps} body WPS`}
+										</div>
+									</>
+								) : (
+									"One complete video · WPS is applied automatically by the compiler policy."
+								)}
 							</div>
 						</div>
 					</div>
@@ -1598,14 +1671,22 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
 								Shot Plan
 							</div>
-							<div className="mt-2">
-								Block 1: {shotPolicy1?.recommended ?? "-"} recommended shot(s)
-							</div>
-							{generationMode === "EXTEND" ? (
-								<div className="mt-1">
-									Block 2: {shotPolicy2?.recommended ?? "-"} recommended shot(s)
+							{extendAuthority ? (
+								<div className="mt-2">
+									{extendAuthority.timeline.map((segment) => {
+										const duration = segment.end_s - segment.start_s;
+										return (
+											<div key={segment.block_index} className="mt-1">
+												Block {segment.block_index}: {duration}s · {promptConfig?.shot_count_policy[String(duration)]?.recommended ?? "-"} recommended shot(s)
+											</div>
+										);
+									})}
 								</div>
-							) : null}
+							) : (
+								<div className="mt-2">
+									Complete video: {videoShotPolicy?.recommended ?? "-"} recommended shot(s)
+								</div>
+							)}
 						</div>
 						<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
@@ -1843,12 +1924,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							(product landbank / claim-safe angles).
 						</div>
 					) : null}
-					{extendManualBlocked ? (
+					{extendTotalRequired ? (
 						<div className="mb-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200">
-							<strong>Production EXTEND requires an Extend Total.</strong> The manual
-							per-block path is DEV/ADVANCED only and fails closed at the backend
-							(EXTEND_MANUAL_BLOCK_PLAN_BLOCKED_IN_PRODUCTION). Pick an Extend Total
-							above to enable Load / Generate.
+							<strong>Production EXTEND requires one Total Video Duration.</strong> The
+							authorized route, block plan, timeline, and WPS budget are derived
+							automatically. Select a total above to enable Load / Generate.
 						</div>
 					) : null}
 					<button
@@ -1859,7 +1939,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							isLoadingPreview ||
 							selectedReadinessLoading ||
 							selectedReadiness?.readiness_status !== "READY" ||
-							extendManualBlocked
+							extendTotalRequired
 						}
 						className="w-full rounded-xl border border-slate-600/40 bg-slate-700/30 px-4 py-3 text-sm font-bold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50 disabled:grayscale transition-all"
 					>
@@ -1937,6 +2017,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									</div>
 								</div>
 							) : null}
+							{previewPackage.planner_result ? (
+								<div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-3 py-3 text-xs text-slate-300" data-testid="operator-storyboard-plan-summary">
+									<div className="font-bold uppercase tracking-[0.18em] text-indigo-300">Storyboard-first plan · {previewPackage.planner_result.plan_version}</div>
+									<div className="mt-2 text-slate-400">Route: {previewPackage.planner_result.route_id} · Total: {previewPackage.planner_result.total_duration_seconds}s · Blocks: [{previewPackage.planner_result.resolved_block_plan.join(", ")}]</div>
+									<div className="mt-1 text-slate-400">Story: {previewPackage.planner_result.full_story_plan.story_summary}</div>
+									<div className="mt-1 text-slate-400">Full dialogue: {previewPackage.planner_result.full_dialogue_plan.full_dialogue_text || "(visual-only preview)"}</div>
+								</div>
+							) : null}
 							<div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
 								Package loaded. Review above then press Generate Final Prompt to
 								save.
@@ -1986,7 +2074,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							!previewPackage ||
 							isLoadingPackage ||
 							showFallbackConfirm ||
-							extendManualBlocked
+							extendTotalRequired
 						}
 						className="w-full rounded-xl border border-blue-500/40 bg-blue-500/15 px-4 py-3 text-sm font-bold text-blue-100 hover:bg-blue-500/25 disabled:opacity-50 disabled:grayscale transition-all"
 					>

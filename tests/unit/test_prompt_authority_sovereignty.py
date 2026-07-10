@@ -40,24 +40,23 @@ def test_legacy_9_section_shim_renders_canonical(monkeypatch):
     assert "The presenter is a Malaysian adult" in prompt
 
 
-def test_requested_total_duration_derives_workbook_chain():
-    # Operator asks 24s total → workbook says Google Flow 24s = [8,8,8].
-    result = compile_ugc_video_prompt(
-        product=PRODUCT, approved_package={}, mode="F2V",
-        target_language="BM_MS", generation_mode="SINGLE", duration_seconds=8,
-        requested_total_duration_seconds=24,
-    )
-    assert len(result["prompt_blocks"]) == 3
-    assert [b["duration_seconds"] for b in result["prompt_blocks"]] == [8, 8, 8]
-
-
-def test_requested_total_40s_fails_closed_without_lane():
-    with pytest.raises(ValueError, match="PREFERRED_LANE_REQUIRED"):
+def test_single_requested_total_fails_closed_before_workbook_resolution():
+    """A stale continuation total may not silently change SINGLE into EXTEND."""
+    with pytest.raises(ValueError, match="SINGLE_MODE_CANNOT_CARRY_REQUESTED_TOTAL_DURATION"):
         compile_ugc_video_prompt(
             product=PRODUCT, approved_package={}, mode="F2V",
             target_language="BM_MS", generation_mode="SINGLE", duration_seconds=8,
-            requested_total_duration_seconds=40,
+            requested_total_duration_seconds=24,
         )
+
+
+def test_requested_total_40s_uses_authorized_google_flow_8s_route():
+    result = compile_ugc_video_prompt(
+        product=PRODUCT, approved_package={}, mode="F2V",
+        target_language="BM_MS", generation_mode="EXTEND", duration_seconds=8,
+        requested_total_duration_seconds=40,
+    )
+    assert [block["duration_seconds"] for block in result["prompt_blocks"]] == [8] * 5
 
 
 def test_explicit_source_mode_frames_reaches_renderer():

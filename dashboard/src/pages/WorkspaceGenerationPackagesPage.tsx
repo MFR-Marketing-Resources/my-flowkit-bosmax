@@ -178,6 +178,13 @@ interface PromptBlock {
 	is_final?: boolean | null;
 	shot_count: number;
 	engine_prompt_text: string;
+	exact_dialogue_slice?: string;
+	allocation?: {
+		assigned_story_beats: Array<{ role: string }>;
+		exact_dialogue_slice: string;
+		continuation_instruction: string;
+		seam_policy: string;
+	};
 }
 
 const CANONICAL_PROMPT_SECTIONS = [
@@ -438,6 +445,7 @@ function PackageDetailPanel({
 	const surfaceMode = getOperatorSurfaceMode(pkg);
 	const isExtend = pkg.generation_mode === "EXTEND";
 	const blocks = (pkg.prompt_blocks_json ?? []) as PromptBlock[];
+	const storyboardPlan = handoff?.storyboard_plan ?? domScaffold?.prompt?.planner_result;
 	const imageStepStart = 2;
 	const promptStep = imageStepStart + allDisplayAssets.length;
 	const generateStep = promptStep + (isExtend ? blocks.length : 1);
@@ -592,18 +600,37 @@ function PackageDetailPanel({
 						<StepLabel n={imageStepStart + allDisplayAssets.length + 1} text={`Select model: ${modeModelHint[surfaceMode] ?? modeModelHint[mode] ?? "match your Workspace setting"}`} />
 					</div>
 
+					{storyboardPlan ? (
+						<div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 px-3 py-3 text-xs text-slate-300" data-testid="storyboard-plan-summary">
+							<div className="font-bold uppercase tracking-widest text-indigo-300">Storyboard-first plan · {storyboardPlan.plan_version}</div>
+							<div className="mt-2 grid gap-1 text-slate-400">
+								<div>Route: {storyboardPlan.route_id} · Total: {storyboardPlan.total_duration_seconds}s · Plan: [{storyboardPlan.resolved_block_plan.join(", ")}]</div>
+								<div>Story: {storyboardPlan.full_story_plan.story_summary}</div>
+								<div>Full dialogue: {storyboardPlan.full_dialogue_plan.full_dialogue_text || "(visual-only package)"}</div>
+							</div>
+						</div>
+					) : null}
+
 					{isExtend && blocks.length > 0 ? (
 						<div className="space-y-3">
 							<div className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs text-amber-200">
 								EXTEND mode — {blocks.length} blocks. Copy and generate Block 1 first, then continue with Block 2.
 							</div>
 							{blocks.map((block, i) => (
-								<PromptCopyBox
-									key={block.block_index}
-									text={block.engine_prompt_text}
-									label={`Block ${block.block_index} — ${block.block_role} (${block.duration_seconds}s${block.start_s != null && block.end_s != null ? ` · ${block.start_s}–${block.end_s}s` : ""} · ${block.shot_count} shot)${block.is_final ? " · FINAL" : ""}`}
-									stepNumber={promptStep + i}
-								/>
+								<div key={block.block_index} className="space-y-2">
+									<PromptCopyBox
+										text={block.engine_prompt_text}
+										label={`Block ${block.block_index} — ${block.block_role} (${block.duration_seconds}s${block.start_s != null && block.end_s != null ? ` · ${block.start_s}–${block.end_s}s` : ""} · ${block.shot_count} shot)${block.is_final ? " · FINAL" : ""}`}
+										stepNumber={promptStep + i}
+									/>
+									{block.allocation ? (
+										<div className="rounded border border-slate-800 bg-slate-950 px-3 py-2 text-[11px] text-slate-400">
+											<div>Allocated story: {block.allocation.assigned_story_beats.map((beat) => beat.role).join(" → ")}</div>
+											<div className="mt-1">Allocated dialogue: {block.allocation.exact_dialogue_slice || "(visual-only block)"}</div>
+											<div className="mt-1">Seam: {block.allocation.seam_policy} · {block.allocation.continuation_instruction}</div>
+										</div>
+									) : null}
+								</div>
 							))}
 						</div>
 					) : (

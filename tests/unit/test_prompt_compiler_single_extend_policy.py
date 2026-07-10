@@ -93,7 +93,7 @@ def test_extend_google_flow_16_emits_two_blocks_8_8():
     result = _extend_total(16)
     assert [b["duration_seconds"] for b in result["prompt_blocks"]] == [8, 8]
     assert result["prompt_blocks"][0]["block_role"] == "ANCHOR"
-    assert result["prompt_blocks"][1]["block_role"] == "CONTINUATION"
+    assert result["prompt_blocks"][1]["block_role"] == "FINAL"
     assert result["total_duration_seconds"] == 16
 
 

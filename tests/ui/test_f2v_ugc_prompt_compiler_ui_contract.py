@@ -15,14 +15,15 @@ def test_f2v_workspace_surfaces_ugc_prompt_compiler_controls():
     for token in [
         "UGC Prompt Compiler Controls",
         "Generation Mode",
-        "Block 1 Duration",
-        "Block 2 Duration",
+        "Video Duration",
+        "Total Video Duration",
+        "Duration Authority",
         "Camera Style",
         "Character Presence",
         "Creator Persona",
         "Language Policy",
-        "Recommended Shots",
-        "Load F2V Package + Generate Final Prompt",
+        "recommended shot(s)",
+        "two-step bridge",
         "Regenerate Final Prompt",
     ]:
         assert token in operator_source
@@ -39,17 +40,15 @@ def test_f2v_workspace_surfaces_ugc_prompt_compiler_controls():
         assert token in api_source
 
 
-def test_f2v_single_mode_hides_block_2_duration_until_extend():
+def test_f2v_single_mode_exposes_one_authoritative_video_duration():
     operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
 
     assert 'const isExtendMode = generationMode === "EXTEND";' in operator_source
-    assert (
-        "Single mode generates one prompt block only and will not split."
-        in operator_source
-    )
-    assert "Switch Generation" in operator_source
-    assert "to Extend to produce a multi-block chain." in operator_source
-    assert "{isExtendMode ? (" in operator_source
+    assert 'id="operator-video-duration"' in operator_source
+    assert 'name="operator_video_duration"' in operator_source
+    assert "One complete video" in operator_source
+    assert "Block 1 Duration" not in operator_source
+    assert "Block 2 Duration" not in operator_source
 
 
 def test_operator_extend_multi_block_split_contract():
@@ -61,24 +60,22 @@ def test_operator_extend_multi_block_split_contract():
     api_source = _read("dashboard/src/api/workspacePackages.ts")
 
     for token in [
-        "Extend Total Duration",
+        "Total Video Duration",
         'id="operator-extend-total-duration"',
         "extendTotalOptions",
-        "extendPlanByTotal",
-        # rule 8: resolved block plan shown before Load Package
-        "Block plan (Google Flow):",
-        # rule 5: fail-closed messaging for unsupported totals
+        "OPERATOR_EXTEND_PLAN_BY_TOTAL",
+        "OPERATOR_EXTEND_ROUTE",
+        "operator-duration-authority-summary",
+        "GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS",
         "UNSUPPORTED_EXTEND_TOTAL_DURATION_",
-        # rules 1-7: total forwarded so the backend workbook derives N blocks
-        "requested_total_duration_seconds: extendTotalValue",
-        'engine_duration_target: engineDurationTarget || "GOOGLE_FLOW"',
+        "requested_total_duration_seconds: extendTotalDurationSeconds",
+        'engine_duration_target: "GOOGLE_FLOW"',
     ]:
         assert token in operator_source, token
 
-    # rule 9: preview + generate both forward the total (identical payloads)
-    assert (
-        operator_source.count("requested_total_duration_seconds: extendTotalValue") >= 2  # preview + generate (+ f2v/i2v handoff)
-    )
+    # One shared builder feeds preview, execution package, and saved handoff.
+    assert operator_source.count("...durationAuthority.payload") >= 3
+    assert "GOOGLE_FLOW_VEO_EXTEND" not in operator_source
     assert "requested_total_duration_seconds" in api_source
 
 
@@ -91,10 +88,8 @@ def test_f2v_workspace_form_controls_have_stable_autofill_identifiers():
         'name="operator_generation_mode"',
         'id="operator-target-language"',
         'name="operator_target_language"',
-        'id="operator-block-1-duration"',
-        'name="operator_block_1_duration"',
-        'id="operator-block-2-duration"',
-        'name="operator_block_2_duration"',
+        'id="operator-video-duration"',
+        'name="operator_video_duration"',
         'id="operator-camera-style"',
         'name="operator_camera_style"',
         'id="operator-character-presence"',
@@ -105,8 +100,7 @@ def test_f2v_workspace_form_controls_have_stable_autofill_identifiers():
         assert token in operator_source
 
     for token in [
-        'id={`f2v-prompt-block-${block.block_index}`}',
-        'name={`f2v_prompt_block_${block.block_index}`}',
+        "workspacePackage.prompt_blocks.map((block) =>",
         'id="f2v-manual-prompt"',
         'name="f2v_manual_prompt"',
         'id="f2v-generation-model"',
@@ -127,21 +121,39 @@ def test_handoff_bank_renders_all_prompt_blocks():
     assert "blocks.length} blocks" in src  # count is dynamic, not a hardcoded 1
 
 
-def test_operator_extend_manual_no_total_blocks_load_and_generate():
-    """Counter-audit: EXTEND with no Extend Total is DEV/ADVANCED-only and fails
-    closed at the backend. The UI must block BOTH Load and Generate (and the handler
-    must guard, and a stale preview must be invalidated) so a normal operator can
-    never trigger a rejected API call."""
+def test_storyboard_first_plan_is_visible_in_operator_preview_and_handoff_bank():
+    operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
+    handoff_source = _read("dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx")
+
+    for token in [
+        "operator-storyboard-plan-summary",
+        "Storyboard-first plan",
+        "Full dialogue:",
+        "storyboard-allocation-summary",
+        "Exact dialogue:",
+    ]:
+        assert token in operator_source, token
+
+    for token in [
+        "storyboard-plan-summary",
+        "storyboardPlan",
+        "Allocated story:",
+        "Allocated dialogue:",
+        "Seam:",
+    ]:
+        assert token in handoff_source, token
+
+
+def test_operator_extend_requires_total_and_hides_manual_duration_controls():
+    """Production EXTEND owns one total only; stale or manual block state never
+    reaches preview or generation from the normal shared operator surface."""
     src = _read("dashboard/src/pages/OperatorPage.tsx")
-    # the blocked condition is defined once, early
-    assert 'generationMode === "EXTEND" && extendTotalValue === null' in src
-    assert "const extendManualBlocked" in src
-    # def + clearing-effect(body+dep) + Load disabled + Load blocker + Generate
-    # disabled + handler guard all reference it
-    assert src.count("extendManualBlocked") >= 5
-    # the Generate handler guards BEFORE any API call
-    assert "if (extendManualBlocked) {" in src
-    # a stale preview is invalidated on entering the blocked state
-    assert "if (extendManualBlocked) setPreviewPackage(null);" in src
-    # inline operator blocker on the Load path
-    assert "Production EXTEND requires an Extend Total" in src
+    assert "const extendTotalRequired" in src
+    assert src.count("extendTotalRequired") >= 5
+    assert "if (extendTotalRequired) {" in src
+    assert "if (extendTotalRequired) setPreviewPackage(null);" in src
+    assert "Production EXTEND requires one Total Video Duration" in src
+    assert "WPS Engine Vendor" not in src
+    assert "WPS Total Duration" not in src
+    assert "operator-block-1-duration" not in src
+    assert "operator-block-2-duration" not in src

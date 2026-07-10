@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from agent.services.workspace_execution_package_service import (
@@ -79,11 +81,21 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
             "shot_plan": [{"block_index": 1, "shot_count": 2, "shots": ["Shot 1", "Shot 2"]}],
             "dialogue_word_budget_per_block": [13],
             "prompt_fingerprint": "compiled_fp_001",
+            "canonical_package_fingerprint": "canonical_fp_001",
             "warnings": [],
             "blockers": [],
             "source_of_truth_notes": ["Compiler note"],
             "continuation_lineage": [],
             "runtime_config_snapshot": {"defaults": {"block_duration_seconds": 8}},
+            "planner_result": {
+                "plan_version": "full_storyboard_first_extend_planner_v1",
+                "planner_fingerprint": "planner_fp_001",
+                "full_story_plan": {"story_beats": [{"beat_id": "beat_1"}]},
+                "full_dialogue_plan": {"utterances": [{"utterance_id": "utterance_1"}]},
+                "block_allocations": [{"block_index": 1}],
+            },
+            "planner_version": "full_storyboard_first_extend_planner_v1",
+            "planner_fingerprint": "planner_fp_001",
         }
 
     async def fake_store(**kwargs):
@@ -110,6 +122,11 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
     assert result["request_lineage_payload"]["prompt_package_snapshot_id"] == "pkg_123"
     assert captured["workspace_execution_package_id"].startswith("wep_")
     assert captured["duration_seconds"] == 8
+    assert result["planner_result"]["planner_fingerprint"] == "planner_fp_001"
+    assert result["canonical_package_fingerprint"] == "canonical_fp_001"
+    stored_lineage = json.loads(captured["request_lineage_payload"])
+    assert stored_lineage["compiler"]["planner_result"] == result["planner_result"]
+    assert stored_lineage["compiler"]["canonical_package_fingerprint"] == "canonical_fp_001"
 
 
 @pytest.mark.asyncio

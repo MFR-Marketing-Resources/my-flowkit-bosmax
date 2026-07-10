@@ -606,14 +606,21 @@ export interface WorkspaceExecutionPackage {
 	prompt_blocks?: Array<{
 		block_id?: string;
 		block_index: number;
-		block_role: "ANCHOR" | "CONTINUATION";
+		block_role: "ANCHOR" | "CONTINUATION" | "FINAL";
 		duration_seconds: number;
+		start_s?: number;
+		end_s?: number;
+		is_final?: boolean;
 		shot_count: number;
 		dialogue_word_budget: number;
 		continuation_from_block_id?: string | null;
 		compiled_prompt_text: string;
 		engine_prompt_text: string;
 		shot_plan?: string[];
+		allocation?: StoryboardBlockAllocation | null;
+		story_beat_ids?: string[];
+		dialogue_utterance_ids?: string[];
+		exact_dialogue_slice?: string;
 	}>;
 	warnings?: string[];
 	compiler_blockers?: string[];
@@ -623,6 +630,105 @@ export interface WorkspaceExecutionPackage {
 		continuation_strategy: string;
 	}>;
 	runtime_config_snapshot?: PromptCompilerRuntimeConfig;
+	planner_result?: FullStoryboardPlannerResult | null;
+	planner_version?: string | null;
+	planner_fingerprint?: string | null;
+	canonical_package_fingerprint?: string | null;
+}
+
+export interface StoryboardContinuityState {
+	product_identity: string;
+	product_scale: string;
+	product_position: string;
+	product_grip: string;
+	presenter_identity: string;
+	presenter_pose: string;
+	presenter_expression: string;
+	wardrobe: string;
+	environment: string;
+	lighting: string;
+	camera_framing: string;
+	camera_direction_path: string;
+	motion_direction: string;
+	emotional_state: string;
+	scene_progression: string;
+	reference_frame_relationship: string;
+}
+
+export interface StoryboardStoryBeat {
+	beat_id: string;
+	role: string;
+	start_s: number;
+	end_s: number;
+	objective: string;
+	visual_action: string;
+	assigned_block_index: number | null;
+}
+
+export interface StoryboardDialogueUtterance {
+	utterance_id: string;
+	role: string;
+	start_s: number;
+	end_s: number;
+	text: string;
+	word_count: number;
+	assigned_block_index: number | null;
+}
+
+export interface StoryboardBlockAllocation {
+	block_index: number;
+	block_role: "ANCHOR" | "CONTINUATION" | "FINAL";
+	duration_seconds: number;
+	start_s: number;
+	end_s: number;
+	is_final: boolean;
+	assigned_story_beat_ids: string[];
+	assigned_story_beats: StoryboardStoryBeat[];
+	assigned_dialogue_utterance_ids: string[];
+	assigned_dialogue_utterances: StoryboardDialogueUtterance[];
+	exact_dialogue_slice: string;
+	dialogue_word_budget: number;
+	actual_dialogue_word_count: number;
+	entry_continuity_state: StoryboardContinuityState;
+	exit_continuity_state: StoryboardContinuityState;
+	seam_policy: string;
+	continuation_instruction: string;
+	source_mode_adapter: string;
+	compliance_status: string;
+	final_cta_text: string;
+	end_frame_instruction: string;
+}
+
+export interface FullStoryboardPlannerResult {
+	plan_version: string;
+	input_fingerprint: string;
+	planner_fingerprint: string;
+	route_id: string;
+	source_mode: string;
+	total_duration_seconds: number;
+	resolved_block_plan: number[];
+	full_story_plan: {
+		plan_version: string;
+		route_id: string;
+		source_mode: string;
+		source_mode_adapter: string;
+		total_duration_seconds: number;
+		resolved_block_plan: number[];
+		narrative_arc: string;
+		story_summary: string;
+		story_beats: StoryboardStoryBeat[];
+	};
+	full_dialogue_plan: {
+		plan_version: string;
+		target_language: string;
+		wps_mode: string;
+		total_duration_seconds: number;
+		total_word_budget: number;
+		actual_total_word_count: number;
+		full_dialogue_text: string;
+		utterances: StoryboardDialogueUtterance[];
+	};
+	block_allocations: StoryboardBlockAllocation[];
 }
 
 export interface WorkspacePromptPreviewResult {
@@ -654,6 +760,9 @@ export interface WorkspacePromptPreviewResult {
 	resolved_block_chain_source?: string;
 	actual_dialogue_word_count_per_block?: number[];
 	wps_status_per_block?: string[];
+	planner_result?: FullStoryboardPlannerResult | null;
+	planner_version?: string | null;
+	planner_fingerprint?: string | null;
 }
 
 // ── Copy Set (Copy Strategy Studio) — approvable copywriting bundle that binds
@@ -2292,6 +2401,7 @@ export interface WorkspaceGenerationPackageManualHandoff {
 	warnings: string[];
 	manual_fallback_ready: boolean;
 	dom_handoff_note: string;
+	storyboard_plan?: FullStoryboardPlannerResult | null;
 }
 
 export interface WorkspaceGenerationPackageDomScaffold {
@@ -2308,6 +2418,7 @@ export interface WorkspaceGenerationPackageDomScaffold {
 		final_text: string;
 		blocks: unknown[];
 		generation_mode: string;
+		planner_result?: FullStoryboardPlannerResult | null;
 	};
 	assets: Record<string, WorkspaceGenerationPackageAsset | null>;
 	settings: Record<string, unknown>;
