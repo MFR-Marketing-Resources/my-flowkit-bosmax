@@ -24,7 +24,22 @@ Canonical `:8100` runs **approved `main` only** (PID restarted via lifecycle; `s
 | Focused extend + integrity + persistence tests | **59 passed** |
 | Dashboard Vitest (utils + Operator component) | **11 passed** |
 | `scripts/verify-gate.ps1` | **PASS** |
-| Full backend `tests/unit+ui+api` vs `main` | main **20** fail / branch **19** fail; **1 net-new** (`test_product_intelligence_service` — under investigation) |
+### Full backend baseline (fair env)
+
+Run branch suite with canonical config parity:
+
+```powershell
+$env:FLOW_AGENT_DIR = "C:\Users\USER\Desktop\_ref_flowkit"
+cd C:\Users\USER\Desktop\_ref_flowkit_wt\feat-google-flow-extension-native-prompt-renderer-v1
+$env:PYTHONPATH = "."
+.\..\..\_ref_flowkit\.venv\Scripts\python.exe -m pytest tests/unit tests/ui tests/api -q --tb=no
+```
+
+| | Failures |
+|--|----------|
+| `origin/main` @ `007a8db` | **20** |
+| PR branch @ `a6cf1e3` (fair `FLOW_AGENT_DIR`) | **20** |
+| **net_new_failures** | **[]** (prior net-new was worktree missing `.local-agent` / `FLOW_AGENT_DIR`, not PR code) |
 
 ### Known limitations
 - Persistence proof uses `workspace_generation_package_service._json` round-trip (same serialization path as DB column); full SQLite CRUD integration test not added in this pass.
