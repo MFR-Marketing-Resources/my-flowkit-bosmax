@@ -3,25 +3,29 @@ import {
 	approvePosterCopySet,
 	composePoster,
 	createPosterCopySet,
+	forkPosterCopySetFromHistorical,
 	generatePosterDirections,
 	newPosterCopySetVersion,
+	patchPosterCopySet,
 	recommendPosterAngles,
 	recommendPosterObjectives,
 	regeneratePosterField,
 	savePosterToLibrary,
 } from "../../api/posterCopySets";
 import { fetchPosterReadiness } from "../../api/posterReadiness";
+import type { Product } from "../../types";
 import {
 	POSTER_COPY_APPROVAL_PHRASE,
 	type PosterAngleRecommendation,
 	type PosterComposeResponse,
 	type PosterCopyDirection,
 	type PosterCopySet,
+	type PosterDeliverableReconstruction,
 	type PosterObjectiveRecommendation,
+	type PosterQAReport,
 } from "../../types/posterCopySet";
 import type { PosterReadinessResponse } from "../../types/posterReadiness";
-import type { Product } from "../../types";
-import { type GuidedStepId, stepIndex } from "./posterGuided";
+import { GUIDED_STEPS, type GuidedStepId, stepIndex } from "./posterGuided";
 
 // Editable working copy of a poster-native copy set (user-facing field names).
 export interface GuidedCopyFields {
@@ -56,9 +60,48 @@ function directionToFields(d: PosterCopyDirection): GuidedCopyFields {
 	};
 }
 
+function copySetToFields(pcs: PosterCopySet): GuidedCopyFields {
+	return {
+		primary_message: pcs.primary_message,
+		support_message: pcs.support_message,
+		proof_points: [...(pcs.proof_points ?? [])],
+		cta: pcs.cta,
+		disclaimer: pcs.disclaimer,
+		tone: pcs.tone,
+		language: pcs.language || "ms",
+	};
+}
+
+function fieldsToPatch(fields: GuidedCopyFields): Record<string, unknown> {
+	return {
+		primary_message: fields.primary_message,
+		support_message: fields.support_message,
+		proof_points: fields.proof_points,
+		cta: fields.cta,
+		disclaimer: fields.disclaimer,
+		tone: fields.tone,
+		language: fields.language,
+	};
+}
+
+// User-facing failure text: lead with OUR friendly explanation; append the
+// backend reason only when it is short human text (never raw JSON / stacks).
 function friendlyError(e: unknown, fallback: string): string {
-	if (e instanceof Error && e.message) return e.message;
-	return fallback;
+	const msg = e instanceof Error ? (e.message ?? "").trim() : "";
+	const looksRaw =
+		!msg ||
+		msg.length > 160 ||
+		msg.startsWith("{") ||
+		msg.startsWith("[") ||
+		msg.includes("Traceback") ||
+		msg.includes("<html");
+	return looksRaw ? fallback : `${fallback} (${msg})`;
+}
+
+function normalizeQa(qa: unknown): PosterQAReport {
+	const candidate = qa as PosterQAReport | null | undefined;
+	if (candidate && Array.isArray(candidate.findings)) return candidate;
+	return { ok: false, findings: [], block_count: 0, warn_count: 0 };
 }
 
 export interface PosterGuidedWorkflow {
@@ -79,11 +122,16 @@ export interface PosterGuidedWorkflow {
 	objectiveRecs: PosterObjectiveRecommendation[];
 	recommendedArchetype: string | null;
 	goalsLoading: boolean;
+	goalsError: string;
 	recommendGoals: () => Promise<void>;
 	goalArchetype: string | null;
 	goalRecipeId: string | null;
 	objectiveText: string;
-	selectGoal: (archetype: string, recipeId?: string, objective?: string) => void;
+	selectGoal: (
+		archetype: string,
+		recipeId?: string,
+		objective?: string,
+	) => void;
 	// angle
 	angles: PosterAngleRecommendation[];
 	anglesLoading: boolean;
@@ -100,15 +148,33 @@ export interface PosterGuidedWorkflow {
 	loadDirections: () => Promise<void>;
 	selectDirection: (index: number) => void;
 	fields: GuidedCopyFields;
-	updateField: (field: keyof GuidedCopyFields, value: string | string[]) => void;
+	updateField: (
+		field: keyof GuidedCopyFields,
+		value: string | string[],
+	) => void;
 	regenField: (field: string) => Promise<void>;
 	fieldRegenLoading: string;
-	// approval
+	fieldRegenError: string;
+	// approval lifecycle. `editingCopySetId` is the ALREADY-CREATED draft (a new
+	// version or a historical fork) — approve() must patch+approve THAT row, never
+	// create a duplicate copy set.
 	approvedCopySet: PosterCopySet | null;
+	editingCopySetId: string | null;
 	approveLoading: boolean;
 	approveError: string;
 	approve: () => Promise<void>;
 	editApproved: () => Promise<void>;
+	// reopen (Creative Library round trip)
+	historicalCopySet: PosterCopySet | null;
+	restoreFromReopen: (
+		recon: PosterDeliverableReconstruction,
+		product: Product | null,
+	) => void;
+	reuseSameCopy: () => void;
+	duplicatePoster: () => void;
+	forkHistorical: () => Promise<void>;
+	forkLoading: boolean;
+	forkError: string;
 	// visual
 	recipeId: string | null;
 	selectRecipe: (recipeId: string) => void;
@@ -132,13 +198,20 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	const [reached, setReached] = useState<GuidedStepId[]>(["product"]);
 	const [product, setProduct] = useState<Product | null>(null);
 
-	const [readiness, setReadiness] = useState<PosterReadinessResponse | null>(null);
+	const [readiness, setReadiness] = useState<PosterReadinessResponse | null>(
+		null,
+	);
 	const [readinessLoading, setReadinessLoading] = useState(false);
 	const [readinessError, setReadinessError] = useState("");
 
-	const [objectiveRecs, setObjectiveRecs] = useState<PosterObjectiveRecommendation[]>([]);
-	const [recommendedArchetype, setRecommendedArchetype] = useState<string | null>(null);
+	const [objectiveRecs, setObjectiveRecs] = useState<
+		PosterObjectiveRecommendation[]
+	>([]);
+	const [recommendedArchetype, setRecommendedArchetype] = useState<
+		string | null
+	>(null);
 	const [goalsLoading, setGoalsLoading] = useState(false);
+	const [goalsError, setGoalsError] = useState("");
 	const [goalArchetype, setGoalArchetype] = useState<string | null>(null);
 	const [goalRecipeId, setGoalRecipeId] = useState<string | null>(null);
 	const [objectiveText, setObjectiveText] = useState("");
@@ -152,19 +225,32 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	const [directionsLoading, setDirectionsLoading] = useState(false);
 	const [directionsError, setDirectionsError] = useState("");
 	const [directionWarnings, setDirectionWarnings] = useState<string[]>([]);
-	const [selectedDirection, setSelectedDirection] = useState<number | null>(null);
+	const [selectedDirection, setSelectedDirection] = useState<number | null>(
+		null,
+	);
 	const [fields, setFields] = useState<GuidedCopyFields>(EMPTY_FIELDS);
 
 	const [fieldRegenLoading, setFieldRegenLoading] = useState("");
+	const [fieldRegenError, setFieldRegenError] = useState("");
 
-	const [approvedCopySet, setApprovedCopySet] = useState<PosterCopySet | null>(null);
+	const [approvedCopySet, setApprovedCopySet] = useState<PosterCopySet | null>(
+		null,
+	);
+	const [editingCopySetId, setEditingCopySetId] = useState<string | null>(null);
 	const [approveLoading, setApproveLoading] = useState(false);
 	const [approveError, setApproveError] = useState("");
+
+	const [historicalCopySet, setHistoricalCopySet] =
+		useState<PosterCopySet | null>(null);
+	const [forkLoading, setForkLoading] = useState(false);
+	const [forkError, setForkError] = useState("");
 
 	const [recipeId, setRecipeId] = useState<string | null>(null);
 	const [backgroundMediaId, setBackgroundMediaId] = useState("");
 
-	const [deliverable, setDeliverable] = useState<PosterComposeResponse | null>(null);
+	const [deliverable, setDeliverable] = useState<PosterComposeResponse | null>(
+		null,
+	);
 	const [composeLoading, setComposeLoading] = useState(false);
 	const [composeError, setComposeError] = useState("");
 
@@ -189,41 +275,45 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	);
 
 	// Selecting a product invalidates EVERYTHING downstream.
-	const selectProduct = useCallback(
-		(p: Product | null) => {
-			setProduct(p);
-			setReadiness(null);
-			setReadinessError("");
-			setObjectiveRecs([]);
-			setRecommendedArchetype(null);
-			setGoalArchetype(null);
-			setGoalRecipeId(null);
-			setObjectiveText("");
-			setAngles([]);
-			setSelectedAngle("");
-			setDirections([]);
-			setSelectedDirection(null);
-			setFields(EMPTY_FIELDS);
-			setApprovedCopySet(null);
-			setRecipeId(null);
-			setBackgroundMediaId("");
-			setDeliverable(null);
-			setSavedAssetId(null);
-			setReached(p ? ["product", "goal"] : ["product"]);
-			setStep(p ? "goal" : "product");
-			if (!p) return;
-			setReadinessLoading(true);
-			void fetchPosterReadiness(p.id)
-				.then((r) => setReadiness(r))
-				.catch((e) => setReadinessError(friendlyError(e, "Gagal menyemak kesediaan produk.")))
-				.finally(() => setReadinessLoading(false));
-		},
-		[],
-	);
+	const selectProduct = useCallback((p: Product | null) => {
+		setProduct(p);
+		setReadiness(null);
+		setReadinessError("");
+		setObjectiveRecs([]);
+		setRecommendedArchetype(null);
+		setGoalsError("");
+		setGoalArchetype(null);
+		setGoalRecipeId(null);
+		setObjectiveText("");
+		setAngles([]);
+		setSelectedAngle("");
+		setDirections([]);
+		setSelectedDirection(null);
+		setFields(EMPTY_FIELDS);
+		setApprovedCopySet(null);
+		setEditingCopySetId(null);
+		setHistoricalCopySet(null);
+		setForkError("");
+		setRecipeId(null);
+		setBackgroundMediaId("");
+		setDeliverable(null);
+		setSavedAssetId(null);
+		setReached(p ? ["product", "goal"] : ["product"]);
+		setStep(p ? "goal" : "product");
+		if (!p) return;
+		setReadinessLoading(true);
+		void fetchPosterReadiness(p.id)
+			.then((r) => setReadiness(r))
+			.catch((e) =>
+				setReadinessError(friendlyError(e, "Gagal menyemak kesediaan produk.")),
+			)
+			.finally(() => setReadinessLoading(false));
+	}, []);
 
 	const recommendGoals = useCallback(async () => {
 		if (!product) return;
 		setGoalsLoading(true);
+		setGoalsError("");
 		try {
 			const res = await recommendPosterObjectives({
 				product_id: product.id,
@@ -233,6 +323,12 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setRecommendedArchetype(res.recommendations?.[0]?.archetype ?? null);
 		} catch (e) {
 			setRecommendedArchetype(null);
+			setGoalsError(
+				friendlyError(
+					e,
+					"Gagal mendapatkan cadangan tujuan. Anda masih boleh memilih sendiri di bawah.",
+				),
+			);
 		} finally {
 			setGoalsLoading(false);
 		}
@@ -250,7 +346,9 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			});
 			setAngles(res.angles ?? []);
 		} catch (e) {
-			setAnglesError(friendlyError(e, "Gagal menjana sudut jualan. Cuba lagi."));
+			setAnglesError(
+				friendlyError(e, "Gagal menjana sudut jualan. Cuba lagi."),
+			);
 		} finally {
 			setAnglesLoading(false);
 		}
@@ -268,6 +366,8 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setSelectedDirection(null);
 			setFields(EMPTY_FIELDS);
 			setApprovedCopySet(null);
+			setEditingCopySetId(null);
+			setHistoricalCopySet(null);
 			setReached((prev) => {
 				const keep = prev.filter((s) => stepIndex(s) <= stepIndex("goal"));
 				return keep.includes("angle") ? keep : [...keep, "angle"];
@@ -292,7 +392,9 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setDirections(res.directions ?? []);
 			setDirectionWarnings(res.warnings ?? []);
 		} catch (e) {
-			setDirectionsError(friendlyError(e, "Gagal menjana arah teks. Cuba lagi."));
+			setDirectionsError(
+				friendlyError(e, "Gagal menjana arah teks. Cuba lagi."),
+			);
 		} finally {
 			setDirectionsLoading(false);
 		}
@@ -305,6 +407,8 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		setSelectedDirection(null);
 		setFields(EMPTY_FIELDS);
 		setApprovedCopySet(null);
+		setEditingCopySetId(null);
+		setHistoricalCopySet(null);
 		setReached((prev) => {
 			const keep = prev.filter((s) => stepIndex(s) <= stepIndex("angle"));
 			return keep.includes("copy") ? keep : [...keep, "copy"];
@@ -318,7 +422,14 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			if (!d) return;
 			setSelectedDirection(index);
 			setFields(directionToFields(d));
-			setReached((prev) => (prev.includes("approve") ? prev : [...prev, "approve"]));
+			// Choosing a fresh AI direction is a BRAND-NEW copy flow — abandon any
+			// in-flight version draft so approve() creates rather than patches.
+			setEditingCopySetId(null);
+			setHistoricalCopySet(null);
+			setApprovedCopySet(null);
+			setReached((prev) =>
+				prev.includes("approve") ? prev : [...prev, "approve"],
+			);
 		},
 		[directions],
 	);
@@ -326,7 +437,8 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	const updateField = useCallback(
 		(field: keyof GuidedCopyFields, value: string | string[]) => {
 			setFields((prev) => ({ ...prev, [field]: value }));
-			// Editing invalidates a prior approval.
+			// Editing invalidates a prior approval (but NOT the editing draft id —
+			// the whole point of the version draft is to receive these edits).
 			setApprovedCopySet(null);
 		},
 		[],
@@ -336,6 +448,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		async (field: string) => {
 			if (!product || !goalArchetype) return;
 			setFieldRegenLoading(field);
+			setFieldRegenError("");
 			try {
 				const res = await regeneratePosterField({
 					product_id: product.id,
@@ -345,10 +458,17 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 					language: fields.language,
 					fields: { ...fields },
 				});
-				setFields((prev) => ({ ...prev, [field]: res.value } as GuidedCopyFields));
+				setFields(
+					(prev) => ({ ...prev, [field]: res.value }) as GuidedCopyFields,
+				);
 				setApprovedCopySet(null);
-			} catch {
-				// surfaced by caller via a toast-less inline; keep field unchanged
+			} catch (e) {
+				setFieldRegenError(
+					friendlyError(
+						e,
+						"Gagal menjana semula medan ini. Teks asal dikekalkan — cuba lagi.",
+					),
+				);
 			} finally {
 				setFieldRegenLoading("");
 			}
@@ -361,51 +481,63 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		setApproveLoading(true);
 		setApproveError("");
 		try {
-			const draft = await createPosterCopySet({
-				product_id: product.id,
-				objective: objectiveText || "Poster",
-				archetype: goalArchetype,
-				angle: selectedAngle,
-				primary_message: fields.primary_message,
-				support_message: fields.support_message,
-				proof_points: fields.proof_points,
-				cta: fields.cta,
-				disclaimer: fields.disclaimer,
-				tone: fields.tone,
-				language: fields.language,
-			});
+			let draftId = editingCopySetId;
+			if (draftId) {
+				// Version-draft path: reuse the EXISTING draft row (parent lineage
+				// already recorded by new-version/fork) — never create a duplicate.
+				await patchPosterCopySet(draftId, fieldsToPatch(fields));
+			} else {
+				const draft = await createPosterCopySet({
+					product_id: product.id,
+					objective: objectiveText || "Poster",
+					archetype: goalArchetype,
+					angle: selectedAngle,
+					...fieldsToPatch(fields),
+				});
+				draftId = draft.poster_copy_set_id;
+			}
 			const approved = await approvePosterCopySet(
-				draft.poster_copy_set_id,
+				draftId,
 				POSTER_COPY_APPROVAL_PHRASE,
 			);
 			setApprovedCopySet(approved);
+			setEditingCopySetId(null);
 			// Stay on the approve step to show the read-only approved state; the
 			// operator continues to the visual step explicitly.
-			setReached((prev) => (prev.includes("visual") ? prev : [...prev, "visual"]));
+			setReached((prev) =>
+				prev.includes("visual") ? prev : [...prev, "visual"],
+			);
 		} catch (e) {
-			setApproveError(friendlyError(e, "Teks tidak lulus semakan. Perbaiki dan cuba lagi."));
+			setApproveError(
+				friendlyError(e, "Teks tidak lulus semakan. Perbaiki dan cuba lagi."),
+			);
 		} finally {
 			setApproveLoading(false);
 		}
-	}, [product, goalArchetype, selectedAngle, objectiveText, fields]);
+	}, [
+		product,
+		goalArchetype,
+		selectedAngle,
+		objectiveText,
+		fields,
+		editingCopySetId,
+	]);
 
-	// Editing approved copy uses the immutable new-version lifecycle.
+	// Editing approved copy uses the immutable new-version lifecycle. The created
+	// draft id is KEPT so approve() patches it instead of creating a duplicate.
 	const editApproved = useCallback(async () => {
 		if (!approvedCopySet) return;
 		setApproveLoading(true);
 		setApproveError("");
 		try {
-			const draft = await newPosterCopySetVersion(approvedCopySet.poster_copy_set_id, {});
+			const draft = await newPosterCopySetVersion(
+				approvedCopySet.poster_copy_set_id,
+				{},
+			);
+			setEditingCopySetId(draft.poster_copy_set_id);
 			setApprovedCopySet(null);
-			setFields({
-				primary_message: draft.primary_message,
-				support_message: draft.support_message,
-				proof_points: [...(draft.proof_points ?? [])],
-				cta: draft.cta,
-				disclaimer: draft.disclaimer,
-				tone: draft.tone,
-				language: draft.language || "ms",
-			});
+			setFields(copySetToFields(draft));
+			setReached((prev) => (prev.includes("copy") ? prev : [...prev, "copy"]));
 			setStep("copy");
 		} catch (e) {
 			setApproveError(friendlyError(e, "Gagal membuka versi baharu."));
@@ -413,6 +545,105 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setApproveLoading(false);
 		}
 	}, [approvedCopySet]);
+
+	// ── Creative Library reopen ────────────────────────────────────────────────
+
+	const restoreFromReopen = useCallback(
+		(recon: PosterDeliverableReconstruction, p: Product | null) => {
+			const pcs = recon.poster_copy_set;
+			const historical =
+				!!recon.poster_copy_set_historical ||
+				pcs?.status === "POSTER_COPY_SUPERSEDED";
+			setProduct(p);
+			setReadiness(null);
+			setReadinessError("");
+			if (p) {
+				setReadinessLoading(true);
+				void fetchPosterReadiness(p.id)
+					.then((r) => setReadiness(r))
+					.catch((e) =>
+						setReadinessError(
+							friendlyError(e, "Gagal menyemak kesediaan produk."),
+						),
+					)
+					.finally(() => setReadinessLoading(false));
+			}
+			setGoalArchetype(pcs?.archetype ?? null);
+			setGoalRecipeId(recon.deliverable.recipe_id ?? null);
+			setObjectiveText(pcs?.objective ?? "");
+			setAngles([]);
+			setSelectedAngle(pcs?.angle ?? "");
+			setDirections([]);
+			setSelectedDirection(null);
+			setFields(pcs ? copySetToFields(pcs) : EMPTY_FIELDS);
+			setApprovedCopySet(
+				!historical && pcs?.status === "POSTER_COPY_APPROVED" ? pcs : null,
+			);
+			setHistoricalCopySet(historical ? pcs : null);
+			setEditingCopySetId(null);
+			setForkError("");
+			setRecipeId(recon.deliverable.recipe_id ?? null);
+			setBackgroundMediaId(recon.deliverable.background_media_id ?? "");
+			setDeliverable({
+				deliverable: recon.deliverable,
+				render_report: {},
+				qa_report: normalizeQa(recon.qa_report),
+			});
+			setSavedAssetId(recon.deliverable.creative_asset_id || null);
+			// The whole journey is restored — every step is navigable and the user
+			// lands on the saved poster, not an empty product wizard.
+			setReached(GUIDED_STEPS.map((s) => s.id));
+			setStep("save");
+		},
+		[],
+	);
+
+	// Reopen action: keep the SAME approved copy and go straight to visual choice.
+	const reuseSameCopy = useCallback(() => {
+		if (!approvedCopySet) return;
+		setDeliverable(null);
+		setSavedAssetId(null);
+		setStep("visual");
+	}, [approvedCopySet]);
+
+	// Reopen action: same copy + same visual/scene, fresh compose (the original
+	// deliverable and saved asset are never touched).
+	const duplicatePoster = useCallback(() => {
+		setDeliverable(null);
+		setSavedAssetId(null);
+		setReached((prev) =>
+			prev.includes("compose") ? prev : [...prev, "compose"],
+		);
+		setStep("compose");
+	}, []);
+
+	// Historical (superseded) copy stays read-only; forking creates an editable
+	// DRAFT lineage-linked to the historical row, preserving the original record.
+	const forkHistorical = useCallback(async () => {
+		if (!historicalCopySet) return;
+		setForkLoading(true);
+		setForkError("");
+		try {
+			const draft = await forkPosterCopySetFromHistorical(
+				historicalCopySet.poster_copy_set_id,
+			);
+			setEditingCopySetId(draft.poster_copy_set_id);
+			setHistoricalCopySet(null);
+			setApprovedCopySet(null);
+			setFields(copySetToFields(draft));
+			setReached((prev) => (prev.includes("copy") ? prev : [...prev, "copy"]));
+			setStep("copy");
+		} catch (e) {
+			setForkError(
+				friendlyError(
+					e,
+					"Gagal mencipta salinan boleh-edit daripada versi sejarah.",
+				),
+			);
+		} finally {
+			setForkLoading(false);
+		}
+	}, [historicalCopySet]);
 
 	const selectRecipe = useCallback((recipe: string) => {
 		setRecipeId(recipe);
@@ -437,7 +668,12 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setSavedAssetId(null);
 			setReached((prev) => (prev.includes("save") ? prev : [...prev, "save"]));
 		} catch (e) {
-			setComposeError(friendlyError(e, "Gagal menghasilkan poster. Semak latar/aset dan cuba lagi."));
+			setComposeError(
+				friendlyError(
+					e,
+					"Gagal menghasilkan poster. Semak latar/aset dan cuba lagi.",
+				),
+			);
 		} finally {
 			setComposeLoading(false);
 		}
@@ -461,19 +697,67 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	}, [deliverable]);
 
 	return {
-		step, reached, goTo, reach, canGoTo,
-		product, selectProduct,
-		readiness, readinessLoading, readinessError,
-		objectiveRecs, recommendedArchetype, goalsLoading, recommendGoals,
-		goalArchetype, goalRecipeId, objectiveText, selectGoal,
-		angles, anglesLoading, anglesError, selectedAngle, selectAngle, loadAngles,
-		directions, directionsLoading, directionsError, directionWarnings,
-		selectedDirection, loadDirections, selectDirection,
-		fields, updateField, regenField, fieldRegenLoading,
-		approvedCopySet, approveLoading, approveError, approve, editApproved,
-		recipeId, selectRecipe,
-		backgroundMediaId, setBackgroundMediaId,
-		compose, composeLoading, composeError, deliverable,
-		save, saveLoading, saveError, savedAssetId,
+		step,
+		reached,
+		goTo,
+		reach,
+		canGoTo,
+		product,
+		selectProduct,
+		readiness,
+		readinessLoading,
+		readinessError,
+		objectiveRecs,
+		recommendedArchetype,
+		goalsLoading,
+		goalsError,
+		recommendGoals,
+		goalArchetype,
+		goalRecipeId,
+		objectiveText,
+		selectGoal,
+		angles,
+		anglesLoading,
+		anglesError,
+		selectedAngle,
+		selectAngle,
+		loadAngles,
+		directions,
+		directionsLoading,
+		directionsError,
+		directionWarnings,
+		selectedDirection,
+		loadDirections,
+		selectDirection,
+		fields,
+		updateField,
+		regenField,
+		fieldRegenLoading,
+		fieldRegenError,
+		approvedCopySet,
+		editingCopySetId,
+		approveLoading,
+		approveError,
+		approve,
+		editApproved,
+		historicalCopySet,
+		restoreFromReopen,
+		reuseSameCopy,
+		duplicatePoster,
+		forkHistorical,
+		forkLoading,
+		forkError,
+		recipeId,
+		selectRecipe,
+		backgroundMediaId,
+		setBackgroundMediaId,
+		compose,
+		composeLoading,
+		composeError,
+		deliverable,
+		save,
+		saveLoading,
+		saveError,
+		savedAssetId,
 	};
 }

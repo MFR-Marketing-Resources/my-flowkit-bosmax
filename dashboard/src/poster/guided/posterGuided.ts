@@ -57,7 +57,9 @@ export const GUIDED_GOALS: GuidedGoal[] = [
 		accent: "emerald",
 	},
 	{
-		archetype: "PRODUCT_SCALE",
+		// Backend/recipe archetype code — "PRODUCT_SCALE" was a mismatch that
+		// silently broke recommendations + recipe filtering for this goal.
+		archetype: "PORTABILITY",
 		title: "Mudah Dibawa",
 		description: "Tekankan saiz padat dan mudah dibawa ke mana-mana.",
 		accent: "sky",
@@ -110,7 +112,9 @@ export interface ReadinessBanner {
 	canProceed: boolean;
 }
 
-export function readinessBanner(status: string | null | undefined): ReadinessBanner {
+export function readinessBanner(
+	status: string | null | undefined,
+): ReadinessBanner {
 	switch (status) {
 		case "POSTER_READY":
 			return {
@@ -162,16 +166,101 @@ export interface QaBuckets {
 	passed: boolean;
 }
 
-export function bucketQaFindings(qa: {
-	ok?: boolean;
-	findings?: { severity: string; message: string }[];
-} | null | undefined): QaBuckets {
+export function bucketQaFindings(
+	qa:
+		| {
+				ok?: boolean;
+				findings?: { severity: string; message: string }[];
+		  }
+		| null
+		| undefined,
+): QaBuckets {
 	const findings = qa?.findings ?? [];
 	return {
-		mustFix: findings.filter((f) => f.severity === "BLOCK").map((f) => f.message),
+		mustFix: findings
+			.filter((f) => f.severity === "BLOCK")
+			.map((f) => f.message),
 		review: findings.filter((f) => f.severity === "WARN").map((f) => f.message),
 		passed: !!qa?.ok && findings.length === 0,
 	};
+}
+
+// ── Product-truth-aware goal gating ─────────────────────────────────────────
+// A goal that CLAIMS something (portability, heritage) must have product
+// evidence behind it. Token heuristics mirror the backend's deterministic
+// objective ranking signals — the UI must not imply every goal fits every
+// product. Goals without evidence stay selectable ONLY behind an explicit
+// operator confirmation.
+
+const SIZE_EVIDENCE_TOKENS = [
+	"5ml",
+	"10ml",
+	"15ml",
+	"25ml",
+	"roll-on",
+	"roll on",
+	"mini",
+	"pocket",
+	"travel",
+	"poket",
+	"kecil",
+	"kompak",
+];
+const HERITAGE_EVIDENCE_TOKENS = [
+	"warisan",
+	"tradisi",
+	"traditional",
+	"herba",
+	"herbal",
+	"turun-temurun",
+	"heritage",
+	"asli",
+];
+
+export interface GoalEvidence {
+	supported: boolean;
+	// Short user-facing reason when NOT supported ("requires product evidence").
+	requirement: string;
+}
+
+export function goalEvidence(
+	archetype: string,
+	product: {
+		product_display_name?: string | null;
+		raw_product_title?: string | null;
+		category?: string | null;
+		type_of_product?: string | null;
+	} | null,
+): GoalEvidence {
+	const blob = [
+		product?.product_display_name,
+		product?.raw_product_title,
+		product?.category,
+		product?.type_of_product,
+	]
+		.map((s) => (s ?? "").toLowerCase())
+		.join(" ");
+	if (archetype === "PORTABILITY") {
+		const supported = SIZE_EVIDENCE_TOKENS.some((t) => blob.includes(t));
+		return {
+			supported,
+			requirement: supported
+				? ""
+				: "Perlukan bukti produk: tiada tanda saiz padat/mudah dibawa pada rekod produk ini.",
+		};
+	}
+	if (archetype === "HERITAGE_TRUST") {
+		const supported = HERITAGE_EVIDENCE_TOKENS.some((t) => blob.includes(t));
+		return {
+			supported,
+			requirement: supported
+				? ""
+				: "Perlukan bukti produk: tiada tanda warisan/tradisional pada rekod produk ini.",
+		};
+	}
+	// PRODUCT_HERO / ROUTINE_USE / OFFER(non-price) / PROBLEM_AWARE_SAFE are
+	// neutral framings that do not assert a product fact.
+	return { supported: true, requirement: "" };
 }
 
 // Human-readable label for the product-truth composition status.
