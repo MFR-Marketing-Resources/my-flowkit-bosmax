@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
-from typing import Any
+from typing import Any, Mapping
 
 from agent.services.prompt_compiler_runtime_config_service import (
     DEFAULT_CREATOR_PERSONA,
@@ -46,6 +47,58 @@ def _clean(value: Any) -> str:
 
 def _fingerprint(*parts: str) -> str:
     return hashlib.sha1("||".join(parts).encode("utf-8")).hexdigest()
+
+
+_VOLATILE_FINGERPRINT_KEYS = {
+    "created_at",
+    "generated_at",
+    "request_id",
+    "request_uuid",
+    "runtime_timestamp",
+    "timestamp",
+    "updated_at",
+    "uuid",
+}
+
+
+def _stable_fingerprint_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _stable_fingerprint_value(item)
+            for key, item in value.items()
+            if str(key).casefold() not in _VOLATILE_FINGERPRINT_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_stable_fingerprint_value(item) for item in value]
+    return value
+
+
+def canonical_package_fingerprint(
+    *,
+    planner_result: Mapping[str, Any] | None,
+    rendered_prompt_blocks: list[dict[str, Any]],
+    renderer_version: str,
+) -> str:
+    """Fingerprint canonical planner state and final rendered blocks, not text alone."""
+    planner = planner_result or {}
+    payload = {
+        "planner_version": planner.get("plan_version"),
+        "route_id": planner.get("route_id"),
+        "total_duration_seconds": planner.get("total_duration_seconds"),
+        "resolved_block_plan": planner.get("resolved_block_plan"),
+        "full_story_plan": planner.get("full_story_plan"),
+        "full_dialogue_plan": planner.get("full_dialogue_plan"),
+        "block_allocations": planner.get("block_allocations"),
+        "renderer_version": renderer_version,
+        "rendered_prompt_blocks": rendered_prompt_blocks,
+    }
+    encoded = json.dumps(
+        _stable_fingerprint_value(payload),
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _title(product: dict[str, Any]) -> str:
@@ -933,6 +986,11 @@ def compile_ugc_video_prompt(
     warnings: list[str] = []
     if resolved_character_presence == "FACELESS":
         warnings.append("FACELESS_MODE_REQUIRES_EXPLICIT_OPERATOR_CHOICE")
+    package_fingerprint = canonical_package_fingerprint(
+        planner_result=planner_result,
+        rendered_prompt_blocks=compiled_blocks,
+        renderer_version=COMPILER_VERSION,
+    )
 
     return {
         "final_compiled_prompt_text": final_compiled_prompt_text,
@@ -956,7 +1014,9 @@ def compile_ugc_video_prompt(
         "dialogue_word_budget_per_block": [
             block["dialogue_word_budget"] for block in compiled_blocks
         ],
-        "prompt_fingerprint": _fingerprint(final_compiled_prompt_text),
+        "prompt_fingerprint": package_fingerprint,
+        "canonical_package_fingerprint": package_fingerprint,
+        "rendered_prompt_fingerprint": _fingerprint(final_compiled_prompt_text),
         "planner_result": planner_result,
         "planner_version": planner_result["plan_version"] if planner_result else None,
         "planner_fingerprint": planner_result["planner_fingerprint"] if planner_result else None,

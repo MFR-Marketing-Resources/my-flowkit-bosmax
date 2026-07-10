@@ -16,7 +16,7 @@ from typing import Any, Mapping, Sequence
 from agent.services import canonical_prompt_compiler as canonical
 
 
-PLAN_VERSION = "full_storyboard_first_extend_planner_v1"
+PLAN_VERSION = "full_storyboard_first_extend_planner_v2"
 
 
 class PlannerValidationError(ValueError):
@@ -199,18 +199,22 @@ def _block_role(index: int, total_blocks: int) -> str:
     return "CONTINUATION"
 
 
-def _roles_for_block(index: int, total_blocks: int, shot_count: int) -> tuple[str, ...]:
-    if total_blocks == 1:
-        candidates = ("HOOK", "PROOF", "CTA")
-    elif index == 1:
-        candidates = ("HOOK", "PROBLEM", "CONTEXT")
-    elif index == total_blocks:
-        candidates = ("RESOLUTION", "CTA", "END_HOLD")
-    elif index == 2:
-        candidates = ("PRODUCT_INTRODUCTION", "ROUTINE", "PROOF")
-    else:
-        candidates = ("USP", "BENEFIT", "TRANSITION")
-    return candidates[:max(1, shot_count)]
+def _global_story_roles(total_duration: int) -> tuple[str, ...]:
+    """Return one semantic arc from duration, never from block positions."""
+    beat_count = max(2, total_duration // 4)
+    if beat_count == 2:
+        return ("HOOK", "CTA")
+    if beat_count == 3:
+        return ("HOOK", "PROOF", "CTA")
+    middle_roles = ("PRODUCT_INTRODUCTION", "ROUTINE", "PROOF", "USP", "BENEFIT", "TRANSITION")
+    needed_middle_roles = beat_count - 4
+    return (
+        "HOOK",
+        "PROBLEM",
+        *(middle_roles[index % len(middle_roles)] for index in range(needed_middle_roles)),
+        "RESOLUTION",
+        "CTA",
+    )
 
 
 def _initial_state(
@@ -237,7 +241,13 @@ def _initial_state(
     )
 
 
-def _exit_state(entry: ContinuityState, *, role: str, block_index: int) -> ContinuityState:
+def _exit_state(
+    entry: ContinuityState,
+    *,
+    role: str,
+    sequence: int,
+    visual_action: str,
+) -> ContinuityState:
     emotional = {
         "HOOK": "engaged opening energy",
         "PROBLEM": "recognition and relevance",
@@ -252,11 +262,65 @@ def _exit_state(entry: ContinuityState, *, role: str, block_index: int) -> Conti
         "CTA": "decision-ready confidence",
         "END_HOLD": "calm final hold",
     }.get(role, entry.emotional_state)
+    state_changes = {
+        "HOOK": {
+            "presenter_pose": "natural three-quarter selling pose leaning into the opening",
+            "motion_direction": "subtle forward settling motion",
+        },
+        "PROBLEM": {
+            "presenter_pose": "recognition pose with the product held in-frame",
+            "camera_framing": "eye-level medium close-up tightening toward the product",
+            "camera_direction_path": "continuous gentle inward camera push",
+        },
+        "PRODUCT_INTRODUCTION": {
+            "product_position": "raised beside the presenter at chest level with the label facing camera",
+            "product_grip": "secure label-facing presentation grip",
+            "camera_framing": "medium close-up transitioning to a truthful product close-up",
+            "motion_direction": "controlled hand lift toward the product label",
+        },
+        "ROUTINE": {
+            "product_position": "moving naturally between the presenter and the routine surface",
+            "product_grip": "controlled routine-use grip",
+            "presenter_pose": "relaxed routine demonstration pose",
+            "camera_direction_path": "short lateral camera track following the routine action",
+            "motion_direction": "gentle lateral hand movement through the routine",
+        },
+        "PROOF": {
+            "camera_framing": "truthful detail close-up with presenter and product co-presence",
+            "camera_direction_path": "steady close-in proof framing",
+            "motion_direction": "small deliberate handling adjustment",
+        },
+        "USP": {
+            "product_position": "held steady at a readable angle inside the established scene",
+            "product_grip": "stable readable-detail grip",
+            "camera_framing": "steady product-detail medium close-up",
+        },
+        "BENEFIT": {
+            "presenter_pose": "resolved practical-confidence pose",
+            "camera_direction_path": "ease back to the established presenter-product framing",
+            "motion_direction": "settling motion toward resolution",
+        },
+        "RESOLUTION": {
+            "product_position": "held naturally at chest level for the resolved selling moment",
+            "presenter_pose": "steady resolution pose with direct eye contact",
+            "camera_framing": "balanced presenter-product closing frame",
+            "motion_direction": "calm settling motion",
+        },
+        "CTA": {
+            "product_position": "held truthfully in the final call-to-action frame",
+            "product_grip": "steady final label-facing grip",
+            "presenter_pose": "decision-ready final hold pose",
+            "camera_direction_path": "stable final hold without a reset",
+            "motion_direction": "minimal seam-free final stillness",
+        },
+    }.get(role, {})
+    visual_progression = _clean(visual_action).split(".", 1)[0].lower()
     return replace(
         entry,
         presenter_expression=emotional,
         emotional_state=emotional,
-        scene_progression=f"block {block_index} exits after {role.lower()}",
+        scene_progression=f"global beat {sequence} advances through {role.lower()}: {visual_progression}",
+        **state_changes,
     )
 
 
@@ -289,61 +353,64 @@ def _build_story_plan(
     trigger_id = normalized_copy.get("trigger_id", "")
     cta_type = normalized_copy.get("cta_type", "")
     presenter_identity = "the resolved presenter" if source_mode in {"HYBRID", "T2V", "INGREDIENTS"} else "the source-frame presenter"
-    cursor = 0
     state = _initial_state(
         source_mode=source_mode,
         product_name=product_name,
         scene_context=scene_context,
         presenter_identity=presenter_identity,
     )
-    beats: list[StoryBeat] = []
-    total_blocks = len(resolved_block_plan)
-    for position, seconds in enumerate(resolved_block_plan, start=1):
-        start = cursor
-        end = start + int(seconds)
-        shot_count = int(shot_count_by_block[position - 1])
-        roles = _roles_for_block(position, total_blocks, shot_count)
-        visuals = canonical._default_shot_plan(
-            source_mode,
-            product=product,
-            shot_count=len(roles),
-            block_index=position,
-            total_blocks=total_blocks,
-            family=family,
-            angle_hint=angle_hint,
-            angle_signal=angle_signal,
-            trigger_id=trigger_id,
-            cta_type=cta_type,
-        )
-        beat_start = float(start)
-        interval = (end - start) / len(roles)
-        for local_index, (role, visual) in enumerate(zip(roles, visuals), start=1):
-            beat_end = float(end) if local_index == len(roles) else beat_start + interval
-            beat_exit = _exit_state(state, role=role, block_index=position)
-            sequence = len(beats) + 1
-            beats.append(
-                StoryBeat(
-                    beat_id=f"beat_{_stable_id(input_fingerprint, role, sequence)}",
-                    role=role,
-                    start_s=beat_start,
-                    end_s=beat_end,
-                    objective=f"Advance the {role.lower().replace('_', ' ')} beat without inventing unsupported claims.",
-                    visual_action=visual,
-                    product_state=state.product_position,
-                    presenter_state=state.presenter_pose,
-                    environment_state=state.environment,
-                    camera_state=state.camera_framing,
-                    motion_state=state.motion_direction,
-                    emotional_state=beat_exit.emotional_state,
-                    continuity_in=state,
-                    continuity_out=beat_exit,
-                    claim_constraints=("approved_copy_only", "product_truth_locked", "no_unsupported_medical_claims"),
-                )
-            )
-            state = beat_exit
-            beat_start = beat_end
-        cursor = end
     total_duration = sum(int(seconds) for seconds in resolved_block_plan)
+    roles = _global_story_roles(total_duration)
+    visual_templates = canonical._default_shot_plan(
+        source_mode,
+        product=product,
+        shot_count=4,
+        block_index=1,
+        total_blocks=1,
+        family=family,
+        angle_hint=angle_hint,
+        angle_signal=angle_signal,
+        trigger_id=trigger_id,
+        cta_type=cta_type,
+    )
+    beats: list[StoryBeat] = []
+    beat_duration = total_duration / len(roles)
+    for sequence, role in enumerate(roles, start=1):
+        start_s = (sequence - 1) * beat_duration
+        end_s = total_duration if sequence == len(roles) else sequence * beat_duration
+        visual_template_index = (
+            len(visual_templates) - 1
+            if role in {"RESOLUTION", "CTA"}
+            else (sequence - 1) % max(1, len(visual_templates) - 1)
+        )
+        visual_template = visual_templates[visual_template_index]
+        visual_action = f"{visual_template} This is the allocated global {role.lower().replace('_', ' ')} beat."
+        beat_exit = _exit_state(
+            state,
+            role=role,
+            sequence=sequence,
+            visual_action=visual_action,
+        )
+        beats.append(
+            StoryBeat(
+                beat_id=f"beat_{_stable_id(input_fingerprint, role, sequence)}",
+                role=role,
+                start_s=start_s,
+                end_s=end_s,
+                objective=f"Advance the {role.lower().replace('_', ' ')} beat without inventing unsupported claims.",
+                visual_action=visual_action,
+                product_state=state.product_position,
+                presenter_state=state.presenter_pose,
+                environment_state=state.environment,
+                camera_state=state.camera_framing,
+                motion_state=state.motion_direction,
+                emotional_state=beat_exit.emotional_state,
+                continuity_in=state,
+                continuity_out=beat_exit,
+                claim_constraints=("approved_copy_only", "product_truth_locked", "no_unsupported_medical_claims"),
+            )
+        )
+        state = beat_exit
     return FullStoryPlan(
         plan_version=PLAN_VERSION,
         route_id=route_id,
@@ -378,47 +445,26 @@ def _build_dialogue_plan(
         canonical.dialogue_word_budget(seconds, target_language, wps_mode=wps_mode)
         for seconds in story_plan.resolved_block_plan
     ]
-    utterances: list[DialogueUtterance] = []
-    seen_clause_keys: set[str] = set()
-    cursor = 0
-    for position, seconds in enumerate(story_plan.resolved_block_plan, start=1):
-        budget = budgets[position - 1]
-        dialogue = ""
-        if dialogue_enabled:
-            dialogue = canonical.build_block_dialogue(
-                copy=normalized_copy,
-                block_index=position,
-                total_blocks=len(story_plan.resolved_block_plan),
-                budget=budget,
-                target_language=target_language,
-                family=canonical._infer_product_family(product, normalized_copy),
-                approved_dialogue=approved_dialogue,
-            )
-            unseen_clauses = [
-                clause
-                for clause in canonical._split_clauses(dialogue)
-                if (clause_key := _clean(clause).casefold()) and clause_key not in seen_clause_keys
-            ]
-            dialogue = canonical._pack_dialogue_clauses(unseen_clauses, budget)
-            seen_clause_keys.update(
-                _clean(clause).casefold()
-                for clause in canonical._split_clauses(dialogue)
-                if _clean(clause)
-            )
-        if dialogue:
-            role = "CTA" if position == len(story_plan.resolved_block_plan) and normalized_copy.get("cta") else "DIALOGUE"
-            utterances.append(
-                DialogueUtterance(
-                    utterance_id=f"utterance_{_stable_id(input_fingerprint, role, position)}",
-                    role=role,
-                    start_s=float(cursor),
-                    end_s=float(cursor + int(seconds)),
-                    text=dialogue,
-                    word_count=len(dialogue.split()),
-                    source_provenance=normalized_copy.get("copy_source") or "fallback_copy_intelligence",
-                )
-            )
-        cursor += int(seconds)
+    cta = _clean(normalized_copy.get("cta"))
+    clause_specs = _global_dialogue_clause_specs(
+        normalized_copy=normalized_copy,
+        approved_dialogue=approved_dialogue,
+        final_cta=cta,
+        target_language=target_language,
+        family=canonical._infer_product_family(product, normalized_copy),
+    ) if dialogue_enabled else []
+    clause_specs = _compress_global_dialogue_clause_specs(
+        clause_specs=clause_specs,
+        total_budget=sum(budgets) if dialogue_enabled else 0,
+        final_block_budget=budgets[-1] if dialogue_enabled else 0,
+        total_blocks=len(story_plan.resolved_block_plan),
+    )
+    utterances = _timestamp_global_dialogue_utterances(
+        clause_specs=clause_specs,
+        total_duration=story_plan.total_duration_seconds,
+        input_fingerprint=input_fingerprint,
+        source_provenance=normalized_copy.get("copy_source") or "fallback_copy_intelligence",
+    )
     full_text = " ".join(utterance.text for utterance in utterances)
     return FullDialoguePlan(
         plan_version=PLAN_VERSION,
@@ -430,8 +476,324 @@ def _build_dialogue_plan(
         full_dialogue_text=full_text,
         utterances=tuple(utterances),
         approved_copy_provenance={"copy_source": normalized_copy.get("copy_source") or "fallback"},
-        compliance_metadata={"generated_once": True, "final_cta_required": bool(normalized_copy.get("cta"))},
+        compliance_metadata={"generated_once": True, "final_cta_required": bool(cta and dialogue_enabled)},
     )
+
+
+def _dialogue_clause_key(clause: str) -> str:
+    return " ".join(character.casefold() if character.isalnum() else " " for character in _clean(clause)).strip()
+
+
+def _global_dialogue_clause_specs(
+    *,
+    normalized_copy: dict[str, Any],
+    approved_dialogue: str | None,
+    final_cta: str,
+    target_language: str,
+    family: str,
+) -> list[tuple[str, str]]:
+    """Build one semantic Copy Set sequence without any block-local inputs."""
+    source_text = _clean(approved_dialogue)
+    if source_text:
+        raw_specs = [
+            ("HOOK" if index == 0 else "CONTEXT", clause)
+            for index, clause in enumerate(canonical._split_clauses(source_text))
+        ]
+    elif normalized_copy.get("copy_source") == "selected_copy_set":
+        raw_specs = [
+            *( ("HOOK", clause) for clause in canonical._split_clauses(normalized_copy.get("hook")) ),
+            *( ("CONTEXT", clause) for clause in canonical._split_clauses(normalized_copy.get("subhook")) ),
+            *( ("CONTEXT", clause) for clause in canonical._split_clauses(normalized_copy.get("angle")) ),
+            *( ("USP", clause) for usp in normalized_copy.get("usps") or [] for clause in canonical._split_clauses(usp) ),
+        ]
+    else:
+        fallback_clauses = canonical._formula_dialogue_clauses(
+            normalized_copy,
+            block_index=1,
+            total_blocks=1,
+            target_language=target_language,
+            family=family,
+        )
+        family_closing = _clean(canonical._family_dialogue_clause(family, "cta", target_language))
+        family_closing_key = _dialogue_clause_key(family_closing)
+        cta_bridge = _clean(canonical._strategic_cta_bridge(
+            normalized_copy.get("cta_type", ""),
+            normalized_copy.get("cta", ""),
+            target_language,
+        ))
+        cta_bridge_key = _dialogue_clause_key(cta_bridge)
+        raw_specs = [
+            (
+                "HOOK"
+                if index == 0
+                else "RESOLUTION"
+                if _dialogue_clause_key(clause) in {family_closing_key, cta_bridge_key}
+                else "PROOF",
+                clause,
+            )
+            for index, clause in enumerate(fallback_clauses)
+        ]
+        if family_closing and not any(
+            _dialogue_clause_key(clause) == family_closing_key
+            for _, clause in raw_specs
+        ):
+            raw_specs.append(("RESOLUTION", family_closing))
+    specs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    cta_key = _dialogue_clause_key(final_cta)
+    for role, raw_clause in raw_specs:
+        clause = _clean(raw_clause)
+        key = _dialogue_clause_key(clause)
+        if not key or key == cta_key or key in seen:
+            continue
+        seen.add(key)
+        specs.append((role, clause))
+    if final_cta:
+        specs.append(("CTA", final_cta))
+    return specs
+
+
+def _compress_global_dialogue_clause_specs(
+    *,
+    clause_specs: Sequence[tuple[str, str]],
+    total_budget: int,
+    final_block_budget: int,
+    total_blocks: int,
+) -> list[tuple[str, str]]:
+    cta_specs = [(role, text) for role, text in clause_specs if role == "CTA"]
+    if len(cta_specs) > 1:
+        raise PlannerValidationError("DUPLICATE_FINAL_CTA")
+    cta_text = cta_specs[0][1] if cta_specs else ""
+    cta_words = len(cta_text.split())
+    if cta_text and cta_words > final_block_budget:
+        raise PlannerValidationError("FINAL_CTA_CANNOT_FIT_WPS_BUDGET")
+    final_roles = {"CTA"} if total_blocks == 1 else {"RESOLUTION", "CTA"}
+    final_specs = [(role, text) for role, text in clause_specs if role in final_roles]
+    reserved_final_words = sum(len(text.split()) for _, text in final_specs)
+    if reserved_final_words > final_block_budget:
+        remaining_final_words = final_block_budget - cta_words
+        compressed_final_specs: list[tuple[str, str]] = []
+        for role, text in final_specs:
+            if role == "CTA":
+                continue
+            if len(text.split()) <= remaining_final_words:
+                compressed_final_specs.append((role, text))
+                remaining_final_words -= len(text.split())
+                continue
+            shortened = canonical._pack_dialogue_clauses([text], remaining_final_words)
+            if shortened:
+                compressed_final_specs.append((role, shortened))
+            remaining_final_words = 0
+            break
+        if cta_text:
+            compressed_final_specs.append(("CTA", cta_text))
+        final_specs = compressed_final_specs
+        reserved_final_words = sum(len(text.split()) for _, text in final_specs)
+    remaining_budget = total_budget - reserved_final_words
+    if remaining_budget < 0:
+        raise PlannerValidationError("DIALOGUE_PLAN_EXCEEDS_WPS_BUDGET")
+    compressed: list[tuple[str, str]] = []
+    for role, text in clause_specs:
+        if role in final_roles:
+            continue
+        words = len(text.split())
+        if words <= remaining_budget:
+            compressed.append((role, text))
+            remaining_budget -= words
+            continue
+        shortened = canonical._pack_dialogue_clauses([text], remaining_budget)
+        if shortened:
+            compressed.append((role, shortened))
+        remaining_budget = 0
+        break
+    compressed.extend(final_specs)
+    return compressed
+
+
+def _timestamp_global_dialogue_utterances(
+    *,
+    clause_specs: Sequence[tuple[str, str]],
+    total_duration: int,
+    input_fingerprint: str,
+    source_provenance: str,
+) -> list[DialogueUtterance]:
+    total_words = sum(len(text.split()) for _, text in clause_specs)
+    cursor_words = 0
+    utterances: list[DialogueUtterance] = []
+    for sequence, (role, text) in enumerate(clause_specs, start=1):
+        word_count = len(text.split())
+        start_s = (total_duration * cursor_words / total_words) if total_words else 0.0
+        cursor_words += word_count
+        end_s = (total_duration * cursor_words / total_words) if total_words else 0.0
+        utterances.append(
+            DialogueUtterance(
+                utterance_id=f"utterance_{_stable_id(input_fingerprint, role, sequence)}",
+                role=role,
+                start_s=start_s,
+                end_s=end_s,
+                text=text,
+                word_count=word_count,
+                source_provenance=source_provenance,
+            )
+        )
+    return utterances
+
+
+def _allocate_dialogue_utterances(
+    dialogue_plan: FullDialoguePlan,
+    resolved_block_plan: Sequence[int],
+) -> tuple[FullDialoguePlan, tuple[tuple[DialogueUtterance, ...], ...]]:
+    budgets = [
+        canonical.dialogue_word_budget(seconds, dialogue_plan.target_language, wps_mode=dialogue_plan.wps_mode)
+        for seconds in resolved_block_plan
+    ]
+    cta_utterances = [utterance for utterance in dialogue_plan.utterances if utterance.role == "CTA"]
+    if len(cta_utterances) > 1:
+        raise PlannerValidationError("DUPLICATE_FINAL_CTA")
+    cta_words = sum(utterance.word_count for utterance in cta_utterances)
+    final_roles = {"CTA"} if len(resolved_block_plan) == 1 else {"RESOLUTION", "CTA"}
+    final_utterances = [
+        utterance for utterance in dialogue_plan.utterances if utterance.role in final_roles
+    ]
+    reserved_final_words = sum(utterance.word_count for utterance in final_utterances)
+    if cta_words > budgets[-1]:
+        raise PlannerValidationError("FINAL_CTA_CANNOT_FIT_WPS_BUDGET")
+    if reserved_final_words > budgets[-1]:
+        raise PlannerValidationError("DIALOGUE_PLAN_EXCEEDS_WPS_BUDGET")
+    allocated_by_block: list[list[DialogueUtterance]] = [[] for _ in resolved_block_plan]
+    used_words = [0 for _ in resolved_block_plan]
+    block_index = 0
+    for utterance in dialogue_plan.utterances:
+        if utterance.role in final_roles:
+            continue
+        while block_index < len(resolved_block_plan):
+            reserved_words = reserved_final_words if block_index == len(resolved_block_plan) - 1 else 0
+            available_words = budgets[block_index] - reserved_words - used_words[block_index]
+            if utterance.word_count <= available_words:
+                allocated_by_block[block_index].append(utterance)
+                used_words[block_index] += utterance.word_count
+                break
+            shortened = canonical._pack_dialogue_clauses([utterance.text], available_words)
+            if shortened:
+                compressed_utterance = replace(
+                    utterance,
+                    text=shortened,
+                    word_count=len(shortened.split()),
+                )
+                allocated_by_block[block_index].append(compressed_utterance)
+                used_words[block_index] += compressed_utterance.word_count
+                break
+            block_index += 1
+        else:
+            raise PlannerValidationError("DIALOGUE_PLAN_EXCEEDS_WPS_BUDGET")
+    if final_utterances:
+        final_index = len(resolved_block_plan) - 1
+        if used_words[final_index] + reserved_final_words > budgets[final_index]:
+            raise PlannerValidationError("FINAL_CTA_CANNOT_FIT_WPS_BUDGET")
+        allocated_by_block[final_index].extend(final_utterances)
+    allocated_utterances: list[DialogueUtterance] = []
+    cursor = 0
+    for position, seconds in enumerate(resolved_block_plan):
+        block_budget = budgets[position]
+        block_cursor_words = 0
+        for utterance in allocated_by_block[position]:
+            start_s = cursor + (seconds * block_cursor_words / block_budget) if block_budget else float(cursor)
+            block_cursor_words += utterance.word_count
+            end_s = cursor + (seconds * block_cursor_words / block_budget) if block_budget else float(cursor)
+            allocated_utterances.append(
+                replace(
+                    utterance,
+                    start_s=start_s,
+                    end_s=end_s,
+                    assigned_block_index=position + 1,
+                )
+            )
+        cursor += int(seconds)
+    full_text = " ".join(utterance.text for utterance in allocated_utterances)
+    return (
+        replace(
+            dialogue_plan,
+            actual_total_word_count=len(full_text.split()),
+            full_dialogue_text=full_text,
+            utterances=tuple(allocated_utterances),
+        ),
+        tuple(tuple(block) for block in allocated_by_block),
+    )
+
+
+def _allocate_story_beats(
+    story_plan: FullStoryPlan,
+) -> tuple[FullStoryPlan, tuple[tuple[StoryBeat, ...], ...]]:
+    windows: list[tuple[int, int]] = []
+    cursor = 0
+    for seconds in story_plan.resolved_block_plan:
+        windows.append((cursor, cursor + int(seconds)))
+        cursor += int(seconds)
+    allocated_by_block: list[list[StoryBeat]] = [[] for _ in windows]
+    allocated_beats: list[StoryBeat] = []
+    for beat in story_plan.story_beats:
+        segments = [
+            (block_index, max(beat.start_s, start_s), min(beat.end_s, end_s))
+            for block_index, (start_s, end_s) in enumerate(windows, start=1)
+            if beat.start_s < end_s and beat.end_s > start_s
+        ]
+        if not segments:
+            raise PlannerValidationError("MISSING_STORY_BEAT_ALLOCATION", beat.beat_id)
+        previous_exit: ContinuityState | None = None
+        for segment_index, (block_index, start_s, end_s) in enumerate(segments, start=1):
+            is_split = len(segments) > 1
+            continuation_suffix = (
+                " Continue this allocated beat from the prior segment without restarting the action."
+                if is_split and segment_index > 1
+                else " End this allocated segment seam-ready for the next window."
+                if is_split
+                else ""
+            )
+            continuity_in = previous_exit or beat.continuity_in
+            continuity_out = beat.continuity_out
+            continuation_prefix = (
+                f"{_continuation_visual_instruction(story_plan.source_mode)} "
+                if block_index > 1 and not allocated_by_block[block_index - 1]
+                else ""
+            )
+            allocated_beat = replace(
+                beat,
+                beat_id=(
+                    f"{beat.beat_id}_segment_{segment_index}"
+                    if is_split
+                    else beat.beat_id
+                ),
+                start_s=start_s,
+                end_s=end_s,
+                visual_action=f"{continuation_prefix}{beat.visual_action}{continuation_suffix}",
+                continuity_in=continuity_in,
+                continuity_out=continuity_out,
+                assigned_block_index=block_index,
+            )
+            allocated_by_block[block_index - 1].append(allocated_beat)
+            allocated_beats.append(allocated_beat)
+            previous_exit = continuity_out
+    return replace(story_plan, story_beats=tuple(allocated_beats)), tuple(
+        tuple(block) for block in allocated_by_block
+    )
+
+
+def _continuation_visual_instruction(source_mode: str) -> str:
+    instructions = {
+        "FRAMES": (
+            "Continue immediately from the prior generated state with the same finished-frame pose, grip, lighting, and camera path; never reset to the uploaded frame."
+        ),
+        "T2V": (
+            "Continue immediately from the prior generated scene with the same presenter, grip, lighting, and camera path; keep it lived-in, scene-native, and socially believable rather than restarting the commercial."
+        ),
+        "HYBRID": (
+            "Continue immediately from the prior generated state with the same avatar identity, product scale, wardrobe, grip, and camera path; do not rebuild from reference assets."
+        ),
+        "INGREDIENTS": (
+            "Continue immediately from the prior generated state with product and presenter truth locked; do not reset to the reference image."
+        ),
+    }
+    return instructions[source_mode]
 
 
 def _end_frame_instruction(
@@ -458,6 +820,11 @@ def _allocate(
     product: dict[str, Any],
     normalized_copy: dict[str, Any],
 ) -> tuple[FullStoryPlan, FullDialoguePlan, tuple[BlockAllocation, ...]]:
+    story_plan, story_by_block = _allocate_story_beats(story_plan)
+    dialogue_plan, dialogue_by_block = _allocate_dialogue_utterances(
+        dialogue_plan,
+        story_plan.resolved_block_plan,
+    )
     allocations: list[BlockAllocation] = []
     allocated_beats: list[StoryBeat] = []
     allocated_utterances: list[DialogueUtterance] = []
@@ -467,15 +834,24 @@ def _allocate(
         start = cursor
         end = start + int(seconds)
         is_final = position == len(story_plan.resolved_block_plan)
-        block_beats = [
-            replace(beat, assigned_block_index=position)
-            for beat in story_plan.story_beats
-            if beat.start_s >= start and beat.end_s <= end
-        ]
+        block_beats = list(story_by_block[position - 1])
+        block_utterances = list(dialogue_by_block[position - 1])
         block_utterances = [
-            replace(utterance, assigned_block_index=position)
-            for utterance in dialogue_plan.utterances
-            if utterance.start_s >= start and utterance.end_s <= end
+            replace(
+                utterance,
+                start_s=next(
+                    planned.start_s
+                    for planned in dialogue_plan.utterances
+                    if planned.utterance_id == utterance.utterance_id
+                ),
+                end_s=next(
+                    planned.end_s
+                    for planned in dialogue_plan.utterances
+                    if planned.utterance_id == utterance.utterance_id
+                ),
+                assigned_block_index=position,
+            )
+            for utterance in block_utterances
         ]
         if not block_beats:
             raise PlannerValidationError("MISSING_STORY_BEAT_ALLOCATION", f"block={position}")
@@ -687,5 +1063,26 @@ def validate_planner_result(result: PlannerResult | Mapping[str, Any]) -> None:
     if set(allocated_utterance_ids) != set(expected_utterance_ids):
         raise PlannerValidationError("MISSING_DIALOGUE_UTTERANCE_ALLOCATION")
     cta_required = bool((data.get("full_dialogue_plan") or {}).get("compliance_metadata", {}).get("final_cta_required"))
-    if cta_required and not allocations[-1].get("final_cta_text"):
+    final_allocation = allocations[-1]
+    final_cta_text = _clean(final_allocation.get("final_cta_text"))
+    if cta_required and not final_cta_text:
         raise PlannerValidationError("FINAL_CTA_REQUIRED")
+    if cta_required:
+        final_dialogue = _clean(final_allocation.get("exact_dialogue_slice"))
+        final_utterances = list(final_allocation.get("assigned_dialogue_utterances") or [])
+        if final_cta_text not in final_dialogue or not any(
+            utterance.get("role") == "CTA" and _clean(utterance.get("text")) == final_cta_text
+            for utterance in final_utterances
+        ):
+            raise PlannerValidationError("FINAL_CTA_CANNOT_FIT_WPS_BUDGET")
+        if any(
+            final_cta_text in _clean(allocation.get("exact_dialogue_slice"))
+            for allocation in allocations[:-1]
+        ):
+            raise PlannerValidationError("CTA_IN_NON_FINAL_BLOCK")
+    concatenated_dialogue = _clean(" ".join(
+        _clean(allocation.get("exact_dialogue_slice")) for allocation in allocations
+    ))
+    full_dialogue = _clean((data.get("full_dialogue_plan") or {}).get("full_dialogue_text"))
+    if concatenated_dialogue != full_dialogue:
+        raise PlannerValidationError("DIALOGUE_ALLOCATION_TEXT_MISMATCH")

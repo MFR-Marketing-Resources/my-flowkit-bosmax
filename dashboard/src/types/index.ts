@@ -633,6 +633,7 @@ export interface WorkspaceExecutionPackage {
 	planner_result?: FullStoryboardPlannerResult | null;
 	planner_version?: string | null;
 	planner_fingerprint?: string | null;
+	canonical_package_fingerprint?: string | null;
 }
 
 export interface StoryboardContinuityState {

@@ -81,6 +81,7 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
             "shot_plan": [{"block_index": 1, "shot_count": 2, "shots": ["Shot 1", "Shot 2"]}],
             "dialogue_word_budget_per_block": [13],
             "prompt_fingerprint": "compiled_fp_001",
+            "canonical_package_fingerprint": "canonical_fp_001",
             "warnings": [],
             "blockers": [],
             "source_of_truth_notes": ["Compiler note"],
@@ -122,8 +123,10 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
     assert captured["workspace_execution_package_id"].startswith("wep_")
     assert captured["duration_seconds"] == 8
     assert result["planner_result"]["planner_fingerprint"] == "planner_fp_001"
+    assert result["canonical_package_fingerprint"] == "canonical_fp_001"
     stored_lineage = json.loads(captured["request_lineage_payload"])
     assert stored_lineage["compiler"]["planner_result"] == result["planner_result"]
+    assert stored_lineage["compiler"]["canonical_package_fingerprint"] == "canonical_fp_001"
 
 
 @pytest.mark.asyncio
