@@ -371,6 +371,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		requestedTotalDuration === "" ? null : Number(requestedTotalDuration);
 	const extendPlan =
 		extendTotalValue !== null ? (extendPlanByTotal[extendTotalValue] ?? null) : null;
+	// Production EXTEND must be total + route driven. The manual per-block path is
+	// DEV/ADVANCED and fails closed at the backend — used to block Load/Generate so a
+	// normal operator can never trigger a rejected API call.
+	const extendManualBlocked =
+		generationMode === "EXTEND" && extendTotalValue === null;
+	// Invalidate any stale preview when the operator enters the blocked EXTEND-manual
+	// state, so a previously-loaded package can never be generated on this path.
+	useEffect(() => {
+		if (extendManualBlocked) setPreviewPackage(null);
+	}, [extendManualBlocked]);
 	const [notice, setNotice] = useState<OperatorNotice>({
 		tone: "idle",
 		title: "Idle",
@@ -1192,6 +1202,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// Click handler: an approved Copy Set generates immediately; NO selection
 	// opens the explicit fallback-confirmation gate first (backend also enforces).
 	const handleGeneratePackage = () => {
+		if (extendManualBlocked) {
+			setNotice({
+				tone: "warning",
+				title: "Extend Total required",
+				detail:
+					"Production EXTEND requires an Extend Total. Manual per-block is DEV/ADVANCED only.",
+				requestId: null,
+			});
+			return;
+		}
 		if (!selectedCopySetId) {
 			setShowFallbackConfirm(true);
 			return;
@@ -1406,11 +1426,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							<div className="space-y-2">
 								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Extend Total Duration</div>
 								<select id="operator-extend-total-duration" name="operator_extend_total_duration" title="Extend total duration - Google Flow workbook block plan" value={requestedTotalDuration === "" ? "" : String(requestedTotalDuration)} onChange={(e) => setRequestedTotalDuration(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100">
-									<option value="">Manual (Block 1 + Block 2)</option>
+									<option value="">Manual per-block — DEV / ADVANCED</option>
 									{extendTotalOptions.map((total) => (<option key={total} value={total}>{total}s</option>))}
 								</select>
 								{extendTotalValue === null ? (
-									<div className="text-[11px] text-slate-400">Manual 2-block chain. Block 2 Duration:{" "}
+									<div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">Production EXTEND requires an Extend Total (route-authority workbook plan). This raw per-block path is DEV / ADVANCED only and fails closed in production (EXTEND_MANUAL_BLOCK_PLAN_BLOCKED_IN_PRODUCTION). Block 2 Duration:{" "}
 										<select id="operator-block-2-duration" name="operator_block_2_duration" title="Block 2 duration" value={String(block2Duration)} onChange={(e) => setBlock2Duration(Number(e.target.value))} className="ml-1 rounded border border-slate-800 bg-slate-900 px-1 py-0.5 text-[11px] text-slate-100">
 											{allowedDurations.map((duration) => (<option key={duration} value={duration}>{duration}s</option>))}
 										</select>{" "}(shots {shotPolicy2?.recommended ?? "-"})
@@ -1823,6 +1843,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							(product landbank / claim-safe angles).
 						</div>
 					) : null}
+					{extendManualBlocked ? (
+						<div className="mb-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200">
+							<strong>Production EXTEND requires an Extend Total.</strong> The manual
+							per-block path is DEV/ADVANCED only and fails closed at the backend
+							(EXTEND_MANUAL_BLOCK_PLAN_BLOCKED_IN_PRODUCTION). Pick an Extend Total
+							above to enable Load / Generate.
+						</div>
+					) : null}
 					<button
 						type="button"
 						onClick={() => void handleLoadPreview()}
@@ -1830,7 +1858,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							!selectedProduct ||
 							isLoadingPreview ||
 							selectedReadinessLoading ||
-							selectedReadiness?.readiness_status !== "READY"
+							selectedReadiness?.readiness_status !== "READY" ||
+							extendManualBlocked
 						}
 						className="w-full rounded-xl border border-slate-600/40 bg-slate-700/30 px-4 py-3 text-sm font-bold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50 disabled:grayscale transition-all"
 					>
@@ -1954,7 +1983,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						type="button"
 						onClick={() => void handleGeneratePackage()}
 						disabled={
-							!previewPackage || isLoadingPackage || showFallbackConfirm
+							!previewPackage ||
+							isLoadingPackage ||
+							showFallbackConfirm ||
+							extendManualBlocked
 						}
 						className="w-full rounded-xl border border-blue-500/40 bg-blue-500/15 px-4 py-3 text-sm font-bold text-blue-100 hover:bg-blue-500/25 disabled:opacity-50 disabled:grayscale transition-all"
 					>

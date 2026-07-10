@@ -35,7 +35,27 @@ def test_single_mode_uses_one_block_and_deterministic_shot_policy():
     assert result["dialogue_word_budget_per_block"] == [32]
 
 
-def test_extend_mode_allows_different_durations_per_block():
+def test_extend_manual_block_plan_blocked_in_production():
+    # The invalid [15,8]-class raw manual plan must NOT pass as production EXTEND —
+    # production EXTEND is total + route-authority driven. Fail closed, no prompt.
+    with pytest.raises(ValueError) as exc:
+        compile_ugc_video_prompt(
+            product=_product(),
+            approved_package=_package(),
+            mode="F2V",
+            generation_mode="EXTEND",
+            duration_seconds=8,
+            blocks=[
+                {"block_index": 1, "duration_seconds": 15},
+                {"block_index": 2, "duration_seconds": 8},
+            ],
+            target_language="EN_US",
+        )
+    assert "EXTEND_MANUAL_BLOCK_PLAN_BLOCKED_IN_PRODUCTION" in str(exc.value)
+
+
+def test_extend_manual_block_plan_allowed_under_dev_override():
+    # DEV/ADVANCED ONLY: an explicit override honors a raw per-block plan.
     result = compile_ugc_video_prompt(
         product=_product(),
         approved_package=_package(),
@@ -47,10 +67,10 @@ def test_extend_mode_allows_different_durations_per_block():
             {"block_index": 2, "duration_seconds": 6},
         ],
         target_language="EN_US",
+        allow_manual_block_plan=True,
     )
 
     assert [block["duration_seconds"] for block in result["prompt_blocks"]] == [15, 6]
-    assert [block["shot_count"] for block in result["prompt_blocks"]] == [4, 1]
     assert result["total_duration_seconds"] == 21
 
 
@@ -112,3 +132,50 @@ def test_requested_total_overrides_raw_blocks():
         target_language="BM_MS",
     )
     assert [b["duration_seconds"] for b in result["prompt_blocks"]] == [8, 8]
+
+
+# ── ROUTE-AWARE authority: production block plans come from an AUTHORIZED route;
+# routes without captured runtime evidence fail closed (owner decision 2026-07-10).
+
+def test_extend_route_missing_authority_fails_closed():
+    # GOOGLE_FLOW_VEO_EXTEND (public-API 8+7n) has NO captured Flow runtime evidence.
+    with pytest.raises(ValueError) as exc:
+        compile_ugc_video_prompt(
+            product=_product(),
+            approved_package=_package(),
+            mode="F2V",
+            generation_mode="EXTEND",
+            route="GOOGLE_FLOW_VEO_EXTEND",
+            engine_duration_target="GOOGLE_FLOW",
+            requested_total_duration_seconds=16,
+            target_language="BM_MS",
+        )
+    assert "ROUTE_DURATION_AUTHORITY_MISSING" in str(exc.value)
+    assert "GOOGLE_FLOW_VEO_EXTEND" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "mode,source_mode",
+    [("F2V", None), ("T2V", None), ("F2V", "HYBRID"), ("I2V", None)],
+)
+def test_all_video_modes_share_route_planner_total_16(mode, source_mode):
+    # F2V / T2V / HYBRID (compiles as an F2V job) / I2V all derive the SAME
+    # authority-backed plan from the SAME route planner.
+    result = compile_ugc_video_prompt(
+        product=_product(),
+        approved_package=_package(),
+        mode=mode,
+        source_mode=source_mode,
+        generation_mode="EXTEND",
+        engine_duration_target="GOOGLE_FLOW",
+        requested_total_duration_seconds=16,
+        target_language="BM_MS",
+    )
+    assert [b["duration_seconds"] for b in result["prompt_blocks"]] == [8, 8]
+
+
+def test_extend_blocks_carry_storyboard_timeline_and_final_flag():
+    result = _extend_total(24)
+    blocks = result["prompt_blocks"]
+    assert [(b["start_s"], b["end_s"]) for b in blocks] == [(0, 8), (8, 16), (16, 24)]
+    assert [b["is_final"] for b in blocks] == [False, False, True]

@@ -1149,11 +1149,11 @@ def test_legacy_entrypoint_delegates_and_uncaps_blocks():
     assert block["engine_prompt_text"].startswith("SECTION 1 - ROLE & OBJECTIVE")
     assert block["dialogue_word_budget"] == 22  # Workspace entrypoint defaults to SweetWPS 2.7 × 8s
     assert "one visible creator" not in block["engine_prompt_text"].lower()
-    # multi-block beyond 2 via explicit blocks
+    # multi-block beyond 2 via the workbook TOTAL authority (the 2-block cap is dead)
     multi = compile_ugc_video_prompt(
         product=PRODUCT, approved_package={}, mode="F2V", target_language="BM_MS",
         generation_mode="EXTEND", duration_seconds=8, copy_intelligence=COPY,
-        blocks=[{"duration_seconds": 8}] * 4,
+        engine_duration_target="GOOGLE_FLOW", requested_total_duration_seconds=32,
     )
     assert len(multi["prompt_blocks"]) == 4, "the 2-block cap must be gone"
 

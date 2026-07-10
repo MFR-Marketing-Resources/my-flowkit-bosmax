@@ -125,3 +125,23 @@ def test_handoff_bank_renders_all_prompt_blocks():
     assert "text={block.engine_prompt_text}" in src
     assert "Block ${block.block_index}" in src
     assert "blocks.length} blocks" in src  # count is dynamic, not a hardcoded 1
+
+
+def test_operator_extend_manual_no_total_blocks_load_and_generate():
+    """Counter-audit: EXTEND with no Extend Total is DEV/ADVANCED-only and fails
+    closed at the backend. The UI must block BOTH Load and Generate (and the handler
+    must guard, and a stale preview must be invalidated) so a normal operator can
+    never trigger a rejected API call."""
+    src = _read("dashboard/src/pages/OperatorPage.tsx")
+    # the blocked condition is defined once, early
+    assert 'generationMode === "EXTEND" && extendTotalValue === null' in src
+    assert "const extendManualBlocked" in src
+    # def + clearing-effect(body+dep) + Load disabled + Load blocker + Generate
+    # disabled + handler guard all reference it
+    assert src.count("extendManualBlocked") >= 5
+    # the Generate handler guards BEFORE any API call
+    assert "if (extendManualBlocked) {" in src
+    # a stale preview is invalidated on entering the blocked state
+    assert "if (extendManualBlocked) setPreviewPackage(null);" in src
+    # inline operator blocker on the Load path
+    assert "Production EXTEND requires an Extend Total" in src
