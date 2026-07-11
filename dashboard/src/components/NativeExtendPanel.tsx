@@ -92,6 +92,9 @@ export default function NativeExtendPanel({
     !!durableStatus &&
     !durableStatus.complete &&
     !(durableStatus.error_code);
+  // Re-authorization is a normal state (a not-yet-started step needs a fresh
+  // confirmation), not a failure — surfaced with the Generate action, not an error.
+  const isAuthExpired = durableStatus?.status === 'AUTHORIZATION_EXPIRED';
 
   const planIntent = () => ({
     product_id: productId ?? null,
@@ -412,7 +415,27 @@ export default function NativeExtendPanel({
             </div>
           )}
 
-          {durableStatus?.error_code && (
+          {/* Re-authorization is a normal, non-error state: only a not-yet-started
+              step needs a fresh confirmation. Already-running work is never lost. */}
+          {isAuthExpired && (
+            <div
+              data-testid="full-video-reauth"
+              className="mt-2 grid gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100"
+            >
+              <div>{durableStatus?.human_stage}</div>
+              <button
+                type="button"
+                data-testid="generate-full-video-btn"
+                className="w-fit rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                disabled={busy || !durablePlan}
+                onClick={openGenerateConfirm}
+              >
+                Generate Video
+              </button>
+            </div>
+          )}
+
+          {durableStatus?.error_code && !isAuthExpired && (
             <div data-testid="full-video-error" className="mt-2 text-xs text-rose-300">
               {durableStatus.human_stage}
               {durableStatus.no_credit_used

@@ -1,13 +1,15 @@
-"""Durable full-video job — the credit-safety core.
+"""Durable full-video job — the credit-safety core (PR315 final wiring).
 
 Proves (zero-credit; the three credit-consuming side effects are injected/mocked):
-job-before-initial, durable logical identity, whole-plan fingerprint authorization,
-DB-atomic idempotency for INITIAL/EXTEND/CONCAT, refresh/restart resume without
-double-submit, effective_submit_count==1 per operation, structured credit state,
-completed job returns the existing asset, fail-closed 8s-vs-16s duration.
+job-before-initial, durable logical identity, COMPLETE production authority +
+INCOMPLETE_PRODUCTION_PLAN fail-closed, whole-plan fingerprint authorization bound
+to the reviewed prompts, DB-atomic idempotency for INITIAL/EXTEND/CONCAT, exact
+per-segment continuation prompts (no generic fallback), resume-after-expiry without
+a live token, structured credit truth (SPENT only with debit evidence), fail-closed
+8s-vs-16s duration.
 
-Every test uses a UNIQUE nonce so its extend-lineage idempotency key (project/scene/
-position/prompt/parent) never collides with another test in the shared module DB.
+Every test uses a UNIQUE nonce so its idempotency keys never collide in the shared
+module DB.
 """
 import asyncio
 import base64
@@ -29,25 +31,46 @@ def _mp4(seconds: float, pad=60_000) -> bytes:
     return ftyp + box(b"moov", mvhd) + b"\x00" * pad
 
 
+def _continuations(nonce, duration):
+    segs = max(2, duration // 8)
+    extend_ops = segs - 1
+    return [
+        {"position": p, "block_index": p + 1,
+         "prompt": f"continuation {p} for {nonce}: extend from the exact ending, "
+                   "same product identity and palm scale, no cut, no reset",
+         "is_final": p == extend_ops}
+        for p in range(1, extend_ops + 1)
+    ]
+
+
 def _intent(nonce, duration=16):
+    """A COMPLETE production authority (explicit → the resolver never touches DB)."""
     return {
         "product_id": "6483d624", "product_name": "MWTCB 25ml",
-        "execution_package_id": "wep_1", "approved_asset_sha256": "hashA",
+        "execution_package_id": "wep_1", "approved_asset_id": "product-image:6483d624:subject",
+        "approved_asset_sha256": "hashA", "initial_asset_media_id": f"asset-{nonce}",
         "requested_duration_seconds": duration, "engine": "GOOGLE_FLOW",
         "model": "veo_3_1_extension_lite", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
-        "initial_prompt_fingerprint": "fp_init", "execution_mode": "HYBRID_EXTEND",
-        "client_request_nonce": nonce,
+        "initial_mode": "I2V",
+        "initial_prompt_text": f"block-1 product-truth prompt for {nonce}",
+        "continuation_prompts": _continuations(nonce, duration),
+        "execution_mode": "HYBRID_EXTEND", "client_request_nonce": nonce,
     }
 
 
 class FakeClient:
-    """The extend runtime and finalize runtime both call this; counts real submits."""
-    def __init__(self, nonce, *, final_seconds=16.0):
+    """The extend + finalize runtimes call this; counts real submits. Optional
+    credit ledger simulates an authoritative debit for the credit-truth test."""
+    def __init__(self, nonce, *, final_seconds=16.0, balance=None):
         self.extend_submits = 0
         self.concat_submits = 0
         self._child = f"child-{nonce}"
         self._concat_job = f"projects/1/locations/us/jobs/cj-{nonce}"
         self._encoded = base64.b64encode(_mp4(final_seconds)).decode()
+        self._balance = balance
+
+    async def get_credits(self):
+        return {"remainingCredits": self._balance} if self._balance is not None else {}
 
     async def generate_video_extend(self, **kw):
         self.extend_submits += 1
@@ -74,12 +97,15 @@ class FakeClient:
                 "mediaGenerationId": "", "inputsCount": 3, "encodedVideo": self._encoded}
 
 
-def _initial_gen(calls, nonce):
+def _initial_gen(calls, nonce, *, credit_after=None):
     async def gen(job):
         calls.append(job["job_id"])
-        return {"operation_id": f"init-{nonce}", "media_id": f"media-{nonce}",
-                "workflow_id": f"wf-{nonce}", "project_id": f"proj-{nonce}",
-                "scene_id": f"scene-{nonce}"}
+        out = {"operation_id": f"init-{nonce}", "media_id": f"init-{nonce}",
+               "workflow_id": f"wf-{nonce}", "project_id": f"proj-{nonce}",
+               "scene_id": f"scene-{nonce}"}
+        if credit_after is not None:
+            out["credit_balance_after"] = credit_after
+        return out
     return gen
 
 
@@ -90,19 +116,34 @@ async def _plan_authorize(monkeypatch, nonce, duration=16):
     # Mission 1: job exists BEFORE any credit-consuming operation.
     assert job["status"] == orch.S_CREATED
     assert job["initial_operation_id"] is None
+    # Mission 3: exact reviewed continuation prompts persisted before authorization.
+    assert json.loads(job["continuation_prompts_json"])
     auth = await orch.authorize_job(
         planned["job_id"], confirmed_plan_fingerprint=planned["plan_fingerprint"])
     return planned, auth
 
 
-# ── identity + plan + authorization ─────────────────────────────────────────
+async def _expire(job_id):
+    await crud.update_video_production_job_full(job_id, authorization_expires_at="1.0")
+
+
+# ── identity + plan authority (Mission 1 / 2 / 3) ────────────────────────────
 async def test_job_created_before_initial_generation(monkeypatch, tmp_path):
     planned, _ = await _plan_authorize(monkeypatch, "created")
     assert planned["job_id"].startswith("vj_")
     assert planned["plan"]["operation_counts"] == {
         "initial_generation": 1, "extend": 1, "final_render": 1, "total": 3}
     assert planned["plan"]["credit_estimate"]["final_render"] == "unknown"
-    assert planned["plan"]["credit_estimate"]["total"] == "unknown"
+
+
+async def test_incomplete_plan_is_rejected(monkeypatch):
+    monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
+    # product id only, no execution package + no explicit authority → cannot resolve
+    with pytest.raises(orch.OrchestratorError) as exc:
+        await orch.plan_job({"product_id": "px", "requested_duration_seconds": 16,
+                             "client_request_nonce": "incomplete"})
+    assert exc.value.code == "INCOMPLETE_PRODUCTION_PLAN"
+    assert "approved_asset" in exc.value.detail or "continuation" in exc.value.detail
 
 
 async def test_same_intent_reuses_one_logical_job(monkeypatch, tmp_path):
@@ -112,7 +153,7 @@ async def test_same_intent_reuses_one_logical_job(monkeypatch, tmp_path):
     assert a["job_id"] == b["job_id"] and b["reused"] is True
 
 
-async def test_changed_plan_rejects_authorization(monkeypatch, tmp_path):
+async def test_changed_prompt_rejects_authorization(monkeypatch, tmp_path):
     planned, _ = await _plan_authorize(monkeypatch, "chg")
     with pytest.raises(orch.OrchestratorError) as exc:
         await orch.authorize_job(planned["job_id"], confirmed_plan_fingerprint="tampered")
@@ -184,7 +225,7 @@ async def test_concurrent_advance_single_concat(monkeypatch, tmp_path):
     assert client.concat_submits == 1
 
 
-# ── restart resume: resume_only never fresh-submits ─────────────────────────
+# ── restart / resume: resume_only never fresh-submits ───────────────────────
 async def test_resume_only_waits_before_fresh_submit(monkeypatch, tmp_path):
     planned, auth = await _plan_authorize(monkeypatch, "ro")
     client = FakeClient("ro")
@@ -209,6 +250,129 @@ async def test_restart_sweep_adds_no_new_credit(monkeypatch, tmp_path):
         client, generate_initial=_initial_gen(calls, "sweep"), out_dir=tmp_path)
     assert isinstance(resumed, list)
     assert (client.extend_submits, client.concat_submits) == before
+
+
+# ── restart-after-expiry recovery (Mission 5) ───────────────────────────────
+async def test_expiry_before_initial_stops_and_reauth_resumes(monkeypatch, tmp_path):
+    planned, auth = await _plan_authorize(monkeypatch, "exp0")
+    await _expire(planned["job_id"])
+    client, calls = FakeClient("exp0"), []
+    gen = _initial_gen(calls, "exp0")
+    # not-yet-submitted stage after expiry → stop safely, no auto-submit
+    status = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth["authorization_token"],
+        generate_initial=gen, out_dir=tmp_path, poll_interval_s=0)
+    assert status["status"] == orch.S_AUTH_EXPIRED
+    assert calls == [] and client.extend_submits == 0
+    # a new reviewed authorization → the job runs to completion
+    auth2 = await orch.authorize_job(
+        planned["job_id"], confirmed_plan_fingerprint=planned["plan_fingerprint"])
+    done = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth2["authorization_token"],
+        generate_initial=gen, out_dir=tmp_path, poll_interval_s=0)
+    assert done["complete"] is True and len(calls) == 1
+
+
+async def _drive_to_initial(monkeypatch, tmp_path, nonce):
+    """Reach the checkpoint where INITIAL is submitted+terminal but EXTEND is not."""
+    planned, auth = await _plan_authorize(monkeypatch, nonce)
+    job = await crud.get_video_production_job(planned["job_id"])
+    idem = orch._stage_key(job, "INITIAL", job["logical_job_key"])
+    await crud.reserve_video_job_side_effect(idem, job_id=job["job_id"], stage="INITIAL")
+    await crud.increment_side_effect_submit_count(idem)
+    await crud.update_video_job_side_effect(
+        idem, submission_state=orch.SUB_TERMINAL, credit_state=orch.CR_MAY_HAVE_SPENT,
+        operation_ref=f"init-{nonce}")
+    await crud.update_video_production_job_full(
+        job["job_id"], status=orch.S_INITIAL_READY, initial_operation_id=f"init-{nonce}",
+        initial_media_id=f"init-{nonce}", project_id=f"proj-{nonce}", scene_id=f"scene-{nonce}",
+        segment_media_ids_json=json.dumps([f"init-{nonce}"]))
+    return planned, auth
+
+
+async def test_expiry_after_initial_submitted_resumes_without_token(monkeypatch, tmp_path):
+    planned, _ = await _drive_to_initial(monkeypatch, tmp_path, "exp1")
+    await _expire(planned["job_id"])
+    client, calls = FakeClient("exp1"), []
+    # resume_only after expiry: polls the already-submitted job, NEVER a fresh submit
+    status = await orch.advance_job(
+        client, planned["job_id"], authorization_token="expired-ignored",
+        generate_initial=_initial_gen(calls, "exp1"), out_dir=tmp_path, resume_only=True)
+    assert client.extend_submits == 0 and calls == []
+    assert status["status"] != orch.S_AUTH_EXPIRED  # already-submitted work isn't stranded
+
+
+async def test_expiry_after_extend_submitted_finalizes_on_resume(monkeypatch, tmp_path):
+    planned, auth = await _drive_to_initial(monkeypatch, tmp_path, "exp2")
+    job = await crud.get_video_production_job(planned["job_id"])
+    conts = json.loads(job["continuation_prompts_json"])
+    from agent.services import google_flow_native_extend_runtime as _nx
+    parent = "init-exp2"
+    idem = orch._stage_key(
+        job, "EXTEND", f"{parent}|{_nx._prompt_hash(conts[0]['prompt'])}|pos1")
+    await crud.reserve_video_job_side_effect(idem, job_id=job["job_id"], stage="EXTEND")
+    await crud.update_video_job_side_effect(
+        idem, submission_state=orch.SUB_TERMINAL, operation_ref="child-exp2")
+    await crud.update_video_production_job_full(
+        job["job_id"], status=orch.S_EXTEND_READY, extend_child_operation_id="child-exp2",
+        segment_media_ids_json=json.dumps([parent, "child-exp2"]))
+    await _expire(planned["job_id"])
+    # CONCAT is the only unsubmitted stage: normal advance with an expired token stops
+    client = FakeClient("exp2")
+    status = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth["authorization_token"],
+        generate_initial=_initial_gen([], "exp2"), out_dir=tmp_path, poll_interval_s=0)
+    assert status["status"] == orch.S_AUTH_EXPIRED and client.concat_submits == 0
+    # re-authorize → the final render completes; no new extend
+    auth2 = await orch.authorize_job(
+        planned["job_id"], confirmed_plan_fingerprint=planned["plan_fingerprint"])
+    done = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth2["authorization_token"],
+        generate_initial=_initial_gen([], "exp2"), out_dir=tmp_path, poll_interval_s=0)
+    assert done["complete"] is True
+    assert client.extend_submits == 0 and client.concat_submits == 1
+
+
+async def test_expiry_after_complete_is_inert(monkeypatch, tmp_path):
+    planned, auth = await _plan_authorize(monkeypatch, "exp3")
+    client = FakeClient("exp3")
+    await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth["authorization_token"],
+        generate_initial=_initial_gen([], "exp3"), out_dir=tmp_path, poll_interval_s=0)
+    await _expire(planned["job_id"])
+    before = (client.extend_submits, client.concat_submits)
+    again = await orch.advance_job(
+        client, planned["job_id"], authorization_token="expired",
+        generate_initial=_initial_gen([], "exp3"), out_dir=tmp_path, poll_interval_s=0)
+    assert again["complete"] is True
+    assert (client.extend_submits, client.concat_submits) == before
+
+
+# ── credit truth (Mission 6) ────────────────────────────────────────────────
+async def test_credit_spent_only_with_debit_evidence(monkeypatch, tmp_path):
+    planned, auth = await _plan_authorize(monkeypatch, "credit")
+    client = FakeClient("credit", balance=1000.0)  # before = 1000
+    await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth["authorization_token"],
+        generate_initial=_initial_gen([], "credit", credit_after=990.0),  # proven -10
+        out_dir=tmp_path, poll_interval_s=0)
+    job = await crud.get_video_production_job(planned["job_id"])
+    se = await crud.get_video_job_side_effect(
+        orch._stage_key(job, "INITIAL", job["logical_job_key"]))
+    assert se["credit_state"] == orch.CR_SPENT
+    assert se["credit_balance_before"] == 1000.0 and se["credit_balance_after"] == 990.0
+
+
+async def test_credit_may_have_spent_without_evidence(monkeypatch, tmp_path):
+    planned, auth = await _plan_authorize(monkeypatch, "credit2")
+    client = FakeClient("credit2")  # no balance ledger
+    await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth["authorization_token"],
+        generate_initial=_initial_gen([], "credit2"), out_dir=tmp_path, poll_interval_s=0)
+    job = await crud.get_video_production_job(planned["job_id"])
+    se = await crud.get_video_job_side_effect(
+        orch._stage_key(job, "INITIAL", job["logical_job_key"]))
+    assert se["credit_state"] == orch.CR_MAY_HAVE_SPENT  # never SPENT on success alone
 
 
 # ── completed job returns the existing asset ────────────────────────────────

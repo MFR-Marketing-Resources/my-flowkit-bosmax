@@ -1,5 +1,7 @@
 """Native-extend API surface: ONE authoritative path (/extend-run), explicit
 live/dry-run + bounded confirmation, central resolver, no direct-submit bypass."""
+import json
+
 import pytest
 from fastapi import HTTPException
 
@@ -239,31 +241,54 @@ async def test_video_job_create_binds_source_and_reports_missing_segments(monkey
 
 
 # ── durable full-video job API (plan / authorize / status) — zero credit ────
-async def test_video_job_plan_creates_before_initial_and_is_reusable():
-    body = flow.VideoJobPlanRequest(
+def _complete_body(nonce, *, duration=16):
+    """A COMPLETE production plan (explicit authority → no DB/compiler needed)."""
+    segs = max(2, duration // 8)
+    conts = [{"position": p, "block_index": p + 1, "prompt": f"cont {p} {nonce}",
+              "is_final": p == segs - 1} for p in range(1, segs)]
+    return flow.VideoJobPlanRequest(
         product_id="p1", product_name="MWTCB", execution_package_id="wep_x",
-        approved_asset_sha256="hashZ", requested_total_duration_seconds=16,
-        client_request_nonce="apinonce")
+        approved_asset_id="product-image:p1:subject", approved_asset_sha256="hashZ",
+        initial_asset_media_id=f"asset-{nonce}", initial_mode="I2V",
+        engine="GOOGLE_FLOW", model="veo", aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
+        requested_total_duration_seconds=duration,
+        initial_prompt_text=f"reviewed initial {nonce}", continuation_prompts=conts,
+        client_request_nonce=nonce)
+
+
+async def test_video_job_plan_creates_before_initial_and_is_reusable():
+    body = _complete_body("apinonce")
     planned = await flow.plan_video_job(body)
     assert planned["job_id"].startswith("vj_")
     assert planned["status"] == "CREATED"
     assert planned["plan"]["operation_counts"]["total"] == 3
-    # job persisted BEFORE any operation
+    # job persisted BEFORE any operation, with the reviewed prompts bound
     job = await flow.crud.get_video_production_job(planned["job_id"])
     assert job["initial_operation_id"] is None
+    assert job["initial_prompt_text"] == "reviewed initial apinonce"
+    assert json.loads(job["continuation_prompts_json"])
     # same intent reuses the one logical job
     again = await flow.plan_video_job(body)
     assert again["job_id"] == planned["job_id"] and again["reused"] is True
 
 
+async def test_video_job_plan_rejects_incomplete_authority():
+    body = flow.VideoJobPlanRequest(product_id="ponly",
+                                    requested_total_duration_seconds=16,
+                                    client_request_nonce="apiincomplete")
+    with pytest.raises(HTTPException) as exc:
+        await flow.plan_video_job(body)
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "INCOMPLETE_PRODUCTION_PLAN"
+
+
 async def test_video_job_authorize_rejects_changed_plan():
-    body = flow.VideoJobPlanRequest(product_id="p2", requested_total_duration_seconds=16,
-                                    client_request_nonce="apiauth")
-    planned = await flow.plan_video_job(body)
+    planned = await flow.plan_video_job(_complete_body("apiauth"))
     ok = await flow.authorize_video_job(
         planned["job_id"],
         flow.VideoJobAuthorizeRequest(confirmed_plan_fingerprint=planned["plan_fingerprint"]))
     assert ok["authorization_token"].startswith("auth_")
+    assert ok["authorization_id"].startswith("authid_")
     with pytest.raises(HTTPException) as exc:
         await flow.authorize_video_job(
             planned["job_id"],
@@ -272,9 +297,7 @@ async def test_video_job_authorize_rejects_changed_plan():
 
 
 async def test_video_job_start_requires_authorization():
-    body = flow.VideoJobPlanRequest(product_id="p3", requested_total_duration_seconds=16,
-                                    client_request_nonce="apistart")
-    planned = await flow.plan_video_job(body)
+    planned = await flow.plan_video_job(_complete_body("apistart"))
 
     class _BG:
         def add_task(self, *a, **k):
@@ -286,11 +309,30 @@ async def test_video_job_start_requires_authorization():
     assert "NOT_AUTHORIZED" in str(exc.value.detail)
 
 
+async def test_video_job_start_consumes_authorization_single_use():
+    planned = await flow.plan_video_job(_complete_body("apiconsume"))
+    await flow.authorize_video_job(
+        planned["job_id"],
+        flow.VideoJobAuthorizeRequest(confirmed_plan_fingerprint=planned["plan_fingerprint"]))
+
+    class _BG:
+        def __init__(self):
+            self.enqueued = 0
+
+        def add_task(self, *a, **k):
+            self.enqueued += 1
+
+    bg1, bg2 = _BG(), _BG()
+    await flow.start_video_job(planned["job_id"], bg1)   # first start wins
+    await flow.start_video_job(planned["job_id"], bg2)   # replay: no new driver
+    assert bg1.enqueued == 1 and bg2.enqueued == 0
+    job = await flow.crud.get_video_production_job(planned["job_id"])
+    assert job["authorization_consumed_at"] is not None
+    assert job["authorization_consumed_by_job_id"] == planned["job_id"]
+
+
 async def test_video_job_status_projection_is_human_and_refresh_safe():
-    body = flow.VideoJobPlanRequest(product_id="p4", product_name="MWTCB",
-                                    requested_total_duration_seconds=24,
-                                    client_request_nonce="apistatus")
-    planned = await flow.plan_video_job(body)
+    planned = await flow.plan_video_job(_complete_body("apistatus", duration=24))
     st = await flow.video_job_status(planned["job_id"])
     assert st["human_stage"] == "Preparing video"
     assert st["complete"] is False

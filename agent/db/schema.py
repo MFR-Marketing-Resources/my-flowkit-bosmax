@@ -1890,6 +1890,17 @@ CREATE INDEX IF NOT EXISTS idx_video_side_effect_job ON video_job_side_effect(jo
             ("initial_operation_id", "TEXT"), ("initial_workflow_id", "TEXT"),
             ("extend_child_operation_id", "TEXT"), ("extend_child_workflow_id", "TEXT"),
             ("stage_state_json", "TEXT"),
+            # Production wiring (PR315 final): the reviewed, fingerprint-bound
+            # authority the job actually runs. The initial adapter and each Extend
+            # use THESE persisted prompts — never a generic fallback.
+            ("initial_mode", "TEXT"), ("initial_prompt_text", "TEXT"),
+            ("initial_prompt_fingerprint", "TEXT"), ("initial_asset_media_id", "TEXT"),
+            ("continuation_prompts_json", "TEXT"),
+            # True single-use authorization: consumed ATOMICALLY at start.
+            ("authorization_id", "TEXT"), ("authorization_issued_at", "TEXT"),
+            ("authorization_consumed_at", "TEXT"),
+            ("authorization_consumed_by_job_id", "TEXT"),
+            ("authorization_consumed_plan_fingerprint", "TEXT"),
         ):
             if col not in vj_cols:
                 await db.execute(f"ALTER TABLE video_production_job ADD COLUMN {col} {decl}")
@@ -1897,6 +1908,18 @@ CREATE INDEX IF NOT EXISTS idx_video_side_effect_job ON video_job_side_effect(jo
         await db.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_video_job_logical_key "
             "ON video_production_job(logical_job_key)")
+        await db.commit()
+
+        # Migration: authoritative credit-debit evidence per side effect. Balance
+        # before/after lets credit_state be SPENT only when a real debit is proven,
+        # not merely because a call returned. Additive; NULL when unknown.
+        cursor = await db.execute("PRAGMA table_info(video_job_side_effect)")
+        se_cols = {row[1] for row in await cursor.fetchall()}
+        for col, decl in (("credit_balance_before", "REAL"),
+                          ("credit_balance_after", "REAL")):
+            if col not in se_cols:
+                await db.execute(
+                    f"ALTER TABLE video_job_side_effect ADD COLUMN {col} {decl}")
         await db.commit()
 
         # Migration: generated_artifact.scene_id — durable scene evidence so the

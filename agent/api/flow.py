@@ -1219,6 +1219,13 @@ class VideoJobPlanRequest(BaseModel):
     initial_prompt_fingerprint: Optional[str] = None
     execution_mode: str = "HYBRID_EXTEND"
     client_request_nonce: Optional[str] = None
+    # Optional explicit authority — normally resolved server-side from the
+    # execution package; supplying these skips resolution (e.g. re-plan from a
+    # fully-specified reviewed plan).
+    initial_mode: Optional[str] = None
+    initial_asset_media_id: Optional[str] = None
+    initial_prompt_text: Optional[str] = None
+    continuation_prompts: Optional[list] = None
 
 
 class VideoJobAuthorizeRequest(BaseModel):
@@ -1236,15 +1243,26 @@ def _job_intent(body: "VideoJobPlanRequest") -> dict:
         "initial_prompt_fingerprint": body.initial_prompt_fingerprint,
         "execution_mode": body.execution_mode,
         "client_request_nonce": body.client_request_nonce,
+        "initial_mode": body.initial_mode,
+        "initial_asset_media_id": body.initial_asset_media_id,
+        "initial_prompt_text": body.initial_prompt_text,
+        "continuation_prompts": body.continuation_prompts,
     }
 
 
 @router.post("/video-jobs/plan")
 async def plan_video_job(body: VideoJobPlanRequest):
     """Create-or-reuse the lifecycle-owning job + return the ONE reviewed plan.
-    Spends nothing. The job exists BEFORE the initial segment is generated."""
+    Spends nothing. The job exists BEFORE the initial segment is generated. An
+    incomplete production plan (missing product/asset/prompt authority) is rejected
+    with a structured 422 — no authorization is ever issued for it."""
     from agent.services import video_production_orchestrator as _orch
-    return await _orch.plan_job(_job_intent(body))
+    try:
+        return await _orch.plan_job(_job_intent(body))
+    except _orch.OrchestratorError as exc:
+        if exc.code == "INCOMPLETE_PRODUCTION_PLAN":
+            raise HTTPException(422, {"code": exc.code, "detail": exc.detail})
+        raise HTTPException(409, str(exc))
 
 
 @router.post("/video-jobs/{job_id}/authorize")
@@ -1261,17 +1279,102 @@ async def authorize_video_job(job_id: str, body: VideoJobAuthorizeRequest):
             404 if exc.code == "VIDEO_JOB_NOT_FOUND" else 409, str(exc))
 
 
-async def _production_initial_generator(job: dict) -> dict:
-    """LIVE initial-segment generation via the existing proven one-door lane.
+_VIDEO_ASPECT_TO_RATIO = {
+    "VIDEO_ASPECT_RATIO_PORTRAIT": "9:16",
+    "VIDEO_ASPECT_RATIO_LANDSCAPE": "16:9",
+    "VIDEO_ASPECT_RATIO_SQUARE": "1:1",
+}
+_INITIAL_GEN_TERMINAL = {"DONE", "FAILED", "REJECTED", "GENERATED_BUT_UNRETRIEVED"}
 
-    Deferred credit surface: only reached under NATIVE_EXTEND_ENABLED + a valid
-    whole-job authorization (operator controlled live proof). Zero-credit validation
-    injects a mock generator into advance_job instead of this.
+
+class InitialGenerationError(RuntimeError):
+    """Fail-closed initial-segment generation error (no durable identity)."""
+
+
+async def _production_initial_generator(job: dict) -> dict:
+    """LIVE initial block-1 generation through the proven one-door lane.
+
+    Runs the exact reviewed authority persisted on the job: product-truth prompt,
+    approved product asset (I2V start frame), engine/model/aspect/duration. It
+    submits via `make_video.start_generate` (the ONE door — never the frozen DOM
+    lane), polls the lane job to a terminal state, resolves the clip's scene, and
+    maps the real result into the durable identity the Extend/concat stages need.
+    Fails closed if any required output identity (operation_id / project_id /
+    scene_id) is missing. Reached only under NATIVE_EXTEND_ENABLED + a consumed
+    whole-job authorization — the deferred, operator-controlled credit surface.
     """
-    raise HTTPException(
-        501, "LIVE_INITIAL_GENERATION_PENDING_OPERATOR_PROOF: initial-segment "
-        "generation is wired to the one-door lane and runs only during the controlled "
-        "operator live proof; it is not exercised in zero-credit validation")
+    from agent.services import make_video as _mv
+    from agent.services import google_flow_native_extend_runtime as _nx
+
+    prompt = (job.get("initial_prompt_text") or "").strip()
+    if not prompt:
+        raise InitialGenerationError("initial prompt not bound to job")
+    if not (job.get("product_id") and job.get("approved_asset_id")
+            and job.get("approved_asset_sha256")):
+        raise InitialGenerationError("product/asset authority missing on job")
+
+    mode = (job.get("initial_mode") or "I2V").upper()
+    start_media = job.get("initial_asset_media_id")
+    if mode in ("I2V", "F2V") and not start_media:
+        raise InitialGenerationError(f"{mode} initial requires an approved product asset media id")
+    aspect = _VIDEO_ASPECT_TO_RATIO.get(job.get("aspect_ratio") or "", "9:16")
+    duration_s = int(job.get("requested_duration_seconds") or 16)
+    per_block_s = 8  # block-1 is one native segment; the chain extends it
+
+    client = get_flow_client()
+    if not getattr(client, "connected", False):
+        raise InitialGenerationError("Extension not connected")
+
+    submit = await _mv.start_generate(
+        mode=mode, prompt=prompt,
+        project_id=job.get("project_id") or None,
+        image_media_ids=[start_media] if start_media else None,
+        aspect=aspect, model=job.get("model"), duration_s=per_block_s,
+        num_videos=1)
+    if not isinstance(submit, dict) or submit.get("status") == "REJECTED":
+        raise InitialGenerationError(
+            f"one-door lane rejected initial: {submit.get('error') if isinstance(submit, dict) else submit}")
+    lane_job_id = submit.get("job_id")
+    if not lane_job_id:
+        raise InitialGenerationError("one-door lane returned no job id")
+
+    # Poll the lane job to terminal. Video generation is minutes-long; the durable
+    # background driver owns this wait (correctness comes from the DB idempotency
+    # table, not from this task surviving).
+    import asyncio as _asyncio
+    lane = None
+    for _ in range(240):  # ~20 min ceiling at 5s
+        lane = _mv.get_job(lane_job_id)
+        if lane and lane.get("status") in _INITIAL_GEN_TERMINAL:
+            break
+        await _asyncio.sleep(5)
+    if not lane or lane.get("status") not in _INITIAL_GEN_TERMINAL:
+        raise InitialGenerationError("initial generation did not reach a terminal state")
+    if lane.get("status") != "DONE":
+        raise InitialGenerationError(
+            f"initial generation {lane.get('status')}: {lane.get('error') or ''}".strip())
+
+    op_id = lane.get("video_media_id") or lane.get("media_id")
+    project_id = lane.get("project_id") or job.get("project_id")
+    if not op_id or not project_id:
+        raise InitialGenerationError("initial clip missing operation/project id")
+
+    # Resolve durable scene evidence for the freshly generated clip (Extend needs it).
+    try:
+        ctx = await _nx.resolve_extend_source_context(
+            client, media_id=op_id, project_id=project_id)
+    except _nx.NativeExtendError as exc:
+        raise InitialGenerationError(f"scene evidence unresolved: {exc}") from exc
+    scene_id = ctx.get("scene_id")
+    if not scene_id:
+        raise InitialGenerationError("initial clip has no scene id")
+
+    return {
+        "operation_id": op_id, "media_id": op_id,
+        "workflow_id": lane.get("workflow_id") or ctx.get("workflow_id"),
+        "project_id": project_id, "scene_id": scene_id,
+        "credit_balance_after": lane.get("remaining_credits"),
+    }
 
 
 async def _drive_video_job(job_id: str, token: str):
@@ -1291,16 +1394,25 @@ async def _drive_video_job(job_id: str, token: str):
 
 @router.post("/video-jobs/{job_id}/start")
 async def start_video_job(job_id: str, background_tasks: BackgroundTasks):
-    """Start/RESUME the durable job and return immediately. Idempotent: calling again
-    resumes from persisted state and never double-submits any operation."""
+    """Start the durable job and return immediately. The single-use authorization is
+    CONSUMED atomically here: the first start wins and enqueues the driver; a replayed
+    start with the same token returns the existing status and never creates another
+    job or authorizes another side effect."""
     from agent.services import video_production_orchestrator as _orch
+    import time as _time
     job = await crud.get_video_production_job(job_id)
     if not job:
         raise HTTPException(404, "VIDEO_JOB_NOT_FOUND")
     token = job.get("authorization_token")
     if not token:
         raise HTTPException(409, "VIDEO_JOB_NOT_AUTHORIZED")
-    background_tasks.add_task(_drive_video_job, job_id, token)
+    consumed = await crud.consume_job_authorization(
+        job_id, token, plan_fingerprint=job.get("plan_fingerprint") or "",
+        now=str(_time.time()))
+    if consumed["consumed"]:
+        background_tasks.add_task(_drive_video_job, job_id, token)  # first start only
+    elif not consumed["already"]:
+        raise HTTPException(409, "VIDEO_JOB_AUTHORIZATION_ROTATED")
     return await _orch.get_job_status(job_id)
 
 
