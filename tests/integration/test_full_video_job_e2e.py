@@ -106,7 +106,7 @@ async def test_full_video_job_end_to_end_zero_credit(monkeypatch, tmp_path):
     _wire_initial(monkeypatch, nonce, captured)
     client = _ExtendConcatClient(nonce, final_seconds=16.0)
 
-    planned = await orch.plan_job(_intent(nonce))
+    planned = await orch.plan_job(_intent(nonce), trust_client_authority=True)
     # created before any operation, reviewed prompts bound
     job0 = await crud.get_video_production_job(planned["job_id"])
     assert job0["status"] == orch.S_CREATED and job0["initial_operation_id"] is None

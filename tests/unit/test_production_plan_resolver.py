@@ -23,7 +23,7 @@ async def test_explicit_authority_is_complete():
         "continuation_prompts": [{"position": 1, "block_index": 2,
                                   "prompt": "the reviewed continuation", "is_final": True}],
     }
-    out = await resolver.resolve_production_authority(intent)
+    out = await resolver.resolve_production_authority(intent, trust_client_authority=True)
     assert out["missing"] == []
     assert out["initial_prompt_fingerprint"] == resolver._fp("the reviewed block-1 prompt")
     assert out["continuation_prompt_fingerprints"] == [
@@ -38,6 +38,46 @@ async def test_incomplete_reports_every_missing_field():
     assert {"execution_package_id", "approved_asset_id", "approved_asset_sha256",
             "initial_asset_media_id", "initial_prompt_text",
             "initial_prompt_fingerprint", "continuation_prompts"} <= missing
+
+
+async def test_production_strips_client_authority_override():
+    # trust=False (production): the client CANNOT inject prompt/asset — they are
+    # dropped, so a would-be override never reaches the plan.
+    intent = {
+        "product_id": "p1", "execution_package_id": "",  # no package to resolve from
+        "requested_duration_seconds": 16,
+        "initial_prompt_text": "INJECTED prompt", "approved_asset_id": "INJECTED",
+        "approved_asset_sha256": "INJECTED", "initial_asset_media_id": "INJECTED",
+        "continuation_prompts": [{"position": 1, "prompt": "INJECTED cont"}],
+    }
+    out = await resolver.resolve_production_authority(intent, trust_client_authority=False)
+    # nothing was honored from the client; the plan is incomplete (fail-closed)
+    assert out.get("initial_prompt_text") in (None, "")
+    assert "approved_asset_id" in out["missing"]
+    assert "continuation_prompts" in out["missing"]
+
+
+async def test_supplied_fingerprint_mismatch_is_rejected():
+    import pytest
+    intent = {
+        "product_id": "p1", "execution_package_id": "wep1",
+        "approved_asset_id": "product-image:p1:subject", "approved_asset_sha256": "sha1",
+        "initial_asset_media_id": "m1", "initial_mode": "I2V", "engine": "GOOGLE_FLOW",
+        "model": "veo", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "requested_duration_seconds": 16,
+        "initial_prompt_text": "the real prompt B",
+        "initial_prompt_fingerprint": resolver._fp("a DIFFERENT prompt A"),  # lie
+        "continuation_prompts": [{"position": 1, "prompt": "cont", "is_final": True}],
+    }
+    with pytest.raises(resolver.AuthorityMismatchError):
+        await resolver.resolve_production_authority(intent, trust_client_authority=True)
+
+
+async def test_invalid_duration_flagged_missing():
+    out = await resolver.resolve_production_authority(
+        {"product_id": "p1", "requested_duration_seconds": 20}, trust_client_authority=True)
+    assert out["duration_valid"] is False
+    assert "valid_duration_plan" in out["missing"]
 
 
 async def test_reads_real_execution_package(monkeypatch):
@@ -62,7 +102,7 @@ async def test_reads_real_execution_package(monkeypatch):
         "product_id": pid, "execution_package_id": "wep_real",
         "requested_duration_seconds": 16,
         "continuation_prompts": [{"position": 1, "prompt": "cont A", "is_final": True}],
-    })
+    }, trust_client_authority=True)
     assert out["missing"] == []
     assert out["model"] == "veo_3_1_extension_lite"
     assert out["aspect_ratio"] == "VIDEO_ASPECT_RATIO_PORTRAIT"
@@ -95,7 +135,7 @@ async def test_maps_compile_door_block_prompts(monkeypatch):
         "approved_asset_sha256": "sha", "initial_asset_media_id": "m", "initial_mode": "I2V",
         "engine": "GOOGLE_FLOW", "model": "veo", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
         "requested_duration_seconds": 24,
-    })
+    }, trust_client_authority=True)
     assert out["initial_prompt_text"] == "INIT block prompt"
     conts = out["continuation_prompts"]
     assert [c["prompt"] for c in conts] == ["EXTEND to block 2", "EXTEND to block 3, final"]

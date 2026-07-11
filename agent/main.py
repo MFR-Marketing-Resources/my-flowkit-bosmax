@@ -231,11 +231,13 @@ async def lifespan(app: FastAPI):
         # job — never a fresh credit submit. Best-effort; boot never blocks on it.
         try:
             from agent.services import video_production_orchestrator as _orch
-            from agent.api.flow import _production_initial_generator
+            from agent.api.flow import (_production_initial_generator,
+                                        _resume_initial_generation)
             from agent.config import OUTPUT_DIR
             client = get_flow_client()
             resumed = await _orch.resume_in_flight_jobs(
                 client, generate_initial=_production_initial_generator,
+                resume_initial=_resume_initial_generation,
                 out_dir=OUTPUT_DIR / "retrieved")
             if resumed:
                 logger.info("Resumed %d in-flight full-video job(s) after restart",

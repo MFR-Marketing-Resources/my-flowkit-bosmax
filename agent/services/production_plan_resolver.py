@@ -1,8 +1,8 @@
 """Resolve the COMPLETE, fingerprint-bound authority a full-video job runs.
 
-Mission 2/3 of the PR315 final wiring: production planning must carry every
-authority field, and the exact initial + continuation prompts must be resolved
-and fingerprinted BEFORE authorization (never a generic runtime fallback).
+Production planning must carry every authority field, and the exact initial +
+continuation prompts must be resolved and fingerprinted BEFORE authorization
+(never a generic runtime fallback).
 
 Authority sources (all proven, reused — nothing re-implemented):
   * persisted execution package  → model / aspect / mode / product asset (id +
@@ -11,10 +11,15 @@ Authority sources (all proven, reused — nothing re-implemented):
     text: block 1 `initial_generation_prompt_text`, block N>=2
     `flow_extend_prompt_text` (the reviewed continuation prompt for that segment).
 
-Contract: explicitly-supplied intent values WIN (hermetic tests pass a complete
-authority set and never touch the DB / compiler). Anything still missing after
-resolution is reported in `missing` — the caller fails closed with a structured
-422 and never issues an authorization for an incomplete plan.
+Server-side SSOT (PR316): in production (`trust_client_authority=False`) the
+client CANNOT override product/asset/prompt authority — those fields are dropped
+and re-resolved from the execution package, so a hand-crafted request can never
+swap the product or prompt. `trust_client_authority=True` is for hermetic tests
+and the explicit recovery path only.
+
+Fingerprint integrity (PR316): every prompt fingerprint is ALWAYS recomputed
+server-side from the canonical text. A supplied fingerprint is only an *expected*
+value — a mismatch is rejected (never trusted as authority).
 """
 from __future__ import annotations
 
@@ -30,10 +35,20 @@ REQUIRED_AUTHORITY = (
     "engine", "model", "aspect_ratio", "requested_duration_seconds",
 )
 
+# Authority the client may NOT set in production — always resolved server-side.
+_CLIENT_OVERRIDABLE_AUTHORITY = (
+    "approved_asset_id", "approved_asset_sha256", "initial_asset_media_id",
+    "initial_mode", "model", "aspect_ratio", "initial_prompt_text",
+    "initial_prompt_fingerprint", "continuation_prompts",
+)
+
 _SEGMENT_SECONDS = 8
+_MIN_DURATION = 16  # a full-video job is at least an initial + one extend
 # The INITIAL block of a full VIDEO job must itself be a video (it is what the native
 # Extend chain continues) — IMG is never a valid block-1 mode here.
 _VIDEO_START_MODES = {"T2V", "I2V", "F2V"}
+
+FINGERPRINT_MISMATCH = "PROMPT_FINGERPRINT_MISMATCH"
 
 
 def _fp(text: str) -> str:
@@ -42,6 +57,11 @@ def _fp(text: str) -> str:
 
 def _clean(value: Any) -> str:
     return str(value or "").strip()
+
+
+def duration_is_valid(seconds: int) -> bool:
+    """A Native-Extend timeline is an exact sum of 8s blocks, >= one extend."""
+    return seconds >= _MIN_DURATION and seconds % _SEGMENT_SECONDS == 0
 
 
 def _primary_product_asset(resolved_assets: list[dict]) -> dict | None:
@@ -58,14 +78,32 @@ def _primary_product_asset(resolved_assets: list[dict]) -> dict | None:
     return resolved_assets[0]
 
 
-async def resolve_production_authority(intent: dict[str, Any]) -> dict[str, Any]:
-    """Return a complete authority dict (+ `missing` list). Never raises for a
-    merely-incomplete plan — the caller decides (422). Explicit intent wins."""
-    from agent.db import crud
+class AuthorityMismatchError(ValueError):
+    """A supplied fingerprint did not match the canonical prompt text."""
+    def __init__(self, detail: str) -> None:
+        self.code = FINGERPRINT_MISMATCH
+        self.detail = detail
+        super().__init__(f"{FINGERPRINT_MISMATCH}:{detail}")
 
+
+async def resolve_production_authority(
+    intent: dict[str, Any], *, trust_client_authority: bool = False,
+) -> dict[str, Any]:
+    """Return a complete authority dict (+ `missing` list). Never raises for a
+    merely-incomplete plan — the caller decides (422). Raises AuthorityMismatchError
+    only when a supplied fingerprint contradicts its prompt text.
+
+    trust_client_authority=False (production): client-supplied product/asset/prompt
+    authority is DROPPED and re-resolved from the execution package (SSOT).
+    """
     out: dict[str, Any] = dict(intent)
+    if not trust_client_authority:
+        for k in _CLIENT_OVERRIDABLE_AUTHORITY:
+            out.pop(k, None)
+
     duration = int(intent.get("requested_duration_seconds") or 16)
     out["requested_duration_seconds"] = duration
+    out["duration_valid"] = duration_is_valid(duration)
     segment_count = max(2, duration // _SEGMENT_SECONDS)
     out["segment_count"] = segment_count
     extend_ops = segment_count - 1
@@ -73,14 +111,14 @@ async def resolve_production_authority(intent: dict[str, Any]) -> dict[str, Any]
         "initial_generation": 1, "extend": extend_ops, "final_render": 1,
         "total": 1 + extend_ops + 1,
     }
-    out.setdefault("engine", None)
     if not _clean(out.get("engine")):
         out["engine"] = "GOOGLE_FLOW"
 
-    # ── base authority from the persisted execution package ──────────────────
+    # ── base authority from the persisted execution package (SSOT) ───────────
     pkg = None
     exec_pkg_id = _clean(intent.get("execution_package_id"))
     if exec_pkg_id:
+        from agent.db import crud
         pkg = await crud.get_workspace_execution_package(exec_pkg_id)
     if pkg:
         if not _clean(out.get("model")):
@@ -106,23 +144,27 @@ async def resolve_production_authority(intent: dict[str, Any]) -> dict[str, Any]
             if not _clean(out.get("initial_asset_media_id")):
                 out["initial_asset_media_id"] = asset.get("media_id")
 
-    # Block-1 make_video mode: a start image → I2V, else T2V. pkg.mode wins.
+    # Block-1 make_video mode: a start image → I2V, else T2V. Never IMG.
     if not _clean(out.get("initial_mode")) or out.get("initial_mode") not in _VIDEO_START_MODES:
         out["initial_mode"] = "I2V" if _clean(out.get("initial_asset_media_id")) else "T2V"
 
     # ── per-block reviewed prompts (initial + continuations) ─────────────────
-    provided = intent.get("continuation_prompts")
-    if provided:
-        out["continuation_prompts"] = _normalize_continuations(provided)
-    else:
-        out["continuation_prompts"] = None
+    supplied_conts = out.get("continuation_prompts") if trust_client_authority else None
+    out["continuation_prompts"] = (
+        _normalize_continuations(supplied_conts) if supplied_conts else None)
     if (not _clean(out.get("initial_prompt_text")) or not out.get("continuation_prompts")) \
             and _clean(out.get("product_id")):
         await _compile_block_prompts(out, segment_count)
 
-    if _clean(out.get("initial_prompt_text")) and not _clean(out.get("initial_prompt_fingerprint")):
-        out["initial_prompt_fingerprint"] = _fp(out["initial_prompt_text"])
-
+    # ── fingerprints ALWAYS recomputed server-side; supplied only compared ───
+    text = _clean(out.get("initial_prompt_text"))
+    supplied_ifp = _clean(intent.get("initial_prompt_fingerprint")) if trust_client_authority else ""
+    if text:
+        computed = _fp(text)
+        if supplied_ifp and supplied_ifp != computed:
+            raise AuthorityMismatchError(
+                "initial_prompt_fingerprint does not match initial_prompt_text")
+        out["initial_prompt_fingerprint"] = computed
     conts = out.get("continuation_prompts") or []
     out["continuation_prompt_fingerprints"] = [c["fingerprint"] for c in conts]
 
@@ -131,16 +173,23 @@ async def resolve_production_authority(intent: dict[str, Any]) -> dict[str, Any]
 
 
 def _normalize_continuations(items: list[dict]) -> list[dict]:
+    """Normalize supplied continuations; the fingerprint is ALWAYS recomputed from
+    the prompt text (a supplied fingerprint that disagrees is rejected)."""
     norm = []
     for i, item in enumerate(items):
         prompt = _clean(item.get("prompt"))
         if not prompt:
             continue
+        computed = _fp(prompt)
+        supplied = _clean(item.get("fingerprint"))
+        if supplied and supplied != computed:
+            raise AuthorityMismatchError(
+                f"continuation fingerprint at position {i + 1} does not match its prompt")
         norm.append({
             "position": int(item.get("position") or (i + 1)),
             "block_index": int(item.get("block_index") or (i + 2)),
             "prompt": prompt,
-            "fingerprint": _clean(item.get("fingerprint")) or _fp(prompt),
+            "fingerprint": computed,
             "is_final": bool(item.get("is_final")),
         })
     return norm
@@ -194,4 +243,6 @@ def _missing_fields(out: dict[str, Any], extend_ops: int) -> list[str]:
     conts = out.get("continuation_prompts") or []
     if len(conts) < extend_ops:
         missing.append("continuation_prompts")
+    if not out.get("duration_valid"):
+        missing.append("valid_duration_plan")
     return missing

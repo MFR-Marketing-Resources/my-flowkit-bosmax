@@ -111,7 +111,7 @@ def _initial_gen(calls, nonce, *, credit_after=None):
 
 async def _plan_authorize(monkeypatch, nonce, duration=16):
     monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
-    planned = await orch.plan_job(_intent(nonce, duration))
+    planned = await orch.plan_job(_intent(nonce, duration), trust_client_authority=True)
     job = await crud.get_video_production_job(planned["job_id"])
     # Mission 1: job exists BEFORE any credit-consuming operation.
     assert job["status"] == orch.S_CREATED
@@ -148,9 +148,28 @@ async def test_incomplete_plan_is_rejected(monkeypatch):
 
 async def test_same_intent_reuses_one_logical_job(monkeypatch, tmp_path):
     monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
-    a = await orch.plan_job(_intent("same"))
-    b = await orch.plan_job(_intent("same"))
+    a = await orch.plan_job(_intent("same"), trust_client_authority=True)
+    b = await orch.plan_job(_intent("same"), trust_client_authority=True)
     assert a["job_id"] == b["job_id"] and b["reused"] is True
+
+
+async def test_invalid_duration_rejected(monkeypatch):
+    monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
+    with pytest.raises(orch.OrchestratorError) as exc:
+        await orch.plan_job(_intent("dur", duration=20), trust_client_authority=True)
+    assert exc.value.code == "INVALID_DURATION_PLAN"
+
+
+async def test_production_ssot_ignores_client_prompt_override(monkeypatch):
+    monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
+    # a client tries to swap the reviewed prompt; production planning must NOT honor it
+    tampered = _intent("ssot")
+    tampered["initial_prompt_text"] = "TAMPERED prompt not from the package"
+    # trust=False (production) → client authority is stripped; with no execution
+    # package to resolve from, the plan is INCOMPLETE rather than honoring the override
+    with pytest.raises(orch.OrchestratorError) as exc:
+        await orch.plan_job(tampered, trust_client_authority=False)
+    assert exc.value.code == "INCOMPLETE_PRODUCTION_PLAN"
 
 
 async def test_changed_prompt_rejects_authorization(monkeypatch, tmp_path):
@@ -331,6 +350,102 @@ async def test_expiry_after_extend_submitted_finalizes_on_resume(monkeypatch, tm
         generate_initial=_initial_gen([], "exp2"), out_dir=tmp_path, poll_interval_s=0)
     assert done["complete"] is True
     assert client.extend_submits == 0 and client.concat_submits == 1
+
+
+# ── mid-flight INITIAL restart recovery via persisted lane (Mission 1 / item 1) ─
+async def _submit_initial_no_terminal(monkeypatch, nonce, lane="lane-x"):
+    """Reach: INITIAL reserved + SUBMITTED (credit MAY be spent), lane handle
+    persisted, but NOT terminal and initial_operation_id still null."""
+    planned, auth = await _plan_authorize(monkeypatch, nonce)
+    job = await crud.get_video_production_job(planned["job_id"])
+    idem = orch._stage_key(job, "INITIAL", job["logical_job_key"])
+    await crud.reserve_video_job_side_effect(idem, job_id=job["job_id"], stage="INITIAL")
+    await crud.increment_side_effect_submit_count(idem)
+    await crud.update_video_job_side_effect(
+        idem, submission_state=orch.SUB_SUBMITTED, credit_state=orch.CR_MAY_HAVE_SPENT,
+        credit_balance_before=1000.0)
+    await crud.update_video_production_job_full(
+        job["job_id"], status=orch.S_INITIAL_SUBMITTING,
+        initial_lane_job_id=lane, initial_lane_project_id=f"proj-{nonce}")
+    return planned, auth, idem
+
+
+def _resumer(*states):
+    seq = list(states)
+    calls = {"n": 0}
+    async def resume(job):
+        i = min(calls["n"], len(seq) - 1)
+        calls["n"] += 1
+        return seq[i]
+    return resume, calls
+
+
+async def test_restart_midflight_initial_resumes_without_resubmit(monkeypatch, tmp_path):
+    planned, auth, idem = await _submit_initial_no_terminal(monkeypatch, "mfdone")
+    client = FakeClient("mfdone")
+    calls = []
+    resume, rc = _resumer({"state": "DONE", "identity": {
+        "operation_id": "init-mfdone", "media_id": "init-mfdone", "workflow_id": "wf",
+        "project_id": "proj-mfdone", "scene_id": "scene-mfdone",
+        "credit_balance_after": 990.0}})
+    status = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth["authorization_token"],
+        generate_initial=_initial_gen(calls, "mfdone"), resume_initial=resume,
+        out_dir=tmp_path, poll_interval_s=0)
+    assert calls == []          # the fresh generator was NEVER called (no re-submit)
+    assert rc["n"] == 1         # it resumed via the persisted lane
+    assert status["complete"] is True
+    job = await crud.get_video_production_job(planned["job_id"])
+    assert job["initial_operation_id"] == "init-mfdone"
+    se = await crud.get_video_job_side_effect(idem)
+    assert se["credit_state"] == orch.CR_SPENT   # 1000 -> 990 proven, from before+after
+
+
+async def test_restart_midflight_initial_still_inflight_waits(monkeypatch, tmp_path):
+    planned, auth, idem = await _submit_initial_no_terminal(monkeypatch, "mfwait")
+    client = FakeClient("mfwait")
+    calls = []
+    resume, _ = _resumer({"state": "INFLIGHT"})
+    status = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth["authorization_token"],
+        generate_initial=_initial_gen(calls, "mfwait"), resume_initial=resume,
+        out_dir=tmp_path, poll_interval_s=0)
+    assert calls == [] and client.extend_submits == 0
+    assert status["complete"] is False
+    se = await crud.get_video_job_side_effect(idem)
+    assert se["submission_state"] == orch.SUB_SUBMITTED   # still in flight, not lost
+
+
+async def test_restart_midflight_initial_lane_lost_goes_recovery(monkeypatch, tmp_path):
+    planned, auth, idem = await _submit_initial_no_terminal(monkeypatch, "mflost")
+    client = FakeClient("mflost")
+    calls = []
+    resume, _ = _resumer({"state": "RECOVERY", "detail": "lane gone after restart"})
+    status = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth["authorization_token"],
+        generate_initial=_initial_gen(calls, "mflost"), resume_initial=resume,
+        out_dir=tmp_path, poll_interval_s=0)
+    assert calls == []                       # never re-submitted
+    assert status["status"] == orch.S_INITIAL_RECOVERY
+    se = await crud.get_video_job_side_effect(idem)
+    assert se["submission_state"] == orch.SUB_UNCERTAIN
+    assert se["credit_state"] == orch.CR_MAY_HAVE_SPENT   # honest: may have spent
+    assert se["retry_safety"] == orch.RS_BLOCKED          # not auto-retried
+
+
+async def test_restart_sweep_recovers_midflight_initial(monkeypatch, tmp_path):
+    planned, auth, idem = await _submit_initial_no_terminal(monkeypatch, "mfsweep")
+    client = FakeClient("mfsweep")
+    resume, _ = _resumer({"state": "DONE", "identity": {
+        "operation_id": "init-mfsweep", "media_id": "init-mfsweep", "workflow_id": "wf",
+        "project_id": "proj-mfsweep", "scene_id": "scene-mfsweep"}})
+    resumed = await orch.resume_in_flight_jobs(
+        client, generate_initial=_initial_gen([], "mfsweep"), resume_initial=resume,
+        out_dir=tmp_path)
+    assert isinstance(resumed, list)
+    job = await crud.get_video_production_job(planned["job_id"])
+    assert job["initial_operation_id"] == "init-mfsweep"   # recovered, no re-submit
+    assert client.extend_submits == 0                       # resume_only: no new credit
 
 
 async def test_expiry_after_complete_is_inert(monkeypatch, tmp_path):
