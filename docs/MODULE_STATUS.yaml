@@ -149,6 +149,7 @@ domains:
       - agent/authority/VIDEO_PROMPT_COMPILER_TEMPLATES.yaml
       - agent/authority/wps_blocking_authority.json
       - tests/unit/test_canonical_prompt_compiler.py
+      - tests/unit/test_extend_scale_continuity.py
       - tests/unit/test_product_lock_builder.py
       - tests/unit/test_prompt_authority_sovereignty.py
       - tests/unit/test_prompt_compiler_9_section.py

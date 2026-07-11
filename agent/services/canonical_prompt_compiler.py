@@ -1589,6 +1589,22 @@ def _section_3_continuity(
             "distance, same lighting, same emotional tone, and same motion direction. The "
             "first half second must contain active continuation with no pause, dead air, or freeze."
         )
+        # Extension scale anchor: a native continuation carries NO attached reference image,
+        # so the block-1 "reference image = scale truth" lock is inert here and the remaining
+        # scale language is enlargement-only — which lets the product drift SMALLER across an
+        # invented pour/cap/re-grip. Re-anchor scale to the previous clip's final frame and make
+        # the lock bidirectional (no shrink AND no enlarge), generic to any product via pname.
+        lines.append(
+            f"SCALE CONTINUITY LOCK (extension): the FINAL FRAME of the previous clip is the scale "
+            f"truth for this continuation — there is no separate attached reference image in this "
+            f"block, so never rely on a reference image for size. Keep {pname}'s on-screen size and "
+            f"its exact ratio to the hand, fingers, and face IDENTICAL to that final frame across the "
+            f"whole block and through every motion, including any pour, tilt, apply, cap, set-down, or "
+            f"re-grip. The product must not shrink and must not enlarge: after the hand pours, applies, "
+            f"or re-grips it, its size on screen is exactly the same as before the action. Hold one "
+            f"single constant absolute size for the entire block; treat any change in the product's "
+            f"size between the start and end of this block as an error."
+        )
     return "\n".join(lines)
 
 
