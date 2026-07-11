@@ -1221,6 +1221,15 @@ async def create_or_replace_workspace_execution_package(
     return await _get_with_db(db, "workspace_execution_package", "workspace_execution_package_id", workspace_execution_package_id)
 
 
+async def get_workspace_execution_package(workspace_execution_package_id: str) -> dict | None:
+    """Load one persisted execution package — the durable-job plan's authority source
+    (compiled product-truth prompt, fingerprint, model/aspect, resolved product asset)."""
+    db = await get_db()
+    return await _get_with_db(
+        db, "workspace_execution_package", "workspace_execution_package_id",
+        workspace_execution_package_id)
+
+
 async def list_workspace_execution_packages(
     *,
     product_id: str | None = None,
@@ -2117,6 +2126,9 @@ async def create_video_production_job_full(job_id: str, *, logical_job_key: str,
         "approved_asset_sha256", "engine", "model", "aspect_ratio",
         "plan_fingerprint", "whole_plan_json", "initial_media_id",
         "segment_media_ids_json",
+        # production authority persisted at plan time (create-before-initial)
+        "initial_mode", "initial_prompt_text", "initial_prompt_fingerprint",
+        "initial_asset_media_id", "continuation_prompts_json",
     }
     cols.update({k: v for k, v in fields.items() if k in allowed})
     names = ", ".join(cols)
@@ -2138,6 +2150,10 @@ async def update_video_production_job_full(job_id: str, **fields) -> None:
         "plan_fingerprint", "whole_plan_json", "authorization_token",
         "authorization_expires_at", "initial_operation_id", "initial_workflow_id",
         "extend_child_operation_id", "extend_child_workflow_id", "stage_state_json",
+        "initial_mode", "initial_prompt_text", "initial_prompt_fingerprint",
+        "initial_asset_media_id", "continuation_prompts_json",
+        "authorization_id", "authorization_issued_at", "authorization_consumed_at",
+        "authorization_consumed_by_job_id", "authorization_consumed_plan_fingerprint",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -2150,6 +2166,36 @@ async def update_video_production_job_full(job_id: str, **fields) -> None:
             "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE job_id=?",
             (*updates.values(), job_id))
         await db.commit()
+
+
+async def consume_job_authorization(job_id: str, token: str, *,
+                                    plan_fingerprint: str, now: str) -> dict:
+    """Atomically CONSUME a job's single-use authorization at start.
+
+    Returns {"consumed": bool, "already": bool, "row": <job>}. consumed=True means
+    THIS call won the single-use race (may enqueue the driver); already=True means
+    the token was already consumed for this job (a replayed start — return status,
+    never a second job or side effect). A token mismatch returns consumed=False,
+    already=False (caller rejects: the plan was re-authorized/rotated).
+    """
+    db = await get_db()
+    async with _db_lock:
+        cur = await db.execute(
+            "UPDATE video_production_job SET authorization_consumed_at=?, "
+            "authorization_consumed_by_job_id=?, authorization_consumed_plan_fingerprint=?, "
+            "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+            "WHERE job_id=? AND authorization_token=? AND authorization_consumed_at IS NULL",
+            (now, job_id, plan_fingerprint, job_id, token))
+        await db.commit()
+        consumed = cur.rowcount == 1
+        r = await db.execute(
+            "SELECT * FROM video_production_job WHERE job_id=?", (job_id,))
+        row = await r.fetchone()
+    row = dict(row) if row else None
+    already = bool(
+        not consumed and row and row.get("authorization_consumed_at")
+        and row.get("authorization_token") == token)
+    return {"consumed": consumed, "already": already, "row": row}
 
 
 # ── DB-level side-effect idempotency (initial / extend / concat) ─────────────
@@ -2195,7 +2241,8 @@ async def get_video_job_side_effect(idempotency_key: str) -> dict | None:
 
 async def update_video_job_side_effect(idempotency_key: str, **fields) -> None:
     allowed = {"submission_state", "credit_state", "retry_safety", "operation_ref",
-               "effective_submit_count", "detail"}
+               "effective_submit_count", "detail",
+               "credit_balance_before", "credit_balance_after"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return

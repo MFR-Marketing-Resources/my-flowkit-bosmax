@@ -57,6 +57,8 @@ S_CONCAT_POLLING = "CONCAT_POLLING"
 S_FINAL_SAVING = "FINAL_SAVING"
 S_COMPLETE = "COMPLETE"
 
+S_AUTH_EXPIRED = "AUTHORIZATION_EXPIRED"  # a not-yet-submitted stage needs re-auth
+
 F_INITIAL = "INITIAL_FAILED"
 F_EXTEND = "EXTEND_FAILED"
 F_FINAL = "FINAL_RENDER_FAILED"
@@ -141,14 +143,45 @@ def build_whole_plan(requested_seconds: int) -> dict[str, Any]:
     }
 
 
-# ── plan + authorize (Mission 1 / 6) ─────────────────────────────────────────
+# ── plan + authorize (Mission 1 / 2 / 3 / 6) ─────────────────────────────────
 async def plan_job(intent: dict[str, Any]) -> dict[str, Any]:
-    """Create (or reuse) the lifecycle-owning job BEFORE any credit operation."""
+    """Create (or reuse) the lifecycle-owning job BEFORE any credit operation.
+
+    Resolves the COMPLETE production authority (product / asset / prompts) and
+    fails closed with INCOMPLETE_PRODUCTION_PLAN if any required field or the exact
+    reviewed prompts cannot be resolved — no authorization is ever minted for an
+    incomplete plan. The resolved initial + continuation prompts are persisted and
+    fingerprinted here, before authorization, so a later prompt change is a
+    PLAN_FINGERPRINT_MISMATCH and each Extend runs the exact reviewed segment prompt.
+    """
+    from agent.services import production_plan_resolver as _resolver
+
     logical_key = compute_logical_job_key(intent)
     existing = await _crud.get_video_production_job_by_logical_key(logical_key)
-    plan = build_whole_plan(int(intent.get("requested_duration_seconds") or 16))
-    intent_for_fp = {**intent, "segment_plan": plan["segment_count"],
-                     "operation_counts": plan["operation_counts"]}
+
+    authority = await _resolver.resolve_production_authority(intent)
+    missing = authority.get("missing") or []
+    if missing and not existing:
+        raise OrchestratorError(
+            "INCOMPLETE_PRODUCTION_PLAN",
+            "missing production authority: " + ", ".join(sorted(set(missing))))
+
+    plan = build_whole_plan(int(authority["requested_duration_seconds"]))
+    conts = authority.get("continuation_prompts") or []
+    intent_for_fp = {
+        **intent,
+        "product_id": authority.get("product_id"),
+        "approved_asset_sha256": authority.get("approved_asset_sha256"),
+        "requested_duration_seconds": authority["requested_duration_seconds"],
+        "engine": authority.get("engine"), "model": authority.get("model"),
+        "aspect_ratio": authority.get("aspect_ratio"),
+        "execution_package_id": authority.get("execution_package_id"),
+        "initial_prompt_fingerprint": authority.get("initial_prompt_fingerprint"),
+        "continuation_prompt_fingerprints": authority.get(
+            "continuation_prompt_fingerprints"),
+        "segment_plan": plan["segment_count"],
+        "operation_counts": plan["operation_counts"],
+    }
     fingerprint = compute_plan_fingerprint(intent_for_fp)
 
     if existing:
@@ -161,12 +194,17 @@ async def plan_job(intent: dict[str, Any]) -> dict[str, Any]:
     await _crud.create_video_production_job_full(
         job_id, logical_job_key=logical_key, status=S_CREATED,
         requested_duration_seconds=plan["requested_seconds"],
-        product_id=intent.get("product_id"), product_name=intent.get("product_name"),
-        execution_package_id=intent.get("execution_package_id"),
-        approved_asset_id=intent.get("approved_asset_id"),
-        approved_asset_sha256=intent.get("approved_asset_sha256"),
-        engine=intent.get("engine"), model=intent.get("model"),
-        aspect_ratio=intent.get("aspect_ratio"),
+        product_id=authority.get("product_id"), product_name=intent.get("product_name"),
+        execution_package_id=authority.get("execution_package_id"),
+        approved_asset_id=authority.get("approved_asset_id"),
+        approved_asset_sha256=authority.get("approved_asset_sha256"),
+        engine=authority.get("engine"), model=authority.get("model"),
+        aspect_ratio=authority.get("aspect_ratio"),
+        initial_mode=authority.get("initial_mode"),
+        initial_prompt_text=authority.get("initial_prompt_text"),
+        initial_prompt_fingerprint=authority.get("initial_prompt_fingerprint"),
+        initial_asset_media_id=authority.get("initial_asset_media_id"),
+        continuation_prompts_json=json.dumps(conts),
         plan_fingerprint=fingerprint,
         whole_plan_json=json.dumps(plan),
         segment_media_ids_json=json.dumps([]))
@@ -191,23 +229,42 @@ async def authorize_job(job_id: str, *, confirmed_plan_fingerprint: str,
             "the reviewed plan changed (product/asset/prompt/duration/count) — re-plan")
     now = time.time() if now is None else now
     token = "auth_" + secrets.token_urlsafe(24)
+    authorization_id = "authid_" + secrets.token_hex(8)
     expires_at = now + AUTHORIZATION_TTL_SECONDS
+    # Re-authorizing rotates the token AND clears any prior single-use consumption
+    # so the freshly reviewed plan can start exactly once.
     await _crud.update_video_production_job_full(
         job_id, status=S_AUTHORIZED, authorization_token=token,
-        authorization_expires_at=str(expires_at), error_code=None)
+        authorization_id=authorization_id, authorization_issued_at=str(now),
+        authorization_expires_at=str(expires_at),
+        authorization_consumed_at=None, authorization_consumed_by_job_id=None,
+        authorization_consumed_plan_fingerprint=None, error_code=None)
     return {"job_id": job_id, "authorization_token": token,
+            "authorization_id": authorization_id,
             "expires_in_seconds": AUTHORIZATION_TTL_SECONDS,
             "plan_fingerprint": confirmed_plan_fingerprint}
 
 
-def _check_authorization(job: dict, token: str, now: float) -> None:
+# ── per-stage authorization gate (Mission 5) ─────────────────────────────────
+# Authorization is required only to INITIATE a not-yet-submitted credit stage.
+# Already-submitted stages resume/poll WITHOUT a live token (token expiry never
+# strands an in-flight job); resume_only paths never call this at all.
+_AUTH_OK = "OK"
+_AUTH_EXPIRED = "EXPIRED"
+
+
+def _gate_stage_start(job: dict, token: str, now: float) -> str:
+    """Return _AUTH_OK to proceed with a fresh submit, or _AUTH_EXPIRED to stop
+    safely and require re-authorization. Raises only on a hard invalid token or a
+    disabled kill-switch (never on mere expiry)."""
     if not orchestrator_enabled():
         raise OrchestratorError(_ft.FINAL_TIMELINE_DISABLED, "NATIVE_EXTEND_ENABLED!=1")
     if not token or token != job.get("authorization_token"):
         raise OrchestratorError(F_AUTH, "authorization token mismatch")
     exp = job.get("authorization_expires_at")
     if exp and now > float(exp):
-        raise OrchestratorError(F_AUTH, "authorization expired — re-authorize")
+        return _AUTH_EXPIRED
+    return _AUTH_OK
 
 
 # ── structured side-effect helpers (Mission 7) ──────────────────────────────
@@ -221,15 +278,58 @@ async def _reserve_or_resume(idem: str, job_id: str, stage: str) -> dict:
     return res
 
 
-# ── the resumable engine (Mission 3 / 4 / 8) ─────────────────────────────────
+# ── the resumable engine (Mission 1 / 3 / 4 / 5 / 6 / 8) ─────────────────────
 InitialGenFn = Callable[[dict], Awaitable[dict]]
+
+
+def _credit_state_from_balances(before, after) -> str:
+    """SPENT only with authoritative debit evidence (a real balance decrease);
+    MAY_HAVE_SPENT when a submit was accepted but no debit is proven; UNKNOWN when
+    a balance is unreadable. Never inferred from success alone."""
+    try:
+        if before is not None and after is not None:
+            return CR_SPENT if float(after) < float(before) else CR_MAY_HAVE_SPENT
+    except (TypeError, ValueError):
+        pass
+    return CR_MAY_HAVE_SPENT
+
+
+async def _safe_credits(client) -> Optional[float]:
+    """Best-effort current credit balance for debit evidence; never raises."""
+    getter = getattr(client, "get_credits", None)
+    if getter is None:
+        return None
+    try:
+        resp = await getter()
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(resp, (int, float)):
+        return float(resp)
+    if isinstance(resp, dict):
+        for k in ("remainingCredits", "credits", "balance", "remaining"):
+            v = resp.get(k) if hasattr(resp, "get") else None
+            if isinstance(v, (int, float)):
+                return float(v)
+    return None
+
+
+async def _needs_stage_gate(idem: str) -> bool:
+    """True when this stage has NOT been submitted yet (initiation → auth required).
+    A stage already SUBMITTED/UNCERTAIN/TERMINAL resumes without a live token."""
+    existing = await _crud.get_video_job_side_effect(idem)
+    return not existing or existing.get("submission_state") == SUB_NOT_ATTEMPTED
+
+
+async def _stop_auth_expired(job_id: str) -> dict:
+    await _crud.update_video_production_job_full(
+        job_id, status=S_AUTH_EXPIRED, error_code=S_AUTH_EXPIRED)
+    return await get_job_status(job_id)
 
 
 async def advance_job(
     client, job_id: str, *,
     authorization_token: str,
     generate_initial: InitialGenFn,
-    continuation_prompt: str = "continue the same shot, same product, same scale",
     now: Optional[float] = None,
     poll_interval_s: int = 5,
     out_dir: Optional[Path] = None,
@@ -237,8 +337,10 @@ async def advance_job(
 ) -> dict:
     """Drive the job forward from its persisted state; resume-safe, never double-submit.
 
-    Returns the job's current structured status. Idempotent: calling again resumes.
-    Raises OrchestratorError only on authorization / hard failures (persisted too).
+    Authorization gates only the INITIATION of a not-yet-submitted credit stage
+    (Mission 5): a stage already submitted resumes/polls without a live token, so
+    token expiry never strands an in-flight job. resume_only never submits.
+    Each Extend runs the exact persisted reviewed prompt for its segment (Mission 3).
     """
     now = time.time() if now is None else now
     job = await _crud.get_video_production_job(job_id)
@@ -246,22 +348,23 @@ async def advance_job(
         raise OrchestratorError("VIDEO_JOB_NOT_FOUND", job_id)
     if job.get("status") == S_COMPLETE:
         return await get_job_status(job_id)
-    _check_authorization(job, authorization_token, now)
 
-    # ── INITIAL segment (reuse existing generator via injected adapter) ──────
+    # ── INITIAL segment via the injected one-door adapter (Mission 1) ────────
     if not job.get("initial_operation_id"):
         idem = _stage_key(job, "INITIAL", job["logical_job_key"])
-        if resume_only:
-            _existing = await _crud.get_video_job_side_effect(idem)
-            if not _existing or _existing.get("submission_state") == SUB_NOT_ATTEMPTED:
-                return await get_job_status(job_id)  # nothing in flight; await human start
+        if await _needs_stage_gate(idem):
+            if resume_only:
+                return await get_job_status(job_id)  # await human start
+            if _gate_stage_start(job, authorization_token, now) == _AUTH_EXPIRED:
+                return await _stop_auth_expired(job_id)
         r = await _reserve_or_resume(idem, job_id, "INITIAL")
         if r["reserved"]:
+            bal_before = await _safe_credits(client)
             await _crud.update_video_production_job_full(job_id, status=S_INITIAL_SUBMITTING)
             await _crud.increment_side_effect_submit_count(idem)
             await _crud.update_video_job_side_effect(
                 idem, submission_state=SUB_SUBMITTED, credit_state=CR_MAY_HAVE_SPENT,
-                retry_safety=RS_RESUME_ONLY)
+                retry_safety=RS_RESUME_ONLY, credit_balance_before=bal_before)
             try:
                 seg = await generate_initial(job)
             except Exception as exc:  # noqa: BLE001
@@ -271,6 +374,18 @@ async def advance_job(
                 await _crud.update_video_production_job_full(
                     job_id, status=F_INITIAL, error_code=F_INITIAL)
                 raise OrchestratorError(F_INITIAL, str(exc)[:200]) from exc
+            # fail closed on any missing durable identity (Mission 1)
+            for key in ("operation_id", "project_id", "scene_id"):
+                if not seg.get(key):
+                    await _crud.update_video_job_side_effect(
+                        idem, submission_state=SUB_UNCERTAIN, credit_state=CR_MAY_HAVE_SPENT,
+                        retry_safety=RS_BLOCKED, detail=f"initial missing {key}")
+                    await _crud.update_video_production_job_full(
+                        job_id, status=F_INITIAL, error_code=F_INITIAL)
+                    raise OrchestratorError(F_INITIAL, f"initial result missing {key}")
+            bal_after = seg.get("credit_balance_after")
+            if bal_after is None:
+                bal_after = await _safe_credits(client)
             await _crud.update_video_production_job_full(
                 job_id, status=S_INITIAL_READY,
                 initial_operation_id=seg["operation_id"],
@@ -284,25 +399,41 @@ async def advance_job(
                 except Exception:  # noqa: BLE001 — evidence best-effort
                     pass
             await _crud.update_video_job_side_effect(
-                idem, submission_state=SUB_TERMINAL, credit_state=CR_SPENT,
-                retry_safety=RS_RESUME_ONLY, operation_ref=seg["operation_id"])
+                idem, submission_state=SUB_TERMINAL,
+                credit_state=_credit_state_from_balances(bal_before, bal_after),
+                retry_safety=RS_RESUME_ONLY, operation_ref=seg["operation_id"],
+                credit_balance_after=bal_after)
             job = await _crud.get_video_production_job(job_id)
         else:
-            # already attempted by someone else — resume by structured state
             row = r["row"] or {}
             if row.get("submission_state") in (SUB_UNCERTAIN,):
                 raise OrchestratorError(
                     F_INITIAL, "prior initial submit is UNCERTAIN — manual review")
             return await get_job_status(job_id)  # in-flight elsewhere; poll
 
-    # ── EXTEND continuation(s) via the native-extend runtime (own idem too) ──
-    if not job.get("extend_child_operation_id"):
-        source_op = job["initial_operation_id"]
-        idem = _stage_key(job, "EXTEND", f"{source_op}|{_nx._prompt_hash(continuation_prompt)}")
-        if resume_only:
-            _existing = await _crud.get_video_job_side_effect(idem)
-            if not _existing or _existing.get("submission_state") == SUB_NOT_ATTEMPTED:
-                return await get_job_status(job_id)  # nothing in flight; await human start
+    # ── EXTEND continuation(s): one per reviewed segment prompt (Mission 3) ──
+    continuations = sorted(
+        json.loads(job.get("continuation_prompts_json") or "[]"),
+        key=lambda c: int(c.get("position") or 0))
+    if not continuations:
+        await _crud.update_video_production_job_full(
+            job_id, status=F_EXTEND, error_code="CONTINUATION_PROMPT_MISSING")
+        raise OrchestratorError(F_EXTEND, "no reviewed continuation prompt bound to job")
+
+    for cont in continuations:
+        segments = json.loads(job.get("segment_media_ids_json") or "[]")
+        position = int(cont.get("position") or 0)
+        if len(segments) > position:
+            continue  # this segment's child already produced
+        parent_op = segments[-1]
+        prompt = cont["prompt"]
+        idem = _stage_key(
+            job, "EXTEND", f"{parent_op}|{_nx._prompt_hash(prompt)}|pos{position}")
+        if await _needs_stage_gate(idem):
+            if resume_only:
+                return await get_job_status(job_id)
+            if _gate_stage_start(job, authorization_token, now) == _AUTH_EXPIRED:
+                return await _stop_auth_expired(job_id)
         r = await _reserve_or_resume(idem, job_id, "EXTEND")
         if r["reserved"]:
             await _crud.update_video_production_job_full(job_id, status=S_EXTEND_SUBMITTING)
@@ -310,14 +441,13 @@ async def advance_job(
             await _crud.update_video_job_side_effect(
                 idem, submission_state=SUB_SUBMITTED, credit_state=CR_MAY_HAVE_SPENT,
                 retry_safety=RS_RESUME_ONLY)
-            blocks = [_nx.ExtendBlock(block_index=2, position=1,
-                                      prompt=continuation_prompt, is_final=True)]
+            blocks = [_nx.ExtendBlock(block_index=position + 1, position=position,
+                                      prompt=prompt, is_final=bool(cont.get("is_final")))]
             req = _nx.ExtendChainRequest(
                 project_id=job["project_id"], scene_id=job["scene_id"],
-                source_operation_id=source_op, blocks=blocks)
+                source_operation_id=parent_op, blocks=blocks,
+                aspect_ratio=job.get("aspect_ratio") or "VIDEO_ASPECT_RATIO_PORTRAIT")
             try:
-                # Kill-switch path (native_extend_enabled) authorizes this live
-                # run; the whole-job authorization was already checked above.
                 result = await _nx.run_native_extend_chain(
                     client, req, dry_run=False, confirm_live_credit_burn=True,
                     confirmed_extend_operation_count=1)
@@ -336,23 +466,25 @@ async def advance_job(
                 await _crud.update_video_job_side_effect(
                     idem, submission_state=SUB_UNCERTAIN, credit_state=CR_MAY_HAVE_SPENT,
                     retry_safety=RS_BLOCKED, detail="no child op in extend result")
+                await _crud.update_video_production_job_full(
+                    job_id, status=F_EXTEND, error_code=F_EXTEND)
                 raise OrchestratorError(F_EXTEND, "extend produced no child operation")
-            segs = json.loads(job.get("segment_media_ids_json") or "[]") + [child_op]
+            segs = segments + [child_op]
             await _crud.update_video_production_job_full(
                 job_id, status=S_EXTEND_READY,
                 extend_child_operation_id=child_op,
                 extend_child_workflow_id=child.get("child_workflow_id"),
                 segment_media_ids_json=json.dumps(segs))
             await _crud.update_video_job_side_effect(
-                idem, submission_state=SUB_TERMINAL, credit_state=CR_SPENT,
+                idem, submission_state=SUB_TERMINAL, credit_state=CR_MAY_HAVE_SPENT,
                 retry_safety=RS_RESUME_ONLY, operation_ref=child_op)
             job = await _crud.get_video_production_job(job_id)
         else:
             row = r["row"] or {}
             if row.get("operation_ref"):
-                segs = json.loads(job.get("segment_media_ids_json") or "[]")
+                segs = segments
                 if row["operation_ref"] not in segs:
-                    segs.append(row["operation_ref"])
+                    segs = segs + [row["operation_ref"]]
                 await _crud.update_video_production_job_full(
                     job_id, status=S_EXTEND_READY,
                     extend_child_operation_id=row["operation_ref"],
@@ -367,10 +499,11 @@ async def advance_job(
     if not job.get("final_media_id"):
         segments = json.loads(job.get("segment_media_ids_json") or "[]")
         idem = _stage_key(job, "CONCAT", "+".join(sorted(segments)))
-        if resume_only:
-            _existing = await _crud.get_video_job_side_effect(idem)
-            if not _existing or _existing.get("submission_state") == SUB_NOT_ATTEMPTED:
+        if await _needs_stage_gate(idem):
+            if resume_only:
                 return await get_job_status(job_id)
+            if _gate_stage_start(job, authorization_token, now) == _AUTH_EXPIRED:
+                return await _stop_auth_expired(job_id)
         r = await _reserve_or_resume(idem, job_id, "CONCAT")
         if not r["reserved"]:
             row = r["row"] or {}
@@ -455,6 +588,7 @@ _HUMAN = {
     S_EXTEND_POLLING: "Extending video", S_EXTEND_READY: "Extending video",
     S_CONCAT_SUBMITTING: "Preparing final video", S_CONCAT_POLLING: "Preparing final video",
     S_FINAL_SAVING: "Preparing final video", S_COMPLETE: "Video ready",
+    S_AUTH_EXPIRED: "Please review and confirm the video again.",
     F_INITIAL: "The first part could not be completed.",
     F_EXTEND: "The continuation could not be completed safely.",
     F_FINAL: "The final video could not be prepared.",

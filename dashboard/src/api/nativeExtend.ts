@@ -238,6 +238,7 @@ export interface VideoJobStatus {
 export interface VideoJobAuthorization {
   job_id: string;
   authorization_token: string;
+  authorization_id?: string;
   expires_in_seconds: number;
 }
 

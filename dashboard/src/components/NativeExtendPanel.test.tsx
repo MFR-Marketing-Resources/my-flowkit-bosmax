@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const resolveMock = vi.fn();
@@ -469,5 +469,25 @@ describe('NativeExtendPanel', () => {
     const err = await screen.findByTestId('full-video-error');
     expect(err).toHaveTextContent('The final video could not be prepared.');
     expect(err).not.toHaveTextContent('No credit was used');
+  });
+
+  it('shows a human re-confirm (not a failure) when a not-yet-started step needs re-authorization', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    // On mount the plan reused an existing job whose status is AUTHORIZATION_EXPIRED.
+    planMock.mockResolvedValue({ ...PLAN, status: 'AUTHORIZATION_EXPIRED' });
+    jobStatusMock.mockResolvedValue(
+      STATUS('Please review and confirm the video again.', {
+        status: 'AUTHORIZATION_EXPIRED', error_code: 'AUTHORIZATION_EXPIRED',
+      }),
+    );
+    renderPanel();
+    // it is a normal re-confirm state: the Generate action is offered, not a red error
+    const reauth = await screen.findByTestId('full-video-reauth');
+    expect(reauth).toHaveTextContent(/review and confirm the video again/i);
+    expect(within(reauth).getByTestId('generate-full-video-btn')).toBeInTheDocument();
+    expect(screen.queryByTestId('full-video-error')).toBeNull();
+    // and the dead 501 stub message never surfaces anywhere
+    expect(document.body.textContent).not.toMatch(/PENDING_OPERATOR_PROOF|501/);
   });
 });
