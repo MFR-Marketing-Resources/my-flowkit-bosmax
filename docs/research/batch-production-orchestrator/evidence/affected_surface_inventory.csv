@@ -1,0 +1,11 @@
+path,symbol,layer,responsibility,orchestrator_relevance,protected,change_type,dependencies,current_tests,new_tests_needed,migration_impact,runtime_impact,risk,classification
+agent/services/make_video.py,"start_generate,_VIDEO_LANE_JOB",execution,ADR-007 door,CRITICAL,protected,extend telemetry only,all queues,test_make_video_binding,lane lease tests,none,HIGH,VERIFIED_CODE
+agent/services/production_queue_service.py,_live_production_loop,orchestration,serial video production,HIGH,mutable,durable control,"WGP,make_video",test_production_queue_service,restart integration,low,HIGH,VERIFIED_CODE
+agent/services/bulk_generation_service.py,"start_bulk_run,_avatar_loop",orchestration,IMG/video bulk,HIGH,mutable,merge facade,"make_video,crud",test_bulk_generation_service,live smoke,low,HIGH,VERIFIED_TEST_IN_THIS_AUDIT
+agent/services/batch_prompt_planner.py,"validate_mode_inputs,plan",planning,variation+fingerprint,HIGH,protected logic,extend pools,WGP service,batch_prompt planner tests,preflight reuse,none,MEDIUM,VERIFIED_CODE
+agent/services/workspace_generation_package_service.py,start_batch_prompt_run,compile,batch prompt→WGP,HIGH,mutable,orchestrator hooks,"compiler,crud",api tests,E2E plan,medium,HIGH,VERIFIED_CODE
+agent/services/batch_planner.py,create_batch_draft,legacy,old batch table,LOW,retire,delete path,variation_matrix,FAILING tests,none if retired,none,LOW,DEAD_OR_OBSOLETE
+agent/db/schema.py,init_db migrations,schema,all tables,CRITICAL,mutable additive,new orchestrator tables,crud,schema tests,migration review,HIGH,HIGH,VERIFIED_CODE
+agent/db/crud.py,"WGP,production,bulk CRUD",persistence,whitelist columns,HIGH,mutable,new CRUD,services,unit tests,contract tests,medium,HIGH,VERIFIED_CODE
+dashboard/src/api/bulkGeneration.ts,listBulkRuns,UI client,bulk toolbar,MEDIUM,mutable,control tower,pages,ui contract,E2E,low,MEDIUM,VERIFIED_TEST_IN_THIS_AUDIT
+dashboard Batch Prompt Builder,batch-prompts client,UI,planning,HIGH,mutable,daily plan UX,WGP API,ui contract,E2E,low,MEDIUM,VERIFIED_CODE

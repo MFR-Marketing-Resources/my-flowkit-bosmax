@@ -1,0 +1,13 @@
+table,primary_key,owning_service,orchestrator_fields,role,classification,orchestrator_fit
+workspace_generation_package,workspace_generation_package_id,"workspace_generation_package_service,crud","product_id,batch_run_id,logical_mode,variation_strategy,prompt_fingerprint,production_status,production_run_id,status",Prompt queue + production item,VERIFIED_CODE,extend for orchestrator item
+production_run,production_run_id,"production_queue_service,crud","status,dry_run,max_parallel_jobs,interval_*,cooldown_*,config_json,totals",Video production batch,VERIFIED_CODE,not daily plan
+bulk_generation_run,bulk_run_id,"bulk_generation_service,crud","kind,status,max_parallel_*,confirm_credit_burn,config_json",IMG/video bulk,VERIFIED_TEST_IN_THIS_AUDIT,merge view only
+bulk_generation_item,bulk_item_id,"bulk_generation_service,crud","bulk_run_id,status,job_id,media_id,retry_count,workspace_generation_package_id",Per bulk item,VERIFIED_CODE,add attempt lineage
+batch,id,batch_planner,"quantity,status,max_parallel_jobs",Legacy planner,DEAD_OR_OBSOLETE,retire per D3
+batch_variant,variant_id,batch_planner,"batch_id,diversity_fingerprint,queue_status",Legacy variants,DEAD_OR_OBSOLETE,INSERT bug 20/21 cols
+generated_artifact,media_id,"make_video,crud","job_id,mode,local_path,workspace_generation_package_id",Retrieval library,VERIFIED_RUNTIME_BY_PRIMARY_AUTHORITY,48h purge policy
+creative_asset,asset_id,creative_asset_service,"semantic_role,review_status,media_id",Avatar/scene refs,VERIFIED_CODE,QA fields partial
+copy_set,copy_set_id,copy_sets,"uniqueness_score,similarity_score",Copy inventory,VERIFIED_CODE,not full batch dedupe
+poster_copy_set,poster_copy_set_id,poster module,status POSTER_COPY_*,Poster copy domain,VERIFIED_TEST_IN_THIS_AUDIT,separate from video
+PROPOSED:daily_production_plan,N/A,N/A,N/A,Daily target orchestration,PROPOSED,new table likely
+PROPOSED:generation_attempt,N/A,N/A,"idempotency_key,parent_item_id",Retry lineage,PROPOSED,new table likely

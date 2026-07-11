@@ -1,0 +1,8 @@
+scenario,detection,persisted_evidence,current_recovery,credit_dup_risk,artifact_dup_risk,manual_intervention,restart_safe,idempotency_key,target_behaviour,acceptance_proof,classification
+local_agent_restart,health/version-proof,partial DB,recover_stuck_bulk_runs bulk only,MEDIUM,MEDIUM,manual,partial,missing run lease,durable run state,runtime test,VERIFIED_CODE
+VIDEO_JOB_IN_FLIGHT,make_video reject,job dict,retry 30s x20,LOW,LOW,auto,partial,none,lane lease,unit test,VERIFIED_TEST_IN_THIS_AUDIT
+production_pause_cancel,_run_control,none,signal only,LOW,LOW,operator,NO restart,none,DB pause flag,integration test,PROCESS_MEMORY_ONLY
+duplicate_submission,no idempotency key,job_id,none,HIGH,MEDIUM,operator,NO,missing,attempt table,live test,NOT_VERIFIED
+provider_rate_limit,403 PUBLIC_ERROR,telemetry,cooldown,MEDIUM,LOW,wait,YES,none,backoff policy,CURRENT_STATE,BLOCKED_BY_EXTERNAL_RUNTIME
+artifact_registration_fail,try/except in make_video,job artifact,best effort log,MEDIUM,HIGH,re-harvest,partial,none,transactional register,live test,VERIFIED_CODE
+QA_reject_replacement,not unified,none,manual new WGP,LOW,LOW,operator,N/A,none,replacement item id,UX spec,MISSING
