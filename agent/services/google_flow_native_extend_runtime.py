@@ -126,28 +126,53 @@ def extract_extend_child(response: dict) -> Optional[dict]:
     """Pull the child identity from a SYNCHRONOUS batchAsyncGenerateVideoExtendVideo
     response (captured record 631). child op id = ``media[0].name`` (==
     ``workflows[0].metadata.primaryMediaId``)."""
-    media = (response or {}).get("media") or []
-    if not media:
+    # Unpack envelope if present
+    data = (response or {}).get("data") if isinstance(response, dict) and "data" in response else response
+    if not isinstance(data, dict):
+        data = {}
+
+    media = data.get("media") or []
+    workflows = data.get("workflows") or []
+
+    if not media and not workflows:
         return None
-    m0 = media[0]
+
+    m0 = media[0] if media else {}
     meta = m0.get("mediaMetadata") or {}
     status = (meta.get("mediaStatus") or m0.get("mediaStatus") or {}).get(
         "mediaGenerationStatus")
-    workflows = (response or {}).get("workflows") or []
+
     wf_meta = (workflows[0].get("metadata") or {}) if workflows else {}
+    wf_name = workflows[0].get("name") if workflows else None
+
+    child_pmid = wf_meta.get("primaryMediaId") or m0.get("name")
+    child_op = m0.get("name") or child_pmid
+    child_wfid = m0.get("workflowId") or wf_name
+    batch_id = wf_meta.get("batchId") or m0.get("batchId")
+
+    if not status:
+        status = "MEDIA_GENERATION_STATUS_SCHEDULED"
+
+    length = None
+    if m0:
+        length = (((m0.get("video") or {}).get("dimensions") or {}).get("length"))
+
     return {
-        "child_operation_id": m0.get("name"),
-        "child_primary_media_id": wf_meta.get("primaryMediaId") or m0.get("name"),
-        "child_workflow_id": m0.get("workflowId") or (
-            workflows[0].get("name") if workflows else None),
-        "batch_id": wf_meta.get("batchId"),
+        "child_operation_id": child_op,
+        "child_primary_media_id": child_pmid,
+        "child_workflow_id": child_wfid,
+        "batch_id": batch_id,
         "status": status,
-        "length": (((m0.get("video") or {}).get("dimensions") or {}).get("length")),
+        "length": length,
     }
 
 
 def _status_from_poll(resp: dict, child_op: str) -> Optional[str]:
-    for m in (resp or {}).get("media") or []:
+    # Unpack envelope if present
+    data = (resp or {}).get("data") if isinstance(resp, dict) and "data" in resp else resp
+    if not isinstance(data, dict):
+        data = {}
+    for m in data.get("media") or []:
         if m.get("name") and child_op and m.get("name") != child_op:
             continue
         ms = m.get("mediaStatus") or (m.get("mediaMetadata") or {}).get("mediaStatus") or {}
@@ -158,7 +183,11 @@ def _status_from_poll(resp: dict, child_op: str) -> Optional[str]:
 def _extract_media_url(media: dict) -> Optional[str]:
     if not isinstance(media, dict):
         return None
-    for scope in (media, media.get("media") or {}, media.get("video") or {}):
+    # Unpack envelope if present
+    data = media.get("data") if "data" in media else media
+    if not isinstance(data, dict):
+        return None
+    for scope in (data, data.get("media") or {}, data.get("video") or {}):
         for k in ("fifeUrl", "servingUri", "downloadUrl", "url", "servingUrl"):
             if isinstance(scope, dict) and scope.get(k):
                 return scope[k]

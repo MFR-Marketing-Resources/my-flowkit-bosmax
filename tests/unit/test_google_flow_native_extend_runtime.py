@@ -207,3 +207,32 @@ async def test_missing_source_operation_id():
     with pytest.raises(nx.NativeExtendError) as exc:
         await nx.run_native_extend_chain(FakeClient(["c2"]), req, dry_run=True)
     assert exc.value.code == nx.EXTEND_PARENT_MEDIA_ID_MISSING
+
+
+def test_extract_extend_child_live_response_shape():
+    # Live response shape wrapped in envelope
+    resp = {
+        "status": 200,
+        "data": {
+            "remainingCredits": 1600,
+            "workflows": [
+                {
+                    "name": "d7557fa6-6efe-4710-91d1-26ac17972a73",
+                    "metadata": {
+                        "displayName": "Product slow push-in soft light",
+                        "createTime": "2026-07-11T05:47:41.754381Z",
+                        "primaryMediaId": "12b526c5-5ea6-4120-ba53-e120eab6d242",
+                        "batchId": "3aa6a033-1d1e-4881-88ee-d1abfed9fe5a"
+                    }
+                }
+            ]
+        }
+    }
+    child = nx.extract_extend_child(resp)
+    assert child is not None
+    assert child["child_operation_id"] == "12b526c5-5ea6-4120-ba53-e120eab6d242"
+    assert child["child_primary_media_id"] == "12b526c5-5ea6-4120-ba53-e120eab6d242"
+    assert child["child_workflow_id"] == "d7557fa6-6efe-4710-91d1-26ac17972a73"
+    assert child["batch_id"] == "3aa6a033-1d1e-4881-88ee-d1abfed9fe5a"
+    assert child["status"] == "MEDIA_GENERATION_STATUS_SCHEDULED"
+
