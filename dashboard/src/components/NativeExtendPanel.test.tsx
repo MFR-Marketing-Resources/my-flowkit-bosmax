@@ -9,6 +9,8 @@ const authorizeMock = vi.fn();
 const liveRunMock = vi.fn();
 const candidatesMock = vi.fn();
 const resolveSourceMock = vi.fn();
+const createJobMock = vi.fn();
+const finalizeMock = vi.fn();
 
 vi.mock('../api/nativeExtend', () => ({
   resolveNativeExtend: (...a: unknown[]) => resolveMock(...a),
@@ -18,6 +20,8 @@ vi.mock('../api/nativeExtend', () => ({
   runNativeExtend: (...a: unknown[]) => liveRunMock(...a),
   fetchNativeExtendSourceCandidates: (...a: unknown[]) => candidatesMock(...a),
   resolveNativeExtendSource: (...a: unknown[]) => resolveSourceMock(...a),
+  createVideoJob: (...a: unknown[]) => createJobMock(...a),
+  finalizeVideoJob: (...a: unknown[]) => finalizeMock(...a),
 }));
 
 // Import SUT after mocks.
@@ -93,7 +97,8 @@ describe('NativeExtendPanel', () => {
     const zip = screen.getByTestId('route-GOOGLE_FLOW_DOWNLOAD_PROJECT_ZIP');
     expect(zip).toHaveTextContent(/NOT a combined final video/);
     const concat = screen.getByTestId('route-GOOGLE_FLOW_FINAL_CONCAT_EXPORT');
-    expect(concat).toHaveTextContent(/unavailable/i);
+    expect(concat).toHaveTextContent(/Final Timeline Render/);
+    expect(concat).toHaveTextContent(/explicit confirmation/i);
   });
 
   it('shows the planned Extend operation count + final-concat unavailable', async () => {
@@ -101,7 +106,7 @@ describe('NativeExtendPanel', () => {
     lineageMock.mockResolvedValue({ lineage: [], count: 0 });
     renderPanel();
     expect(await screen.findByTestId('planned-op-count')).toHaveTextContent('2');
-    expect(screen.getByTestId('final-concat-state')).toHaveTextContent(/UNAVAILABLE/);
+    expect(screen.getByTestId('final-concat-state')).toHaveTextContent(/READY \(execute-gated\)/);
   });
 
   it('renders blockers and disables preview when parent/project/scene missing', async () => {
@@ -288,5 +293,62 @@ describe('NativeExtendPanel', () => {
     expect(guide).not.toHaveAttribute('open');
     // The four lane cards remain available inside the guide.
     expect(screen.getByTestId('route-GOOGLE_FLOW_FINAL_CONCAT_EXPORT')).toBeInTheDocument();
+  });
+
+  it('renders ONE final video result after prepare + gated render', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({
+      lineage: [
+        {
+          extend_lineage_id: 'L1',
+          block_index: 2,
+          block_position: 1,
+          parent_operation_id: 'op1',
+          child_operation_id: 'child-1',
+          child_primary_media_id: 'child-1',
+          polling_state: 'EXTEND_SUCCEEDED',
+        },
+      ],
+      count: 1,
+    });
+    createJobMock.mockResolvedValue({ job_id: 'vj_ui', status: 'TIMELINE_SEGMENTS_READY' });
+    finalizeMock
+      .mockResolvedValueOnce({
+        dry_run: true,
+        status: 'TIMELINE_SEGMENTS_READY',
+        job_id: 'vj_ui',
+        planned_render_operation_count: 1,
+      })
+      .mockResolvedValueOnce({
+        dry_run: false,
+        status: 'COMPLETE',
+        job_id: 'vj_ui',
+        final_media_id: 'final_vj_ui',
+        measured_duration_s: 16.0,
+        size_mb: 14.2,
+      });
+    renderPanel();
+
+    const prepare = await screen.findByTestId('final-prepare-btn');
+    fireEvent.click(prepare);
+    await waitFor(() => expect(createJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({ source_media_id: 'op1', project_id: 'p' }),
+    ));
+    expect(await screen.findByTestId('final-plan')).toHaveTextContent('1 final render');
+
+    fireEvent.click(screen.getByTestId('final-render-btn'));
+    fireEvent.click(await screen.findByTestId('final-render-confirm-btn'));
+    await waitFor(() => expect(finalizeMock).toHaveBeenLastCalledWith('vj_ui', {
+      dry_run: false,
+      confirm_live_credit_burn: true,
+    }));
+
+    const result = await screen.findByTestId('final-video-result');
+    expect(result).toHaveTextContent(/Video ready/);
+    expect(result).toHaveTextContent(/16/);
+    const link = screen.getByTestId('final-download');
+    expect(link).toHaveAttribute('href', '/api/flow/retrieved/final_vj_ui');
+    // ONE deliverable: segment lineage is explicitly diagnostics
+    expect(screen.getByTestId('native-extend-lineage')).toHaveTextContent(/diagnostics/i);
   });
 });

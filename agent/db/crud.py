@@ -2060,6 +2060,86 @@ async def get_generated_artifact(media_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+async def list_artifact_scene_ids(project_id: str) -> list[str]:
+    """Distinct scene ids we have durable artifact evidence for in a project."""
+    db = await get_db()
+    cur = await db.execute(
+        """SELECT DISTINCT scene_id FROM generated_artifact
+           WHERE project_id=? AND scene_id IS NOT NULL AND scene_id!=''
+           ORDER BY rowid DESC""",
+        (project_id,),
+    )
+    rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+
+async def create_video_production_job(job_id: str, *, project_id: str = None,
+                                      scene_id: str = None,
+                                      requested_duration_seconds: int = None,
+                                      status: str = "PREPARING",
+                                      initial_media_id: str = None,
+                                      segment_media_ids_json: str = None,
+                                      product_id: str = None,
+                                      product_name: str = None) -> None:
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO video_production_job
+               (job_id, project_id, scene_id, requested_duration_seconds, status,
+                initial_media_id, segment_media_ids_json, product_id, product_name)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (job_id, project_id, scene_id, requested_duration_seconds, status,
+             initial_media_id, segment_media_ids_json, product_id, product_name),
+        )
+        await db.commit()
+
+
+async def get_video_production_job(job_id: str) -> dict | None:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM video_production_job WHERE job_id=?", (job_id,))
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def list_video_production_jobs(limit: int = 20) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM video_production_job ORDER BY created_at DESC, rowid DESC LIMIT ?",
+        (int(limit),))
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def update_video_production_job(job_id: str, **fields) -> None:
+    """Update allowed job fields (status transitions + final identities)."""
+    allowed = {"status", "error_code", "scene_id", "initial_media_id",
+               "segment_media_ids_json", "extend_lineage_ids_json",
+               "final_concat_job_name", "final_media_id", "final_local_path",
+               "final_sha256", "final_duration_s"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    db = await get_db()
+    sets = ", ".join(f"{k}=?" for k in updates)
+    async with _db_lock:
+        await db.execute(
+            f"UPDATE video_production_job SET {sets}, "
+            "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE job_id=?",
+            (*updates.values(), job_id),
+        )
+        await db.commit()
+
+
+async def set_artifact_scene(media_id: str, scene_id: str) -> None:
+    """Persist durable scene evidence for a generated clip."""
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            "UPDATE generated_artifact SET scene_id=? WHERE media_id=?",
+            (scene_id, media_id))
+        await db.commit()
+
+
 async def list_extend_source_candidates(limit: int = 8) -> list[dict]:
     """Finished VIDEO clips usable as native-Extend parents, newest first.
 

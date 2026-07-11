@@ -4,12 +4,13 @@
 //   1. Independent Block Plan        — separate 8s blocks, NOT a continuation.
 //   2. Native Flow Extend            — each block continues the previous clip.
 //   3. Download Project ZIP          — client-side ZIP of per-workflow media.
-//   4. Final Concatenated Export     — the single combined video (UNAVAILABLE).
+//   4. Final Timeline Render         — the single combined video (execute-gated).
 //
 // Authority mirrors the backend capability registry (extend_route_planner):
-// native-extend transport is AUTHORIZED (captured 2026-07-11), but the final
-// concatenated export stays AUTHORITY_MISSING and MUST render disabled — the
-// Download Project ZIP is NOT a substitute for it.
+// native-extend transport AND the final concatenated export are both AUTHORIZED
+// (captured 2026-07-11 — concat submit/poll/terminal with the combined MP4
+// delivered inline). Final render execution stays gated behind an explicit live
+// confirmation; the Download Project ZIP is still NOT a substitute for it.
 
 export type ExtendCapabilityAuthority = 'AUTHORIZED' | 'AUTHORITY_MISSING';
 
@@ -51,11 +52,11 @@ export const NATIVE_EXTEND_ROUTES: ExtendRouteOption[] = [
   },
   {
     id: 'GOOGLE_FLOW_FINAL_CONCAT_EXPORT',
-    label: 'Final Concatenated Export (unavailable)',
+    label: 'Final Timeline Render (one full video)',
     description:
-      'The single combined 16s video. Runtime contract not captured — fails closed (AUTHORITY_MISSING). Do not substitute the Download Project ZIP.',
-    authority: 'AUTHORITY_MISSING',
-    disabled: true,
+      'Renders the segments into ONE combined full-duration MP4 (captured runVideoFxConcatenation contract). Live render requires explicit confirmation. The Download Project ZIP is not a substitute.',
+    authority: 'AUTHORIZED',
+    disabled: false,
   },
 ];
 

@@ -95,7 +95,7 @@ async def test_resolve_reports_blockers_when_context_missing():
     assert "EXTEND_PARENT_MEDIA_ID_MISSING" in out["blockers"]
     assert "EXTEND_PROJECT_CONTEXT_MISSING" in out["blockers"]
     assert "EXTEND_SCENE_CONTEXT_MISSING" in out["blockers"]
-    assert out["final_concat_export_available"] is False
+    assert out["final_concat_export_available"] is True  # captured contract (execute-gated)
     assert out["transport_proven"] is True
 
 
@@ -108,7 +108,7 @@ async def test_resolve_executable_when_context_ready():
     assert out["blockers"] == []
     assert out["route_id"] == "GOOGLE_FLOW_NATIVE_EXTEND"
     assert out["block_plan"] == [8, 8, 8]
-    assert out["final_concat_export_available"] is False   # stays fail-closed
+    assert out["final_concat_export_available"] is True   # captured; execution stays confirm-gated
 
 
 async def test_native_extend_lineage_endpoint_empty():
@@ -149,39 +149,90 @@ async def test_source_candidates_lists_finished_clips_newest_first():
 
 
 async def test_resolve_source_returns_verified_context(monkeypatch):
+    from agent.services import google_flow_native_extend_runtime as nx
+
     class _Client:
         connected = True
 
-        async def list_project_scenes(self, project_id):
-            return {"scene": {"sceneId": "scene-9", "displayName": "S9"},
-                    "sceneWorkflows": [{
+        async def list_scene_workflows(self, scene_id, project_id=""):
+            assert (scene_id, project_id) == ("scene-9", "proj-9")
+            return {"sceneWorkflows": [{
                         "workflow": {"name": "wf", "metadata": {"primaryMediaId": "clip-9"}},
-                        "sceneId": "scene-9"}]}
+                        "sceneId": "scene-9"}],
+                    "media": [{"name": "clip-9"}]}
 
-        async def list_scene_workflows(self, scene_id):  # pragma: no cover — first pass hits
-            return {"sceneWorkflows": [], "media": []}
+    async def _lineage(**_kw):
+        return [{"scene_id": "scene-9"}]
 
+    monkeypatch.setattr(nx._crud, "list_extend_lineage", _lineage)
     monkeypatch.setattr(flow, "get_flow_client", lambda: _Client())
     out = await flow.native_extend_resolve_source(
         flow.ExtendResolveSourceRequest(media_id="clip-9", project_id="proj-9"))
     assert out == {"project_id": "proj-9", "scene_id": "scene-9",
-                   "source_operation_id": "clip-9", "scene_display_name": "S9",
+                   "source_operation_id": "clip-9", "scene_display_name": None,
                    "verified": True}
 
 
-async def test_resolve_source_fails_closed_when_clip_not_in_project(monkeypatch):
+async def test_resolve_source_fails_closed_when_clip_not_verifiable(monkeypatch):
+    from agent.services import google_flow_native_extend_runtime as nx
+
     class _Client:
         connected = True
 
-        async def list_project_scenes(self, project_id):
-            return {"scene": {"sceneId": "scene-x"}, "sceneWorkflows": []}
-
-        async def list_scene_workflows(self, scene_id):
+        async def list_scene_workflows(self, scene_id, project_id=""):
             return {"sceneWorkflows": [], "media": []}
 
+    async def _lineage(**_kw):
+        return [{"scene_id": "scene-x"}]
+
+    monkeypatch.setattr(nx._crud, "list_extend_lineage", _lineage)
     monkeypatch.setattr(flow, "get_flow_client", lambda: _Client())
     with pytest.raises(HTTPException) as exc:
         await flow.native_extend_resolve_source(
             flow.ExtendResolveSourceRequest(media_id="ghost", project_id="proj-x"))
     assert exc.value.status_code == 404
     assert "EXTEND_SOURCE_NOT_RESOLVABLE" in str(exc.value.detail)
+
+
+# ── ONE logical video job: create + finalize gates (zero credit) ────────────
+async def test_video_job_create_binds_source_and_reports_missing_segments(monkeypatch):
+    from agent.services import google_flow_native_extend_runtime as nx
+
+    class _Client:
+        connected = True
+
+        async def list_scene_workflows(self, scene_id, project_id=""):
+            return {"media": [{"name": "vj-parent"}], "sceneWorkflows": []}
+
+    async def _lineage(**kw):
+        return [{"scene_id": "vj-scene", "parent_operation_id": "vj-parent",
+                 "child_operation_id": "vj-child",
+                 "polling_state": "EXTEND_SUCCEEDED", "block_position": 1}]
+
+    monkeypatch.setattr(nx._crud, "list_extend_lineage", _lineage)
+    monkeypatch.setattr(flow.crud, "list_extend_lineage", _lineage)
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _Client())
+    out = await flow.create_video_job(flow.VideoJobCreateRequest(
+        source_media_id="vj-parent", project_id="vj-proj",
+        requested_total_duration_seconds=16))
+    assert out["scene_id"] == "vj-scene"
+    assert out["segments"] == ["vj-parent", "vj-child"]
+    assert out["status"] == "TIMELINE_SEGMENTS_READY"
+    assert out["next"] == "finalize"
+
+    job = await flow.get_video_job(out["job_id"])
+    assert job["initial_media_id"] == "vj-parent"
+
+    # finalize dry-run: exact planned submit, nothing fired, no credit
+    plan = await flow.finalize_video_job(
+        out["job_id"], flow.VideoJobFinalizeRequest(dry_run=True))
+    assert plan["dry_run"] is True
+    assert plan["planned_render_operation_count"] == 1
+    assert plan["planned_request"]["inputVideos"][0]["mediaGenerationId"] == "vj-parent"
+
+    # live without confirm -> 409 (explicit contract, never silently downgraded)
+    with pytest.raises(HTTPException) as exc:
+        await flow.finalize_video_job(
+            out["job_id"], flow.VideoJobFinalizeRequest(dry_run=False))
+    assert exc.value.status_code == 409
+    assert "LIVE_CREDIT_CONFIRMATION_REQUIRED" in str(exc.value.detail)

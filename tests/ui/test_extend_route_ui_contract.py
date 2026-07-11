@@ -16,7 +16,7 @@ def _read():
 def test_four_distinct_routes_present():
     t = _read()
     for label in ["Independent Block Plan", "Native Flow Extend",
-                  "Download Project ZIP", "Final Concatenated Export"]:
+                  "Download Project ZIP", "Final Timeline Render"]:
         assert label in t, f"missing route label: {label}"
 
 
@@ -26,11 +26,13 @@ def test_download_zip_not_labelled_combined_final_video():
     assert "consumes no generation credit" in t
 
 
-def test_final_concat_export_disabled_and_authority_missing():
+def test_final_render_authorized_but_execute_gated():
     t = _read()
-    assert "FINAL_CONCAT_EXPORT_AUTHORITY_MISSING" in t
-    assert "AUTHORITY_MISSING" in t
-    assert "disabled: true" in t
+    # captured contract makes the final render selectable — but the copy must keep
+    # the explicit-confirmation gate and never offer the ZIP as a substitute.
+    assert "ONE combined full-duration MP4" in t
+    assert "explicit confirmation" in t
+    assert "not a substitute" in t.lower()
 
 
 def test_native_extend_route_declared_authorized():

@@ -116,6 +116,15 @@ domains:
       - tests/unit/test_google_flow_native_extend_runtime.py
       - tests/api/test_extend_api.py
       - tests/unit/test_native_extend_source_resolver.py
+      - agent/services/google_flow_final_timeline_runtime.py
+      - tests/unit/test_google_flow_final_timeline_runtime.py
+      - tests/fixtures/google_flow_final_concat/__init__.py
+      - tests/fixtures/google_flow_final_concat/create_scene_request.sanitized.json
+      - tests/fixtures/google_flow_final_concat/create_scene_response.sanitized.json
+      - tests/fixtures/google_flow_final_concat/concat_submit_request.sanitized.json
+      - tests/fixtures/google_flow_final_concat/concat_submit_response.sanitized.json
+      - tests/fixtures/google_flow_final_concat/concat_poll_active.sanitized.json
+      - tests/fixtures/google_flow_final_concat/concat_poll_successful.sanitized.json
       - tests/ui/test_extend_route_ui_contract.py
       - tests/fixtures/google_flow_native_extend/__init__.py
       - tests/fixtures/google_flow_native_extend/extend_request.sanitized.json

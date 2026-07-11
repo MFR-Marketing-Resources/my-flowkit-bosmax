@@ -192,18 +192,19 @@ NATIVE_EXTEND_CAPABILITIES: dict[str, dict[str, Any]] = {
         "rpc": "client-side ZIP blob of per-workflow media (NO server export/concat)",
         "evidence": CAPTURE_EVIDENCE_DOWNLOAD,
     },
-    # Fail closed: runVideoFxConcatenation EXISTS, but its terminal
-    # runVideoFxCheckConcatenationStatus response + the persisted combined-media
-    # identity were NOT captured. Do NOT substitute the Download Project ZIP for a
-    # final concatenated export.
+    # CAPTURED end-to-end (concat_completion_smoke_20260711_100555 rid=9924.2526/
+    # 2540/2542): submit runVideoFxConcatenation {inputVideos[mediaGenerationId,
+    # length(ns), start/endTimeOffset]} -> {operation{operation{name: .../jobs/<id>}}};
+    # poll runVideoFxCheckConcatenationStatus (submit response verbatim) ->
+    # ACTIVE -> SUCCESSFUL with the ONE combined MP4 delivered INLINE in
+    # ``encodedVideo`` (mediaGenerationId/outputUri empty). Execution stays gated
+    # behind dry-run-default + explicit live confirmation; the Download Project ZIP
+    # is still NEVER a substitute for this deliverable.
     "GOOGLE_FLOW_FINAL_CONCAT_EXPORT": {
-        "authority": AUTHORITY_MISSING,
-        "error_code": "FINAL_CONCAT_EXPORT_AUTHORITY_MISSING",
-        "pending_reason": (
-            "runVideoFxConcatenation submit captured, but its terminal check-status "
-            "response and persisted combined-media identity were not; the 16s combined "
-            "output has no captured retrieval contract. Fail closed."
-        ),
+        "authority": AUTHORIZED,
+        "rpc": ("POST /v1:runVideoFxConcatenation; "
+                "POST /v1:runVideoFxCheckConcatenationStatus -> encodedVideo inline"),
+        "evidence": "CAPTURE_20260711_100555:rid=9924.2526/2540/2542",
     },
 }
 

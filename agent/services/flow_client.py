@@ -846,25 +846,24 @@ class FlowClient:
             "headers": random_headers(),
         }, timeout=15)
 
-    async def list_project_scenes(self, project_id: str) -> dict:
-        """List a Flow project's scenes + their workflows (read-only, zero credit).
+    async def create_scene(self, project_id: str, workflow_ids: list[str]) -> dict:
+        """Create a Flow SCENE (the timeline container) from workflow ids.
 
-        Captured contract (CAPTURE_20260711_100555):
-        GET /v1/flow/projects/{projectId}/scenes →
-        {scene:{sceneId,...}, sceneWorkflows:[{workflow:{name, metadata:{primaryMediaId,
-        batchId}}, sceneId, sceneWorkflowMetadata:{...}}]} — single-scene envelope, or a
-        {scenes:[...]} list on multi-scene projects. Used to auto-resolve the Extend
-        parent context (scene id + source operation id) from a finished Block-1 clip.
+        Captured live contract (concat_completion_smoke_20260711_100555):
+        POST /v1/flow/projects/{projectId}/scenes  body {"workflowIds": [...]}
+        -> {scene:{sceneId,...}, sceneWorkflows:[{workflow{name, metadata{
+        primaryMediaId, batchId}}, sceneId, sceneWorkflowMetadata{totalDuration,...}}]}
+        NOTE: there is NO GET listing for project scenes on this host — the page
+        lists scenes via labs.google trpc (outside the relay host guard). Scene ids
+        must come from our own records (lineage / artifacts / this response).
         """
-        # Captured live contract (extend_live_manual_live_20260711_094742): the real
-        # browser request is BARE — no key / clientContext params (auth rides on the
-        # relay's Authorization header). Adding them makes the endpoint 404.
         url = f"{GOOGLE_FLOW_API}/v1/flow/projects/{project_id}/scenes"
         return await self._send("api_request", {
             "url": url,
-            "method": "GET",
+            "method": "POST",
             "headers": random_headers(),
-        }, timeout=20)
+            "body": {"workflowIds": list(workflow_ids or [])},
+        }, timeout=30)
 
     async def list_scene_workflows(self, scene_id: str, project_id: str = "") -> dict:
         """List one scene's workflows + media (read-only, zero credit).
@@ -883,6 +882,39 @@ class FlowClient:
             "method": "GET",
             "headers": random_headers(),
         }, timeout=20)
+
+    async def run_video_concatenation(self, input_videos: list[dict]) -> dict:
+        """Submit the FINAL TIMELINE render — concatenate segment media into ONE video.
+
+        Captured live contract (concat_completion_smoke_20260711_100555 rid=9924.2526):
+        POST /v1:runVideoFxConcatenation
+        body {"inputVideos":[{"mediaGenerationId", "length":"8000000000" (ns string),
+              "startTimeOffset":"0.000000000s", "endTimeOffset":"8.000000000s"}, ...]}
+        -> {"operation":{"operation":{"name":"projects/<n>/locations/us-central1/jobs/<id>"}}}
+        """
+        url = f"{GOOGLE_FLOW_API}/v1:runVideoFxConcatenation"
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": {"inputVideos": input_videos},
+        }, timeout=60)
+
+    async def check_video_concatenation_status(self, operation_envelope: dict) -> dict:
+        """Poll the final-timeline render job (body = the submit response VERBATIM).
+
+        Captured terminal contract (rid=9924.2542): non-terminal
+        {"status":"MEDIA_GENERATION_STATUS_ACTIVE", ...} then
+        {"status":"MEDIA_GENERATION_STATUS_SUCCESSFUL", "inputsCount":N,
+         "encodedVideo":"<base64 mp4>"} — the ONE combined MP4 arrives INLINE.
+        """
+        url = f"{GOOGLE_FLOW_API}/v1:runVideoFxCheckConcatenationStatus"
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": operation_envelope,
+        }, timeout=120)
 
     async def upload_image(self, image_base64: str, mime_type: str = "image/jpeg",
                             project_id: str = "", file_name: str = "image.jpg") -> dict:

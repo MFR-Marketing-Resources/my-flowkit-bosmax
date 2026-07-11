@@ -1,0 +1,7 @@
+{
+ "status": "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+ "outputUri": "",
+ "mediaGenerationId": "",
+ "inputsCount": 3,
+ "encodedVideo": "<BASE64_MP4_REDACTED length=19911700 \u2014 full 16s combined MP4 delivered INLINE in this field (capture concat_completion_smoke_20260711_100555 rid=9924.2542)>"
+}
