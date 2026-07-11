@@ -58,6 +58,7 @@ S_FINAL_SAVING = "FINAL_SAVING"
 S_COMPLETE = "COMPLETE"
 
 S_AUTH_EXPIRED = "AUTHORIZATION_EXPIRED"  # a not-yet-submitted stage needs re-auth
+S_INITIAL_RECOVERY = "INITIAL_RECOVERY_REQUIRED"  # in-flight lane lost after restart
 
 F_INITIAL = "INITIAL_FAILED"
 F_EXTEND = "EXTEND_FAILED"
@@ -144,7 +145,8 @@ def build_whole_plan(requested_seconds: int) -> dict[str, Any]:
 
 
 # ── plan + authorize (Mission 1 / 2 / 3 / 6) ─────────────────────────────────
-async def plan_job(intent: dict[str, Any]) -> dict[str, Any]:
+async def plan_job(intent: dict[str, Any], *,
+                   trust_client_authority: bool = False) -> dict[str, Any]:
     """Create (or reuse) the lifecycle-owning job BEFORE any credit operation.
 
     Resolves the COMPLETE production authority (product / asset / prompts) and
@@ -153,13 +155,31 @@ async def plan_job(intent: dict[str, Any]) -> dict[str, Any]:
     incomplete plan. The resolved initial + continuation prompts are persisted and
     fingerprinted here, before authorization, so a later prompt change is a
     PLAN_FINGERPRINT_MISMATCH and each Extend runs the exact reviewed segment prompt.
+
+    Production (trust_client_authority=False) enforces server-side SSOT: the client
+    cannot override product/asset/prompt authority. A non-8s-multiple duration is
+    rejected up front. A supplied fingerprint that contradicts its text is rejected.
     """
     from agent.services import production_plan_resolver as _resolver
+
+    # Duration guard (no floor division): a Native-Extend timeline is an exact sum
+    # of 8s blocks; anything else would later fail the final-duration check after
+    # credits are already spent, so reject it at plan time.
+    duration = int(intent.get("requested_duration_seconds") or 16)
+    if not _resolver.duration_is_valid(duration):
+        raise OrchestratorError(
+            "INVALID_DURATION_PLAN",
+            f"requested {duration}s is not a valid Native-Extend plan "
+            "(must be a multiple of 8s and at least 16s, e.g. 16=[8,8], 24=[8,8,8])")
 
     logical_key = compute_logical_job_key(intent)
     existing = await _crud.get_video_production_job_by_logical_key(logical_key)
 
-    authority = await _resolver.resolve_production_authority(intent)
+    try:
+        authority = await _resolver.resolve_production_authority(
+            intent, trust_client_authority=trust_client_authority)
+    except _resolver.AuthorityMismatchError as exc:
+        raise OrchestratorError(_resolver.FINGERPRINT_MISMATCH, exc.detail) from exc
     missing = authority.get("missing") or []
     if missing and not existing:
         raise OrchestratorError(
@@ -280,6 +300,43 @@ async def _reserve_or_resume(idem: str, job_id: str, stage: str) -> dict:
 
 # ── the resumable engine (Mission 1 / 3 / 4 / 5 / 6 / 8) ─────────────────────
 InitialGenFn = Callable[[dict], Awaitable[dict]]
+# Poll-only resume of a persisted in-flight initial lane. Returns a structured state
+# ({"state": "DONE"/"INFLIGHT"/"RECOVERY"/"FAILED", ...}); NEVER submits.
+InitialResumeFn = Callable[[dict], Awaitable[dict]]
+
+
+async def _persist_initial_result(job_id: str, idem: str, seg: dict, *,
+                                  bal_before, client) -> None:
+    """Persist a completed INITIAL result (fresh OR resumed) with credit truth.
+    Fails closed on any missing durable identity."""
+    for key in ("operation_id", "project_id", "scene_id"):
+        if not seg.get(key):
+            await _crud.update_video_job_side_effect(
+                idem, submission_state=SUB_UNCERTAIN, credit_state=CR_MAY_HAVE_SPENT,
+                retry_safety=RS_BLOCKED, detail=f"initial missing {key}")
+            await _crud.update_video_production_job_full(
+                job_id, status=F_INITIAL, error_code=F_INITIAL)
+            raise OrchestratorError(F_INITIAL, f"initial result missing {key}")
+    bal_after = seg.get("credit_balance_after")
+    if bal_after is None:
+        bal_after = await _safe_credits(client)
+    await _crud.update_video_production_job_full(
+        job_id, status=S_INITIAL_READY,
+        initial_operation_id=seg["operation_id"],
+        initial_media_id=seg.get("media_id") or seg["operation_id"],
+        initial_workflow_id=seg.get("workflow_id"),
+        project_id=seg.get("project_id"), scene_id=seg.get("scene_id"),
+        segment_media_ids_json=json.dumps([seg["operation_id"]]))
+    if seg.get("media_id") and seg.get("scene_id"):
+        try:
+            await _crud.set_artifact_scene(seg["media_id"], seg["scene_id"])
+        except Exception:  # noqa: BLE001 — evidence best-effort
+            pass
+    await _crud.update_video_job_side_effect(
+        idem, submission_state=SUB_TERMINAL,
+        credit_state=_credit_state_from_balances(bal_before, bal_after),
+        retry_safety=RS_RESUME_ONLY, operation_ref=seg["operation_id"],
+        credit_balance_after=bal_after)
 
 
 def _credit_state_from_balances(before, after) -> str:
@@ -326,10 +383,43 @@ async def _stop_auth_expired(job_id: str) -> dict:
     return await get_job_status(job_id)
 
 
+async def _drive_initial_resume(job_id: str, idem: str,
+                                resume_initial: Optional[InitialResumeFn],
+                                client) -> dict:
+    """Resume an already-submitted INITIAL by polling its persisted lane — NEVER
+    submits. Completes on DONE, waits on INFLIGHT, and on a lost lane goes to
+    INITIAL_RECOVERY_REQUIRED (credit may have been spent) instead of stranding."""
+    if resume_initial is None:
+        return await get_job_status(job_id)  # no resumer wired; just poll
+    job = await _crud.get_video_production_job(job_id)
+    existing = await _crud.get_video_job_side_effect(idem) or {}
+    state = await resume_initial(job)
+    kind = (state or {}).get("state")
+    if kind == "DONE":
+        await _persist_initial_result(
+            job_id, idem, state["identity"],
+            bal_before=existing.get("credit_balance_before"), client=client)
+    elif kind == "RECOVERY":
+        await _crud.update_video_job_side_effect(
+            idem, submission_state=SUB_UNCERTAIN, credit_state=CR_MAY_HAVE_SPENT,
+            retry_safety=RS_BLOCKED, detail=str(state.get("detail"))[:200])
+        await _crud.update_video_production_job_full(
+            job_id, status=S_INITIAL_RECOVERY, error_code=S_INITIAL_RECOVERY)
+    elif kind == "FAILED":
+        await _crud.update_video_job_side_effect(
+            idem, submission_state=SUB_UNCERTAIN, credit_state=CR_MAY_HAVE_SPENT,
+            retry_safety=RS_BLOCKED, detail=str(state.get("detail"))[:200])
+        await _crud.update_video_production_job_full(
+            job_id, status=F_INITIAL, error_code=F_INITIAL)
+    # INFLIGHT (or unknown) → leave state as-is; caller polls again
+    return await get_job_status(job_id)
+
+
 async def advance_job(
     client, job_id: str, *,
     authorization_token: str,
     generate_initial: InitialGenFn,
+    resume_initial: Optional[InitialResumeFn] = None,
     now: Optional[float] = None,
     poll_interval_s: int = 5,
     out_dir: Optional[Path] = None,
@@ -341,6 +431,11 @@ async def advance_job(
     (Mission 5): a stage already submitted resumes/polls without a live token, so
     token expiry never strands an in-flight job. resume_only never submits.
     Each Extend runs the exact persisted reviewed prompt for its segment (Mission 3).
+
+    A mid-flight-submitted INITIAL is RESUMED (poll-only) via `resume_initial` against
+    the persisted one-door lane handle — never re-submitted. If the lane handle is
+    lost after a restart, the job goes to INITIAL_RECOVERY_REQUIRED (credit may have
+    been spent) rather than getting silently stuck or double-spending.
     """
     now = time.time() if now is None else now
     job = await _crud.get_video_production_job(job_id)
@@ -349,16 +444,22 @@ async def advance_job(
     if job.get("status") == S_COMPLETE:
         return await get_job_status(job_id)
 
-    # ── INITIAL segment via the injected one-door adapter (Mission 1) ────────
+    # ── INITIAL segment via the injected one-door adapter (Mission 1 / 5) ────
     if not job.get("initial_operation_id"):
         idem = _stage_key(job, "INITIAL", job["logical_job_key"])
-        if await _needs_stage_gate(idem):
+        existing = await _crud.get_video_job_side_effect(idem)
+        not_yet_submitted = (
+            not existing or existing.get("submission_state") == SUB_NOT_ATTEMPTED)
+
+        if not_yet_submitted:
             if resume_only:
                 return await get_job_status(job_id)  # await human start
             if _gate_stage_start(job, authorization_token, now) == _AUTH_EXPIRED:
                 return await _stop_auth_expired(job_id)
-        r = await _reserve_or_resume(idem, job_id, "INITIAL")
-        if r["reserved"]:
+            r = await _reserve_or_resume(idem, job_id, "INITIAL")
+            if not r["reserved"]:
+                # lost the reserve race to a concurrent caller — resume, don't submit
+                return await _drive_initial_resume(job_id, idem, resume_initial, client)
             bal_before = await _safe_credits(client)
             await _crud.update_video_production_job_full(job_id, status=S_INITIAL_SUBMITTING)
             await _crud.increment_side_effect_submit_count(idem)
@@ -374,42 +475,17 @@ async def advance_job(
                 await _crud.update_video_production_job_full(
                     job_id, status=F_INITIAL, error_code=F_INITIAL)
                 raise OrchestratorError(F_INITIAL, str(exc)[:200]) from exc
-            # fail closed on any missing durable identity (Mission 1)
-            for key in ("operation_id", "project_id", "scene_id"):
-                if not seg.get(key):
-                    await _crud.update_video_job_side_effect(
-                        idem, submission_state=SUB_UNCERTAIN, credit_state=CR_MAY_HAVE_SPENT,
-                        retry_safety=RS_BLOCKED, detail=f"initial missing {key}")
-                    await _crud.update_video_production_job_full(
-                        job_id, status=F_INITIAL, error_code=F_INITIAL)
-                    raise OrchestratorError(F_INITIAL, f"initial result missing {key}")
-            bal_after = seg.get("credit_balance_after")
-            if bal_after is None:
-                bal_after = await _safe_credits(client)
-            await _crud.update_video_production_job_full(
-                job_id, status=S_INITIAL_READY,
-                initial_operation_id=seg["operation_id"],
-                initial_media_id=seg.get("media_id") or seg["operation_id"],
-                initial_workflow_id=seg.get("workflow_id"),
-                project_id=seg.get("project_id"), scene_id=seg.get("scene_id"),
-                segment_media_ids_json=json.dumps([seg["operation_id"]]))
-            if seg.get("media_id") and seg.get("scene_id"):
-                try:
-                    await _crud.set_artifact_scene(seg["media_id"], seg["scene_id"])
-                except Exception:  # noqa: BLE001 — evidence best-effort
-                    pass
-            await _crud.update_video_job_side_effect(
-                idem, submission_state=SUB_TERMINAL,
-                credit_state=_credit_state_from_balances(bal_before, bal_after),
-                retry_safety=RS_RESUME_ONLY, operation_ref=seg["operation_id"],
-                credit_balance_after=bal_after)
+            await _persist_initial_result(job_id, idem, seg, bal_before=bal_before, client=client)
             job = await _crud.get_video_production_job(job_id)
         else:
-            row = r["row"] or {}
-            if row.get("submission_state") in (SUB_UNCERTAIN,):
-                raise OrchestratorError(
-                    F_INITIAL, "prior initial submit is UNCERTAIN — manual review")
-            return await get_job_status(job_id)  # in-flight elsewhere; poll
+            # ALREADY SUBMITTED (this run or a crashed prior run) — resume poll-only.
+            if existing.get("submission_state") == SUB_UNCERTAIN:
+                # already reconciled to RECOVERY/failed — surface, never resubmit
+                return await get_job_status(job_id)
+            resumed = await _drive_initial_resume(job_id, idem, resume_initial, client)
+            job = await _crud.get_video_production_job(job_id)
+            if not job.get("initial_operation_id"):
+                return resumed  # still in-flight / recovery — poll again later
 
     # ── EXTEND continuation(s): one per reviewed segment prompt (Mission 3) ──
     continuations = sorted(
@@ -589,6 +665,7 @@ _HUMAN = {
     S_CONCAT_SUBMITTING: "Preparing final video", S_CONCAT_POLLING: "Preparing final video",
     S_FINAL_SAVING: "Preparing final video", S_COMPLETE: "Video ready",
     S_AUTH_EXPIRED: "Please review and confirm the video again.",
+    S_INITIAL_RECOVERY: "The first part is being reconciled after an interruption.",
     F_INITIAL: "The first part could not be completed.",
     F_EXTEND: "The continuation could not be completed safely.",
     F_FINAL: "The final video could not be prepared.",
@@ -601,16 +678,20 @@ def _human_stage(status: Optional[str]) -> str:
 
 
 async def resume_in_flight_jobs(client, *, generate_initial: InitialGenFn,
+                                resume_initial: Optional[InitialResumeFn] = None,
                                 out_dir: Optional[Path] = None) -> list[dict]:
     """On process restart, RESUME (poll only) every in-flight authorized job — never
-    a fresh credit submit. New stages wait for a human-triggered start."""
+    a fresh credit submit. A mid-flight initial is polled via its persisted lane
+    handle (or reconciled to INITIAL_RECOVERY_REQUIRED). New stages wait for a
+    human-triggered start."""
     resumed = []
     for job in await _crud.list_non_terminal_authorized_jobs():
         try:
             status = await advance_job(
                 client, job["job_id"],
                 authorization_token=job.get("authorization_token") or "",
-                generate_initial=generate_initial, out_dir=out_dir, resume_only=True)
+                generate_initial=generate_initial, resume_initial=resume_initial,
+                out_dir=out_dir, resume_only=True)
             resumed.append(status)
         except Exception:  # noqa: BLE001 — one bad job never blocks the sweep
             continue

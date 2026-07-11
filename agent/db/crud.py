@@ -2154,6 +2154,7 @@ async def update_video_production_job_full(job_id: str, **fields) -> None:
         "initial_asset_media_id", "continuation_prompts_json",
         "authorization_id", "authorization_issued_at", "authorization_consumed_at",
         "authorization_consumed_by_job_id", "authorization_consumed_plan_fingerprint",
+        "initial_lane_job_id", "initial_lane_project_id",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:

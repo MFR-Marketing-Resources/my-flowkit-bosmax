@@ -113,3 +113,72 @@ async def test_adapter_rejects_when_extension_disconnected(monkeypatch):
     monkeypatch.setattr(flow, "get_flow_client", lambda: _Disconnected())
     with pytest.raises(flow.InitialGenerationError):
         await flow._production_initial_generator(_job())
+
+
+# ── deterministic scene attach when the clip is not yet a scene member (item 5) ─
+class _AttachClient:
+    connected = True
+
+    async def get_credits(self):
+        return {"remainingCredits": 1234.0}
+
+    async def get_media(self, mid):
+        return {"media": [{"name": mid, "workflowId": "wf-clip-1"}]}
+
+    async def create_scene(self, project_id, workflow_ids):
+        # captured contract: scene + sceneWorkflows carrying the clip's primaryMediaId
+        return {"scene": {"sceneId": "scene-created-1"},
+                "sceneWorkflows": [{"workflow": {"metadata": {
+                    "primaryMediaId": "clip-op-1"}}, "sceneId": "scene-created-1"}]}
+
+
+async def test_adapter_attaches_scene_deterministically_when_not_member(monkeypatch):
+    _wire(monkeypatch, scene_raises=True)  # not yet a member → must attach + verify
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _AttachClient())
+    out = await flow._production_initial_generator(_job())
+    assert out["scene_id"] == "scene-created-1"   # created from the clip's workflow
+    assert out["operation_id"] == "clip-op-1"
+
+
+async def test_adapter_fails_closed_when_attach_unverified(monkeypatch):
+    _wire(monkeypatch, scene_raises=True)
+
+    class _BadAttach(_AttachClient):
+        async def create_scene(self, project_id, workflow_ids):
+            # scene created but does NOT list our clip → membership unverified
+            return {"scene": {"sceneId": "scene-x"},
+                    "sceneWorkflows": [{"workflow": {"metadata": {
+                        "primaryMediaId": "some-other-clip"}}}]}
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _BadAttach())
+    with pytest.raises(flow.InitialGenerationError):
+        await flow._production_initial_generator(_job())
+
+
+# ── poll-only resume states (item 1) ─────────────────────────────────────────
+async def test_resume_reports_recovery_when_lane_lost(monkeypatch):
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _FakeClient())
+    monkeypatch.setattr(mv, "get_job", lambda jid: None)  # restart wiped the lane
+    job = {**_job(), "initial_lane_job_id": "g_lost", "initial_lane_project_id": "proj-77"}
+    state = await flow._resume_initial_generation(job)
+    assert state["state"] == "RECOVERY"
+
+
+async def test_resume_reports_inflight_then_done(monkeypatch):
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _AttachClient())
+    monkeypatch.setattr(nx, "resolve_extend_source_context", _raise_scene)
+    job = {**_job(), "initial_lane_job_id": "g_run", "initial_lane_project_id": "proj-77"}
+
+    monkeypatch.setattr(mv, "get_job",
+                        lambda jid: {"status": "GENERATING", "project_id": "proj-77"})
+    assert (await flow._resume_initial_generation(job))["state"] == "INFLIGHT"
+
+    monkeypatch.setattr(mv, "get_job", lambda jid: {
+        "status": "DONE", "project_id": "proj-77", "video_media_id": "clip-op-1"})
+    done = await flow._resume_initial_generation(job)
+    assert done["state"] == "DONE"
+    assert done["identity"]["scene_id"] == "scene-created-1"
+
+
+async def _raise_scene(client, *, media_id, project_id):
+    raise nx.NativeExtendError("SCENE_EVIDENCE_MISSING")

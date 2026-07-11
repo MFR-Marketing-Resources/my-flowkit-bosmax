@@ -1250,19 +1250,39 @@ def _job_intent(body: "VideoJobPlanRequest") -> dict:
     }
 
 
+_PLAN_422_CODES = {
+    "INCOMPLETE_PRODUCTION_PLAN", "INVALID_DURATION_PLAN", "PROMPT_FINGERPRINT_MISMATCH",
+}
+
+
+async def _plan_video_job(body: "VideoJobPlanRequest", *, trust_client_authority: bool):
+    from agent.services import video_production_orchestrator as _orch
+    try:
+        return await _orch.plan_job(
+            _job_intent(body), trust_client_authority=trust_client_authority)
+    except _orch.OrchestratorError as exc:
+        if exc.code in _PLAN_422_CODES:
+            raise HTTPException(422, {"code": exc.code, "detail": exc.detail})
+        raise HTTPException(409, str(exc))
+
+
 @router.post("/video-jobs/plan")
 async def plan_video_job(body: VideoJobPlanRequest):
     """Create-or-reuse the lifecycle-owning job + return the ONE reviewed plan.
-    Spends nothing. The job exists BEFORE the initial segment is generated. An
-    incomplete production plan (missing product/asset/prompt authority) is rejected
-    with a structured 422 — no authorization is ever issued for it."""
-    from agent.services import video_production_orchestrator as _orch
-    try:
-        return await _orch.plan_job(_job_intent(body))
-    except _orch.OrchestratorError as exc:
-        if exc.code == "INCOMPLETE_PRODUCTION_PLAN":
-            raise HTTPException(422, {"code": exc.code, "detail": exc.detail})
-        raise HTTPException(409, str(exc))
+
+    Server-side SSOT: the client CANNOT override product/asset/prompt authority — all
+    of it is resolved from the execution package. Spends nothing; the job exists
+    BEFORE the initial segment. Incomplete/invalid-duration/fingerprint-mismatch plans
+    are rejected with a structured 422 — no authorization is ever issued for them."""
+    return await _plan_video_job(body, trust_client_authority=False)
+
+
+@router.post("/video-jobs/plan-recovery")
+async def plan_video_job_recovery(body: VideoJobPlanRequest):
+    """RECOVERY/admin plan path — accepts explicit reviewed authority overrides (kept
+    OUT of the normal production endpoint). Still recomputes every fingerprint
+    server-side and rejects a supplied fingerprint that contradicts its prompt."""
+    return await _plan_video_job(body, trust_client_authority=True)
 
 
 @router.post("/video-jobs/{job_id}/authorize")
@@ -1291,46 +1311,124 @@ class InitialGenerationError(RuntimeError):
     """Fail-closed initial-segment generation error (no durable identity)."""
 
 
-async def _production_initial_generator(job: dict) -> dict:
-    """LIVE initial block-1 generation through the proven one-door lane.
+def _find_key(obj, key, _depth=0):
+    """Best-effort recursive lookup of the first non-empty value for `key`."""
+    if _depth > 6 or obj is None:
+        return None
+    if isinstance(obj, dict):
+        if obj.get(key) not in (None, "", []):
+            return obj.get(key)
+        for v in obj.values():
+            r = _find_key(v, key, _depth + 1)
+            if r not in (None, "", []):
+                return r
+    elif isinstance(obj, list):
+        for v in obj:
+            r = _find_key(v, key, _depth + 1)
+            if r not in (None, "", []):
+                return r
+    return None
 
-    Runs the exact reviewed authority persisted on the job: product-truth prompt,
-    approved product asset (I2V start frame), engine/model/aspect/duration. It
-    submits via `make_video.start_generate` (the ONE door — never the frozen DOM
-    lane), polls the lane job to a terminal state, resolves the clip's scene, and
-    maps the real result into the durable identity the Extend/concat stages need.
-    Fails closed if any required output identity (operation_id / project_id /
-    scene_id) is missing. Reached only under NATIVE_EXTEND_ENABLED + a consumed
-    whole-job authorization — the deferred, operator-controlled credit surface.
-    """
-    from agent.services import make_video as _mv
-    from agent.services import google_flow_native_extend_runtime as _nx
 
+def _initial_gen_preconditions(job: dict) -> tuple[str, str, str, str]:
     prompt = (job.get("initial_prompt_text") or "").strip()
     if not prompt:
         raise InitialGenerationError("initial prompt not bound to job")
     if not (job.get("product_id") and job.get("approved_asset_id")
             and job.get("approved_asset_sha256")):
         raise InitialGenerationError("product/asset authority missing on job")
-
     mode = (job.get("initial_mode") or "I2V").upper()
     start_media = job.get("initial_asset_media_id")
     if mode in ("I2V", "F2V") and not start_media:
         raise InitialGenerationError(f"{mode} initial requires an approved product asset media id")
     aspect = _VIDEO_ASPECT_TO_RATIO.get(job.get("aspect_ratio") or "", "9:16")
-    duration_s = int(job.get("requested_duration_seconds") or 16)
-    per_block_s = 8  # block-1 is one native segment; the chain extends it
+    return prompt, mode, start_media, aspect
+
+
+async def _ensure_scene_membership(client, op_id: str, project_id: str,
+                                   workflow_id: str | None) -> tuple[str, str | None]:
+    """Guarantee the initial clip is a VERIFIED member of a scene/timeline before any
+    Extend (Mission 5). Order: (1) already a member of a known scene? (2) otherwise
+    deterministically create a scene from the clip's workflow id and VERIFY the
+    createScene response lists our clip. Fail closed if membership cannot be proven —
+    the Extend never runs against an unattached clip."""
+    from agent.services import google_flow_native_extend_runtime as _nx
+    # 1) already attached (make_video's own flow may have created the scene)
+    try:
+        ctx = await _nx.resolve_extend_source_context(
+            client, media_id=op_id, project_id=project_id)
+        if ctx.get("scene_id"):
+            return ctx["scene_id"], ctx.get("workflow_id") or workflow_id
+    except _nx.NativeExtendError:
+        pass
+    # 2) deterministic attach — need the clip's workflow id
+    wf = workflow_id
+    if not wf:
+        try:
+            media = await client.get_media(op_id)
+            wf = _find_key(media, "workflowId") or _find_key(media, "workflow")
+        except Exception:  # noqa: BLE001
+            wf = None
+    if not wf:
+        raise InitialGenerationError(
+            "INITIAL_SCENE_UNRESOLVED: initial clip has no scene and no workflow id to attach one")
+    resp = await client.create_scene(project_id, [wf])
+    data = resp.get("data", resp) if isinstance(resp, dict) else resp
+    scene_id = _find_key(data, "sceneId")
+    member_ids = set()
+    for m in (data.get("sceneWorkflows") if isinstance(data, dict) else None) or []:
+        pmid = _find_key(m, "primaryMediaId")
+        if pmid:
+            member_ids.add(pmid)
+    if not scene_id or (member_ids and op_id not in member_ids):
+        raise InitialGenerationError(
+            "INITIAL_SCENE_ATTACH_UNVERIFIED: created scene does not verify clip membership")
+    try:
+        await crud.set_artifact_scene(op_id, scene_id)  # durable evidence for resolves
+    except Exception:  # noqa: BLE001
+        pass
+    return scene_id, wf
+
+
+async def _map_lane_to_identity(client, lane: dict, job: dict) -> dict:
+    op_id = lane.get("video_media_id") or lane.get("media_id")
+    project_id = lane.get("project_id") or job.get("project_id") or job.get("initial_lane_project_id")
+    if not op_id or not project_id:
+        raise InitialGenerationError("initial clip missing operation/project id")
+    scene_id, wf = await _ensure_scene_membership(
+        client, op_id, project_id, lane.get("workflow_id"))
+    if not scene_id:
+        raise InitialGenerationError("initial clip has no scene id")
+    return {
+        "operation_id": op_id, "media_id": op_id, "workflow_id": wf,
+        "project_id": project_id, "scene_id": scene_id,
+        "credit_balance_after": lane.get("remaining_credits"),
+    }
+
+
+async def _production_initial_generator(job: dict) -> dict:
+    """LIVE initial block-1 generation through the proven one-door lane.
+
+    Runs the exact reviewed authority persisted on the job (product-truth prompt,
+    approved product asset, engine/model/aspect) via `make_video.start_generate`
+    (the ONE door — never the frozen DOM lane). The one-door lane handle is PERSISTED
+    the instant the submit is accepted, before the long poll, so a mid-flight crash
+    never loses a (possibly credit-spending) job. Polls to terminal, guarantees
+    verified scene membership, maps the real identities. Reached only under
+    NATIVE_EXTEND_ENABLED + a consumed whole-job authorization.
+    """
+    from agent.services import make_video as _mv
+    import asyncio as _asyncio
+    prompt, mode, start_media, aspect = _initial_gen_preconditions(job)
 
     client = get_flow_client()
     if not getattr(client, "connected", False):
         raise InitialGenerationError("Extension not connected")
 
     submit = await _mv.start_generate(
-        mode=mode, prompt=prompt,
-        project_id=job.get("project_id") or None,
+        mode=mode, prompt=prompt, project_id=job.get("project_id") or None,
         image_media_ids=[start_media] if start_media else None,
-        aspect=aspect, model=job.get("model"), duration_s=per_block_s,
-        num_videos=1)
+        aspect=aspect, model=job.get("model"), duration_s=8, num_videos=1)
     if not isinstance(submit, dict) or submit.get("status") == "REJECTED":
         raise InitialGenerationError(
             f"one-door lane rejected initial: {submit.get('error') if isinstance(submit, dict) else submit}")
@@ -1338,12 +1436,15 @@ async def _production_initial_generator(job: dict) -> dict:
     if not lane_job_id:
         raise InitialGenerationError("one-door lane returned no job id")
 
-    # Poll the lane job to terminal. Video generation is minutes-long; the durable
-    # background driver owns this wait (correctness comes from the DB idempotency
-    # table, not from this task surviving).
-    import asyncio as _asyncio
+    # DURABLE HANDLE (Mission 1): persist the lane identity NOW — before the minutes-
+    # long poll — so a crash after submit never loses the job. Resume polls this, never
+    # re-submits.
+    await crud.update_video_production_job_full(
+        job["job_id"], initial_lane_job_id=lane_job_id,
+        initial_lane_project_id=(job.get("project_id") or ""))
+
     lane = None
-    for _ in range(240):  # ~20 min ceiling at 5s
+    for _ in range(240):  # ~20 min ceiling at 5s; the durable driver owns this wait
         lane = _mv.get_job(lane_job_id)
         if lane and lane.get("status") in _INITIAL_GEN_TERMINAL:
             break
@@ -1353,28 +1454,42 @@ async def _production_initial_generator(job: dict) -> dict:
     if lane.get("status") != "DONE":
         raise InitialGenerationError(
             f"initial generation {lane.get('status')}: {lane.get('error') or ''}".strip())
+    return await _map_lane_to_identity(client, lane, job)
 
-    op_id = lane.get("video_media_id") or lane.get("media_id")
-    project_id = lane.get("project_id") or job.get("project_id")
-    if not op_id or not project_id:
-        raise InitialGenerationError("initial clip missing operation/project id")
 
-    # Resolve durable scene evidence for the freshly generated clip (Extend needs it).
+async def _resume_initial_generation(job: dict) -> dict:
+    """Poll-ONLY resume of a persisted in-flight initial lane. NEVER submits.
+
+    Returns a structured state so the orchestrator never has to guess:
+      {"state": "DONE", "identity": {...}}   lane finished — map identities
+      {"state": "INFLIGHT"}                    still generating (or handle not yet recorded)
+      {"state": "RECOVERY", "detail": ...}     lane handle gone after a restart (make_video's
+                                               job map is in-memory) — credit MAY have been
+                                               spent; reconcile, NEVER re-submit
+      {"state": "FAILED", "detail": ...}       lane reached a non-DONE terminal state
+    """
+    from agent.services import make_video as _mv
+    lane_job_id = job.get("initial_lane_job_id")
+    if not lane_job_id:
+        return {"state": "INFLIGHT"}  # submit not yet durably recorded; caller waits
+    lane = _mv.get_job(lane_job_id)
+    if lane is None:
+        return {"state": "RECOVERY",
+                "detail": f"initial lane {lane_job_id} lost after restart "
+                          f"(project {job.get('initial_lane_project_id') or job.get('project_id')})"}
+    if lane.get("status") not in _INITIAL_GEN_TERMINAL:
+        return {"state": "INFLIGHT"}  # still generating; poll again later
+    if lane.get("status") != "DONE":
+        return {"state": "FAILED",
+                "detail": f"initial generation {lane.get('status')}: {lane.get('error') or ''}".strip()}
+    client = get_flow_client()
+    if not getattr(client, "connected", False):
+        return {"state": "INFLIGHT"}
     try:
-        ctx = await _nx.resolve_extend_source_context(
-            client, media_id=op_id, project_id=project_id)
-    except _nx.NativeExtendError as exc:
-        raise InitialGenerationError(f"scene evidence unresolved: {exc}") from exc
-    scene_id = ctx.get("scene_id")
-    if not scene_id:
-        raise InitialGenerationError("initial clip has no scene id")
-
-    return {
-        "operation_id": op_id, "media_id": op_id,
-        "workflow_id": lane.get("workflow_id") or ctx.get("workflow_id"),
-        "project_id": project_id, "scene_id": scene_id,
-        "credit_balance_after": lane.get("remaining_credits"),
-    }
+        identity = await _map_lane_to_identity(client, lane, job)
+    except InitialGenerationError as exc:
+        return {"state": "FAILED", "detail": str(exc)}
+    return {"state": "DONE", "identity": identity}
 
 
 async def _drive_video_job(job_id: str, token: str):
@@ -1387,6 +1502,7 @@ async def _drive_video_job(job_id: str, token: str):
         await _orch.advance_job(
             client, job_id, authorization_token=token,
             generate_initial=_production_initial_generator,
+            resume_initial=_resume_initial_generation,
             out_dir=OUTPUT_DIR / "retrieved")
     except Exception:  # noqa: BLE001 — state is persisted; never crash the loop
         pass

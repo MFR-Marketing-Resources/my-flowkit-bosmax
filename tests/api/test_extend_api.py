@@ -258,7 +258,7 @@ def _complete_body(nonce, *, duration=16):
 
 async def test_video_job_plan_creates_before_initial_and_is_reusable():
     body = _complete_body("apinonce")
-    planned = await flow.plan_video_job(body)
+    planned = await flow.plan_video_job_recovery(body)   # recovery path takes authority
     assert planned["job_id"].startswith("vj_")
     assert planned["status"] == "CREATED"
     assert planned["plan"]["operation_counts"]["total"] == 3
@@ -268,7 +268,7 @@ async def test_video_job_plan_creates_before_initial_and_is_reusable():
     assert job["initial_prompt_text"] == "reviewed initial apinonce"
     assert json.loads(job["continuation_prompts_json"])
     # same intent reuses the one logical job
-    again = await flow.plan_video_job(body)
+    again = await flow.plan_video_job_recovery(body)
     assert again["job_id"] == planned["job_id"] and again["reused"] is True
 
 
@@ -277,13 +277,33 @@ async def test_video_job_plan_rejects_incomplete_authority():
                                     requested_total_duration_seconds=16,
                                     client_request_nonce="apiincomplete")
     with pytest.raises(HTTPException) as exc:
-        await flow.plan_video_job(body)
+        await flow.plan_video_job(body)   # PRODUCTION endpoint
     assert exc.value.status_code == 422
     assert exc.value.detail["code"] == "INCOMPLETE_PRODUCTION_PLAN"
 
 
+async def test_production_endpoint_ignores_client_authority_override():
+    # the PRODUCTION endpoint drops client-supplied prompt/asset (SSOT); with no
+    # execution package to resolve from, a would-be override yields a 422, never a job
+    body = _complete_body("apissot")               # carries injected prompt/asset
+    with pytest.raises(HTTPException) as exc:
+        await flow.plan_video_job(body)            # trust=False
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "INCOMPLETE_PRODUCTION_PLAN"
+
+
+async def test_plan_rejects_invalid_duration():
+    body = flow.VideoJobPlanRequest(product_id="p1", execution_package_id="wep",
+                                    requested_total_duration_seconds=20,  # not a *8
+                                    client_request_nonce="apidur")
+    with pytest.raises(HTTPException) as exc:
+        await flow.plan_video_job(body)
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "INVALID_DURATION_PLAN"
+
+
 async def test_video_job_authorize_rejects_changed_plan():
-    planned = await flow.plan_video_job(_complete_body("apiauth"))
+    planned = await flow.plan_video_job_recovery(_complete_body("apiauth"))
     ok = await flow.authorize_video_job(
         planned["job_id"],
         flow.VideoJobAuthorizeRequest(confirmed_plan_fingerprint=planned["plan_fingerprint"]))
@@ -297,7 +317,7 @@ async def test_video_job_authorize_rejects_changed_plan():
 
 
 async def test_video_job_start_requires_authorization():
-    planned = await flow.plan_video_job(_complete_body("apistart"))
+    planned = await flow.plan_video_job_recovery(_complete_body("apistart"))
 
     class _BG:
         def add_task(self, *a, **k):
@@ -310,7 +330,7 @@ async def test_video_job_start_requires_authorization():
 
 
 async def test_video_job_start_consumes_authorization_single_use():
-    planned = await flow.plan_video_job(_complete_body("apiconsume"))
+    planned = await flow.plan_video_job_recovery(_complete_body("apiconsume"))
     await flow.authorize_video_job(
         planned["job_id"],
         flow.VideoJobAuthorizeRequest(confirmed_plan_fingerprint=planned["plan_fingerprint"]))
@@ -332,7 +352,7 @@ async def test_video_job_start_consumes_authorization_single_use():
 
 
 async def test_video_job_status_projection_is_human_and_refresh_safe():
-    planned = await flow.plan_video_job(_complete_body("apistatus", duration=24))
+    planned = await flow.plan_video_job_recovery(_complete_body("apistatus", duration=24))
     st = await flow.video_job_status(planned["job_id"])
     assert st["human_stage"] == "Preparing video"
     assert st["complete"] is False

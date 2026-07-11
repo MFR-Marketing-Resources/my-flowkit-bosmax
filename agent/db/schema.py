@@ -1901,6 +1901,11 @@ CREATE INDEX IF NOT EXISTS idx_video_side_effect_job ON video_job_side_effect(jo
             ("authorization_consumed_at", "TEXT"),
             ("authorization_consumed_by_job_id", "TEXT"),
             ("authorization_consumed_plan_fingerprint", "TEXT"),
+            # PR316 durable make_video boundary: the in-flight one-door lane handle is
+            # persisted the instant a submit is accepted, so a mid-flight crash never
+            # loses the (possibly credit-spending) job — resume polls this handle,
+            # never re-submits.
+            ("initial_lane_job_id", "TEXT"), ("initial_lane_project_id", "TEXT"),
         ):
             if col not in vj_cols:
                 await db.execute(f"ALTER TABLE video_production_job ADD COLUMN {col} {decl}")
