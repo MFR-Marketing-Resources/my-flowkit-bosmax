@@ -119,7 +119,7 @@ export function resolvePromptRepresentationPresentation(
 			showIndependentSecondary: false,
 			showExtendUnavailable: false,
 			helpText:
-				"This continuation block runs automatically through Native Flow Extend below. Manual copy into Google Flow’s Extend function is a fallback only.",
+				"This part of the video continues automatically in the full-video pipeline below.",
 		};
 	}
 

@@ -72,7 +72,7 @@ describe("OperatorPage prompt representation presentation + clipboard", () => {
 		// SEV-1 de-mix: no independent copy button on the extend operator surface —
 		// the fallback text stays available (Handoff Bank) without mixed instructions.
 		expect(p.showIndependentSecondary).toBe(false);
-		expect(p.helpText).toMatch(/Native Flow Extend/);
+		expect(p.helpText).toMatch(/full-video pipeline/);
 		await navigator.clipboard.writeText(p.independentText);
 		expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith("INDEPENDENT FALLBACK");
 	});
