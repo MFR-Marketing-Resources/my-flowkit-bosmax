@@ -287,6 +287,16 @@ def build_product_lock(
         scale_lock = f"PRODUCT SCALE LOCK: {_fallback_scale_line(product or {})}"
         matched_id = None
 
+    # SEV-1 label-truth (live drift evidence: the engine re-typeset the real
+    # "Minyak Warisan Tok Cap Burung 25ml" label to shorthand and invented dosage
+    # text): the printed label is part of product identity, for every mode.
+    identity_lock += (
+        " LABEL TEXT LOCK: The printed label text, typography, and layout must match the "
+        "attached reference image exactly — never re-typeset, shorten, translate, or restyle "
+        "the printed product name, and never add dosage, usage, or instruction text that is "
+        "not physically printed on the real label."
+    )
+
     geometry_lock = (
         "PRODUCT GEOMETRY LOCK: Preserve the exact silhouette, body shape, cap-to-body ratio, "
         "neck and shoulder proportion, and front/back flatness of the real product. Never let it "

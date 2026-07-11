@@ -304,7 +304,7 @@ PHYSICS_FAMILY_RULES: dict[str, dict[str, Any]] = {
     "supplement_bottle": _rule(
         physics_class="SUPPLEMENT_BOTTLE",
         product_scale="SMALL_OBJECT",
-        hand_object_interaction="stable bottle presentation with dosage-format cues, cap integrity, and label lock",
+        hand_object_interaction="stable bottle presentation with the real pack format visible, cap integrity, and label lock",
         recommended_grip="side grip with thumb behind label or base-supported bottle hold",
         air_gap_rule="keep fingers away from the label copy and cap seam so the supplement format is obvious",
         material_behavior="rigid supplement bottle or canister with screw-cap resistance and audible closure expectation",
@@ -312,7 +312,7 @@ PHYSICS_FAMILY_RULES: dict[str, dict[str, Any]] = {
         fragility_level="LOW",
         handling_notes="Hold the supplement upright and clean, emphasizing bottle format and label readability over exaggerated gestures.",
         camera_handling_notes="Avoid medical theatrics; frame the bottle like a trustworthy daily product with cap and label clearly visible.",
-        unsafe_handling_rules=["avoid medical cure claims", "avoid loose pills unless explicitly shown", "avoid obscuring dosage-format cues"],
+        unsafe_handling_rules=["avoid medical cure claims", "avoid loose pills unless explicitly shown", "avoid obscuring the real pack-format cues"],
     ),
     "electronics_small_box": _rule(
         physics_class="ELECTRONICS_SMALL_DEVICE",

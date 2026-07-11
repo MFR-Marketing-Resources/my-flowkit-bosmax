@@ -114,10 +114,12 @@ export function resolvePromptRepresentationPresentation(
 			primaryCopyLabel: "Copy Extend Prompt",
 			primaryTestId: "copy-extend-prompt",
 			showExtendPrimary: true,
-			showIndependentSecondary: true,
+			// SEV-1 de-mix: native Extend runs this block through the panel below —
+			// the independent-block copy affordance stays in the Handoff Bank only.
+			showIndependentSecondary: false,
 			showExtendUnavailable: false,
 			helpText:
-				"Extend Prompt is for manual testing through Google Flow’s Extend function. Independent Block Prompt is the existing standalone-block fallback.",
+				"This continuation block runs automatically through Native Flow Extend below. Manual copy into Google Flow’s Extend function is a fallback only.",
 		};
 	}
 

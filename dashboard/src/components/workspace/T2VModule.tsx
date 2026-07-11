@@ -313,8 +313,10 @@ export default function T2VModule({
 									/>
 								))}
 								<div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
-									EXTEND mode — copy each block separately into the video
-									engine. Do NOT paste both blocks into one generation.
+									EXTEND mode — Block 1 generates first through the one-door
+									lane; continuation blocks then run automatically via Native
+									Flow Extend. Manual copy of a block into the engine is a
+									fallback only — never paste both blocks into one generation.
 								</div>
 							</div>
 						) : (

@@ -127,3 +127,61 @@ async def test_native_extend_lineage_redacts_signed_output_url(monkeypatch):
     monkeypatch.setattr(flow.crud, "list_extend_lineage", _rows)
     out = await flow.native_extend_lineage(project_id="p")
     assert "output_url" not in out["lineage"][0]
+
+
+# ── SEV-1 source auto-inheritance: candidates + verified resolve-source ─────
+async def test_source_candidates_lists_finished_clips_newest_first():
+    from agent.db import crud
+    await crud.insert_generated_artifact(
+        "cand-old", job_id="j-old", mode="F2V", artifact_kind="video",
+        project_id="proj-cand")
+    await crud.insert_generated_artifact(
+        "cand-skip-image", job_id="j-img", mode="IMG", artifact_kind="image",
+        project_id="proj-cand")
+    await crud.insert_generated_artifact(
+        "cand-new", job_id="j-new", mode="F2V", artifact_kind="video",
+        project_id="proj-cand")
+    out = await flow.native_extend_source_candidates(limit=5)
+    ids = [c["media_id"] for c in out["candidates"]]
+    assert "cand-new" in ids and "cand-old" in ids
+    assert "cand-skip-image" not in ids          # images are never Extend parents
+    assert ids.index("cand-new") < ids.index("cand-old")  # newest first
+
+
+async def test_resolve_source_returns_verified_context(monkeypatch):
+    class _Client:
+        connected = True
+
+        async def list_project_scenes(self, project_id):
+            return {"scene": {"sceneId": "scene-9", "displayName": "S9"},
+                    "sceneWorkflows": [{
+                        "workflow": {"name": "wf", "metadata": {"primaryMediaId": "clip-9"}},
+                        "sceneId": "scene-9"}]}
+
+        async def list_scene_workflows(self, scene_id):  # pragma: no cover — first pass hits
+            return {"sceneWorkflows": [], "media": []}
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _Client())
+    out = await flow.native_extend_resolve_source(
+        flow.ExtendResolveSourceRequest(media_id="clip-9", project_id="proj-9"))
+    assert out == {"project_id": "proj-9", "scene_id": "scene-9",
+                   "source_operation_id": "clip-9", "scene_display_name": "S9",
+                   "verified": True}
+
+
+async def test_resolve_source_fails_closed_when_clip_not_in_project(monkeypatch):
+    class _Client:
+        connected = True
+
+        async def list_project_scenes(self, project_id):
+            return {"scene": {"sceneId": "scene-x"}, "sceneWorkflows": []}
+
+        async def list_scene_workflows(self, scene_id):
+            return {"sceneWorkflows": [], "media": []}
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _Client())
+    with pytest.raises(HTTPException) as exc:
+        await flow.native_extend_resolve_source(
+            flow.ExtendResolveSourceRequest(media_id="ghost", project_id="proj-x"))
+    assert exc.value.status_code == 404
+    assert "EXTEND_SOURCE_NOT_RESOLVABLE" in str(exc.value.detail)

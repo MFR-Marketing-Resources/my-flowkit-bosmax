@@ -243,7 +243,7 @@ function PromptAuditCard({
 					>
 						{copiedPrimary ? "Copied" : primaryLabel}
 					</button>
-					{showIndependentSecondary || isExtendBlock ? (
+					{showIndependentSecondary ? (
 						<button
 							type="button"
 							onClick={handleCopyIndependent}
@@ -1925,8 +1925,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									"Select one Total Video Duration to derive the authorized route, block plan, timeline, and automatic WPS budget."
 								) : extendAuthority ? (
 									<>
-										<div>
-											Route: {extendAuthority.route} · authorized · {extendAuthority.plan.length} blocks
+										<div title={extendAuthority.route ?? undefined}>
+											Route:{" "}
+											{extendAuthority.route === "GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS"
+												? "Uniform 8s block plan (executes via Native Flow Extend below)"
+												: extendAuthority.route}{" "}
+											· authorized · {extendAuthority.plan.length} blocks
 										</div>
 										<div className="mt-1">
 											Plan: {extendAuthority.plan.map((duration) => `${duration}s`).join(" + ")} · Timeline: {extendAuthority.timeline.map((segment) => `${segment.start_s}–${segment.end_s}s`).join(" | ")}

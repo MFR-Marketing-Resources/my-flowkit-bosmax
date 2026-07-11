@@ -58,7 +58,10 @@ describe("promptRepresentationUi", () => {
 		expect(block2.primaryCopyText).toBe(extend);
 		expect(block2.primaryCopyText).not.toContain("You are generating");
 		expect(block2.primaryCopyLabel).toBe("Copy Extend Prompt");
-		expect(block2.showIndependentSecondary).toBe(true);
+		// SEV-1 de-mix: the independent copy affordance is hidden on the default
+		// operator surface (Handoff Bank keeps the standalone fallback) — but the
+		// fallback text itself stays intact.
+		expect(block2.showIndependentSecondary).toBe(false);
 		expect(block2.independentText).toContain("You are generating");
 	});
 

@@ -1,5 +1,6 @@
 """Direct Flow API endpoints — for manual operations outside the queue."""
 import base64
+import hashlib
 import json
 import re
 import tempfile
@@ -1154,6 +1155,39 @@ async def native_extend_lineage(project_id: str = None,
     return {"lineage": safe_rows, "count": len(safe_rows)}
 
 
+@router.get("/native-extend/source-candidates")
+async def native_extend_source_candidates(limit: int = 8):
+    """Finished Block-1 clips usable as Extend parents (newest first, zero credit).
+
+    SEV-1 UX repair: the operator never pastes raw ids — the panel offers these
+    candidates and /native-extend/resolve-source completes the scene context."""
+    rows = await crud.list_extend_source_candidates(limit=limit)
+    return {"candidates": rows, "count": len(rows)}
+
+
+class ExtendResolveSourceRequest(BaseModel):
+    """Resolve one finished clip into a verified Extend parent context."""
+    media_id: str
+    project_id: str
+
+
+@router.post("/native-extend/resolve-source")
+async def native_extend_resolve_source(body: ExtendResolveSourceRequest):
+    """Auto-resolve {project, scene, source operation} from a finished clip.
+
+    Read-only Flow GETs (scenes + workflows listings); fail-closed 404 when the
+    clip cannot be verified inside the project — never guesses a scene id."""
+    from agent.services import google_flow_native_extend_runtime as _nx
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    try:
+        return await _nx.resolve_extend_source_context(
+            client, media_id=body.media_id, project_id=body.project_id)
+    except _nx.NativeExtendError as exc:
+        raise HTTPException(404, str(exc))
+
+
 @router.post("/check-status")
 async def check_status(body: CheckStatusRequest):
     """Check video generation status."""
@@ -1555,6 +1589,9 @@ async def _resolve_asset_to_media_id(client, asset: dict, slot: str, request_id:
                 f"cannot read {slot} asset: {exc}", f"ERR_{token}_UPLOAD_API_FAILED")
         raise HTTPException(422, f"ERR_{token}_UPLOAD_API_FAILED") from exc
     b64 = base64.b64encode(image_bytes).decode()
+    # Asset-authority evidence (SEV-1): hash the EXACT bytes being uploaded so the
+    # request's durable stage history proves which file became the Flow reference.
+    asset_sha256 = hashlib.sha256(image_bytes).hexdigest()
     mime = mimetypes.guess_type(str(local_path))[0] or "image/png"
     up = await client.upload_image(
         b64, mime_type=mime, project_id="",
@@ -1570,7 +1607,9 @@ async def _resolve_asset_to_media_id(client, asset: dict, slot: str, request_id:
     if request_id:
         await crud.add_stage_event(
             request_id, f"API_{token}_ASSET_UPLOADED", "WAITING_FLOW",
-            f"source_type=api_upload media_id={uploaded_id}", "backend")
+            f"source_type=api_upload media_id={uploaded_id} "
+            f"file={os.path.basename(str(local_path))} sha256={asset_sha256}",
+            "backend")
     return str(uploaded_id)
 
 

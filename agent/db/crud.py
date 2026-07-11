@@ -2060,6 +2060,29 @@ async def get_generated_artifact(media_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+async def list_extend_source_candidates(limit: int = 8) -> list[dict]:
+    """Finished VIDEO clips usable as native-Extend parents, newest first.
+
+    A generated clip's library media id IS its Flow operation id (captured
+    contract), so each row here is a complete Extend parent candidate once its
+    scene id is resolved. Joined with generation_result for operator-readable
+    product context — no raw-id copying required in the normal workflow.
+    """
+    db = await get_db()
+    cur = await db.execute(
+        """SELECT ga.media_id, ga.job_id, ga.project_id, ga.created_at,
+                  gr.product_id, gr.product_name, gr.request_id,
+                  gr.workspace_generation_package_id
+           FROM generated_artifact ga
+           LEFT JOIN generation_result gr ON gr.media_id = ga.media_id
+           WHERE ga.artifact_kind='video' AND ga.project_id IS NOT NULL
+           ORDER BY ga.created_at DESC, ga.rowid DESC LIMIT ?""",
+        (int(limit),),
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
 async def delete_generated_artifact(media_id: str) -> dict:
     """Delete ONE artifact (DB row + local file) by Flow media id, immediately.
     Used when a registry profile is deleted so its temp reference image does not
