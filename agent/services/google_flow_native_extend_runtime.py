@@ -673,12 +673,14 @@ def _lineage_outcome(row: dict, *, resumed: bool = False) -> dict:
 
 
 def final_concat_export_status() -> dict:
-    """The 16s combined concatenated export is fail-closed. Callers that want a
-    combined deliverable must surface this — NEVER substitute the Download Project
-    ZIP (which is block1.mp4 + a poster image, not the continuation)."""
+    """Final-timeline render capability status (mirrors the capability registry).
+
+    Captured end-to-end 2026-07-11 (submit -> job -> ACTIVE -> SUCCESSFUL with the
+    combined MP4 inline). Execution remains confirm-gated; the Download Project
+    ZIP is NEVER a substitute for the one full-duration deliverable."""
     return {
         "capability": "GOOGLE_FLOW_FINAL_CONCAT_EXPORT",
-        "authority": _routes.AUTHORITY_MISSING,
+        "authority": _routes.capability_authority("GOOGLE_FLOW_FINAL_CONCAT_EXPORT"),
         "error_code": FINAL_CONCAT_EXPORT_AUTHORITY_MISSING,
     }
 
@@ -686,9 +688,12 @@ def final_concat_export_status() -> dict:
 # ─── Extend source auto-resolution (zero-credit, read-only) ─────────────────
 # SEV-1 UX repair: the operator must NOT paste raw project/scene/operation ids.
 # A finished Block-1 clip's library media id IS its operation id (captured
-# contract: child op id == media[0].name == workflows[0].metadata.primaryMediaId),
-# so the only missing piece is the sceneId — resolved from the project's scene
-# listings and VERIFIED by matching the workflow that produced the clip.
+# contract: child op id == media[0].name == workflows[0].metadata.primaryMediaId).
+# Scene ids CANNOT be listed from this host (the page uses labs.google trpc,
+# outside the relay host guard; GET /projects/{pid}/scenes does not exist — only
+# the createScene POST). Scene candidates therefore come from OUR OWN records
+# (extend lineage + persisted artifacts) and are VERIFIED against the proven
+# GET /v1/flow/scene/{sceneId}/workflows listing before use. Fail closed always.
 
 
 def _unwrap(data: object) -> dict:
@@ -697,19 +702,11 @@ def _unwrap(data: object) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _scene_entries(scenes_response: dict) -> list[dict]:
-    """Normalize both captured shapes: {scenes:[{scene, sceneWorkflows}...]} and the
-    single-scene envelope {scene:{...}, sceneWorkflows:[...]}."""
-    data = _unwrap(scenes_response)
-    if isinstance(data.get("scenes"), list):
-        return [s for s in data["scenes"] if isinstance(s, dict)]
-    if isinstance(data.get("scene"), dict) or isinstance(data.get("sceneWorkflows"), list):
-        return [data]
-    return []
-
-
-def _workflow_matches_media(entry: dict, media_id: str) -> bool:
-    for swf in entry.get("sceneWorkflows") or []:
+def _workflow_listing_matches_media(data: dict, media_id: str) -> bool:
+    for m in data.get("media") or []:
+        if isinstance(m, dict) and m.get("name") == media_id:
+            return True
+    for swf in data.get("sceneWorkflows") or []:
         wf = (swf or {}).get("workflow") or {}
         meta = wf.get("metadata") or {}
         if meta.get("primaryMediaId") == media_id or wf.get("name") == media_id:
@@ -717,14 +714,23 @@ def _workflow_matches_media(entry: dict, media_id: str) -> bool:
     return False
 
 
-def _entry_scene_id(entry: dict) -> str | None:
-    scene = entry.get("scene") or {}
-    sid = scene.get("sceneId") or entry.get("sceneId")
-    if not sid:
-        for swf in entry.get("sceneWorkflows") or []:
-            if isinstance(swf, dict) and swf.get("sceneId"):
-                return swf["sceneId"]
-    return sid
+async def _candidate_scene_ids(project_id: str) -> list[str]:
+    """Scene ids we have durable evidence for, newest first, de-duplicated."""
+    seen: list[str] = []
+    try:
+        for row in await _crud.list_extend_lineage(project_id=project_id):
+            sid = row.get("scene_id")
+            if sid and sid not in seen:
+                seen.append(sid)
+    except Exception:  # noqa: BLE001 — lineage is one source, not the only one
+        pass
+    try:
+        for sid in await _crud.list_artifact_scene_ids(project_id):
+            if sid and sid not in seen:
+                seen.append(sid)
+    except Exception:  # noqa: BLE001
+        pass
+    return seen
 
 
 async def resolve_extend_source_context(client, *, media_id: str,
@@ -732,58 +738,38 @@ async def resolve_extend_source_context(client, *, media_id: str,
     """Resolve {project_id, scene_id, source_operation_id} for a finished clip.
 
     Fail-closed: raises NativeExtendError(EXTEND_SOURCE_NOT_RESOLVABLE) when the
-    clip cannot be located in any scene of the project — never guesses a scene id.
+    clip cannot be VERIFIED inside a known scene of the project — never guesses.
     Read-only GETs only; spends nothing.
     """
     if not media_id or not project_id:
         raise NativeExtendError(EXTEND_SOURCE_NOT_RESOLVABLE, "media_id/project_id required")
-    try:
-        scenes_resp = await client.list_project_scenes(project_id)
-    except Exception as exc:  # noqa: BLE001 — network/relay failure is a resolution failure
-        raise NativeExtendError(EXTEND_SOURCE_NOT_RESOLVABLE, f"scenes: {exc}") from exc
-    entries = _scene_entries(scenes_resp)
 
-    matched_scene: str | None = None
-    display: str | None = None
-    for entry in entries:
-        if _workflow_matches_media(entry, media_id):
-            matched_scene = _entry_scene_id(entry)
-            display = ((entry.get("scene") or {}).get("displayName"))
-            break
+    candidates = await _candidate_scene_ids(project_id)
+    tried: list[str] = []
+    for sid in candidates:
+        try:
+            resp = await client.list_scene_workflows(sid, project_id=project_id)
+        except Exception as exc:  # noqa: BLE001 — try the next candidate
+            tried.append(f"{sid[:8]}:err:{exc}")
+            continue
+        data = _unwrap(resp)
+        status = resp.get("status") if isinstance(resp, dict) else None
+        if isinstance(status, int) and status >= 400:
+            tried.append(f"{sid[:8]}:http{status}")
+            continue
+        if _workflow_listing_matches_media(data, media_id):
+            return {
+                "project_id": project_id,
+                "scene_id": sid,
+                "source_operation_id": media_id,
+                "scene_display_name": None,
+                "verified": True,
+            }
+        tried.append(f"{sid[:8]}:no-match")
 
-    if not matched_scene:
-        # Second pass: some scene listings return workflowIds only — query each
-        # scene's own workflow listing and match media[].name / primaryMediaId.
-        for entry in entries:
-            sid = _entry_scene_id(entry)
-            if not sid:
-                continue
-            try:
-                wf_resp = await client.list_scene_workflows(sid, project_id=project_id)
-            except Exception:  # noqa: BLE001 — try the next scene
-                continue
-            data = _unwrap(wf_resp)
-            media_names = {m.get("name") for m in data.get("media") or [] if isinstance(m, dict)}
-            if media_id in media_names or _workflow_matches_media(data, media_id):
-                matched_scene = sid
-                display = ((entry.get("scene") or {}).get("displayName"))
-                break
-
-    if not matched_scene:
-        # Fail-closed WITH diagnostics: say what the listing actually returned so a
-        # live contract drift is identifiable from the error alone (no debug builds).
-        data = _unwrap(scenes_resp)
-        status = scenes_resp.get("status") if isinstance(scenes_resp, dict) else None
-        raise NativeExtendError(
-            EXTEND_SOURCE_NOT_RESOLVABLE,
-            f"clip {media_id} not found in any scene of project {project_id} "
-            f"(listing status={status} keys={sorted(data.keys())[:6]} "
-            f"scenes={len(entries)})")
-
-    return {
-        "project_id": project_id,
-        "scene_id": matched_scene,
-        "source_operation_id": media_id,
-        "scene_display_name": display,
-        "verified": True,
-    }
+    hint = ("NONE — no lineage/artifact scene evidence for this project yet; "
+            "run one captured-path extend or open the project timeline once in Flow")
+    raise NativeExtendError(
+        EXTEND_SOURCE_NOT_RESOLVABLE,
+        f"clip {media_id} not verified in any known scene of project {project_id} "
+        f"(known scenes tried: {tried or hint})")

@@ -16,11 +16,14 @@ def test_five_runtime_capabilities_authorized():
         assert R.require_capability(cap)["authority"] == R.AUTHORIZED
 
 
-def test_final_concat_export_fails_closed():
-    assert R.capability_authority("GOOGLE_FLOW_FINAL_CONCAT_EXPORT") == R.AUTHORITY_MISSING
-    with pytest.raises(R.CapabilityAuthorityMissing) as exc:
-        R.require_capability("GOOGLE_FLOW_FINAL_CONCAT_EXPORT")
-    assert exc.value.error_code == "FINAL_CONCAT_EXPORT_AUTHORITY_MISSING"
+def test_final_concat_export_authorized_by_captured_terminal_contract():
+    # CAPTURE_20260711_100555 rid=9924.2526/2540/2542 closed the loop: submit ->
+    # job name -> ACTIVE -> SUCCESSFUL with the combined MP4 inline (encodedVideo).
+    assert R.capability_authority("GOOGLE_FLOW_FINAL_CONCAT_EXPORT") == R.AUTHORIZED
+    entry = R.require_capability("GOOGLE_FLOW_FINAL_CONCAT_EXPORT")
+    assert "runVideoFxConcatenation" in entry["rpc"]
+    assert "encodedVideo" in entry["rpc"]
+    assert "CAPTURE_20260711_100555" in entry["evidence"]
 
 
 def test_unknown_capability_raises():

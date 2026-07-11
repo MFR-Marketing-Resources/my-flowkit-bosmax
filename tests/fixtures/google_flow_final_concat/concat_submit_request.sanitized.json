@@ -1,0 +1,16 @@
+{
+ "inputVideos": [
+  {
+   "mediaGenerationId": "69051c7b-1a50-4560-89a8-50795e12ff5c",
+   "length": "8000000000",
+   "startTimeOffset": "0.000000000s",
+   "endTimeOffset": "8.000000000s"
+  },
+  {
+   "mediaGenerationId": "164c65b0-5e58-48dd-a019-80a8ed461b4f",
+   "length": "8000000000",
+   "startTimeOffset": "0.000000000s",
+   "endTimeOffset": "8.000000000s"
+  }
+ ]
+}

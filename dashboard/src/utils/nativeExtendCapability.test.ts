@@ -11,7 +11,7 @@ describe('nativeExtendCapability', () => {
     expect(labels).toContain('Independent Block Plan');
     expect(labels).toContain('Native Flow Extend');
     expect(labels).toContain('Download Project ZIP');
-    expect(labels.some((l) => l.startsWith('Final Concatenated Export'))).toBe(true);
+    expect(labels.some((l) => l.startsWith('Final Timeline Render'))).toBe(true);
     expect(new Set(NATIVE_EXTEND_ROUTES.map((r) => r.id)).size).toBe(4);
   });
 
@@ -23,14 +23,17 @@ describe('nativeExtendCapability', () => {
     expect(zip.authority).toBe('AUTHORIZED');
   });
 
-  it('final concatenated export is disabled + authority-missing', () => {
+  it('final timeline render is authorized (captured contract) but execute-gated in copy', () => {
     const concat = NATIVE_EXTEND_ROUTES.find(
       (r) => r.id === 'GOOGLE_FLOW_FINAL_CONCAT_EXPORT',
     )!;
-    expect(concat.authority).toBe('AUTHORITY_MISSING');
-    expect(concat.disabled).toBe(true);
-    expect(isRouteSelectable(concat)).toBe(false);
-    expect(finalConcatExportAvailable()).toBe(false);
+    expect(concat.authority).toBe('AUTHORIZED');
+    expect(concat.disabled).toBe(false);
+    expect(isRouteSelectable(concat)).toBe(true);
+    expect(finalConcatExportAvailable()).toBe(true);
+    // the copy must keep the confirmation gate + never offer the ZIP as substitute
+    expect(concat.description).toMatch(/explicit confirmation/i);
+    expect(concat.description).toMatch(/not a substitute/i);
   });
 
   it('native extend + independent block are both selectable', () => {

@@ -1,0 +1,30 @@
+{
+ "scene": {
+  "sceneId": "cce593f7-8450-4461-9f82-6b207cfc5857",
+  "displayName": "Untitled Scene 07-11 01:53:19",
+  "aspectRatio": "SCENE_ASPECT_RATIO_LANDSCAPE",
+  "sceneMetadata": {}
+ },
+ "sceneWorkflows": [
+  {
+   "workflow": {
+    "name": "366baeff-e7a5-48df-a374-962502adbcf9",
+    "metadata": {
+     "displayName": "Woman holding glass bottle",
+     "primaryMediaId": "69051c7b-1a50-4560-89a8-50795e12ff5c",
+     "batchId": "65268176-069f-4435-905b-6d3ab37f6c3f"
+    },
+    "projectId": "c6c87bdd-7af2-415b-9826-315d53fc8d9b"
+   },
+   "sceneId": "cce593f7-8450-4461-9f82-6b207cfc5857",
+   "sceneWorkflowMetadata": {
+    "totalDuration": "8s",
+    "startTime": "0s",
+    "endTime": "8s",
+    "mediaType": {
+     "type": "VIDEO"
+    }
+   }
+  }
+ ]
+}

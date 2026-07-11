@@ -1188,6 +1188,120 @@ async def native_extend_resolve_source(body: ExtendResolveSourceRequest):
         raise HTTPException(404, str(exc))
 
 
+
+# ─── ONE logical full-video job (Mission C/E/F) ──────────────────────────────
+class VideoJobCreateRequest(BaseModel):
+    """Bind one logical full-duration video job to a verified source clip."""
+    source_media_id: str
+    project_id: str
+    requested_total_duration_seconds: int = 16
+    product_id: Optional[str] = None
+    product_name: Optional[str] = None
+
+
+class VideoJobFinalizeRequest(BaseModel):
+    """Render the ONE final MP4. DRY-RUN default; live needs explicit confirm."""
+    dry_run: bool = True
+    confirm_live_credit_burn: bool = False
+
+
+@router.post("/video-jobs")
+async def create_video_job(body: VideoJobCreateRequest):
+    """Create the logical job: verified source + already-proven Extend children.
+
+    Segments are INTERNAL: the user deliverable is one final full-duration MP4.
+    Fail-closed at every identity step; spends nothing."""
+    import json as _json
+    from agent.services import google_flow_native_extend_runtime as _nx
+    from agent.services import google_flow_final_timeline_runtime as _ft
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    try:
+        ctx = await _nx.resolve_extend_source_context(
+            client, media_id=body.source_media_id, project_id=body.project_id)
+    except _nx.NativeExtendError as exc:
+        raise HTTPException(404, str(exc))
+    # Successful Extend children of this source, in position order (scene-matched).
+    rows = await crud.list_extend_lineage(project_id=body.project_id)
+    children = sorted(
+        [r for r in rows
+         if r.get("parent_operation_id") == body.source_media_id
+         and r.get("polling_state") == "EXTEND_SUCCEEDED"
+         and r.get("child_operation_id")
+         and (not r.get("scene_id") or r.get("scene_id") == ctx["scene_id"])],
+        key=lambda r: (r.get("block_position") or 0))
+    segments = [body.source_media_id] + [r["child_operation_id"] for r in children]
+    needed = max(2, int(body.requested_total_duration_seconds // 8))
+    status = (_ft.JOB_SEGMENTS_READY if len(segments) >= needed
+              else _ft.JOB_BINDING_EXTEND)
+    job_id = f"vj_{uuid4().hex[:12]}"
+    await crud.create_video_production_job(
+        job_id, project_id=body.project_id, scene_id=ctx["scene_id"],
+        requested_duration_seconds=body.requested_total_duration_seconds,
+        status=status, initial_media_id=body.source_media_id,
+        segment_media_ids_json=_json.dumps(segments),
+        product_id=body.product_id, product_name=body.product_name)
+    return {
+        "job_id": job_id, "status": status, "scene_id": ctx["scene_id"],
+        "segments": segments, "segments_needed": needed,
+        "next": ("finalize" if status == _ft.JOB_SEGMENTS_READY
+                 else "run native Extend for the missing continuation block(s)"),
+    }
+
+
+@router.get("/video-jobs")
+async def list_video_jobs(limit: int = 20):
+    return {"jobs": await crud.list_video_production_jobs(limit=limit)}
+
+
+@router.get("/video-jobs/{job_id}")
+async def get_video_job(job_id: str):
+    job = await crud.get_video_production_job(job_id)
+    if not job:
+        raise HTTPException(404, "VIDEO_JOB_NOT_FOUND")
+    return job
+
+
+@router.post("/video-jobs/{job_id}/finalize")
+async def finalize_video_job(job_id: str, body: VideoJobFinalizeRequest):
+    """Final timeline render → ONE full-duration MP4 (captured concat contract).
+
+    DRY-RUN returns the exact planned submit and spends nothing. Live requires
+    the kill-switch AND explicit confirmation; duration is validated fail-closed
+    (a 16s request must never complete with an 8s segment)."""
+    import json as _json
+    from agent.services import google_flow_final_timeline_runtime as _ft
+    from agent.config import OUTPUT_DIR
+    job = await crud.get_video_production_job(job_id)
+    if not job:
+        raise HTTPException(404, "VIDEO_JOB_NOT_FOUND")
+    segments = _json.loads(job.get("segment_media_ids_json") or "[]")
+    client = get_flow_client()
+    if not body.dry_run and not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    try:
+        result = await _ft.finalize_timeline(
+            client, job_id=job_id, segment_media_ids=segments,
+            requested_seconds=int(job.get("requested_duration_seconds") or 16),
+            out_dir=OUTPUT_DIR / "retrieved",
+            dry_run=body.dry_run,
+            confirm_live_credit_burn=body.confirm_live_credit_burn)
+    except _ft.FinalTimelineError as exc:
+        code_409 = {_ft.LIVE_CONFIRMATION_REQUIRED, _ft.FINAL_TIMELINE_DISABLED,
+                    _ft.FINAL_DUPLICATE_SUBMISSION_BLOCKED}
+        raise HTTPException(409 if exc.code in code_409 else 422, str(exc))
+    if not body.dry_run and result.get("status") == _ft.JOB_COMPLETE:
+        # Register the ONE final deliverable in the system library so the existing
+        # /retrieved/{media_id} route serves it (per-block files stay diagnostics).
+        await crud.insert_generated_artifact(
+            result["final_media_id"], job_id=job_id, mode="EXTEND",
+            artifact_kind="video", local_path=result["local_path"],
+            size_mb=result.get("size_mb"), project_id=job.get("project_id"),
+            duration_used=int(result.get("measured_duration_s") or 0))
+    return result
+
+
 @router.post("/check-status")
 async def check_status(body: CheckStatusRequest):
     """Check video generation status."""

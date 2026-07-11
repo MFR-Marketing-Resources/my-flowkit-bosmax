@@ -1831,7 +1831,41 @@ CREATE INDEX IF NOT EXISTS idx_extend_lineage_child ON extend_lineage(child_oper
 CREATE INDEX IF NOT EXISTS idx_extend_lineage_parent ON extend_lineage(parent_operation_id);
 CREATE INDEX IF NOT EXISTS idx_extend_lineage_pkg ON extend_lineage(workspace_generation_package_id, block_index);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_extend_lineage_idem ON extend_lineage(idempotency_key);
+
+-- ONE logical full-video production job (Mission C): the user deliverable is a
+-- single full-duration MP4; segment media are internal diagnostics only.
+CREATE TABLE IF NOT EXISTS video_production_job (
+    job_id                      TEXT PRIMARY KEY,
+    project_id                  TEXT,
+    scene_id                    TEXT,
+    requested_duration_seconds  INTEGER,
+    status                      TEXT NOT NULL DEFAULT 'PREPARING',
+    error_code                  TEXT,
+    initial_media_id            TEXT,
+    segment_media_ids_json      TEXT,
+    extend_lineage_ids_json     TEXT,
+    final_concat_job_name       TEXT,
+    final_media_id              TEXT,
+    final_local_path            TEXT,
+    final_sha256                TEXT,
+    final_duration_s            REAL,
+    product_id                  TEXT,
+    product_name                TEXT,
+    created_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_video_job_project ON video_production_job(project_id);
 """)
+        await db.commit()
+
+        # Migration: generated_artifact.scene_id — durable scene evidence so the
+        # Extend source resolver can verify clips without a (non-existent) scenes
+        # listing endpoint. Nullable; filled by orchestration when a scene is known.
+        cursor = await db.execute("PRAGMA table_info(generated_artifact)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "scene_id" not in columns:
+            await db.execute("ALTER TABLE generated_artifact ADD COLUMN scene_id TEXT")
+            logger.info("Migrated: added scene_id column to generated_artifact")
         await db.commit()
 
         # Copy Set foundation (Copy Strategy Studio Phase 1). Additive table —

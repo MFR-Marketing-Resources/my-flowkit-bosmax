@@ -1,11 +1,10 @@
-"""Extend source auto-resolution — SEV-1 regression for the raw-id operator UX.
+"""Extend source auto-resolution — evidence-based, fail-closed.
 
-A finished clip's library media id IS its operation id (captured contract:
-child op == media[0].name == workflows[0].metadata.primaryMediaId), so
-resolve_extend_source_context only has to locate the clip's scene — verified
-against the project's scene/workflow listings, fail-closed when absent.
-Shapes mirror CAPTURE_20260711_100555 (single-scene envelope, {scenes:[...]}
-list, and the workflowIds-only variant that forces the per-scene second pass).
+The live host has NO scenes-listing GET (the page uses labs.google trpc, outside
+the relay host guard; only the createScene POST exists) — proven by the post-#310
+live 404s and the capture request inventory. Scene candidates therefore come from
+OUR OWN durable records (extend lineage + artifact scene evidence) and each one is
+VERIFIED against the captured GET /v1/flow/scene/{sid}/workflows listing before use.
 """
 import asyncio
 
@@ -13,82 +12,98 @@ import pytest
 
 from agent.services import google_flow_native_extend_runtime as nx
 
-CLIP = "0af072c9-270a-48dc-8811-fe6f4a968e08"
-PROJ = "7347fceb-a208-4fae-9b81-5994e5a8c85a"
+CLIP = "69051c7b-1a50-4560-89a8-50795e12ff5c"
+PROJ = "c6c87bdd-7af2-415b-9826-315d53fc8d9b"
 SCENE = "cce593f7-8450-4461-9f82-6b207cfc5857"
 
 
-def _scene_entry(scene_id=SCENE, media_id=CLIP, display="Scene 1"):
-    return {
-        "scene": {"sceneId": scene_id, "displayName": display},
-        "sceneWorkflows": [{
-            "workflow": {"name": "wf-1", "projectId": PROJ,
-                         "metadata": {"primaryMediaId": media_id, "batchId": "b"}},
-            "sceneId": scene_id,
-        }],
-    }
-
-
 class _Client:
-    def __init__(self, scenes_response, scene_workflows=None):
-        self._scenes = scenes_response
-        self._wf = scene_workflows or {}
-        self.scene_calls: list[str] = []
-
-    async def list_project_scenes(self, project_id):
-        assert project_id == PROJ
-        return self._scenes
+    def __init__(self, workflows_by_scene):
+        self._wf = workflows_by_scene
+        self.calls: list[tuple[str, str]] = []
 
     async def list_scene_workflows(self, scene_id, project_id=""):
-        # live contract: the workflows listing requires the projectId query param
-        assert project_id == PROJ
-        self.scene_calls.append(scene_id)
+        self.calls.append((scene_id, project_id))
         return self._wf.get(scene_id, {"sceneWorkflows": [], "media": []})
 
 
-def test_resolves_from_single_scene_envelope():
-    ctx = asyncio.run(nx.resolve_extend_source_context(
-        _Client(_scene_entry()), media_id=CLIP, project_id=PROJ))
-    assert ctx == {
-        "project_id": PROJ, "scene_id": SCENE, "source_operation_id": CLIP,
-        "scene_display_name": "Scene 1", "verified": True,
+def _wf_listing(media_id=CLIP):
+    # captured shape: {sceneWorkflows:[{workflow{name, metadata{primaryMediaId}}}], media:[{name}]}
+    return {
+        "sceneWorkflows": [{
+            "workflow": {"name": "366baeff-wf",
+                         "metadata": {"primaryMediaId": media_id}},
+            "sceneId": SCENE,
+        }],
+        "media": [{"name": media_id, "projectId": PROJ}],
     }
 
 
-def test_resolves_from_scenes_list_and_data_envelope():
-    resp = {"data": {"scenes": [_scene_entry("other-scene", "other-clip"),
-                                _scene_entry()]}}
-    ctx = asyncio.run(nx.resolve_extend_source_context(
-        _Client(resp), media_id=CLIP, project_id=PROJ))
-    assert ctx["scene_id"] == SCENE
-    assert ctx["source_operation_id"] == CLIP
+def _patch_evidence(monkeypatch, lineage_scenes=(), artifact_scenes=()):
+    async def _lineage(**_kw):
+        return [{"scene_id": sid} for sid in lineage_scenes]
+
+    async def _artifacts(_project_id):
+        return list(artifact_scenes)
+
+    monkeypatch.setattr(nx._crud, "list_extend_lineage", _lineage)
+    monkeypatch.setattr(nx._crud, "list_artifact_scene_ids", _artifacts,
+                        raising=False)
 
 
-def test_second_pass_queries_each_scene_when_listing_is_sparse():
-    # Sparse listing: scene ids only, no inline workflows -> per-scene lookup.
-    sparse = {"scenes": [{"scene": {"sceneId": SCENE, "displayName": "S"},
-                          "sceneWorkflows": []}]}
-    client = _Client(sparse, scene_workflows={
-        SCENE: {"sceneWorkflows": [], "media": [{"name": CLIP, "projectId": PROJ}]},
-    })
+def test_resolves_via_lineage_scene_evidence(monkeypatch):
+    _patch_evidence(monkeypatch, lineage_scenes=[SCENE])
+    client = _Client({SCENE: _wf_listing()})
     ctx = asyncio.run(nx.resolve_extend_source_context(
         client, media_id=CLIP, project_id=PROJ))
     assert ctx["scene_id"] == SCENE
-    assert client.scene_calls == [SCENE]
+    assert ctx["source_operation_id"] == CLIP
+    assert ctx["verified"] is True
+    # the workflows verification call carried the live-required projectId param
+    assert client.calls == [(SCENE, PROJ)]
 
 
-def test_fails_closed_when_clip_is_not_in_the_project():
-    client = _Client(_scene_entry(media_id="someone-elses-clip"))
+def test_resolves_via_artifact_scene_evidence(monkeypatch):
+    _patch_evidence(monkeypatch, lineage_scenes=[], artifact_scenes=[SCENE])
+    client = _Client({SCENE: _wf_listing()})
+    ctx = asyncio.run(nx.resolve_extend_source_context(
+        client, media_id=CLIP, project_id=PROJ))
+    assert ctx["scene_id"] == SCENE
+
+
+def test_skips_non_matching_scene_then_matches(monkeypatch):
+    other = "other-scene"
+    _patch_evidence(monkeypatch, lineage_scenes=[other, SCENE])
+    client = _Client({other: _wf_listing("different-clip"), SCENE: _wf_listing()})
+    ctx = asyncio.run(nx.resolve_extend_source_context(
+        client, media_id=CLIP, project_id=PROJ))
+    assert ctx["scene_id"] == SCENE
+    assert [c[0] for c in client.calls] == [other, SCENE]
+
+
+def test_fails_closed_when_no_scene_evidence_exists(monkeypatch):
+    _patch_evidence(monkeypatch)
+    client = _Client({})
     with pytest.raises(nx.NativeExtendError) as exc:
         asyncio.run(nx.resolve_extend_source_context(
             client, media_id=CLIP, project_id=PROJ))
     assert exc.value.code == nx.EXTEND_SOURCE_NOT_RESOLVABLE
+    assert "no lineage/artifact scene evidence" in str(exc.value)
 
 
-def test_fails_closed_on_missing_identifiers():
-    with pytest.raises(nx.NativeExtendError):
+def test_fails_closed_when_clip_not_in_any_known_scene(monkeypatch):
+    _patch_evidence(monkeypatch, lineage_scenes=[SCENE])
+    client = _Client({SCENE: _wf_listing("someone-elses-clip")})
+    with pytest.raises(nx.NativeExtendError) as exc:
         asyncio.run(nx.resolve_extend_source_context(
-            _Client({}), media_id="", project_id=PROJ))
-    with pytest.raises(nx.NativeExtendError):
-        asyncio.run(nx.resolve_extend_source_context(
-            _Client({}), media_id=CLIP, project_id=""))
+            client, media_id=CLIP, project_id=PROJ))
+    assert exc.value.code == nx.EXTEND_SOURCE_NOT_RESOLVABLE
+    assert "no-match" in str(exc.value)
+
+
+def test_fails_closed_on_missing_identifiers(monkeypatch):
+    _patch_evidence(monkeypatch)
+    for mid, pid in (("", PROJ), (CLIP, "")):
+        with pytest.raises(nx.NativeExtendError):
+            asyncio.run(nx.resolve_extend_source_context(
+                _Client({}), media_id=mid, project_id=pid))

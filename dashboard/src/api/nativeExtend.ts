@@ -156,3 +156,46 @@ export async function resolveNativeExtendSource(input: {
 }): Promise<ExtendResolvedSource> {
   return postAPI('/api/flow/native-extend/resolve-source', input);
 }
+
+
+// ─── ONE logical full-video job (final timeline render) ─────────────────────
+export interface VideoJob {
+  job_id: string;
+  status: string;
+  scene_id?: string | null;
+  segments?: string[];
+  segments_needed?: number;
+  requested_duration_seconds?: number | null;
+  final_media_id?: string | null;
+  final_local_path?: string | null;
+  final_duration_s?: number | null;
+  next?: string;
+}
+
+export interface FinalizeResult {
+  dry_run: boolean;
+  status: string;
+  job_id: string;
+  planned_render_operation_count?: number;
+  final_media_id?: string;
+  measured_duration_s?: number;
+  size_mb?: number;
+  sha256?: string;
+}
+
+export async function createVideoJob(input: {
+  source_media_id: string;
+  project_id: string;
+  requested_total_duration_seconds: number;
+  product_id?: string | null;
+  product_name?: string | null;
+}): Promise<VideoJob> {
+  return postAPI('/api/flow/video-jobs', input);
+}
+
+export async function finalizeVideoJob(
+  jobId: string,
+  input: { dry_run: boolean; confirm_live_credit_burn?: boolean },
+): Promise<FinalizeResult> {
+  return postAPI(`/api/flow/video-jobs/${encodeURIComponent(jobId)}/finalize`, input);
+}

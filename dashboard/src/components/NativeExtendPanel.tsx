@@ -22,11 +22,14 @@ import {
   resolveNativeExtendSource,
   requestNativeExtendLiveAuthorization,
   runNativeExtend,
+  createVideoJob,
+  finalizeVideoJob,
   type NativeExtendResolution,
   type ExtendRunResult,
   type ExtendLineageRow,
   type ExtendBlockInput,
   type ExtendSourceCandidate,
+  type FinalizeResult,
 } from '../api/nativeExtend';
 
 export interface NativeExtendPanelProps {
@@ -64,8 +67,57 @@ export default function NativeExtendPanel({
   const [selectedSource, setSelectedSource] = useState('');
   const [sourceNote, setSourceNote] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  // ONE logical full-video job: the user deliverable is a single full-duration MP4.
+  const [finalJobId, setFinalJobId] = useState<string | null>(null);
+  const [finalPlan, setFinalPlan] = useState<FinalizeResult | null>(null);
+  const [finalResult, setFinalResult] = useState<FinalizeResult | null>(null);
+  const [finalBusy, setFinalBusy] = useState(false);
+  const [finalConfirm, setFinalConfirm] = useState(false);
+  const [finalError, setFinalError] = useState<string | null>(null);
 
   const plannedBlockCount = plannedBlocks.length;
+  const requestedSeconds = totalDurationSeconds ?? (plannedBlockCount + 1) * 8;
+  const extendSucceeded = lineage.some(
+    (row) => row.polling_state === 'EXTEND_SUCCEEDED' && row.child_operation_id,
+  );
+
+  const prepareFinal = async () => {
+    if (!projectId || !sourceOperationId) return;
+    setFinalBusy(true);
+    setFinalError(null);
+    try {
+      const job = await createVideoJob({
+        source_media_id: sourceOperationId,
+        project_id: projectId,
+        requested_total_duration_seconds: requestedSeconds,
+      });
+      setFinalJobId(job.job_id);
+      const plan = await finalizeVideoJob(job.job_id, { dry_run: true });
+      setFinalPlan(plan);
+    } catch (e) {
+      setFinalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFinalBusy(false);
+    }
+  };
+
+  const renderFinal = async () => {
+    if (!finalJobId) return;
+    setFinalBusy(true);
+    setFinalError(null);
+    try {
+      const result = await finalizeVideoJob(finalJobId, {
+        dry_run: false,
+        confirm_live_credit_burn: true,
+      });
+      setFinalResult(result);
+      setFinalConfirm(false);
+    } catch (e) {
+      setFinalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFinalBusy(false);
+    }
+  };
 
   const applyCandidate = async (candidate: ExtendSourceCandidate) => {
     setSelectedSource(candidate.media_id);
@@ -363,9 +415,9 @@ export default function NativeExtendPanel({
             Extend operations: {resolution.planned_operation_count}
           </div>
           <div data-testid="final-concat-state" className="text-slate-400">
-            Final concatenated 16s export:{' '}
+            Final timeline render:{' '}
             {finalConcatExportAvailable()
-              ? 'available'
+              ? 'READY (execute-gated) — renders ONE full-duration MP4'
               : 'UNAVAILABLE — fails closed (the Download Project ZIP is NOT a substitute)'}
           </div>
           {resolution.blockers.length > 0 &&
@@ -471,10 +523,94 @@ export default function NativeExtendPanel({
         </div>
       )}
 
+      {/* ONE final video — the user deliverable (segments are diagnostics) */}
+      {extendSucceeded && !finalResult && (
+        <div data-testid="final-video-section" className="mt-3 rounded border border-emerald-500/30 bg-emerald-500/5 p-2 text-xs">
+          <div className="font-medium text-emerald-200">
+            Final video — render the {requestedSeconds}s timeline into ONE MP4
+          </div>
+          {!finalPlan ? (
+            <button
+              type="button"
+              data-testid="final-prepare-btn"
+              className="mt-2 rounded bg-emerald-700 px-3 py-1.5 font-medium text-white disabled:opacity-40"
+              disabled={finalBusy}
+              onClick={prepareFinal}
+            >
+              Prepare final video (dry-run · no credits)
+            </button>
+          ) : (
+            <div className="mt-2 grid gap-1">
+              <div data-testid="final-plan">
+                Planned: {finalPlan.planned_render_operation_count ?? 1} final render
+                operation → one {requestedSeconds}s MP4
+              </div>
+              {!finalConfirm ? (
+                <button
+                  type="button"
+                  data-testid="final-render-btn"
+                  className="rounded bg-emerald-600 px-3 py-1.5 font-medium text-white disabled:opacity-40"
+                  disabled={finalBusy}
+                  onClick={() => setFinalConfirm(true)}
+                >
+                  Render final video
+                </button>
+              ) : (
+                <div data-testid="final-render-confirm" className="rounded border border-rose-500/50 bg-rose-500/10 p-2 text-rose-100">
+                  <p>Confirm final render: exactly 1 render operation for the reviewed
+                  {' '}{requestedSeconds}s timeline.</p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      data-testid="final-render-confirm-btn"
+                      className="rounded bg-rose-600 px-3 py-1.5 font-medium text-white disabled:opacity-40"
+                      disabled={finalBusy}
+                      onClick={renderFinal}
+                    >
+                      Confirm &amp; render
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border border-slate-500 px-3 py-1.5"
+                      disabled={finalBusy}
+                      onClick={() => setFinalConfirm(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {finalError && (
+            <div data-testid="final-error" className="mt-1 text-rose-300">{finalError}</div>
+          )}
+        </div>
+      )}
+
+      {finalResult && (
+        <div data-testid="final-video-result" className="mt-3 rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
+          <div className="font-semibold text-emerald-200">Video ready</div>
+          <div className="mt-1 text-xs text-slate-300">
+            One final video · {finalResult.measured_duration_s?.toFixed?.(1) ?? finalResult.measured_duration_s}s
+            {finalResult.size_mb ? ` · ${finalResult.size_mb} MB` : ''}
+          </div>
+          {finalResult.final_media_id && (
+            <a
+              data-testid="final-download"
+              className="mt-2 inline-block rounded bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white"
+              href={`/api/flow/retrieved/${finalResult.final_media_id}`}
+            >
+              Download final video
+            </a>
+          )}
+        </div>
+      )}
+
       {/* Lineage + polling status */}
       {lineage.length > 0 && (
         <div data-testid="native-extend-lineage" className="mt-3 grid gap-1 text-xs">
-          <div className="font-medium text-slate-300">Lineage &amp; polling status</div>
+          <div className="font-medium text-slate-300">Segment lineage (diagnostics — the deliverable is the ONE final video)</div>
           {lineage.map((row) => (
             <div key={row.extend_lineage_id} data-testid={`lineage-${row.block_index}`}>
               Block {row.block_index}: {row.parent_operation_id ?? '—'} →{' '}
