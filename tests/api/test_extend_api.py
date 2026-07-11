@@ -236,3 +236,65 @@ async def test_video_job_create_binds_source_and_reports_missing_segments(monkey
             out["job_id"], flow.VideoJobFinalizeRequest(dry_run=False))
     assert exc.value.status_code == 409
     assert "LIVE_CREDIT_CONFIRMATION_REQUIRED" in str(exc.value.detail)
+
+
+# ── durable full-video job API (plan / authorize / status) — zero credit ────
+async def test_video_job_plan_creates_before_initial_and_is_reusable():
+    body = flow.VideoJobPlanRequest(
+        product_id="p1", product_name="MWTCB", execution_package_id="wep_x",
+        approved_asset_sha256="hashZ", requested_total_duration_seconds=16,
+        client_request_nonce="apinonce")
+    planned = await flow.plan_video_job(body)
+    assert planned["job_id"].startswith("vj_")
+    assert planned["status"] == "CREATED"
+    assert planned["plan"]["operation_counts"]["total"] == 3
+    # job persisted BEFORE any operation
+    job = await flow.crud.get_video_production_job(planned["job_id"])
+    assert job["initial_operation_id"] is None
+    # same intent reuses the one logical job
+    again = await flow.plan_video_job(body)
+    assert again["job_id"] == planned["job_id"] and again["reused"] is True
+
+
+async def test_video_job_authorize_rejects_changed_plan():
+    body = flow.VideoJobPlanRequest(product_id="p2", requested_total_duration_seconds=16,
+                                    client_request_nonce="apiauth")
+    planned = await flow.plan_video_job(body)
+    ok = await flow.authorize_video_job(
+        planned["job_id"],
+        flow.VideoJobAuthorizeRequest(confirmed_plan_fingerprint=planned["plan_fingerprint"]))
+    assert ok["authorization_token"].startswith("auth_")
+    with pytest.raises(HTTPException) as exc:
+        await flow.authorize_video_job(
+            planned["job_id"],
+            flow.VideoJobAuthorizeRequest(confirmed_plan_fingerprint="nope"))
+    assert exc.value.status_code == 409
+
+
+async def test_video_job_start_requires_authorization():
+    body = flow.VideoJobPlanRequest(product_id="p3", requested_total_duration_seconds=16,
+                                    client_request_nonce="apistart")
+    planned = await flow.plan_video_job(body)
+
+    class _BG:
+        def add_task(self, *a, **k):
+            raise AssertionError("must not enqueue an unauthorized job")
+
+    with pytest.raises(HTTPException) as exc:
+        await flow.start_video_job(planned["job_id"], _BG())
+    assert exc.value.status_code == 409
+    assert "NOT_AUTHORIZED" in str(exc.value.detail)
+
+
+async def test_video_job_status_projection_is_human_and_refresh_safe():
+    body = flow.VideoJobPlanRequest(product_id="p4", product_name="MWTCB",
+                                    requested_total_duration_seconds=24,
+                                    client_request_nonce="apistatus")
+    planned = await flow.plan_video_job(body)
+    st = await flow.video_job_status(planned["job_id"])
+    assert st["human_stage"] == "Preparing video"
+    assert st["complete"] is False
+    assert st["plan"]["operation_counts"]["extend"] == 2  # 24s -> 3 segments -> 2 extends
+    with pytest.raises(HTTPException) as exc:
+        await flow.video_job_status("vj_missing")
+    assert exc.value.status_code == 404
