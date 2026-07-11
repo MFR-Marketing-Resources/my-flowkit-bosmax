@@ -2329,6 +2329,36 @@ async def set_artifact_scene(media_id: str, scene_id: str) -> None:
         await db.commit()
 
 
+async def list_known_media_ids() -> set:
+    """Every Flow media id BOSMAX has EVER produced, retrieved, or lineaged.
+
+    This is the DURABLE retrieval-exclusion set (SEV-0 fix, live incident
+    g_09ced57d5d4b): a freshly generated clip mints a brand-new Flow id, so it can
+    NEVER be in here — while any clip we already know (old test videos, previous
+    runs, extend parents/children) always is. DOM snapshots under-report in a
+    history-laden project (the editor lists more OLD media after each tab reload
+    than the pre-poll snapshot saw), so DOM-diff alone must never be the only
+    freshness authority. Per-source fail-soft: one missing table never empties
+    the whole set.
+    """
+    db = await get_db()
+    ids: set = set()
+    for query in (
+        "SELECT media_id FROM generated_artifact WHERE media_id IS NOT NULL",
+        "SELECT media_id FROM generation_result WHERE media_id IS NOT NULL",
+        "SELECT parent_operation_id FROM extend_lineage WHERE parent_operation_id IS NOT NULL",
+        "SELECT child_operation_id FROM extend_lineage WHERE child_operation_id IS NOT NULL",
+        "SELECT parent_primary_media_id FROM extend_lineage WHERE parent_primary_media_id IS NOT NULL",
+        "SELECT child_primary_media_id FROM extend_lineage WHERE child_primary_media_id IS NOT NULL",
+    ):
+        try:
+            cur = await db.execute(query)
+            ids |= {row[0] for row in await cur.fetchall() if row[0]}
+        except Exception:  # noqa: BLE001 — a missing legacy table must not empty the set
+            continue
+    return ids
+
+
 async def list_extend_source_candidates(limit: int = 8) -> list[dict]:
     """Finished VIDEO clips usable as native-Extend parents, newest first.
 

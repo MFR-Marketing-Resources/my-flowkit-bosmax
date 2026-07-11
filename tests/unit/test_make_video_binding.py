@@ -302,14 +302,14 @@ def _gen(job_id, nres):
 
 def test_duration_mismatch_hard_fails():  # DUR-3
     job = _gen("jd", {"approved": True, "model_ok": True, "duration_ok": False,
-                      "model_used": "veo_3_1_lite", "duration_used": 4})
+                      "model_used": "veo_3_1_r2v_lite", "duration_used": 4})
     assert job["status"] == "FAILED"
     assert "FAILED_WRONG_DURATION" in job["error"]
 
 
 def test_duration_match_completes():  # DUR-2
     job = _gen("jm", {"approved": True, "model_ok": True, "duration_ok": True,
-                      "model_used": "veo_3_1_lite", "duration_used": 8})
+                      "model_used": "veo_3_1_r2v_lite", "duration_used": 8})
     assert job["status"] == "DONE"
     assert job.get("duration_used") == 8
     assert job.get("model_ok") is True and job.get("duration_ok") is True   # fully exposed
@@ -318,7 +318,7 @@ def test_duration_match_completes():  # DUR-2
 
 def test_duration_absent_marks_unverified_not_fail():  # DUR-4
     job = _gen("ju", {"approved": True, "model_ok": True, "duration_ok": None,
-                      "model_used": "veo_3_1_lite", "duration_used": None})
+                      "model_used": "veo_3_1_r2v_lite", "duration_used": None})
     assert job["status"] == "DONE"               # absent duration is NOT a hard fail
     assert job.get("duration_unverified") is True
     assert "model_unverified" not in job         # model WAS verified, only duration absent
@@ -393,7 +393,7 @@ def test_generate_marks_generated_but_unretrieved_on_editor_tab_lost_after_appro
     # approved + reached GENERATING, then harvest reports the bound tab is gone → the video was
     # likely generated (credits likely spent) but unretrieved. Must NOT be a plain FAILED.
     nres = {"approved": True, "model_ok": True, "duration_ok": True,
-            "model_used": "veo_3_1_lite", "duration_used": 8}
+            "model_used": "veo_3_1_r2v_lite", "duration_used": 8}
     job = _gen2("jg", nres, {"result": {"error": "BOUND_TAB_GONE"}})
     assert job["status"] == "GENERATED_BUT_UNRETRIEVED"
     assert job.get("media_id") is None
@@ -419,7 +419,7 @@ def test_generate_keeps_failed_for_preapproval_error():
 def test_generate_done_when_video_retrieved():
     # Successful harvest + saved mp4 → DONE preserved with real media_id / local_path.
     nres = {"approved": True, "model_ok": True, "duration_ok": True,
-            "model_used": "veo_3_1_lite", "duration_used": 8}
+            "model_used": "veo_3_1_r2v_lite", "duration_used": 8}
     harvest = {"result": {"flow_tab_found": True, "flow_tab_id": 1,
                           "diag": {"projectId": "p1", "videoIds": ["vid-1"]}}}
     job = _gen2("jd2", nres, harvest, save_result=("vid-1", "/out/vid-1.mp4", 1.0))
@@ -461,7 +461,7 @@ def test_retrieval_reloads_stale_tab_and_never_claims_preexisting_video():
 
     async def fake_negotiate(*a, **k):
         return {"approved": True, "model_ok": True, "duration_ok": True,
-                "model_used": "veo_3_1_lite", "duration_used": 8}
+                "model_used": "veo_3_1_r2v_lite", "duration_used": 8}
 
     async def fake_save(client, cands, exclude):
         usable = [m for m in cands if m not in exclude]
@@ -520,7 +520,7 @@ def test_retrieval_probe_fails_fast_on_reference_image_missing():
 
     async def fake_negotiate(*a, **k):
         return {"approved": True, "model_ok": True, "duration_ok": True,
-                "model_used": "veo_3_1_lite", "duration_used": 8, "turns_used": 4}
+                "model_used": "veo_3_1_r2v_lite", "duration_used": 8, "turns_used": 4}
 
     async def fake_save(client, cands, exclude):
         return (None, None, None)
@@ -586,7 +586,7 @@ def test_retrieval_collects_user_count_videos():
     async def fake_negotiate(*a, **k):
         assert k.get("desired_num") == 2, "user count must reach the negotiation"
         return {"approved": True, "model_ok": True, "duration_ok": True,
-                "model_used": "veo_3_1_lite", "duration_used": 8}
+                "model_used": "veo_3_1_r2v_lite", "duration_used": 8}
 
     async def fake_save(client, cands, exclude):
         usable = [m for m in cands if m not in exclude]

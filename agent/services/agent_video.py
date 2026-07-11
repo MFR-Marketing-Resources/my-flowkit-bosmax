@@ -193,7 +193,8 @@ def parse_agent_sse(text) -> dict:
             "duration_used": duration_used}
 
 
-def decide(permission, target_model=None, target_duration_s=None, desired_num=1):
+def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
+           has_reference=False):
     """Steer the agent to the USER-SELECTED model+duration and approve under a CAP-GATE
     (Layer A): num_videos==1, num_images==0, and cost <= ceiling(model, duration).
 
@@ -202,6 +203,12 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1)
     (a promo cheaper price still passes), refuses multi-video / images, and NEVER puts a credit
     target in the steer text (that makes the agent inflate the video count to hit the number).
     The actual model AND duration are verified POST-approve (the proposal carries neither).
+
+    STEER WORDING LAW (SEV-0/live incident): a correction must NEVER say "no images" —
+    the agent reads that as "drop the attached reference image" and rewrites the run as a
+    text-only generation with the wrong product. When a reference is attached, every steer
+    explicitly PRESERVES it; the image-output ban is phrased as "no separate image
+    generations", which the agent does not confuse with the reference.
     """
     spec = video_models.resolve(target_model)
     dur = target_duration_s if target_duration_s is not None else spec["default_duration_s"]
@@ -209,8 +216,9 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1)
     # count=2 means a 2-video proposal is the CORRECT one and costs ~2× the unit cap.
     ceiling = video_models.expected_cost(spec["key"], dur) * max(1, int(desired_num or 1))
     video_word = "video" if desired_num == 1 else "videos"
+    keep_ref = (" using the attached reference image" if has_reference else "")
     steer = (f"{spec['agent_label']}, {dur} second {video_word}, "
-             f"{desired_num} {video_word} only, no images")
+             f"{desired_num} {video_word} only{keep_ref}, no separate image generations")
     if not permission:
         return ("wait", steer, None)
     nv = permission.get("num_videos")
@@ -219,11 +227,11 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1)
     ni = permission.get("num_images")
     cost = permission.get("total_cost")
     if not nv:  # None or 0 — image-only / unclear
-        return ("reject", f"no images. {steer}", DENIED)
+        return ("reject", f"do not generate images — generate the {video_word}{keep_ref}. {steer}", DENIED)
     if nv != desired_num:  # reject any count that differs from the USER's setting
         return ("reject", f"i want exactly {desired_num} {video_word}, not {nv}. {steer}", DENIED)
     if ni:  # a real video proposal must not also generate images
-        return ("reject", f"no images. {steer}", DENIED)
+        return ("reject", f"do not generate images — generate the {video_word}{keep_ref}. {steer}", DENIED)
     if cost is not None and cost > ceiling:  # CAP, not exact — promos may be cheaper
         return ("reject",
                 f"too expensive for {desired_num} {video_word} — "
@@ -284,7 +292,8 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
                     "agent_text": state["text"], "transcript": transcript}
 
         kind, msg, perm_action = decide(state["permission"], target_model,
-                                        target_duration_s, desired_num)
+                                        target_duration_s, desired_num,
+                                        has_reference=bool(media_ids))
         if kind == "approve":
             if not approve:
                 return {"ok": True, "dry": True, "would_approve": state["permission"],
