@@ -308,6 +308,35 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     return {"job_id": job_id, "status": "SUBMITTED", "mode": mode}
 
 
+def _reference_run_dropped_reference(refs, model_used):
+    """True when a REFERENCE run verifiably fired a TEXT-ONLY generation tool.
+
+    Captured contract (live g_09ced57d5d4b): an attached start image fires the
+    r2v variant (model_used veo_3_1_r2v_lite); a text-only run fires the plain
+    veo_3_1_* key. Only the veo_3_1 family is captured — other engines return
+    None (unverified, flagged upstream) rather than guessed. No refs → None.
+    """
+    if not refs or not isinstance(model_used, str) or not model_used:
+        return None
+    mu = model_used.lower()
+    if not mu.startswith("veo_3_1"):
+        return None  # contract not captured for this engine — never guess
+    return "r2v" not in mu
+
+
+async def _durable_media_exclusion() -> set:
+    """Every media id BOSMAX has ever recorded (artifacts / results / extend lineage).
+
+    A freshly generated clip can never be in this set, so it is the DOM-independent
+    freshness authority for retrieval (SEV-0 fix). Fail-soft: a DB error returns an
+    empty set — the DOM snapshot + stale/ref excludes still apply."""
+    from agent.db import crud
+    try:
+        return await crud.list_known_media_ids()
+    except Exception:  # noqa: BLE001
+        return set()
+
+
 async def _save_video_by_get_media(client, candidates, exclude) -> tuple:
     """Return (media_id, mp4_path, size_mb) for the first candidate whose get_media
     yields a real video (encodedVideo), excluding stale/reference ids. Else (None,..)."""
@@ -438,6 +467,15 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         if nres.get("duration_ok") is False:
             raise RuntimeError(
                 f"FAILED_WRONG_DURATION: expected {duration_s or 'default'}s, got {nres.get('duration_used')}s")
+        # SEV-0 Mission 11: a reference run must fire a REFERENCE generation tool.
+        # The proposal carries no tool/model (fixture-proven), so this is the earliest
+        # honest boundary — fail LOUD instead of reporting a text-only fallback (image
+        # silently dropped) as a successful reference generation.
+        if _reference_run_dropped_reference(refs, nres.get("model_used")) is True:
+            raise RuntimeError(
+                "INITIAL_T2V_FALLBACK_REJECTED: references were attached but the agent "
+                f"fired a text-only generation tool ({nres.get('model_used')}) — the "
+                "product image was dropped; do not treat this output as reference-anchored")
         # Evidence ABSENT from the approved SSE (e.g. an unrecognized generation tool) → unknown,
         # NOT a hard fail, but FLAGGED so it is never reported as verified. A None model_used means
         # the fired tool was unrecognized, in which case duration is absent too (both flags set).
@@ -474,7 +512,15 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         except Exception:  # noqa: BLE001 — snapshot is best-effort; stale/ref excludes still apply
             pass
         job["preexisting_media_excluded"] = len(preexisting)
-        exclude = set(_STALE_VIDEO_IDS) | set(refs) | preexisting
+        # SEV-0 durable exclusion (live incident g_09ced57d5d4b): the DOM snapshot
+        # above under-reports in a history-laden project — it saw only 2 ids, then
+        # the periodic tab reload surfaced OLD clip 0af072c9 (known to our own DB
+        # for hours) which was accepted and reported as this run's output. A fresh
+        # clip mints a brand-new Flow id, so it can NEVER be in our DB — every
+        # DB-known media id is excluded unconditionally, independent of DOM state.
+        known = await _durable_media_exclusion()
+        job["db_known_media_excluded"] = len(known)
+        exclude = set(_STALE_VIDEO_IDS) | set(refs) | preexisting | known
         collected = []  # user's count setting: retrieval collects num_videos artifacts
         await asyncio.sleep(120)
         for i in range(36):

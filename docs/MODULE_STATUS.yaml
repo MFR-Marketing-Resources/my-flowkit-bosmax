@@ -230,6 +230,8 @@ domains:
       - agent/services/make_video.py
       - tests/unit/test_agent_video.py
       - tests/unit/test_manual_lane_reroute.py
+      - tests/unit/test_make_video_binding.py
+      - tests/unit/test_retrieval_freshness_exclusion.py
       - agent/services/batch_planner.py
       - agent/models/product_registration.py
       - agent/services/product_knowledge_service.py
