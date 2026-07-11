@@ -1,15 +1,36 @@
-# Failure recovery and idempotency audit
+# Failure recovery and idempotency (repair v1.1)
 
-See `evidence/failure_recovery_matrix.csv`.
+**Evidence:** `evidence/failure_recovery_matrix.csv`
 
-## Highlights
+## Inherited runtime claims
+
+| Claim | Authority | Re-run this audit? |
+|-------|-----------|-------------------|
+| ADR-007 job completion + artifact insert | CURRENT_STATE, ADR-007 | **NO** — `NOT_REEXECUTED_IN_THIS_AUDIT` |
+| Extension WS telemetry | RUNTIME_TELEMETRY_LOCKDOWN | **NO** |
+
+## Scenario coverage (summary)
 
 | Scenario | Classification |
 |----------|----------------|
-| VIDEO_JOB_IN_FLIGHT retry | VERIFIED_TEST |
-| Production pause/cancel mid-run | PROCESS_MEMORY_ONLY |
-| Agent restart during production_run RUNNING | NOT_VERIFIED |
-| `recover_stuck_bulk_runs` on lifespan | VERIFIED_CODE (bulk only) |
-| Duplicate credit spend protection | PARTIAL — serial video + dry_run gate; not formal idempotency keys |
+| Local agent restart | bulk `recover_stuck_bulk_runs` partial; production **manual** |
+| Backend restart | in-memory `_run_control` lost — **PROCESS_MEMORY_ONLY** |
+| Extension disconnect | jobs may stall; poll timeout paths — **VERIFIED_CODE** partial |
+| VIDEO_JOB_IN_FLIGHT | retry loop — **VERIFIED_TEST_IN_THIS_AUDIT** |
+| Duplicate submission | **NOT_VERIFIED** — no idempotency key |
+| Lost response after provider accept | **NOT_VERIFIED** |
+| Artifact DB fail after download | logged; re-harvest possible — **VERIFIED_CODE** |
+| QA reject → replacement | **MISSING** unified replacement item |
+| Pause / resume / cancel | signals only — restart **NOT_VERIFIED** |
+| Provider rate limit | **BLOCKED_BY_EXTERNAL_RUNTIME** |
 
-Item-level failure in batch: production loop marks FAILED and continues — **VERIFIED_CODE**.
+## Target behaviours (PROPOSED)
+
+- Durable `generation_attempt` with idempotency key per item+attempt index
+- Lane lease with TTL and fencing token
+- Transactional artifact register (media_id + WGP FK)
+
+## Acceptance proof required later
+
+Integration: kill process mid-run → resume without double credit spend.
+Live: authorized smoke only.

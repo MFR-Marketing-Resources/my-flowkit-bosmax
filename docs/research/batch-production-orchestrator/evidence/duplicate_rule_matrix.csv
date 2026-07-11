@@ -1,5 +1,8 @@
-rule,implemented,scope,classification
-exact_fingerprint_legacy,Y,batch local,VERIFIED_CODE
-dialogue_similarity_soft,Y,planner 0.9,VERIFIED_TEST
-cross_batch_history,partial,planner,NOT_VERIFIED
-max_capacity_preflight,N,global,MISSING
+rule_type,implemented,mechanism,classification,notes
+exact_prompt_duplicate,partial,batch planner sha1,hard in batch,VERIFIED_TEST_IN_THIS_AUDIT,not global
+exact_dialogue_duplicate,partial,planner,soft/hard mix,VERIFIED_TEST_IN_THIS_AUDIT,
+semantic_dialogue_similarity,partial,0.90 ceiling,soft warn,VERIFIED_CODE,
+cross_batch_duplicate,partial,product history inputs,NOT_VERIFIED,
+intentional_controlled_reuse,Y,variation strategies SAME_SCRIPT_*,VERIFIED_CODE,policy DECISION_REQUIRED
+generated_output_visual_similarity,N,none,NOT_VERIFIED,provider
+max_capacity_preflight,N,none,MISSING,see 13_UNIQUE_CAPACITY

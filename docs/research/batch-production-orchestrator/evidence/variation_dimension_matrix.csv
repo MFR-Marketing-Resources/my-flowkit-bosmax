@@ -1,5 +1,9 @@
-dimension,exists,stable_id,fingerprint,video,poster,classification
-product,Y,product_id,partial,Y,Y,VERIFIED_CODE
-avatar_code,Y,avatar_code,sha1,Y,N,VERIFIED_CODE
-copy_set,Y,copy_set_id,partial,Y,Y,VERIFIED_CODE
-poster_layout,Y,draft,N,N,Y,VERIFIED_TEST
+dimension,exists,stable_id,in_fingerprint,in_lineage,operator_select,auto_rotate,video,poster,classification
+product,Y,product_id,partial,Y,operator,Y,Y,VERIFIED_CODE
+avatar_code,Y,avatar_code,sha1,Y,auto,Y,N,VERIFIED_CODE
+scene_asset,Y,asset_id,sha1,Y,auto,Y,N,VERIFIED_CODE
+hook_angle,Y,free text,sha1,Y,auto,Y,partial,VERIFIED_CODE
+copy_set,Y,copy_set_id,partial,Y,operator,partial,Y,VERIFIED_CODE
+dialogue_plan,Y,WGP json,sha1 dialogue,Y,compiler,Y,N,VERIFIED_CODE
+poster_layout,Y,draft,N,N,operator,N,Y,VERIFIED_TEST_IN_THIS_AUDIT
+creative_DNA,N,N/A,N/A,N/A,N/A,N/A,N/A,PROPOSED

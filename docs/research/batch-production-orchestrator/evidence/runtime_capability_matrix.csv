@@ -1,4 +1,10 @@
-capability,code_value,unit_test,live_proof,classification
-VERIFIED_SAFE_VIDEO_CONCURRENCY,1,Y,N,1_SAFE_DEFAULT
-VERIFIED_SAFE_IMAGE_CONCURRENCY,2-3 workers,Y,N,NOT_VERIFIED
-VERIFIED_SAFE_COMBINED_CONCURRENCY,unknown,N,N,NOT_VERIFIED
+capability,code_evidence,unit_test_in_this_audit,reexecuted_runtime_in_this_audit,primary_authority_source,classification,value
+ADR-007 generation door,make_video.start_generate,partial,NO,CURRENT_STATE.md PR#160-167,VERIFIED_RUNTIME_BY_PRIMARY_AUTHORITY,inherited
+video_single_flight,_VIDEO_LANE_JOB,YES production_queue mock,NO,make_video.py,VERIFIED_CODE,1_SAFE_DEFAULT
+production_serial_dequeue,limit=1 QUEUED,YES,NO,production_queue_service.py,VERIFIED_CODE,1
+bulk_img_parallel,_clamp_parallel_images 1-3,YES,NO,bulk_generation_service.py,VERIFIED_CODE,2-3 code only
+bulk_video_parallel,_clamp_parallel_videos,YES,NO,bulk_generation_service.py,VERIFIED_CODE,1
+VERIFIED_SAFE_VIDEO_CONCURRENCY,composite above,YES,NO,this audit,VERIFIED_CODE,1_SAFE_DEFAULT
+VERIFIED_SAFE_IMAGE_CONCURRENCY,semaphore workers,partial,NO,none live,NOT_VERIFIED,NOT_VERIFIED
+VERIFIED_SAFE_COMBINED_CONCURRENCY,IMG exempt video lock,NO,NO,none,NOT_VERIFIED,NOT_VERIFIED
+200 videos/day single lane,throughput model,NO,NO,none,NOT_VERIFIED,see doc 09

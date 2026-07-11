@@ -1,4 +1,7 @@
-# Batch Creative Production Orchestrator — Secondary Research Evidence (v1)
+# Batch Creative Production Orchestrator — Secondary Research Evidence (v1.1 repair)
+
+**Report version:** 1.1.0-repair  
+**CI_STATUS:** `NO_WORKFLOW_RUN_FOUND` for PR #305 (see manifest)
 
 **Classification:** Secondary research only. **Not** implementation authority.
 
@@ -39,8 +42,9 @@ Use these reports only to prepare a **future** implementation contract after ind
 | `10_TARGET_ARCHITECTURE_PROPOSAL.md` | **PROPOSED** target (not approved) |
 | `11_GAP_RISK_AND_DECISION_REGISTER.md` | Gaps, risks, decisions |
 | `12_IMPLEMENTATION_READINESS_MATRIX.md` | Readiness matrix |
-| `manifest.json` | Machine manifest |
-| `evidence/*.csv` | Traceability matrices |
+| `13_UNIQUE_CAPACITY_PREFLIGHT_CONTRACT.md` | **PROPOSED** preflight contract |
+| `manifest.json` | Machine manifest + provenance |
+| `evidence/*.csv` | Traceability matrices (incl. `failed_test_baseline_matrix.csv`) |
 
 ## Live credits
 

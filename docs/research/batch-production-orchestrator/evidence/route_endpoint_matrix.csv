@@ -1,8 +1,11 @@
-route_or_prefix,method,handler_module,purpose,classification,notes
-/api/batches,POST draft,agent.api.batches,Legacy batch draft,VERIFIED_CODE,No Flow
-/api/batches/{id}/queue,POST,agent.services.batch_queue,Status only queue,VERIFIED_CODE,No Flow
-/api/workspace/generation-packages/batch-prompts,POST,WGP service,Modern batch prompts,VERIFIED_CODE,Qty 1-100
-/api/workspace/production-queue,POST,production_queue_service,Enqueue dry run,VERIFIED_TEST,max_parallel=1
-/api/bulk-generation,POST,bulk_generation_service,Avatar/video bulk,VERIFIED_TEST,Video serial
-/api/flow/execute-flow-job,POST,agent.api.flow,ADR-007 door,VERIFIED_RUNTIME,Authority
-/api/poster/prompt-draft,POST,poster_prompt,Poster prompts,VERIFIED_TEST,No live gen
+method,endpoint,router_file,handler_symbol,service_call,db_writes,credit_spend,dry_run,confirmation_gate,ui_caller,state_transition,failure_codes,test_coverage,orchestrator_role,classification
+POST,/api/batches/draft,agent/api/batches.py,post_batch_draft,create_batch_draft,"batch,batch_variant",NO,N/A,none,legacy UI if any,DRAFT,400 error,test_batch_planner FAIL,legacy plan only,VERIFIED_CODE
+POST,/api/batches/{id}/queue,agent/api/batches.py,post_batch_queue,queue_batch,"batch,batch_variant,event",NO,N/A,none,legacy,QUEUED,blocked batch,test_batch_queue FAIL,none,VERIFIED_CODE
+POST,/api/workspace/generation-packages/batch-prompts,workspace_generation_packages.py,start_batch_prompts,start_batch_prompt_run,workspace_generation_package,NO,implicit compile,mode contract,Batch Prompt Builder,WGP DRAFT/READY,422 MODE_CONTRACT,test_batch_prompt_and_production_api,planning,VERIFIED_CODE
+POST,/api/workspace/generation-packages/approve,workspace_generation_packages.py,approve_packages_endpoint,approve_packages,WGP production_status,NO,N/A,status gate,Prompt Queue,APPROVED,NOT_APPROVABLE,test_production_queue_service,approval,VERIFIED_TEST_IN_THIS_AUDIT
+POST,/api/workspace/production-queue,production_queue.py,send_to_production,send_to_production,"production_run,WGP QUEUED",NO,run dry_run=1,MODEL_REQUIRED,Production Queue UI,QUEUED,ERR_UNKNOWN_MODEL,test_production_queue_service,video enqueue,VERIFIED_TEST_IN_THIS_AUDIT
+POST,/api/workspace/production-queue/{id}/start,production_queue.py,start_run,run_production_queue,"run status,WGP RUNNING+",YES if confirm,default dry,confirm_live_credit_burn,Production Queue UI,RUNNING,RUN_NOT_FOUND,test_production_queue_service,video execute,VERIFIED_TEST_IN_THIS_AUDIT
+POST,/api/bulk-generation/avatar-images,bulk_generation.py,create_avatar_bulk,create_avatar_image_bulk_run,bulk_*,NO until start,start dry path,confirm_credit_burn,Avatar Registry,PENDING,NO_ELIGIBLE,test_bulk_generation_api,IMG bulk,VERIFIED_TEST_IN_THIS_AUDIT
+POST,/api/bulk-generation/video,bulk_generation.py,create_video_bulk,create_video_bulk_run,bulk_*,NO until start,confirm,confirm_credit_burn,bulk UI,PENDING,PACKAGE_IDS,test_bulk_generation_service,video bulk serial,VERIFIED_TEST_IN_THIS_AUDIT
+POST,/api/flow/execute-flow-job,flow.py,execute_flow_job,make_video.start_generate,"generated_artifact,job",YES,smoke paths,operator auth,all modes UI,job SUBMITTED,VIDEO_JOB_IN_FLIGHT,test_manual_lane_reroute authority,execution door,VERIFIED_RUNTIME_BY_PRIMARY_AUTHORITY
+POST,/api/poster/prompt-draft,poster_prompt.py,build_draft,PosterPromptDraftService,none,NO,N/A,readiness gate,Poster Builder,prompt package,422 unsafe copy,test_poster_*,poster plan,VERIFIED_TEST_IN_THIS_AUDIT

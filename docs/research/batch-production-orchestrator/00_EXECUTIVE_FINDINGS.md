@@ -1,53 +1,66 @@
-# Executive findings — Batch production orchestrator audit v1
+# 00 — Executive findings (repair v1.1)
 
-**Examined commit:** `b271f5e162f45c75cf94e88be5c0bc9cadbd6103` (`origin/main`)
+**Report version:** 1.1.0-repair  
+**Examined base:** `main` @ `b271f5e162f45c75cf94e88be5c0bc9cadbd6103`  
+**Pre-repair PR head:** `fe6206ec4b0c9c0ca8873c0cd925a06f27291310`  
+**CI_STATUS:** `NO_WORKFLOW_RUN_FOUND` (GitHub `statusCheckRollup` empty for PR #305 at repair time)
 
 ## Implementation readiness verdict
 
-**`HOLD_RUNTIME_PROOF_REQUIRED`**
+**`READY_FOR_ARCHITECTURE_LOCK_REVIEW`**
 
-Rationale: Throughput at 200 videos + 200 images/day, safe combined concurrency, and multi-lane provider capacity are **not** established by runtime evidence. Code enforces **video serial single-flight** (`VIDEO_JOB_IN_FLIGHT`). Image bulk allows **2–3 parallel workers in-process** but provider independence is **NOT_VERIFIED**. Repository also lacks a unified daily production plan / wave / microbatch orchestrator (**MISSING** / **PROPOSED**).
+Runtime proof for image/combined concurrency and 200/day throughput remains **out of scope** of this documentation repair; see **REMAINING_RUNTIME_PROOF** below.
 
-## Key verified findings (code/tests)
+## Repair summary (v1.1)
+
+| Repair | Status |
+|--------|--------|
+| Manifest provenance (no stale final SHA) | Done — `manifest.json` → `provenance` block |
+| Runtime classification clarity | Done — `VERIFIED_RUNTIME_BY_PRIMARY_AUTHORITY`, `NOT_REEXECUTED_IN_THIS_AUDIT` |
+| Failed test baseline proof | Done — `evidence/failed_test_baseline_matrix.csv` |
+| Schema / state / failure / surfaces / routes | Expanded CSV + `06`, `08` |
+| Unique capacity preflight contract | `13_UNIQUE_CAPACITY_PREFLIGHT_CONTRACT.md` |
+| Throughput formulas | `09` expanded |
+| D1–D7 decision register | `11` expanded |
+| UX functional contract | `07` expanded |
+
+## Verified findings (evidence-bound)
 
 | Finding | Classification | Anchor |
 |---------|----------------|--------|
-| One hardened generation door ADR-007 | VERIFIED_RUNTIME (authority) | `make_video.start_generate`, `/api/flow/execute-flow-job` |
-| Production queue serial dequeue `limit=1` | VERIFIED_CODE | `production_queue_service._live_production_loop` |
-| `max_parallel_jobs=1` on production run create | VERIFIED_CODE | `production_queue_service.send_to_production` |
-| Video lane lock `_VIDEO_LANE_JOB` | VERIFIED_CODE | `make_video.py` ~L292–304 |
-| Batch prompt builder qty 1–100, one logical mode | VERIFIED_CODE | `batch_prompt_planner`, `start_batch_prompt_run` |
-| Legacy `/api/batches` queue **does not** start Flow | VERIFIED_CODE | `batch_queue.py` message |
-| Bulk video `_clamp_parallel_videos` → 1 | VERIFIED_CODE | `bulk_generation_service.py` |
-| Bulk IMG parallel clamp 1–3 | VERIFIED_CODE | `_clamp_parallel_images` |
-| Legacy `batch_planner` max qty **20** | VERIFIED_CODE | `scheduler_safety.py` |
-| Legacy batch unit tests **fail** (fixture/DB) | VERIFIED_TEST | `test_batch_planner.py`, `test_batch_queue.py` |
+| Video lane single-flight | `VERIFIED_CODE` | `make_video._VIDEO_LANE_JOB` |
+| Production queue serial dequeue | `VERIFIED_CODE` | `production_queue_service._live_production_loop` limit 1 |
+| ADR-007 door | `VERIFIED_RUNTIME_BY_PRIMARY_AUTHORITY` | `.ai/status/CURRENT_STATE.md`; **NOT_REEXECUTED_IN_THIS_AUDIT** |
+| Batch prompt qty 1–100 | `VERIFIED_CODE` | `batch_prompt_planner.validate_mode_inputs` |
+| Legacy batch no Flow | `VERIFIED_CODE` | `batch_queue.queue_batch` |
+| Legacy batch tests fail on base + branch | `VERIFIED_TEST_IN_THIS_AUDIT` | `failed_test_baseline_matrix.csv` |
 
-## Concurrency results (mandatory)
+## Concurrency (explicit)
 
 | Metric | Value |
-|--------|--------|
+|--------|-------|
 | `VERIFIED_SAFE_VIDEO_CONCURRENCY` | `1_SAFE_DEFAULT` |
-| `VERIFIED_SAFE_IMAGE_CONCURRENCY` | `NOT_VERIFIED` (code allows 2–3 workers; no live provider proof) |
+| `VERIFIED_SAFE_IMAGE_CONCURRENCY` | `NOT_VERIFIED` |
 | `VERIFIED_SAFE_COMBINED_CONCURRENCY` | `NOT_VERIFIED` |
 
-## Critical blockers for 200+200/day
+## Test subset (this audit)
 
-1. **Architecture:** No single daily production plan entity; parallel paths (`batch`, `production_run`, `bulk_generation_run`, WGP `batch_run_id`).
-2. **Throughput:** Serial video + 45–120s inter-job interval + cooldown → theoretical ceiling far below 200 videos/day on one lane.
-3. **Runtime:** ADR-007 live-proven **manual/single-job** lanes; **not** proven for bulk production queue at scale (**BLOCKED_BY_EXTERNAL_RUNTIME** for rate limits per CURRENT_STATE).
-4. **Dedupe:** Rich planner fingerprints vs weak legacy `v{i}_productId` fingerprints; no proven max unique capacity preflight.
-5. **Posters:** Poster module is prompt-first; no poster bulk orchestrator equivalent to `bulk_generation_run`.
+Command: see `manifest.json` → `tests_executed`.
 
-## Authority conflicts noted (not resolved here)
+| Result | Count |
+|--------|-------|
+| Passed | 47 |
+| Failed | 4 (legacy `test_batch_planner`, `test_batch_queue`) |
 
-- `.ai/status/CURRENT_STATE.md` last updated 2026-07-02; repo `main` has since gained bulk generation, batch-prompt split, poster modules — **secondary evidence** documents newer code; **CURRENT_STATE** remains primary for ADR-007 locked generation list until updated by maintainers.
+Baseline: all four failures **match** on examined base SHA `b271f5e` (detached worktree `C:/tmp/bosmax-base-audit`). Documentation changes **cannot** affect test outcome.
 
-## Tests executed (non-destructive)
+## Remaining runtime proof (post architecture lock)
 
-```text
-pytest tests/unit/test_batch_planner.py tests/unit/test_batch_queue.py \
-  tests/unit/test_production_queue_service.py tests/unit/test_bulk_generation_service.py \
-  tests/api/test_batch_prompt_and_production_api.py tests/api/test_bulk_generation_api.py -q
-Result: 4 failed, 47 passed (legacy batch failures pre-existing per CURRENT_STATE open items)
-```
+- Live multi-image worker ceiling on Google account
+- Combined video+image under rate limits
+- Optional second verified execution lane
+- End-to-end 200+200 day simulation (no credit spend in this mission)
+
+## PROPOSED default architecture positions
+
+Listed in `10_TARGET_ARCHITECTURE_PROPOSAL.md` and `manifest` — **not approved**.
