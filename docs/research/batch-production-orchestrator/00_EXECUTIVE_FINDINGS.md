@@ -20,7 +20,7 @@ Runtime proof for image/combined concurrency and 200/day throughput remains **ou
 | Failed test baseline proof | Done — `evidence/failed_test_baseline_matrix.csv` |
 | Schema / state / failure / surfaces / routes | Expanded CSV + `06`, `08` |
 | Unique capacity preflight contract | `13_UNIQUE_CAPACITY_PREFLIGHT_CONTRACT.md` |
-| Throughput formulas | `09` expanded |
+| Throughput formulas | `09` expanded (cooldown-correct `J_h`; final math correction) |
 | D1–D7 decision register | `11` expanded |
 | UX functional contract | `07` expanded |
 
@@ -42,6 +42,13 @@ Runtime proof for image/combined concurrency and 200/day throughput remains **ou
 | `VERIFIED_SAFE_VIDEO_CONCURRENCY` | `1_SAFE_DEFAULT` |
 | `VERIFIED_SAFE_IMAGE_CONCURRENCY` | `NOT_VERIFIED` |
 | `VERIFIED_SAFE_COMBINED_CONCURRENCY` | `NOT_VERIFIED` |
+
+## Throughput (theoretical — doc 09, corrected math)
+
+- One verified lane: **insufficient** for 200 videos in **8h or 12h** under all documented scenarios.
+- Nominal **24h** single lane: **≈195** jobs/day (before failure allowance) — **below 200**.
+- **200/day on one lane** only under **optimistic 24h** (≈329 before allowance).
+- Multi-lane counts and formulas: `09_THROUGHPUT_CAPACITY_AND_CREDIT_MODEL.md`. **NOT_VERIFIED** at runtime.
 
 ## Test subset (this audit)
 
