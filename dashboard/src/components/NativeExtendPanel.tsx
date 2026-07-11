@@ -6,10 +6,9 @@
 // zero-credit dry-run, shows parent→child lineage + polling status, and surfaces the
 // exact number of credit-consuming Extend operations a live run would perform.
 //
-// It deliberately exposes NO live-run button: a live chain runs only server-side
-// through the authoritative orchestrator (POST /api/flow/extend-run) with
-// NATIVE_EXTEND_ENABLED=1 and a bounded confirmed operation count. Nothing here can
-// spend credits.
+// Live execution requires an explicit confirmation after dry-run. The backend grants
+// a process-local, single-use authorization bound to the exact reviewed chain and
+// planned operation count; /extend-run remains the only execution path.
 import { useEffect, useState } from 'react';
 import {
   NATIVE_EXTEND_ROUTES,
@@ -19,6 +18,8 @@ import {
   resolveNativeExtend,
   previewNativeExtend,
   fetchNativeExtendLineage,
+  requestNativeExtendLiveAuthorization,
+  runNativeExtend,
   type NativeExtendResolution,
   type ExtendRunResult,
   type ExtendLineageRow,
@@ -51,6 +52,8 @@ export default function NativeExtendPanel({
   const [lineage, setLineage] = useState<ExtendLineageRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmLive, setConfirmLive] = useState(false);
+  const [liveResult, setLiveResult] = useState<ExtendRunResult | null>(null);
 
   const plannedBlockCount = plannedBlocks.length;
 
@@ -97,6 +100,46 @@ export default function NativeExtendPanel({
         aspect_ratio: aspectRatio,
       });
       setPreview(r);
+      setConfirmLive(false);
+      setLiveResult(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const canStartLive =
+    !!preview &&
+    preview.planned_operation_count > 0 &&
+    !!resolution?.route_executable &&
+    !busy;
+
+  const runLive = async () => {
+    if (!preview || !canStartLive) return;
+    const input = {
+      project_id: projectId,
+      scene_id: sceneId,
+      source_operation_id: sourceOperationId,
+      blocks: plannedBlocks,
+      aspect_ratio: aspectRatio,
+      dry_run: false,
+      confirm_live_credit_burn: true,
+      confirmed_extend_operation_count: preview.planned_operation_count,
+    };
+    setBusy(true);
+    setError(null);
+    try {
+      const authorization = await requestNativeExtendLiveAuthorization(input);
+      if (authorization.planned_operation_count !== preview.planned_operation_count) {
+        throw new Error('EXTEND_CONFIRMATION_COUNT_MISMATCH');
+      }
+      const result = await runNativeExtend({
+        ...input,
+        live_authorization_token: authorization.authorization_token,
+      });
+      setLiveResult(result);
+      setConfirmLive(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -248,16 +291,62 @@ export default function NativeExtendPanel({
         </div>
       )}
 
-      {/* Live execution is NOT a button here — orchestrator-only, never a bypass */}
-      <div
-        data-testid="native-extend-live-note"
-        className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200"
-      >
-        Live execution is not available from this panel. A live chain runs only through the
-        authoritative orchestrator (POST /api/flow/extend-run) with NATIVE_EXTEND_ENABLED=1 and an
-        explicit confirmed operation count equal to the planned count above. No control here spends
-        credits.
-      </div>
+      {canStartLive && (
+        <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-100">
+          <p data-testid="native-extend-live-warning">
+            Live test spends Google Flow credits. This authorizes exactly{' '}
+            {preview?.planned_operation_count} Extend operation
+            {preview?.planned_operation_count === 1 ? '' : 's'}; the final concatenated export remains unavailable.
+          </p>
+          <button
+            type="button"
+            data-testid="native-extend-live-btn"
+            className="mt-2 rounded bg-amber-600 px-3 py-1.5 font-medium text-white"
+            onClick={() => setConfirmLive(true)}
+          >
+            Run live test ({preview?.planned_operation_count} credit-consuming operation
+            {preview?.planned_operation_count === 1 ? '' : 's'})
+          </button>
+        </div>
+      )}
+
+      {confirmLive && preview && (
+        <div
+          data-testid="native-extend-live-confirm"
+          className="mt-3 rounded border border-rose-500/50 bg-rose-500/10 p-3 text-xs text-rose-100"
+        >
+          <p>
+            Confirm live Native Extend: Google Flow will be asked to run exactly{' '}
+            {preview.planned_operation_count} credit-consuming operation
+            {preview.planned_operation_count === 1 ? '' : 's'} for this reviewed plan.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              data-testid="native-extend-live-confirm-btn"
+              className="rounded bg-rose-600 px-3 py-1.5 font-medium text-white disabled:opacity-40"
+              disabled={busy}
+              onClick={runLive}
+            >
+              Confirm &amp; run live
+            </button>
+            <button
+              type="button"
+              className="rounded border border-slate-500 px-3 py-1.5"
+              disabled={busy}
+              onClick={() => setConfirmLive(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {liveResult && (
+        <div data-testid="native-extend-live-result" className="mt-3 text-xs text-emerald-300">
+          Live request accepted by the authoritative Extend orchestrator. Polling and lineage status are shown below.
+        </div>
+      )}
 
       {/* Lineage + polling status */}
       {lineage.length > 0 && (

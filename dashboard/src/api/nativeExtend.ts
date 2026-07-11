@@ -1,8 +1,7 @@
 // Typed client for the native Flow Extend surface. All calls go through the ONE
 // authoritative backend path (/api/flow/extend-run) or the read-only resolver /
-// lineage endpoints. Nothing here can spend credits: preview is dry-run only, and a
-// live run is intentionally NOT exposed from the dashboard (it runs server-side
-// through the orchestrator with NATIVE_EXTEND_ENABLED + a bounded confirmed count).
+// lineage endpoints. Live execution is available only after the backend issues a
+// process-local, single-use authorization bound to the reviewed plan and count.
 import { getAPI, postAPI } from './client';
 
 export interface NativeExtendResolution {
@@ -59,7 +58,6 @@ export interface ExtendLineageRow {
   child_operation_id: string | null;
   child_primary_media_id: string | null;
   polling_state: string;
-  output_url: string | null;
 }
 
 export interface ExtendBlockInput {
@@ -67,6 +65,24 @@ export interface ExtendBlockInput {
   position: number;
   prompt: string;
   is_final?: boolean;
+}
+
+export interface NativeExtendLiveAuthorization {
+  authorization_token: string;
+  planned_operation_count: number;
+  expires_in_seconds: number;
+}
+
+export interface NativeExtendRunInput {
+  project_id: string;
+  scene_id: string;
+  source_operation_id: string;
+  blocks: ExtendBlockInput[];
+  aspect_ratio?: string;
+  dry_run: boolean;
+  confirm_live_credit_burn?: boolean;
+  confirmed_extend_operation_count?: number;
+  live_authorization_token?: string;
 }
 
 export async function resolveNativeExtend(input: {
@@ -88,6 +104,16 @@ export async function previewNativeExtend(input: {
   aspect_ratio?: string;
 }): Promise<ExtendRunResult> {
   return postAPI('/api/flow/extend-run', { ...input, dry_run: true });
+}
+
+export async function requestNativeExtendLiveAuthorization(
+  input: NativeExtendRunInput,
+): Promise<NativeExtendLiveAuthorization> {
+  return postAPI('/api/flow/native-extend/live-authorization', input);
+}
+
+export async function runNativeExtend(input: NativeExtendRunInput): Promise<ExtendRunResult> {
+  return postAPI('/api/flow/extend-run', input);
 }
 
 export async function fetchNativeExtendLineage(

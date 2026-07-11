@@ -47,6 +47,23 @@ async def test_extend_run_live_flag_off_is_409(monkeypatch):
     assert "NATIVE_EXTEND_DISABLED" in str(exc.value.detail)
 
 
+async def test_live_authorization_is_single_use_and_bound_to_planned_count(monkeypatch):
+    monkeypatch.delenv("NATIVE_EXTEND_ENABLED", raising=False)
+    body = _run("p-api-auth", dry_run=False, confirm=True, count=1)
+    authorization = await flow.native_extend_live_authorization(body)
+
+    assert authorization["planned_operation_count"] == 1
+    assert authorization["authorization_token"]
+
+
+async def test_live_authorization_requires_explicit_credit_confirmation():
+    with pytest.raises(HTTPException) as exc:
+        await flow.native_extend_live_authorization(
+            _run("p-api-no-confirm", dry_run=False, confirm=False, count=1))
+    assert exc.value.status_code == 409
+    assert "LIVE_CREDIT_CONFIRMATION_REQUIRED" in str(exc.value.detail)
+
+
 async def test_extend_run_count_mismatch_is_409(monkeypatch):
     monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
     with pytest.raises(HTTPException) as exc:
@@ -97,3 +114,16 @@ async def test_resolve_executable_when_context_ready():
 async def test_native_extend_lineage_endpoint_empty():
     out = await flow.native_extend_lineage(project_id="p-none")
     assert out["count"] == 0 and out["lineage"] == []
+
+
+async def test_native_extend_lineage_redacts_signed_output_url(monkeypatch):
+    async def _rows(**_kwargs):
+        return [{
+            "extend_lineage_id": "lineage-1",
+            "polling_state": "EXTEND_SUCCEEDED",
+            "output_url": "https://flow-content.google/video?signature=private",
+        }]
+
+    monkeypatch.setattr(flow.crud, "list_extend_lineage", _rows)
+    out = await flow.native_extend_lineage(project_id="p")
+    assert "output_url" not in out["lineage"][0]

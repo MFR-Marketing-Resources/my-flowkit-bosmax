@@ -16,8 +16,8 @@ Design invariants:
   * parent/child OPERATION id and primaryMediaId are persisted as SEPARATE fields —
     the extend binding uses the OPERATION id (block-1 op b6371e69 != media 69051c7b).
   * Fail-closed everywhere: capability gate, model resolution, missing context, and a
-    hard DRY_RUN default. A live credit-consuming submit needs BOTH
-    ``NATIVE_EXTEND_ENABLED=1`` AND ``confirm_live_credit_burn=True``.
+    hard DRY_RUN default. A live credit-consuming submit needs explicit confirmation
+    plus a one-shot authorization bound to its exact plan (or the legacy env gate).
   * The 16s COMBINED concatenated export stays AUTHORITY_MISSING — this service never
     substitutes the Download Project ZIP (block1.mp4 + poster) for it.
 """
@@ -27,6 +27,8 @@ import asyncio
 import hashlib
 import logging
 import os
+import secrets
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -56,6 +58,7 @@ NATIVE_EXTEND_DISABLED = "NATIVE_EXTEND_DISABLED"
 # Explicit live-intent contract (no silent live->dry-run downgrade; bounded credit).
 LIVE_CREDIT_CONFIRMATION_REQUIRED = "LIVE_CREDIT_CONFIRMATION_REQUIRED"
 EXTEND_CONFIRMATION_COUNT_MISMATCH = "EXTEND_CONFIRMATION_COUNT_MISMATCH"
+EXTEND_LIVE_AUTHORIZATION_INVALID = "EXTEND_LIVE_AUTHORIZATION_INVALID"
 
 # Terminal media-generation states (existing aisandbox constants).
 TERMINAL_SUCCESS = "MEDIA_GENERATION_STATUS_SUCCESSFUL"
@@ -235,6 +238,94 @@ class ExtendChainRequest:
     user_paygate_tier: str = "PAYGATE_TIER_TWO"
 
 
+@dataclass(frozen=True)
+class _LiveExtendAuthorization:
+    request_fingerprint: str
+    planned_operation_count: int
+    expires_at: float
+
+
+_LIVE_AUTHORIZATION_TTL_SECONDS = 300
+_live_authorizations: dict[str, _LiveExtendAuthorization] = {}
+
+
+def _request_fingerprint(req: ExtendChainRequest) -> str:
+    """Bind a one-shot authorization to the exact chain that was reviewed.
+
+    Prompt text is represented by its hash, so no prompt content is retained in
+    the in-memory authorization record.
+    """
+    parts = [
+        req.project_id, req.scene_id, req.source_operation_id, req.aspect_ratio,
+        req.workspace_generation_package_id or "", str(req.seed or ""),
+        req.user_paygate_tier,
+    ]
+    for block in req.blocks:
+        parts.extend((
+            str(block.block_index), str(block.position), _prompt_hash(block.prompt),
+            str(block.is_final), str(block.start_frame_index), str(block.end_frame_index),
+        ))
+    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+
+
+def _prune_expired_authorizations(now: float) -> None:
+    for token, authorization in list(_live_authorizations.items()):
+        if authorization.expires_at <= now:
+            _live_authorizations.pop(token, None)
+
+
+async def issue_live_authorization(
+    req: ExtendChainRequest, *, confirmed_operation_count: Optional[int],
+) -> dict:
+    """Issue a process-local, single-use live authorization for an exact plan.
+
+    This is the operator-facing alternative to a persistent environment gate. It
+    performs no network submission and expires automatically after five minutes.
+    """
+    _routes.require_capability("GOOGLE_FLOW_NATIVE_EXTEND_REQUEST")
+    plan = await plan_native_extend_chain(req)
+    planned_operation_count = plan["planned_operation_count"]
+    if confirmed_operation_count is None:
+        raise NativeExtendError(
+            LIVE_CREDIT_CONFIRMATION_REQUIRED,
+            "confirmed_extend_operation_count required for live authorization",
+        )
+    if int(confirmed_operation_count) != planned_operation_count:
+        raise NativeExtendError(
+            EXTEND_CONFIRMATION_COUNT_MISMATCH,
+            f"confirmed={confirmed_operation_count} planned={planned_operation_count}",
+        )
+
+    now = time.monotonic()
+    _prune_expired_authorizations(now)
+    token = secrets.token_urlsafe(32)
+    _live_authorizations[token] = _LiveExtendAuthorization(
+        request_fingerprint=_request_fingerprint(req),
+        planned_operation_count=planned_operation_count,
+        expires_at=now + _LIVE_AUTHORIZATION_TTL_SECONDS,
+    )
+    return {
+        "token": token,
+        "planned_operation_count": planned_operation_count,
+        "expires_in_seconds": _LIVE_AUTHORIZATION_TTL_SECONDS,
+    }
+
+
+def _consume_live_authorization(
+    token: str, req: ExtendChainRequest, planned_operation_count: int,
+) -> None:
+    authorization = _live_authorizations.get(token)
+    if authorization is None or authorization.expires_at <= time.monotonic():
+        _live_authorizations.pop(token, None)
+        raise NativeExtendError(EXTEND_LIVE_AUTHORIZATION_INVALID)
+    if (
+        authorization.request_fingerprint != _request_fingerprint(req)
+        or authorization.planned_operation_count != planned_operation_count
+    ):
+        raise NativeExtendError(EXTEND_LIVE_AUTHORIZATION_INVALID)
+    _live_authorizations.pop(token, None)
+
+
 def _validate_context(req: ExtendChainRequest) -> str:
     """Fail-closed context validation shared by plan + execute. Returns the
     resolved model key (also fail-closed on unsupported aspect)."""
@@ -307,6 +398,7 @@ async def run_native_extend_chain(
     dry_run: bool = True,
     confirm_live_credit_burn: bool = False,
     confirmed_extend_operation_count: Optional[int] = None,
+    live_authorization_token: Optional[str] = None,
     poll_timeout_s: int = 600,
     poll_interval_s: int = 5,
 ) -> dict:
@@ -315,10 +407,10 @@ async def run_native_extend_chain(
     Explicit live/dry-run contract — caller intent is NEVER silently rewritten:
       * ``dry_run=True``  -> plan + persist SOURCE_READY, fire nothing.
       * ``dry_run=False`` + no confirm            -> LIVE_CREDIT_CONFIRMATION_REQUIRED.
-      * ``dry_run=False`` + confirm + flag OFF     -> NATIVE_EXTEND_DISABLED.
+      * ``dry_run=False`` + confirm + no authorization -> NATIVE_EXTEND_DISABLED.
       * ``dry_run=False`` + confirm + no count     -> LIVE_CREDIT_CONFIRMATION_REQUIRED.
       * ``dry_run=False`` + confirm + count != plan-> EXTEND_CONFIRMATION_COUNT_MISMATCH.
-      * ``dry_run=False`` + confirm + flag ON + count==plan -> LIVE execution.
+      * ``dry_run=False`` + confirmation + exact one-shot authorization -> LIVE execution.
 
     ``confirmed_extend_operation_count`` is the BOUNDED credit authorization: it must
     equal the resume-aware number of credit-consuming submits the live run will make,
@@ -346,8 +438,6 @@ async def run_native_extend_chain(
     if not confirm_live_credit_burn:
         raise NativeExtendError(LIVE_CREDIT_CONFIRMATION_REQUIRED,
                                 "confirm_live_credit_burn required for dry_run=false")
-    if not native_extend_enabled():
-        raise NativeExtendError(NATIVE_EXTEND_DISABLED, "NATIVE_EXTEND_ENABLED!=1")
     if confirmed_extend_operation_count is None:
         raise NativeExtendError(LIVE_CREDIT_CONFIRMATION_REQUIRED,
                                 "confirmed_extend_operation_count required for live run")
@@ -355,6 +445,10 @@ async def run_native_extend_chain(
         raise NativeExtendError(
             EXTEND_CONFIRMATION_COUNT_MISMATCH,
             f"confirmed={confirmed_extend_operation_count} planned={planned_operation_count}")
+    if live_authorization_token:
+        _consume_live_authorization(live_authorization_token, req, planned_operation_count)
+    elif not native_extend_enabled():
+        raise NativeExtendError(NATIVE_EXTEND_DISABLED, "one-shot authorization required")
 
     results: list[dict] = []
     parent_op = req.source_operation_id
@@ -542,7 +636,7 @@ async def _run_one_extend_block(
         "child_operation_id": child["child_operation_id"],
         "child_primary_media_id": child["child_primary_media_id"],
         "child_workflow_id": child["child_workflow_id"],
-        "output_url": output_url, "polling_state": STATE_SUCCEEDED,
+        "polling_state": STATE_SUCCEEDED,
     }
 
 
@@ -571,7 +665,6 @@ def _lineage_outcome(row: dict, *, resumed: bool = False) -> dict:
         "parent_operation_id": row.get("parent_operation_id"),
         "child_operation_id": row.get("child_operation_id"),
         "child_primary_media_id": row.get("child_primary_media_id"),
-        "output_url": row.get("output_url"),
         "polling_state": row.get("polling_state"),
         "resumed": resumed,
         "dry_run": False,
