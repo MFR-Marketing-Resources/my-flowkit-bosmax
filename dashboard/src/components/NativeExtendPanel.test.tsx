@@ -5,11 +5,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const resolveMock = vi.fn();
 const previewMock = vi.fn();
 const lineageMock = vi.fn();
+const authorizeMock = vi.fn();
+const liveRunMock = vi.fn();
 
 vi.mock('../api/nativeExtend', () => ({
   resolveNativeExtend: (...a: unknown[]) => resolveMock(...a),
   previewNativeExtend: (...a: unknown[]) => previewMock(...a),
   fetchNativeExtendLineage: (...a: unknown[]) => lineageMock(...a),
+  requestNativeExtendLiveAuthorization: (...a: unknown[]) => authorizeMock(...a),
+  runNativeExtend: (...a: unknown[]) => liveRunMock(...a),
 }));
 
 // Import SUT after mocks.
@@ -94,7 +98,7 @@ describe('NativeExtendPanel', () => {
     expect(screen.getByTestId('native-extend-preview-btn')).toBeDisabled();
   });
 
-  it('preview runs a DRY-RUN, shows the plan, and exposes NO live-spend button', async () => {
+  it('requires explicit bounded confirmation before a live run can be authorized', async () => {
     resolveMock.mockResolvedValue(READY);
     lineageMock.mockResolvedValue({ lineage: [], count: 0 });
     previewMock.mockResolvedValue({
@@ -117,11 +121,31 @@ describe('NativeExtendPanel', () => {
     await waitFor(() => expect(previewMock).toHaveBeenCalledTimes(1));
     expect(await screen.findByTestId('preview-op-count')).toHaveTextContent('2');
     expect(screen.getByTestId('preview-block-2')).toBeInTheDocument();
-    // live is orchestrator-only — never a bypass button in the UI
-    expect(screen.getByTestId('native-extend-live-note')).toHaveTextContent(
-      /not available from this panel/i,
-    );
-    expect(screen.queryByText(/^run live$/i)).toBeNull();
+    expect(screen.getByTestId('native-extend-live-btn')).toHaveTextContent('2');
+    expect(screen.queryByTestId('native-extend-live-confirm')).toBeNull();
+
+    authorizeMock.mockResolvedValue({
+      authorization_token: 'one-shot-token',
+      planned_operation_count: 2,
+      expires_in_seconds: 300,
+    });
+    liveRunMock.mockResolvedValue({
+      dry_run: false,
+      planned_operation_count: 2,
+      block_count: 2,
+      blocks: [],
+    });
+    fireEvent.click(screen.getByTestId('native-extend-live-btn'));
+    expect(await screen.findByTestId('native-extend-live-confirm')).toHaveTextContent('exactly 2');
+    fireEvent.click(screen.getByTestId('native-extend-live-confirm-btn'));
+
+    await waitFor(() => expect(authorizeMock).toHaveBeenCalledTimes(1));
+    expect(liveRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      dry_run: false,
+      confirm_live_credit_burn: true,
+      confirmed_extend_operation_count: 2,
+      live_authorization_token: 'one-shot-token',
+    }));
   });
 
   it('renders lineage / polling status', async () => {
@@ -136,7 +160,6 @@ describe('NativeExtendPanel', () => {
           child_operation_id: 'c2',
           child_primary_media_id: 'c2',
           polling_state: 'EXTEND_SUCCEEDED',
-          output_url: 'u',
         },
       ],
       count: 1,

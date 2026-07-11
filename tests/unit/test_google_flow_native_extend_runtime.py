@@ -95,6 +95,34 @@ async def test_live_with_confirm_but_flag_off_fails(monkeypatch):
     assert exc.value.code == nx.NATIVE_EXTEND_DISABLED
 
 
+async def test_one_shot_authorization_permits_exact_live_chain_without_env_gate(monkeypatch):
+    monkeypatch.delenv("NATIVE_EXTEND_ENABLED", raising=False)
+    req = _req(_blocks(1, "one-shot"), pid="p-one-shot")
+    authorization = await nx.issue_live_authorization(req, confirmed_operation_count=1)
+
+    out = await nx.run_native_extend_chain(
+        FakeClient(["c2"]), req, dry_run=False, confirm_live_credit_burn=True,
+        confirmed_extend_operation_count=1,
+        live_authorization_token=authorization["token"], poll_interval_s=0)
+
+    assert out["chain"] == ["op1", "c2"]
+    assert "output_url" not in out["blocks"][0]
+
+    resumed_authorization = await nx.issue_live_authorization(
+        req, confirmed_operation_count=0)
+    await nx.run_native_extend_chain(
+        FakeClient(["c3"]), req, dry_run=False, confirm_live_credit_burn=True,
+        confirmed_extend_operation_count=0,
+        live_authorization_token=resumed_authorization["token"], poll_interval_s=0)
+
+    with pytest.raises(nx.NativeExtendError) as exc:
+        await nx.run_native_extend_chain(
+            FakeClient(["c3"]), req, dry_run=False, confirm_live_credit_burn=True,
+            confirmed_extend_operation_count=0,
+            live_authorization_token=resumed_authorization["token"], poll_interval_s=0)
+    assert exc.value.code == nx.EXTEND_LIVE_AUTHORIZATION_INVALID
+
+
 async def test_live_missing_count_fails(monkeypatch):
     monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
     with pytest.raises(nx.NativeExtendError) as exc:

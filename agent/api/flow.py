@@ -105,6 +105,9 @@ class ExtendRunRequest(BaseModel):
     # Bounded live-credit authorization: MUST equal the resume-aware planned submit
     # count (from a prior dry-run's planned_operation_count) or the live run is rejected.
     confirmed_extend_operation_count: Optional[int] = None
+    # Process-local, single-use authorization issued only after the operator accepts
+    # the exact planned operation count. It is never persisted or logged.
+    live_authorization_token: Optional[str] = None
 
 
 class ExtendResolveRequest(BaseModel):
@@ -1042,6 +1045,50 @@ async def upscale_video(body: UpscaleVideoRequest):
     return result.get("data", result)
 
 
+def _native_extend_chain_request(body: ExtendRunRequest, runtime):
+    return runtime.ExtendChainRequest(
+        project_id=body.project_id, scene_id=body.scene_id,
+        source_operation_id=body.source_operation_id,
+        blocks=[runtime.ExtendBlock(
+            block_index=b.block_index, position=b.position, prompt=b.prompt,
+            is_final=b.is_final, start_frame_index=b.start_frame_index,
+            end_frame_index=b.end_frame_index) for b in body.blocks],
+        aspect_ratio=body.aspect_ratio,
+        workspace_generation_package_id=body.workspace_generation_package_id,
+        seed=body.seed, user_paygate_tier=body.user_paygate_tier)
+
+
+@router.post("/native-extend/live-authorization")
+async def native_extend_live_authorization(body: ExtendRunRequest):
+    """Issue one bounded, expiring authorization after explicit operator confirmation.
+
+    This route only resolves the existing chain plan. It never calls Google Flow or
+    spends credits; the resulting token is valid for one matching /extend-run call.
+    """
+    from agent.services import extend_route_planner as _routes
+    from agent.services import google_flow_native_extend_runtime as _nx
+    if body.dry_run or not body.confirm_live_credit_burn:
+        raise HTTPException(409, _nx.LIVE_CREDIT_CONFIRMATION_REQUIRED)
+    try:
+        authorization = await _nx.issue_live_authorization(
+            _native_extend_chain_request(body, _nx),
+            confirmed_operation_count=body.confirmed_extend_operation_count,
+        )
+        return {
+            "authorization_token": authorization["token"],
+            "planned_operation_count": authorization["planned_operation_count"],
+            "expires_in_seconds": authorization["expires_in_seconds"],
+        }
+    except _routes.CapabilityAuthorityMissing as exc:
+        raise HTTPException(403, str(exc))
+    except _nx.NativeExtendError as exc:
+        raise HTTPException(422 if exc.code in {
+            _nx.EXTEND_PARENT_MEDIA_ID_MISSING, _nx.EXTEND_PROJECT_CONTEXT_MISSING,
+            _nx.EXTEND_SCENE_CONTEXT_MISSING, _nx.EXTEND_RUNTIME_CONTRACT_MISSING,
+            _nx.EXTEND_UNSUPPORTED_MODEL, _nx.EXTEND_UNSUPPORTED_DURATION,
+        } else 409, str(exc))
+
+
 @router.post("/extend-run")
 async def extend_run(body: ExtendRunRequest):
     """Native Flow Extend CHAIN — THE single authoritative execution surface.
@@ -1063,21 +1110,13 @@ async def extend_run(body: ExtendRunRequest):
     # request is rejected with its precise 4xx regardless of extension state. A genuine
     # disconnect surfaces from the submit path as EXTEND_REQUEST_REJECTED.
     client = get_flow_client()
-    chain_req = _nx.ExtendChainRequest(
-        project_id=body.project_id, scene_id=body.scene_id,
-        source_operation_id=body.source_operation_id,
-        blocks=[_nx.ExtendBlock(
-            block_index=b.block_index, position=b.position, prompt=b.prompt,
-            is_final=b.is_final, start_frame_index=b.start_frame_index,
-            end_frame_index=b.end_frame_index) for b in body.blocks],
-        aspect_ratio=body.aspect_ratio,
-        workspace_generation_package_id=body.workspace_generation_package_id,
-        seed=body.seed, user_paygate_tier=body.user_paygate_tier)
+    chain_req = _native_extend_chain_request(body, _nx)
     try:
         return await _nx.run_native_extend_chain(
             client, chain_req, dry_run=body.dry_run,
             confirm_live_credit_burn=body.confirm_live_credit_burn,
-            confirmed_extend_operation_count=body.confirmed_extend_operation_count)
+            confirmed_extend_operation_count=body.confirmed_extend_operation_count,
+            live_authorization_token=body.live_authorization_token)
     except _routes.CapabilityAuthorityMissing as exc:
         raise HTTPException(403, str(exc))
     except _nx.NativeExtendError as exc:
@@ -1109,7 +1148,10 @@ async def native_extend_lineage(project_id: str = None,
     rows = await crud.list_extend_lineage(
         workspace_generation_package_id=workspace_generation_package_id,
         project_id=project_id)
-    return {"lineage": rows, "count": len(rows)}
+    # Flow media URLs can be signed and short-lived. They remain server-side lineage
+    # metadata only and are never returned to the operator/browser surface.
+    safe_rows = [{key: value for key, value in row.items() if key != "output_url"} for row in rows]
+    return {"lineage": safe_rows, "count": len(safe_rows)}
 
 
 @router.post("/check-status")
