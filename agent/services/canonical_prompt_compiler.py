@@ -1603,7 +1603,10 @@ def _section_3_continuity(
             f"re-grip. The product must not shrink and must not enlarge: after the hand pours, applies, "
             f"or re-grips it, its size on screen is exactly the same as before the action. Hold one "
             f"single constant absolute size for the entire block; treat any change in the product's "
-            f"size between the start and end of this block as an error."
+            f"size between the start and end of this block as an error. For SIZE in this block this "
+            f"rule is the final authority: if any other instruction here treats a reference image as "
+            f"a size, scale, or physical-scale source, ignore it for size and defer to the previous "
+            f"clip's final frame as the only size truth."
         )
     return "\n".join(lines)
 

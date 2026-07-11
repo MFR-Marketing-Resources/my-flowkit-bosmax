@@ -39,6 +39,9 @@ def test_continuation_block_gets_bidirectional_frame_anchored_scale_lock():
     # covers the invented pour/cap/re-grip motions where the drift happened
     for word in ("pour", "cap", "re-grip"):
         assert word in s3, word
+    # it is the FINAL authority on size, so a trailing reference-image scale line can't re-anchor it
+    assert "this rule is the final authority" in s3
+    assert "ignore it for size and defer to the previous" in s3
 
 
 def test_opening_block_1_is_untouched():
