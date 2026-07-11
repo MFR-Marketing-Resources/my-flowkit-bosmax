@@ -2094,6 +2094,147 @@ async def create_video_production_job(job_id: str, *, project_id: str = None,
         await db.commit()
 
 
+async def get_video_production_job_by_logical_key(logical_job_key: str) -> dict | None:
+    """One job per logical production intent (durable identity, create-before-initial)."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM video_production_job WHERE logical_job_key=?", (logical_job_key,))
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def create_video_production_job_full(job_id: str, *, logical_job_key: str,
+                                           status: str = "CREATED", **fields) -> None:
+    """Create the lifecycle-owning job BEFORE any credit-consuming operation.
+
+    Idempotent on logical_job_key via INSERT OR IGNORE — a racing duplicate create
+    for the same production intent is a no-op (callers then read the existing row).
+    """
+    cols = {"job_id": job_id, "logical_job_key": logical_job_key, "status": status}
+    allowed = {
+        "project_id", "scene_id", "requested_duration_seconds", "product_id",
+        "product_name", "execution_package_id", "approved_asset_id",
+        "approved_asset_sha256", "engine", "model", "aspect_ratio",
+        "plan_fingerprint", "whole_plan_json", "initial_media_id",
+        "segment_media_ids_json",
+    }
+    cols.update({k: v for k, v in fields.items() if k in allowed})
+    names = ", ".join(cols)
+    marks = ", ".join("?" for _ in cols)
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            f"INSERT OR IGNORE INTO video_production_job ({names}) VALUES ({marks})",
+            tuple(cols.values()))
+        await db.commit()
+
+
+async def update_video_production_job_full(job_id: str, **fields) -> None:
+    """Update any lifecycle-owner field (superset of update_video_production_job)."""
+    allowed = {
+        "status", "error_code", "project_id", "scene_id", "initial_media_id",
+        "segment_media_ids_json", "extend_lineage_ids_json", "final_concat_job_name",
+        "final_media_id", "final_local_path", "final_sha256", "final_duration_s",
+        "plan_fingerprint", "whole_plan_json", "authorization_token",
+        "authorization_expires_at", "initial_operation_id", "initial_workflow_id",
+        "extend_child_operation_id", "extend_child_workflow_id", "stage_state_json",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    db = await get_db()
+    sets = ", ".join(f"{k}=?" for k in updates)
+    async with _db_lock:
+        await db.execute(
+            f"UPDATE video_production_job SET {sets}, "
+            "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE job_id=?",
+            (*updates.values(), job_id))
+        await db.commit()
+
+
+# ── DB-level side-effect idempotency (initial / extend / concat) ─────────────
+async def reserve_video_job_side_effect(idempotency_key: str, *, job_id: str,
+                                        stage: str) -> dict:
+    """Atomically reserve a credit-consuming side effect.
+
+    Returns {"reserved": bool, "row": <existing-or-new-row>}. reserved=True means
+    THIS caller won the race and may submit; reserved=False means a row already
+    existed (another tab/process/attempt) and the caller must RESUME/return by the
+    row's structured state — never a second submit.
+    """
+    db = await get_db()
+    async with _db_lock:
+        cur = await db.execute(
+            "INSERT OR IGNORE INTO video_job_side_effect "
+            "(idempotency_key, job_id, stage, submission_state, retry_safety) "
+            "VALUES (?,?,?,'NOT_ATTEMPTED','RESUME_ONLY')",
+            (idempotency_key, job_id, stage))
+        await db.commit()
+        reserved = cur.rowcount == 1
+        row = await db.execute(
+            "SELECT * FROM video_job_side_effect WHERE idempotency_key=?",
+            (idempotency_key,))
+        row = await row.fetchone()
+    return {"reserved": reserved, "row": dict(row) if row else None}
+
+
+async def list_video_job_side_effects(job_id: str) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM video_job_side_effect WHERE job_id=? ORDER BY created_at", (job_id,))
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_video_job_side_effect(idempotency_key: str) -> dict | None:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM video_job_side_effect WHERE idempotency_key=?", (idempotency_key,))
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def update_video_job_side_effect(idempotency_key: str, **fields) -> None:
+    allowed = {"submission_state", "credit_state", "retry_safety", "operation_ref",
+               "effective_submit_count", "detail"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    db = await get_db()
+    sets = ", ".join(f"{k}=?" for k in updates)
+    async with _db_lock:
+        await db.execute(
+            f"UPDATE video_job_side_effect SET {sets}, "
+            "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE idempotency_key=?",
+            (*updates.values(), idempotency_key))
+        await db.commit()
+
+
+async def increment_side_effect_submit_count(idempotency_key: str) -> int:
+    """Atomically bump + return the effective submit count (proves exactly-once)."""
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            "UPDATE video_job_side_effect SET effective_submit_count = "
+            "effective_submit_count + 1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+            "WHERE idempotency_key=?", (idempotency_key,))
+        await db.commit()
+        cur = await db.execute(
+            "SELECT effective_submit_count FROM video_job_side_effect WHERE idempotency_key=?",
+            (idempotency_key,))
+        r = await cur.fetchone()
+    return int(r[0]) if r else 0
+
+
+async def list_non_terminal_authorized_jobs() -> list[dict]:
+    """In-flight AUTHORIZED jobs to resume on process restart (durable worker sweep)."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM video_production_job WHERE status NOT IN "
+        "('CREATED','COMPLETE') AND status NOT LIKE '%FAILED%' "
+        "AND authorization_token IS NOT NULL ORDER BY created_at")
+    return [dict(r) for r in await cur.fetchall()]
+
+
 async def get_video_production_job(job_id: str) -> dict | None:
     db = await get_db()
     cur = await db.execute(

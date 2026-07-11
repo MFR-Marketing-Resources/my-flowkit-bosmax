@@ -1948,6 +1948,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					{extendAuthority && (
 						<NativeExtendPanel
 							totalDurationSeconds={requestedTotalDuration}
+							productId={selectedProduct?.id ?? null}
+							productName={selectedProduct?.product_display_name ?? null}
+							executionPackageId={
+								workspacePackage?.workspace_execution_package_id ?? null
+							}
 							plannedBlocks={extendAuthority.plan.slice(1).map((_blockDuration, i) => ({
 								block_index: i + 2,
 								position: i + 1,

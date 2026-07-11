@@ -9,8 +9,10 @@ const authorizeMock = vi.fn();
 const liveRunMock = vi.fn();
 const candidatesMock = vi.fn();
 const resolveSourceMock = vi.fn();
-const createJobMock = vi.fn();
-const finalizeMock = vi.fn();
+const planMock = vi.fn();
+const authorizeJobMock = vi.fn();
+const startJobMock = vi.fn();
+const jobStatusMock = vi.fn();
 
 vi.mock('../api/nativeExtend', () => ({
   resolveNativeExtend: (...a: unknown[]) => resolveMock(...a),
@@ -20,8 +22,10 @@ vi.mock('../api/nativeExtend', () => ({
   runNativeExtend: (...a: unknown[]) => liveRunMock(...a),
   fetchNativeExtendSourceCandidates: (...a: unknown[]) => candidatesMock(...a),
   resolveNativeExtendSource: (...a: unknown[]) => resolveSourceMock(...a),
-  createVideoJob: (...a: unknown[]) => createJobMock(...a),
-  finalizeVideoJob: (...a: unknown[]) => finalizeMock(...a),
+  planVideoJob: (...a: unknown[]) => planMock(...a),
+  authorizeVideoJob: (...a: unknown[]) => authorizeJobMock(...a),
+  startVideoJob: (...a: unknown[]) => startJobMock(...a),
+  getVideoJobStatus: (...a: unknown[]) => jobStatusMock(...a),
 }));
 
 // Import SUT after mocks.
@@ -42,7 +46,33 @@ beforeEach(() => {
     scene_display_name: 'S',
     verified: true,
   });
+  planMock.mockResolvedValue(PLAN);
+  authorizeJobMock.mockResolvedValue({
+    job_id: 'vj_1', authorization_token: 'auth_x', expires_in_seconds: 600,
+  });
+  startJobMock.mockResolvedValue(STATUS('Generating video'));
+  jobStatusMock.mockResolvedValue(STATUS('Generating video'));
 });
+
+const PLAN = {
+  job_id: 'vj_1',
+  status: 'CREATED',
+  plan_fingerprint: 'fp_1',
+  plan: {
+    requested_seconds: 24,
+    segment_count: 3,
+    operation_counts: { initial_generation: 1, extend: 2, final_render: 1, total: 4 },
+    credit_estimate: { initial_generation: 'credit_consuming', extend: 'credit_consuming', final_render: 'unknown', total: 'unknown' },
+  },
+};
+function STATUS(stage: string, over: Record<string, unknown> = {}) {
+  return {
+    job_id: 'vj_1', status: stage, human_stage: stage, error_code: null,
+    requested_duration_seconds: 24, product_name: 'MWTCB',
+    plan: PLAN.plan, final_media_id: null, final_duration_s: null,
+    complete: false, credit_summary: 'NOT_SPENT', no_credit_used: true, ...over,
+  };
+}
 
 const READY = {
   route_id: 'GOOGLE_FLOW_NATIVE_EXTEND',
@@ -75,6 +105,9 @@ function renderPanel(props: Record<string, unknown> = {}) {
       projectId="p"
       sceneId="s"
       sourceOperationId="op1"
+      productId="prod-1"
+      productName="MWTCB"
+      executionPackageId="wep_1"
       totalDurationSeconds={24}
       plannedBlocks={[
         { block_index: 2, position: 1, prompt: 'b2' },
@@ -232,18 +265,20 @@ describe('NativeExtendPanel', () => {
     expect(screen.queryByTestId('native-extend-waiting-source')).toBeNull();
   });
 
-  it('shows WAITING_FOR_SOURCE when no finished clip exists and nothing was supplied', async () => {
+  it('shows a human prompt (not raw codes) when no product is selected', async () => {
     resolveMock.mockResolvedValue(BLOCKED);
     lineageMock.mockResolvedValue({ lineage: [], count: 0 });
     candidatesMock.mockResolvedValue({ candidates: [], count: 0 });
-    renderPanel({ projectId: '', sceneId: '', sourceOperationId: '' });
+    renderPanel({ productId: undefined, projectId: '', sceneId: '', sourceOperationId: '' });
 
     expect(await screen.findByTestId('native-extend-waiting-source')).toHaveTextContent(
-      /Waiting for the first part/,
+      /Select a product above/,
     );
-    // Raw blocker codes stay out of the empty-state surface.
+    // No engineering blocker codes on the normal surface.
     expect(screen.queryByTestId('native-extend-blockers')).toBeNull();
-    expect(screen.getByTestId('native-extend-preview-btn')).toBeDisabled();
+    // Without an intent there is no Generate action and no plan call.
+    expect(screen.queryByTestId('generate-full-video-btn')).toBeNull();
+    expect(planMock).not.toHaveBeenCalled();
   });
 
   it('selecting a saved clip resolves and fills the Flow context', async () => {
@@ -295,64 +330,30 @@ describe('NativeExtendPanel', () => {
     expect(screen.getByTestId('route-GOOGLE_FLOW_FINAL_CONCAT_EXPORT')).toBeInTheDocument();
   });
 
-  it('renders ONE final video result after prepare + gated render', async () => {
-    resolveMock.mockResolvedValue(READY);
-    lineageMock.mockResolvedValue({
-      lineage: [
-        {
-          extend_lineage_id: 'L1',
-          block_index: 2,
-          block_position: 1,
-          parent_operation_id: 'op1',
-          child_operation_id: 'child-1',
-          child_primary_media_id: 'child-1',
-          polling_state: 'EXTEND_SUCCEEDED',
-        },
-      ],
-      count: 1,
-    });
-    createJobMock.mockResolvedValue({ job_id: 'vj_ui', status: 'TIMELINE_SEGMENTS_READY' });
-    finalizeMock
-      .mockResolvedValueOnce({
-        dry_run: true,
-        status: 'TIMELINE_SEGMENTS_READY',
-        job_id: 'vj_ui',
-        planned_render_operation_count: 1,
-      })
-      .mockResolvedValueOnce({
-        dry_run: false,
-        status: 'COMPLETE',
-        job_id: 'vj_ui',
-        final_media_id: 'final_vj_ui',
-        measured_duration_s: 16.0,
-        size_mb: 14.2,
-      });
+  it('restores ONE final video result from a completed durable job on mount (refresh-safe)', async () => {
+    // Refresh scenario: plan() reuses the existing job; status is already COMPLETE.
+    planMock.mockResolvedValue({ ...PLAN, status: 'COMPLETE' });
+    jobStatusMock.mockResolvedValue(
+      STATUS('Video ready', {
+        status: 'COMPLETE', complete: true,
+        final_media_id: 'final_vj_1', final_duration_s: 24.0,
+      }),
+    );
     renderPanel();
-
-    const prepare = await screen.findByTestId('final-prepare-btn');
-    fireEvent.click(prepare);
-    await waitFor(() => expect(createJobMock).toHaveBeenCalledWith(
-      expect.objectContaining({ source_media_id: 'op1', project_id: 'p' }),
-    ));
-    expect(await screen.findByTestId('final-plan')).toHaveTextContent('1 final render');
-
-    fireEvent.click(screen.getByTestId('final-render-btn'));
-    fireEvent.click(await screen.findByTestId('final-render-confirm-btn'));
-    await waitFor(() => expect(finalizeMock).toHaveBeenLastCalledWith('vj_ui', {
-      dry_run: false,
-      confirm_live_credit_burn: true,
-    }));
 
     const result = await screen.findByTestId('final-video-result');
     expect(result).toHaveTextContent(/Video ready/);
-    expect(result).toHaveTextContent(/16/);
-    const link = screen.getByTestId('final-download');
-    expect(link).toHaveAttribute('href', '/api/flow/retrieved/final_vj_ui');
-    // ONE deliverable: segment lineage is explicitly diagnostics
-    expect(screen.getByTestId('native-extend-lineage')).toHaveTextContent(/diagnostics/i);
+    expect(result).toHaveTextContent(/24/);
+    expect(screen.getByTestId('final-preview')).toBeInTheDocument();     // one preview
+    expect(screen.getByTestId('final-download')).toHaveAttribute(
+      'href', '/api/flow/retrieved/final_vj_1');
+    // it RESUMED — never started a fresh job on load
+    expect(startJobMock).not.toHaveBeenCalled();
+    // no second result card
+    expect(screen.getAllByTestId('final-video-result')).toHaveLength(1);
   });
 
-  const BANNED_ON_NORMAL_SURFACE = [
+    const BANNED_ON_NORMAL_SURFACE = [
     'Independent Block Plan',
     'Download Project ZIP',
     'Final Concatenated Export',
@@ -395,73 +396,78 @@ describe('NativeExtendPanel', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('one Generate Video action runs the whole job behind ONE confirmation (Mission 8)', async () => {
+  it('one Generate Video action runs the whole job behind ONE whole-plan confirmation (Mission 8)', async () => {
     resolveMock.mockResolvedValue(READY);
     lineageMock.mockResolvedValue({ lineage: [], count: 0 });
-    previewMock.mockResolvedValue({
-      dry_run: true,
-      planned_operation_count: 2,
-      block_count: 2,
-      model_key: 'x',
-      blocks: [],
-    });
-    authorizeMock.mockResolvedValue({
-      authorization_token: 'one-shot',
-      planned_operation_count: 2,
-      expires_in_seconds: 300,
-    });
-    liveRunMock.mockResolvedValue({ dry_run: false, planned_operation_count: 2, block_count: 2, blocks: [] });
-    createJobMock.mockResolvedValue({ job_id: 'vj_full', status: 'TIMELINE_SEGMENTS_READY' });
-    finalizeMock
-      .mockResolvedValueOnce({ dry_run: true, status: 'TIMELINE_SEGMENTS_READY', job_id: 'vj_full', planned_render_operation_count: 1 })
-      .mockResolvedValueOnce({ dry_run: false, status: 'COMPLETE', job_id: 'vj_full', final_media_id: 'final_vj_full', measured_duration_s: 24.0, size_mb: 21.5 });
+    startJobMock.mockResolvedValue(STATUS('Generating video'));
     renderPanel();
 
     const generate = await screen.findByTestId('generate-full-video-btn');
     await waitFor(() => expect(generate).not.toBeDisabled());
     fireEvent.click(generate);
 
-    // ONE confirmation covering the entire requested video
+    // ONE confirmation covering the ENTIRE requested video (initial + extend + final)
     const confirm = await screen.findByTestId('full-video-confirm');
+    expect(confirm).toHaveTextContent(/Initial part: 1 operation/);
     expect(confirm).toHaveTextContent(/Continuation: 2 operations/);
     expect(confirm).toHaveTextContent(/Final video preparation: 1 operation/);
+    expect(screen.getByTestId('full-video-plan-total')).toHaveTextContent('4');
+    // honest credit: final render cost is 'unknown', not "credits once"
+    expect(confirm).toHaveTextContent(/Final render credit cost is unknown/);
+    expect(confirm).not.toHaveTextContent(/credits once/);
+
     fireEvent.click(screen.getByTestId('full-video-confirm-btn'));
 
-    await waitFor(() => expect(finalizeMock).toHaveBeenLastCalledWith('vj_full', {
-      dry_run: false,
-      confirm_live_credit_burn: true,
-    }));
-    expect(authorizeMock).toHaveBeenCalledTimes(1);   // bounded, single-use, internal
-    expect(liveRunMock).toHaveBeenCalledWith(expect.objectContaining({
-      confirmed_extend_operation_count: 2,
-      live_authorization_token: 'one-shot',
-    }));
+    // one authorization for the whole reviewed plan, then one start (returns fast)
+    await waitFor(() => expect(authorizeJobMock).toHaveBeenCalledWith('vj_1', 'fp_1'));
+    expect(authorizeJobMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(startJobMock).toHaveBeenCalledWith('vj_1'));
 
-    const result = await screen.findByTestId('final-video-result');
-    expect(result).toHaveTextContent(/Video ready/);
-    expect(screen.getByTestId('final-preview')).toBeInTheDocument();   // one preview
-    expect(screen.getByTestId('final-download')).toHaveAttribute(
-      'href', '/api/flow/retrieved/final_vj_full');
-    // no second result card and no raw-code progress leaked
+    // simple human progress, no raw codes
+    const progress = await screen.findByTestId('full-video-progress');
+    expect(progress).toHaveTextContent(/Generating video/);
     expect(screen.queryByTestId('full-video-error')).toBeNull();
   });
 
-  it('human failure copy + no-credit claim only on proven pre-submit gates', async () => {
+    it('human failure copy + no-credit claim come from STRUCTURED backend state', async () => {
     resolveMock.mockResolvedValue(READY);
     lineageMock.mockResolvedValue({ lineage: [], count: 0 });
-    previewMock.mockResolvedValue({ dry_run: true, planned_operation_count: 2, block_count: 2, blocks: [] });
-    authorizeMock.mockRejectedValue(new Error('NATIVE_EXTEND_DISABLED:flag off'));
+    // start returns a failed status with backend-proven no_credit_used
+    startJobMock.mockResolvedValue(
+      STATUS('The continuation could not be completed safely.', {
+        status: 'EXTEND_FAILED', error_code: 'EXTEND_FAILED',
+        credit_summary: 'NOT_SPENT', no_credit_used: true,
+      }),
+    );
     renderPanel();
     fireEvent.click(await screen.findByTestId('generate-full-video-btn'));
     fireEvent.click(await screen.findByTestId('full-video-confirm-btn'));
+
     const err = await screen.findByTestId('full-video-error');
     expect(err).toHaveTextContent('The continuation could not be completed safely.');
     expect(err).toHaveTextContent('No credit was used for the failed step.');
-    // raw code stays in diagnostics
-    expect(screen.getByTestId('full-video-raw-error')).toHaveTextContent(/NATIVE_EXTEND_DISABLED/);
+    // raw code lives only inside Advanced Diagnostics
+    expect(screen.getByTestId('full-video-raw-error')).toHaveTextContent(/EXTEND_FAILED/);
     expect(
       screen.getByTestId('full-video-raw-error')
         .closest('[data-testid="native-extend-advanced-diagnostics"]'),
     ).not.toBeNull();
+  });
+
+  it('does NOT claim "no credit used" when the backend reports credit MAY_HAVE_SPENT', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    startJobMock.mockResolvedValue(
+      STATUS('The final video could not be prepared.', {
+        status: 'FINAL_RENDER_FAILED', error_code: 'FINAL_RENDER_FAILED',
+        credit_summary: 'MAY_HAVE_SPENT', no_credit_used: false,
+      }),
+    );
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('generate-full-video-btn'));
+    fireEvent.click(await screen.findByTestId('full-video-confirm-btn'));
+    const err = await screen.findByTestId('full-video-error');
+    expect(err).toHaveTextContent('The final video could not be prepared.');
+    expect(err).not.toHaveTextContent('No credit was used');
   });
 });

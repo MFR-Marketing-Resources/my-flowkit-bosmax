@@ -199,3 +199,77 @@ export async function finalizeVideoJob(
 ): Promise<FinalizeResult> {
   return postAPI(`/api/flow/video-jobs/${encodeURIComponent(jobId)}/finalize`, input);
 }
+
+
+// ─── Durable, server-owned full-video job ───────────────────────────────────
+export interface VideoJobPlan {
+  job_id: string;
+  status: string;
+  plan_fingerprint: string;
+  reused?: boolean;
+  plan: {
+    requested_seconds: number;
+    segment_count: number;
+    operation_counts: {
+      initial_generation: number;
+      extend: number;
+      final_render: number;
+      total: number;
+    };
+    credit_estimate: Record<string, string>;
+  };
+}
+
+export interface VideoJobStatus {
+  job_id: string;
+  status: string;
+  human_stage: string;
+  error_code?: string | null;
+  requested_duration_seconds?: number | null;
+  product_name?: string | null;
+  plan?: VideoJobPlan['plan'];
+  final_media_id?: string | null;
+  final_duration_s?: number | null;
+  complete: boolean;
+  credit_summary: 'NOT_SPENT' | 'MAY_HAVE_SPENT' | 'SPENT' | 'UNKNOWN';
+  no_credit_used: boolean;
+}
+
+export interface VideoJobAuthorization {
+  job_id: string;
+  authorization_token: string;
+  expires_in_seconds: number;
+}
+
+export async function planVideoJob(intent: {
+  product_id?: string | null;
+  product_name?: string | null;
+  execution_package_id?: string | null;
+  approved_asset_sha256?: string | null;
+  requested_total_duration_seconds: number;
+  engine?: string | null;
+  model?: string | null;
+  aspect_ratio?: string;
+  initial_prompt_fingerprint?: string | null;
+  execution_mode?: string;
+  client_request_nonce?: string | null;
+}): Promise<VideoJobPlan> {
+  return postAPI('/api/flow/video-jobs/plan', intent);
+}
+
+export async function authorizeVideoJob(
+  jobId: string,
+  confirmedPlanFingerprint: string,
+): Promise<VideoJobAuthorization> {
+  return postAPI(`/api/flow/video-jobs/${encodeURIComponent(jobId)}/authorize`, {
+    confirmed_plan_fingerprint: confirmedPlanFingerprint,
+  });
+}
+
+export async function startVideoJob(jobId: string): Promise<VideoJobStatus> {
+  return postAPI(`/api/flow/video-jobs/${encodeURIComponent(jobId)}/start`, {});
+}
+
+export async function getVideoJobStatus(jobId: string): Promise<VideoJobStatus> {
+  return getAPI(`/api/flow/video-jobs/${encodeURIComponent(jobId)}/status`);
+}

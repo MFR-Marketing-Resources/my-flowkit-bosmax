@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import aiohttp
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
 from agent.services.flow_client import get_flow_client
@@ -1203,6 +1203,115 @@ class VideoJobFinalizeRequest(BaseModel):
     """Render the ONE final MP4. DRY-RUN default; live needs explicit confirm."""
     dry_run: bool = True
     confirm_live_credit_burn: bool = False
+
+
+class VideoJobPlanRequest(BaseModel):
+    """Plan the ONE logical full-video job BEFORE any credit operation."""
+    product_id: Optional[str] = None
+    product_name: Optional[str] = None
+    execution_package_id: Optional[str] = None
+    approved_asset_id: Optional[str] = None
+    approved_asset_sha256: Optional[str] = None
+    requested_total_duration_seconds: int = 16
+    engine: Optional[str] = None
+    model: Optional[str] = None
+    aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT"
+    initial_prompt_fingerprint: Optional[str] = None
+    execution_mode: str = "HYBRID_EXTEND"
+    client_request_nonce: Optional[str] = None
+
+
+class VideoJobAuthorizeRequest(BaseModel):
+    confirmed_plan_fingerprint: str
+
+
+def _job_intent(body: "VideoJobPlanRequest") -> dict:
+    return {
+        "product_id": body.product_id, "product_name": body.product_name,
+        "execution_package_id": body.execution_package_id,
+        "approved_asset_id": body.approved_asset_id,
+        "approved_asset_sha256": body.approved_asset_sha256,
+        "requested_duration_seconds": body.requested_total_duration_seconds,
+        "engine": body.engine, "model": body.model, "aspect_ratio": body.aspect_ratio,
+        "initial_prompt_fingerprint": body.initial_prompt_fingerprint,
+        "execution_mode": body.execution_mode,
+        "client_request_nonce": body.client_request_nonce,
+    }
+
+
+@router.post("/video-jobs/plan")
+async def plan_video_job(body: VideoJobPlanRequest):
+    """Create-or-reuse the lifecycle-owning job + return the ONE reviewed plan.
+    Spends nothing. The job exists BEFORE the initial segment is generated."""
+    from agent.services import video_production_orchestrator as _orch
+    return await _orch.plan_job(_job_intent(body))
+
+
+@router.post("/video-jobs/{job_id}/authorize")
+async def authorize_video_job(job_id: str, body: VideoJobAuthorizeRequest):
+    """Issue ONE expiring, single-use, job-bound, fingerprint-bound authorization for
+    the whole reviewed plan. A changed plan (product/asset/prompt/duration/count) is
+    rejected with 409."""
+    from agent.services import video_production_orchestrator as _orch
+    try:
+        return await _orch.authorize_job(
+            job_id, confirmed_plan_fingerprint=body.confirmed_plan_fingerprint)
+    except _orch.OrchestratorError as exc:
+        raise HTTPException(
+            404 if exc.code == "VIDEO_JOB_NOT_FOUND" else 409, str(exc))
+
+
+async def _production_initial_generator(job: dict) -> dict:
+    """LIVE initial-segment generation via the existing proven one-door lane.
+
+    Deferred credit surface: only reached under NATIVE_EXTEND_ENABLED + a valid
+    whole-job authorization (operator controlled live proof). Zero-credit validation
+    injects a mock generator into advance_job instead of this.
+    """
+    raise HTTPException(
+        501, "LIVE_INITIAL_GENERATION_PENDING_OPERATOR_PROOF: initial-segment "
+        "generation is wired to the one-door lane and runs only during the controlled "
+        "operator live proof; it is not exercised in zero-credit validation")
+
+
+async def _drive_video_job(job_id: str, token: str):
+    """Background durable driver — resume-safe; correctness is guaranteed by the DB
+    idempotency table, not by this task surviving."""
+    from agent.services import video_production_orchestrator as _orch
+    from agent.config import OUTPUT_DIR
+    client = get_flow_client()
+    try:
+        await _orch.advance_job(
+            client, job_id, authorization_token=token,
+            generate_initial=_production_initial_generator,
+            out_dir=OUTPUT_DIR / "retrieved")
+    except Exception:  # noqa: BLE001 — state is persisted; never crash the loop
+        pass
+
+
+@router.post("/video-jobs/{job_id}/start")
+async def start_video_job(job_id: str, background_tasks: BackgroundTasks):
+    """Start/RESUME the durable job and return immediately. Idempotent: calling again
+    resumes from persisted state and never double-submits any operation."""
+    from agent.services import video_production_orchestrator as _orch
+    job = await crud.get_video_production_job(job_id)
+    if not job:
+        raise HTTPException(404, "VIDEO_JOB_NOT_FOUND")
+    token = job.get("authorization_token")
+    if not token:
+        raise HTTPException(409, "VIDEO_JOB_NOT_AUTHORIZED")
+    background_tasks.add_task(_drive_video_job, job_id, token)
+    return await _orch.get_job_status(job_id)
+
+
+@router.get("/video-jobs/{job_id}/status")
+async def video_job_status(job_id: str):
+    """Structured, refresh-safe status the UI restores on mount (never auto-starts)."""
+    from agent.services import video_production_orchestrator as _orch
+    try:
+        return await _orch.get_job_status(job_id)
+    except _orch.OrchestratorError:
+        raise HTTPException(404, "VIDEO_JOB_NOT_FOUND")
 
 
 @router.post("/video-jobs")

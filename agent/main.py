@@ -225,6 +225,25 @@ async def lifespan(app: FastAPI):
     worker_task = asyncio.create_task(controller.start())
     from agent.services.workspace_generation_package_service import _scheduler_loop
     scheduler_task = asyncio.create_task(_scheduler_loop())
+
+    async def _resume_durable_video_jobs():
+        # Restart recovery: RESUME (poll only) any in-flight authorized full-video
+        # job — never a fresh credit submit. Best-effort; boot never blocks on it.
+        try:
+            from agent.services import video_production_orchestrator as _orch
+            from agent.api.flow import _production_initial_generator
+            from agent.config import OUTPUT_DIR
+            client = get_flow_client()
+            resumed = await _orch.resume_in_flight_jobs(
+                client, generate_initial=_production_initial_generator,
+                out_dir=OUTPUT_DIR / "retrieved")
+            if resumed:
+                logger.info("Resumed %d in-flight full-video job(s) after restart",
+                            len(resumed))
+        except Exception:  # noqa: BLE001 — recovery must never crash startup
+            logger.debug("durable video-job resume sweep skipped", exc_info=True)
+
+    resume_task = asyncio.create_task(_resume_durable_video_jobs())
     logger.info("WS server + worker + batch scheduler started")
 
     yield

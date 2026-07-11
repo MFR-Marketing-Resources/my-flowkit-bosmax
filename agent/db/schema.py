@@ -1855,7 +1855,48 @@ CREATE TABLE IF NOT EXISTS video_production_job (
     updated_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_video_job_project ON video_production_job(project_id);
+
+-- DB-LEVEL idempotency for every credit-consuming side effect (initial/extend/
+-- concat). The PRIMARY KEY makes reserve-before-submit atomic: two tabs/processes
+-- racing the same operation cannot both win. submission_state/credit_state/
+-- retry_safety are the STRUCTURED truth the UI reads (never string parsing).
+CREATE TABLE IF NOT EXISTS video_job_side_effect (
+    idempotency_key         TEXT PRIMARY KEY,
+    job_id                  TEXT NOT NULL,
+    stage                   TEXT NOT NULL,
+    submission_state        TEXT NOT NULL DEFAULT 'NOT_ATTEMPTED',
+    credit_state            TEXT NOT NULL DEFAULT 'NOT_SPENT',
+    retry_safety            TEXT NOT NULL DEFAULT 'SAFE',
+    operation_ref           TEXT,
+    effective_submit_count  INTEGER NOT NULL DEFAULT 0,
+    detail                  TEXT,
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_video_side_effect_job ON video_job_side_effect(job_id, stage);
 """)
+        await db.commit()
+
+        # Migration: video_production_job durable-identity + lifecycle-owner columns
+        # (create-before-initial). Additive; older rows read NULL and stay inert.
+        cursor = await db.execute("PRAGMA table_info(video_production_job)")
+        vj_cols = {row[1] for row in await cursor.fetchall()}
+        for col, decl in (
+            ("logical_job_key", "TEXT"), ("execution_package_id", "TEXT"),
+            ("approved_asset_id", "TEXT"), ("approved_asset_sha256", "TEXT"),
+            ("engine", "TEXT"), ("model", "TEXT"), ("aspect_ratio", "TEXT"),
+            ("plan_fingerprint", "TEXT"), ("whole_plan_json", "TEXT"),
+            ("authorization_token", "TEXT"), ("authorization_expires_at", "TEXT"),
+            ("initial_operation_id", "TEXT"), ("initial_workflow_id", "TEXT"),
+            ("extend_child_operation_id", "TEXT"), ("extend_child_workflow_id", "TEXT"),
+            ("stage_state_json", "TEXT"),
+        ):
+            if col not in vj_cols:
+                await db.execute(f"ALTER TABLE video_production_job ADD COLUMN {col} {decl}")
+        # unique logical identity — created AFTER the column exists
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_video_job_logical_key "
+            "ON video_production_job(logical_job_key)")
         await db.commit()
 
         # Migration: generated_artifact.scene_id — durable scene evidence so the

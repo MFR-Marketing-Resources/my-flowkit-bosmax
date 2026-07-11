@@ -22,14 +22,17 @@ import {
   resolveNativeExtendSource,
   requestNativeExtendLiveAuthorization,
   runNativeExtend,
-  createVideoJob,
-  finalizeVideoJob,
+  planVideoJob,
+  authorizeVideoJob,
+  startVideoJob,
+  getVideoJobStatus,
   type NativeExtendResolution,
   type ExtendRunResult,
   type ExtendLineageRow,
   type ExtendBlockInput,
   type ExtendSourceCandidate,
-  type FinalizeResult,
+  type VideoJobPlan,
+  type VideoJobStatus,
 } from '../api/nativeExtend';
 
 export interface NativeExtendPanelProps {
@@ -39,6 +42,11 @@ export interface NativeExtendPanelProps {
   totalDurationSeconds?: number | null;
   plannedBlocks?: ExtendBlockInput[];
   aspectRatio?: string;
+  // Production intent — lets the ONE job own the whole lifecycle (create-before-initial).
+  productId?: string | null;
+  productName?: string | null;
+  executionPackageId?: string | null;
+  approvedAssetSha256?: string | null;
 }
 
 export default function NativeExtendPanel({
@@ -48,6 +56,10 @@ export default function NativeExtendPanel({
   totalDurationSeconds,
   plannedBlocks = [],
   aspectRatio = 'VIDEO_ASPECT_RATIO_PORTRAIT',
+  productId,
+  productName,
+  executionPackageId,
+  approvedAssetSha256,
 }: NativeExtendPanelProps) {
   // Flow runtime ids the operator supplies (seeded from props when available).
   const [projectId, setProjectId] = useState(projectIdProp ?? '');
@@ -66,62 +78,66 @@ export default function NativeExtendPanel({
   const [selectedSource, setSelectedSource] = useState('');
   const [sourceNote, setSourceNote] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  // ONE logical full-video job: the user deliverable is a single full-duration MP4.
-  const [finalJobId, setFinalJobId] = useState<string | null>(null);
-  const [finalPlan, setFinalPlan] = useState<FinalizeResult | null>(null);
-  const [finalResult, setFinalResult] = useState<FinalizeResult | null>(null);
-  const [finalBusy, setFinalBusy] = useState(false);
-  const [finalConfirm, setFinalConfirm] = useState(false);
-  const [finalError, setFinalError] = useState<string | null>(null);
-  // ONE-action full-video orchestration (normal mode)
+  // ONE durable, server-owned full-video job (normal mode)
+  const [durablePlan, setDurablePlan] = useState<VideoJobPlan | null>(null);
+  const [durableStatus, setDurableStatus] = useState<VideoJobStatus | null>(null);
   const [fullConfirm, setFullConfirm] = useState(false);
-  const [fullStage, setFullStage] = useState<string | null>(null);
-  const [fullError, setFullError] = useState<string | null>(null);
-  const [fullRawError, setFullRawError] = useState<string | null>(null);
 
   const plannedBlockCount = plannedBlocks.length;
   const requestedSeconds = totalDurationSeconds ?? (plannedBlockCount + 1) * 8;
-  const extendSucceeded = lineage.some(
-    (row) => row.polling_state === 'EXTEND_SUCCEEDED' && row.child_operation_id,
-  );
+  // Deterministic production intent: the SAME configuration resolves to the SAME
+  // logical job, so a refresh reuses it (no localStorage, no duplicate job).
+  const intentReady = Boolean(productId && requestedSeconds > 8);
+  const jobInFlight =
+    !!durableStatus &&
+    !durableStatus.complete &&
+    !(durableStatus.error_code);
 
-  const prepareFinal = async () => {
-    if (!projectId || !sourceOperationId) return;
-    setFinalBusy(true);
-    setFinalError(null);
-    try {
-      const job = await createVideoJob({
-        source_media_id: sourceOperationId,
-        project_id: projectId,
-        requested_total_duration_seconds: requestedSeconds,
-      });
-      setFinalJobId(job.job_id);
-      const plan = await finalizeVideoJob(job.job_id, { dry_run: true });
-      setFinalPlan(plan);
-    } catch (e) {
-      setFinalError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setFinalBusy(false);
-    }
-  };
+  const planIntent = () => ({
+    product_id: productId ?? null,
+    product_name: productName ?? null,
+    execution_package_id: executionPackageId ?? null,
+    approved_asset_sha256: approvedAssetSha256 ?? null,
+    requested_total_duration_seconds: requestedSeconds,
+    aspect_ratio: aspectRatio,
+    execution_mode: 'HYBRID_EXTEND',
+  });
 
-  const renderFinal = async () => {
-    if (!finalJobId) return;
-    setFinalBusy(true);
-    setFinalError(null);
-    try {
-      const result = await finalizeVideoJob(finalJobId, {
-        dry_run: false,
-        confirm_live_credit_burn: true,
+  // Plan-on-mount + refresh-resume: planning is idempotent, so this restores an
+  // existing job's live status instead of ever starting a new one on page load.
+  useEffect(() => {
+    if (!intentReady) return;
+    let cancelled = false;
+    planVideoJob(planIntent())
+      .then(async (plan) => {
+        if (cancelled) return;
+        setDurablePlan(plan);
+        if (plan.status !== 'CREATED') {
+          const st = await getVideoJobStatus(plan.job_id).catch(() => null);
+          if (!cancelled && st) setDurableStatus(st);
+        }
+      })
+      .catch(() => {
+        /* planning is advisory; the button re-plans on click */
       });
-      setFinalResult(result);
-      setFinalConfirm(false);
-    } catch (e) {
-      setFinalError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setFinalBusy(false);
-    }
-  };
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productId, executionPackageId, requestedSeconds]);
+
+  // Poll a running job (never starts one) — refresh/restart safe.
+  useEffect(() => {
+    if (!jobInFlight || !durableStatus) return;
+    const id = durableStatus.job_id;
+    const t = setInterval(() => {
+      getVideoJobStatus(id)
+        .then((st) => setDurableStatus(st))
+        .catch(() => {});
+    }, 3000);
+    return () => clearInterval(t);
+  }, [jobInFlight, durableStatus?.job_id]);
+
 
   const applyCandidate = async (candidate: ExtendSourceCandidate) => {
     setSelectedSource(candidate.media_id);
@@ -261,94 +277,40 @@ export default function NativeExtendPanel({
     }
   };
 
-  // Pre-submit gate codes: failing on these provably spends nothing.
-  const NO_SPEND_CODES = [
-    'LIVE_CREDIT_CONFIRMATION_REQUIRED',
-    'NATIVE_EXTEND_DISABLED',
-    'FINAL_TIMELINE_DISABLED',
-    'EXTEND_SOURCE_NOT_RESOLVABLE',
-    'need >=2 segment',
-  ];
-
-  const humanFailure = (stage: string, raw: string): string => {
-    const base =
-      stage === 'Extending video'
-        ? 'The continuation could not be completed safely.'
-        : stage === 'Preparing final video'
-          ? 'The final video could not be prepared.'
-          : 'The video could not be started.';
-    const noSpend = NO_SPEND_CODES.some((c) => raw.includes(c));
-    return noSpend ? `${base} No credit was used for the failed step.` : base;
-  };
-
-  const runFullVideo = async () => {
-    if (!projectId || !sceneId || !sourceOperationId || plannedBlockCount === 0) return;
-    setBusy(true);
-    setFullError(null);
-    setFullRawError(null);
-    let stage = 'Preparing video';
-    setFullStage(stage);
+  const openGenerateConfirm = async () => {
+    // (Re)plan to get the exact reviewed operation counts + fingerprint.
     try {
-      const liveInput = {
-        project_id: projectId,
-        scene_id: sceneId,
-        source_operation_id: sourceOperationId,
-        blocks: plannedBlocks,
-        aspect_ratio: aspectRatio,
-        dry_run: false,
-        confirm_live_credit_burn: true,
-      };
-      const plan = await previewNativeExtend({
-        project_id: projectId,
-        scene_id: sceneId,
-        source_operation_id: sourceOperationId,
-        blocks: plannedBlocks,
-        aspect_ratio: aspectRatio,
-      });
-      stage = 'Extending video';
-      setFullStage(stage);
-      const authorization = await requestNativeExtendLiveAuthorization({
-        ...liveInput,
-        confirmed_extend_operation_count: plan.planned_operation_count,
-      });
-      await runNativeExtend({
-        ...liveInput,
-        confirmed_extend_operation_count: authorization.planned_operation_count,
-        live_authorization_token: authorization.authorization_token,
-      });
-      stage = 'Preparing final video';
-      setFullStage(stage);
-      const job = await createVideoJob({
-        source_media_id: sourceOperationId,
-        project_id: projectId,
-        requested_total_duration_seconds: requestedSeconds,
-      });
-      setFinalJobId(job.job_id);
-      await finalizeVideoJob(job.job_id, { dry_run: true });
-      const done = await finalizeVideoJob(job.job_id, {
-        dry_run: false,
-        confirm_live_credit_burn: true,
-      });
-      setFinalResult(done);
-      setFullStage('Video ready');
-      fetchNativeExtendLineage(projectId)
-        .then((r) => setLineage(r.lineage))
-        .catch(() => {});
-    } catch (e) {
-      const raw = e instanceof Error ? e.message : String(e);
-      setFullRawError(raw);
-      setFullError(humanFailure(stage, raw));
-      setFullStage(null);
-    } finally {
-      setBusy(false);
-      setFullConfirm(false);
+      const plan = await planVideoJob(planIntent());
+      setDurablePlan(plan);
+      setFullConfirm(true);
+    } catch {
+      /* surfaced by the disabled state / advisory plan */
     }
   };
 
-  const idsReady = Boolean(projectId && sceneId && sourceOperationId);
-  const canGenerateFull =
-    idsReady && plannedBlockCount > 0 && !!resolution?.route_executable &&
-    !busy && !finalResult && !finalBusy;
+  const confirmAndGenerate = async () => {
+    if (!durablePlan) return;
+    setBusy(true);
+    try {
+      await authorizeVideoJob(durablePlan.job_id, durablePlan.plan_fingerprint);
+      const st = await startVideoJob(durablePlan.job_id); // returns immediately
+      setDurableStatus(st);
+      setFullConfirm(false);
+    } catch (e) {
+      setDurableStatus({
+        job_id: durablePlan.job_id,
+        status: 'ERROR',
+        human_stage: 'The video could not be started.',
+        error_code: e instanceof Error ? e.message : String(e),
+        complete: false,
+        credit_summary: 'NOT_SPENT',
+        no_credit_used: true,
+      });
+      setFullConfirm(false);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div
@@ -363,103 +325,122 @@ export default function NativeExtendPanel({
       </div>
 
       {/* ── NORMAL MODE: one job, one action, one result ─────────────────── */}
-      {!idsReady && !finalResult && (
-        <div
-          data-testid="native-extend-waiting-source"
-          className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-100"
-        >
-          Waiting for the first part — generate the video above; it links here
-          automatically.
-        </div>
-      )}
-
-      {idsReady && !finalResult && !fullStage && !fullConfirm && (
-        <div className="grid gap-2">
-          <div data-testid="full-video-ready" className="text-xs text-slate-300">
-            Ready to complete the full {requestedSeconds}s video
-            {plannedBlockCount > 0
-              ? ` (${plannedBlockCount + 1} parts, joined automatically).`
-              : '.'}
-          </div>
-          <button
-            type="button"
-            data-testid="generate-full-video-btn"
-            className="w-fit rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={!canGenerateFull}
-            onClick={() => setFullConfirm(true)}
-          >
-            Generate Video
-          </button>
-        </div>
-      )}
-
-      {fullConfirm && !finalResult && (
-        <div
-          data-testid="full-video-confirm"
-          className="mt-2 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100"
-        >
-          <p className="font-medium">Generate the complete {requestedSeconds}-second video?</p>
-          <ul className="mt-1 list-inside list-disc text-amber-100/90">
-            <li>Continuation: {plannedBlockCount} operation{plannedBlockCount === 1 ? '' : 's'}</li>
-            <li>Final video preparation: 1 operation</li>
-            <li>Uses Google Flow credits once, for this reviewed plan only.</li>
-          </ul>
-          <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              data-testid="full-video-confirm-btn"
-              className="rounded bg-indigo-600 px-3 py-1.5 font-medium text-white disabled:opacity-40"
-              disabled={busy}
-              onClick={runFullVideo}
+      {!durableStatus?.complete && (
+        <>
+          {!intentReady && (
+            <div
+              data-testid="native-extend-waiting-source"
+              className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-100"
             >
-              Confirm &amp; generate
-            </button>
-            <button
-              type="button"
-              className="rounded border border-slate-500 px-3 py-1.5"
-              disabled={busy}
-              onClick={() => setFullConfirm(false)}
+              Select a product above to generate the full {requestedSeconds}s video.
+            </div>
+          )}
+
+          {intentReady && !durableStatus && !fullConfirm && (
+            <div className="grid gap-2">
+              <div data-testid="full-video-ready" className="text-xs text-slate-300">
+                {productName ? `${productName} — ` : ''}one {requestedSeconds}s video,
+                generated in parts automatically.
+              </div>
+              <button
+                type="button"
+                data-testid="generate-full-video-btn"
+                className="w-fit rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={busy || !durablePlan}
+                onClick={openGenerateConfirm}
+              >
+                Generate Video
+              </button>
+            </div>
+          )}
+
+          {fullConfirm && durablePlan && (
+            <div
+              data-testid="full-video-confirm"
+              className="mt-2 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100"
             >
-              Cancel
-            </button>
-          </div>
-        </div>
+              <p className="font-medium">
+                Generate the complete {durablePlan.plan.requested_seconds}-second video?
+              </p>
+              <ul className="mt-1 list-inside list-disc text-amber-100/90">
+                <li>
+                  Initial part: {durablePlan.plan.operation_counts.initial_generation} operation
+                </li>
+                <li>
+                  Continuation: {durablePlan.plan.operation_counts.extend} operation
+                  {durablePlan.plan.operation_counts.extend === 1 ? '' : 's'}
+                </li>
+                <li>
+                  Final video preparation: {durablePlan.plan.operation_counts.final_render} operation
+                </li>
+                <li data-testid="full-video-plan-total">
+                  Total operations authorized: {durablePlan.plan.operation_counts.total}
+                </li>
+                <li>
+                  One confirmation authorizes the operations listed above. Final render
+                  credit cost is {durablePlan.plan.credit_estimate.final_render}.
+                </li>
+              </ul>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  data-testid="full-video-confirm-btn"
+                  className="rounded bg-indigo-600 px-3 py-1.5 font-medium text-white disabled:opacity-40"
+                  disabled={busy}
+                  onClick={confirmAndGenerate}
+                >
+                  Confirm &amp; generate
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-slate-500 px-3 py-1.5"
+                  disabled={busy}
+                  onClick={() => setFullConfirm(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {durableStatus && !durableStatus.error_code && (
+            <div
+              data-testid="full-video-progress"
+              className="mt-2 rounded border border-indigo-400/30 bg-indigo-400/10 px-3 py-2 text-xs text-indigo-100"
+            >
+              {durableStatus.human_stage}…
+            </div>
+          )}
+
+          {durableStatus?.error_code && (
+            <div data-testid="full-video-error" className="mt-2 text-xs text-rose-300">
+              {durableStatus.human_stage}
+              {durableStatus.no_credit_used
+                ? ' No credit was used for the failed step.'
+                : ''}
+            </div>
+          )}
+        </>
       )}
 
-      {fullStage && fullStage !== 'Video ready' && (
-        <div
-          data-testid="full-video-progress"
-          className="mt-2 rounded border border-indigo-400/30 bg-indigo-400/10 px-3 py-2 text-xs text-indigo-100"
-        >
-          {fullStage}…
-        </div>
-      )}
-
-      {fullError && (
-        <div data-testid="full-video-error" className="mt-2 text-xs text-rose-300">
-          {fullError}
-        </div>
-      )}
-
-      {finalResult && (
+      {durableStatus?.complete && (
         <div data-testid="final-video-result" className="mt-3 rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
           <div className="font-semibold text-emerald-200">Video ready</div>
           <div className="mt-1 text-xs text-slate-300">
-            One final video · {finalResult.measured_duration_s?.toFixed?.(1) ?? finalResult.measured_duration_s}s
-            {finalResult.size_mb ? ` · ${finalResult.size_mb} MB` : ''}
+            One final video · {durableStatus.final_duration_s?.toFixed?.(1) ?? durableStatus.final_duration_s}s
           </div>
-          {finalResult.final_media_id && (
+          {durableStatus.final_media_id && (
             <>
               <video
                 data-testid="final-preview"
                 className="mt-2 max-h-64 rounded"
-                src={`/api/flow/retrieved/${finalResult.final_media_id}`}
+                src={`/api/flow/retrieved/${durableStatus.final_media_id}`}
                 controls
               />
               <a
                 data-testid="final-download"
                 className="mt-2 inline-block rounded bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white"
-                href={`/api/flow/retrieved/${finalResult.final_media_id}`}
+                href={`/api/flow/retrieved/${durableStatus.final_media_id}`}
               >
                 Download final video
               </a>
@@ -633,9 +614,9 @@ export default function NativeExtendPanel({
               {error}
             </div>
           )}
-          {fullRawError && (
+          {durableStatus?.error_code && (
             <div data-testid="full-video-raw-error" className="mt-2 text-xs text-rose-300">
-              raw: {fullRawError}
+              raw: {durableStatus.error_code}
             </div>
           )}
 
@@ -710,70 +691,6 @@ export default function NativeExtendPanel({
           {liveResult && (
             <div data-testid="native-extend-live-result" className="mt-3 text-xs text-emerald-300">
               Live request accepted by the authoritative Extend orchestrator. Polling and lineage status are shown below.
-            </div>
-          )}
-
-          {extendSucceeded && !finalResult && (
-            <div data-testid="final-video-section" className="mt-3 rounded border border-emerald-500/30 bg-emerald-500/5 p-2 text-xs">
-              <div className="font-medium text-emerald-200">
-                Final video — render the {requestedSeconds}s timeline into ONE MP4
-              </div>
-              {!finalPlan ? (
-                <button
-                  type="button"
-                  data-testid="final-prepare-btn"
-                  className="mt-2 rounded bg-emerald-700 px-3 py-1.5 font-medium text-white disabled:opacity-40"
-                  disabled={finalBusy}
-                  onClick={prepareFinal}
-                >
-                  Prepare final video (dry-run · no credits)
-                </button>
-              ) : (
-                <div className="mt-2 grid gap-1">
-                  <div data-testid="final-plan">
-                    Planned: {finalPlan.planned_render_operation_count ?? 1} final render
-                    operation → one {requestedSeconds}s MP4
-                  </div>
-                  {!finalConfirm ? (
-                    <button
-                      type="button"
-                      data-testid="final-render-btn"
-                      className="rounded bg-emerald-600 px-3 py-1.5 font-medium text-white disabled:opacity-40"
-                      disabled={finalBusy}
-                      onClick={() => setFinalConfirm(true)}
-                    >
-                      Render final video
-                    </button>
-                  ) : (
-                    <div data-testid="final-render-confirm" className="rounded border border-rose-500/50 bg-rose-500/10 p-2 text-rose-100">
-                      <p>Confirm final render: exactly 1 render operation for the reviewed
-                      {' '}{requestedSeconds}s timeline.</p>
-                      <div className="mt-2 flex gap-2">
-                        <button
-                          type="button"
-                          data-testid="final-render-confirm-btn"
-                          className="rounded bg-rose-600 px-3 py-1.5 font-medium text-white disabled:opacity-40"
-                          disabled={finalBusy}
-                          onClick={renderFinal}
-                        >
-                          Confirm &amp; render
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded border border-slate-500 px-3 py-1.5"
-                          disabled={finalBusy}
-                          onClick={() => setFinalConfirm(false)}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-              {finalError && (
-                <div data-testid="final-error" className="mt-1 text-rose-300">{finalError}</div>
-              )}
             </div>
           )}
 
