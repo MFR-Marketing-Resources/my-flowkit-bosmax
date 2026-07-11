@@ -58,6 +58,6 @@
     "Retire legacy batch API"
   ],
   "implementation_readiness_verdict": "HOLD_RUNTIME_PROOF_REQUIRED",
-  "research_commit_sha": "904f83bc8909c1fb53b58fd6f416cd92f38c965d",
+  "research_commit_sha": "2afb7db7bfaa5e4b8f1809970aee2d6e841c5f7e",
   "pull_request_url": "https://github.com/MFR-Marketing-Resources/my-flowkit-bosmax/pull/305"
 }
