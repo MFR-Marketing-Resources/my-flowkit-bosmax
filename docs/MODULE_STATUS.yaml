@@ -106,6 +106,10 @@ domains:
       - agent/services/google_flow_native_extend_runtime.py
       - dashboard/src/utils/nativeExtendCapability.ts
       - dashboard/src/utils/nativeExtendCapability.test.ts
+      - dashboard/src/api/nativeExtend.ts
+      - dashboard/src/components/NativeExtendPanel.tsx
+      - dashboard/src/components/NativeExtendPanel.test.tsx
+      - tests/unit/test_extend_relay_contract.py
       - tests/unit/test_flow_client_extend_builder.py
       - tests/unit/test_extend_capability_authority.py
       - tests/unit/test_extend_lineage_persistence.py

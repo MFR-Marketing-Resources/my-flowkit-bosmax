@@ -71,3 +71,50 @@ gap (see `.ai/experiments/aisandbox_extend_discovery/`):
 - Pending: a BOSMAX-driven LIVE native-extend proof (credit-consuming, operator approval)
   and the final-concat terminal contract. Until then the verdict is
   `READY_FOR_LIVE_NATIVE_EXTEND_PROOF`, not `DONE_NATIVE_EXTEND_PROVEN`.
+
+## Integration closure (PR #304 update)
+
+Eight integration defects closed so native extend is operator-usable and
+safety-consistent, with ONE authoritative path:
+
+1. **No direct-submit bypass.** The thin `/extend-video` endpoint (which called
+   `FlowClient.generate_video_extend` directly, bypassing lineage/idempotency/polling)
+   is REMOVED. `client.generate_video_extend` is now called from exactly one place —
+   the orchestrator. Every production submit passes validation → capability → bounded
+   confirmation → persistence → idempotency → submit → child extraction → polling →
+   lineage → resume.
+2. **No silent live→dry-run downgrade.** `/extend-run` no longer derives
+   `live = not dry_run and confirm`. Explicit contract: `dry_run=false` without confirm
+   → `LIVE_CREDIT_CONFIRMATION_REQUIRED`; without the flag → `NATIVE_EXTEND_DISABLED`;
+   caller intent is never rewritten.
+3. **Bounded credit confirmation.** A live run requires
+   `confirmed_extend_operation_count` == the resume-aware `planned_operation_count`, else
+   `EXTEND_CONFIRMATION_COUNT_MISMATCH` — a caller can never authorize more submits than
+   it saw.
+4. **Operator workflow integrated.** `NativeExtendPanel` (rendered in OperatorPage's
+   EXTEND section) consumes the capability model + the central resolver + a zero-credit
+   dry-run + lineage; shows route/model/8s-block-duration, parent-source + project/scene
+   readiness, planned continuation blocks + operation count, explicit blockers, and
+   final-concat-UNAVAILABLE. It exposes NO live-spend button (orchestrator-only).
+5. **One deterministic resolver.** `resolve_native_extend_execution` (+ POST
+   `/api/flow/native-extend/resolve`) is the single truth for transport-proven /
+   duration-authorized / parent-ready / project-scene-ready / route-executable /
+   final-concat-available / blockers — so UI, API and planner cannot disagree.
+6. **Parent-aware idempotency.** The idempotency key now includes the parent operation
+   id: same prompt/position against a DIFFERENT parent is a new extension and never
+   reuses an old child.
+7. **Explicit source terminology.** `source_media_id` → `source_operation_id` at the
+   flow_client boundary (it is the parent OPERATION id bound to `videoInput.mediaId`,
+   not the primaryMediaId).
+8. **Crash-safe submit ordering.** The lineage row is marked `EXTEND_SUBMITTED` BEFORE
+   the network call, so a crash during/after submit leaves an in-flight row and a resume
+   fails closed (`EXTEND_DUPLICATE_SUBMISSION_BLOCKED`) instead of double-spending.
+
+**Extension relay: ZERO changes (proven).** The `api_request` relay is fully generic —
+host-only guard (path-agnostic), body forwarded via `JSON.stringify` (no field
+allow-list), reCAPTCHA token injected into the top-level `clientContext` the Extend body
+already carries, full `response.text()` read with no size cap (the ~33.5KB synchronous
+response transits intact), exactly one response per id, HTTP-callback delivery immune to
+WS disconnect. `rules.json`/`manifest.json` match on host, covering
+`/v1/video:batchAsyncGenerateVideoExtendVideo` identically to the existing `/v1/video:*`
+RPCs. Guarded by `tests/unit/test_extend_relay_contract.py`.

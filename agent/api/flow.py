@@ -80,21 +80,6 @@ class UpscaleVideoRequest(BaseModel):
     resolution: str = "VIDEO_RESOLUTION_4K"
 
 
-class GenerateVideoExtendRequest(BaseModel):
-    """Native Flow Extend — single continuation block (direct RPC)."""
-    source_media_id: str
-    project_id: str
-    scene_id: str
-    position: int
-    prompt: str
-    aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT"
-    start_frame_index: int = 1
-    end_frame_index: int = 24
-    seed: Optional[int] = None
-    user_paygate_tier: str = "PAYGATE_TIER_ONE"
-    confirm_live_credit_burn: bool = False
-
-
 class ExtendBlockModel(BaseModel):
     block_index: int
     position: int
@@ -105,7 +90,8 @@ class ExtendBlockModel(BaseModel):
 
 
 class ExtendRunRequest(BaseModel):
-    """Native Flow Extend CHAIN (orchestrator). DRY_RUN by default."""
+    """Native Flow Extend CHAIN — THE single authoritative execution surface.
+    DRY_RUN by default; a live run requires explicit confirm + bounded op count."""
     project_id: str
     scene_id: str
     source_operation_id: str
@@ -116,6 +102,18 @@ class ExtendRunRequest(BaseModel):
     user_paygate_tier: str = "PAYGATE_TIER_ONE"
     dry_run: bool = True
     confirm_live_credit_burn: bool = False
+    # Bounded live-credit authorization: MUST equal the resume-aware planned submit
+    # count (from a prior dry-run's planned_operation_count) or the live run is rejected.
+    confirmed_extend_operation_count: Optional[int] = None
+
+
+class ExtendResolveRequest(BaseModel):
+    """Central native-extend execution-decision query (readiness/blockers) for the UI."""
+    project_id: Optional[str] = None
+    scene_id: Optional[str] = None
+    source_operation_id: Optional[str] = None
+    planned_block_count: int = 0
+    total_duration_seconds: Optional[int] = None
 
 
 class UploadImageRequest(BaseModel):
@@ -1044,57 +1042,27 @@ async def upscale_video(body: UpscaleVideoRequest):
     return result.get("data", result)
 
 
-@router.post("/extend-video")
-async def extend_video(body: GenerateVideoExtendRequest):
-    """Native Google Flow Extend — single continuation block (direct RPC).
-
-    Fails closed: requires the AUTHORIZED capability + NATIVE_EXTEND_ENABLED=1 +
-    an explicit confirm_live_credit_burn. Missing parent/project/scene or an
-    unsupported model -> 422; capability missing -> 403; flag/confirm off -> 409.
-    """
-    from agent.config import EXTEND_VIDEO_MODELS
-    from agent.services import extend_route_planner as _routes
-    from agent.services import google_flow_native_extend_runtime as _nx
-    try:
-        _routes.require_capability("GOOGLE_FLOW_NATIVE_EXTEND_REQUEST")
-    except _routes.CapabilityAuthorityMissing as exc:
-        raise HTTPException(403, str(exc))
-    if not body.source_media_id:
-        raise HTTPException(422, _nx.EXTEND_PARENT_MEDIA_ID_MISSING)
-    if not (body.project_id and body.scene_id):
-        raise HTTPException(422, _nx.EXTEND_PROJECT_CONTEXT_MISSING)
-    if not EXTEND_VIDEO_MODELS.get(body.aspect_ratio):
-        raise HTTPException(422, f"{_nx.EXTEND_UNSUPPORTED_MODEL}:{body.aspect_ratio}")
-    if not _nx.native_extend_enabled():
-        raise HTTPException(409, _nx.NATIVE_EXTEND_DISABLED)
-    if not body.confirm_live_credit_burn:
-        raise HTTPException(409, f"{_nx.NATIVE_EXTEND_DISABLED}:confirm_live_credit_burn required")
-    client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
-    result = await client.generate_video_extend(
-        source_media_id=body.source_media_id, project_id=body.project_id,
-        scene_id=body.scene_id, position=body.position, prompt=body.prompt,
-        aspect_ratio=body.aspect_ratio, start_frame_index=body.start_frame_index,
-        end_frame_index=body.end_frame_index, seed=body.seed,
-        user_paygate_tier=body.user_paygate_tier)
-    if result.get("error"):
-        raise HTTPException(502, result["error"])
-    return result.get("data", result)
-
-
 @router.post("/extend-run")
 async def extend_run(body: ExtendRunRequest):
-    """Native Flow Extend CHAIN orchestrator. DRY_RUN by default: validates,
-    persists SOURCE_READY lineage, and returns the planned per-block requests
-    WITHOUT spending credits. A live chain needs dry_run=false AND
-    confirm_live_credit_burn=true AND NATIVE_EXTEND_ENABLED=1."""
+    """Native Flow Extend CHAIN — THE single authoritative execution surface.
+
+    Every production native-extend submission goes through this one path (validation
+    -> capability -> bounded confirmation -> persistence -> idempotency -> submit ->
+    child extraction -> polling -> lineage -> resume). There is NO direct-submit
+    bypass. Explicit live/dry-run contract (caller intent is never silently rewritten):
+      * dry_run=true  -> plan + persist SOURCE_READY, spend nothing.
+      * dry_run=false + no confirm             -> 409 LIVE_CREDIT_CONFIRMATION_REQUIRED
+      * dry_run=false + confirm + flag OFF      -> 409 NATIVE_EXTEND_DISABLED
+      * dry_run=false + confirm + no/!=count    -> 409 (confirmation / count mismatch)
+      * dry_run=false + confirm + flag ON + count==plan -> live execution.
+    """
     from agent.services import extend_route_planner as _routes
     from agent.services import google_flow_native_extend_runtime as _nx
-    live = (not body.dry_run) and bool(body.confirm_live_credit_burn)
+    # NOTE: no connection pre-check here — the runtime runs ALL fail-closed gates
+    # (capability -> confirm -> flag -> bounded count) FIRST, so an unauthorized live
+    # request is rejected with its precise 4xx regardless of extension state. A genuine
+    # disconnect surfaces from the submit path as EXTEND_REQUEST_REJECTED.
     client = get_flow_client()
-    if live and not client.connected:
-        raise HTTPException(503, "Extension not connected")
     chain_req = _nx.ExtendChainRequest(
         project_id=body.project_id, scene_id=body.scene_id,
         source_operation_id=body.source_operation_id,
@@ -1107,8 +1075,9 @@ async def extend_run(body: ExtendRunRequest):
         seed=body.seed, user_paygate_tier=body.user_paygate_tier)
     try:
         return await _nx.run_native_extend_chain(
-            client, chain_req, dry_run=not live,
-            confirm_live_credit_burn=body.confirm_live_credit_burn)
+            client, chain_req, dry_run=body.dry_run,
+            confirm_live_credit_burn=body.confirm_live_credit_burn,
+            confirmed_extend_operation_count=body.confirmed_extend_operation_count)
     except _routes.CapabilityAuthorityMissing as exc:
         raise HTTPException(403, str(exc))
     except _nx.NativeExtendError as exc:
@@ -1118,6 +1087,29 @@ async def extend_run(body: ExtendRunRequest):
             _nx.EXTEND_UNSUPPORTED_MODEL, _nx.EXTEND_UNSUPPORTED_DURATION,
         }
         raise HTTPException(422 if exc.code in code_422 else 409, str(exc))
+
+
+@router.post("/native-extend/resolve")
+async def native_extend_resolve(body: ExtendResolveRequest):
+    """Central native-extend execution decision (readiness / blockers / route) for the
+    Operator UI. Pure resolution — no submit, no credit. The exact resume-aware
+    planned_operation_count comes from an /extend-run dry_run (real prompts); this
+    resolver reports readiness + full block count so the UI can gate coherently."""
+    from agent.services import extend_route_planner as _routes
+    return _routes.resolve_native_extend_execution(
+        parent_operation_id=body.source_operation_id, project_id=body.project_id,
+        scene_id=body.scene_id, planned_block_count=body.planned_block_count,
+        total_duration_seconds=body.total_duration_seconds)
+
+
+@router.get("/native-extend/lineage")
+async def native_extend_lineage(project_id: str = None,
+                                workspace_generation_package_id: str = None):
+    """Durable parent->child lineage + polling state for the operator surface."""
+    rows = await crud.list_extend_lineage(
+        workspace_generation_package_id=workspace_generation_package_id,
+        project_id=project_id)
+    return {"lineage": rows, "count": len(rows)}
 
 
 @router.post("/check-status")

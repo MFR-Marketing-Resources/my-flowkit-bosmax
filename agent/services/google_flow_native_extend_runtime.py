@@ -53,6 +53,9 @@ EXTEND_UNSUPPORTED_MODEL = "EXTEND_UNSUPPORTED_MODEL"
 EXTEND_UNSUPPORTED_DURATION = "EXTEND_UNSUPPORTED_DURATION"
 FINAL_CONCAT_EXPORT_AUTHORITY_MISSING = "FINAL_CONCAT_EXPORT_AUTHORITY_MISSING"
 NATIVE_EXTEND_DISABLED = "NATIVE_EXTEND_DISABLED"
+# Explicit live-intent contract (no silent live->dry-run downgrade; bounded credit).
+LIVE_CREDIT_CONFIRMATION_REQUIRED = "LIVE_CREDIT_CONFIRMATION_REQUIRED"
+EXTEND_CONFIRMATION_COUNT_MISMATCH = "EXTEND_CONFIRMATION_COUNT_MISMATCH"
 
 # Terminal media-generation states (existing aisandbox constants).
 TERMINAL_SUCCESS = "MEDIA_GENERATION_STATUS_SUCCESSFUL"
@@ -166,9 +169,16 @@ def _prompt_hash(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
-def _idempotency_key(project_id: str, scene_id: str, position: int, prompt_hash: str) -> str:
+def _idempotency_key(project_id: str, scene_id: str, position: int, prompt_hash: str,
+                     parent_operation_id: str) -> str:
+    """Idempotency identity is PARENT-AWARE. Including the parent operation id means
+    the same prompt at the same position against a DIFFERENT parent (regenerated
+    source, reused prompt on a new lineage, rerun after a failed source) is a
+    genuinely NEW extension and must not reuse the old child. Same (project, scene,
+    position, prompt, parent) is the only thing that dedups a duplicate credit spend."""
     return hashlib.sha256(
-        f"{project_id}|{scene_id}|{position}|{prompt_hash}".encode("utf-8")).hexdigest()
+        f"{project_id}|{scene_id}|{position}|{prompt_hash}|{parent_operation_id}".encode(
+            "utf-8")).hexdigest()
 
 
 # ── Request model ───────────────────────────────────────────────────────────
@@ -196,28 +206,9 @@ class ExtendChainRequest:
     user_paygate_tier: str = "PAYGATE_TIER_TWO"
 
 
-# ── Orchestrator ────────────────────────────────────────────────────────────
-async def run_native_extend_chain(
-    client,
-    req: ExtendChainRequest,
-    *,
-    dry_run: bool = True,
-    confirm_live_credit_burn: bool = False,
-    poll_timeout_s: int = 600,
-    poll_interval_s: int = 5,
-) -> dict:
-    """Execute (or dry-run plan) a native-extend chain over ``req.blocks``.
-
-    DRY_RUN (default) validates + persists SOURCE_READY lineage and returns the
-    planned requests WITHOUT firing. A live run additionally requires
-    ``NATIVE_EXTEND_ENABLED=1`` and ``confirm_live_credit_burn=True``.
-    """
-    # DRY_RUN planning is always allowed (no credit spend); a LIVE submit needs the
-    # runtime kill-switch ON *and* an explicit per-call credit confirmation.
-    if not dry_run and not native_extend_enabled():
-        raise NativeExtendError(NATIVE_EXTEND_DISABLED, "NATIVE_EXTEND_ENABLED!=1")
-    _routes.require_capability("GOOGLE_FLOW_NATIVE_EXTEND_REQUEST")
-
+def _validate_context(req: ExtendChainRequest) -> str:
+    """Fail-closed context validation shared by plan + execute. Returns the
+    resolved model key (also fail-closed on unsupported aspect)."""
     if not req.project_id:
         raise NativeExtendError(EXTEND_PROJECT_CONTEXT_MISSING)
     if not req.scene_id:
@@ -226,42 +217,192 @@ async def run_native_extend_chain(
         raise NativeExtendError(EXTEND_PARENT_MEDIA_ID_MISSING, "source_operation_id")
     if not req.blocks:
         raise NativeExtendError(EXTEND_RUNTIME_CONTRACT_MISSING, "no extend blocks")
+    model_key = config.EXTEND_VIDEO_MODELS.get(req.aspect_ratio)
+    if not model_key:
+        raise NativeExtendError(EXTEND_UNSUPPORTED_MODEL, req.aspect_ratio)
+    return model_key
+
+
+async def plan_native_extend_chain(req: ExtendChainRequest) -> dict:
+    """Resume-aware plan (no side effects, no submit). For each block, resolve its
+    expected PARENT (prior block's persisted child if already SUCCEEDED, else the
+    source chain) and whether it still needs a live submission. Once a block is not
+    yet succeeded, downstream parents are unknown until it fires, so those blocks
+    also need submission. ``planned_operation_count`` is the exact number of
+    credit-consuming submits a live run would perform — the number the operator must
+    explicitly confirm."""
+    model_key = _validate_context(req)
+    steps: list[dict] = []
+    parent = req.source_operation_id
+    parent_known = True
+    for block in req.blocks:
+        prompt_hash = _prompt_hash(block.prompt)
+        idem = (_idempotency_key(req.project_id, req.scene_id, block.position,
+                                 prompt_hash, parent) if parent_known else None)
+        existing = await _crud.get_extend_lineage_by_idempotency(idem) if idem else None
+        succeeded = bool(existing
+                         and existing.get("polling_state") == STATE_SUCCEEDED
+                         and existing.get("child_operation_id"))
+        steps.append({
+            "block_index": block.block_index,
+            "position": block.position,
+            "parent_operation_id": parent if parent_known else None,
+            "idempotency_key": idem,
+            "existing_state": existing.get("polling_state") if existing else None,
+            "needs_submit": not succeeded,
+            "endpoint": config.ENDPOINTS["generate_video_extend"],
+            "videoModelKey": model_key,
+            "aspect_ratio": req.aspect_ratio,
+            "videoInput": {"mediaId": parent if parent_known else None,
+                           "startFrameIndex": block.start_frame_index,
+                           "endFrameIndex": block.end_frame_index},
+        })
+        if succeeded:
+            parent = existing["child_operation_id"]  # known chain continues
+        else:
+            parent_known = False
+            parent = None
+    return {
+        "model_key": model_key,
+        "block_count": len(req.blocks),
+        "planned_operation_count": sum(1 for s in steps if s["needs_submit"]),
+        "steps": steps,
+    }
+
+
+# ── Orchestrator ────────────────────────────────────────────────────────────
+async def run_native_extend_chain(
+    client,
+    req: ExtendChainRequest,
+    *,
+    dry_run: bool = True,
+    confirm_live_credit_burn: bool = False,
+    confirmed_extend_operation_count: Optional[int] = None,
+    poll_timeout_s: int = 600,
+    poll_interval_s: int = 5,
+) -> dict:
+    """THE single authoritative native-extend execution path.
+
+    Explicit live/dry-run contract — caller intent is NEVER silently rewritten:
+      * ``dry_run=True``  -> plan + persist SOURCE_READY, fire nothing.
+      * ``dry_run=False`` + no confirm            -> LIVE_CREDIT_CONFIRMATION_REQUIRED.
+      * ``dry_run=False`` + confirm + flag OFF     -> NATIVE_EXTEND_DISABLED.
+      * ``dry_run=False`` + confirm + no count     -> LIVE_CREDIT_CONFIRMATION_REQUIRED.
+      * ``dry_run=False`` + confirm + count != plan-> EXTEND_CONFIRMATION_COUNT_MISMATCH.
+      * ``dry_run=False`` + confirm + flag ON + count==plan -> LIVE execution.
+
+    ``confirmed_extend_operation_count`` is the BOUNDED credit authorization: it must
+    equal the resume-aware number of credit-consuming submits the live run will make,
+    so a caller can never accidentally authorize more blocks than it saw.
+    """
+    _routes.require_capability("GOOGLE_FLOW_NATIVE_EXTEND_REQUEST")
+    plan = await plan_native_extend_chain(req)  # validates context + resolves plan
+    planned_operation_count = plan["planned_operation_count"]
+
+    base = {
+        "project_id": req.project_id,
+        "scene_id": req.scene_id,
+        "source_operation_id": req.source_operation_id,
+        "planned_operation_count": planned_operation_count,
+        "block_count": plan["block_count"],
+        "model_key": plan["model_key"],
+        "plan": plan["steps"],
+    }
+
+    if dry_run:
+        results = await _persist_dry_run_plan(req, plan)
+        return {**base, "dry_run": True, "blocks": results}
+
+    # ── LIVE intent — explicit, fail-closed, bounded ──
+    if not confirm_live_credit_burn:
+        raise NativeExtendError(LIVE_CREDIT_CONFIRMATION_REQUIRED,
+                                "confirm_live_credit_burn required for dry_run=false")
+    if not native_extend_enabled():
+        raise NativeExtendError(NATIVE_EXTEND_DISABLED, "NATIVE_EXTEND_ENABLED!=1")
+    if confirmed_extend_operation_count is None:
+        raise NativeExtendError(LIVE_CREDIT_CONFIRMATION_REQUIRED,
+                                "confirmed_extend_operation_count required for live run")
+    if int(confirmed_extend_operation_count) != planned_operation_count:
+        raise NativeExtendError(
+            EXTEND_CONFIRMATION_COUNT_MISMATCH,
+            f"confirmed={confirmed_extend_operation_count} planned={planned_operation_count}")
 
     results: list[dict] = []
     parent_op = req.source_operation_id
     for block in req.blocks:
         outcome = await _run_one_extend_block(
             client, req, block, parent_op,
-            dry_run=dry_run, confirm=confirm_live_credit_burn,
             poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
         )
         results.append(outcome)
         child = outcome.get("child_operation_id")
         if child:
             parent_op = child  # chain: next block extends this child
-        elif not dry_run:
+        else:
             break  # live run produced no child — stop the chain, fail closed
 
     return {
-        "dry_run": dry_run,
-        "project_id": req.project_id,
-        "scene_id": req.scene_id,
-        "source_operation_id": req.source_operation_id,
-        "blocks": results,
+        **base, "dry_run": False, "blocks": results,
         "chain": [req.source_operation_id]
         + [b.get("child_operation_id") for b in results if b.get("child_operation_id")],
     }
 
 
+async def _persist_dry_run_plan(req: ExtendChainRequest, plan: dict) -> list[dict]:
+    """Persist SOURCE_READY lineage for planned-and-known blocks (idempotent), and
+    return the per-block dry-run outcome. Blocks whose parent is unknown until an
+    earlier block fires are reported without a lineage row (parent is None)."""
+    outcomes: list[dict] = []
+    for step, block in zip(plan["steps"], req.blocks):
+        state = step["existing_state"]
+        lineage_id = None
+        if step["parent_operation_id"] and step["needs_submit"]:
+            existing = await _crud.get_extend_lineage_by_idempotency(step["idempotency_key"])
+            if existing:
+                lineage_id = existing["extend_lineage_id"]
+                state = existing["polling_state"]
+            else:
+                lineage_id = str(uuid.uuid4())
+                await _crud.insert_extend_lineage(
+                    lineage_id,
+                    workspace_generation_package_id=req.workspace_generation_package_id,
+                    project_id=req.project_id, scene_id=req.scene_id,
+                    block_index=block.block_index, block_position=block.position,
+                    parent_operation_id=step["parent_operation_id"],
+                    model_key=plan["model_key"], aspect_ratio=req.aspect_ratio,
+                    start_frame_index=block.start_frame_index,
+                    end_frame_index=block.end_frame_index,
+                    continuation_prompt_hash=_prompt_hash(block.prompt),
+                    idempotency_key=step["idempotency_key"],
+                    polling_state=STATE_SOURCE_READY,
+                )
+                state = STATE_SOURCE_READY
+        outcomes.append({
+            "lineage_id": lineage_id, "block_index": block.block_index,
+            "position": block.position, "dry_run": True,
+            "parent_operation_id": step["parent_operation_id"],
+            "child_operation_id": None, "needs_submit": step["needs_submit"],
+            "planned_request": {"endpoint": step["endpoint"],
+                                "videoModelKey": step["videoModelKey"],
+                                "videoInput": step["videoInput"],
+                                "sceneContext": {"sceneId": req.scene_id,
+                                                 "position": block.position}},
+            "polling_state": state or STATE_SOURCE_READY,
+        })
+    return outcomes
+
+
 async def _run_one_extend_block(
     client, req: ExtendChainRequest, block: ExtendBlock, parent_op: str,
-    *, dry_run: bool, confirm: bool, poll_timeout_s: int, poll_interval_s: int,
+    *, poll_timeout_s: int, poll_interval_s: int,
 ) -> dict:
+    """Execute ONE live extend block. Reached only after run_native_extend_chain has
+    passed every gate (capability + kill-switch + confirm + bounded count)."""
     if not parent_op:
         raise NativeExtendError(EXTEND_PARENT_MEDIA_ID_MISSING, f"block{block.block_index}")
 
     prompt_hash = _prompt_hash(block.prompt)
-    idem = _idempotency_key(req.project_id, req.scene_id, block.position, prompt_hash)
+    idem = _idempotency_key(req.project_id, req.scene_id, block.position, prompt_hash, parent_op)
     model_key = config.EXTEND_VIDEO_MODELS.get(req.aspect_ratio)
     if not model_key:
         raise NativeExtendError(EXTEND_UNSUPPORTED_MODEL, req.aspect_ratio)
@@ -269,10 +410,10 @@ async def _run_one_extend_block(
     existing = await _crud.get_extend_lineage_by_idempotency(idem)
     if existing:
         state = existing.get("polling_state")
-        if state == STATE_SUCCEEDED:
-            # resume: already done — return the recorded child, do not re-submit
-            return _lineage_outcome(existing, resumed=True)
-        if state in (STATE_SUBMITTED, STATE_POLLING) and not dry_run:
+        if state == STATE_SUCCEEDED and existing.get("child_operation_id"):
+            return _lineage_outcome(existing, resumed=True)  # resume: never re-submit
+        if state in (STATE_SUBMITTED, STATE_POLLING):
+            # in-flight OR crashed after a prior submit — fail closed, never double-spend
             raise NativeExtendError(EXTEND_DUPLICATE_SUBMISSION_BLOCKED, idem)
 
     lineage_id = existing["extend_lineage_id"] if existing else str(uuid.uuid4())
@@ -290,45 +431,27 @@ async def _run_one_extend_block(
             polling_state=STATE_SOURCE_READY,
         )
     else:
+        # retry of a prior FAILED / SOURCE_READY / BLOCKED row (same parent, same idem)
         await _crud.update_extend_lineage(
             lineage_id, parent_operation_id=parent_op,
-            polling_state=STATE_SOURCE_READY,
+            polling_state=STATE_SOURCE_READY, error_code=None, error_message=None,
             retry_attempt=(existing.get("retry_attempt") or 0) + 1,
         )
 
-    planned = {
-        "endpoint": config.ENDPOINTS["generate_video_extend"],
-        "videoModelKey": model_key,
-        "videoInput": {"mediaId": parent_op,
-                       "startFrameIndex": block.start_frame_index,
-                       "endFrameIndex": block.end_frame_index},
-        "sceneContext": {"sceneId": req.scene_id, "position": block.position},
-        "aspectRatio": req.aspect_ratio,
-        "prompt_chars": len(block.prompt or ""),
-    }
-
-    if dry_run:
-        return {
-            "lineage_id": lineage_id, "block_index": block.block_index,
-            "position": block.position, "dry_run": True, "planned_request": planned,
-            "parent_operation_id": parent_op, "child_operation_id": None,
-            "polling_state": STATE_SOURCE_READY,
-        }
-
-    if not confirm:
-        await _crud.update_extend_lineage(lineage_id, polling_state=STATE_BLOCKED,
-                                          error_code=NATIVE_EXTEND_DISABLED)
-        raise NativeExtendError(NATIVE_EXTEND_DISABLED,
-                                "confirm_live_credit_burn required for live submit")
+    # DEFECT-8 fix: mark EXTEND_SUBMITTED *before* the network call. If the process
+    # dies during/after submit, the row is EXTEND_SUBMITTED (no child) and a later
+    # resume fails closed (EXTEND_DUPLICATE_SUBMISSION_BLOCKED) instead of double-spending.
+    await _crud.update_extend_lineage(lineage_id, polling_state=STATE_SUBMITTED)
 
     # ── LIVE SUBMIT ─────────────────────────────────────────────────────────
     resp = await client.generate_video_extend(
-        source_media_id=parent_op, project_id=req.project_id, scene_id=req.scene_id,
+        source_operation_id=parent_op, project_id=req.project_id, scene_id=req.scene_id,
         position=block.position, prompt=block.prompt, aspect_ratio=req.aspect_ratio,
         start_frame_index=block.start_frame_index, end_frame_index=block.end_frame_index,
         seed=req.seed, user_paygate_tier=req.user_paygate_tier,
     )
     if not resp or resp.get("error"):
+        # a REJECTED submit spends no credit -> FAILED (retryable on resume)
         detail = str(resp.get("error")) if resp else "no response"
         await _crud.update_extend_lineage(lineage_id, polling_state=STATE_FAILED,
                                           error_code=EXTEND_REQUEST_REJECTED,
@@ -347,7 +470,7 @@ async def _run_one_extend_block(
                                 "child == parent operation id")
 
     await _crud.update_extend_lineage(
-        lineage_id, polling_state=STATE_SUBMITTED,
+        lineage_id,
         child_operation_id=child["child_operation_id"],
         child_primary_media_id=child["child_primary_media_id"],
         child_workflow_id=child["child_workflow_id"], batch_id=child.get("batch_id"),

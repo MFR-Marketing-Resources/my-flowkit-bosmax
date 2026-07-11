@@ -251,3 +251,77 @@ def require_capability(capability_id: str) -> dict[str, Any]:
         raise CapabilityAuthorityMissing(
             cid, cap.get("error_code"), cap.get("pending_reason", ""))
     return cap
+
+
+# Route id the operator surface uses for a native-extend continuation. Native extend
+# BORROWS its uniform-8s durations from the AUTHORIZED independent-block workbook —
+# it is NOT the 8+7n route `GOOGLE_FLOW_VEO_EXTEND` (which stays AUTHORITY_MISSING).
+NATIVE_EXTEND_ROUTE_ID = "GOOGLE_FLOW_NATIVE_EXTEND"
+_NATIVE_EXTEND_DURATION_ROUTE = "GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS"
+
+
+def resolve_native_extend_execution(
+    *,
+    parent_operation_id: str | None,
+    project_id: str | None,
+    scene_id: str | None,
+    planned_block_count: int = 0,
+    planned_operation_count: int | None = None,
+    total_duration_seconds: int | None = None,
+) -> dict[str, Any]:
+    """THE single deterministic resolver for "can native extend run, and what blocks
+    apply?". One truth for the UI, the API and the planner — so they can never
+    disagree (UI enabled / planner blocked / API silently runs / route unsupported).
+
+    Returns a consolidated, machine-readable decision with the EXACT blockers. Never
+    authorizes the unverified final concat export.
+    """
+    blockers: list[str] = []
+
+    transport_proven = capability_authority("GOOGLE_FLOW_NATIVE_EXTEND_REQUEST") == AUTHORIZED
+    if not transport_proven:
+        blockers.append("EXTEND_RUNTIME_CONTRACT_MISSING")
+
+    parent_ready = bool(parent_operation_id)
+    if not parent_ready:
+        blockers.append("EXTEND_PARENT_MEDIA_ID_MISSING")
+    project_ready = bool(project_id)
+    if not project_ready:
+        blockers.append("EXTEND_PROJECT_CONTEXT_MISSING")
+    scene_ready = bool(scene_id)
+    if not scene_ready:
+        blockers.append("EXTEND_SCENE_CONTEXT_MISSING")
+
+    duration_plan_authorized = True
+    block_plan: list[int] | None = None
+    if total_duration_seconds:
+        try:
+            block_plan = resolve_route_block_plan(
+                _NATIVE_EXTEND_DURATION_ROUTE, int(total_duration_seconds))
+        except (ValueError, RouteDurationAuthorityMissing) as exc:
+            duration_plan_authorized = False
+            blockers.append(str(exc).split(":")[0])
+
+    final_concat_available = (
+        capability_authority("GOOGLE_FLOW_FINAL_CONCAT_EXPORT") == AUTHORIZED)
+
+    route_executable = not blockers
+    return {
+        "route_id": NATIVE_EXTEND_ROUTE_ID,
+        "transport_proven": transport_proven,
+        "duration_plan_authorized": duration_plan_authorized,
+        "block_plan": block_plan,
+        "parent_ready": parent_ready,
+        "project_ready": project_ready,
+        "scene_ready": scene_ready,
+        "project_scene_ready": project_ready and scene_ready,
+        "route_executable": route_executable,
+        "final_concat_export_available": final_concat_available,
+        "model_key": "veo_3_1_extension_lite",
+        "block_duration_seconds": 8,
+        "planned_block_count": planned_block_count,
+        "planned_operation_count": (
+            planned_operation_count if planned_operation_count is not None
+            else planned_block_count),
+        "blockers": blockers,
+    }

@@ -688,7 +688,7 @@ class FlowClient:
             "captchaAction": "VIDEO_GENERATION",
         }, timeout=60)
 
-    async def generate_video_extend(self, *, source_media_id: str, project_id: str,
+    async def generate_video_extend(self, *, source_operation_id: str, project_id: str,
                                     scene_id: str, position: int, prompt: str,
                                     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
                                     start_frame_index: int = 1, end_frame_index: int = 24,
@@ -703,6 +703,10 @@ class FlowClient:
         structured block prompt (same shape as the initial block), never a compact
         "extend this video" phrase.
 
+        NOTE the boundary: ``source_operation_id`` is the parent clip's OPERATION id
+        (what `videoInput.mediaId` binds — block-1 op `b6371e69`), NOT its
+        `primaryMediaId` (`69051c7b`). Callers must pass the operation id.
+
         Model FAILS CLOSED: an aspect ratio without captured evidence resolves to no
         model key and returns an error — never a silent downgrade to another model.
         Rides the same authenticated extension relay as every other video RPC
@@ -711,7 +715,7 @@ class FlowClient:
         model_key = EXTEND_VIDEO_MODELS.get(aspect_ratio)
         if not model_key:
             return {"error": f"UNKNOWN_EXTEND_MODEL:{aspect_ratio}"}
-        if not source_media_id:
+        if not source_operation_id:
             return {"error": "EXTEND_PARENT_MEDIA_ID_MISSING"}
         if not (project_id and scene_id):
             return {"error": "EXTEND_PROJECT_CONTEXT_MISSING"}
@@ -723,7 +727,7 @@ class FlowClient:
             "seed": int(seed) if seed is not None else int(time.time()) % 100000,
             "metadata": {"sceneId": scene_id},
             "videoInput": {
-                "mediaId": source_media_id,
+                "mediaId": source_operation_id,
                 "startFrameIndex": int(start_frame_index),
                 "endFrameIndex": int(end_frame_index),
             },

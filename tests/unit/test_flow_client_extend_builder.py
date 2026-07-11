@@ -25,7 +25,7 @@ async def test_extend_builder_matches_captured_contract():
 
     client._send = fake_send
     await client.generate_video_extend(
-        source_media_id="b6371e69-23d4-4d6e-a874-50dc03fc850a",
+        source_operation_id="b6371e69-23d4-4d6e-a874-50dc03fc850a",
         project_id="c6c87bdd-7af2-415b-9826-315d53fc8d9b",
         scene_id="cce593f7-8450-4461-9f82-6b207cfc5857",
         position=1, prompt="FULL STRUCTURED BLOCK PROMPT (block 2 of 2)",
@@ -66,7 +66,7 @@ async def test_extend_builder_fails_closed_on_unknown_aspect():
 
     client._send = fake_send
     res = await client.generate_video_extend(
-        source_media_id="m", project_id="p", scene_id="s", position=1,
+        source_operation_id="m", project_id="p", scene_id="s", position=1,
         prompt="x", aspect_ratio="VIDEO_ASPECT_RATIO_SQUARE")
     assert res["error"].startswith("UNKNOWN_EXTEND_MODEL")
 
@@ -79,7 +79,7 @@ async def test_extend_builder_missing_parent():
 
     client._send = fake_send
     res = await client.generate_video_extend(
-        source_media_id="", project_id="p", scene_id="s", position=1, prompt="x")
+        source_operation_id="", project_id="p", scene_id="s", position=1, prompt="x")
     assert res["error"] == "EXTEND_PARENT_MEDIA_ID_MISSING"
 
 
