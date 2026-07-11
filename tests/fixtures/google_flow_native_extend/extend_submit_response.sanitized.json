@@ -1,0 +1,76 @@
+{
+  "remainingCredits": 1610,
+  "workflows": [
+    {
+      "name": "737b10c8-f754-4ac7-8ca1-7e87d5819f26",
+      "metadata": {
+        "displayName": "Minyak Warisan Tok Cap Burung",
+        "createTime": "2026-07-11T01:53:41.379475Z",
+        "primaryMediaId": "164c65b0-5e58-48dd-a019-80a8ed461b4f",
+        "batchId": "36bf48e5-0ba1-4726-9670-2e4539fd4cdd",
+        "updateTime": "2026-07-11T01:53:49.232879Z"
+      },
+      "projectId": "c6c87bdd-7af2-415b-9826-315d53fc8d9b"
+    }
+  ],
+  "media": [
+    {
+      "name": "164c65b0-5e58-48dd-a019-80a8ed461b4f",
+      "projectId": "c6c87bdd-7af2-415b-9826-315d53fc8d9b",
+      "workflowId": "737b10c8-f754-4ac7-8ca1-7e87d5819f26",
+      "workflowStepId": "CAE",
+      "mediaMetadata": {
+        "createTime": "2026-07-11T01:53:41.379475Z",
+        "mediaTitle": "<STRUCTURED_BLOCK_PROMPT_PLACEHOLDER>",
+        "requestData": {
+          "videoGenerationRequestData": {
+            "videoModelControlInput": {
+              "videoModelName": "models/veo-3.1-lite-generate-002;backend_beyond",
+              "videoGenerationMode": "VIDEO_GENERATION_MODE_VIDEO_EXTENSION",
+              "videoModelCapabilities": [
+                "VIDEO_MODEL_CAPABILITY_EXTEND"
+              ],
+              "videoAspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+              "videoResolution": "VIDEO_RESOLUTION_720P"
+            },
+            "videoGenerationVideoInputs": [
+              {
+                "mediaId": "b6371e69-23d4-4d6e-a874-50dc03fc850a"
+              }
+            ]
+          },
+          "promptInputs": [
+            {
+              "structuredPrompt": {
+                "parts": [
+                  {
+                    "text": "<STRUCTURED_BLOCK_PROMPT_PLACEHOLDER>"
+                  }
+                ]
+              }
+            }
+          ],
+          "clientPlatform": "CLIENT_PLATFORM_WEB"
+        },
+        "mediaStatus": {
+          "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_SCHEDULED"
+        },
+        "visibility": "PRIVATE"
+      },
+      "video": {
+        "generatedVideo": {
+          "seed": 11019,
+          "prompt": "<STRUCTURED_BLOCK_PROMPT_PLACEHOLDER>",
+          "model": "veo_3_1_extension_lite",
+          "baseImageMediaGenerationId": "",
+          "isLooped": false,
+          "aspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT"
+        },
+        "dimensions": {
+          "length": "8s"
+        }
+      },
+      "sceneId": "cce593f7-8450-4461-9f82-6b207cfc5857"
+    }
+  ]
+}

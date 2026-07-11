@@ -80,6 +80,42 @@ class UpscaleVideoRequest(BaseModel):
     resolution: str = "VIDEO_RESOLUTION_4K"
 
 
+class ExtendBlockModel(BaseModel):
+    block_index: int
+    position: int
+    prompt: str
+    is_final: bool = False
+    start_frame_index: int = 1
+    end_frame_index: int = 24
+
+
+class ExtendRunRequest(BaseModel):
+    """Native Flow Extend CHAIN — THE single authoritative execution surface.
+    DRY_RUN by default; a live run requires explicit confirm + bounded op count."""
+    project_id: str
+    scene_id: str
+    source_operation_id: str
+    blocks: list[ExtendBlockModel]
+    aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT"
+    workspace_generation_package_id: Optional[str] = None
+    seed: Optional[int] = None
+    user_paygate_tier: str = "PAYGATE_TIER_ONE"
+    dry_run: bool = True
+    confirm_live_credit_burn: bool = False
+    # Bounded live-credit authorization: MUST equal the resume-aware planned submit
+    # count (from a prior dry-run's planned_operation_count) or the live run is rejected.
+    confirmed_extend_operation_count: Optional[int] = None
+
+
+class ExtendResolveRequest(BaseModel):
+    """Central native-extend execution-decision query (readiness/blockers) for the UI."""
+    project_id: Optional[str] = None
+    scene_id: Optional[str] = None
+    source_operation_id: Optional[str] = None
+    planned_block_count: int = 0
+    total_duration_seconds: Optional[int] = None
+
+
 class UploadImageRequest(BaseModel):
     file_path: str  # absolute path to local image file
     project_id: str = ""
@@ -1004,6 +1040,76 @@ async def upscale_video(body: UpscaleVideoRequest):
     if result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
     return result.get("data", result)
+
+
+@router.post("/extend-run")
+async def extend_run(body: ExtendRunRequest):
+    """Native Flow Extend CHAIN — THE single authoritative execution surface.
+
+    Every production native-extend submission goes through this one path (validation
+    -> capability -> bounded confirmation -> persistence -> idempotency -> submit ->
+    child extraction -> polling -> lineage -> resume). There is NO direct-submit
+    bypass. Explicit live/dry-run contract (caller intent is never silently rewritten):
+      * dry_run=true  -> plan + persist SOURCE_READY, spend nothing.
+      * dry_run=false + no confirm             -> 409 LIVE_CREDIT_CONFIRMATION_REQUIRED
+      * dry_run=false + confirm + flag OFF      -> 409 NATIVE_EXTEND_DISABLED
+      * dry_run=false + confirm + no/!=count    -> 409 (confirmation / count mismatch)
+      * dry_run=false + confirm + flag ON + count==plan -> live execution.
+    """
+    from agent.services import extend_route_planner as _routes
+    from agent.services import google_flow_native_extend_runtime as _nx
+    # NOTE: no connection pre-check here — the runtime runs ALL fail-closed gates
+    # (capability -> confirm -> flag -> bounded count) FIRST, so an unauthorized live
+    # request is rejected with its precise 4xx regardless of extension state. A genuine
+    # disconnect surfaces from the submit path as EXTEND_REQUEST_REJECTED.
+    client = get_flow_client()
+    chain_req = _nx.ExtendChainRequest(
+        project_id=body.project_id, scene_id=body.scene_id,
+        source_operation_id=body.source_operation_id,
+        blocks=[_nx.ExtendBlock(
+            block_index=b.block_index, position=b.position, prompt=b.prompt,
+            is_final=b.is_final, start_frame_index=b.start_frame_index,
+            end_frame_index=b.end_frame_index) for b in body.blocks],
+        aspect_ratio=body.aspect_ratio,
+        workspace_generation_package_id=body.workspace_generation_package_id,
+        seed=body.seed, user_paygate_tier=body.user_paygate_tier)
+    try:
+        return await _nx.run_native_extend_chain(
+            client, chain_req, dry_run=body.dry_run,
+            confirm_live_credit_burn=body.confirm_live_credit_burn,
+            confirmed_extend_operation_count=body.confirmed_extend_operation_count)
+    except _routes.CapabilityAuthorityMissing as exc:
+        raise HTTPException(403, str(exc))
+    except _nx.NativeExtendError as exc:
+        code_422 = {
+            _nx.EXTEND_PARENT_MEDIA_ID_MISSING, _nx.EXTEND_PROJECT_CONTEXT_MISSING,
+            _nx.EXTEND_SCENE_CONTEXT_MISSING, _nx.EXTEND_RUNTIME_CONTRACT_MISSING,
+            _nx.EXTEND_UNSUPPORTED_MODEL, _nx.EXTEND_UNSUPPORTED_DURATION,
+        }
+        raise HTTPException(422 if exc.code in code_422 else 409, str(exc))
+
+
+@router.post("/native-extend/resolve")
+async def native_extend_resolve(body: ExtendResolveRequest):
+    """Central native-extend execution decision (readiness / blockers / route) for the
+    Operator UI. Pure resolution — no submit, no credit. The exact resume-aware
+    planned_operation_count comes from an /extend-run dry_run (real prompts); this
+    resolver reports readiness + full block count so the UI can gate coherently."""
+    from agent.services import extend_route_planner as _routes
+    return _routes.resolve_native_extend_execution(
+        parent_operation_id=body.source_operation_id, project_id=body.project_id,
+        scene_id=body.scene_id, planned_block_count=body.planned_block_count,
+        total_duration_seconds=body.total_duration_seconds)
+
+
+@router.get("/native-extend/lineage")
+async def native_extend_lineage(project_id: str = None,
+                                workspace_generation_package_id: str = None):
+    """Durable parent->child lineage + polling state for the operator surface."""
+    rows = await crud.list_extend_lineage(
+        workspace_generation_package_id=workspace_generation_package_id,
+        project_id=project_id)
+    return {"lineage": rows, "count": len(rows)}
 
 
 @router.post("/check-status")

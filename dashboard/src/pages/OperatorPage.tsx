@@ -26,6 +26,7 @@ import I2VModule from "../components/workspace/I2VModule";
 import IMGModule from "../components/workspace/IMGModule";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import T2VModule from "../components/workspace/T2VModule";
+import NativeExtendPanel from "../components/NativeExtendPanel";
 import {
 	type VideoCapabilityMatrix,
 	defaultEngine as pickDefaultEngine,
@@ -1940,6 +1941,17 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							</div>
 						</div>
 					</div>
+					{extendAuthority && (
+						<NativeExtendPanel
+							totalDurationSeconds={requestedTotalDuration}
+							plannedBlocks={extendAuthority.plan.slice(1).map((_blockDuration, i) => ({
+								block_index: i + 2,
+								position: i + 1,
+								prompt: `Native Extend continuation block ${i + 2}`,
+								is_final: i === extendAuthority.plan.length - 2,
+							}))}
+						/>
+					)}
 					<div className="mt-4 grid gap-3 md:grid-cols-2">
 						<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
