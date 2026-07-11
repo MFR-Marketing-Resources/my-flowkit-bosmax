@@ -806,6 +806,22 @@ def ordered_ref_slots(start_asset, refs) -> list[tuple[str, dict]]:
     return slots
 
 
+_BLOCK_HEADER_MARKER = "SECTION 1 - ROLE & OBJECTIVE"
+
+
+def _is_multi_block_prompt(prompt: str) -> bool:
+    """True when a prompt carries MORE THAN ONE compiled 9-section block.
+
+    One generation = ONE block. Submitting the full multi-block compiled document
+    (`final_compiled_prompt_text`) makes the Flow agent propose one generation per
+    block (live incident: 2 blocks → '2 video generations, 30 credits' → the
+    count-mismatch steer → the agent dropped the reference image and compressed
+    both blocks' dialogue into one clip). Block 2+ text belongs to the native
+    Extend step on the FINISHED video 1, never to the initial submission.
+    """
+    return (prompt or "").count(_BLOCK_HEADER_MARKER) > 1
+
+
 @router.post("/generate")
 async def generate(body: GenerateRequest):
     """THE one door for all four modes. mode = IMG | T2V | I2V | F2V → job_id.
@@ -816,6 +832,10 @@ async def generate(body: GenerateRequest):
         raise HTTPException(422, f"unknown mode '{body.mode}' (use IMG/T2V/I2V/F2V)")
     if not body.prompt.strip():
         raise HTTPException(422, "prompt is required")
+    if _is_multi_block_prompt(body.prompt):
+        raise HTTPException(
+            422, "MULTI_BLOCK_PROMPT_REJECTED: one generation carries ONE block's "
+            "prompt; block 2+ text belongs to the Extend step on the finished video")
     # Validate model+duration BEFORE connectivity so 422 stays deterministic (patch I2a);
     # always resolve against the EFFECTIVE model (defaults to Lite) so a bad duration_s with
     # no model (e.g. 10s on default Lite) is caught here, not late inside the job.
@@ -1334,6 +1354,9 @@ def _initial_gen_preconditions(job: dict) -> tuple[str, str, str, str]:
     prompt = (job.get("initial_prompt_text") or "").strip()
     if not prompt:
         raise InitialGenerationError("initial prompt not bound to job")
+    if _is_multi_block_prompt(prompt):
+        raise InitialGenerationError(
+            "initial prompt carries more than one compiled block — block 1 only")
     if not (job.get("product_id") and job.get("approved_asset_id")
             and job.get("approved_asset_sha256")):
         raise InitialGenerationError("product/asset authority missing on job")
@@ -2076,6 +2099,14 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     if not prompt:
         await _fail_manual_request(
             request_id, "API_LANE_REJECTED", "manual job has no prompt", "ERR_PROMPT_REQUIRED")
+    # ONE generation = ONE block. The full multi-block compiled document must never
+    # reach the agent (live incident: 2 blocks → 2-video proposal → count steer →
+    # reference image dropped). Block 2+ runs as native Extend on the finished clip.
+    if _is_multi_block_prompt(prompt):
+        await _fail_manual_request(
+            request_id, "API_LANE_REJECTED",
+            "prompt carries more than one compiled block — submit block 1 only; "
+            "block 2+ belongs to the Extend step", "ERR_MULTI_BLOCK_PROMPT")
 
     # Collect EVERY image the dashboard sent: F2V uses startAsset; I2V/IMG send
     # refs.{subjectAsset,sceneAsset,styleAsset} (previously DROPPED here — I2V died

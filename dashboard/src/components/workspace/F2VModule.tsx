@@ -526,7 +526,15 @@ export default function F2VModule({
 
 	useEffect(() => {
 		if (workspacePackage?.mode !== "F2V") return;
-		setManualPrompt(workspacePackage.prompt_text);
+		// INITIAL submission carries BLOCK 1 ONLY. `prompt_text` is the FULL compiled
+		// document (all blocks joined) — sending it made the Flow agent propose one
+		// generation per block (2 videos), which triggered the count-mismatch steer
+		// and dropped the reference image. Block 2+ text belongs to the native
+		// Extend step on the finished video, never to video 1.
+		setManualPrompt(
+			workspacePackage.prompt_blocks?.[0]?.engine_prompt_text ??
+				workspacePackage.prompt_text,
+		);
 		setOrientation(
 			workspacePackage.aspect_ratio === "16:9" ? "HORIZONTAL" : "VERTICAL",
 		);
