@@ -759,7 +759,7 @@ async def resolve_extend_source_context(client, *, media_id: str,
             if not sid:
                 continue
             try:
-                wf_resp = await client.list_scene_workflows(sid)
+                wf_resp = await client.list_scene_workflows(sid, project_id=project_id)
             except Exception:  # noqa: BLE001 — try the next scene
                 continue
             data = _unwrap(wf_resp)
