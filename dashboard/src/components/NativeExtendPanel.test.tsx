@@ -239,7 +239,7 @@ describe('NativeExtendPanel', () => {
     renderPanel({ projectId: '', sceneId: '', sourceOperationId: '' });
 
     expect(await screen.findByTestId('native-extend-waiting-source')).toHaveTextContent(
-      /WAITING_FOR_SOURCE/,
+      /Waiting for the first part/,
     );
     // Raw blocker codes stay out of the empty-state surface.
     expect(screen.queryByTestId('native-extend-blockers')).toBeNull();
@@ -350,5 +350,118 @@ describe('NativeExtendPanel', () => {
     expect(link).toHaveAttribute('href', '/api/flow/retrieved/final_vj_ui');
     // ONE deliverable: segment lineage is explicitly diagnostics
     expect(screen.getByTestId('native-extend-lineage')).toHaveTextContent(/diagnostics/i);
+  });
+
+  const BANNED_ON_NORMAL_SURFACE = [
+    'Independent Block Plan',
+    'Download Project ZIP',
+    'Final Concatenated Export',
+    'Flow project id',
+    'Scene id',
+    'Source clip operation id',
+    'GOOGLE_FLOW_NATIVE_EXTEND',
+    'veo_3_1_extension_lite',
+    'EXTEND_PARENT_MEDIA_ID_MISSING',
+    'AUTHORITY_MISSING',
+    'Preview continuation plan',
+  ];
+
+  it('normal production surface exposes NO engineering strings (Mission 9)', async () => {
+    resolveMock.mockResolvedValue(BLOCKED);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    renderPanel({ sourceOperationId: '' });
+    await screen.findByTestId('native-extend-panel');
+
+    const diagnostics = screen.getByTestId('native-extend-advanced-diagnostics');
+    expect(diagnostics.tagName.toLowerCase()).toBe('details');
+    expect(diagnostics).not.toHaveAttribute('open'); // closed by default
+
+    // Every occurrence of every technical string must live INSIDE diagnostics.
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const offenders: string[] = [];
+    let node: Node | null = walker.nextNode();
+    while (node) {
+      const text = node.textContent ?? '';
+      for (const banned of BANNED_ON_NORMAL_SURFACE) {
+        if (text.includes(banned)) {
+          const el = node.parentElement;
+          if (!el?.closest('[data-testid="native-extend-advanced-diagnostics"]')) {
+            offenders.push(`${banned} :: ${text.slice(0, 60)}`);
+          }
+        }
+      }
+      node = walker.nextNode();
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('one Generate Video action runs the whole job behind ONE confirmation (Mission 8)', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    previewMock.mockResolvedValue({
+      dry_run: true,
+      planned_operation_count: 2,
+      block_count: 2,
+      model_key: 'x',
+      blocks: [],
+    });
+    authorizeMock.mockResolvedValue({
+      authorization_token: 'one-shot',
+      planned_operation_count: 2,
+      expires_in_seconds: 300,
+    });
+    liveRunMock.mockResolvedValue({ dry_run: false, planned_operation_count: 2, block_count: 2, blocks: [] });
+    createJobMock.mockResolvedValue({ job_id: 'vj_full', status: 'TIMELINE_SEGMENTS_READY' });
+    finalizeMock
+      .mockResolvedValueOnce({ dry_run: true, status: 'TIMELINE_SEGMENTS_READY', job_id: 'vj_full', planned_render_operation_count: 1 })
+      .mockResolvedValueOnce({ dry_run: false, status: 'COMPLETE', job_id: 'vj_full', final_media_id: 'final_vj_full', measured_duration_s: 24.0, size_mb: 21.5 });
+    renderPanel();
+
+    const generate = await screen.findByTestId('generate-full-video-btn');
+    await waitFor(() => expect(generate).not.toBeDisabled());
+    fireEvent.click(generate);
+
+    // ONE confirmation covering the entire requested video
+    const confirm = await screen.findByTestId('full-video-confirm');
+    expect(confirm).toHaveTextContent(/Continuation: 2 operations/);
+    expect(confirm).toHaveTextContent(/Final video preparation: 1 operation/);
+    fireEvent.click(screen.getByTestId('full-video-confirm-btn'));
+
+    await waitFor(() => expect(finalizeMock).toHaveBeenLastCalledWith('vj_full', {
+      dry_run: false,
+      confirm_live_credit_burn: true,
+    }));
+    expect(authorizeMock).toHaveBeenCalledTimes(1);   // bounded, single-use, internal
+    expect(liveRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      confirmed_extend_operation_count: 2,
+      live_authorization_token: 'one-shot',
+    }));
+
+    const result = await screen.findByTestId('final-video-result');
+    expect(result).toHaveTextContent(/Video ready/);
+    expect(screen.getByTestId('final-preview')).toBeInTheDocument();   // one preview
+    expect(screen.getByTestId('final-download')).toHaveAttribute(
+      'href', '/api/flow/retrieved/final_vj_full');
+    // no second result card and no raw-code progress leaked
+    expect(screen.queryByTestId('full-video-error')).toBeNull();
+  });
+
+  it('human failure copy + no-credit claim only on proven pre-submit gates', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    previewMock.mockResolvedValue({ dry_run: true, planned_operation_count: 2, block_count: 2, blocks: [] });
+    authorizeMock.mockRejectedValue(new Error('NATIVE_EXTEND_DISABLED:flag off'));
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('generate-full-video-btn'));
+    fireEvent.click(await screen.findByTestId('full-video-confirm-btn'));
+    const err = await screen.findByTestId('full-video-error');
+    expect(err).toHaveTextContent('The continuation could not be completed safely.');
+    expect(err).toHaveTextContent('No credit was used for the failed step.');
+    // raw code stays in diagnostics
+    expect(screen.getByTestId('full-video-raw-error')).toHaveTextContent(/NATIVE_EXTEND_DISABLED/);
+    expect(
+      screen.getByTestId('full-video-raw-error')
+        .closest('[data-testid="native-extend-advanced-diagnostics"]'),
+    ).not.toBeNull();
   });
 });
