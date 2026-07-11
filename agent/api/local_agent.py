@@ -383,7 +383,18 @@ def _stale_backend_sources() -> list[str]:
 
 @router.get("/version-proof", response_model=LocalAgentVersionProof)
 async def get_local_agent_version_proof(request: Request) -> LocalAgentVersionProof:
+    # Enumerate the SERVED paths authoritatively. In this runtime's process
+    # topology `request.app.routes` can under-report (observed 13 vs the 351
+    # that /openapi.json and actual routing expose), which false-flagged present
+    # routes as missing and fired a spurious "restart the agent" banner. The
+    # OpenAPI schema is the same source /openapi.json serves, so union it in;
+    # a route genuinely absent from BOTH is still reported missing (guardrail
+    # intent preserved).
     route_paths = {getattr(r, "path", "") for r in request.app.routes}
+    try:
+        route_paths |= set(request.app.openapi().get("paths", {}).keys())
+    except Exception:  # openapi generation must never break the health guardrail
+        pass
     stale = _stale_backend_sources()
     return LocalAgentVersionProof(
         pid=os.getpid(),
