@@ -14,6 +14,7 @@ from typing import Optional
 from agent.config import (
     GOOGLE_FLOW_API, GOOGLE_API_KEY, ENDPOINTS,
     VIDEO_MODELS, UPSCALE_MODELS, IMAGE_MODELS, VIDEO_POLL_TIMEOUT,
+    EXTEND_VIDEO_MODELS,
 )
 from agent.services.headers import random_headers
 
@@ -686,6 +687,81 @@ class FlowClient:
             "body": body,
             "captchaAction": "VIDEO_GENERATION",
         }, timeout=60)
+
+    async def generate_video_extend(self, *, source_media_id: str, project_id: str,
+                                    scene_id: str, position: int, prompt: str,
+                                    aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
+                                    start_frame_index: int = 1, end_frame_index: int = 24,
+                                    seed: int = None, batch_id: str = None,
+                                    user_paygate_tier: str = "PAYGATE_TIER_TWO") -> dict:
+        """Native Google Flow Extend — continue a prior clip into the next block.
+
+        Emits the exact captured contract (live 2026-07-11, record 608):
+        POST /v1/video:batchAsyncGenerateVideoExtendVideo. Continuity is carried by
+        ``videoInput.{mediaId,startFrameIndex,endFrameIndex}`` — the parent's
+        OPERATION id + trim window — NOT by prompt phrasing. The prompt is the FULL
+        structured block prompt (same shape as the initial block), never a compact
+        "extend this video" phrase.
+
+        Model FAILS CLOSED: an aspect ratio without captured evidence resolves to no
+        model key and returns an error — never a silent downgrade to another model.
+        Rides the same authenticated extension relay as every other video RPC
+        (``_send('api_request', …)``) so no extension change is needed.
+        """
+        model_key = EXTEND_VIDEO_MODELS.get(aspect_ratio)
+        if not model_key:
+            return {"error": f"UNKNOWN_EXTEND_MODEL:{aspect_ratio}"}
+        if not source_media_id:
+            return {"error": "EXTEND_PARENT_MEDIA_ID_MISSING"}
+        if not (project_id and scene_id):
+            return {"error": "EXTEND_PROJECT_CONTEXT_MISSING"}
+
+        request = {
+            "aspectRatio": aspect_ratio,
+            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+            "videoModelKey": model_key,
+            "seed": int(seed) if seed is not None else int(time.time()) % 100000,
+            "metadata": {"sceneId": scene_id},
+            "videoInput": {
+                "mediaId": source_media_id,
+                "startFrameIndex": int(start_frame_index),
+                "endFrameIndex": int(end_frame_index),
+            },
+        }
+        body = {
+            "mediaGenerationContext": {
+                "batchId": batch_id or f"{uuid.uuid4()}",
+                "audioFailurePreference": "BLOCK_SILENCED_VIDEOS",
+                "sceneContext": {"sceneId": scene_id, "position": int(position)},
+            },
+            "clientContext": self._client_context(project_id, user_paygate_tier),
+            "requests": [request],
+            "useV2ModelConfig": True,
+        }
+        url = self._build_url("generate_video_extend")
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": body,
+            "captchaAction": "VIDEO_GENERATION",
+        }, timeout=60)  # Submit only — synchronous response returns the child id; polling is separate
+
+    async def check_video_status_by_media(self, media: list) -> dict:
+        """Poll async video status by MEDIA id — native-extend poll contract
+        (captured): body ``{"media":[{"name":<childMediaId>,"projectId":<pid>}]}``.
+
+        Deliberately NOT ``check_video_status`` (which sends ``{"operations":[…]}``
+        for the classic generate lane): the extension bridge proxies bytes blindly,
+        so a wrong body shape yields an empty poll, not an error.
+        """
+        url = self._build_url("check_video_status")
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": {"media": media},
+        }, timeout=30)
 
     async def check_video_status(self, operations: list[dict]) -> dict:
         """Check status of video generation operations."""

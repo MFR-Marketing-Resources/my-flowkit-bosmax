@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit", "poster_copy_set", "poster_deliverable"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit", "poster_copy_set", "poster_deliverable", "extend_lineage"})
 
 
 def _validate_table(table: str) -> None:
@@ -52,6 +52,7 @@ _COLUMNS = {
     "copy_generation_batch": {"product_id", "requested_count", "created_count", "deduped_count", "rejected_count", "source", "provider_lane", "provider_model", "updated_at"},
     "avatar_product_fit": {"avatar_code", "product_category", "fit_score", "suitability_notes", "updated_at"},
     "product_intelligence_review_field_provenance": {"draft_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
+    "extend_lineage": {"workspace_generation_package_id", "project_id", "scene_id", "block_index", "block_position", "parent_operation_id", "parent_primary_media_id", "child_operation_id", "child_primary_media_id", "child_workflow_id", "batch_id", "model_key", "aspect_ratio", "start_frame_index", "end_frame_index", "continuation_prompt_hash", "idempotency_key", "polling_state", "retry_attempt", "output_url", "error_code", "error_message", "updated_at", "completed_at"},
 }
 
 
@@ -2248,6 +2249,111 @@ async def caption_summary_for_media_ids(media_ids: list) -> dict:
         r["mid"]: {"count": r["total"], "approved": r["approved"] or 0}
         for r in rows
     }
+
+
+# ── Native Google Flow Extend LINEAGE (durable parent->child chain) ─────────
+# Additive, durable per-block record. Parent/child OPERATION id and primaryMediaId
+# are four separate columns (never collapsed). `idempotency_key` is UNIQUE so a
+# duplicate block submission is rejected (EXTEND_DUPLICATE_SUBMISSION_BLOCKED).
+
+async def insert_extend_lineage(
+    extend_lineage_id: str,
+    *,
+    workspace_generation_package_id: str = None,
+    project_id: str = None,
+    scene_id: str = None,
+    block_index: int = None,
+    block_position: int = None,
+    parent_operation_id: str = None,
+    parent_primary_media_id: str = None,
+    child_operation_id: str = None,
+    child_primary_media_id: str = None,
+    child_workflow_id: str = None,
+    batch_id: str = None,
+    model_key: str = None,
+    aspect_ratio: str = None,
+    start_frame_index: int = None,
+    end_frame_index: int = None,
+    continuation_prompt_hash: str = None,
+    idempotency_key: str = None,
+    polling_state: str = "NOT_STARTED",
+) -> dict:
+    """Create a durable extend-lineage row. Raises the underlying sqlite
+    IntegrityError if idempotency_key already exists — callers map that to
+    EXTEND_DUPLICATE_SUBMISSION_BLOCKED. Never touched by the 48h artifact purge."""
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO extend_lineage
+               (extend_lineage_id, workspace_generation_package_id, project_id,
+                scene_id, block_index, block_position, parent_operation_id,
+                parent_primary_media_id, child_operation_id, child_primary_media_id,
+                child_workflow_id, batch_id, model_key, aspect_ratio,
+                start_frame_index, end_frame_index, continuation_prompt_hash,
+                idempotency_key, polling_state, retry_attempt, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+            (extend_lineage_id, workspace_generation_package_id, project_id,
+             scene_id, block_index, block_position, parent_operation_id,
+             parent_primary_media_id, child_operation_id, child_primary_media_id,
+             child_workflow_id, batch_id, model_key, aspect_ratio,
+             start_frame_index, end_frame_index, continuation_prompt_hash,
+             idempotency_key, polling_state, now, now),
+        )
+        await db.commit()
+    return await _get("extend_lineage", "extend_lineage_id", extend_lineage_id)
+
+
+async def update_extend_lineage(extend_lineage_id: str, **kwargs) -> Optional[dict]:
+    """Whitelisted update (mirrors _update); auto-stamps updated_at."""
+    return await _update("extend_lineage", "extend_lineage_id", extend_lineage_id, **kwargs)
+
+
+async def get_extend_lineage(extend_lineage_id: str) -> Optional[dict]:
+    return await _get("extend_lineage", "extend_lineage_id", extend_lineage_id)
+
+
+async def get_extend_lineage_by_child(child_operation_id: str) -> Optional[dict]:
+    """Lineage row whose child (block N output) has this operation/media id — the
+    id that block N+1 binds as its videoInput.mediaId parent."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM extend_lineage WHERE child_operation_id=? "
+        "ORDER BY created_at DESC LIMIT 1", (child_operation_id,))
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def get_extend_lineage_by_idempotency(idempotency_key: str) -> Optional[dict]:
+    """Existing row for an idempotency key — the dedup lookup that blocks a
+    duplicate credit-consuming submission before it is fired."""
+    if not idempotency_key:
+        return None
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM extend_lineage WHERE idempotency_key=?", (idempotency_key,))
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def list_extend_lineage(workspace_generation_package_id: str = None,
+                              project_id: str = None) -> list:
+    """Lineage rows for a package/project, ordered by block index (chain order)."""
+    db = await get_db()
+    query = "SELECT * FROM extend_lineage"
+    clauses, params = [], []
+    if workspace_generation_package_id:
+        clauses.append("workspace_generation_package_id=?")
+        params.append(workspace_generation_package_id)
+    if project_id:
+        clauses.append("project_id=?")
+        params.append(project_id)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY block_index ASC, created_at ASC"
+    cur = await db.execute(query, params)
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 # ── Bulk generation orchestrator (Google Flow V1) ─────────────────────────

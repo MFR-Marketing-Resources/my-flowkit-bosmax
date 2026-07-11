@@ -100,6 +100,22 @@ domains:
       - agent/services/prompt_compiler_runtime_config_service.py
       - agent/services/canonical_prompt_compiler.py
       - agent/services/extend_route_planner.py
+      # Native Google Flow Extend (runtime lane, capability authority, lineage)
+      - .ai/decisions/ADR-009-google-flow-native-video-extend.md
+      - agent/config.py
+      - agent/services/google_flow_native_extend_runtime.py
+      - dashboard/src/utils/nativeExtendCapability.ts
+      - dashboard/src/utils/nativeExtendCapability.test.ts
+      - tests/unit/test_flow_client_extend_builder.py
+      - tests/unit/test_extend_capability_authority.py
+      - tests/unit/test_extend_lineage_persistence.py
+      - tests/unit/test_google_flow_native_extend_runtime.py
+      - tests/api/test_extend_api.py
+      - tests/ui/test_extend_route_ui_contract.py
+      - tests/fixtures/google_flow_native_extend/__init__.py
+      - tests/fixtures/google_flow_native_extend/extend_request.sanitized.json
+      - tests/fixtures/google_flow_native_extend/extend_submit_response.sanitized.json
+      - tests/fixtures/google_flow_native_extend/poll_status.sanitized.json
       - agent/services/product_lock_builder.py
       - agent/services/avatar_registry.py
       - agent/services/avatar_csv_factory_service.py

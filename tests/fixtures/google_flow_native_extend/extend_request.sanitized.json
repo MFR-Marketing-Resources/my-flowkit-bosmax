@@ -1,0 +1,36 @@
+{
+  "mediaGenerationContext": {
+    "batchId": "36bf48e5-0ba1-4726-9670-2e4539fd4cdd",
+    "audioFailurePreference": "BLOCK_SILENCED_VIDEOS",
+    "sceneContext": {
+      "sceneId": "cce593f7-8450-4461-9f82-6b207cfc5857",
+      "position": 1
+    }
+  },
+  "clientContext": "<RUNTIME_CLIENT_CONTEXT: built by flow_client._client_context(project_id, tier); projectId+tool=PINHOLE+userPaygateTier + a time-based session token + an empty auth-object the extension fills in. Excluded from contract-parity comparison because it is generated per call.>",
+  "requests": [
+    {
+      "aspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+      "textInput": {
+        "structuredPrompt": {
+          "parts": [
+            {
+              "text": "<STRUCTURED_BLOCK_PROMPT_PLACEHOLDER>"
+            }
+          ]
+        }
+      },
+      "videoModelKey": "veo_3_1_extension_lite",
+      "seed": 11019,
+      "metadata": {
+        "sceneId": "cce593f7-8450-4461-9f82-6b207cfc5857"
+      },
+      "videoInput": {
+        "mediaId": "b6371e69-23d4-4d6e-a874-50dc03fc850a",
+        "startFrameIndex": 1,
+        "endFrameIndex": 24
+      }
+    }
+  ],
+  "useV2ModelConfig": true
+}

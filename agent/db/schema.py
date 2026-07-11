@@ -1787,6 +1787,53 @@ CREATE INDEX IF NOT EXISTS idx_generation_result_product ON generation_result(pr
 """)
         await db.commit()
 
+        # Native Google Flow Extend LINEAGE — durable parent->child chain record,
+        # one row per extend BLOCK submission (evidence: 2026-07-11 capture). The
+        # parent/child OPERATION id and primaryMediaId are FOUR SEPARATE columns and
+        # are NEVER collapsed: the extend request binds videoInput.mediaId to the
+        # parent OPERATION id, while retrieval/concat reference the primaryMediaId —
+        # proven distinct in the capture (block-1 op b6371e69 != media 69051c7b).
+        # `idempotency_key` is UNIQUE so a duplicate block submission fails closed.
+        # Durable like generation_result — never touched by the 48h artifact purge.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS extend_lineage (
+    extend_lineage_id               TEXT PRIMARY KEY,
+    workspace_generation_package_id TEXT,
+    project_id                      TEXT,
+    scene_id                        TEXT,
+    block_index                     INTEGER,
+    block_position                  INTEGER,
+    parent_operation_id             TEXT,
+    parent_primary_media_id         TEXT,
+    child_operation_id              TEXT,
+    child_primary_media_id          TEXT,
+    child_workflow_id               TEXT,
+    batch_id                        TEXT,
+    model_key                       TEXT,
+    aspect_ratio                    TEXT,
+    start_frame_index               INTEGER,
+    end_frame_index                 INTEGER,
+    continuation_prompt_hash        TEXT,
+    idempotency_key                 TEXT,
+    polling_state                   TEXT NOT NULL DEFAULT 'NOT_STARTED'
+        CHECK(polling_state IN ('NOT_STARTED','SOURCE_READY','EXTEND_SUBMITTED',
+              'EXTEND_POLLING','EXTEND_SUCCEEDED','EXTEND_FAILED','HARVEST_FAILED',
+              'CANCELLED','BLOCKED')),
+    retry_attempt                   INTEGER NOT NULL DEFAULT 0,
+    output_url                      TEXT,
+    error_code                      TEXT,
+    error_message                   TEXT,
+    created_at                      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    completed_at                    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_extend_lineage_child ON extend_lineage(child_operation_id);
+CREATE INDEX IF NOT EXISTS idx_extend_lineage_parent ON extend_lineage(parent_operation_id);
+CREATE INDEX IF NOT EXISTS idx_extend_lineage_pkg ON extend_lineage(workspace_generation_package_id, block_index);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_extend_lineage_idem ON extend_lineage(idempotency_key);
+""")
+        await db.commit()
+
         # Copy Set foundation (Copy Strategy Studio Phase 1). Additive table —
         # persists an explicitly-approvable Copy Set (product → angle / hook /
         # subhook / usp / cta) that later feeds the canonical prompt compiler as

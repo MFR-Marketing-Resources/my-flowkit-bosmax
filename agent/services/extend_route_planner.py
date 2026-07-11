@@ -149,3 +149,105 @@ def segment_timeline(plan: list[int]) -> list[dict[str, Any]]:
         )
         cursor = end
     return segments
+
+
+# ─── Native-Extend CAPABILITY authority (a SECOND, orthogonal axis) ──────────
+# TWO-AXIS RULE (do not conflate):
+#   * ROUTE authority (ROUTE_REGISTRY above) = block-DURATION math. It answers
+#     "may this route turn a total duration into a block plan?" The public-API
+#     8+7n route `GOOGLE_FLOW_VEO_EXTEND` stays AUTHORITY_MISSING forever here —
+#     native extend borrows its durations from the already-AUTHORIZED
+#     `GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS` workbook (uniform 8s), NOT from 8+7n.
+#   * CAPABILITY authority (below) = which RUNTIME aisandbox operations are proven
+#     by CAPTURED wire evidence. AUTHORIZED here means "we have the exact request
+#     contract"; it does NOT relax any route/duration gate.
+# Flipping a route flag and proving a transport capability are different acts;
+# keeping them separate is what lets native extend ship while 8+7n stays closed.
+CAPTURE_EVIDENCE_SUBMIT = "CAPTURE_20260711_094742"   # extend request/response/poll
+CAPTURE_EVIDENCE_RETRIEVE = "CAPTURE_20260711_100555"  # scene/workflows + media retrieval
+CAPTURE_EVIDENCE_DOWNLOAD = "CAPTURE_20260711_102244"  # Download Project ZIP
+
+NATIVE_EXTEND_CAPABILITIES: dict[str, dict[str, Any]] = {
+    "GOOGLE_FLOW_NATIVE_EXTEND_REQUEST": {
+        "authority": AUTHORIZED,
+        "rpc": "POST /v1/video:batchAsyncGenerateVideoExtendVideo",
+        "evidence": CAPTURE_EVIDENCE_SUBMIT,
+    },
+    "GOOGLE_FLOW_EXTEND_CHILD_POLLING": {
+        "authority": AUTHORIZED,
+        "rpc": "POST /v1/video:batchCheckAsyncVideoGenerationStatus {media:[{name,projectId}]}",
+        "evidence": CAPTURE_EVIDENCE_SUBMIT,
+    },
+    "GOOGLE_FLOW_EXTEND_LINEAGE": {
+        "authority": AUTHORIZED,
+        "evidence": CAPTURE_EVIDENCE_SUBMIT,
+    },
+    "GOOGLE_FLOW_PER_BLOCK_MEDIA_RETRIEVAL": {
+        "authority": AUTHORIZED,
+        "rpc": "GET /v1/media/{id} (get_media); trpc media.getMediaUrlRedirect -> signed flow-content.google",
+        "evidence": CAPTURE_EVIDENCE_RETRIEVE,
+    },
+    "GOOGLE_FLOW_DOWNLOAD_PROJECT_ZIP": {
+        "authority": AUTHORIZED,
+        "rpc": "client-side ZIP blob of per-workflow media (NO server export/concat)",
+        "evidence": CAPTURE_EVIDENCE_DOWNLOAD,
+    },
+    # Fail closed: runVideoFxConcatenation EXISTS, but its terminal
+    # runVideoFxCheckConcatenationStatus response + the persisted combined-media
+    # identity were NOT captured. Do NOT substitute the Download Project ZIP for a
+    # final concatenated export.
+    "GOOGLE_FLOW_FINAL_CONCAT_EXPORT": {
+        "authority": AUTHORITY_MISSING,
+        "error_code": "FINAL_CONCAT_EXPORT_AUTHORITY_MISSING",
+        "pending_reason": (
+            "runVideoFxConcatenation submit captured, but its terminal check-status "
+            "response and persisted combined-media identity were not; the 16s combined "
+            "output has no captured retrieval contract. Fail closed."
+        ),
+    },
+}
+
+
+class CapabilityAuthorityMissing(ValueError):
+    """Raised when a native-extend RUNTIME capability without captured evidence is
+    required. Fail closed — never substitute a different capability (e.g. Download
+    Project ZIP for final concat export)."""
+
+    def __init__(self, capability_id: str, error_code: str | None = None,
+                 reason: str = "") -> None:
+        self.capability_id = capability_id
+        self.error_code = error_code or "CAPABILITY_AUTHORITY_MISSING"
+        self.reason = reason
+        message = f"{self.error_code}:{capability_id}"
+        if reason:
+            message = f"{message}:{reason}"
+        super().__init__(message)
+
+
+def capability_authority(capability_id: str) -> str:
+    """AUTHORIZED / AUTHORITY_MISSING for a native-extend capability.
+
+    Raises ``UNKNOWN_NATIVE_EXTEND_CAPABILITY:{id}`` for an undeclared capability.
+    """
+    cid = normalize_route(capability_id) or ""
+    cap = NATIVE_EXTEND_CAPABILITIES.get(cid)
+    if cap is None:
+        raise ValueError(f"UNKNOWN_NATIVE_EXTEND_CAPABILITY:{capability_id}")
+    return cap["authority"]
+
+
+def require_capability(capability_id: str) -> dict[str, Any]:
+    """Return the capability record iff AUTHORIZED, else fail closed.
+
+    Raises:
+        UNKNOWN_NATIVE_EXTEND_CAPABILITY:{id} — undeclared capability
+        CapabilityAuthorityMissing            — declared but not AUTHORIZED
+    """
+    cid = normalize_route(capability_id) or ""
+    cap = NATIVE_EXTEND_CAPABILITIES.get(cid)
+    if cap is None:
+        raise ValueError(f"UNKNOWN_NATIVE_EXTEND_CAPABILITY:{capability_id}")
+    if cap.get("authority") != AUTHORIZED:
+        raise CapabilityAuthorityMissing(
+            cid, cap.get("error_code"), cap.get("pending_reason", ""))
+    return cap

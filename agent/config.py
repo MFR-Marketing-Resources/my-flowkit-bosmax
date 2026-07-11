@@ -132,6 +132,17 @@ VIDEO_MODELS = _MODELS["video_models"]
 UPSCALE_MODELS = _MODELS["upscale_models"]
 IMAGE_MODELS = _MODELS["image_models"]
 
+# Native Flow Extend model key, per captured aspect ratio (live evidence
+# 2026-07-11: portrait -> veo_3_1_extension_lite). FAILS CLOSED for any aspect
+# ratio without captured evidence — the Extend builder NEVER silently downgrades
+# to an independent-block model (USER SETTINGS ARE LAW). Landscape is included
+# because the extension model key is aspect-independent, but any other/unknown
+# ratio resolves to None and hard-errors upstream.
+EXTEND_VIDEO_MODELS = _MODELS.get("extend_video_models", {
+    "VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_extension_lite",
+    "VIDEO_ASPECT_RATIO_LANDSCAPE": "veo_3_1_extension_lite",
+})
+
 # ─── API Endpoints ───────────────────────────────────────────
 ENDPOINTS = {
     "generate_images": "/v1/projects/{project_id}/flowMedia:batchGenerateImages",
@@ -139,6 +150,10 @@ ENDPOINTS = {
     "generate_video_start_end": "/v1/video:batchAsyncGenerateVideoStartAndEndImage",
     "generate_video_references": "/v1/video:batchAsyncGenerateVideoReferenceImages",
     "upscale_video": "/v1/video:batchAsyncGenerateVideoUpsampleVideo",
+    # Native Google Flow Extend (continuation of a prior clip). Captured live
+    # 2026-07-11 (see .ai/experiments/aisandbox_extend_discovery). Direct aisandbox
+    # RPC over the same authenticated extension relay — NOT the flowCreationAgent lane.
+    "generate_video_extend": "/v1/video:batchAsyncGenerateVideoExtendVideo",
     "upscale_image": "/v1/flow/upsampleImage",
     "upload_image": "/v1/flow/uploadImage",
     "check_video_status": "/v1/video:batchCheckAsyncVideoGenerationStatus",
