@@ -856,15 +856,17 @@ class FlowClient:
         {scenes:[...]} list on multi-scene projects. Used to auto-resolve the Extend
         parent context (scene id + source operation id) from a finished Block-1 clip.
         """
-        url = (f"{GOOGLE_FLOW_API}/v1/flow/projects/{project_id}/scenes"
-               f"?key={GOOGLE_API_KEY}&clientContext.tool=PINHOLE")
+        # Captured live contract (extend_live_manual_live_20260711_094742): the real
+        # browser request is BARE — no key / clientContext params (auth rides on the
+        # relay's Authorization header). Adding them makes the endpoint 404.
+        url = f"{GOOGLE_FLOW_API}/v1/flow/projects/{project_id}/scenes"
         return await self._send("api_request", {
             "url": url,
             "method": "GET",
             "headers": random_headers(),
         }, timeout=20)
 
-    async def list_scene_workflows(self, scene_id: str) -> dict:
+    async def list_scene_workflows(self, scene_id: str, project_id: str = "") -> dict:
         """List one scene's workflows + media (read-only, zero credit).
 
         Captured contract: GET /v1/flow/scene/{sceneId}/workflows →
@@ -872,8 +874,10 @@ class FlowClient:
         media[].name is the generated clip's operation id (== workflows'
         metadata.primaryMediaId) — the exact value native Extend needs as its parent.
         """
+        # Captured live contract: workflows listing takes sceneId + projectId query
+        # params (and nothing else). project_id is required for the live call.
         url = (f"{GOOGLE_FLOW_API}/v1/flow/scene/{scene_id}/workflows"
-               f"?key={GOOGLE_API_KEY}&clientContext.tool=PINHOLE")
+               f"?sceneId={scene_id}" + (f"&projectId={project_id}" if project_id else ""))
         return await self._send("api_request", {
             "url": url,
             "method": "GET",

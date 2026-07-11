@@ -39,7 +39,9 @@ class _Client:
         assert project_id == PROJ
         return self._scenes
 
-    async def list_scene_workflows(self, scene_id):
+    async def list_scene_workflows(self, scene_id, project_id=""):
+        # live contract: the workflows listing requires the projectId query param
+        assert project_id == PROJ
         self.scene_calls.append(scene_id)
         return self._wf.get(scene_id, {"sceneWorkflows": [], "media": []})
 
