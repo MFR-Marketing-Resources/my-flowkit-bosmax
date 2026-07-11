@@ -115,6 +115,7 @@ domains:
       - tests/unit/test_extend_lineage_persistence.py
       - tests/unit/test_google_flow_native_extend_runtime.py
       - tests/api/test_extend_api.py
+      - tests/unit/test_native_extend_source_resolver.py
       - tests/ui/test_extend_route_ui_contract.py
       - tests/fixtures/google_flow_native_extend/__init__.py
       - tests/fixtures/google_flow_native_extend/extend_request.sanitized.json
@@ -150,6 +151,7 @@ domains:
       - agent/authority/wps_blocking_authority.json
       - tests/unit/test_canonical_prompt_compiler.py
       - tests/unit/test_extend_scale_continuity.py
+      - tests/unit/test_product_label_truth.py
       - tests/unit/test_product_lock_builder.py
       - tests/unit/test_prompt_authority_sovereignty.py
       - tests/unit/test_prompt_compiler_9_section.py

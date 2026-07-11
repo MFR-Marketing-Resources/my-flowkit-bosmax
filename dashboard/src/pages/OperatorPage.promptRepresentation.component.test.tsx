@@ -63,13 +63,16 @@ describe("OperatorPage prompt representation presentation + clipboard", () => {
 		expect(navigator.clipboard.writeText).toHaveBeenCalledWith("LEGACY INDEPENDENT ONLY");
 	});
 
-	it("independent fallback secondary is distinct from extend", async () => {
+	it("independent fallback text survives but its copy affordance is de-mixed away", async () => {
 		const p = resolvePromptRepresentationPresentation({
 			block_index: 2,
 			independent_block_prompt_text: "INDEPENDENT FALLBACK",
 			flow_extend_prompt_text: "Extend this video from the exact ending of Video 1.",
 		});
-		expect(p.showIndependentSecondary).toBe(true);
+		// SEV-1 de-mix: no independent copy button on the extend operator surface —
+		// the fallback text stays available (Handoff Bank) without mixed instructions.
+		expect(p.showIndependentSecondary).toBe(false);
+		expect(p.helpText).toMatch(/Native Flow Extend/);
 		await navigator.clipboard.writeText(p.independentText);
 		expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith("INDEPENDENT FALLBACK");
 	});

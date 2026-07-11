@@ -231,11 +231,12 @@ def _product_name(product: dict[str, Any]) -> str:
 
 
 def _product_visual_alias(product: dict[str, Any], family: str) -> str:
-    explicit = _clean(
-        product.get("product_short_name")
-        or product.get("product_display_name_short")
-        or product.get("visual_display_name")
-    )
+    # SEV-1 label-truth: catalog shorthand (product_short_name /
+    # product_display_name_short) is NEVER a prompt-visible product name — the engine
+    # re-typeset the real "Minyak Warisan Tok Cap Burung 25ml" label as the shorthand
+    # "Minyak Cap Burung" (live drift evidence). Only an explicit operator-set
+    # visual_display_name may override the canonical registered name here.
+    explicit = _clean(product.get("visual_display_name"))
     if explicit:
         return explicit
     full = _product_name(product)
@@ -586,8 +587,10 @@ def _family_clause_bank(family: str) -> dict[str, Any]:
                 "Malay": "Memang jenis benda yang senang kekal dalam routine.",
                 "English": "It feels like something people can keep in a routine comfortably.",
             },
-            "visual_proof": "make the bottle, dosage logic, and routine fit feel careful and measured rather than loud",
-            "end_payoff": "a clean bottle shot showing dosage instructions clearly with measured wellness context",
+            # SEV-1 label-truth: never direct the engine to render dosage/usage text —
+            # invented label content replaced the real MWTCB label (live drift evidence).
+            "visual_proof": "make the real bottle, its printed label exactly as in the reference, and routine fit feel careful and measured rather than loud",
+            "end_payoff": "a clean bottle shot with the real printed label unchanged and readable, in measured wellness context",
         },
         "general": {
             "dialogue_opening": {

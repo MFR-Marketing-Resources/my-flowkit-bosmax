@@ -846,6 +846,38 @@ class FlowClient:
             "headers": random_headers(),
         }, timeout=15)
 
+    async def list_project_scenes(self, project_id: str) -> dict:
+        """List a Flow project's scenes + their workflows (read-only, zero credit).
+
+        Captured contract (CAPTURE_20260711_100555):
+        GET /v1/flow/projects/{projectId}/scenes →
+        {scene:{sceneId,...}, sceneWorkflows:[{workflow:{name, metadata:{primaryMediaId,
+        batchId}}, sceneId, sceneWorkflowMetadata:{...}}]} — single-scene envelope, or a
+        {scenes:[...]} list on multi-scene projects. Used to auto-resolve the Extend
+        parent context (scene id + source operation id) from a finished Block-1 clip.
+        """
+        url = f"{GOOGLE_FLOW_API}/v1/flow/projects/{project_id}/scenes?key={GOOGLE_API_KEY}"
+        return await self._send("api_request", {
+            "url": url,
+            "method": "GET",
+            "headers": random_headers(),
+        }, timeout=20)
+
+    async def list_scene_workflows(self, scene_id: str) -> dict:
+        """List one scene's workflows + media (read-only, zero credit).
+
+        Captured contract: GET /v1/flow/scene/{sceneId}/workflows →
+        {sceneWorkflows:[...], media:[{name, projectId, workflowId, ...}]}.
+        media[].name is the generated clip's operation id (== workflows'
+        metadata.primaryMediaId) — the exact value native Extend needs as its parent.
+        """
+        url = f"{GOOGLE_FLOW_API}/v1/flow/scene/{scene_id}/workflows?key={GOOGLE_API_KEY}"
+        return await self._send("api_request", {
+            "url": url,
+            "method": "GET",
+            "headers": random_headers(),
+        }, timeout=20)
+
     async def upload_image(self, image_base64: str, mime_type: str = "image/jpeg",
                             project_id: str = "", file_name: str = "image.jpg") -> dict:
         """Upload an image for use as start/end frame.

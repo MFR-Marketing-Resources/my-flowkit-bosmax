@@ -18,12 +18,15 @@ import {
   resolveNativeExtend,
   previewNativeExtend,
   fetchNativeExtendLineage,
+  fetchNativeExtendSourceCandidates,
+  resolveNativeExtendSource,
   requestNativeExtendLiveAuthorization,
   runNativeExtend,
   type NativeExtendResolution,
   type ExtendRunResult,
   type ExtendLineageRow,
   type ExtendBlockInput,
+  type ExtendSourceCandidate,
 } from '../api/nativeExtend';
 
 export interface NativeExtendPanelProps {
@@ -54,8 +57,66 @@ export default function NativeExtendPanel({
   const [error, setError] = useState<string | null>(null);
   const [confirmLive, setConfirmLive] = useState(false);
   const [liveResult, setLiveResult] = useState<ExtendRunResult | null>(null);
+  // SEV-1 UX repair: finished Block-1 clips auto-inherit into the Extend context —
+  // the operator selects a clip, never pastes raw project/scene/operation ids.
+  const [candidates, setCandidates] = useState<ExtendSourceCandidate[]>([]);
+  const [candidatesLoaded, setCandidatesLoaded] = useState(false);
+  const [selectedSource, setSelectedSource] = useState('');
+  const [sourceNote, setSourceNote] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const plannedBlockCount = plannedBlocks.length;
+
+  const applyCandidate = async (candidate: ExtendSourceCandidate) => {
+    setSelectedSource(candidate.media_id);
+    setSourceNote('Resolving scene context…');
+    try {
+      const ctx = await resolveNativeExtendSource({
+        media_id: candidate.media_id,
+        project_id: candidate.project_id,
+      });
+      setProjectId(ctx.project_id);
+      setSceneId(ctx.scene_id);
+      setSourceOperationId(ctx.source_operation_id);
+      setSourceNote(
+        `Source verified — ${candidate.product_name ?? candidate.media_id.slice(0, 8)} · scene ${
+          ctx.scene_display_name ?? ctx.scene_id.slice(0, 8)
+        }`,
+      );
+    } catch (e) {
+      setSourceNote(
+        `Could not auto-resolve this clip (${e instanceof Error ? e.message : String(e)}). ` +
+          'Open Advanced Diagnostics to enter ids manually.',
+      );
+      setAdvancedOpen(true);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchNativeExtendSourceCandidates()
+      .then((r) => {
+        if (cancelled) return;
+        setCandidates(r.candidates);
+        setCandidatesLoaded(true);
+        // Auto-inherit the newest finished clip when the operator has supplied nothing.
+        if (
+          r.candidates.length > 0 &&
+          !(projectIdProp ?? '') &&
+          !(sceneIdProp ?? '') &&
+          !(sourceProp ?? '')
+        ) {
+          void applyCandidate(r.candidates[0]);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCandidatesLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -157,8 +218,13 @@ export default function NativeExtendPanel({
         <span className="text-xs text-slate-400">temporal continuation · uniform 8s blocks</span>
       </div>
 
-      {/* Four distinct routes — no ambiguity between them */}
-      <div data-testid="native-extend-routes" className="mb-3 grid gap-1">
+      {/* Four distinct routes — collapsed lane guide (SEV-1: the default surface
+          stays linear; the contrast cards are reference material, not workflow). */}
+      <details data-testid="native-extend-lane-guide" className="mb-3">
+        <summary className="cursor-pointer text-xs text-slate-400">
+          Lane guide — what runs where (independent blocks · native Extend · ZIP · final export)
+        </summary>
+        <div data-testid="native-extend-routes" className="mt-2 grid gap-1">
         {NATIVE_EXTEND_ROUTES.map((route) => (
           <div
             key={route.id}
@@ -180,10 +246,65 @@ export default function NativeExtendPanel({
             <p className="text-xs text-slate-400">{route.description}</p>
           </div>
         ))}
+        </div>
+      </details>
+
+      {/* Source clip — auto-inherited from finished Block-1 generations */}
+      <div className="mb-3 grid gap-2">
+        <label className="text-xs text-slate-400">
+          Source clip (finished Block-1 — auto-inherited)
+          <select
+            data-testid="native-extend-source-select"
+            className="mt-1 w-full rounded bg-slate-800 px-2 py-1 text-slate-100"
+            value={selectedSource}
+            onChange={(e) => {
+              const candidate = candidates.find((c) => c.media_id === e.target.value);
+              if (candidate) void applyCandidate(candidate);
+            }}
+          >
+            <option value="">
+              {candidates.length > 0
+                ? 'Select a finished clip…'
+                : 'No finished clips yet'}
+            </option>
+            {candidates.map((c) => (
+              <option key={c.media_id} value={c.media_id}>
+                {(c.product_name ?? 'clip')} · {c.created_at ?? ''} · {c.media_id.slice(0, 8)}…
+              </option>
+            ))}
+          </select>
+        </label>
+        {sourceNote && (
+          <div data-testid="native-extend-source-note" className="text-xs text-slate-400">
+            {sourceNote}
+          </div>
+        )}
+        {candidatesLoaded &&
+          candidates.length === 0 &&
+          !projectId &&
+          !sceneId &&
+          !sourceOperationId && (
+            <div
+              data-testid="native-extend-waiting-source"
+              className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-100"
+            >
+              WAITING_FOR_SOURCE — generate Block 1 first; the finished clip appears here
+              automatically as the Extend source.
+            </div>
+          )}
       </div>
 
-      {/* Flow context inputs */}
-      <div className="mb-3 grid gap-2 sm:grid-cols-3">
+      {/* Raw Flow ids — Advanced Diagnostics only (never required in the normal flow) */}
+      <details
+        data-testid="native-extend-advanced"
+        className="mb-3"
+        open={advancedOpen}
+        onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
+      >
+        <summary className="cursor-pointer text-xs text-slate-500">
+          Advanced Diagnostics — raw Flow ids (auto-filled; manual entry is a fallback)
+        </summary>
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
         <label className="text-xs text-slate-400">
           Flow project id
           <input
@@ -214,7 +335,8 @@ export default function NativeExtendPanel({
             placeholder="finished Block-1 operation id"
           />
         </label>
-      </div>
+        </div>
+      </details>
 
       {/* Readiness + blockers + planned operation count + final-concat state */}
       {resolution && (
@@ -246,7 +368,8 @@ export default function NativeExtendPanel({
               ? 'available'
               : 'UNAVAILABLE — fails closed (the Download Project ZIP is NOT a substitute)'}
           </div>
-          {resolution.blockers.length > 0 && (
+          {resolution.blockers.length > 0 &&
+            Boolean(projectId || sceneId || sourceOperationId) && (
             <div
               data-testid="native-extend-blockers"
               className="mt-1 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-rose-200"

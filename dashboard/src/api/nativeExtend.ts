@@ -121,3 +121,38 @@ export async function fetchNativeExtendLineage(
 ): Promise<{ lineage: ExtendLineageRow[]; count: number }> {
   return getAPI(`/api/flow/native-extend/lineage?project_id=${encodeURIComponent(projectId)}`);
 }
+
+// ─── Extend source auto-inheritance (SEV-1 UX repair — no raw ids) ───────────
+export interface ExtendSourceCandidate {
+  media_id: string;
+  job_id: string | null;
+  project_id: string;
+  created_at: string | null;
+  product_id: string | null;
+  product_name: string | null;
+  request_id: string | null;
+  workspace_generation_package_id: string | null;
+}
+
+export interface ExtendResolvedSource {
+  project_id: string;
+  scene_id: string;
+  source_operation_id: string;
+  scene_display_name: string | null;
+  verified: boolean;
+}
+
+/** Finished Block-1 clips usable as Extend parents (newest first, zero credit). */
+export async function fetchNativeExtendSourceCandidates(
+  limit = 8,
+): Promise<{ candidates: ExtendSourceCandidate[]; count: number }> {
+  return getAPI(`/api/flow/native-extend/source-candidates?limit=${limit}`);
+}
+
+/** Verify one finished clip inside its project and return the full parent context. */
+export async function resolveNativeExtendSource(input: {
+  media_id: string;
+  project_id: string;
+}): Promise<ExtendResolvedSource> {
+  return postAPI('/api/flow/native-extend/resolve-source', input);
+}

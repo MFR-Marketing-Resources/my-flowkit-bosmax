@@ -1,12 +1,14 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const resolveMock = vi.fn();
 const previewMock = vi.fn();
 const lineageMock = vi.fn();
 const authorizeMock = vi.fn();
 const liveRunMock = vi.fn();
+const candidatesMock = vi.fn();
+const resolveSourceMock = vi.fn();
 
 vi.mock('../api/nativeExtend', () => ({
   resolveNativeExtend: (...a: unknown[]) => resolveMock(...a),
@@ -14,6 +16,8 @@ vi.mock('../api/nativeExtend', () => ({
   fetchNativeExtendLineage: (...a: unknown[]) => lineageMock(...a),
   requestNativeExtendLiveAuthorization: (...a: unknown[]) => authorizeMock(...a),
   runNativeExtend: (...a: unknown[]) => liveRunMock(...a),
+  fetchNativeExtendSourceCandidates: (...a: unknown[]) => candidatesMock(...a),
+  resolveNativeExtendSource: (...a: unknown[]) => resolveSourceMock(...a),
 }));
 
 // Import SUT after mocks.
@@ -22,6 +26,18 @@ import NativeExtendPanel from './NativeExtendPanel';
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+});
+
+beforeEach(() => {
+  // Default: no finished clips — existing tests drive ids via props.
+  candidatesMock.mockResolvedValue({ candidates: [], count: 0 });
+  resolveSourceMock.mockResolvedValue({
+    project_id: 'p',
+    scene_id: 's',
+    source_operation_id: 'op1',
+    scene_display_name: 'S',
+    verified: true,
+  });
 });
 
 const READY = {
@@ -166,5 +182,111 @@ describe('NativeExtendPanel', () => {
     });
     renderPanel();
     expect(await screen.findByTestId('lineage-2')).toHaveTextContent('EXTEND_SUCCEEDED');
+  });
+
+  it('auto-inherits the newest finished clip when the operator supplied nothing', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    candidatesMock.mockResolvedValue({
+      candidates: [
+        {
+          media_id: 'clip-new',
+          job_id: 'j2',
+          project_id: 'proj-1',
+          created_at: '2026-07-11T10:23:38Z',
+          product_id: 'prod',
+          product_name: 'Minyak Warisan Tok Cap Burung 25ml',
+          request_id: 'req',
+          workspace_generation_package_id: null,
+        },
+      ],
+      count: 1,
+    });
+    resolveSourceMock.mockResolvedValue({
+      project_id: 'proj-1',
+      scene_id: 'scene-1',
+      source_operation_id: 'clip-new',
+      scene_display_name: 'Scene 1',
+      verified: true,
+    });
+    renderPanel({ projectId: '', sceneId: '', sourceOperationId: '' });
+
+    await waitFor(() =>
+      expect(resolveSourceMock).toHaveBeenCalledWith({
+        media_id: 'clip-new',
+        project_id: 'proj-1',
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('project-input')).toHaveValue('proj-1'),
+    );
+    expect(screen.getByTestId('scene-input')).toHaveValue('scene-1');
+    expect(screen.getByTestId('source-operation-input')).toHaveValue('clip-new');
+    expect(screen.getByTestId('native-extend-source-note')).toHaveTextContent(/verified/i);
+    // No raw-code blocker wall in the inherited flow.
+    expect(screen.queryByTestId('native-extend-waiting-source')).toBeNull();
+  });
+
+  it('shows WAITING_FOR_SOURCE when no finished clip exists and nothing was supplied', async () => {
+    resolveMock.mockResolvedValue(BLOCKED);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    candidatesMock.mockResolvedValue({ candidates: [], count: 0 });
+    renderPanel({ projectId: '', sceneId: '', sourceOperationId: '' });
+
+    expect(await screen.findByTestId('native-extend-waiting-source')).toHaveTextContent(
+      /WAITING_FOR_SOURCE/,
+    );
+    // Raw blocker codes stay out of the empty-state surface.
+    expect(screen.queryByTestId('native-extend-blockers')).toBeNull();
+    expect(screen.getByTestId('native-extend-preview-btn')).toBeDisabled();
+  });
+
+  it('selecting a saved clip resolves and fills the Flow context', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    candidatesMock.mockResolvedValue({
+      candidates: [
+        {
+          media_id: 'clip-a',
+          job_id: 'ja',
+          project_id: 'proj-a',
+          created_at: '2026-07-11T09:00:00Z',
+          product_id: null,
+          product_name: 'Bosmax Oil 10 ML',
+          request_id: null,
+          workspace_generation_package_id: null,
+        },
+      ],
+      count: 1,
+    });
+    resolveSourceMock.mockResolvedValue({
+      project_id: 'proj-a',
+      scene_id: 'scene-a',
+      source_operation_id: 'clip-a',
+      scene_display_name: null,
+      verified: true,
+    });
+    renderPanel(); // props supplied -> no auto-run; manual selection still works
+    const select = await screen.findByTestId('native-extend-source-select');
+    fireEvent.change(select, { target: { value: 'clip-a' } });
+    await waitFor(() =>
+      expect(screen.getByTestId('source-operation-input')).toHaveValue('clip-a'),
+    );
+    expect(screen.getByTestId('project-input')).toHaveValue('proj-a');
+    expect(screen.getByTestId('scene-input')).toHaveValue('scene-a');
+  });
+
+  it('keeps raw ids inside Advanced Diagnostics and the lane guide collapsed', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    renderPanel();
+    const advanced = await screen.findByTestId('native-extend-advanced');
+    expect(advanced.tagName.toLowerCase()).toBe('details');
+    expect(advanced).not.toHaveAttribute('open');
+    const guide = screen.getByTestId('native-extend-lane-guide');
+    expect(guide.tagName.toLowerCase()).toBe('details');
+    expect(guide).not.toHaveAttribute('open');
+    // The four lane cards remain available inside the guide.
+    expect(screen.getByTestId('route-GOOGLE_FLOW_FINAL_CONCAT_EXPORT')).toBeInTheDocument();
   });
 });
