@@ -1,0 +1,63 @@
+{
+  "report_title": "BOSMAX_BATCH_CREATIVE_PRODUCTION_ORCHESTRATOR_FORENSIC_AUDIT_V1",
+  "report_version": "1.0.0",
+  "repository": "https://github.com/MFR-Marketing-Resources/my-flowkit-bosmax",
+  "examined_branch": "main",
+  "examined_commit_sha": "b271f5e162f45c75cf94e88be5c0bc9cadbd6103",
+  "generated_timestamp": "2026-07-11T05:34:23Z",
+  "agent_identity": "Hermes Agent (grok-composer-2.5-fast)",
+  "files": [
+    "README.md",
+    "00_EXECUTIVE_FINDINGS.md",
+    "01_CURRENT_STATE_REPOSITORY_AUDIT.md",
+    "02_BATCH_PROMPT_AND_VARIATION_AUDIT.md",
+    "03_CREATIVE_DIVERSITY_AND_DEDUPE_AUDIT.md",
+    "04_PRODUCTION_QUEUE_AND_CONCURRENCY_AUDIT.md",
+    "05_IMAGE_AND_POSTER_PIPELINE_AUDIT.md",
+    "06_DATA_MODEL_AND_STATE_MACHINE_AUDIT.md",
+    "07_OPERATOR_WORKFLOW_AND_UX_AUDIT.md",
+    "08_FAILURE_RECOVERY_AND_IDEMPOTENCY_AUDIT.md",
+    "09_THROUGHPUT_CAPACITY_AND_CREDIT_MODEL.md",
+    "10_TARGET_ARCHITECTURE_PROPOSAL.md",
+    "11_GAP_RISK_AND_DECISION_REGISTER.md",
+    "12_IMPLEMENTATION_READINESS_MATRIX.md",
+    "manifest.json",
+    "evidence/route_endpoint_matrix.csv",
+    "evidence/current_schema_matrix.csv",
+    "evidence/state_transition_matrix.csv",
+    "evidence/variation_dimension_matrix.csv",
+    "evidence/duplicate_rule_matrix.csv",
+    "evidence/runtime_capability_matrix.csv",
+    "evidence/failure_recovery_matrix.csv",
+    "evidence/affected_surface_inventory.csv"
+  ],
+  "primary_authority_files_read": [
+    "AGENTS.md",
+    ".ai/status/CURRENT_STATE.md",
+    ".ai/contracts/AI_AGENT_OPERATING_CONTRACT.md",
+    ".ai/contracts/CODEX_IMPLEMENTATION_CONTRACT.md",
+    ".ai/contracts/ANTIGRAVITY_UAT_CONTRACT.md",
+    ".ai/contracts/REPORT_REJECTION_RULES.md",
+    ".ai/contracts/RUNTIME_TELEMETRY_LOCKDOWN.md",
+    ".ai/contracts/GIT_PROOF_REQUIREMENTS.md",
+    ".ai/ENGINEERING_LOCKDOWN.md",
+    "docs/agent-delivery-sop.md",
+    ".ai/architecture/ARCHITECTURE_RESET.md",
+    ".ai/decisions/ADR-007-abandon-dom-wiring-api-first-rebuild.md",
+    ".ai/decisions/ADR-008-canonical-prompt-compiler-authority.md"
+  ],
+  "tests_executed": [
+    "pytest tests/unit/test_batch_planner.py tests/unit/test_batch_queue.py tests/unit/test_production_queue_service.py tests/unit/test_bulk_generation_service.py tests/api/test_batch_prompt_and_production_api.py tests/api/test_bulk_generation_api.py -q"
+  ],
+  "runtime_tests_executed": [],
+  "live_credit_spent": false,
+  "known_unresolved_questions": [
+    "Safe IMG concurrency at Google Flow provider",
+    "Combined IMG+video under same account",
+    "200/day achievable lane count",
+    "Retire legacy batch API"
+  ],
+  "implementation_readiness_verdict": "HOLD_RUNTIME_PROOF_REQUIRED",
+  "research_commit_sha": null,
+  "pull_request_url": null
+}

@@ -1,0 +1,5 @@
+table,primary_key,orchestrator_fields,classification,gap
+workspace_generation_package,workspace_generation_package_id,production_status batch_run_id logical_mode,VERIFIED_CODE,no daily_plan
+production_run,production_run_id,max_parallel_jobs interval cooldown,VERIFIED_CODE,parallel not used
+bulk_generation_run,bulk_run_id,max_parallel_images videos,VERIFIED_TEST,not merged
+batch,id,quantity max_parallel_jobs,DEAD_OR_OBSOLETE,queue no Flow

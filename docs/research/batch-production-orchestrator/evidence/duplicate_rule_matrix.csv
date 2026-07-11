@@ -1,0 +1,5 @@
+rule,implemented,scope,classification
+exact_fingerprint_legacy,Y,batch local,VERIFIED_CODE
+dialogue_similarity_soft,Y,planner 0.9,VERIFIED_TEST
+cross_batch_history,partial,planner,NOT_VERIFIED
+max_capacity_preflight,N,global,MISSING

@@ -1,0 +1,5 @@
+scenario,db_backed,tested,runtime_proven,classification
+VIDEO_JOB_IN_FLIGHT retry,Y,Y,N,VERIFIED_TEST
+production pause cancel,partial,N,N,PROCESS_MEMORY_ONLY
+agent restart mid production,partial,N,N,NOT_VERIFIED
+bulk recover_stuck,Y,partial,N,VERIFIED_CODE

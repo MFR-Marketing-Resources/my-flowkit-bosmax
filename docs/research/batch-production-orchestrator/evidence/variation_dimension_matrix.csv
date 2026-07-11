@@ -1,0 +1,5 @@
+dimension,exists,stable_id,fingerprint,video,poster,classification
+product,Y,product_id,partial,Y,Y,VERIFIED_CODE
+avatar_code,Y,avatar_code,sha1,Y,N,VERIFIED_CODE
+copy_set,Y,copy_set_id,partial,Y,Y,VERIFIED_CODE
+poster_layout,Y,draft,N,N,Y,VERIFIED_TEST

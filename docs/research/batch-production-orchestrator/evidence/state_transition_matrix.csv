@@ -1,0 +1,5 @@
+entity,from,to,trigger,classification
+workspace_generation_package,APPROVED,QUEUED,send_to_production,VERIFIED_TEST
+workspace_generation_package,QUEUED,RUNNING,production loop,VERIFIED_TEST
+production_run,PENDING,RUNNING,live start,VERIFIED_TEST
+bulk_generation_item,QUEUED,RUNNING,claim_next,VERIFIED_TEST

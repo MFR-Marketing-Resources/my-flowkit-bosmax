@@ -1,0 +1,8 @@
+route_or_prefix,method,handler_module,purpose,classification,notes
+/api/batches,POST draft,agent.api.batches,Legacy batch draft,VERIFIED_CODE,No Flow
+/api/batches/{id}/queue,POST,agent.services.batch_queue,Status only queue,VERIFIED_CODE,No Flow
+/api/workspace/generation-packages/batch-prompts,POST,WGP service,Modern batch prompts,VERIFIED_CODE,Qty 1-100
+/api/workspace/production-queue,POST,production_queue_service,Enqueue dry run,VERIFIED_TEST,max_parallel=1
+/api/bulk-generation,POST,bulk_generation_service,Avatar/video bulk,VERIFIED_TEST,Video serial
+/api/flow/execute-flow-job,POST,agent.api.flow,ADR-007 door,VERIFIED_RUNTIME,Authority
+/api/poster/prompt-draft,POST,poster_prompt,Poster prompts,VERIFIED_TEST,No live gen

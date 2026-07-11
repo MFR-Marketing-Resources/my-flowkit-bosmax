@@ -1,0 +1,5 @@
+path,layer,protected,notes
+agent/services/make_video.py,execution,Y,ADR-007
+agent/services/production_queue_service.py,queue,partial,Serial
+agent/services/bulk_generation_service.py,bulk,N,IMG parallel
+agent/services/batch_prompt_planner.py,plan,N,Pure
