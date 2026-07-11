@@ -856,7 +856,8 @@ class FlowClient:
         {scenes:[...]} list on multi-scene projects. Used to auto-resolve the Extend
         parent context (scene id + source operation id) from a finished Block-1 clip.
         """
-        url = f"{GOOGLE_FLOW_API}/v1/flow/projects/{project_id}/scenes?key={GOOGLE_API_KEY}"
+        url = (f"{GOOGLE_FLOW_API}/v1/flow/projects/{project_id}/scenes"
+               f"?key={GOOGLE_API_KEY}&clientContext.tool=PINHOLE")
         return await self._send("api_request", {
             "url": url,
             "method": "GET",
@@ -871,7 +872,8 @@ class FlowClient:
         media[].name is the generated clip's operation id (== workflows'
         metadata.primaryMediaId) — the exact value native Extend needs as its parent.
         """
-        url = f"{GOOGLE_FLOW_API}/v1/flow/scene/{scene_id}/workflows?key={GOOGLE_API_KEY}"
+        url = (f"{GOOGLE_FLOW_API}/v1/flow/scene/{scene_id}/workflows"
+               f"?key={GOOGLE_API_KEY}&clientContext.tool=PINHOLE")
         return await self._send("api_request", {
             "url": url,
             "method": "GET",
