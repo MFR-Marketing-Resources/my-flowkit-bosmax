@@ -44,6 +44,9 @@ _CLIENT_OVERRIDABLE_AUTHORITY = (
 
 _SEGMENT_SECONDS = 8
 _MIN_DURATION = 16  # a full-video job is at least an initial + one extend
+# Compiled 9-section block header — >1 occurrence means a MULTI-block document,
+# which must never be submitted as one generation prompt.
+_BLOCK_HEADER_MARKER = "SECTION 1 - ROLE & OBJECTIVE"
 # The INITIAL block of a full VIDEO job must itself be a video (it is what the native
 # Extend chain continues) — IMG is never a valid block-1 mode here.
 _VIDEO_START_MODES = {"T2V", "I2V", "F2V"}
@@ -130,7 +133,14 @@ async def resolve_production_authority(
         if not _clean(out.get("product_id")):
             out["product_id"] = pkg.get("product_id")
         if not _clean(out.get("initial_prompt_text")):
-            out["initial_prompt_text"] = pkg.get("prompt_text")
+            # ONE generation = ONE block. `pkg.prompt_text` is the FULL compiled
+            # document — for a multi-block (EXTEND) package it joins every block,
+            # and submitting that made the Flow agent propose one generation per
+            # block (live incident). Accept it only when single-block; otherwise
+            # leave empty so _compile_block_prompts resolves the exact block-1 text.
+            pkg_prompt = pkg.get("prompt_text") or ""
+            if pkg_prompt.count(_BLOCK_HEADER_MARKER) <= 1:
+                out["initial_prompt_text"] = pkg_prompt
         try:
             resolved_assets = json.loads(pkg.get("resolved_assets") or "[]")
         except (TypeError, ValueError):
@@ -245,4 +255,7 @@ def _missing_fields(out: dict[str, Any], extend_ops: int) -> list[str]:
         missing.append("continuation_prompts")
     if not out.get("duration_valid"):
         missing.append("valid_duration_plan")
+    # fail-closed: the initial prompt must be exactly ONE block
+    if (out.get("initial_prompt_text") or "").count(_BLOCK_HEADER_MARKER) > 1:
+        missing.append("single_block_initial_prompt")
     return missing

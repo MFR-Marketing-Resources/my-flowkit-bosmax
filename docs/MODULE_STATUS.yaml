@@ -122,6 +122,7 @@ domains:
       - tests/unit/test_video_production_orchestrator.py
       - tests/unit/test_production_plan_resolver.py
       - tests/unit/test_production_initial_adapter.py
+      - tests/unit/test_single_block_prompt_guard.py
       - tests/integration/test_full_video_job_e2e.py
       - tests/unit/test_google_flow_final_timeline_runtime.py
       - tests/fixtures/google_flow_final_concat/__init__.py
