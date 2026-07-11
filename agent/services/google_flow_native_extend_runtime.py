@@ -770,9 +770,15 @@ async def resolve_extend_source_context(client, *, media_id: str,
                 break
 
     if not matched_scene:
+        # Fail-closed WITH diagnostics: say what the listing actually returned so a
+        # live contract drift is identifiable from the error alone (no debug builds).
+        data = _unwrap(scenes_resp)
+        status = scenes_resp.get("status") if isinstance(scenes_resp, dict) else None
         raise NativeExtendError(
             EXTEND_SOURCE_NOT_RESOLVABLE,
-            f"clip {media_id} not found in any scene of project {project_id}")
+            f"clip {media_id} not found in any scene of project {project_id} "
+            f"(listing status={status} keys={sorted(data.keys())[:6]} "
+            f"scenes={len(entries)})")
 
     return {
         "project_id": project_id,
