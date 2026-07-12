@@ -357,6 +357,19 @@ export function resolveOperatorSourceMode(
 	return "T2V";
 }
 
+// Owner Phase-1 (SEV-0 manual_faf40cf6): a HYBRID failure must never surface as a
+// bare "F2V failed" — the SOURCE mode is the user-facing identity; the shared
+// transport mode is a diagnostic detail. Pure + hoisted so the mapping is
+// unit-testable without rendering the page. Presentation only: transport values
+// and telemetry keys are unchanged.
+export function noticeModeLabel(surfaceMode: string, transportMode: string): string {
+	const source = resolveOperatorSourceMode(surfaceMode);
+	if (source === "HYBRID") return `HYBRID (transport: ${transportMode})`;
+	if (source === "FRAMES") return "Frames/F2V";
+	if (source === "INGREDIENTS") return "Ingredients/I2V";
+	return transportMode;
+}
+
 const OPERATOR_EXTEND_ROUTE = "GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS";
 const OPERATOR_EXTEND_PLAN_BY_TOTAL: Record<number, number[]> = {
 	16: [8, 8],
@@ -933,7 +946,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				if (status === "FAILED") {
 					setNotice({
 						tone: "error",
-						title: `${data.mode} failed`,
+						title: `${noticeModeLabel(mode, data.mode)} failed`,
 						detail: job.error || "Generation failed.",
 						requestId,
 					});
@@ -947,7 +960,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				if (status === "GENERATED_BUT_UNRETRIEVED") {
 					setNotice({
 						tone: "warning",
-						title: `${data.mode} generated in Flow — local retrieval failed`,
+						title: `${noticeModeLabel(mode, data.mode)} generated in Flow — local retrieval failed`,
 						detail:
 							"Generated in Flow, but local retrieval failed. Manual recovery/download required." +
 							(job.credit_spent_likely ? " A credit was likely spent." : "") +
@@ -1049,7 +1062,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				if (status === "FAILED") {
 					setNotice({
 						tone: "error",
-						title: `${data.mode} failed`,
+						title: `${noticeModeLabel(mode, data.mode)} failed`,
 						detail:
 							telemetry?.error_message ||
 							stageMessage ||

@@ -253,20 +253,23 @@ async def test_same_prompt_missing_media_seed_is_rejected_when_gen_seed_known(
     assert stats["seed_mismatched"] == 1
 
 
-async def test_missing_generation_seed_never_yields_prompt_only_success(
+async def test_missing_sse_seed_is_evidence_only_owner_contract(
         tmp_path, monkeypatch):
-    """Mandatory test 4: when the approved SSE exposed NO usable seed, a
-    prompt+model match alone is NOT deterministic — nothing is accepted and the
-    candidate is counted unverifiable (the run fails closed
-    OUTPUT_CORRELATION_UNAVAILABLE, never a false deterministic success)."""
+    """OWNER PHASE-1 CONTRACT (supersedes the PR#323 fail-closed rule, which the
+    incident manual_faf40cf6 proved produced a PAID false negative): when the
+    approved SSE exposes NO usable seed, the proven composite (normalized
+    provider prompt + model + project/snapshot guards) is the acceptance
+    authority; the provider media seed is recorded as EVIDENCE ONLY — never
+    used to manufacture a link, never a reason to reject."""
     monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
     client = _PromptMediaClient({"prompt-match": "THIS RUN prompt"})
     stats = _stats()
     mid, _, _, ev = await mv._accept_correlated_output(
         client, ["prompt-match"], set(), _corr(seed=None), stats)
-    assert mid is None and ev is None
-    assert stats["unverifiable"] == 1
-    assert stats["unverifiable_ids"] == ["prompt-match"]
+    assert mid == "prompt-match"
+    assert ev["seed_matched"] == "EVIDENCE_ONLY_SSE_SEED_ABSENT"
+    assert ev["media_seed"] == 7          # provider seed preserved as evidence
+    assert stats["unverifiable"] == 0
 
 
 def test_seed_value_normalization():
@@ -276,3 +279,179 @@ def test_seed_value_normalization():
     assert mv._seed_value(None) is None
     assert mv._seed_value("") is None
     assert mv._seed_value(True) is None    # booleans are never seeds
+
+
+# ═══ Owner Phase-1: provider XML-envelope normalization (proven lossless) ═══
+import os as _os
+
+_FIXDIR = _os.path.join(_os.path.dirname(__file__), "..", "fixtures",
+                        "google_flow_media_resource")
+
+
+def _fixture(name):
+    with open(_os.path.join(_FIXDIR, name), encoding="utf-8") as f:
+        return f.read()
+
+
+def test_extract_provider_prompt_plain_text():
+    path, val = mv._extract_provider_prompt("  plain prompt text ")
+    assert path == "PLAIN" and val == "plain prompt text"
+
+
+def test_extract_provider_prompt_absent():
+    assert mv._extract_provider_prompt(None) == ("ABSENT", None)
+
+
+def test_extract_provider_prompt_real_captured_envelope_is_lossless():
+    """THE incident contract: the REAL captured media prompt of the paid output
+    f0f865d6 normalizes to the REAL captured SSE tool prompt VERBATIM."""
+    xml = _fixture("initial_r2v_prompt_envelope.sanitized.txt")
+    sse = _fixture("initial_r2v_sse_prompt.sanitized.txt")
+    path, val = mv._extract_provider_prompt(xml)
+    assert path == "XML_INNER_PROMPT"
+    assert val == sse.strip()
+
+
+def test_extract_provider_prompt_entity_decoding_lossless():
+    xml = ("<root><context></context><instruction>"
+           "<prompt>A &amp; B &lt;fast&gt; \"quotes\"</prompt></instruction></root>")
+    path, val = mv._extract_provider_prompt(xml)
+    assert path == "XML_INNER_PROMPT"
+    assert val == 'A & B <fast> "quotes"'
+
+
+def test_extract_provider_prompt_malformed_fails_safe():
+    path, val = mv._extract_provider_prompt(
+        "<root><instruction><prompt>broken")
+    assert path == "MALFORMED_XML" and val is None
+
+
+def test_extract_provider_prompt_conflicting_nodes_ambiguous():
+    xml = ("<root><instruction><prompt>one</prompt>"
+           "<prompt>two</prompt></instruction></root>")
+    path, val = mv._extract_provider_prompt(xml)
+    assert path == "AMBIGUOUS_PROMPT_NODES" and val is None
+
+
+def test_extract_provider_prompt_duplicate_identical_nodes_ok():
+    xml = ("<root><instruction><prompt>same</prompt>"
+           "<prompt>same</prompt></instruction></root>")
+    assert mv._extract_provider_prompt(xml) == ("XML_INNER_PROMPT", "same")
+
+
+class _XmlMediaClient:
+    """Media resources whose prompt is the PROVEN XML envelope (or overrides)."""
+    def __init__(self, entries):
+        self.fetched = []
+        self._entries = entries  # mid -> {"prompt":..., "seed":..., "model":...}
+
+    async def get_media(self, mid):
+        self.fetched.append(mid)
+        e = self._entries[mid]
+        video = {"encodedVideo": base64.b64encode(b"\x00" * 2048).decode(),
+                 "model": e.get("model", "veo_3_1_r2v_lite")}
+        if e.get("seed") is not None:
+            video["seed"] = e["seed"]
+        if e.get("prompt") is not None:
+            video["prompt"] = e["prompt"]
+        return {"name": mid, "video": video}
+
+
+def _envelope(inner):
+    return ("<root>\n  <context>\n  </context>\n  <instruction>\n"
+            f"    <prompt>{inner}</prompt>\n  </instruction>\n</root>")
+
+
+async def test_xml_wrapped_current_output_binds(tmp_path, monkeypatch):
+    """Phase-1 core repair: the paid incident shape — XML-wrapped provider prompt
+    + SSE seed absent — BINDS through the normalized composite (project guard +
+    snapshot/exclusion prefilter are enforced by the caller; here the identity
+    core: normalized prompt + model, seed evidence-only)."""
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _XmlMediaClient({"ours": {"prompt": _envelope("THIS RUN prompt"),
+                                       "seed": 308957}})
+    stats = _stats()
+    mid, path, size, ev = await mv._accept_correlated_output(
+        client, ["ours"], set(), _corr(seed=None, model="veo_3_1_r2v_lite"), stats)
+    assert mid == "ours"
+    assert ev["prompt_normalization"] == "XML_INNER_PROMPT"
+    assert ev["seed_matched"] == "EVIDENCE_ONLY_SSE_SEED_ABSENT"
+    assert ev["media_seed"] == 308957      # provider seed recorded as evidence
+    assert stats["prompt_mismatched"] == 0
+
+
+async def test_real_captured_incident_output_binds(tmp_path, monkeypatch):
+    """End-to-end with the REAL captured artifacts: the exact media prompt and
+    exact SSE prompt from manual_faf40cf6 — the output rejected 31 times must
+    now bind."""
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    xml = _fixture("initial_r2v_prompt_envelope.sanitized.txt")
+    sse = _fixture("initial_r2v_sse_prompt.sanitized.txt").strip()
+    client = _XmlMediaClient({
+        "f0f865d6": {"prompt": xml, "seed": 308957, "model": "veo_3_1_r2v_lite"}})
+    corr = {"submitted_prompt": "original submitted block", "sse_prompt": sse,
+            "expected_model": "veo_3_1_r2v_lite", "tool_call_id": "t", "response_id": "r",
+            "seed": None}
+    mid, _, _, ev = await mv._accept_correlated_output(
+        client, ["f0f865d6"], set(), corr, _stats())
+    assert mid == "f0f865d6"
+    assert ev["matched_on"] == "sse_tool_prompt"
+
+
+async def test_xml_old_clip_with_different_inner_prompt_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _XmlMediaClient({"old": {"prompt": _envelope("some OTHER run"), "seed": 7}})
+    stats = _stats()
+    mid, _, _, _ = await mv._accept_correlated_output(
+        client, ["old"], set(), _corr(seed=None), stats)
+    assert mid is None and stats["prompt_mismatched"] == 1
+
+
+async def test_raw_xml_markup_is_never_compared(tmp_path, monkeypatch):
+    """The regression that caused the incident: an anchor that happens to EQUAL
+    the raw XML markup must NOT match (only the normalized inner value counts)."""
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    raw = _envelope("inner value")
+    client = _XmlMediaClient({"m": {"prompt": raw, "seed": 7}})
+    stats = _stats()
+    mid, _, _, _ = await mv._accept_correlated_output(
+        client, ["m"], set(), _corr(prompt=raw, seed=7), stats)
+    assert mid is None and stats["prompt_mismatched"] == 1
+
+
+async def test_malformed_xml_counts_unverifiable_with_evidence(tmp_path, monkeypatch):
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _XmlMediaClient({"bad": {"prompt": "<root><instruction><prompt>x", "seed": 7}})
+    stats = _stats()
+    mid, _, _, ev = await mv._accept_correlated_output(
+        client, ["bad"], set(), _corr(), stats)
+    assert mid is None and ev is None
+    assert stats["unverifiable"] == 1
+    assert stats["normalization_failures"] == {"bad": "MALFORMED_XML"}
+
+
+async def test_ambiguous_prompt_nodes_count_unverifiable(tmp_path, monkeypatch):
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    xml = "<root><instruction><prompt>a</prompt><prompt>b</prompt></instruction></root>"
+    client = _XmlMediaClient({"amb": {"prompt": xml, "seed": 7}})
+    stats = _stats()
+    mid, _, _, _ = await mv._accept_correlated_output(
+        client, ["amb"], set(), _corr(), stats)
+    assert mid is None
+    assert stats["normalization_failures"] == {"amb": "AMBIGUOUS_PROMPT_NODES"}
+
+
+async def test_seed_still_required_when_both_sides_expose_it(tmp_path, monkeypatch):
+    """PR#323 protection retained: SSE seed present + media seed different → reject."""
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _XmlMediaClient({"m": {"prompt": _envelope("THIS RUN prompt"), "seed": 999}})
+    stats = _stats()
+    mid, _, _, _ = await mv._accept_correlated_output(
+        client, ["m"], set(), _corr(seed=4242), stats)
+    assert mid is None and stats["seed_mismatched"] == 1
+
+
+def test_fastfail_marker_registered():
+    assert "CURRENT_OUTPUT_IDENTITY_MISMATCH" in mv._RETRIEVAL_PHASE_MARKERS
+    assert mv._IDENTITY_MISMATCH_FASTFAIL_ROUNDS >= 2
+    assert mv._IDENTITY_MISMATCH_MIN_TRIES >= 3

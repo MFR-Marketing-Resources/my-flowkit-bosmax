@@ -347,32 +347,72 @@ async def _durable_media_exclusion() -> set:
         return set()
 
 
+def _extract_provider_prompt(raw) -> tuple:
+    """Normalize the provider-stored media prompt to its EFFECTIVE prompt text.
+
+    Captured live contract (incident manual_faf40cf6 output f0f865d6 + extend
+    child 12b526c5 — two independent captures, one consistent envelope): Google
+    Flow stores `media.video.prompt` as an XML envelope
+
+        <root><context>…</context><instruction><prompt>{INPUT PROMPT}</prompt>…
+
+    whose inner <prompt> equals the submitted/tool prompt VERBATIM (proven
+    lossless). This helper extracts that inner value with REAL XML parsing
+    (entity escaping handled by the parser — never string surgery):
+
+      * plain text (no XML envelope)      → ("PLAIN", stripped text)
+      * proven envelope, ONE <prompt>     → ("XML_INNER_PROMPT", inner text)
+      * malformed XML                     → ("MALFORMED_XML", None)  fail-safe
+      * zero or >1 CONFLICTING <prompt>s  → ("AMBIGUOUS_PROMPT_NODES", None)
+        (never silently choose between different values)
+
+    No fuzzy matching, no content rewriting — exact text in, exact text out.
+    """
+    if raw is None:
+        return "ABSENT", None
+    text = str(raw)
+    if "<prompt" not in text or "<instruction" not in text:
+        return "PLAIN", text.strip()
+    import xml.etree.ElementTree as _ET
+    try:
+        root = _ET.fromstring(text)
+    except _ET.ParseError:
+        return "MALFORMED_XML", None
+    nodes = root.findall(".//prompt")
+    values = {("".join(n.itertext())).strip() for n in nodes}
+    values.discard("")
+    if len(values) != 1:
+        return "AMBIGUOUS_PROMPT_NODES", None
+    return "XML_INNER_PROMPT", next(iter(values))
+
+
 async def _accept_correlated_output(client, candidates, exclude, correlation,
                                     stats) -> tuple:
-    """DETERMINISTIC current-run output binding (PR321 closure, Defect 2).
+    """DETERMINISTIC current-run output binding (PR321/322/323 + Owner Phase-1).
 
     A candidate media id becomes this run's output ONLY when its OWN media
     resource structurally proves it belongs to THIS submission. Captured live
-    contract (zero-credit GET /v1/media/{id}, clip 12b526c5, 2026-07-12):
+    contract (zero-credit GET /v1/media/{id}, clips 12b526c5 + f0f865d6):
     {name, video{prompt, model, seed, aspectRatio, encodedVideo}} — the resource
-    carries the EXACT generation prompt and model key that produced it.
+    carries the generation prompt (XML envelope, inner <prompt> == the exact
+    input prompt, proven lossless), the model key and the seed.
 
-    Acceptance requires EVERY exact identity (PR322 final seed closure):
-      * media.video.prompt equals (stripped) the exact prompt THIS run fired —
-        the agent-tool prompt captured from the approved SSE when present,
-        else the submitted block-1 prompt;
+    Acceptance = the proven composite (Owner-approved contract):
+      * current bound project + PROJECT_DRIFT guard (enforced by the caller);
+      * candidate absent from the pre-submit snapshot and every stale/reference/
+        DB-known exclusion (defensive prefilter — never the sole authority);
+      * NORMALIZED provider prompt (see _extract_provider_prompt) equals the
+        exact prompt THIS run fired — the SSE tool prompt when captured, else
+        the submitted block-1 prompt. Raw XML markup is NEVER compared;
       * a CONFIRMED model mismatch (both sides known) rejects the candidate;
-      * media.video.seed equals THIS generation's SSE-captured seed — the
-        discriminator when two generations share prompt AND model. Same-prompt
-        media with a different or missing seed is rejected. When the approved
-        SSE exposed NO usable seed there is NO prompt-only fallback: nothing is
-        accepted and the run fails closed OUTPUT_CORRELATION_UNAVAILABLE
-        (GENERATED_BUT_UNRETRIEVED honesty — never a deterministic-success claim).
+      * seed must match ONLY when BOTH sides expose a usable seed (live SSE may
+        omit it — the media seed is then recorded as evidence, never used to
+        manufacture a link the submit never exposed, and never a reason to
+        reject the otherwise-proven composite).
 
-    The exclusion set (stale/refs/DOM-snapshot/DB-known) remains a DEFENSIVE
-    prefilter and diagnostic only — it is never the acceptance authority, and a
-    finished video that exposes NO prompt metadata is counted `unverifiable`
-    (the caller fails closed OUTPUT_CORRELATION_UNAVAILABLE), never accepted.
+    A finished video with NO prompt metadata, malformed XML or ambiguous
+    prompt nodes is counted `unverifiable` with the precise normalization path
+    recorded — never accepted, never guessed.
 
     Returns (media_id, mp4_path, size_mb, evidence) or (None, None, None, None).
     """
@@ -380,6 +420,7 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
     anchors = [str(a).strip() for a in (correlation.get("sse_prompt"),
                                         correlation.get("submitted_prompt")) if a]
     gen_seed = _seed_value(correlation.get("seed"))
+    stats["round_rejected_ids"] = []  # per-call: completed-but-identity-rejected
     for mid in dict.fromkeys(candidates):  # de-dupe, keep order
         if mid in exclude:
             continue
@@ -390,35 +431,34 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
             continue  # not a finished video (or not a video resource at all)
         video_meta = mdata.get("video") if isinstance(mdata, dict) else None
         video_meta = video_meta if isinstance(video_meta, dict) else {}
-        vprompt = video_meta.get("prompt")
+        norm_path, vprompt = _extract_provider_prompt(video_meta.get("prompt"))
         vmodel = video_meta.get("model")
         if vprompt is None:
-            # finished video whose resource exposes no generation prompt — it can
-            # NEVER be bound to this run; count it so the job fails closed.
+            # No usable prompt metadata (absent / malformed XML / ambiguous
+            # nodes) — it can NEVER be bound to this run; record the precise
+            # normalization evidence so the job fails closed with proof.
             stats["unverifiable"] += 1
             if mid not in stats["unverifiable_ids"]:
                 stats["unverifiable_ids"].append(mid)
+            stats.setdefault("normalization_failures", {})[mid] = norm_path
+            stats["round_rejected_ids"].append(mid)
             continue
-        if str(vprompt).strip() not in anchors:
+        if vprompt not in anchors:
             stats["prompt_mismatched"] += 1  # another run's output — never ours
+            stats["round_rejected_ids"].append(mid)
             continue
         expected_model = correlation.get("expected_model")
         if expected_model and vmodel and str(vmodel) != str(expected_model):
             stats["model_mismatched"] += 1
-            continue
-        if gen_seed is None:
-            # The approved SSE exposed no usable seed — a prompt+model match alone
-            # is NOT deterministic (two generations can share both). No fallback:
-            # count unverifiable so the run fails closed, never a false success.
-            stats["unverifiable"] += 1
-            if mid not in stats["unverifiable_ids"]:
-                stats["unverifiable_ids"].append(mid)
+            stats["round_rejected_ids"].append(mid)
             continue
         media_seed = _seed_value(video_meta.get("seed"))
-        if media_seed is None or media_seed != gen_seed:
-            # same prompt/model but NOT this generation's seed — a different run.
-            stats["seed_mismatched"] += 1
-            continue
+        if gen_seed is not None:
+            # Both sides must agree when the approved SSE exposed a seed.
+            if media_seed is None or media_seed != gen_seed:
+                stats["seed_mismatched"] += 1
+                stats["round_rejected_ids"].append(mid)
+                continue
         vbytes = base64.b64decode(enc)
         outdir = OUTPUT_DIR / "retrieved"
         outdir.mkdir(parents=True, exist_ok=True)
@@ -427,13 +467,14 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
         sse_anchor = str(correlation.get("sse_prompt") or "").strip()
         evidence = {
             "media_id": mid,
-            "matched_on": ("sse_tool_prompt" if sse_anchor
-                           and str(vprompt).strip() == sse_anchor
+            "matched_on": ("sse_tool_prompt" if sse_anchor and vprompt == sse_anchor
                            else "submitted_prompt"),
+            "prompt_normalization": norm_path,
             "media_model": vmodel,
             "media_seed": video_meta.get("seed"),
             "gen_seed": correlation.get("seed"),
-            "seed_matched": True,
+            "seed_matched": (True if gen_seed is not None
+                             else "EVIDENCE_ONLY_SSE_SEED_ABSENT"),
             "tool_call_id": correlation.get("tool_call_id"),
             "response_id": correlation.get("response_id"),
         }
@@ -459,7 +500,17 @@ def _seed_value(raw):
 # reported as GENERATED_BUT_UNRETRIEVED, never as a plain generation FAILED.
 _RETRIEVAL_PHASE_MARKERS = (
     "EDITOR_TAB_LOST", "TAB_DRIFT", "PROJECT_DRIFT", "OUTPUT_CORRELATION_UNAVAILABLE",
+    "CURRENT_OUTPUT_IDENTITY_MISMATCH",
     "video not found/retrieved in time")
+
+# Fast-failure bound (Owner Phase-1): once the SAME non-empty set of COMPLETED
+# candidates has been rejected for deterministic identity reasons this many polls
+# in a row (their stored metadata can never change), stop early with precise
+# evidence instead of blind-polling to the 12-minute ceiling. Rendering-in-
+# progress never trips this: a still-rendering output is not a completed
+# candidate, and any NEW completed candidate changes the set and resets the run.
+_IDENTITY_MISMATCH_FASTFAIL_ROUNDS = 3
+_IDENTITY_MISMATCH_MIN_TRIES = 6  # never before ~4.5 min total (120s + 6 polls)
 
 
 def _is_retrieval_phase_error(msg) -> bool:
@@ -608,7 +659,11 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             k: v for k, v in correlation.items() if k != "submitted_prompt"}
         corr_stats = {"unverifiable": 0, "prompt_mismatched": 0,
                       "model_mismatched": 0, "seed_mismatched": 0,
-                      "unverifiable_ids": []}
+                      "unverifiable_ids": [], "normalization_failures": {},
+                      "round_rejected_ids": []}
+        # Fast-failure trackers (Owner Phase-1): consecutive polls in which the
+        # SAME completed candidates were rejected for deterministic identity reasons.
+        identity_reject_sig, identity_reject_rounds = None, 0
         probe_turn = int(nres.get("turns_used") or 0) + 1  # next agent turn for status probes
         # False-DONE fix (live: g_745e95ede679 claimed the PREVIOUS run's mp4 at try 1):
         # snapshot every media id already visible in the project BEFORE polling, so
@@ -694,6 +749,33 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                            artifact="video", artifacts=list(collected))
                 await _record_artifacts(job, mode, collected)
                 return
+            # FAST FAILURE (Owner Phase-1): completed candidates rejected for
+            # deterministic identity reasons have IMMUTABLE stored metadata — no
+            # future poll changes them. When the SAME non-empty rejected set
+            # repeats _IDENTITY_MISMATCH_FASTFAIL_ROUNDS polls in a row (and the
+            # run is past the minimum window so an in-flight render still gets
+            # its chance), stop with precise evidence instead of the blind
+            # 12-minute loop the incident suffered (31 identical rejections).
+            round_sig = tuple(sorted(corr_stats.get("round_rejected_ids") or []))
+            if round_sig and round_sig == identity_reject_sig and not collected:
+                identity_reject_rounds += 1
+            else:
+                identity_reject_sig = round_sig or None
+                identity_reject_rounds = 1 if round_sig else 0
+            if (identity_reject_rounds >= _IDENTITY_MISMATCH_FASTFAIL_ROUNDS
+                    and i >= _IDENTITY_MISMATCH_MIN_TRIES and not collected):
+                job["correlation_stats"] = dict(corr_stats)
+                raise RuntimeError(
+                    "CURRENT_OUTPUT_IDENTITY_MISMATCH: completed candidate(s) "
+                    f"{list(round_sig)[:4]} were rejected {identity_reject_rounds} "
+                    "consecutive polls for deterministic identity reasons "
+                    f"(prompt_mismatched={corr_stats['prompt_mismatched']}, "
+                    f"model_mismatched={corr_stats['model_mismatched']}, "
+                    f"seed_mismatched={corr_stats['seed_mismatched']}, "
+                    f"unverifiable={corr_stats['unverifiable']}, "
+                    f"normalization={corr_stats.get('normalization_failures') or {} }, "
+                    f"sse_seed={'present' if _seed_value(correlation.get('seed')) is not None else 'absent'}) "
+                    "— their stored metadata cannot change; refusing to blind-poll")
             # Empty project after minutes of polling can mean the render died
             # server-side (agent posts "Failed / missing reference image" in chat,
             # invisible to harvest). Ask the agent directly — a zero-credit turn —
@@ -729,14 +811,12 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         # (never a false success; credits may have been spent).
         if corr_stats["unverifiable"] and not collected:
             job["correlation_stats"] = dict(corr_stats)
-            reason = ("this run's approved SSE exposed no usable generation seed"
-                      if _seed_value(correlation.get("seed")) is None
-                      else "the media resource exposes no generation-prompt metadata")
             raise RuntimeError(
                 "OUTPUT_CORRELATION_UNAVAILABLE: finished media "
                 f"{corr_stats['unverifiable_ids'][:4]} cannot be deterministically "
-                f"bound ({reason}) — refusing an uncorrelated candidate as this "
-                "run's output")
+                "bound (no usable prompt metadata; normalization="
+                f"{corr_stats.get('normalization_failures') or {} }) — refusing an "
+                "uncorrelated candidate as this run's output")
         # Render started but no mp4 harvested in the polling window — treat as a retrieval-phase
         # failure (classified below as GENERATED_BUT_UNRETRIEVED), not a generation failure.
         job["correlation_stats"] = dict(corr_stats)

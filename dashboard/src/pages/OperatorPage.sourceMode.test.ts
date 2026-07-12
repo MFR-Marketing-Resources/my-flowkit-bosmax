@@ -26,3 +26,25 @@ describe("resolveOperatorSourceMode (ADR-008 canonical source_mode)", () => {
 		expect(resolveOperatorSourceMode("UNKNOWN_SURFACE")).toBe("T2V");
 	});
 });
+
+// Owner Phase-1 (SEV-0 manual_faf40cf6): failure notices must identify the
+// SOURCE mode; the shared transport is a diagnostic detail only.
+import { noticeModeLabel } from "./OperatorPage";
+
+describe("noticeModeLabel (Hybrid failure diagnostics)", () => {
+	it("labels a HYBRID-surface failure as HYBRID with F2V transport detail", () => {
+		expect(noticeModeLabel("HYBRID", "F2V")).toBe("HYBRID (transport: F2V)");
+	});
+
+	it("keeps a true Frames surface identified as Frames/F2V", () => {
+		expect(noticeModeLabel("F2V", "F2V")).toBe("Frames/F2V");
+	});
+
+	it("identifies the Ingredients surface distinctly", () => {
+		expect(noticeModeLabel("I2V", "I2V")).toBe("Ingredients/I2V");
+	});
+
+	it("passes T2V through unchanged (source == transport)", () => {
+		expect(noticeModeLabel("T2V", "T2V")).toBe("T2V");
+	});
+});
