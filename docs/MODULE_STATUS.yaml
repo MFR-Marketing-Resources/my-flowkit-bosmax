@@ -129,8 +129,9 @@ domains:
       - tests/fixtures/google_flow_media_resource/media_resource.sanitized.json
       - tests/fixtures/google_flow_media_resource/initial_r2v_prompt_envelope.sanitized.txt
       - tests/fixtures/google_flow_media_resource/initial_r2v_sse_prompt.sanitized.txt
-      # Owner Phase-2: targeted current-UI driver (kill-switched)
+      # Owner Phase-2B: composer references, exact video id, sequential UI Extend
       - extension/flow-ui-driver.js
+      - extension/background.js
       - agent/services/google_flow_ui_driver.py
       - tests/unit/test_flow_ui_driver.py
       - tests/fixtures/google_flow_ui_contract/ui_contract.sanitized.json
