@@ -304,6 +304,29 @@ async function handleFlowUiDownloadProject(params) {
 	return { ...result, clicked: clicked.clicked, flow_tab_id: tab.id };
 }
 
+// Composer reference attach: arm CDP file chooser, open Upload media on the project composer.
+async function handleFlowUiComposerAttachFile(params) {
+	const tab = await resolveFlowUiTab(params?.tab_id);
+	if (!tab) return { ok: false, error: "NO_FLOW_TAB" };
+	const filePath = params?.file_path;
+	if (!filePath || typeof filePath !== "string") {
+		return { ok: false, error: "ERR_CDP_FILE_PATH_REQUIRED" };
+	}
+	const armed = await beginCdpFileChooserProof(
+		tab.id,
+		filePath,
+		params?.expected_file_name || null,
+		params?.slot_label || "ComposerRef",
+	);
+	if (!armed.ok) return { ...armed, flow_tab_id: tab.id };
+	const clicked = await handleFlowUiVerb("FLOWUI_OPEN_COMPOSER_UPLOAD", {
+		tab_id: tab.id,
+	});
+	if (!clicked.ok) return { ...clicked, flow_tab_id: tab.id };
+	const proof = await waitForCdpFileChooserProof(tab.id);
+	return { ...(proof || { ok: false, error: "ERR_CDP_FILE_CHOOSER_NO_RESULT" }), flow_tab_id: tab.id, upload_menu: clicked };
+}
+
 async function handleHarvestVideoUrls(targetTabId) {
 	let tab;
 	if (targetTabId != null) {
@@ -5053,6 +5076,11 @@ function connectToAgent() {
 			} else if (msg.method === "FLOWUI_DOWNLOAD_PROJECT_CAPTURE") {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleFlowUiDownloadProject(msg.params || {}),
+				);
+				replyToAgent(msg, result);
+			} else if (msg.method === "FLOWUI_COMPOSER_ATTACH_FILE") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleFlowUiComposerAttachFile(msg.params || {}),
 				);
 				replyToAgent(msg, result);
 			} else if (msg.method === "HARVEST_VIDEO_URLS") {

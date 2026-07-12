@@ -875,13 +875,35 @@ class FlowClient:
     async def flowui_verify_media_visible(self, media_ids: list,
                                           tab_id: int | None = None) -> dict:
         return await self._send(
-            "FLOWUI_VERIFY_MEDIA_VISIBLE",
+            "FLOWUI_VERIFY_COMPOSER_MEDIA",
             {"media_ids": list(media_ids or []), "tab_id": tab_id}, timeout=25)
 
-    async def flowui_open_video(self, title_substr: str,
+    async def flowui_verify_composer_zero(self, tab_id: int | None = None) -> dict:
+        return await self._send("FLOWUI_VERIFY_COMPOSER_ZERO",
+                                {"tab_id": tab_id}, timeout=40)
+
+    async def flowui_composer_attach_file(self, file_path: str, *,
+                                          expected_file_name: str | None = None,
+                                          slot_label: str = "ComposerRef",
+                                          tab_id: int | None = None) -> dict:
+        return await self._send(
+            "FLOWUI_COMPOSER_ATTACH_FILE",
+            {"file_path": file_path, "expected_file_name": expected_file_name,
+             "slot_label": slot_label, "tab_id": tab_id}, timeout=60)
+
+    async def flowui_set_composer_prompt(self, text: str,
+                                         tab_id: int | None = None) -> dict:
+        return await self._send(
+            "FLOWUI_SET_COMPOSER_PROMPT", {"text": text, "tab_id": tab_id},
+            timeout=30)
+
+    async def flowui_open_video(self, parent_media_operation_id: str, *,
+                                expected_project_id: str | None = None,
                                 tab_id: int | None = None) -> dict:
         return await self._send(
-            "FLOWUI_OPEN_VIDEO", {"title_substr": title_substr, "tab_id": tab_id},
+            "FLOWUI_OPEN_VIDEO",
+            {"parent_media_operation_id": parent_media_operation_id,
+             "expected_project_id": expected_project_id, "tab_id": tab_id},
             timeout=30)
 
     async def flowui_add_clip_extend(self, model_label: str,

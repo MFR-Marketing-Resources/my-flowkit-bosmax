@@ -1157,7 +1157,7 @@ async def extend_run(body: ExtendRunRequest):
 class UiExtendBlockRequest(BaseModel):
     """Drive ONE Extend block through the current Flow UI (dry-run default)."""
     job_id: str
-    parent_title_substr: str
+    parent_media_operation_id: str = ""
     block_index: int
     position: int
     prompt: str
@@ -1217,7 +1217,7 @@ async def ui_driver_extend_block(body: UiExtendBlockRequest):
     try:
         return await _ui.extend_block_via_ui(
             client, job_id=body.job_id,
-            parent_title_substr=body.parent_title_substr,
+            parent_media_operation_id=body.parent_media_operation_id,
             block_index=body.block_index, position=body.position,
             prompt=body.prompt, model_label=body.model_label,
             confirm_live_credit_burn=body.confirm_live_credit_burn,
@@ -2296,10 +2296,14 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     slot_assets = ordered_ref_slots(start_asset, body.get("refs"),
                                     end_asset=body.get("endAsset"))
     refs = []
+    local_paths = []
     for slot_label, asset in slot_assets:
         resolved = await _resolve_asset_to_media_id(client, asset, slot_label, request_id)
         if resolved and resolved not in refs:
             refs.append(resolved)
+            lp = asset.get("localFilePath") or asset.get("local_file_path")
+            if lp:
+                local_paths.append(str(lp))
 
     if mode in ("I2V", "F2V") and not refs:
         await _fail_manual_request(
@@ -2424,19 +2428,32 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         f"aspect={aspect} count={count} model={model_key or 'default'} "
         f"duration_s={duration_s or 'default'}", "backend")
 
-    # ── Owner Phase-2 reference-first gate (kill-switched, default OFF) ─────
-    # When the CURRENT-UI driver is enabled, every reference-mode job must have
-    # its uploaded references VISIBLY present in the active Flow surface (exact
-    # count) BEFORE Block-1 is sent — API upload alone is not visible proof.
-    # T2V asserts ZERO references. With the switch off, the proven API lane
-    # behaviour is byte-identical.
+    # ── Owner Phase-2B: composer-driven initial lane (mutually exclusive) ───
     from agent.services import google_flow_ui_driver as _ui_drv
     if _ui_drv.ui_driver_enabled() and mode in ("T2V", "I2V", "F2V"):
         try:
-            await _ui_drv.verify_references_visible(client, refs, len(refs))
+            ui_initial = await _ui_drv.run_initial_block1_via_composer(
+                client,
+                prompt=prompt,
+                media_ids=refs,
+                local_file_paths=local_paths,
+                expected_count=len(refs),
+                dry_run=body.get("confirm_live_credit_burn") is not True,
+                confirm_live_credit_burn=bool(body.get("confirm_live_credit_burn")),
+            )
             await crud.add_stage_event(
-                request_id, "UI_REFERENCES_VISIBLE_CONFIRMED", "WAITING_FLOW",
-                f"count={len(refs)} mode={mode}", "backend")
+                request_id, "UI_COMPOSER_INITIAL_READY", "WAITING_FLOW",
+                f"lane=UI_COMPOSER_INITIAL count={len(refs)} mode={mode}",
+                "backend")
+            return {
+                "ok": True,
+                "accepted": True,
+                "lane": "UI_COMPOSER_INITIAL",
+                "request_id": request_id,
+                "mode": mode,
+                "status": "READY_FOR_NEGOTIATION",
+                "ui_driver": ui_initial,
+            }
         except _ui_drv.FlowUiDriverError as exc:
             await _fail_manual_request(
                 request_id, "API_LANE_REJECTED",

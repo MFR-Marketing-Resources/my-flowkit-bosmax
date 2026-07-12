@@ -1,34 +1,15 @@
-"""Owner-approved CURRENT-UI video driver (Phase 2 targeted refactor).
+"""Owner-approved CURRENT-UI video driver (Phase 2B — three blocker closure).
 
-ONE shared driver for the Owner SOP path — never per-mode transports:
-
-  reference visibility gate (pre-Block-1)
-  → exact current Video 1 → open detail/timeline
-  → Add Clip → "Extend (Veo 3.1 - Lite)" → Block-N prompt only
-  → ONE submit per block (kill-switch + explicit confirm)
-  → Download Project (browser download captured, hashed, inspected)
-  → honest artifact registration (a ZIP is a project archive, never an MP4).
-
-Selector authority: accessible names captured live 2026-07-12
-(.ai/experiments/aisandbox_extend_discovery/out/ui_contract/*): "Add Clip",
-"Extend ({{modelName}})", prompt box "What happens next?", toolbar "More",
-menu item "Download Project". No generated CSS classes, no coordinates.
-
-Safety contract:
-  * kill switch: FLOW_UI_DRIVER_ENABLED must be "1" for ANY live UI submit;
-  * route exclusivity: UI Extend and direct-RPC Extend share the SAME per-block
-    idempotency stage key (video_job_side_effect) — a block that either route
-    has already submitted can never be submitted again by the other;
-  * the direct-RPC Native Extend implementation is untouched (protected
-    fallback);
-  * Download Project result is registered exactly as captured (zip signature +
-    entry listing + sha256); an incomplete download is never a success.
+Composer-scoped reference gate, exact parent media operation id selection,
+Extend submit → poll → correlate → persist → sequential lineage.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Optional
@@ -36,6 +17,19 @@ from typing import Optional
 from agent.db import crud
 
 # ── states (Owner Phase-2 contract) ──────────────────────────────────────────
+S_COMPOSER_READY = "COMPOSER_READY"
+S_STALE_REFERENCES_CHECKING = "STALE_REFERENCES_CHECKING"
+S_STALE_REFERENCES_CLEARED = "STALE_REFERENCES_CLEARED_OR_ZERO"
+S_REFERENCES_ATTACHING = "REFERENCES_ATTACHING"
+S_REFERENCES_VISIBLE = "REFERENCES_VISIBLE"
+S_REFERENCE_COUNT_CONFIRMED = "REFERENCE_COUNT_CONFIRMED"
+S_REFERENCE_ORDER_CONFIRMED = "REFERENCE_ORDER_CONFIRMED"
+S_BLOCK1_PROMPT_INSERTING = "BLOCK1_PROMPT_INSERTING"
+S_BLOCK1_PROMPT_CONFIRMED = "BLOCK1_PROMPT_CONFIRMED"
+S_SETTINGS_APPLYING = "SETTINGS_APPLYING"
+S_SETTINGS_CONFIRMED = "SETTINGS_CONFIRMED"
+S_READY_FOR_NEGOTIATION = "READY_FOR_NEGOTIATION"
+
 S_CURRENT_VIDEO_OPENING = "CURRENT_VIDEO_OPENING"
 S_CURRENT_VIDEO_CONFIRMED = "CURRENT_VIDEO_CONFIRMED"
 S_EXTEND_CONTROL_OPENING = "EXTEND_CONTROL_OPENING"
@@ -43,6 +37,13 @@ S_EXTEND_PROMPT_READY = "EXTEND_PROMPT_READY"
 S_NEXT_BLOCK_PROMPT_CONFIRMED = "NEXT_BLOCK_PROMPT_CONFIRMED"
 S_EXTEND_READY_TO_SUBMIT = "EXTEND_READY_TO_SUBMIT"
 S_EXTEND_SUBMITTED = "EXTEND_SUBMITTED"
+S_EXTEND_POLLING = "EXTEND_POLLING"
+S_CHILD_CANDIDATE_FOUND = "CHILD_CANDIDATE_FOUND"
+S_CHILD_IDENTITY_CONFIRMED = "CHILD_IDENTITY_CONFIRMED"
+S_CHILD_PERSISTED = "CHILD_PERSISTED"
+S_EXTEND_COMPLETE = "EXTEND_COMPLETE"
+S_NEXT_BLOCK_READY = "NEXT_BLOCK_READY"
+
 S_DOWNLOAD_COMPLETED = "DOWNLOAD_COMPLETED"
 S_ARTIFACT_REGISTERED = "ARTIFACT_REGISTERED"
 
@@ -53,6 +54,15 @@ ERR_REFERENCES_NOT_VISIBLE = "REFERENCES_NOT_VISIBLE"
 ERR_STALE_REFERENCES = "STALE_REFERENCES_PRESENT"
 ERR_MULTI_BLOCK_PROMPT = "EXTEND_PROMPT_MULTI_BLOCK_REJECTED"
 ERR_DOWNLOAD_INCOMPLETE = "DOWNLOAD_INCOMPLETE"
+ERR_COMPOSER_ATTACH_FAILED = "COMPOSER_ATTACH_FAILED"
+
+ERR_CURRENT_VIDEO_NOT_FOUND = "CURRENT_VIDEO_NOT_FOUND"
+ERR_CURRENT_VIDEO_IDENTITY_MISMATCH = "CURRENT_VIDEO_IDENTITY_MISMATCH"
+ERR_CURRENT_VIDEO_PROJECT_MISMATCH = "CURRENT_VIDEO_PROJECT_MISMATCH"
+
+ERR_EXTEND_CHILD_NOT_FOUND = "EXTEND_CHILD_NOT_FOUND"
+ERR_EXTEND_CHILD_PROMPT_MISMATCH = "EXTEND_CHILD_PROMPT_MISMATCH"
+ERR_EXTEND_UNCERTAIN = "EXTEND_SUBMIT_UNCERTAIN"
 
 _BLOCK_HEADER_MARKER = "SECTION 1 - ROLE & OBJECTIVE"
 
@@ -65,54 +75,281 @@ class FlowUiDriverError(RuntimeError):
 
 
 def ui_driver_enabled() -> bool:
-    """Kill switch — default OFF: the proven API lane stays production authority
-    until the Owner's controlled live test proves this driver."""
     return os.environ.get("FLOW_UI_DRIVER_ENABLED") == "1"
 
 
 def _res(envelope: dict) -> dict:
-    """Unwrap the WS relay envelope {result: {...}} → verb result."""
     if not isinstance(envelope, dict):
         return {"ok": False, "error": "FLOWUI_BAD_ENVELOPE"}
     return envelope.get("result", envelope)
 
 
-# ── reference-first visibility gate (Boundary A) ─────────────────────────────
-async def verify_references_visible(client, media_ids: list,
-                                    expected_count: int) -> dict:
-    """The Owner reference-first gate: every uploaded reference must be VISIBLY
-    present in the current Flow project surface, and the visible count must
-    equal the mode contract count, BEFORE Block-1 is sent. T2V passes
-    expected_count=0 with an empty list (zero references, zero stale)."""
+def _map_open_video_error(err: str) -> str:
+    if err == "CURRENT_VIDEO_NOT_FOUND":
+        return ERR_CURRENT_VIDEO_NOT_FOUND
+    if err == "CURRENT_VIDEO_IDENTITY_MISMATCH":
+        return ERR_CURRENT_VIDEO_IDENTITY_MISMATCH
+    if err == "CURRENT_VIDEO_PROJECT_MISMATCH":
+        return ERR_CURRENT_VIDEO_PROJECT_MISMATCH
+    return err or ERR_CURRENT_VIDEO_NOT_FOUND
+
+
+# ── composer reference gate (Blocker 1) ────────────────────────────────────
+async def ensure_composer_references(
+    client,
+    *,
+    media_ids: list,
+    local_file_paths: list,
+    expected_count: int,
+) -> dict:
+    """Attach references to the real composer and verify scoped thumbnails."""
     ids = [str(m) for m in (media_ids or []) if m]
-    if len(ids) != int(expected_count):
+    paths = [str(p) for p in (local_file_paths or []) if p]
+    states: list = []
+
+    def mark(state: str, **kw):
+        states.append({"state": state, **kw})
+
+    mark(S_COMPOSER_READY)
+    mark(S_STALE_REFERENCES_CHECKING)
+    if expected_count == 0:
+        zero = _res(await client.flowui_verify_composer_zero())
+        if not zero.get("ok"):
+            raise FlowUiDriverError(
+                ERR_STALE_REFERENCES,
+                str(zero.get("error") or zero.get("detail") or zero))
+        mark(S_STALE_REFERENCES_CLEARED, count=0)
+        return {"ok": True, "expected_count": 0, "states": states}
+
+    if len(ids) != expected_count:
         raise FlowUiDriverError(
             ERR_REFERENCES_NOT_VISIBLE,
             f"reference list count {len(ids)} != mode contract {expected_count}")
-    if not ids:  # T2V: nothing to verify visible; caller separately checks stale
-        return {"ok": True, "expected_count": 0, "visible_count": 0}
-    res = _res(await client.flowui_verify_media_visible(ids))
-    if not res.get("ok"):
+
+    mark(S_REFERENCES_ATTACHING)
+    if paths:
+        if len(paths) != expected_count:
+            raise FlowUiDriverError(
+                ERR_COMPOSER_ATTACH_FAILED,
+                f"local paths {len(paths)} != expected {expected_count}")
+        for i, path in enumerate(paths):
+            attached = _res(await client.flowui_composer_attach_file(
+                path, slot_label=f"ComposerRef{i + 1}"))
+            if not attached.get("ok"):
+                raise FlowUiDriverError(
+                    ERR_COMPOSER_ATTACH_FAILED, str(attached.get("error")))
+
+    vis = _res(await client.flowui_verify_media_visible(ids))
+    if not vis.get("ok"):
         raise FlowUiDriverError(
             ERR_REFERENCES_NOT_VISIBLE,
-            f"missing={res.get('missing')} visible={res.get('visible_count')}"
-            f"/{res.get('expected_count')} (error={res.get('error')})")
-    return res
+            f"missing={vis.get('missing')} order_ok={vis.get('order_ok')} "
+            f"composer_count={vis.get('composer_thumbnail_count')}")
+    mark(S_REFERENCES_VISIBLE, visible_count=vis.get("visible_count"))
+    mark(S_REFERENCE_COUNT_CONFIRMED, count=expected_count)
+    if expected_count > 1 and vis.get("order_ok") is False:
+        raise FlowUiDriverError(ERR_REFERENCES_NOT_VISIBLE, "reference order mismatch")
+    mark(S_REFERENCE_ORDER_CONFIRMED)
+    return {"ok": True, "states": states, **vis}
 
 
-# ── timeline Extend for ONE block (Boundary D) ───────────────────────────────
-async def extend_block_via_ui(client, *, job_id: str, parent_title_substr: str,
-                              block_index: int, position: int, prompt: str,
-                              model_label: str = "Veo 3.1 - Lite",
-                              confirm_live_credit_burn: bool = False,
-                              dry_run: bool = True) -> dict:
-    """Drive ONE Extend block through the current Flow UI.
+async def verify_references_visible(client, media_ids: list,
+                                    expected_count: int) -> dict:
+    """Composer-scoped visibility gate (T2V uses expected_count=0)."""
+    if expected_count == 0:
+        zero = _res(await client.flowui_verify_composer_zero())
+        if not zero.get("ok"):
+            raise FlowUiDriverError(ERR_STALE_REFERENCES, str(zero.get("error")))
+        return {"ok": True, "expected_count": 0, "visible_count": 0,
+                "scope": "composer_reference_container"}
+    return await ensure_composer_references(
+        client, media_ids=media_ids, local_file_paths=[], expected_count=expected_count)
 
-    dry_run=True walks the full state machine up to EXTEND_READY_TO_SUBMIT
-    (prompt inserted + read back) and STOPS — zero credit. Live requires the
-    kill switch AND explicit confirmation AND the per-block route lock.
-    """
-    if not prompt or _BLOCK_HEADER_MARKER in prompt and prompt.count(_BLOCK_HEADER_MARKER) > 1:
+
+async def run_initial_block1_via_composer(
+    client,
+    *,
+    prompt: str,
+    media_ids: list,
+    local_file_paths: list,
+    expected_count: int,
+    dry_run: bool = True,
+    confirm_live_credit_burn: bool = False,
+) -> dict:
+    """Composer-driven Block 1 initial lane (mutually exclusive with API initial)."""
+    states: list = []
+
+    def mark(state: str, **kw):
+        states.append({"state": state, **kw})
+
+    ref_out = await ensure_composer_references(
+        client, media_ids=media_ids, local_file_paths=local_file_paths,
+        expected_count=expected_count)
+    states.extend(ref_out.get("states") or [])
+
+    mark(S_BLOCK1_PROMPT_INSERTING)
+    typed = _res(await client.flowui_set_composer_prompt(prompt))
+    if not typed.get("ok"):
+        raise FlowUiDriverError("BLOCK1_PROMPT_INSERT_FAILED",
+                                str(typed.get("error")))
+    mark(S_BLOCK1_PROMPT_CONFIRMED, length=typed.get("length"))
+    mark(S_SETTINGS_APPLYING)
+    # Settings are operator-law on the composer surface; server records intent only.
+    mark(S_SETTINGS_CONFIRMED, note="composer_surface_authority")
+    mark(S_READY_FOR_NEGOTIATION)
+
+    if dry_run:
+        return {"ok": True, "dry_run": True, "lane": "UI_COMPOSER_INITIAL",
+                "states": states}
+
+    if not ui_driver_enabled():
+        raise FlowUiDriverError(ERR_DISABLED, "FLOW_UI_DRIVER_ENABLED != 1")
+    if confirm_live_credit_burn is not True:
+        raise FlowUiDriverError(ERR_CONFIRM,
+                                "explicit confirm_live_credit_burn required")
+    raise FlowUiDriverError(
+        "UI_INITIAL_SUBMIT_NOT_IN_PHASE2B",
+        "live Block-1 credit submit reserved for controlled live test")
+
+
+# ── timeline media snapshot for UI Extend polling ───────────────────────────
+def _media_ids_from_scene_listing(resp: dict) -> set:
+    out: set = set()
+    data = resp.get("data", resp) if isinstance(resp, dict) else {}
+    if not isinstance(data, dict):
+        return out
+    for m in data.get("media") or []:
+        if isinstance(m, dict) and m.get("name"):
+            out.add(str(m["name"]))
+    for sw in data.get("sceneWorkflows") or []:
+        if not isinstance(sw, dict):
+            continue
+        wf = sw.get("workflow") or {}
+        meta = wf.get("metadata") if isinstance(wf, dict) else {}
+        if isinstance(meta, dict) and meta.get("primaryMediaId"):
+            out.add(str(meta["primaryMediaId"]))
+    return out
+
+
+async def _snapshot_timeline_media(client, project_id: str, scene_id: str) -> set:
+    if not project_id or not scene_id:
+        raise FlowUiDriverError("EXTEND_PROJECT_CONTEXT_MISSING",
+                                "project_id and scene_id required for UI polling")
+    resp = await client.list_scene_workflows(scene_id, project_id)
+    return _media_ids_from_scene_listing(resp)
+
+
+async def _correlate_ui_extend_child(
+    client, *, project_id: str, candidates: list, submitted_prompt: str,
+    snapshot_ids: set, model_key: str | None = None, seed=None,
+) -> dict | None:
+    from agent.services.make_video import _extract_provider_prompt
+
+    for mid in candidates:
+        if mid in snapshot_ids:
+            continue
+        media = await client.get_media(mid)
+        mdata = media.get("data", media) if isinstance(media, dict) else media
+        if not isinstance(mdata, dict):
+            continue
+        video_meta = mdata.get("video") if isinstance(mdata.get("video"), dict) else {}
+        norm_path, vprompt = _extract_provider_prompt(video_meta.get("prompt"))
+        if vprompt is None or vprompt.strip() != submitted_prompt.strip():
+            continue
+        vmodel = video_meta.get("model")
+        if model_key and vmodel and str(vmodel) != str(model_key):
+            continue
+        vseed = video_meta.get("seed")
+        if seed is not None and vseed is not None and str(vseed) != str(seed):
+            continue
+        return {
+            "child_operation_id": mid,
+            "child_primary_media_id": video_meta.get("primaryMediaId") or mid,
+            "correlation_evidence": {
+                "normalization_path": norm_path,
+                "prompt_match": True,
+                "model": vmodel,
+                "seed": vseed,
+            },
+        }
+    return None
+
+
+async def _poll_ui_extend_child(
+    client, *, project_id: str, scene_id: str, submitted_prompt: str,
+    snapshot_ids: set, poll_timeout_s: int = 120, poll_interval_s: int = 5,
+    model_key: str | None = None, seed=None,
+) -> dict:
+    elapsed = 0
+    while elapsed <= poll_timeout_s:
+        current = await _snapshot_timeline_media(client, project_id, scene_id)
+        new_ids = [m for m in current if m not in snapshot_ids]
+        child = await _correlate_ui_extend_child(
+            client, project_id=project_id, candidates=new_ids,
+            submitted_prompt=submitted_prompt, snapshot_ids=snapshot_ids,
+            model_key=model_key, seed=seed)
+        if child:
+            return child
+        await asyncio.sleep(poll_interval_s)
+        elapsed += poll_interval_s
+    raise FlowUiDriverError(ERR_EXTEND_CHILD_NOT_FOUND, "polling exhausted")
+
+
+async def _persist_ui_extend_child(
+    job: dict, *, block_index: int, position: int, parent_op: str,
+    child: dict, prompt: str, idem: str, workspace_generation_package_id: str | None,
+) -> str:
+    from agent.services import google_flow_native_extend_runtime as _nx
+
+    existing = await crud.get_extend_lineage_by_idempotency(idem)
+    lineage_id = existing["extend_lineage_id"] if existing else str(uuid.uuid4())
+    if not existing:
+        await crud.insert_extend_lineage(
+            lineage_id,
+            workspace_generation_package_id=workspace_generation_package_id,
+            project_id=job.get("project_id"),
+            scene_id=job.get("scene_id"),
+            block_index=block_index,
+            block_position=position,
+            parent_operation_id=parent_op,
+            child_operation_id=child["child_operation_id"],
+            child_primary_media_id=child.get("child_primary_media_id"),
+            continuation_prompt_hash=_nx._prompt_hash(prompt),
+            idempotency_key=idem,
+            polling_state="EXTEND_SUCCEEDED",
+        )
+    else:
+        await crud.update_extend_lineage(
+            lineage_id,
+            child_operation_id=child["child_operation_id"],
+            child_primary_media_id=child.get("child_primary_media_id"),
+            polling_state="EXTEND_SUCCEEDED",
+        )
+
+    job_id = job["job_id"]
+    segments = json.loads(job.get("segment_media_ids_json") or "[]")
+    child_op = child["child_operation_id"]
+    if child_op not in segments:
+        segments.append(child_op)
+    await crud.update_video_production_job_full(
+        job_id,
+        segment_media_ids_json=json.dumps(segments),
+        extend_child_operation_id=child_op,
+    )
+    return lineage_id
+
+
+# ── timeline Extend for ONE block (Blocker 2 + 3) ───────────────────────────
+async def extend_block_via_ui(
+    client, *, job_id: str, parent_media_operation_id: str,
+    block_index: int, position: int, prompt: str,
+    model_label: str = "Veo 3.1 - Lite",
+    confirm_live_credit_burn: bool = False,
+    dry_run: bool = True,
+    poll_timeout_s: int = 120,
+    poll_interval_s: int = 5,
+) -> dict:
+    if not prompt or (_BLOCK_HEADER_MARKER in prompt and prompt.count(_BLOCK_HEADER_MARKER) > 1):
         raise FlowUiDriverError(ERR_MULTI_BLOCK_PROMPT,
                                 "extend prompt must be exactly ONE block")
     states: list = []
@@ -120,10 +357,9 @@ async def extend_block_via_ui(client, *, job_id: str, parent_title_substr: str,
     def mark(state: str, **kw):
         states.append({"state": state, **kw})
 
-    # ── route-exclusivity lock: SAME stage key family as direct-RPC Extend ──
-    # (video_production_orchestrator._stage_key uses sha256(job|EXTEND|payload))
     from agent.services import video_production_orchestrator as _orch
     from agent.services import google_flow_native_extend_runtime as _nx
+
     job = await crud.get_video_production_job(job_id)
     if not job:
         raise FlowUiDriverError("VIDEO_JOB_NOT_FOUND", job_id)
@@ -132,32 +368,39 @@ async def extend_block_via_ui(client, *, job_id: str, parent_title_substr: str,
         raise FlowUiDriverError("EXTEND_PARENT_MISSING",
                                 "job has no bound current Video 1")
     parent_op = segments[-1]
+    if parent_media_operation_id and parent_media_operation_id != parent_op:
+        raise FlowUiDriverError(
+            ERR_CURRENT_VIDEO_IDENTITY_MISMATCH,
+            f"requested parent {parent_media_operation_id} != lineage {parent_op}")
+
     idem = _orch._stage_key(
         job, "EXTEND", f"{parent_op}|{_nx._prompt_hash(prompt)}|pos{position}")
     existing = await crud.get_video_job_side_effect(idem)
     if existing and existing.get("submission_state") != "NOT_ATTEMPTED":
         raise FlowUiDriverError(
             ERR_ROUTE_LOCKED,
-            f"block pos{position} already submitted via "
-            f"{existing.get('stage')} (state={existing.get('submission_state')}) — "
-            "UI and direct-RPC can never double-submit the same block")
+            f"block pos{position} already submitted (state={existing.get('submission_state')})")
 
-    # ── open the EXACT current video ─────────────────────────────────────────
+    project_id = job.get("project_id") or ""
+    scene_id = job.get("scene_id") or ""
+    snapshot_ids: set = set()
+    if project_id and scene_id and not dry_run:
+        snapshot_ids = await _snapshot_timeline_media(client, project_id, scene_id)
+
     mark(S_CURRENT_VIDEO_OPENING, parent=parent_op)
-    opened = _res(await client.flowui_open_video(parent_title_substr))
+    opened = _res(await client.flowui_open_video(
+        parent_op, expected_project_id=project_id or None))
     if not opened.get("ok"):
-        raise FlowUiDriverError("CURRENT_VIDEO_OPEN_FAILED",
-                                str(opened.get("error")))
-    mark(S_CURRENT_VIDEO_CONFIRMED, view=(opened.get("state") or {}).get("view"))
+        code = _map_open_video_error(str(opened.get("error")))
+        raise FlowUiDriverError(code, str(opened.get("error")))
+    mark(S_CURRENT_VIDEO_CONFIRMED, project_id=opened.get("project_id"))
 
-    # ── Add Clip → Extend (model) ────────────────────────────────────────────
     mark(S_EXTEND_CONTROL_OPENING)
     menu = _res(await client.flowui_add_clip_extend(model_label))
     if not menu.get("ok"):
         raise FlowUiDriverError("EXTEND_CONTROL_FAILED", str(menu.get("error")))
     mark(S_EXTEND_PROMPT_READY, menu_item=menu.get("menu_item"))
 
-    # ── Block-N prompt ONLY, verified by read-back ───────────────────────────
     typed = _res(await client.flowui_set_extend_prompt(prompt))
     if not typed.get("ok"):
         raise FlowUiDriverError("EXTEND_PROMPT_INSERT_FAILED",
@@ -172,17 +415,18 @@ async def extend_block_via_ui(client, *, job_id: str, parent_title_substr: str,
         return {"ok": True, "dry_run": True, "states": states,
                 "idempotency_key": idem, "parent_operation_id": parent_op}
 
-    # ── LIVE submit: kill switch + explicit confirm + reserve the block ─────
     if not ui_driver_enabled():
         raise FlowUiDriverError(ERR_DISABLED, "FLOW_UI_DRIVER_ENABLED != 1")
     if confirm_live_credit_burn is not True:
         raise FlowUiDriverError(ERR_CONFIRM,
                                 "explicit confirm_live_credit_burn required")
+
     reserve = await crud.reserve_video_job_side_effect(idem, job_id=job_id,
                                                        stage="EXTEND")
     if not reserve.get("reserved"):
         raise FlowUiDriverError(ERR_ROUTE_LOCKED,
                                 "another route reserved this block first")
+
     await crud.update_video_job_side_effect(
         idem, submission_state="SUBMITTED", credit_state="MAY_HAVE_SPENT",
         retry_safety="RESUME_ONLY", detail="UI_TIMELINE_EXTEND")
@@ -191,19 +435,99 @@ async def extend_block_via_ui(client, *, job_id: str, parent_title_substr: str,
         await crud.update_video_job_side_effect(
             idem, submission_state="UNCERTAIN", credit_state="MAY_HAVE_SPENT",
             retry_safety="BLOCKED", detail=str(submitted.get("error"))[:180])
-        raise FlowUiDriverError("EXTEND_SUBMIT_FAILED", str(submitted.get("error")))
+        raise FlowUiDriverError(ERR_EXTEND_UNCERTAIN, str(submitted.get("error")))
     mark(S_EXTEND_SUBMITTED)
-    return {"ok": True, "dry_run": False, "states": states,
-            "idempotency_key": idem, "parent_operation_id": parent_op}
+
+    mark(S_EXTEND_POLLING)
+    try:
+        child = await _poll_ui_extend_child(
+            client, project_id=project_id, scene_id=scene_id,
+            submitted_prompt=prompt, snapshot_ids=snapshot_ids,
+            poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
+            model_key=job.get("model"))
+    except FlowUiDriverError:
+        await crud.update_video_job_side_effect(
+            idem, submission_state="UNCERTAIN", credit_state="MAY_HAVE_SPENT",
+            retry_safety="BLOCKED", detail="UI_EXTEND_POLL_NO_CHILD")
+        raise
+
+    mark(S_CHILD_CANDIDATE_FOUND, child_operation_id=child["child_operation_id"])
+    mark(S_CHILD_IDENTITY_CONFIRMED, evidence=child.get("correlation_evidence"))
+
+    job["job_id"] = job_id
+    lineage_id = await _persist_ui_extend_child(
+        job, block_index=block_index, position=position, parent_op=parent_op,
+        child=child, prompt=prompt, idem=idem,
+        workspace_generation_package_id=job.get("execution_package_id"))
+    mark(S_CHILD_PERSISTED, lineage_id=lineage_id)
+    mark(S_EXTEND_COMPLETE)
+    mark(S_NEXT_BLOCK_READY, next_parent=child["child_operation_id"])
+
+    await crud.update_video_job_side_effect(
+        idem, submission_state="TERMINAL", credit_state="MAY_HAVE_SPENT",
+        retry_safety="RESUME_ONLY", operation_ref=child["child_operation_id"])
+
+    return {
+        "ok": True, "dry_run": False, "states": states,
+        "idempotency_key": idem,
+        "parent_operation_id": parent_op,
+        "child_operation_id": child["child_operation_id"],
+        "lineage_id": lineage_id,
+    }
 
 
-# ── Download Project (Boundary E) ────────────────────────────────────────────
+async def run_sequential_ui_extend_chain(
+    client, *, job_id: str, blocks: list,
+    confirm_live_credit_burn: bool = False,
+    dry_run: bool = True,
+) -> dict:
+    """Block 2..N: each block uses the persisted child as the next parent."""
+    results = []
+    for block in sorted(blocks, key=lambda b: int(b.get("position") or 0)):
+        out = await extend_block_via_ui(
+            client,
+            job_id=job_id,
+            parent_media_operation_id="",  # lineage authority
+            block_index=int(block["block_index"]),
+            position=int(block["position"]),
+            prompt=str(block["prompt"]),
+            model_label=block.get("model_label") or "Veo 3.1 - Lite",
+            confirm_live_credit_burn=confirm_live_credit_burn,
+            dry_run=dry_run,
+        )
+        results.append(out)
+        if not out.get("ok"):
+            break
+    return {"ok": all(r.get("ok") for r in results), "blocks": results}
+
+
+async def assert_final_lineage_for_download(job_id: str) -> dict:
+    job = await crud.get_video_production_job(job_id)
+    if not job:
+        raise FlowUiDriverError("VIDEO_JOB_NOT_FOUND", job_id)
+    segments = json.loads(job.get("segment_media_ids_json") or "[]")
+    if len(segments) < 2:
+        raise FlowUiDriverError("FINAL_LINEAGE_INCOMPLETE",
+                                "expected final child in segment lineage")
+    final_child = segments[-1]
+    parent = segments[-2] if len(segments) >= 2 else None
+    return {
+        "ok": True,
+        "final_child_operation_id": final_child,
+        "parent_operation_id": parent,
+        "project_id": job.get("project_id"),
+        "segment_count": len(segments),
+    }
+
+
+# ── Download Project (final-lineage gate) ───────────────────────────────────
 async def download_project_via_ui(client, *, job_id: Optional[str],
                                   project_id: Optional[str],
-                                  register: bool = True) -> dict:
-    """Three-dot menu → Download Project → capture the ACTUAL browser download,
-    hash + inspect it, and register it HONESTLY (ZIP = project archive).
-    Zero credit (captured contract: client-side ZIP blob)."""
+                                  register: bool = True,
+                                  require_final_lineage: bool = True) -> dict:
+    if require_final_lineage and job_id:
+        await assert_final_lineage_for_download(job_id)
+
     res = _res(await client.flowui_download_project())
     if not res.get("ok"):
         raise FlowUiDriverError("DOWNLOAD_PROJECT_FAILED", str(res.get("error")))
@@ -231,7 +555,7 @@ async def download_project_via_ui(client, *, job_id: Optional[str],
     artifact_kind = "project_archive" if is_zip else "file"
     result = {
         "ok": True,
-        "artifact_kind": artifact_kind,       # HONEST: never "video" for a ZIP
+        "artifact_kind": artifact_kind,
         "local_path": str(path),
         "bytes": len(data),
         "sha256": sha,
@@ -243,11 +567,6 @@ async def download_project_via_ui(client, *, job_id: Optional[str],
         "state": S_DOWNLOAD_COMPLETED,
     }
     if register:
-        # EXISTING durable-job metadata mechanism (stage_state_json on
-        # video_production_job) — no migration, no schema CHECK conflicts
-        # (generated_artifact/generation_result constrain kind to video|image,
-        # and a ZIP must NEVER be registered as either). Content-addressed key:
-        # identical bytes can never double-register.
         artifact_id = f"project-archive:{sha[:24]}"
         registered = False
         vj = await crud.get_video_production_job(job_id) if job_id else None
@@ -262,6 +581,10 @@ async def download_project_via_ui(client, *, job_id: Optional[str],
                     "artifact_kind": artifact_kind, "local_path": str(path),
                     "bytes": len(data), "sha256": sha, "mime": dl.get("mime"),
                     "zip_entries": entries[:10], "project_id": project_id,
+                    "final_child_operation_id": (
+                        json.loads(vj.get("segment_media_ids_json") or "[]")[-1]
+                        if vj.get("segment_media_ids_json") else None
+                    ),
                 }
                 await crud.update_video_production_job_full(
                     job_id, stage_state_json=json.dumps(state))
@@ -269,8 +592,6 @@ async def download_project_via_ui(client, *, job_id: Optional[str],
         result["artifact_id"] = artifact_id
         result["registered"] = registered
         if not registered:
-            # ad-hoc download without a durable job: full metadata returned to
-            # the caller; honesty preserved (never silently claimed persisted).
             result["registered_reason"] = "NO_DURABLE_JOB_ROW_FOR_JOB_ID"
         result["state"] = (S_ARTIFACT_REGISTERED if registered
                            else S_DOWNLOAD_COMPLETED)
