@@ -4,7 +4,7 @@
 	if (window.__FLOWUI_DRIVER_ACTIVE__) return;
 	window.__FLOWUI_DRIVER_ACTIVE__ = true;
 
-	const VERSION = "flowui-1.2.0-phase2c-20260712";
+	const VERSION = "flowui-1.3.0-phase2d-20260712";
 
 	const NAMES = {
 		ADD_CLIP: "Add Clip",
@@ -83,17 +83,16 @@
 		return null;
 	}
 
-	/** Proven composer-reference panel: smallest ancestor containing composer + add control. */
+	/** Proven composer-reference panel: FIRST ancestor containing composer + add control. */
 	function findComposerReferenceContainer(composer) {
 		if (!composer) return null;
 		let el = composer.parentElement;
-		let best = null;
 		while (el && el !== document.body) {
 			if (!el.contains(composer)) break;
-			if (composerAddButtonWithin(el)) best = el;
+			if (composerAddButtonWithin(el)) return el;
 			el = el.parentElement;
 		}
-		return best;
+		return null;
 	}
 
 	const CONTAINER_EVIDENCE =

@@ -129,7 +129,7 @@ domains:
       - tests/fixtures/google_flow_media_resource/media_resource.sanitized.json
       - tests/fixtures/google_flow_media_resource/initial_r2v_prompt_envelope.sanitized.txt
       - tests/fixtures/google_flow_media_resource/initial_r2v_sse_prompt.sanitized.txt
-      # Owner Phase-2B/2C: exact composer container/count, live submit path, typed IDs
+      # Owner Phase-2B/2C/2D: composer nearest container, typed IDs, live submit
       - extension/flow-ui-driver.js
       - extension/background.js
       - agent/services/google_flow_ui_driver.py
