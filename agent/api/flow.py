@@ -1305,6 +1305,33 @@ async def plan_video_job_recovery(body: VideoJobPlanRequest):
     return await _plan_video_job(body, trust_client_authority=True)
 
 
+@router.post("/video-jobs/lookup")
+async def lookup_video_job(body: VideoJobPlanRequest):
+    """READ-ONLY logical-job lookup for page mount / refresh restore.
+
+    Computes the SAME logical job key as /video-jobs/plan from the client intent
+    and returns the existing job's reviewed plan + status WITHOUT creating a job,
+    resolving authority, or writing anything. A fresh page therefore performs
+    zero plan writes on mount; the ONE plan POST happens only on the deliberate
+    Generate action."""
+    from agent.services import video_production_orchestrator as _orch
+    key = _orch.compute_logical_job_key(_job_intent(body))
+    job = await crud.get_video_production_job_by_logical_key(key)
+    if not job:
+        return {"found": False, "logical_job_key": key}
+    plan = None
+    if job.get("whole_plan_json"):
+        try:
+            plan = json.loads(job["whole_plan_json"])
+        except (TypeError, ValueError):
+            plan = None
+    return {
+        "found": True, "job_id": job["job_id"], "status": job["status"],
+        "plan_fingerprint": job.get("plan_fingerprint"), "plan": plan,
+        "logical_job_key": key,
+    }
+
+
 @router.post("/video-jobs/{job_id}/authorize")
 async def authorize_video_job(job_id: str, body: VideoJobAuthorizeRequest):
     """Issue ONE expiring, single-use, job-bound, fingerprint-bound authorization for

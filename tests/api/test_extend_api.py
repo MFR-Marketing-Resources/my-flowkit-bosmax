@@ -292,6 +292,35 @@ async def test_production_endpoint_ignores_client_authority_override():
     assert exc.value.detail["code"] == "INCOMPLETE_PRODUCTION_PLAN"
 
 
+# ── read-only lookup: the mount/refresh restore path writes NOTHING ─────────
+async def test_video_job_lookup_is_read_only_and_finds_existing_job():
+    body = _complete_body("apilookup")
+    # 1) unknown intent → found:false and NO job row created (pure read)
+    missing = await flow.lookup_video_job(body)
+    assert missing["found"] is False
+    key = missing["logical_job_key"]
+    assert await flow.crud.get_video_production_job_by_logical_key(key) is None
+    # 2) after a deliberate plan, the SAME intent lookup restores it read-only
+    planned = await flow.plan_video_job_recovery(body)
+    found = await flow.lookup_video_job(body)
+    assert found["found"] is True
+    assert found["job_id"] == planned["job_id"]
+    assert found["logical_job_key"] == key
+    assert found["plan_fingerprint"] == planned["plan_fingerprint"]
+    assert found["plan"]["operation_counts"]["total"] == planned["plan"]["operation_counts"]["total"]
+
+
+async def test_video_job_lookup_never_422s_on_incomplete_authority():
+    # Mount-time restore must be silent for an incomplete intent — no 422, no write.
+    body = flow.VideoJobPlanRequest(product_id="lookup-only",
+                                    requested_total_duration_seconds=16,
+                                    client_request_nonce="apilookup-incomplete")
+    out = await flow.lookup_video_job(body)
+    assert out["found"] is False
+    assert await flow.crud.get_video_production_job_by_logical_key(
+        out["logical_job_key"]) is None
+
+
 async def test_plan_rejects_invalid_duration():
     body = flow.VideoJobPlanRequest(product_id="p1", execution_package_id="wep",
                                     requested_total_duration_seconds=20,  # not a *8

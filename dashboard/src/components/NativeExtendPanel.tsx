@@ -9,7 +9,7 @@
 // Live execution requires an explicit confirmation after dry-run. The backend grants
 // a process-local, single-use authorization bound to the exact reviewed chain and
 // planned operation count; /extend-run remains the only execution path.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   NATIVE_EXTEND_ROUTES,
   finalConcatExportAvailable,
@@ -22,6 +22,7 @@ import {
   resolveNativeExtendSource,
   requestNativeExtendLiveAuthorization,
   runNativeExtend,
+  lookupVideoJob,
   planVideoJob,
   authorizeVideoJob,
   startVideoJob,
@@ -82,12 +83,17 @@ export default function NativeExtendPanel({
   const [durablePlan, setDurablePlan] = useState<VideoJobPlan | null>(null);
   const [durableStatus, setDurableStatus] = useState<VideoJobStatus | null>(null);
   const [fullConfirm, setFullConfirm] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  // StrictMode-safe single-flight: one read-only lookup per intent key.
+  const lookupKeyRef = useRef<string | null>(null);
 
   const plannedBlockCount = plannedBlocks.length;
   const requestedSeconds = totalDurationSeconds ?? (plannedBlockCount + 1) * 8;
   // Deterministic production intent: the SAME configuration resolves to the SAME
   // logical job, so a refresh reuses it (no localStorage, no duplicate job).
-  const intentReady = Boolean(productId && requestedSeconds > 8);
+  // FULL client-side authority is required before ANY plan traffic exists —
+  // product + execution package + a multi-block duration (SEV-0: no premature 422s).
+  const intentReady = Boolean(productId && executionPackageId && requestedSeconds > 8);
   const jobInFlight =
     !!durableStatus &&
     !durableStatus.complete &&
@@ -106,26 +112,41 @@ export default function NativeExtendPanel({
     execution_mode: 'HYBRID_EXTEND',
   });
 
-  // Plan-on-mount + refresh-resume: planning is idempotent, so this restores an
-  // existing job's live status instead of ever starting a new one on page load.
+  // Mount / intent-change restore is READ-ONLY (SEV-0 lifecycle contract):
+  // clear any stale job authority from a previous product/package, then look up
+  // the existing logical job WITHOUT creating or planning anything. The ONE
+  // plan POST happens only on the deliberate Generate action below.
   useEffect(() => {
+    // Switching products/packages/durations must never carry another job's
+    // plan, status, or output authority forward.
+    setDurablePlan(null);
+    setDurableStatus(null);
+    setFullConfirm(false);
+    setPlanError(null);
     if (!intentReady) return;
-    let cancelled = false;
-    planVideoJob(planIntent())
-      .then(async (plan) => {
-        if (cancelled) return;
-        setDurablePlan(plan);
-        if (plan.status !== 'CREATED') {
-          const st = await getVideoJobStatus(plan.job_id).catch(() => null);
-          if (!cancelled && st) setDurableStatus(st);
+    const key = `${productId}|${executionPackageId}|${requestedSeconds}|${aspectRatio}`;
+    const alreadyIssued = lookupKeyRef.current === key;
+    lookupKeyRef.current = key;
+    if (alreadyIssued) return; // StrictMode double-invoke guard: ONE lookup per key
+    lookupVideoJob(planIntent())
+      .then(async (found) => {
+        // Apply only while this intent is still current (stale lookups dropped).
+        if (lookupKeyRef.current !== key || !found.found || !found.job_id) return;
+        setDurablePlan({
+          job_id: found.job_id,
+          status: found.status ?? 'CREATED',
+          plan_fingerprint: found.plan_fingerprint ?? '',
+          reused: true,
+          plan: found.plan ?? undefined,
+        } as VideoJobPlan);
+        if (found.status && found.status !== 'CREATED') {
+          const st = await getVideoJobStatus(found.job_id).catch(() => null);
+          if (lookupKeyRef.current === key && st) setDurableStatus(st);
         }
       })
       .catch(() => {
-        /* planning is advisory; the button re-plans on click */
+        /* restore is advisory and read-only; never retried automatically */
       });
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId, executionPackageId, requestedSeconds]);
 
@@ -167,30 +188,24 @@ export default function NativeExtendPanel({
     }
   };
 
+  // SEV-0 current-run binding: history candidates are a DIAGNOSTICS-ONLY manual
+  // fallback. They are fetched only when the operator opens Advanced Diagnostics
+  // and are NEVER auto-applied — no old/project-history clip can silently become
+  // the Extend source, and no resolve-source request exists on mount.
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const candidatesLoadedRef = useRef(false);
   useEffect(() => {
-    let cancelled = false;
+    if (!diagnosticsOpen || candidatesLoadedRef.current) return;
+    candidatesLoadedRef.current = true;
     fetchNativeExtendSourceCandidates()
-      .then((r) => {
-        if (cancelled) return;
-        setCandidates(r.candidates);
-        // Auto-inherit the newest finished clip when the operator has supplied nothing.
-        if (
-          r.candidates.length > 0 &&
-          !(projectIdProp ?? '') &&
-          !(sceneIdProp ?? '') &&
-          !(sourceProp ?? '')
-        ) {
-          void applyCandidate(r.candidates[0]);
-        }
-      })
+      .then((r) => setCandidates(r.candidates))
       .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [diagnosticsOpen]);
 
   useEffect(() => {
+    // Readiness resolution is a diagnostics aid for the manual lane — nothing to
+    // resolve (and no request) until some Flow context actually exists.
+    if (!projectId && !sceneId && !sourceOperationId) return;
     let cancelled = false;
     resolveNativeExtend({
       project_id: projectId || null,
@@ -280,14 +295,39 @@ export default function NativeExtendPanel({
     }
   };
 
+  // "API 422: {"detail":{"code":…,"detail":…}}" → human-readable structured detail.
+  const describePlanError = (e: unknown): string => {
+    const raw = e instanceof Error ? e.message : String(e);
+    const jsonStart = raw.indexOf('{');
+    if (jsonStart >= 0) {
+      try {
+        const parsed = JSON.parse(raw.slice(jsonStart));
+        const detail = parsed?.detail;
+        if (detail && typeof detail === 'object') {
+          return `${detail.code ?? 'PLAN_REJECTED'}: ${detail.detail ?? ''}`.trim();
+        }
+        if (typeof detail === 'string') return detail;
+      } catch {
+        /* fall through to raw */
+      }
+    }
+    return raw;
+  };
+
   const openGenerateConfirm = async () => {
-    // (Re)plan to get the exact reviewed operation counts + fingerprint.
+    // THE one deliberate plan action: exactly one POST per click, never retried.
+    // A structured 422 (missing/invalid authority) is shown verbatim — the
+    // operator fixes the input; the request is not replayed automatically.
+    setPlanError(null);
+    setBusy(true);
     try {
       const plan = await planVideoJob(planIntent());
       setDurablePlan(plan);
       setFullConfirm(true);
-    } catch {
-      /* surfaced by the disabled state / advisory plan */
+    } catch (e) {
+      setPlanError(describePlanError(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -349,11 +389,16 @@ export default function NativeExtendPanel({
                 type="button"
                 data-testid="generate-full-video-btn"
                 className="w-fit rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-                disabled={busy || !durablePlan}
+                disabled={busy}
                 onClick={openGenerateConfirm}
               >
                 Generate Video
               </button>
+              {planError && (
+                <div data-testid="full-video-plan-error" className="text-xs text-rose-300">
+                  The video plan was rejected — {planError}
+                </div>
+              )}
             </div>
           )}
 
@@ -427,7 +472,7 @@ export default function NativeExtendPanel({
                 type="button"
                 data-testid="generate-full-video-btn"
                 className="w-fit rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
-                disabled={busy || !durablePlan}
+                disabled={busy}
                 onClick={openGenerateConfirm}
               >
                 Generate Video
@@ -476,6 +521,7 @@ export default function NativeExtendPanel({
       <details
         data-testid="native-extend-advanced-diagnostics"
         className="mt-4 border-t border-slate-700/60 pt-2"
+        onToggle={(e) => setDiagnosticsOpen((e.target as HTMLDetailsElement).open)}
       >
         <summary className="cursor-pointer text-xs text-slate-500">
           Advanced Diagnostics

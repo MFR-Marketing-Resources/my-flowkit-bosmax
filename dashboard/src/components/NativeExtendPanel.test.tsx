@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import { StrictMode } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +10,7 @@ const authorizeMock = vi.fn();
 const liveRunMock = vi.fn();
 const candidatesMock = vi.fn();
 const resolveSourceMock = vi.fn();
+const lookupMock = vi.fn();
 const planMock = vi.fn();
 const authorizeJobMock = vi.fn();
 const startJobMock = vi.fn();
@@ -22,6 +24,7 @@ vi.mock('../api/nativeExtend', () => ({
   runNativeExtend: (...a: unknown[]) => liveRunMock(...a),
   fetchNativeExtendSourceCandidates: (...a: unknown[]) => candidatesMock(...a),
   resolveNativeExtendSource: (...a: unknown[]) => resolveSourceMock(...a),
+  lookupVideoJob: (...a: unknown[]) => lookupMock(...a),
   planVideoJob: (...a: unknown[]) => planMock(...a),
   authorizeVideoJob: (...a: unknown[]) => authorizeJobMock(...a),
   startVideoJob: (...a: unknown[]) => startJobMock(...a),
@@ -46,6 +49,7 @@ beforeEach(() => {
     scene_display_name: 'S',
     verified: true,
   });
+  lookupMock.mockResolvedValue({ found: false, logical_job_key: 'ljk_none' });
   planMock.mockResolvedValue(PLAN);
   authorizeJobMock.mockResolvedValue({
     job_id: 'vj_1', authorization_token: 'auth_x', expires_in_seconds: 600,
@@ -222,47 +226,55 @@ describe('NativeExtendPanel', () => {
     expect(await screen.findByTestId('lineage-2')).toHaveTextContent('EXTEND_SUCCEEDED');
   });
 
-  it('auto-inherits the newest finished clip when the operator supplied nothing', async () => {
+  // ── SEV-0 current-run binding: NO history clip can silently become the source ──
+  it('mount performs ZERO candidate lookups and ZERO resolve-source calls (SEV-0)', async () => {
     resolveMock.mockResolvedValue(READY);
     lineageMock.mockResolvedValue({ lineage: [], count: 0 });
     candidatesMock.mockResolvedValue({
       candidates: [
         {
-          media_id: 'clip-new',
-          job_id: 'j2',
-          project_id: 'proj-1',
-          created_at: '2026-07-11T10:23:38Z',
-          product_id: 'prod',
-          product_name: 'Minyak Warisan Tok Cap Burung 25ml',
-          request_id: 'req',
+          media_id: 'clip-old', job_id: 'j-old', project_id: 'proj-old',
+          created_at: '2026-07-11T10:23:38Z', product_id: 'prod',
+          product_name: 'Old clip', request_id: 'req',
           workspace_generation_package_id: null,
         },
       ],
       count: 1,
     });
-    resolveSourceMock.mockResolvedValue({
-      project_id: 'proj-1',
-      scene_id: 'scene-1',
-      source_operation_id: 'clip-new',
-      scene_display_name: 'Scene 1',
-      verified: true,
+    renderPanel({ projectId: '', sceneId: '', sourceOperationId: '' });
+    await screen.findByTestId('native-extend-panel');
+    // A newer-looking historical clip exists — it must NEVER be fetched, resolved,
+    // or inherited on mount. The durable job owns its own Video 1.
+    expect(candidatesMock).not.toHaveBeenCalled();
+    expect(resolveSourceMock).not.toHaveBeenCalled();
+    expect(planMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('project-input')).toHaveValue('');
+    expect(screen.getByTestId('source-operation-input')).toHaveValue('');
+  });
+
+  it('candidates load only when Advanced Diagnostics is opened, never auto-applied', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    candidatesMock.mockResolvedValue({
+      candidates: [
+        {
+          media_id: 'clip-old', job_id: 'j-old', project_id: 'proj-old',
+          created_at: '2026-07-11T10:23:38Z', product_id: 'prod',
+          product_name: 'Old clip', request_id: 'req',
+          workspace_generation_package_id: null,
+        },
+      ],
+      count: 1,
     });
     renderPanel({ projectId: '', sceneId: '', sourceOperationId: '' });
-
-    await waitFor(() =>
-      expect(resolveSourceMock).toHaveBeenCalledWith({
-        media_id: 'clip-new',
-        project_id: 'proj-1',
-      }),
-    );
-    await waitFor(() =>
-      expect(screen.getByTestId('project-input')).toHaveValue('proj-1'),
-    );
-    expect(screen.getByTestId('scene-input')).toHaveValue('scene-1');
-    expect(screen.getByTestId('source-operation-input')).toHaveValue('clip-new');
-    expect(screen.getByTestId('native-extend-source-note')).toHaveTextContent(/verified/i);
-    // No raw-code blocker wall in the inherited flow.
-    expect(screen.queryByTestId('native-extend-waiting-source')).toBeNull();
+    const diagnostics = await screen.findByTestId('native-extend-advanced-diagnostics');
+    (diagnostics as HTMLDetailsElement).open = true;
+    fireEvent(diagnostics, new Event('toggle'));
+    await waitFor(() => expect(candidatesMock).toHaveBeenCalledTimes(1));
+    // Listed for the operator, but NOT auto-resolved into the Extend context.
+    expect(resolveSourceMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('project-input')).toHaveValue('');
+    expect(screen.getByTestId('source-operation-input')).toHaveValue('');
   });
 
   it('shows a human prompt (not raw codes) when no product is selected', async () => {
@@ -276,12 +288,107 @@ describe('NativeExtendPanel', () => {
     );
     // No engineering blocker codes on the normal surface.
     expect(screen.queryByTestId('native-extend-blockers')).toBeNull();
-    // Without an intent there is no Generate action and no plan call.
+    // Without an intent there is no Generate action, no plan call, no lookup.
     expect(screen.queryByTestId('generate-full-video-btn')).toBeNull();
+    expect(planMock).not.toHaveBeenCalled();
+    expect(lookupMock).not.toHaveBeenCalled();
+  });
+
+  // ── SEV-0 request lifecycle: plan gating, StrictMode, deterministic 422 ────
+  it('an incomplete execution package produces ZERO plan and ZERO lookup calls', async () => {
+    resolveMock.mockResolvedValue(BLOCKED);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    renderPanel({
+      executionPackageId: undefined,
+      projectId: '', sceneId: '', sourceOperationId: '',
+    });
+    expect(await screen.findByTestId('native-extend-waiting-source')).toBeInTheDocument();
+    expect(planMock).not.toHaveBeenCalled();
+    expect(lookupMock).not.toHaveBeenCalled();
+    expect(resolveSourceMock).not.toHaveBeenCalled();
+  });
+
+  it('StrictMode double-mount issues at most ONE read-only lookup and ZERO plans', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    render(
+      <StrictMode>
+        <NativeExtendPanel
+          projectId="p"
+          sceneId="s"
+          sourceOperationId="op1"
+          productId="prod-1"
+          productName="MWTCB"
+          executionPackageId="wep_1"
+          totalDurationSeconds={24}
+          plannedBlocks={[
+            { block_index: 2, position: 1, prompt: 'b2' },
+            { block_index: 3, position: 2, prompt: 'b3', is_final: true },
+          ]}
+        />
+      </StrictMode>,
+    );
+    await screen.findByTestId('native-extend-panel');
+    await waitFor(() => expect(lookupMock).toHaveBeenCalledTimes(1));
     expect(planMock).not.toHaveBeenCalled();
   });
 
-  it('selecting a saved clip resolves and fills the Flow context', async () => {
+  it('a deterministic 422 shows the exact rejection and is NEVER retried', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    planMock.mockRejectedValue(
+      new Error(
+        'API 422: {"detail":{"code":"INCOMPLETE_PRODUCTION_PLAN","detail":"missing production authority: initial_prompt_text"}}',
+      ),
+    );
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('generate-full-video-btn'));
+    const err = await screen.findByTestId('full-video-plan-error');
+    expect(err).toHaveTextContent('INCOMPLETE_PRODUCTION_PLAN');
+    expect(err).toHaveTextContent('initial_prompt_text');
+    // exactly the ONE deliberate request — no automatic retry, no confirm dialog
+    expect(planMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('full-video-confirm')).toBeNull();
+    // still exactly one call after the UI settles
+    await new Promise((r) => setTimeout(r, 50));
+    expect(planMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('switching products clears stale job authority (no cross-job reuse)', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    lookupMock.mockResolvedValue({
+      found: true, job_id: 'vj_A', status: 'INITIAL_POLLING',
+      plan_fingerprint: 'fp_A', plan: PLAN.plan, logical_job_key: 'ljk_A',
+    });
+    jobStatusMock.mockResolvedValue(STATUS('Generating video', { job_id: 'vj_A' }));
+    const view = renderPanel({ productId: 'prod-A' });
+    expect(await screen.findByTestId('full-video-progress')).toBeInTheDocument();
+
+    // Product switch: job A's plan/status/output authority must NOT carry over.
+    lookupMock.mockResolvedValue({ found: false, logical_job_key: 'ljk_B' });
+    view.rerender(
+      <NativeExtendPanel
+        projectId="p"
+        sceneId="s"
+        sourceOperationId="op1"
+        productId="prod-B"
+        productName="Other"
+        executionPackageId="wep_2"
+        totalDurationSeconds={24}
+        plannedBlocks={[
+          { block_index: 2, position: 1, prompt: 'b2' },
+          { block_index: 3, position: 2, prompt: 'b3', is_final: true },
+        ]}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId('full-video-progress')).toBeNull(),
+    );
+    expect(screen.getByTestId('generate-full-video-btn')).toBeInTheDocument();
+  });
+
+  it('selecting a saved clip resolves and fills the Flow context (diagnostics only)', async () => {
     resolveMock.mockResolvedValue(READY);
     lineageMock.mockResolvedValue({ lineage: [], count: 0 });
     candidatesMock.mockResolvedValue({
@@ -306,7 +413,11 @@ describe('NativeExtendPanel', () => {
       scene_display_name: null,
       verified: true,
     });
-    renderPanel(); // props supplied -> no auto-run; manual selection still works
+    renderPanel(); // manual selection requires opening Advanced Diagnostics first
+    const diagnostics = await screen.findByTestId('native-extend-advanced-diagnostics');
+    (diagnostics as HTMLDetailsElement).open = true;
+    fireEvent(diagnostics, new Event('toggle'));
+    await waitFor(() => expect(candidatesMock).toHaveBeenCalledTimes(1));
     const select = await screen.findByTestId('native-extend-source-select');
     fireEvent.change(select, { target: { value: 'clip-a' } });
     await waitFor(() =>
@@ -331,8 +442,11 @@ describe('NativeExtendPanel', () => {
   });
 
   it('restores ONE final video result from a completed durable job on mount (refresh-safe)', async () => {
-    // Refresh scenario: plan() reuses the existing job; status is already COMPLETE.
-    planMock.mockResolvedValue({ ...PLAN, status: 'COMPLETE' });
+    // Refresh scenario: the READ-ONLY lookup finds the existing job; status COMPLETE.
+    lookupMock.mockResolvedValue({
+      found: true, job_id: 'vj_1', status: 'COMPLETE',
+      plan_fingerprint: 'fp_1', plan: PLAN.plan, logical_job_key: 'ljk_1',
+    });
     jobStatusMock.mockResolvedValue(
       STATUS('Video ready', {
         status: 'COMPLETE', complete: true,
@@ -347,7 +461,8 @@ describe('NativeExtendPanel', () => {
     expect(screen.getByTestId('final-preview')).toBeInTheDocument();     // one preview
     expect(screen.getByTestId('final-download')).toHaveAttribute(
       'href', '/api/flow/retrieved/final_vj_1');
-    // it RESUMED — never started a fresh job on load
+    // it RESUMED read-only — never planned, never started a fresh job on load
+    expect(planMock).not.toHaveBeenCalled();
     expect(startJobMock).not.toHaveBeenCalled();
     // no second result card
     expect(screen.getAllByTestId('final-video-result')).toHaveLength(1);
@@ -474,8 +589,11 @@ describe('NativeExtendPanel', () => {
   it('shows a human re-confirm (not a failure) when a not-yet-started step needs re-authorization', async () => {
     resolveMock.mockResolvedValue(READY);
     lineageMock.mockResolvedValue({ lineage: [], count: 0 });
-    // On mount the plan reused an existing job whose status is AUTHORIZATION_EXPIRED.
-    planMock.mockResolvedValue({ ...PLAN, status: 'AUTHORIZATION_EXPIRED' });
+    // On mount the READ-ONLY lookup finds a job whose status is AUTHORIZATION_EXPIRED.
+    lookupMock.mockResolvedValue({
+      found: true, job_id: 'vj_1', status: 'AUTHORIZATION_EXPIRED',
+      plan_fingerprint: 'fp_1', plan: PLAN.plan, logical_job_key: 'ljk_1',
+    });
     jobStatusMock.mockResolvedValue(
       STATUS('Please review and confirm the video again.', {
         status: 'AUTHORIZATION_EXPIRED', error_code: 'AUTHORIZATION_EXPIRED',
