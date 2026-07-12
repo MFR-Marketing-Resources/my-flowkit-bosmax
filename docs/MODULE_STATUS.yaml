@@ -119,6 +119,10 @@ domains:
       - agent/services/google_flow_final_timeline_runtime.py
       - agent/services/video_production_orchestrator.py
       - agent/services/production_plan_resolver.py
+      # Unified all-mode reference contract (F2V 1-2 / HYBRID 1 / I2V 2-3 / T2V 0)
+      - agent/services/flow_mode_reference_contract.py
+      - tests/unit/test_flow_mode_reference_contract.py
+      - tests/unit/test_initial_reference_contract.py
       - tests/unit/test_video_production_orchestrator.py
       - tests/unit/test_production_plan_resolver.py
       - tests/unit/test_production_initial_adapter.py
