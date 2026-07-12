@@ -635,3 +635,44 @@ if __name__ == "__main__":
         fn()
         print("PASS", fn.__name__)
     print(f"\nALL {len(fns)} TESTS PASSED")
+
+
+def test_fastfail_identity_mismatch_exits_before_blind_timeout():
+    """Owner Phase-1: a completed candidate rejected for the SAME deterministic
+    identity reason every poll (immutable stored metadata — the incident's 31
+    identical rejections) must exit early as CURRENT_OUTPUT_IDENTITY_MISMATCH,
+    classified GENERATED_BUT_UNRETRIEVED, instead of blind-polling 36 rounds."""
+    calls = {"accept": 0}
+    nres = {"ok": True, "approved": True, "generation_started": True,
+            "model_used": "veo_3_1_r2v_lite", "model_ok": True,
+            "duration_used": 8, "duration_ok": True, "turns_used": 2,
+            "agent_text": "ok", "gen_prompt": "tool prompt", "gen_seed": None,
+            "tool_call_id": "t", "response_id": "r"}
+
+    async def fake_accept(client, cands, exclude, correlation, stats):
+        calls["accept"] += 1
+        stats["round_rejected_ids"] = ["decoy-completed-clip"]
+        stats["prompt_mismatched"] += 1
+        return (None, None, None, None)
+
+    mv._JOBS.clear()
+    mv._JOBS["g_ff"] = {"status": "SUBMITTED"}
+    restore = _setup_generate_mocks(nres)
+    orig_accept = mv._accept_correlated_output
+    mv._accept_correlated_output = fake_accept
+    try:
+        _run(mv._run_generate("g_ff", "F2V", "p", "p1",
+                              ["aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb"], None,
+                              "9:16", None, model="veo_3_1_lite", duration_s=8))
+        job = dict(mv._JOBS["g_ff"])
+    finally:
+        mv._accept_correlated_output = orig_accept
+        restore()
+        mv._JOBS.clear()
+
+    assert job["status"] == "GENERATED_BUT_UNRETRIEVED"      # credits honesty kept
+    assert "CURRENT_OUTPUT_IDENTITY_MISMATCH" in str(job.get("original_error"))
+    assert "prompt_mismatched" in str(job.get("original_error"))
+    # exited early: well below the 36-poll blind ceiling
+    assert calls["accept"] < 12
+    assert job.get("correlation_stats", {}).get("prompt_mismatched", 0) >= 3

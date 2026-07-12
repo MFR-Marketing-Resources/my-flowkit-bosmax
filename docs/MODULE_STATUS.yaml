@@ -127,6 +127,8 @@ domains:
       - tests/unit/test_initial_reference_contract.py
       - tests/unit/test_server_mode_authority.py
       - tests/fixtures/google_flow_media_resource/media_resource.sanitized.json
+      - tests/fixtures/google_flow_media_resource/initial_r2v_prompt_envelope.sanitized.txt
+      - tests/fixtures/google_flow_media_resource/initial_r2v_sse_prompt.sanitized.txt
       - tests/unit/test_video_production_orchestrator.py
       - tests/unit/test_production_plan_resolver.py
       - tests/unit/test_production_initial_adapter.py

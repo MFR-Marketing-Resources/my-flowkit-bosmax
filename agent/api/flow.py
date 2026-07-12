@@ -2038,6 +2038,7 @@ async def _bridge_generate_job_telemetry(request_id: str, job_id: str,
                 f"{'PARTIAL: ' + str(job.get('partial_detail')) if job.get('partial') else ''} "
                 f"local_path={job.get('local_path')}", "backend",
             )
+            await _persist_output_correlation_evidence(request_id, job_id, job)
             await crud.upsert_request_telemetry(
                 request_id, status="COMPLETED", completed_at=crud._now(),
                 last_heartbeat_at=crud._now(),
@@ -2055,11 +2056,38 @@ async def _bridge_generate_job_telemetry(request_id: str, job_id: str,
                 request_id, "FAILED", "FAIL", f"job={job_id} {code}", "backend",
                 fail_code=code, first_fail_stage="API_GENERATE_PROGRESS",
             )
+            await _persist_output_correlation_evidence(request_id, job_id, job)
             await crud.update_request(
                 request_id, status="FAILED", error_message=code, updated_at=crud._now(),
             )
             return
         await asyncio.sleep(10)
+
+
+async def _persist_output_correlation_evidence(request_id: str, job_id: str, job: dict):
+    """Durably persist the run's output-correlation evidence as a stage event
+    (Owner Phase-1). The incident (manual_faf40cf6) proved the in-memory
+    correlation_stats/generation_identity vanish on restart — the exact evidence
+    needed to diagnose a paid false-negative. Uses the EXISTING telemetry
+    mechanism; no schema change. Best-effort: evidence must never fail a job."""
+    import json as _json
+    try:
+        # Order matters: the compact decision evidence first so the tail-truncation
+        # below can only ever clip the long sse_prompt inside generation_identity.
+        evidence = {
+            "correlation_stats": job.get("correlation_stats"),
+            "output_correlation": job.get("output_correlation"),
+            "generation_identity": job.get("generation_identity"),
+        }
+        if not any(evidence.values()):
+            return
+        await crud.add_stage_event(
+            request_id, "API_OUTPUT_CORRELATION", "WAITING_FLOW",
+            f"job={job_id} " + _json.dumps(evidence, ensure_ascii=False)[:1800],
+            "backend",
+        )
+    except Exception:  # noqa: BLE001 — evidence is best-effort by contract
+        pass
 
 
 async def _resolve_asset_to_media_id(client, asset: dict, slot: str, request_id: str | None = None) -> str:
