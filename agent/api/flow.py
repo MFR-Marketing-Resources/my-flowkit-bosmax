@@ -259,6 +259,9 @@ def _asset_payload_has_local_file(asset: object) -> bool:
 # mistaken for a media id and the remote downloadUrl was never materialized).
 _FLOW_MEDIA_UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+# Final concat deliverable ids are minted as `final_{job_id}` (not a Flow UUID);
+# the pattern is path-traversal-safe (alphanumerics + underscore only).
+_FINAL_MEDIA_ID_RE = re.compile(r"^final_[A-Za-z0-9_]+$")
 
 
 def _extract_flow_media_id(asset: object) -> str | None:
@@ -938,8 +941,9 @@ async def get_retrieved_artifact(media_id: str):
     result inline the moment a job completes — no back-button/reload hunting."""
     from fastapi.responses import FileResponse
     from agent.config import OUTPUT_DIR
-    if not _FLOW_MEDIA_UUID_RE.match(str(media_id or "")):
-        raise HTTPException(422, "media_id must be a bare UUID")
+    mid = str(media_id or "")
+    if not (_FLOW_MEDIA_UUID_RE.match(mid) or _FINAL_MEDIA_ID_RE.match(mid)):
+        raise HTTPException(422, "media_id must be a bare UUID or final_<job_id>")
     base = OUTPUT_DIR / "retrieved"
     for ext, mime in ((".mp4", "video/mp4"), (".jpg", "image/jpeg"), (".png", "image/png")):
         candidate = base / f"{media_id}{ext}"
