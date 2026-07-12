@@ -1205,6 +1205,39 @@ async def ui_driver_verify_references(body: UiVerifyReferencesRequest):
         raise HTTPException(422, f"{exc.code}: {exc.detail}")
 
 
+@router.post("/ui-driver/reload-flow-tab")
+async def ui_driver_reload_flow_tab():
+    """Reload Flow tab to pick up updated content scripts (zero credit)."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    res = await client._send("RELOAD_FLOW_TAB", {}, timeout=45)
+    return res.get("result", res)
+
+
+@router.get("/ui-driver/composer-reference")
+async def ui_driver_composer_reference():
+    """Zero-credit composer container + thumbnail count from live Flow tab."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    res = await client._send("FLOWUI_COMPOSER_REFERENCE_STATE", {}, timeout=30)
+    return res.get("result", res)
+
+
+@router.post("/ui-driver/submit-boundary-probe")
+async def ui_driver_submit_boundary_probe():
+    """Reach Create control with intercept_only (zero credit)."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    await client.flowui_set_composer_prompt(
+        "BOSMAX Phase-2D zero-credit validation probe — not for generation")
+    res = await client.flowui_submit_composer_create(
+        confirm=True, intercept_only=True)
+    return res.get("result", res)
+
+
 @router.post("/ui-driver/extend-block")
 async def ui_driver_extend_block(body: UiExtendBlockRequest):
     """Owner timeline-Extend for ONE block. dry_run walks to

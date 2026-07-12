@@ -4,7 +4,7 @@
 	if (window.__FLOWUI_DRIVER_ACTIVE__) return;
 	window.__FLOWUI_DRIVER_ACTIVE__ = true;
 
-	const VERSION = "flowui-1.3.0-phase2d-20260712";
+	const VERSION = "flowui-1.3.1-phase2d-20260712";
 
 	const NAMES = {
 		ADD_CLIP: "Add Clip",
@@ -52,16 +52,26 @@
 		}
 	}
 
+	function isComposerAttachControl(el) {
+		if (!el || !vis(el)) return false;
+		const l = label(el).toLowerCase();
+		if (l === "add" || l.endsWith("add") || /\badd\b/.test(l)) return true;
+		// Material icon ligature prefixes (e.g. add_2Create) — proven project composer attach.
+		if (l.startsWith("add_")) return true;
+		return false;
+	}
+
 	function findComposerElement() {
 		const candidates = Array.from(
-			document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]'),
+			document.querySelectorAll(
+				'textarea, [contenteditable="true"], [role="textbox"]',
+			),
 		);
-		const specific = candidates.find(
-			(el) => el.getAttribute("aria-label") === "Editable text" && vis(el),
-		);
-		if (specific) return specific;
-		const withPlaceholder = candidates.find((el) => {
+		const creationComposer = candidates.find((el) => {
 			if (!vis(el)) return false;
+			if (el.getAttribute && el.getAttribute("data-slate-editor") === "true") {
+				return true;
+			}
 			const text =
 				el.textContent ||
 				el.getAttribute("placeholder") ||
@@ -69,16 +79,18 @@
 				"";
 			return text.includes(NAMES.COMPOSER_NEW);
 		});
-		if (withPlaceholder) return withPlaceholder;
+		if (creationComposer) return creationComposer;
+		const specific = candidates.find(
+			(el) => el.getAttribute("aria-label") === "Editable text" && vis(el),
+		);
+		if (specific) return specific;
 		return candidates.find(vis) || null;
 	}
 
 	function composerAddButtonWithin(root) {
 		if (!root || !root.querySelectorAll) return null;
 		for (const el of root.querySelectorAll('button, [role="button"]')) {
-			if (!vis(el)) continue;
-			const l = label(el).toLowerCase();
-			if (l === "add" || l.endsWith("add") || /\badd\b/.test(l)) return el;
+			if (isComposerAttachControl(el)) return el;
 		}
 		return null;
 	}
@@ -361,11 +373,7 @@
 		const composer = findComposerElement();
 		if (!composer) return { ok: false, error: "COMPOSER_NOT_FOUND" };
 		const addBtn = findByLabel("button", NAMES.COMPOSER_ADD) ||
-			Array.from(document.querySelectorAll("button")).find((el) => {
-				if (!vis(el)) return false;
-				const l = label(el).toLowerCase();
-				return l === "add" || l.endsWith("add");
-			});
+			Array.from(document.querySelectorAll("button")).find(isComposerAttachControl);
 		if (!addBtn) return { ok: false, error: "COMPOSER_ATTACH_CONTROL_NOT_FOUND" };
 		addBtn.click();
 		await sleep(400);
