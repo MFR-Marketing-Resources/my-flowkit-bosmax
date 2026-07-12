@@ -6427,6 +6427,10 @@ function isSettingsScopedModelSource(source) {
       return false;
     }
 
+    // FLOWUI verbs are owned by flow-ui-driver.js (Owner Phase-2): this
+    // catch-all must not answer them, or its synchronous reply wins the
+    // response race before the driver's async handler can respond.
+    if (msg && msg.type === 'FLOWUI') return false;
     sendResponse({ ok: false, error: 'ERR_UNKNOWN_MESSAGE_TYPE' });
     return false;
   };
