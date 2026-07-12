@@ -1,0 +1,61 @@
+{
+ "_captured": "2026-07-12 zero-credit, isolated debug Chrome (CDP), project 7bdd0f87",
+ "_evidence": ".ai/experiments/aisandbox_extend_discovery/out/ui_contract/20260712_17*",
+ "_note": "Accessible-name contract for the CURRENT Flow UI. Material icon ligature text prefixes each label (e.g. 'addAdd Clip') — drivers match on the LABEL suffix. No generated CSS classes, no coordinates.",
+ "video_detail": {
+  "proof_of_view": "button 'Back to projects'",
+  "toolbar": [
+   "Favorite",
+   "Share",
+   "Download",
+   "Move to trash",
+   "Hide history",
+   "More",
+   "Done"
+  ],
+  "timeline_add_clip": "button 'Add Clip'",
+  "add_clip_menu_items": [
+   "Add Clip",
+   "Extend (Veo 3.1 - Lite)"
+  ],
+  "extend_menu_template": "Extend ({{modelName}})",
+  "extend_prompt_placeholder": "What happens next?",
+  "extend_mode_chip": "Extend (Veo 3.1 - Lite)close",
+  "submit_credit_button": "arrow_forwardCreate",
+  "clear_prompt": "Clear prompt"
+ },
+ "detail_more_menu": [
+  "Download Project",
+  "Product Help",
+  "Flow Help Center",
+  "View all changelogs",
+  "Flow TV",
+  "About Flow",
+  "Learn Flow",
+  "Send app feedback",
+  "Report legal issue",
+  "Privacy Notice"
+ ],
+ "project_view": {
+  "composer_placeholder": "What do you want to create?",
+  "composer_attach_menu": [
+   "Upload media",
+   "Create Collection",
+   "Create Character",
+   "Create Scene"
+  ],
+  "nav_add_media": "Add Media",
+  "video_card": "div[role=button] containing title text + play_circle"
+ },
+ "download_project_capture": {
+  "suggested_filename": "download.zip",
+  "url_kind": "blob:",
+  "bytes": 2048103,
+  "sha256": "d5d3fe848416d08ca00289494cedce25702c64fe366dc235ee827ea721d43bfe",
+  "zip_signature": "PK\u0003\u0004",
+  "zip_entries": [
+   "Woman_holding_bottle_speaking_202607121723.mp4"
+  ],
+  "_meaning": "Download Project = client-side ZIP blob wrapping the timeline MP4(s); registered as project_archive, never as a video"
+ }
+}
