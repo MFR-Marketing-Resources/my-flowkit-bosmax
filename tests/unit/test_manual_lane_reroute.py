@@ -336,3 +336,135 @@ def test_source_lineage_default_warning_fires_only_for_bare_f2v():
     assert _source_lineage_default_warning("I2V", None) is None
     assert _source_lineage_default_warning("T2V", None) is None
     assert _source_lineage_default_warning("IMG", None) is None
+
+
+# ── unified all-mode reference contract (operator lane) ─────────────────────
+import pytest
+from fastapi import HTTPException
+
+
+def _contract_client():
+    class _C:
+        connected = True
+
+        async def get_media(self, media_id):
+            return {"status": 200, "data": {"name": media_id}}
+
+        async def get_credits(self):
+            return {"data": {"userPaygateTier": "PAYGATE_TIER_ONE"}}
+
+        async def harvest_video_urls(self, tab_id=None):
+            return {"result": {"flow_tab_found": True, "flow_tab_id": 1,
+                               "flow_url": "https://labs.google/fx/tools/flow/project/p1",
+                               "diag": {"projectId": "p1"}}}
+    return _C()
+
+
+def _wire_contract(monkeypatch, calls):
+    async def fake_start_generate(mode, prompt, project_id=None, image_media_ids=None,
+                                  aspect="9:16", tier="PAYGATE_TIER_ONE", **kw):
+        calls["start_generate"] = {"mode": mode, "image_media_ids": image_media_ids}
+        return {"job_id": "g_contract", "status": "SUBMITTED", "mode": mode}
+
+    async def fake_stage(request_id, stage, status, message, source, **kw):
+        calls.setdefault("stages", []).append((stage, message))
+
+    async def fake_upsert(request_id, **kw):
+        calls.setdefault("telemetry", []).append(kw.get("error_code"))
+
+    monkeypatch.setattr(flow_api, "get_flow_client", _contract_client)
+    monkeypatch.setattr(flow_api.crud, "add_stage_event", fake_stage)
+    monkeypatch.setattr(flow_api.crud, "upsert_request_telemetry", fake_upsert)
+    import agent.services.make_video as mv
+    monkeypatch.setattr(mv, "start_generate", fake_start_generate)
+
+
+_UUID_A = "aaaaaaaa-1111-4222-8333-000000000001"
+_UUID_B = "bbbbbbbb-1111-4222-8333-000000000002"
+_UUID_C = "cccccccc-1111-4222-8333-000000000003"
+
+
+def test_manual_lane_f2v_end_frame_reaches_flow_in_order(monkeypatch):
+    """The user-selected END frame was previously materialized then silently
+    DROPPED (never uploaded) — a 2-image F2V job must send BOTH frames, start
+    first, end second."""
+    calls = {}
+    _wire_contract(monkeypatch, calls)
+    body = {"request_id": "m_f2v2", "prompt": "make it",
+            "startAsset": {"mediaId": _UUID_A},
+            "endAsset": {"mediaId": _UUID_B},
+            "source_mode": "F2V", "aspect": "9:16"}
+    result = _run(flow_api._run_manual_job_via_generate(body, "F2V", body["startAsset"]))
+    assert result["ok"] is True
+    assert calls["start_generate"]["image_media_ids"] == [_UUID_A, _UUID_B]
+
+
+def test_manual_lane_blocks_t2v_with_any_reference(monkeypatch):
+    calls = {}
+    _wire_contract(monkeypatch, calls)
+    body = {"request_id": "m_t2vref", "prompt": "text only",
+            "startAsset": {"mediaId": _UUID_A}, "source_mode": "T2V"}
+    with pytest.raises(HTTPException) as exc:
+        _run(flow_api._run_manual_job_via_generate(body, "T2V", body["startAsset"]))
+    assert exc.value.status_code == 422
+    assert "ERR_T2V_REFERENCES_FORBIDDEN" in str(exc.value.detail)
+    assert "start_generate" not in calls          # zero transport, zero credit
+
+
+def test_manual_lane_blocks_i2v_with_fewer_than_two_refs(monkeypatch):
+    calls = {}
+    _wire_contract(monkeypatch, calls)
+    body = {"request_id": "m_i2v1", "prompt": "ingredients",
+            "refs": {"subjectAsset": {"mediaId": _UUID_A}}}
+    with pytest.raises(HTTPException) as exc:
+        _run(flow_api._run_manual_job_via_generate(body, "I2V", None))
+    assert exc.value.status_code == 422
+    assert "ERR_REFERENCE_COUNT_CONTRACT" in str(exc.value.detail)
+    assert "start_generate" not in calls
+
+
+def test_manual_lane_hybrid_is_exactly_one_product_image(monkeypatch):
+    calls = {}
+    _wire_contract(monkeypatch, calls)
+    # exactly 1 → allowed
+    ok_body = {"request_id": "m_hyb1", "prompt": "hybrid",
+               "startAsset": {"mediaId": _UUID_A}, "source_mode": "HYBRID"}
+    result = _run(flow_api._run_manual_job_via_generate(ok_body, "F2V", ok_body["startAsset"]))
+    assert result["ok"] is True
+    assert calls["start_generate"]["image_media_ids"] == [_UUID_A]
+    # a second image under HYBRID → blocked (never silently dropped)
+    calls.clear()
+    bad = {"request_id": "m_hyb2", "prompt": "hybrid",
+           "startAsset": {"mediaId": _UUID_A}, "endAsset": {"mediaId": _UUID_B},
+           "source_mode": "HYBRID"}
+    with pytest.raises(HTTPException) as exc:
+        _run(flow_api._run_manual_job_via_generate(bad, "F2V", bad["startAsset"]))
+    assert exc.value.status_code == 422
+    assert "ERR_REFERENCE_COUNT_CONTRACT" in str(exc.value.detail)
+    assert "start_generate" not in calls
+
+
+def test_manual_lane_blocks_f2v_with_more_than_two_refs(monkeypatch):
+    calls = {}
+    _wire_contract(monkeypatch, calls)
+    body = {"request_id": "m_f2v3", "prompt": "frames",
+            "startAsset": {"mediaId": _UUID_A}, "endAsset": {"mediaId": _UUID_B},
+            "refs": {"subjectAsset": {"mediaId": _UUID_C}}}
+    with pytest.raises(HTTPException) as exc:
+        _run(flow_api._run_manual_job_via_generate(body, "F2V", body["startAsset"]))
+    assert exc.value.status_code == 422
+    assert "ERR_REFERENCE_COUNT_CONTRACT" in str(exc.value.detail)
+    assert "start_generate" not in calls
+
+
+def test_manual_lane_i2v_three_refs_preserve_slot_order(monkeypatch):
+    calls = {}
+    _wire_contract(monkeypatch, calls)
+    body = {"request_id": "m_i2v3", "prompt": "ingredients",
+            "refs": {"subjectAsset": {"mediaId": _UUID_A},
+                     "sceneAsset": {"mediaId": _UUID_B},
+                     "styleAsset": {"mediaId": _UUID_C}}}
+    result = _run(flow_api._run_manual_job_via_generate(body, "I2V", None))
+    assert result["ok"] is True
+    # canonical order: subject → scene → style (semantic roles preserved)
+    assert calls["start_generate"]["image_media_ids"] == [_UUID_A, _UUID_B, _UUID_C]

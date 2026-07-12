@@ -331,6 +331,9 @@ export interface WorkspaceExecutePayload {
 	stop_after_stage?: string;
 	startAsset?: UploadedAsset | null;
 	endAsset?: UploadedAsset | null;
+	// Surface declaration for the backend reference-count contract:
+	// HYBRID = exactly 1 product image; F2V/FRAMES = 1-2 frames.
+	source_mode?: "F2V" | "HYBRID" | "FRAMES" | "I2V" | "T2V";
 	refs?: {
 		subjectAsset?: UploadedAsset | null;
 		sceneAsset?: UploadedAsset | null;

@@ -148,3 +148,65 @@ async def test_full_video_job_end_to_end_zero_credit(monkeypatch, tmp_path):
         client, generate_initial=flow._production_initial_generator, out_dir=tmp_path)
     assert isinstance(resumed, list)
     assert client.extend_submits == 1 and client.concat_submits == 1
+
+
+async def test_full_video_job_i2v_two_reference_initial(monkeypatch, tmp_path):
+    """Multi-block I2V: the initial segment carries BOTH ordered ingredient refs
+    through the SAME one-door service, then extends its own Video 1."""
+    monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
+    nonce = "e2e-i2v2"
+    captured: dict = {}
+    _wire_initial(monkeypatch, nonce, captured)
+    client = _ExtendConcatClient(nonce, final_seconds=16.0)
+
+    intent = _intent(nonce)
+    intent["initial_source_mode"] = "I2V"
+    intent["initial_reference_media_ids"] = [f"asset-{nonce}", f"asset2-{nonce}"]
+    planned = await orch.plan_job(intent, trust_client_authority=True)
+    auth = await orch.authorize_job(
+        planned["job_id"], confirmed_plan_fingerprint=planned["plan_fingerprint"])
+    status = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth["authorization_token"],
+        generate_initial=flow._production_initial_generator,
+        out_dir=tmp_path, poll_interval_s=0)
+    assert status["complete"] is True
+
+    # BOTH refs reached the one door, in the user's order — never reduced to one
+    assert captured["mode"] == "I2V"
+    assert captured["image_media_ids"] == [f"asset-{nonce}", f"asset2-{nonce}"]
+    # Extend used THIS job's own Video 1 (structural current-run binding)
+    job = await crud.get_video_production_job(planned["job_id"])
+    assert json.loads(job["segment_media_ids_json"])[0] == f"init-{nonce}"
+    assert client.extend_submits == 1
+
+
+async def test_full_video_job_t2v_text_only_initial(monkeypatch, tmp_path):
+    """Multi-block T2V: block-1 goes to the SAME service with ZERO images and no
+    asset authority, then extends its own Video 1."""
+    monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
+    nonce = "e2e-t2v"
+    captured: dict = {}
+    _wire_initial(monkeypatch, nonce, captured)
+    client = _ExtendConcatClient(nonce, final_seconds=16.0)
+
+    intent = _intent(nonce)
+    intent["initial_mode"] = "T2V"
+    intent["initial_source_mode"] = "T2V"
+    intent["approved_asset_id"] = None
+    intent["approved_asset_sha256"] = None
+    intent["initial_asset_media_id"] = None
+    planned = await orch.plan_job(intent, trust_client_authority=True)
+    auth = await orch.authorize_job(
+        planned["job_id"], confirmed_plan_fingerprint=planned["plan_fingerprint"])
+    status = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth["authorization_token"],
+        generate_initial=flow._production_initial_generator,
+        out_dir=tmp_path, poll_interval_s=0)
+    assert status["complete"] is True
+
+    # text-only: the one door received NO reference images
+    assert captured["mode"] == "T2V"
+    assert not captured["image_media_ids"]
+    job = await crud.get_video_production_job(planned["job_id"])
+    assert json.loads(job["segment_media_ids_json"])[0] == f"init-{nonce}"
+    assert client.extend_submits == 1

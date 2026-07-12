@@ -35,9 +35,16 @@ REQUIRED_AUTHORITY = (
     "engine", "model", "aspect_ratio", "requested_duration_seconds",
 )
 
+# Asset authority applies only to IMAGE-anchored initials — a T2V (text-only)
+# block-1 has, by contract, ZERO reference images and no asset media id.
+_IMAGE_MODE_ONLY_AUTHORITY = (
+    "approved_asset_id", "approved_asset_sha256", "initial_asset_media_id",
+)
+
 # Authority the client may NOT set in production — always resolved server-side.
 _CLIENT_OVERRIDABLE_AUTHORITY = (
     "approved_asset_id", "approved_asset_sha256", "initial_asset_media_id",
+    "initial_reference_media_ids", "initial_source_mode",
     "initial_mode", "model", "aspect_ratio", "initial_prompt_text",
     "initial_prompt_fingerprint", "continuation_prompts",
 )
@@ -65,6 +72,21 @@ def _clean(value: Any) -> str:
 def duration_is_valid(seconds: int) -> bool:
     """A Native-Extend timeline is an exact sum of 8s blocks, >= one extend."""
     return seconds >= _MIN_DURATION and seconds % _SEGMENT_SECONDS == 0
+
+
+def _ordered_reference_media_ids(resolved_assets: list[dict],
+                                 primary: dict | None) -> list[str]:
+    """ORDERED Flow media ids for the initial generation: the anchoring product
+    asset first (start-frame role), then the remaining package assets in their
+    stored order. Preserves the user's selection exactly — nothing is silently
+    dropped or added; count violations fail closed downstream."""
+    ordered: list[str] = []
+    rest = [a for a in (resolved_assets or []) if a is not primary]
+    for asset in ([primary] if primary else []) + rest:
+        mid = _clean((asset or {}).get("media_id"))
+        if mid and mid not in ordered:
+            ordered.append(mid)
+    return ordered
 
 
 def _primary_product_asset(resolved_assets: list[dict]) -> dict | None:
@@ -153,10 +175,34 @@ async def resolve_production_authority(
                 out["approved_asset_sha256"] = asset.get("asset_fingerprint")
             if not _clean(out.get("initial_asset_media_id")):
                 out["initial_asset_media_id"] = asset.get("media_id")
+        # The package's ordered resolved assets ARE the user's reference
+        # selection: block-1 sends EXACTLY this list (anchor first) — nothing is
+        # ever silently dropped, added, or reduced downstream.
+        if not isinstance(out.get("initial_reference_media_ids"), list):
+            ordered = _ordered_reference_media_ids(resolved_assets, asset)
+            if ordered:
+                out["initial_reference_media_ids"] = ordered
+
+    # T2V asset-authority relaxation applies only to an EXPLICIT text-only mode
+    # (package/intent declared) — never to the incomplete-plan fallback below,
+    # which must keep reporting the missing asset authority.
+    out["initial_mode_explicit"] = _clean(out.get("initial_mode")) in _VIDEO_START_MODES
 
     # Block-1 make_video mode: a start image → I2V, else T2V. Never IMG.
     if not _clean(out.get("initial_mode")) or out.get("initial_mode") not in _VIDEO_START_MODES:
         out["initial_mode"] = "I2V" if _clean(out.get("initial_asset_media_id")) else "T2V"
+
+    # ── ORDERED initial reference list (same contract as one-block generation) ──
+    refs = out.get("initial_reference_media_ids")
+    if not isinstance(refs, list):
+        refs = ([out["initial_asset_media_id"]]
+                if _clean(out.get("initial_asset_media_id")) else [])
+    refs = [str(m) for m in refs if _clean(m)]
+    if _clean(out.get("initial_mode")).upper() == "T2V" and out.get("initial_mode_explicit"):
+        refs = []  # text-only: NEVER inherit stale image state into T2V
+    out["initial_reference_media_ids"] = refs
+    if refs and not _clean(out.get("initial_asset_media_id")):
+        out["initial_asset_media_id"] = refs[0]
 
     # ── per-block reviewed prompts (initial + continuations) ─────────────────
     supplied_conts = out.get("continuation_prompts") if trust_client_authority else None
@@ -249,7 +295,12 @@ async def _compile_block_prompts(out: dict[str, Any], segment_count: int) -> Non
 
 
 def _missing_fields(out: dict[str, Any], extend_ops: int) -> list[str]:
-    missing = [f for f in REQUIRED_AUTHORITY if not _clean(out.get(f))]
+    from agent.services import flow_mode_reference_contract as _refc
+    mode = _clean(out.get("initial_mode")).upper()
+    explicit_t2v = mode == "T2V" and bool(out.get("initial_mode_explicit"))
+    required = [f for f in REQUIRED_AUTHORITY
+                if not (explicit_t2v and f in _IMAGE_MODE_ONLY_AUTHORITY)]
+    missing = [f for f in required if not _clean(out.get(f))]
     conts = out.get("continuation_prompts") or []
     if len(conts) < extend_ops:
         missing.append("continuation_prompts")
@@ -258,4 +309,18 @@ def _missing_fields(out: dict[str, Any], extend_ops: int) -> list[str]:
     # fail-closed: the initial prompt must be exactly ONE block
     if (out.get("initial_prompt_text") or "").count(_BLOCK_HEADER_MARKER) > 1:
         missing.append("single_block_initial_prompt")
+    # ── per-mode reference contract (fail-closed, zero credit) ───────────────
+    # When the USER's surface mode is known (execution package / explicit
+    # intent) the full contract applies; otherwise (recovery/legacy intents)
+    # only the transport hard caps — proven single-image flows stay valid.
+    refs = out.get("initial_reference_media_ids") or []
+    source_mode = _clean(out.get("initial_source_mode")) or None
+    if source_mode or mode == "T2V":
+        ok, _code, detail = _refc.validate_reference_count(
+            mode, len(refs), source_mode=source_mode)
+    else:
+        detail = _refc.service_hard_violation(mode, len(refs))
+        ok = detail is None
+    if not ok:
+        missing.append(f"initial_reference_contract ({detail})")
     return missing

@@ -1906,6 +1906,9 @@ CREATE INDEX IF NOT EXISTS idx_video_side_effect_job ON video_job_side_effect(jo
             # loses the (possibly credit-spending) job — resume polls this handle,
             # never re-submits.
             ("initial_lane_job_id", "TEXT"), ("initial_lane_project_id", "TEXT"),
+            # Unified all-mode contract: the ORDERED reference media ids block-1
+            # actually sends (F2V 1-2 / HYBRID 1 / I2V 2-3 / T2V 0).
+            ("initial_reference_media_ids_json", "TEXT"),
         ):
             if col not in vj_cols:
                 await db.execute(f"ALTER TABLE video_production_job ADD COLUMN {col} {decl}")

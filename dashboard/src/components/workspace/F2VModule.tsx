@@ -631,6 +631,9 @@ export default function F2VModule({
 						},
 			},
 			mode: "F2V",
+			// Backend reference-count contract authority: HYBRID = exactly the ONE
+			// product image; F2V/FRAMES = 1-2 frames (start [+ end]).
+			source_mode: surfaceMode,
 		});
 	};
 

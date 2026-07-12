@@ -789,15 +789,19 @@ REF_SLOT_ORDER: tuple[tuple[str, str], ...] = (
 )
 
 
-def ordered_ref_slots(start_asset, refs) -> list[tuple[str, dict]]:
+def ordered_ref_slots(start_asset, refs, end_asset=None) -> list[tuple[str, dict]]:
     """Return the ORDERED [(slot_label, asset_dict), ...] the execution lane will
-    upload, WITHOUT resolving/uploading anything — startAsset first, then
-    subject, scene, style, image. Pure and deterministic: this is the dry-run
-    proof seam for execution-payload reference ordering (no live Flow upload).
+    upload, WITHOUT resolving/uploading anything — startAsset first, then the
+    F2V END frame (previously materialized but silently DROPPED here — a 2-image
+    frames job lost its user-selected end frame), then subject, scene, style,
+    image. Pure and deterministic: this is the dry-run proof seam for
+    execution-payload reference ordering (no live Flow upload).
     """
     slots: list[tuple[str, dict]] = []
     if isinstance(start_asset, dict) and start_asset:
         slots.append(("Start", start_asset))
+    if isinstance(end_asset, dict) and end_asset:
+        slots.append(("End", end_asset))
     if isinstance(refs, dict):
         for ref_key, slot_label in REF_SLOT_ORDER:
             asset = refs.get(ref_key)
@@ -1244,6 +1248,7 @@ class VideoJobPlanRequest(BaseModel):
     # fully-specified reviewed plan).
     initial_mode: Optional[str] = None
     initial_asset_media_id: Optional[str] = None
+    initial_reference_media_ids: Optional[list] = None
     initial_prompt_text: Optional[str] = None
     continuation_prompts: Optional[list] = None
 
@@ -1265,6 +1270,7 @@ def _job_intent(body: "VideoJobPlanRequest") -> dict:
         "client_request_nonce": body.client_request_nonce,
         "initial_mode": body.initial_mode,
         "initial_asset_media_id": body.initial_asset_media_id,
+        "initial_reference_media_ids": body.initial_reference_media_ids,
         "initial_prompt_text": body.initial_prompt_text,
         "continuation_prompts": body.continuation_prompts,
     }
@@ -1377,22 +1383,46 @@ def _find_key(obj, key, _depth=0):
     return None
 
 
-def _initial_gen_preconditions(job: dict) -> tuple[str, str, str, str]:
+def _initial_gen_preconditions(job: dict) -> tuple[str, str, list, str]:
+    """Fail-closed authority check for the initial segment. Returns the ORDERED
+    reference media-id list the one-door service receives — the SAME per-mode
+    reference contract every one-block generation obeys (F2V 1-2 · I2V 2-3 ·
+    T2V 0); the multi-block initial is not a special transport."""
+    from agent.services import flow_mode_reference_contract as _refc
     prompt = (job.get("initial_prompt_text") or "").strip()
     if not prompt:
         raise InitialGenerationError("initial prompt not bound to job")
     if _is_multi_block_prompt(prompt):
         raise InitialGenerationError(
             "initial prompt carries more than one compiled block — block 1 only")
-    if not (job.get("product_id") and job.get("approved_asset_id")
-            and job.get("approved_asset_sha256")):
-        raise InitialGenerationError("product/asset authority missing on job")
     mode = (job.get("initial_mode") or "I2V").upper()
-    start_media = job.get("initial_asset_media_id")
-    if mode in ("I2V", "F2V") and not start_media:
+    if mode == "T2V":
+        # Text-only: product authority still applies; asset authority does not.
+        if not job.get("product_id"):
+            raise InitialGenerationError("product authority missing on job")
+    elif not (job.get("product_id") and job.get("approved_asset_id")
+              and job.get("approved_asset_sha256")):
+        raise InitialGenerationError("product/asset authority missing on job")
+    # Ordered reference list persisted at plan time; legacy rows (planned before
+    # the column existed) fall back to the single initial asset.
+    try:
+        refs = json.loads(job.get("initial_reference_media_ids_json") or "null")
+    except (TypeError, ValueError):
+        refs = None
+    if refs is None:
+        refs = [job["initial_asset_media_id"]] if job.get("initial_asset_media_id") else []
+    refs = [str(m) for m in refs if m]
+    if mode == "T2V" and refs:
+        raise InitialGenerationError(
+            "T2V initial must carry ZERO reference images — stale image state is "
+            "never inherited into a text-only generation")
+    if mode in ("I2V", "F2V") and not refs:
         raise InitialGenerationError(f"{mode} initial requires an approved product asset media id")
+    violation = _refc.service_hard_violation(mode, len(refs))
+    if violation:
+        raise InitialGenerationError(violation)
     aspect = _VIDEO_ASPECT_TO_RATIO.get(job.get("aspect_ratio") or "", "9:16")
-    return prompt, mode, start_media, aspect
+    return prompt, mode, refs, aspect
 
 
 async def _ensure_scene_membership(client, op_id: str, project_id: str,
@@ -1469,7 +1499,7 @@ async def _production_initial_generator(job: dict) -> dict:
     """
     from agent.services import make_video as _mv
     import asyncio as _asyncio
-    prompt, mode, start_media, aspect = _initial_gen_preconditions(job)
+    prompt, mode, refs, aspect = _initial_gen_preconditions(job)
 
     client = get_flow_client()
     if not getattr(client, "connected", False):
@@ -1477,7 +1507,7 @@ async def _production_initial_generator(job: dict) -> dict:
 
     submit = await _mv.start_generate(
         mode=mode, prompt=prompt, project_id=job.get("project_id") or None,
-        image_media_ids=[start_media] if start_media else None,
+        image_media_ids=refs or None,
         aspect=aspect, model=job.get("model"), duration_s=8, num_videos=1)
     if not isinstance(submit, dict) or submit.get("status") == "REJECTED":
         raise InitialGenerationError(
@@ -2135,10 +2165,13 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             "prompt carries more than one compiled block — submit block 1 only; "
             "block 2+ belongs to the Extend step", "ERR_MULTI_BLOCK_PROMPT")
 
-    # Collect EVERY image the dashboard sent: F2V uses startAsset; I2V/IMG send
-    # refs.{subjectAsset,sceneAsset,styleAsset} (previously DROPPED here — I2V died
-    # ERR_START_ASSET_REQUIRED and IMG silently ignored its reference images).
-    slot_assets = ordered_ref_slots(start_asset, body.get("refs"))
+    # Collect EVERY image the dashboard sent: F2V uses startAsset (+ optional
+    # endAsset — previously materialized then silently DROPPED here, losing the
+    # user's 2nd frame); I2V/IMG send refs.{subjectAsset,sceneAsset,styleAsset}
+    # (previously DROPPED here — I2V died ERR_START_ASSET_REQUIRED and IMG
+    # silently ignored its reference images).
+    slot_assets = ordered_ref_slots(start_asset, body.get("refs"),
+                                    end_asset=body.get("endAsset"))
     refs = []
     for slot_label, asset in slot_assets:
         resolved = await _resolve_asset_to_media_id(client, asset, slot_label, request_id)
@@ -2149,6 +2182,19 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         await _fail_manual_request(
             request_id, "API_LANE_REJECTED",
             f"{mode} needs a start/reference image", "ERR_START_ASSET_REQUIRED")
+
+    # ── USER MODE REFERENCE CONTRACT (fail-closed, zero credit) ──────────────
+    # F2V/FRAMES 1-2 · HYBRID exactly 1 (the product image) · I2V 2-3 · T2V 0.
+    # The dashboard declares its surface via `source_mode` (HYBRID vs F2V);
+    # without a declaration the transport-mode bounds apply. Wrong counts are
+    # rejected BEFORE any settings/generation work — never silently dropped,
+    # padded, or converted to a text-only run.
+    from agent.services import flow_mode_reference_contract as _refc
+    _ref_ok, _ref_code, _ref_detail = _refc.validate_reference_count(
+        mode, len(refs), source_mode=body.get("source_mode"))
+    if not _ref_ok:
+        await _fail_manual_request(
+            request_id, "API_LANE_REJECTED", _ref_detail, _ref_code)
 
     tier = "PAYGATE_TIER_ONE"
     if mode in ("T2V", "I2V", "F2V"):

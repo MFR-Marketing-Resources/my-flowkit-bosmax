@@ -289,6 +289,16 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     _gc_jobs()
     mode = (mode or "").upper()
     num_videos = max(1, min(4, int(num_videos or 1)))
+    # ONE-DOOR reference contract (transport hard caps): T2V is text-only —
+    # attached references are NEVER inherited/forwarded; F2V carries at most 2
+    # frames, I2V at most 3 ingredient refs. Rejected synchronously, before the
+    # lane is claimed or any credit-adjacent work starts. Lower bounds live at
+    # the operator layers (see flow_mode_reference_contract).
+    from agent.services import flow_mode_reference_contract as _refc
+    _ref_count = len([m for m in (image_media_ids or []) if m])
+    _violation = _refc.service_hard_violation(mode, _ref_count)
+    if _violation:
+        return {"status": "REJECTED", "error": _violation}
     # Single-flight (patch H): one video job at a time on the shared Flow tab. IMG exempt.
     if mode in _VIDEO_MODES and _VIDEO_LANE_JOB and _job_active(_VIDEO_LANE_JOB):
         return {"status": "REJECTED", "error": "VIDEO_JOB_IN_FLIGHT",

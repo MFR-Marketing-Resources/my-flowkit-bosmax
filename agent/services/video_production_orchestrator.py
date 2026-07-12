@@ -224,6 +224,8 @@ async def plan_job(intent: dict[str, Any], *,
         initial_prompt_text=authority.get("initial_prompt_text"),
         initial_prompt_fingerprint=authority.get("initial_prompt_fingerprint"),
         initial_asset_media_id=authority.get("initial_asset_media_id"),
+        initial_reference_media_ids_json=json.dumps(
+            authority.get("initial_reference_media_ids") or []),
         continuation_prompts_json=json.dumps(conts),
         plan_fingerprint=fingerprint,
         whole_plan_json=json.dumps(plan),
