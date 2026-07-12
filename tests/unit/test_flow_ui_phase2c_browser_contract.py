@@ -16,6 +16,10 @@ def test_flow_ui_driver_uses_structural_composer_container():
     assert "composer_panel:editable_text_plus_add_control_ancestor" in text
     assert "FLOWUI_SUBMIT_COMPOSER_CREATE" in text
     assert "UI_INITIAL_SUBMIT_NOT_IN_PHASE2B" not in text
+    # Phase-2D: first ancestor wins — no upward replacement loop
+    block = text.split("function findComposerReferenceContainer")[1].split("function ")[0]
+    assert "let best" not in block
+    assert "return el" in block
 
 
 def test_ui_contract_documents_composer_reference_container():

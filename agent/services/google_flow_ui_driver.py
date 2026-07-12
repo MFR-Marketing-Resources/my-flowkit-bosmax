@@ -412,7 +412,7 @@ async def _persist_ui_extend_child(
 
     child_media = child.get("child_media_id")
     child_op = child.get("child_operation_id")
-    child_pmid = child.get("child_primary_media_id") or child_media
+    child_pmid = child.get("child_primary_media_id")
 
     existing = await crud.get_extend_lineage_by_idempotency(idem)
     lineage_id = existing["extend_lineage_id"] if existing else str(uuid.uuid4())
@@ -594,7 +594,7 @@ async def extend_block_via_ui(
     mark(S_EXTEND_COMPLETE)
     mark(S_NEXT_BLOCK_READY, next_parent_media_resource_id=child.get("child_media_id"))
 
-    op_ref = child.get("child_operation_id") or child.get("child_media_id")
+    op_ref = child.get("child_operation_id")
     await crud.update_video_job_side_effect(
         idem, submission_state="TERMINAL", credit_state="MAY_HAVE_SPENT",
         retry_safety="RESUME_ONLY", operation_ref=op_ref)

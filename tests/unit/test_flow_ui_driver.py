@@ -2,6 +2,7 @@
 import hashlib
 import json
 import zipfile
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -259,6 +260,10 @@ async def test_live_extend_polls_and_persists_child(monkeypatch):
     assert segs == ["video1-op"]
     state = json.loads(vj["stage_state_json"])
     assert state["ui_parent_media_resource_ids"][-1] == child_id
+    lin = await crud.get_extend_lineage_by_idempotency(out["idempotency_key"])
+    assert lin is not None
+    assert lin["child_primary_media_id"] is None
+    assert lin["child_operation_id"] is None
 
 
 async def test_three_block_chain_uses_child2_as_block3_parent():
@@ -398,3 +403,144 @@ async def test_initial_duplicate_submit_blocked(monkeypatch):
             expected_count=0, dry_run=False, confirm_live_credit_burn=True,
             request_id="req-dup", intercept_submit=True)
     assert e.value.code == "INITIAL_SUBMIT_BLOCKED"
+
+
+async def test_child_primary_media_id_stays_null_when_provider_omits(monkeypatch):
+    monkeypatch.setenv("FLOW_UI_DRIVER_ENABLED", "1")
+    child_id = "child-pm"
+    c = _Client(
+        scene_phases=[
+            {"data": {"media": [], "sceneWorkflows": []}},
+            {"data": {"media": [{"name": child_id, "workflowId": "wf-only"}],
+                       "sceneWorkflows": []}},
+        ],
+        media_prompts={child_id: "Extend child prompt exact"},
+    )
+    job_id = await _job("pmnull")
+    prompt = "Extend child prompt exact"
+
+    async def get_media_pm(self, mid):
+        return {"data": {"name": mid, "workflowId": "wf-only",
+                         "video": {"prompt": prompt,
+                                   "model": "veo_3_1_t2v_fast_portrait"}}}
+    c.get_media = get_media_pm.__get__(c, _Client)
+
+    out = await ui.extend_block_via_ui(
+        c, job_id=job_id, parent_media_operation_id="video1-op",
+        block_index=2, position=1, prompt=prompt,
+        dry_run=False, confirm_live_credit_burn=True,
+        poll_timeout_s=5, poll_interval_s=1)
+    assert out["child_primary_media_id"] is None
+    assert out["child_workflow_id"] == "wf-only"
+    assert out["child_operation_id"] is None
+    lin = await crud.get_extend_lineage_by_idempotency(out["idempotency_key"])
+    assert lin["child_primary_media_id"] is None
+
+
+async def test_child_primary_media_id_persisted_when_provider_supplies(monkeypatch):
+    monkeypatch.setenv("FLOW_UI_DRIVER_ENABLED", "1")
+    child_id = "child-both"
+    c = _Client(
+        scene_phases=[
+            {"data": {"media": [], "sceneWorkflows": []}},
+            {"data": {"media": [{"name": child_id, "workflowId": "wf-x",
+                                 "primaryMediaId": "pm-x"}],
+                       "sceneWorkflows": []}},
+        ],
+        media_prompts={child_id: "Extend child prompt exact"},
+    )
+    async def get_media(self, mid):
+        return {"data": {"name": mid, "workflowId": "wf-x",
+                         "primaryMediaId": "pm-x",
+                         "video": {"prompt": self.over.get("media_prompts", {}).get(mid, ""),
+                                   "model": "veo_3_1_t2v_fast_portrait"}}}
+    c.get_media = get_media.__get__(c, _Client)
+    job_id = await _job("pmboth")
+    out = await ui.extend_block_via_ui(
+        c, job_id=job_id, parent_media_operation_id="video1-op",
+        block_index=2, position=1, prompt="Extend child prompt exact",
+        dry_run=False, confirm_live_credit_burn=True,
+        poll_timeout_s=5, poll_interval_s=1)
+    assert out["child_primary_media_id"] == "pm-x"
+    lin = await crud.get_extend_lineage_by_idempotency(out["idempotency_key"])
+    assert lin["child_primary_media_id"] == "pm-x"
+
+
+def test_composer_nearest_ancestor_python_simulation():
+    """Nested panels: first ancestor with add wins; outer project media excluded."""
+
+    class Node:
+        def __init__(self, nid, *, add=False, project_card=False, thumb=False):
+            self.id = nid
+            self.add = add
+            self.project_card = project_card
+            self.thumb = thumb
+            self.parent = None
+            self.children = []
+
+        def contains(self, node):
+            cur = node
+            while cur:
+                if cur is self:
+                    return True
+                cur = cur.parent
+            return False
+
+    def link(parent, child):
+        child.parent = parent
+        parent.children.append(child)
+
+    def find_container(composer):
+        el = composer.parent
+        while el:
+            if not el.contains(composer):
+                break
+            if el.add:
+                return el
+            el = el.parent
+        return None
+
+    def count_thumbs(container):
+        total = 0
+        stack = [container]
+        while stack:
+            n = stack.pop()
+            if n.thumb and not n.project_card:
+                total += 1
+            stack.extend(n.children)
+        return total
+
+    outer = Node("outer", add=True)
+    outer_thumb = Node("outer_thumb", project_card=True, thumb=True)
+    outer_extra = Node("outer_extra", thumb=True)
+    inner = Node("inner", add=True)
+    ref = Node("ref", thumb=True)
+    composer = Node("composer")
+    link(outer, outer_thumb)
+    link(outer, outer_extra)
+    link(outer, inner)
+    link(inner, ref)
+    link(inner, composer)
+
+    picked = find_container(composer)
+    assert picked is inner
+    assert picked is not outer
+    assert count_thumbs(picked) == 1
+    assert count_thumbs(outer) >= 2
+
+
+def test_composer_container_dom_first_ancestor_contract():
+    import json
+    import subprocess
+    mjs = Path(__file__).resolve().parent / "composer_container_dom.mjs"
+    proc = subprocess.run(
+        ["node", str(mjs)], capture_output=True, text=True, timeout=30,
+        cwd=str(mjs.parent))
+    if proc.returncode == 0 and proc.stdout.strip().startswith("{"):
+        data = json.loads(proc.stdout.strip().splitlines()[-1])
+        assert data["ok"] is True
+        assert data["selected_container_id"] == "inner"
+        return
+    if "SKIP" in (proc.stdout + proc.stderr):
+        pytest.skip("DOMParser unavailable in node")
+    raise AssertionError(proc.stdout + proc.stderr)
