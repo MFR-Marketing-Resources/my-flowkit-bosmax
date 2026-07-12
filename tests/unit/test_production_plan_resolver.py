@@ -89,13 +89,19 @@ async def test_reads_real_execution_package(monkeypatch):
         aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT", model="veo_3_1_extension_lite",
         manual_override=False, prompt_text="PERSISTED block-1 product-truth prompt",
         prompt_fingerprint="pf", prompt_package_snapshot_id="snap",
-        asset_slots=json.dumps(["subject"]),
-        resolved_assets=json.dumps([{
-            "asset_id": f"product-image:{pid}:subject",
-            "asset_fingerprint": "sha-persisted", "slot_key": "subject",
-            "media_id": "media-persisted"}]),
+        asset_slots=json.dumps(["subject", "scene"]),
+        resolved_assets=json.dumps([
+            {"asset_id": f"product-image:{pid}:subject",
+             "asset_fingerprint": "sha-persisted", "slot_key": "subject",
+             "media_id": "media-persisted"},
+            {"asset_id": f"scene-context:{pid}:scene",
+             "asset_fingerprint": "sha-scene", "slot_key": "scene",
+             "media_id": "media-scene"},
+        ]),
         readiness="READY", execution_allowed=True, production_generation_allowed=True,
-        manual_fallback="{}", blockers="[]", request_lineage_payload="{}",
+        manual_fallback="{}", blockers="[]",
+        request_lineage_payload=json.dumps(
+            {"compiler": {"source_mode": "INGREDIENTS"}}),
         source_of_truth_notes="[]")
     # continuation prompts supplied explicitly so we isolate the package→authority map
     out = await resolver.resolve_production_authority({
@@ -111,6 +117,11 @@ async def test_reads_real_execution_package(monkeypatch):
     assert out["initial_asset_media_id"] == "media-persisted"
     assert out["initial_prompt_text"] == "PERSISTED block-1 product-truth prompt"
     assert out["initial_mode"] == "I2V"
+    # PR321 closure: the canonical source mode is SERVER-derived from the
+    # package's persisted compiler lineage, and the ordered reference list is
+    # the package's own asset selection (INGREDIENTS contract 2-3 — met).
+    assert out["initial_source_mode"] == "INGREDIENTS"
+    assert out["initial_reference_media_ids"] == ["media-persisted", "media-scene"]
 
 
 async def test_maps_compile_door_block_prompts(monkeypatch):

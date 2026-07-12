@@ -347,24 +347,76 @@ async def _durable_media_exclusion() -> set:
         return set()
 
 
-async def _save_video_by_get_media(client, candidates, exclude) -> tuple:
-    """Return (media_id, mp4_path, size_mb) for the first candidate whose get_media
-    yields a real video (encodedVideo), excluding stale/reference ids. Else (None,..)."""
+async def _accept_correlated_output(client, candidates, exclude, correlation,
+                                    stats) -> tuple:
+    """DETERMINISTIC current-run output binding (PR321 closure, Defect 2).
+
+    A candidate media id becomes this run's output ONLY when its OWN media
+    resource structurally proves it belongs to THIS submission. Captured live
+    contract (zero-credit GET /v1/media/{id}, clip 12b526c5, 2026-07-12):
+    {name, video{prompt, model, seed, aspectRatio, encodedVideo}} — the resource
+    carries the EXACT generation prompt and model key that produced it.
+
+    Acceptance requires:
+      * media.video.prompt equals (stripped) the exact prompt THIS run fired —
+        the agent-tool prompt captured from the approved SSE when present,
+        else the submitted block-1 prompt;
+      * a CONFIRMED model mismatch (both sides known) rejects the candidate.
+
+    The exclusion set (stale/refs/DOM-snapshot/DB-known) remains a DEFENSIVE
+    prefilter and diagnostic only — it is never the acceptance authority, and a
+    finished video that exposes NO prompt metadata is counted `unverifiable`
+    (the caller fails closed OUTPUT_CORRELATION_UNAVAILABLE), never accepted.
+
+    Returns (media_id, mp4_path, size_mb, evidence) or (None, None, None, None).
+    """
     import base64
+    anchors = [str(a).strip() for a in (correlation.get("sse_prompt"),
+                                        correlation.get("submitted_prompt")) if a]
     for mid in dict.fromkeys(candidates):  # de-dupe, keep order
         if mid in exclude:
             continue
         media = await client.get_media(mid)
         mdata = media.get("data", media) if isinstance(media, dict) else media
         enc = _deep(mdata, "encodedVideo")
-        if enc:
-            vbytes = base64.b64decode(enc)
-            outdir = OUTPUT_DIR / "retrieved"
-            outdir.mkdir(parents=True, exist_ok=True)
-            path = outdir / f"{mid}.mp4"
-            path.write_bytes(vbytes)
-            return mid, str(path), round(len(vbytes) / 1024 / 1024, 2)
-    return None, None, None
+        if not enc:
+            continue  # not a finished video (or not a video resource at all)
+        video_meta = mdata.get("video") if isinstance(mdata, dict) else None
+        video_meta = video_meta if isinstance(video_meta, dict) else {}
+        vprompt = video_meta.get("prompt")
+        vmodel = video_meta.get("model")
+        if vprompt is None:
+            # finished video whose resource exposes no generation prompt — it can
+            # NEVER be bound to this run; count it so the job fails closed.
+            stats["unverifiable"] += 1
+            if mid not in stats["unverifiable_ids"]:
+                stats["unverifiable_ids"].append(mid)
+            continue
+        if str(vprompt).strip() not in anchors:
+            stats["prompt_mismatched"] += 1  # another run's output — never ours
+            continue
+        expected_model = correlation.get("expected_model")
+        if expected_model and vmodel and str(vmodel) != str(expected_model):
+            stats["model_mismatched"] += 1
+            continue
+        vbytes = base64.b64decode(enc)
+        outdir = OUTPUT_DIR / "retrieved"
+        outdir.mkdir(parents=True, exist_ok=True)
+        path = outdir / f"{mid}.mp4"
+        path.write_bytes(vbytes)
+        sse_anchor = str(correlation.get("sse_prompt") or "").strip()
+        evidence = {
+            "media_id": mid,
+            "matched_on": ("sse_tool_prompt" if sse_anchor
+                           and str(vprompt).strip() == sse_anchor
+                           else "submitted_prompt"),
+            "media_model": vmodel,
+            "media_seed": video_meta.get("seed"),
+            "tool_call_id": correlation.get("tool_call_id"),
+            "response_id": correlation.get("response_id"),
+        }
+        return mid, str(path), round(len(vbytes) / 1024 / 1024, 2), evidence
+    return None, None, None, None
 
 
 # Retrieval-phase failure markers (false-negative fix). A failure carrying one of these AFTER the
@@ -372,7 +424,8 @@ async def _save_video_by_get_media(client, candidates, exclude) -> tuple:
 # likely generated (credits likely spent) but could not be fetched locally. Such a job must be
 # reported as GENERATED_BUT_UNRETRIEVED, never as a plain generation FAILED.
 _RETRIEVAL_PHASE_MARKERS = (
-    "EDITOR_TAB_LOST", "TAB_DRIFT", "PROJECT_DRIFT", "video not found/retrieved in time")
+    "EDITOR_TAB_LOST", "TAB_DRIFT", "PROJECT_DRIFT", "OUTPUT_CORRELATION_UNAVAILABLE",
+    "video not found/retrieved in time")
 
 
 def _is_retrieval_phase_error(msg) -> bool:
@@ -507,6 +560,20 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
 
         job["status"], job["stage"] = "GENERATING", "rendering + retrieving"
         generating = True  # past approval: any failure below is RETRIEVAL-phase, not generation
+        # DETERMINISTIC current-run binding (PR321 closure): the exact identities of
+        # THIS submission — the acceptance authority for every retrieved artifact.
+        correlation = {
+            "submitted_prompt": prompt,
+            "sse_prompt": nres.get("gen_prompt"),
+            "expected_model": nres.get("model_used"),
+            "tool_call_id": nres.get("tool_call_id"),
+            "response_id": nres.get("response_id"),
+            "seed": nres.get("gen_seed"),
+        }
+        job["generation_identity"] = {
+            k: v for k, v in correlation.items() if k != "submitted_prompt"}
+        corr_stats = {"unverifiable": 0, "prompt_mismatched": 0,
+                      "model_mismatched": 0, "unverifiable_ids": []}
         probe_turn = int(nres.get("turns_used") or 0) + 1  # next agent turn for status probes
         # False-DONE fix (live: g_745e95ede679 claimed the PREVIOUS run's mp4 at try 1):
         # snapshot every media id already visible in the project BEFORE polling, so
@@ -572,11 +639,14 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             # Collect up to num_videos fresh artifacts (user count setting = x2 means
             # TWO videos must come home, not just the first one found).
             while True:
-                mid, path, size = await _save_video_by_get_media(client, cands, exclude)
+                mid, path, size, evidence = await _accept_correlated_output(
+                    client, cands, exclude, correlation, corr_stats)
                 if not mid:
                     break
                 exclude.add(mid)
-                collected.append({"media_id": mid, "local_path": path, "size_mb": size})
+                collected.append({"media_id": mid, "local_path": path,
+                                  "size_mb": size, "correlation": evidence})
+                job["output_correlation"] = evidence
                 job["artifacts"] = list(collected)
                 job["stage"] = (f"retrieved {len(collected)}/{num_videos} video(s)"
                                 f" (try {i + 1})")
@@ -619,8 +689,18 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                        partial_detail=f"retrieved {len(collected)}/{num_videos} requested videos")
             await _record_artifacts(job, mode, collected)
             return
+        # Finished video(s) exist but expose no generation prompt to bind them to
+        # THIS run — refuse the uncorrelated candidate(s) instead of guessing
+        # (never a false success; credits may have been spent).
+        if corr_stats["unverifiable"] and not collected:
+            job["correlation_stats"] = dict(corr_stats)
+            raise RuntimeError(
+                "OUTPUT_CORRELATION_UNAVAILABLE: finished media "
+                f"{corr_stats['unverifiable_ids'][:4]} exposes no generation-prompt "
+                "metadata — refusing an uncorrelated candidate as this run's output")
         # Render started but no mp4 harvested in the polling window — treat as a retrieval-phase
         # failure (classified below as GENERATED_BUT_UNRETRIEVED), not a generation failure.
+        job["correlation_stats"] = dict(corr_stats)
         raise RuntimeError("video not found/retrieved in time")
     except Exception as e:  # noqa: BLE001
         msg = str(e)

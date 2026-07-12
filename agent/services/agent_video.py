@@ -149,6 +149,7 @@ def parse_agent_sse(text) -> dict:
                     "error": text["error"], "text": ""}
         text = json.dumps(text)
     permission, tools, error, texts, model, duration_used = None, [], None, [], None, None
+    gen_prompt, gen_seed, tool_call_id, response_id = None, None, None, None
     for line in (text or "").splitlines():
         line = line.strip()
         if not line.startswith("data:"):
@@ -180,6 +181,15 @@ def parse_agent_sse(text) -> dict:
                         duration_used = int(round(float(dur)))
                     except (TypeError, ValueError):
                         pass
+                # PR321 closure: capture EVERY exact identity the generation tool
+                # invocation exposes (SSE contract carries toolCallId + responseId;
+                # prompt/seed when the agent passes them) — the correlation anchors
+                # for deterministic current-run output binding.
+                gen_prompt = (ta.get("prompt") or ta.get("video_prompt")
+                              or ta.get("prompt_text") or gen_prompt)
+                gen_seed = ta.get("seed", gen_seed)
+                tool_call_id = ti.get("toolCallId") or tool_call_id
+                response_id = am.get("responseId") or response_id
     joined = " ".join(texts)
     low = joined.lower()
     # started_tool is the HARD proof — a real generation toolInvocation fired. `started` keeps
@@ -190,7 +200,9 @@ def parse_agent_sse(text) -> dict:
     return {"permission": permission, "tools": tools, "started": started,
             "started_tool": started_tool,
             "error": error, "text": joined[:600], "model": model,
-            "duration_used": duration_used}
+            "duration_used": duration_used,
+            "gen_prompt": gen_prompt, "gen_seed": gen_seed,
+            "tool_call_id": tool_call_id, "response_id": response_id}
 
 
 def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
@@ -275,6 +287,12 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             "model_ok": (video_models.model_matches(mu, target_model) if mu else None),
             "duration_used": du,
             "duration_ok": (None if du is None else (du == tgt_dur)),
+            # Exact generation identities from the fired tool (PR321 closure) —
+            # the deterministic output-correlation anchors.
+            "gen_prompt": st.get("gen_prompt"),
+            "gen_seed": st.get("gen_seed"),
+            "tool_call_id": st.get("tool_call_id"),
+            "response_id": st.get("response_id"),
         }
 
     state = await send(prompt, media=media_ids)

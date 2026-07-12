@@ -1483,6 +1483,10 @@ async def _map_lane_to_identity(client, lane: dict, job: dict) -> dict:
         "operation_id": op_id, "media_id": op_id, "workflow_id": wf,
         "project_id": project_id, "scene_id": scene_id,
         "credit_balance_after": lane.get("remaining_credits"),
+        # Exact-output correlation evidence bound by the one-door lane (PR321
+        # closure) — persisted on the job for diagnostics + audit.
+        "correlation": lane.get("output_correlation")
+                       or lane.get("generation_identity"),
     }
 
 
@@ -2185,13 +2189,32 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
 
     # ── USER MODE REFERENCE CONTRACT (fail-closed, zero credit) ──────────────
     # F2V/FRAMES 1-2 · HYBRID exactly 1 (the product image) · I2V 2-3 · T2V 0.
-    # The dashboard declares its surface via `source_mode` (HYBRID vs F2V);
-    # without a declaration the transport-mode bounds apply. Wrong counts are
-    # rejected BEFORE any settings/generation work — never silently dropped,
-    # padded, or converted to a text-only run.
+    # SERVER-OWNED authority (PR321 closure): when the job runs a persisted
+    # execution package, the canonical source mode is DERIVED from that
+    # package's compiler lineage — a contradicting client declaration is
+    # rejected, and the derived mode (never a silent F2V transport fallback)
+    # is the contract authority. Without a package the dashboard declaration /
+    # transport bounds apply as before. Wrong counts are rejected BEFORE any
+    # settings/generation work — never silently dropped, padded, or converted
+    # to a text-only run.
     from agent.services import flow_mode_reference_contract as _refc
+    _authority_source_mode = body.get("source_mode")
+    _pkg_id = str(body.get("workspace_execution_package_id") or "").strip()
+    if _pkg_id:
+        _pkg = await crud.get_workspace_execution_package(_pkg_id)
+        _derived = _refc.derive_package_source_mode(_pkg)
+        if _derived:
+            _declared = _refc.normalize_source_mode(body.get("source_mode"))
+            if _declared and _declared != _derived:
+                await _fail_manual_request(
+                    request_id, "API_LANE_REJECTED",
+                    f"client source_mode '{body.get('source_mode')}' contradicts the "
+                    f"execution package's compiled lineage '{_derived}' — the package "
+                    "authority is server-owned",
+                    _refc.ERR_SOURCE_MODE_AUTHORITY_MISMATCH)
+            _authority_source_mode = _derived
     _ref_ok, _ref_code, _ref_detail = _refc.validate_reference_count(
-        mode, len(refs), source_mode=body.get("source_mode"))
+        mode, len(refs), source_mode=_authority_source_mode)
     if not _ref_ok:
         await _fail_manual_request(
             request_id, "API_LANE_REJECTED", _ref_detail, _ref_code)

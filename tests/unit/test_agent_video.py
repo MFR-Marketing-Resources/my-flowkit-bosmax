@@ -272,3 +272,29 @@ if __name__ == "__main__":
         fn()
         print("PASS", fn.__name__)
     print(f"\nALL {len(fns)} TESTS PASSED")
+
+
+# ── PR321 closure: exact generation identities captured from the approved SSE ─
+_POST_APPROVE_WITH_IDENTITY = (
+    'data: {"agentMessage": {"agentEvents": [{"eventId": "ev-9","toolInvocation": '
+    '{"toolCallId": "tc-12345","toolName": "generate_video_with_references",'
+    '"toolArguments": {"model_usage_key": "veo_3_1_r2v_lite","duration": 8.0,'
+    '"aspect_ratio": "9:16","prompt": "EXACT agent generation prompt","seed": 4242}}}],'
+    '"responseId": "resp-777"}}\n'
+)
+
+
+def test_parse_captures_generation_identities_from_approved_sse():
+    st = av.parse_agent_sse(_POST_APPROVE_WITH_IDENTITY)
+    assert st["started_tool"] is True
+    assert st["tool_call_id"] == "tc-12345"
+    assert st["response_id"] == "resp-777"
+    assert st["gen_prompt"] == "EXACT agent generation prompt"
+    assert st["gen_seed"] == 4242
+    assert st["model"] == "veo_3_1_r2v_lite"
+
+
+def test_parse_identities_absent_stay_none():
+    st = av.parse_agent_sse(_POST_APPROVE)
+    assert st["gen_prompt"] is None and st["gen_seed"] is None
+    assert st["tool_call_id"] is None   # synthetic minimal shape has no toolCallId

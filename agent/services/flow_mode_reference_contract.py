@@ -97,3 +97,49 @@ def service_hard_violation(mode: str, count: int) -> Optional[str]:
                 f"{count} reference image(s) were attached")
     return (f"{ERR_REFERENCE_COUNT_CONTRACT}: {(mode or '').upper()} supports at "
             f"most {hard} reference image(s), got {count}")
+
+
+# ── SERVER-OWNED source-mode authority (PR321 closure, Defect 1) ─────────────
+ERR_SOURCE_MODE_AUTHORITY_MISMATCH = "ERR_SOURCE_MODE_AUTHORITY_MISMATCH"
+
+# Compiler-canonical lineages (ugc_video_prompt_compiler_service.CANONICAL_SOURCE_MODES).
+_CANONICAL_SOURCE_MODES = {"T2V", "HYBRID", "FRAMES", "INGREDIENTS", "IMAGES"}
+
+# UI / transport aliases → canonical lineage (the dashboard's F2V surface IS the
+# FRAMES lineage; its I2V surface IS INGREDIENTS).
+_SOURCE_MODE_ALIASES = {
+    "F2V": "FRAMES", "FRAMES": "FRAMES", "HYBRID": "HYBRID",
+    "I2V": "INGREDIENTS", "INGREDIENTS": "INGREDIENTS", "T2V": "T2V",
+    "IMAGES": "IMAGES", "IMG": "IMAGES",
+}
+
+# The compiler's documented per-mode DEFAULT lineage when a package predates the
+# persisted compiler lineage (see _source_lineage_default_warning: a bare F2V
+# compile defaults to the HYBRID product-anchor branch).
+_PACKAGE_MODE_DEFAULT_LINEAGE = {"T2V": "T2V", "I2V": "INGREDIENTS", "F2V": "HYBRID"}
+
+
+def normalize_source_mode(value) -> str | None:
+    """Canonical lineage for a UI/transport surface declaration (None if unknown)."""
+    return _SOURCE_MODE_ALIASES.get(str(value or "").strip().upper())
+
+
+def derive_package_source_mode(pkg: dict | None) -> str | None:
+    """The SERVER-OWNED canonical source mode of a persisted execution package.
+
+    Authority order (never a client declaration):
+      1. the compiler lineage persisted at package-compile time
+         (`request_lineage_payload.compiler.source_mode` — canonical set);
+      2. the compiler's documented per-mode default for legacy packages.
+    """
+    if not pkg:
+        return None
+    import json as _json
+    try:
+        lineage = _json.loads(pkg.get("request_lineage_payload") or "{}")
+    except (TypeError, ValueError):
+        lineage = {}
+    compiled = str(((lineage.get("compiler") or {}).get("source_mode")) or "").strip().upper()
+    if compiled in _CANONICAL_SOURCE_MODES:
+        return compiled
+    return _PACKAGE_MODE_DEFAULT_LINEAGE.get(str(pkg.get("mode") or "").strip().upper())

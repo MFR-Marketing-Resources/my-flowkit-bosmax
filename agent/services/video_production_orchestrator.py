@@ -226,6 +226,7 @@ async def plan_job(intent: dict[str, Any], *,
         initial_asset_media_id=authority.get("initial_asset_media_id"),
         initial_reference_media_ids_json=json.dumps(
             authority.get("initial_reference_media_ids") or []),
+        initial_source_mode=authority.get("initial_source_mode"),
         continuation_prompts_json=json.dumps(conts),
         plan_fingerprint=fingerprint,
         whole_plan_json=json.dumps(plan),
@@ -328,6 +329,7 @@ async def _persist_initial_result(job_id: str, idem: str, seg: dict, *,
         initial_media_id=seg.get("media_id") or seg["operation_id"],
         initial_workflow_id=seg.get("workflow_id"),
         project_id=seg.get("project_id"), scene_id=seg.get("scene_id"),
+        initial_correlation_json=json.dumps(seg.get("correlation") or None),
         segment_media_ids_json=json.dumps([seg["operation_id"]]))
     if seg.get("media_id") and seg.get("scene_id"):
         try:
@@ -649,6 +651,10 @@ async def get_job_status(job_id: str) -> dict:
         "error_code": job.get("error_code"),
         "requested_duration_seconds": job.get("requested_duration_seconds"),
         "product_name": job.get("product_name"),
+        # PR321 closure diagnostics: canonical server-derived surface mode and the
+        # exact output-correlation evidence bound at INITIAL completion.
+        "initial_source_mode": job.get("initial_source_mode"),
+        "initial_correlation": json.loads(job.get("initial_correlation_json") or "null"),
         "plan": plan,
         "final_media_id": job.get("final_media_id"),
         "final_duration_s": job.get("final_duration_s"),

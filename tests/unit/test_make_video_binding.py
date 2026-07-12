@@ -270,20 +270,21 @@ def _setup_generate_mocks(nres):
     async def fake_negotiate(*a, **k):
         return nres
 
-    async def fake_save(client, cands, exclude):
-        return ("vid-1", "/out/vid-1.mp4", 1.0)
+    async def fake_save(client, cands, exclude, correlation, stats):
+        return ("vid-1", "/out/vid-1.mp4", 1.0,
+                {"media_id": "vid-1", "matched_on": "submitted_prompt"})
 
     orig = (mv.get_flow_client, mv._bind_editor_session,
-            mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio)
+            mv.agent_video.negotiate_and_generate, mv._accept_correlated_output, mv.asyncio)
     mv.get_flow_client = lambda: _C()
     mv._bind_editor_session = fake_bind
     mv.agent_video.negotiate_and_generate = fake_negotiate
-    mv._save_video_by_get_media = fake_save
+    mv._accept_correlated_output = fake_save
     mv.asyncio = _ShimAsyncio(mv.asyncio)
 
     def restore():
         (mv.get_flow_client, mv._bind_editor_session,
-         mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio) = orig
+         mv.agent_video.negotiate_and_generate, mv._accept_correlated_output, mv.asyncio) = orig
     return restore
 
 
@@ -359,20 +360,21 @@ def _setup_generate_mocks_custom(nres, harvest_result, save_result=(None, None, 
     async def fake_negotiate(*a, **k):
         return nres
 
-    async def fake_save(client, cands, exclude):
-        return save_result
+    async def fake_save(client, cands, exclude, correlation, stats):
+        return (*save_result, {"media_id": save_result[0],
+                               "matched_on": "submitted_prompt"} if save_result[0] else None)
 
     orig = (mv.get_flow_client, mv._bind_editor_session,
-            mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio)
+            mv.agent_video.negotiate_and_generate, mv._accept_correlated_output, mv.asyncio)
     mv.get_flow_client = lambda: _C()
     mv._bind_editor_session = fake_bind
     mv.agent_video.negotiate_and_generate = fake_negotiate
-    mv._save_video_by_get_media = fake_save
+    mv._accept_correlated_output = fake_save
     mv.asyncio = _ShimAsyncio(mv.asyncio)
 
     def restore():
         (mv.get_flow_client, mv._bind_editor_session,
-         mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio) = orig
+         mv.agent_video.negotiate_and_generate, mv._accept_correlated_output, mv.asyncio) = orig
     return restore
 
 
@@ -463,19 +465,20 @@ def test_retrieval_reloads_stale_tab_and_never_claims_preexisting_video():
         return {"approved": True, "model_ok": True, "duration_ok": True,
                 "model_used": "veo_3_1_r2v_lite", "duration_used": 8}
 
-    async def fake_save(client, cands, exclude):
+    async def fake_save(client, cands, exclude, correlation, stats):
         usable = [m for m in cands if m not in exclude]
         assert "old-video" not in usable, "pre-existing video must be excluded from retrieval"
         if "fresh-video" in usable:
-            return ("fresh-video", "/out/v.mp4", 1.9)
-        return (None, None, None)
+            return ("fresh-video", "/out/v.mp4", 1.9,
+                    {"media_id": "fresh-video", "matched_on": "submitted_prompt"})
+        return (None, None, None, None)
 
     orig = (mv.get_flow_client, mv._bind_editor_session,
-            mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio)
+            mv.agent_video.negotiate_and_generate, mv._accept_correlated_output, mv.asyncio)
     mv.get_flow_client = lambda: _C()
     mv._bind_editor_session = fake_bind
     mv.agent_video.negotiate_and_generate = fake_negotiate
-    mv._save_video_by_get_media = fake_save
+    mv._accept_correlated_output = fake_save
     mv.asyncio = _ShimAsyncio(mv.asyncio)
     mv._JOBS.clear()
     mv._JOBS["jr"] = {"status": "SUBMITTED"}
@@ -485,7 +488,7 @@ def test_retrieval_reloads_stale_tab_and_never_claims_preexisting_video():
         job = dict(mv._JOBS["jr"])
     finally:
         (mv.get_flow_client, mv._bind_editor_session,
-         mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media, mv.asyncio) = orig
+         mv.agent_video.negotiate_and_generate, mv._accept_correlated_output, mv.asyncio) = orig
         mv._JOBS.clear()
 
     assert state["reloads"] >= 1          # the loop refreshed the stale tab
@@ -522,8 +525,8 @@ def test_retrieval_probe_fails_fast_on_reference_image_missing():
         return {"approved": True, "model_ok": True, "duration_ok": True,
                 "model_used": "veo_3_1_r2v_lite", "duration_used": 8, "turns_used": 4}
 
-    async def fake_save(client, cands, exclude):
-        return (None, None, None)
+    async def fake_save(client, cands, exclude, correlation, stats):
+        return (None, None, None, None)
 
     async def fake_probe(client, project_id, session_id, turn_number):
         probes["count"] += 1
@@ -533,12 +536,12 @@ def test_retrieval_probe_fails_fast_on_reference_image_missing():
                 "turn_number": turn_number + 1}
 
     orig = (mv.get_flow_client, mv._bind_editor_session,
-            mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media,
+            mv.agent_video.negotiate_and_generate, mv._accept_correlated_output,
             mv.agent_video.probe_render_failure, mv.asyncio)
     mv.get_flow_client = lambda: _C()
     mv._bind_editor_session = fake_bind
     mv.agent_video.negotiate_and_generate = fake_negotiate
-    mv._save_video_by_get_media = fake_save
+    mv._accept_correlated_output = fake_save
     mv.agent_video.probe_render_failure = fake_probe
     mv.asyncio = _ShimAsyncio(mv.asyncio)
     mv._JOBS.clear()
@@ -549,7 +552,7 @@ def test_retrieval_probe_fails_fast_on_reference_image_missing():
         job = dict(mv._JOBS["jp"])
     finally:
         (mv.get_flow_client, mv._bind_editor_session,
-         mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media,
+         mv.agent_video.negotiate_and_generate, mv._accept_correlated_output,
          mv.agent_video.probe_render_failure, mv.asyncio) = orig
         mv._JOBS.clear()
 
@@ -588,22 +591,23 @@ def test_retrieval_collects_user_count_videos():
         return {"approved": True, "model_ok": True, "duration_ok": True,
                 "model_used": "veo_3_1_r2v_lite", "duration_used": 8}
 
-    async def fake_save(client, cands, exclude):
+    async def fake_save(client, cands, exclude, correlation, stats):
         usable = [m for m in cands if m not in exclude]
         if usable:
-            return (usable[0], f"/out/{usable[0]}.mp4", 1.5)
-        return (None, None, None)
+            return (usable[0], f"/out/{usable[0]}.mp4", 1.5,
+                    {"media_id": usable[0], "matched_on": "submitted_prompt"})
+        return (None, None, None, None)
 
     async def fake_record(job, mode, artifacts):
         recorded.extend(a["media_id"] for a in artifacts)
 
     orig = (mv.get_flow_client, mv._bind_editor_session,
-            mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media,
+            mv.agent_video.negotiate_and_generate, mv._accept_correlated_output,
             mv._record_artifacts, mv.asyncio)
     mv.get_flow_client = lambda: _C()
     mv._bind_editor_session = fake_bind
     mv.agent_video.negotiate_and_generate = fake_negotiate
-    mv._save_video_by_get_media = fake_save
+    mv._accept_correlated_output = fake_save
     mv._record_artifacts = fake_record
     mv.asyncio = _ShimAsyncio(mv.asyncio)
     mv._JOBS.clear()
@@ -614,7 +618,7 @@ def test_retrieval_collects_user_count_videos():
         job = dict(mv._JOBS["jc"])
     finally:
         (mv.get_flow_client, mv._bind_editor_session,
-         mv.agent_video.negotiate_and_generate, mv._save_video_by_get_media,
+         mv.agent_video.negotiate_and_generate, mv._accept_correlated_output,
          mv._record_artifacts, mv.asyncio) = orig
         mv._JOBS.clear()
 
