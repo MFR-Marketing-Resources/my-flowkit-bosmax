@@ -4,7 +4,7 @@
 	if (window.__FLOWUI_DRIVER_ACTIVE__) return;
 	window.__FLOWUI_DRIVER_ACTIVE__ = true;
 
-	const VERSION = "flowui-1.1.0-phase2b-20260712";
+	const VERSION = "flowui-1.2.0-phase2c-20260712";
 
 	const NAMES = {
 		ADD_CLIP: "Add Clip",
@@ -73,60 +73,84 @@
 		return candidates.find(vis) || null;
 	}
 
-	function collectComposerContextRoots(composer, depth = 5) {
-		const roots = [];
-		const seen = new Set();
-		let cur = composer;
-		for (let i = 0; i < depth && cur; i++) {
-			if (!seen.has(cur)) {
-				seen.add(cur);
-				roots.push(cur);
-			}
-			cur = cur.parentElement;
+	function composerAddButtonWithin(root) {
+		if (!root || !root.querySelectorAll) return null;
+		for (const el of root.querySelectorAll('button, [role="button"]')) {
+			if (!vis(el)) continue;
+			const l = label(el).toLowerCase();
+			if (l === "add" || l.endsWith("add") || /\badd\b/.test(l)) return el;
 		}
-		return roots;
+		return null;
 	}
 
-	function nodeCarriesMediaId(node, mediaId) {
-		const mid = String(mediaId || "");
-		if (!mid) return false;
-		const attrs = [];
-		if (node.src) attrs.push(node.src);
-		if (node.currentSrc) attrs.push(node.currentSrc);
+	/** Proven composer-reference panel: smallest ancestor containing composer + add control. */
+	function findComposerReferenceContainer(composer) {
+		if (!composer) return null;
+		let el = composer.parentElement;
+		let best = null;
+		while (el && el !== document.body) {
+			if (!el.contains(composer)) break;
+			if (composerAddButtonWithin(el)) best = el;
+			el = el.parentElement;
+		}
+		return best;
+	}
+
+	const CONTAINER_EVIDENCE =
+		"composer_panel:editable_text_plus_add_control_ancestor";
+
+	function isInsideProjectVideoCard(node) {
+		let p = node;
+		while (p && p !== document.body) {
+			if (p.getAttribute && p.getAttribute("role") === "button") {
+				const t = (p.textContent || "").toLowerCase();
+				if (t.includes("play_circle") || /\d{1,2}:\d{2}/.test(t)) return true;
+			}
+			p = p.parentElement;
+		}
+		return false;
+	}
+
+	function extractMediaTokensFromThumb(node) {
+		const tokens = [];
+		if (!node) return tokens;
+		if (node.src) tokens.push(String(node.src));
+		if (node.currentSrc) tokens.push(String(node.currentSrc));
 		if (node.getAttribute) {
 			for (const a of node.getAttributeNames()) {
-				attrs.push(node.getAttribute(a));
+				const v = node.getAttribute(a);
+				if (v) tokens.push(String(v));
 			}
 		}
-		return attrs.some((v) => v && String(v).includes(mid));
+		return tokens;
+	}
+
+	function thumbMatchesExpectedId(node, expectedId) {
+		const want = String(expectedId || "");
+		if (!want) return false;
+		return extractMediaTokensFromThumb(node).some((t) => t.includes(want));
 	}
 
 	function collectComposerReferenceThumbnails(composer) {
-		const roots = collectComposerContextRoots(composer, 6);
-		const composerRect = composer.getBoundingClientRect();
+		const container = findComposerReferenceContainer(composer);
+		if (!container) return { container: null, thumbs: [] };
 		const thumbs = [];
 		const seen = new Set();
-		for (const root of roots) {
-			if (!root.querySelectorAll) continue;
-			for (const node of root.querySelectorAll("img, video, picture, canvas")) {
-				if (!vis(node) || seen.has(node)) continue;
-				const rect = node.getBoundingClientRect();
-				if (rect.width < 20 || rect.height < 20) continue;
-				const hNear =
-					rect.right >= composerRect.left - 180 &&
-					rect.left <= composerRect.right + 240;
-				const vNear =
-					Math.abs(
-						rect.top + rect.height / 2 -
-							(composerRect.top + composerRect.height / 2),
-					) <= Math.max(composerRect.height * 3, 280);
-				if (!hNear || !vNear) continue;
-				seen.add(node);
-				thumbs.push({ node, rect });
-			}
+		const nodes = container.querySelectorAll("img, video, picture");
+		for (const node of nodes) {
+			if (!vis(node) || seen.has(node)) continue;
+			if (isInsideProjectVideoCard(node)) continue;
+			const rect = node.getBoundingClientRect();
+			if (rect.width < 24 || rect.height < 24) continue;
+			seen.add(node);
+			thumbs.push({ node, rect });
 		}
 		thumbs.sort((a, b) => a.rect.left - b.rect.left || a.rect.top - b.rect.top);
-		return thumbs;
+		return { container, thumbs };
+	}
+
+	function nodeCarriesMediaId(node, mediaId) {
+		return thumbMatchesExpectedId(node, mediaId);
 	}
 
 	function composerReferenceState() {
@@ -137,106 +161,180 @@
 				error: "COMPOSER_NOT_FOUND",
 				composer_found: false,
 				thumbnails: [],
-				count: 0,
+				actual_total_count: 0,
 			};
 		}
-		const thumbs = collectComposerReferenceThumbnails(composer);
-		const mapped = thumbs.map((t, index) => {
-			const ids = [];
-			for (const attr of ["src", "data-media-id", "data-asset-id"]) {
-				const v = t.node.getAttribute && t.node.getAttribute(attr);
-				if (v) ids.push(v);
-			}
-			if (t.node.src) ids.push(t.node.src);
-			return { index, ids };
-		});
+		const { container, thumbs } = collectComposerReferenceThumbnails(composer);
+		if (!container) {
+			return {
+				ok: false,
+				error: "COMPOSER_REFERENCE_CONTAINER_NOT_FOUND",
+				composer_found: true,
+				thumbnails: [],
+				actual_total_count: 0,
+			};
+		}
+		const mapped = thumbs.map((t, index) => ({
+			index,
+			ids: extractMediaTokensFromThumb(t.node),
+		}));
 		return {
 			ok: true,
 			composer_found: true,
 			driver_version: VERSION,
 			thumbnails: mapped,
-			count: thumbs.length,
+			actual_total_count: thumbs.length,
+			expected_count: null,
+			container_evidence: CONTAINER_EVIDENCE,
 			scope: "composer_reference_container",
 		};
 	}
 
 	function verifyComposerMediaVisible(mediaIds) {
-		const state = composerReferenceState();
-		if (!state.ok) return { ...state, expected_count: (mediaIds || []).length };
-		const ids = mediaIds || [];
-		const thumbs = collectComposerReferenceThumbnails(findComposerElement());
-		const results = {};
-		const order = [];
-		for (const mid of ids) {
-			const hit = thumbs.find((t) => nodeCarriesMediaId(t.node, mid));
-			results[mid] = Boolean(hit);
-			if (hit) order.push(mid);
+		const composer = findComposerElement();
+		if (!composer) {
+			return { ok: false, error: "COMPOSER_NOT_FOUND", expected_count: (mediaIds || []).length };
 		}
-		const missing = Object.entries(results)
-			.filter(([, v]) => !v)
-			.map(([k]) => k);
-		let orderOk = true;
-		if (ids.length > 1 && order.length === ids.length) {
-			orderOk = ids.every((mid, i) => order[i] === mid);
+		const { container, thumbs } = collectComposerReferenceThumbnails(composer);
+		if (!container) {
+			return {
+				ok: false,
+				error: "COMPOSER_REFERENCE_CONTAINER_NOT_FOUND",
+				expected_count: (mediaIds || []).length,
+			};
 		}
+		const expected = (mediaIds || []).map(String);
+		const expected_count = expected.length;
+		const actual_total_count = thumbs.length;
+		const observed_ids = [];
+		const matched = {};
+		const duplicate_ids = [];
+		for (const mid of expected) matched[mid] = 0;
+
+		for (const t of thumbs) {
+			let hit = null;
+			for (const mid of expected) {
+				if (thumbMatchesExpectedId(t.node, mid)) {
+					hit = mid;
+					break;
+				}
+			}
+			if (hit) {
+				matched[hit] += 1;
+				if (matched[hit] > 1) duplicate_ids.push(hit);
+				observed_ids.push(hit);
+			} else {
+				observed_ids.push(
+					(extractMediaTokensFromThumb(t.node)[0] || "unknown").slice(0, 80),
+				);
+			}
+		}
+
+		const missing = expected.filter((mid) => matched[mid] < 1);
+		const unexpected_ids = [];
+		for (let i = 0; i < thumbs.length; i++) {
+			const t = thumbs[i];
+			const matchedAny = expected.some((mid) => thumbMatchesExpectedId(t.node, mid));
+			if (!matchedAny) {
+				unexpected_ids.push(observed_ids[i]);
+			}
+		}
+
+		let order_ok = true;
+		if (expected_count > 1) {
+			const orderHits = [];
+			for (const t of thumbs) {
+				for (const mid of expected) {
+					if (thumbMatchesExpectedId(t.node, mid)) {
+						orderHits.push(mid);
+						break;
+					}
+				}
+			}
+			order_ok =
+				orderHits.length === expected_count &&
+				orderHits.every((mid, i) => mid === expected[i]);
+		}
+
+		const count_ok = actual_total_count === expected_count;
+		const ok =
+			count_ok &&
+			missing.length === 0 &&
+			unexpected_ids.length === 0 &&
+			duplicate_ids.length === 0 &&
+			order_ok;
+
 		return {
-			ok: missing.length === 0 && orderOk,
+			ok,
 			driver_version: VERSION,
 			scope: "composer_reference_container",
-			checked: ids,
-			visible: results,
+			container_evidence: CONTAINER_EVIDENCE,
+			checked: expected,
+			observed_ids,
+			expected_count,
+			actual_total_count,
 			missing,
-			order_ok: orderOk,
-			visible_count: ids.length - missing.length,
-			expected_count: ids.length,
-			composer_thumbnail_count: state.count,
+			unexpected_ids,
+			duplicate_ids,
+			order_ok,
+			visible: Object.fromEntries(expected.map((m) => [m, matched[m] >= 1])),
 		};
 	}
 
 	async function clearComposerReferences() {
 		const composer = findComposerElement();
 		if (!composer) return { ok: false, error: "COMPOSER_NOT_FOUND" };
-		const roots = collectComposerContextRoots(composer, 6);
+		const { container } = collectComposerReferenceThumbnails(composer);
+		if (!container) {
+			return { ok: false, error: "COMPOSER_REFERENCE_CONTAINER_NOT_FOUND" };
+		}
 		let cleared = 0;
 		for (let pass = 0; pass < 8; pass++) {
-			let clicked = false;
-			for (const root of roots) {
-				for (const btn of root.querySelectorAll(
-					'button, [role="button"], [role="menuitem"]',
-				)) {
-					if (!vis(btn)) continue;
-					const l = label(btn).toLowerCase();
-					if (
-						!/^(remove|delete|close|clear)/.test(l) &&
-						!l.includes("remove") &&
-						!l.includes("close")
-					) {
-						continue;
-					}
-					btn.click();
-					clicked = true;
-					cleared += 1;
-					await sleep(400);
-					break;
-				}
-				if (clicked) break;
+			const { thumbs } = collectComposerReferenceThumbnails(composer);
+			if (!thumbs.length) {
+				return {
+					ok: true,
+					cleared,
+					actual_total_count: 0,
+					container_evidence: CONTAINER_EVIDENCE,
+				};
 			}
-			const left = composerReferenceState().count;
-			if (left === 0) {
-				return { ok: true, cleared, count: 0, scope: "composer_reference_container" };
+			let clicked = false;
+			for (const btn of container.querySelectorAll(
+				'button, [role="button"], [role="menuitem"]',
+			)) {
+				if (!vis(btn)) continue;
+				const l = label(btn).toLowerCase();
+				if (
+					!/^(remove|delete|close|clear)/.test(l) &&
+					!l.includes("remove") &&
+					!l.includes("close")
+				) {
+					continue;
+				}
+				btn.click();
+				clicked = true;
+				cleared += 1;
+				await sleep(400);
+				break;
 			}
 			if (!clicked) break;
 		}
-		const remaining = composerReferenceState().count;
-		if (remaining > 0) {
+		const left = composerReferenceState().actual_total_count;
+		if (left > 0) {
 			return {
 				ok: false,
 				error: "STALE_REFERENCE_CLEAR_FAILED",
-				remaining,
+				actual_total_count: left,
 				cleared,
 			};
 		}
-		return { ok: true, cleared, count: 0 };
+		return {
+			ok: true,
+			cleared,
+			actual_total_count: 0,
+			container_evidence: CONTAINER_EVIDENCE,
+		};
 	}
 
 	async function verifyComposerZero() {
@@ -245,14 +343,19 @@
 			return cleared;
 		}
 		const state = composerReferenceState();
-		if (state.count !== 0) {
+		if (state.actual_total_count !== 0) {
 			return {
 				ok: false,
 				error: "STALE_REFERENCES_PRESENT",
-				composer_thumbnail_count: state.count,
+				actual_total_count: state.actual_total_count,
 			};
 		}
-		return { ok: true, composer_thumbnail_count: 0, scope: "composer_reference_container" };
+		return {
+			ok: true,
+			actual_total_count: 0,
+			container_evidence: CONTAINER_EVIDENCE,
+			scope: "composer_reference_container",
+		};
 	}
 
 	async function openComposerAttachUpload() {
@@ -293,9 +396,36 @@
 		};
 	}
 
-	function subtreeContainsId(root, mediaOperationId) {
-		if (!root || !mediaOperationId) return false;
-		const want = String(mediaOperationId);
+	async function submitComposerCreate(confirm, interceptOnly) {
+		if (confirm !== true) {
+			return { ok: false, error: "COMPOSER_SUBMIT_CONFIRM_REQUIRED" };
+		}
+		const composer = findComposerElement();
+		if (!composer) return { ok: false, error: "COMPOSER_NOT_FOUND" };
+		const btn =
+			findByLabel("button", NAMES.SUBMIT_CREATE) ||
+			Array.from(document.querySelectorAll("button")).find((el) => {
+				if (!vis(el)) return false;
+				const l = label(el).toLowerCase();
+				return l.includes("create") && (l.includes("arrow") || l.endsWith("create"));
+			});
+		if (!btn) return { ok: false, error: "COMPOSER_SUBMIT_BUTTON_NOT_FOUND" };
+		if (interceptOnly === true) {
+			return {
+				ok: true,
+				intercept_only: true,
+				would_invoke: label(btn),
+				submit_control: "composer_create",
+			};
+		}
+		btn.click();
+		await sleep(1500);
+		return { ok: true, submitted: true, clicked: label(btn), state: observeState() };
+	}
+
+	function subtreeContainsId(root, mediaResourceId) {
+		if (!root || !mediaResourceId) return false;
+		const want = String(mediaResourceId);
 		if (root.querySelectorAll) {
 			for (const node of root.querySelectorAll(
 				"img, video, source, [data-media-id], [href]",
@@ -312,9 +442,11 @@
 		return m ? m[1] : null;
 	}
 
-	async function openVideoByMediaId(mediaOperationId, expectedProjectId) {
-		const want = String(mediaOperationId || "").trim();
-		if (!want) return { ok: false, error: "CURRENT_VIDEO_NOT_FOUND", detail: "empty id" };
+	async function openVideoByMediaResourceId(mediaResourceId, expectedProjectId) {
+		const want = String(mediaResourceId || "").trim();
+		if (!want) {
+			return { ok: false, error: "CURRENT_VIDEO_NOT_FOUND", detail: "empty id" };
+		}
 		const card = await waitFor(() => {
 			for (const el of document.querySelectorAll('div[role="button"]')) {
 				if (!vis(el)) continue;
@@ -347,7 +479,8 @@
 		}
 		return {
 			ok: true,
-			media_operation_id: want,
+			media_resource_id: want,
+			parent_open_identity_type: "media_resource_id",
 			project_id: projectId,
 			state: observeState(),
 		};
@@ -484,9 +617,14 @@
 		FLOWUI_CLEAR_COMPOSER_REFERENCES: async () => clearComposerReferences(),
 		FLOWUI_OPEN_COMPOSER_UPLOAD: async () => openComposerAttachUpload(),
 		FLOWUI_SET_COMPOSER_PROMPT: async (a) => setComposerPrompt(a.text),
+		FLOWUI_SUBMIT_COMPOSER_CREATE: async (a) =>
+			submitComposerCreate(a.confirm === true, a.intercept_only === true),
 		FLOWUI_VERIFY_MEDIA_VISIBLE: async (a) => verifyComposerMediaVisible(a.media_ids),
 		FLOWUI_OPEN_VIDEO: async (a) =>
-			openVideoByMediaId(a.parent_media_operation_id, a.expected_project_id),
+			openVideoByMediaResourceId(
+				a.parent_media_resource_id || a.parent_media_operation_id,
+				a.expected_project_id,
+			),
 		FLOWUI_ADD_CLIP_EXTEND: async (a) => addClipExtend(a.model_label),
 		FLOWUI_SET_EXTEND_PROMPT: async (a) => setExtendPrompt(a.text),
 		FLOWUI_SUBMIT_EXTEND: async (a) => submitExtend(a.confirm === true),

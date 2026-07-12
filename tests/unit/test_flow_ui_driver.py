@@ -1,4 +1,4 @@
-"""Owner Phase-2B — CURRENT-UI driver contract tests (all zero credit)."""
+"""Owner Phase-2B/2C — CURRENT-UI driver contract tests (all zero credit)."""
 import hashlib
 import json
 import zipfile
@@ -24,21 +24,43 @@ class _Client:
         self.calls.append(("verify", tuple(media_ids)))
         missing = [m for m in media_ids if m in self.over.get("invisible", ())]
         order_ok = self.over.get("order_ok", True)
+        unexpected = list(self.over.get("unexpected_ids", ()))
+        actual = self.over.get("actual_total_count", len(media_ids) - len(missing))
+        if self.over.get("extra_thumbnail"):
+            actual = len(media_ids) + 1
+            unexpected = ["extra-thumb"]
+        dup = list(self.over.get("duplicate_ids", ()))
+        ok = (
+            not missing and order_ok and not unexpected and not dup
+            and actual == len(media_ids)
+        )
         return {"result": {
-            "ok": not missing and order_ok,
+            "ok": ok,
             "missing": missing,
+            "unexpected_ids": unexpected,
+            "duplicate_ids": dup,
             "order_ok": order_ok,
             "visible_count": len(media_ids) - len(missing),
             "expected_count": len(media_ids),
+            "actual_total_count": actual,
             "scope": "composer_reference_container",
-            "composer_thumbnail_count": len(media_ids) - len(missing),
+            "container_evidence": "composer_panel:editable_text_plus_add_control_ancestor",
         }}
+
+    async def flowui_submit_composer_create(self, *, confirm, intercept_only=False, tab_id=None):
+        self.calls.append(("composer_submit", confirm, intercept_only))
+        if not confirm:
+            return {"result": {"ok": False, "error": "COMPOSER_SUBMIT_CONFIRM_REQUIRED"}}
+        if intercept_only:
+            return {"result": {"ok": True, "intercept_only": True,
+                                "would_invoke": "arrow_forwardCreate"}}
+        return {"result": {"ok": True, "submitted": True}}
 
     async def flowui_verify_composer_zero(self, tab_id=None):
         if self.over.get("stale"):
             return {"result": {"ok": False, "error": "STALE_REFERENCES_PRESENT",
-                               "composer_thumbnail_count": 1}}
-        return {"result": {"ok": True, "composer_thumbnail_count": 0,
+                               "actual_total_count": 1}}
+        return {"result": {"ok": True, "actual_total_count": 0,
                            "scope": "composer_reference_container"}}
 
     async def flowui_composer_attach_file(self, file_path, **kw):
@@ -49,9 +71,9 @@ class _Client:
         self.calls.append(("composer_prompt", text))
         return {"result": {"ok": True, "read_back": text, "length": len(text)}}
 
-    async def flowui_open_video(self, parent_media_operation_id, *,
+    async def flowui_open_video(self, parent_media_resource_id, *,
                                 expected_project_id=None, tab_id=None):
-        self.calls.append(("open", parent_media_operation_id, expected_project_id))
+        self.calls.append(("open", parent_media_resource_id, expected_project_id))
         if self.over.get("wrong_video"):
             return {"result": {"ok": False, "error": "CURRENT_VIDEO_NOT_FOUND"}}
         if self.over.get("identity_mismatch"):
@@ -59,7 +81,8 @@ class _Client:
         if self.over.get("project_mismatch"):
             return {"result": {"ok": False, "error": "CURRENT_VIDEO_PROJECT_MISMATCH",
                                "expected": "p-exp", "actual": "p-wrong"}}
-        return {"result": {"ok": True, "media_operation_id": parent_media_operation_id,
+        return {"result": {"ok": True, "media_resource_id": parent_media_resource_id,
+                           "parent_open_identity_type": "media_resource_id",
                            "project_id": expected_project_id or "proj-1",
                            "state": {"view": "VIDEO_DETAIL"}}}
 
@@ -94,7 +117,8 @@ class _Client:
     async def get_media(self, mid):
         prompts = self.over.get("media_prompts", {})
         prompt = prompts.get(mid, self.over.get("default_child_prompt", ""))
-        return {"data": {"video": {"prompt": prompt, "model": "veo_3_1", "seed": 1},
+        return {"data": {"name": mid, "workflowId": "wf-child",
+                         "video": {"prompt": prompt, "model": "veo_3_1", "seed": 1},
                          "encodedVideo": "x"}}
 
 
@@ -105,7 +129,11 @@ async def _job(nonce, segments=("video1-op",), **extra):
         requested_duration_seconds=16, product_id="p1",
         segment_media_ids_json=json.dumps(list(segments)),
         project_id=extra.get("project_id", "proj-1"),
-        scene_id=extra.get("scene_id", "scene-1"))
+        scene_id=extra.get("scene_id", "scene-1"),
+        initial_media_id=extra.get("initial_media_id", "media-v1"))
+    if extra.get("stage_state_json"):
+        await crud.update_video_production_job_full(
+            job_id, stage_state_json=extra.get("stage_state_json"))
     return job_id
 
 
@@ -148,9 +176,12 @@ async def test_ui_initial_lane_dry_run_never_api_generate():
     c = _Client()
     out = await ui.run_initial_block1_via_composer(
         c, prompt="Block 1 only", media_ids=[], local_file_paths=[],
-        expected_count=0, dry_run=True)
+        expected_count=0, dry_run=True, request_id="req-1")
     assert out["lane"] == "UI_COMPOSER_INITIAL"
+    assert out.get("submit_boundary", {}).get("intercept_only") is True
+    assert out.get("idempotency_would_reserve") is True
     assert ("composer_prompt", "Block 1 only") in c.calls
+    assert ("composer_submit", True, True) in c.calls
 
 
 # ── exact video identity (Blocker 2) ─────────────────────────────────────────
@@ -165,7 +196,7 @@ async def test_dry_run_walks_to_ready_and_never_submits():
     assert ui.S_EXTEND_READY_TO_SUBMIT in states
     assert ("submit", True) not in c.calls
     assert out["parent_operation_id"] == "video1-op"
-    assert ("open", "video1-op", "proj-1") in c.calls
+    assert ("open", "media-v1", "proj-1") in c.calls
 
 
 async def test_exact_video_not_found():
@@ -202,11 +233,12 @@ async def test_project_mismatch():
 async def test_live_extend_polls_and_persists_child(monkeypatch):
     monkeypatch.setenv("FLOW_UI_DRIVER_ENABLED", "1")
     prompt = "Extend child prompt exact"
-    child_id = "child2-op"
+    child_id = "child2-media"
     c = _Client(
         scene_phases=[
             {"data": {"media": [], "sceneWorkflows": []}},
-            {"data": {"media": [{"name": child_id}], "sceneWorkflows": []}},
+            {"data": {"media": [{"name": child_id, "workflowId": "wf2"}],
+                      "sceneWorkflows": []}},
         ],
         media_prompts={child_id: prompt},
         default_child_prompt="wrong",
@@ -217,23 +249,31 @@ async def test_live_extend_polls_and_persists_child(monkeypatch):
         block_index=2, position=1, prompt=prompt,
         dry_run=False, confirm_live_credit_burn=True,
         poll_timeout_s=5, poll_interval_s=1)
-    assert out["ok"] and out["child_operation_id"] == child_id
+    assert out["ok"] and out["child_media_id"] == child_id
+    assert out["child_operation_id"] is None
     states = [s["state"] for s in out["states"]]
     assert ui.S_EXTEND_POLLING in states
     assert ui.S_CHILD_PERSISTED in states
     vj = await crud.get_video_production_job(job_id)
     segs = json.loads(vj["segment_media_ids_json"])
-    assert segs == ["video1-op", child_id]
+    assert segs == ["video1-op"]
+    state = json.loads(vj["stage_state_json"])
+    assert state["ui_parent_media_resource_ids"][-1] == child_id
 
 
 async def test_three_block_chain_uses_child2_as_block3_parent():
     c = _Client()
-    job_id = await _job("chain1", segments=("video1-op", "child2-op"))
+    job_id = await _job(
+        "chain1",
+        segments=("video1-op", "child2-op"),
+        stage_state_json=json.dumps(
+            {"ui_parent_media_resource_ids": ["media-v1", "child2-media"]}),
+    )
     out = await ui.extend_block_via_ui(
         c, job_id=job_id, parent_media_operation_id="",
         block_index=3, position=2, prompt="Block 3", dry_run=True)
     assert out["parent_operation_id"] == "child2-op"
-    assert ("open", "child2-op", "proj-1") in c.calls
+    assert ("open", "child2-media", "proj-1") in c.calls
 
 
 async def test_sequential_chain_dry_run_two_blocks():
@@ -299,3 +339,62 @@ def test_kill_switch_default_off(monkeypatch):
     assert ui.ui_driver_enabled() is False
     monkeypatch.setenv("FLOW_UI_DRIVER_ENABLED", "1")
     assert ui.ui_driver_enabled() is True
+
+
+# ── Phase-2C composer exact count ─────────────────────────────────────────────
+async def test_extra_composer_thumbnail_fails():
+    with pytest.raises(ui.FlowUiDriverError) as e:
+        await ui.ensure_composer_references(
+            _Client(extra_thumbnail=True), media_ids=["m1"],
+            local_file_paths=[], expected_count=1)
+    assert e.value.code == ui.ERR_REFERENCES_NOT_VISIBLE
+
+
+async def test_missing_composer_thumbnail_fails():
+    with pytest.raises(ui.FlowUiDriverError) as e:
+        await ui.ensure_composer_references(
+            _Client(invisible=("m1",)), media_ids=["m1"],
+            local_file_paths=[], expected_count=1)
+    assert e.value.code == ui.ERR_REFERENCES_NOT_VISIBLE
+
+
+def test_typed_timeline_snapshot_separates_workflow_and_media():
+    snap = ui._typed_timeline_snapshot({
+        "data": {
+            "media": [{"name": "med-a", "workflowId": "wf-a"}],
+            "sceneWorkflows": [{"workflow": {"name": "wf-b",
+                "metadata": {"primaryMediaId": "pm-b"}}}],
+        },
+    })
+    assert "med-a" in snap["media_resource_ids"]
+    assert "wf-a" in snap["workflow_ids"]
+    assert "wf-b" in snap["workflow_ids"]
+    assert "pm-b" in snap["primary_media_ids"]
+    assert "med-a" not in snap["workflow_ids"]
+
+
+async def test_initial_live_path_intercept_once(monkeypatch):
+    monkeypatch.setenv("FLOW_UI_DRIVER_ENABLED", "1")
+    c = _Client()
+    out = await ui.run_initial_block1_via_composer(
+        c, prompt="live", media_ids=[], local_file_paths=[],
+        expected_count=0, dry_run=False, confirm_live_credit_burn=True,
+        request_id="req-live", intercept_submit=True)
+    assert out["ok"]
+    assert ("composer_submit", True, True) in c.calls
+    assert "UI_INITIAL_SUBMIT_NOT_IN_PHASE2B" not in str(out)
+
+
+async def test_initial_duplicate_submit_blocked(monkeypatch):
+    monkeypatch.setenv("FLOW_UI_DRIVER_ENABLED", "1")
+    c = _Client()
+    await ui.run_initial_block1_via_composer(
+        c, prompt="dup", media_ids=[], local_file_paths=[],
+        expected_count=0, dry_run=False, confirm_live_credit_burn=True,
+        request_id="req-dup", intercept_submit=True)
+    with pytest.raises(ui.FlowUiDriverError) as e:
+        await ui.run_initial_block1_via_composer(
+            c, prompt="dup", media_ids=[], local_file_paths=[],
+            expected_count=0, dry_run=False, confirm_live_credit_burn=True,
+            request_id="req-dup", intercept_submit=True)
+    assert e.value.code == "INITIAL_SUBMIT_BLOCKED"

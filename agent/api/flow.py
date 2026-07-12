@@ -1158,6 +1158,7 @@ class UiExtendBlockRequest(BaseModel):
     """Drive ONE Extend block through the current Flow UI (dry-run default)."""
     job_id: str
     parent_media_operation_id: str = ""
+    parent_media_resource_id: str = ""
     block_index: int
     position: int
     prompt: str
@@ -1218,6 +1219,7 @@ async def ui_driver_extend_block(body: UiExtendBlockRequest):
         return await _ui.extend_block_via_ui(
             client, job_id=body.job_id,
             parent_media_operation_id=body.parent_media_operation_id,
+            parent_media_resource_id=body.parent_media_resource_id,
             block_index=body.block_index, position=body.position,
             prompt=body.prompt, model_label=body.model_label,
             confirm_live_credit_burn=body.confirm_live_credit_burn,
@@ -2440,6 +2442,8 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 expected_count=len(refs),
                 dry_run=body.get("confirm_live_credit_burn") is not True,
                 confirm_live_credit_burn=bool(body.get("confirm_live_credit_burn")),
+                request_id=request_id,
+                intercept_submit=body.get("confirm_live_credit_burn") is not True,
             )
             await crud.add_stage_event(
                 request_id, "UI_COMPOSER_INITIAL_READY", "WAITING_FLOW",
