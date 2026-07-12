@@ -1153,6 +1153,97 @@ async def extend_run(body: ExtendRunRequest):
         raise HTTPException(422 if exc.code in code_422 else 409, str(exc))
 
 
+# ── Owner Phase-2: CURRENT-UI driver (targeted, kill-switched) ──────────────
+class UiExtendBlockRequest(BaseModel):
+    """Drive ONE Extend block through the current Flow UI (dry-run default)."""
+    job_id: str
+    parent_title_substr: str
+    block_index: int
+    position: int
+    prompt: str
+    model_label: str = "Veo 3.1 - Lite"
+    dry_run: bool = True
+    confirm_live_credit_burn: bool = False
+
+
+class UiVerifyReferencesRequest(BaseModel):
+    media_ids: list
+    expected_count: int
+
+
+class UiDownloadProjectRequest(BaseModel):
+    job_id: Optional[str] = None
+    project_id: Optional[str] = None
+    register: bool = True
+
+
+@router.get("/ui-driver/state")
+async def ui_driver_state():
+    """Observe the current Flow UI view (zero credit, read-only)."""
+    from agent.services import google_flow_ui_driver as _ui
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    res = await client.flowui_state()
+    return {"enabled": _ui.ui_driver_enabled(),
+            "state": res.get("result", res)}
+
+
+@router.post("/ui-driver/verify-references")
+async def ui_driver_verify_references(body: UiVerifyReferencesRequest):
+    """Reference-first visibility gate (zero credit): every reference must be
+    VISIBLY present and the count must equal the mode contract."""
+    from agent.services import google_flow_ui_driver as _ui
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    try:
+        return await _ui.verify_references_visible(
+            client, body.media_ids, body.expected_count)
+    except _ui.FlowUiDriverError as exc:
+        raise HTTPException(422, f"{exc.code}: {exc.detail}")
+
+
+@router.post("/ui-driver/extend-block")
+async def ui_driver_extend_block(body: UiExtendBlockRequest):
+    """Owner timeline-Extend for ONE block. dry_run walks to
+    EXTEND_READY_TO_SUBMIT and stops (zero credit). Live requires the
+    FLOW_UI_DRIVER_ENABLED kill switch AND explicit confirmation AND the
+    per-block route lock shared with direct-RPC (no double submit ever)."""
+    from agent.services import google_flow_ui_driver as _ui
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    try:
+        return await _ui.extend_block_via_ui(
+            client, job_id=body.job_id,
+            parent_title_substr=body.parent_title_substr,
+            block_index=body.block_index, position=body.position,
+            prompt=body.prompt, model_label=body.model_label,
+            confirm_live_credit_burn=body.confirm_live_credit_burn,
+            dry_run=body.dry_run)
+    except _ui.FlowUiDriverError as exc:
+        status = 409 if exc.code in (_ui.ERR_ROUTE_LOCKED, _ui.ERR_CONFIRM,
+                                     _ui.ERR_DISABLED) else 422
+        raise HTTPException(status, f"{exc.code}: {exc.detail}")
+
+
+@router.post("/ui-driver/download-project")
+async def ui_driver_download_project(body: UiDownloadProjectRequest):
+    """Owner Download Project: capture the REAL browser download, hash and
+    inspect it, register honestly (ZIP = project archive). Zero credit."""
+    from agent.services import google_flow_ui_driver as _ui
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    try:
+        return await _ui.download_project_via_ui(
+            client, job_id=body.job_id, project_id=body.project_id,
+            register=body.register)
+    except _ui.FlowUiDriverError as exc:
+        raise HTTPException(422, f"{exc.code}: {exc.detail}")
+
+
 @router.post("/native-extend/resolve")
 async def native_extend_resolve(body: ExtendResolveRequest):
     """Central native-extend execution decision (readiness / blockers / route) for the
@@ -2332,6 +2423,24 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         request_id, "API_USER_SETTINGS_APPLIED", "WAITING_FLOW",
         f"aspect={aspect} count={count} model={model_key or 'default'} "
         f"duration_s={duration_s or 'default'}", "backend")
+
+    # ── Owner Phase-2 reference-first gate (kill-switched, default OFF) ─────
+    # When the CURRENT-UI driver is enabled, every reference-mode job must have
+    # its uploaded references VISIBLY present in the active Flow surface (exact
+    # count) BEFORE Block-1 is sent — API upload alone is not visible proof.
+    # T2V asserts ZERO references. With the switch off, the proven API lane
+    # behaviour is byte-identical.
+    from agent.services import google_flow_ui_driver as _ui_drv
+    if _ui_drv.ui_driver_enabled() and mode in ("T2V", "I2V", "F2V"):
+        try:
+            await _ui_drv.verify_references_visible(client, refs, len(refs))
+            await crud.add_stage_event(
+                request_id, "UI_REFERENCES_VISIBLE_CONFIRMED", "WAITING_FLOW",
+                f"count={len(refs)} mode={mode}", "backend")
+        except _ui_drv.FlowUiDriverError as exc:
+            await _fail_manual_request(
+                request_id, "API_LANE_REJECTED",
+                f"{exc.code}: {exc.detail}", exc.code)
 
     res = await _mv.start_generate(
         mode, prompt, project_id=created_project_id,

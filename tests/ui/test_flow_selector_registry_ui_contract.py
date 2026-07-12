@@ -16,7 +16,7 @@ def test_manifest_loads_selector_registry_before_flow_dom():
     # selector-registry.js and content-flow-dom.js. The core invariant this test guards —
     # selector-registry.js loads BEFORE content-flow-dom.js — still holds in the new order.
     assert (
-        '"js": ["content.js", "selector-registry.js", "gfv2-readiness.js", "content-flow-dom.js"]'
+        '"js": ["content.js", "selector-registry.js", "gfv2-readiness.js", "content-flow-dom.js", "flow-ui-driver.js"]'
         in manifest
     )
     js_order = manifest.split('"js": [', 1)[1].split("]", 1)[0]

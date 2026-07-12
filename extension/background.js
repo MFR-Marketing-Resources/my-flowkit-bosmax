@@ -206,6 +206,104 @@ try {
 
 // Scan the Flow tab's DOM for finished video URLs (storage.googleapis.com/ai-sandbox-videofx/video/...).
 // Reads <video>/<source> src plus any video URL embedded in the page HTML.
+// ── FLOWUI driver relay (Owner Phase-2, targeted current-UI driver) ─────────
+// Resolves the target Flow tab (bound tab preferred, exactly like harvest),
+// forwards ONE verb to the flow-ui-driver.js content script and returns its
+// structured result. The driver has NO credit authority: the only credit verb
+// (FLOWUI_SUBMIT_EXTEND) additionally requires the server-side kill switch and
+// an explicit confirm flag end-to-end.
+async function resolveFlowUiTab(targetTabId) {
+	if (targetTabId != null) {
+		try {
+			const tab = await chrome.tabs.get(targetTabId);
+			if (tab && /labs\.google\/fx\/.*tools\/flow/.test(tab.url || "")) return tab;
+		} catch (_e) { /* fall through */ }
+		return null;
+	}
+	const tabs = await chrome.tabs.query({
+		url: [
+			"https://labs.google/fx/tools/flow*",
+			"https://labs.google/fx/*/tools/flow*",
+		],
+	});
+	if (!tabs.length) return null;
+	return selectBestFlowTab(tabs) || tabs[0];
+}
+
+async function handleFlowUiVerb(verb, params) {
+	const tab = await resolveFlowUiTab(params?.tab_id);
+	if (!tab) return { ok: false, error: "NO_FLOW_TAB" };
+	try {
+		const res = await chrome.tabs.sendMessage(tab.id, {
+			type: "FLOWUI",
+			verb,
+			args: params || {},
+		});
+		return { ...(res || { ok: false, error: "FLOWUI_NO_RESPONSE" }), flow_tab_id: tab.id };
+	} catch (e) {
+		return { ok: false, error: "FLOWUI_SEND_FAILED", detail: String(e?.message || e).slice(0, 160), flow_tab_id: tab.id };
+	}
+}
+
+// Download Project = zero-credit menu click that emits a browser-side ZIP blob
+// download (captured contract 2026-07-12: suggested name download.zip, PK zip
+// signature, single MP4 entry). We arm chrome.downloads listeners FIRST, then
+// click, then wait for the download to COMPLETE — an incomplete/interrupted
+// download is never reported as success.
+async function handleFlowUiDownloadProject(params) {
+	const tab = await resolveFlowUiTab(params?.tab_id);
+	if (!tab) return { ok: false, error: "NO_FLOW_TAB" };
+	const timeoutMs = Math.min(Number(params?.timeout_ms) || 120000, 300000);
+	const armedAt = Date.now();
+
+	const downloadDone = new Promise((resolve) => {
+		const created = {};
+		const onCreated = (item) => {
+			// only downloads born AFTER we armed, from this browser session
+			if ((item.startTime ? Date.parse(item.startTime) : Date.now()) >= armedAt - 2000) {
+				created[item.id] = item;
+			}
+		};
+		const onChanged = async (delta) => {
+			if (!created[delta.id]) return;
+			if (delta.state && delta.state.current === "complete") {
+				cleanup();
+				const [item] = await chrome.downloads.search({ id: delta.id });
+				resolve({ ok: true, download: {
+					id: item.id,
+					filename: item.filename,
+					mime: item.mime,
+					bytes: item.fileSize,
+					total_bytes: item.totalBytes,
+					state: item.state,
+					start_time: item.startTime,
+					end_time: item.endTime,
+					final_url: (item.finalUrl || item.url || "").slice(0, 60),
+				}});
+			} else if (delta.state && delta.state.current === "interrupted") {
+				cleanup();
+				resolve({ ok: false, error: "DOWNLOAD_INTERRUPTED", download_id: delta.id });
+			}
+		};
+		const timer = setTimeout(() => {
+			cleanup();
+			resolve({ ok: false, error: "DOWNLOAD_TIMEOUT" });
+		}, timeoutMs);
+		function cleanup() {
+			clearTimeout(timer);
+			chrome.downloads.onCreated.removeListener(onCreated);
+			chrome.downloads.onChanged.removeListener(onChanged);
+		}
+		chrome.downloads.onCreated.addListener(onCreated);
+		chrome.downloads.onChanged.addListener(onChanged);
+	});
+
+	const clicked = await handleFlowUiVerb("FLOWUI_DOWNLOAD_PROJECT", params);
+	if (!clicked.ok) return clicked;
+	const result = await downloadDone;
+	return { ...result, clicked: clicked.clicked, flow_tab_id: tab.id };
+}
+
 async function handleHarvestVideoUrls(targetTabId) {
 	let tab;
 	if (targetTabId != null) {
@@ -4945,6 +5043,16 @@ function connectToAgent() {
 			} else if (msg.method === "RELOAD_FLOW_TAB") {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleReloadFlowTab(),
+				);
+				replyToAgent(msg, result);
+			} else if (msg.method && msg.method.startsWith("FLOWUI_") && msg.method !== "FLOWUI_DOWNLOAD_PROJECT_CAPTURE") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleFlowUiVerb(msg.method, msg.params || {}),
+				);
+				replyToAgent(msg, result);
+			} else if (msg.method === "FLOWUI_DOWNLOAD_PROJECT_CAPTURE") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleFlowUiDownloadProject(msg.params || {}),
 				);
 				replyToAgent(msg, result);
 			} else if (msg.method === "HARVEST_VIDEO_URLS") {

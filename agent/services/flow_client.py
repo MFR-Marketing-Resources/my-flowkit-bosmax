@@ -865,6 +865,49 @@ class FlowClient:
             "body": {"workflowIds": list(workflow_ids or [])},
         }, timeout=30)
 
+    # ── FLOWUI current-UI driver relay (Owner Phase-2, targeted) ─────────────
+    # Thin verb relays to extension/flow-ui-driver.js. No credit authority here:
+    # the single credit verb (submit_extend) requires confirm=True end-to-end and
+    # is additionally gated by the server-side kill switch in the driver service.
+    async def flowui_state(self, tab_id: int | None = None) -> dict:
+        return await self._send("FLOWUI_STATE", {"tab_id": tab_id}, timeout=20)
+
+    async def flowui_verify_media_visible(self, media_ids: list,
+                                          tab_id: int | None = None) -> dict:
+        return await self._send(
+            "FLOWUI_VERIFY_MEDIA_VISIBLE",
+            {"media_ids": list(media_ids or []), "tab_id": tab_id}, timeout=25)
+
+    async def flowui_open_video(self, title_substr: str,
+                                tab_id: int | None = None) -> dict:
+        return await self._send(
+            "FLOWUI_OPEN_VIDEO", {"title_substr": title_substr, "tab_id": tab_id},
+            timeout=30)
+
+    async def flowui_add_clip_extend(self, model_label: str,
+                                     tab_id: int | None = None) -> dict:
+        return await self._send(
+            "FLOWUI_ADD_CLIP_EXTEND", {"model_label": model_label, "tab_id": tab_id},
+            timeout=30)
+
+    async def flowui_set_extend_prompt(self, text: str,
+                                       tab_id: int | None = None) -> dict:
+        return await self._send(
+            "FLOWUI_SET_EXTEND_PROMPT", {"text": text, "tab_id": tab_id}, timeout=30)
+
+    async def flowui_submit_extend(self, *, confirm: bool,
+                                   tab_id: int | None = None) -> dict:
+        return await self._send(
+            "FLOWUI_SUBMIT_EXTEND", {"confirm": bool(confirm), "tab_id": tab_id},
+            timeout=40)
+
+    async def flowui_download_project(self, tab_id: int | None = None,
+                                      timeout_ms: int = 120000) -> dict:
+        return await self._send(
+            "FLOWUI_DOWNLOAD_PROJECT_CAPTURE",
+            {"tab_id": tab_id, "timeout_ms": timeout_ms},
+            timeout=max(60, int(timeout_ms / 1000) + 30))
+
     async def list_scene_workflows(self, scene_id: str, project_id: str = "") -> dict:
         """List one scene's workflows + media (read-only, zero credit).
 
