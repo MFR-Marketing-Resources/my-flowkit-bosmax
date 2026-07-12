@@ -137,6 +137,7 @@ domains:
       - tests/fixtures/google_flow_ui_contract/ui_contract.sanitized.json
       - scripts/phase2d_real_browser_validation.py
       - docs/evidence/phase2d_real_browser_validation.sanitized.json
+      - tests/api/test_retrieved_final_id.py
       - tests/unit/test_video_production_orchestrator.py
       - tests/unit/test_production_plan_resolver.py
       - tests/unit/test_production_initial_adapter.py
