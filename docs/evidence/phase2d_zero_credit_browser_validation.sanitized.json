@@ -1,0 +1,98 @@
+{
+  "timestamp_utc": "2026-07-12T11:54:28.408752+00:00",
+  "merge_sha": "ced033695804e1c6db654ab3e037b5f17b37e667",
+  "driver_version_expected": "flowui-1.3.1-phase2d-20260712",
+  "credit_note": "zero-credit probes only",
+  "steps": {
+    "health": {
+      "extension_connected": true,
+      "version": "0.2.0"
+    },
+    "reload_flow_tab": {
+      "method": "RELOAD_FLOW_TAB",
+      "timestamp": "2026-07-12T11:54:30.317Z",
+      "flow_tab_found": true,
+      "flow_tab_id": 873135584,
+      "flow_url": "https://labs.google/fx/tools/flow/project/7bdd0f87-0bec-4efa-bd96-334c5980e638",
+      "ok": true,
+      "error": null,
+      "action_taken": "RELOAD_AND_REINJECT",
+      "extension_protocol_version": "FLOWKIT_EXTENSION_V1",
+      "content_build_id": "flowkit-f2v-runner-audit-2026-06-15a",
+      "content_script_protocol_version": "FLOWKIT_DOM_V1",
+      "content_script_loaded": true,
+      "content_script_alive": true,
+      "runtime_ready": true,
+      "build_match": true,
+      "last_content_script_seen_at": "2026-07-12T11:54:30.315Z",
+      "raw_error": null,
+      "BACKGROUND_RECEIVED_RELOAD_FLOW_TAB": true,
+      "BACKGROUND_SENT_RELOAD_FLOW_TAB_RESPONSE": true
+    },
+    "reload_extension": {
+      "method": "RELOAD_EXTENSION",
+      "timestamp": "2026-07-12T11:54:30.342Z",
+      "flow_tab_found": true,
+      "flow_tab_id": 873135584,
+      "flow_url": "https://labs.google/fx/tools/flow/project/7bdd0f87-0bec-4efa-bd96-334c5980e638",
+      "ok": true,
+      "action": "RELOAD_EXTENSION",
+      "last_checked_at": "2026-07-12T11:54:30Z"
+    },
+    "flowui_state": {
+      "enabled": false,
+      "state": {
+        "method": "FLOWUI_STATE",
+        "timestamp": "2026-07-12T11:54:57.567Z",
+        "flow_tab_found": true,
+        "flow_tab_id": 873135584,
+        "flow_url": "https://labs.google/fx/tools/flow/project/7bdd0f87-0bec-4efa-bd96-334c5980e638",
+        "ok": true,
+        "driver_version": "flowui-1.3.1-phase2d-20260712",
+        "url": "https://labs.google/fx/tools/flow/project/7bdd0f87-0bec-4efa-bd96-334c5980e638",
+        "view": "PROJECT",
+        "title": "bosmax f2v manual",
+        "has_add_clip": false,
+        "extend_menu_visible": false,
+        "extend_prompt_visible": false,
+        "composer_found": true
+      }
+    },
+    "composer_reference": {
+      "method": "FLOWUI_COMPOSER_REFERENCE_STATE",
+      "timestamp": "2026-07-12T11:54:57.580Z",
+      "flow_tab_found": true,
+      "flow_tab_id": 873135584,
+      "flow_url": "https://labs.google/fx/tools/flow/project/7bdd0f87-0bec-4efa-bd96-334c5980e638",
+      "ok": true,
+      "composer_found": true,
+      "driver_version": "flowui-1.3.1-phase2d-20260712",
+      "thumbnails": [],
+      "actual_total_count": 0,
+      "expected_count": null,
+      "container_evidence": "composer_panel:editable_text_plus_add_control_ancestor",
+      "scope": "composer_reference_container"
+    },
+    "t2v_zero_verify": {
+      "ok": true,
+      "expected_count": 0,
+      "visible_count": 0,
+      "scope": "composer_reference_container"
+    },
+    "submit_boundary_intercept": {
+      "method": "FLOWUI_SUBMIT_COMPOSER_CREATE",
+      "timestamp": "2026-07-12T11:54:58.147Z",
+      "flow_tab_found": true,
+      "flow_tab_id": 873135584,
+      "flow_url": "https://labs.google/fx/tools/flow/project/7bdd0f87-0bec-4efa-bd96-334c5980e638",
+      "ok": true,
+      "intercept_only": true,
+      "would_invoke": "add_2Create",
+      "submit_control": "composer_create"
+    }
+  },
+  "credit_before": 1560,
+  "credit_after": 1560,
+  "credit_unchanged": true,
+  "verdict": "BROWSER_VALIDATED_ZERO_CREDIT"
+}

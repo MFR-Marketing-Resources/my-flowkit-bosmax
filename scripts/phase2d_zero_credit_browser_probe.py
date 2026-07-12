@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "http://127.0.0.1:8100"
-MERGE_SHA = "a196a1d5acfe46a992d7139e3bd1026b42fbdd78"
+MERGE_SHA = "ced033695804e1c6db654ab3e037b5f17b37e667"
 
 
 def _get(path: str) -> dict:
@@ -60,6 +60,11 @@ def run() -> dict:
                     break
         except urllib.error.HTTPError as exc:
             out["steps"]["reload_extension"] = {"http_error": exc.code}
+        time.sleep(4)
+        _post("/api/operator/open-target-flow-project", {
+            "flow_project_url": (
+                "https://labs.google/fx/tools/flow/project/"
+                "7bdd0f87-0bec-4efa-bd96-334c5980e638")})
         time.sleep(6)
         _post("/api/flow/ui-driver/reload-flow-tab")
         time.sleep(8)
