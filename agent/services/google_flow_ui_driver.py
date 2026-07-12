@@ -143,8 +143,18 @@ async def ensure_composer_references(
     if not vis.get("ok"):
         raise FlowUiDriverError(
             ERR_REFERENCES_NOT_VISIBLE,
-            f"missing={vis.get('missing')} order_ok={vis.get('order_ok')} "
-            f"composer_count={vis.get('composer_thumbnail_count')}")
+            f"missing={vis.get('missing')} unexpected={vis.get('unexpected_ids')} "
+            f"duplicates={vis.get('duplicate_ids')} "
+            f"actual_total={vis.get('actual_total_count')} expected={expected_count}")
+    if vis.get("actual_total_count") != expected_count:
+        raise FlowUiDriverError(
+            ERR_REFERENCES_NOT_VISIBLE,
+            f"composer actual_total_count={vis.get('actual_total_count')} "
+            f"!= expected {expected_count}")
+    if vis.get("unexpected_ids"):
+        raise FlowUiDriverError(
+            ERR_REFERENCES_NOT_VISIBLE,
+            f"unexpected composer thumbnails: {vis.get('unexpected_ids')}")
     mark(S_REFERENCES_VISIBLE, visible_count=vis.get("visible_count"))
     mark(S_REFERENCE_COUNT_CONFIRMED, count=expected_count)
     if expected_count > 1 and vis.get("order_ok") is False:
@@ -175,6 +185,8 @@ async def run_initial_block1_via_composer(
     expected_count: int,
     dry_run: bool = True,
     confirm_live_credit_burn: bool = False,
+    request_id: str | None = None,
+    intercept_submit: bool = False,
 ) -> dict:
     """Composer-driven Block 1 initial lane (mutually exclusive with API initial)."""
     states: list = []
@@ -194,59 +206,133 @@ async def run_initial_block1_via_composer(
                                 str(typed.get("error")))
     mark(S_BLOCK1_PROMPT_CONFIRMED, length=typed.get("length"))
     mark(S_SETTINGS_APPLYING)
-    # Settings are operator-law on the composer surface; server records intent only.
     mark(S_SETTINGS_CONFIRMED, note="composer_surface_authority")
     mark(S_READY_FOR_NEGOTIATION)
 
+    idem = (
+        f"UI_INITIAL:{request_id or 'manual'}:"
+        f"{hashlib.sha256((prompt or '').encode()).hexdigest()[:16]}"
+    )
+
     if dry_run:
-        return {"ok": True, "dry_run": True, "lane": "UI_COMPOSER_INITIAL",
-                "states": states}
+        boundary = _res(await client.flowui_submit_composer_create(
+            confirm=True, intercept_only=True))
+        return {
+            "ok": True,
+            "dry_run": True,
+            "lane": "UI_COMPOSER_INITIAL",
+            "states": states,
+            "submit_boundary": boundary,
+            "idempotency_key": idem,
+            "idempotency_would_reserve": True,
+        }
 
     if not ui_driver_enabled():
         raise FlowUiDriverError(ERR_DISABLED, "FLOW_UI_DRIVER_ENABLED != 1")
     if confirm_live_credit_burn is not True:
         raise FlowUiDriverError(ERR_CONFIRM,
                                 "explicit confirm_live_credit_burn required")
-    raise FlowUiDriverError(
-        "UI_INITIAL_SUBMIT_NOT_IN_PHASE2B",
-        "live Block-1 credit submit reserved for controlled live test")
+
+    reserve = await crud.reserve_video_job_side_effect(
+        idem, job_id=request_id or idem, stage="INITIAL")
+    if not reserve.get("reserved"):
+        raise FlowUiDriverError(
+            "INITIAL_SUBMIT_BLOCKED",
+            f"duplicate initial submit (state={reserve.get('row', {}).get('submission_state')})")
+
+    sub = _res(await client.flowui_submit_composer_create(
+        confirm=True, intercept_only=bool(intercept_submit)))
+    if not sub.get("ok"):
+        await crud.update_video_job_side_effect(
+            idem, submission_state="NOT_ATTEMPTED", retry_safety="SAFE",
+            detail=str(sub.get("error")))
+        raise FlowUiDriverError("INITIAL_SUBMIT_FAILED", str(sub.get("error")))
+
+    mark("INITIAL_SUBMIT_INVOKED", intercept_only=intercept_submit)
+    return {
+        "ok": True,
+        "lane": "UI_COMPOSER_INITIAL",
+        "states": states,
+        "submit_result": sub,
+        "idempotency_key": idem,
+    }
 
 
-# ── timeline media snapshot for UI Extend polling ───────────────────────────
-def _media_ids_from_scene_listing(resp: dict) -> set:
-    out: set = set()
+# ── typed timeline snapshot for UI Extend polling ─────────────────────────────
+def _typed_timeline_snapshot(resp: dict) -> dict:
     data = resp.get("data", resp) if isinstance(resp, dict) else {}
     if not isinstance(data, dict):
-        return out
+        data = {}
+    media_resource_ids: set = set()
+    workflow_ids: set = set()
+    primary_media_ids: set = set()
+    records: list = []
     for m in data.get("media") or []:
-        if isinstance(m, dict) and m.get("name"):
-            out.add(str(m["name"]))
+        if not isinstance(m, dict):
+            continue
+        mr = m.get("name")
+        wf = m.get("workflowId")
+        sid = m.get("sceneId")
+        rec = {
+            "media_resource_id": str(mr) if mr else None,
+            "workflow_id": str(wf) if wf else None,
+            "primary_media_id": None,
+            "operation_id": None,
+            "scene_id": str(sid) if sid else None,
+            "project_id": m.get("projectId"),
+        }
+        records.append(rec)
+        if mr:
+            media_resource_ids.add(str(mr))
+        if wf:
+            workflow_ids.add(str(wf))
     for sw in data.get("sceneWorkflows") or []:
         if not isinstance(sw, dict):
             continue
         wf = sw.get("workflow") or {}
-        meta = wf.get("metadata") if isinstance(wf, dict) else {}
-        if isinstance(meta, dict) and meta.get("primaryMediaId"):
-            out.add(str(meta["primaryMediaId"]))
-    return out
+        if not isinstance(wf, dict):
+            continue
+        meta = wf.get("metadata") or {}
+        wname = wf.get("name")
+        pmid = meta.get("primaryMediaId") if isinstance(meta, dict) else None
+        records.append({
+            "media_resource_id": None,
+            "workflow_id": str(wname) if wname else None,
+            "primary_media_id": str(pmid) if pmid else None,
+            "operation_id": None,
+            "scene_id": sw.get("sceneId"),
+            "project_id": None,
+        })
+        if wname:
+            workflow_ids.add(str(wname))
+        if pmid:
+            primary_media_ids.add(str(pmid))
+    return {
+        "records": records,
+        "media_resource_ids": media_resource_ids,
+        "workflow_ids": workflow_ids,
+        "primary_media_ids": primary_media_ids,
+        "operation_ids": set(),
+    }
 
 
-async def _snapshot_timeline_media(client, project_id: str, scene_id: str) -> set:
+async def _snapshot_timeline_media(client, project_id: str, scene_id: str) -> dict:
     if not project_id or not scene_id:
         raise FlowUiDriverError("EXTEND_PROJECT_CONTEXT_MISSING",
                                 "project_id and scene_id required for UI polling")
     resp = await client.list_scene_workflows(scene_id, project_id)
-    return _media_ids_from_scene_listing(resp)
+    return _typed_timeline_snapshot(resp)
 
 
 async def _correlate_ui_extend_child(
     client, *, project_id: str, candidates: list, submitted_prompt: str,
-    snapshot_ids: set, model_key: str | None = None, seed=None,
+    snapshot: dict, model_key: str | None = None, seed=None,
 ) -> dict | None:
     from agent.services.make_video import _extract_provider_prompt
 
+    prior_media = snapshot.get("media_resource_ids") or set()
     for mid in candidates:
-        if mid in snapshot_ids:
+        if mid in prior_media:
             continue
         media = await client.get_media(mid)
         mdata = media.get("data", media) if isinstance(media, dict) else media
@@ -262,14 +348,24 @@ async def _correlate_ui_extend_child(
         vseed = video_meta.get("seed")
         if seed is not None and vseed is not None and str(vseed) != str(seed):
             continue
+        child_media_id = str(mdata.get("name") or mid)
         return {
-            "child_operation_id": mid,
-            "child_primary_media_id": video_meta.get("primaryMediaId") or mid,
+            "child_media_id": child_media_id,
+            "child_primary_media_id": (
+                video_meta.get("primaryMediaId")
+                or mdata.get("primaryMediaId")
+            ),
+            "child_workflow_id": mdata.get("workflowId"),
+            "child_operation_id": None,
             "correlation_evidence": {
                 "normalization_path": norm_path,
                 "prompt_match": True,
                 "model": vmodel,
                 "seed": vseed,
+                "identity_types": {
+                    "media_resource_id": child_media_id,
+                    "operation_id": None,
+                },
             },
         }
     return None
@@ -277,16 +373,20 @@ async def _correlate_ui_extend_child(
 
 async def _poll_ui_extend_child(
     client, *, project_id: str, scene_id: str, submitted_prompt: str,
-    snapshot_ids: set, poll_timeout_s: int = 120, poll_interval_s: int = 5,
+    snapshot: dict, poll_timeout_s: int = 120, poll_interval_s: int = 5,
     model_key: str | None = None, seed=None,
 ) -> dict:
+    prior_media = snapshot.get("media_resource_ids") or set()
     elapsed = 0
     while elapsed <= poll_timeout_s:
         current = await _snapshot_timeline_media(client, project_id, scene_id)
-        new_ids = [m for m in current if m not in snapshot_ids]
+        new_ids = [
+            m for m in current.get("media_resource_ids") or set()
+            if m not in prior_media
+        ]
         child = await _correlate_ui_extend_child(
             client, project_id=project_id, candidates=new_ids,
-            submitted_prompt=submitted_prompt, snapshot_ids=snapshot_ids,
+            submitted_prompt=submitted_prompt, snapshot=snapshot,
             model_key=model_key, seed=seed)
         if child:
             return child
@@ -295,11 +395,24 @@ async def _poll_ui_extend_child(
     raise FlowUiDriverError(ERR_EXTEND_CHILD_NOT_FOUND, "polling exhausted")
 
 
+def _ui_parent_media_resource_id(job: dict) -> str | None:
+    state = json.loads(job.get("stage_state_json") or "{}")
+    chain = state.get("ui_parent_media_resource_ids") or []
+    if chain:
+        return str(chain[-1])
+    im = job.get("initial_media_id")
+    return str(im) if im else None
+
+
 async def _persist_ui_extend_child(
     job: dict, *, block_index: int, position: int, parent_op: str,
     child: dict, prompt: str, idem: str, workspace_generation_package_id: str | None,
 ) -> str:
     from agent.services import google_flow_native_extend_runtime as _nx
+
+    child_media = child.get("child_media_id")
+    child_op = child.get("child_operation_id")
+    child_pmid = child.get("child_primary_media_id") or child_media
 
     existing = await crud.get_extend_lineage_by_idempotency(idem)
     lineage_id = existing["extend_lineage_id"] if existing else str(uuid.uuid4())
@@ -312,8 +425,8 @@ async def _persist_ui_extend_child(
             block_index=block_index,
             block_position=position,
             parent_operation_id=parent_op,
-            child_operation_id=child["child_operation_id"],
-            child_primary_media_id=child.get("child_primary_media_id"),
+            child_operation_id=child_op,
+            child_primary_media_id=child_pmid,
             continuation_prompt_hash=_nx._prompt_hash(prompt),
             idempotency_key=idem,
             polling_state="EXTEND_SUCCEEDED",
@@ -321,27 +434,38 @@ async def _persist_ui_extend_child(
     else:
         await crud.update_extend_lineage(
             lineage_id,
-            child_operation_id=child["child_operation_id"],
-            child_primary_media_id=child.get("child_primary_media_id"),
+            child_operation_id=child_op,
+            child_primary_media_id=child_pmid,
             polling_state="EXTEND_SUCCEEDED",
         )
 
     job_id = job["job_id"]
     segments = json.loads(job.get("segment_media_ids_json") or "[]")
-    child_op = child["child_operation_id"]
-    if child_op not in segments:
+    if child_op and child_op not in segments:
         segments.append(child_op)
+
+    state = json.loads(job.get("stage_state_json") or "{}")
+    ui_chain = list(state.get("ui_parent_media_resource_ids") or [])
+    if not ui_chain and job.get("initial_media_id"):
+        ui_chain.append(str(job["initial_media_id"]))
+    if child_media:
+        ui_chain.append(str(child_media))
+    state["ui_parent_media_resource_ids"] = ui_chain
+
     await crud.update_video_production_job_full(
         job_id,
         segment_media_ids_json=json.dumps(segments),
         extend_child_operation_id=child_op,
+        extend_child_workflow_id=child.get("child_workflow_id"),
+        stage_state_json=json.dumps(state),
     )
     return lineage_id
 
 
 # ── timeline Extend for ONE block (Blocker 2 + 3) ───────────────────────────
 async def extend_block_via_ui(
-    client, *, job_id: str, parent_media_operation_id: str,
+    client, *, job_id: str, parent_media_operation_id: str = "",
+    parent_media_resource_id: str = "",
     block_index: int, position: int, prompt: str,
     model_label: str = "Veo 3.1 - Lite",
     confirm_live_credit_burn: bool = False,
@@ -368,10 +492,15 @@ async def extend_block_via_ui(
         raise FlowUiDriverError("EXTEND_PARENT_MISSING",
                                 "job has no bound current Video 1")
     parent_op = segments[-1]
+    open_id = (
+        parent_media_resource_id
+        or _ui_parent_media_resource_id(job)
+        or parent_op
+    )
     if parent_media_operation_id and parent_media_operation_id != parent_op:
         raise FlowUiDriverError(
             ERR_CURRENT_VIDEO_IDENTITY_MISMATCH,
-            f"requested parent {parent_media_operation_id} != lineage {parent_op}")
+            f"requested lineage parent {parent_media_operation_id} != {parent_op}")
 
     idem = _orch._stage_key(
         job, "EXTEND", f"{parent_op}|{_nx._prompt_hash(prompt)}|pos{position}")
@@ -383,13 +512,14 @@ async def extend_block_via_ui(
 
     project_id = job.get("project_id") or ""
     scene_id = job.get("scene_id") or ""
-    snapshot_ids: set = set()
+    snapshot: dict = {"media_resource_ids": set(), "workflow_ids": set()}
     if project_id and scene_id and not dry_run:
-        snapshot_ids = await _snapshot_timeline_media(client, project_id, scene_id)
+        snapshot = await _snapshot_timeline_media(client, project_id, scene_id)
 
-    mark(S_CURRENT_VIDEO_OPENING, parent=parent_op)
+    mark(S_CURRENT_VIDEO_OPENING, parent_operation_id=parent_op,
+         parent_open_media_resource_id=open_id)
     opened = _res(await client.flowui_open_video(
-        parent_op, expected_project_id=project_id or None))
+        open_id, expected_project_id=project_id or None))
     if not opened.get("ok"):
         code = _map_open_video_error(str(opened.get("error")))
         raise FlowUiDriverError(code, str(opened.get("error")))
@@ -442,7 +572,7 @@ async def extend_block_via_ui(
     try:
         child = await _poll_ui_extend_child(
             client, project_id=project_id, scene_id=scene_id,
-            submitted_prompt=prompt, snapshot_ids=snapshot_ids,
+            submitted_prompt=prompt, snapshot=snapshot,
             poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
             model_key=job.get("model"))
     except FlowUiDriverError:
@@ -451,7 +581,8 @@ async def extend_block_via_ui(
             retry_safety="BLOCKED", detail="UI_EXTEND_POLL_NO_CHILD")
         raise
 
-    mark(S_CHILD_CANDIDATE_FOUND, child_operation_id=child["child_operation_id"])
+    mark(S_CHILD_CANDIDATE_FOUND, child_media_id=child.get("child_media_id"),
+         child_operation_id=child.get("child_operation_id"))
     mark(S_CHILD_IDENTITY_CONFIRMED, evidence=child.get("correlation_evidence"))
 
     job["job_id"] = job_id
@@ -461,17 +592,21 @@ async def extend_block_via_ui(
         workspace_generation_package_id=job.get("execution_package_id"))
     mark(S_CHILD_PERSISTED, lineage_id=lineage_id)
     mark(S_EXTEND_COMPLETE)
-    mark(S_NEXT_BLOCK_READY, next_parent=child["child_operation_id"])
+    mark(S_NEXT_BLOCK_READY, next_parent_media_resource_id=child.get("child_media_id"))
 
+    op_ref = child.get("child_operation_id") or child.get("child_media_id")
     await crud.update_video_job_side_effect(
         idem, submission_state="TERMINAL", credit_state="MAY_HAVE_SPENT",
-        retry_safety="RESUME_ONLY", operation_ref=child["child_operation_id"])
+        retry_safety="RESUME_ONLY", operation_ref=op_ref)
 
     return {
         "ok": True, "dry_run": False, "states": states,
         "idempotency_key": idem,
         "parent_operation_id": parent_op,
-        "child_operation_id": child["child_operation_id"],
+        "child_media_id": child.get("child_media_id"),
+        "child_operation_id": child.get("child_operation_id"),
+        "child_primary_media_id": child.get("child_primary_media_id"),
+        "child_workflow_id": child.get("child_workflow_id"),
         "lineage_id": lineage_id,
     }
 

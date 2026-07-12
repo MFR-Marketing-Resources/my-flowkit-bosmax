@@ -897,12 +897,22 @@ class FlowClient:
             "FLOWUI_SET_COMPOSER_PROMPT", {"text": text, "tab_id": tab_id},
             timeout=30)
 
-    async def flowui_open_video(self, parent_media_operation_id: str, *,
+    async def flowui_submit_composer_create(self, *, confirm: bool,
+                                            intercept_only: bool = False,
+                                            tab_id: int | None = None) -> dict:
+        return await self._send(
+            "FLOWUI_SUBMIT_COMPOSER_CREATE",
+            {"confirm": bool(confirm), "intercept_only": bool(intercept_only),
+             "tab_id": tab_id},
+            timeout=40)
+
+    async def flowui_open_video(self, parent_media_resource_id: str, *,
                                 expected_project_id: str | None = None,
                                 tab_id: int | None = None) -> dict:
         return await self._send(
             "FLOWUI_OPEN_VIDEO",
-            {"parent_media_operation_id": parent_media_operation_id,
+            {"parent_media_resource_id": parent_media_resource_id,
+             "parent_media_operation_id": parent_media_resource_id,
              "expected_project_id": expected_project_id, "tab_id": tab_id},
             timeout=30)
 

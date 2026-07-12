@@ -44,6 +44,14 @@
    "Create Character",
    "Create Scene"
   ],
+  "composer_reference_container": {
+   "evidence_id": "composer_panel:editable_text_plus_add_control_ancestor",
+   "discovery": "smallest ancestor of composer textbox that also contains the Add attachment control",
+   "thumbnail_scope": "img/video/picture inside container excluding project video cards (role=button with play_circle)",
+   "acceptance": "actual_total_count == expected_count; no unexpected_ids; no duplicate_ids; order_ok when count>1",
+   "t2v": "actual_total_count must equal 0 after thumbnail-specific remove actions",
+   "composer_submit": "arrow_forwardCreate with confirm + idempotency reserve; intercept_only for zero-credit validation"
+  },
   "nav_add_media": "Add Media",
   "video_card": "div[role=button] containing title text + play_circle"
  },
