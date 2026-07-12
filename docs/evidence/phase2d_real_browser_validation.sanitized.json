@@ -1,0 +1,137 @@
+{
+  "validation_timestamp_utc": "2026-07-12T13:53:27.449491+00:00",
+  "executor": "Claude Fable 5",
+  "previous_executor": "Composer 2.5",
+  "local_handoff_branch": "main (uncommitted working tree from Composer 2.5)",
+  "local_handoff_sha": "81f1c18b7eb20a1e3e6f15bef947b3f961c0d77a",
+  "remote_main_sha": "81f1c18b7eb20a1e3e6f15bef947b3f961c0d77a",
+  "runtime_sha": "81f1c18b7eb20a1e3e6f15bef947b3f961c0d77a",
+  "extension_manifest_version": "0.2.0",
+  "driver_version_expected": "flowui-1.3.2-phase2d-20260712",
+  "ui_driver_version": "flowui-1.3.2-phase2d-20260712",
+  "backend_health": {
+    "ok": true,
+    "extension_connected": true,
+    "version": "0.2.0"
+  },
+  "capture_video_payload_http": 200,
+  "sanitized_flow_project_manual": "7bdd0f87…",
+  "sanitized_flow_project_job": "c6c87bdd…",
+  "credit_before": 1560,
+  "credit_after": 1560,
+  "credit_unchanged": true,
+  "recovery_actions": [
+    "reload_extension",
+    "open_project_manual",
+    "reload_flow_tab",
+    "composer_ready_attempt_1",
+    "backend_force_restart_flow_ui_driver_enabled",
+    "three_bounded_validation_passes"
+  ],
+  "root_cause_previous_incomplete_validation": "The captured CURRENT-UI contract (tests/fixtures/google_flow_ui_contract/ui_contract.sanitized.json) that proves video-open -> detail -> More -> Download Project all succeed was produced by Playwright/CDP TRUSTED clicks in an isolated debug Chrome (.ai/experiments/aisandbox_extend_discovery/capture_ui_pass2.py). The Chrome extension flow-ui-driver.js drives the OPERATOR's live authenticated tab with content-script SYNTHETIC clicks (pointerdown/mousedown/up + .click()). Across three bounded zero-credit passes these synthetic clicks do NOT trigger Flow's React-Router navigation from a project video card into VIDEO_DETAIL; the card is located by exact media-resource id but the detail view never confirms. Download Project depends on being in VIDEO_DETAIL, so it fails downstream with DOWNLOAD_PROJECT_ITEM_NOT_FOUND. Hybrid attach now reaches the composer upload path (dispatch-shadow bug fixed) but the reference thumbnail does not render within the bounded poll window in the live tab. All three residual failures are the same class: live Flow UI does not respond to the driver's synthetic content-script clicks the way it responds to isolated trusted CDP/Playwright clicks.",
+  "surgical_fixes_proven_this_session": [
+    "extension/background.js: FLOWUI_COMPOSER_ATTACH_FILE was swallowed by the generic startsWith('FLOWUI_') WS dispatch branch and routed to the plain content-script relay instead of the CDP file-chooser handler handleFlowUiComposerAttachFile. PROVEN by the error transition FLOWUI_NO_RESPONSE -> real attach attempt (REFERENCES_NOT_VISIBLE actual_total_count=0) after excluding it from the generic branch.",
+    "extension/flow-ui-driver.js: Download-Project 'More' matcher used a JS regex literal with a double-escaped backslash-s that matched a literal backslash-s, never whitespace. Corrected to a single-escaped whitespace class.",
+    "agent/services/google_flow_ui_driver.py: path-only composer attach read the reference count once immediately; upload thumbnails render asynchronously. Now polls the container count up to ~30s before failing closed.",
+    "extension/flow-ui-driver.js: exact-video-open removed the body.innerHTML fallback that could click ANY visible card containing an img/video (risk of opening a same-title/unrelated card); now requires the exact media-resource id in the clicked card's subtree, per contract requirement 'same-title/unrelated cards ignored'."
+  ],
+  "driver_state": {
+    "enabled": true,
+    "flow_tab_found": true,
+    "flow_url": "https://labs.google/fx/tools/flow/project/7bdd0f87…",
+    "driver_version": "flowui-1.3.2-phase2d-20260712",
+    "view": "PROJECT",
+    "title": "bosmax f2v manual",
+    "composer_found": true,
+    "result": "PASS"
+  },
+  "composer_container": {
+    "ok": true,
+    "composer_found": true,
+    "thumbnails": [],
+    "actual_total_count": 0,
+    "container_evidence": "composer_panel:editable_text_plus_add_control_ancestor",
+    "scope": "composer_reference_container",
+    "result": "PASS"
+  },
+  "t2v_exact_zero": {
+    "ok": true,
+    "expected_count": 0,
+    "visible_count": 0,
+    "scope": "composer_reference_container",
+    "result": "PASS"
+  },
+  "hybrid_exact_one": {
+    "http": 422,
+    "detail": "REFERENCES_NOT_VISIBLE: actual_total_count=0 expected=1",
+    "note": "Composer upload path now reached (dispatch-shadow bug fixed) but reference thumbnail did not render in the live tab within the bounded poll window.",
+    "result": "BLOCKED_LIVE_UI"
+  },
+  "submit_boundary": {
+    "ok": true,
+    "intercept_only": true,
+    "would_invoke": "add_2Create",
+    "submit_control": "composer_create",
+    "note": "Real Create boundary located; NO submit performed; legacy API generation lane not invoked.",
+    "result": "PASS"
+  },
+  "exact_video_open": {
+    "requested_identity_type": "media_resource_id",
+    "open_target_authority": "generated_artifact",
+    "media_id_used_truncated": "f0f865d6…",
+    "error": "DETAIL_VIEW_NOT_CONFIRMED",
+    "note": "Exact card located by media-resource id; synthetic click did not drive React navigation into VIDEO_DETAIL. Trusted CDP/Playwright click on the same project (captured contract) does navigate.",
+    "result": "BLOCKED_LIVE_UI"
+  },
+  "typed_identifiers": {
+    "media_resource_id": "69051c7b…",
+    "workflow_id": null,
+    "primary_media_id": null,
+    "operation_id": "69051c7b…",
+    "scene_id": "cce593f7…",
+    "project_id": "c6c87bdd…",
+    "invariants": "missing fields remain null; media id NOT copied into primary_media_id; workflow id NOT renamed as operation id",
+    "result": "PASS"
+  },
+  "download_project": {
+    "http": 422,
+    "detail": "DOWNLOAD_PROJECT_FAILED: DOWNLOAD_PROJECT_ITEM_NOT_FOUND",
+    "note": "Downstream of exact_video_open: without VIDEO_DETAIL the detail 'More' menu that hosts Download Project is not present. Fail-closed checks were NOT weakened to force a 200.",
+    "downloaded_byte_count": 0,
+    "zip_signature": "UNVERIFIED_LIVE",
+    "zip_entry_count": 0,
+    "archive_sha256": "UNVERIFIED_LIVE",
+    "result": "BLOCKED_LIVE_UI"
+  },
+  "download_project_contract_reference_capture": {
+    "source": "tests/fixtures/google_flow_ui_contract/ui_contract.sanitized.json (Playwright/CDP trusted-click capture, project 7bdd0f87, zero-credit)",
+    "bytes": 2048103,
+    "zip_signature": "PK",
+    "zip_entries": ["Woman_holding_bottle_speaking_202607121723.mp4"],
+    "sha256": "d5d3fe848416d08ca00289494cedce25702c64fe366dc235ee827ea721d43bfe",
+    "note": "Reference-only; proves the UI contract is real and achievable via trusted clicks. NOT presented as this session's live extension-driven proof."
+  },
+  "automated_tests": {
+    "node_check": "PASS (background.js, flow-ui-driver.js, content-flow-dom.js)",
+    "f2v_asset_picker_harness": "PASS (22/22)",
+    "test_flow_ui_driver": "PASS (27 passed, 1 skipped)",
+    "locked_bundle": "PASS (103 passed) — test_manual_lane_reroute, test_make_video_binding, test_agent_video, test_generate_validation, test_extension_side_panel_ui_contract"
+  },
+  "retries_and_recovery": "3 bounded zero-credit passes; reload-extension + reopen-project + reload-flow-tab between passes; backend force-restarted with FLOW_UI_DRIVER_ENABLED=1 to load the async-thumbnail poll fix.",
+  "final_status": "BLOCKED_CURRENT_FLOW_UI_CONTRACT",
+  "blocker_summary": "Live Flow UI does not respond to the extension driver's content-script synthetic navigation clicks (card->detail, detail More menu). Making exact-video-open, Download Project, and Hybrid-attach pass live would require routing those clicks through the extension's CDP trusted-click path as a new coordinate-discovery navigation subsystem — a rebuild beyond surgical scope — and continued live-Flow interaction debugging, which the repo contract (CLAUDE.md / AGENTS.md) forbids. Credits unchanged (1560 -> 1560).",
+  "passing_probes": [
+    "driver_state",
+    "composer_container",
+    "t2v_exact_zero",
+    "submit_boundary_interception",
+    "typed_identifiers",
+    "credit_unchanged"
+  ],
+  "blocked_probes": [
+    "hybrid_exact_one",
+    "exact_video_open",
+    "download_project"
+  ],
+  "owner_controlled_next_step": "Owner decision required: authorize wiring the extension's existing CDP trusted-click helper (cdpClickCoordinate) into a coordinate-discovery navigation path for the video card, detail More menu, and Download Project menuitem — the isolated Playwright/CDP capture proves those actions succeed with trusted clicks. This is a scoped follow-up subsystem, not a surgical patch, and needs explicit approval per the Engineering Lockdown."
+}

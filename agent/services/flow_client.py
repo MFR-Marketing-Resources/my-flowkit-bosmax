@@ -914,7 +914,7 @@ class FlowClient:
             {"parent_media_resource_id": parent_media_resource_id,
              "parent_media_operation_id": parent_media_resource_id,
              "expected_project_id": expected_project_id, "tab_id": tab_id},
-            timeout=30)
+            timeout=60)
 
     async def flowui_add_clip_extend(self, model_label: str,
                                      tab_id: int | None = None) -> dict:

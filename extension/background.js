@@ -233,16 +233,28 @@ async function resolveFlowUiTab(targetTabId) {
 async function handleFlowUiVerb(verb, params) {
 	const tab = await resolveFlowUiTab(params?.tab_id);
 	if (!tab) return { ok: false, error: "NO_FLOW_TAB" };
-	try {
-		const res = await chrome.tabs.sendMessage(tab.id, {
-			type: "FLOWUI",
-			verb,
-			args: params || {},
-		});
-		return { ...(res || { ok: false, error: "FLOWUI_NO_RESPONSE" }), flow_tab_id: tab.id };
-	} catch (e) {
-		return { ok: false, error: "FLOWUI_SEND_FAILED", detail: String(e?.message || e).slice(0, 160), flow_tab_id: tab.id };
+	const payload = { type: "FLOWUI", verb, args: params || {} };
+	let lastErr = null;
+	for (let attempt = 0; attempt < 3; attempt++) {
+		try {
+			const res = await chrome.tabs.sendMessage(tab.id, payload);
+			if (res) return { ...(res || {}), flow_tab_id: tab.id };
+		} catch (e) {
+			lastErr = e;
+			await new Promise((r) => setTimeout(r, 350));
+			continue;
+		}
+		await new Promise((r) => setTimeout(r, 250));
 	}
+	if (lastErr) {
+		return {
+			ok: false,
+			error: "FLOWUI_SEND_FAILED",
+			detail: String(lastErr?.message || lastErr).slice(0, 160),
+			flow_tab_id: tab.id,
+		};
+	}
+	return { ok: false, error: "FLOWUI_NO_RESPONSE", flow_tab_id: tab.id };
 }
 
 // Download Project = zero-credit menu click that emits a browser-side ZIP blob
@@ -319,9 +331,25 @@ async function handleFlowUiComposerAttachFile(params) {
 		params?.slot_label || "ComposerRef",
 	);
 	if (!armed.ok) return { ...armed, flow_tab_id: tab.id };
-	const clicked = await handleFlowUiVerb("FLOWUI_OPEN_COMPOSER_UPLOAD", {
-		tab_id: tab.id,
-	});
+	async function invokeOpenComposerUpload() {
+		try {
+			const inj = await chrome.scripting.executeScript({
+				target: { tabId: tab.id },
+				func: async (verb) => {
+					const inv = window.__FLOWUI_INVOKE__;
+					if (!inv) return { ok: false, error: "FLOWUI_INVOKE_MISSING" };
+					return await inv(verb, {});
+				},
+				args: ["FLOWUI_OPEN_COMPOSER_UPLOAD"],
+			});
+			const direct = inj?.[0]?.result;
+			if (direct?.ok) return direct;
+		} catch (_e) {
+			/* fall through to sendMessage */
+		}
+		return handleFlowUiVerb("FLOWUI_OPEN_COMPOSER_UPLOAD", { tab_id: tab.id });
+	}
+	const clicked = await invokeOpenComposerUpload();
 	if (!clicked.ok) return { ...clicked, flow_tab_id: tab.id };
 	const proof = await waitForCdpFileChooserProof(tab.id);
 	return { ...(proof || { ok: false, error: "ERR_CDP_FILE_CHOOSER_NO_RESULT" }), flow_tab_id: tab.id, upload_menu: clicked };
@@ -361,7 +389,18 @@ async function handleHarvestVideoUrls(targetTabId) {
 				const imageIds = new Set();
 				const grab = (s) => {
 					const m = s?.match(/[?&]name=([0-9a-f-]{36})/);
-					return m ? m[1] : null;
+					if (m) return m[1];
+					const m2 = s?.match(
+						/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i,
+					);
+					return m2 ? m2[1] : null;
+				};
+				const addUuid = (raw) => {
+					if (!raw) return;
+					const re =
+						/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+					const hits = String(raw).match(re) || [];
+					for (const id of hits) videoIds.add(id);
 				};
 				document.querySelectorAll("video, source").forEach((v) => {
 					const s = v.src || v.currentSrc || "";
@@ -372,6 +411,10 @@ async function handleHarvestVideoUrls(targetTabId) {
 				document.querySelectorAll("img").forEach((im) => {
 					const id = grab(im.src || im.currentSrc || "");
 					if (id) imageIds.add(id);
+					addUuid(im.src || im.currentSrc || "");
+				});
+				document.querySelectorAll('div[role="button"]').forEach((el) => {
+					addUuid(el.innerHTML || "");
 				});
 				const pm = location.href.match(/project\/([0-9a-f-]{36})/);
 				return {
@@ -1463,6 +1506,13 @@ const WS_METHOD_TIMEOUT_MS = {
 	OPEN_FLOW_NEW_PROJECT: 75000,
 	EXECUTE_FLOW_JOB: 125000,
 	DEBUG_FLOW_DOM_EXECUTION: 65000,
+	FLOWUI_OPEN_VIDEO: 45000,
+	FLOWUI_COMPOSER_ATTACH_FILE: 90000,
+	FLOWUI_DOWNLOAD_PROJECT_CAPTURE: 180000,
+	FLOWUI_CLEAR_COMPOSER_REFERENCES: 60000,
+	FLOWUI_VERIFY_COMPOSER_ZERO: 45000,
+	FLOWUI_COMPOSER_REFERENCE_STATE: 30000,
+	FLOWUI_SUBMIT_COMPOSER_CREATE: 30000,
 };
 
 function buildFlowTabSnapshot(flowTab) {
@@ -1605,7 +1655,8 @@ async function executeWsMethodAndReply(msg, handler) {
 	logWsMethodStage(method, "received", flowTab);
 
 	try {
-		const timeoutMs = WS_METHOD_TIMEOUT_MS[method] || 10000;
+		const timeoutMs = WS_METHOD_TIMEOUT_MS[method]
+			|| (String(method).startsWith("FLOWUI_") ? 45000 : 10000);
 		const result = await promiseWithTimeout(
 			Promise.resolve().then(handler),
 			timeoutMs,
@@ -5068,7 +5119,12 @@ function connectToAgent() {
 					handleReloadFlowTab(),
 				);
 				replyToAgent(msg, result);
-			} else if (msg.method && msg.method.startsWith("FLOWUI_") && msg.method !== "FLOWUI_DOWNLOAD_PROJECT_CAPTURE") {
+			} else if (
+				msg.method &&
+				msg.method.startsWith("FLOWUI_") &&
+				msg.method !== "FLOWUI_DOWNLOAD_PROJECT_CAPTURE" &&
+				msg.method !== "FLOWUI_COMPOSER_ATTACH_FILE"
+			) {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleFlowUiVerb(msg.method, msg.params || {}),
 				);
