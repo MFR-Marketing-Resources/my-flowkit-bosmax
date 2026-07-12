@@ -242,7 +242,7 @@ export interface VideoJobAuthorization {
   expires_in_seconds: number;
 }
 
-export async function planVideoJob(intent: {
+export type VideoJobPlanIntent = {
   product_id?: string | null;
   product_name?: string | null;
   execution_package_id?: string | null;
@@ -254,7 +254,24 @@ export async function planVideoJob(intent: {
   initial_prompt_fingerprint?: string | null;
   execution_mode?: string;
   client_request_nonce?: string | null;
-}): Promise<VideoJobPlan> {
+};
+
+export interface VideoJobLookup {
+  found: boolean;
+  job_id?: string;
+  status?: string;
+  plan_fingerprint?: string;
+  plan?: VideoJobPlan['plan'] | null;
+  logical_job_key?: string;
+}
+
+/** READ-ONLY mount/refresh restore: returns the existing logical job (if any)
+ *  without creating a job, resolving authority, or writing anything. */
+export async function lookupVideoJob(intent: VideoJobPlanIntent): Promise<VideoJobLookup> {
+  return postAPI('/api/flow/video-jobs/lookup', intent);
+}
+
+export async function planVideoJob(intent: VideoJobPlanIntent): Promise<VideoJobPlan> {
   return postAPI('/api/flow/video-jobs/plan', intent);
 }
 
