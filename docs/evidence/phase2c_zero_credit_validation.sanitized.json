@@ -1,0 +1,52 @@
+{
+  "task": "BOSMAX_SEV0_PHASE_2C_FINAL_FOUR_BLOCKERS",
+  "baseline_merge_sha": "cd33a05a6a3e3111d7e3faa59a92af2d879eb434",
+  "deployed_merge_sha": "083f7af8e45fb59e15fdb08d114945bec69ba0ea",
+  "feature_commit_sha": "32a17ff",
+  "pr": "https://github.com/MFR-Marketing-Resources/my-flowkit-bosmax/pull/329",
+  "extension_manifest_version": "0.2.0",
+  "flow_ui_driver_version": "flowui-1.2.0-phase2c-20260712",
+  "kill_switch": "FLOW_UI_DRIVER_ENABLED default OFF",
+  "credit_balance": {
+    "before": "unchanged",
+    "after": "unchanged",
+    "note": "No live composer submit or live Extend during validation"
+  },
+  "blocker_1_composer_container": {
+    "container_evidence": "composer_panel:editable_text_plus_add_control_ancestor",
+    "enforcement": [
+      "actual_total_count == expected_count",
+      "unexpected_ids empty",
+      "duplicate_ids empty",
+      "project video cards excluded via role=button heuristics"
+    ],
+    "fixture": "tests/fixtures/google_flow_ui_contract/ui_contract.sanitized.json#composer_reference_container"
+  },
+  "blocker_2_live_submit_path": {
+    "verb": "FLOWUI_SUBMIT_COMPOSER_CREATE",
+    "dry_run": "intercept_only reaches arrow_forwardCreate boundary",
+    "live_guards": ["FLOW_UI_DRIVER_ENABLED=1", "confirm_live_credit_burn=True", "reserve_video_job_side_effect"],
+    "removed": "UI_INITIAL_SUBMIT_NOT_IN_PHASE2B"
+  },
+  "blocker_3_typed_identifiers": {
+    "snapshot": "_typed_timeline_snapshot separates media_resource_ids, workflow_ids, primary_media_ids",
+    "child_fields": ["child_media_id", "child_operation_id (nullable)", "child_primary_media_id", "child_workflow_id"],
+    "ui_parent_chain": "stage_state_json.ui_parent_media_resource_ids",
+    "open_video_identity": "media_resource_id / parent_open_identity_type"
+  },
+  "blocker_4_browser_validation": {
+    "post_merge_executed": true,
+    "commands": [
+      "pytest tests/unit/test_flow_ui_driver.py -q → 23 passed",
+      "pytest tests/unit/test_flow_ui_phase2c_browser_contract.py -q → 2 passed, 1 skipped (live tab optional)",
+      "pytest tests/unit/test_flow_mode_reference_contract.py tests/unit/test_google_flow_native_extend_runtime.py -q → 48 passed aggregate with driver suite"
+    ],
+    "live_flow_tab_probe": "skipped unless FLOW_UI_LIVE_BROWSER_VALIDATE=1 and extension connected"
+  },
+  "modes_zero_credit_contract": {
+    "Hybrid": "exactly 1 thumbnail in composer container",
+    "F2V": "total 1 or 2 with order",
+    "I2V": "total 2 or 3 with order",
+    "T2V": "actual_total_count 0 after remove"
+  }
+}
