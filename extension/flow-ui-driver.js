@@ -4,7 +4,7 @@
 	if (window.__FLOWUI_DRIVER_ACTIVE__) return;
 	window.__FLOWUI_DRIVER_ACTIVE__ = true;
 
-	const VERSION = "flowui-1.3.1-phase2d-20260712";
+	const VERSION = "flowui-1.3.2-phase2d-20260712";
 
 	const NAMES = {
 		ADD_CLIP: "Add Clip",
@@ -41,6 +41,38 @@
 	}
 
 	const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+	// Flow's React cards ignore bare synthetic .click() for navigation (they
+	// bind pointer/mouse-down); dispatch the full sequence like a real click.
+	function realClick(el) {
+		try {
+			el.scrollIntoView({ block: "center", inline: "center" });
+		} catch (_e) {
+			/* detached or non-scrollable */
+		}
+		const r = el.getBoundingClientRect();
+		const opts = {
+			bubbles: true,
+			cancelable: true,
+			composed: true,
+			button: 0,
+			clientX: r.left + r.width / 2,
+			clientY: r.top + r.height / 2,
+		};
+		for (const [Ctor, type] of [
+			[PointerEvent, "pointerdown"],
+			[MouseEvent, "mousedown"],
+			[PointerEvent, "pointerup"],
+			[MouseEvent, "mouseup"],
+		]) {
+			try {
+				el.dispatchEvent(new Ctor(type, opts));
+			} catch (_e) {
+				/* constructor unavailable */
+			}
+		}
+		el.click();
+	}
 
 	async function waitFor(fn, timeoutMs, stepMs = 250) {
 		const t0 = Date.now();
@@ -375,14 +407,14 @@
 		const addBtn = findByLabel("button", NAMES.COMPOSER_ADD) ||
 			Array.from(document.querySelectorAll("button")).find(isComposerAttachControl);
 		if (!addBtn) return { ok: false, error: "COMPOSER_ATTACH_CONTROL_NOT_FOUND" };
-		addBtn.click();
+		realClick(addBtn);
 		await sleep(400);
 		const upload = await waitFor(
 			() => findByLabel('[role="menuitem"], button', NAMES.UPLOAD_MEDIA),
 			5000,
 		);
 		if (!upload) return { ok: false, error: "UPLOAD_MEDIA_NOT_FOUND" };
-		upload.click();
+		realClick(upload);
 		return { ok: true, ready_for_file_chooser: true, menu_item: label(upload) };
 	}
 
@@ -454,24 +486,55 @@
 		if (!want) {
 			return { ok: false, error: "CURRENT_VIDEO_NOT_FOUND", detail: "empty id" };
 		}
+		// Exact card ONLY: same-title/unrelated cards must never be clicked.
 		const card = await waitFor(() => {
-			for (const el of document.querySelectorAll('div[role="button"]')) {
+			for (const el of document.querySelectorAll(
+				'div[role="button"], a[role="button"]',
+			)) {
 				if (!vis(el)) continue;
-				if (!subtreeContainsId(el, want)) continue;
-				return el;
+				if (subtreeContainsId(el, want)) return el;
 			}
 			return null;
-		}, 10000);
+		}, 15000);
 		if (!card) {
 			return { ok: false, error: "CURRENT_VIDEO_NOT_FOUND", want };
 		}
-		card.click();
-		const detail = await waitFor(
-			() => findByLabel("button", NAMES.BACK_TO_PROJECTS),
-			10000,
-		);
+		const findDetail = () => {
+			const st = observeState();
+			if (st.view === "VIDEO_DETAIL" || st.has_add_clip) return st;
+			const back = findByLabel("button", NAMES.BACK_TO_PROJECTS);
+			if (back) return back;
+			const addClip = findByLabel("button", NAMES.ADD_CLIP);
+			if (addClip) return addClip;
+			return Array.from(document.querySelectorAll("button")).find((el) => {
+				if (!vis(el)) return false;
+				return label(el).toLowerCase().includes("back to project");
+			});
+		};
+		realClick(card);
+		await sleep(1200);
+		let detail = await waitFor(findDetail, 8000);
+		if (!detail) {
+			// Finished clips open on double-click per captured operator SOP.
+			realClick(card);
+			try {
+				card.dispatchEvent(
+					new MouseEvent("dblclick", {
+						bubbles: true,
+						cancelable: true,
+						composed: true,
+					}),
+				);
+			} catch (_e) {
+				/* detached card */
+			}
+			detail = await waitFor(findDetail, 14000);
+		}
 		if (!detail) return { ok: false, error: "DETAIL_VIEW_NOT_CONFIRMED" };
-		const detailRoot = detail.closest("main") || detail.parentElement || document.body;
+		const detailRoot =
+			(detail.closest && detail.closest("main")) ||
+			document.querySelector("main") ||
+			document.body;
 		if (!subtreeContainsId(detailRoot, want)) {
 			return { ok: false, error: "CURRENT_VIDEO_IDENTITY_MISMATCH", want };
 		}
@@ -598,21 +661,39 @@
 
 	async function downloadProject() {
 		const more = await waitFor(() => {
+			const labeled = findByLabel("button", NAMES.DETAIL_MORE);
+			if (labeled) return labeled;
 			for (const el of document.querySelectorAll("button")) {
 				if (!vis(el)) continue;
 				const l = label(el);
-				if (/(^|\s|_vert)More$/.test(l) && !/options/i.test(l)) return el;
+				if (/(^|\s|_vert)More$/i.test(l) && !/options/i.test(l)) return el;
+				if (/more_vert/i.test(l) && !/options/i.test(l)) return el;
 			}
 			return null;
-		}, 8000);
+		}, 12000);
 		if (!more) return { ok: false, error: "DETAIL_MORE_MENU_NOT_FOUND" };
-		more.click();
+		realClick(more);
 		const item = await waitFor(
-			() => findByLabel('[role="menuitem"], button', NAMES.DOWNLOAD_PROJECT),
-			6000,
+			() => {
+				const found = findByLabel(
+					'[role="menuitem"], button',
+					NAMES.DOWNLOAD_PROJECT,
+				);
+				if (found) return found;
+				for (const el of document.querySelectorAll(
+					'[role="menuitem"], button, a',
+				)) {
+					if (!vis(el)) continue;
+					if (label(el).toLowerCase().includes("download project")) {
+						return el;
+					}
+				}
+				return null;
+			},
+			10000,
 		);
 		if (!item) return { ok: false, error: "DOWNLOAD_PROJECT_ITEM_NOT_FOUND" };
-		item.click();
+		realClick(item);
 		return { ok: true, clicked: label(item) };
 	}
 
@@ -636,6 +717,12 @@
 		FLOWUI_SET_EXTEND_PROMPT: async (a) => setExtendPrompt(a.text),
 		FLOWUI_SUBMIT_EXTEND: async (a) => submitExtend(a.confirm === true),
 		FLOWUI_DOWNLOAD_PROJECT: async () => downloadProject(),
+	};
+
+	window.__FLOWUI_INVOKE__ = (verb, args) => {
+		const fn = VERBS[verb];
+		if (!fn) return Promise.resolve({ ok: false, error: "UNKNOWN_FLOWUI_VERB" });
+		return Promise.resolve(fn(args || {}));
 	};
 
 	chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

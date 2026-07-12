@@ -115,6 +115,13 @@ class _Client:
             return phases[idx]
         return self.over.get("scene_listing", {"data": {"media": [], "sceneWorkflows": []}})
 
+    async def _send(self, method, params=None, timeout=20):
+        if method == "FLOWUI_COMPOSER_REFERENCE_STATE":
+            act = self.over.get("composer_ref_count", 1)
+            return {"result": {"ok": True, "actual_total_count": act,
+                               "scope": "composer_reference_container"}}
+        return {"result": {"ok": False, "error": f"unmocked:{method}"}}
+
     async def get_media(self, mid):
         prompts = self.over.get("media_prompts", {})
         prompt = prompts.get(mid, self.over.get("default_child_prompt", ""))
@@ -152,12 +159,12 @@ async def test_t2v_stale_composer_fails_closed():
 
 
 async def test_hybrid_one_composer_reference_attach_and_verify():
-    c = _Client()
+    c = _Client(composer_ref_count=1)
     out = await ui.ensure_composer_references(
-        c, media_ids=["m-prod"], local_file_paths=["/tmp/p.png"], expected_count=1)
+        c, media_ids=[], local_file_paths=["/tmp/p.png"], expected_count=1)
     assert out["ok"]
     assert ("attach", "/tmp/p.png") in c.calls
-    assert ("verify", ("m-prod",)) in c.calls
+    assert out["actual_total_count"] == 1
 
 
 @pytest.mark.parametrize("ids,expected", [(["a"], 1), (["a", "b"], 2)])
@@ -361,6 +368,14 @@ async def test_missing_composer_thumbnail_fails():
             _Client(invisible=("m1",)), media_ids=["m1"],
             local_file_paths=[], expected_count=1)
     assert e.value.code == ui.ERR_REFERENCES_NOT_VISIBLE
+
+
+async def test_path_only_local_file_exact_one():
+    out = await ui.ensure_composer_references(
+        _Client(composer_ref_count=1), media_ids=[],
+        local_file_paths=["/tmp/approved.png"], expected_count=1)
+    assert out["ok"] is True
+    assert out["actual_total_count"] == 1
 
 
 def test_typed_timeline_snapshot_separates_workflow_and_media():

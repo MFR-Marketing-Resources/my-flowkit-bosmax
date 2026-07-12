@@ -1176,6 +1176,16 @@ class UiDownloadProjectRequest(BaseModel):
     job_id: Optional[str] = None
     project_id: Optional[str] = None
     register: bool = True
+    require_final_lineage: bool = True
+
+
+class UiHybridOneProbeRequest(BaseModel):
+    local_file_path: str
+
+
+class UiOpenVideoProbeRequest(BaseModel):
+    parent_media_resource_id: str
+    expected_project_id: Optional[str] = None
 
 
 @router.get("/ui-driver/state")
@@ -1188,6 +1198,28 @@ async def ui_driver_state():
     res = await client.flowui_state()
     return {"enabled": _ui.ui_driver_enabled(),
             "state": res.get("result", res)}
+
+
+@router.get("/ui-driver/live-media-ids")
+async def ui_driver_live_media_ids():
+    """Zero-credit DOM harvest of visible media ids on the active Flow tab."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    res = await client.harvest_video_urls()
+    inner = res.get("result", res) if isinstance(res, dict) else {}
+    diag = inner.get("diag") or inner
+    ids = (
+        list(diag.get("videoIds") or diag.get("mediaIds") or [])
+        if isinstance(diag, dict)
+        else []
+    )
+    return {
+        "ok": True,
+        "video_ids": ids,
+        "project_id": diag.get("projectId") if isinstance(diag, dict) else None,
+        "flow_tab_id": inner.get("flow_tab_id"),
+    }
 
 
 @router.post("/ui-driver/verify-references")
@@ -1238,6 +1270,53 @@ async def ui_driver_submit_boundary_probe():
     return res.get("result", res)
 
 
+@router.post("/ui-driver/clear-composer-references")
+async def ui_driver_clear_composer_references():
+    """Remove composer reference thumbnails via captured remove controls (zero credit)."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    res = await client._send("FLOWUI_CLEAR_COMPOSER_REFERENCES", {}, timeout=60)
+    return res.get("result", res)
+
+
+@router.post("/ui-driver/hybrid-one-probe")
+async def ui_driver_hybrid_one_probe(body: UiHybridOneProbeRequest):
+    """Attach one approved local image, verify exact-one, clear, verify zero (zero credit)."""
+    from agent.services import google_flow_ui_driver as _ui
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    path = body.local_file_path.strip()
+    if not path:
+        raise HTTPException(400, "local_file_path required")
+    try:
+        one = await _ui.ensure_composer_references(
+            client, media_ids=[], local_file_paths=[path], expected_count=1)
+        cleared = await client._send("FLOWUI_CLEAR_COMPOSER_REFERENCES", {}, timeout=60)
+        zero = await _ui.verify_references_visible(client, [], 0)
+        return {
+            "ok": True,
+            "hybrid_one": one,
+            "cleared": cleared.get("result", cleared),
+            "zero_after_clear": zero,
+        }
+    except _ui.FlowUiDriverError as exc:
+        raise HTTPException(422, f"{exc.code}: {exc.detail}")
+
+
+@router.post("/ui-driver/open-video-probe")
+async def ui_driver_open_video_probe(body: UiOpenVideoProbeRequest):
+    """Open timeline card by exact media resource ID (zero credit)."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    res = await client.flowui_open_video(
+        body.parent_media_resource_id,
+        expected_project_id=body.expected_project_id)
+    return res.get("result", res)
+
+
 @router.post("/ui-driver/extend-block")
 async def ui_driver_extend_block(body: UiExtendBlockRequest):
     """Owner timeline-Extend for ONE block. dry_run walks to
@@ -1274,7 +1353,8 @@ async def ui_driver_download_project(body: UiDownloadProjectRequest):
     try:
         return await _ui.download_project_via_ui(
             client, job_id=body.job_id, project_id=body.project_id,
-            register=body.register)
+            register=body.register,
+            require_final_lineage=body.require_final_lineage)
     except _ui.FlowUiDriverError as exc:
         raise HTTPException(422, f"{exc.code}: {exc.detail}")
 

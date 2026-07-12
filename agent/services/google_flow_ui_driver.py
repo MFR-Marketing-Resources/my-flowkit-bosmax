@@ -121,6 +121,36 @@ async def ensure_composer_references(
         mark(S_STALE_REFERENCES_CLEARED, count=0)
         return {"ok": True, "expected_count": 0, "states": states}
 
+    if paths and len(paths) == expected_count:
+        mark(S_REFERENCES_ATTACHING)
+        for i, path in enumerate(paths):
+            attached = _res(await client.flowui_composer_attach_file(
+                path, slot_label=f"ComposerRef{i + 1}"))
+            if not attached.get("ok"):
+                raise FlowUiDriverError(
+                    ERR_COMPOSER_ATTACH_FAILED, str(attached.get("error")))
+        # Upload thumbnails render asynchronously — poll bounded, never assume.
+        act = None
+        for _ in range(12):
+            ref = _res(await client._send(
+                "FLOWUI_COMPOSER_REFERENCE_STATE", {}, timeout=40))
+            act = ref.get("actual_total_count")
+            if act == expected_count:
+                break
+            await asyncio.sleep(2.5)
+        if act != expected_count:
+            raise FlowUiDriverError(
+                ERR_REFERENCES_NOT_VISIBLE,
+                f"actual_total_count={act} expected={expected_count}")
+        mark(S_REFERENCE_COUNT_CONFIRMED, actual_total_count=act)
+        return {
+            "ok": True,
+            "expected_count": expected_count,
+            "actual_total_count": act,
+            "states": states,
+            "scope": "composer_reference_container",
+        }
+
     if len(ids) != expected_count:
         raise FlowUiDriverError(
             ERR_REFERENCES_NOT_VISIBLE,
